@@ -1,0 +1,42 @@
+{
+  "id": "general-office",
+  "name": "General Office",
+  "page": {
+    "paperSize": "A4",
+    "marginTop": 2.54,
+    "marginBottom": 2.54,
+    "marginLeft": 3.17,
+    "marginRight": 3.17
+  },
+  "headings": {
+    "level1": {
+      "fontName": "SimHei",
+      "fontSize": 16,
+      "bold": true,
+      "alignment": "center",
+      "spacingBefore": 12,
+      "spacingAfter": 12
+    },
+    "level2": {
+      "fontName": "SimHei",
+      "fontSize": 14,
+      "bold": true,
+      "alignment": "left",
+      "spacingBefore": 8,
+      "spacingAfter": 8
+    }
+  },
+  "body": {
+    "fontName": "SimSun",
+    "fontSize": 12,
+    "lineSpacing": 1.5,
+    "firstLineIndent": 2
+  },
+  "proofreadRules": [
+    "heading_hierarchy",
+    "font_consistency",
+    "font_size_consistency",
+    "double_space",
+    "punctuation_spacing"
+  ]
+}

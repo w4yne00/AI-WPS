@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui">
+  <ribbon>
+    <tabs>
+      <tab id="wpsAiAssistantTab" label="AI Assistant">
+        <group id="wpsAiAssistantWordGroup" label="Word Tools">
+          <button id="btnProofread" label="Format Proofread" size="large" onAction="openTaskpane" />
+          <button id="btnAutoFormat" label="Auto Format" size="large" onAction="openTaskpane" />
+          <button id="btnRewrite" label="Rewrite / Continue" size="large" onAction="openTaskpane" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

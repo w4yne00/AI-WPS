@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wps:ApplicationManifest
+  xmlns:wps="http://www.wps.cn/schema/wpsjs"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <wps:AppId>wps-ai-assistant</wps:AppId>
+  <wps:Name>WPS AI Assistant</wps:Name>
+  <wps:Version>0.1.0</wps:Version>
+  <wps:Description>AI assistant plugin for Word proofreading, formatting, and rewriting.</wps:Description>
+  <wps:Ribbon>ribbon.xml</wps:Ribbon>
+</wps:ApplicationManifest>

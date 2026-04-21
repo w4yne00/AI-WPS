@@ -1,0 +1,29 @@
+{
+  "rules": [
+    {
+      "id": "heading_hierarchy",
+      "severity": "warning",
+      "description": "Detect skipped heading levels."
+    },
+    {
+      "id": "font_consistency",
+      "severity": "warning",
+      "description": "Detect unexpected mixed font names in body paragraphs."
+    },
+    {
+      "id": "font_size_consistency",
+      "severity": "warning",
+      "description": "Detect unexpected mixed font sizes in body paragraphs."
+    },
+    {
+      "id": "double_space",
+      "severity": "info",
+      "description": "Detect repeated whitespace in text."
+    },
+    {
+      "id": "punctuation_spacing",
+      "severity": "info",
+      "description": "Detect spaces before Chinese punctuation."
+    }
+  ]
+}
