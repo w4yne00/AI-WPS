@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<wps:ApplicationManifest
+  xmlns:wps="http://www.wps.cn/schema/wpsjs"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <wps:AppId>wps-runtime-probe</wps:AppId>
+  <wps:Name>WPS Runtime Probe</wps:Name>
+  <wps:Version>0.1.0</wps:Version>
+  <wps:Description>Standalone runtime capability probe for Kylin V10 WPS validation.</wps:Description>
+  <wps:Ribbon>ribbon.xml</wps:Ribbon>
+</wps:ApplicationManifest>
