@@ -65,6 +65,13 @@ export interface FormatPreviewResult {
   };
 }
 
+export interface RewriteResult {
+  originalText: string;
+  rewrittenText: string;
+  rewriteMode: string;
+  diffHints: string[];
+}
+
 export interface TemplateSummary {
   id: string;
   name: string;
@@ -74,6 +81,7 @@ export interface TemplateSummary {
 export interface ConfigSummary {
   servicePort: number;
   difyBaseUrl: string;
+  difyWorkflowId: string;
   logPath: string;
   templateRoot: string;
   timeoutSeconds: number;
@@ -117,6 +125,29 @@ export function isWordFormatPreviewResponse(
     Array.isArray((candidate.data as FormatPreviewResult).changes) &&
     typeof (candidate.data as FormatPreviewResult).summary?.changeCount === "number" &&
     typeof (candidate.data as FormatPreviewResult).summary?.templateId === "string" &&
+    Array.isArray(candidate.errors)
+  );
+}
+
+export function isWordRewriteResponse(
+  value: unknown
+): value is ApiEnvelope<RewriteResult> {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<ApiEnvelope<RewriteResult>>;
+  return (
+    typeof candidate.success === "boolean" &&
+    typeof candidate.traceId === "string" &&
+    typeof candidate.taskType === "string" &&
+    typeof candidate.message === "string" &&
+    typeof candidate.data === "object" &&
+    candidate.data !== null &&
+    typeof (candidate.data as RewriteResult).originalText === "string" &&
+    typeof (candidate.data as RewriteResult).rewrittenText === "string" &&
+    typeof (candidate.data as RewriteResult).rewriteMode === "string" &&
+    Array.isArray((candidate.data as RewriteResult).diffHints) &&
     Array.isArray(candidate.errors)
   );
 }

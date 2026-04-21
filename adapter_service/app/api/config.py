@@ -13,6 +13,7 @@ def get_config() -> dict:
         "data": {
             "servicePort": settings.service_port,
             "difyBaseUrl": settings.dify_base_url,
+            "difyWorkflowId": settings.dify_workflow_id,
             "logPath": settings.log_path,
             "templateRoot": settings.template_root,
             "timeoutSeconds": settings.timeout_seconds,

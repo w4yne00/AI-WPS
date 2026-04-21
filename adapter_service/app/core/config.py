@@ -12,6 +12,7 @@ class AppSettings:
     service_port: int = 18100
     dify_base_url: str = "http://intranet-dify.local/v1"
     dify_api_key_env: str = "DIFY_API_KEY"
+    dify_workflow_id: str = "wps-word-rewrite"
     log_path: str = "./logs/adapter.log"
     template_root: str = "./templates"
     timeout_seconds: int = 30
@@ -30,6 +31,7 @@ def load_settings(config_path: Path | None = None) -> AppSettings:
         service_port=payload.get("servicePort", 18100),
         dify_base_url=payload.get("difyBaseUrl", "http://intranet-dify.local/v1"),
         dify_api_key_env=payload.get("difyApiKeyEnv", "DIFY_API_KEY"),
+        dify_workflow_id=payload.get("difyWorkflowId", "wps-word-rewrite"),
         log_path=payload.get("logPath", "./logs/adapter.log"),
         template_root=payload.get("templateRoot", "./templates"),
         timeout_seconds=payload.get("timeoutSeconds", 30),

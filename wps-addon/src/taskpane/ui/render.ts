@@ -14,6 +14,21 @@ export function renderApp(state: AppState): void {
       return;
     }
 
+    if (state.rewriteResult) {
+      resultPanel.textContent = [
+        `Mode: ${state.rewriteResult.rewriteMode}`,
+        "",
+        "Original:",
+        state.rewriteResult.originalText,
+        "",
+        "Rewritten:",
+        state.rewriteResult.rewrittenText,
+        "",
+        `Hints: ${state.rewriteResult.diffHints.join(", ")}`
+      ].join("\n");
+      return;
+    }
+
     if (state.formatChanges.length > 0) {
       const summary = state.formatSummary
         ? `Template ${state.formatSummary.templateId}, ${state.formatSummary.changeCount} changes`

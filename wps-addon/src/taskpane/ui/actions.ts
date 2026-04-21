@@ -1,6 +1,10 @@
 import { AdapterClient } from "../api/client";
-import { isWordFormatPreviewResponse, isWordProofreadResponse } from "../api/types";
-import { extractActiveDocument } from "../wps/document";
+import {
+  isWordFormatPreviewResponse,
+  isWordProofreadResponse,
+  isWordRewriteResponse
+} from "../api/types";
+import { extractActiveDocument, extractCurrentSelection } from "../wps/document";
 import { initialState, type AppState } from "./state";
 import { renderApp } from "./render";
 
@@ -47,6 +51,7 @@ export async function runProofread(): Promise<void> {
     state.issues = response.data.issues;
     state.formatChanges = [];
     state.formatSummary = undefined;
+    state.rewriteResult = undefined;
     state.traceId = response.traceId;
     renderApp(state);
   } catch (error) {
@@ -74,6 +79,35 @@ export async function runFormatPreview(): Promise<void> {
     state.issues = [];
     state.formatChanges = response.data.changes;
     state.formatSummary = response.data.summary;
+    state.rewriteResult = undefined;
+    state.traceId = response.traceId;
+    renderApp(state);
+  } catch (error) {
+    state.loading = false;
+    state.error = error instanceof Error ? error.message : "Unknown error";
+    renderApp(state);
+  }
+}
+
+export async function runRewrite(): Promise<void> {
+  try {
+    state.loading = true;
+    state.error = undefined;
+    renderApp(state);
+
+    const payload = extractCurrentSelection();
+    payload.options.templateId = state.selectedTemplateId;
+
+    const response = await client.postWordRewrite(payload);
+    if (!isWordRewriteResponse(response)) {
+      throw new Error("Unexpected rewrite response shape");
+    }
+
+    state.loading = false;
+    state.issues = [];
+    state.formatChanges = [];
+    state.formatSummary = undefined;
+    state.rewriteResult = response.data;
     state.traceId = response.traceId;
     renderApp(state);
   } catch (error) {

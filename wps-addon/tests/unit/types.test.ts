@@ -3,7 +3,8 @@ import { describe, expect, it } from "vitest";
 import { getDefaultBaseUrl } from "../../src/taskpane/api/client";
 import {
   isWordFormatPreviewResponse,
-  isWordProofreadResponse
+  isWordProofreadResponse,
+  isWordRewriteResponse
 } from "../../src/taskpane/api/types";
 
 describe("response contracts", () => {
@@ -50,6 +51,24 @@ describe("response contracts", () => {
             changeCount: 0,
             templateId: "general-office"
           }
+        },
+        errors: []
+      })
+    ).toBe(true);
+  });
+
+  it("accepts valid rewrite payloads", () => {
+    expect(
+      isWordRewriteResponse({
+        success: true,
+        traceId: "trace-3",
+        taskType: "word.rewrite",
+        message: "completed",
+        data: {
+          originalText: "old",
+          rewrittenText: "new",
+          rewriteMode: "continue",
+          diffHints: ["Text content changed"]
         },
         errors: []
       })

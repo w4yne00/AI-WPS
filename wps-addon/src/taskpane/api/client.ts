@@ -3,6 +3,7 @@ import type {
   ConfigSummary,
   FormatPreviewResult,
   ProofreadResult,
+  RewriteResult,
   TemplateSummary,
   WordDocumentRequest
 } from "./types";
@@ -34,6 +35,12 @@ export class AdapterClient {
     payload: WordDocumentRequest
   ): Promise<ApiEnvelope<FormatPreviewResult>> {
     return this.post("/word/format-preview", payload);
+  }
+
+  async postWordRewrite(
+    payload: WordDocumentRequest
+  ): Promise<ApiEnvelope<RewriteResult>> {
+    return this.post("/word/rewrite", payload);
   }
 
   private async get<T>(path: string): Promise<T> {

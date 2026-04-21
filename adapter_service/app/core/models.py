@@ -81,3 +81,7 @@ class FormatPreviewSummary(BaseModel):
 class FormatPreviewResponseData(BaseModel):
     changes: List[FormatChange] = Field(default_factory=list)
     summary: FormatPreviewSummary
+
+
+class RewriteResponseData(RewriteResult):
+    pass

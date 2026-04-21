@@ -2,6 +2,7 @@
   "servicePort": 18100,
   "difyBaseUrl": "http://intranet-dify.local/v1",
   "difyApiKeyEnv": "DIFY_API_KEY",
+  "difyWorkflowId": "wps-word-rewrite",
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
   "timeoutSeconds": 30

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { collectHeadings, collectParagraphs, extractActiveDocument } from "../../src/taskpane/wps/document";
+import {
+  collectHeadings,
+  collectParagraphs,
+  extractActiveDocument,
+  extractCurrentSelection
+} from "../../src/taskpane/wps/document";
 
 describe("Word document extraction", () => {
   it("normalizes the active document into the request payload", () => {
@@ -68,5 +73,36 @@ describe("Word document extraction", () => {
     );
 
     expect(headings).toEqual([{ level: 2, text: "Section" }]);
+  });
+
+  it("prefers the current selection for rewrite requests", () => {
+    (
+      globalThis as typeof globalThis & {
+        window?: Record<string, unknown>;
+      }
+    ).window = Object.assign((globalThis as typeof globalThis & { window?: Record<string, unknown> }).window ?? {}, {
+      __WPS_MOCK_DOCUMENT__: {
+        Name: "demo.docx",
+        Content: {
+          Text: "Full document"
+        },
+        Selection: {
+          Text: "Selected text"
+        },
+        Paragraphs: [
+          {
+            Text: "Full document",
+            ParagraphFormat: {
+              OutlineLevel: 0
+            }
+          }
+        ]
+      }
+    });
+
+    const payload = extractCurrentSelection();
+
+    expect(payload.selectionMode).toBe("selection");
+    expect(payload.content.plainText).toBe("Selected text");
   });
 });
