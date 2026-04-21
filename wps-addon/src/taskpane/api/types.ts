@@ -72,6 +72,24 @@ export interface RewriteResult {
   diffHints: string[];
 }
 
+export interface RuntimeProbeResult {
+  runtime: {
+    hasWpsGlobal: boolean;
+    hasActiveDocument: boolean;
+    hasSelection: boolean;
+    activeDocumentName?: string;
+    paragraphCount: number;
+    headingCount: number;
+  };
+  adapter: {
+    reachable: boolean;
+    status?: string;
+    service?: string;
+    baseUrl: string;
+    error?: string;
+  };
+}
+
 export interface TemplateSummary {
   id: string;
   name: string;

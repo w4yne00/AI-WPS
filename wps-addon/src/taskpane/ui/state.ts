@@ -1,4 +1,10 @@
-import type { FormatPreviewChange, ProofreadIssue, RewriteResult, TemplateSummary } from "../api/types";
+import type {
+  FormatPreviewChange,
+  ProofreadIssue,
+  RewriteResult,
+  RuntimeProbeResult,
+  TemplateSummary
+} from "../api/types";
 
 export interface AppState {
   healthStatus: string;
@@ -12,6 +18,7 @@ export interface AppState {
     templateId: string;
   };
   rewriteResult?: RewriteResult;
+  runtimeProbe?: RuntimeProbeResult;
   pendingApplyAction?: "format" | "rewrite";
   appliedMessage?: string;
   error?: string;

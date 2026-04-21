@@ -5,6 +5,7 @@ import {
   isWordRewriteResponse
 } from "../api/types";
 import { extractActiveDocument, extractCurrentSelection } from "../wps/document";
+import { collectRuntimeProbe } from "../wps/probe";
 import { applyFormattingChanges, applyRewriteResult } from "../wps/writeback";
 import { initialState, type AppState } from "./state";
 import { renderApp } from "./render";
@@ -69,6 +70,7 @@ export async function runProofread(): Promise<void> {
     state.formatChanges = [];
     state.formatSummary = undefined;
     state.rewriteResult = undefined;
+    state.runtimeProbe = undefined;
     state.pendingApplyAction = undefined;
     state.appliedMessage = undefined;
     state.traceId = response.traceId;
@@ -101,6 +103,7 @@ export async function runFormatPreview(): Promise<void> {
     state.formatChanges = response.data.changes;
     state.formatSummary = response.data.summary;
     state.rewriteResult = undefined;
+    state.runtimeProbe = undefined;
     state.pendingApplyAction = "format";
     state.appliedMessage = undefined;
     state.traceId = response.traceId;
@@ -133,6 +136,7 @@ export async function runRewrite(): Promise<void> {
     state.formatChanges = [];
     state.formatSummary = undefined;
     state.rewriteResult = response.data;
+    state.runtimeProbe = undefined;
     state.pendingApplyAction = "rewrite";
     state.appliedMessage = undefined;
     state.traceId = response.traceId;
@@ -157,6 +161,29 @@ export function applyPreview(): void {
     applyRewriteResult(state.rewriteResult, latestSelectionMode);
     state.appliedMessage = "Rewrite result applied.";
     state.pendingApplyAction = undefined;
+    renderApp(state);
+  }
+}
+
+export async function runRuntimeProbe(): Promise<void> {
+  try {
+    state.loading = true;
+    state.error = undefined;
+    state.appliedMessage = undefined;
+    renderApp(state);
+
+    const result = await collectRuntimeProbe(client);
+    state.loading = false;
+    state.issues = [];
+    state.formatChanges = [];
+    state.formatSummary = undefined;
+    state.rewriteResult = undefined;
+    state.runtimeProbe = result;
+    state.pendingApplyAction = undefined;
+    renderApp(state);
+  } catch (error) {
+    state.loading = false;
+    state.error = error instanceof Error ? error.message : "Unknown error";
     renderApp(state);
   }
 }

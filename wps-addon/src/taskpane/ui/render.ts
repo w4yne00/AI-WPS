@@ -20,6 +20,26 @@ export function renderApp(state: AppState): void {
       return;
     }
 
+    if (state.runtimeProbe) {
+      resultPanel.textContent = [
+        "Runtime Probe",
+        "",
+        `WPS global: ${state.runtimeProbe.runtime.hasWpsGlobal}`,
+        `Active document: ${state.runtimeProbe.runtime.hasActiveDocument}`,
+        `Selection available: ${state.runtimeProbe.runtime.hasSelection}`,
+        `Document name: ${state.runtimeProbe.runtime.activeDocumentName ?? "N/A"}`,
+        `Paragraph count: ${state.runtimeProbe.runtime.paragraphCount}`,
+        `Heading count: ${state.runtimeProbe.runtime.headingCount}`,
+        "",
+        `Adapter reachable: ${state.runtimeProbe.adapter.reachable}`,
+        `Adapter base URL: ${state.runtimeProbe.adapter.baseUrl}`,
+        `Adapter service: ${state.runtimeProbe.adapter.service ?? "N/A"}`,
+        `Adapter status: ${state.runtimeProbe.adapter.status ?? "N/A"}`,
+        `Adapter error: ${state.runtimeProbe.adapter.error ?? "N/A"}`
+      ].join("\n");
+      return;
+    }
+
     if (state.rewriteResult) {
       resultPanel.textContent = [
         `Mode: ${state.rewriteResult.rewriteMode}`,
