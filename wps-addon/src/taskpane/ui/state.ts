@@ -12,6 +12,8 @@ export interface AppState {
     templateId: string;
   };
   rewriteResult?: RewriteResult;
+  pendingApplyAction?: "format" | "rewrite";
+  appliedMessage?: string;
   error?: string;
   traceId?: string;
 }

@@ -3,9 +3,15 @@ import type { AppState } from "./state";
 export function renderApp(state: AppState): void {
   const statusNode = document.getElementById("status");
   const resultPanel = document.getElementById("result-panel");
+  const applyButton = document.getElementById("apply-button") as HTMLButtonElement | null;
 
   if (statusNode) {
-    statusNode.textContent = `Adapter health: ${state.healthStatus}`;
+    const suffix = state.appliedMessage ? ` | ${state.appliedMessage}` : "";
+    statusNode.textContent = `Adapter health: ${state.healthStatus}${suffix}`;
+  }
+
+  if (applyButton) {
+    applyButton.disabled = state.loading || !state.pendingApplyAction;
   }
 
   if (resultPanel) {

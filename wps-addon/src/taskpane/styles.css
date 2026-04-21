@@ -32,3 +32,22 @@ button {
   border-top: 1px solid #c0b7aa;
   padding-top: 12px;
 }
+
+#result-panel {
+  white-space: pre-wrap;
+  min-height: 140px;
+  background: #fffdf7;
+  border: 1px solid #d6c9b8;
+  padding: 12px;
+}
+
+#result-actions {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+#apply-button[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
