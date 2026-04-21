@@ -1,0 +1,1 @@
+# Word capability services package.

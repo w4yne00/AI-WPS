@@ -1,5 +1,6 @@
 import { AdapterClient } from "../api/client";
 import { isWordProofreadResponse } from "../api/types";
+import { extractActiveDocument } from "../wps/document";
 import { initialState, type AppState } from "./state";
 import { renderApp } from "./render";
 
@@ -29,20 +30,8 @@ export async function initializeApp(): Promise<void> {
 }
 
 export async function runProofread(): Promise<void> {
-  const payload = {
-    documentId: "placeholder-doc",
-    scene: "word" as const,
-    selectionMode: "document" as const,
-    content: {
-      plainText: "Placeholder document content.",
-      paragraphs: [],
-      headings: []
-    },
-    options: {
-      templateId: state.selectedTemplateId,
-      trackChanges: true
-    }
-  };
+  const payload = extractActiveDocument();
+  payload.options.templateId = state.selectedTemplateId;
 
   const response = await client.postWordProofread(payload);
   if (!isWordProofreadResponse(response)) {

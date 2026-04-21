@@ -20,4 +20,17 @@ describe("response contracts", () => {
   it("uses localhost as the default adapter host", () => {
     expect(getDefaultBaseUrl()).toBe("http://127.0.0.1:18100");
   });
+
+  it("rejects invalid proofread payloads", () => {
+    expect(
+      isWordProofreadResponse({
+        success: true,
+        traceId: "trace-1",
+        taskType: "word.proofread",
+        message: "completed",
+        data: {},
+        errors: []
+      })
+    ).toBe(false);
+  });
 });

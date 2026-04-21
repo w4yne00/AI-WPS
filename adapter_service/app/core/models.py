@@ -67,3 +67,7 @@ class ApiEnvelope(BaseModel):
     message: str
     data: dict
     errors: List[dict]
+
+
+class ProofreadResponseData(BaseModel):
+    issues: List[Issue] = Field(default_factory=list)
