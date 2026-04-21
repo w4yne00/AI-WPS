@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from app.core.config import load_settings
 
@@ -24,3 +24,11 @@ class TemplateLoader:
                     }
                 )
         return templates
+
+    def get_template(self, template_id: str) -> Dict:
+        for pattern in ("company/*.json", "general/*.json"):
+            for path in sorted(self.template_root.glob(pattern)):
+                data = json.loads(path.read_text(encoding="utf-8"))
+                if data["id"] == template_id:
+                    return data
+        raise FileNotFoundError("Template not found: {0}".format(template_id))

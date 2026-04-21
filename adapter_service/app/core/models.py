@@ -71,3 +71,13 @@ class ApiEnvelope(BaseModel):
 
 class ProofreadResponseData(BaseModel):
     issues: List[Issue] = Field(default_factory=list)
+
+
+class FormatPreviewSummary(BaseModel):
+    change_count: int = Field(alias="changeCount")
+    template_id: str = Field(alias="templateId")
+
+
+class FormatPreviewResponseData(BaseModel):
+    changes: List[FormatChange] = Field(default_factory=list)
+    summary: FormatPreviewSummary

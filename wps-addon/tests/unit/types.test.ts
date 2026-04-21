@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { getDefaultBaseUrl } from "../../src/taskpane/api/client";
-import { isWordProofreadResponse } from "../../src/taskpane/api/types";
+import {
+  isWordFormatPreviewResponse,
+  isWordProofreadResponse
+} from "../../src/taskpane/api/types";
 
 describe("response contracts", () => {
   it("accepts the common envelope", () => {
@@ -32,5 +35,24 @@ describe("response contracts", () => {
         errors: []
       })
     ).toBe(false);
+  });
+
+  it("accepts valid format preview payloads", () => {
+    expect(
+      isWordFormatPreviewResponse({
+        success: true,
+        traceId: "trace-2",
+        taskType: "word.format_preview",
+        message: "completed",
+        data: {
+          changes: [],
+          summary: {
+            changeCount: 0,
+            templateId: "general-office"
+          }
+        },
+        errors: []
+      })
+    ).toBe(true);
   });
 });

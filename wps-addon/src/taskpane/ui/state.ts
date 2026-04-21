@@ -1,4 +1,4 @@
-import type { ProofreadIssue, TemplateSummary } from "../api/types";
+import type { FormatPreviewChange, ProofreadIssue, TemplateSummary } from "../api/types";
 
 export interface AppState {
   healthStatus: string;
@@ -6,6 +6,11 @@ export interface AppState {
   selectedTemplateId?: string;
   templates: TemplateSummary[];
   issues: ProofreadIssue[];
+  formatChanges: FormatPreviewChange[];
+  formatSummary?: {
+    changeCount: number;
+    templateId: string;
+  };
   error?: string;
   traceId?: string;
 }
@@ -14,5 +19,6 @@ export const initialState: AppState = {
   healthStatus: "unknown",
   loading: false,
   templates: [],
-  issues: []
+  issues: [],
+  formatChanges: []
 };

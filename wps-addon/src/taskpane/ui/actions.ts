@@ -1,5 +1,5 @@
 import { AdapterClient } from "../api/client";
-import { isWordProofreadResponse } from "../api/types";
+import { isWordFormatPreviewResponse, isWordProofreadResponse } from "../api/types";
 import { extractActiveDocument } from "../wps/document";
 import { initialState, type AppState } from "./state";
 import { renderApp } from "./render";
@@ -30,15 +30,55 @@ export async function initializeApp(): Promise<void> {
 }
 
 export async function runProofread(): Promise<void> {
-  const payload = extractActiveDocument();
-  payload.options.templateId = state.selectedTemplateId;
+  try {
+    state.loading = true;
+    state.error = undefined;
+    renderApp(state);
 
-  const response = await client.postWordProofread(payload);
-  if (!isWordProofreadResponse(response)) {
-    throw new Error("Unexpected proofread response shape");
+    const payload = extractActiveDocument();
+    payload.options.templateId = state.selectedTemplateId;
+
+    const response = await client.postWordProofread(payload);
+    if (!isWordProofreadResponse(response)) {
+      throw new Error("Unexpected proofread response shape");
+    }
+
+    state.loading = false;
+    state.issues = response.data.issues;
+    state.formatChanges = [];
+    state.formatSummary = undefined;
+    state.traceId = response.traceId;
+    renderApp(state);
+  } catch (error) {
+    state.loading = false;
+    state.error = error instanceof Error ? error.message : "Unknown error";
+    renderApp(state);
   }
+}
 
-  state.issues = response.data.issues;
-  state.traceId = response.traceId;
-  renderApp(state);
+export async function runFormatPreview(): Promise<void> {
+  try {
+    state.loading = true;
+    state.error = undefined;
+    renderApp(state);
+
+    const payload = extractActiveDocument();
+    payload.options.templateId = state.selectedTemplateId;
+
+    const response = await client.postWordFormatPreview(payload);
+    if (!isWordFormatPreviewResponse(response)) {
+      throw new Error("Unexpected format preview response shape");
+    }
+
+    state.loading = false;
+    state.issues = [];
+    state.formatChanges = response.data.changes;
+    state.formatSummary = response.data.summary;
+    state.traceId = response.traceId;
+    renderApp(state);
+  } catch (error) {
+    state.loading = false;
+    state.error = error instanceof Error ? error.message : "Unknown error";
+    renderApp(state);
+  }
 }

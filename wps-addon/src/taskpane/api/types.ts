@@ -50,6 +50,21 @@ export interface ProofreadResult {
   issues: ProofreadIssue[];
 }
 
+export interface FormatPreviewChange {
+  paragraphIndex: number;
+  currentStyle: string;
+  targetStyle: string;
+  reason: string;
+}
+
+export interface FormatPreviewResult {
+  changes: FormatPreviewChange[];
+  summary: {
+    changeCount: number;
+    templateId: string;
+  };
+}
+
 export interface TemplateSummary {
   id: string;
   name: string;
@@ -80,6 +95,28 @@ export function isWordProofreadResponse(
     typeof candidate.data === "object" &&
     candidate.data !== null &&
     Array.isArray((candidate.data as ProofreadResult).issues) &&
+    Array.isArray(candidate.errors)
+  );
+}
+
+export function isWordFormatPreviewResponse(
+  value: unknown
+): value is ApiEnvelope<FormatPreviewResult> {
+  if (typeof value !== "object" || value === null) {
+    return false;
+  }
+
+  const candidate = value as Partial<ApiEnvelope<FormatPreviewResult>>;
+  return (
+    typeof candidate.success === "boolean" &&
+    typeof candidate.traceId === "string" &&
+    typeof candidate.taskType === "string" &&
+    typeof candidate.message === "string" &&
+    typeof candidate.data === "object" &&
+    candidate.data !== null &&
+    Array.isArray((candidate.data as FormatPreviewResult).changes) &&
+    typeof (candidate.data as FormatPreviewResult).summary?.changeCount === "number" &&
+    typeof (candidate.data as FormatPreviewResult).summary?.templateId === "string" &&
     Array.isArray(candidate.errors)
   );
 }

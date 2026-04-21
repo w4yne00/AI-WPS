@@ -1,6 +1,7 @@
 import type {
   ApiEnvelope,
   ConfigSummary,
+  FormatPreviewResult,
   ProofreadResult,
   TemplateSummary,
   WordDocumentRequest
@@ -27,6 +28,12 @@ export class AdapterClient {
     payload: WordDocumentRequest
   ): Promise<ApiEnvelope<ProofreadResult>> {
     return this.post("/word/proofread", payload);
+  }
+
+  async postWordFormatPreview(
+    payload: WordDocumentRequest
+  ): Promise<ApiEnvelope<FormatPreviewResult>> {
+    return this.post("/word/format-preview", payload);
   }
 
   private async get<T>(path: string): Promise<T> {

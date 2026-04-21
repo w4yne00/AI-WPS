@@ -14,6 +14,20 @@ export function renderApp(state: AppState): void {
       return;
     }
 
+    if (state.formatChanges.length > 0) {
+      const summary = state.formatSummary
+        ? `Template ${state.formatSummary.templateId}, ${state.formatSummary.changeCount} changes`
+        : "Format preview";
+      resultPanel.textContent = [
+        summary,
+        ...state.formatChanges.map(
+          (change) =>
+            `P${change.paragraphIndex}: ${change.currentStyle} -> ${change.targetStyle} (${change.reason})`
+        )
+      ].join("\n");
+      return;
+    }
+
     if (state.issues.length > 0) {
       resultPanel.textContent = state.issues
         .map((issue) => `${issue.ruleId}: ${issue.message}`)
