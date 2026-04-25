@@ -42,20 +42,20 @@
   }
 
   function runProbe() {
-    var document = getActiveDocument();
-    var paragraphInfo = collectParagraphs(document);
+    var activeDocument = getActiveDocument();
+    var paragraphInfo = collectParagraphs(activeDocument);
     var result = {
       hasWpsGlobal: typeof window.wps !== "undefined",
-      hasActiveDocument: !!document,
-      hasSelection: !!(document && document.Selection),
-      documentName: document && document.Name,
+      hasActiveDocument: !!activeDocument,
+      hasSelection: !!(activeDocument && activeDocument.Selection),
+      documentName: activeDocument && activeDocument.Name,
       paragraphCount: paragraphInfo.paragraphCount,
       headingCount: paragraphInfo.headingCount,
       adapterReachable: "checking",
       adapterDetail: "probing 127.0.0.1:18100/health"
     };
 
-    var outputNode = document.getElementById("probe-output");
+    var outputNode = window.document.getElementById("probe-output");
     outputNode.textContent = formatLines(result);
 
     fetch("http://127.0.0.1:18100/health")
