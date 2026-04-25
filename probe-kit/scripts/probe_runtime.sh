@@ -36,7 +36,11 @@ mkdir -p "$(dirname "$OUT_FILE")"
 
   echo "== Probe Kit Layout =="
   for path in \
+    "$KIT_ROOT/wps-probe-addon/index.html" \
+    "$KIT_ROOT/wps-probe-addon/main.js" \
+    "$KIT_ROOT/wps-probe-addon/ribbon.js" \
     "$KIT_ROOT/wps-probe-addon/manifest.xml" \
+    "$KIT_ROOT/wps-probe-addon/manifest.json" \
     "$KIT_ROOT/wps-probe-addon/ribbon.xml" \
     "$KIT_ROOT/wps-probe-addon/taskpane.html" \
     "$KIT_ROOT/wps-probe-addon/taskpane.js"; do

@@ -13,9 +13,13 @@
 
 - [ ] 探针包已成功解压
 - [ ] `wps-probe-addon/manifest.xml` 存在
+- [ ] `wps-probe-addon/index.html` 存在
+- [ ] `wps-probe-addon/main.js` 存在
+- [ ] `wps-probe-addon/ribbon.js` 存在
 - [ ] `wps-probe-addon/ribbon.xml` 存在
 - [ ] `wps-probe-addon/taskpane.html` 存在
 - [ ] `wps-probe-addon/taskpane.js` 存在
+- [ ] 手工导入时目录名符合 `<插件名>_<版本号>`
 - [ ] `scripts/probe_runtime.sh` 可执行
 
 ## C. Shell 探针结果

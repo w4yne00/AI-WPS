@@ -2,3 +2,5 @@
 __pycache__/
 *.pyc
 dist-probe-kit/
+.DS_Store
+._*

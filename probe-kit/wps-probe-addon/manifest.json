@@ -1,0 +1,6 @@
+{
+  "name": "wps-probe-addon",
+  "version": "1.0.0",
+  "description": "Kylin V10 WPS runtime probe addon",
+  "entry": "index.html"
+}

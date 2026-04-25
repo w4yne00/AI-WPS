@@ -22,7 +22,11 @@
 
 WPS 插件探针由以下静态文件组成：
 
+- `index.html`
+- `main.js`
+- `ribbon.js`
 - `manifest.xml`
+- `manifest.json`
 - `ribbon.xml`
 - `taskpane.html`
 - `taskpane.js`
