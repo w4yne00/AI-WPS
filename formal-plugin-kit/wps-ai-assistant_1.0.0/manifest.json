@@ -1,0 +1,6 @@
+{
+  "name": "wps-ai-assistant",
+  "version": "1.0.0",
+  "description": "Phase 1 WPS AI assistant",
+  "entry": "index.html"
+}

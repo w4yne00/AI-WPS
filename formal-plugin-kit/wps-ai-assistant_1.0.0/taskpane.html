@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WPS AI 助理</title>
+    <link rel="stylesheet" href="./taskpane.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="header">
+        <h1>WPS AI 助理</h1>
+        <div id="health-indicator" class="badge badge-warn">检测中</div>
+      </header>
+
+      <section class="controls">
+        <label class="field">
+          <span>模板</span>
+          <select id="template-select"></select>
+        </label>
+
+        <div class="button-row">
+          <button id="btn-proofread" type="button">格式校对</button>
+          <button id="btn-format" type="button">排版预览</button>
+          <button id="btn-rewrite" type="button">改写/续写</button>
+          <button id="btn-probe" type="button">运行探针</button>
+        </div>
+
+        <div class="button-row secondary">
+          <button id="btn-apply" type="button" disabled>应用预览</button>
+          <button id="btn-refresh" type="button">刷新配置</button>
+        </div>
+      </section>
+
+      <section class="status">
+        <div id="status-line">等待操作。</div>
+        <div id="trace-line">Trace: N/A</div>
+      </section>
+
+      <section class="panel">
+        <h2>结果预览</h2>
+        <pre id="result-output">等待运行。</pre>
+      </section>
+    </div>
+    <script src="./taskpane.js"></script>
+  </body>
+</html>
