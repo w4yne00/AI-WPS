@@ -10,6 +10,7 @@
 - `scripts/status_adapter.sh`
 - `scripts/check_health.sh`
 - `scripts/check_environment.sh`
+- `scripts/show_logs.sh`
 
 ## 启动
 
@@ -20,13 +21,19 @@ bash scripts/start_adapter.sh 18100
 ## 状态
 
 ```bash
-bash scripts/status_adapter.sh
+bash scripts/status_adapter.sh 18100
 ```
 
 ## 健康检查
 
 ```bash
 bash scripts/check_health.sh 18100
+```
+
+如果返回 `adapter_health=unreachable`，继续执行：
+
+```bash
+bash scripts/show_logs.sh 50
 ```
 
 ## 停止
