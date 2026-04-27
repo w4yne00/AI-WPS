@@ -1,10 +1,9 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<customUI xmlns="http://schemas.microsoft.com/office/2009/07/customui">
-  <ribbon>
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon startFromScratch="false">
     <tabs>
       <tab id="wpsRuntimeProbeTab" label="Runtime Probe">
         <group id="wpsRuntimeProbeGroup" label="Diagnostics">
-          <button id="btnRuntimeProbe" label="Open Runtime Probe" size="large" onAction="openTaskpane" />
+          <button id="btnRuntimeProbe" label="Open Runtime Probe" size="large" onAction="OnAction" />
         </group>
       </tab>
     </tabs>
