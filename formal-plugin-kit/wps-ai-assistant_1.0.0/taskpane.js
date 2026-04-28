@@ -118,12 +118,21 @@
   }
 
   function request(path, payload) {
-    return fetch(ADAPTER_BASE_URL + path, {
-      method: payload ? "POST" : "GET",
-      headers: {
+    var options = {
+      method: payload ? "POST" : "GET"
+    };
+
+    if (payload) {
+      options.headers = {
         "Content-Type": "application/json"
-      },
-      body: payload ? JSON.stringify(payload) : undefined
+      };
+      options.body = JSON.stringify(payload);
+    }
+
+    return fetch(ADAPTER_BASE_URL + path, {
+      method: options.method,
+      headers: options.headers,
+      body: options.body
     }).then(function (response) {
       return response.json().then(function (body) {
         if (!response.ok) {

@@ -202,9 +202,15 @@ def rewrite(payload):
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _set_cors_headers(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Trace-Id")
+
     def _write(self, status_code, body):
         payload = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
+        self._set_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(payload)))
         self.end_headers()
@@ -213,6 +219,12 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stdout.write(fmt % args + "\n")
         sys.stdout.flush()
+
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self._set_cors_headers()
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_GET(self):
         path = urlparse(self.path).path
