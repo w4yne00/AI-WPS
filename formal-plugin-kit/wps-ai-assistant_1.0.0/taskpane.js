@@ -1,5 +1,6 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
+  var TASKPANE_ROOT_ID = "result-output";
   var state = {
     templates: [],
     selectedTemplateId: "general-office",
@@ -13,6 +14,10 @@
 
   function setStatus(message) {
     document.getElementById("status-line").textContent = message;
+  }
+
+  function isTaskpanePage() {
+    return Boolean(document.getElementById(TASKPANE_ROOT_ID));
   }
 
   function setTrace(traceId) {
@@ -402,6 +407,13 @@
     document.getElementById("btn-rewrite").addEventListener("click", runRewrite);
     document.getElementById("btn-probe").addEventListener("click", runProbe);
     document.getElementById("btn-apply").addEventListener("click", applyPreview);
+  }
+
+  if (!isTaskpanePage()) {
+    window.openTaskpane = function () {
+      return true;
+    };
+    return;
   }
 
   bindEvents();
