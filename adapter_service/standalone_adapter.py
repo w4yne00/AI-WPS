@@ -212,6 +212,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def log_message(self, fmt, *args):
         sys.stdout.write(fmt % args + "\n")
+        sys.stdout.flush()
 
     def do_GET(self):
         path = urlparse(self.path).path
@@ -323,7 +324,7 @@ class Handler(BaseHTTPRequestHandler):
 def main():
     port = int(os.environ.get("ADAPTER_PORT", sys.argv[1] if len(sys.argv) > 1 else "18100"))
     server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print("standalone_adapter_started port={0}".format(port))
+    print("standalone_adapter_started port={0}".format(port), flush=True)
     server.serve_forever()
 
 
