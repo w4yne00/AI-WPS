@@ -18,6 +18,12 @@
 bash scripts/start_adapter.sh 18100
 ```
 
+说明：
+
+- 如果目标机已安装 `uvicorn`，脚本优先使用 `uvicorn`
+- 如果目标机没有 `uvicorn`，脚本会自动降级到 `standalone` 模式
+- `standalone` 模式只依赖系统自带 `python3`，适合先打通目标机联调
+
 ## 状态
 
 ```bash
