@@ -15,12 +15,19 @@ TEMPLATE_ROOT = ROOT_DIR / "templates"
 SPACE_BEFORE_CHINESE_PUNCTUATION = re.compile(r"\s+[，。！？；：]")
 
 
-def load_template(template_id):
+def iter_template_documents():
     for pattern in ("company/*.json", "general/*.json"):
         for path in sorted(TEMPLATE_ROOT.glob(pattern)):
             data = json.loads(path.read_text(encoding="utf-8"))
-            if data["id"] == template_id:
-                return data
+            if "id" not in data:
+                continue
+            yield path, data
+
+
+def load_template(template_id):
+    for _, data in iter_template_documents():
+        if data["id"] == template_id:
+            return data
     if template_id != "general-office":
         return load_template("general-office")
     raise FileNotFoundError("Template not found: {0}".format(template_id))
@@ -28,16 +35,14 @@ def load_template(template_id):
 
 def list_templates():
     templates = []
-    for pattern in ("company/*.json", "general/*.json"):
-        for path in sorted(TEMPLATE_ROOT.glob(pattern)):
-            data = json.loads(path.read_text(encoding="utf-8"))
-            templates.append(
-                {
-                    "id": data["id"],
-                    "name": data.get("name", data["id"]),
-                    "path": str(path),
-                }
-            )
+    for path, data in iter_template_documents():
+        templates.append(
+            {
+                "id": data["id"],
+                "name": data.get("name", data["id"]),
+                "path": str(path),
+            }
+        )
     return templates
 
 
