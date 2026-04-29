@@ -1,8 +1,10 @@
 {
   "servicePort": 18100,
-  "difyBaseUrl": "http://intranet-dify.local/v1",
-  "difyApiKeyEnv": "DIFY_API_KEY",
-  "difyWorkflowId": "wps-word-rewrite",
+  "providerType": "enterprise-chat-api",
+  "providerBaseUrl": "https://aibot.chinasatnet.com.cn/v1",
+  "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
+  "providerChatPath": "/chat-messages",
+  "providerMode": "blocking",
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
   "timeoutSeconds": 30

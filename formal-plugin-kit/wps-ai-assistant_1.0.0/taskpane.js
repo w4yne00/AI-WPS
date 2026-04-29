@@ -4,12 +4,17 @@
   var state = {
     templates: [],
     selectedTemplateId: "general-office",
+    rewriteStyle: "default",
+    focusPoint: "default",
+    lengthMode: "default",
+    userInstruction: "",
     traceId: "",
     pendingApplyAction: "",
     formatChanges: [],
     rewriteResult: null,
     latestDocumentPayload: null,
-    latestSelectionMode: "document"
+    latestSelectionMode: "document",
+    providerName: "N/A"
   };
 
   function setStatus(message) {
@@ -23,6 +28,15 @@
   function setTrace(traceId) {
     state.traceId = traceId || "";
     document.getElementById("trace-line").textContent = "Trace: " + (traceId || "N/A");
+  }
+
+  function setProviderLine(providerName, configured) {
+    var detail = providerName || "N/A";
+    if (typeof configured === "boolean") {
+      detail += configured ? " / configured" : " / mock";
+    }
+    state.providerName = detail;
+    document.getElementById("provider-line").textContent = "Provider: " + detail;
   }
 
   function setHealthBadge(mode, text) {
@@ -112,7 +126,11 @@
       },
       options: {
         templateId: state.selectedTemplateId,
-        trackChanges: true
+        trackChanges: true,
+        userInstruction: state.userInstruction,
+        rewriteStyle: state.rewriteStyle,
+        focusPoint: state.focusPoint,
+        lengthMode: state.lengthMode
       }
     };
   }
@@ -153,11 +171,13 @@
       var templates = results[1];
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
+      setProviderLine(health.data.providerType || "N/A", health.data.providerConfigured);
       state.templates = templates.data.templates || [];
       renderTemplateOptions();
       setStatus("配置已刷新。");
     }).catch(function (error) {
       setHealthBadge("badge-error", "不可达");
+      setProviderLine("N/A");
       setStatus("刷新失败：" + error.message);
       setResult("无法连接本地适配层：" + error.message);
     });
@@ -228,6 +248,8 @@
       "",
       "改写后:",
       result.rewrittenText,
+      "",
+      "Provider: " + (result.provider || state.providerName),
       "",
       "提示: " + result.diffHints.join(", ")
     ].join("\n");
@@ -409,6 +431,18 @@
   function bindEvents() {
     document.getElementById("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
+    });
+    document.getElementById("rewrite-style").addEventListener("change", function (event) {
+      state.rewriteStyle = event.target.value;
+    });
+    document.getElementById("focus-point").addEventListener("change", function (event) {
+      state.focusPoint = event.target.value;
+    });
+    document.getElementById("length-mode").addEventListener("change", function (event) {
+      state.lengthMode = event.target.value;
+    });
+    document.getElementById("user-instruction").addEventListener("input", function (event) {
+      state.userInstruction = event.target.value;
     });
     document.getElementById("btn-refresh").addEventListener("click", refreshConfig);
     document.getElementById("btn-proofread").addEventListener("click", runProofread);

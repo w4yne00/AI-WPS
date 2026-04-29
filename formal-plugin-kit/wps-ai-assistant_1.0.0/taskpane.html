@@ -19,6 +19,44 @@
           <select id="template-select"></select>
         </label>
 
+        <div class="rewrite-grid">
+          <label class="field">
+            <span>改写风格</span>
+            <select id="rewrite-style">
+              <option value="default">默认正式</option>
+              <option value="formal">更正式</option>
+              <option value="structured">更有条理</option>
+              <option value="reporting">更像汇报材料</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>侧重点</span>
+            <select id="focus-point">
+              <option value="default">保持完整</option>
+              <option value="conclusion">突出结论</option>
+              <option value="risk">突出风险</option>
+              <option value="next_step">突出下一步</option>
+              <option value="implementation">突出实施路径</option>
+            </select>
+          </label>
+
+          <label class="field">
+            <span>篇幅</span>
+            <select id="length-mode">
+              <option value="default">默认</option>
+              <option value="concise">精简</option>
+              <option value="same">保持篇幅</option>
+              <option value="expanded">适度扩写</option>
+            </select>
+          </label>
+        </div>
+
+        <label class="field">
+          <span>补充要求</span>
+          <textarea id="user-instruction" rows="3" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
+        </label>
+
         <div class="button-row">
           <button id="btn-proofread" type="button">格式校对</button>
           <button id="btn-format" type="button">排版预览</button>
@@ -35,6 +73,7 @@
       <section class="status">
         <div id="status-line">等待操作。</div>
         <div id="trace-line">Trace: N/A</div>
+        <div id="provider-line">Provider: N/A</div>
       </section>
 
       <section class="panel">

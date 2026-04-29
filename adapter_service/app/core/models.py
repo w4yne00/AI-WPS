@@ -27,6 +27,10 @@ class DocumentContent(BaseModel):
 class RequestOptions(BaseModel):
     template_id: Optional[str] = Field(default=None, alias="templateId")
     track_changes: bool = Field(default=True, alias="trackChanges")
+    user_instruction: str = Field(default="", alias="userInstruction")
+    rewrite_style: str = Field(default="default", alias="rewriteStyle")
+    focus_point: str = Field(default="default", alias="focusPoint")
+    length_mode: str = Field(default="default", alias="lengthMode")
 
 
 class WordDocumentRequest(BaseModel):
@@ -58,6 +62,7 @@ class RewriteResult(BaseModel):
     rewritten_text: str = Field(alias="rewrittenText")
     rewrite_mode: str = Field(alias="rewriteMode")
     diff_hints: List[str] = Field(default_factory=list, alias="diffHints")
+    provider: str = "mock"
 
 
 class ApiEnvelope(BaseModel):

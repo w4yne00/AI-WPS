@@ -12,8 +12,10 @@ def get_config() -> dict:
         "success": True,
         "data": {
             "servicePort": settings.service_port,
-            "difyBaseUrl": settings.dify_base_url,
-            "difyWorkflowId": settings.dify_workflow_id,
+            "providerType": settings.provider_type,
+            "providerBaseUrl": settings.provider_base_url,
+            "providerChatPath": settings.provider_chat_path,
+            "providerMode": settings.provider_mode,
             "logPath": settings.log_path,
             "templateRoot": settings.template_root,
             "timeoutSeconds": settings.timeout_seconds,

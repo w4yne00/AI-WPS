@@ -6,3 +6,4 @@ dist-formal-plugin-kit/
 dist-adapter-start-kit/
 .DS_Store
 ._*
+logs/

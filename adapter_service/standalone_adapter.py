@@ -8,6 +8,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from app.core.config import load_settings
+from app.services.provider_client import ProviderClient
+
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
@@ -187,22 +190,29 @@ def rewrite(payload):
             if paragraph.get("text", "").strip()
         ).strip()
 
-    prefix = {
-        "rewrite": "Rewritten draft:",
-        "continue": "Continued draft:",
-        "polish": "Polished draft:",
-        "formalize": "Formalized draft:",
-    }.get(mode, "Rewritten draft:")
-    rewritten_text = "{0}\n{1}".format(prefix, source_text)
+    options = payload.get("options", {})
+    provider_result = ProviderClient(load_settings()).rewrite(
+        source_text,
+        mode,
+        trace_id="standalone-word-rewrite",
+        user_instruction=options.get("userInstruction", ""),
+        style=options.get("rewriteStyle", "default"),
+        focus=options.get("focusPoint", "default"),
+        length=options.get("lengthMode", "default"),
+    )
+    rewritten_text = provider_result["rewrittenText"]
     diff_hints = ["Text content changed"]
     if len(rewritten_text) > len(source_text):
         diff_hints.append("Expanded content length")
+    if len(rewritten_text) < len(source_text):
+        diff_hints.append("Compressed content length")
 
     return {
         "originalText": source_text,
         "rewrittenText": rewritten_text,
         "rewriteMode": mode,
         "diffHints": diff_hints,
+        "provider": provider_result.get("provider", "mock"),
     }
 
 
@@ -234,6 +244,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path = urlparse(self.path).path
         if path == "/health":
+            settings = load_settings()
             self._write(
                 200,
                 {
@@ -246,6 +257,8 @@ class Handler(BaseHTTPRequestHandler):
                         "status": "ok",
                         "version": "0.1.0",
                         "mode": "standalone",
+                        "providerType": settings.provider_type,
+                        "providerConfigured": ProviderClient(settings).is_configured(),
                     },
                     "errors": [],
                 },

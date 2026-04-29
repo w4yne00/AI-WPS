@@ -25,3 +25,17 @@ class DifyUnavailableError(AdapterError):
     def __init__(self, message: str = "Dify endpoint is unreachable.") -> None:
         super().__init__("DIFY_UNREACHABLE", message, status_code=502)
 
+
+class ProviderTimeoutError(AdapterError):
+    def __init__(self, message: str = "Enterprise AI request timed out.") -> None:
+        super().__init__("PROVIDER_TIMEOUT", message, status_code=504)
+
+
+class ProviderAuthError(AdapterError):
+    def __init__(self, message: str = "Enterprise AI authentication failed.") -> None:
+        super().__init__("PROVIDER_AUTH_FAILED", message, status_code=401)
+
+
+class ProviderUnavailableError(AdapterError):
+    def __init__(self, message: str = "Enterprise AI endpoint is unreachable.") -> None:
+        super().__init__("PROVIDER_UNREACHABLE", message, status_code=502)
