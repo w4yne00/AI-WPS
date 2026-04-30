@@ -17,6 +17,14 @@ function testGetEffectiveSelectionText() {
     "第二种选区来源"
   );
   assert.strictEqual(helpers.getEffectiveSelectionText({ Text: "   " }), "");
+  assert.strictEqual(
+    helpers.getEffectiveSelectionText([
+      null,
+      { Text: "" },
+      { Range: { Text: " 来自 Application.Selection " } }
+    ]),
+    "来自 Application.Selection"
+  );
 }
 
 function testResolveRewriteScope() {
@@ -44,8 +52,19 @@ function testSelectionWritebackGuard() {
   assert.ok(changed.message.includes("选区已变化"));
 }
 
+function testGetWritableSelection() {
+  const target = helpers.getWritableSelection([
+    null,
+    { Range: { Text: "abc" } },
+    { Text: "later" }
+  ]);
+  assert.ok(target);
+  assert.strictEqual(target.Range.Text, "abc");
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
+testGetWritableSelection();
 
 console.log("taskpane-helpers tests passed");

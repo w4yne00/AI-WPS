@@ -1,5 +1,6 @@
 import json
 import os
+from pathlib import Path
 from typing import Dict, Optional
 from urllib import error, request as urllib_request
 
@@ -9,6 +10,7 @@ from app.core.logging import get_logger
 
 
 logger = get_logger(__name__)
+LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 
 
 STYLE_TEXT = {
@@ -84,12 +86,45 @@ def extract_answer(body: Dict) -> str:
     raise ProviderUnavailableError("Enterprise AI response did not contain an answer.")
 
 
+def get_local_api_key_path(path: Optional[Path] = None) -> Path:
+    return path or LOCAL_KEY_PATH
+
+
+def save_local_api_key(api_key: str, path: Optional[Path] = None) -> None:
+    target = get_local_api_key_path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(api_key.strip(), encoding="utf-8")
+
+
+def clear_local_api_key(path: Optional[Path] = None) -> None:
+    target = get_local_api_key_path(path)
+    if target.exists():
+        target.unlink()
+
+
+def load_local_api_key(path: Optional[Path] = None) -> str:
+    target = get_local_api_key_path(path)
+    if not target.exists():
+        return ""
+    return target.read_text(encoding="utf-8").strip()
+
+
 class ProviderClient:
     def __init__(self, settings: Optional[AppSettings] = None) -> None:
         self.settings = settings or load_settings()
 
     def is_configured(self) -> bool:
-        return bool(os.getenv(self.settings.provider_api_key_env))
+        return bool(self.get_api_key())
+
+    def get_auth_source(self) -> str:
+        if os.getenv(self.settings.provider_api_key_env):
+            return "env"
+        if load_local_api_key():
+            return "file"
+        return "none"
+
+    def get_api_key(self) -> str:
+        return os.getenv(self.settings.provider_api_key_env) or load_local_api_key()
 
     def rewrite(
         self,
@@ -109,7 +144,7 @@ class ProviderClient:
             focus=focus,
             length=length,
         )
-        api_key = os.getenv(self.settings.provider_api_key_env)
+        api_key = self.get_api_key()
         if not api_key:
             logger.info("traceId=%s provider=mock task=word.rewrite", trace_id)
             return {
@@ -164,7 +199,7 @@ class ProviderClient:
         logger.info("traceId=%s provider=enterprise-chat-api task=word.rewrite", trace_id)
         return {
             "rewrittenText": rewritten_text,
-            "provider": "enterprise-chat-api",
+            "provider": "enterprise-chat-api/{0}".format(self.get_auth_source()),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),

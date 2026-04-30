@@ -1,7 +1,6 @@
 from fastapi import APIRouter
-import os
-
 from app.core.config import load_settings
+from app.services.provider_client import ProviderClient
 
 router = APIRouter()
 
@@ -9,6 +8,7 @@ router = APIRouter()
 @router.get("/health")
 def health() -> dict:
     settings = load_settings()
+    provider = ProviderClient(settings)
     return {
         "success": True,
         "data": {
@@ -16,6 +16,7 @@ def health() -> dict:
             "status": "ok",
             "version": "0.1.0",
             "providerType": settings.provider_type,
-            "providerConfigured": bool(os.getenv(settings.provider_api_key_env)),
+            "providerConfigured": provider.is_configured(),
+            "providerAuthSource": provider.get_auth_source(),
         },
     }

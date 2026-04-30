@@ -4,6 +4,7 @@ from fastapi.responses import JSONResponse
 
 from app.api.config import router as config_router
 from app.api.health import router as health_router
+from app.api.provider import router as provider_router
 from app.api.templates import router as templates_router
 from app.api.word import router as word_router
 from app.core.errors import AdapterError
@@ -20,6 +21,7 @@ app.add_middleware(
 )
 app.include_router(health_router)
 app.include_router(config_router)
+app.include_router(provider_router)
 app.include_router(templates_router)
 app.include_router(word_router)
 

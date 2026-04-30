@@ -57,6 +57,17 @@
           <textarea id="user-instruction" rows="3" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
         </label>
 
+        <div class="api-key-row">
+          <label class="field api-key-field">
+            <span>API Key</span>
+            <input id="provider-api-key" type="password" placeholder="导入企业 API Key" />
+          </label>
+          <div class="api-key-actions">
+            <button id="btn-save-api-key" type="button">保存 Key</button>
+            <button id="btn-clear-api-key" type="button">清除 Key</button>
+          </div>
+        </div>
+
         <div class="button-row">
           <button id="btn-proofread" type="button">格式校对</button>
           <button id="btn-format" type="button">排版预览</button>
@@ -75,6 +86,7 @@
         <div id="status-line">等待操作。</div>
         <div id="trace-line">Trace: N/A</div>
         <div id="provider-line">Provider: N/A</div>
+        <div id="provider-auth-line">Provider Auth: N/A</div>
         <div id="scope-line">当前范围：未检测</div>
       </section>
 

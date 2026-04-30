@@ -15,7 +15,8 @@
     rewriteResult: null,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
-    providerName: "N/A"
+    providerName: "N/A",
+    providerAuthSource: "N/A"
   };
 
   function setStatus(message) {
@@ -38,6 +39,11 @@
     }
     state.providerName = detail;
     document.getElementById("provider-line").textContent = "Provider: " + detail;
+  }
+
+  function setProviderAuthLine(source) {
+    state.providerAuthSource = source || "N/A";
+    document.getElementById("provider-auth-line").textContent = "Provider Auth: " + state.providerAuthSource;
   }
 
   function setScopeLine(label) {
@@ -67,14 +73,30 @@
     return app.ActiveDocument || null;
   }
 
+  function getSelectionSources(document) {
+    var app = getHostApplication();
+    return [
+      document && document.Selection,
+      app && app.Selection,
+      app && app.ActiveWindow && app.ActiveWindow.Selection,
+      app && app.ActiveDocument && app.ActiveDocument.Selection
+    ];
+  }
+
   function getParagraphs(document) {
     return (document && (document.Paragraphs || document.paragraphs)) || [];
   }
 
   function getSelectionText(document) {
     return helpers.getEffectiveSelectionText
-      ? helpers.getEffectiveSelectionText(document && document.Selection)
+      ? helpers.getEffectiveSelectionText(getSelectionSources(document))
       : "";
+  }
+
+  function getWritableSelection(document) {
+    return helpers.getWritableSelection
+      ? helpers.getWritableSelection(getSelectionSources(document))
+      : (document && document.Selection) || null;
   }
 
   function collectParagraphs(document) {
@@ -203,6 +225,7 @@
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "N/A", health.data.providerConfigured);
+      setProviderAuthLine(health.data.providerAuthSource || "none");
       resolveSelectionScope(false);
       state.templates = templates.data.templates || [];
       renderTemplateOptions();
@@ -210,8 +233,53 @@
     }).catch(function (error) {
       setHealthBadge("badge-error", "不可达");
       setProviderLine("N/A");
+      setProviderAuthLine("N/A");
       setStatus("刷新失败：" + error.message);
       setResult("无法连接本地适配层：" + error.message);
+    });
+  }
+
+  function saveApiKey() {
+    var input = document.getElementById("provider-api-key");
+    var apiKey = (input.value || "").trim();
+    if (!apiKey) {
+      setStatus("请输入 API Key。");
+      setResult("请输入 API Key 后再保存。");
+      return;
+    }
+    setStatus("正在保存 API Key...");
+    request("/provider/api-key", { apiKey: apiKey })
+      .then(function (body) {
+        input.value = "";
+        setProviderAuthLine(body.data.authSource || "file");
+        setStatus("API Key 已保存。");
+        return refreshConfig();
+      })
+      .catch(function (error) {
+        setStatus("保存 API Key 失败：" + error.message);
+        setResult(error.message);
+      });
+  }
+
+  function clearApiKey() {
+    setStatus("正在清除 API Key...");
+    fetch(ADAPTER_BASE_URL + "/provider/api-key", {
+      method: "DELETE"
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) {
+          throw new Error((body.errors && body.errors[0] && body.errors[0].message) || body.message || ("HTTP " + response.status));
+        }
+        return body;
+      });
+    }).then(function (body) {
+      document.getElementById("provider-api-key").value = "";
+      setProviderAuthLine(body.data.authSource || "none");
+      setStatus("API Key 已清除。");
+      return refreshConfig();
+    }).catch(function (error) {
+      setStatus("清除 API Key 失败：" + error.message);
+      setResult(error.message);
     });
   }
 
@@ -328,7 +396,8 @@
       return;
     }
 
-    if (state.latestSelectionMode === "selection" && document.Selection) {
+    if (state.latestSelectionMode === "selection") {
+      var writableSelection = getWritableSelection(document);
       var selectionCheck = helpers.canApplyRewriteToSelection
         ? helpers.canApplyRewriteToSelection(state.latestDocumentPayload.content.plainText, getSelectionText(document))
         : { ok: true };
@@ -337,9 +406,16 @@
         setResult(selectionCheck.message);
         return;
       }
-      document.Selection.Text = state.rewriteResult.rewrittenText;
-      if (document.Selection.Range) {
-        document.Selection.Range.Text = state.rewriteResult.rewrittenText;
+      if (!writableSelection) {
+        setStatus("未找到可写回的选区对象。");
+        setResult("当前宿主未暴露可写回的选区对象，请执行运行探针并反馈结果。");
+        return;
+      }
+      if (typeof writableSelection.Text !== "undefined") {
+        writableSelection.Text = state.rewriteResult.rewrittenText;
+      }
+      if (writableSelection.Range && typeof writableSelection.Range.Text !== "undefined") {
+        writableSelection.Range.Text = state.rewriteResult.rewrittenText;
       }
     } else {
       if (document.Content) {
@@ -493,6 +569,8 @@
     document.getElementById("user-instruction").addEventListener("input", function (event) {
       state.userInstruction = event.target.value;
     });
+    document.getElementById("btn-save-api-key").addEventListener("click", saveApiKey);
+    document.getElementById("btn-clear-api-key").addEventListener("click", clearApiKey);
     document.getElementById("btn-refresh").addEventListener("click", refreshConfig);
     document.getElementById("btn-proofread").addEventListener("click", runProofread);
     document.getElementById("btn-format").addEventListener("click", runFormatPreview);

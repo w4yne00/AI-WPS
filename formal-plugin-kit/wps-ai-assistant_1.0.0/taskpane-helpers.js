@@ -9,11 +9,41 @@
     return String(text || "").replace(/\r/g, "").trim();
   }
 
-  function getEffectiveSelectionText(selection) {
-    if (!selection) {
+  function getEffectiveSelectionText(selectionOrSources) {
+    if (!selectionOrSources) {
       return "";
     }
-    return normalizeText(selection.Text || (selection.Range && selection.Range.Text) || "");
+    if (Array.isArray(selectionOrSources)) {
+      for (var i = 0; i < selectionOrSources.length; i += 1) {
+        var value = getEffectiveSelectionText(selectionOrSources[i]);
+        if (value) {
+          return value;
+        }
+      }
+      return "";
+    }
+    return normalizeText(
+      selectionOrSources.Text ||
+      (selectionOrSources.Range && selectionOrSources.Range.Text) ||
+      (selectionOrSources.TextRange && selectionOrSources.TextRange.Text) ||
+      ""
+    );
+  }
+
+  function getWritableSelection(sources) {
+    for (var i = 0; i < sources.length; i += 1) {
+      var selection = sources[i];
+      if (!selection) {
+        continue;
+      }
+      if (typeof selection.Text !== "undefined") {
+        return selection;
+      }
+      if (selection.Range && typeof selection.Range.Text !== "undefined") {
+        return selection;
+      }
+    }
+    return null;
   }
 
   function resolveRewriteScope(options) {
@@ -64,6 +94,7 @@
   return {
     normalizeText: normalizeText,
     getEffectiveSelectionText: getEffectiveSelectionText,
+    getWritableSelection: getWritableSelection,
     resolveRewriteScope: resolveRewriteScope,
     canApplyRewriteToSelection: canApplyRewriteToSelection
   };

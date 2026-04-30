@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from app.core.config import load_settings
-from app.services.provider_client import ProviderClient
+from app.services.provider_client import ProviderClient, clear_local_api_key, save_local_api_key
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -244,6 +244,7 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             settings = load_settings()
+            provider = ProviderClient(settings)
             self._write(
                 200,
                 {
@@ -257,7 +258,26 @@ class Handler(BaseHTTPRequestHandler):
                         "version": "0.1.0",
                         "mode": "standalone",
                         "providerType": settings.provider_type,
-                        "providerConfigured": ProviderClient(settings).is_configured(),
+                        "providerConfigured": provider.is_configured(),
+                        "providerAuthSource": provider.get_auth_source(),
+                    },
+                    "errors": [],
+                },
+            )
+            return
+        if path == "/provider/status":
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-status",
+                    "taskType": "provider.status",
+                    "message": "completed",
+                    "data": {
+                        "configured": provider.is_configured(),
+                        "authSource": provider.get_auth_source(),
+                        "providerType": provider.settings.provider_type,
                     },
                     "errors": [],
                 },
@@ -332,6 +352,71 @@ class Handler(BaseHTTPRequestHandler):
                     "taskType": "word.rewrite",
                     "message": "completed",
                     "data": rewrite(payload),
+                    "errors": [],
+                },
+            )
+            return
+        if path == "/provider/api-key":
+            api_key = payload.get("apiKey", "").strip()
+            if not api_key:
+                self._write(
+                    400,
+                    {
+                        "success": False,
+                        "traceId": "standalone-provider-save",
+                        "taskType": "provider.api_key",
+                        "message": "API key is required.",
+                        "data": {},
+                        "errors": [{"code": "API_KEY_REQUIRED", "message": "API key is required."}],
+                    },
+                )
+                return
+            save_local_api_key(api_key)
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-save",
+                    "taskType": "provider.api_key",
+                    "message": "saved",
+                    "data": {
+                        "configured": provider.is_configured(),
+                        "authSource": provider.get_auth_source(),
+                    },
+                    "errors": [],
+                },
+            )
+            return
+
+        self._write(
+            404,
+            {
+                "success": False,
+                "traceId": "standalone-not-found",
+                "taskType": "adapter.error",
+                "message": "Not found",
+                "data": {},
+                "errors": [{"code": "NOT_FOUND", "message": path}],
+            },
+        )
+
+    def do_DELETE(self):
+        path = urlparse(self.path).path
+        if path == "/provider/api-key":
+            clear_local_api_key()
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-clear",
+                    "taskType": "provider.api_key",
+                    "message": "cleared",
+                    "data": {
+                        "configured": provider.is_configured(),
+                        "authSource": provider.get_auth_source(),
+                    },
                     "errors": [],
                 },
             )

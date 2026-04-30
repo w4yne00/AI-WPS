@@ -65,12 +65,14 @@ body {
 
 select,
 button,
-textarea {
+textarea,
+input {
   font: inherit;
 }
 
 select,
-textarea {
+textarea,
+input {
   width: 100%;
   padding: 8px;
   border: 1px solid #cabda8;
@@ -95,6 +97,23 @@ textarea {
   flex-wrap: wrap;
 }
 
+.api-key-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: end;
+}
+
+.api-key-field {
+  margin-bottom: 0;
+}
+
+.api-key-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 button {
   border: none;
   background: #214c3f;
@@ -115,6 +134,7 @@ button[disabled] {
 #status-line,
 #trace-line,
 #provider-line,
+#provider-auth-line,
 #scope-line {
   font-size: 13px;
   margin-bottom: 6px;
@@ -131,6 +151,10 @@ button[disabled] {
 
 @media (max-width: 720px) {
   .rewrite-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .api-key-row {
     grid-template-columns: 1fr;
   }
 }
