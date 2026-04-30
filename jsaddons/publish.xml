@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<jsplugins>
+ <jsplugin name="wps-probe-addon" url="file://" type="wps" enable="enable_dev" version="1.0.0"/>
+</jsplugins>

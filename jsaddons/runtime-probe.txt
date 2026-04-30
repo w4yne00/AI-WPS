@@ -1,0 +1,23 @@
+== System ==
+date=2026-04-23 17:05:13 +0800
+kernel=Linux 5.4.18-85-generic
+machine=aarch64
+shell=/bin/bash
+
+== Python ==
+python3_path=/usr/bin/python3
+python3_version=Python 3.8.10
+
+== WPS Binaries ==
+wps_path=/usr/bin/wps
+wpp_path=/usr/bin/wpp
+et_path=/usr/bin/et
+
+== Probe Kit Layout ==
+present=/home/cloud/桌面/wps-runtime-probe-kit-20260422/wps-probe-addon/manifest.xml
+present=/home/cloud/桌面/wps-runtime-probe-kit-20260422/wps-probe-addon/ribbon.xml
+present=/home/cloud/桌面/wps-runtime-probe-kit-20260422/wps-probe-addon/taskpane.html
+present=/home/cloud/桌面/wps-runtime-probe-kit-20260422/wps-probe-addon/taskpane.js
+
+== Adapter Health ==
+adapter_health=unreachable

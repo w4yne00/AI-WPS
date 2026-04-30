@@ -1,0 +1,6 @@
+<jsplugins>
+  <jsplugin name="mb_rightscontroller_wps" type="wps" url="http://127.0.0.1/mb_rightscontroller_wps_1.0.3.tar.gz" version="1.0.3" />
+  <jsplugin name="mb_rightscontroller_wpp" type="wpp" url="http://127.0.0.1/mb_rightscontroller_wpp_1.0.3.tar.gz" version="1.0.3" />
+  <jsplugin name="mb_rightscontroller_et" type="et" url="http://127.0.0.1/mb_rightscontroller_et_1.0.3.tar.gz" version="1.0.3" />
+<!-- <jsplugin name="wps-probe-addon" version="1.0.0" url="index.html" load="onLoad" enable="true"/> -->
+</jsplugins>

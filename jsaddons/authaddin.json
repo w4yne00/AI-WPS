@@ -1,0 +1,43 @@
+{
+    "et": {
+        "636430786b334f4a446e706530764c69": {
+            "enable": true,
+            "isload": true,
+            "md5": "345f7a43415267746433484e5069705a55694975543258543735495461733635556e3432425f47532d33303d",
+            "mode": 1,
+            "name": "mb_rightscontroller_et",
+            "path": "/home/cloud/.local/share/Kingsoft/wps/jsaddons/mb_rightscontroller_et_1.0.3"
+        },
+        "namelist": "636430786b334f4a446e706530764c69"
+    },
+    "wpp": {
+        "4f304e52646a476f5f7053385f4a6c72": {
+            "enable": true,
+            "isload": true,
+            "md5": "4e454b6d6a5736534270526e6953594b4b674736525758543735495461733635556e3432425f47532d33303d",
+            "mode": 1,
+            "name": "mb_rightscontroller_wpp",
+            "path": "/home/cloud/.local/share/Kingsoft/wps/jsaddons/mb_rightscontroller_wpp_1.0.3"
+        },
+        "namelist": "4f304e52646a476f5f7053385f4a6c72"
+    },
+    "wps": {
+        "304f2d4c4231424169547851395f4f4b": {
+            "enable": true,
+            "isload": true,
+            "md5": "6b394b76516442325630536b5468725966393038516d58543735495461733635556e3432425f47532d33303d",
+            "mode": 1,
+            "name": "mb_rightscontroller_wps",
+            "path": "/home/cloud/.local/share/Kingsoft/wps/jsaddons/mb_rightscontroller_wps_1.0.3"
+        },
+        "4436573642586b547036744e5a445875": {
+            "enable": true,
+            "isload": true,
+            "md5": "4d694c46746c735569524a4b5059577a744f4d31373258543735495461733635556e3432425f47532d33303d",
+            "mode": 1,
+            "name": "wps-probe-addon",
+            "path": "/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-probe-addon_1.0.0"
+        },
+        "namelist": "304f2d4c4231424169547851395f4f4b;4436573642586b547036744e5a445875"
+    }
+}

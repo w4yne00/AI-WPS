@@ -1,0 +1,24 @@
+{
+  "name": "WPS AI 助理",
+  "version": "1.0.0",
+  "description": "基于 Dify 智能体的 WPS AI 助手",
+  "icons": {},
+  "dependencies": {
+    "wps-jsapi": "^2.0.0"
+  },
+  "entrypoints": [
+    {
+      "id": "wps-ai-assistant",
+      "type": "taskpane",
+      "title": "WPS AI 助理",
+      "content": {
+        "uri": "index.html",
+        "width": 400,
+        "height": 600
+      }
+    }
+  ],
+  "permissions": [
+    "allowAllOrigins"
+  ]
+}

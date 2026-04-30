@@ -1,0 +1,9 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+    <ribbon startFromScratch="false">
+    <tabs>
+        <!--<tab id="wpsAddinTab" label="权限控制">
+				
+        </tab>-->
+        </tabs>
+    </ribbon>
+</customUI>
