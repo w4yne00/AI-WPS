@@ -95,7 +95,24 @@
               <p class="panel-eyebrow">输出</p>
               <h2>结果预览</h2>
             </div>
-            <span id="result-mode-chip" class="inline-status">等待运行</span>
+            <div class="result-tools">
+              <span id="result-mode-chip" class="inline-status">等待运行</span>
+              <button id="btn-copy-result" class="ghost-action icon-action" type="button" title="复制结果" aria-label="复制结果">⧉</button>
+            </div>
+          </div>
+          <div id="comparison-view" class="comparison-view" hidden>
+            <article class="compare-column">
+              <div class="compare-head">
+                <span>原文</span>
+              </div>
+              <pre id="original-output"></pre>
+            </article>
+            <article class="compare-column compare-column-accent">
+              <div class="compare-head">
+                <span>改写后</span>
+              </div>
+              <pre id="rewritten-output"></pre>
+            </article>
           </div>
           <pre id="result-output">等待运行。</pre>
         </section>
@@ -111,54 +128,68 @@
             </div>
           </header>
 
-          <section class="settings-card">
-            <div class="settings-card-head">
-              <div>
-                <p class="panel-eyebrow">认证</p>
-                <h3>企业 API Key</h3>
+          <section id="connection-settings-section" class="settings-group">
+            <div class="settings-group-title">
+              <p class="panel-eyebrow">Connection</p>
+              <h3>连接设置</h3>
+            </div>
+
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <div>
+                  <p class="panel-eyebrow">认证</p>
+                  <h4>企业 API Key</h4>
+                </div>
+                <span id="provider-auth-line" class="inline-status">Provider Auth: N/A</span>
               </div>
-              <span id="provider-auth-line" class="inline-status">Provider Auth: N/A</span>
-            </div>
 
-            <label class="field">
-              <span>导入企业 API Key</span>
-              <input id="provider-api-key" type="password" placeholder="粘贴企业 API Key" />
-            </label>
+              <label class="field">
+                <span>导入企业 API Key</span>
+                <input id="provider-api-key" type="password" placeholder="粘贴企业 API Key" />
+              </label>
 
-            <div class="button-row settings-actions">
-              <button id="btn-save-api-key" type="button">保存 Key</button>
-              <button id="btn-clear-api-key" class="secondary-action" type="button">清除 Key</button>
-            </div>
+              <div class="button-row settings-actions">
+                <button id="btn-save-api-key" type="button">保存 Key</button>
+                <button id="btn-clear-api-key" class="secondary-action" type="button">清除 Key</button>
+                <button id="btn-refresh" class="ghost-action" type="button">刷新配置</button>
+              </div>
+            </section>
           </section>
 
-          <section class="settings-card">
-            <div class="settings-card-head">
-              <div>
-                <p class="panel-eyebrow">运行时</p>
-                <h3>联调与诊断</h3>
-              </div>
-              <span class="inline-status" id="settings-provider-line">Provider: N/A</span>
+          <section id="diagnostics-section" class="settings-group">
+            <div class="settings-group-title">
+              <p class="panel-eyebrow">Diagnostics</p>
+              <h3>诊断</h3>
             </div>
 
-            <div class="diag-grid">
-              <div class="diag-item">
-                <span class="diag-label">Trace</span>
-                <strong id="trace-line">N/A</strong>
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <div>
+                  <p class="panel-eyebrow">运行时</p>
+                  <h4>联调状态</h4>
+                </div>
+                <span class="inline-status" id="settings-provider-line">Provider: N/A</span>
               </div>
-              <div class="diag-item">
-                <span class="diag-label">当前范围</span>
-                <strong id="settings-scope-line">未检测</strong>
-              </div>
-              <div class="diag-item">
-                <span class="diag-label">Provider</span>
-                <strong id="provider-line">N/A</strong>
-              </div>
-            </div>
 
-            <div class="button-row settings-actions">
-              <button id="btn-refresh" type="button">刷新配置</button>
-              <button id="btn-probe" class="secondary-action" type="button">运行探针</button>
-            </div>
+              <div class="diag-grid">
+                <div class="diag-item">
+                  <span class="diag-label">Trace</span>
+                  <strong id="trace-line">N/A</strong>
+                </div>
+                <div class="diag-item">
+                  <span class="diag-label">当前范围</span>
+                  <strong id="settings-scope-line">未检测</strong>
+                </div>
+                <div class="diag-item">
+                  <span class="diag-label">Provider</span>
+                  <strong id="provider-line">N/A</strong>
+                </div>
+              </div>
+
+              <div class="button-row settings-actions">
+                <button id="btn-probe" class="secondary-action" type="button">运行探针</button>
+              </div>
+            </section>
           </section>
         </section>
       </section>
