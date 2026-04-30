@@ -64,27 +64,13 @@
 
   function setResult(text) {
     var output = document.getElementById("result-output");
-    var comparison = document.getElementById("comparison-view");
-    var originalOutput = document.getElementById("original-output");
-    var rewrittenOutput = document.getElementById("rewritten-output");
-    comparison.hidden = true;
-    originalOutput.textContent = "";
-    rewrittenOutput.textContent = "";
     output.hidden = false;
     output.textContent = text;
     state.copyText = text || "";
   }
 
-  function setRewriteComparison(result) {
-    var output = document.getElementById("result-output");
-    var comparison = document.getElementById("comparison-view");
-    var originalOutput = document.getElementById("original-output");
-    var rewrittenOutput = document.getElementById("rewritten-output");
-    output.hidden = true;
-    comparison.hidden = false;
-    originalOutput.textContent = result.originalText || "";
-    rewrittenOutput.textContent = result.rewrittenText || "";
-    state.copyText = result.rewrittenText || "";
+  function setRewriteResult(result) {
+    setResult(result.rewrittenText || "");
   }
 
   function setApplyEnabled(enabled) {
@@ -566,7 +552,7 @@
         state.rewriteResult = body.data;
         setApplyEnabled(true);
         setTrace(body.traceId);
-        setRewriteComparison(body.data);
+        setRewriteResult(body.data);
         setStatus("改写结果已生成。");
       })
       .catch(function (error) {

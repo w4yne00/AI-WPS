@@ -13,23 +13,16 @@
           <p class="eyebrow">WPS AI 助理</p>
           <h1>文档处理台</h1>
         </div>
-        <div class="header-actions">
+        <div id="top-toolbox" class="header-actions">
           <div id="health-indicator" class="badge badge-warn">检测中</div>
           <button id="btn-open-settings" class="icon-button" type="button" aria-label="打开设置">⚙</button>
         </div>
       </header>
 
       <section id="home-view" class="view active">
-        <section class="hero-card">
-          <div class="hero-copy">
-            <p class="hero-kicker">一期联调版</p>
-            <h2>只保留高频文档动作</h2>
-            <p>针对当前文档或选中文本执行校对、排版预览、改写和续写。技术配置已下沉到设置页。</p>
-          </div>
-          <div class="scope-pill">
-            <span class="scope-pill-label">当前范围</span>
-            <strong id="scope-line">未检测</strong>
-          </div>
+        <section id="scope-strip" class="scope-strip">
+          <span class="scope-pill-label">当前范围</span>
+          <strong id="scope-line">未检测</strong>
         </section>
 
         <section class="controls">
@@ -99,20 +92,6 @@
               <span id="result-mode-chip" class="inline-status">等待运行</span>
               <button id="btn-copy-result" class="ghost-action icon-action" type="button" title="复制结果" aria-label="复制结果">⧉</button>
             </div>
-          </div>
-          <div id="comparison-view" class="comparison-view" hidden>
-            <article class="compare-column">
-              <div class="compare-head">
-                <span>原文</span>
-              </div>
-              <pre id="original-output"></pre>
-            </article>
-            <article class="compare-column compare-column-accent">
-              <div class="compare-head">
-                <span>改写后</span>
-              </div>
-              <pre id="rewritten-output"></pre>
-            </article>
           </div>
           <pre id="result-output">等待运行。</pre>
         </section>
