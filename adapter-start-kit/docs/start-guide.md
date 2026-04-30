@@ -11,6 +11,22 @@
 - `scripts/check_health.sh`
 - `scripts/check_environment.sh`
 - `scripts/show_logs.sh`
+- `scripts/enable_exec_permissions.sh`
+- `scripts/restart_adapter.sh`
+
+## 首次执行权限修复
+
+如果目标机解压后脚本没有执行权限，可运行：
+
+```bash
+bash scripts/enable_exec_permissions.sh
+```
+
+如果目标机目录权限较严，需要提权：
+
+```bash
+bash scripts/enable_exec_permissions.sh sudo
+```
 
 ## 启动
 
@@ -30,6 +46,18 @@ bash scripts/start_adapter.sh 18100
 bash scripts/status_adapter.sh 18100
 ```
 
+## 一键重启
+
+```bash
+bash scripts/restart_adapter.sh 18100
+```
+
+这会按顺序执行：
+
+- `stop_adapter.sh`
+- `start_adapter.sh`
+- `check_health.sh`
+
 ## 健康检查
 
 ```bash
@@ -45,5 +73,5 @@ bash scripts/show_logs.sh 50
 ## 停止
 
 ```bash
-bash scripts/stop_adapter.sh
+bash scripts/stop_adapter.sh 18100
 ```

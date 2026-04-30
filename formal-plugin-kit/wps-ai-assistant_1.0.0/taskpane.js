@@ -22,6 +22,7 @@
 
   function setStatus(message) {
     document.getElementById("status-line").textContent = message;
+    document.getElementById("result-mode-chip").textContent = message || "等待运行";
   }
 
   function isTaskpanePage() {
@@ -30,8 +31,7 @@
 
   function setTrace(traceId) {
     state.traceId = traceId || "";
-    document.getElementById("trace-line").textContent = "Trace: " + (traceId || "N/A");
-    document.getElementById("settings-trace-line").textContent = traceId || "N/A";
+    document.getElementById("trace-line").textContent = traceId || "N/A";
   }
 
   function setProviderLine(providerName, configured) {

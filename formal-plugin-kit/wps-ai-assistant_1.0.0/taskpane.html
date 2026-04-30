@@ -95,10 +95,7 @@
               <p class="panel-eyebrow">输出</p>
               <h2>结果预览</h2>
             </div>
-            <div class="mini-meta">
-              <span id="trace-line">Trace: N/A</span>
-              <span id="provider-line">Provider: N/A</span>
-            </div>
+            <span id="result-mode-chip" class="inline-status">等待运行</span>
           </div>
           <pre id="result-output">等待运行。</pre>
         </section>
@@ -146,11 +143,15 @@
             <div class="diag-grid">
               <div class="diag-item">
                 <span class="diag-label">Trace</span>
-                <strong id="settings-trace-line">N/A</strong>
+                <strong id="trace-line">N/A</strong>
               </div>
               <div class="diag-item">
                 <span class="diag-label">当前范围</span>
                 <strong id="settings-scope-line">未检测</strong>
+              </div>
+              <div class="diag-item">
+                <span class="diag-label">Provider</span>
+                <strong id="provider-line">N/A</strong>
               </div>
             </div>
 

@@ -295,13 +295,6 @@ button[disabled] {
   gap: 12px;
 }
 
-.mini-meta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 4px;
-}
-
 #result-output {
   min-height: 260px;
   margin: 16px 0 0;
@@ -312,6 +305,13 @@ button[disabled] {
   white-space: pre-wrap;
   overflow: auto;
   line-height: 1.6;
+  max-height: 420px;
+}
+
+#result-mode-chip {
+  align-self: center;
+  max-width: 220px;
+  text-align: center;
 }
 
 .settings-shell {
