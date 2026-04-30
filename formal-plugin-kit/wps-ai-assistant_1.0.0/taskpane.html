@@ -60,7 +60,8 @@
         <div class="button-row">
           <button id="btn-proofread" type="button">格式校对</button>
           <button id="btn-format" type="button">排版预览</button>
-          <button id="btn-rewrite" type="button">改写/续写</button>
+          <button id="btn-rewrite-selection" type="button">改写选中</button>
+          <button id="btn-continue-selection" type="button">选中续写</button>
           <button id="btn-probe" type="button">运行探针</button>
         </div>
 
@@ -74,6 +75,7 @@
         <div id="status-line">等待操作。</div>
         <div id="trace-line">Trace: N/A</div>
         <div id="provider-line">Provider: N/A</div>
+        <div id="scope-line">当前范围：未检测</div>
       </section>
 
       <section class="panel">
@@ -81,6 +83,7 @@
         <pre id="result-output">等待运行。</pre>
       </section>
     </div>
+    <script src="./taskpane-helpers.js"></script>
     <script src="./taskpane.js"></script>
   </body>
 </html>

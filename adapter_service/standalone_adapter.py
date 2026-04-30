@@ -180,8 +180,8 @@ def format_preview(payload):
 
 
 def rewrite(payload):
-    selection_mode = payload.get("selectionMode", "document")
-    mode = "continue" if selection_mode == "selection" else "rewrite"
+    options = payload.get("options", {})
+    mode = options.get("rewriteAction", "rewrite")
     source_text = payload["content"].get("plainText", "").strip()
     if not source_text:
         source_text = "\n".join(
@@ -190,7 +190,6 @@ def rewrite(payload):
             if paragraph.get("text", "").strip()
         ).strip()
 
-    options = payload.get("options", {})
     provider_result = ProviderClient(load_settings()).rewrite(
         source_text,
         mode,

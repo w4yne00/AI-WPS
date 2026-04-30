@@ -68,7 +68,7 @@ def preview_format_word(request: WordDocumentRequest) -> dict:
 @router.post("/word/rewrite")
 def rewrite_word(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-rewrite")
-    mode = "continue" if request.selection_mode == "selection" else "rewrite"
+    mode = request.options.rewrite_action or "rewrite"
     rewrite = rewriter.rewrite(request, trace_id=trace_id, mode=mode)
     payload = RewriteResponseData(**rewrite)
     logger.info(

@@ -31,6 +31,7 @@ class RequestOptions(BaseModel):
     rewrite_style: str = Field(default="default", alias="rewriteStyle")
     focus_point: str = Field(default="default", alias="focusPoint")
     length_mode: str = Field(default="default", alias="lengthMode")
+    rewrite_action: str = Field(default="rewrite", alias="rewriteAction")
 
 
 class WordDocumentRequest(BaseModel):

@@ -26,7 +26,8 @@ def test_word_rewrite_returns_rewritten_text() -> None:
         },
         "options": {
             "templateId": "general-office",
-            "trackChanges": True
+            "trackChanges": True,
+            "rewriteAction": "continue"
         }
     }
 
@@ -38,3 +39,39 @@ def test_word_rewrite_returns_rewritten_text() -> None:
     assert body["data"]["rewriteMode"] == "continue"
     assert body["data"]["rewrittenText"]
     assert "Text content changed" in body["data"]["diffHints"]
+
+
+def test_word_rewrite_respects_explicit_rewrite_action() -> None:
+    client = TestClient(app)
+    payload = {
+        "documentId": "doc-001",
+        "scene": "word",
+        "selectionMode": "selection",
+        "content": {
+            "plainText": "只改写这一段内容。",
+            "paragraphs": [
+                {
+                    "index": 1,
+                    "text": "只改写这一段内容。",
+                    "styleName": "Body",
+                    "fontName": "SimSun",
+                    "fontSize": 12,
+                    "alignment": "left",
+                    "outlineLevel": 0
+                }
+            ],
+            "headings": []
+        },
+        "options": {
+            "templateId": "general-office",
+            "trackChanges": True,
+            "rewriteAction": "rewrite"
+        }
+    }
+
+    response = client.post("/word/rewrite", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["taskType"] == "word.rewrite"
+    assert body["data"]["rewriteMode"] == "rewrite"

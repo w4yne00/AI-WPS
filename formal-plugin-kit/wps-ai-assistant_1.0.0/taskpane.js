@@ -1,6 +1,7 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
   var TASKPANE_ROOT_ID = "result-output";
+  var helpers = window.WpsAiAssistantHelpers || {};
   var state = {
     templates: [],
     selectedTemplateId: "general-office",
@@ -39,6 +40,10 @@
     document.getElementById("provider-line").textContent = "Provider: " + detail;
   }
 
+  function setScopeLine(label) {
+    document.getElementById("scope-line").textContent = label || "当前范围：未检测";
+  }
+
   function setHealthBadge(mode, text) {
     var node = document.getElementById("health-indicator");
     node.className = "badge " + mode;
@@ -64,6 +69,12 @@
 
   function getParagraphs(document) {
     return (document && (document.Paragraphs || document.paragraphs)) || [];
+  }
+
+  function getSelectionText(document) {
+    return helpers.getEffectiveSelectionText
+      ? helpers.getEffectiveSelectionText(document && document.Selection)
+      : "";
   }
 
   function collectParagraphs(document) {
@@ -99,7 +110,7 @@
     return headings;
   }
 
-  function extractDocument(selectionMode) {
+  function extractDocument(selectionMode, rewriteAction) {
     var document = getActiveDocument();
     if (!document) {
       throw new Error("未检测到活动文档。");
@@ -111,8 +122,7 @@
       : paragraphs.map(function (item) { return item.text; }).join("\n");
 
     if (selectionMode === "selection") {
-      var selection = document.Selection || {};
-      plainText = selection.Text || (selection.Range && selection.Range.Text) || plainText;
+      plainText = getSelectionText(document) || plainText;
     }
 
     return {
@@ -130,9 +140,30 @@
         userInstruction: state.userInstruction,
         rewriteStyle: state.rewriteStyle,
         focusPoint: state.focusPoint,
-        lengthMode: state.lengthMode
+        lengthMode: state.lengthMode,
+        rewriteAction: rewriteAction || "rewrite"
       }
     };
+  }
+
+  function resolveSelectionScope(requireSelection) {
+    var document = getActiveDocument();
+    var selectionText = getSelectionText(document);
+    var resolved = helpers.resolveRewriteScope
+      ? helpers.resolveRewriteScope({
+        selectionText: selectionText,
+        requireSelection: requireSelection
+      })
+      : {
+        ok: !!selectionText,
+        selectionMode: selectionText ? "selection" : "document",
+        scopeLabel: selectionText ? "当前范围：选中文本" : "当前范围：全文",
+        selectedText: selectionText,
+        message: "请先用鼠标选中一段文字，再执行改写或续写。"
+      };
+
+    setScopeLine(resolved.scopeLabel);
+    return resolved;
   }
 
   function request(path, payload) {
@@ -172,6 +203,7 @@
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "N/A", health.data.providerConfigured);
+      resolveSelectionScope(false);
       state.templates = templates.data.templates || [];
       renderTemplateOptions();
       setStatus("配置已刷新。");
@@ -297,6 +329,14 @@
     }
 
     if (state.latestSelectionMode === "selection" && document.Selection) {
+      var selectionCheck = helpers.canApplyRewriteToSelection
+        ? helpers.canApplyRewriteToSelection(state.latestDocumentPayload.content.plainText, getSelectionText(document))
+        : { ok: true };
+      if (!selectionCheck.ok) {
+        setStatus(selectionCheck.message);
+        setResult(selectionCheck.message);
+        return;
+      }
       document.Selection.Text = state.rewriteResult.rewrittenText;
       if (document.Selection.Range) {
         document.Selection.Range.Text = state.rewriteResult.rewrittenText;
@@ -365,9 +405,16 @@
       });
   }
 
-  function runRewrite() {
+  function runRewriteAction(action) {
+    var selectionScope = resolveSelectionScope(true);
+    if (!selectionScope.ok) {
+      setStatus(selectionScope.message);
+      setResult(selectionScope.message);
+      return;
+    }
+
     try {
-      state.latestDocumentPayload = extractDocument("selection");
+      state.latestDocumentPayload = extractDocument("selection", action);
       state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
     } catch (error) {
       setStatus(error.message);
@@ -375,7 +422,7 @@
       return;
     }
 
-    setStatus("正在执行改写/续写...");
+    setStatus(action === "continue" ? "正在执行选中续写..." : "正在执行选中改写...");
     request("/word/rewrite", state.latestDocumentPayload)
       .then(function (body) {
         state.pendingApplyAction = "rewrite";
@@ -395,6 +442,7 @@
     var document = getActiveDocument();
     var paragraphs = collectParagraphs(document || {});
     var headingCount = collectHeadings(paragraphs).length;
+    var scope = resolveSelectionScope(false);
     var lines = [
       "Runtime Probe",
       "",
@@ -404,6 +452,7 @@
       "Document name: " + ((document && document.Name) || "N/A"),
       "Paragraph count: " + paragraphs.length,
       "Heading count: " + headingCount,
+      scope.scopeLabel,
       "Adapter base URL: " + ADAPTER_BASE_URL
     ];
 
@@ -447,7 +496,12 @@
     document.getElementById("btn-refresh").addEventListener("click", refreshConfig);
     document.getElementById("btn-proofread").addEventListener("click", runProofread);
     document.getElementById("btn-format").addEventListener("click", runFormatPreview);
-    document.getElementById("btn-rewrite").addEventListener("click", runRewrite);
+    document.getElementById("btn-rewrite-selection").addEventListener("click", function () {
+      runRewriteAction("rewrite");
+    });
+    document.getElementById("btn-continue-selection").addEventListener("click", function () {
+      runRewriteAction("continue");
+    });
     document.getElementById("btn-probe").addEventListener("click", runProbe);
     document.getElementById("btn-apply").addEventListener("click", applyPreview);
   }

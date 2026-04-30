@@ -114,7 +114,8 @@ button[disabled] {
 
 #status-line,
 #trace-line,
-#provider-line {
+#provider-line,
+#scope-line {
   font-size: 13px;
   margin-bottom: 6px;
 }
