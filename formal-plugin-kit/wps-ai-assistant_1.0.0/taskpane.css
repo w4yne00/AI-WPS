@@ -38,7 +38,8 @@ body {
 .header-copy h1,
 .panel-head h2,
 .settings-head h2,
-.settings-card-head h3 {
+.settings-group-title h3,
+.settings-card-head h4 {
   margin: 0;
   font-family: "Noto Serif SC", "Songti SC", serif;
   letter-spacing: 0.02em;
@@ -261,6 +262,15 @@ button.ghost-action {
   box-shadow: none;
 }
 
+.icon-action {
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  padding: 0;
+  border-radius: 12px;
+  font-size: 18px;
+}
+
 button[disabled] {
   opacity: 0.45;
   cursor: not-allowed;
@@ -295,6 +305,14 @@ button[disabled] {
   gap: 12px;
 }
 
+.result-tools {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
 #result-output {
   min-height: 260px;
   margin: 16px 0 0;
@@ -306,6 +324,57 @@ button[disabled] {
   overflow: auto;
   line-height: 1.6;
   max-height: 420px;
+}
+
+.comparison-view {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.comparison-view[hidden] {
+  display: none;
+}
+
+.compare-column {
+  min-width: 0;
+  border-radius: 18px;
+  border: 1px solid rgba(190, 168, 135, 0.65);
+  background: var(--panel-strong);
+  overflow: hidden;
+}
+
+.compare-column-accent {
+  border-color: rgba(31, 76, 64, 0.28);
+  box-shadow: inset 4px 0 0 rgba(31, 76, 64, 0.2);
+}
+
+.compare-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 38px;
+  padding: 0 14px;
+  border-bottom: 1px solid rgba(190, 168, 135, 0.52);
+  background: rgba(255, 250, 241, 0.9);
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.compare-column pre {
+  min-height: 320px;
+  max-height: 520px;
+  margin: 0;
+  padding: 14px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.7;
+  font-family: inherit;
+  font-size: 14px;
 }
 
 #result-mode-chip {
@@ -320,6 +389,24 @@ button[disabled] {
 
 .settings-head {
   margin-bottom: 16px;
+}
+
+.settings-group {
+  margin-top: 14px;
+}
+
+.settings-group-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  border-bottom: 1px solid rgba(190, 168, 135, 0.5);
+  padding-bottom: 8px;
+}
+
+.settings-group-title h3 {
+  font-size: 19px;
 }
 
 .settings-card {
@@ -356,7 +443,8 @@ button[disabled] {
   .hero-card,
   .rewrite-grid,
   .button-cluster,
-  .diag-grid {
+  .diag-grid,
+  .comparison-view {
     grid-template-columns: 1fr;
   }
 

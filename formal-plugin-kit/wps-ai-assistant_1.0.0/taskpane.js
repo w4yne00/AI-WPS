@@ -17,7 +17,8 @@
     latestSelectionMode: "document",
     providerName: "N/A",
     providerAuthSource: "N/A",
-    currentView: "home"
+    currentView: "home",
+    copyText: ""
   };
 
   function setStatus(message) {
@@ -62,7 +63,28 @@
   }
 
   function setResult(text) {
-    document.getElementById("result-output").textContent = text;
+    var output = document.getElementById("result-output");
+    var comparison = document.getElementById("comparison-view");
+    var originalOutput = document.getElementById("original-output");
+    var rewrittenOutput = document.getElementById("rewritten-output");
+    comparison.hidden = true;
+    originalOutput.textContent = "";
+    rewrittenOutput.textContent = "";
+    output.hidden = false;
+    output.textContent = text;
+    state.copyText = text || "";
+  }
+
+  function setRewriteComparison(result) {
+    var output = document.getElementById("result-output");
+    var comparison = document.getElementById("comparison-view");
+    var originalOutput = document.getElementById("original-output");
+    var rewrittenOutput = document.getElementById("rewritten-output");
+    output.hidden = true;
+    comparison.hidden = false;
+    originalOutput.textContent = result.originalText || "";
+    rewrittenOutput.textContent = result.rewrittenText || "";
+    state.copyText = result.rewrittenText || "";
   }
 
   function setApplyEnabled(enabled) {
@@ -350,20 +372,40 @@
     return lines.join("\n");
   }
 
-  function renderRewrite(result) {
-    return [
-      "模式: " + result.rewriteMode,
-      "",
-      "原文:",
-      result.originalText,
-      "",
-      "改写后:",
-      result.rewrittenText,
-      "",
-      "Provider: " + (result.provider || state.providerName),
-      "",
-      "提示: " + result.diffHints.join(", ")
-    ].join("\n");
+  function copyResult() {
+    var text = state.copyText || document.getElementById("result-output").textContent || "";
+    if (!text.trim()) {
+      setStatus("暂无可复制的结果。");
+      return;
+    }
+
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        setStatus("结果已复制。");
+      }).catch(function () {
+        fallbackCopy(text);
+      });
+      return;
+    }
+
+    fallbackCopy(text);
+  }
+
+  function fallbackCopy(text) {
+    var textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.setAttribute("readonly", "readonly");
+    textarea.style.position = "fixed";
+    textarea.style.left = "-9999px";
+    document.body.appendChild(textarea);
+    textarea.select();
+    try {
+      document.execCommand("copy");
+      setStatus("结果已复制。");
+    } catch (error) {
+      setStatus("复制失败，请手动选择结果文本。");
+    }
+    document.body.removeChild(textarea);
   }
 
   function applyParagraphStyle(paragraph, targetStyle) {
@@ -524,7 +566,7 @@
         state.rewriteResult = body.data;
         setApplyEnabled(true);
         setTrace(body.traceId);
-        setResult(renderRewrite(body.data));
+        setRewriteComparison(body.data);
         setStatus("改写结果已生成。");
       })
       .catch(function (error) {
@@ -603,6 +645,7 @@
     });
     document.getElementById("btn-probe").addEventListener("click", runProbe);
     document.getElementById("btn-apply").addEventListener("click", applyPreview);
+    document.getElementById("btn-copy-result").addEventListener("click", copyResult);
   }
 
   if (!isTaskpanePage()) {
