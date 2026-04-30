@@ -70,17 +70,54 @@ AI-WPS is a WPS AI assistant for intranet office terminals. It uses a **WPS nati
 
 The current scope is **Phase 1: platform foundation + Word workflows**, designed for Kylin V10 ARM, offline deployment, and intranet-only environments.
 
+## Current Version
+
+| Item | Value |
+| --- | --- |
+| Version | `v0.5.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.5.0-20260430` |
+| Phase | `P1` platform foundation + Word |
+| Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
+| Delivery status | Internal test build, not final production release |
+
+Version rule format:
+
+```text
+AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}
+```
+
+Rules:
+
+- `phase`: project phase, such as `P1` or `P2`.
+- `scope`: main delivery scope, such as `WORD`, `EXCEL`, `PPT`, or `DELIVERY`.
+- `major`: architecture or compatibility boundary changes.
+- `minor`: user-visible capability additions.
+- `patch`: bug fixes, UI polish, packaging updates, and documentation updates.
+- `yyyymmdd`: build or milestone date.
+
 ## Highlights
 
 | Capability | Description |
 | --- | --- |
-| Word proofreading | Detects heading hierarchy issues, mixed body fonts/sizes, repeated spaces, and spacing before Chinese punctuation |
+| WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
+| Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, and spacing before Chinese punctuation |
+| AI typo check | Uses the enterprise AI provider to detect Chinese typos, wrong words, and suspicious wording; falls back safely when no API key is configured |
 | Word format preview | Builds a template-based paragraph style change plan before applying it |
-| Word rewrite/continue | Reads the current selection or document and calls the enterprise AI API; falls back to a local mock response when no key is configured |
-| Template-driven rules | Keeps general and future company-specific office templates under `templates/` |
-| Local adapter service | FastAPI service for config, templates, rules, provider calls, logging, and normalized errors |
-| Runtime probe | Checks WPS runtime exposure, active document, selection availability, and localhost adapter reachability |
-| Offline delivery | Includes scripts for install, start, diagnose, uninstall, and package generation |
+| Word rewrite/continue | Rewrites or continues from the current selected text, calls the enterprise AI API, and supports local mock fallback |
+| Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
+| Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
+| Runtime probe and settings | Task pane settings page for API key import, provider status, runtime probe, and diagnostics |
+| Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, and operational scripts |
+
+## Latest Updates
+
+| Version | Update |
+| --- | --- |
+| `v0.5.0-alpha` | Added company Word template driven proofreading and format preview; added AI typo detection via enterprise provider |
+| `v0.4.x-alpha` | Added Kylin V10 ARM offline Python runtime wheel bundle for `uvicorn` mode |
+| `v0.3.x-alpha` | Improved task pane interaction: compact home view, settings/diagnostics split, auto scope detection, copy result |
+| `v0.2.x-alpha` | Added provider API key UI, selection-only rewrite/continue, and provider mock fallback |
+| `v0.1.x-alpha` | Built baseline adapter APIs, proofread, format preview, rewrite, probe kit, and startup scripts |
 
 ## Architecture
 
