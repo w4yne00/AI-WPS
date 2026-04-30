@@ -40,7 +40,16 @@ function testResolveRewriteScope() {
     requireSelection: true
   });
   assert.strictEqual(missingSelection.ok, false);
+  assert.strictEqual(missingSelection.scopeLabel, "当前范围：全文");
   assert.ok(missingSelection.message.includes("请先用鼠标选中"));
+
+  const cursorScope = helpers.resolveRewriteScope({
+    selectionText: "",
+    requireSelection: false
+  });
+  assert.strictEqual(cursorScope.ok, true);
+  assert.strictEqual(cursorScope.selectionMode, "document");
+  assert.strictEqual(cursorScope.scopeLabel, "当前范围：全文");
 }
 
 function testSelectionWritebackGuard() {

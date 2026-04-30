@@ -18,7 +18,8 @@
     providerName: "N/A",
     providerAuthSource: "N/A",
     currentView: "home",
-    copyText: ""
+    copyText: "",
+    scopeWatcher: null
   };
 
   function setStatus(message) {
@@ -205,6 +206,23 @@
 
     setScopeLine(resolved.scopeLabel);
     return resolved;
+  }
+
+  function updateScopeIndicator() {
+    var document = getActiveDocument();
+    if (!document) {
+      setScopeLine("当前范围：未检测");
+      return;
+    }
+    resolveSelectionScope(false);
+  }
+
+  function startScopeWatcher() {
+    if (state.scopeWatcher) {
+      return;
+    }
+    updateScopeIndicator();
+    state.scopeWatcher = setInterval(updateScopeIndicator, 800);
   }
 
   function request(path, payload) {
@@ -643,4 +661,5 @@
 
   bindEvents();
   refreshConfig();
+  startScopeWatcher();
 })();

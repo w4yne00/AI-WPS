@@ -52,7 +52,7 @@
       return {
         ok: false,
         selectionMode: "selection",
-        scopeLabel: "当前范围：未检测到有效选区",
+        scopeLabel: "当前范围：全文",
         message: "请先用鼠标选中一段文字，再执行改写或续写。"
       };
     }

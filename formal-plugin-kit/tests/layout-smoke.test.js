@@ -22,4 +22,12 @@ assert.ok(!html.includes('comparison-view'));
 assert.ok(!html.includes('original-output'));
 assert.ok(!html.includes('rewritten-output'));
 
+const js = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
+  "utf8"
+);
+
+assert.ok(js.includes("startScopeWatcher"));
+assert.ok(js.includes("setInterval(updateScopeIndicator"));
+
 console.log("layout smoke tests passed");
