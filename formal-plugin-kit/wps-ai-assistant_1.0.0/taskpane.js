@@ -16,7 +16,8 @@
     latestDocumentPayload: null,
     latestSelectionMode: "document",
     providerName: "N/A",
-    providerAuthSource: "N/A"
+    providerAuthSource: "N/A",
+    currentView: "home"
   };
 
   function setStatus(message) {
@@ -30,6 +31,7 @@
   function setTrace(traceId) {
     state.traceId = traceId || "";
     document.getElementById("trace-line").textContent = "Trace: " + (traceId || "N/A");
+    document.getElementById("settings-trace-line").textContent = traceId || "N/A";
   }
 
   function setProviderLine(providerName, configured) {
@@ -39,6 +41,7 @@
     }
     state.providerName = detail;
     document.getElementById("provider-line").textContent = "Provider: " + detail;
+    document.getElementById("settings-provider-line").textContent = "Provider: " + detail;
   }
 
   function setProviderAuthLine(source) {
@@ -47,7 +50,9 @@
   }
 
   function setScopeLine(label) {
-    document.getElementById("scope-line").textContent = label || "当前范围：未检测";
+    var text = label || "当前范围：未检测";
+    document.getElementById("scope-line").textContent = text.replace(/^当前范围：/, "");
+    document.getElementById("settings-scope-line").textContent = text.replace(/^当前范围：/, "");
   }
 
   function setHealthBadge(mode, text) {
@@ -62,6 +67,12 @@
 
   function setApplyEnabled(enabled) {
     document.getElementById("btn-apply").disabled = !enabled;
+  }
+
+  function switchView(viewName) {
+    state.currentView = viewName;
+    document.getElementById("home-view").classList.toggle("active", viewName === "home");
+    document.getElementById("settings-view").classList.toggle("active", viewName === "settings");
   }
 
   function getHostApplication() {
@@ -456,6 +467,14 @@
       });
   }
 
+  function openSettings() {
+    switchView("settings");
+  }
+
+  function closeSettings() {
+    switchView("home");
+  }
+
   function runFormatPreview() {
     try {
       state.latestDocumentPayload = extractDocument("document");
@@ -571,6 +590,8 @@
     });
     document.getElementById("btn-save-api-key").addEventListener("click", saveApiKey);
     document.getElementById("btn-clear-api-key").addEventListener("click", clearApiKey);
+    document.getElementById("btn-open-settings").addEventListener("click", openSettings);
+    document.getElementById("btn-close-settings").addEventListener("click", closeSettings);
     document.getElementById("btn-refresh").addEventListener("click", refreshConfig);
     document.getElementById("btn-proofread").addEventListener("click", runProofread);
     document.getElementById("btn-format").addEventListener("click", runFormatPreview);

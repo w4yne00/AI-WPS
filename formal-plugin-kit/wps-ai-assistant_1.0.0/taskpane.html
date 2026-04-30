@@ -9,90 +9,157 @@
   <body>
     <div class="app">
       <header class="header">
-        <h1>WPS AI 助理</h1>
-        <div id="health-indicator" class="badge badge-warn">检测中</div>
+        <div class="header-copy">
+          <p class="eyebrow">WPS AI 助理</p>
+          <h1>文档处理台</h1>
+        </div>
+        <div class="header-actions">
+          <div id="health-indicator" class="badge badge-warn">检测中</div>
+          <button id="btn-open-settings" class="icon-button" type="button" aria-label="打开设置">⚙</button>
+        </div>
       </header>
 
-      <section class="controls">
-        <label class="field">
-          <span>模板</span>
-          <select id="template-select"></select>
-        </label>
-
-        <div class="rewrite-grid">
-          <label class="field">
-            <span>改写风格</span>
-            <select id="rewrite-style">
-              <option value="default">默认正式</option>
-              <option value="formal">更正式</option>
-              <option value="structured">更有条理</option>
-              <option value="reporting">更像汇报材料</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>侧重点</span>
-            <select id="focus-point">
-              <option value="default">保持完整</option>
-              <option value="conclusion">突出结论</option>
-              <option value="risk">突出风险</option>
-              <option value="next_step">突出下一步</option>
-              <option value="implementation">突出实施路径</option>
-            </select>
-          </label>
-
-          <label class="field">
-            <span>篇幅</span>
-            <select id="length-mode">
-              <option value="default">默认</option>
-              <option value="concise">精简</option>
-              <option value="same">保持篇幅</option>
-              <option value="expanded">适度扩写</option>
-            </select>
-          </label>
-        </div>
-
-        <label class="field">
-          <span>补充要求</span>
-          <textarea id="user-instruction" rows="3" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
-        </label>
-
-        <div class="api-key-row">
-          <label class="field api-key-field">
-            <span>API Key</span>
-            <input id="provider-api-key" type="password" placeholder="导入企业 API Key" />
-          </label>
-          <div class="api-key-actions">
-            <button id="btn-save-api-key" type="button">保存 Key</button>
-            <button id="btn-clear-api-key" type="button">清除 Key</button>
+      <section id="home-view" class="view active">
+        <section class="hero-card">
+          <div class="hero-copy">
+            <p class="hero-kicker">一期联调版</p>
+            <h2>只保留高频文档动作</h2>
+            <p>针对当前文档或选中文本执行校对、排版预览、改写和续写。技术配置已下沉到设置页。</p>
           </div>
-        </div>
+          <div class="scope-pill">
+            <span class="scope-pill-label">当前范围</span>
+            <strong id="scope-line">未检测</strong>
+          </div>
+        </section>
 
-        <div class="button-row">
-          <button id="btn-proofread" type="button">格式校对</button>
-          <button id="btn-format" type="button">排版预览</button>
-          <button id="btn-rewrite-selection" type="button">改写选中</button>
-          <button id="btn-continue-selection" type="button">选中续写</button>
-          <button id="btn-probe" type="button">运行探针</button>
-        </div>
+        <section class="controls">
+          <label class="field">
+            <span>模板</span>
+            <select id="template-select"></select>
+          </label>
 
-        <div class="button-row secondary">
-          <button id="btn-apply" type="button" disabled>应用预览</button>
-          <button id="btn-refresh" type="button">刷新配置</button>
-        </div>
+          <div class="rewrite-grid">
+            <label class="field">
+              <span>改写风格</span>
+              <select id="rewrite-style">
+                <option value="default">默认正式</option>
+                <option value="formal">更正式</option>
+                <option value="structured">更有条理</option>
+                <option value="reporting">更像汇报材料</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>侧重点</span>
+              <select id="focus-point">
+                <option value="default">保持完整</option>
+                <option value="conclusion">突出结论</option>
+                <option value="risk">突出风险</option>
+                <option value="next_step">突出下一步</option>
+                <option value="implementation">突出实施路径</option>
+              </select>
+            </label>
+
+            <label class="field">
+              <span>篇幅</span>
+              <select id="length-mode">
+                <option value="default">默认</option>
+                <option value="concise">精简</option>
+                <option value="same">保持篇幅</option>
+                <option value="expanded">适度扩写</option>
+              </select>
+            </label>
+          </div>
+
+          <label class="field">
+            <span>补充要求</span>
+            <textarea id="user-instruction" rows="3" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
+          </label>
+
+          <div class="button-cluster">
+            <button id="btn-proofread" type="button">格式校对</button>
+            <button id="btn-format" type="button">排版预览</button>
+            <button id="btn-rewrite-selection" type="button">改写选中</button>
+            <button id="btn-continue-selection" type="button">选中续写</button>
+            <button id="btn-apply" class="secondary-action" type="button" disabled>应用预览</button>
+          </div>
+
+          <section class="status compact-status">
+            <div id="status-line">等待操作。</div>
+          </section>
+        </section>
+
+        <section class="panel result-panel">
+          <div class="panel-head">
+            <div>
+              <p class="panel-eyebrow">输出</p>
+              <h2>结果预览</h2>
+            </div>
+            <div class="mini-meta">
+              <span id="trace-line">Trace: N/A</span>
+              <span id="provider-line">Provider: N/A</span>
+            </div>
+          </div>
+          <pre id="result-output">等待运行。</pre>
+        </section>
       </section>
 
-      <section class="status">
-        <div id="status-line">等待操作。</div>
-        <div id="trace-line">Trace: N/A</div>
-        <div id="provider-line">Provider: N/A</div>
-        <div id="provider-auth-line">Provider Auth: N/A</div>
-        <div id="scope-line">当前范围：未检测</div>
-      </section>
+      <section id="settings-view" class="view">
+        <section class="settings-shell">
+          <header class="settings-head">
+            <button id="btn-close-settings" class="back-button" type="button">‹ 返回</button>
+            <div>
+              <p class="panel-eyebrow">低频配置</p>
+              <h2>设置与诊断</h2>
+            </div>
+          </header>
 
-      <section class="panel">
-        <h2>结果预览</h2>
-        <pre id="result-output">等待运行。</pre>
+          <section class="settings-card">
+            <div class="settings-card-head">
+              <div>
+                <p class="panel-eyebrow">认证</p>
+                <h3>企业 API Key</h3>
+              </div>
+              <span id="provider-auth-line" class="inline-status">Provider Auth: N/A</span>
+            </div>
+
+            <label class="field">
+              <span>导入企业 API Key</span>
+              <input id="provider-api-key" type="password" placeholder="粘贴企业 API Key" />
+            </label>
+
+            <div class="button-row settings-actions">
+              <button id="btn-save-api-key" type="button">保存 Key</button>
+              <button id="btn-clear-api-key" class="secondary-action" type="button">清除 Key</button>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <div class="settings-card-head">
+              <div>
+                <p class="panel-eyebrow">运行时</p>
+                <h3>联调与诊断</h3>
+              </div>
+              <span class="inline-status" id="settings-provider-line">Provider: N/A</span>
+            </div>
+
+            <div class="diag-grid">
+              <div class="diag-item">
+                <span class="diag-label">Trace</span>
+                <strong id="settings-trace-line">N/A</strong>
+              </div>
+              <div class="diag-item">
+                <span class="diag-label">当前范围</span>
+                <strong id="settings-scope-line">未检测</strong>
+              </div>
+            </div>
+
+            <div class="button-row settings-actions">
+              <button id="btn-refresh" type="button">刷新配置</button>
+              <button id="btn-probe" class="secondary-action" type="button">运行探针</button>
+            </div>
+          </section>
+        </section>
       </section>
     </div>
     <script src="./taskpane-helpers.js"></script>
