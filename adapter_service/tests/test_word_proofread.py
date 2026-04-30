@@ -65,3 +65,39 @@ def test_word_proofread_returns_detected_issues() -> None:
         "font_size_consistency",
         "double_space"
     }
+
+
+def test_word_proofread_uses_company_template_rules() -> None:
+    client = TestClient(app)
+    payload = {
+        "documentId": "doc-002",
+        "scene": "word",
+        "selectionMode": "document",
+        "content": {
+            "plainText": "技术文件正文",
+            "paragraphs": [
+                {
+                    "index": 1,
+                    "text": "技术文件正文",
+                    "styleName": "Normal",
+                    "fontName": "楷体",
+                    "fontSize": 14,
+                    "alignment": "left",
+                    "outlineLevel": 0,
+                    "lineSpacing": 1.0
+                }
+            ],
+            "headings": []
+        },
+        "options": {
+            "templateId": "technical-file-format-requirements",
+            "trackChanges": True
+        }
+    }
+
+    response = client.post("/word/proofread", json=payload)
+
+    assert response.status_code == 200
+    issues = response.json()["data"]["issues"]
+    rule_ids = {issue["ruleId"] for issue in issues}
+    assert {"template_font", "template_font_size", "template_line_spacing"} <= rule_ids

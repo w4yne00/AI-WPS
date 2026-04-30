@@ -4,7 +4,7 @@
   var helpers = window.WpsAiAssistantHelpers || {};
   var state = {
     templates: [],
-    selectedTemplateId: "general-office",
+    selectedTemplateId: "technical-file-format-requirements",
     rewriteStyle: "default",
     focusPoint: "default",
     lengthMode: "default",
@@ -132,8 +132,11 @@
         styleName: paragraph.StyleNameLocal || paragraph.styleName || "Body",
         fontName: font.NameFarEast || font.Name || "",
         fontSize: font.Size || 0,
+        bold: Boolean(font.Bold),
         alignment: String(paragraphFormat.Alignment || "left"),
-        outlineLevel: paragraphFormat.OutlineLevel || 0
+        outlineLevel: paragraphFormat.OutlineLevel || 0,
+        lineSpacing: paragraphFormat.LineSpacing || paragraphFormat.lineSpacing || null,
+        firstLineIndent: paragraphFormat.FirstLineIndent || paragraphFormat.firstLineIndent || null
       });
     }
     return items;

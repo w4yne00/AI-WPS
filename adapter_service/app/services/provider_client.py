@@ -71,6 +71,55 @@ def build_rewrite_prompt(
     return "\n".join(lines)
 
 
+def build_typo_prompt(text: str) -> str:
+    return "\n".join(
+        [
+            "你是一名中文技术文件校对助手。",
+            "请检查下面文本中的错别字、用词错误、明显病句或疑似错误表达。",
+            "要求：",
+            "1. 只返回 JSON，不要输出解释性前后缀。",
+            "2. JSON 格式为数组，每一项包含 original、suggestion、reason。",
+            "3. 如果没有发现问题，返回空数组 []。",
+            "4. 不要改写全文，只指出明确或高度疑似的问题。",
+            "",
+            "待检查文本：",
+            text.strip(),
+        ]
+    )
+
+
+def parse_typo_issues(answer: str) -> list:
+    raw = (answer or "").strip()
+    if not raw:
+        return []
+    start = raw.find("[")
+    end = raw.rfind("]")
+    if start >= 0 and end >= start:
+        raw = raw[start:end + 1]
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(payload, list):
+        return []
+    issues = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        original = str(item.get("original", "")).strip()
+        suggestion = str(item.get("suggestion", "")).strip()
+        reason = str(item.get("reason", "")).strip()
+        if original and suggestion:
+            issues.append(
+                {
+                    "original": original,
+                    "suggestion": suggestion,
+                    "reason": reason,
+                }
+            )
+    return issues
+
+
 def extract_answer(body: Dict) -> str:
     answer = body.get("answer")
     if isinstance(answer, str) and answer.strip():
@@ -204,6 +253,58 @@ class ProviderClient:
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
         }
+
+    def proofread_typos(self, text: str, trace_id: str) -> list:
+        source_text = text.strip()
+        if not source_text or not self.get_api_key():
+            return []
+
+        prompt = build_typo_prompt(source_text)
+        payload = json.dumps(
+            {
+                "input_data": {
+                    "scene": "word",
+                    "proofread_mode": "typo",
+                    "trace_id": trace_id,
+                },
+                "query": prompt,
+                "conversation_id": "",
+                "mode": self.settings.provider_mode,
+                "user": "wps-ai-assistant",
+                "files": [],
+            }
+        ).encode("utf-8")
+        url = "{0}{1}".format(
+            self.settings.provider_base_url.rstrip("/"),
+            self.settings.provider_chat_path,
+        )
+        req = urllib_request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(self.get_api_key()),
+                "Content-Type": "application/json",
+                "X-Trace-Id": trace_id,
+            },
+        )
+
+        try:
+            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise ProviderAuthError() from exc
+            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            if "timed out" in str(reason).lower():
+                raise ProviderTimeoutError() from exc
+            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
+
+        answer = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.typo", trace_id)
+        return parse_typo_issues(answer)
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:
         prefix_map = {

@@ -1,0 +1,113 @@
+{
+  "id": "technical-file-format-requirements",
+  "name": "技术文件格式及书写要求",
+  "sourceDocument": "technical-file-format-requirements.docx",
+  "page": {
+    "paperSize": "A4",
+    "marginTop": 2.54,
+    "marginBottom": 2.54,
+    "marginLeft": 3.17,
+    "marginRight": 3.17
+  },
+  "body": {
+    "styleName": "Normal",
+    "fontName": "宋体",
+    "fontAliases": ["宋体", "SimSun"],
+    "asciiFontName": "Times New Roman",
+    "fontSize": 12,
+    "bold": false,
+    "lineSpacing": 1.25,
+    "firstLineIndentChars": 2,
+    "alignment": "justify"
+  },
+  "headings": {
+    "level1": {
+      "styleName": "Heading 1",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 12,
+      "bold": false,
+      "lineSpacing": 1.25,
+      "spacingBeforeLines": 0.5,
+      "spacingAfterLines": 0.5
+    },
+    "level2": {
+      "styleName": "Heading 2",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 12,
+      "bold": false,
+      "lineSpacing": 1.25
+    },
+    "level3": {
+      "styleName": "Heading 3",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 12,
+      "bold": false,
+      "lineSpacing": 1.25
+    },
+    "level4": {
+      "styleName": "Heading 4",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 12,
+      "bold": false,
+      "lineSpacing": 1.25
+    }
+  },
+  "styles": {
+    "文档标题": {
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 14,
+      "bold": false,
+      "alignment": "center"
+    },
+    "Caption": {
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 12,
+      "bold": false,
+      "alignment": "center",
+      "lineSpacing": 1.0,
+      "spacingBeforeLines": 0.5,
+      "spacingAfterLines": 0.5
+    },
+    "3.1注-无编号注": {
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 10.5,
+      "bold": false
+    },
+    "3.2注-有编号注": {
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 10.5,
+      "bold": false,
+      "lineSpacing": 1.25
+    },
+    "附录标题": {
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "fontSize": 14,
+      "bold": false,
+      "alignment": "center",
+      "lineSpacing": 1.25
+    }
+  },
+  "proofreadRules": [
+    "template_style",
+    "heading_hierarchy",
+    "double_space",
+    "punctuation_spacing",
+    "ai_typo"
+  ],
+  "aiProofread": {
+    "enabled": true,
+    "ruleId": "ai_typo",
+    "description": "Use the enterprise model to detect Chinese typos, wrong words, and suspicious wording."
+  }
+}

@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 @router.post("/word/proofread")
 def proofread_word(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-proofread")
-    issues = proofreader.proofread(request)
+    issues = proofreader.proofread(request, trace_id=trace_id)
     payload = ProofreadResponseData(issues=issues)
     logger.info(
         "traceId=%s task=word.proofread templateId=%s issueCount=%s",

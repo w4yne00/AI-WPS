@@ -16,6 +16,8 @@ class TemplateLoader:
         for pattern in ("company/*.json", "general/*.json"):
             for path in sorted(self.template_root.glob(pattern)):
                 data = json.loads(path.read_text(encoding="utf-8"))
+                if "id" not in data:
+                    continue
                 templates.append(
                     {
                         "id": data["id"],
@@ -29,6 +31,8 @@ class TemplateLoader:
         for pattern in ("company/*.json", "general/*.json"):
             for path in sorted(self.template_root.glob(pattern)):
                 data = json.loads(path.read_text(encoding="utf-8"))
+                if "id" not in data:
+                    continue
                 if data["id"] == template_id:
                     return data
         raise FileNotFoundError("Template not found: {0}".format(template_id))

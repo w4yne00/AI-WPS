@@ -12,3 +12,5 @@ def test_template_loader_returns_general_template() -> None:
     templates = loader.list_templates()
 
     assert any(item["id"] == "general-office" for item in templates)
+    assert any(item["id"] == "technical-file-format-requirements" for item in templates)
+    assert not any(item["id"] == "rules" for item in templates)

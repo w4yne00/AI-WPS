@@ -7,7 +7,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.core.config import load_settings
-from app.services.provider_client import extract_answer, build_rewrite_prompt
+from app.services.provider_client import (
+    build_rewrite_prompt,
+    build_typo_prompt,
+    extract_answer,
+    parse_typo_issues,
+)
 
 
 class EnterpriseProviderTests(unittest.TestCase):
@@ -65,6 +70,25 @@ class EnterpriseProviderTests(unittest.TestCase):
         }
 
         self.assertEqual(extract_answer(body), "这是改写后的文档内容。")
+
+    def test_typo_prompt_and_parser_use_json_array(self) -> None:
+        prompt = build_typo_prompt("这是一个技术文挡。")
+
+        self.assertIn("只返回 JSON", prompt)
+        self.assertIn("这是一个技术文挡。", prompt)
+
+        issues = parse_typo_issues(
+            """
+            [
+              {"original": "文挡", "suggestion": "文档", "reason": "错别字"}
+            ]
+            """
+        )
+
+        self.assertEqual(
+            issues,
+            [{"original": "文挡", "suggestion": "文档", "reason": "错别字"}],
+        )
 
 
 if __name__ == "__main__":

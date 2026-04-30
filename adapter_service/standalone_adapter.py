@@ -53,8 +53,75 @@ def body_paragraphs(payload):
     return [p for p in payload["content"].get("paragraphs", []) if p.get("text", "").strip()]
 
 
+def font_matches(font_name, rule):
+    expected = [rule.get("fontName", "")]
+    expected.extend(rule.get("fontAliases", []))
+    return font_name.lower() in {item.lower() for item in expected if item}
+
+
+def normalize_line_spacing(value):
+    try:
+        numeric = float(value)
+    except (TypeError, ValueError):
+        return None
+    if numeric > 10:
+        return numeric / 240.0
+    return numeric
+
+
+def paragraph_style_rule(paragraph, template):
+    style_name = paragraph.get("styleName") or ""
+    if style_name in template.get("styles", {}):
+        return template["styles"][style_name]
+    outline_level = paragraph.get("outlineLevel") or 0
+    if outline_level > 0:
+        return template.get("headings", {}).get("level{0}".format(outline_level), {})
+    return template.get("body", {})
+
+
 def proofread(payload):
     issues = []
+    template_id = payload.get("options", {}).get("templateId") or "general-office"
+    template = load_template(template_id)
+    for paragraph in body_paragraphs(payload):
+        rule = paragraph_style_rule(paragraph, template)
+        if rule.get("fontName") and paragraph.get("fontName") and not font_matches(paragraph.get("fontName"), rule):
+            issues.append(
+                {
+                    "ruleId": "template_font",
+                    "severity": "warning",
+                    "message": "Paragraph font does not match the selected Word template.",
+                    "paragraphIndex": paragraph.get("index"),
+                    "suggestion": "Use {0} for this paragraph style.".format(rule.get("fontName")),
+                    "autoFixable": True,
+                }
+            )
+        if rule.get("fontSize") is not None and paragraph.get("fontSize") is not None:
+            if abs(float(paragraph.get("fontSize")) - float(rule.get("fontSize"))) > 0.01:
+                issues.append(
+                    {
+                        "ruleId": "template_font_size",
+                        "severity": "warning",
+                        "message": "Paragraph font size does not match the selected Word template.",
+                        "paragraphIndex": paragraph.get("index"),
+                        "suggestion": "Use {0} pt for this paragraph style.".format(rule.get("fontSize")),
+                        "autoFixable": True,
+                    }
+                )
+        if rule.get("lineSpacing") is not None and paragraph.get("lineSpacing") is not None:
+            normalized = normalize_line_spacing(paragraph.get("lineSpacing"))
+            if normalized is not None and abs(normalized - float(rule.get("lineSpacing"))) > 0.05:
+                issues.append(
+                    {
+                        "ruleId": "template_line_spacing",
+                        "severity": "warning",
+                        "message": "Paragraph line spacing does not match the selected Word template.",
+                        "paragraphIndex": paragraph.get("index"),
+                        "suggestion": "Use {0} line spacing.".format(rule.get("lineSpacing")),
+                        "autoFixable": True,
+                    }
+                )
+
     headings = payload["content"].get("headings", [])
     current_level = 0
     for heading in headings:
@@ -128,6 +195,25 @@ def proofread(payload):
                     "autoFixable": True,
                 }
             )
+    if template.get("aiProofread", {}).get("enabled"):
+        text = payload["content"].get("plainText", "").strip()
+        try:
+            typo_items = ProviderClient(load_settings()).proofread_typos(text, "standalone-word-proofread")
+        except Exception:
+            typo_items = []
+        for item in typo_items:
+            issues.append(
+                {
+                    "ruleId": template.get("aiProofread", {}).get("ruleId", "ai_typo"),
+                    "severity": "warning",
+                    "message": "AI detected a possible typo or wording issue: {0}".format(item.get("original", "")),
+                    "suggestion": "{0}{1}".format(
+                        item.get("suggestion", ""),
+                        "（{0}）".format(item.get("reason", "")) if item.get("reason") else "",
+                    ),
+                    "autoFixable": False,
+                }
+            )
     return issues
 
 
@@ -135,30 +221,24 @@ def format_preview(payload):
     template_id = payload.get("options", {}).get("templateId") or "general-office"
     template = load_template(template_id)
     body = template.get("body", {})
-    body_font = body.get("fontName")
-    body_size = body.get("fontSize")
     changes = []
 
     for paragraph in body_paragraphs(payload):
         current_style = paragraph.get("styleName") or "Body"
-        target_style = current_style
+        rule = paragraph_style_rule(paragraph, template)
+        target_style = rule.get("styleName", current_style)
         reason_parts = []
-        outline_level = paragraph.get("outlineLevel") or 0
-        if outline_level > 0:
-            target_style = "Heading {0}".format(outline_level)
-            heading = template.get("headings", {}).get("level{0}".format(outline_level), {})
-            if paragraph.get("fontName") != heading.get("fontName"):
-                reason_parts.append("align heading font with template")
-            if paragraph.get("fontSize") != heading.get("fontSize"):
-                reason_parts.append("align heading size with template")
-        else:
-            target_style = "Body"
-            if paragraph.get("fontName") != body_font:
-                reason_parts.append("align body font with template")
-            if paragraph.get("fontSize") != body_size:
-                reason_parts.append("align body size with template")
-            if not paragraph.get("text", "").startswith("  "):
-                reason_parts.append("apply body indent and spacing defaults")
+        if rule.get("fontName") and paragraph.get("fontName") and not font_matches(paragraph.get("fontName"), rule):
+            reason_parts.append("align font with template")
+        if rule.get("fontSize") is not None and paragraph.get("fontSize") is not None:
+            if abs(float(paragraph.get("fontSize")) - float(rule.get("fontSize"))) > 0.01:
+                reason_parts.append("align font size with template")
+        if rule.get("lineSpacing") is not None and paragraph.get("lineSpacing") is not None:
+            normalized = normalize_line_spacing(paragraph.get("lineSpacing"))
+            if normalized is not None and abs(normalized - float(rule.get("lineSpacing"))) > 0.05:
+                reason_parts.append("align line spacing with template")
+        if (paragraph.get("outlineLevel") or 0) == 0 and rule.get("firstLineIndentChars") and not paragraph.get("text", "").startswith("  "):
+            reason_parts.append("apply body first-line indent")
 
         if reason_parts or current_style != target_style:
             changes.append(

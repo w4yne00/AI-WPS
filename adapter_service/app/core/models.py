@@ -11,6 +11,9 @@ class Paragraph(BaseModel):
     font_size: Optional[float] = Field(default=None, alias="fontSize")
     alignment: Optional[str] = None
     outline_level: Optional[int] = Field(default=None, alias="outlineLevel")
+    line_spacing: Optional[float] = Field(default=None, alias="lineSpacing")
+    first_line_indent: Optional[float] = Field(default=None, alias="firstLineIndent")
+    bold: Optional[bool] = None
 
 
 class Heading(BaseModel):

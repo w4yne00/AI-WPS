@@ -52,3 +52,39 @@ def test_word_format_preview_returns_change_plan() -> None:
     assert body["data"]["summary"]["changeCount"] >= 1
     assert body["data"]["summary"]["templateId"] == "general-office"
     assert any(change["targetStyle"] == "Body" for change in body["data"]["changes"])
+
+
+def test_word_format_preview_uses_company_template_style_names() -> None:
+    client = TestClient(app)
+    payload = {
+        "documentId": "doc-002",
+        "scene": "word",
+        "selectionMode": "document",
+        "content": {
+            "plainText": "正文",
+            "paragraphs": [
+                {
+                    "index": 1,
+                    "text": "正文",
+                    "styleName": "Body",
+                    "fontName": "楷体",
+                    "fontSize": 14,
+                    "alignment": "left",
+                    "outlineLevel": 0,
+                    "lineSpacing": 1.0
+                }
+            ],
+            "headings": []
+        },
+        "options": {
+            "templateId": "technical-file-format-requirements",
+            "trackChanges": True
+        }
+    }
+
+    response = client.post("/word/format-preview", json=payload)
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["data"]["summary"]["templateId"] == "technical-file-format-requirements"
+    assert any(change["targetStyle"] == "Normal" for change in body["data"]["changes"])
