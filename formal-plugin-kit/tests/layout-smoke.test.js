@@ -39,6 +39,17 @@ assert.ok(js.includes("setInterval(updateScopeIndicator"));
 assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
 
+const css = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.css",
+  "utf8"
+);
+
+assert.ok(css.includes("--surface"));
+assert.ok(css.includes("--hairline"));
+assert.ok(css.includes(".action-bar"));
+assert.ok(css.includes(".glass-card"));
+assert.ok(css.includes("linear-gradient(180deg, #fafafa"));
+
 const ribbon = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml",
   "utf8"
