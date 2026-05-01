@@ -101,8 +101,7 @@ body {
   border-color: #e4b4b4;
 }
 
-.icon-button,
-.back-button {
+.icon-button {
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.85);
   color: var(--text);
@@ -119,12 +118,6 @@ body {
   line-height: 1;
   padding: 0;
   box-shadow: var(--shadow);
-}
-
-.back-button {
-  border-radius: 999px;
-  padding: 10px 14px;
-  font-weight: 700;
 }
 
 .view {
@@ -329,7 +322,7 @@ button[disabled] {
 }
 
 .settings-head {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .settings-group {
@@ -341,9 +334,9 @@ button[disabled] {
   align-items: baseline;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 10px;
+  margin-bottom: 8px;
   border-bottom: 1px solid rgba(190, 168, 135, 0.5);
-  padding-bottom: 8px;
+  padding-bottom: 6px;
 }
 
 .settings-group-title h3 {

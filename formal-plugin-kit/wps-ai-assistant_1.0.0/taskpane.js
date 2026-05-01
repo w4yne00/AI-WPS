@@ -582,10 +582,6 @@
       });
   }
 
-  function closeSettings() {
-    switchMode("rewrite");
-  }
-
   function runFormatPreview() {
     try {
       state.latestDocumentPayload = extractDocument("document");
@@ -714,7 +710,6 @@
     });
     byId("btn-save-api-key").addEventListener("click", saveApiKey);
     byId("btn-clear-api-key").addEventListener("click", clearApiKey);
-    byId("btn-close-settings").addEventListener("click", closeSettings);
     byId("btn-refresh").addEventListener("click", refreshConfig);
     byId("btn-probe").addEventListener("click", runProbe);
     byId("btn-apply").addEventListener("click", applyPreview);

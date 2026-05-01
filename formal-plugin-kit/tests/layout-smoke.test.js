@@ -8,7 +8,6 @@ const html = fs.readFileSync(
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
-assert.ok(html.includes('id="btn-close-settings"'));
 assert.ok(html.includes('id="btn-save-api-key"'));
 assert.ok(html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
@@ -25,6 +24,10 @@ assert.ok(!html.includes('hero-copy'));
 assert.ok(!html.includes('comparison-view'));
 assert.ok(!html.includes('original-output'));
 assert.ok(!html.includes('rewritten-output'));
+assert.ok(!html.includes('id="btn-close-settings"'));
+assert.ok(!html.includes('低频配置'));
+assert.ok(!html.includes('认证</p>'));
+assert.ok(!html.includes('运行时</p>'));
 
 const js = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
@@ -50,5 +53,13 @@ const ribbon = fs.readFileSync(
 ].forEach((label) => {
   assert.ok(ribbon.includes(`label="${label}"`), `missing ribbon label ${label}`);
 });
+
+const ribbonJs = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js",
+  "utf8"
+);
+
+assert.ok(ribbonJs.includes("closeCurrentTaskPane"));
+assert.ok(ribbonJs.includes("WpsAiAssistantTaskPane"));
 
 console.log("layout smoke tests passed");

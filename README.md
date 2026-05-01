@@ -74,8 +74,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.6.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.6.0-20260501` |
+| Version | `v0.6.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.6.1-20260501` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -115,6 +115,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.6.1-alpha` | Simplified the settings page and ensured each ribbon action hides the previous task pane before opening the next one |
 | `v0.6.0-alpha` | Reworked the WPS AI tab into five task entries, split the task pane into mode-specific Word workflows, localized visible titles, and moved template selection into proofreading and formatting |
 | `v0.5.1-alpha` | Added a simple ribbon button icon and moved template selection into settings to keep the home task pane focused |
 | `v0.5.0-alpha` | Added company Word template driven proofreading and format preview; added AI typo detection via enterprise provider |
