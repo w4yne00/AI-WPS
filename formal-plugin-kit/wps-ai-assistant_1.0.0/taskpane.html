@@ -76,21 +76,14 @@
             <button id="btn-run-primary" type="button">生成改写</button>
             <button id="btn-apply" class="secondary-action" type="button" disabled>应用预览</button>
           </div>
-
-          <section class="status compact-status">
-            <div id="status-line">等待操作。</div>
-          </section>
+          <div id="status-line" class="sr-only">等待操作。</div>
         </section>
 
         <section class="panel result-panel glass-card">
           <div class="panel-head">
+            <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
             <div>
-              <p class="panel-eyebrow">输出</p>
               <h2>结果预览</h2>
-            </div>
-            <div class="result-tools">
-              <span id="result-mode-chip" class="inline-status">等待运行</span>
-              <button id="btn-copy-result" class="ghost-action icon-action" type="button" title="复制结果" aria-label="复制结果">⧉</button>
             </div>
           </div>
           <pre id="result-output">等待运行。</pre>
@@ -99,20 +92,17 @@
 
       <section id="settings-view" class="view">
         <section class="settings-shell glass-card">
-          <header class="settings-head">
-            <h2>设置</h2>
-          </header>
-
           <section id="connection-settings-section" class="settings-group">
-            <div class="settings-group-title">
-              <h3>连接设置</h3>
-            </div>
-
             <section class="settings-card">
               <div class="settings-card-head">
-                <h4>企业接口密钥</h4>
+                <h4>大模型接口</h4>
                 <span id="provider-auth-line" class="inline-status">认证来源：未检测</span>
               </div>
+
+              <label class="field">
+                <span>大模型 API URL</span>
+                <input id="provider-base-url" type="text" placeholder="例如：https://aibot.example.com/v1" />
+              </label>
 
               <label class="field">
                 <span>导入企业接口密钥</span>
@@ -120,6 +110,7 @@
               </label>
 
               <div class="button-row settings-actions">
+                <button id="btn-save-provider-url" type="button">保存地址</button>
                 <button id="btn-save-api-key" type="button">保存密钥</button>
                 <button id="btn-clear-api-key" class="secondary-action" type="button">清除密钥</button>
                 <button id="btn-refresh" class="ghost-action" type="button">刷新配置</button>
@@ -128,10 +119,6 @@
           </section>
 
           <section id="diagnostics-section" class="settings-group">
-            <div class="settings-group-title">
-              <h3>诊断</h3>
-            </div>
-
             <section class="settings-card">
               <div class="settings-card-head">
                 <h4>联调状态</h4>

@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.config import load_settings
+from app.core.config import load_settings, save_provider_base_url
 from app.services.provider_client import (
     build_rewrite_prompt,
     build_typo_prompt,
@@ -42,6 +42,30 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_api_key_env, "ENTERPRISE_AI_API_KEY")
         self.assertEqual(settings.provider_chat_path, "/chat-messages")
         self.assertEqual(settings.provider_mode, "blocking")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_save_provider_base_url_updates_config_file(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "servicePort": 19100,
+              "providerType": "enterprise-chat-api",
+              "providerBaseUrl": "https://old.example/v1"
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        save_provider_base_url("https://new.example/v1", config_file)
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.provider_base_url, "https://new.example/v1")
+        self.assertEqual(settings.service_port, 19100)
 
         config_file.unlink()
         tmp_dir.rmdir()

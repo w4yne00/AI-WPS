@@ -25,6 +25,33 @@ class AppSettings:
     timeout_seconds: int = 30
 
 
+def load_config_payload(config_path: Optional[Path] = None) -> dict:
+    path = config_path or DEFAULT_CONFIG_PATH
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    if EXAMPLE_CONFIG_PATH.exists():
+        return json.loads(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def save_config_payload(payload: dict, config_path: Optional[Path] = None) -> None:
+    path = config_path or DEFAULT_CONFIG_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def save_provider_base_url(base_url: str, config_path: Optional[Path] = None) -> None:
+    value = base_url.strip().rstrip("/")
+    if not (value.startswith("http://") or value.startswith("https://")):
+        raise ValueError("Provider base URL must start with http:// or https://")
+    payload = load_config_payload(config_path)
+    payload["providerBaseUrl"] = value
+    save_config_payload(payload, config_path)
+
+
 def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     path = config_path or DEFAULT_CONFIG_PATH
     if not path.exists():

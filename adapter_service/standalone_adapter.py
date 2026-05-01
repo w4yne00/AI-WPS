@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.core.config import load_settings
+from app.core.config import load_settings, save_provider_base_url
 from app.services.provider_client import ProviderClient, clear_local_api_key, save_local_api_key
 
 
@@ -335,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.6.2-alpha",
+                        "version": "0.6.3-alpha",
                         "mode": "standalone",
                         "providerType": settings.provider_type,
                         "providerConfigured": provider.is_configured(),
@@ -358,6 +358,32 @@ class Handler(BaseHTTPRequestHandler):
                         "configured": provider.is_configured(),
                         "authSource": provider.get_auth_source(),
                         "providerType": provider.settings.provider_type,
+                    },
+                    "errors": [],
+                },
+            )
+            return
+        if path == "/config":
+            settings = load_settings()
+            provider = ProviderClient(settings)
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-config",
+                    "taskType": "adapter.config",
+                    "message": "completed",
+                    "data": {
+                        "servicePort": settings.service_port,
+                        "providerType": settings.provider_type,
+                        "providerBaseUrl": settings.provider_base_url,
+                        "providerChatPath": settings.provider_chat_path,
+                        "providerMode": settings.provider_mode,
+                        "providerConfigured": provider.is_configured(),
+                        "providerAuthSource": provider.get_auth_source(),
+                        "logPath": settings.log_path,
+                        "templateRoot": settings.template_root,
+                        "timeoutSeconds": settings.timeout_seconds,
                     },
                     "errors": [],
                 },
@@ -432,6 +458,39 @@ class Handler(BaseHTTPRequestHandler):
                     "taskType": "word.rewrite",
                     "message": "completed",
                     "data": rewrite(payload),
+                    "errors": [],
+                },
+            )
+            return
+        if path == "/provider/base-url":
+            base_url = payload.get("baseUrl", "").strip()
+            try:
+                save_provider_base_url(base_url)
+            except ValueError as error:
+                self._write(
+                    400,
+                    {
+                        "success": False,
+                        "traceId": "standalone-provider-url",
+                        "taskType": "provider.base_url",
+                        "message": str(error),
+                        "data": {},
+                        "errors": [{"code": "PROVIDER_URL_INVALID", "message": str(error)}],
+                    },
+                )
+                return
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-url",
+                    "taskType": "provider.base_url",
+                    "message": "saved",
+                    "data": {
+                        "providerBaseUrl": provider.settings.provider_base_url,
+                        "providerType": provider.settings.provider_type,
+                    },
                     "errors": [],
                 },
             )

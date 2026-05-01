@@ -69,7 +69,6 @@
 
   function setStatus(message) {
     byId("status-line").textContent = message;
-    byId("result-mode-chip").textContent = message || "等待运行";
   }
 
   function isTaskpanePage() {
@@ -88,7 +87,11 @@
   }
 
   function setProviderLine(providerName, configured) {
-    var detail = providerName || "未检测";
+    var providerText = {
+      "enterprise-chat-api": "企业接口",
+      mock: "模拟接口"
+    };
+    var detail = providerText[providerName] || providerName || "未检测";
     if (typeof configured === "boolean") {
       detail += configured ? " / 已配置" : " / 模拟";
     }
@@ -98,7 +101,12 @@
   }
 
   function setProviderAuthLine(source) {
-    state.providerAuthSource = source || "未检测";
+    var sourceText = {
+      none: "未配置",
+      file: "本地文件",
+      env: "环境变量"
+    };
+    state.providerAuthSource = sourceText[source] || source || "未检测";
     byId("provider-auth-line").textContent = "认证来源：" + state.providerAuthSource;
   }
 
@@ -323,18 +331,21 @@
     setStatus("正在刷新配置...");
     return Promise.all([
       request("/health"),
-      request("/templates")
+      request("/templates"),
+      request("/config")
     ]).then(function (results) {
       var health = results[0];
       var templates = results[1];
+      var config = results[2];
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       setProviderAuthLine(health.data.providerAuthSource || "none");
+      byId("provider-base-url").value = config.data.providerBaseUrl || "";
       resolveSelectionScope(false);
       state.templates = templates.data.templates || [];
       renderTemplateOptions();
-      setStatus("配置已刷新。");
+      setStatus("就绪");
     }).catch(function (error) {
       setHealthBadge("badge-error", "不可达");
       setProviderLine("未检测");
@@ -342,6 +353,26 @@
       setStatus("刷新失败：" + error.message);
       setResult("无法连接本地适配层：" + error.message);
     });
+  }
+
+  function saveProviderBaseUrl() {
+    var input = byId("provider-base-url");
+    var baseUrl = (input.value || "").trim();
+    if (!baseUrl) {
+      setResult("请输入大模型 API URL 后再保存。");
+      return;
+    }
+    setStatus("正在保存大模型 API URL...");
+    request("/provider/base-url", { baseUrl: baseUrl })
+      .then(function (body) {
+        input.value = body.data.providerBaseUrl || baseUrl;
+        setStatus("大模型 API URL 已保存。");
+        return refreshConfig();
+      })
+      .catch(function (error) {
+        setStatus("保存大模型 API URL 失败：" + error.message);
+        setResult(error.message);
+      });
   }
 
   function saveApiKey() {
@@ -708,6 +739,7 @@
     byId("user-instruction").addEventListener("input", function (event) {
       state.userInstruction = event.target.value;
     });
+    byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
     byId("btn-save-api-key").addEventListener("click", saveApiKey);
     byId("btn-clear-api-key").addEventListener("click", clearApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
