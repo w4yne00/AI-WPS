@@ -17,6 +17,8 @@ assert.ok(html.includes('id="diagnostics-section"'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
+assert.ok(html.includes('格式校对与排版模板'));
+assert.ok(html.indexOf('id="template-select"') > html.indexOf('id="connection-settings-section"'));
 assert.ok(!html.includes('hero-copy'));
 assert.ok(!html.includes('comparison-view'));
 assert.ok(!html.includes('original-output'));

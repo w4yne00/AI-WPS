@@ -335,7 +335,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.1.0",
+                        "version": "0.5.1-alpha",
                         "mode": "standalone",
                         "providerType": settings.provider_type,
                         "providerConfigured": provider.is_configured(),

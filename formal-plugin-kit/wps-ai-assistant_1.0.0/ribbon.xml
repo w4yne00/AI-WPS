@@ -3,7 +3,7 @@
     <tabs>
       <tab id="wpsAiAssistantTab" label="WPS AI 助理">
         <group id="wpsAiAssistantGroup" label="AI 助理">
-          <button id="btnWpsAiAssistant" label="打开 AI 助理" size="large" onAction="OnAction" />
+          <button id="btnWpsAiAssistant" label="打开 AI 助理" size="large" image="assets/ai-assistant-32.png" onAction="OnAction" />
         </group>
       </tab>
     </tabs>

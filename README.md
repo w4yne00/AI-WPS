@@ -74,8 +74,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.5.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.5.0-20260430` |
+| Version | `v0.5.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.5.1-20260501` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -113,6 +113,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.5.1-alpha` | Added a simple ribbon button icon and moved template selection into settings to keep the home task pane focused |
 | `v0.5.0-alpha` | Added company Word template driven proofreading and format preview; added AI typo detection via enterprise provider |
 | `v0.4.x-alpha` | Added Kylin V10 ARM offline Python runtime wheel bundle for `uvicorn` mode |
 | `v0.3.x-alpha` | Improved task pane interaction: compact home view, settings/diagnostics split, auto scope detection, copy result |

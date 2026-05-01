@@ -2,5 +2,9 @@
   "name": "wps-ai-assistant",
   "version": "1.0.0",
   "description": "Phase 1 WPS AI assistant",
+  "icons": {
+    "32": "assets/ai-assistant-32.png",
+    "128": "assets/ai-assistant.svg"
+  },
   "entry": "index.html"
 }

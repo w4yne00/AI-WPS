@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="AI assistant">
+  <rect x="6" y="5" width="16" height="20" rx="2.5" fill="none" stroke="#4f4f4f" stroke-width="2"/>
+  <path d="M11 13h6M11 18h4" stroke="#4f4f4f" stroke-width="2" stroke-linecap="round"/>
+  <path d="M21 9h5v15h-9" fill="none" stroke="#4f4f4f" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M22.5 16.5l2 2 4-5" fill="none" stroke="#1f9d73" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
