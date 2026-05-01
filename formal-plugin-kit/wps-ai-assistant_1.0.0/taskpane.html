@@ -11,64 +11,69 @@
       <header class="header">
         <div class="header-copy">
           <p class="eyebrow">WPS AI 助理</p>
-          <h1>文档处理台</h1>
+          <h1 id="task-title">智能改写</h1>
         </div>
         <div id="top-toolbox" class="header-actions">
           <div id="health-indicator" class="badge badge-warn">检测中</div>
-          <button id="btn-open-settings" class="icon-button" type="button" aria-label="打开设置">⚙</button>
         </div>
       </header>
 
       <section id="home-view" class="view active">
         <section id="scope-strip" class="scope-strip">
-          <span class="scope-pill-label">当前范围</span>
+          <span class="scope-pill-label">识别范围</span>
           <strong id="scope-line">未检测</strong>
         </section>
 
         <section class="controls">
-          <div class="rewrite-grid">
-            <label class="field">
-              <span>改写风格</span>
-              <select id="rewrite-style">
-                <option value="default">默认正式</option>
-                <option value="formal">更正式</option>
-                <option value="structured">更有条理</option>
-                <option value="reporting">更像汇报材料</option>
-              </select>
-            </label>
+          <div id="rewrite-options" class="mode-block">
+            <div class="rewrite-grid">
+              <label class="field">
+                <span id="style-field-label">改写风格</span>
+                <select id="rewrite-style">
+                  <option value="default">默认正式</option>
+                  <option value="formal">更正式</option>
+                  <option value="structured">更有条理</option>
+                  <option value="reporting">更像汇报材料</option>
+                </select>
+              </label>
 
-            <label class="field">
-              <span>侧重点</span>
-              <select id="focus-point">
-                <option value="default">保持完整</option>
-                <option value="conclusion">突出结论</option>
-                <option value="risk">突出风险</option>
-                <option value="next_step">突出下一步</option>
-                <option value="implementation">突出实施路径</option>
-              </select>
-            </label>
+              <label class="field">
+                <span>侧重点</span>
+                <select id="focus-point">
+                  <option value="default">保持完整</option>
+                  <option value="conclusion">突出结论</option>
+                  <option value="risk">突出风险</option>
+                  <option value="next_step">突出下一步</option>
+                  <option value="implementation">突出实施路径</option>
+                </select>
+              </label>
 
+              <label class="field">
+                <span>篇幅</span>
+                <select id="length-mode">
+                  <option value="default">默认</option>
+                  <option value="concise">精简</option>
+                  <option value="same">保持篇幅</option>
+                  <option value="expanded">适度扩写</option>
+                </select>
+              </label>
+            </div>
+          </div>
+
+          <div id="template-options" class="mode-block compact-template" hidden>
             <label class="field">
-              <span>篇幅</span>
-              <select id="length-mode">
-                <option value="default">默认</option>
-                <option value="concise">精简</option>
-                <option value="same">保持篇幅</option>
-                <option value="expanded">适度扩写</option>
-              </select>
+              <span>文档模板</span>
+              <select id="template-select"></select>
             </label>
           </div>
 
-          <label class="field">
+          <label id="instruction-block" class="field">
             <span>补充要求</span>
-            <textarea id="user-instruction" rows="3" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
+            <textarea id="user-instruction" rows="2" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
           </label>
 
           <div class="button-cluster">
-            <button id="btn-proofread" type="button">格式校对</button>
-            <button id="btn-format" type="button">排版预览</button>
-            <button id="btn-rewrite-selection" type="button">改写选中</button>
-            <button id="btn-continue-selection" type="button">选中续写</button>
+            <button id="btn-run-primary" type="button">生成改写</button>
             <button id="btn-apply" class="secondary-action" type="button" disabled>应用预览</button>
           </div>
 
@@ -98,13 +103,13 @@
             <button id="btn-close-settings" class="back-button" type="button">‹ 返回</button>
             <div>
               <p class="panel-eyebrow">低频配置</p>
-              <h2>设置与诊断</h2>
+              <h2>设置</h2>
             </div>
           </header>
 
           <section id="connection-settings-section" class="settings-group">
             <div class="settings-group-title">
-              <p class="panel-eyebrow">Connection</p>
+              <p class="panel-eyebrow">连接</p>
               <h3>连接设置</h3>
             </div>
 
@@ -112,42 +117,27 @@
               <div class="settings-card-head">
                 <div>
                   <p class="panel-eyebrow">认证</p>
-                  <h4>企业 API Key</h4>
+                  <h4>企业接口密钥</h4>
                 </div>
-                <span id="provider-auth-line" class="inline-status">Provider Auth: N/A</span>
+                <span id="provider-auth-line" class="inline-status">认证来源：未检测</span>
               </div>
 
               <label class="field">
-                <span>导入企业 API Key</span>
-                <input id="provider-api-key" type="password" placeholder="粘贴企业 API Key" />
+                <span>导入企业接口密钥</span>
+                <input id="provider-api-key" type="password" placeholder="粘贴企业接口密钥" />
               </label>
 
               <div class="button-row settings-actions">
-                <button id="btn-save-api-key" type="button">保存 Key</button>
-                <button id="btn-clear-api-key" class="secondary-action" type="button">清除 Key</button>
+                <button id="btn-save-api-key" type="button">保存密钥</button>
+                <button id="btn-clear-api-key" class="secondary-action" type="button">清除密钥</button>
                 <button id="btn-refresh" class="ghost-action" type="button">刷新配置</button>
               </div>
-            </section>
-
-            <section class="settings-card">
-              <div class="settings-card-head">
-                <div>
-                  <p class="panel-eyebrow">Template</p>
-                  <h4>文档模板</h4>
-                </div>
-                <span class="inline-status">低频规则</span>
-              </div>
-
-              <label class="field compact-field">
-                <span>格式校对与排版模板</span>
-                <select id="template-select"></select>
-              </label>
             </section>
           </section>
 
           <section id="diagnostics-section" class="settings-group">
             <div class="settings-group-title">
-              <p class="panel-eyebrow">Diagnostics</p>
+              <p class="panel-eyebrow">诊断</p>
               <h3>诊断</h3>
             </div>
 
@@ -157,21 +147,21 @@
                   <p class="panel-eyebrow">运行时</p>
                   <h4>联调状态</h4>
                 </div>
-                <span class="inline-status" id="settings-provider-line">Provider: N/A</span>
+                <span class="inline-status" id="settings-provider-line">接口：未检测</span>
               </div>
 
               <div class="diag-grid">
                 <div class="diag-item">
-                  <span class="diag-label">Trace</span>
-                  <strong id="trace-line">N/A</strong>
+                  <span class="diag-label">追踪号</span>
+                  <strong id="trace-line">未检测</strong>
                 </div>
                 <div class="diag-item">
-                  <span class="diag-label">当前范围</span>
+                  <span class="diag-label">识别范围</span>
                   <strong id="settings-scope-line">未检测</strong>
                 </div>
                 <div class="diag-item">
-                  <span class="diag-label">Provider</span>
-                  <strong id="provider-line">N/A</strong>
+                  <span class="diag-label">接口状态</span>
+                  <strong id="provider-line">未检测</strong>
                 </div>
               </div>
 

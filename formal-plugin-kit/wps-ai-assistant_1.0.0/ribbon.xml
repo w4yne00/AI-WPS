@@ -2,8 +2,12 @@
   <ribbon startFromScratch="false">
     <tabs>
       <tab id="wpsAiAssistantTab" label="WPS AI 助理">
-        <group id="wpsAiAssistantGroup" label="AI 助理">
-          <button id="btnWpsAiAssistant" label="打开 AI 助理" size="large" image="assets/ai-assistant-32.png" onAction="OnAction" />
+        <group id="wpsAiAssistantGroup" label="文档处理">
+          <button id="btnAiRewrite" label="智能改写" size="large" image="assets/icon-rewrite.png" onAction="OnAction" />
+          <button id="btnAiContinue" label="智能续写" size="large" image="assets/icon-continue.png" onAction="OnAction" />
+          <button id="btnAiProofread" label="格式校对" size="large" image="assets/icon-proofread.png" onAction="OnAction" />
+          <button id="btnAiFormat" label="智能排版" size="large" image="assets/icon-format.png" onAction="OnAction" />
+          <button id="btnAiSettings" label="设置" size="large" image="assets/icon-settings.png" onAction="OnAction" />
         </group>
       </tab>
     </tabs>

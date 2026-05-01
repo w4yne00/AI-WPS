@@ -8,7 +8,6 @@ const html = fs.readFileSync(
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
-assert.ok(html.includes('id="btn-open-settings"'));
 assert.ok(html.includes('id="btn-close-settings"'));
 assert.ok(html.includes('id="btn-save-api-key"'));
 assert.ok(html.includes('id="btn-probe"'));
@@ -17,8 +16,11 @@ assert.ok(html.includes('id="diagnostics-section"'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
-assert.ok(html.includes('格式校对与排版模板'));
-assert.ok(html.indexOf('id="template-select"') > html.indexOf('id="connection-settings-section"'));
+assert.ok(html.includes('id="task-title"'));
+assert.ok(html.includes('识别范围'));
+assert.ok(html.includes('id="rewrite-options"'));
+assert.ok(html.includes('id="template-options"'));
+assert.ok(html.includes('id="btn-run-primary"'));
 assert.ok(!html.includes('hero-copy'));
 assert.ok(!html.includes('comparison-view'));
 assert.ok(!html.includes('original-output'));
@@ -31,5 +33,22 @@ const js = fs.readFileSync(
 
 assert.ok(js.includes("startScopeWatcher"));
 assert.ok(js.includes("setInterval(updateScopeIndicator"));
+assert.ok(js.includes("switchMode"));
+assert.ok(js.includes("getInitialMode"));
+
+const ribbon = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml",
+  "utf8"
+);
+
+[
+  "智能改写",
+  "智能续写",
+  "格式校对",
+  "智能排版",
+  "设置"
+].forEach((label) => {
+  assert.ok(ribbon.includes(`label="${label}"`), `missing ribbon label ${label}`);
+});
 
 console.log("layout smoke tests passed");

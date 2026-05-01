@@ -1,29 +1,29 @@
 :root {
-  --bg: #f3ecdf;
-  --panel: rgba(255, 250, 241, 0.94);
-  --panel-strong: #fffdf7;
-  --line: #d7c6ad;
-  --line-strong: #bea887;
-  --text: #201a15;
-  --muted: #6f6252;
-  --accent: #1f4c40;
-  --accent-2: #8e6b2f;
+  --bg: #f5f1e9;
+  --panel: rgba(255, 252, 246, 0.92);
+  --panel-strong: #fffefa;
+  --line: #ded1bf;
+  --line-strong: #c7b497;
+  --text: #1d1b18;
+  --muted: #756a5b;
+  --accent: #195343;
+  --accent-2: #8a6a35;
   --danger: #9b3535;
-  --shadow: 0 18px 38px rgba(73, 52, 28, 0.12);
+  --shadow: 0 14px 34px rgba(78, 61, 39, 0.1);
 }
 
 body {
   margin: 0;
   font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif;
   background:
-    radial-gradient(circle at top right, rgba(143, 107, 47, 0.12), transparent 22%),
-    linear-gradient(180deg, #f8f1e5 0%, var(--bg) 100%);
+    radial-gradient(circle at top right, rgba(255, 255, 255, 0.85), transparent 24%),
+    linear-gradient(180deg, #fbf8f1 0%, var(--bg) 100%);
   color: var(--text);
 }
 
 .app {
   min-height: 100vh;
-  padding: 14px;
+  padding: 12px;
   box-sizing: border-box;
 }
 
@@ -32,7 +32,7 @@ body {
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .header-copy h1,
@@ -46,7 +46,7 @@ body {
 }
 
 .header-copy h1 {
-  font-size: 26px;
+  font-size: 27px;
   line-height: 1.1;
 }
 
@@ -150,8 +150,8 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  border-radius: 18px;
-  padding: 10px 14px;
+  border-radius: 16px;
+  padding: 9px 13px;
   background: linear-gradient(180deg, rgba(31, 76, 64, 0.08), rgba(31, 76, 64, 0.02));
   border: 1px solid rgba(31, 76, 64, 0.12);
   margin-bottom: 12px;
@@ -167,8 +167,8 @@ body {
 .controls,
 .result-panel,
 .settings-shell {
-  border-radius: 20px;
-  padding: 14px;
+  border-radius: 18px;
+  padding: 13px;
 }
 
 .controls {
@@ -199,7 +199,7 @@ textarea,
 input {
   width: 100%;
   box-sizing: border-box;
-  padding: 9px 11px;
+  padding: 8px 10px;
   border-radius: 12px;
   border: 1px solid var(--line);
   background: rgba(255, 255, 255, 0.9);
@@ -208,7 +208,7 @@ input {
 
 textarea {
   resize: vertical;
-  min-height: 70px;
+  min-height: 58px;
 }
 
 .rewrite-grid {
@@ -219,7 +219,7 @@ textarea {
 
 .button-cluster {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1.2fr 0.8fr;
   gap: 8px;
 }
 
@@ -231,7 +231,7 @@ textarea {
 
 button {
   border: 0;
-  border-radius: 13px;
+  border-radius: 14px;
   background: linear-gradient(180deg, #245546 0%, var(--accent) 100%);
   color: #fff;
   padding: 10px 11px;
@@ -305,8 +305,8 @@ button[disabled] {
 }
 
 #result-output {
-  min-height: 220px;
-  margin: 12px 0 0;
+  min-height: 260px;
+  margin: 10px 0 0;
   padding: 14px;
   border-radius: 16px;
   border: 1px solid rgba(190, 168, 135, 0.65);
@@ -314,7 +314,7 @@ button[disabled] {
   white-space: pre-wrap;
   overflow: auto;
   line-height: 1.6;
-  max-height: 520px;
+  max-height: 560px;
   overflow-wrap: anywhere;
 }
 
@@ -325,7 +325,7 @@ button[disabled] {
 }
 
 .settings-shell {
-  padding: 22px;
+  padding: 18px;
 }
 
 .settings-head {

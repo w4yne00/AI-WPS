@@ -74,8 +74,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.5.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.5.1-20260501` |
+| Version | `v0.6.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.6.0-20260501` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -100,19 +100,22 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
+| Five task entries | WPS AI tab exposes rewrite, continue, proofread, format, and settings as separate ribbon actions |
+| Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
 | Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, and spacing before Chinese punctuation |
 | AI typo check | Uses the enterprise AI provider to detect Chinese typos, wrong words, and suspicious wording; falls back safely when no API key is configured |
 | Word format preview | Builds a template-based paragraph style change plan before applying it |
 | Word rewrite/continue | Rewrites or continues from the current selected text, calls the enterprise AI API, and supports local mock fallback |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Runtime probe and settings | Task pane settings page for API key import, provider status, runtime probe, and diagnostics |
+| Runtime probe and settings | Settings page for API key import, provider status, runtime probe, and diagnostics |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, and operational scripts |
 
 ## Latest Updates
 
 | Version | Update |
 | --- | --- |
+| `v0.6.0-alpha` | Reworked the WPS AI tab into five task entries, split the task pane into mode-specific Word workflows, localized visible titles, and moved template selection into proofreading and formatting |
 | `v0.5.1-alpha` | Added a simple ribbon button icon and moved template selection into settings to keep the home task pane focused |
 | `v0.5.0-alpha` | Added company Word template driven proofreading and format preview; added AI typo detection via enterprise provider |
 | `v0.4.x-alpha` | Added Kylin V10 ARM offline Python runtime wheel bundle for `uvicorn` mode |

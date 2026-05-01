@@ -2,6 +2,47 @@
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
+  var modeConfig = {
+    rewrite: {
+      title: "智能改写",
+      styleLabel: "改写风格",
+      primaryText: "生成改写",
+      runningText: "正在执行智能改写...",
+      doneText: "改写结果已生成。",
+      action: "rewrite",
+      showRewriteOptions: true,
+      showInstruction: true,
+      showTemplate: false
+    },
+    continue: {
+      title: "智能续写",
+      styleLabel: "续写风格",
+      primaryText: "生成续写",
+      runningText: "正在执行智能续写...",
+      doneText: "续写结果已生成。",
+      action: "continue",
+      showRewriteOptions: true,
+      showInstruction: true,
+      showTemplate: false
+    },
+    proofread: {
+      title: "格式校对",
+      primaryText: "开始校对",
+      showRewriteOptions: false,
+      showInstruction: false,
+      showTemplate: true
+    },
+    format: {
+      title: "智能排版",
+      primaryText: "生成排版预览",
+      showRewriteOptions: false,
+      showInstruction: false,
+      showTemplate: true
+    },
+    settings: {
+      title: "设置"
+    }
+  };
   var state = {
     templates: [],
     selectedTemplateId: "technical-file-format-requirements",
@@ -15,56 +56,67 @@
     rewriteResult: null,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
-    providerName: "N/A",
-    providerAuthSource: "N/A",
-    currentView: "home",
+    providerName: "未检测",
+    providerAuthSource: "未检测",
+    currentMode: "rewrite",
     copyText: "",
     scopeWatcher: null
   };
 
+  function byId(id) {
+    return document.getElementById(id);
+  }
+
   function setStatus(message) {
-    document.getElementById("status-line").textContent = message;
-    document.getElementById("result-mode-chip").textContent = message || "等待运行";
+    byId("status-line").textContent = message;
+    byId("result-mode-chip").textContent = message || "等待运行";
   }
 
   function isTaskpanePage() {
-    return Boolean(document.getElementById(TASKPANE_ROOT_ID));
+    return Boolean(byId(TASKPANE_ROOT_ID));
+  }
+
+  function getInitialMode() {
+    var match = /[?&]mode=([^&]+)/.exec(window.location.search || "");
+    var mode = match ? decodeURIComponent(match[1]) : "rewrite";
+    return modeConfig[mode] ? mode : "rewrite";
   }
 
   function setTrace(traceId) {
     state.traceId = traceId || "";
-    document.getElementById("trace-line").textContent = traceId || "N/A";
+    byId("trace-line").textContent = traceId || "未检测";
   }
 
   function setProviderLine(providerName, configured) {
-    var detail = providerName || "N/A";
+    var detail = providerName || "未检测";
     if (typeof configured === "boolean") {
-      detail += configured ? " / configured" : " / mock";
+      detail += configured ? " / 已配置" : " / 模拟";
     }
     state.providerName = detail;
-    document.getElementById("provider-line").textContent = "Provider: " + detail;
-    document.getElementById("settings-provider-line").textContent = "Provider: " + detail;
+    byId("provider-line").textContent = "接口：" + detail;
+    byId("settings-provider-line").textContent = "接口：" + detail;
   }
 
   function setProviderAuthLine(source) {
-    state.providerAuthSource = source || "N/A";
-    document.getElementById("provider-auth-line").textContent = "Provider Auth: " + state.providerAuthSource;
+    state.providerAuthSource = source || "未检测";
+    byId("provider-auth-line").textContent = "认证来源：" + state.providerAuthSource;
   }
 
   function setScopeLine(label) {
-    var text = label || "当前范围：未检测";
-    document.getElementById("scope-line").textContent = text.replace(/^当前范围：/, "");
-    document.getElementById("settings-scope-line").textContent = text.replace(/^当前范围：/, "");
+    var text = label || "识别范围：未检测";
+    text = text.replace(/^当前范围：/, "").replace(/^识别范围：/, "");
+    byId("scope-line").textContent = text;
+    byId("settings-scope-line").textContent = text;
   }
 
   function setHealthBadge(mode, text) {
-    var node = document.getElementById("health-indicator");
+    var node = byId("health-indicator");
     node.className = "badge " + mode;
     node.textContent = text;
   }
 
   function setResult(text) {
-    var output = document.getElementById("result-output");
+    var output = byId("result-output");
     output.hidden = false;
     output.textContent = text;
     state.copyText = text || "";
@@ -75,13 +127,33 @@
   }
 
   function setApplyEnabled(enabled) {
-    document.getElementById("btn-apply").disabled = !enabled;
+    byId("btn-apply").disabled = !enabled;
   }
 
   function switchView(viewName) {
-    state.currentView = viewName;
-    document.getElementById("home-view").classList.toggle("active", viewName === "home");
-    document.getElementById("settings-view").classList.toggle("active", viewName === "settings");
+    byId("home-view").classList.toggle("active", viewName === "home");
+    byId("settings-view").classList.toggle("active", viewName === "settings");
+  }
+
+  function switchMode(mode) {
+    var config = modeConfig[mode] || modeConfig.rewrite;
+    state.currentMode = modeConfig[mode] ? mode : "rewrite";
+    byId("task-title").textContent = config.title;
+
+    if (state.currentMode === "settings") {
+      switchView("settings");
+      return;
+    }
+
+    switchView("home");
+    byId("rewrite-options").hidden = !config.showRewriteOptions;
+    byId("instruction-block").hidden = !config.showInstruction;
+    byId("template-options").hidden = !config.showTemplate;
+    byId("style-field-label").textContent = config.styleLabel || "改写风格";
+    byId("btn-run-primary").textContent = config.primaryText;
+    state.pendingApplyAction = "";
+    setApplyEnabled(false);
+    setStatus("等待操作。");
   }
 
   function getHostApplication() {
@@ -143,16 +215,9 @@
   }
 
   function collectHeadings(paragraphs) {
-    var headings = [];
-    for (var i = 0; i < paragraphs.length; i += 1) {
-      if ((paragraphs[i].outlineLevel || 0) > 0) {
-        headings.push({
-          level: paragraphs[i].outlineLevel,
-          text: paragraphs[i].text
-        });
-      }
-    }
-    return headings;
+    return paragraphs.filter(function (item) {
+      return (item.outlineLevel || 0) > 0;
+    });
   }
 
   function extractDocument(selectionMode, rewriteAction) {
@@ -200,9 +265,9 @@
         requireSelection: requireSelection
       })
       : {
-        ok: !!selectionText,
+        ok: !!selectionText || !requireSelection,
         selectionMode: selectionText ? "selection" : "document",
-        scopeLabel: selectionText ? "当前范围：选中文本" : "当前范围：全文",
+        scopeLabel: selectionText ? "识别范围：选中文本" : "识别范围：全文",
         selectedText: selectionText,
         message: "请先用鼠标选中一段文字，再执行改写或续写。"
       };
@@ -214,7 +279,7 @@
   function updateScopeIndicator() {
     var document = getActiveDocument();
     if (!document) {
-      setScopeLine("当前范围：未检测");
+      setScopeLine("识别范围：未检测");
       return;
     }
     resolveSelectionScope(false);
@@ -264,7 +329,7 @@
       var templates = results[1];
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
-      setProviderLine(health.data.providerType || "N/A", health.data.providerConfigured);
+      setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       setProviderAuthLine(health.data.providerAuthSource || "none");
       resolveSelectionScope(false);
       state.templates = templates.data.templates || [];
@@ -272,37 +337,37 @@
       setStatus("配置已刷新。");
     }).catch(function (error) {
       setHealthBadge("badge-error", "不可达");
-      setProviderLine("N/A");
-      setProviderAuthLine("N/A");
+      setProviderLine("未检测");
+      setProviderAuthLine("未检测");
       setStatus("刷新失败：" + error.message);
       setResult("无法连接本地适配层：" + error.message);
     });
   }
 
   function saveApiKey() {
-    var input = document.getElementById("provider-api-key");
+    var input = byId("provider-api-key");
     var apiKey = (input.value || "").trim();
     if (!apiKey) {
-      setStatus("请输入 API Key。");
-      setResult("请输入 API Key 后再保存。");
+      setStatus("请输入企业接口密钥。");
+      setResult("请输入企业接口密钥后再保存。");
       return;
     }
-    setStatus("正在保存 API Key...");
+    setStatus("正在保存企业接口密钥...");
     request("/provider/api-key", { apiKey: apiKey })
       .then(function (body) {
         input.value = "";
         setProviderAuthLine(body.data.authSource || "file");
-        setStatus("API Key 已保存。");
+        setStatus("企业接口密钥已保存。");
         return refreshConfig();
       })
       .catch(function (error) {
-        setStatus("保存 API Key 失败：" + error.message);
+        setStatus("保存企业接口密钥失败：" + error.message);
         setResult(error.message);
       });
   }
 
   function clearApiKey() {
-    setStatus("正在清除 API Key...");
+    setStatus("正在清除企业接口密钥...");
     fetch(ADAPTER_BASE_URL + "/provider/api-key", {
       method: "DELETE"
     }).then(function (response) {
@@ -313,24 +378,24 @@
         return body;
       });
     }).then(function (body) {
-      document.getElementById("provider-api-key").value = "";
+      byId("provider-api-key").value = "";
       setProviderAuthLine(body.data.authSource || "none");
-      setStatus("API Key 已清除。");
+      setStatus("企业接口密钥已清除。");
       return refreshConfig();
     }).catch(function (error) {
-      setStatus("清除 API Key 失败：" + error.message);
+      setStatus("清除企业接口密钥失败：" + error.message);
       setResult(error.message);
     });
   }
 
   function renderTemplateOptions() {
-    var select = document.getElementById("template-select");
+    var select = byId("template-select");
     select.innerHTML = "";
 
     if (!state.templates.length) {
       var fallback = document.createElement("option");
       fallback.value = "general-office";
-      fallback.textContent = "general-office";
+      fallback.textContent = "通用办公模板";
       select.appendChild(fallback);
       state.selectedTemplateId = "general-office";
       return;
@@ -339,7 +404,7 @@
     state.templates.forEach(function (template) {
       var option = document.createElement("option");
       option.value = template.id;
-      option.textContent = template.name + " (" + template.id + ")";
+      option.textContent = template.name;
       if (template.id === state.selectedTemplateId) {
         option.selected = true;
       }
@@ -348,30 +413,37 @@
   }
 
   function renderIssues(issues) {
+    if (!issues || !issues.length) {
+      return "未发现需要处理的问题。";
+    }
     return issues.map(function (issue) {
       return [
-        "规则: " + issue.ruleId,
-        "级别: " + issue.severity,
-        "段落: " + (issue.paragraphIndex || "N/A"),
-        "说明: " + issue.message,
-        "建议: " + (issue.suggestion || "N/A"),
-        "自动修复: " + issue.autoFixable
+        "规则：" + issue.ruleId,
+        "级别：" + issue.severity,
+        "段落：" + (issue.paragraphIndex || "无"),
+        "说明：" + issue.message,
+        "建议：" + (issue.suggestion || "无"),
+        "可自动修复：" + (issue.autoFixable ? "是" : "否")
       ].join(" | ");
     }).join("\n");
   }
 
   function renderFormatChanges(summary, changes) {
     var lines = [
-      "模板: " + summary.templateId,
-      "变更数: " + summary.changeCount,
+      "模板：" + summary.templateId,
+      "变更数：" + summary.changeCount,
       ""
     ];
 
+    if (!changes || !changes.length) {
+      lines.push("当前文档暂无可预览的排版变更。");
+      return lines.join("\n");
+    }
+
     changes.forEach(function (change) {
       lines.push(
-        "P" + change.paragraphIndex +
-        ": " + change.currentStyle +
-        " -> " + change.targetStyle +
+        "第 " + change.paragraphIndex + " 段：" +
+        change.currentStyle + " → " + change.targetStyle +
         " | " + change.reason
       );
     });
@@ -380,7 +452,7 @@
   }
 
   function copyResult() {
-    var text = state.copyText || document.getElementById("result-output").textContent || "";
+    var text = state.copyText || byId("result-output").textContent || "";
     if (!text.trim()) {
       setStatus("暂无可复制的结果。");
       return;
@@ -477,19 +549,13 @@
       if (writableSelection.Range && typeof writableSelection.Range.Text !== "undefined") {
         writableSelection.Range.Text = state.rewriteResult.rewrittenText;
       }
-    } else {
-      if (document.Content) {
-        document.Content.Text = state.rewriteResult.rewrittenText;
-      }
-      var paragraphs = getParagraphs(document);
-      if (paragraphs.length > 0) {
-        paragraphs[0].Text = state.rewriteResult.rewrittenText;
-      }
+    } else if (document.Content) {
+      document.Content.Text = state.rewriteResult.rewrittenText;
     }
 
     state.pendingApplyAction = "";
     setApplyEnabled(false);
-    setStatus("改写结果已应用。");
+    setStatus("结果已应用。");
   }
 
   function runProofread() {
@@ -516,12 +582,8 @@
       });
   }
 
-  function openSettings() {
-    switchView("settings");
-  }
-
   function closeSettings() {
-    switchView("home");
+    switchMode("rewrite");
   }
 
   function runFormatPreview() {
@@ -566,7 +628,8 @@
       return;
     }
 
-    setStatus(action === "continue" ? "正在执行选中续写..." : "正在执行选中改写...");
+    var config = modeConfig[state.currentMode] || modeConfig.rewrite;
+    setStatus(config.runningText);
     request("/word/rewrite", state.latestDocumentPayload)
       .then(function (body) {
         state.pendingApplyAction = "rewrite";
@@ -574,10 +637,10 @@
         setApplyEnabled(true);
         setTrace(body.traceId);
         setRewriteResult(body.data);
-        setStatus("改写结果已生成。");
+        setStatus(config.doneText);
       })
       .catch(function (error) {
-        setStatus("改写失败：" + error.message);
+        setStatus("生成失败：" + error.message);
         setResult(error.message);
       });
   }
@@ -588,26 +651,20 @@
     var headingCount = collectHeadings(paragraphs).length;
     var scope = resolveSelectionScope(false);
     var lines = [
-      "Runtime Probe",
+      "运行探针",
       "",
-      "WPS global: " + (typeof window.wps !== "undefined" || typeof window.Application !== "undefined"),
-      "Active document: " + Boolean(document),
-      "Selection available: " + Boolean(document && document.Selection),
-      "Document name: " + ((document && document.Name) || "N/A"),
-      "Paragraph count: " + paragraphs.length,
-      "Heading count: " + headingCount,
-      scope.scopeLabel,
-      "Adapter base URL: " + ADAPTER_BASE_URL
+      "WPS 全局对象：" + (typeof window.wps !== "undefined" || typeof window.Application !== "undefined"),
+      "活动文档：" + Boolean(document),
+      "选区对象：" + Boolean(document && document.Selection),
+      "文档名称：" + ((document && document.Name) || "无"),
+      "段落数量：" + paragraphs.length,
+      "标题数量：" + headingCount,
+      scope.scopeLabel.replace(/^当前范围：/, "识别范围："),
+      "适配服务地址：" + ADAPTER_BASE_URL
     ];
 
     setResult(lines.join("\n"));
-    setStatus("运行时探针已执行。");
-  }
-
-  function collectHeadings(paragraphs) {
-    return paragraphs.filter(function (item) {
-      return (item.outlineLevel || 0) > 0;
-    });
+    setStatus("运行探针已执行。");
   }
 
   function applyPreview() {
@@ -621,48 +678,59 @@
     }
   }
 
+  function runPrimaryAction() {
+    if (state.currentMode === "rewrite") {
+      runRewriteAction("rewrite");
+      return;
+    }
+    if (state.currentMode === "continue") {
+      runRewriteAction("continue");
+      return;
+    }
+    if (state.currentMode === "proofread") {
+      runProofread();
+      return;
+    }
+    if (state.currentMode === "format") {
+      runFormatPreview();
+    }
+  }
+
   function bindEvents() {
-    document.getElementById("template-select").addEventListener("change", function (event) {
+    byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
     });
-    document.getElementById("rewrite-style").addEventListener("change", function (event) {
+    byId("rewrite-style").addEventListener("change", function (event) {
       state.rewriteStyle = event.target.value;
     });
-    document.getElementById("focus-point").addEventListener("change", function (event) {
+    byId("focus-point").addEventListener("change", function (event) {
       state.focusPoint = event.target.value;
     });
-    document.getElementById("length-mode").addEventListener("change", function (event) {
+    byId("length-mode").addEventListener("change", function (event) {
       state.lengthMode = event.target.value;
     });
-    document.getElementById("user-instruction").addEventListener("input", function (event) {
+    byId("user-instruction").addEventListener("input", function (event) {
       state.userInstruction = event.target.value;
     });
-    document.getElementById("btn-save-api-key").addEventListener("click", saveApiKey);
-    document.getElementById("btn-clear-api-key").addEventListener("click", clearApiKey);
-    document.getElementById("btn-open-settings").addEventListener("click", openSettings);
-    document.getElementById("btn-close-settings").addEventListener("click", closeSettings);
-    document.getElementById("btn-refresh").addEventListener("click", refreshConfig);
-    document.getElementById("btn-proofread").addEventListener("click", runProofread);
-    document.getElementById("btn-format").addEventListener("click", runFormatPreview);
-    document.getElementById("btn-rewrite-selection").addEventListener("click", function () {
-      runRewriteAction("rewrite");
-    });
-    document.getElementById("btn-continue-selection").addEventListener("click", function () {
-      runRewriteAction("continue");
-    });
-    document.getElementById("btn-probe").addEventListener("click", runProbe);
-    document.getElementById("btn-apply").addEventListener("click", applyPreview);
-    document.getElementById("btn-copy-result").addEventListener("click", copyResult);
+    byId("btn-save-api-key").addEventListener("click", saveApiKey);
+    byId("btn-clear-api-key").addEventListener("click", clearApiKey);
+    byId("btn-close-settings").addEventListener("click", closeSettings);
+    byId("btn-refresh").addEventListener("click", refreshConfig);
+    byId("btn-probe").addEventListener("click", runProbe);
+    byId("btn-apply").addEventListener("click", applyPreview);
+    byId("btn-copy-result").addEventListener("click", copyResult);
+    byId("btn-run-primary").addEventListener("click", runPrimaryAction);
   }
 
   if (!isTaskpanePage()) {
-    window.openTaskpane = function () {
-      return true;
+    window.openTaskpane = function (mode) {
+      return switchMode(mode || "rewrite");
     };
     return;
   }
 
   bindEvents();
+  switchMode(getInitialMode());
   refreshConfig();
   startScopeWatcher();
 })();

@@ -10,15 +10,26 @@ function OnAddinLoad(ribbonUI) {
   return true;
 }
 
+function resolveMode(controlId) {
+  var modeMap = {
+    btnAiRewrite: "rewrite",
+    btnAiContinue: "continue",
+    btnAiProofread: "proofread",
+    btnAiFormat: "format",
+    btnAiSettings: "settings",
+    btnWpsAiAssistant: "rewrite"
+  };
+  return modeMap[controlId] || "rewrite";
+}
+
 function OnAction(control) {
-  if (control.Id === "btnWpsAiAssistant") {
-    try {
-      var url = location.href.replace(/[^\/]*$/, "");
-      var taskPane = window.Application.CreateTaskPane(url + "taskpane.html");
-      taskPane.Visible = true;
-    } catch (error) {
-      window.Application.confirm("错误：" + error.message);
-    }
+  try {
+    var mode = resolveMode(control.Id || control.id);
+    var url = location.href.replace(/[^\/]*$/, "");
+    var taskPane = window.Application.CreateTaskPane(url + "taskpane.html?mode=" + encodeURIComponent(mode));
+    taskPane.Visible = true;
+  } catch (error) {
+    window.Application.confirm("错误：" + error.message);
   }
 
   return true;
