@@ -1,17 +1,6 @@
 {
   "servicePort": 18100,
-  "activeProviderId": "xingchen-api",
-  "providers": [
-    {
-      "id": "xingchen-api",
-      "name": "星辰 API",
-      "type": "enterprise-chat-api",
-      "baseUrl": "https://aibot.chinasatnet.com.cn/v1",
-      "apiKeyEnv": "ENTERPRISE_AI_API_KEY",
-      "chatPath": "/chat-messages",
-      "mode": "blocking"
-    }
-  ],
+  "providerName": "星辰 API",
   "providerType": "enterprise-chat-api",
   "providerBaseUrl": "https://aibot.chinasatnet.com.cn/v1",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",

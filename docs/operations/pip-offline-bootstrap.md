@@ -1,6 +1,6 @@
 # pip 离线引导包安装说明
 
-适用场景：麒麟 V10 ARM 目标机已有 Python 3.8，但没有 `pip` 命令，导致无法安装 `kylin-v10-arm-py38-runtime-deps-20260430` 中的运行依赖。
+适用场景：麒麟 V10 ARM 目标机已有 Python 3.8，但没有 `pip` 命令，导致无法安装 `kylin-v10-arm-py38-runtime-deps-20260506` 中的运行依赖。
 
 离线包路径：
 
@@ -27,7 +27,7 @@ PYTHON_BIN=/usr/bin/python3.8 bash scripts/install_pip.sh
 ## 2. 安装 AI-WPS 运行依赖
 
 ```bash
-tar -xzf kylin-v10-arm-py38-runtime-deps-20260430.tar.gz
+tar -xzf kylin-v10-arm-py38-runtime-deps-20260506.tar.gz
 cd kylin-v10-arm-py38
 python3 -m pip install --no-index --find-links wheels -r requirements-runtime.txt
 ```

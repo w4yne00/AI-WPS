@@ -6,7 +6,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.config import load_settings, save_provider_base_url, save_active_provider
+from app.core.config import load_settings, save_provider_base_url
 from app.services.provider_client import (
     build_rewrite_prompt,
     build_typo_prompt,
@@ -70,117 +70,25 @@ class EnterpriseProviderTests(unittest.TestCase):
         config_file.unlink()
         tmp_dir.rmdir()
 
-    def test_load_settings_uses_active_provider_from_provider_list(self) -> None:
+    def test_save_provider_base_url_updates_provider_name(self) -> None:
         tmp_dir = Path("tmp-test-config")
         tmp_dir.mkdir(exist_ok=True)
         config_file = tmp_dir / "adapter.json"
         config_file.write_text(
             """
             {
-              "activeProviderId": "backup",
-              "providers": [
-                {
-                  "id": "primary",
-                  "name": "主接口",
-                  "baseUrl": "https://primary.example/v1",
-                  "apiKeyEnv": "PRIMARY_KEY"
-                },
-                {
-                  "id": "backup",
-                  "name": "备用接口",
-                  "baseUrl": "https://backup.example/v1",
-                  "apiKeyEnv": "BACKUP_KEY",
-                  "chatPath": "/chat-messages"
-                }
-              ]
+              "providerName": "旧名称",
+              "providerBaseUrl": "https://old.example/v1"
             }
             """,
             encoding="utf-8",
         )
 
-        settings = load_settings(config_file)
-
-        self.assertEqual(settings.provider_id, "backup")
-        self.assertEqual(settings.provider_name, "备用接口")
-        self.assertEqual(settings.provider_base_url, "https://backup.example/v1")
-        self.assertEqual(settings.provider_api_key_env, "BACKUP_KEY")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
-
-    def test_save_provider_base_url_updates_named_provider(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "activeProviderId": "primary",
-              "providers": [
-                {"id": "primary", "name": "旧名称", "baseUrl": "https://old.example/v1"}
-              ]
-            }
-            """,
-            encoding="utf-8",
-        )
-
-        save_provider_base_url("https://new.example/v1", config_file, provider_id="primary", provider_name="新名称")
+        save_provider_base_url("https://new.example/v1", config_file, provider_name="新名称")
         settings = load_settings(config_file)
 
         self.assertEqual(settings.provider_name, "新名称")
         self.assertEqual(settings.provider_base_url, "https://new.example/v1")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
-
-    def test_save_active_provider_switches_current_provider(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "activeProviderId": "primary",
-              "providers": [
-                {"id": "primary", "name": "主接口", "baseUrl": "https://primary.example/v1"},
-                {"id": "backup", "name": "备用接口", "baseUrl": "https://backup.example/v1"}
-              ]
-            }
-            """,
-            encoding="utf-8",
-        )
-
-        save_active_provider("backup", config_file)
-        settings = load_settings(config_file)
-
-        self.assertEqual(settings.provider_id, "backup")
-        self.assertEqual(settings.provider_base_url, "https://backup.example/v1")
-
-        config_file.unlink()
-        tmp_dir.rmdir()
-
-    def test_saving_inactive_provider_does_not_switch_active_provider(self) -> None:
-        tmp_dir = Path("tmp-test-config")
-        tmp_dir.mkdir(exist_ok=True)
-        config_file = tmp_dir / "adapter.json"
-        config_file.write_text(
-            """
-            {
-              "activeProviderId": "primary",
-              "providers": [
-                {"id": "primary", "name": "主接口", "baseUrl": "https://primary.example/v1"},
-                {"id": "backup", "name": "备用接口", "baseUrl": "https://backup.example/v1"}
-              ]
-            }
-            """,
-            encoding="utf-8",
-        )
-
-        save_provider_base_url("https://new-backup.example/v1", config_file, provider_id="backup")
-        settings = load_settings(config_file)
-
-        self.assertEqual(settings.provider_id, "primary")
-        self.assertEqual(settings.provider_base_url, "https://primary.example/v1")
 
         config_file.unlink()
         tmp_dir.rmdir()

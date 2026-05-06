@@ -2,6 +2,10 @@
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
+  var fallbackTemplates = [
+    { id: "technical-file-format-requirements", name: "技术文件格式及书写要求" },
+    { id: "general-office", name: "通用办公模板" }
+  ];
   var modeConfig = {
     rewrite: {
       title: "智能改写",
@@ -56,8 +60,6 @@
     rewriteResult: null,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
-    providers: [],
-    activeProviderId: "",
     providerName: "未检测",
     providerAuthSource: "未检测",
     providerBaseUrl: "",
@@ -126,55 +128,9 @@
     byId("provider-base-url").value = state.providerBaseUrl;
   }
 
-  function getActiveProvider() {
-    for (var i = 0; i < state.providers.length; i += 1) {
-      if (state.providers[i].id === state.activeProviderId || state.providers[i].active) {
-        return state.providers[i];
-      }
-    }
-    return state.providers[0] || null;
-  }
-
-  function renderProviderOptions() {
-    var select = byId("provider-active-select");
-    select.innerHTML = "";
-    if (!state.providers.length) {
-      var empty = document.createElement("option");
-      empty.value = "";
-      empty.textContent = "未检测到模型提供商";
-      select.appendChild(empty);
-      return;
-    }
-    state.providers.forEach(function (provider) {
-      var option = document.createElement("option");
-      option.value = provider.id;
-      option.textContent = provider.name + " (" + provider.id + ")";
-      if (provider.id === state.activeProviderId || provider.active) {
-        option.selected = true;
-      }
-      select.appendChild(option);
-    });
-  }
-
-  function previewSelectedProvider() {
-    var providerId = byId("provider-active-select").value;
-    for (var i = 0; i < state.providers.length; i += 1) {
-      if (state.providers[i].id === providerId) {
-        byId("provider-name").value = state.providers[i].name || "";
-        byId("provider-base-url").value = state.providers[i].baseUrl || "";
-        return;
-      }
-    }
-  }
-
   function applyProviderConfig(configData) {
-    var providers = configData.providers || [];
-    state.providers = providers;
-    state.activeProviderId = configData.activeProviderId || "";
-    renderProviderOptions();
-    var activeProvider = getActiveProvider();
-    setProviderName((activeProvider && activeProvider.name) || configData.providerName || "企业大模型接口");
-    setProviderBaseUrl((activeProvider && activeProvider.baseUrl) || configData.providerBaseUrl || "");
+    setProviderName(configData.providerName || "企业大模型接口");
+    setProviderBaseUrl(configData.providerBaseUrl || "");
   }
 
   function showProviderEditor(show) {
@@ -189,10 +145,11 @@
     setProviderLine("mock", false);
     setProviderName("本地 mock");
     setProviderAuthLine("none");
-    setStatus("本地适配服务未启动。");
+    setStatus("本地适配服务暂不可用。");
     setResult([
-      "本地适配服务未启动或端口 18100 未监听。",
-      "这不是大模型接口故障；启动 adapter 后，未配置企业密钥时会继续使用 mock 模型。",
+      "本地适配服务暂不可用，插件无法访问 http://127.0.0.1:18100。",
+      "请确认已执行 adapter 一键启动脚本，并用健康检查确认 /health 可访问。",
+      "这不是大模型接口故障；adapter 启动后，未配置企业密钥时会继续使用 mock 模型。",
       "后台返回：" + message
     ].join("\n"));
   }
@@ -438,17 +395,21 @@
     });
   }
 
+  function renderFallbackTemplateOptions() {
+    state.templates = fallbackTemplates.slice();
+    renderTemplateOptions();
+  }
+
   function saveProviderBaseUrl() {
     var input = byId("provider-base-url");
     var baseUrl = (input.value || "").trim();
     var providerName = (byId("provider-name").value || "").trim();
-    var providerId = byId("provider-active-select").value || state.activeProviderId || "";
     if (!baseUrl) {
       setResult("请输入大模型 API URL 后再保存。");
       return;
     }
     setStatus("正在保存大模型 API URL...");
-    request("/provider/base-url", { baseUrl: baseUrl, providerId: providerId, providerName: providerName })
+    request("/provider/base-url", { baseUrl: baseUrl, providerName: providerName })
       .then(function (body) {
         if (body.data.providerName) {
           setProviderName(body.data.providerName);
@@ -466,14 +427,13 @@
   function saveApiKey() {
     var input = byId("provider-api-key");
     var apiKey = (input.value || "").trim();
-    var providerId = byId("provider-active-select").value || state.activeProviderId || "";
     if (!apiKey) {
       setStatus("请输入企业接口密钥。");
       setResult("请输入企业接口密钥后再保存。");
       return;
     }
     setStatus("正在保存企业接口密钥...");
-    request("/provider/api-key", { apiKey: apiKey, providerId: providerId })
+    request("/provider/api-key", { apiKey: apiKey })
       .then(function (body) {
         input.value = "";
         setProviderAuthLine(body.data.authSource || "file");
@@ -482,25 +442,6 @@
       })
       .catch(function (error) {
         setStatus("保存企业接口密钥失败：" + error.message);
-        setResult(error.message);
-      });
-  }
-
-  function setActiveProvider() {
-    var providerId = byId("provider-active-select").value;
-    if (!providerId) {
-      setResult("请选择要启用的模型提供商。");
-      return;
-    }
-    setStatus("正在切换模型提供商...");
-    request("/provider/active", { providerId: providerId })
-      .then(function () {
-        state.activeProviderId = providerId;
-        setStatus("当前模型提供商已切换。");
-        return refreshConfig();
-      })
-      .catch(function (error) {
-        setStatus("切换模型提供商失败：" + error.message);
         setResult(error.message);
       });
   }
@@ -851,8 +792,6 @@
     byId("btn-save-api-key").addEventListener("click", saveApiKey);
     byId("btn-clear-api-key").addEventListener("click", clearApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
-    byId("btn-set-active-provider").addEventListener("click", setActiveProvider);
-    byId("provider-active-select").addEventListener("change", previewSelectedProvider);
     byId("btn-edit-provider").addEventListener("click", function () {
       showProviderEditor(true);
     });
@@ -873,6 +812,7 @@
   }
 
   bindEvents();
+  renderFallbackTemplateOptions();
   switchMode(getInitialMode());
   refreshConfig();
   startScopeWatcher();

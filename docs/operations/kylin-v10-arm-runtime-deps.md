@@ -16,7 +16,7 @@ This project can run the local adapter in two modes:
 The offline runtime dependency package is:
 
 ```text
-dist-offline-deps/kylin-v10-arm-py38-runtime-deps-20260430.tar.gz
+dist-offline-deps/kylin-v10-arm-py38-runtime-deps-20260506.tar.gz
 ```
 
 It contains:
@@ -26,12 +26,17 @@ It contains:
 - `SHA256SUMS`
 - `wheels/*.whl`
 
+20260506 package note:
+
+- Adds `exceptiongroup==1.2.2`, required by `anyio` on Python 3.8.
+- Fixes offline install failures like `No matching distribution found for exceptiongroup>=1.0.2; python_version < "3.11"`.
+
 ## Target Install
 
 On the Kylin V10 ARM target machine:
 
 ```bash
-tar -xzf kylin-v10-arm-py38-runtime-deps-20260430.tar.gz
+tar -xzf kylin-v10-arm-py38-runtime-deps-20260506.tar.gz
 cd kylin-v10-arm-py38
 bash install_runtime_deps.sh
 ```
@@ -46,6 +51,13 @@ Then restart the adapter:
 
 ```bash
 bash scripts/restart_adapter.sh 18100
+```
+
+To force FastAPI/uvicorn mode instead of fallback standalone mode:
+
+```bash
+bash scripts/start_uvicorn_adapter.sh 18100
+bash scripts/check_health.sh 18100
 ```
 
 The expected startup output should include:
