@@ -1,6 +1,7 @@
 import unittest
 from pathlib import Path
 import sys
+import os
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -8,6 +9,7 @@ if str(ROOT) not in sys.path:
 
 from app.core.config import load_settings, save_provider_base_url
 from app.services.provider_client import (
+    ProviderClient,
     build_rewrite_prompt,
     build_typo_prompt,
     extract_answer,
@@ -42,6 +44,26 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_api_key_env, "ENTERPRISE_AI_API_KEY")
         self.assertEqual(settings.provider_chat_path, "/chat-messages")
         self.assertEqual(settings.provider_mode, "blocking")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerName": "仅配置名称"
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.provider_base_url, "")
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -92,6 +114,46 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         config_file.unlink()
         tmp_dir.rmdir()
+
+    def test_save_provider_base_url_allows_empty_url_and_updates_name(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerName": "旧名称",
+              "providerBaseUrl": "https://old.example/v1"
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        save_provider_base_url("", config_file, provider_name="自定义供应商")
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.provider_name, "自定义供应商")
+        self.assertEqual(settings.provider_base_url, "")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_provider_requires_key_and_base_url_to_be_configured(self) -> None:
+        previous = os.environ.get("ENTERPRISE_AI_API_KEY")
+        os.environ["ENTERPRISE_AI_API_KEY"] = "secret"
+        try:
+            empty_url_client = ProviderClient(load_settings())
+            empty_url_client.settings.provider_base_url = ""
+            self.assertFalse(empty_url_client.is_configured())
+
+            configured_client = ProviderClient(load_settings())
+            configured_client.settings.provider_base_url = "https://new.example/v1"
+            self.assertTrue(configured_client.is_configured())
+        finally:
+            if previous is None:
+                os.environ.pop("ENTERPRISE_AI_API_KEY", None)
+            else:
+                os.environ["ENTERPRISE_AI_API_KEY"] = previous
 
     def test_build_rewrite_prompt_includes_user_instruction(self) -> None:
         prompt = build_rewrite_prompt(

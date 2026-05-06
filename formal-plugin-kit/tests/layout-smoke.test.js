@@ -64,6 +64,7 @@ assert.ok(js.includes("插件无法访问 http://127.0.0.1:18100"));
 assert.ok(js.includes("当前适配服务版本较旧"));
 assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
+assert.ok(!js.includes("请输入大模型 API URL 后再保存"));
 assert.ok(!js.includes("renderProviderOptions"));
 assert.ok(!js.includes("setActiveProvider"));
 assert.ok(js.includes("本地适配服务暂不可用"));

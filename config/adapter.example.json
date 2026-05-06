@@ -1,8 +1,8 @@
 {
   "servicePort": 18100,
-  "providerName": "星辰 API",
+  "providerName": "企业大模型接口",
   "providerType": "enterprise-chat-api",
-  "providerBaseUrl": "https://aibot.chinasatnet.com.cn/v1",
+  "providerBaseUrl": "",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
   "providerChatPath": "/chat-messages",
   "providerMode": "blocking",

@@ -436,22 +436,18 @@
     var input = byId("provider-base-url");
     var baseUrl = (input.value || "").trim();
     var providerName = (byId("provider-name").value || "").trim();
-    if (!baseUrl) {
-      setResult("请输入大模型 API URL 后再保存。");
-      return;
-    }
     setStatus("正在保存大模型 API URL...");
     request("/provider/base-url", { baseUrl: baseUrl, providerName: providerName })
       .then(function (body) {
-        if (body.data.providerName) {
-          setProviderName(body.data.providerName);
-        }
-        setProviderBaseUrl(body.data.providerBaseUrl || baseUrl);
+        var savedName = body.data.providerName || providerName || "企业大模型接口";
+        var savedUrl = typeof body.data.providerBaseUrl === "string" ? body.data.providerBaseUrl : baseUrl;
+        setProviderName(savedName);
+        setProviderBaseUrl(savedUrl);
         setStatus("大模型 API URL 已保存。");
         setResult([
           "模型提供商配置已保存。",
-          "名称：" + (body.data.providerName || providerName || "企业大模型接口"),
-          "URL：" + (body.data.providerBaseUrl || baseUrl)
+          "名称：" + savedName,
+          "URL：" + (savedUrl || "未配置")
         ].join("\n"));
         return refreshConfig();
       })

@@ -163,7 +163,7 @@ class ProviderClient:
         self.settings = settings or load_settings()
 
     def is_configured(self) -> bool:
-        return bool(self.get_api_key())
+        return bool(self.settings.provider_base_url.strip() and self.get_api_key())
 
     def get_auth_source(self) -> str:
         if os.getenv(self.settings.provider_api_key_env):
@@ -194,7 +194,7 @@ class ProviderClient:
             length=length,
         )
         api_key = self.get_api_key()
-        if not api_key:
+        if not self.is_configured():
             logger.info("traceId=%s provider=mock task=word.rewrite", trace_id)
             return {
                 "rewrittenText": self._mock_rewrite(text, mode, user_instruction),
@@ -256,7 +256,7 @@ class ProviderClient:
 
     def proofread_typos(self, text: str, trace_id: str) -> list:
         source_text = text.strip()
-        if not source_text or not self.get_api_key():
+        if not source_text or not self.is_configured():
             return []
 
         prompt = build_typo_prompt(source_text)

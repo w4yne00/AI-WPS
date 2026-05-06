@@ -14,7 +14,7 @@ class AppSettings:
     service_port: int = 18100
     provider_name: str = "企业大模型接口"
     provider_type: str = "enterprise-chat-api"
-    provider_base_url: str = "https://aibot.chinasatnet.com.cn/v1"
+    provider_base_url: str = ""
     provider_api_key_env: str = "ENTERPRISE_AI_API_KEY"
     provider_chat_path: str = "/chat-messages"
     provider_mode: str = "blocking"
@@ -50,7 +50,7 @@ def save_provider_base_url(
     provider_name: Optional[str] = None,
 ) -> None:
     value = base_url.strip().rstrip("/")
-    if not (value.startswith("http://") or value.startswith("https://")):
+    if value and not (value.startswith("http://") or value.startswith("https://")):
         raise ValueError("Provider base URL must start with http:// or https://")
     payload = load_config_payload(config_path)
     payload["providerBaseUrl"] = value
@@ -72,7 +72,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         service_port=payload.get("servicePort", 18100),
         provider_name=payload.get("providerName", "企业大模型接口"),
         provider_type=payload.get("providerType", "enterprise-chat-api"),
-        provider_base_url=payload.get("providerBaseUrl", payload.get("difyBaseUrl", "https://aibot.chinasatnet.com.cn/v1")),
+        provider_base_url=payload.get("providerBaseUrl", payload.get("difyBaseUrl", "")),
         provider_api_key_env=payload.get("providerApiKeyEnv", payload.get("difyApiKeyEnv", "ENTERPRISE_AI_API_KEY")),
         provider_chat_path=payload.get("providerChatPath", "/chat-messages"),
         provider_mode=payload.get("providerMode", "blocking"),

@@ -74,8 +74,8 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.6.7-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.6.7-20260506` |
+| 当前版本 | `v0.6.8-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.6.8-20260506` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
@@ -115,6 +115,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.6.8-alpha` | 修复模型配置清空逻辑：空的大模型 API URL 可以保存，模型提供商名称会随 URL 一起保存，并且只有 API URL 与 API Key 同时存在时才显示已配置 |
 | `v0.6.7-alpha` | 修复旧 standalone adapter 占用 `18100` 导致 uvicorn 未真正启动的问题，健康检查增加运行模式提示，将裸露的 `Failed to fetch` 改为可执行诊断信息，并稳定单一模型供应商 URL/API Key 保存反馈 |
 | `v0.6.6-alpha` | 修复 Python 3.8 离线依赖缺少 `exceptiongroup` 的安装问题，新增 uvicorn 一键启动说明，模板下拉增加本地兜底，并将设置页回退为单一模型供应商配置 |
 | `v0.6.5-alpha` | 修复 Ribbon 图标显示为问号的问题，模型提供商名称改为可配置，并支持从后台多个 provider 中选择当前激活接口 |
@@ -228,8 +229,9 @@ cp config/adapter.example.json config/adapter.json
 ```json
 {
   "servicePort": 18100,
+  "providerName": "企业大模型接口",
   "providerType": "enterprise-chat-api",
-  "providerBaseUrl": "https://aibot.chinasatnet.com.cn/v1",
+  "providerBaseUrl": "",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
   "providerChatPath": "/chat-messages",
   "providerMode": "blocking",
