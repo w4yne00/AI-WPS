@@ -16,6 +16,9 @@ assert.ok(html.includes('id="provider-edit-view"'));
 assert.ok(html.includes('id="btn-edit-provider"'));
 assert.ok(html.includes('id="btn-back-provider-summary"'));
 assert.ok(html.includes('id="provider-summary-url"'));
+assert.ok(html.includes('id="provider-active-select"'));
+assert.ok(html.includes('id="provider-name"'));
+assert.ok(html.includes('id="btn-set-active-provider"'));
 assert.ok(html.indexOf('id="provider-summary-card"') < html.indexOf('id="provider-edit-view"'));
 assert.ok(html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
@@ -56,6 +59,8 @@ assert.ok(js.includes("getInitialMode"));
 assert.ok(js.includes("saveProviderBaseUrl"));
 assert.ok(js.includes("setAdapterUnavailableState"));
 assert.ok(js.includes("showProviderEditor"));
+assert.ok(js.includes("renderProviderOptions"));
+assert.ok(js.includes("setActiveProvider"));
 assert.ok(js.includes("本地适配服务未启动"));
 assert.ok(!js.includes('setHealthBadge("badge-error", "不可达")'));
 assert.ok(!js.includes("无法连接本地适配层"));
@@ -88,6 +93,7 @@ const ribbon = fs.readFileSync(
 });
 
 assert.ok(ribbon.includes('getImage="GetImage"'));
+assert.ok(!ribbon.includes('image="assets/'));
 
 const ribbonJs = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js",
@@ -98,5 +104,7 @@ assert.ok(ribbonJs.includes("closeCurrentTaskPane"));
 assert.ok(ribbonJs.includes("WpsAiAssistantTaskPane"));
 assert.ok(ribbonJs.includes("function GetImage"));
 assert.ok(ribbonJs.includes("ribbonIconMap"));
+assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
+assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 
 console.log("layout smoke tests passed");

@@ -33,9 +33,7 @@ var ribbonIconMap = {
 
 function GetImage(control) {
   var controlId = control && (control.Id || control.id);
-  var iconPath = ribbonIconMap[controlId] || "assets/ai-assistant-32.png";
-  var baseUrl = location.href.replace(/[^\/]*$/, "");
-  return baseUrl + iconPath;
+  return ribbonIconMap[controlId] || "assets/ai-assistant-32.png";
 }
 
 function closeCurrentTaskPane() {

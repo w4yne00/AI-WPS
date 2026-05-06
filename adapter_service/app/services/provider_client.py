@@ -11,6 +11,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
+LOCAL_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 
 
 STYLE_TEXT = {
@@ -135,24 +136,32 @@ def extract_answer(body: Dict) -> str:
     raise ProviderUnavailableError("Enterprise AI response did not contain an answer.")
 
 
-def get_local_api_key_path(path: Optional[Path] = None) -> Path:
-    return path or LOCAL_KEY_PATH
+def _safe_provider_id(provider_id: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ("-", "_") else "-" for ch in provider_id.strip()) or "enterprise-chat-api"
 
 
-def save_local_api_key(api_key: str, path: Optional[Path] = None) -> None:
-    target = get_local_api_key_path(path)
+def get_local_api_key_path(path: Optional[Path] = None, provider_id: str = "") -> Path:
+    if path:
+        return path
+    if not provider_id or provider_id == "enterprise-chat-api":
+        return LOCAL_KEY_PATH
+    return LOCAL_KEY_DIR / _safe_provider_id(provider_id)
+
+
+def save_local_api_key(api_key: str, path: Optional[Path] = None, provider_id: str = "") -> None:
+    target = get_local_api_key_path(path, provider_id)
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(api_key.strip(), encoding="utf-8")
 
 
-def clear_local_api_key(path: Optional[Path] = None) -> None:
-    target = get_local_api_key_path(path)
+def clear_local_api_key(path: Optional[Path] = None, provider_id: str = "") -> None:
+    target = get_local_api_key_path(path, provider_id)
     if target.exists():
         target.unlink()
 
 
-def load_local_api_key(path: Optional[Path] = None) -> str:
-    target = get_local_api_key_path(path)
+def load_local_api_key(path: Optional[Path] = None, provider_id: str = "") -> str:
+    target = get_local_api_key_path(path, provider_id)
     if not target.exists():
         return ""
     return target.read_text(encoding="utf-8").strip()
@@ -168,12 +177,12 @@ class ProviderClient:
     def get_auth_source(self) -> str:
         if os.getenv(self.settings.provider_api_key_env):
             return "env"
-        if load_local_api_key():
+        if load_local_api_key(provider_id=self.settings.provider_id):
             return "file"
         return "none"
 
     def get_api_key(self) -> str:
-        return os.getenv(self.settings.provider_api_key_env) or load_local_api_key()
+        return os.getenv(self.settings.provider_api_key_env) or load_local_api_key(provider_id=self.settings.provider_id)
 
     def rewrite(
         self,

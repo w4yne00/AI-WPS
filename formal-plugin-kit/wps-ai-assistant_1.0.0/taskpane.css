@@ -203,6 +203,13 @@ input {
   box-shadow: var(--shadow-soft);
 }
 
+.inline-picker {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+}
+
 select:focus,
 textarea:focus,
 input:focus {
@@ -455,7 +462,8 @@ button[disabled] {
 
   .rewrite-grid,
   .button-cluster,
-  .diag-grid {
+  .diag-grid,
+  .inline-picker {
     grid-template-columns: 1fr;
   }
 

@@ -56,6 +56,8 @@
     rewriteResult: null,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
+    providers: [],
+    activeProviderId: "",
     providerName: "未检测",
     providerAuthSource: "未检测",
     providerBaseUrl: "",
@@ -102,6 +104,12 @@
     byId("provider-summary-type").textContent = detail;
   }
 
+  function setProviderName(name) {
+    state.providerName = name || "未检测";
+    byId("provider-summary-name").textContent = state.providerName;
+    byId("provider-name").value = state.providerName === "未检测" ? "" : state.providerName;
+  }
+
   function setProviderAuthLine(source) {
     var sourceText = {
       none: "未配置",
@@ -118,6 +126,57 @@
     byId("provider-base-url").value = state.providerBaseUrl;
   }
 
+  function getActiveProvider() {
+    for (var i = 0; i < state.providers.length; i += 1) {
+      if (state.providers[i].id === state.activeProviderId || state.providers[i].active) {
+        return state.providers[i];
+      }
+    }
+    return state.providers[0] || null;
+  }
+
+  function renderProviderOptions() {
+    var select = byId("provider-active-select");
+    select.innerHTML = "";
+    if (!state.providers.length) {
+      var empty = document.createElement("option");
+      empty.value = "";
+      empty.textContent = "未检测到模型提供商";
+      select.appendChild(empty);
+      return;
+    }
+    state.providers.forEach(function (provider) {
+      var option = document.createElement("option");
+      option.value = provider.id;
+      option.textContent = provider.name + " (" + provider.id + ")";
+      if (provider.id === state.activeProviderId || provider.active) {
+        option.selected = true;
+      }
+      select.appendChild(option);
+    });
+  }
+
+  function previewSelectedProvider() {
+    var providerId = byId("provider-active-select").value;
+    for (var i = 0; i < state.providers.length; i += 1) {
+      if (state.providers[i].id === providerId) {
+        byId("provider-name").value = state.providers[i].name || "";
+        byId("provider-base-url").value = state.providers[i].baseUrl || "";
+        return;
+      }
+    }
+  }
+
+  function applyProviderConfig(configData) {
+    var providers = configData.providers || [];
+    state.providers = providers;
+    state.activeProviderId = configData.activeProviderId || "";
+    renderProviderOptions();
+    var activeProvider = getActiveProvider();
+    setProviderName((activeProvider && activeProvider.name) || configData.providerName || "企业大模型接口");
+    setProviderBaseUrl((activeProvider && activeProvider.baseUrl) || configData.providerBaseUrl || "");
+  }
+
   function showProviderEditor(show) {
     byId("provider-edit-view").hidden = !show;
     byId("provider-summary-card").classList.toggle("editing", !!show);
@@ -128,6 +187,7 @@
     setHealthBadge("badge-warn", "待启动");
     setTrace("");
     setProviderLine("mock", false);
+    setProviderName("本地 mock");
     setProviderAuthLine("none");
     setStatus("本地适配服务未启动。");
     setResult([
@@ -368,7 +428,7 @@
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       setProviderAuthLine(health.data.providerAuthSource || "none");
-      setProviderBaseUrl(config.data.providerBaseUrl || "");
+      applyProviderConfig(config.data || {});
       resolveSelectionScope(false);
       state.templates = templates.data.templates || [];
       renderTemplateOptions();
@@ -381,13 +441,18 @@
   function saveProviderBaseUrl() {
     var input = byId("provider-base-url");
     var baseUrl = (input.value || "").trim();
+    var providerName = (byId("provider-name").value || "").trim();
+    var providerId = byId("provider-active-select").value || state.activeProviderId || "";
     if (!baseUrl) {
       setResult("请输入大模型 API URL 后再保存。");
       return;
     }
     setStatus("正在保存大模型 API URL...");
-    request("/provider/base-url", { baseUrl: baseUrl })
+    request("/provider/base-url", { baseUrl: baseUrl, providerId: providerId, providerName: providerName })
       .then(function (body) {
+        if (body.data.providerName) {
+          setProviderName(body.data.providerName);
+        }
         setProviderBaseUrl(body.data.providerBaseUrl || baseUrl);
         setStatus("大模型 API URL 已保存。");
         return refreshConfig();
@@ -401,13 +466,14 @@
   function saveApiKey() {
     var input = byId("provider-api-key");
     var apiKey = (input.value || "").trim();
+    var providerId = byId("provider-active-select").value || state.activeProviderId || "";
     if (!apiKey) {
       setStatus("请输入企业接口密钥。");
       setResult("请输入企业接口密钥后再保存。");
       return;
     }
     setStatus("正在保存企业接口密钥...");
-    request("/provider/api-key", { apiKey: apiKey })
+    request("/provider/api-key", { apiKey: apiKey, providerId: providerId })
       .then(function (body) {
         input.value = "";
         setProviderAuthLine(body.data.authSource || "file");
@@ -416,6 +482,25 @@
       })
       .catch(function (error) {
         setStatus("保存企业接口密钥失败：" + error.message);
+        setResult(error.message);
+      });
+  }
+
+  function setActiveProvider() {
+    var providerId = byId("provider-active-select").value;
+    if (!providerId) {
+      setResult("请选择要启用的模型提供商。");
+      return;
+    }
+    setStatus("正在切换模型提供商...");
+    request("/provider/active", { providerId: providerId })
+      .then(function () {
+        state.activeProviderId = providerId;
+        setStatus("当前模型提供商已切换。");
+        return refreshConfig();
+      })
+      .catch(function (error) {
+        setStatus("切换模型提供商失败：" + error.message);
         setResult(error.message);
       });
   }
@@ -766,6 +851,8 @@
     byId("btn-save-api-key").addEventListener("click", saveApiKey);
     byId("btn-clear-api-key").addEventListener("click", clearApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
+    byId("btn-set-active-provider").addEventListener("click", setActiveProvider);
+    byId("provider-active-select").addEventListener("change", previewSelectedProvider);
     byId("btn-edit-provider").addEventListener("click", function () {
       showProviderEditor(true);
     });
