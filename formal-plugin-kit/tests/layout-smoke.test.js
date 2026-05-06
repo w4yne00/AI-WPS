@@ -11,6 +11,12 @@ assert.ok(html.includes('id="settings-view"'));
 assert.ok(html.includes('id="btn-save-api-key"'));
 assert.ok(html.includes('id="provider-base-url"'));
 assert.ok(html.includes('id="btn-save-provider-url"'));
+assert.ok(html.includes('id="provider-summary-card"'));
+assert.ok(html.includes('id="provider-edit-view"'));
+assert.ok(html.includes('id="btn-edit-provider"'));
+assert.ok(html.includes('id="btn-back-provider-summary"'));
+assert.ok(html.includes('id="provider-summary-url"'));
+assert.ok(html.indexOf('id="provider-summary-card"') < html.indexOf('id="provider-edit-view"'));
 assert.ok(html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
 assert.ok(html.includes('id="diagnostics-section"'));
@@ -36,6 +42,7 @@ assert.ok(!html.includes('id="btn-close-settings"'));
 assert.ok(!html.includes('低频配置'));
 assert.ok(!html.includes('认证</p>'));
 assert.ok(!html.includes('运行时</p>'));
+assert.ok(!html.includes('连接设置'));
 
 const js = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
@@ -47,6 +54,11 @@ assert.ok(js.includes("setInterval(updateScopeIndicator"));
 assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
 assert.ok(js.includes("saveProviderBaseUrl"));
+assert.ok(js.includes("setAdapterUnavailableState"));
+assert.ok(js.includes("showProviderEditor"));
+assert.ok(js.includes("本地适配服务未启动"));
+assert.ok(!js.includes('setHealthBadge("badge-error", "不可达")'));
+assert.ok(!js.includes("无法连接本地适配层"));
 
 const css = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.css",
@@ -75,6 +87,8 @@ const ribbon = fs.readFileSync(
   assert.ok(ribbon.includes(`label="${label}"`), `missing ribbon label ${label}`);
 });
 
+assert.ok(ribbon.includes('getImage="GetImage"'));
+
 const ribbonJs = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js",
   "utf8"
@@ -82,5 +96,7 @@ const ribbonJs = fs.readFileSync(
 
 assert.ok(ribbonJs.includes("closeCurrentTaskPane"));
 assert.ok(ribbonJs.includes("WpsAiAssistantTaskPane"));
+assert.ok(ribbonJs.includes("function GetImage"));
+assert.ok(ribbonJs.includes("ribbonIconMap"));
 
 console.log("layout smoke tests passed");

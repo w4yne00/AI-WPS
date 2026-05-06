@@ -1,0 +1,5 @@
+6ed6e98282a504ee0a6632856e16c39f222d313fc38be33de216d4afb6ac12f7  get-pip.py
+ba0d021a166865d2265246961bec0152ff124de910c5cc39f1156ce3fa7c69dc  wheels/pip-24.0-py3-none-any.whl
+c636ac361bc47580504644275c9ad802c50415c7522212252c033bd15f301f32  wheels/setuptools-69.5.1-py3-none-any.whl
+55c570405f142630c6b9f72fe09d9b67cf1477fcf543ae5b8dcb1f5b7377da81  wheels/wheel-0.43.0-py3-none-any.whl
+75e7bb45aafaabea50adc412eaace02953248b524f8077abbf09f3396314ec32  scripts/install_pip.sh

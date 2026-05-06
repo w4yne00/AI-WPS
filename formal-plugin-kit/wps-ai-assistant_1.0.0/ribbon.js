@@ -22,6 +22,22 @@ function resolveMode(controlId) {
   return modeMap[controlId] || "rewrite";
 }
 
+var ribbonIconMap = {
+  btnAiRewrite: "assets/icon-rewrite.png",
+  btnAiContinue: "assets/icon-continue.png",
+  btnAiProofread: "assets/icon-proofread.png",
+  btnAiFormat: "assets/icon-format.png",
+  btnAiSettings: "assets/icon-settings.png",
+  btnWpsAiAssistant: "assets/ai-assistant-32.png"
+};
+
+function GetImage(control) {
+  var controlId = control && (control.Id || control.id);
+  var iconPath = ribbonIconMap[controlId] || "assets/ai-assistant-32.png";
+  var baseUrl = location.href.replace(/[^\/]*$/, "");
+  return baseUrl + iconPath;
+}
+
 function closeCurrentTaskPane() {
   var current = window.Application.WpsAiAssistantTaskPane;
   if (!current) {

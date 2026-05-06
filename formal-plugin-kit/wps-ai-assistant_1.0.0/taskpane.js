@@ -58,6 +58,7 @@
     latestSelectionMode: "document",
     providerName: "未检测",
     providerAuthSource: "未检测",
+    providerBaseUrl: "",
     currentMode: "rewrite",
     copyText: "",
     scopeWatcher: null
@@ -98,6 +99,7 @@
     state.providerName = detail;
     byId("provider-line").textContent = "接口：" + detail;
     byId("settings-provider-line").textContent = "接口：" + detail;
+    byId("provider-summary-type").textContent = detail;
   }
 
   function setProviderAuthLine(source) {
@@ -107,7 +109,32 @@
       env: "环境变量"
     };
     state.providerAuthSource = sourceText[source] || source || "未检测";
-    byId("provider-auth-line").textContent = "认证来源：" + state.providerAuthSource;
+    byId("provider-auth-line").textContent = "密钥：" + state.providerAuthSource;
+  }
+
+  function setProviderBaseUrl(baseUrl) {
+    state.providerBaseUrl = baseUrl || "";
+    byId("provider-summary-url").textContent = state.providerBaseUrl || "未配置大模型 API URL";
+    byId("provider-base-url").value = state.providerBaseUrl;
+  }
+
+  function showProviderEditor(show) {
+    byId("provider-edit-view").hidden = !show;
+    byId("provider-summary-card").classList.toggle("editing", !!show);
+  }
+
+  function setAdapterUnavailableState(error) {
+    var message = error && error.message ? error.message : "端口未监听";
+    setHealthBadge("badge-warn", "待启动");
+    setTrace("");
+    setProviderLine("mock", false);
+    setProviderAuthLine("none");
+    setStatus("本地适配服务未启动。");
+    setResult([
+      "本地适配服务未启动或端口 18100 未监听。",
+      "这不是大模型接口故障；启动 adapter 后，未配置企业密钥时会继续使用 mock 模型。",
+      "后台返回：" + message
+    ].join("\n"));
   }
 
   function setScopeLine(label) {
@@ -341,17 +368,13 @@
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       setProviderAuthLine(health.data.providerAuthSource || "none");
-      byId("provider-base-url").value = config.data.providerBaseUrl || "";
+      setProviderBaseUrl(config.data.providerBaseUrl || "");
       resolveSelectionScope(false);
       state.templates = templates.data.templates || [];
       renderTemplateOptions();
       setStatus("就绪");
     }).catch(function (error) {
-      setHealthBadge("badge-error", "不可达");
-      setProviderLine("未检测");
-      setProviderAuthLine("未检测");
-      setStatus("刷新失败：" + error.message);
-      setResult("无法连接本地适配层：" + error.message);
+      setAdapterUnavailableState(error);
     });
   }
 
@@ -365,7 +388,7 @@
     setStatus("正在保存大模型 API URL...");
     request("/provider/base-url", { baseUrl: baseUrl })
       .then(function (body) {
-        input.value = body.data.providerBaseUrl || baseUrl;
+        setProviderBaseUrl(body.data.providerBaseUrl || baseUrl);
         setStatus("大模型 API URL 已保存。");
         return refreshConfig();
       })
@@ -743,6 +766,12 @@
     byId("btn-save-api-key").addEventListener("click", saveApiKey);
     byId("btn-clear-api-key").addEventListener("click", clearApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
+    byId("btn-edit-provider").addEventListener("click", function () {
+      showProviderEditor(true);
+    });
+    byId("btn-back-provider-summary").addEventListener("click", function () {
+      showProviderEditor(false);
+    });
     byId("btn-probe").addEventListener("click", runProbe);
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
