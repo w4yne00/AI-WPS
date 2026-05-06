@@ -9,9 +9,22 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
-if curl -fsS "$HEALTH_URL"; then
+BODY="$(curl -fsS "$HEALTH_URL" 2>/dev/null || true)"
+
+if [ -n "$BODY" ]; then
+  printf '%s\n' "$BODY"
+  MODE="$(printf '%s' "$BODY" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
   echo
   echo "adapter_health=reachable url=$HEALTH_URL"
+  if [ "$MODE" = "uvicorn" ]; then
+    echo "adapter_mode=uvicorn"
+    echo "adapter_runtime=fastapi"
+  elif [ "$MODE" = "standalone" ]; then
+    echo "adapter_mode=standalone"
+    echo "hint=端口可达，但当前是 standalone 兼容模式；如需 FastAPI/uvicorn，请执行 bash scripts/start_uvicorn_adapter.sh ${PORT}，脚本会替换旧进程。"
+  else
+    echo "adapter_mode=${MODE:-unknown}"
+  fi
   exit 0
 fi
 

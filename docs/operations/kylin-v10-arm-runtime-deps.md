@@ -64,6 +64,8 @@ The expected startup output should include:
 
 ```text
 mode=uvicorn
+adapter_mode=uvicorn
 ```
 
 If dependency installation fails or `uvicorn` cannot be imported, the existing start script will continue to fall back to `standalone` mode.
+If health is reachable but reports `adapter_mode=standalone`, rerun `bash scripts/start_uvicorn_adapter.sh 18100`; the script now replaces the old standalone process before starting FastAPI.

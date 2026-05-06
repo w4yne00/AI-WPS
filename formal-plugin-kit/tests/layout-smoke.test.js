@@ -58,6 +58,10 @@ assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
 assert.ok(js.includes("saveProviderBaseUrl"));
 assert.ok(js.includes("setAdapterUnavailableState"));
+assert.ok(js.includes("describeFetchError"));
+assert.ok(js.includes("readAdapterJson"));
+assert.ok(js.includes("插件无法访问 http://127.0.0.1:18100"));
+assert.ok(js.includes("当前适配服务版本较旧"));
 assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(!js.includes("renderProviderOptions"));
@@ -107,5 +111,25 @@ assert.ok(ribbonJs.includes("function GetImage"));
 assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
+
+const uvicornStart = fs.readFileSync(
+  "adapter-start-kit/scripts/start_uvicorn_adapter.sh",
+  "utf8"
+);
+
+assert.ok(uvicornStart.includes("existing_adapter_detected"));
+assert.ok(uvicornStart.includes("replace_existing_adapter"));
+assert.ok(uvicornStart.includes("mode=uvicorn"));
+
+const healthCheck = fs.readFileSync(
+  "adapter-start-kit/scripts/check_health.sh",
+  "utf8"
+);
+
+assert.ok(healthCheck.includes("adapter_mode=uvicorn"));
+assert.ok(healthCheck.includes("adapter_mode=standalone"));
+
+const fastapiHealth = fs.readFileSync("adapter_service/app/api/health.py", "utf8");
+assert.ok(fastapiHealth.includes('"mode": "uvicorn"'));
 
 console.log("layout smoke tests passed");

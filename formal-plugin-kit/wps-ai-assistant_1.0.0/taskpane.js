@@ -371,13 +371,33 @@
     });
   }
 
+  function describeFetchError(error) {
+    var message = error && error.message ? error.message : String(error || "");
+    if (message === "Failed to fetch" || message.indexOf("NetworkError") >= 0) {
+      return "插件无法访问 http://127.0.0.1:18100。请确认 adapter 正在运行、端口为 18100，并重新打开任务窗格。";
+    }
+    return message;
+  }
+
+  function readAdapterJson(path) {
+    return request(path).catch(function (error) {
+      return {
+        success: false,
+        data: {},
+        errors: [{ message: describeFetchError(error) }]
+      };
+    });
+  }
+
   function refreshConfig() {
     setStatus("正在刷新配置...");
-    return Promise.all([
-      request("/health"),
-      request("/templates"),
-      request("/config")
-    ]).then(function (results) {
+    return request("/health").then(function (health) {
+      return Promise.all([
+        Promise.resolve(health),
+        readAdapterJson("/templates"),
+        readAdapterJson("/config")
+      ]);
+    }).then(function (results) {
       var health = results[0];
       var templates = results[1];
       var config = results[2];
@@ -385,10 +405,22 @@
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       setProviderAuthLine(health.data.providerAuthSource || "none");
-      applyProviderConfig(config.data || {});
+      if (config.success === false) {
+        applyProviderConfig({
+          providerName: health.data.providerName || "企业大模型接口",
+          providerBaseUrl: state.providerBaseUrl
+        });
+        setResult("当前适配服务版本较旧或缺少 /config 接口，请使用新版 adapter-start-kit 后再保存模型配置。\n后台返回：" + config.errors[0].message);
+      } else {
+        applyProviderConfig(config.data || {});
+      }
       resolveSelectionScope(false);
-      state.templates = templates.data.templates || [];
-      renderTemplateOptions();
+      if (templates.success === false) {
+        renderFallbackTemplateOptions();
+      } else {
+        state.templates = templates.data.templates || fallbackTemplates.slice();
+        renderTemplateOptions();
+      }
       setStatus("就绪");
     }).catch(function (error) {
       setAdapterUnavailableState(error);
@@ -416,11 +448,16 @@
         }
         setProviderBaseUrl(body.data.providerBaseUrl || baseUrl);
         setStatus("大模型 API URL 已保存。");
+        setResult([
+          "模型提供商配置已保存。",
+          "名称：" + (body.data.providerName || providerName || "企业大模型接口"),
+          "URL：" + (body.data.providerBaseUrl || baseUrl)
+        ].join("\n"));
         return refreshConfig();
       })
       .catch(function (error) {
-        setStatus("保存大模型 API URL 失败：" + error.message);
-        setResult(error.message);
+        setStatus("保存大模型 API URL 失败：" + describeFetchError(error));
+        setResult(describeFetchError(error));
       });
   }
 
@@ -438,11 +475,12 @@
         input.value = "";
         setProviderAuthLine(body.data.authSource || "file");
         setStatus("企业接口密钥已保存。");
+        setResult("企业接口密钥已保存。\n密钥状态：已配置");
         return refreshConfig();
       })
       .catch(function (error) {
-        setStatus("保存企业接口密钥失败：" + error.message);
-        setResult(error.message);
+        setStatus("保存企业接口密钥失败：" + describeFetchError(error));
+        setResult(describeFetchError(error));
       });
   }
 
@@ -463,8 +501,9 @@
       setStatus("企业接口密钥已清除。");
       return refreshConfig();
     }).catch(function (error) {
-      setStatus("清除企业接口密钥失败：" + error.message);
-      setResult(error.message);
+      var message = describeFetchError(error);
+      setStatus("清除企业接口密钥失败：" + message);
+      setResult(message);
     });
   }
 
@@ -657,8 +696,9 @@
         setStatus("格式校对完成。");
       })
       .catch(function (error) {
-        setStatus("格式校对失败：" + error.message);
-        setResult(error.message);
+        var message = describeFetchError(error);
+        setStatus("格式校对失败：" + message);
+        setResult(message);
       });
   }
 
@@ -682,8 +722,9 @@
         setStatus("排版预览已生成。");
       })
       .catch(function (error) {
-        setStatus("排版预览失败：" + error.message);
-        setResult(error.message);
+        var message = describeFetchError(error);
+        setStatus("排版预览失败：" + message);
+        setResult(message);
       });
   }
 
@@ -716,8 +757,9 @@
         setStatus(config.doneText);
       })
       .catch(function (error) {
-        setStatus("生成失败：" + error.message);
-        setResult(error.message);
+        var message = describeFetchError(error);
+        setStatus("生成失败：" + message);
+        setResult(message);
       });
   }
 

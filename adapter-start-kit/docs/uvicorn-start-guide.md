@@ -33,7 +33,11 @@ bash scripts/check_health.sh 18100
 
 ```text
 adapter_health=reachable url=http://127.0.0.1:18100/health
+adapter_mode=uvicorn
 ```
+
+如果健康检查显示 `adapter_mode=standalone`，说明端口可达但仍是旧的兼容服务。
+重新执行 `bash scripts/start_uvicorn_adapter.sh 18100` 即可，脚本会识别并替换占用 `18100` 的旧 standalone 进程。
 
 ## 3. 常用命令
 
@@ -46,6 +50,6 @@ bash scripts/restart_adapter.sh 18100
 
 ## 4. 说明
 
-- `start_uvicorn_adapter.sh` 只走 uvicorn；缺依赖会直接提示安装离线依赖。
-- `start_adapter.sh` 会优先 uvicorn，缺 uvicorn 时自动降级 standalone。
+- `start_uvicorn_adapter.sh` 只走 uvicorn；缺依赖会直接提示安装离线依赖，并会在端口被旧 standalone 占用时自动替换旧进程。
+- `start_adapter.sh` 会优先 uvicorn，缺 uvicorn 时自动降级 standalone，也会避免被旧模式进程占用端口。
 - WPS 插件访问地址固定为 `http://127.0.0.1:18100`，因此启动端口建议保持 `18100`。

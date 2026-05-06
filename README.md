@@ -74,8 +74,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.6.6-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.6.6-20260506` |
+| Version | `v0.6.7-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.6.7-20260506` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -108,13 +108,14 @@ Rules:
 | Word rewrite/continue | Rewrites or continues from the current selected text, calls the enterprise AI API, and supports local mock fallback |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Runtime probe and settings | Settings page for provider-card API configuration, active provider switching, API key import, provider status, runtime probe, and diagnostics |
+| Runtime probe and settings | Settings page for a single provider-card API configuration, API key import, provider status, runtime probe, and diagnostics |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 
 ## Latest Updates
 
 | Version | Update |
 | --- | --- |
+| `v0.6.7-alpha` | Fixed uvicorn startup when an old standalone adapter still owns port `18100`, improved health-check mode hints, replaced raw `Failed to fetch` output with actionable adapter diagnostics, and stabilized single provider URL/API key save feedback |
 | `v0.6.6-alpha` | Fixed the Python 3.8 offline dependency bundle by adding `exceptiongroup`, added a uvicorn-only one-click startup guide, added local template dropdown fallback, and reverted settings to a single provider profile |
 | `v0.6.5-alpha` | Fixed Ribbon icon fallback rendering, made provider names configurable, and allowed switching the active provider from backend-defined provider profiles |
 | `v0.6.4-alpha` | Added provider-card settings with edit drill-down, clarified adapter-not-started mock hints, added Ribbon icon callback fallback, and packaged offline pip bootstrap for Python 3.8 targets without pip |
