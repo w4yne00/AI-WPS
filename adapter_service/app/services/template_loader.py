@@ -2,14 +2,15 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from app.core.config import load_settings
+from app.core.config import BASE_DIR, load_settings
 
 
 class TemplateLoader:
     def __init__(self, template_root: Optional[str] = None) -> None:
         settings = load_settings()
         root = template_root or settings.template_root
-        self.template_root = Path(root)
+        root_path = Path(root)
+        self.template_root = root_path if root_path.is_absolute() else BASE_DIR / root_path
 
     def list_templates(self) -> List[dict]:
         templates: List[dict] = []

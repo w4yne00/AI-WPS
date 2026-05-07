@@ -15,6 +15,7 @@ from app.services.provider_client import (
     extract_answer,
     parse_typo_issues,
 )
+from app.services.template_loader import TemplateLoader
 
 
 class EnterpriseProviderTests(unittest.TestCase):
@@ -154,6 +155,18 @@ class EnterpriseProviderTests(unittest.TestCase):
                 os.environ.pop("ENTERPRISE_AI_API_KEY", None)
             else:
                 os.environ["ENTERPRISE_AI_API_KEY"] = previous
+
+    def test_template_loader_resolves_default_root_from_package_base(self) -> None:
+        previous_cwd = Path.cwd()
+        os.chdir(ROOT)
+        try:
+            loader = TemplateLoader()
+            template_ids = {item["id"] for item in loader.list_templates()}
+        finally:
+            os.chdir(previous_cwd)
+
+        self.assertIn("general-office", template_ids)
+        self.assertIn("technical-file-format-requirements", template_ids)
 
     def test_build_rewrite_prompt_includes_user_instruction(self) -> None:
         prompt = build_rewrite_prompt(
