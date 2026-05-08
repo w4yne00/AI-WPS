@@ -74,8 +74,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.6.9-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.6.9-20260507` |
+| Version | `v0.7.0-alpha` |
+| Version rule number | `AI-WPS-P1-DELIVERY-0.7.0-20260508` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -110,11 +110,13 @@ Rules:
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
 | Runtime probe and settings | Settings page for a single provider-card API configuration, API key import, provider status, runtime probe, and diagnostics |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
+| Phase 1 delivery kit | One package installs WPS add-in files, `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
 
 ## Latest Updates
 
 | Version | Update |
 | --- | --- |
+| `v0.7.0-alpha` | Added the Phase 1 delivery package with one-click install, pip/runtime offline dependency installation, WPS `jsaddons` deployment, `publish.xml`, one-click smoke test, and acceptance templates |
 | `v0.6.9-alpha` | Fixed uvicorn template loading when the adapter starts from `adapter_service/`, restoring `/templates`, Word proofreading, and format preview access to packaged template files |
 | `v0.6.8-alpha` | Fixed provider settings clearing: empty model API URLs can now be saved, provider names are saved together with URLs, and provider status is only configured when both API URL and API key are present |
 | `v0.6.7-alpha` | Fixed uvicorn startup when an old standalone adapter still owns port `18100`, improved health-check mode hints, replaced raw `Failed to fetch` output with actionable adapter diagnostics, and stabilized single provider URL/API key save feedback |

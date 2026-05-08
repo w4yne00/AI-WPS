@@ -4,6 +4,8 @@ __pycache__/
 dist-probe-kit/
 dist-formal-plugin-kit/
 dist-adapter-start-kit/
+dist-phase1-delivery-kit/*
+!dist-phase1-delivery-kit/*.tar.gz
 .DS_Store
 ._*
 logs/

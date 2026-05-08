@@ -1,0 +1,53 @@
+# AI-WPS 一期交付总包
+
+适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
+
+## 一键安装
+
+```bash
+tar -xzf ai-wps-phase1-delivery-YYYYMMDD.tar.gz
+cd ai-wps-phase1-delivery-YYYYMMDD
+bash installer/install_phase1.sh
+```
+
+默认安装路径：
+
+- WPS 插件：`/home/cloud/.Local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0`
+- `publish.xml`：`/home/cloud/.Local/share/Kingsoft/wps/jsaddons/publish.xml`
+- Adapter：`$HOME/ai-wps-phase1/adapter-start-kit`
+- Adapter 端口：`18100`
+
+如需覆盖：
+
+```bash
+WPS_JSADDONS_DIR="$HOME/.Local/share/Kingsoft/wps/jsaddons" \
+AI_WPS_INSTALL_ROOT="$HOME/ai-wps-phase1" \
+PORT=18100 \
+PYTHON_BIN=python3 \
+bash installer/install_phase1.sh
+```
+
+## 一键联调
+
+```bash
+bash scripts/phase1_smoke_test.sh
+```
+
+## 包内内容
+
+- `packages/wps-ai-assistant_1.0.0/`：WPS 正式一期插件。
+- `packages/adapter-start-kit/`：本地 adapter 启动包。
+- `packages/kylin-v10-arm-py38-pip-bootstrap/`：无 pip 目标机离线 pip 引导包。
+- `packages/kylin-v10-arm-py38/`：Python 3.8 ARM 离线运行依赖。
+- `wps-jsaddons/publish.xml`：WPS `jsaddons` 发布文件。
+- `installer/install_phase1.sh`：一键安装脚本。
+- `scripts/phase1_smoke_test.sh`：一键联调脚本。
+- `docs/phase1-acceptance-checklist.md`：验收清单。
+- `docs/phase1-acceptance-record.md`：验收记录模板。
+
+## 安装后操作
+
+1. 关闭并重新打开 WPS。
+2. 确认 Ribbon 出现 `WPS AI 助理`。
+3. 打开设置页刷新配置。
+4. 验证格式校对、智能排版、智能改写、智能续写。
