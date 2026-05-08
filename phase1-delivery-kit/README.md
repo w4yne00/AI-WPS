@@ -12,15 +12,15 @@ bash installer/install_phase1.sh
 
 默认安装路径：
 
-- WPS 插件：`/home/cloud/.Local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0`
-- `publish.xml`：`/home/cloud/.Local/share/Kingsoft/wps/jsaddons/publish.xml`
+- WPS 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0`
+- `publish.xml`：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/publish.xml`
 - Adapter：`$HOME/ai-wps-phase1/adapter-start-kit`
 - Adapter 端口：`18100`
 
 如需覆盖：
 
 ```bash
-WPS_JSADDONS_DIR="$HOME/.Local/share/Kingsoft/wps/jsaddons" \
+WPS_JSADDONS_DIR="$HOME/.local/share/Kingsoft/wps/jsaddons" \
 AI_WPS_INSTALL_ROOT="$HOME/ai-wps-phase1" \
 PORT=18100 \
 PYTHON_BIN=python3 \

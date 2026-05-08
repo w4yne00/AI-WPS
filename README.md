@@ -74,8 +74,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.7.0-alpha` |
-| Version rule number | `AI-WPS-P1-DELIVERY-0.7.0-20260508` |
+| Version | `v0.7.1-alpha` |
+| Version rule number | `AI-WPS-P1-DELIVERY-0.7.1-20260508` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -116,6 +116,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.7.1-alpha` | Corrected the Phase 1 delivery package default WPS `jsaddons` install path to `/home/cloud/.local/share/Kingsoft/wps/jsaddons`, updated handoff docs, and rebuilt the delivery package |
 | `v0.7.0-alpha` | Added the Phase 1 delivery package with one-click install, pip/runtime offline dependency installation, WPS `jsaddons` deployment, `publish.xml`, one-click smoke test, and acceptance templates |
 | `v0.6.9-alpha` | Fixed uvicorn template loading when the adapter starts from `adapter_service/`, restoring `/templates`, Word proofreading, and format preview access to packaged template files |
 | `v0.6.8-alpha` | Fixed provider settings clearing: empty model API URLs can now be saved, provider names are saved together with URLs, and provider status is only configured when both API URL and API key are present |

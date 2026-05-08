@@ -5,8 +5,8 @@
 - [ ] 执行 `bash installer/install_phase1.sh` 无错误退出。
 - [ ] `python3 -m pip --version` 可返回版本。
 - [ ] `python3 -c "import fastapi, uvicorn, pydantic, requests"` 执行成功。
-- [ ] `~/.Local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0` 存在。
-- [ ] `~/.Local/share/Kingsoft/wps/jsaddons/publish.xml` 存在，并包含 `wps-ai-assistant`。
+- [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0` 存在。
+- [ ] `~/.local/share/Kingsoft/wps/jsaddons/publish.xml` 存在，并包含 `wps-ai-assistant`。
 
 ## 2. Adapter 检查
 
