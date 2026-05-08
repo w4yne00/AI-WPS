@@ -30,6 +30,9 @@ assert.ok(html.includes('id="task-title"'));
 assert.ok(html.includes('识别范围'));
 assert.ok(html.includes('id="rewrite-options"'));
 assert.ok(html.includes('id="template-options"'));
+assert.ok(html.includes('id="technical-review-options"'));
+assert.ok(html.includes('id="technical-document-type"'));
+assert.ok(html.includes('id="technical-review-prompt"'));
 assert.ok(html.includes('id="btn-run-primary"'));
 assert.ok(html.indexOf('id="btn-copy-result"') < html.indexOf('结果预览'));
 assert.ok(!html.includes('hero-copy'));
@@ -56,6 +59,9 @@ assert.ok(js.includes("startScopeWatcher"));
 assert.ok(js.includes("setInterval(updateScopeIndicator"));
 assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
+assert.ok(js.includes("technicalReview"));
+assert.ok(js.includes("/word/technical-review"));
+assert.ok(js.includes("DEFAULT_TECHNICAL_REVIEW_PROMPT"));
 assert.ok(js.includes("saveProviderBaseUrl"));
 assert.ok(js.includes("setAdapterUnavailableState"));
 assert.ok(js.includes("describeFetchError"));
@@ -93,6 +99,7 @@ const ribbon = fs.readFileSync(
   "智能续写",
   "格式校对",
   "智能排版",
+  "技术文档审查",
   "设置"
 ].forEach((label) => {
   assert.ok(ribbon.includes(`label="${label}"`), `missing ribbon label ${label}`);

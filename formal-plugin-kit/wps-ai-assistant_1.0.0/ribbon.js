@@ -16,6 +16,7 @@ function resolveMode(controlId) {
     btnAiContinue: "continue",
     btnAiProofread: "proofread",
     btnAiFormat: "format",
+    btnAiTechnicalReview: "technicalReview",
     btnAiSettings: "settings",
     btnWpsAiAssistant: "rewrite"
   };
@@ -27,6 +28,7 @@ var ribbonIconMap = {
   btnAiContinue: "assets/icon-continue.png",
   btnAiProofread: "assets/icon-proofread.png",
   btnAiFormat: "assets/icon-format.png",
+  btnAiTechnicalReview: "assets/icon-proofread.png",
   btnAiSettings: "assets/icon-settings.png",
   btnWpsAiAssistant: "assets/ai-assistant-32.png"
 };

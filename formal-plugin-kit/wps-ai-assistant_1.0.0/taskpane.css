@@ -222,6 +222,11 @@ textarea {
   min-height: 58px;
 }
 
+.review-prompt-field textarea {
+  min-height: 170px;
+  line-height: 1.55;
+}
+
 .rewrite-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));

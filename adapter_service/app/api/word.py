@@ -5,6 +5,7 @@ from app.core.models import (
     FormatPreviewSummary,
     ProofreadResponseData,
     RewriteResponseData,
+    TechnicalReviewResponseData,
     WordDocumentRequest,
 )
 from app.core.logging import get_logger
@@ -12,11 +13,13 @@ from app.core.tracing import new_trace_id
 from app.services.word.formatter import WordFormatter
 from app.services.word.proofreader import WordProofreader
 from app.services.word.rewriter import WordRewriter
+from app.services.word.technical_reviewer import WordTechnicalReviewer
 
 router = APIRouter()
 proofreader = WordProofreader()
 formatter = WordFormatter()
 rewriter = WordRewriter()
+technical_reviewer = WordTechnicalReviewer()
 logger = get_logger(__name__)
 
 
@@ -81,6 +84,27 @@ def rewrite_word(request: WordDocumentRequest) -> dict:
         "success": True,
         "traceId": trace_id,
         "taskType": "word.rewrite",
+        "message": "completed",
+        "data": payload.dict(by_alias=True),
+        "errors": [],
+    }
+
+
+@router.post("/word/technical-review")
+def technical_review_word(request: WordDocumentRequest) -> dict:
+    trace_id = new_trace_id("word-technical-review")
+    review = technical_reviewer.review(request, trace_id=trace_id)
+    payload = TechnicalReviewResponseData(**review)
+    logger.info(
+        "traceId=%s task=word.technical_review documentType=%s issueCount=%s",
+        trace_id,
+        payload.document_type,
+        len(payload.issues),
+    )
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "word.technical_review",
         "message": "completed",
         "data": payload.dict(by_alias=True),
         "errors": [],

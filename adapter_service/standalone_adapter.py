@@ -9,7 +9,12 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from app.core.config import load_settings, save_provider_base_url
-from app.services.provider_client import ProviderClient, clear_local_api_key, save_local_api_key
+from app.services.provider_client import (
+    ProviderClient,
+    clear_local_api_key,
+    get_default_technical_review_prompt,
+    save_local_api_key,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -295,6 +300,34 @@ def rewrite(payload):
     }
 
 
+def technical_review(payload):
+    options = payload.get("options", {})
+    source_text = payload["content"].get("plainText", "").strip()
+    if not source_text:
+        source_text = "\n".join(
+            paragraph.get("text", "")
+            for paragraph in payload["content"].get("paragraphs", [])
+            if paragraph.get("text", "").strip()
+        ).strip()
+
+    review_prompt = options.get("technicalReviewPrompt", "").strip()
+    if not review_prompt:
+        review_prompt = get_default_technical_review_prompt()
+    provider_result = ProviderClient(load_settings()).technical_review(
+        source_text,
+        trace_id="standalone-word-technical-review",
+        document_type=options.get("technicalDocumentType", "general_technical"),
+        review_prompt=review_prompt,
+    )
+    return {
+        "documentType": options.get("technicalDocumentType", "general_technical"),
+        "reviewPrompt": review_prompt,
+        "summary": provider_result.get("summary", ""),
+        "issues": provider_result.get("issues", []),
+        "provider": provider_result.get("provider", "mock"),
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -461,6 +494,20 @@ class Handler(BaseHTTPRequestHandler):
                     "taskType": "word.rewrite",
                     "message": "completed",
                     "data": rewrite(payload),
+                    "errors": [],
+                },
+            )
+            return
+
+        if path == "/word/technical-review":
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-word-technical-review",
+                    "taskType": "word.technical_review",
+                    "message": "completed",
+                    "data": technical_review(payload),
                     "errors": [],
                 },
             )

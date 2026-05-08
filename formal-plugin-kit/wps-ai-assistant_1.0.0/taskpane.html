@@ -67,6 +67,23 @@
             </label>
           </div>
 
+          <div id="technical-review-options" class="mode-block" hidden>
+            <label class="field">
+              <span>文档类型</span>
+              <select id="technical-document-type">
+                <option value="general_technical">通用技术文档</option>
+                <option value="technical_solution">技术方案</option>
+                <option value="contract_acceptance">合同验收文档</option>
+                <option value="test_outline">测试大纲和细则</option>
+              </select>
+            </label>
+
+            <label class="field review-prompt-field">
+              <span>审查重点提示词</span>
+              <textarea id="technical-review-prompt" rows="8"></textarea>
+            </label>
+          </div>
+
           <label id="instruction-block" class="field">
             <span>补充要求</span>
             <textarea id="user-instruction" rows="2" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>

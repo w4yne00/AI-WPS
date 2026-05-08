@@ -35,6 +35,8 @@ class RequestOptions(BaseModel):
     focus_point: str = Field(default="default", alias="focusPoint")
     length_mode: str = Field(default="default", alias="lengthMode")
     rewrite_action: str = Field(default="rewrite", alias="rewriteAction")
+    technical_document_type: str = Field(default="general_technical", alias="technicalDocumentType")
+    technical_review_prompt: str = Field(default="", alias="technicalReviewPrompt")
 
 
 class WordDocumentRequest(BaseModel):
@@ -69,6 +71,16 @@ class RewriteResult(BaseModel):
     provider: str = "mock"
 
 
+class TechnicalReviewIssue(BaseModel):
+    category: Literal["accuracy", "terminology", "design", "requirement"]
+    severity: Literal["high", "medium", "low"]
+    location: Optional[str] = None
+    original_text: Optional[str] = Field(default=None, alias="originalText")
+    problem: str
+    suggestion: str
+    suggested_rewrite: Optional[str] = Field(default=None, alias="suggestedRewrite")
+
+
 class ApiEnvelope(BaseModel):
     success: bool
     trace_id: str = Field(alias="traceId")
@@ -94,3 +106,11 @@ class FormatPreviewResponseData(BaseModel):
 
 class RewriteResponseData(RewriteResult):
     pass
+
+
+class TechnicalReviewResponseData(BaseModel):
+    document_type: str = Field(alias="documentType")
+    review_prompt: str = Field(alias="reviewPrompt")
+    summary: str
+    issues: List[TechnicalReviewIssue] = Field(default_factory=list)
+    provider: str = "mock"

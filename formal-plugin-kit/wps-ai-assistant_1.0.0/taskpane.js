@@ -2,6 +2,14 @@
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
+  var DEFAULT_TECHNICAL_REVIEW_PROMPT = [
+    "请从以下维度审查技术文档内容：",
+    "1. 功能描述准确性：检查功能边界、输入输出、前置条件、异常流程、权限和依赖是否描述清楚，避免夸大或遗漏关键约束。",
+    "2. 术语专业性：检查技术术语、产品名称、接口名称、模块名称是否准确、一致，避免口语化和同一概念多种叫法。",
+    "3. 设计合理性：检查方案是否说明架构边界、模块职责、数据流、容错机制、安全性、可扩展性和部署约束。",
+    "4. 要求明确性：检查需求、验收标准和测试要求是否可执行、可验证、无歧义，避免“尽快、友好、高效、支持多种”等不可验收表述。",
+    "请优先指出影响理解、实现、验收或交付风险的问题，并给出可直接落地的修改建议。"
+  ].join("\n");
   var fallbackTemplates = [
     { id: "technical-file-format-requirements", name: "技术文件格式及书写要求" },
     { id: "general-office", name: "通用办公模板" }
@@ -41,7 +49,16 @@
       primaryText: "生成排版预览",
       showRewriteOptions: false,
       showInstruction: false,
-      showTemplate: true
+      showTemplate: true,
+      showTechnicalReviewOptions: false
+    },
+    technicalReview: {
+      title: "技术文档审查",
+      primaryText: "开始审查",
+      showRewriteOptions: false,
+      showInstruction: false,
+      showTemplate: false,
+      showTechnicalReviewOptions: true
     },
     settings: {
       title: "设置"
@@ -54,6 +71,8 @@
     focusPoint: "default",
     lengthMode: "default",
     userInstruction: "",
+    technicalDocumentType: "general_technical",
+    technicalReviewPrompt: DEFAULT_TECHNICAL_REVIEW_PROMPT,
     traceId: "",
     pendingApplyAction: "",
     formatChanges: [],
@@ -201,6 +220,7 @@
     byId("rewrite-options").hidden = !config.showRewriteOptions;
     byId("instruction-block").hidden = !config.showInstruction;
     byId("template-options").hidden = !config.showTemplate;
+    byId("technical-review-options").hidden = !config.showTechnicalReviewOptions;
     byId("style-field-label").textContent = config.styleLabel || "改写风格";
     byId("btn-run-primary").textContent = config.primaryText;
     state.pendingApplyAction = "";
@@ -303,7 +323,9 @@
         rewriteStyle: state.rewriteStyle,
         focusPoint: state.focusPoint,
         lengthMode: state.lengthMode,
-        rewriteAction: rewriteAction || "rewrite"
+        rewriteAction: rewriteAction || "rewrite",
+        technicalDocumentType: state.technicalDocumentType,
+        technicalReviewPrompt: state.technicalReviewPrompt
       }
     };
   }
@@ -566,6 +588,59 @@
     return lines.join("\n");
   }
 
+  function renderTechnicalReview(data) {
+    var categoryText = {
+      accuracy: "功能描述准确性",
+      terminology: "术语专业性",
+      design: "设计合理性",
+      requirement: "要求明确性"
+    };
+    var severityText = {
+      high: "高",
+      medium: "中",
+      low: "低"
+    };
+    var documentTypeText = {
+      general_technical: "通用技术文档",
+      technical_solution: "技术方案",
+      contract_acceptance: "合同验收文档",
+      test_outline: "测试大纲和细则"
+    };
+    var issues = data.issues || [];
+    var lines = [
+      "技术文档审查结果",
+      "",
+      "文档类型：" + (documentTypeText[data.documentType] || data.documentType || "通用技术文档"),
+      "总体结论：" + (data.summary || "审查完成。"),
+      ""
+    ];
+
+    if (!issues.length) {
+      lines.push("未发现明显技术文档审查问题。");
+      return lines.join("\n");
+    }
+
+    issues.forEach(function (issue, index) {
+      lines.push(
+        "[" + (severityText[issue.severity] || issue.severity || "中") + "] " +
+        (categoryText[issue.category] || issue.category || "技术审查") +
+        " #" + (index + 1)
+      );
+      lines.push("位置：" + (issue.location || "未定位"));
+      if (issue.originalText) {
+        lines.push("原文：" + issue.originalText);
+      }
+      lines.push("问题：" + (issue.problem || "未说明"));
+      lines.push("建议：" + (issue.suggestion || "无"));
+      if (issue.suggestedRewrite) {
+        lines.push("建议改写：" + issue.suggestedRewrite);
+      }
+      lines.push("");
+    });
+
+    return lines.join("\n").trim();
+  }
+
   function copyResult() {
     var text = state.copyText || byId("result-output").textContent || "";
     if (!text.trim()) {
@@ -724,6 +799,39 @@
       });
   }
 
+  function runTechnicalReview() {
+    var scope = resolveSelectionScope(false);
+    if (!scope.ok) {
+      setStatus(scope.message);
+      setResult(scope.message);
+      return;
+    }
+
+    try {
+      state.latestDocumentPayload = extractDocument(scope.selectionMode);
+      state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+    } catch (error) {
+      setStatus(error.message);
+      setResult(error.message);
+      return;
+    }
+
+    setStatus("正在执行技术文档审查...");
+    request("/word/technical-review", state.latestDocumentPayload)
+      .then(function (body) {
+        state.pendingApplyAction = "";
+        setApplyEnabled(false);
+        setTrace(body.traceId);
+        setResult(renderTechnicalReview(body.data || {}));
+        setStatus("技术文档审查完成。");
+      })
+      .catch(function (error) {
+        var message = describeFetchError(error);
+        setStatus("技术文档审查失败：" + message);
+        setResult(message);
+      });
+  }
+
   function runRewriteAction(action) {
     var selectionScope = resolveSelectionScope(true);
     if (!selectionScope.ok) {
@@ -807,6 +915,10 @@
     }
     if (state.currentMode === "format") {
       runFormatPreview();
+      return;
+    }
+    if (state.currentMode === "technicalReview") {
+      runTechnicalReview();
     }
   }
 
@@ -825,6 +937,12 @@
     });
     byId("user-instruction").addEventListener("input", function (event) {
       state.userInstruction = event.target.value;
+    });
+    byId("technical-document-type").addEventListener("change", function (event) {
+      state.technicalDocumentType = event.target.value;
+    });
+    byId("technical-review-prompt").addEventListener("input", function (event) {
+      state.technicalReviewPrompt = event.target.value;
     });
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
     byId("btn-save-api-key").addEventListener("click", saveApiKey);
@@ -850,6 +968,7 @@
   }
 
   bindEvents();
+  byId("technical-review-prompt").value = state.technicalReviewPrompt;
   renderFallbackTemplateOptions();
   switchMode(getInitialMode());
   refreshConfig();
