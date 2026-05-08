@@ -28,6 +28,7 @@
 
 <p align="center">
   <code>Word Proofread</code>
+  <code>Technical Review</code>
   <code>Format Preview</code>
   <code>Rewrite / Continue</code>
   <code>Template Rules</code>
@@ -100,10 +101,11 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Five task entries | WPS AI tab exposes rewrite, continue, proofread, format, and settings as separate ribbon actions |
+| Six task entries | WPS AI tab exposes rewrite, continue, proofread, format, technical review, and settings as separate ribbon actions |
 | Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
-| Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, and spacing before Chinese punctuation |
-| AI typo check | Uses the enterprise AI provider to detect Chinese typos, wrong words, and suspicious wording; falls back safely when no API key is configured |
+| Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, Chinese punctuation spacing, and structured document quality issues |
+| Technical document review | Reviews selected text or the whole document for functional accuracy, professional terminology, design rationality, and requirement clarity with an editable prompt |
+| AI document quality check | Sends `documentStructure` and local rule findings to the enterprise AI provider for categorized typos, grammar, expression, logic, and heading-consistency findings; falls back safely when no API key is configured |
 | Word format preview | Builds a template-based paragraph style change plan before applying it |
 | Word rewrite/continue | Rewrites or continues from the current selected text, calls the enterprise AI API, and supports local mock fallback |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
@@ -116,7 +118,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.8.0-alpha` | Enhanced the proofreading loop: the WPS add-in now extracts `documentStructure`, the adapter sends structured document data to enterprise Dify User Input, and AI findings are categorized across typos, grammar, expression, logic, and heading consistency |
+| `v0.8.0-alpha` | Added the sixth Ribbon workflow, Technical Document Review, with document-type selection and a transparent editable review prompt for functional accuracy, terminology, design rationality, and requirement clarity; also enhanced structured proofreading by extracting `documentStructure` and sending document data plus local findings to enterprise Dify User Input |
 | `v0.7.1-alpha` | Corrected the Phase 1 delivery package default WPS `jsaddons` install path to `/home/cloud/.local/share/Kingsoft/wps/jsaddons`, updated handoff docs, and rebuilt the delivery package |
 | `v0.7.0-alpha` | Added the Phase 1 delivery package with one-click install, pip/runtime offline dependency installation, WPS `jsaddons` deployment, `publish.xml`, one-click smoke test, and acceptance templates |
 | `v0.6.9-alpha` | Fixed uvicorn template loading when the adapter starts from `adapter_service/`, restoring `/templates`, Word proofreading, and format preview access to packaged template files |
@@ -267,6 +269,7 @@ When no API key is configured, `/word/rewrite` returns a local mock response, wh
 | `POST` | `/word/proofread` | Structured Word proofreading |
 | `POST` | `/word/format-preview` | Word auto-format preview |
 | `POST` | `/word/rewrite` | Rewrite or continue from Word selection/document content |
+| `POST` | `/word/technical-review` | Technical document review for functional accuracy, terminology, design, and requirement clarity |
 
 Unified response envelope:
 
@@ -350,7 +353,7 @@ The current implementation covers the Phase 1 baseline:
 - WPS task pane and action buttons
 - Structured document/selection extraction
 - Local adapter health, config, templates, and provider status
-- Word proofreading, format preview, and rewrite/continue APIs
+- Word proofreading, technical review, format preview, and rewrite/continue APIs
 - Preview-first Word write-back
 - Runtime probing and offline delivery scripts
 
