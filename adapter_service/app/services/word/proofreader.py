@@ -33,7 +33,7 @@ class WordProofreader:
         issues.extend(self._check_font_size_consistency(request))
         issues.extend(self._check_double_spaces(request))
         issues.extend(self._check_punctuation_spacing(request))
-        issues.extend(self._check_ai_typos(request, template, trace_id))
+        issues.extend(self._check_ai_document_quality(request, template, trace_id, issues))
         return issues
 
     def _resolve_template(self, template_id: str) -> Dict:
@@ -218,6 +218,104 @@ class WordProofreader:
                 )
             )
         return detected
+
+    def _check_ai_document_quality(
+        self,
+        request: WordDocumentRequest,
+        template: Dict,
+        trace_id: str,
+        local_issues: List[Issue],
+    ) -> List[Issue]:
+        ai_config = template.get("aiProofread", {})
+        if not ai_config.get("enabled"):
+            return []
+        text = request.content.plain_text.strip()
+        if not text:
+            text = "\n".join(paragraph.text for paragraph in body_paragraphs(request)).strip()
+        if not text:
+            return []
+
+        document_structure = request.content.document_structure or self._build_document_structure_fallback(
+            request,
+            template,
+        )
+        local_findings = [
+            issue.dict(by_alias=True, exclude_none=True)
+            for issue in local_issues
+        ]
+
+        try:
+            ai_items = self.provider_client.proofread_document(
+                document_text=text,
+                document_structure=document_structure,
+                template_type=template.get("name", request.options.template_id or "general-office"),
+                template_version=str(template.get("version", "v1")),
+                trace_id=trace_id,
+                local_rule_findings=local_findings,
+            )
+        except Exception:
+            return []
+
+        detected: List[Issue] = []
+        for item in ai_items:
+            suggestion = item.get("suggestion") or ""
+            reason = item.get("reason") or ""
+            detected.append(
+                Issue(
+                    ruleId="ai_{0}".format(item.get("category", "expression")),
+                    category=item.get("category", "expression"),
+                    severity=item.get("severity", "warning"),
+                    message=item.get("message", "AI detected a document quality issue."),
+                    paragraphIndex=item.get("paragraphIndex"),
+                    original=item.get("original") or None,
+                    replacement=suggestion or None,
+                    suggestion="{0}{1}".format(
+                        suggestion,
+                        "（{0}）".format(reason) if reason else "",
+                    ) or None,
+                    reason=reason or None,
+                    confidence=item.get("confidence"),
+                    source="ai",
+                    autoFixable=False,
+                )
+            )
+        return detected
+
+    def _build_document_structure_fallback(self, request: WordDocumentRequest, template: Dict) -> Dict:
+        return {
+            "doc_name": request.document_id,
+            "template_id": request.options.template_id or template.get("id", "general-office"),
+            "selection_mode": request.selection_mode,
+            "page_setup": template.get("page", {}),
+            "paragraphs": [
+                {
+                    "index": paragraph.index,
+                    "text": paragraph.text,
+                    "style_name": paragraph.style_name,
+                    "font_family": paragraph.font_name,
+                    "font_size_pt": paragraph.font_size,
+                    "bold": paragraph.bold,
+                    "alignment": paragraph.alignment,
+                    "outline_level": paragraph.outline_level,
+                    "line_spacing": paragraph.line_spacing,
+                    "first_line_indent": paragraph.first_line_indent,
+                }
+                for paragraph in request.content.paragraphs
+            ],
+            "headings": [
+                {
+                    "level": heading.level,
+                    "text": heading.text,
+                    "paragraph_index": heading.paragraph_index,
+                }
+                for heading in request.content.headings
+            ],
+            "capabilities": {
+                "page_setup_extracted": False,
+                "paragraph_style_extracted": bool(request.content.paragraphs),
+                "table_extracted": False,
+            },
+        }
 
     def _check_double_spaces(self, request: WordDocumentRequest) -> List[Issue]:
         detected: List[Issue] = []

@@ -74,8 +74,8 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.7.1-alpha` |
-| 版本规则号 | `AI-WPS-P1-DELIVERY-0.7.1-20260508` |
+| 当前版本 | `v0.8.0-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.8.0-20260508` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
@@ -116,6 +116,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.8.0-alpha` | 增强格式校对闭环：WPS 插件抽取 `documentStructure`，adapter 将结构化文档数据传给企业 Dify User Input，并支持错别字、语病、表述不规范、逻辑不清和章节命名不统一分类审校 |
 | `v0.7.1-alpha` | 修正一期交付总包默认 WPS `jsaddons` 安装路径为 `/home/cloud/.local/share/Kingsoft/wps/jsaddons`，并同步交接文档和重新打包 |
 | `v0.7.0-alpha` | 新增一期交付总包，提供一键安装、pip/运行依赖离线安装、WPS `jsaddons` 自动部署、`publish.xml` 写入、一键联调和验收模板 |
 | `v0.6.9-alpha` | 修复 uvicorn 从 `adapter_service/` 目录启动时模板路径解析错误的问题，恢复 `/templates`、格式校对和智能排版对启动包模板文件的访问 |

@@ -71,9 +71,51 @@ function testGetWritableSelection() {
   assert.strictEqual(target.Range.Text, "abc");
 }
 
+function testBuildDocumentStructureForProofread() {
+  const structure = helpers.buildDocumentStructure({
+    documentId: "安全运行方案.docx",
+    templateId: "technical-file-format-requirements",
+    selectionMode: "document",
+    plainText: "一、总体要求\n正文内容",
+    paragraphs: [
+      {
+        index: 1,
+        text: "一、总体要求",
+        styleName: "Heading 1",
+        fontName: "黑体",
+        fontSize: 12,
+        bold: false,
+        alignment: "center",
+        outlineLevel: 1,
+        lineSpacing: 1.25,
+        firstLineIndent: 0,
+        spaceBefore: 6,
+        spaceAfter: 6
+      }
+    ],
+    headings: [
+      {
+        level: 1,
+        text: "一、总体要求",
+        paragraphIndex: 1
+      }
+    ]
+  });
+
+  assert.strictEqual(structure.doc_name, "安全运行方案.docx");
+  assert.strictEqual(structure.template_id, "technical-file-format-requirements");
+  assert.strictEqual(structure.paragraphs[0].style_name, "Heading 1");
+  assert.strictEqual(structure.paragraphs[0].font_family, "黑体");
+  assert.strictEqual(structure.paragraphs[0].first_line_indent, 0);
+  assert.strictEqual(structure.headings[0].paragraph_index, 1);
+  assert.strictEqual(structure.capabilities.paragraph_style_extracted, true);
+  assert.strictEqual(structure.capabilities.table_extracted, false);
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
 testGetWritableSelection();
+testBuildDocumentStructureForProofread();
 
 console.log("taskpane-helpers tests passed");

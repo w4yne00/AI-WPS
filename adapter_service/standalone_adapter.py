@@ -95,6 +95,7 @@ def proofread(payload):
                 {
                     "ruleId": "template_font",
                     "severity": "warning",
+                    "category": "format",
                     "message": "Paragraph font does not match the selected Word template.",
                     "paragraphIndex": paragraph.get("index"),
                     "suggestion": "Use {0} for this paragraph style.".format(rule.get("fontName")),
@@ -107,6 +108,7 @@ def proofread(payload):
                     {
                         "ruleId": "template_font_size",
                         "severity": "warning",
+                        "category": "format",
                         "message": "Paragraph font size does not match the selected Word template.",
                         "paragraphIndex": paragraph.get("index"),
                         "suggestion": "Use {0} pt for this paragraph style.".format(rule.get("fontSize")),
@@ -120,6 +122,7 @@ def proofread(payload):
                     {
                         "ruleId": "template_line_spacing",
                         "severity": "warning",
+                        "category": "format",
                         "message": "Paragraph line spacing does not match the selected Word template.",
                         "paragraphIndex": paragraph.get("index"),
                         "suggestion": "Use {0} line spacing.".format(rule.get("lineSpacing")),
@@ -136,6 +139,7 @@ def proofread(payload):
             {
                 "ruleId": "heading_hierarchy",
                 "severity": "warning",
+                "category": "format",
                 "message": "Heading levels skip an intermediate level.",
                 "suggestion": "Insert the missing heading level or lower this heading level.",
                 "autoFixable": False,
@@ -153,6 +157,7 @@ def proofread(payload):
                     {
                         "ruleId": "font_consistency",
                         "severity": "warning",
+                        "category": "format",
                         "message": "Body text uses a mixed font family.",
                         "paragraphIndex": paragraph.get("index"),
                         "suggestion": "Align the paragraph font with the dominant body font.",
@@ -169,6 +174,7 @@ def proofread(payload):
                     {
                         "ruleId": "font_size_consistency",
                         "severity": "warning",
+                        "category": "format",
                         "message": "Body text uses a mixed font size.",
                         "paragraphIndex": paragraph.get("index"),
                         "suggestion": "Align the paragraph size with the dominant body size.",
@@ -183,6 +189,7 @@ def proofread(payload):
                 {
                     "ruleId": "double_space",
                     "severity": "info",
+                    "category": "format",
                     "message": "Repeated whitespace found in the paragraph.",
                     "paragraphIndex": paragraph.get("index"),
                     "suggestion": "Collapse consecutive spaces to a single space.",
@@ -194,6 +201,7 @@ def proofread(payload):
                 {
                     "ruleId": "punctuation_spacing",
                     "severity": "info",
+                    "category": "format",
                     "message": "Space detected before Chinese punctuation.",
                     "paragraphIndex": paragraph.get("index"),
                     "suggestion": "Remove the space before punctuation.",
@@ -202,16 +210,40 @@ def proofread(payload):
             )
     if template.get("aiProofread", {}).get("enabled"):
         text = payload["content"].get("plainText", "").strip()
+        document_structure = payload["content"].get("documentStructure") or {
+            "doc_name": payload.get("documentId", "unnamed.docx"),
+            "template_id": template_id,
+            "selection_mode": payload.get("selectionMode", "document"),
+            "paragraphs": payload["content"].get("paragraphs", []),
+            "headings": payload["content"].get("headings", []),
+            "capabilities": {
+                "paragraph_style_extracted": bool(payload["content"].get("paragraphs", [])),
+                "table_extracted": False,
+            },
+        }
         try:
-            typo_items = ProviderClient(load_settings()).proofread_typos(text, "standalone-word-proofread")
+            ai_items = ProviderClient(load_settings()).proofread_document(
+                document_text=text,
+                document_structure=document_structure,
+                template_type=template.get("name", template_id),
+                template_version=str(template.get("version", "v1")),
+                trace_id="standalone-word-proofread",
+                local_rule_findings=issues,
+            )
         except Exception:
-            typo_items = []
-        for item in typo_items:
+            ai_items = []
+        for item in ai_items:
             issues.append(
                 {
-                    "ruleId": template.get("aiProofread", {}).get("ruleId", "ai_typo"),
-                    "severity": "warning",
-                    "message": "AI detected a possible typo or wording issue: {0}".format(item.get("original", "")),
+                    "ruleId": "ai_{0}".format(item.get("category", "expression")),
+                    "severity": item.get("severity", "warning"),
+                    "category": item.get("category", "expression"),
+                    "message": item.get("message", "AI detected a document quality issue."),
+                    "paragraphIndex": item.get("paragraphIndex"),
+                    "original": item.get("original") or None,
+                    "replacement": item.get("suggestion") or None,
+                    "reason": item.get("reason") or None,
+                    "source": "ai",
                     "suggestion": "{0}{1}".format(
                         item.get("suggestion", ""),
                         "（{0}）".format(item.get("reason", "")) if item.get("reason") else "",
@@ -368,7 +400,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.7.1-alpha",
+                        "version": "0.8.0-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
