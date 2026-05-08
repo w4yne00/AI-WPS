@@ -91,11 +91,75 @@
     return { ok: true };
   }
 
+  function normalizeNumber(value) {
+    if (value === null || typeof value === "undefined" || value === "") {
+      return null;
+    }
+    var numeric = Number(value);
+    return isNaN(numeric) ? null : numeric;
+  }
+
+  function firstDefined() {
+    for (var i = 0; i < arguments.length; i += 1) {
+      if (typeof arguments[i] !== "undefined" && arguments[i] !== null) {
+        return arguments[i];
+      }
+    }
+    return null;
+  }
+
+  function buildDocumentStructure(options) {
+    var paragraphs = options.paragraphs || [];
+    var headings = options.headings || [];
+    return {
+      doc_name: options.documentId || "unnamed.docx",
+      template_id: options.templateId || "general-office",
+      selection_mode: options.selectionMode || "document",
+      page_setup: options.pageSetup || {},
+      paragraphs: paragraphs.map(function (paragraph) {
+        return {
+          index: paragraph.index,
+          text: paragraph.text || "",
+          style_name: paragraph.styleName || paragraph.style_name || "",
+          font_family: paragraph.fontName || paragraph.font_family || "",
+          font_size_pt: normalizeNumber(firstDefined(paragraph.fontSize, paragraph.font_size_pt)),
+          bold: Boolean(paragraph.bold),
+          italic: Boolean(paragraph.italic),
+          underline: paragraph.underline || null,
+          alignment: paragraph.alignment || "",
+          outline_level: normalizeNumber(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
+          line_spacing: normalizeNumber(firstDefined(paragraph.lineSpacing, paragraph.line_spacing)),
+          first_line_indent: normalizeNumber(firstDefined(paragraph.firstLineIndent, paragraph.first_line_indent)),
+          space_before: normalizeNumber(firstDefined(paragraph.spaceBefore, paragraph.space_before)),
+          space_after: normalizeNumber(firstDefined(paragraph.spaceAfter, paragraph.space_after)),
+          left_indent: normalizeNumber(firstDefined(paragraph.leftIndent, paragraph.left_indent)),
+          right_indent: normalizeNumber(firstDefined(paragraph.rightIndent, paragraph.right_indent))
+        };
+      }),
+      headings: headings.map(function (heading) {
+        return {
+          level: heading.level || heading.outlineLevel || 0,
+          text: heading.text || "",
+          paragraph_index: heading.paragraphIndex || heading.index || null
+        };
+      }),
+      tables: options.tables || [],
+      captions: options.captions || [],
+      capabilities: {
+        page_setup_extracted: Boolean(options.pageSetup && Object.keys(options.pageSetup).length),
+        paragraph_style_extracted: paragraphs.length > 0,
+        table_extracted: Boolean(options.tables && options.tables.length),
+        header_footer_extracted: false
+      }
+    };
+  }
+
   return {
     normalizeText: normalizeText,
     getEffectiveSelectionText: getEffectiveSelectionText,
     getWritableSelection: getWritableSelection,
     resolveRewriteScope: resolveRewriteScope,
-    canApplyRewriteToSelection: canApplyRewriteToSelection
+    canApplyRewriteToSelection: canApplyRewriteToSelection,
+    buildDocumentStructure: buildDocumentStructure
   };
 });

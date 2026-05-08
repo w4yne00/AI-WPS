@@ -257,10 +257,16 @@
         fontName: font.NameFarEast || font.Name || "",
         fontSize: font.Size || 0,
         bold: Boolean(font.Bold),
+        italic: Boolean(font.Italic),
+        underline: font.Underline || null,
         alignment: String(paragraphFormat.Alignment || "left"),
         outlineLevel: paragraphFormat.OutlineLevel || 0,
         lineSpacing: paragraphFormat.LineSpacing || paragraphFormat.lineSpacing || null,
-        firstLineIndent: paragraphFormat.FirstLineIndent || paragraphFormat.firstLineIndent || null
+        firstLineIndent: paragraphFormat.FirstLineIndent || paragraphFormat.firstLineIndent || null,
+        spaceBefore: paragraphFormat.SpaceBefore || paragraphFormat.spaceBefore || null,
+        spaceAfter: paragraphFormat.SpaceAfter || paragraphFormat.spaceAfter || null,
+        leftIndent: paragraphFormat.LeftIndent || paragraphFormat.leftIndent || null,
+        rightIndent: paragraphFormat.RightIndent || paragraphFormat.rightIndent || null
       });
     }
     return items;
@@ -269,7 +275,27 @@
   function collectHeadings(paragraphs) {
     return paragraphs.filter(function (item) {
       return (item.outlineLevel || 0) > 0;
+    }).map(function (item) {
+      return {
+        level: item.outlineLevel || 0,
+        text: item.text || "",
+        paragraphIndex: item.index
+      };
     });
+  }
+
+  function collectPageSetup(document) {
+    var setup = document && (document.PageSetup || document.pageSetup);
+    if (!setup) {
+      return {};
+    }
+    return {
+      paperSize: setup.PaperSize || setup.paperSize || "",
+      marginTop: setup.TopMargin || setup.marginTop || null,
+      marginBottom: setup.BottomMargin || setup.marginBottom || null,
+      marginLeft: setup.LeftMargin || setup.marginLeft || null,
+      marginRight: setup.RightMargin || setup.marginRight || null
+    };
   }
 
   function extractDocument(selectionMode, rewriteAction) {
@@ -287,6 +313,19 @@
       plainText = getSelectionText(document) || plainText;
     }
 
+    var headings = collectHeadings(paragraphs);
+    var documentStructure = helpers.buildDocumentStructure
+      ? helpers.buildDocumentStructure({
+        documentId: document.Name || "unnamed.docx",
+        templateId: state.selectedTemplateId,
+        selectionMode: selectionMode,
+        plainText: plainText,
+        pageSetup: collectPageSetup(document),
+        paragraphs: paragraphs,
+        headings: headings
+      })
+      : {};
+
     return {
       documentId: document.Name || "unnamed.docx",
       scene: "word",
@@ -294,7 +333,8 @@
       content: {
         plainText: plainText,
         paragraphs: paragraphs,
-        headings: collectHeadings(paragraphs)
+        headings: headings,
+        documentStructure: documentStructure
       },
       options: {
         templateId: state.selectedTemplateId,
@@ -531,15 +571,29 @@
     if (!issues || !issues.length) {
       return "未发现需要处理的问题。";
     }
+    var categoryText = {
+      format: "格式合规",
+      typo: "错别字",
+      grammar: "语病",
+      expression: "表述规范",
+      logic: "逻辑清晰",
+      heading_consistency: "章节命名"
+    };
     return issues.map(function (issue) {
+      var category = categoryText[issue.category] || issue.category || "格式合规";
+      var original = issue.original ? ("原文：" + issue.original) : "";
+      var reason = issue.reason ? ("依据：" + issue.reason) : "";
       return [
+        "类型：" + category,
         "规则：" + issue.ruleId,
         "级别：" + issue.severity,
         "段落：" + (issue.paragraphIndex || "无"),
         "说明：" + issue.message,
         "建议：" + (issue.suggestion || "无"),
+        original,
+        reason,
         "可自动修复：" + (issue.autoFixable ? "是" : "否")
-      ].join(" | ");
+      ].filter(Boolean).join(" | ");
     }).join("\n");
   }
 

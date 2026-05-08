@@ -1,4 +1,4 @@
-from typing import List, Literal, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -13,18 +13,26 @@ class Paragraph(BaseModel):
     outline_level: Optional[int] = Field(default=None, alias="outlineLevel")
     line_spacing: Optional[float] = Field(default=None, alias="lineSpacing")
     first_line_indent: Optional[float] = Field(default=None, alias="firstLineIndent")
+    space_before: Optional[float] = Field(default=None, alias="spaceBefore")
+    space_after: Optional[float] = Field(default=None, alias="spaceAfter")
+    left_indent: Optional[float] = Field(default=None, alias="leftIndent")
+    right_indent: Optional[float] = Field(default=None, alias="rightIndent")
+    italic: Optional[bool] = None
+    underline: Optional[bool] = None
     bold: Optional[bool] = None
 
 
 class Heading(BaseModel):
     level: int
     text: str
+    paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
 
 
 class DocumentContent(BaseModel):
     plain_text: str = Field(alias="plainText")
     paragraphs: List[Paragraph]
     headings: List[Heading] = Field(default_factory=list)
+    document_structure: Dict[str, Any] = Field(default_factory=dict, alias="documentStructure")
 
 
 class RequestOptions(BaseModel):
@@ -49,8 +57,15 @@ class Issue(BaseModel):
     rule_id: str = Field(alias="ruleId")
     severity: Literal["info", "warning", "error"]
     message: str
+    category: str = "format"
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
     suggestion: Optional[str] = None
+    original: Optional[str] = None
+    replacement: Optional[str] = None
+    reason: Optional[str] = None
+    confidence: Optional[float] = None
+    source: str = "local"
+    evidence: Optional[str] = None
     auto_fixable: bool = Field(default=False, alias="autoFixable")
 
 

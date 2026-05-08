@@ -2,6 +2,7 @@ import unittest
 from pathlib import Path
 import sys
 import os
+import importlib.util
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -10,9 +11,11 @@ if str(ROOT) not in sys.path:
 from app.core.config import load_settings, save_provider_base_url
 from app.services.provider_client import (
     ProviderClient,
+    build_document_proofread_payload,
     build_rewrite_prompt,
     build_typo_prompt,
     extract_answer,
+    parse_document_proofread_issues,
     parse_typo_issues,
 )
 from app.services.template_loader import TemplateLoader
@@ -211,6 +214,112 @@ class EnterpriseProviderTests(unittest.TestCase):
             issues,
             [{"original": "文挡", "suggestion": "文档", "reason": "错别字"}],
         )
+
+    @unittest.skipUnless(importlib.util.find_spec("pydantic"), "pydantic is required for model parsing")
+    def test_document_structure_is_accepted_in_word_request(self) -> None:
+        from app.core.models import WordDocumentRequest
+
+        request = WordDocumentRequest.parse_obj(
+            {
+                "documentId": "doc-structure",
+                "scene": "word",
+                "selectionMode": "document",
+                "content": {
+                    "plainText": "一、总体要求\n正文内容",
+                    "paragraphs": [
+                        {
+                            "index": 1,
+                            "text": "一、总体要求",
+                            "styleName": "Heading 1",
+                            "fontName": "黑体",
+                            "fontSize": 12,
+                            "outlineLevel": 1,
+                        }
+                    ],
+                    "headings": [{"level": 1, "text": "一、总体要求"}],
+                    "documentStructure": {
+                        "doc_name": "安全运行方案.docx",
+                        "template_id": "technical-file-format-requirements",
+                        "paragraphs": [
+                            {
+                                "index": 1,
+                                "text": "一、总体要求",
+                                "style_name": "Heading 1",
+                                "font_family": "黑体",
+                            }
+                        ],
+                        "capabilities": {
+                            "paragraph_style_extracted": True,
+                            "table_extracted": False,
+                        },
+                    },
+                },
+            }
+        )
+
+        self.assertEqual(request.content.document_structure["doc_name"], "安全运行方案.docx")
+        self.assertTrue(request.content.document_structure["capabilities"]["paragraph_style_extracted"])
+
+    def test_document_proofread_payload_sends_dify_user_inputs(self) -> None:
+        payload = build_document_proofread_payload(
+            document_text="一、总体要求\n正文内容",
+            document_structure={
+                "doc_name": "安全运行方案.docx",
+                "template_id": "technical-file-format-requirements",
+                "paragraphs": [{"index": 1, "text": "一、总体要求"}],
+            },
+            template_type="技术文件格式及书写要求",
+            template_version="v1",
+            trace_id="trace-proofread",
+            local_rule_findings=[
+                {
+                    "ruleId": "template_font",
+                    "category": "format",
+                    "paragraphIndex": 1,
+                    "message": "字体不符合模板。",
+                }
+            ],
+        )
+
+        input_data = payload["input_data"]
+        self.assertEqual(input_data["document_text"], "一、总体要求\n正文内容")
+        self.assertEqual(input_data["document_structure"]["doc_name"], "安全运行方案.docx")
+        self.assertEqual(input_data["template_type"], "技术文件格式及书写要求")
+        self.assertTrue(input_data["check_scope"]["check_expression"])
+        self.assertEqual(input_data["local_rule_findings"][0]["category"], "format")
+        self.assertIn("结构化 JSON", payload["query"])
+
+    def test_parse_document_proofread_issues_supports_quality_categories(self) -> None:
+        issues = parse_document_proofread_issues(
+            """
+            {
+              "issues": [
+                {
+                  "category": "typo",
+                  "severity": "warning",
+                  "paragraphIndex": 2,
+                  "original": "文挡",
+                  "suggestion": "文档",
+                  "message": "疑似错别字",
+                  "reason": "应使用“文档”。",
+                  "confidence": 0.93
+                },
+                {
+                  "category": "heading_consistency",
+                  "severity": "info",
+                  "paragraphIndex": 5,
+                  "message": "章节命名不统一",
+                  "suggestion": "统一使用“安全能力设计”。"
+                }
+              ]
+            }
+            """
+        )
+
+        self.assertEqual(len(issues), 2)
+        self.assertEqual(issues[0]["category"], "typo")
+        self.assertEqual(issues[0]["original"], "文挡")
+        self.assertEqual(issues[1]["category"], "heading_consistency")
 
 
 if __name__ == "__main__":

@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from urllib import error, request as urllib_request
 
 from app.core.config import AppSettings, load_settings
@@ -88,6 +88,55 @@ def build_typo_prompt(text: str) -> str:
     )
 
 
+def build_document_proofread_prompt() -> str:
+    return "\n".join(
+        [
+            "你是一名企业技术文档审校器，不是自由改写器。",
+            "请基于 input_data 中的 document_text、document_structure、template_type、check_scope 和 local_rule_findings 做综合审校。",
+            "审校范围包括：错别字、语病、表述不规范、逻辑不清、章节命名不统一。",
+            "格式合规问题请参考 local_rule_findings，不要虚构无法从结构化数据判断的页眉页脚、页码或表格深层格式问题。",
+            "必须只返回结构化 JSON，不要输出解释性前后缀。",
+            "JSON 格式：",
+            '{"issues":[{"category":"typo|grammar|expression|logic|heading_consistency","severity":"info|warning|error","paragraphIndex":1,"original":"原文片段","suggestion":"修改建议","message":"问题说明","reason":"判断依据","confidence":0.0}]}',
+            "如果没有发现问题，返回 {\"issues\":[]}。",
+        ]
+    )
+
+
+def build_document_proofread_payload(
+    document_text: str,
+    document_structure: Dict,
+    template_type: str,
+    template_version: str,
+    trace_id: str,
+    local_rule_findings: Optional[List[Dict]] = None,
+) -> Dict:
+    return {
+        "input_data": {
+            "scene": "word",
+            "proofread_mode": "document_quality",
+            "trace_id": trace_id,
+            "document_text": document_text,
+            "document_structure": document_structure,
+            "template_type": template_type,
+            "template_version": template_version,
+            "check_scope": {
+                "check_format": True,
+                "check_expression": True,
+                "check_typos": True,
+                "check_logic": True,
+                "check_heading_consistency": True,
+            },
+            "local_rule_findings": local_rule_findings or [],
+        },
+        "query": build_document_proofread_prompt(),
+        "conversation_id": "",
+        "mode": "blocking",
+        "user": "wps-ai-assistant",
+        "files": [],
+    }
+
+
 def parse_typo_issues(answer: str) -> list:
     raw = (answer or "").strip()
     if not raw:
@@ -117,6 +166,82 @@ def parse_typo_issues(answer: str) -> list:
                     "reason": reason,
                 }
             )
+    return issues
+
+
+def _extract_json_payload(answer: str):
+    raw = (answer or "").strip()
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        pass
+
+    object_start = raw.find("{")
+    object_end = raw.rfind("}")
+    if object_start >= 0 and object_end >= object_start:
+        try:
+            return json.loads(raw[object_start:object_end + 1])
+        except json.JSONDecodeError:
+            pass
+
+    array_start = raw.find("[")
+    array_end = raw.rfind("]")
+    if array_start >= 0 and array_end >= array_start:
+        try:
+            return json.loads(raw[array_start:array_end + 1])
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def parse_document_proofread_issues(answer: str) -> List[Dict]:
+    payload = _extract_json_payload(answer)
+    if payload is None:
+        return []
+    if isinstance(payload, dict):
+        raw_issues = payload.get("issues", [])
+    elif isinstance(payload, list):
+        raw_issues = payload
+    else:
+        return []
+
+    allowed_categories = {
+        "typo",
+        "grammar",
+        "expression",
+        "logic",
+        "heading_consistency",
+    }
+    allowed_severities = {"info", "warning", "error"}
+    issues: List[Dict] = []
+    for item in raw_issues:
+        if not isinstance(item, dict):
+            continue
+        category = str(item.get("category", "expression")).strip() or "expression"
+        if category not in allowed_categories:
+            category = "expression"
+        severity = str(item.get("severity", "warning")).strip() or "warning"
+        if severity not in allowed_severities:
+            severity = "warning"
+        message = str(item.get("message", "")).strip()
+        suggestion = str(item.get("suggestion", item.get("replacement", ""))).strip()
+        original = str(item.get("original", "")).strip()
+        reason = str(item.get("reason", "")).strip()
+        if not (message or suggestion or original):
+            continue
+        parsed = {
+            "category": category,
+            "severity": severity,
+            "paragraphIndex": item.get("paragraphIndex", item.get("paragraph_index")),
+            "original": original,
+            "suggestion": suggestion,
+            "message": message or "AI detected a document quality issue.",
+            "reason": reason,
+            "confidence": item.get("confidence"),
+        }
+        issues.append(parsed)
     return issues
 
 
@@ -305,6 +430,58 @@ class ProviderClient:
         answer = extract_answer(body)
         logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.typo", trace_id)
         return parse_typo_issues(answer)
+
+    def proofread_document(
+        self,
+        document_text: str,
+        document_structure: Dict,
+        template_type: str,
+        template_version: str,
+        trace_id: str,
+        local_rule_findings: Optional[List[Dict]] = None,
+    ) -> List[Dict]:
+        if not document_text.strip() or not self.is_configured():
+            return []
+
+        payload = build_document_proofread_payload(
+            document_text=document_text,
+            document_structure=document_structure,
+            template_type=template_type,
+            template_version=template_version,
+            trace_id=trace_id,
+            local_rule_findings=local_rule_findings,
+        )
+        payload["mode"] = self.settings.provider_mode
+        req = urllib_request.Request(
+            "{0}{1}".format(
+                self.settings.provider_base_url.rstrip("/"),
+                self.settings.provider_chat_path,
+            ),
+            data=json.dumps(payload).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(self.get_api_key()),
+                "Content-Type": "application/json",
+                "X-Trace-Id": trace_id,
+            },
+        )
+
+        try:
+            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
+                body = json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise ProviderAuthError() from exc
+            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            if "timed out" in str(reason).lower():
+                raise ProviderTimeoutError() from exc
+            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
+
+        answer = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.document", trace_id)
+        return parse_document_proofread_issues(answer)
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:
         prefix_map = {
