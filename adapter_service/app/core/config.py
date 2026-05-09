@@ -1,12 +1,18 @@
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Optional
+from typing import Dict, Optional
 
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = BASE_DIR / "config/adapter.json"
 EXAMPLE_CONFIG_PATH = BASE_DIR / "config/adapter.example.json"
+
+
+@dataclass
+class TaskRoute:
+    task_id: str
+    enabled: bool = True
 
 
 @dataclass
@@ -24,6 +30,7 @@ class AppSettings:
     log_path: str = "./logs/adapter.log"
     template_root: str = "./templates"
     timeout_seconds: int = 30
+    task_routes: Dict[str, TaskRoute] = field(default_factory=dict)
 
 
 def load_config_payload(config_path: Optional[Path] = None) -> dict:
@@ -59,6 +66,17 @@ def save_provider_base_url(
     save_config_payload(payload, config_path)
 
 
+def task_routes_to_dict(settings: AppSettings) -> dict:
+    routes = settings.task_routes or {}
+    return {
+        task_type: {
+            "taskId": route.task_id,
+            "enabled": route.enabled,
+        }
+        for task_type, route in routes.items()
+    }
+
+
 def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     path = config_path or DEFAULT_CONFIG_PATH
     if not path.exists():
@@ -68,6 +86,15 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         return AppSettings()
 
     payload = json.loads(path.read_text(encoding="utf-8"))
+    task_routes = {}
+    for task_type, route_payload in payload.get("taskRoutes", {}).items():
+        if not isinstance(route_payload, dict):
+            continue
+        task_routes[task_type] = TaskRoute(
+            task_id=str(route_payload.get("taskId", task_type)).strip() or task_type,
+            enabled=bool(route_payload.get("enabled", True)),
+        )
+
     return AppSettings(
         service_port=payload.get("servicePort", 18100),
         provider_name=payload.get("providerName", "企业大模型接口"),
@@ -82,4 +109,5 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         log_path=payload.get("logPath", "./logs/adapter.log"),
         template_root=payload.get("templateRoot", "./templates"),
         timeout_seconds=payload.get("timeoutSeconds", 30),
+        task_routes=task_routes,
     )

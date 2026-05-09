@@ -1,12 +1,34 @@
 {
   "servicePort": 18100,
   "providerName": "企业大模型接口",
-  "providerType": "enterprise-chat-api",
+  "providerType": "enterprise-dify-workflow",
   "providerBaseUrl": "",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
-  "providerChatPath": "/chat-messages",
+  "providerChatPath": "/workflows/run",
   "providerMode": "blocking",
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
-  "timeoutSeconds": 30
+  "timeoutSeconds": 30,
+  "taskRoutes": {
+    "word.rewrite": {
+      "taskId": "word.rewrite",
+      "enabled": true
+    },
+    "word.continue": {
+      "taskId": "word.continue",
+      "enabled": true
+    },
+    "word.proofread": {
+      "taskId": "word.proofread",
+      "enabled": true
+    },
+    "word.format_preview": {
+      "taskId": "word.format_preview",
+      "enabled": true
+    },
+    "word.technical_review": {
+      "taskId": "word.technical_review",
+      "enabled": true
+    }
+  }
 }

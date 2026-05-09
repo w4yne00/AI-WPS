@@ -75,8 +75,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.8.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.8.0-20260508` |
+| Version | `v0.9.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.9.0-20260509` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -118,6 +118,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.9.0-alpha` | Closed the Phase 1 provider design around one provider, one API key, one Dify workflow, and `task_id` branching; added lightweight adapter `taskRoutes`, Dify workflow payload support, `/config` route summaries, `/health` route counts, and deployment/handoff docs |
 | `v0.8.0-alpha` | Added the sixth Ribbon workflow, Technical Document Review, with document-type selection and a transparent editable review prompt for functional accuracy, terminology, design rationality, and requirement clarity; also enhanced structured proofreading by extracting `documentStructure` and sending document data plus local findings to enterprise Dify User Input |
 | `v0.7.1-alpha` | Corrected the Phase 1 delivery package default WPS `jsaddons` install path to `/home/cloud/.local/share/Kingsoft/wps/jsaddons`, updated handoff docs, and rebuilt the delivery package |
 | `v0.7.0-alpha` | Added the Phase 1 delivery package with one-click install, pip/runtime offline dependency installation, WPS `jsaddons` deployment, `publish.xml`, one-click smoke test, and acceptance templates |

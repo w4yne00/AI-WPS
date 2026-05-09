@@ -1,5 +1,7 @@
 # AI-WPS 一期交付总包
 
+版本：`v0.9.0-alpha`
+
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
@@ -44,10 +46,13 @@ bash scripts/phase1_smoke_test.sh
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
+- `docs/operations/dify-single-workflow-task-routing.md`：Dify 单工作流 task_id 路由部署手册。
+- `docs/operations/phase1-v0.9.0-deployment.md`：新版本部署手册。
 
 ## 安装后操作
 
 1. 关闭并重新打开 WPS。
 2. 确认 Ribbon 出现 `WPS AI 助理`。
 3. 打开设置页刷新配置。
-4. 验证格式校对、智能排版、智能改写、智能续写。
+4. 验证智能改写、智能续写、格式校对、智能排版和技术审查。
+5. 如果接入 Dify 工作流，确认工作流通过 `task_id` 分流到对应路径。

@@ -113,6 +113,7 @@
   function setProviderLine(providerName, configured) {
     var providerText = {
       "enterprise-chat-api": "企业接口",
+      "enterprise-dify-workflow": "Dify 工作流",
       mock: "模拟接口"
     };
     var detail = providerText[providerName] || providerName || "未检测";

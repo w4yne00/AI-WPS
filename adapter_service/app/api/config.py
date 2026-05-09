@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.config import load_settings
+from app.core.config import load_settings, task_routes_to_dict
 from app.services.provider_client import ProviderClient
 
 router = APIRouter()
@@ -21,6 +21,7 @@ def get_config() -> dict:
             "providerMode": settings.provider_mode,
             "providerConfigured": provider.is_configured(),
             "providerAuthSource": provider.get_auth_source(),
+            "taskRoutes": task_routes_to_dict(settings),
             "logPath": settings.log_path,
             "templateRoot": settings.template_root,
             "timeoutSeconds": settings.timeout_seconds,

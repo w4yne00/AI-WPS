@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 from urllib import error, request as urllib_request
 
-from app.core.config import AppSettings, load_settings
+from app.core.config import AppSettings, TaskRoute, load_settings
 from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.logging import get_logger
 
@@ -167,10 +167,13 @@ def build_document_proofread_payload(
     template_version: str,
     trace_id: str,
     local_rule_findings: Optional[List[Dict]] = None,
+    task_id: str = "word.proofread",
 ) -> Dict:
     return {
         "input_data": {
             "scene": "word",
+            "task_id": task_id,
+            "taskType": task_id,
             "proofread_mode": "document_quality",
             "trace_id": trace_id,
             "document_text": document_text,
@@ -189,6 +192,33 @@ def build_document_proofread_payload(
         "query": build_document_proofread_prompt(),
         "conversation_id": "",
         "mode": "blocking",
+        "user": "wps-ai-assistant",
+        "files": [],
+    }
+
+
+def is_workflow_provider(settings: AppSettings) -> bool:
+    return (
+        settings.provider_type == "enterprise-dify-workflow"
+        or settings.provider_chat_path.rstrip("/").endswith("/workflows/run")
+    )
+
+
+def build_provider_request_payload(settings: AppSettings, input_data: Dict, query: str) -> Dict:
+    if is_workflow_provider(settings):
+        inputs = dict(input_data)
+        inputs["query"] = query
+        return {
+            "inputs": inputs,
+            "response_mode": settings.provider_mode,
+            "user": "wps-ai-assistant",
+            "files": [],
+        }
+    return {
+        "input_data": input_data,
+        "query": query,
+        "conversation_id": "",
+        "mode": settings.provider_mode,
         "user": "wps-ai-assistant",
         "files": [],
     }
@@ -425,6 +455,22 @@ class ProviderClient:
     def __init__(self, settings: Optional[AppSettings] = None) -> None:
         self.settings = settings or load_settings()
 
+    def resolve_task_route(self, task_type: str) -> TaskRoute:
+        routes = self.settings.task_routes or {}
+        return routes.get(task_type) or TaskRoute(task_id=task_type, enabled=True)
+
+    def build_task_input_data(self, task_type: str, trace_id: str, payload: Optional[Dict] = None) -> Dict:
+        route = self.resolve_task_route(task_type)
+        input_data = {
+            "scene": "word",
+            "task_id": route.task_id,
+            "taskType": task_type,
+            "trace_id": trace_id,
+        }
+        if payload:
+            input_data.update(payload)
+        return input_data
+
     def is_configured(self) -> bool:
         return bool(self.settings.provider_base_url.strip() and self.get_api_key())
 
@@ -466,18 +512,15 @@ class ProviderClient:
             }
 
         payload = json.dumps(
-            {
-                "input_data": {
-                    "scene": "word",
-                    "rewrite_mode": mode,
-                    "trace_id": trace_id,
-                },
-                "query": prompt,
-                "conversation_id": "",
-                "mode": self.settings.provider_mode,
-                "user": "wps-ai-assistant",
-                "files": [],
-            }
+            build_provider_request_payload(
+                self.settings,
+                self.build_task_input_data(
+                    "word.continue" if mode == "continue" else "word.rewrite",
+                    trace_id,
+                    {"rewrite_mode": mode},
+                ),
+                prompt,
+            )
         ).encode("utf-8")
         url = "{0}{1}".format(
             self.settings.provider_base_url.rstrip("/"),
@@ -524,18 +567,15 @@ class ProviderClient:
 
         prompt = build_typo_prompt(source_text)
         payload = json.dumps(
-            {
-                "input_data": {
-                    "scene": "word",
-                    "proofread_mode": "typo",
-                    "trace_id": trace_id,
-                },
-                "query": prompt,
-                "conversation_id": "",
-                "mode": self.settings.provider_mode,
-                "user": "wps-ai-assistant",
-                "files": [],
-            }
+            build_provider_request_payload(
+                self.settings,
+                self.build_task_input_data(
+                    "word.proofread",
+                    trace_id,
+                    {"proofread_mode": "typo"},
+                ),
+                prompt,
+            )
         ).encode("utf-8")
         url = "{0}{1}".format(
             self.settings.provider_base_url.rstrip("/"),
@@ -588,8 +628,14 @@ class ProviderClient:
             template_version=template_version,
             trace_id=trace_id,
             local_rule_findings=local_rule_findings,
+            task_id=self.resolve_task_route("word.proofread").task_id,
         )
-        payload["mode"] = self.settings.provider_mode
+        payload["input_data"]["taskType"] = "word.proofread"
+        payload = build_provider_request_payload(
+            self.settings,
+            payload["input_data"],
+            payload["query"],
+        )
         req = urllib_request.Request(
             "{0}{1}".format(
                 self.settings.provider_base_url.rstrip("/"),
@@ -649,19 +695,18 @@ class ProviderClient:
             return result
 
         payload = json.dumps(
-            {
-                "input_data": {
-                    "scene": "word",
-                    "review_mode": "technical_document",
-                    "document_type": document_type,
-                    "trace_id": trace_id,
-                },
-                "query": prompt,
-                "conversation_id": "",
-                "mode": self.settings.provider_mode,
-                "user": "wps-ai-assistant",
-                "files": [],
-            }
+            build_provider_request_payload(
+                self.settings,
+                self.build_task_input_data(
+                    "word.technical_review",
+                    trace_id,
+                    {
+                        "review_mode": "technical_document",
+                        "document_type": document_type,
+                    },
+                ),
+                prompt,
+            )
         ).encode("utf-8")
         url = "{0}{1}".format(
             self.settings.provider_base_url.rstrip("/"),

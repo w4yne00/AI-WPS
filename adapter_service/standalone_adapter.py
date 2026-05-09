@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
-from app.core.config import load_settings, save_provider_base_url
+from app.core.config import load_settings, save_provider_base_url, task_routes_to_dict
 from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
@@ -400,12 +400,13 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.8.0-alpha",
+                        "version": "0.9.0-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
                         "providerConfigured": provider.is_configured(),
                         "providerAuthSource": provider.get_auth_source(),
+                        "taskRouteCount": len(settings.task_routes or {}),
                     },
                     "errors": [],
                 },
@@ -449,6 +450,7 @@ class Handler(BaseHTTPRequestHandler):
                         "providerMode": settings.provider_mode,
                         "providerConfigured": provider.is_configured(),
                         "providerAuthSource": provider.get_auth_source(),
+                        "taskRoutes": task_routes_to_dict(settings),
                         "logPath": settings.log_path,
                         "templateRoot": settings.template_root,
                         "timeoutSeconds": settings.timeout_seconds,

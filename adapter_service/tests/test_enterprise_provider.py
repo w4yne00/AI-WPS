@@ -8,10 +8,11 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.config import load_settings, save_provider_base_url
+from app.core.config import load_settings, save_provider_base_url, task_routes_to_dict
 from app.services.provider_client import (
     ProviderClient,
     build_document_proofread_payload,
+    build_provider_request_payload,
     build_rewrite_prompt,
     build_typo_prompt,
     extract_answer,
@@ -51,6 +52,58 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         config_file.unlink()
         tmp_dir.rmdir()
+
+    def test_load_settings_reads_task_routes(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerType": "enterprise-dify-workflow",
+              "providerChatPath": "/workflows/run",
+              "taskRoutes": {
+                "word.proofread": {
+                  "taskId": "word.proofread",
+                  "enabled": true
+                },
+                "word.technical_review": {
+                  "taskId": "word.technical_review",
+                  "enabled": false
+                }
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.task_routes["word.proofread"].task_id, "word.proofread")
+        self.assertTrue(settings.task_routes["word.proofread"].enabled)
+        self.assertFalse(settings.task_routes["word.technical_review"].enabled)
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_provider_client_resolves_default_task_route(self) -> None:
+        client = ProviderClient(load_settings())
+
+        route = client.resolve_task_route("word.rewrite")
+
+        self.assertEqual(route.task_id, "word.rewrite")
+        self.assertTrue(route.enabled)
+
+    def test_task_routes_to_dict_exposes_safe_summary(self) -> None:
+        settings = load_settings()
+        settings.task_routes = {
+            "word.proofread": type("Route", (), {"task_id": "word.proofread", "enabled": True})()
+        }
+
+        summary = task_routes_to_dict(settings)
+
+        self.assertEqual(summary["word.proofread"]["taskId"], "word.proofread")
+        self.assertTrue(summary["word.proofread"]["enabled"])
 
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -279,15 +332,53 @@ class EnterpriseProviderTests(unittest.TestCase):
                     "message": "字体不符合模板。",
                 }
             ],
+            task_id="word.proofread",
         )
 
         input_data = payload["input_data"]
+        self.assertEqual(input_data["task_id"], "word.proofread")
+        self.assertEqual(input_data["taskType"], "word.proofread")
         self.assertEqual(input_data["document_text"], "一、总体要求\n正文内容")
         self.assertEqual(input_data["document_structure"]["doc_name"], "安全运行方案.docx")
         self.assertEqual(input_data["template_type"], "技术文件格式及书写要求")
         self.assertTrue(input_data["check_scope"]["check_expression"])
         self.assertEqual(input_data["local_rule_findings"][0]["category"], "format")
         self.assertIn("结构化 JSON", payload["query"])
+
+    def test_build_provider_request_payload_uses_workflow_inputs(self) -> None:
+        settings = load_settings()
+        settings.provider_type = "enterprise-dify-workflow"
+        settings.provider_chat_path = "/workflows/run"
+        settings.provider_mode = "blocking"
+
+        payload = build_provider_request_payload(
+            settings=settings,
+            input_data={"task_id": "word.proofread", "taskType": "word.proofread"},
+            query="请审校文档。",
+        )
+
+        self.assertEqual(payload["inputs"]["task_id"], "word.proofread")
+        self.assertEqual(payload["inputs"]["taskType"], "word.proofread")
+        self.assertEqual(payload["inputs"]["query"], "请审校文档。")
+        self.assertEqual(payload["response_mode"], "blocking")
+        self.assertNotIn("input_data", payload)
+
+    def test_build_provider_request_payload_keeps_chat_message_shape(self) -> None:
+        settings = load_settings()
+        settings.provider_type = "enterprise-chat-api"
+        settings.provider_chat_path = "/chat-messages"
+        settings.provider_mode = "blocking"
+
+        payload = build_provider_request_payload(
+            settings=settings,
+            input_data={"task_id": "word.rewrite", "taskType": "word.rewrite"},
+            query="请改写。",
+        )
+
+        self.assertEqual(payload["input_data"]["task_id"], "word.rewrite")
+        self.assertEqual(payload["query"], "请改写。")
+        self.assertEqual(payload["mode"], "blocking")
+        self.assertNotIn("inputs", payload)
 
     def test_parse_document_proofread_issues_supports_quality_categories(self) -> None:
         issues = parse_document_proofread_issues(
