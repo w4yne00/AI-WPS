@@ -20,7 +20,7 @@ class WordTechnicalReviewer:
 
         review_prompt = request.options.technical_review_prompt.strip()
         if not review_prompt:
-            review_prompt = get_default_technical_review_prompt()
+            review_prompt = get_default_technical_review_prompt(request.options.technical_document_type)
 
         provider_result = self.provider_client.technical_review(
             source_text,

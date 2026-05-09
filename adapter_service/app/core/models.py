@@ -43,7 +43,7 @@ class RequestOptions(BaseModel):
     focus_point: str = Field(default="default", alias="focusPoint")
     length_mode: str = Field(default="default", alias="lengthMode")
     rewrite_action: str = Field(default="rewrite", alias="rewriteAction")
-    technical_document_type: str = Field(default="general_technical", alias="technicalDocumentType")
+    technical_document_type: str = Field(default="technical_solution", alias="technicalDocumentType")
     technical_review_prompt: str = Field(default="", alias="technicalReviewPrompt")
 
 

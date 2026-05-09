@@ -75,8 +75,8 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.9.0-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.9.0-20260509` |
+| 当前版本 | `v0.9.1-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.9.1-20260509` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
@@ -118,7 +118,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
-| `v0.9.0-alpha` | 一期 provider 路线收口为“单 provider + 单 API Key + 单 Dify 工作流 + task_id 判断节点”，adapter 新增轻量 `taskRoutes` 配置、Dify workflow payload 适配、`/config` 路由摘要和 `/health` 路由数量，补充 Dify 工作流部署手册、新版本部署手册和交接文档 |
+| `v0.9.1-alpha` | 修复目标机旧 uvicorn adapter 占用 `18100` 导致插件命中旧接口的问题，启动脚本会按版本替换旧进程；模板下拉合并后端模板与本地兜底模板；技术文档审查收敛为技术方案、合同验收文档、测试大纲和细则三类，并按文档类型自动切换审查提示词 |
 | `v0.8.0-alpha` | 新增第六个 Ribbon 工作流“技术文档审查”，支持文档类型选择和透明可编辑审查提示词，用于检查功能描述准确性、术语专业性、设计合理性和要求明确性；同时增强结构化审校能力，WPS 插件抽取 `documentStructure`，adapter 将文档结构和本地规则发现传给企业 Dify User Input |
 | `v0.7.1-alpha` | 修正一期交付总包默认 WPS `jsaddons` 安装路径为 `/home/cloud/.local/share/Kingsoft/wps/jsaddons`，并同步交接文档和重新打包 |
 | `v0.7.0-alpha` | 新增一期交付总包，提供一键安装、pip/运行依赖离线安装、WPS `jsaddons` 自动部署、`publish.xml` 写入、一键联调和验收模板 |

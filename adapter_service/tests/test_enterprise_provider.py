@@ -16,6 +16,7 @@ from app.services.provider_client import (
     build_rewrite_prompt,
     build_typo_prompt,
     extract_answer,
+    get_default_technical_review_prompt,
     parse_document_proofread_issues,
     parse_typo_issues,
 )
@@ -267,6 +268,17 @@ class EnterpriseProviderTests(unittest.TestCase):
             issues,
             [{"original": "文挡", "suggestion": "文档", "reason": "错别字"}],
         )
+
+    def test_default_technical_review_prompt_changes_by_document_type(self) -> None:
+        solution_prompt = get_default_technical_review_prompt("technical_solution")
+        acceptance_prompt = get_default_technical_review_prompt("contract_acceptance")
+        test_outline_prompt = get_default_technical_review_prompt("test_outline")
+
+        self.assertIn("架构边界", solution_prompt)
+        self.assertIn("验收证据", acceptance_prompt)
+        self.assertIn("测试范围", test_outline_prompt)
+        self.assertNotEqual(acceptance_prompt, solution_prompt)
+        self.assertNotEqual(test_outline_prompt, solution_prompt)
 
     @unittest.skipUnless(importlib.util.find_spec("pydantic"), "pydantic is required for model parsing")
     def test_document_structure_is_accepted_in_word_request(self) -> None:

@@ -1,6 +1,6 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.9.0-alpha`
+版本：`v0.9.1-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
@@ -47,7 +47,7 @@ bash scripts/phase1_smoke_test.sh
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
 - `docs/operations/dify-single-workflow-task-routing.md`：Dify 单工作流 task_id 路由部署手册。
-- `docs/operations/phase1-v0.9.0-deployment.md`：新版本部署手册。
+- `docs/operations/phase1-v0.9.1-deployment.md`：新版本部署手册。
 
 ## 安装后操作
 

@@ -36,22 +36,47 @@ LENGTH_TEXT = {
 }
 
 DOCUMENT_TYPE_TEXT = {
-    "general_technical": "通用技术文档",
     "technical_solution": "技术方案",
     "contract_acceptance": "合同验收文档",
     "test_outline": "测试大纲和细则",
 }
 
-DEFAULT_TECHNICAL_REVIEW_PROMPT = "\n".join(
-    [
-        "请从以下维度审查技术文档内容：",
-        "1. 功能描述准确性：检查功能边界、输入输出、前置条件、异常流程、权限和依赖是否描述清楚，避免夸大或遗漏关键约束。",
-        "2. 术语专业性：检查技术术语、产品名称、接口名称、模块名称是否准确、一致，避免口语化和同一概念多种叫法。",
-        "3. 设计合理性：检查方案是否说明架构边界、模块职责、数据流、容错机制、安全性、可扩展性和部署约束。",
-        "4. 要求明确性：检查需求、验收标准和测试要求是否可执行、可验证、无歧义，避免“尽快、友好、高效、支持多种”等不可验收表述。",
-        "请优先指出影响理解、实现、验收或交付风险的问题，并给出可直接落地的修改建议。",
-    ]
-)
+TECHNICAL_REVIEW_PROMPTS = {
+    "technical_solution": "\n".join(
+        [
+            "请从以下维度审查技术方案内容：",
+            "1. 功能描述准确性：检查功能边界、输入输出、前置条件、异常流程、权限和依赖是否描述清楚，避免夸大或遗漏关键约束。",
+            "2. 术语专业性：检查技术术语、产品名称、接口名称、模块名称是否准确、一致，避免口语化和同一概念多种叫法。",
+            "3. 设计合理性：检查方案是否说明架构边界、模块职责、数据流、容错机制、安全性、可扩展性和部署约束。",
+            "4. 要求明确性：检查需求、验收标准和测试要求是否可执行、可验证、无歧义，避免“尽快、友好、高效、支持多种”等不可验收表述。",
+            "请优先指出影响理解、实现、验收或交付风险的问题，并给出可直接落地的修改建议。",
+        ]
+    ),
+    "contract_acceptance": "\n".join(
+        [
+            "请从以下维度审查合同验收文档内容：",
+            "1. 验收范围：检查验收对象、交付边界、版本范围、排除项和依赖条件是否明确。",
+            "2. 验收证据：检查是否明确交付物清单、测试记录、签署材料、问题闭环记录和可追溯证明。",
+            "3. 判定标准：检查通过/不通过标准、缺陷等级、整改时限、复验方式和例外处理是否可执行。",
+            "4. 合同一致性：检查文档表述是否与合同条款、技术协议、变更单和项目范围保持一致。",
+            "5. 风险闭环：检查遗留问题、限制条件、责任归属和后续计划是否清楚，避免留下验收争议。",
+            "请优先指出可能影响验收签署、责任划分或后续交付的风险，并给出可落地修改建议。",
+        ]
+    ),
+    "test_outline": "\n".join(
+        [
+            "请从以下维度审查测试大纲和细则内容：",
+            "1. 测试范围：检查测试对象、版本、环境、接口、模块边界和不测范围是否明确。",
+            "2. 测试目标：检查测试目标是否与需求、设计、验收标准对应，是否覆盖关键业务路径和异常场景。",
+            "3. 用例完整性：检查前置条件、输入数据、操作步骤、预期结果、判定准则和清理步骤是否可复现。",
+            "4. 覆盖充分性：检查功能、性能、安全、兼容、异常、边界值和回归测试是否按风险分层覆盖。",
+            "5. 缺陷闭环：检查缺陷记录、等级划分、复测策略、通过条件和测试报告输出是否明确。",
+            "请优先指出会导致测试不可执行、不可复现、不可验收或覆盖不足的问题，并给出可落地修改建议。",
+        ]
+    ),
+}
+
+DEFAULT_TECHNICAL_REVIEW_PROMPT = TECHNICAL_REVIEW_PROMPTS["technical_solution"]
 
 
 def build_rewrite_prompt(
@@ -110,8 +135,8 @@ def build_typo_prompt(text: str) -> str:
     )
 
 
-def get_default_technical_review_prompt() -> str:
-    return DEFAULT_TECHNICAL_REVIEW_PROMPT
+def get_default_technical_review_prompt(document_type: str = "technical_solution") -> str:
+    return TECHNICAL_REVIEW_PROMPTS.get(document_type, DEFAULT_TECHNICAL_REVIEW_PROMPT)
 
 
 def build_technical_review_prompt(
@@ -119,8 +144,8 @@ def build_technical_review_prompt(
     document_type: str,
     review_prompt: str = "",
 ) -> str:
-    prompt_text = review_prompt.strip() or DEFAULT_TECHNICAL_REVIEW_PROMPT
-    document_type_text = DOCUMENT_TYPE_TEXT.get(document_type, document_type or "通用技术文档")
+    prompt_text = review_prompt.strip() or get_default_technical_review_prompt(document_type)
+    document_type_text = DOCUMENT_TYPE_TEXT.get(document_type, "技术方案")
     return "\n".join(
         [
             "你是一名资深技术文档审查专家。",
@@ -671,7 +696,7 @@ class ProviderClient:
         self,
         text: str,
         trace_id: str,
-        document_type: str = "general_technical",
+        document_type: str = "technical_solution",
         review_prompt: str = "",
     ) -> Dict:
         source_text = text.strip()

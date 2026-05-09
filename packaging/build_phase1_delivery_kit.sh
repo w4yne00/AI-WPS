@@ -23,7 +23,7 @@ cp -R "$ROOT_DIR/config" "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/templates" "$TMP_DIR/packages/adapter-start-kit/"
 mkdir -p "$TMP_DIR/docs/operations"
 cp "$ROOT_DIR/docs/operations/dify-single-workflow-task-routing.md" "$TMP_DIR/docs/operations/"
-cp "$ROOT_DIR/docs/operations/phase1-v0.9.0-deployment.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/phase1-v0.9.1-deployment.md" "$TMP_DIR/docs/operations/"
 
 tar -xzf "$PIP_TAR" -C "$TMP_DIR/packages"
 mv "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap-20260506" "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap"

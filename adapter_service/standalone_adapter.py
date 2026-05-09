@@ -343,16 +343,17 @@ def technical_review(payload):
         ).strip()
 
     review_prompt = options.get("technicalReviewPrompt", "").strip()
+    document_type = options.get("technicalDocumentType", "technical_solution")
     if not review_prompt:
-        review_prompt = get_default_technical_review_prompt()
+        review_prompt = get_default_technical_review_prompt(document_type)
     provider_result = ProviderClient(load_settings()).technical_review(
         source_text,
         trace_id="standalone-word-technical-review",
-        document_type=options.get("technicalDocumentType", "general_technical"),
+        document_type=document_type,
         review_prompt=review_prompt,
     )
     return {
-        "documentType": options.get("technicalDocumentType", "general_technical"),
+        "documentType": document_type,
         "reviewPrompt": review_prompt,
         "summary": provider_result.get("summary", ""),
         "issues": provider_result.get("issues", []),
@@ -400,7 +401,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.9.0-alpha",
+                        "version": "0.9.1-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,

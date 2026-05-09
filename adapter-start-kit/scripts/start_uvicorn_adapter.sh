@@ -4,6 +4,7 @@ set -euo pipefail
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-18100}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-0.9.1-alpha}"
 PID_FILE="$KIT_ROOT/run/adapter.pid"
 LOG_DIR="$KIT_ROOT/logs"
 LOG_FILE="$LOG_DIR/adapter.log"
@@ -25,6 +26,10 @@ read_health() {
 
 detect_mode() {
   printf '%s' "$1" | sed -n 's/.*"mode"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
+}
+
+detect_version() {
+  printf '%s' "$1" | sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1
 }
 
 kill_pid_if_running() {
@@ -66,16 +71,18 @@ replace_existing_adapter() {
 HEALTH_BODY="$(read_health)"
 if [ -n "$HEALTH_BODY" ]; then
   CURRENT_MODE="$(detect_mode "$HEALTH_BODY")"
+  CURRENT_VERSION="$(detect_version "$HEALTH_BODY")"
   if [ "$CURRENT_MODE" = "uvicorn" ]; then
-    if [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" >/dev/null 2>&1; then
+    if [ "$CURRENT_VERSION" = "$EXPECTED_VERSION" ] && [ -f "$PID_FILE" ] && kill -0 "$(cat "$PID_FILE")" >/dev/null 2>&1; then
       echo "adapter_already_running pid=$(cat "$PID_FILE") port=$PORT mode=uvicorn"
-    else
-      echo "adapter_already_running pid=unknown port=$PORT mode=uvicorn"
+      echo "adapter_health=reachable url=$HEALTH_URL version=${CURRENT_VERSION:-unknown}"
+      exit 0
     fi
-    echo "adapter_health=reachable url=$HEALTH_URL"
-    exit 0
+    echo "adapter_stale_running mode=uvicorn current_version=${CURRENT_VERSION:-unknown} expected_version=$EXPECTED_VERSION port=$PORT"
+    replace_existing_adapter "$HEALTH_BODY"
+  else
+    replace_existing_adapter "$HEALTH_BODY"
   fi
-  replace_existing_adapter "$HEALTH_BODY"
 fi
 
 cd "$KIT_ROOT/adapter_service"
@@ -85,9 +92,9 @@ PID="$(cat "$PID_FILE")"
 
 for _ in 1 2 3 4 5 6 7 8; do
   HEALTH_BODY="$(read_health)"
-  if [ -n "$HEALTH_BODY" ] && [ "$(detect_mode "$HEALTH_BODY")" = "uvicorn" ]; then
+  if [ -n "$HEALTH_BODY" ] && [ "$(detect_mode "$HEALTH_BODY")" = "uvicorn" ] && [ "$(detect_version "$HEALTH_BODY")" = "$EXPECTED_VERSION" ]; then
     echo "adapter_started pid=$PID port=$PORT mode=uvicorn log=$LOG_FILE"
-    echo "adapter_health=reachable url=$HEALTH_URL"
+    echo "adapter_health=reachable url=$HEALTH_URL version=$EXPECTED_VERSION"
     exit 0
   fi
   sleep 1
