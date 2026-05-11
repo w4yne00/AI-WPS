@@ -2,7 +2,9 @@
 
 更新时间：2026-05-09
 
-适用版本：`v0.9.1-alpha`
+适用版本：`v0.10.0-alpha`
+
+> 状态说明：本手册是历史兼容方案。`v0.10.0-alpha` 的推荐路线已切换为“单 `providerBaseUrl` + `taskRoutes` + 每任务 `path/apiKeyRef/payloadStyle`”。新部署优先参考 `docs/operations/dify-task-routes-path-apikeyref.md`。
 
 ## 1. 目标
 

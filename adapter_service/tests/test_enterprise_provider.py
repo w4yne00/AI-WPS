@@ -13,10 +13,13 @@ from app.services.provider_client import (
     ProviderClient,
     build_document_proofread_payload,
     build_provider_request_payload,
+    build_route_request_payload,
     build_rewrite_prompt,
     build_typo_prompt,
     extract_answer,
     get_default_technical_review_prompt,
+    save_route_api_key,
+    clear_route_api_key,
     parse_document_proofread_issues,
     parse_typo_issues,
 )
@@ -87,6 +90,43 @@ class EnterpriseProviderTests(unittest.TestCase):
         config_file.unlink()
         tmp_dir.rmdir()
 
+    def test_load_settings_reads_task_route_transport_fields(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerType": "enterprise-dify-workflow",
+              "providerBaseUrl": "https://aibot.example/v1",
+              "taskRoutes": {
+                "word.proofread": {
+                  "taskId": "word.proofread",
+                  "path": "/workflows/run",
+                  "apiKeyRef": "proofread",
+                  "payloadStyle": "workflow",
+                  "responseMode": "blocking",
+                  "outputKey": "result",
+                  "enabled": true
+                }
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        settings = load_settings(config_file)
+        route = settings.task_routes["word.proofread"]
+
+        self.assertEqual(route.path, "/workflows/run")
+        self.assertEqual(route.api_key_ref, "proofread")
+        self.assertEqual(route.payload_style, "workflow")
+        self.assertEqual(route.response_mode, "blocking")
+        self.assertEqual(route.output_key, "result")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
     def test_provider_client_resolves_default_task_route(self) -> None:
         client = ProviderClient(load_settings())
 
@@ -98,13 +138,131 @@ class EnterpriseProviderTests(unittest.TestCase):
     def test_task_routes_to_dict_exposes_safe_summary(self) -> None:
         settings = load_settings()
         settings.task_routes = {
-            "word.proofread": type("Route", (), {"task_id": "word.proofread", "enabled": True})()
+            "word.proofread": type(
+                "Route",
+                (),
+                {
+                    "task_id": "word.proofread",
+                    "enabled": True,
+                    "path": "/workflows/run",
+                    "api_key_ref": "proofread",
+                    "payload_style": "workflow",
+                    "response_mode": "blocking",
+                    "output_key": "result",
+                },
+            )()
         }
 
         summary = task_routes_to_dict(settings)
 
         self.assertEqual(summary["word.proofread"]["taskId"], "word.proofread")
         self.assertTrue(summary["word.proofread"]["enabled"])
+        self.assertEqual(summary["word.proofread"]["path"], "/workflows/run")
+        self.assertEqual(summary["word.proofread"]["apiKeyRef"], "proofread")
+        self.assertEqual(summary["word.proofread"]["payloadStyle"], "workflow")
+        self.assertNotIn("apiKey", summary["word.proofread"])
+
+    def test_build_route_request_payload_uses_route_payload_style(self) -> None:
+        settings = load_settings()
+        settings.provider_mode = "blocking"
+        route = type(
+            "Route",
+            (),
+            {
+                "task_id": "word.proofread",
+                "payload_style": "workflow",
+                "response_mode": "streaming",
+            },
+        )()
+
+        payload = build_route_request_payload(
+            settings,
+            route,
+            {"task_id": "word.proofread", "document_text": "正文"},
+            "检查正文",
+        )
+
+        self.assertEqual(payload["response_mode"], "streaming")
+        self.assertEqual(payload["inputs"]["task_id"], "word.proofread")
+        self.assertEqual(payload["inputs"]["query"], "检查正文")
+        self.assertNotIn("query", payload)
+
+    def test_build_route_request_payload_uses_dify_chat_fields(self) -> None:
+        settings = load_settings()
+        settings.provider_mode = "blocking"
+        route = type(
+            "Route",
+            (),
+            {
+                "task_id": "word.rewrite",
+                "payload_style": "chat",
+                "response_mode": "blocking",
+            },
+        )()
+
+        payload = build_route_request_payload(
+            settings,
+            route,
+            {"task_id": "word.rewrite", "source_text": "原文"},
+            "请改写原文",
+        )
+
+        self.assertEqual(payload["query"], "请改写原文")
+        self.assertEqual(payload["inputs"]["task_id"], "word.rewrite")
+        self.assertEqual(payload["response_mode"], "blocking")
+        self.assertNotIn("input_data", payload)
+        self.assertNotIn("mode", payload)
+
+    def test_build_route_request_payload_keeps_legacy_chat_fields_when_requested(self) -> None:
+        settings = load_settings()
+        route = type(
+            "Route",
+            (),
+            {
+                "task_id": "word.rewrite",
+                "payload_style": "legacy-chat",
+                "response_mode": "blocking",
+            },
+        )()
+
+        payload = build_route_request_payload(
+            settings,
+            route,
+            {"task_id": "word.rewrite", "source_text": "原文"},
+            "请改写原文",
+        )
+
+        self.assertEqual(payload["input_data"]["task_id"], "word.rewrite")
+        self.assertEqual(payload["mode"], "blocking")
+
+    def test_route_api_key_uses_ref_file_before_default_key(self) -> None:
+        tmp_dir = Path("tmp-test-route-keys")
+        tmp_dir.mkdir(exist_ok=True)
+        default_key = tmp_dir / "provider_api_key"
+        default_key.write_text("default-secret", encoding="utf-8")
+        previous = os.environ.get("ENTERPRISE_AI_API_KEY")
+        os.environ["ENTERPRISE_AI_API_KEY"] = "env-secret"
+        try:
+            save_route_api_key("proofread", "route-secret", tmp_dir)
+            client = ProviderClient(load_settings())
+            client.settings.provider_base_url = "https://aibot.example/v1"
+            self.assertEqual(client.get_api_key("proofread", tmp_dir), "route-secret")
+            clear_route_api_key("proofread", tmp_dir)
+            self.assertEqual(client.get_api_key("proofread", tmp_dir), "env-secret")
+        finally:
+            if previous is None:
+                os.environ.pop("ENTERPRISE_AI_API_KEY", None)
+            else:
+                os.environ["ENTERPRISE_AI_API_KEY"] = previous
+            if default_key.exists():
+                default_key.unlink()
+            route_key = tmp_dir / "provider_api_keys" / "proofread"
+            if route_key.exists():
+                route_key.unlink()
+            route_dir = tmp_dir / "provider_api_keys"
+            if route_dir.exists():
+                route_dir.rmdir()
+            tmp_dir.rmdir()
 
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -249,6 +407,17 @@ class EnterpriseProviderTests(unittest.TestCase):
         }
 
         self.assertEqual(extract_answer(body), "这是改写后的文档内容。")
+
+    def test_extract_answer_reads_workflow_outputs(self) -> None:
+        body = {
+            "data": {
+                "outputs": {
+                    "result": "{\"issues\":[]}"
+                }
+            }
+        }
+
+        self.assertEqual(extract_answer(body, output_key="result"), "{\"issues\":[]}")
 
     def test_typo_prompt_and_parser_use_json_array(self) -> None:
         prompt = build_typo_prompt("这是一个技术文挡。")

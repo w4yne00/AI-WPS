@@ -460,6 +460,50 @@ button[disabled] {
   box-shadow: var(--shadow-soft);
 }
 
+.task-routes-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.task-route-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: center;
+  border-radius: 16px;
+  border: 1px solid var(--hairline);
+  background: var(--surface-soft);
+  padding: 10px;
+}
+
+.task-route-main {
+  min-width: 0;
+}
+
+.task-route-main strong,
+.task-route-main span {
+  display: block;
+}
+
+.task-route-main span,
+.muted-note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.task-route-item input,
+.task-route-item .route-actions {
+  grid-column: 1 / -1;
+}
+
+.route-actions {
+  margin-top: 0;
+}
+
 @media (max-width: 720px) {
   .app {
     padding: 12px;

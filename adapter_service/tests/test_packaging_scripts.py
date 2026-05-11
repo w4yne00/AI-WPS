@@ -31,3 +31,13 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-file-format-requirements", js)
+
+    def test_taskpane_settings_exposes_task_route_keys(self) -> None:
+        html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
+            encoding="utf-8"
+        )
+        js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
+
+        self.assertIn("task-routes-list", html)
+        self.assertIn("renderTaskRoutes", js)
+        self.assertIn("/provider/task-api-key", js)

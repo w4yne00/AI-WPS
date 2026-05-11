@@ -12,8 +12,10 @@ from app.core.config import load_settings, save_provider_base_url, task_routes_t
 from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
+    clear_route_api_key,
     get_default_technical_review_prompt,
     save_local_api_key,
+    save_route_api_key,
 )
 
 
@@ -401,7 +403,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.9.1-alpha",
+                        "version": "0.10.0-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
@@ -435,6 +437,12 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/config":
             settings = load_settings()
             provider = ProviderClient(settings)
+            task_routes = task_routes_to_dict(settings)
+            for task_type, route_summary in task_routes.items():
+                route = settings.task_routes.get(task_type)
+                api_key_ref = route.api_key_ref if route else route_summary.get("apiKeyRef", "default")
+                route_summary["configured"] = bool(provider.get_api_key(api_key_ref))
+                route_summary["authSource"] = provider.get_route_auth_source(api_key_ref)
             self._write(
                 200,
                 {
@@ -451,7 +459,7 @@ class Handler(BaseHTTPRequestHandler):
                         "providerMode": settings.provider_mode,
                         "providerConfigured": provider.is_configured(),
                         "providerAuthSource": provider.get_auth_source(),
-                        "taskRoutes": task_routes_to_dict(settings),
+                        "taskRoutes": task_routes,
                         "logPath": settings.log_path,
                         "templateRoot": settings.template_root,
                         "timeoutSeconds": settings.timeout_seconds,
@@ -617,6 +625,41 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/provider/task-api-key":
+            api_key_ref = payload.get("apiKeyRef", "default").strip() or "default"
+            api_key = payload.get("apiKey", "").strip()
+            if not api_key:
+                self._write(
+                    400,
+                    {
+                        "success": False,
+                        "traceId": "standalone-provider-task-save",
+                        "taskType": "provider.task_api_key",
+                        "message": "API key is required.",
+                        "data": {},
+                        "errors": [{"code": "API_KEY_REQUIRED", "message": "API key is required."}],
+                    },
+                )
+                return
+            save_route_api_key(api_key_ref, api_key)
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-task-save",
+                    "taskType": "provider.task_api_key",
+                    "message": "saved",
+                    "data": {
+                        "apiKeyRef": api_key_ref,
+                        "configured": bool(provider.get_api_key(api_key_ref)),
+                        "authSource": provider.get_route_auth_source(api_key_ref),
+                    },
+                    "errors": [],
+                },
+            )
+            return
+
         self._write(
             404,
             {
@@ -644,6 +687,27 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "configured": provider.is_configured(),
                         "authSource": provider.get_auth_source(),
+                    },
+                    "errors": [],
+                },
+            )
+            return
+
+        if path.startswith("/provider/task-api-key/"):
+            api_key_ref = path.rsplit("/", 1)[-1]
+            clear_route_api_key(api_key_ref)
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-task-clear",
+                    "taskType": "provider.task_api_key",
+                    "message": "cleared",
+                    "data": {
+                        "apiKeyRef": api_key_ref,
+                        "configured": bool(provider.get_api_key(api_key_ref)),
+                        "authSource": provider.get_route_auth_source(api_key_ref),
                     },
                     "errors": [],
                 },

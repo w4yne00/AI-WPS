@@ -3,12 +3,23 @@ from pydantic import BaseModel, Field
 from typing import Optional
 
 from app.core.config import save_provider_base_url
-from app.services.provider_client import ProviderClient, clear_local_api_key, save_local_api_key
+from app.services.provider_client import (
+    ProviderClient,
+    clear_local_api_key,
+    clear_route_api_key,
+    save_local_api_key,
+    save_route_api_key,
+)
 
 router = APIRouter()
 
 
 class ProviderApiKeyRequest(BaseModel):
+    api_key: str = Field(alias="apiKey")
+
+
+class ProviderTaskApiKeyRequest(BaseModel):
+    api_key_ref: str = Field(alias="apiKeyRef")
     api_key: str = Field(alias="apiKey")
 
 
@@ -45,6 +56,21 @@ def save_provider_api_key(request: ProviderApiKeyRequest) -> dict:
     }
 
 
+@router.post("/provider/task-api-key")
+def save_provider_task_api_key(request: ProviderTaskApiKeyRequest) -> dict:
+    save_route_api_key(request.api_key_ref, request.api_key)
+    client = ProviderClient()
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {
+            "apiKeyRef": request.api_key_ref,
+            "configured": bool(client.get_api_key(request.api_key_ref)),
+            "authSource": client.get_route_auth_source(request.api_key_ref),
+        },
+    }
+
+
 @router.post("/provider/base-url")
 def save_provider_url(request: ProviderBaseUrlRequest) -> dict:
     save_provider_base_url(
@@ -73,5 +99,20 @@ def delete_provider_api_key() -> dict:
         "data": {
             "configured": client.is_configured(),
             "authSource": client.get_auth_source(),
+        },
+    }
+
+
+@router.delete("/provider/task-api-key/{api_key_ref}")
+def delete_provider_task_api_key(api_key_ref: str) -> dict:
+    clear_route_api_key(api_key_ref)
+    client = ProviderClient()
+    return {
+        "success": True,
+        "message": "cleared",
+        "data": {
+            "apiKeyRef": api_key_ref,
+            "configured": bool(client.get_api_key(api_key_ref)),
+            "authSource": client.get_route_auth_source(api_key_ref),
         },
     }

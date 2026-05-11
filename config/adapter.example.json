@@ -12,22 +12,47 @@
   "taskRoutes": {
     "word.rewrite": {
       "taskId": "word.rewrite",
+      "path": "/chat-messages",
+      "apiKeyRef": "rewrite",
+      "payloadStyle": "chat",
+      "responseMode": "blocking",
+      "outputKey": "answer",
       "enabled": true
     },
     "word.continue": {
       "taskId": "word.continue",
+      "path": "/chat-messages",
+      "apiKeyRef": "continue",
+      "payloadStyle": "chat",
+      "responseMode": "blocking",
+      "outputKey": "answer",
       "enabled": true
     },
     "word.proofread": {
       "taskId": "word.proofread",
+      "path": "/workflows/run",
+      "apiKeyRef": "proofread",
+      "payloadStyle": "workflow",
+      "responseMode": "blocking",
+      "outputKey": "result",
       "enabled": true
     },
     "word.format_preview": {
       "taskId": "word.format_preview",
+      "path": "/workflows/run",
+      "apiKeyRef": "format_preview",
+      "payloadStyle": "workflow",
+      "responseMode": "blocking",
+      "outputKey": "result",
       "enabled": true
     },
     "word.technical_review": {
       "taskId": "word.technical_review",
+      "path": "/workflows/run",
+      "apiKeyRef": "technical_review",
+      "payloadStyle": "workflow",
+      "responseMode": "blocking",
+      "outputKey": "result",
       "enabled": true
     }
   }

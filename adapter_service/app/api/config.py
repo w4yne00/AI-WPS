@@ -10,6 +10,12 @@ router = APIRouter()
 def get_config() -> dict:
     settings = load_settings()
     provider = ProviderClient(settings)
+    task_routes = task_routes_to_dict(settings)
+    for task_type, route_summary in task_routes.items():
+        route = settings.task_routes.get(task_type)
+        api_key_ref = route.api_key_ref if route else route_summary.get("apiKeyRef", "default")
+        route_summary["configured"] = bool(provider.get_api_key(api_key_ref))
+        route_summary["authSource"] = provider.get_route_auth_source(api_key_ref)
     return {
         "success": True,
         "data": {
@@ -21,7 +27,7 @@ def get_config() -> dict:
             "providerMode": settings.provider_mode,
             "providerConfigured": provider.is_configured(),
             "providerAuthSource": provider.get_auth_source(),
-            "taskRoutes": task_routes_to_dict(settings),
+            "taskRoutes": task_routes,
             "logPath": settings.log_path,
             "templateRoot": settings.template_root,
             "timeoutSeconds": settings.timeout_seconds,

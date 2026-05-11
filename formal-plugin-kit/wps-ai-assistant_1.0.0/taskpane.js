@@ -103,6 +103,7 @@
     providerName: "未检测",
     providerAuthSource: "未检测",
     providerBaseUrl: "",
+    taskRoutes: {},
     currentMode: "rewrite",
     copyText: "",
     scopeWatcher: null
@@ -172,6 +173,8 @@
   function applyProviderConfig(configData) {
     setProviderName(configData.providerName || "企业大模型接口");
     setProviderBaseUrl(configData.providerBaseUrl || "");
+    state.taskRoutes = configData.taskRoutes || {};
+    renderTaskRoutes();
   }
 
   function showProviderEditor(show) {
@@ -601,6 +604,108 @@
       var message = describeFetchError(error);
       setStatus("清除企业接口密钥失败：" + message);
       setResult(message);
+    });
+  }
+
+  function taskLabel(taskType) {
+    var labels = {
+      "word.rewrite": "智能改写",
+      "word.continue": "智能续写",
+      "word.proofread": "格式校对",
+      "word.format_preview": "智能排版",
+      "word.technical_review": "技术文档审查"
+    };
+    return labels[taskType] || taskType;
+  }
+
+  function sortedTaskTypes(routes) {
+    var order = ["word.rewrite", "word.continue", "word.proofread", "word.format_preview", "word.technical_review"];
+    var seen = {};
+    var result = [];
+    order.forEach(function (taskType) {
+      if (routes[taskType]) {
+        seen[taskType] = true;
+        result.push(taskType);
+      }
+    });
+    Object.keys(routes || {}).forEach(function (taskType) {
+      if (!seen[taskType]) {
+        result.push(taskType);
+      }
+    });
+    return result;
+  }
+
+  function renderTaskRoutes() {
+    var list = byId("task-routes-list");
+    if (!list) {
+      return;
+    }
+    var routes = state.taskRoutes || {};
+    var taskTypes = sortedTaskTypes(routes);
+    list.innerHTML = "";
+    if (!taskTypes.length) {
+      var empty = document.createElement("p");
+      empty.className = "muted-note";
+      empty.textContent = "未检测到任务路由配置。";
+      list.appendChild(empty);
+      return;
+    }
+    taskTypes.forEach(function (taskType) {
+      var route = routes[taskType] || {};
+      var item = document.createElement("div");
+      item.className = "task-route-item";
+      item.innerHTML = [
+        '<div class="task-route-main">',
+        '<strong>' + taskLabel(taskType) + '</strong>',
+        '<span>' + (route.path || "默认接口路径") + ' · ' + (route.payloadStyle || "auto") + ' · ' + (route.apiKeyRef || "default") + '</span>',
+        '</div>',
+        '<span class="inline-status">' + (route.configured ? "密钥已配置" : "密钥未配置") + '</span>',
+        '<input type="password" placeholder="粘贴该任务 API Key" data-task-ref="' + (route.apiKeyRef || "default") + '" />',
+        '<div class="button-row route-actions">',
+        '<button type="button" class="mini-button" data-save-task-key="' + (route.apiKeyRef || "default") + '">保存密钥</button>',
+        '<button type="button" class="ghost-action mini-button" data-clear-task-key="' + (route.apiKeyRef || "default") + '">清除</button>',
+        '</div>'
+      ].join("");
+      list.appendChild(item);
+    });
+  }
+
+  function saveTaskApiKey(apiKeyRef) {
+    var input = document.querySelector('input[data-task-ref="' + apiKeyRef + '"]');
+    var apiKey = input ? (input.value || "").trim() : "";
+    if (!apiKey) {
+      setStatus("请输入该任务的 API Key。");
+      return;
+    }
+    request("/provider/task-api-key", { apiKeyRef: apiKeyRef, apiKey: apiKey })
+      .then(function () {
+        if (input) {
+          input.value = "";
+        }
+        setStatus("任务密钥已保存。");
+        return refreshConfig();
+      })
+      .catch(function (error) {
+        setStatus("保存任务密钥失败：" + describeFetchError(error));
+      });
+  }
+
+  function clearTaskApiKey(apiKeyRef) {
+    fetch(ADAPTER_BASE_URL + "/provider/task-api-key/" + encodeURIComponent(apiKeyRef), {
+      method: "DELETE"
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) {
+          throw new Error((body.errors && body.errors[0] && body.errors[0].message) || body.message || ("HTTP " + response.status));
+        }
+        return body;
+      });
+    }).then(function () {
+      setStatus("任务密钥已清除。");
+      return refreshConfig();
+    }).catch(function (error) {
+      setStatus("清除任务密钥失败：" + describeFetchError(error));
     });
   }
 
@@ -1057,6 +1162,17 @@
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
     byId("btn-run-primary").addEventListener("click", runPrimaryAction);
+    byId("task-routes-list").addEventListener("click", function (event) {
+      var target = event.target;
+      var saveRef = target && target.getAttribute && target.getAttribute("data-save-task-key");
+      var clearRef = target && target.getAttribute && target.getAttribute("data-clear-task-key");
+      if (saveRef) {
+        saveTaskApiKey(saveRef);
+      }
+      if (clearRef) {
+        clearTaskApiKey(clearRef);
+      }
+    });
   }
 
   if (!isTaskpanePage()) {

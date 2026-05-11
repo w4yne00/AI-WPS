@@ -11,6 +11,7 @@ from app.core.logging import get_logger
 
 logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
+ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 
 
 STYLE_TEXT = {
@@ -222,11 +223,19 @@ def build_document_proofread_payload(
     }
 
 
+def infer_payload_style(path: str, provider_type: str = "") -> str:
+    normalized = (path or "").rstrip("/")
+    if normalized.endswith("/workflows/run"):
+        return "workflow"
+    if normalized.endswith("/chat-messages"):
+        return "chat"
+    if provider_type == "enterprise-dify-workflow":
+        return "workflow"
+    return "chat"
+
+
 def is_workflow_provider(settings: AppSettings) -> bool:
-    return (
-        settings.provider_type == "enterprise-dify-workflow"
-        or settings.provider_chat_path.rstrip("/").endswith("/workflows/run")
-    )
+    return infer_payload_style(settings.provider_chat_path, settings.provider_type) == "workflow"
 
 
 def build_provider_request_payload(settings: AppSettings, input_data: Dict, query: str) -> Dict:
@@ -244,6 +253,39 @@ def build_provider_request_payload(settings: AppSettings, input_data: Dict, quer
         "query": query,
         "conversation_id": "",
         "mode": settings.provider_mode,
+        "user": "wps-ai-assistant",
+        "files": [],
+    }
+
+
+def build_route_request_payload(settings: AppSettings, route: TaskRoute, input_data: Dict, query: str) -> Dict:
+    style = route.payload_style or infer_payload_style(route.path or settings.provider_chat_path, settings.provider_type)
+    response_mode = route.response_mode or settings.provider_mode
+    if style == "workflow":
+        inputs = dict(input_data)
+        inputs["query"] = query
+        return {
+            "inputs": inputs,
+            "response_mode": response_mode,
+            "user": "wps-ai-assistant",
+            "files": [],
+        }
+    if style in ("legacy-chat", "enterprise-chat", "enterprise-legacy"):
+        return {
+            "input_data": input_data,
+            "inputs": input_data,
+            "query": query,
+            "conversation_id": "",
+            "response_mode": response_mode,
+            "mode": response_mode,
+            "user": "wps-ai-assistant",
+            "files": [],
+        }
+    return {
+        "inputs": input_data,
+        "query": query,
+        "conversation_id": "",
+        "response_mode": response_mode,
         "user": "wps-ai-assistant",
         "files": [],
     }
@@ -438,13 +480,23 @@ def parse_technical_review_answer(answer: str) -> Dict:
     }
 
 
-def extract_answer(body: Dict) -> str:
+def extract_answer(body: Dict, output_key: str = "") -> str:
     answer = body.get("answer")
     if isinstance(answer, str) and answer.strip():
         return answer.strip()
 
     data = body.get("data", {})
     if isinstance(data, dict):
+        outputs = data.get("outputs")
+        if isinstance(outputs, dict):
+            keys = [output_key] if output_key else []
+            keys.extend(["result", "answer", "text", "output", "rewrittenText"])
+            for key in keys:
+                value = outputs.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
+                if isinstance(value, (dict, list)):
+                    return json.dumps(value, ensure_ascii=False)
         for key in ("answer", "text", "rewrittenText"):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
@@ -455,6 +507,13 @@ def extract_answer(body: Dict) -> str:
 
 def get_local_api_key_path(path: Optional[Path] = None) -> Path:
     return path or LOCAL_KEY_PATH
+
+
+def get_route_api_key_path(api_key_ref: str, base_path: Optional[Path] = None) -> Path:
+    safe_ref = "".join(ch for ch in (api_key_ref or "default") if ch.isalnum() or ch in ("-", "_", "."))
+    safe_ref = safe_ref or "default"
+    root = base_path or LOCAL_KEY_PATH.parent
+    return root / "provider_api_keys" / safe_ref
 
 
 def save_local_api_key(api_key: str, path: Optional[Path] = None) -> None:
@@ -476,13 +535,41 @@ def load_local_api_key(path: Optional[Path] = None) -> str:
     return target.read_text(encoding="utf-8").strip()
 
 
+def save_route_api_key(api_key_ref: str, api_key: str, base_path: Optional[Path] = None) -> None:
+    target = get_route_api_key_path(api_key_ref, base_path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(api_key.strip(), encoding="utf-8")
+
+
+def clear_route_api_key(api_key_ref: str, base_path: Optional[Path] = None) -> None:
+    target = get_route_api_key_path(api_key_ref, base_path)
+    if target.exists():
+        target.unlink()
+
+
+def load_route_api_key(api_key_ref: str, base_path: Optional[Path] = None) -> str:
+    target = get_route_api_key_path(api_key_ref, base_path)
+    if not target.exists():
+        return ""
+    return target.read_text(encoding="utf-8").strip()
+
+
 class ProviderClient:
     def __init__(self, settings: Optional[AppSettings] = None) -> None:
         self.settings = settings or load_settings()
 
     def resolve_task_route(self, task_type: str) -> TaskRoute:
         routes = self.settings.task_routes or {}
-        return routes.get(task_type) or TaskRoute(task_id=task_type, enabled=True)
+        route = routes.get(task_type) or TaskRoute(task_id=task_type, enabled=True)
+        if not route.path:
+            route.path = self.settings.provider_chat_path
+        if not route.payload_style:
+            route.payload_style = infer_payload_style(route.path, self.settings.provider_type)
+        if not route.response_mode:
+            route.response_mode = self.settings.provider_mode
+        if not route.api_key_ref:
+            route.api_key_ref = "default"
+        return route
 
     def build_task_input_data(self, task_type: str, trace_id: str, payload: Optional[Dict] = None) -> Dict:
         route = self.resolve_task_route(task_type)
@@ -497,7 +584,18 @@ class ProviderClient:
         return input_data
 
     def is_configured(self) -> bool:
-        return bool(self.settings.provider_base_url.strip() and self.get_api_key())
+        if not self.settings.provider_base_url.strip():
+            return False
+        if self.get_api_key():
+            return True
+        for route in (self.settings.task_routes or {}).values():
+            if self.get_api_key(route.api_key_ref):
+                return True
+        return False
+
+    def is_task_configured(self, task_type: str) -> bool:
+        route = self.resolve_task_route(task_type)
+        return bool(self.settings.provider_base_url.strip() and self.get_api_key(route.api_key_ref))
 
     def get_auth_source(self) -> str:
         if os.getenv(self.settings.provider_api_key_env):
@@ -506,8 +604,49 @@ class ProviderClient:
             return "file"
         return "none"
 
-    def get_api_key(self) -> str:
-        return os.getenv(self.settings.provider_api_key_env) or load_local_api_key()
+    def get_route_auth_source(self, api_key_ref: str) -> str:
+        if load_route_api_key(api_key_ref):
+            return "route-file"
+        return self.get_auth_source()
+
+    def get_api_key(self, api_key_ref: str = "default", key_base_path: Optional[Path] = None) -> str:
+        route_key = load_route_api_key(api_key_ref, key_base_path)
+        if route_key:
+            return route_key
+        return os.getenv(self.settings.provider_api_key_env) or load_local_api_key(
+            key_base_path / "provider_api_key" if key_base_path else None
+        )
+
+    def build_route_url(self, route: TaskRoute) -> str:
+        return "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), route.path or self.settings.provider_chat_path)
+
+    def post_task(self, task_type: str, trace_id: str, input_data: Dict, query: str) -> Dict:
+        route = self.resolve_task_route(task_type)
+        payload = json.dumps(
+            build_route_request_payload(self.settings, route, input_data, query)
+        ).encode("utf-8")
+        req = urllib_request.Request(
+            self.build_route_url(route),
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(self.get_api_key(route.api_key_ref)),
+                "Content-Type": "application/json",
+                "X-Trace-Id": trace_id,
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
+                return json.loads(response.read().decode("utf-8"))
+        except error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise ProviderAuthError() from exc
+            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            if "timed out" in str(reason).lower():
+                raise ProviderTimeoutError() from exc
+            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
 
     def rewrite(
         self,
@@ -527,8 +666,8 @@ class ProviderClient:
             focus=focus,
             length=length,
         )
-        api_key = self.get_api_key()
-        if not self.is_configured():
+        task_type = "word.continue" if mode == "continue" else "word.rewrite"
+        if not self.is_task_configured(task_type):
             logger.info("traceId=%s provider=mock task=word.rewrite", trace_id)
             return {
                 "rewrittenText": self._mock_rewrite(text, mode, user_instruction),
@@ -536,50 +675,18 @@ class ProviderClient:
                 "prompt": prompt,
             }
 
-        payload = json.dumps(
-            build_provider_request_payload(
-                self.settings,
-                self.build_task_input_data(
-                    "word.continue" if mode == "continue" else "word.rewrite",
-                    trace_id,
-                    {"rewrite_mode": mode},
-                ),
-                prompt,
-            )
-        ).encode("utf-8")
-        url = "{0}{1}".format(
-            self.settings.provider_base_url.rstrip("/"),
-            self.settings.provider_chat_path,
-        )
-        req = urllib_request.Request(
-            url,
-            data=payload,
-            method="POST",
-            headers={
-                "Authorization": "Bearer {0}".format(api_key),
-                "Content-Type": "application/json",
-                "X-Trace-Id": trace_id,
-            },
+        body = self.post_task(
+            task_type,
+            trace_id,
+            self.build_task_input_data(task_type, trace_id, {"rewrite_mode": mode}),
+            prompt,
         )
 
-        try:
-            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            if exc.code in (401, 403):
-                raise ProviderAuthError() from exc
-            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
-        except error.URLError as exc:
-            reason = getattr(exc, "reason", "")
-            if "timed out" in str(reason).lower():
-                raise ProviderTimeoutError() from exc
-            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
-
-        rewritten_text = extract_answer(body)
+        rewritten_text = extract_answer(body, self.resolve_task_route(task_type).output_key)
         logger.info("traceId=%s provider=enterprise-chat-api task=word.rewrite", trace_id)
         return {
             "rewrittenText": rewritten_text,
-            "provider": "enterprise-chat-api/{0}".format(self.get_auth_source()),
+            "provider": "enterprise-chat-api/{0}".format(self.get_route_auth_source(self.resolve_task_route(task_type).api_key_ref)),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -587,50 +694,18 @@ class ProviderClient:
 
     def proofread_typos(self, text: str, trace_id: str) -> list:
         source_text = text.strip()
-        if not source_text or not self.is_configured():
+        if not source_text or not self.is_task_configured("word.proofread"):
             return []
 
         prompt = build_typo_prompt(source_text)
-        payload = json.dumps(
-            build_provider_request_payload(
-                self.settings,
-                self.build_task_input_data(
-                    "word.proofread",
-                    trace_id,
-                    {"proofread_mode": "typo"},
-                ),
-                prompt,
-            )
-        ).encode("utf-8")
-        url = "{0}{1}".format(
-            self.settings.provider_base_url.rstrip("/"),
-            self.settings.provider_chat_path,
-        )
-        req = urllib_request.Request(
-            url,
-            data=payload,
-            method="POST",
-            headers={
-                "Authorization": "Bearer {0}".format(self.get_api_key()),
-                "Content-Type": "application/json",
-                "X-Trace-Id": trace_id,
-            },
+        body = self.post_task(
+            "word.proofread",
+            trace_id,
+            self.build_task_input_data("word.proofread", trace_id, {"proofread_mode": "typo"}),
+            prompt,
         )
 
-        try:
-            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            if exc.code in (401, 403):
-                raise ProviderAuthError() from exc
-            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
-        except error.URLError as exc:
-            reason = getattr(exc, "reason", "")
-            if "timed out" in str(reason).lower():
-                raise ProviderTimeoutError() from exc
-            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
-
-        answer = extract_answer(body)
+        answer = extract_answer(body, self.resolve_task_route("word.proofread").output_key)
         logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.typo", trace_id)
         return parse_typo_issues(answer)
 
@@ -643,7 +718,7 @@ class ProviderClient:
         trace_id: str,
         local_rule_findings: Optional[List[Dict]] = None,
     ) -> List[Dict]:
-        if not document_text.strip() or not self.is_configured():
+        if not document_text.strip() or not self.is_task_configured("word.proofread"):
             return []
 
         payload = build_document_proofread_payload(
@@ -656,39 +731,9 @@ class ProviderClient:
             task_id=self.resolve_task_route("word.proofread").task_id,
         )
         payload["input_data"]["taskType"] = "word.proofread"
-        payload = build_provider_request_payload(
-            self.settings,
-            payload["input_data"],
-            payload["query"],
-        )
-        req = urllib_request.Request(
-            "{0}{1}".format(
-                self.settings.provider_base_url.rstrip("/"),
-                self.settings.provider_chat_path,
-            ),
-            data=json.dumps(payload).encode("utf-8"),
-            method="POST",
-            headers={
-                "Authorization": "Bearer {0}".format(self.get_api_key()),
-                "Content-Type": "application/json",
-                "X-Trace-Id": trace_id,
-            },
-        )
+        body = self.post_task("word.proofread", trace_id, payload["input_data"], payload["query"])
 
-        try:
-            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            if exc.code in (401, 403):
-                raise ProviderAuthError() from exc
-            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
-        except error.URLError as exc:
-            reason = getattr(exc, "reason", "")
-            if "timed out" in str(reason).lower():
-                raise ProviderTimeoutError() from exc
-            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
-
-        answer = extract_answer(body)
+        answer = extract_answer(body, self.resolve_task_route("word.proofread").output_key)
         logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.document", trace_id)
         return parse_document_proofread_issues(answer)
 
@@ -713,60 +758,36 @@ class ProviderClient:
                 "prompt": prompt,
             }
 
-        if not self.is_configured():
+        if not self.is_task_configured("word.technical_review"):
             logger.info("traceId=%s provider=mock task=word.technical_review", trace_id)
             result = self._mock_technical_review(source_text, document_type)
             result["prompt"] = prompt
             return result
 
-        payload = json.dumps(
-            build_provider_request_payload(
-                self.settings,
-                self.build_task_input_data(
-                    "word.technical_review",
-                    trace_id,
-                    {
-                        "review_mode": "technical_document",
-                        "document_type": document_type,
-                    },
-                ),
-                prompt,
-            )
-        ).encode("utf-8")
-        url = "{0}{1}".format(
-            self.settings.provider_base_url.rstrip("/"),
-            self.settings.provider_chat_path,
-        )
-        req = urllib_request.Request(
-            url,
-            data=payload,
-            method="POST",
-            headers={
-                "Authorization": "Bearer {0}".format(self.get_api_key()),
-                "Content-Type": "application/json",
-                "X-Trace-Id": trace_id,
-            },
+        body = self.post_task(
+            "word.technical_review",
+            trace_id,
+            self.build_task_input_data(
+                "word.technical_review",
+                trace_id,
+                {
+                    "review_mode": "technical_document",
+                    "document_type": document_type,
+                },
+            ),
+            prompt,
         )
 
-        try:
-            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-        except error.HTTPError as exc:
-            if exc.code in (401, 403):
-                raise ProviderAuthError() from exc
-            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
-        except error.URLError as exc:
-            reason = getattr(exc, "reason", "")
-            if "timed out" in str(reason).lower():
-                raise ProviderTimeoutError() from exc
-            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
-
-        parsed = parse_technical_review_answer(extract_answer(body))
+        parsed = parse_technical_review_answer(
+            extract_answer(body, self.resolve_task_route("word.technical_review").output_key)
+        )
         logger.info("traceId=%s provider=enterprise-chat-api task=word.technical_review", trace_id)
         return {
             "summary": parsed["summary"],
             "issues": parsed["issues"],
-            "provider": "enterprise-chat-api/{0}".format(self.get_auth_source()),
+            "provider": "enterprise-chat-api/{0}".format(
+                self.get_route_auth_source(self.resolve_task_route("word.technical_review").api_key_ref)
+            ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),

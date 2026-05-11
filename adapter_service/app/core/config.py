@@ -13,6 +13,11 @@ EXAMPLE_CONFIG_PATH = BASE_DIR / "config/adapter.example.json"
 class TaskRoute:
     task_id: str
     enabled: bool = True
+    path: str = ""
+    api_key_ref: str = "default"
+    payload_style: str = ""
+    response_mode: str = ""
+    output_key: str = ""
 
 
 @dataclass
@@ -72,6 +77,11 @@ def task_routes_to_dict(settings: AppSettings) -> dict:
         task_type: {
             "taskId": route.task_id,
             "enabled": route.enabled,
+            "path": route.path,
+            "apiKeyRef": route.api_key_ref,
+            "payloadStyle": route.payload_style,
+            "responseMode": route.response_mode,
+            "outputKey": route.output_key,
         }
         for task_type, route in routes.items()
     }
@@ -93,6 +103,11 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         task_routes[task_type] = TaskRoute(
             task_id=str(route_payload.get("taskId", task_type)).strip() or task_type,
             enabled=bool(route_payload.get("enabled", True)),
+            path=str(route_payload.get("path", "")).strip(),
+            api_key_ref=str(route_payload.get("apiKeyRef", "default")).strip() or "default",
+            payload_style=str(route_payload.get("payloadStyle", "")).strip(),
+            response_mode=str(route_payload.get("responseMode", "")).strip(),
+            output_key=str(route_payload.get("outputKey", "")).strip(),
         )
 
     return AppSettings(
