@@ -47,6 +47,7 @@ bash scripts/phase1_smoke_test.sh
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
 - `docs/operations/dify-task-routes-path-apikeyref.md`：Dify 多任务路由部署手册。
+- `docs/operations/AI-WPS-Dify多任务工作流节点配置手册-v0.10.0.docx`：Word 版 Dify 节点级配置手册。
 - `docs/operations/phase1-v0.9.1-deployment.md`：新版本部署手册。
 
 ## 安装后操作
