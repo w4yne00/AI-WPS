@@ -31,6 +31,26 @@
     ].join("\n")
   };
   var DEFAULT_TECHNICAL_REVIEW_PROMPT = TECHNICAL_REVIEW_PROMPTS.technical_solution;
+  var REWRITE_STYLE_PROMPTS = {
+    default: "使用正式、清晰、简洁的中文表达。",
+    formal: "使用正式、清晰、简洁的中文表达。",
+    structured: "使用结构清晰、层次分明的中文表达。",
+    reporting: "使用更像工作汇报材料的表达，突出结论与执行状态。"
+  };
+  var REWRITE_FOCUS_PROMPTS = {
+    default: "保持内容完整。",
+    conclusion: "优先突出结论和关键判断。",
+    risk: "优先突出风险、问题与影响。",
+    next_step: "优先突出下一步计划和行动项。",
+    implementation: "优先突出实施路径、步骤与安排。"
+  };
+  var REWRITE_LENGTH_PROMPTS = {
+    default: "保持原有篇幅附近。",
+    concise: "尽量精简表达，避免冗余。",
+    same: "保持篇幅基本不变。",
+    expanded: "可适度扩写，使表达更完整。"
+  };
+  var REWRITE_OUTPUT_PROMPT = "不要原样返回待处理内容；只输出最终正文。";
   var fallbackTemplates = [
     { id: "technical-file-format-requirements", name: "技术文件格式及书写要求" },
     { id: "general-office", name: "通用办公模板" }
@@ -226,6 +246,27 @@
     byId("btn-apply").disabled = !enabled;
   }
 
+  function getRewritePromptFragments() {
+    return {
+      style: REWRITE_STYLE_PROMPTS[state.rewriteStyle] || REWRITE_STYLE_PROMPTS.default,
+      focus: REWRITE_FOCUS_PROMPTS[state.focusPoint] || REWRITE_FOCUS_PROMPTS.default,
+      length: REWRITE_LENGTH_PROMPTS[state.lengthMode] || REWRITE_LENGTH_PROMPTS.default
+    };
+  }
+
+  function updateRewritePromptPreview() {
+    var fragments = getRewritePromptFragments();
+    var isContinueMode = state.currentMode === "continue";
+    byId("rewrite-prompt-label").textContent = isContinueMode ? "续写提示词" : "改写提示词";
+    byId("style-prompt-text").textContent = fragments.style;
+    byId("focus-prompt-text").textContent = fragments.focus;
+    byId("length-prompt-text").textContent = fragments.length;
+    byId("selected-style-prompt").textContent = fragments.style;
+    byId("selected-focus-prompt").textContent = fragments.focus;
+    byId("selected-length-prompt").textContent = fragments.length;
+    byId("selected-output-prompt").textContent = REWRITE_OUTPUT_PROMPT;
+  }
+
   function switchView(viewName) {
     byId("home-view").classList.toggle("active", viewName === "home");
     byId("settings-view").classList.toggle("active", viewName === "settings");
@@ -248,6 +289,7 @@
     byId("technical-review-options").hidden = !config.showTechnicalReviewOptions;
     byId("style-field-label").textContent = config.styleLabel || "改写风格";
     byId("btn-run-primary").textContent = config.primaryText;
+    updateRewritePromptPreview();
     state.pendingApplyAction = "";
     setApplyEnabled(false);
     setStatus("等待操作。");
@@ -1132,12 +1174,15 @@
     });
     byId("rewrite-style").addEventListener("change", function (event) {
       state.rewriteStyle = event.target.value;
+      updateRewritePromptPreview();
     });
     byId("focus-point").addEventListener("change", function (event) {
       state.focusPoint = event.target.value;
+      updateRewritePromptPreview();
     });
     byId("length-mode").addEventListener("change", function (event) {
       state.lengthMode = event.target.value;
+      updateRewritePromptPreview();
     });
     byId("user-instruction").addEventListener("input", function (event) {
       state.userInstruction = event.target.value;

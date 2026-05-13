@@ -41,3 +41,15 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("task-routes-list", html)
         self.assertIn("renderTaskRoutes", js)
         self.assertIn("/provider/task-api-key", js)
+
+    def test_rewrite_taskpane_exposes_prompt_fragments(self) -> None:
+        html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
+            encoding="utf-8"
+        )
+        js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
+
+        self.assertIn("prompt-fragment-card", html)
+        self.assertIn("rewrite-prompt-label", html)
+        self.assertIn("updateRewritePromptPreview", js)
+        self.assertIn("REWRITE_STYLE_PROMPTS", js)
+        self.assertIn("不要原样返回待处理内容", js)

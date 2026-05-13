@@ -75,8 +75,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.10.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.10.0-20260511` |
+| Version | `v0.10.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.10.1-20260513` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -118,6 +118,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.10.1-alpha` | Refined the rewrite/continue task pane to expose the exact prompt fragments for style, focus, length, and output constraints; the supplemental input is now presented as a rewrite/continue prompt area while retaining the original free-form placeholder |
 | `v0.10.0-alpha` | Upgraded provider routing to one `providerBaseUrl` plus per-task `taskRoutes` with `path`, `apiKeyRef`, and `payloadStyle`; the adapter now routes each Word task directly to its Dify app or workflow, the settings page exposes task key management, and the Dify multi-route deployment guide was added |
 | `v0.9.1-alpha` | Fixed stale uvicorn adapters on target machines by replacing old port `18100` processes when the running version does not match the package; merged backend templates with local fallback templates; reduced Technical Document Review to solution, contract acceptance, and test outline document types with type-specific default prompts |
 | `v0.8.0-alpha` | Added the sixth Ribbon workflow, Technical Document Review, with document-type selection and a transparent editable review prompt for functional accuracy, terminology, design rationality, and requirement clarity; also enhanced structured proofreading by extracting `documentStructure` and sending document data plus local findings to enterprise Dify User Input |
