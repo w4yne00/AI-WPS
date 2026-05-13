@@ -81,12 +81,19 @@ adapter 发送：
 
 ```json
 {
-  "query": "用户任务提示词",
+  "query": "完整任务提示词，包含改写/续写要求和待处理原文",
   "inputs": {
     "scene": "word",
     "task_id": "word.rewrite",
     "taskType": "word.rewrite",
-    "trace_id": "word-rewrite-..."
+    "trace_id": "word-rewrite-...",
+    "source_text": "待处理原文",
+    "text": "待处理原文",
+    "rewrite_mode": "rewrite",
+    "user_instruction": "用户补充要求",
+    "rewrite_style": "formal",
+    "focus_point": "risk",
+    "length_mode": "same"
   },
   "response_mode": "blocking",
   "user": "wps-ai-assistant",

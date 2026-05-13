@@ -235,6 +235,41 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(payload["input_data"]["task_id"], "word.rewrite")
         self.assertEqual(payload["mode"], "blocking")
 
+    def test_rewrite_sends_source_text_in_dify_chat_inputs(self) -> None:
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self) -> None:
+                super().__init__(load_settings())
+                self.settings.provider_base_url = "https://aibot.example/v1"
+                self.captured_input_data = {}
+                self.captured_query = ""
+
+            def is_task_configured(self, task_type: str) -> bool:
+                return True
+
+            def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
+                self.captured_input_data = input_data
+                self.captured_query = query
+                return {"answer": "这是改写后的文本。"}
+
+        client = CapturingProviderClient()
+
+        result = client.rewrite(
+            "原文内容",
+            "rewrite",
+            "trace-001",
+            user_instruction="更正式",
+            style="formal",
+            focus="risk",
+            length="same",
+        )
+
+        self.assertEqual(result["rewrittenText"], "这是改写后的文本。")
+        self.assertEqual(client.captured_input_data["source_text"], "原文内容")
+        self.assertEqual(client.captured_input_data["text"], "原文内容")
+        self.assertEqual(client.captured_input_data["rewrite_mode"], "rewrite")
+        self.assertEqual(client.captured_input_data["user_instruction"], "更正式")
+        self.assertIn("待处理内容：\n原文内容", client.captured_query)
+
     def test_route_api_key_uses_ref_file_before_default_key(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
         tmp_dir.mkdir(exist_ok=True)
@@ -394,6 +429,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertIn("保留原意，不编造事实", prompt)
+        self.assertIn("不要原样返回待处理内容", prompt)
         self.assertIn("用户附加要求", prompt)
         self.assertIn("请突出风险和下一步计划，压缩到200字以内。", prompt)
         self.assertIn("项目进展总体正常，但风险项较多。", prompt)

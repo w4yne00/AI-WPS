@@ -98,6 +98,7 @@ def build_rewrite_prompt(
         "3. {0}。".format(FOCUS_TEXT.get(focus, FOCUS_TEXT["default"])),
         "4. {0}。".format(LENGTH_TEXT.get(length, LENGTH_TEXT["default"])),
         "5. 输出结果直接给出正文，不要解释你的处理过程。",
+        "6. 不要原样返回待处理内容；如果原文已经较好，也必须在措辞、结构或信息组织上做出有效优化。",
     ]
 
     if user_instruction.strip():
@@ -678,7 +679,19 @@ class ProviderClient:
         body = self.post_task(
             task_type,
             trace_id,
-            self.build_task_input_data(task_type, trace_id, {"rewrite_mode": mode}),
+            self.build_task_input_data(
+                task_type,
+                trace_id,
+                {
+                    "rewrite_mode": mode,
+                    "source_text": text.strip(),
+                    "text": text.strip(),
+                    "user_instruction": user_instruction.strip(),
+                    "rewrite_style": style,
+                    "focus_point": focus,
+                    "length_mode": length,
+                },
+            ),
             prompt,
         )
 
