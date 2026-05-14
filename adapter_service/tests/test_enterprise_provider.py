@@ -203,15 +203,26 @@ class EnterpriseProviderTests(unittest.TestCase):
         payload = build_route_request_payload(
             settings,
             route,
-            {"task_id": "word.rewrite", "source_text": "原文"},
+            {
+                "task_id": "word.rewrite",
+                "source_text": "原文",
+                "text": "原文",
+                "mode": "rewrite",
+                "rewrite_mode": "rewrite",
+            },
             "请改写原文",
         )
 
         self.assertEqual(payload["query"], "请改写原文")
         self.assertEqual(payload["inputs"]["task_id"], "word.rewrite")
+        self.assertEqual(payload["inputs"]["text"], "原文")
+        self.assertEqual(payload["inputs"]["mode"], "rewrite")
+        self.assertEqual(payload["inputs"]["query"], "请改写原文")
+        self.assertEqual(payload["inputs"]["prompt"], "请改写原文")
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertNotIn("input_data", payload)
         self.assertNotIn("mode", payload)
+        self.assertNotIn("conversation_id", payload)
 
     def test_build_route_request_payload_keeps_legacy_chat_fields_when_requested(self) -> None:
         settings = load_settings()
@@ -266,6 +277,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(result["rewrittenText"], "这是改写后的文本。")
         self.assertEqual(client.captured_input_data["source_text"], "原文内容")
         self.assertEqual(client.captured_input_data["text"], "原文内容")
+        self.assertEqual(client.captured_input_data["mode"], "rewrite")
         self.assertEqual(client.captured_input_data["rewrite_mode"], "rewrite")
         self.assertEqual(client.captured_input_data["user_instruction"], "更正式")
         self.assertIn("待处理内容：\n原文内容", client.captured_query)

@@ -282,10 +282,12 @@ def build_route_request_payload(settings: AppSettings, route: TaskRoute, input_d
             "user": "wps-ai-assistant",
             "files": [],
         }
+    inputs = dict(input_data)
+    inputs.setdefault("query", query)
+    inputs.setdefault("prompt", query)
     return {
-        "inputs": input_data,
+        "inputs": inputs,
         "query": query,
-        "conversation_id": "",
         "response_mode": response_mode,
         "user": "wps-ai-assistant",
         "files": [],
@@ -683,6 +685,7 @@ class ProviderClient:
                 task_type,
                 trace_id,
                 {
+                    "mode": mode,
                     "rewrite_mode": mode,
                     "source_text": text.strip(),
                     "text": text.strip(),
