@@ -65,6 +65,7 @@
       action: "rewrite",
       showRewriteOptions: true,
       showInstruction: true,
+      showPromptFragments: true,
       showTemplate: false
     },
     continue: {
@@ -76,6 +77,7 @@
       action: "continue",
       showRewriteOptions: true,
       showInstruction: true,
+      showPromptFragments: true,
       showTemplate: false
     },
     proofread: {
@@ -257,7 +259,9 @@
   function updateRewritePromptPreview() {
     var fragments = getRewritePromptFragments();
     var isContinueMode = state.currentMode === "continue";
+    var shouldShowPromptFragments = state.currentMode === "rewrite" || state.currentMode === "continue";
     byId("rewrite-prompt-label").textContent = isContinueMode ? "续写提示词" : "改写提示词";
+    byId("prompt-fragment-card").hidden = !shouldShowPromptFragments;
     byId("style-prompt-text").textContent = fragments.style;
     byId("focus-prompt-text").textContent = fragments.focus;
     byId("length-prompt-text").textContent = fragments.length;

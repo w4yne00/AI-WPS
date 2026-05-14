@@ -403,7 +403,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.10.2-alpha",
+                        "version": "0.10.3-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,

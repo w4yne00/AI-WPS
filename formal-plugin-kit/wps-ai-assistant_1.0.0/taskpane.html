@@ -80,7 +80,7 @@
               </select>
             </label>
 
-            <label class="field review-prompt-field">
+            <label class="field review-prompt-field" hidden>
               <span>审查重点提示词</span>
               <textarea id="technical-review-prompt" rows="8"></textarea>
             </label>
@@ -88,7 +88,7 @@
 
           <label id="instruction-block" class="field">
             <span id="rewrite-prompt-label">改写提示词</span>
-            <div id="prompt-fragment-card" class="prompt-fragment-card">
+            <div id="prompt-fragment-card" class="prompt-fragment-card" hidden>
               <div>
                 <b>风格</b>
                 <p id="selected-style-prompt">使用正式、清晰、简洁的中文表达。</p>
@@ -106,7 +106,7 @@
                 <p id="selected-output-prompt">不要原样返回待处理内容；只输出最终正文。</p>
               </div>
             </div>
-            <textarea id="user-instruction" rows="2" placeholder="例如：请突出风险和下一步计划，压缩到200字以内。"></textarea>
+            <textarea id="user-instruction" rows="2" placeholder="补充要求：请突出风险和下一步计划，压缩到200字以内。"></textarea>
           </label>
 
           <div class="button-cluster action-bar">

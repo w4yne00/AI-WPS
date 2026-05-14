@@ -49,7 +49,11 @@ class PackagingScriptTests(unittest.TestCase):
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
         self.assertIn("prompt-fragment-card", html)
+        self.assertIn('id="prompt-fragment-card" class="prompt-fragment-card" hidden', html)
         self.assertIn("rewrite-prompt-label", html)
+        self.assertIn("补充要求：请突出风险和下一步计划，压缩到200字以内。", html)
         self.assertIn("updateRewritePromptPreview", js)
+        self.assertIn("showPromptFragments: true", js)
+        self.assertIn("prompt-fragment-card\").hidden = !shouldShowPromptFragments", js)
         self.assertIn("REWRITE_STYLE_PROMPTS", js)
         self.assertIn("不要原样返回待处理内容", js)
