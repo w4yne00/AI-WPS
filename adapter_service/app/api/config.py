@@ -14,7 +14,7 @@ def get_config() -> dict:
     for task_type, route_summary in task_routes.items():
         route = settings.task_routes.get(task_type)
         api_key_ref = route.api_key_ref if route else route_summary.get("apiKeyRef", "default")
-        route_summary["configured"] = bool(provider.get_api_key(api_key_ref))
+        route_summary["configured"] = bool(provider.get_task_api_key(route)) if route else bool(provider.get_api_key(api_key_ref))
         route_summary["authSource"] = provider.get_route_auth_source(api_key_ref)
     return {
         "success": True,

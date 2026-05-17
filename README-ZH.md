@@ -75,8 +75,8 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.10.3-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.10.3-20260514` |
+| 当前版本 | `v0.11.0-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.11.0-20260517` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
@@ -101,16 +101,16 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 能力 | 说明 |
 | --- | --- |
 | WPS 原生任务窗格 | 支持麒麟/WPS 目标终端已验证的 `jsaddons` 手工导入结构 |
-| 六个任务入口 | WPS AI 助理选项卡平铺提供智能改写、智能续写、格式校对、智能排版、技术文档审查和设置 |
+| 五个任务入口 | WPS AI 助理选项卡提供智能编写、格式校对、智能排版、技术文档审查和设置 |
 | 独立任务窗格模式 | 同一个任务窗格根据 Ribbon 点击入口切换为聚焦的 Word 工作流 |
 | Word 格式审校 | 检查标题层级、模板字体/字号/行距、重复空格、中文标点前空格和结构化文档质量问题 |
 | 技术文档审查 | 面向选中文本或全文，按可编辑提示词检查功能描述准确性、术语专业性、设计合理性和要求明确性 |
 | AI 文档质量审校 | 将 `documentStructure` 和本地规则发现传给企业 AI provider，分类返回错别字、语病、表述、逻辑和章节命名一致性问题；未配置密钥时安全跳过 |
 | Word 自动格式预览 | 基于模板生成段落样式调整计划，先预览再应用 |
-| Word 改写/续写 | 读取当前选中文本调用企业 AI 接口生成结果；未配置密钥时使用本地 mock 回退 |
+| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Workflow 严格输入变量 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
 | 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
-| 设置与诊断 | 设置页提供单一模型提供商卡片、接口地址配置、按任务 API Key 导入、provider 状态、运行探针和诊断信息 |
+| 设置与联调状态 | 设置页保留单一全局 API URL 和按任务 API Key，移除面向用户的运行探针入口 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
 | 一期交付总包 | 一个压缩包内置 WPS 插件、`publish.xml`、pip 引导、运行依赖、adapter、一键联调脚本和验收模板 |
 
@@ -118,6 +118,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.11.0-alpha` | 将智能改写和智能续写合并为智能编写，智能编写改为 Dify Workflow `/workflows/run` 严格输入变量（`source_text`、`write_action`、`style`、`focus`、`length`、`user_prompt`、`selection_mode`、`trace_id`），设置页移除全局 API Key 和运行探针，仅保留全局 URL + 每任务 Key；同步刷新 Ribbon 图标，并新增正式设计文档作为非 bug 改动的开发准绳 |
 | `v0.10.3-alpha` | 优化任务窗格提示词展示：仅智能改写/续写显示提示词拆解卡片，格式校对、智能排版、技术文档审查恢复简洁视图，并将补充输入占位文案改为“补充要求” |
 | `v0.10.2-alpha` | 修复智能改写/续写 Dify Chat 入参：按 `/chat-messages` 标准发送顶层 `query`，并在 `inputs` 中同步 `text`、`mode`、`query`、`prompt`，避免工作流节点读不到原文和任务模式导致原样返回 |
 | `v0.10.1-alpha` | 优化智能改写/续写任务窗格，显性展示“风格、侧重点、篇幅、输出约束”对应提示词，将“补充要求”调整为改写/续写提示词区域，并保留用户补充输入 |
@@ -259,7 +260,7 @@ cp config/adapter.example.json config/adapter.json
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-未配置密钥时，`/word/rewrite` 会走本地 mock 响应，方便离线开发和基础验收。
+未配置智能编写任务密钥时，`/word/smart-write` 会走本地 mock 响应，方便离线开发和基础验收。旧 `/word/rewrite` 端点保留作回滚兼容，插件界面不再调用。
 
 ## API 一览
 
@@ -269,11 +270,12 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `GET` | `/config` | 查看当前运行配置摘要 |
 | `GET` | `/templates` | 获取可用模板列表 |
 | `GET` | `/provider/status` | 查看企业 AI provider 认证状态 |
-| `POST` | `/provider/api-key` | 保存本地 API key |
-| `DELETE` | `/provider/api-key` | 清除本地 API key |
+| `POST` | `/provider/task-api-key` | 按 `apiKeyRef` 保存每任务 API Key |
+| `DELETE` | `/provider/task-api-key/{apiKeyRef}` | 清除指定任务 API Key |
 | `POST` | `/word/proofread` | Word 结构化审校 |
 | `POST` | `/word/format-preview` | Word 自动格式化预览 |
-| `POST` | `/word/rewrite` | Word 选区/正文改写或续写 |
+| `POST` | `/word/smart-write` | 对当前选中文本进行智能编写，支持改写、续写、总结和自定义 |
+| `POST` | `/word/rewrite` | 旧改写/续写兼容端点，保留作回滚使用 |
 | `POST` | `/word/technical-review` | 技术文档审查，检查功能描述、术语、设计和要求明确性 |
 
 统一响应结构：

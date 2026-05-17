@@ -3,8 +3,7 @@
     <tabs>
       <tab id="wpsAiAssistantTab" label="WPS AI 助理">
         <group id="wpsAiAssistantGroup" label="文档处理">
-          <button id="btnAiRewrite" label="智能改写" size="large" getImage="GetImage" onAction="OnAction" />
-          <button id="btnAiContinue" label="智能续写" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiSmartWrite" label="智能编写" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiProofread" label="格式校对" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiFormat" label="智能排版" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiTechnicalReview" label="技术文档审查" size="large" getImage="GetImage" onAction="OnAction" />

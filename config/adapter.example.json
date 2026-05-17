@@ -10,22 +10,13 @@
   "templateRoot": "./templates",
   "timeoutSeconds": 30,
   "taskRoutes": {
-    "word.rewrite": {
-      "taskId": "word.rewrite",
-      "path": "/chat-messages",
-      "apiKeyRef": "rewrite",
-      "payloadStyle": "chat",
+    "word.smart_write": {
+      "taskId": "word.smart_write",
+      "path": "/workflows/run",
+      "apiKeyRef": "smart_write",
+      "payloadStyle": "workflow",
       "responseMode": "blocking",
-      "outputKey": "answer",
-      "enabled": true
-    },
-    "word.continue": {
-      "taskId": "word.continue",
-      "path": "/chat-messages",
-      "apiKeyRef": "continue",
-      "payloadStyle": "chat",
-      "responseMode": "blocking",
-      "outputKey": "answer",
+      "outputKey": "result",
       "enabled": true
     },
     "word.proofread": {

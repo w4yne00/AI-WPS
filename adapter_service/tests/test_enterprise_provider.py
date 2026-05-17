@@ -15,6 +15,7 @@ from app.services.provider_client import (
     build_provider_request_payload,
     build_route_request_payload,
     build_rewrite_prompt,
+    build_smart_write_prompt,
     build_typo_prompt,
     extract_answer,
     get_default_technical_review_prompt,
@@ -130,9 +131,9 @@ class EnterpriseProviderTests(unittest.TestCase):
     def test_provider_client_resolves_default_task_route(self) -> None:
         client = ProviderClient(load_settings())
 
-        route = client.resolve_task_route("word.rewrite")
+        route = client.resolve_task_route("word.smart_write")
 
-        self.assertEqual(route.task_id, "word.rewrite")
+        self.assertEqual(route.task_id, "word.smart_write")
         self.assertTrue(route.enabled)
 
     def test_task_routes_to_dict_exposes_safe_summary(self) -> None:
@@ -246,6 +247,40 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(payload["input_data"]["task_id"], "word.rewrite")
         self.assertEqual(payload["mode"], "blocking")
 
+    def test_build_route_request_payload_uses_strict_smart_write_workflow_inputs(self) -> None:
+        settings = load_settings()
+        route = type(
+            "Route",
+            (),
+            {
+                "task_id": "word.smart_write",
+                "payload_style": "workflow",
+                "response_mode": "blocking",
+            },
+        )()
+
+        payload = build_route_request_payload(
+            settings,
+            route,
+            {
+                "source_text": "原文",
+                "write_action": "rewrite",
+                "style": "formal",
+                "focus": "default",
+                "length": "same",
+                "user_prompt": "补充要求",
+                "selection_mode": "selection",
+                "trace_id": "trace-smart",
+            },
+            "内部提示词",
+        )
+
+        self.assertEqual(payload["inputs"]["source_text"], "原文")
+        self.assertEqual(payload["inputs"]["write_action"], "rewrite")
+        self.assertEqual(payload["inputs"]["user_prompt"], "补充要求")
+        self.assertNotIn("query", payload["inputs"])
+        self.assertNotIn("query", payload)
+
     def test_rewrite_sends_source_text_in_dify_chat_inputs(self) -> None:
         class CapturingProviderClient(ProviderClient):
             def __init__(self) -> None:
@@ -282,6 +317,45 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(client.captured_input_data["user_instruction"], "更正式")
         self.assertIn("待处理内容：\n原文内容", client.captured_query)
 
+    def test_smart_write_sends_workflow_start_variables(self) -> None:
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self) -> None:
+                super().__init__(load_settings())
+                self.settings.provider_base_url = "https://aibot.example/v1"
+                self.captured_input_data = {}
+                self.captured_query = ""
+
+            def is_task_configured(self, task_type: str) -> bool:
+                return True
+
+            def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
+                self.captured_input_data = input_data
+                self.captured_query = query
+                return {"data": {"outputs": {"result": "智能编写后的文本。"}}}
+
+        client = CapturingProviderClient()
+
+        result = client.smart_write(
+            "原文内容",
+            "rewrite",
+            "trace-smart",
+            user_prompt="更正式",
+            style="formal",
+            focus="risk",
+            length="same",
+            selection_mode="selection",
+        )
+
+        self.assertEqual(result["rewrittenText"], "智能编写后的文本。")
+        self.assertEqual(client.captured_input_data["source_text"], "原文内容")
+        self.assertEqual(client.captured_input_data["write_action"], "rewrite")
+        self.assertEqual(client.captured_input_data["style"], "formal")
+        self.assertEqual(client.captured_input_data["focus"], "risk")
+        self.assertEqual(client.captured_input_data["length"], "same")
+        self.assertEqual(client.captured_input_data["user_prompt"], "更正式")
+        self.assertEqual(client.captured_input_data["selection_mode"], "selection")
+        self.assertIn("待处理原文：\n原文内容", client.captured_query)
+
     def test_route_api_key_uses_ref_file_before_default_key(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
         tmp_dir.mkdir(exist_ok=True)
@@ -306,6 +380,26 @@ class EnterpriseProviderTests(unittest.TestCase):
             route_key = tmp_dir / "provider_api_keys" / "proofread"
             if route_key.exists():
                 route_key.unlink()
+            route_dir = tmp_dir / "provider_api_keys"
+            if route_dir.exists():
+                route_dir.rmdir()
+            tmp_dir.rmdir()
+
+    def test_task_route_api_key_does_not_fall_back_to_default_for_named_ref(self) -> None:
+        tmp_dir = Path("tmp-test-route-keys")
+        tmp_dir.mkdir(exist_ok=True)
+        default_key = tmp_dir / "provider_api_key"
+        default_key.write_text("default-secret", encoding="utf-8")
+        route = type("Route", (), {"api_key_ref": "smart_write"})()
+        try:
+            client = ProviderClient(load_settings())
+            self.assertEqual(client.get_task_api_key(route, tmp_dir), "")
+            save_route_api_key("smart_write", "smart-secret", tmp_dir)
+            self.assertEqual(client.get_task_api_key(route, tmp_dir), "smart-secret")
+        finally:
+            clear_route_api_key("smart_write", tmp_dir)
+            if default_key.exists():
+                default_key.unlink()
             route_dir = tmp_dir / "provider_api_keys"
             if route_dir.exists():
                 route_dir.rmdir()
@@ -445,6 +539,20 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("用户附加要求", prompt)
         self.assertIn("请突出风险和下一步计划，压缩到200字以内。", prompt)
         self.assertIn("项目进展总体正常，但风险项较多。", prompt)
+
+    def test_build_smart_write_prompt_requires_changed_output(self) -> None:
+        prompt = build_smart_write_prompt(
+            text="项目进展总体正常。",
+            action="rewrite",
+            user_prompt="更正式",
+            style="formal",
+            focus="risk",
+            length="same",
+        )
+
+        self.assertIn("企业办公文档智能编写助手", prompt)
+        self.assertIn("不允许原样返回原文", prompt)
+        self.assertIn("待处理原文：\n项目进展总体正常。", prompt)
 
     def test_extract_answer_reads_enterprise_chat_response(self) -> None:
         body = {

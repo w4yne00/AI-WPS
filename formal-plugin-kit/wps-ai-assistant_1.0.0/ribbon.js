@@ -12,23 +12,21 @@ function OnAddinLoad(ribbonUI) {
 
 function resolveMode(controlId) {
   var modeMap = {
-    btnAiRewrite: "rewrite",
-    btnAiContinue: "continue",
+    btnAiSmartWrite: "smartWrite",
     btnAiProofread: "proofread",
     btnAiFormat: "format",
     btnAiTechnicalReview: "technicalReview",
     btnAiSettings: "settings",
-    btnWpsAiAssistant: "rewrite"
+    btnWpsAiAssistant: "smartWrite"
   };
-  return modeMap[controlId] || "rewrite";
+  return modeMap[controlId] || "smartWrite";
 }
 
 var ribbonIconMap = {
-  btnAiRewrite: "assets/icon-rewrite.png",
-  btnAiContinue: "assets/icon-continue.png",
+  btnAiSmartWrite: "assets/icon-smart-write.png",
   btnAiProofread: "assets/icon-proofread.png",
   btnAiFormat: "assets/icon-format.png",
-  btnAiTechnicalReview: "assets/icon-proofread.png",
+  btnAiTechnicalReview: "assets/icon-review.png",
   btnAiSettings: "assets/icon-settings.png",
   btnWpsAiAssistant: "assets/ai-assistant-32.png"
 };

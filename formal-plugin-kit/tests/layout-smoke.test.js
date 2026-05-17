@@ -8,7 +8,6 @@ const html = fs.readFileSync(
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
-assert.ok(html.includes('id="btn-save-api-key"'));
 assert.ok(html.includes('id="provider-base-url"'));
 assert.ok(html.includes('id="btn-save-provider-url"'));
 assert.ok(html.includes('id="provider-summary-card"'));
@@ -20,7 +19,10 @@ assert.ok(html.includes('id="provider-name"'));
 assert.ok(html.indexOf('id="provider-summary-card"') < html.indexOf('id="provider-edit-view"'));
 assert.ok(!html.includes('id="provider-active-select"'));
 assert.ok(!html.includes('id="btn-set-active-provider"'));
-assert.ok(html.includes('id="btn-probe"'));
+assert.ok(!html.includes('id="provider-api-key"'));
+assert.ok(!html.includes('id="btn-save-api-key"'));
+assert.ok(!html.includes('id="btn-clear-api-key"'));
+assert.ok(!html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
 assert.ok(html.includes('id="diagnostics-section"'));
 assert.ok(html.includes('id="btn-copy-result"'));
@@ -28,6 +30,8 @@ assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
 assert.ok(html.includes('id="task-title"'));
 assert.ok(html.includes('识别范围'));
+assert.ok(html.includes('智能编写'));
+assert.ok(html.includes('id="write-action"'));
 assert.ok(html.includes('id="rewrite-options"'));
 assert.ok(html.includes('id="template-options"'));
 assert.ok(html.includes('id="technical-review-options"'));
@@ -63,6 +67,7 @@ assert.ok(js.includes("technicalReview"));
 assert.ok(js.includes("/word/technical-review"));
 assert.ok(js.includes("DEFAULT_TECHNICAL_REVIEW_PROMPT"));
 assert.ok(js.includes("saveProviderBaseUrl"));
+assert.ok(js.includes("/word/smart-write"));
 assert.ok(js.includes("setAdapterUnavailableState"));
 assert.ok(js.includes("describeFetchError"));
 assert.ok(js.includes("readAdapterJson"));
@@ -76,6 +81,8 @@ assert.ok(!js.includes("setActiveProvider"));
 assert.ok(js.includes("本地适配服务暂不可用"));
 assert.ok(!js.includes('setHealthBadge("badge-error", "不可达")'));
 assert.ok(!js.includes("无法连接本地适配层"));
+assert.ok(!js.includes("runProbe"));
+assert.ok(!js.includes("/word/rewrite"));
 
 const css = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.css",
@@ -95,8 +102,7 @@ const ribbon = fs.readFileSync(
 );
 
 [
-  "智能改写",
-  "智能续写",
+  "智能编写",
   "格式校对",
   "智能排版",
   "技术文档审查",
@@ -118,6 +124,8 @@ assert.ok(ribbonJs.includes("WpsAiAssistantTaskPane"));
 assert.ok(ribbonJs.includes("function GetImage"));
 assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
+assert.ok(ribbonJs.includes("icon-smart-write.png"));
+assert.ok(ribbonJs.includes("icon-review.png"));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 
 const uvicornStart = fs.readFileSync(

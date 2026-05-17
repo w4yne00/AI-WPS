@@ -90,6 +90,27 @@ def rewrite_word(request: WordDocumentRequest) -> dict:
     }
 
 
+@router.post("/word/smart-write")
+def smart_write_word(request: WordDocumentRequest) -> dict:
+    trace_id = new_trace_id("word-smart-write")
+    write = rewriter.smart_write(request, trace_id=trace_id)
+    payload = RewriteResponseData(**write)
+    logger.info(
+        "traceId=%s task=word.smart_write action=%s sourceLength=%s",
+        trace_id,
+        payload.rewrite_mode,
+        len(payload.original_text),
+    )
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "word.smart_write",
+        "message": "completed",
+        "data": payload.dict(by_alias=True),
+        "errors": [],
+    }
+
+
 @router.post("/word/technical-review")
 def technical_review_word(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-technical-review")

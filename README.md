@@ -75,8 +75,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.10.3-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.10.3-20260514` |
+| Version | `v0.11.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.11.0-20260517` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -101,16 +101,16 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Six task entries | WPS AI tab exposes rewrite, continue, proofread, format, technical review, and settings as separate ribbon actions |
+| Five task entries | WPS AI tab exposes Smart Write, Proofread, Format Preview, Technical Review, and Settings as focused ribbon actions |
 | Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
 | Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, Chinese punctuation spacing, and structured document quality issues |
 | Technical document review | Reviews selected text or the whole document for functional accuracy, professional terminology, design rationality, and requirement clarity with an editable prompt |
 | AI document quality check | Sends `documentStructure` and local rule findings to the enterprise AI provider for categorized typos, grammar, expression, logic, and heading-consistency findings; falls back safely when no API key is configured |
 | Word format preview | Builds a template-based paragraph style change plan before applying it |
-| Word rewrite/continue | Rewrites or continues from the current selected text, calls the enterprise AI API, and supports local mock fallback |
+| Word smart write | Combines rewrite, continue, summarize, and custom writing into one Workflow-backed task with strict Dify Start variables |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Runtime probe and settings | Settings page for a single provider-card API configuration, per-task API key import, provider status, runtime probe, and diagnostics |
+| Provider settings | Settings page keeps one global API URL and per-task API keys; probe UI is removed from the user-facing pane |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package installs WPS add-in files, `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
 
@@ -118,6 +118,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.11.0-alpha` | Replaced separate Rewrite and Continue entries with Smart Write, switched Smart Write to Dify Workflow `/workflows/run` with strict Start variables (`source_text`, `write_action`, `style`, `focus`, `length`, `user_prompt`, `selection_mode`, `trace_id`), removed global API key/probe controls from settings, refreshed Ribbon icons, and added the formal design document as the source of truth for non-bug changes |
 | `v0.10.3-alpha` | Refined task-pane prompt visibility: only Rewrite and Continue show prompt-fragment cards, Proofread, Format Preview, and Technical Review return to a cleaner view, and the supplemental input placeholder now starts with “补充要求” |
 | `v0.10.2-alpha` | Fixed rewrite/continue Dify Chat inputs: standard `/chat-messages` payload now sends top-level `query` and mirrors `text`, `mode`, `query`, and `prompt` inside `inputs`, preventing workflows from missing the source text or task mode and returning the original text unchanged |
 | `v0.10.1-alpha` | Refined the rewrite/continue task pane to expose the exact prompt fragments for style, focus, length, and output constraints; the supplemental input is now presented as a rewrite/continue prompt area while retaining the original free-form placeholder |
@@ -259,7 +260,7 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-When no API key is configured, `/word/rewrite` returns a local mock response, which is useful for offline development and baseline acceptance.
+When no Smart Write task API key is configured, `/word/smart-write` returns a local mock response, which is useful for offline development and baseline acceptance. The legacy `/word/rewrite` endpoint remains available for rollback compatibility but is no longer called by the add-in UI.
 
 ## API Surface
 
@@ -269,11 +270,12 @@ When no API key is configured, `/word/rewrite` returns a local mock response, wh
 | `GET` | `/config` | Current runtime configuration summary |
 | `GET` | `/templates` | Available template list |
 | `GET` | `/provider/status` | Enterprise AI provider authentication status |
-| `POST` | `/provider/api-key` | Save a local API key |
-| `DELETE` | `/provider/api-key` | Clear the local API key |
+| `POST` | `/provider/task-api-key` | Save a per-task API key by `apiKeyRef` |
+| `DELETE` | `/provider/task-api-key/{apiKeyRef}` | Clear a per-task API key |
 | `POST` | `/word/proofread` | Structured Word proofreading |
 | `POST` | `/word/format-preview` | Word auto-format preview |
-| `POST` | `/word/rewrite` | Rewrite or continue from Word selection/document content |
+| `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
+| `POST` | `/word/rewrite` | Legacy rewrite/continue endpoint retained for rollback compatibility |
 | `POST` | `/word/technical-review` | Technical document review for functional accuracy, terminology, design, and requirement clarity |
 
 Unified response envelope:

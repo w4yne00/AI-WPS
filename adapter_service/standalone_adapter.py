@@ -334,6 +334,43 @@ def rewrite(payload):
     }
 
 
+def smart_write(payload):
+    options = payload.get("options", {})
+    action = options.get("rewriteAction", "rewrite")
+    source_text = payload["content"].get("plainText", "").strip()
+    if not source_text:
+        source_text = "\n".join(
+            paragraph.get("text", "")
+            for paragraph in payload["content"].get("paragraphs", [])
+            if paragraph.get("text", "").strip()
+        ).strip()
+
+    provider_result = ProviderClient(load_settings()).smart_write(
+        source_text,
+        action,
+        trace_id="standalone-word-smart-write",
+        user_prompt=options.get("userInstruction", ""),
+        style=options.get("rewriteStyle", "default"),
+        focus=options.get("focusPoint", "default"),
+        length=options.get("lengthMode", "default"),
+        selection_mode=payload.get("selectionMode", "selection"),
+    )
+    rewritten_text = provider_result["rewrittenText"]
+    diff_hints = ["Text content changed"]
+    if len(rewritten_text) > len(source_text):
+        diff_hints.append("Expanded content length")
+    if len(rewritten_text) < len(source_text):
+        diff_hints.append("Compressed content length")
+
+    return {
+        "originalText": source_text,
+        "rewrittenText": rewritten_text,
+        "rewriteMode": action,
+        "diffHints": diff_hints,
+        "provider": provider_result.get("provider", "mock"),
+    }
+
+
 def technical_review(payload):
     options = payload.get("options", {})
     source_text = payload["content"].get("plainText", "").strip()
@@ -403,7 +440,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.10.3-alpha",
+                        "version": "0.11.0-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
@@ -441,7 +478,7 @@ class Handler(BaseHTTPRequestHandler):
             for task_type, route_summary in task_routes.items():
                 route = settings.task_routes.get(task_type)
                 api_key_ref = route.api_key_ref if route else route_summary.get("apiKeyRef", "default")
-                route_summary["configured"] = bool(provider.get_api_key(api_key_ref))
+                route_summary["configured"] = bool(provider.get_task_api_key(route)) if route else bool(provider.get_api_key(api_key_ref))
                 route_summary["authSource"] = provider.get_route_auth_source(api_key_ref)
             self._write(
                 200,
@@ -537,6 +574,20 @@ class Handler(BaseHTTPRequestHandler):
                     "taskType": "word.rewrite",
                     "message": "completed",
                     "data": rewrite(payload),
+                    "errors": [],
+                },
+            )
+            return
+
+        if path == "/word/smart-write":
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-word-smart-write",
+                    "taskType": "word.smart_write",
+                    "message": "completed",
+                    "data": smart_write(payload),
                     "errors": [],
                 },
             )

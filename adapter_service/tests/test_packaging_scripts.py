@@ -32,7 +32,7 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-file-format-requirements", js)
 
-    def test_taskpane_settings_exposes_task_route_keys(self) -> None:
+    def test_taskpane_settings_exposes_task_route_keys_without_global_key_or_probe(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
@@ -41,13 +41,20 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("task-routes-list", html)
         self.assertIn("renderTaskRoutes", js)
         self.assertIn("/provider/task-api-key", js)
+        self.assertNotIn('id="provider-api-key"', html)
+        self.assertNotIn('id="btn-save-api-key"', html)
+        self.assertNotIn('id="btn-clear-api-key"', html)
+        self.assertNotIn('id="btn-probe"', html)
+        self.assertNotIn("runProbe", js)
 
-    def test_rewrite_taskpane_exposes_prompt_fragments(self) -> None:
+    def test_smart_write_taskpane_exposes_prompt_fragments(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
+        self.assertIn("智能编写", html)
+        self.assertIn('id="write-action"', html)
         self.assertIn("prompt-fragment-card", html)
         self.assertIn('id="prompt-fragment-card" class="prompt-fragment-card" hidden', html)
         self.assertIn("rewrite-prompt-label", html)
@@ -57,3 +64,23 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("prompt-fragment-card\").hidden = !shouldShowPromptFragments", js)
         self.assertIn("REWRITE_STYLE_PROMPTS", js)
         self.assertIn("不要原样返回待处理内容", js)
+        self.assertIn("/word/smart-write", js)
+        self.assertNotIn("/word/rewrite", js)
+
+    def test_ribbon_uses_five_current_entries_and_current_icons(self) -> None:
+        ribbon = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml").read_text(
+            encoding="utf-8"
+        )
+        ribbon_js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js").read_text(
+            encoding="utf-8"
+        )
+
+        for label in ["智能编写", "格式校对", "智能排版", "技术文档审查", "设置"]:
+            self.assertIn('label="{0}"'.format(label), ribbon)
+        self.assertNotIn("智能改写", ribbon)
+        self.assertNotIn("智能续写", ribbon)
+        self.assertIn("btnAiSmartWrite", ribbon)
+        self.assertNotIn("btnAiRewrite", ribbon)
+        self.assertNotIn("btnAiContinue", ribbon)
+        self.assertIn("icon-smart-write.png", ribbon_js)
+        self.assertIn("icon-review.png", ribbon_js)

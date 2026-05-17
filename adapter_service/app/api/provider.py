@@ -58,14 +58,15 @@ def save_provider_api_key(request: ProviderApiKeyRequest) -> dict:
 
 @router.post("/provider/task-api-key")
 def save_provider_task_api_key(request: ProviderTaskApiKeyRequest) -> dict:
-    save_route_api_key(request.api_key_ref, request.api_key)
+    api_key = request.api_key.strip()
+    save_route_api_key(request.api_key_ref, api_key)
     client = ProviderClient()
     return {
         "success": True,
         "message": "saved",
         "data": {
             "apiKeyRef": request.api_key_ref,
-            "configured": bool(client.get_api_key(request.api_key_ref)),
+            "configured": bool(api_key),
             "authSource": client.get_route_auth_source(request.api_key_ref),
         },
     }
@@ -112,7 +113,7 @@ def delete_provider_task_api_key(api_key_ref: str) -> dict:
         "message": "cleared",
         "data": {
             "apiKeyRef": api_key_ref,
-            "configured": bool(client.get_api_key(api_key_ref)),
+            "configured": bool(client.get_api_key(api_key_ref)) if api_key_ref == "default" else False,
             "authSource": client.get_route_auth_source(api_key_ref),
         },
     }

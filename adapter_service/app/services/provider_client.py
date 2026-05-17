@@ -120,6 +120,44 @@ def build_rewrite_prompt(
     return "\n".join(lines)
 
 
+def build_smart_write_prompt(
+    text: str,
+    action: str,
+    user_prompt: str = "",
+    style: str = "default",
+    focus: str = "default",
+    length: str = "default",
+) -> str:
+    action_text = {
+        "rewrite": "改写润色",
+        "continue": "续写扩展",
+        "summarize": "提炼总结",
+        "custom": "自定义编写",
+    }.get(action, "改写润色")
+    lines = [
+        "你是企业办公文档智能编写助手。",
+        "任务类型：{0}".format(action_text),
+        "表达风格：{0}".format(STYLE_TEXT.get(style, STYLE_TEXT["default"])),
+        "侧重点：{0}".format(FOCUS_TEXT.get(focus, FOCUS_TEXT["default"])),
+        "篇幅要求：{0}".format(LENGTH_TEXT.get(length, LENGTH_TEXT["default"])),
+    ]
+    if user_prompt.strip():
+        lines.extend(["用户补充要求：", user_prompt.strip()])
+    lines.extend(
+        [
+            "",
+            "待处理原文：",
+            text.strip(),
+            "",
+            "要求：",
+            "1. 必须基于待处理原文生成新内容。",
+            "2. 不允许原样返回原文。",
+            "3. 只输出最终正文，不要解释处理过程。",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def build_typo_prompt(text: str) -> str:
     return "\n".join(
         [
@@ -264,7 +302,8 @@ def build_route_request_payload(settings: AppSettings, route: TaskRoute, input_d
     response_mode = route.response_mode or settings.provider_mode
     if style == "workflow":
         inputs = dict(input_data)
-        inputs["query"] = query
+        if route.task_id != "word.smart_write":
+            inputs["query"] = query
         return {
             "inputs": inputs,
             "response_mode": response_mode,
@@ -589,16 +628,16 @@ class ProviderClient:
     def is_configured(self) -> bool:
         if not self.settings.provider_base_url.strip():
             return False
+        for route in (self.settings.task_routes or {}).values():
+            if self.get_task_api_key(route):
+                return True
         if self.get_api_key():
             return True
-        for route in (self.settings.task_routes or {}).values():
-            if self.get_api_key(route.api_key_ref):
-                return True
         return False
 
     def is_task_configured(self, task_type: str) -> bool:
         route = self.resolve_task_route(task_type)
-        return bool(self.settings.provider_base_url.strip() and self.get_api_key(route.api_key_ref))
+        return bool(self.settings.provider_base_url.strip() and self.get_task_api_key(route))
 
     def get_auth_source(self) -> str:
         if os.getenv(self.settings.provider_api_key_env):
@@ -610,6 +649,8 @@ class ProviderClient:
     def get_route_auth_source(self, api_key_ref: str) -> str:
         if load_route_api_key(api_key_ref):
             return "route-file"
+        if api_key_ref and api_key_ref != "default":
+            return "none"
         return self.get_auth_source()
 
     def get_api_key(self, api_key_ref: str = "default", key_base_path: Optional[Path] = None) -> str:
@@ -619,6 +660,11 @@ class ProviderClient:
         return os.getenv(self.settings.provider_api_key_env) or load_local_api_key(
             key_base_path / "provider_api_key" if key_base_path else None
         )
+
+    def get_task_api_key(self, route: TaskRoute, key_base_path: Optional[Path] = None) -> str:
+        if route.api_key_ref and route.api_key_ref != "default":
+            return load_route_api_key(route.api_key_ref, key_base_path)
+        return self.get_api_key(route.api_key_ref or "default", key_base_path)
 
     def build_route_url(self, route: TaskRoute) -> str:
         return "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), route.path or self.settings.provider_chat_path)
@@ -633,7 +679,7 @@ class ProviderClient:
             data=payload,
             method="POST",
             headers={
-                "Authorization": "Bearer {0}".format(self.get_api_key(route.api_key_ref)),
+                "Authorization": "Bearer {0}".format(self.get_task_api_key(route)),
                 "Content-Type": "application/json",
                 "X-Trace-Id": trace_id,
             },
@@ -650,6 +696,62 @@ class ProviderClient:
             if "timed out" in str(reason).lower():
                 raise ProviderTimeoutError() from exc
             raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
+
+    def smart_write(
+        self,
+        text: str,
+        action: str,
+        trace_id: str,
+        user_prompt: str = "",
+        style: str = "default",
+        focus: str = "default",
+        length: str = "default",
+        selection_mode: str = "selection",
+    ) -> Dict:
+        prompt = build_smart_write_prompt(
+            text=text,
+            action=action,
+            user_prompt=user_prompt,
+            style=style,
+            focus=focus,
+            length=length,
+        )
+        task_type = "word.smart_write"
+        if not self.is_task_configured(task_type):
+            logger.info("traceId=%s provider=mock task=word.smart_write", trace_id)
+            return {
+                "rewrittenText": self._mock_rewrite(text, action, user_prompt),
+                "provider": "mock",
+                "prompt": prompt,
+            }
+
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {
+                "source_text": text.strip(),
+                "write_action": action,
+                "style": style,
+                "focus": focus,
+                "length": length,
+                "user_prompt": user_prompt.strip(),
+                "selection_mode": selection_mode,
+                "trace_id": trace_id,
+            },
+            prompt,
+        )
+
+        rewritten_text = extract_answer(body, self.resolve_task_route(task_type).output_key)
+        logger.info("traceId=%s provider=enterprise-dify-workflow task=word.smart_write", trace_id)
+        return {
+            "rewrittenText": rewritten_text,
+            "provider": "enterprise-dify-workflow/{0}".format(
+                self.get_route_auth_source(self.resolve_task_route(task_type).api_key_ref)
+            ),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
 
     def rewrite(
         self,

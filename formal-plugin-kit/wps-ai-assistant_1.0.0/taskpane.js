@@ -56,25 +56,12 @@
     { id: "general-office", name: "通用办公模板" }
   ];
   var modeConfig = {
-    rewrite: {
-      title: "智能改写",
-      styleLabel: "改写风格",
-      primaryText: "生成改写",
-      runningText: "正在执行智能改写...",
-      doneText: "改写结果已生成。",
-      action: "rewrite",
-      showRewriteOptions: true,
-      showInstruction: true,
-      showPromptFragments: true,
-      showTemplate: false
-    },
-    continue: {
-      title: "智能续写",
-      styleLabel: "续写风格",
-      primaryText: "生成续写",
-      runningText: "正在执行智能续写...",
-      doneText: "续写结果已生成。",
-      action: "continue",
+    smartWrite: {
+      title: "智能编写",
+      styleLabel: "表达风格",
+      primaryText: "生成内容",
+      runningText: "正在执行智能编写...",
+      doneText: "智能编写结果已生成。",
       showRewriteOptions: true,
       showInstruction: true,
       showPromptFragments: true,
@@ -110,6 +97,7 @@
   var state = {
     templates: [],
     selectedTemplateId: "technical-file-format-requirements",
+    writeAction: "rewrite",
     rewriteStyle: "default",
     focusPoint: "default",
     lengthMode: "default",
@@ -126,7 +114,7 @@
     providerAuthSource: "未检测",
     providerBaseUrl: "",
     taskRoutes: {},
-    currentMode: "rewrite",
+    currentMode: "smartWrite",
     copyText: "",
     scopeWatcher: null
   };
@@ -145,8 +133,11 @@
 
   function getInitialMode() {
     var match = /[?&]mode=([^&]+)/.exec(window.location.search || "");
-    var mode = match ? decodeURIComponent(match[1]) : "rewrite";
-    return modeConfig[mode] ? mode : "rewrite";
+    var mode = match ? decodeURIComponent(match[1]) : "smartWrite";
+    if (mode === "rewrite" || mode === "continue") {
+      return "smartWrite";
+    }
+    return modeConfig[mode] ? mode : "smartWrite";
   }
 
   function setTrace(traceId) {
@@ -258,9 +249,8 @@
 
   function updateRewritePromptPreview() {
     var fragments = getRewritePromptFragments();
-    var isContinueMode = state.currentMode === "continue";
-    var shouldShowPromptFragments = state.currentMode === "rewrite" || state.currentMode === "continue";
-    byId("rewrite-prompt-label").textContent = isContinueMode ? "续写提示词" : "改写提示词";
+    var shouldShowPromptFragments = state.currentMode === "smartWrite";
+    byId("rewrite-prompt-label").textContent = "编写要求";
     byId("prompt-fragment-card").hidden = !shouldShowPromptFragments;
     byId("style-prompt-text").textContent = fragments.style;
     byId("focus-prompt-text").textContent = fragments.focus;
@@ -277,8 +267,8 @@
   }
 
   function switchMode(mode) {
-    var config = modeConfig[mode] || modeConfig.rewrite;
-    state.currentMode = modeConfig[mode] ? mode : "rewrite";
+    var config = modeConfig[mode] || modeConfig.smartWrite;
+    state.currentMode = modeConfig[mode] ? mode : "smartWrite";
     byId("task-title").textContent = config.title;
 
     if (state.currentMode === "settings") {
@@ -291,7 +281,7 @@
     byId("instruction-block").hidden = !config.showInstruction;
     byId("template-options").hidden = !config.showTemplate;
     byId("technical-review-options").hidden = !config.showTechnicalReviewOptions;
-    byId("style-field-label").textContent = config.styleLabel || "改写风格";
+    byId("style-field-label").textContent = config.styleLabel || "表达风格";
     byId("btn-run-primary").textContent = config.primaryText;
     updateRewritePromptPreview();
     state.pendingApplyAction = "";
@@ -607,56 +597,9 @@
       });
   }
 
-  function saveApiKey() {
-    var input = byId("provider-api-key");
-    var apiKey = (input.value || "").trim();
-    if (!apiKey) {
-      setStatus("请输入企业接口密钥。");
-      setResult("请输入企业接口密钥后再保存。");
-      return;
-    }
-    setStatus("正在保存企业接口密钥...");
-    request("/provider/api-key", { apiKey: apiKey })
-      .then(function (body) {
-        input.value = "";
-        setProviderAuthLine(body.data.authSource || "file");
-        setStatus("企业接口密钥已保存。");
-        setResult("企业接口密钥已保存。\n密钥状态：已配置");
-        return refreshConfig();
-      })
-      .catch(function (error) {
-        setStatus("保存企业接口密钥失败：" + describeFetchError(error));
-        setResult(describeFetchError(error));
-      });
-  }
-
-  function clearApiKey() {
-    setStatus("正在清除企业接口密钥...");
-    fetch(ADAPTER_BASE_URL + "/provider/api-key", {
-      method: "DELETE"
-    }).then(function (response) {
-      return response.json().then(function (body) {
-        if (!response.ok) {
-          throw new Error((body.errors && body.errors[0] && body.errors[0].message) || body.message || ("HTTP " + response.status));
-        }
-        return body;
-      });
-    }).then(function (body) {
-      byId("provider-api-key").value = "";
-      setProviderAuthLine(body.data.authSource || "none");
-      setStatus("企业接口密钥已清除。");
-      return refreshConfig();
-    }).catch(function (error) {
-      var message = describeFetchError(error);
-      setStatus("清除企业接口密钥失败：" + message);
-      setResult(message);
-    });
-  }
-
   function taskLabel(taskType) {
     var labels = {
-      "word.rewrite": "智能改写",
-      "word.continue": "智能续写",
+      "word.smart_write": "智能编写",
       "word.proofread": "格式校对",
       "word.format_preview": "智能排版",
       "word.technical_review": "技术文档审查"
@@ -665,7 +608,7 @@
   }
 
   function sortedTaskTypes(routes) {
-    var order = ["word.rewrite", "word.continue", "word.proofread", "word.format_preview", "word.technical_review"];
+    var order = ["word.smart_write", "word.proofread", "word.format_preview", "word.technical_review"];
     var seen = {};
     var result = [];
     order.forEach(function (taskType) {
@@ -980,7 +923,7 @@
       }
       if (!writableSelection) {
         setStatus("未找到可写回的选区对象。");
-        setResult("当前宿主未暴露可写回的选区对象，请执行运行探针并反馈结果。");
+        setResult("当前宿主未暴露可写回的选区对象，请反馈当前 WPS 版本、操作路径和选区截图。");
         return;
       }
       if (typeof writableSelection.Text !== "undefined") {
@@ -1082,7 +1025,7 @@
       });
   }
 
-  function runRewriteAction(action) {
+  function runSmartWriteAction() {
     var selectionScope = resolveSelectionScope(true);
     if (!selectionScope.ok) {
       setStatus(selectionScope.message);
@@ -1091,7 +1034,7 @@
     }
 
     try {
-      state.latestDocumentPayload = extractDocument("selection", action);
+      state.latestDocumentPayload = extractDocument("selection", state.writeAction || "rewrite");
       state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
     } catch (error) {
       setStatus(error.message);
@@ -1099,9 +1042,9 @@
       return;
     }
 
-    var config = modeConfig[state.currentMode] || modeConfig.rewrite;
+    var config = modeConfig[state.currentMode] || modeConfig.smartWrite;
     setStatus(config.runningText);
-    request("/word/rewrite", state.latestDocumentPayload)
+    request("/word/smart-write", state.latestDocumentPayload)
       .then(function (body) {
         state.pendingApplyAction = "rewrite";
         state.rewriteResult = body.data;
@@ -1117,28 +1060,6 @@
       });
   }
 
-  function runProbe() {
-    var document = getActiveDocument();
-    var paragraphs = collectParagraphs(document || {});
-    var headingCount = collectHeadings(paragraphs).length;
-    var scope = resolveSelectionScope(false);
-    var lines = [
-      "运行探针",
-      "",
-      "WPS 全局对象：" + (typeof window.wps !== "undefined" || typeof window.Application !== "undefined"),
-      "活动文档：" + Boolean(document),
-      "选区对象：" + Boolean(document && document.Selection),
-      "文档名称：" + ((document && document.Name) || "无"),
-      "段落数量：" + paragraphs.length,
-      "标题数量：" + headingCount,
-      scope.scopeLabel.replace(/^当前范围：/, "识别范围："),
-      "适配服务地址：" + ADAPTER_BASE_URL
-    ];
-
-    setResult(lines.join("\n"));
-    setStatus("运行探针已执行。");
-  }
-
   function applyPreview() {
     if (state.pendingApplyAction === "format") {
       applyFormatChanges();
@@ -1151,12 +1072,8 @@
   }
 
   function runPrimaryAction() {
-    if (state.currentMode === "rewrite") {
-      runRewriteAction("rewrite");
-      return;
-    }
-    if (state.currentMode === "continue") {
-      runRewriteAction("continue");
+    if (state.currentMode === "smartWrite") {
+      runSmartWriteAction();
       return;
     }
     if (state.currentMode === "proofread") {
@@ -1175,6 +1092,9 @@
   function bindEvents() {
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
+    });
+    byId("write-action").addEventListener("change", function (event) {
+      state.writeAction = event.target.value;
     });
     byId("rewrite-style").addEventListener("change", function (event) {
       state.rewriteStyle = event.target.value;
@@ -1198,8 +1118,6 @@
       state.technicalReviewPrompt = event.target.value;
     });
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
-    byId("btn-save-api-key").addEventListener("click", saveApiKey);
-    byId("btn-clear-api-key").addEventListener("click", clearApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
     byId("btn-edit-provider").addEventListener("click", function () {
       showProviderEditor(true);
@@ -1207,7 +1125,6 @@
     byId("btn-back-provider-summary").addEventListener("click", function () {
       showProviderEditor(false);
     });
-    byId("btn-probe").addEventListener("click", runProbe);
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
     byId("btn-run-primary").addEventListener("click", runPrimaryAction);
@@ -1226,7 +1143,7 @@
 
   if (!isTaskpanePage()) {
     window.openTaskpane = function (mode) {
-      return switchMode(mode || "rewrite");
+      return switchMode(mode || "smartWrite");
     };
     return;
   }

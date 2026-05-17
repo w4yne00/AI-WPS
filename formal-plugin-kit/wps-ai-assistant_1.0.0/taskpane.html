@@ -11,7 +11,7 @@
       <header class="header">
         <div class="header-copy">
           <p class="eyebrow">WPS AI 助理</p>
-          <h1 id="task-title">智能改写</h1>
+          <h1 id="task-title">智能编写</h1>
         </div>
         <div id="top-toolbox" class="header-actions">
           <div id="health-indicator" class="badge badge-warn">检测中</div>
@@ -28,7 +28,17 @@
           <div id="rewrite-options" class="mode-block">
             <div class="rewrite-grid">
               <label class="field">
-                <span id="style-field-label">改写风格</span>
+                <span>编写动作</span>
+                <select id="write-action">
+                  <option value="rewrite">改写润色</option>
+                  <option value="continue">续写扩展</option>
+                  <option value="summarize">提炼总结</option>
+                  <option value="custom">自定义</option>
+                </select>
+              </label>
+
+              <label class="field">
+                <span id="style-field-label">表达风格</span>
                 <select id="rewrite-style">
                   <option value="default">默认正式</option>
                   <option value="formal">更正式</option>
@@ -87,7 +97,7 @@
           </div>
 
           <label id="instruction-block" class="field">
-            <span id="rewrite-prompt-label">改写提示词</span>
+            <span id="rewrite-prompt-label">编写要求</span>
             <div id="prompt-fragment-card" class="prompt-fragment-card" hidden>
               <div>
                 <b>风格</b>
@@ -155,15 +165,8 @@
                   <input id="provider-base-url" type="text" placeholder="例如：https://aibot.example.com/v1" />
                 </label>
 
-                <label class="field">
-                  <span>企业接口密钥</span>
-                  <input id="provider-api-key" type="password" placeholder="粘贴企业接口密钥" />
-                </label>
-
                 <div class="button-row settings-actions">
                   <button id="btn-save-provider-url" type="button">保存地址</button>
-                  <button id="btn-save-api-key" type="button">保存密钥</button>
-                  <button id="btn-clear-api-key" class="secondary-action" type="button">清除密钥</button>
                   <button id="btn-refresh" class="ghost-action" type="button">刷新配置</button>
                   <button id="btn-back-provider-summary" class="ghost-action" type="button">完成</button>
                 </div>
@@ -199,10 +202,6 @@
                   <span class="diag-label">接口状态</span>
                   <strong id="provider-line">未检测</strong>
                 </div>
-              </div>
-
-              <div class="button-row settings-actions">
-                <button id="btn-probe" class="secondary-action" type="button">运行探针</button>
               </div>
             </section>
           </section>

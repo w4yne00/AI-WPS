@@ -9,11 +9,7 @@ class WordRewriter:
         self.provider_client = provider_client or ProviderClient()
 
     def rewrite(self, request: WordDocumentRequest, trace_id: str, mode: str = "rewrite") -> Dict:
-        source_text = request.content.plain_text.strip()
-        if not source_text:
-            source_text = "\n".join(
-                paragraph.text for paragraph in request.content.paragraphs if paragraph.text.strip()
-            ).strip()
+        source_text = self._extract_source_text(request)
 
         provider_result = self.provider_client.rewrite(
             source_text,
@@ -32,6 +28,36 @@ class WordRewriter:
             "diffHints": self._build_diff_hints(source_text, rewritten_text),
             "provider": provider_result.get("provider", "mock"),
         }
+
+    def smart_write(self, request: WordDocumentRequest, trace_id: str) -> Dict:
+        source_text = self._extract_source_text(request)
+        action = request.options.rewrite_action or "rewrite"
+        provider_result = self.provider_client.smart_write(
+            source_text,
+            action,
+            trace_id,
+            user_prompt=request.options.user_instruction,
+            style=request.options.rewrite_style,
+            focus=request.options.focus_point,
+            length=request.options.length_mode,
+            selection_mode=request.selection_mode,
+        )
+        rewritten_text = provider_result["rewrittenText"]
+        return {
+            "originalText": source_text,
+            "rewrittenText": rewritten_text,
+            "rewriteMode": action,
+            "diffHints": self._build_diff_hints(source_text, rewritten_text),
+            "provider": provider_result.get("provider", "mock"),
+        }
+
+    def _extract_source_text(self, request: WordDocumentRequest) -> str:
+        source_text = request.content.plain_text.strip()
+        if not source_text:
+            source_text = "\n".join(
+                paragraph.text for paragraph in request.content.paragraphs if paragraph.text.strip()
+            ).strip()
+        return source_text
 
     def _build_diff_hints(self, original_text: str, rewritten_text: str) -> List[str]:
         hints: List[str] = []

@@ -1,26 +1,19 @@
 # Dify 多任务路由部署手册
 
-适用版本：`v0.10.0-alpha`
+适用版本：`v0.11.0-alpha`
 
 ## 1. 设计目标
 
-当前版本不再推荐把所有 Word 任务塞进一个 Dify 工作流后用判断节点分流。adapter 改为负责路由：同一个 `providerBaseUrl` 下，每个任务可以配置独立的接口路径、API Key 引用和请求体类型。
-
-```text
-单 providerBaseUrl + taskRoutes + 每任务 path/apiKeyRef/payloadStyle
-```
+adapter 使用“单 providerBaseUrl + taskRoutes + 每任务 path/apiKeyRef/payloadStyle”模式。每个 WPS 任务可以命中独立的 Dify Workflow，并使用独立 API Key。智能编写已从旧的智能改写/智能续写 Chat 调用切换为独立 Workflow，以避免 Dify 工作流未读取原文导致原样返回。
 
 ## 2. 推荐 Dify 应用拆分
 
-| WPS 任务 | taskRoute key | 推荐 Dify 类型 | path | payloadStyle | apiKeyRef |
-| --- | --- | --- | --- | --- | --- |
-| 智能改写 | `word.rewrite` | Chatflow/Chat App | `/chat-messages` | `chat` | `rewrite` |
-| 智能续写 | `word.continue` | Chatflow/Chat App | `/chat-messages` | `chat` | `continue` |
-| 格式校对 | `word.proofread` | Workflow | `/workflows/run` | `workflow` | `proofread` |
-| 智能排版 | `word.format_preview` | Workflow | `/workflows/run` | `workflow` | `format_preview` |
-| 技术文档审查 | `word.technical_review` | Workflow | `/workflows/run` | `workflow` | `technical_review` |
-
-如果企业封装接口对所有应用仍使用同一路径，也可以把多个任务的 `path` 配成相同值，但 API Key 应按任务分开。
+| WPS 任务 | taskRoute key | 推荐 Dify 类型 | path | payloadStyle | apiKeyRef | Output 字段 |
+| --- | --- | --- | --- | --- | --- | --- |
+| 智能编写 | `word.smart_write` | Workflow | `/workflows/run` | `workflow` | `smart_write` | `result` |
+| 格式校对 | `word.proofread` | Workflow | `/workflows/run` | `workflow` | `proofread` | `result` |
+| 智能排版 | `word.format_preview` | Workflow | `/workflows/run` | `workflow` | `format_preview` | `result` |
+| 技术文档审查 | `word.technical_review` | Workflow | `/workflows/run` | `workflow` | `technical_review` | `result` |
 
 ## 3. adapter 配置示例
 
@@ -31,13 +24,13 @@
   "providerBaseUrl": "https://aibot.chinasatnet.com.cn/v1",
   "providerMode": "blocking",
   "taskRoutes": {
-    "word.rewrite": {
-      "taskId": "word.rewrite",
-      "path": "/chat-messages",
-      "apiKeyRef": "rewrite",
-      "payloadStyle": "chat",
+    "word.smart_write": {
+      "taskId": "word.smart_write",
+      "path": "/workflows/run",
+      "apiKeyRef": "smart_write",
+      "payloadStyle": "workflow",
       "responseMode": "blocking",
-      "outputKey": "answer",
+      "outputKey": "result",
       "enabled": true
     },
     "word.proofread": {
@@ -61,42 +54,43 @@
 adapter_service/run/provider_api_keys/<apiKeyRef>
 ```
 
-默认密钥仍保留：
+推荐配置：
 
 ```text
-adapter_service/run/provider_api_key
+smart_write
+proofread
+format_preview
+technical_review
 ```
 
-读取顺序：
+## 5. 智能编写 Workflow 输入要求
 
-1. 当前任务的 `provider_api_keys/<apiKeyRef>`。
-2. 环境变量 `ENTERPRISE_AI_API_KEY`。
-3. 默认本地密钥 `provider_api_key`。
+Dify Workflow 的 Start 节点必须创建以下输入变量：
 
-## 5. Dify 字段要求
+| 变量 | 类型 | 说明 |
+| --- | --- | --- |
+| `source_text` | String | WPS 当前选中文本，是大模型必须处理的原文 |
+| `write_action` | String | `rewrite`、`continue`、`summarize`、`custom` |
+| `style` | String | 表达风格，例如 `formal`、`structured` |
+| `focus` | String | 侧重点，例如 `risk`、`conclusion` |
+| `length` | String | 篇幅要求，例如 `same`、`concise`、`expanded` |
+| `user_prompt` | String | 用户自定义补充要求 |
+| `selection_mode` | String | `selection` 或 `document` |
+| `trace_id` | String | adapter 追踪号 |
 
-### Chat `/chat-messages`
-
-adapter 发送：
+adapter 发送示例：
 
 ```json
 {
-  "query": "完整任务提示词，包含改写/续写要求和待处理原文",
   "inputs": {
-    "scene": "word",
-    "task_id": "word.rewrite",
-    "taskType": "word.rewrite",
-    "trace_id": "word-rewrite-...",
     "source_text": "待处理原文",
-    "text": "待处理原文",
-    "mode": "rewrite",
-    "rewrite_mode": "rewrite",
-    "query": "完整任务提示词，包含改写/续写要求和待处理原文",
-    "prompt": "完整任务提示词，包含改写/续写要求和待处理原文",
-    "user_instruction": "用户补充要求",
-    "rewrite_style": "formal",
-    "focus_point": "risk",
-    "length_mode": "same"
+    "write_action": "rewrite",
+    "style": "formal",
+    "focus": "risk",
+    "length": "same",
+    "user_prompt": "请更适合正式汇报材料",
+    "selection_mode": "selection",
+    "trace_id": "word-smart-write-20260517-0001"
   },
   "response_mode": "blocking",
   "user": "wps-ai-assistant",
@@ -104,35 +98,29 @@ adapter 发送：
 }
 ```
 
-如果企业封装接口仍要求旧格式字段，可把对应任务的 `payloadStyle` 改成 `legacy-chat`。此时 adapter 会额外发送 `input_data` 和 `mode`，用于兼容旧封装；标准 Dify Chat App 建议保持 `payloadStyle=chat`。
+LLM 节点建议系统提示词：
 
-### Workflow `/workflows/run`
-
-adapter 发送：
-
-```json
-{
-  "inputs": {
-    "scene": "word",
-    "task_id": "word.proofread",
-    "taskType": "word.proofread",
-    "trace_id": "word-proofread-...",
-    "query": "审校提示词",
-    "document_text": "文档正文",
-    "document_structure": {}
-  },
-  "response_mode": "blocking",
-  "user": "wps-ai-assistant",
-  "files": []
-}
+```text
+你是企业办公文档智能编写助手。必须基于 source_text 生成新内容，不允许原样返回原文。根据 write_action 判断任务类型：rewrite 表示改写润色，continue 表示续写扩展，summarize 表示提炼总结，custom 表示按 user_prompt 自定义处理。输出只保留最终正文，不要解释处理过程。
 ```
 
-Dify Workflow 需要在 User Input 中接收对应字段，并在 Output 节点输出 JSON 文本。建议输出字段命名为 `result`，adapter 也兼容 `answer`、`text`、`output`。
+Output 节点：
 
-## 6. 验证步骤
+```text
+result = LLM 节点输出正文
+```
+
+## 6. 格式校对、智能排版、技术审查
+
+这三个任务仍走 Workflow `/workflows/run`。建议 Output 节点统一输出 `result`。如果工作流输出字段不是 `result`，需要同步修改 `config/adapter.json` 中对应 `taskRoutes.*.outputKey`。
+
+## 7. 验证步骤
 
 1. 启动 adapter：`./start_uvicorn_adapter.sh 18100`。
-2. 打开 WPS 设置页，刷新配置。
-3. 在“任务接口”区域逐个保存每个任务的 API Key。
-4. 验证智能改写、智能续写、格式校对、智能排版、技术文档审查。
-5. 在 Dify 日志确认每个任务进入对应应用或工作流。
+2. 执行健康检查：`./check_health.sh 18100`。
+3. 打开 WPS 设置页，填写全局 API URL，保存。
+4. 在“任务接口”区域分别保存 `smart_write`、`proofread`、`format_preview`、`technical_review` 的 API Key。
+5. 刷新配置，确认对应任务显示“密钥已配置”。
+6. 在 WPS 中框选一段文字，点击“智能编写”，选择“改写润色”，执行生成。
+7. 在 Dify 日志确认 Start 节点收到 `source_text`，Output 节点返回 `result`。
+8. 验证格式校对、智能排版、技术文档审查分别命中对应 Workflow。
