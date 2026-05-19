@@ -10,6 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.11.1-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -41,6 +42,9 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("task-routes-list", html)
         self.assertIn("renderTaskRoutes", js)
         self.assertIn("/provider/task-api-key", js)
+        self.assertNotIn('id="provider-auth-line"', html)
+        self.assertNotIn("setProviderAuthLine", js)
+        self.assertNotIn("providerAuthSource", js)
         self.assertNotIn('id="provider-api-key"', html)
         self.assertNotIn('id="btn-save-api-key"', html)
         self.assertNotIn('id="btn-clear-api-key"', html)

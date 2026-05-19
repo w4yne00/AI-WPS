@@ -440,13 +440,14 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.11.0-alpha",
+                        "version": "0.11.1-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
+                        "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
                         "providerConfigured": provider.is_configured(),
-                        "providerAuthSource": provider.get_auth_source(),
                         "taskRouteCount": len(settings.task_routes or {}),
+                        "taskRouteConfiguredCount": provider.task_route_configured_count(),
                     },
                     "errors": [],
                 },
@@ -463,10 +464,23 @@ class Handler(BaseHTTPRequestHandler):
                     "message": "completed",
                     "data": {
                         "configured": provider.is_configured(),
-                        "authSource": provider.get_auth_source(),
                         "providerName": provider.settings.provider_name,
                         "providerType": provider.settings.provider_type,
                     },
+                    "errors": [],
+                },
+            )
+            return
+        if path == "/provider/route-diagnostics":
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-route-diagnostics",
+                    "taskType": "provider.route_diagnostics",
+                    "message": "completed",
+                    "data": provider.build_route_diagnostics(),
                     "errors": [],
                 },
             )
@@ -494,8 +508,9 @@ class Handler(BaseHTTPRequestHandler):
                         "providerBaseUrl": settings.provider_base_url,
                         "providerChatPath": settings.provider_chat_path,
                         "providerMode": settings.provider_mode,
+                        "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
                         "providerConfigured": provider.is_configured(),
-                        "providerAuthSource": provider.get_auth_source(),
+                        "taskRouteConfiguredCount": provider.task_route_configured_count(),
                         "taskRoutes": task_routes,
                         "logPath": settings.log_path,
                         "templateRoot": settings.template_root,

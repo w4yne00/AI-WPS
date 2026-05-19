@@ -75,11 +75,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.11.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.11.0-20260517` |
+| Version | `v0.11.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.11.1-20260519` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260519.tar.gz` |
 
 Version rule format:
 
@@ -118,6 +119,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.11.1-alpha` | Tightened task-route key selection so named workflow tasks only use their own `apiKeyRef`, merged default task routes into old target-machine configs, removed the global key status from the settings summary, added route diagnostics, and updated adapter version checks |
 | `v0.11.0-alpha` | Replaced separate Rewrite and Continue entries with Smart Write, switched Smart Write to Dify Workflow `/workflows/run` with strict Start variables (`source_text`, `write_action`, `style`, `focus`, `length`, `user_prompt`, `selection_mode`, `trace_id`), removed global API key/probe controls from settings, refreshed Ribbon icons, and added the formal design document as the source of truth for non-bug changes |
 | `v0.10.3-alpha` | Refined task-pane prompt visibility: only Rewrite and Continue show prompt-fragment cards, Proofread, Format Preview, and Technical Review return to a cleaner view, and the supplemental input placeholder now starts with “补充要求” |
 | `v0.10.2-alpha` | Fixed rewrite/continue Dify Chat inputs: standard `/chat-messages` payload now sends top-level `query` and mirrors `text`, `mode`, `query`, and `prompt` inside `inputs`, preventing workflows from missing the source text or task mode and returning the original text unchanged |

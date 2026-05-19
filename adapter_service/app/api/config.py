@@ -16,6 +16,7 @@ def get_config() -> dict:
         api_key_ref = route.api_key_ref if route else route_summary.get("apiKeyRef", "default")
         route_summary["configured"] = bool(provider.get_task_api_key(route)) if route else bool(provider.get_api_key(api_key_ref))
         route_summary["authSource"] = provider.get_route_auth_source(api_key_ref)
+    configured_count = provider.task_route_configured_count()
     return {
         "success": True,
         "data": {
@@ -25,8 +26,9 @@ def get_config() -> dict:
             "providerBaseUrl": settings.provider_base_url,
             "providerChatPath": settings.provider_chat_path,
             "providerMode": settings.provider_mode,
+            "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
             "providerConfigured": provider.is_configured(),
-            "providerAuthSource": provider.get_auth_source(),
+            "taskRouteConfiguredCount": configured_count,
             "taskRoutes": task_routes,
             "logPath": settings.log_path,
             "templateRoot": settings.template_root,

@@ -1,15 +1,26 @@
-from fastapi.testclient import TestClient
+import importlib.util
+import unittest
 
-from app.main import app
+HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.util.find_spec("pydantic") is not None
+
+if HAS_API_DEPS:
+    from fastapi.testclient import TestClient
+    from app.main import app
 
 
-def test_health_returns_service_metadata() -> None:
-    client = TestClient(app)
-    response = client.get("/health")
+@unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
+class HealthApiTests(unittest.TestCase):
+    def test_health_returns_service_metadata(self) -> None:
+        client = TestClient(app)
+        response = client.get("/health")
 
-    assert response.status_code == 200
+        self.assertEqual(response.status_code, 200)
 
-    body = response.json()
-    assert body["success"] is True
-    assert body["data"]["service"] == "wps-ai-adapter"
-    assert body["data"]["status"] == "ok"
+        body = response.json()
+        data = body["data"]
+        self.assertTrue(body["success"])
+        self.assertEqual(data["service"], "wps-ai-adapter")
+        self.assertEqual(data["status"], "ok")
+        self.assertIn("providerBaseUrlConfigured", data)
+        self.assertIn("taskRouteConfiguredCount", data)
+        self.assertNotIn("providerAuthSource", data)

@@ -625,19 +625,17 @@ class ProviderClient:
             input_data.update(payload)
         return input_data
 
-    def is_configured(self) -> bool:
+    def is_configured(self, key_base_path: Optional[Path] = None) -> bool:
         if not self.settings.provider_base_url.strip():
             return False
         for route in (self.settings.task_routes or {}).values():
-            if self.get_task_api_key(route):
+            if self.get_task_api_key(route, key_base_path):
                 return True
-        if self.get_api_key():
-            return True
         return False
 
-    def is_task_configured(self, task_type: str) -> bool:
+    def is_task_configured(self, task_type: str, key_base_path: Optional[Path] = None) -> bool:
         route = self.resolve_task_route(task_type)
-        return bool(self.settings.provider_base_url.strip() and self.get_task_api_key(route))
+        return bool(self.settings.provider_base_url.strip() and self.get_task_api_key(route, key_base_path))
 
     def get_auth_source(self) -> str:
         if os.getenv(self.settings.provider_api_key_env):
@@ -669,10 +667,58 @@ class ProviderClient:
     def build_route_url(self, route: TaskRoute) -> str:
         return "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), route.path or self.settings.provider_chat_path)
 
+    def task_route_configured_count(self, key_base_path: Optional[Path] = None) -> int:
+        return sum(
+            1
+            for route in (self.settings.task_routes or {}).values()
+            if self.get_task_api_key(route, key_base_path)
+        )
+
+    def build_route_diagnostics(self, key_base_path: Optional[Path] = None) -> Dict:
+        routes = {}
+        for task_type, route in (self.settings.task_routes or {}).items():
+            resolved = self.resolve_task_route(task_type)
+            api_key_ref = resolved.api_key_ref or "default"
+            auth_source = "route-file" if self.get_task_api_key(resolved, key_base_path) else "none"
+            if api_key_ref == "default":
+                auth_source = self.get_route_auth_source(api_key_ref)
+            routes[task_type] = {
+                "taskId": resolved.task_id,
+                "enabled": resolved.enabled,
+                "url": self.build_route_url(resolved) if self.settings.provider_base_url.strip() else "",
+                "path": resolved.path,
+                "payloadStyle": resolved.payload_style,
+                "responseMode": resolved.response_mode,
+                "outputKey": resolved.output_key,
+                "apiKeyRef": api_key_ref,
+                "configured": bool(self.settings.provider_base_url.strip() and self.get_task_api_key(resolved, key_base_path)),
+                "authSource": auth_source,
+            }
+        return {
+            "version": "0.11.1-alpha",
+            "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
+            "taskRouteCount": len(routes),
+            "taskRouteConfiguredCount": self.task_route_configured_count(key_base_path),
+            "routes": routes,
+        }
+
     def post_task(self, task_type: str, trace_id: str, input_data: Dict, query: str) -> Dict:
         route = self.resolve_task_route(task_type)
+        route_payload = build_route_request_payload(self.settings, route, input_data, query)
+        logger.info(
+            "traceId=%s task=%s routeTaskId=%s url=%s apiKeyRef=%s authSource=%s payloadStyle=%s outputKey=%s inputKeys=%s",
+            trace_id,
+            task_type,
+            route.task_id,
+            self.build_route_url(route),
+            route.api_key_ref,
+            self.get_route_auth_source(route.api_key_ref),
+            route.payload_style,
+            route.output_key,
+            sorted(route_payload.get("inputs", {}).keys()),
+        )
         payload = json.dumps(
-            build_route_request_payload(self.settings, route, input_data, query)
+            route_payload
         ).encode("utf-8")
         req = urllib_request.Request(
             self.build_route_url(route),

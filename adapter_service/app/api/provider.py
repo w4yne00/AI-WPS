@@ -42,6 +42,15 @@ def get_provider_status() -> dict:
     }
 
 
+@router.get("/provider/route-diagnostics")
+def get_provider_route_diagnostics() -> dict:
+    client = ProviderClient()
+    return {
+        "success": True,
+        "data": client.build_route_diagnostics(),
+    }
+
+
 @router.post("/provider/api-key")
 def save_provider_api_key(request: ProviderApiKeyRequest) -> dict:
     save_local_api_key(request.api_key)

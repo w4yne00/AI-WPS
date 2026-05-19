@@ -75,11 +75,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.11.0-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.11.0-20260517` |
+| 当前版本 | `v0.11.1-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.11.1-20260519` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
+| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260519.tar.gz` |
 
 版本规则格式：
 
@@ -118,6 +119,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.11.1-alpha` | 收紧任务路由密钥选择，命名工作流任务只使用自己的 `apiKeyRef`；旧目标机配置自动补齐默认任务路由；设置页摘要移除全局密钥状态；新增路由诊断信息；同步更新 adapter 版本检查 |
 | `v0.11.0-alpha` | 将智能改写和智能续写合并为智能编写，智能编写改为 Dify Workflow `/workflows/run` 严格输入变量（`source_text`、`write_action`、`style`、`focus`、`length`、`user_prompt`、`selection_mode`、`trace_id`），设置页移除全局 API Key 和运行探针，仅保留全局 URL + 每任务 Key；同步刷新 Ribbon 图标，并新增正式设计文档作为非 bug 改动的开发准绳 |
 | `v0.10.3-alpha` | 优化任务窗格提示词展示：仅智能改写/续写显示提示词拆解卡片，格式校对、智能排版、技术文档审查恢复简洁视图，并将补充输入占位文案改为“补充要求” |
 | `v0.10.2-alpha` | 修复智能改写/续写 Dify Chat 入参：按 `/chat-messages` 标准发送顶层 `query`，并在 `inputs` 中同步 `text`、`mode`、`query`、`prompt`，避免工作流节点读不到原文和任务模式导致原样返回 |

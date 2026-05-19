@@ -56,6 +56,29 @@ def save_config_payload(payload: dict, config_path: Optional[Path] = None) -> No
     )
 
 
+def _load_example_payload() -> dict:
+    if EXAMPLE_CONFIG_PATH.exists():
+        return json.loads(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
+    return {}
+
+
+def _parse_task_routes(payload: dict) -> Dict[str, TaskRoute]:
+    task_routes = {}
+    for task_type, route_payload in payload.get("taskRoutes", {}).items():
+        if not isinstance(route_payload, dict):
+            continue
+        task_routes[task_type] = TaskRoute(
+            task_id=str(route_payload.get("taskId", task_type)).strip() or task_type,
+            enabled=bool(route_payload.get("enabled", True)),
+            path=str(route_payload.get("path", "")).strip(),
+            api_key_ref=str(route_payload.get("apiKeyRef", "default")).strip() or "default",
+            payload_style=str(route_payload.get("payloadStyle", "")).strip(),
+            response_mode=str(route_payload.get("responseMode", "")).strip(),
+            output_key=str(route_payload.get("outputKey", "")).strip(),
+        )
+    return task_routes
+
+
 def save_provider_base_url(
     base_url: str,
     config_path: Optional[Path] = None,
@@ -96,19 +119,8 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         return AppSettings()
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    task_routes = {}
-    for task_type, route_payload in payload.get("taskRoutes", {}).items():
-        if not isinstance(route_payload, dict):
-            continue
-        task_routes[task_type] = TaskRoute(
-            task_id=str(route_payload.get("taskId", task_type)).strip() or task_type,
-            enabled=bool(route_payload.get("enabled", True)),
-            path=str(route_payload.get("path", "")).strip(),
-            api_key_ref=str(route_payload.get("apiKeyRef", "default")).strip() or "default",
-            payload_style=str(route_payload.get("payloadStyle", "")).strip(),
-            response_mode=str(route_payload.get("responseMode", "")).strip(),
-            output_key=str(route_payload.get("outputKey", "")).strip(),
-        )
+    task_routes = _parse_task_routes(_load_example_payload())
+    task_routes.update(_parse_task_routes(payload))
 
     return AppSettings(
         service_port=payload.get("servicePort", 18100),

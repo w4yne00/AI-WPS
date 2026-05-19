@@ -19,6 +19,7 @@ from app.services.provider_client import (
     build_typo_prompt,
     extract_answer,
     get_default_technical_review_prompt,
+    get_route_api_key_path,
     save_route_api_key,
     clear_route_api_key,
     parse_document_proofread_issues,
@@ -124,6 +125,67 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(route.payload_style, "workflow")
         self.assertEqual(route.response_mode, "blocking")
         self.assertEqual(route.output_key, "result")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_load_settings_merges_default_task_routes_into_old_config(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerName": "目标机旧配置",
+              "providerBaseUrl": "https://aibot.example/v1"
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.provider_name, "目标机旧配置")
+        self.assertIn("word.smart_write", settings.task_routes)
+        self.assertIn("word.proofread", settings.task_routes)
+        self.assertEqual(settings.task_routes["word.smart_write"].path, "/workflows/run")
+        self.assertEqual(settings.task_routes["word.smart_write"].api_key_ref, "smart_write")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_load_settings_preserves_user_task_route_over_default_route(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerBaseUrl": "https://aibot.example/v1",
+              "taskRoutes": {
+                "word.smart_write": {
+                  "taskId": "word.smart_write",
+                  "path": "/chat-messages",
+                  "apiKeyRef": "custom_smart_write",
+                  "payloadStyle": "chat",
+                  "responseMode": "blocking",
+                  "outputKey": "answer",
+                  "enabled": true
+                }
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        settings = load_settings(config_file)
+        route = settings.task_routes["word.smart_write"]
+
+        self.assertEqual(route.path, "/chat-messages")
+        self.assertEqual(route.api_key_ref, "custom_smart_write")
+        self.assertEqual(route.payload_style, "chat")
+        self.assertEqual(route.output_key, "answer")
+        self.assertIn("word.proofread", settings.task_routes)
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -405,6 +467,64 @@ class EnterpriseProviderTests(unittest.TestCase):
                 route_dir.rmdir()
             tmp_dir.rmdir()
 
+    def test_named_task_configuration_ignores_env_and_default_key(self) -> None:
+        tmp_dir = Path("tmp-test-route-keys")
+        tmp_dir.mkdir(exist_ok=True)
+        default_key = tmp_dir / "provider_api_key"
+        default_key.write_text("default-secret", encoding="utf-8")
+        previous = os.environ.get("ENTERPRISE_AI_API_KEY")
+        os.environ["ENTERPRISE_AI_API_KEY"] = "env-secret"
+        try:
+            settings = load_settings()
+            settings.provider_base_url = "https://aibot.example/v1"
+            settings.task_routes["word.smart_write"].api_key_ref = "smart_write"
+            client = ProviderClient(settings)
+
+            self.assertFalse(client.is_task_configured("word.smart_write", tmp_dir))
+            save_route_api_key("smart_write", "smart-secret", tmp_dir)
+            self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
+        finally:
+            if previous is None:
+                os.environ.pop("ENTERPRISE_AI_API_KEY", None)
+            else:
+                os.environ["ENTERPRISE_AI_API_KEY"] = previous
+            clear_route_api_key("smart_write", tmp_dir)
+            if default_key.exists():
+                default_key.unlink()
+            route_key = get_route_api_key_path("smart_write", tmp_dir)
+            if route_key.exists():
+                route_key.unlink()
+            route_dir = tmp_dir / "provider_api_keys"
+            if route_dir.exists():
+                route_dir.rmdir()
+            tmp_dir.rmdir()
+
+    def test_route_diagnostics_exposes_smart_write_route_without_secret(self) -> None:
+        tmp_dir = Path("tmp-test-route-keys")
+        tmp_dir.mkdir(exist_ok=True)
+        try:
+            save_route_api_key("smart_write", "smart-secret", tmp_dir)
+            settings = load_settings()
+            settings.provider_base_url = "https://aibot.example/v1"
+            client = ProviderClient(settings)
+
+            diagnostics = client.build_route_diagnostics(key_base_path=tmp_dir)
+            smart_write = diagnostics["routes"]["word.smart_write"]
+
+            self.assertEqual(smart_write["url"], "https://aibot.example/v1/workflows/run")
+            self.assertEqual(smart_write["apiKeyRef"], "smart_write")
+            self.assertEqual(smart_write["payloadStyle"], "workflow")
+            self.assertEqual(smart_write["outputKey"], "result")
+            self.assertTrue(smart_write["configured"])
+            self.assertEqual(smart_write["authSource"], "route-file")
+            self.assertNotIn("smart-secret", str(diagnostics))
+        finally:
+            clear_route_api_key("smart_write", tmp_dir)
+            route_dir = tmp_dir / "provider_api_keys"
+            if route_dir.exists():
+                route_dir.rmdir()
+            tmp_dir.rmdir()
+
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
         tmp_dir = Path("tmp-test-config")
         tmp_dir.mkdir(exist_ok=True)
@@ -505,7 +625,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
             configured_client = ProviderClient(load_settings())
             configured_client.settings.provider_base_url = "https://new.example/v1"
-            self.assertTrue(configured_client.is_configured())
+            self.assertFalse(configured_client.is_configured())
         finally:
             if previous is None:
                 os.environ.pop("ENTERPRISE_AI_API_KEY", None)

@@ -111,7 +111,6 @@
     latestDocumentPayload: null,
     latestSelectionMode: "document",
     providerName: "未检测",
-    providerAuthSource: "未检测",
     providerBaseUrl: "",
     taskRoutes: {},
     currentMode: "smartWrite",
@@ -153,7 +152,7 @@
     };
     var detail = providerText[providerName] || providerName || "未检测";
     if (typeof configured === "boolean") {
-      detail += configured ? " / 已配置" : " / 模拟";
+      detail += configured ? " / URL已配置" : " / URL未配置";
     }
     state.providerName = detail;
     byId("provider-line").textContent = "接口：" + detail;
@@ -165,16 +164,6 @@
     state.providerName = name || "未检测";
     byId("provider-summary-name").textContent = state.providerName;
     byId("provider-name").value = state.providerName === "未检测" ? "" : state.providerName;
-  }
-
-  function setProviderAuthLine(source) {
-    var sourceText = {
-      none: "未配置",
-      file: "本地文件",
-      env: "环境变量"
-    };
-    state.providerAuthSource = sourceText[source] || source || "未检测";
-    byId("provider-auth-line").textContent = "密钥：" + state.providerAuthSource;
   }
 
   function setProviderBaseUrl(baseUrl) {
@@ -201,7 +190,6 @@
     setTrace("");
     setProviderLine("mock", false);
     setProviderName("本地 mock");
-    setProviderAuthLine("none");
     setStatus("本地适配服务暂不可用。");
     setResult([
       "本地适配服务暂不可用，插件无法访问 http://127.0.0.1:18100。",
@@ -543,8 +531,7 @@
       var config = results[2];
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
-      setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
-      setProviderAuthLine(health.data.providerAuthSource || "none");
+      setProviderLine(health.data.providerType || "未检测", health.data.providerBaseUrlConfigured);
       if (config.success === false) {
         applyProviderConfig({
           providerName: health.data.providerName || "企业大模型接口",
