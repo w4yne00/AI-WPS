@@ -21,6 +21,7 @@ class HealthApiTests(unittest.TestCase):
         self.assertTrue(body["success"])
         self.assertEqual(data["service"], "wps-ai-adapter")
         self.assertEqual(data["status"], "ok")
+        self.assertEqual(data["version"], "0.11.2-alpha")
         self.assertIn("providerBaseUrlConfigured", data)
         self.assertIn("taskRouteConfiguredCount", data)
-        self.assertNotIn("providerAuthSource", data)
+        self.assertIn("providerAuthSource", data)

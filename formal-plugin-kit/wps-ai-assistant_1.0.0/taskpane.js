@@ -112,7 +112,7 @@
     latestSelectionMode: "document",
     providerName: "未检测",
     providerBaseUrl: "",
-    taskRoutes: {},
+    providerAuthSource: "none",
     currentMode: "smartWrite",
     copyText: "",
     scopeWatcher: null
@@ -147,12 +147,13 @@
   function setProviderLine(providerName, configured) {
     var providerText = {
       "enterprise-chat-api": "企业接口",
+      "enterprise-dify-chat": "Dify Chat",
       "enterprise-dify-workflow": "Dify 工作流",
       mock: "模拟接口"
     };
     var detail = providerText[providerName] || providerName || "未检测";
     if (typeof configured === "boolean") {
-      detail += configured ? " / URL已配置" : " / URL未配置";
+      detail += configured ? " / 已配置" : " / 未配置";
     }
     state.providerName = detail;
     byId("provider-line").textContent = "接口：" + detail;
@@ -172,11 +173,16 @@
     byId("provider-base-url").value = state.providerBaseUrl;
   }
 
+  function setProviderAuthLine(authSource) {
+    state.providerAuthSource = authSource || "none";
+    var text = state.providerAuthSource === "none" ? "统一密钥：未配置" : "统一密钥：已配置";
+    byId("provider-auth-line").textContent = text;
+  }
+
   function applyProviderConfig(configData) {
     setProviderName(configData.providerName || "企业大模型接口");
     setProviderBaseUrl(configData.providerBaseUrl || "");
-    state.taskRoutes = configData.taskRoutes || {};
-    renderTaskRoutes();
+    setProviderAuthLine(configData.providerAuthSource || "none");
   }
 
   function showProviderEditor(show) {
@@ -531,7 +537,7 @@
       var config = results[2];
       setHealthBadge("badge-ok", health.data.status);
       setTrace(health.traceId || "");
-      setProviderLine(health.data.providerType || "未检测", health.data.providerBaseUrlConfigured);
+      setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       if (config.success === false) {
         applyProviderConfig({
           providerName: health.data.providerName || "企业大模型接口",
@@ -584,91 +590,27 @@
       });
   }
 
-  function taskLabel(taskType) {
-    var labels = {
-      "word.smart_write": "智能编写",
-      "word.proofread": "格式校对",
-      "word.format_preview": "智能排版",
-      "word.technical_review": "技术文档审查"
-    };
-    return labels[taskType] || taskType;
-  }
-
-  function sortedTaskTypes(routes) {
-    var order = ["word.smart_write", "word.proofread", "word.format_preview", "word.technical_review"];
-    var seen = {};
-    var result = [];
-    order.forEach(function (taskType) {
-      if (routes[taskType]) {
-        seen[taskType] = true;
-        result.push(taskType);
-      }
-    });
-    Object.keys(routes || {}).forEach(function (taskType) {
-      if (!seen[taskType]) {
-        result.push(taskType);
-      }
-    });
-    return result;
-  }
-
-  function renderTaskRoutes() {
-    var list = byId("task-routes-list");
-    if (!list) {
-      return;
-    }
-    var routes = state.taskRoutes || {};
-    var taskTypes = sortedTaskTypes(routes);
-    list.innerHTML = "";
-    if (!taskTypes.length) {
-      var empty = document.createElement("p");
-      empty.className = "muted-note";
-      empty.textContent = "未检测到任务路由配置。";
-      list.appendChild(empty);
-      return;
-    }
-    taskTypes.forEach(function (taskType) {
-      var route = routes[taskType] || {};
-      var item = document.createElement("div");
-      item.className = "task-route-item";
-      item.innerHTML = [
-        '<div class="task-route-main">',
-        '<strong>' + taskLabel(taskType) + '</strong>',
-        '<span>' + (route.path || "默认接口路径") + ' · ' + (route.payloadStyle || "auto") + ' · ' + (route.apiKeyRef || "default") + '</span>',
-        '</div>',
-        '<span class="inline-status">' + (route.configured ? "密钥已配置" : "密钥未配置") + '</span>',
-        '<input type="password" placeholder="粘贴该任务 API Key" data-task-ref="' + (route.apiKeyRef || "default") + '" />',
-        '<div class="button-row route-actions">',
-        '<button type="button" class="mini-button" data-save-task-key="' + (route.apiKeyRef || "default") + '">保存密钥</button>',
-        '<button type="button" class="ghost-action mini-button" data-clear-task-key="' + (route.apiKeyRef || "default") + '">清除</button>',
-        '</div>'
-      ].join("");
-      list.appendChild(item);
-    });
-  }
-
-  function saveTaskApiKey(apiKeyRef) {
-    var input = document.querySelector('input[data-task-ref="' + apiKeyRef + '"]');
-    var apiKey = input ? (input.value || "").trim() : "";
+  function saveProviderApiKey() {
+    var input = byId("provider-api-key");
+    var apiKey = (input.value || "").trim();
     if (!apiKey) {
-      setStatus("请输入该任务的 API Key。");
+      setStatus("请输入统一 Dify Chat API Key。");
       return;
     }
-    request("/provider/task-api-key", { apiKeyRef: apiKeyRef, apiKey: apiKey })
+    request("/provider/api-key", { apiKey: apiKey })
       .then(function () {
-        if (input) {
-          input.value = "";
-        }
-        setStatus("任务密钥已保存。");
+        input.value = "";
+        setProviderAuthLine("file");
+        setStatus("统一密钥已保存。");
         return refreshConfig();
       })
       .catch(function (error) {
-        setStatus("保存任务密钥失败：" + describeFetchError(error));
+        setStatus("保存统一密钥失败：" + describeFetchError(error));
       });
   }
 
-  function clearTaskApiKey(apiKeyRef) {
-    fetch(ADAPTER_BASE_URL + "/provider/task-api-key/" + encodeURIComponent(apiKeyRef), {
+  function clearProviderApiKey() {
+    fetch(ADAPTER_BASE_URL + "/provider/api-key", {
       method: "DELETE"
     }).then(function (response) {
       return response.json().then(function (body) {
@@ -678,10 +620,12 @@
         return body;
       });
     }).then(function () {
-      setStatus("任务密钥已清除。");
+      byId("provider-api-key").value = "";
+      setProviderAuthLine("none");
+      setStatus("统一密钥已清除。");
       return refreshConfig();
     }).catch(function (error) {
-      setStatus("清除任务密钥失败：" + describeFetchError(error));
+      setStatus("清除统一密钥失败：" + describeFetchError(error));
     });
   }
 
@@ -1105,6 +1049,8 @@
       state.technicalReviewPrompt = event.target.value;
     });
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
+    byId("btn-save-api-key").addEventListener("click", saveProviderApiKey);
+    byId("btn-clear-api-key").addEventListener("click", clearProviderApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
     byId("btn-edit-provider").addEventListener("click", function () {
       showProviderEditor(true);
@@ -1115,17 +1061,6 @@
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
     byId("btn-run-primary").addEventListener("click", runPrimaryAction);
-    byId("task-routes-list").addEventListener("click", function (event) {
-      var target = event.target;
-      var saveRef = target && target.getAttribute && target.getAttribute("data-save-task-key");
-      var clearRef = target && target.getAttribute && target.getAttribute("data-clear-task-key");
-      if (saveRef) {
-        saveTaskApiKey(saveRef);
-      }
-      if (clearRef) {
-        clearTaskApiKey(clearRef);
-      }
-    });
   }
 
   if (!isTaskpanePage()) {

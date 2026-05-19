@@ -20,7 +20,9 @@ from app.services.provider_client import (
     extract_answer,
     get_default_technical_review_prompt,
     get_route_api_key_path,
+    save_local_api_key,
     save_route_api_key,
+    clear_local_api_key,
     clear_route_api_key,
     parse_document_proofread_issues,
     parse_typo_issues,
@@ -129,7 +131,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         config_file.unlink()
         tmp_dir.rmdir()
 
-    def test_load_settings_merges_default_task_routes_into_old_config(self) -> None:
+    def test_load_settings_does_not_inject_default_task_routes_into_old_config(self) -> None:
         tmp_dir = Path("tmp-test-config")
         tmp_dir.mkdir(exist_ok=True)
         config_file = tmp_dir / "adapter.json"
@@ -146,10 +148,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         settings = load_settings(config_file)
 
         self.assertEqual(settings.provider_name, "目标机旧配置")
-        self.assertIn("word.smart_write", settings.task_routes)
-        self.assertIn("word.proofread", settings.task_routes)
-        self.assertEqual(settings.task_routes["word.smart_write"].path, "/workflows/run")
-        self.assertEqual(settings.task_routes["word.smart_write"].api_key_ref, "smart_write")
+        self.assertEqual(settings.task_routes, {})
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -185,7 +184,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(route.api_key_ref, "custom_smart_write")
         self.assertEqual(route.payload_style, "chat")
         self.assertEqual(route.output_key, "answer")
-        self.assertIn("word.proofread", settings.task_routes)
+        self.assertNotIn("word.proofread", settings.task_routes)
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -225,9 +224,10 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(summary["word.proofread"]["payloadStyle"], "workflow")
         self.assertNotIn("apiKey", summary["word.proofread"])
 
-    def test_build_route_request_payload_uses_route_payload_style(self) -> None:
+    def test_build_route_request_payload_uses_unified_chat_query_shape(self) -> None:
         settings = load_settings()
         settings.provider_mode = "blocking"
+        settings.provider_chat_path = "/chat-messages"
         route = type(
             "Route",
             (),
@@ -245,12 +245,14 @@ class EnterpriseProviderTests(unittest.TestCase):
             "检查正文",
         )
 
+        self.assertEqual(payload["query"], "检查正文")
+        self.assertEqual(payload["inputs"], {})
         self.assertEqual(payload["response_mode"], "streaming")
-        self.assertEqual(payload["inputs"]["task_id"], "word.proofread")
-        self.assertEqual(payload["inputs"]["query"], "检查正文")
-        self.assertNotIn("query", payload)
+        self.assertEqual(payload["conversation_id"], "")
+        self.assertNotIn("input_data", payload)
+        self.assertNotIn("task_id", payload["inputs"])
 
-    def test_build_route_request_payload_uses_dify_chat_fields(self) -> None:
+    def test_build_route_request_payload_ignores_custom_start_variables(self) -> None:
         settings = load_settings()
         settings.provider_mode = "blocking"
         route = type(
@@ -277,15 +279,11 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["query"], "请改写原文")
-        self.assertEqual(payload["inputs"]["task_id"], "word.rewrite")
-        self.assertEqual(payload["inputs"]["text"], "原文")
-        self.assertEqual(payload["inputs"]["mode"], "rewrite")
-        self.assertEqual(payload["inputs"]["query"], "请改写原文")
-        self.assertEqual(payload["inputs"]["prompt"], "请改写原文")
+        self.assertEqual(payload["inputs"], {})
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertNotIn("input_data", payload)
         self.assertNotIn("mode", payload)
-        self.assertNotIn("conversation_id", payload)
+        self.assertEqual(payload["conversation_id"], "")
 
     def test_build_route_request_payload_keeps_legacy_chat_fields_when_requested(self) -> None:
         settings = load_settings()
@@ -306,10 +304,13 @@ class EnterpriseProviderTests(unittest.TestCase):
             "请改写原文",
         )
 
-        self.assertEqual(payload["input_data"]["task_id"], "word.rewrite")
-        self.assertEqual(payload["mode"], "blocking")
+        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["query"], "请改写原文")
+        self.assertEqual(payload["response_mode"], "blocking")
+        self.assertNotIn("input_data", payload)
+        self.assertNotIn("mode", payload)
 
-    def test_build_route_request_payload_uses_strict_smart_write_workflow_inputs(self) -> None:
+    def test_build_route_request_payload_does_not_send_smart_write_workflow_inputs(self) -> None:
         settings = load_settings()
         route = type(
             "Route",
@@ -337,13 +338,13 @@ class EnterpriseProviderTests(unittest.TestCase):
             "内部提示词",
         )
 
-        self.assertEqual(payload["inputs"]["source_text"], "原文")
-        self.assertEqual(payload["inputs"]["write_action"], "rewrite")
-        self.assertEqual(payload["inputs"]["user_prompt"], "补充要求")
-        self.assertNotIn("query", payload["inputs"])
-        self.assertNotIn("query", payload)
+        self.assertEqual(payload["query"], "内部提示词")
+        self.assertEqual(payload["inputs"], {})
+        self.assertNotIn("source_text", payload["inputs"])
+        self.assertNotIn("write_action", payload["inputs"])
+        self.assertNotIn("user_prompt", payload["inputs"])
 
-    def test_rewrite_sends_source_text_in_dify_chat_inputs(self) -> None:
+    def test_rewrite_sends_full_prompt_as_unified_query_only(self) -> None:
         class CapturingProviderClient(ProviderClient):
             def __init__(self) -> None:
                 super().__init__(load_settings())
@@ -351,7 +352,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 self.captured_input_data = {}
                 self.captured_query = ""
 
-            def is_task_configured(self, task_type: str) -> bool:
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
                 return True
 
             def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
@@ -372,14 +373,11 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(result["rewrittenText"], "这是改写后的文本。")
-        self.assertEqual(client.captured_input_data["source_text"], "原文内容")
-        self.assertEqual(client.captured_input_data["text"], "原文内容")
-        self.assertEqual(client.captured_input_data["mode"], "rewrite")
-        self.assertEqual(client.captured_input_data["rewrite_mode"], "rewrite")
-        self.assertEqual(client.captured_input_data["user_instruction"], "更正式")
+        self.assertEqual(client.captured_input_data, {})
         self.assertIn("待处理内容：\n原文内容", client.captured_query)
+        self.assertIn("不要原样返回待处理内容", client.captured_query)
 
-    def test_smart_write_sends_workflow_start_variables(self) -> None:
+    def test_smart_write_sends_full_prompt_as_unified_query_only(self) -> None:
         class CapturingProviderClient(ProviderClient):
             def __init__(self) -> None:
                 super().__init__(load_settings())
@@ -387,7 +385,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 self.captured_input_data = {}
                 self.captured_query = ""
 
-            def is_task_configured(self, task_type: str) -> bool:
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
                 return True
 
             def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
@@ -409,14 +407,9 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(result["rewrittenText"], "智能编写后的文本。")
-        self.assertEqual(client.captured_input_data["source_text"], "原文内容")
-        self.assertEqual(client.captured_input_data["write_action"], "rewrite")
-        self.assertEqual(client.captured_input_data["style"], "formal")
-        self.assertEqual(client.captured_input_data["focus"], "risk")
-        self.assertEqual(client.captured_input_data["length"], "same")
-        self.assertEqual(client.captured_input_data["user_prompt"], "更正式")
-        self.assertEqual(client.captured_input_data["selection_mode"], "selection")
+        self.assertEqual(client.captured_input_data, {})
         self.assertIn("待处理原文：\n原文内容", client.captured_query)
+        self.assertIn("不允许原样返回原文", client.captured_query)
 
     def test_route_api_key_uses_ref_file_before_default_key(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
@@ -447,16 +440,19 @@ class EnterpriseProviderTests(unittest.TestCase):
                 route_dir.rmdir()
             tmp_dir.rmdir()
 
-    def test_task_route_api_key_does_not_fall_back_to_default_for_named_ref(self) -> None:
+    def test_task_route_api_key_is_legacy_only_and_task_config_uses_unified_key(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
         tmp_dir.mkdir(exist_ok=True)
         default_key = tmp_dir / "provider_api_key"
         default_key.write_text("default-secret", encoding="utf-8")
         route = type("Route", (), {"api_key_ref": "smart_write"})()
         try:
-            client = ProviderClient(load_settings())
-            self.assertEqual(client.get_task_api_key(route, tmp_dir), "")
-            save_route_api_key("smart_write", "smart-secret", tmp_dir)
+            settings = load_settings()
+            settings.provider_base_url = "https://aibot.example/v1"
+            client = ProviderClient(settings)
+            self.assertEqual(client.get_task_api_key(route, tmp_dir), "default-secret")
+            self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
+            save_local_api_key("smart-secret", tmp_dir / "provider_api_key")
             self.assertEqual(client.get_task_api_key(route, tmp_dir), "smart-secret")
         finally:
             clear_route_api_key("smart_write", tmp_dir)
@@ -467,7 +463,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 route_dir.rmdir()
             tmp_dir.rmdir()
 
-    def test_named_task_configuration_ignores_env_and_default_key(self) -> None:
+    def test_named_task_configuration_uses_unified_env_or_default_key(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
         tmp_dir.mkdir(exist_ok=True)
         default_key = tmp_dir / "provider_api_key"
@@ -477,10 +473,9 @@ class EnterpriseProviderTests(unittest.TestCase):
         try:
             settings = load_settings()
             settings.provider_base_url = "https://aibot.example/v1"
-            settings.task_routes["word.smart_write"].api_key_ref = "smart_write"
             client = ProviderClient(settings)
 
-            self.assertFalse(client.is_task_configured("word.smart_write", tmp_dir))
+            self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
             save_route_api_key("smart_write", "smart-secret", tmp_dir)
             self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
         finally:
@@ -499,26 +494,25 @@ class EnterpriseProviderTests(unittest.TestCase):
                 route_dir.rmdir()
             tmp_dir.rmdir()
 
-    def test_route_diagnostics_exposes_smart_write_route_without_secret(self) -> None:
+    def test_route_diagnostics_exposes_unified_chat_endpoint_without_secret(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
         tmp_dir.mkdir(exist_ok=True)
         try:
-            save_route_api_key("smart_write", "smart-secret", tmp_dir)
+            save_local_api_key("smart-secret", tmp_dir / "provider_api_key")
             settings = load_settings()
             settings.provider_base_url = "https://aibot.example/v1"
             client = ProviderClient(settings)
 
             diagnostics = client.build_route_diagnostics(key_base_path=tmp_dir)
-            smart_write = diagnostics["routes"]["word.smart_write"]
-
-            self.assertEqual(smart_write["url"], "https://aibot.example/v1/workflows/run")
-            self.assertEqual(smart_write["apiKeyRef"], "smart_write")
-            self.assertEqual(smart_write["payloadStyle"], "workflow")
-            self.assertEqual(smart_write["outputKey"], "result")
-            self.assertTrue(smart_write["configured"])
-            self.assertEqual(smart_write["authSource"], "route-file")
+            self.assertEqual(diagnostics["url"], "https://aibot.example/v1/chat-messages")
+            self.assertEqual(diagnostics["path"], "/chat-messages")
+            self.assertEqual(diagnostics["payloadStyle"], "chat")
+            self.assertTrue(diagnostics["configured"])
+            self.assertEqual(diagnostics["authSource"], "file")
+            self.assertEqual(diagnostics["routes"], {})
             self.assertNotIn("smart-secret", str(diagnostics))
         finally:
+            clear_local_api_key(tmp_dir / "provider_api_key")
             clear_route_api_key("smart_write", tmp_dir)
             route_dir = tmp_dir / "provider_api_keys"
             if route_dir.exists():
@@ -625,7 +619,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
             configured_client = ProviderClient(load_settings())
             configured_client.settings.provider_base_url = "https://new.example/v1"
-            self.assertFalse(configured_client.is_configured())
+            self.assertTrue(configured_client.is_configured())
         finally:
             if previous is None:
                 os.environ.pop("ENTERPRISE_AI_API_KEY", None)
@@ -802,10 +796,10 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(input_data["local_rule_findings"][0]["category"], "format")
         self.assertIn("结构化 JSON", payload["query"])
 
-    def test_build_provider_request_payload_uses_workflow_inputs(self) -> None:
+    def test_build_provider_request_payload_uses_unified_chat_sys_query_shape(self) -> None:
         settings = load_settings()
-        settings.provider_type = "enterprise-dify-workflow"
-        settings.provider_chat_path = "/workflows/run"
+        settings.provider_type = "enterprise-dify-chat"
+        settings.provider_chat_path = "/chat-messages"
         settings.provider_mode = "blocking"
 
         payload = build_provider_request_payload(
@@ -814,13 +808,13 @@ class EnterpriseProviderTests(unittest.TestCase):
             query="请审校文档。",
         )
 
-        self.assertEqual(payload["inputs"]["task_id"], "word.proofread")
-        self.assertEqual(payload["inputs"]["taskType"], "word.proofread")
-        self.assertEqual(payload["inputs"]["query"], "请审校文档。")
+        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["query"], "请审校文档。")
+        self.assertEqual(payload["conversation_id"], "")
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertNotIn("input_data", payload)
 
-    def test_build_provider_request_payload_keeps_chat_message_shape(self) -> None:
+    def test_build_provider_request_payload_ignores_input_data_for_chat_message_shape(self) -> None:
         settings = load_settings()
         settings.provider_type = "enterprise-chat-api"
         settings.provider_chat_path = "/chat-messages"
@@ -832,10 +826,12 @@ class EnterpriseProviderTests(unittest.TestCase):
             query="请改写。",
         )
 
-        self.assertEqual(payload["input_data"]["task_id"], "word.rewrite")
+        self.assertEqual(payload["inputs"], {})
         self.assertEqual(payload["query"], "请改写。")
-        self.assertEqual(payload["mode"], "blocking")
-        self.assertNotIn("inputs", payload)
+        self.assertEqual(payload["response_mode"], "blocking")
+        self.assertEqual(payload["conversation_id"], "")
+        self.assertNotIn("input_data", payload)
+        self.assertNotIn("mode", payload)
 
     def test_parse_document_proofread_issues_supports_quality_categories(self) -> None:
         issues = parse_document_proofread_issues(

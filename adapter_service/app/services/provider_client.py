@@ -278,55 +278,22 @@ def is_workflow_provider(settings: AppSettings) -> bool:
 
 
 def build_provider_request_payload(settings: AppSettings, input_data: Dict, query: str) -> Dict:
-    if is_workflow_provider(settings):
-        inputs = dict(input_data)
-        inputs["query"] = query
-        return {
-            "inputs": inputs,
-            "response_mode": settings.provider_mode,
-            "user": "wps-ai-assistant",
-            "files": [],
-        }
     return {
-        "input_data": input_data,
+        "inputs": {},
         "query": query,
         "conversation_id": "",
-        "mode": settings.provider_mode,
+        "response_mode": settings.provider_mode,
         "user": "wps-ai-assistant",
         "files": [],
     }
 
 
 def build_route_request_payload(settings: AppSettings, route: TaskRoute, input_data: Dict, query: str) -> Dict:
-    style = route.payload_style or infer_payload_style(route.path or settings.provider_chat_path, settings.provider_type)
     response_mode = route.response_mode or settings.provider_mode
-    if style == "workflow":
-        inputs = dict(input_data)
-        if route.task_id != "word.smart_write":
-            inputs["query"] = query
-        return {
-            "inputs": inputs,
-            "response_mode": response_mode,
-            "user": "wps-ai-assistant",
-            "files": [],
-        }
-    if style in ("legacy-chat", "enterprise-chat", "enterprise-legacy"):
-        return {
-            "input_data": input_data,
-            "inputs": input_data,
-            "query": query,
-            "conversation_id": "",
-            "response_mode": response_mode,
-            "mode": response_mode,
-            "user": "wps-ai-assistant",
-            "files": [],
-        }
-    inputs = dict(input_data)
-    inputs.setdefault("query", query)
-    inputs.setdefault("prompt", query)
     return {
-        "inputs": inputs,
+        "inputs": {},
         "query": query,
+        "conversation_id": "",
         "response_mode": response_mode,
         "user": "wps-ai-assistant",
         "files": [],
@@ -626,21 +593,15 @@ class ProviderClient:
         return input_data
 
     def is_configured(self, key_base_path: Optional[Path] = None) -> bool:
-        if not self.settings.provider_base_url.strip():
-            return False
-        for route in (self.settings.task_routes or {}).values():
-            if self.get_task_api_key(route, key_base_path):
-                return True
-        return False
+        return bool(self.settings.provider_base_url.strip() and self.get_api_key("default", key_base_path))
 
     def is_task_configured(self, task_type: str, key_base_path: Optional[Path] = None) -> bool:
-        route = self.resolve_task_route(task_type)
-        return bool(self.settings.provider_base_url.strip() and self.get_task_api_key(route, key_base_path))
+        return self.is_configured(key_base_path)
 
-    def get_auth_source(self) -> str:
+    def get_auth_source(self, key_base_path: Optional[Path] = None) -> str:
         if os.getenv(self.settings.provider_api_key_env):
             return "env"
-        if load_local_api_key():
+        if load_local_api_key(key_base_path / "provider_api_key" if key_base_path else None):
             return "file"
         return "none"
 
@@ -660,72 +621,56 @@ class ProviderClient:
         )
 
     def get_task_api_key(self, route: TaskRoute, key_base_path: Optional[Path] = None) -> str:
-        if route.api_key_ref and route.api_key_ref != "default":
-            return load_route_api_key(route.api_key_ref, key_base_path)
-        return self.get_api_key(route.api_key_ref or "default", key_base_path)
+        return self.get_api_key("default", key_base_path)
 
     def build_route_url(self, route: TaskRoute) -> str:
         return "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), route.path or self.settings.provider_chat_path)
 
     def task_route_configured_count(self, key_base_path: Optional[Path] = None) -> int:
-        return sum(
-            1
-            for route in (self.settings.task_routes or {}).values()
-            if self.get_task_api_key(route, key_base_path)
-        )
+        return 0
 
     def build_route_diagnostics(self, key_base_path: Optional[Path] = None) -> Dict:
-        routes = {}
-        for task_type, route in (self.settings.task_routes or {}).items():
-            resolved = self.resolve_task_route(task_type)
-            api_key_ref = resolved.api_key_ref or "default"
-            auth_source = "route-file" if self.get_task_api_key(resolved, key_base_path) else "none"
-            if api_key_ref == "default":
-                auth_source = self.get_route_auth_source(api_key_ref)
-            routes[task_type] = {
-                "taskId": resolved.task_id,
-                "enabled": resolved.enabled,
-                "url": self.build_route_url(resolved) if self.settings.provider_base_url.strip() else "",
-                "path": resolved.path,
-                "payloadStyle": resolved.payload_style,
-                "responseMode": resolved.response_mode,
-                "outputKey": resolved.output_key,
-                "apiKeyRef": api_key_ref,
-                "configured": bool(self.settings.provider_base_url.strip() and self.get_task_api_key(resolved, key_base_path)),
-                "authSource": auth_source,
-            }
+        path = self.settings.provider_chat_path or "/chat-messages"
+        url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.11.1-alpha",
+            "version": "0.11.2-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
-            "taskRouteCount": len(routes),
-            "taskRouteConfiguredCount": self.task_route_configured_count(key_base_path),
-            "routes": routes,
+            "providerChatPath": path,
+            "url": url,
+            "path": path,
+            "payloadStyle": "chat",
+            "responseMode": self.settings.provider_mode,
+            "configured": self.is_configured(key_base_path),
+            "authSource": self.get_auth_source(key_base_path),
+            "taskRouteCount": 0,
+            "taskRouteConfiguredCount": 0,
+            "routes": {},
         }
 
     def post_task(self, task_type: str, trace_id: str, input_data: Dict, query: str) -> Dict:
-        route = self.resolve_task_route(task_type)
-        route_payload = build_route_request_payload(self.settings, route, input_data, query)
+        route_payload = build_provider_request_payload(self.settings, {}, query)
+        url = "{0}{1}".format(
+            self.settings.provider_base_url.rstrip("/"),
+            self.settings.provider_chat_path or "/chat-messages",
+        )
         logger.info(
-            "traceId=%s task=%s routeTaskId=%s url=%s apiKeyRef=%s authSource=%s payloadStyle=%s outputKey=%s inputKeys=%s",
+            "traceId=%s task=%s url=%s authSource=%s payloadStyle=chat queryLength=%s inputKeysIgnored=%s",
             trace_id,
             task_type,
-            route.task_id,
-            self.build_route_url(route),
-            route.api_key_ref,
-            self.get_route_auth_source(route.api_key_ref),
-            route.payload_style,
-            route.output_key,
-            sorted(route_payload.get("inputs", {}).keys()),
+            url,
+            self.get_auth_source(),
+            len(query or ""),
+            sorted((input_data or {}).keys()),
         )
         payload = json.dumps(
             route_payload
         ).encode("utf-8")
         req = urllib_request.Request(
-            self.build_route_url(route),
+            url,
             data=payload,
             method="POST",
             headers={
-                "Authorization": "Bearer {0}".format(self.get_task_api_key(route)),
+                "Authorization": "Bearer {0}".format(self.get_api_key()),
                 "Content-Type": "application/json",
                 "X-Trace-Id": trace_id,
             },
@@ -774,26 +719,15 @@ class ProviderClient:
         body = self.post_task(
             task_type,
             trace_id,
-            {
-                "source_text": text.strip(),
-                "write_action": action,
-                "style": style,
-                "focus": focus,
-                "length": length,
-                "user_prompt": user_prompt.strip(),
-                "selection_mode": selection_mode,
-                "trace_id": trace_id,
-            },
+            {},
             prompt,
         )
 
-        rewritten_text = extract_answer(body, self.resolve_task_route(task_type).output_key)
-        logger.info("traceId=%s provider=enterprise-dify-workflow task=word.smart_write", trace_id)
+        rewritten_text = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.smart_write", trace_id)
         return {
             "rewrittenText": rewritten_text,
-            "provider": "enterprise-dify-workflow/{0}".format(
-                self.get_route_auth_source(self.resolve_task_route(task_type).api_key_ref)
-            ),
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source()),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -829,28 +763,15 @@ class ProviderClient:
         body = self.post_task(
             task_type,
             trace_id,
-            self.build_task_input_data(
-                task_type,
-                trace_id,
-                {
-                    "mode": mode,
-                    "rewrite_mode": mode,
-                    "source_text": text.strip(),
-                    "text": text.strip(),
-                    "user_instruction": user_instruction.strip(),
-                    "rewrite_style": style,
-                    "focus_point": focus,
-                    "length_mode": length,
-                },
-            ),
+            {},
             prompt,
         )
 
-        rewritten_text = extract_answer(body, self.resolve_task_route(task_type).output_key)
-        logger.info("traceId=%s provider=enterprise-chat-api task=word.rewrite", trace_id)
+        rewritten_text = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.rewrite", trace_id)
         return {
             "rewrittenText": rewritten_text,
-            "provider": "enterprise-chat-api/{0}".format(self.get_route_auth_source(self.resolve_task_route(task_type).api_key_ref)),
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source()),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -865,12 +786,12 @@ class ProviderClient:
         body = self.post_task(
             "word.proofread",
             trace_id,
-            self.build_task_input_data("word.proofread", trace_id, {"proofread_mode": "typo"}),
+            {},
             prompt,
         )
 
-        answer = extract_answer(body, self.resolve_task_route("word.proofread").output_key)
-        logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.typo", trace_id)
+        answer = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.proofread.typo", trace_id)
         return parse_typo_issues(answer)
 
     def proofread_document(
@@ -894,11 +815,10 @@ class ProviderClient:
             local_rule_findings=local_rule_findings,
             task_id=self.resolve_task_route("word.proofread").task_id,
         )
-        payload["input_data"]["taskType"] = "word.proofread"
-        body = self.post_task("word.proofread", trace_id, payload["input_data"], payload["query"])
+        body = self.post_task("word.proofread", trace_id, {}, payload["query"])
 
-        answer = extract_answer(body, self.resolve_task_route("word.proofread").output_key)
-        logger.info("traceId=%s provider=enterprise-chat-api task=word.proofread.document", trace_id)
+        answer = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.proofread.document", trace_id)
         return parse_document_proofread_issues(answer)
 
     def technical_review(
@@ -931,27 +851,18 @@ class ProviderClient:
         body = self.post_task(
             "word.technical_review",
             trace_id,
-            self.build_task_input_data(
-                "word.technical_review",
-                trace_id,
-                {
-                    "review_mode": "technical_document",
-                    "document_type": document_type,
-                },
-            ),
+            {},
             prompt,
         )
 
         parsed = parse_technical_review_answer(
-            extract_answer(body, self.resolve_task_route("word.technical_review").output_key)
+            extract_answer(body)
         )
-        logger.info("traceId=%s provider=enterprise-chat-api task=word.technical_review", trace_id)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.technical_review", trace_id)
         return {
             "summary": parsed["summary"],
             "issues": parsed["issues"],
-            "provider": "enterprise-chat-api/{0}".format(
-                self.get_route_auth_source(self.resolve_task_route("word.technical_review").api_key_ref)
-            ),
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source()),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),

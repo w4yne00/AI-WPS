@@ -1,50 +1,13 @@
 {
   "servicePort": 18100,
   "providerName": "企业大模型接口",
-  "providerType": "enterprise-dify-workflow",
+  "providerType": "enterprise-dify-chat",
   "providerBaseUrl": "",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
-  "providerChatPath": "/workflows/run",
+  "providerChatPath": "/chat-messages",
   "providerMode": "blocking",
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
   "timeoutSeconds": 30,
-  "taskRoutes": {
-    "word.smart_write": {
-      "taskId": "word.smart_write",
-      "path": "/workflows/run",
-      "apiKeyRef": "smart_write",
-      "payloadStyle": "workflow",
-      "responseMode": "blocking",
-      "outputKey": "result",
-      "enabled": true
-    },
-    "word.proofread": {
-      "taskId": "word.proofread",
-      "path": "/workflows/run",
-      "apiKeyRef": "proofread",
-      "payloadStyle": "workflow",
-      "responseMode": "blocking",
-      "outputKey": "result",
-      "enabled": true
-    },
-    "word.format_preview": {
-      "taskId": "word.format_preview",
-      "path": "/workflows/run",
-      "apiKeyRef": "format_preview",
-      "payloadStyle": "workflow",
-      "responseMode": "blocking",
-      "outputKey": "result",
-      "enabled": true
-    },
-    "word.technical_review": {
-      "taskId": "word.technical_review",
-      "path": "/workflows/run",
-      "apiKeyRef": "technical_review",
-      "payloadStyle": "workflow",
-      "responseMode": "blocking",
-      "outputKey": "result",
-      "enabled": true
-    }
-  }
+  "taskRoutes": {}
 }

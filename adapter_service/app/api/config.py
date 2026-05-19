@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.core.config import load_settings, task_routes_to_dict
+from app.core.config import load_settings
 from app.services.provider_client import ProviderClient
 
 router = APIRouter()
@@ -10,13 +10,6 @@ router = APIRouter()
 def get_config() -> dict:
     settings = load_settings()
     provider = ProviderClient(settings)
-    task_routes = task_routes_to_dict(settings)
-    for task_type, route_summary in task_routes.items():
-        route = settings.task_routes.get(task_type)
-        api_key_ref = route.api_key_ref if route else route_summary.get("apiKeyRef", "default")
-        route_summary["configured"] = bool(provider.get_task_api_key(route)) if route else bool(provider.get_api_key(api_key_ref))
-        route_summary["authSource"] = provider.get_route_auth_source(api_key_ref)
-    configured_count = provider.task_route_configured_count()
     return {
         "success": True,
         "data": {
@@ -28,8 +21,9 @@ def get_config() -> dict:
             "providerMode": settings.provider_mode,
             "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
             "providerConfigured": provider.is_configured(),
-            "taskRouteConfiguredCount": configured_count,
-            "taskRoutes": task_routes,
+            "providerAuthSource": provider.get_auth_source(),
+            "taskRouteConfiguredCount": 0,
+            "taskRoutes": {},
             "logPath": settings.log_path,
             "templateRoot": settings.template_root,
             "timeoutSeconds": settings.timeout_seconds,

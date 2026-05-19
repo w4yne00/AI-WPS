@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.11.1-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.11.2-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -33,21 +33,21 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-file-format-requirements", js)
 
-    def test_taskpane_settings_exposes_task_route_keys_without_global_key_or_probe(self) -> None:
+    def test_taskpane_settings_exposes_unified_key_without_task_routes_or_probe(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
-        self.assertIn("task-routes-list", html)
-        self.assertIn("renderTaskRoutes", js)
-        self.assertIn("/provider/task-api-key", js)
-        self.assertNotIn('id="provider-auth-line"', html)
-        self.assertNotIn("setProviderAuthLine", js)
-        self.assertNotIn("providerAuthSource", js)
-        self.assertNotIn('id="provider-api-key"', html)
-        self.assertNotIn('id="btn-save-api-key"', html)
-        self.assertNotIn('id="btn-clear-api-key"', html)
+        self.assertNotIn("task-routes-list", html)
+        self.assertNotIn("renderTaskRoutes", js)
+        self.assertNotIn("/provider/task-api-key", js)
+        self.assertIn('id="provider-auth-line"', html)
+        self.assertIn("setProviderAuthLine", js)
+        self.assertIn("providerAuthSource", js)
+        self.assertIn('id="provider-api-key"', html)
+        self.assertIn('id="btn-save-api-key"', html)
+        self.assertIn('id="btn-clear-api-key"', html)
         self.assertNotIn('id="btn-probe"', html)
         self.assertNotIn("runProbe", js)
 

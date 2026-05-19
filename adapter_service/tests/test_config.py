@@ -26,7 +26,7 @@ def test_load_settings_reads_example_file(tmp_path: Path) -> None:
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 class ConfigApiTests(unittest.TestCase):
-    def test_config_exposes_route_counts_without_global_auth_source(self) -> None:
+    def test_config_exposes_unified_provider_status_and_empty_routes(self) -> None:
         client = TestClient(app)
 
         response = client.get("/config")
@@ -35,6 +35,8 @@ class ConfigApiTests(unittest.TestCase):
         body = response.json()
         data = body["data"]
         self.assertIn("providerBaseUrlConfigured", data)
-        self.assertIn("taskRouteConfiguredCount", data)
+        self.assertIn("providerAuthSource", data)
+        self.assertEqual(data["providerChatPath"], "/chat-messages")
+        self.assertEqual(data["taskRouteConfiguredCount"], 0)
         self.assertIn("taskRoutes", data)
-        self.assertNotIn("providerAuthSource", data)
+        self.assertEqual(data["taskRoutes"], {})

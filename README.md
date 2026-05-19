@@ -75,8 +75,8 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.11.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.11.1-20260519` |
+| Version | `v0.11.2-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.11.2-20260519` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
@@ -108,10 +108,10 @@ Rules:
 | Technical document review | Reviews selected text or the whole document for functional accuracy, professional terminology, design rationality, and requirement clarity with an editable prompt |
 | AI document quality check | Sends `documentStructure` and local rule findings to the enterprise AI provider for categorized typos, grammar, expression, logic, and heading-consistency findings; falls back safely when no API key is configured |
 | Word format preview | Builds a template-based paragraph style change plan before applying it |
-| Word smart write | Combines rewrite, continue, summarize, and custom writing into one Workflow-backed task with strict Dify Start variables |
+| Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through top-level `query` for Dify `sys.query` |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Provider settings | Settings page keeps one global API URL and per-task API keys; probe UI is removed from the user-facing pane |
+| Provider settings | Settings page keeps one global API URL and one unified Dify Chat API key; per-task routing controls are removed from the user-facing pane |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package installs WPS add-in files, `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
 
@@ -119,6 +119,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.11.2-alpha` | Rolled provider calls back to one Dify Chatflow `/chat-messages` endpoint using top-level `query`/`sys.query`, disabled task-route selection in the runtime path, restored one unified API key in settings, and removed per-task key controls from the task pane |
 | `v0.11.1-alpha` | Tightened task-route key selection so named workflow tasks only use their own `apiKeyRef`, merged default task routes into old target-machine configs, removed the global key status from the settings summary, added route diagnostics, and updated adapter version checks |
 | `v0.11.0-alpha` | Replaced separate Rewrite and Continue entries with Smart Write, switched Smart Write to Dify Workflow `/workflows/run` with strict Start variables (`source_text`, `write_action`, `style`, `focus`, `length`, `user_prompt`, `selection_mode`, `trace_id`), removed global API key/probe controls from settings, refreshed Ribbon icons, and added the formal design document as the source of truth for non-bug changes |
 | `v0.10.3-alpha` | Refined task-pane prompt visibility: only Rewrite and Continue show prompt-fragment cards, Proofread, Format Preview, and Technical Review return to a cleaner view, and the supplemental input placeholder now starts with “补充要求” |
@@ -245,7 +246,7 @@ Important fields:
 {
   "servicePort": 18100,
   "providerName": "Enterprise Model API",
-  "providerType": "enterprise-chat-api",
+  "providerType": "enterprise-dify-chat",
   "providerBaseUrl": "",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
   "providerChatPath": "/chat-messages",
@@ -262,7 +263,7 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-When no Smart Write task API key is configured, `/word/smart-write` returns a local mock response, which is useful for offline development and baseline acceptance. The legacy `/word/rewrite` endpoint remains available for rollback compatibility but is no longer called by the add-in UI.
+When no unified provider API key is configured, `/word/smart-write` returns a local mock response, which is useful for offline development and baseline acceptance. The legacy `/word/rewrite` endpoint remains available for rollback compatibility but is no longer called by the add-in UI.
 
 ## API Surface
 
@@ -272,8 +273,8 @@ When no Smart Write task API key is configured, `/word/smart-write` returns a lo
 | `GET` | `/config` | Current runtime configuration summary |
 | `GET` | `/templates` | Available template list |
 | `GET` | `/provider/status` | Enterprise AI provider authentication status |
-| `POST` | `/provider/task-api-key` | Save a per-task API key by `apiKeyRef` |
-| `DELETE` | `/provider/task-api-key/{apiKeyRef}` | Clear a per-task API key |
+| `POST` | `/provider/api-key` | Save the unified Dify Chat API key |
+| `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
 | `POST` | `/word/proofread` | Structured Word proofreading |
 | `POST` | `/word/format-preview` | Word auto-format preview |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |

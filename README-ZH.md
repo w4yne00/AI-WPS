@@ -75,8 +75,8 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.11.1-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.11.1-20260519` |
+| 当前版本 | `v0.11.2-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.11.2-20260519` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
@@ -108,10 +108,10 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 技术文档审查 | 面向选中文本或全文，按可编辑提示词检查功能描述准确性、术语专业性、设计合理性和要求明确性 |
 | AI 文档质量审校 | 将 `documentStructure` 和本地规则发现传给企业 AI provider，分类返回错别字、语病、表述、逻辑和章节命名一致性问题；未配置密钥时安全跳过 |
 | Word 自动格式预览 | 基于模板生成段落样式调整计划，先预览再应用 |
-| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Workflow 严格输入变量 |
+| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 通过顶层 `query` 发送完整提示词供 Dify `sys.query` 读取 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
 | 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
-| 设置与联调状态 | 设置页保留单一全局 API URL 和按任务 API Key，移除面向用户的运行探针入口 |
+| 设置与联调状态 | 设置页保留单一全局 API URL 和统一 Dify Chat API Key，移除每任务路由和运行探针入口 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
 | 一期交付总包 | 一个压缩包内置 WPS 插件、`publish.xml`、pip 引导、运行依赖、adapter、一键联调脚本和验收模板 |
 
@@ -119,6 +119,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.11.2-alpha` | 回归单 Dify Chatflow `/chat-messages`：adapter 只通过顶层 `query` 发送完整提示词供 Dify `sys.query` 读取；运行路径停用任务路由选择；设置页恢复统一 API Key，移除每任务密钥配置控件 |
 | `v0.11.1-alpha` | 收紧任务路由密钥选择，命名工作流任务只使用自己的 `apiKeyRef`；旧目标机配置自动补齐默认任务路由；设置页摘要移除全局密钥状态；新增路由诊断信息；同步更新 adapter 版本检查 |
 | `v0.11.0-alpha` | 将智能改写和智能续写合并为智能编写，智能编写改为 Dify Workflow `/workflows/run` 严格输入变量（`source_text`、`write_action`、`style`、`focus`、`length`、`user_prompt`、`selection_mode`、`trace_id`），设置页移除全局 API Key 和运行探针，仅保留全局 URL + 每任务 Key；同步刷新 Ribbon 图标，并新增正式设计文档作为非 bug 改动的开发准绳 |
 | `v0.10.3-alpha` | 优化任务窗格提示词展示：仅智能改写/续写显示提示词拆解卡片，格式校对、智能排版、技术文档审查恢复简洁视图，并将补充输入占位文案改为“补充要求” |
@@ -245,7 +246,7 @@ cp config/adapter.example.json config/adapter.json
 {
   "servicePort": 18100,
   "providerName": "企业大模型接口",
-  "providerType": "enterprise-chat-api",
+  "providerType": "enterprise-dify-chat",
   "providerBaseUrl": "",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
   "providerChatPath": "/chat-messages",
@@ -262,7 +263,7 @@ cp config/adapter.example.json config/adapter.json
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-未配置智能编写任务密钥时，`/word/smart-write` 会走本地 mock 响应，方便离线开发和基础验收。旧 `/word/rewrite` 端点保留作回滚兼容，插件界面不再调用。
+未配置统一 provider API Key 时，`/word/smart-write` 会走本地 mock 响应，方便离线开发和基础验收。旧 `/word/rewrite` 端点保留作回滚兼容，插件界面不再调用。
 
 ## API 一览
 
@@ -272,8 +273,8 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `GET` | `/config` | 查看当前运行配置摘要 |
 | `GET` | `/templates` | 获取可用模板列表 |
 | `GET` | `/provider/status` | 查看企业 AI provider 认证状态 |
-| `POST` | `/provider/task-api-key` | 按 `apiKeyRef` 保存每任务 API Key |
-| `DELETE` | `/provider/task-api-key/{apiKeyRef}` | 清除指定任务 API Key |
+| `POST` | `/provider/api-key` | 保存统一 Dify Chat API Key |
+| `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |
 | `POST` | `/word/proofread` | Word 结构化审校 |
 | `POST` | `/word/format-preview` | Word 自动格式化预览 |
 | `POST` | `/word/smart-write` | 对当前选中文本进行智能编写，支持改写、续写、总结和自定义 |

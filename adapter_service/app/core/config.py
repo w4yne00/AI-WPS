@@ -24,7 +24,7 @@ class TaskRoute:
 class AppSettings:
     service_port: int = 18100
     provider_name: str = "企业大模型接口"
-    provider_type: str = "enterprise-chat-api"
+    provider_type: str = "enterprise-dify-chat"
     provider_base_url: str = ""
     provider_api_key_env: str = "ENTERPRISE_AI_API_KEY"
     provider_chat_path: str = "/chat-messages"
@@ -119,13 +119,12 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         return AppSettings()
 
     payload = json.loads(path.read_text(encoding="utf-8"))
-    task_routes = _parse_task_routes(_load_example_payload())
-    task_routes.update(_parse_task_routes(payload))
+    task_routes = _parse_task_routes(payload)
 
     return AppSettings(
         service_port=payload.get("servicePort", 18100),
         provider_name=payload.get("providerName", "企业大模型接口"),
-        provider_type=payload.get("providerType", "enterprise-chat-api"),
+        provider_type=payload.get("providerType", "enterprise-dify-chat"),
         provider_base_url=payload.get("providerBaseUrl", payload.get("difyBaseUrl", "")),
         provider_api_key_env=payload.get("providerApiKeyEnv", payload.get("difyApiKeyEnv", "ENTERPRISE_AI_API_KEY")),
         provider_chat_path=payload.get("providerChatPath", "/chat-messages"),
