@@ -75,12 +75,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.11.2-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.11.2-20260519` |
+| 当前版本 | `v0.11.8-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.11.8-20260522` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260519.tar.gz` |
+| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260521.tar.gz` |
 
 版本规则格式：
 
@@ -108,10 +108,12 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 技术文档审查 | 面向选中文本或全文，按可编辑提示词检查功能描述准确性、术语专业性、设计合理性和要求明确性 |
 | AI 文档质量审校 | 将 `documentStructure` 和本地规则发现传给企业 AI provider，分类返回错别字、语病、表述、逻辑和章节命名一致性问题；未配置密钥时安全跳过 |
 | Word 自动格式预览 | 基于模板生成段落样式调整计划，先预览再应用 |
-| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 通过顶层 `query` 发送完整提示词供 Dify `sys.query` 读取 |
+| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 同时通过顶层 `query` 和 `inputs.query` 发送完整提示词 |
+| Markdown 结果预览 | 任务窗口结果区按 Markdown 渲染分段、换行、标题、列表、表格、引用、代码块和链接；复制与写回仍保留模型原文 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
 | 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
 | 设置与联调状态 | 设置页保留单一全局 API URL 和统一 Dify Chat API Key，移除每任务路由和运行探针入口 |
+| Adapter 运维诊断 | 启动包脚本统一管理 uvicorn adapter，健康检查同步显示 provider 配置、路由摘要和最后一次转发诊断 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
 | 一期交付总包 | 一个压缩包内置 WPS 插件、`publish.xml`、pip 引导、运行依赖、adapter、一键联调脚本和验收模板 |
 
@@ -119,7 +121,11 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
-| `v0.11.2-alpha` | 回归单 Dify Chatflow `/chat-messages`：adapter 只通过顶层 `query` 发送完整提示词供 Dify `sys.query` 读取；运行路径停用任务路由选择；设置页恢复统一 API Key，移除每任务密钥配置控件 |
+| `v0.11.8-alpha` | 增强任务窗口 Markdown 成品预览：保留正文分段和单换行，补充分隔线与表格渲染，结果区更接近 Dify 的排版层次 |
+| `v0.11.7-alpha` | 修复 uvicorn Word 路由缓存启动时 provider settings 的问题；设置页保存 API URL 后，智能编写会在配置判定和转发前重新读取最新配置，不再出现 health 已配置但任务仍走 mock |
+| `v0.11.6-alpha` | adapter 启动包运维脚本统一收敛到 uvicorn，状态/健康/日志脚本暴露 provider 配置和转发诊断；mock 回退也写入 `/provider/debug-last`，可直接看到未真实转发原因 |
+| `v0.11.5-alpha` | 任务窗口结果预览支持安全 Markdown 渲染，Dify 返回的标题、列表、引用、代码块和链接会按格式显示；复制和写回仍使用原始模型文本 |
+| `v0.11.4-alpha` | 重新对齐 Dify 官方 `/chat-messages`：顶层 `query` 供 `sys.query` 使用，同时把同一份完整提示词写入 `inputs.query` 供开始节点自定义 `query` 使用；新增脱敏的 `/provider/debug-last` 诊断接口 |
 | `v0.11.1-alpha` | 收紧任务路由密钥选择，命名工作流任务只使用自己的 `apiKeyRef`；旧目标机配置自动补齐默认任务路由；设置页摘要移除全局密钥状态；新增路由诊断信息；同步更新 adapter 版本检查 |
 | `v0.11.0-alpha` | 将智能改写和智能续写合并为智能编写，智能编写改为 Dify Workflow `/workflows/run` 严格输入变量（`source_text`、`write_action`、`style`、`focus`、`length`、`user_prompt`、`selection_mode`、`trace_id`），设置页移除全局 API Key 和运行探针，仅保留全局 URL + 每任务 Key；同步刷新 Ribbon 图标，并新增正式设计文档作为非 bug 改动的开发准绳 |
 | `v0.10.3-alpha` | 优化任务窗格提示词展示：仅智能改写/续写显示提示词拆解卡片，格式校对、智能排版、技术文档审查恢复简洁视图，并将补充输入占位文案改为“补充要求” |

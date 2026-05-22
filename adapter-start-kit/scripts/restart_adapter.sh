@@ -8,7 +8,7 @@ echo "restart_step=stop"
 bash "$KIT_ROOT/scripts/stop_adapter.sh" "$PORT" || true
 
 echo "restart_step=start"
-bash "$KIT_ROOT/scripts/start_adapter.sh" "$PORT"
+bash "$KIT_ROOT/scripts/start_uvicorn_adapter.sh" "$PORT"
 
 echo "restart_step=check"
 bash "$KIT_ROOT/scripts/check_health.sh" "$PORT"

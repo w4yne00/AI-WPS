@@ -10,9 +10,30 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.11.2-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.11.8-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
+
+    def test_adapter_operations_scripts_manage_uvicorn_and_provider_diagnostics(self) -> None:
+        scripts = {
+            name: (ROOT / "adapter-start-kit/scripts" / name).read_text(encoding="utf-8")
+            for name in [
+                "start_adapter.sh",
+                "restart_adapter.sh",
+                "status_adapter.sh",
+                "check_health.sh",
+                "show_logs.sh",
+                "stop_adapter.sh",
+            ]
+        }
+
+        self.assertIn("start_uvicorn_adapter.sh", scripts["start_adapter.sh"])
+        self.assertIn("start_uvicorn_adapter.sh", scripts["restart_adapter.sh"])
+        self.assertIn("/provider/status", scripts["status_adapter.sh"])
+        self.assertIn("/provider/route-diagnostics", scripts["check_health.sh"])
+        self.assertIn("/provider/debug-last", scripts["check_health.sh"])
+        self.assertIn("provider=mock", scripts["show_logs.sh"])
+        self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
 
     def test_taskpane_technical_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(

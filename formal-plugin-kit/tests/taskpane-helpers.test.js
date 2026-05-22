@@ -112,10 +112,64 @@ function testBuildDocumentStructureForProofread() {
   assert.strictEqual(structure.capabilities.table_extracted, false);
 }
 
+function testRenderMarkdownFormatsCommonBlocks() {
+  const html = helpers.renderMarkdown([
+    "# 审查结果",
+    "",
+    "第一段第一行",
+    "第一段第二行",
+    "",
+    "- **结论**：可以发布",
+    "- `trace_id` 已记录",
+    "",
+    "---",
+    "",
+    "> 请复核关键风险。",
+    "",
+    "| 项目 | 状态 |",
+    "| --- | :---: |",
+    "| 任务 | 已完成 |",
+    "",
+    "```json",
+    "{\"ok\": true}",
+    "```"
+  ].join("\n"));
+
+  assert.ok(html.includes("<h1>审查结果</h1>"));
+  assert.ok(html.includes("<p>第一段第一行<br>第一段第二行</p>"));
+  assert.ok(html.includes("<ul>"));
+  assert.ok(html.includes("<strong>结论</strong>"));
+  assert.ok(html.includes("<code>trace_id</code>"));
+  assert.ok(html.includes("<hr>"));
+  assert.ok(html.includes("<blockquote>"));
+  assert.ok(html.includes('<div class="markdown-table-wrap">'));
+  assert.ok(html.includes("<th>项目</th>"));
+  assert.ok(html.includes("<td>已完成</td>"));
+  assert.ok(html.includes('<pre><code class="language-json">'));
+  assert.ok(html.includes("{&quot;ok&quot;: true}"));
+}
+
+function testRenderMarkdownEscapesUnsafeHtmlAndLinks() {
+  const html = helpers.renderMarkdown([
+    '<img src=x onerror="alert(1)">',
+    "[危险链接](javascript:alert(1))",
+    "[官网](https://example.com?a=1&b=2)"
+  ].join("\n"));
+
+  assert.ok(html.includes("&lt;img"));
+  assert.ok(html.includes("onerror"));
+  assert.ok(!html.includes("<img"));
+  assert.ok(!html.includes("javascript:"));
+  assert.ok(!html.includes('href="javascript:'));
+  assert.ok(html.includes('href="https://example.com?a=1&amp;b=2"'));
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
 testGetWritableSelection();
 testBuildDocumentStructureForProofread();
+testRenderMarkdownFormatsCommonBlocks();
+testRenderMarkdownEscapesUnsafeHtmlAndLinks();
 
 console.log("taskpane-helpers tests passed");

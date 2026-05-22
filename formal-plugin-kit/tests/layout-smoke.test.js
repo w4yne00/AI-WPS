@@ -42,6 +42,8 @@ assert.ok(html.includes('id="technical-document-type"'));
 assert.ok(html.includes('id="technical-review-prompt"'));
 assert.ok(html.includes('id="btn-run-primary"'));
 assert.ok(html.indexOf('id="btn-copy-result"') < html.indexOf('结果预览'));
+assert.ok(html.includes('class="markdown-output"'));
+assert.ok(!html.includes('<pre id="result-output"'));
 assert.ok(!html.includes('hero-copy'));
 assert.ok(!html.includes('comparison-view'));
 assert.ok(!html.includes('original-output'));
@@ -74,6 +76,7 @@ assert.ok(js.includes("/word/smart-write"));
 assert.ok(js.includes("setAdapterUnavailableState"));
 assert.ok(js.includes("describeFetchError"));
 assert.ok(js.includes("readAdapterJson"));
+assert.ok(js.includes("renderMarkdown"));
 assert.ok(js.includes("插件无法访问 http://127.0.0.1:18100"));
 assert.ok(js.includes("当前适配服务版本较旧"));
 assert.ok(js.includes("showProviderEditor"));
@@ -101,6 +104,8 @@ assert.ok(css.includes("--hairline"));
 assert.ok(css.includes(".action-bar"));
 assert.ok(css.includes(".glass-card"));
 assert.ok(css.includes(".copy-button"));
+assert.ok(css.includes(".markdown-output"));
+assert.ok(css.includes(".markdown-table-wrap"));
 assert.ok(css.includes("linear-gradient(180deg, #fafafa"));
 
 const ribbon = fs.readFileSync(

@@ -6,6 +6,7 @@ from app.core.config import save_provider_base_url
 from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
+    get_last_provider_debug,
     save_local_api_key,
 )
 
@@ -41,6 +42,14 @@ def get_provider_route_diagnostics() -> dict:
     return {
         "success": True,
         "data": client.build_route_diagnostics(),
+    }
+
+
+@router.get("/provider/debug-last")
+def get_provider_debug_last() -> dict:
+    return {
+        "success": True,
+        "data": get_last_provider_debug(),
     }
 
 

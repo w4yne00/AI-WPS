@@ -221,7 +221,11 @@
   function setResult(text) {
     var output = byId("result-output");
     output.hidden = false;
-    output.textContent = text;
+    if (helpers.renderMarkdown) {
+      output.innerHTML = helpers.renderMarkdown(text);
+    } else {
+      output.textContent = text;
+    }
     state.copyText = text || "";
   }
 

@@ -3,12 +3,13 @@ from pathlib import Path
 import sys
 import os
 import importlib.util
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.config import load_settings, save_provider_base_url, task_routes_to_dict
+from app.core.config import AppSettings, load_settings, save_provider_base_url, task_routes_to_dict
 from app.services.provider_client import (
     ProviderClient,
     build_document_proofread_payload,
@@ -18,6 +19,7 @@ from app.services.provider_client import (
     build_smart_write_prompt,
     build_typo_prompt,
     extract_answer,
+    get_last_provider_debug,
     get_default_technical_review_prompt,
     get_route_api_key_path,
     save_local_api_key,
@@ -26,6 +28,8 @@ from app.services.provider_client import (
     clear_route_api_key,
     parse_document_proofread_issues,
     parse_typo_issues,
+    record_provider_debug,
+    reset_provider_debug,
 )
 from app.services.template_loader import TemplateLoader
 
@@ -246,11 +250,11 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["query"], "检查正文")
-        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["inputs"], {"query": "检查正文"})
         self.assertEqual(payload["response_mode"], "streaming")
         self.assertEqual(payload["conversation_id"], "")
         self.assertNotIn("input_data", payload)
-        self.assertNotIn("task_id", payload["inputs"])
+        self.assertNotIn("mode", payload)
 
     def test_build_route_request_payload_ignores_custom_start_variables(self) -> None:
         settings = load_settings()
@@ -279,7 +283,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["query"], "请改写原文")
-        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["inputs"], {"query": "请改写原文"})
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertNotIn("input_data", payload)
         self.assertNotIn("mode", payload)
@@ -304,7 +308,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             "请改写原文",
         )
 
-        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["inputs"], {"query": "请改写原文"})
         self.assertEqual(payload["query"], "请改写原文")
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertNotIn("input_data", payload)
@@ -339,7 +343,8 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(payload["query"], "内部提示词")
-        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["inputs"], {"query": "内部提示词"})
+        self.assertNotIn("input_data", payload)
         self.assertNotIn("source_text", payload["inputs"])
         self.assertNotIn("write_action", payload["inputs"])
         self.assertNotIn("user_prompt", payload["inputs"])
@@ -519,6 +524,87 @@ class EnterpriseProviderTests(unittest.TestCase):
                 route_dir.rmdir()
             tmp_dir.rmdir()
 
+    def test_provider_debug_records_sanitized_request_and_response(self) -> None:
+        full_prompt = "请改写这段很长的原文，包含不应该完整暴露在调试接口里的内容。"
+        reset_provider_debug()
+
+        record_provider_debug(
+            {
+                "traceId": "trace-debug",
+                "taskType": "word.smart_write",
+                "url": "https://aibot.example/v1/chat-messages",
+                "request": {
+                    "body": build_provider_request_payload(load_settings(), {}, full_prompt),
+                },
+                "response": {
+                    "status": 200,
+                    "body": {
+                        "answer": "模型处理后的文本。",
+                        "conversation_id": "conv-1",
+                    },
+                },
+            }
+        )
+
+        debug = get_last_provider_debug()
+
+        self.assertEqual(debug["traceId"], "trace-debug")
+        self.assertEqual(debug["taskType"], "word.smart_write")
+        self.assertEqual(debug["request"]["bodyKeys"], ["conversation_id", "files", "inputs", "query", "response_mode", "user"])
+        self.assertEqual(debug["request"]["inputsKeys"], ["query"])
+        self.assertEqual(debug["request"]["queryLength"], len(full_prompt))
+        self.assertIn("queryPreview", debug["request"])
+        self.assertEqual(debug["response"]["status"], 200)
+        self.assertEqual(debug["response"]["bodyKeys"], ["answer", "conversation_id"])
+        self.assertEqual(debug["response"]["answerLength"], len("模型处理后的文本。"))
+        self.assertNotIn("Authorization", str(debug))
+        self.assertNotIn(full_prompt, str(debug))
+
+    def test_provider_debug_records_sanitized_error(self) -> None:
+        reset_provider_debug()
+
+        record_provider_debug(
+            {
+                "traceId": "trace-error",
+                "taskType": "word.smart_write",
+                "url": "https://aibot.example/v1/chat-messages",
+                "request": {
+                    "body": build_provider_request_payload(load_settings(), {}, "请改写原文"),
+                },
+                "error": {
+                    "type": "HTTPError",
+                    "status": 400,
+                    "message": "Bad Request: missing query",
+                },
+            }
+        )
+
+        debug = get_last_provider_debug()
+
+        self.assertEqual(debug["error"]["type"], "HTTPError")
+        self.assertEqual(debug["error"]["status"], 400)
+        self.assertIn("Bad Request", debug["error"]["message"])
+        self.assertNotIn("请改写原文", str(debug))
+
+    def test_smart_write_mock_records_debug_skip_reason(self) -> None:
+        settings = load_settings()
+        settings.provider_base_url = ""
+        client = ProviderClient(settings)
+        reset_provider_debug()
+
+        result = client.smart_write("待改写原文", "rewrite", "trace-mock-debug")
+        debug = get_last_provider_debug()
+
+        self.assertEqual(result["provider"], "mock")
+        self.assertEqual(debug["traceId"], "trace-mock-debug")
+        self.assertEqual(debug["taskType"], "word.smart_write")
+        self.assertEqual(debug["provider"], "mock")
+        self.assertEqual(debug["skipReason"], "provider_not_configured")
+        self.assertFalse(debug["providerBaseUrlConfigured"])
+        self.assertEqual(debug["authSource"], "none")
+        self.assertGreater(debug["request"]["queryLength"], len("待改写原文"))
+        self.assertNotIn("待改写原文", str(debug))
+
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
         tmp_dir = Path("tmp-test-config")
         tmp_dir.mkdir(exist_ok=True)
@@ -620,6 +706,27 @@ class EnterpriseProviderTests(unittest.TestCase):
             configured_client = ProviderClient(load_settings())
             configured_client.settings.provider_base_url = "https://new.example/v1"
             self.assertTrue(configured_client.is_configured())
+        finally:
+            if previous is None:
+                os.environ.pop("ENTERPRISE_AI_API_KEY", None)
+            else:
+                os.environ["ENTERPRISE_AI_API_KEY"] = previous
+
+    def test_default_provider_client_refreshes_settings_before_task_configuration(self) -> None:
+        previous = os.environ.get("ENTERPRISE_AI_API_KEY")
+        os.environ["ENTERPRISE_AI_API_KEY"] = "secret"
+        try:
+            with patch(
+                "app.services.provider_client.load_settings",
+                side_effect=[
+                    AppSettings(provider_base_url=""),
+                    AppSettings(provider_base_url="https://aibot.example/v1"),
+                ],
+            ):
+                client = ProviderClient()
+
+                self.assertTrue(client.is_task_configured("word.smart_write"))
+                self.assertEqual(client.settings.provider_base_url, "https://aibot.example/v1")
         finally:
             if previous is None:
                 os.environ.pop("ENTERPRISE_AI_API_KEY", None)
@@ -808,11 +915,12 @@ class EnterpriseProviderTests(unittest.TestCase):
             query="请审校文档。",
         )
 
-        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["inputs"], {"query": "请审校文档。"})
         self.assertEqual(payload["query"], "请审校文档。")
         self.assertEqual(payload["conversation_id"], "")
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertNotIn("input_data", payload)
+        self.assertNotIn("mode", payload)
 
     def test_build_provider_request_payload_ignores_input_data_for_chat_message_shape(self) -> None:
         settings = load_settings()
@@ -826,7 +934,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             query="请改写。",
         )
 
-        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["inputs"], {"query": "请改写。"})
         self.assertEqual(payload["query"], "请改写。")
         self.assertEqual(payload["response_mode"], "blocking")
         self.assertEqual(payload["conversation_id"], "")

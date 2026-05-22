@@ -12,6 +12,7 @@ from app.core.logging import get_logger
 logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
+_LAST_PROVIDER_DEBUG: Dict = {}
 
 
 STYLE_TEXT = {
@@ -279,7 +280,7 @@ def is_workflow_provider(settings: AppSettings) -> bool:
 
 def build_provider_request_payload(settings: AppSettings, input_data: Dict, query: str) -> Dict:
     return {
-        "inputs": {},
+        "inputs": {"query": query},
         "query": query,
         "conversation_id": "",
         "response_mode": settings.provider_mode,
@@ -291,13 +292,89 @@ def build_provider_request_payload(settings: AppSettings, input_data: Dict, quer
 def build_route_request_payload(settings: AppSettings, route: TaskRoute, input_data: Dict, query: str) -> Dict:
     response_mode = route.response_mode or settings.provider_mode
     return {
-        "inputs": {},
+        "inputs": {"query": query},
         "query": query,
         "conversation_id": "",
         "response_mode": response_mode,
         "user": "wps-ai-assistant",
         "files": [],
     }
+
+
+def _preview_text(value: str, limit: int = 4) -> str:
+    text = (value or "").replace("\r", " ").replace("\n", " ").strip()
+    if not text:
+        return ""
+    return text[:limit] + "..."
+
+
+def _sanitize_provider_body(body: Dict) -> Dict:
+    inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
+    query = str(body.get("query", "") or "")
+    return {
+        "bodyKeys": sorted(body.keys()),
+        "inputsKeys": sorted(inputs.keys()),
+        "queryLength": len(query),
+        "queryPreview": _preview_text(query),
+        "responseMode": body.get("response_mode", body.get("mode", "")),
+        "conversationIdSet": bool(body.get("conversation_id")),
+        "filesCount": len(body.get("files") or []),
+        "user": body.get("user", ""),
+    }
+
+
+def _sanitize_provider_response(body: Dict) -> Dict:
+    answer = str(body.get("answer", "") or "") if isinstance(body, dict) else ""
+    data = body.get("data", {}) if isinstance(body, dict) else {}
+    outputs = data.get("outputs", {}) if isinstance(data, dict) else {}
+    output_answer = ""
+    if isinstance(outputs, dict):
+        output_answer = str(outputs.get("answer", outputs.get("result", "")) or "")
+    return {
+        "bodyKeys": sorted(body.keys()) if isinstance(body, dict) else [],
+        "answerLength": len(answer or output_answer),
+        "conversationIdSet": bool(body.get("conversation_id")) if isinstance(body, dict) else False,
+        "messageIdSet": bool(body.get("message_id") or body.get("id")) if isinstance(body, dict) else False,
+    }
+
+
+def reset_provider_debug() -> None:
+    _LAST_PROVIDER_DEBUG.clear()
+
+
+def record_provider_debug(event: Dict) -> None:
+    debug = {
+        "traceId": event.get("traceId", ""),
+        "taskType": event.get("taskType", ""),
+        "url": event.get("url", ""),
+    }
+    request_info = event.get("request", {})
+    if isinstance(request_info, dict):
+        body = request_info.get("body", {})
+        if isinstance(body, dict):
+            debug["request"] = _sanitize_provider_body(body)
+    response_info = event.get("response", {})
+    if isinstance(response_info, dict) and response_info:
+        debug["response"] = {
+            "status": response_info.get("status", 200),
+            **_sanitize_provider_response(response_info.get("body", {})),
+        }
+    error_info = event.get("error", {})
+    if isinstance(error_info, dict) and error_info:
+        debug["error"] = {
+            "type": str(error_info.get("type", "")),
+            "status": error_info.get("status", ""),
+            "message": _preview_text(str(error_info.get("message", "")), 160),
+        }
+    for field in ("provider", "skipReason", "providerBaseUrlConfigured", "authSource"):
+        if field in event:
+            debug[field] = event[field]
+    _LAST_PROVIDER_DEBUG.clear()
+    _LAST_PROVIDER_DEBUG.update(debug)
+
+
+def get_last_provider_debug() -> Dict:
+    return dict(_LAST_PROVIDER_DEBUG)
 
 
 def parse_typo_issues(answer: str) -> list:
@@ -566,6 +643,11 @@ def load_route_api_key(api_key_ref: str, base_path: Optional[Path] = None) -> st
 class ProviderClient:
     def __init__(self, settings: Optional[AppSettings] = None) -> None:
         self.settings = settings or load_settings()
+        self.reload_settings = settings is None
+
+    def refresh_settings(self) -> None:
+        if self.reload_settings:
+            self.settings = load_settings()
 
     def resolve_task_route(self, task_type: str) -> TaskRoute:
         routes = self.settings.task_routes or {}
@@ -593,6 +675,7 @@ class ProviderClient:
         return input_data
 
     def is_configured(self, key_base_path: Optional[Path] = None) -> bool:
+        self.refresh_settings()
         return bool(self.settings.provider_base_url.strip() and self.get_api_key("default", key_base_path))
 
     def is_task_configured(self, task_type: str, key_base_path: Optional[Path] = None) -> bool:
@@ -633,7 +716,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.11.2-alpha",
+            "version": "0.11.8-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -648,6 +731,7 @@ class ProviderClient:
         }
 
     def post_task(self, task_type: str, trace_id: str, input_data: Dict, query: str) -> Dict:
+        self.refresh_settings()
         route_payload = build_provider_request_payload(self.settings, {}, query)
         url = "{0}{1}".format(
             self.settings.provider_base_url.rstrip("/"),
@@ -665,6 +749,14 @@ class ProviderClient:
         payload = json.dumps(
             route_payload
         ).encode("utf-8")
+        record_provider_debug(
+            {
+                "traceId": trace_id,
+                "taskType": task_type,
+                "url": url,
+                "request": {"body": route_payload},
+            }
+        )
         req = urllib_request.Request(
             url,
             data=payload,
@@ -677,16 +769,57 @@ class ProviderClient:
         )
         try:
             with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
-                return json.loads(response.read().decode("utf-8"))
+                body = json.loads(response.read().decode("utf-8"))
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": url,
+                        "request": {"body": route_payload},
+                        "response": {"status": getattr(response, "status", 200), "body": body},
+                    }
+                )
+                return body
         except error.HTTPError as exc:
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    "request": {"body": route_payload},
+                    "error": {"type": "HTTPError", "status": exc.code, "message": str(exc)},
+                }
+            )
             if exc.code in (401, 403):
                 raise ProviderAuthError() from exc
             raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
         except error.URLError as exc:
             reason = getattr(exc, "reason", "")
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    "request": {"body": route_payload},
+                    "error": {"type": "URLError", "message": str(reason)},
+                }
+            )
             if "timed out" in str(reason).lower():
                 raise ProviderTimeoutError() from exc
             raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
+
+    def record_unconfigured_debug(self, task_type: str, trace_id: str, query: str) -> None:
+        record_provider_debug(
+            {
+                "traceId": trace_id,
+                "taskType": task_type,
+                "provider": "mock",
+                "skipReason": "provider_not_configured",
+                "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
+                "authSource": self.get_auth_source(),
+                "request": {"body": build_provider_request_payload(self.settings, {}, query)},
+            }
+        )
 
     def smart_write(
         self,
@@ -710,6 +843,7 @@ class ProviderClient:
         task_type = "word.smart_write"
         if not self.is_task_configured(task_type):
             logger.info("traceId=%s provider=mock task=word.smart_write", trace_id)
+            self.record_unconfigured_debug(task_type, trace_id, prompt)
             return {
                 "rewrittenText": self._mock_rewrite(text, action, user_prompt),
                 "provider": "mock",
@@ -754,6 +888,7 @@ class ProviderClient:
         task_type = "word.continue" if mode == "continue" else "word.rewrite"
         if not self.is_task_configured(task_type):
             logger.info("traceId=%s provider=mock task=word.rewrite", trace_id)
+            self.record_unconfigured_debug(task_type, trace_id, prompt)
             return {
                 "rewrittenText": self._mock_rewrite(text, mode, user_instruction),
                 "provider": "mock",
@@ -844,6 +979,7 @@ class ProviderClient:
 
         if not self.is_task_configured("word.technical_review"):
             logger.info("traceId=%s provider=mock task=word.technical_review", trace_id)
+            self.record_unconfigured_debug("word.technical_review", trace_id, prompt)
             result = self._mock_technical_review(source_text, document_type)
             result["prompt"] = prompt
             return result

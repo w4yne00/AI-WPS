@@ -13,6 +13,7 @@ from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
     get_default_technical_review_prompt,
+    get_last_provider_debug,
     save_local_api_key,
 )
 
@@ -438,7 +439,7 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.11.2-alpha",
+                        "version": "0.11.8-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
@@ -481,6 +482,19 @@ class Handler(BaseHTTPRequestHandler):
                     "taskType": "provider.route_diagnostics",
                     "message": "completed",
                     "data": provider.build_route_diagnostics(),
+                    "errors": [],
+                },
+            )
+            return
+        if path == "/provider/debug-last":
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-debug-last",
+                    "taskType": "provider.debug_last",
+                    "message": "completed",
+                    "data": get_last_provider_debug(),
                     "errors": [],
                 },
             )
