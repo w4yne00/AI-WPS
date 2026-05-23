@@ -55,6 +55,12 @@
     { id: "technical-file-format-requirements", name: "技术文件格式及书写要求" },
     { id: "general-office", name: "通用办公模板" }
   ];
+  var TASK_API_KEY_DEFS = [
+    { taskType: "word.smart_write", label: "智能编写" },
+    { taskType: "word.smart_format", label: "智能排版" },
+    { taskType: "word.proofread", label: "格式校对" },
+    { taskType: "word.technical_review", label: "技术文档审查" }
+  ];
   var modeConfig = {
     smartWrite: {
       title: "智能编写",
@@ -113,6 +119,7 @@
     providerName: "未检测",
     providerBaseUrl: "",
     providerAuthSource: "none",
+    taskApiKeys: {},
     currentMode: "smartWrite",
     copyText: "",
     scopeWatcher: null
@@ -183,6 +190,8 @@
     setProviderName(configData.providerName || "企业大模型接口");
     setProviderBaseUrl(configData.providerBaseUrl || "");
     setProviderAuthLine(configData.providerAuthSource || "none");
+    state.taskApiKeys = configData.taskApiKeys || {};
+    renderTaskApiKeys();
   }
 
   function showProviderEditor(show) {
@@ -633,6 +642,76 @@
     });
   }
 
+  function getTaskApiKeyStatus(taskType) {
+    return state.taskApiKeys[taskType] || {};
+  }
+
+  function renderTaskApiKeys() {
+    var list = byId("task-api-key-list");
+    if (!list) {
+      return;
+    }
+    list.innerHTML = "";
+    TASK_API_KEY_DEFS.forEach(function (item) {
+      var status = getTaskApiKeyStatus(item.taskType);
+      var configured = Boolean(status.taskKeyConfigured);
+      var effective = Boolean(status.configured);
+      var row = document.createElement("div");
+      row.className = "task-route-item";
+      row.innerHTML = [
+        '<div class="task-route-main">',
+        "<strong>" + item.label + "</strong>",
+        "<span>" + (configured ? "任务密钥已配置" : (effective ? "使用统一密钥" : "未配置密钥")) + "</span>",
+        "</div>",
+        '<span class="provider-badge">' + (configured ? "独立" : "兜底") + "</span>",
+        '<input type="password" data-task-key-input="' + item.taskType + '" placeholder="粘贴' + item.label + ' API Key" />',
+        '<div class="button-row route-actions">',
+        '<button type="button" data-save-task-key="' + item.taskType + '">保存密钥</button>',
+        '<button type="button" class="ghost-action" data-clear-task-key="' + item.taskType + '">清除</button>',
+        "</div>"
+      ].join("");
+      list.appendChild(row);
+    });
+  }
+
+  function saveTaskApiKey(taskType) {
+    var input = document.querySelector('[data-task-key-input="' + taskType + '"]');
+    var apiKey = input ? (input.value || "").trim() : "";
+    if (!apiKey) {
+      setStatus("请输入任务 API Key。");
+      return;
+    }
+    request("/provider/task-api-key", { taskType: taskType, apiKey: apiKey })
+      .then(function () {
+        if (input) {
+          input.value = "";
+        }
+        setStatus("任务密钥已保存。");
+        return refreshConfig();
+      })
+      .catch(function (error) {
+        setStatus("保存任务密钥失败：" + describeFetchError(error));
+      });
+  }
+
+  function clearTaskApiKey(taskType) {
+    fetch(ADAPTER_BASE_URL + "/provider/task-api-key/" + encodeURIComponent(taskType), {
+      method: "DELETE"
+    }).then(function (response) {
+      return response.json().then(function (body) {
+        if (!response.ok) {
+          throw new Error((body.errors && body.errors[0] && body.errors[0].message) || body.message || ("HTTP " + response.status));
+        }
+        return body;
+      });
+    }).then(function () {
+      setStatus("任务密钥已清除。");
+      return refreshConfig();
+    }).catch(function (error) {
+      setStatus("清除任务密钥失败：" + describeFetchError(error));
+    });
+  }
+
   function renderTemplateOptions() {
     var select = byId("template-select");
     select.innerHTML = "";
@@ -691,6 +770,7 @@
     var lines = [
       "模板：" + summary.templateId,
       "变更数：" + summary.changeCount,
+      "识别来源：" + (summary.provider || "local"),
       ""
     ];
 
@@ -703,6 +783,7 @@
       lines.push(
         "第 " + change.paragraphIndex + " 段：" +
         change.currentStyle + " → " + change.targetStyle +
+        " | 角色：" + (change.role || "未识别") +
         " | " + change.reason
       );
     });
@@ -805,13 +886,83 @@
     document.body.removeChild(textarea);
   }
 
-  function applyParagraphStyle(paragraph, targetStyle) {
+  function twipsToPoints(value) {
+    var numeric = Number(value);
+    if (!isFinite(numeric)) {
+      return null;
+    }
+    return numeric / 20;
+  }
+
+  function applyPageSetup(document, properties) {
+    var setup = document && (document.PageSetup || document.pageSetup);
+    if (!setup || !properties) {
+      return;
+    }
+    var marginMap = [
+      ["marginTopTwips", "TopMargin"],
+      ["marginBottomTwips", "BottomMargin"],
+      ["marginLeftTwips", "LeftMargin"],
+      ["marginRightTwips", "RightMargin"]
+    ];
+    marginMap.forEach(function (item) {
+      var value = twipsToPoints(properties[item[0]]);
+      if (value !== null) {
+        setup[item[1]] = value;
+      }
+    });
+  }
+
+  function setIfPresent(target, key, value) {
+    if (typeof value !== "undefined" && value !== null) {
+      target[key] = value;
+    }
+  }
+
+  function applyParagraphStyle(paragraph, targetStyle, targetProperties) {
+    var properties = targetProperties || {};
     paragraph.StyleNameLocal = targetStyle;
     paragraph.styleName = targetStyle;
     paragraph.Font = paragraph.Font || {};
     paragraph.ParagraphFormat = paragraph.ParagraphFormat || {};
 
-    if (targetStyle === "Body") {
+    if (properties.fontName) {
+      paragraph.Font.NameFarEast = properties.fontName;
+      paragraph.Font.Name = properties.asciiFontName || properties.fontName;
+    }
+    setIfPresent(paragraph.Font, "Size", properties.fontSize);
+    if (typeof properties.bold === "boolean") {
+      paragraph.Font.Bold = properties.bold;
+    }
+    setIfPresent(paragraph.ParagraphFormat, "Alignment", properties.alignment);
+    setIfPresent(paragraph.ParagraphFormat, "LineSpacing", properties.lineSpacingTwips);
+    setIfPresent(paragraph.ParagraphFormat, "OutlineLevel", properties.outlineLevel);
+    var firstLineIndent = twipsToPoints(properties.firstLineIndentTwips);
+    var leftIndent = twipsToPoints(properties.leftIndentTwips);
+    var rightIndent = twipsToPoints(properties.rightIndentTwips);
+    var spaceBefore = twipsToPoints(properties.spaceBeforeTwips);
+    var spaceAfter = twipsToPoints(properties.spaceAfterTwips);
+    if (firstLineIndent !== null) {
+      paragraph.ParagraphFormat.FirstLineIndent = firstLineIndent;
+    }
+    if (leftIndent !== null) {
+      paragraph.ParagraphFormat.LeftIndent = leftIndent;
+    }
+    if (rightIndent !== null) {
+      paragraph.ParagraphFormat.RightIndent = rightIndent;
+    }
+    if (spaceBefore !== null) {
+      paragraph.ParagraphFormat.SpaceBefore = spaceBefore;
+    }
+    if (spaceAfter !== null) {
+      paragraph.ParagraphFormat.SpaceAfter = spaceAfter;
+    }
+
+    if (Object.keys(properties).length) {
+      return;
+    }
+
+    if (targetStyle === "Body" || targetStyle === "Normal") {
       paragraph.Font.NameFarEast = "SimSun";
       paragraph.Font.Name = "SimSun";
       paragraph.Font.Size = 12;
@@ -829,11 +980,15 @@
     var document = getActiveDocument();
     var paragraphs = getParagraphs(document);
     state.formatChanges.forEach(function (change) {
+      if (change.paragraphIndex === 0) {
+        applyPageSetup(document, change.targetProperties || {});
+        return;
+      }
       var paragraph = paragraphs[change.paragraphIndex - 1];
       if (!paragraph) {
         return;
       }
-      applyParagraphStyle(paragraph, change.targetStyle);
+      applyParagraphStyle(paragraph, change.targetStyle, change.targetProperties || {});
     });
     state.pendingApplyAction = "";
     setApplyEnabled(false);
@@ -1061,6 +1216,16 @@
     });
     byId("btn-back-provider-summary").addEventListener("click", function () {
       showProviderEditor(false);
+    });
+    byId("task-api-key-list").addEventListener("click", function (event) {
+      var saveTask = event.target.getAttribute("data-save-task-key");
+      var clearTask = event.target.getAttribute("data-clear-task-key");
+      if (saveTask) {
+        saveTaskApiKey(saveTask);
+      }
+      if (clearTask) {
+        clearTaskApiKey(clearTask);
+      }
     });
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);

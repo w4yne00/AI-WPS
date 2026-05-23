@@ -6,16 +6,21 @@ import sys
 from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
-from app.core.config import load_settings, save_provider_base_url
+from app.core.config import load_settings, save_provider_base_url, save_task_api_key_ref
+from app.core.models import WordDocumentRequest
 from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
+    clear_route_api_key,
     get_default_technical_review_prompt,
     get_last_provider_debug,
+    normalize_task_api_key_ref,
+    save_route_api_key,
     save_local_api_key,
 )
+from app.services.word.formatter import WordFormatter
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -256,45 +261,11 @@ def proofread(payload):
 
 
 def format_preview(payload):
-    template_id = payload.get("options", {}).get("templateId") or "general-office"
-    template = load_template(template_id)
-    body = template.get("body", {})
-    changes = []
-
-    for paragraph in body_paragraphs(payload):
-        current_style = paragraph.get("styleName") or "Body"
-        rule = paragraph_style_rule(paragraph, template)
-        target_style = rule.get("styleName", current_style)
-        reason_parts = []
-        if rule.get("fontName") and paragraph.get("fontName") and not font_matches(paragraph.get("fontName"), rule):
-            reason_parts.append("align font with template")
-        if rule.get("fontSize") is not None and paragraph.get("fontSize") is not None:
-            if abs(float(paragraph.get("fontSize")) - float(rule.get("fontSize"))) > 0.01:
-                reason_parts.append("align font size with template")
-        if rule.get("lineSpacing") is not None and paragraph.get("lineSpacing") is not None:
-            normalized = normalize_line_spacing(paragraph.get("lineSpacing"))
-            if normalized is not None and abs(normalized - float(rule.get("lineSpacing"))) > 0.05:
-                reason_parts.append("align line spacing with template")
-        if (paragraph.get("outlineLevel") or 0) == 0 and rule.get("firstLineIndentChars") and not paragraph.get("text", "").startswith("  "):
-            reason_parts.append("apply body first-line indent")
-
-        if reason_parts or current_style != target_style:
-            changes.append(
-                {
-                    "paragraphIndex": paragraph.get("index"),
-                    "currentStyle": current_style,
-                    "targetStyle": target_style,
-                    "reason": "; ".join(reason_parts) or "normalize paragraph style",
-                }
-            )
-
-    return {
-        "changes": changes,
-        "summary": {
-            "changeCount": len(changes),
-            "templateId": template["id"],
-        },
-    }
+    if hasattr(WordDocumentRequest, "model_validate"):
+        request = WordDocumentRequest.model_validate(payload)
+    else:
+        request = WordDocumentRequest.parse_obj(payload)
+    return WordFormatter().preview(request, trace_id="standalone-word-format-preview")
 
 
 def rewrite(payload):
@@ -439,13 +410,14 @@ class Handler(BaseHTTPRequestHandler):
                     "data": {
                         "service": "wps-ai-adapter",
                         "status": "ok",
-                        "version": "0.11.8-alpha",
+                        "version": "0.12.0-alpha",
                         "mode": "standalone",
                         "providerName": settings.provider_name,
                         "providerType": settings.provider_type,
                         "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
                         "providerConfigured": provider.is_configured(),
                         "providerAuthSource": provider.get_auth_source(),
+                        "taskApiKeys": provider.build_task_api_key_status(),
                         "taskRouteCount": 0,
                         "taskRouteConfiguredCount": 0,
                     },
@@ -499,6 +471,20 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/provider/task-api-keys":
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-task-api-keys",
+                    "taskType": "provider.task_api_keys",
+                    "message": "completed",
+                    "data": provider.build_task_api_key_status(),
+                    "errors": [],
+                },
+            )
+            return
         if path == "/config":
             settings = load_settings()
             provider = ProviderClient(settings)
@@ -519,6 +505,7 @@ class Handler(BaseHTTPRequestHandler):
                         "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
                         "providerConfigured": provider.is_configured(),
                         "providerAuthSource": provider.get_auth_source(),
+                        "taskApiKeys": provider.build_task_api_key_status(),
                         "taskRouteConfiguredCount": 0,
                         "taskRoutes": {},
                         "logPath": settings.log_path,
@@ -699,6 +686,38 @@ class Handler(BaseHTTPRequestHandler):
                 },
             )
             return
+        if path == "/provider/task-api-key":
+            task_type = payload.get("taskType", "").strip()
+            api_key = payload.get("apiKey", "").strip()
+            if not task_type or not api_key:
+                self._write(
+                    400,
+                    {
+                        "success": False,
+                        "traceId": "standalone-provider-task-save",
+                        "taskType": "provider.task_api_key",
+                        "message": "Task type and API key are required.",
+                        "data": {},
+                        "errors": [{"code": "TASK_API_KEY_REQUIRED", "message": "Task type and API key are required."}],
+                    },
+                )
+                return
+            api_key_ref = payload.get("apiKeyRef") or normalize_task_api_key_ref(task_type)
+            save_task_api_key_ref(task_type, api_key_ref)
+            save_route_api_key(api_key_ref, api_key)
+            provider = ProviderClient(load_settings())
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-task-save",
+                    "taskType": "provider.task_api_key",
+                    "message": "saved",
+                    "data": provider.build_task_api_key_status().get(task_type, {}),
+                    "errors": [],
+                },
+            )
+            return
 
         self._write(
             404,
@@ -728,6 +747,22 @@ class Handler(BaseHTTPRequestHandler):
                         "configured": provider.is_configured(),
                         "authSource": provider.get_auth_source(),
                     },
+                    "errors": [],
+                },
+            )
+            return
+        if path.startswith("/provider/task-api-key/"):
+            task_type = unquote(path.rsplit("/", 1)[-1])
+            provider = ProviderClient(load_settings())
+            clear_route_api_key(provider.get_task_api_key_ref(task_type))
+            self._write(
+                200,
+                {
+                    "success": True,
+                    "traceId": "standalone-provider-task-clear",
+                    "taskType": "provider.task_api_key",
+                    "message": "cleared",
+                    "data": ProviderClient(load_settings()).build_task_api_key_status().get(task_type, {}),
                     "errors": [],
                 },
             )

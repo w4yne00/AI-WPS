@@ -2,14 +2,21 @@
   "id": "technical-file-format-requirements",
   "name": "技术文件格式及书写要求",
   "sourceDocument": "technical-file-format-requirements.docx",
+  "version": "2026-05-23",
   "page": {
     "paperSize": "A4",
-    "marginTop": 2.54,
-    "marginBottom": 2.54,
-    "marginLeft": 3.17,
-    "marginRight": 3.17
+    "widthTwips": 11906,
+    "heightTwips": 16838,
+    "marginTopTwips": 1440,
+    "marginBottomTwips": 1440,
+    "marginLeftTwips": 1800,
+    "marginRightTwips": 1800,
+    "headerTwips": 851,
+    "footerTwips": 992
   },
   "body": {
+    "role": "body",
+    "styleId": "1",
     "styleName": "Normal",
     "fontName": "宋体",
     "fontAliases": ["宋体", "SimSun"],
@@ -17,86 +24,250 @@
     "fontSize": 12,
     "bold": false,
     "lineSpacing": 1.25,
-    "firstLineIndentChars": 2,
-    "alignment": "justify"
+    "lineSpacingTwips": 300,
+    "firstLineIndentTwips": 640,
+    "alignment": "justify",
+    "outlineLevel": 0
   },
-  "headings": {
-    "level1": {
-      "styleName": "Heading 1",
+  "roleRules": {
+    "document_title": {
+      "styleId": "22",
+      "styleName": "文档标题",
       "fontName": "黑体",
       "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 14,
+      "bold": false,
+      "alignment": "center",
+      "firstLineIndentTwips": 0,
+      "leftIndentTwips": 0,
+      "outlineLevel": 9
+    },
+    "heading1": {
+      "styleId": "2",
+      "styleName": "heading 1",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
       "fontSize": 12,
       "bold": false,
       "lineSpacing": 1.25,
-      "spacingBeforeLines": 0.5,
-      "spacingAfterLines": 0.5
+      "lineSpacingTwips": 300,
+      "spaceBeforeTwips": 50,
+      "spaceAfterTwips": 50,
+      "leftIndentTwips": 432,
+      "hangingIndentTwips": 432,
+      "outlineLevel": 1
     },
-    "level2": {
-      "styleName": "Heading 2",
+    "heading2": {
+      "styleId": "3",
+      "styleName": "heading 2",
       "fontName": "黑体",
       "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
       "fontSize": 12,
       "bold": false,
-      "lineSpacing": 1.25
+      "lineSpacing": 1.25,
+      "lineSpacingTwips": 300,
+      "leftIndentTwips": 575,
+      "hangingIndentTwips": 575,
+      "outlineLevel": 2
     },
-    "level3": {
-      "styleName": "Heading 3",
+    "heading3": {
+      "styleId": "4",
+      "styleName": "heading 3",
       "fontName": "黑体",
       "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
       "fontSize": 12,
       "bold": false,
-      "lineSpacing": 1.25
+      "lineSpacing": 1.25,
+      "lineSpacingTwips": 300,
+      "leftIndentTwips": 720,
+      "hangingIndentTwips": 720,
+      "outlineLevel": 3
     },
-    "level4": {
-      "styleName": "Heading 4",
+    "heading4": {
+      "styleId": "5",
+      "styleName": "heading 4",
       "fontName": "黑体",
       "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "Times New Roman",
       "fontSize": 12,
       "bold": false,
-      "lineSpacing": 1.25
-    }
-  },
-  "styles": {
-    "文档标题": {
-      "fontName": "黑体",
-      "fontAliases": ["黑体", "SimHei"],
-      "fontSize": 14,
-      "bold": false,
-      "alignment": "center"
+      "lineSpacing": 1.25,
+      "lineSpacingTwips": 300,
+      "leftIndentTwips": 864,
+      "hangingIndentTwips": 864,
+      "outlineLevel": 4
     },
-    "Caption": {
+    "caption": {
+      "styleId": "12",
+      "styleName": "caption",
       "fontName": "黑体",
       "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
       "fontSize": 12,
       "bold": false,
       "alignment": "center",
       "lineSpacing": 1.0,
-      "spacingBeforeLines": 0.5,
-      "spacingAfterLines": 0.5
+      "lineSpacingTwips": 240,
+      "spaceBeforeTwips": 50,
+      "spaceAfterTwips": 50,
+      "firstLineIndentTwips": 0
     },
-    "3.1注-无编号注": {
-      "fontName": "宋体",
-      "fontAliases": ["宋体", "SimSun"],
-      "asciiFontName": "Times New Roman",
-      "fontSize": 10.5,
-      "bold": false
-    },
-    "3.2注-有编号注": {
+    "note": {
+      "styleId": "37",
+      "styleName": "3.1注-无编号注",
       "fontName": "宋体",
       "fontAliases": ["宋体", "SimSun"],
       "asciiFontName": "Times New Roman",
       "fontSize": 10.5,
       "bold": false,
-      "lineSpacing": 1.25
+      "leftIndentTwips": 867,
+      "hangingIndentTwips": 419
     },
-    "附录标题": {
+    "numbered_note": {
+      "styleId": "26",
+      "styleName": "3.2注-有编号注",
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 10.5,
+      "bold": false,
+      "lineSpacing": 1.25,
+      "lineSpacingTwips": 300,
+      "leftIndentTwips": 1026,
+      "hangingIndentTwips": 578
+    },
+    "list1_numbered": {
+      "styleId": "23",
+      "styleName": "1.1一级列项-编号",
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 12,
+      "bold": false
+    },
+    "list1_plain": {
+      "styleId": "25",
+      "styleName": "1.2一级列项-无编号",
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 12,
+      "bold": false,
+      "leftIndentTwips": 998,
+      "hangingIndentTwips": 497
+    },
+    "list2_numbered": {
+      "styleId": "33",
+      "styleName": "2.1二级列项-有编号",
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 12,
+      "bold": false,
+      "leftIndentTwips": 1385,
+      "hangingIndentTwips": 425
+    },
+    "list2_plain": {
+      "styleId": "24",
+      "styleName": "2.2二级列项-无编号",
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 12,
+      "bold": false,
+      "alignment": "left",
+      "leftIndentTwips": 1457,
+      "hangingIndentTwips": 499
+    },
+    "appendix_title": {
+      "styleId": "38",
+      "styleName": "附录标题",
       "fontName": "黑体",
       "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
       "fontSize": 14,
       "bold": false,
       "alignment": "center",
-      "lineSpacing": 1.25
+      "lineSpacing": 1.25,
+      "lineSpacingTwips": 300,
+      "spaceBeforeTwips": 50,
+      "spaceAfterTwips": 50,
+      "firstLineIndentTwips": 0,
+      "outlineLevel": 1
+    },
+    "appendix_heading1": {
+      "styleId": "27",
+      "styleName": "附录一级标题",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
+      "fontSize": 12,
+      "bold": false,
+      "spaceBeforeTwips": 50,
+      "spaceAfterTwips": 50,
+      "leftIndentTwips": 567,
+      "hangingIndentTwips": 567,
+      "outlineLevel": 2
+    },
+    "appendix_heading2": {
+      "styleId": "28",
+      "styleName": "附录二级标题",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
+      "fontSize": 12,
+      "bold": false,
+      "leftIndentTwips": 709,
+      "hangingIndentTwips": 709,
+      "outlineLevel": 3
+    },
+    "appendix_heading3": {
+      "styleId": "29",
+      "styleName": "附录三级标题",
+      "fontName": "黑体",
+      "fontAliases": ["黑体", "SimHei"],
+      "asciiFontName": "黑体",
+      "fontSize": 12,
+      "bold": false,
+      "leftIndentTwips": 850,
+      "hangingIndentTwips": 850,
+      "outlineLevel": 4
+    },
+    "table_body": {
+      "styleId": "43",
+      "styleName": "表正文",
+      "fontName": "宋体",
+      "fontAliases": ["宋体", "SimSun"],
+      "asciiFontName": "Times New Roman",
+      "fontSize": 12,
+      "bold": false,
+      "alignment": "center",
+      "lineSpacingTwips": 0,
+      "lineRule": "atLeast",
+      "firstLineIndentTwips": 0
     }
+  },
+  "headings": {
+    "level1": {"roleRef": "heading1"},
+    "level2": {"roleRef": "heading2"},
+    "level3": {"roleRef": "heading3"},
+    "level4": {"roleRef": "heading4"}
+  },
+  "styles": {
+    "文档标题": {"roleRef": "document_title"},
+    "Caption": {"roleRef": "caption"},
+    "caption": {"roleRef": "caption"},
+    "3.1注-无编号注": {"roleRef": "note"},
+    "3.2注-有编号注": {"roleRef": "numbered_note"},
+    "附录标题": {"roleRef": "appendix_title"},
+    "附录一级标题": {"roleRef": "appendix_heading1"},
+    "附录二级标题": {"roleRef": "appendix_heading2"},
+    "附录三级标题": {"roleRef": "appendix_heading3"},
+    "表正文": {"roleRef": "table_body"}
   },
   "proofreadRules": [
     "template_style",
@@ -109,5 +280,10 @@
     "enabled": true,
     "ruleId": "ai_typo",
     "description": "Use the enterprise model to detect Chinese typos, wrong words, and suspicious wording."
+  },
+  "aiFormat": {
+    "enabled": true,
+    "taskType": "word.smart_format",
+    "description": "Use the enterprise model only to classify paragraph roles. Formatting is applied by local template rules."
   }
 }

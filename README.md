@@ -75,12 +75,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.11.8-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.11.8-20260522` |
+| Version | `v0.12.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.12.0-20260523` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260521.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260523.tar.gz` |
 
 Version rule format:
 
@@ -107,12 +107,12 @@ Rules:
 | Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, Chinese punctuation spacing, and structured document quality issues |
 | Technical document review | Reviews selected text or the whole document for functional accuracy, professional terminology, design rationality, and requirement clarity with an editable prompt |
 | AI document quality check | Sends `documentStructure` and local rule findings to the enterprise AI provider for categorized typos, grammar, expression, logic, and heading-consistency findings; falls back safely when no API key is configured |
-| Word format preview | Builds a template-based paragraph style change plan before applying it |
+| Word smart format | Uses the standard Word template as the rule source, combines local rules with optional AI paragraph-role classification, and previews page setup, headings, body text, captions, notes, lists, appendices, and table-body formatting before applying |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through both top-level `query` and `inputs.query` |
 | Markdown result preview | The task pane renders Markdown paragraphs, line breaks, headings, lists, tables, quotes, code blocks, and links while copy/apply actions keep the raw model text |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Provider settings | Settings page keeps one global API URL and one unified Dify Chat API key; per-task routing controls are removed from the user-facing pane |
+| Provider settings | Settings page keeps one global API URL and supports both a unified Dify Chat API key and task-level API keys; task keys override the unified fallback only for their own task |
 | Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package installs WPS add-in files, `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
@@ -121,6 +121,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.12.0-alpha` | Rebuilt Smart Format around the uploaded `技术文件格式及书写要求` Word template: format preview now carries `targetProperties` for page setup, headings, body text, captions, notes, lists, appendices, and table body; settings now support task-level API keys so Smart Format can use its own Dify key while falling back to the unified key when absent |
 | `v0.11.8-alpha` | Enhanced the rendered Markdown result preview with preserved paragraphs and single line breaks plus horizontal rules and responsive tables so task-pane output has clearer Dify-like structure |
 | `v0.11.7-alpha` | Fixed uvicorn Word routes caching provider settings from adapter startup; after the settings pane saves the API URL, smart write reloads configuration before readiness checks and forwarding instead of continuing to use stale mock-only settings |
 | `v0.11.6-alpha` | Adapter start-kit operations now converge on uvicorn; health/status/log scripts expose provider readiness and forwarding diagnostics, and mock fallback records a `/provider/debug-last` skip reason |
@@ -259,7 +260,13 @@ Important fields:
   "providerMode": "blocking",
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
-  "timeoutSeconds": 30
+  "timeoutSeconds": 30,
+  "taskApiKeyRefs": {
+    "word.smart_write": "word_smart_write",
+    "word.smart_format": "word_smart_format",
+    "word.proofread": "word_proofread",
+    "word.technical_review": "word_technical_review"
+  }
 }
 ```
 
@@ -269,7 +276,9 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-When no unified provider API key is configured, `/word/smart-write` returns a local mock response, which is useful for offline development and baseline acceptance. The legacy `/word/rewrite` endpoint remains available for rollback compatibility but is no longer called by the add-in UI.
+Task-level API keys are stored under `run/provider_api_keys/<ref>`. For example, Smart Format can use a dedicated Dify app key through `word.smart_format`; when a task key is absent, the adapter falls back to the unified provider API key. When no usable key is configured, `/word/smart-write` returns a local mock response and Smart Format can still produce a local template-rule preview. The legacy `/word/rewrite` endpoint remains available for rollback compatibility but is no longer called by the add-in UI.
+
+The Smart Format Dify setup is documented in [AI-WPS Smart Format Dify workflow guide](./docs/operations/dify-smart-format-workflow.md). The Dify app should classify paragraph roles only; actual Word formatting is applied locally from the template rules.
 
 ## API Surface
 
@@ -279,8 +288,11 @@ When no unified provider API key is configured, `/word/smart-write` returns a lo
 | `GET` | `/config` | Current runtime configuration summary |
 | `GET` | `/templates` | Available template list |
 | `GET` | `/provider/status` | Enterprise AI provider authentication status |
+| `GET` | `/provider/task-api-keys` | Task-level API key status summary |
 | `POST` | `/provider/api-key` | Save the unified Dify Chat API key |
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
+| `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
+| `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
 | `POST` | `/word/proofread` | Structured Word proofreading |
 | `POST` | `/word/format-preview` | Word auto-format preview |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |

@@ -22,6 +22,7 @@ def get_config() -> dict:
             "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
             "providerConfigured": provider.is_configured(),
             "providerAuthSource": provider.get_auth_source(),
+            "taskApiKeys": provider.build_task_api_key_status(),
             "taskRouteConfiguredCount": 0,
             "taskRoutes": {},
             "logPath": settings.log_path,

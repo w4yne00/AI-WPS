@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from app.core.config import AppSettings, load_settings, save_provider_base_url, task_routes_to_dict
+from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
 from app.services.provider_client import (
     ProviderClient,
     build_document_proofread_payload,
@@ -61,6 +61,28 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_api_key_env, "ENTERPRISE_AI_API_KEY")
         self.assertEqual(settings.provider_chat_path, "/chat-messages")
         self.assertEqual(settings.provider_mode, "blocking")
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_load_settings_reads_task_api_key_refs(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "taskApiKeyRefs": {
+                "word.smart_format": "format_key"
+              }
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.task_api_key_refs["word.smart_format"], "format_key")
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -445,22 +467,22 @@ class EnterpriseProviderTests(unittest.TestCase):
                 route_dir.rmdir()
             tmp_dir.rmdir()
 
-    def test_task_route_api_key_is_legacy_only_and_task_config_uses_unified_key(self) -> None:
+    def test_task_api_key_overrides_unified_key_for_matching_task(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
         tmp_dir.mkdir(exist_ok=True)
         default_key = tmp_dir / "provider_api_key"
         default_key.write_text("default-secret", encoding="utf-8")
-        route = type("Route", (), {"api_key_ref": "smart_write"})()
         try:
             settings = load_settings()
             settings.provider_base_url = "https://aibot.example/v1"
+            settings.task_api_key_refs = {"word.smart_format": "smart_format"}
             client = ProviderClient(settings)
-            self.assertEqual(client.get_task_api_key(route, tmp_dir), "default-secret")
-            self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
-            save_local_api_key("smart-secret", tmp_dir / "provider_api_key")
-            self.assertEqual(client.get_task_api_key(route, tmp_dir), "smart-secret")
+            self.assertEqual(client.get_api_key_for_task("word.smart_format", tmp_dir), "default-secret")
+            save_route_api_key("smart_format", "format-secret", tmp_dir)
+            self.assertEqual(client.get_api_key_for_task("word.smart_format", tmp_dir), "format-secret")
+            self.assertEqual(client.get_api_key_for_task("word.smart_write", tmp_dir), "default-secret")
         finally:
-            clear_route_api_key("smart_write", tmp_dir)
+            clear_route_api_key("smart_format", tmp_dir)
             if default_key.exists():
                 default_key.unlink()
             route_dir = tmp_dir / "provider_api_keys"
@@ -481,17 +503,18 @@ class EnterpriseProviderTests(unittest.TestCase):
             client = ProviderClient(settings)
 
             self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
-            save_route_api_key("smart_write", "smart-secret", tmp_dir)
+            save_route_api_key("word_smart_write", "smart-secret", tmp_dir)
             self.assertTrue(client.is_task_configured("word.smart_write", tmp_dir))
+            self.assertEqual(client.get_auth_source_for_task("word.smart_write", tmp_dir), "task-file")
         finally:
             if previous is None:
                 os.environ.pop("ENTERPRISE_AI_API_KEY", None)
             else:
                 os.environ["ENTERPRISE_AI_API_KEY"] = previous
-            clear_route_api_key("smart_write", tmp_dir)
+            clear_route_api_key("word_smart_write", tmp_dir)
             if default_key.exists():
                 default_key.unlink()
-            route_key = get_route_api_key_path("smart_write", tmp_dir)
+            route_key = get_route_api_key_path("word_smart_write", tmp_dir)
             if route_key.exists():
                 route_key.unlink()
             route_dir = tmp_dir / "provider_api_keys"
@@ -514,11 +537,12 @@ class EnterpriseProviderTests(unittest.TestCase):
             self.assertEqual(diagnostics["payloadStyle"], "chat")
             self.assertTrue(diagnostics["configured"])
             self.assertEqual(diagnostics["authSource"], "file")
+            self.assertIn("word.smart_format", diagnostics["taskApiKeys"])
             self.assertEqual(diagnostics["routes"], {})
             self.assertNotIn("smart-secret", str(diagnostics))
         finally:
             clear_local_api_key(tmp_dir / "provider_api_key")
-            clear_route_api_key("smart_write", tmp_dir)
+            clear_route_api_key("word_smart_write", tmp_dir)
             route_dir = tmp_dir / "provider_api_keys"
             if route_dir.exists():
                 route_dir.rmdir()
@@ -645,6 +669,28 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertEqual(settings.provider_base_url, "https://new.example/v1")
         self.assertEqual(settings.service_port, 19100)
+
+        config_file.unlink()
+        tmp_dir.rmdir()
+
+    def test_save_task_api_key_ref_updates_config_file(self) -> None:
+        tmp_dir = Path("tmp-test-config")
+        tmp_dir.mkdir(exist_ok=True)
+        config_file = tmp_dir / "adapter.json"
+        config_file.write_text(
+            """
+            {
+              "providerBaseUrl": "https://old.example/v1"
+            }
+            """,
+            encoding="utf-8",
+        )
+
+        save_task_api_key_ref("word.smart_format", "format_key", config_file)
+        settings = load_settings(config_file)
+
+        self.assertEqual(settings.task_api_key_refs["word.smart_format"], "format_key")
+        self.assertEqual(settings.provider_base_url, "https://old.example/v1")
 
         config_file.unlink()
         tmp_dir.rmdir()

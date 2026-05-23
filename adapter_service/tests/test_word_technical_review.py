@@ -1,12 +1,19 @@
-from fastapi.testclient import TestClient
+import importlib.util
+import unittest
 
-from app.main import app
 from app.services.provider_client import (
     build_technical_review_prompt,
     parse_technical_review_answer,
 )
 
+HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.util.find_spec("pydantic") is not None
 
+if HAS_API_DEPS:
+    from fastapi.testclient import TestClient
+    from app.main import app
+
+
+@unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 def test_word_technical_review_returns_structured_issues() -> None:
     client = TestClient(app)
     payload = {

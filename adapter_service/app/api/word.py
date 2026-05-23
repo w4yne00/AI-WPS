@@ -47,7 +47,7 @@ def proofread_word(request: WordDocumentRequest) -> dict:
 @router.post("/word/format-preview")
 def preview_format_word(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-format-preview")
-    preview = formatter.preview(request)
+    preview = formatter.preview(request, trace_id=trace_id)
     payload = FormatPreviewResponseData(
         changes=preview["changes"],
         summary=FormatPreviewSummary(**preview["summary"]),

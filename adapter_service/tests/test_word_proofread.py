@@ -1,8 +1,14 @@
-from fastapi.testclient import TestClient
+import importlib.util
+import unittest
 
-from app.main import app
+HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.util.find_spec("pydantic") is not None
+
+if HAS_API_DEPS:
+    from fastapi.testclient import TestClient
+    from app.main import app
 
 
+@unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 def test_word_proofread_returns_detected_issues() -> None:
     client = TestClient(app)
     payload = {

@@ -366,7 +366,7 @@ def record_provider_debug(event: Dict) -> None:
             "status": error_info.get("status", ""),
             "message": _preview_text(str(error_info.get("message", "")), 160),
         }
-    for field in ("provider", "skipReason", "providerBaseUrlConfigured", "authSource"):
+    for field in ("provider", "skipReason", "providerBaseUrlConfigured", "authSource", "taskAuthSource"):
         if field in event:
             debug[field] = event[field]
     _LAST_PROVIDER_DEBUG.clear()
@@ -640,6 +640,10 @@ def load_route_api_key(api_key_ref: str, base_path: Optional[Path] = None) -> st
     return target.read_text(encoding="utf-8").strip()
 
 
+def normalize_task_api_key_ref(task_type: str) -> str:
+    return "".join(ch if ch.isalnum() else "_" for ch in (task_type or "default")).strip("_") or "default"
+
+
 class ProviderClient:
     def __init__(self, settings: Optional[AppSettings] = None) -> None:
         self.settings = settings or load_settings()
@@ -679,7 +683,8 @@ class ProviderClient:
         return bool(self.settings.provider_base_url.strip() and self.get_api_key("default", key_base_path))
 
     def is_task_configured(self, task_type: str, key_base_path: Optional[Path] = None) -> bool:
-        return self.is_configured(key_base_path)
+        self.refresh_settings()
+        return bool(self.settings.provider_base_url.strip() and self.get_api_key_for_task(task_type, key_base_path))
 
     def get_auth_source(self, key_base_path: Optional[Path] = None) -> str:
         if os.getenv(self.settings.provider_api_key_env):
@@ -695,6 +700,16 @@ class ProviderClient:
             return "none"
         return self.get_auth_source()
 
+    def get_task_api_key_ref(self, task_type: str) -> str:
+        refs = self.settings.task_api_key_refs or {}
+        return refs.get(task_type) or normalize_task_api_key_ref(task_type)
+
+    def get_auth_source_for_task(self, task_type: str, key_base_path: Optional[Path] = None) -> str:
+        api_key_ref = self.get_task_api_key_ref(task_type)
+        if load_route_api_key(api_key_ref, key_base_path):
+            return "task-file"
+        return self.get_auth_source(key_base_path)
+
     def get_api_key(self, api_key_ref: str = "default", key_base_path: Optional[Path] = None) -> str:
         route_key = load_route_api_key(api_key_ref, key_base_path)
         if route_key:
@@ -704,7 +719,34 @@ class ProviderClient:
         )
 
     def get_task_api_key(self, route: TaskRoute, key_base_path: Optional[Path] = None) -> str:
+        return self.get_api_key_for_task(route.task_id, key_base_path)
+
+    def get_api_key_for_task(self, task_type: str, key_base_path: Optional[Path] = None) -> str:
+        api_key_ref = self.get_task_api_key_ref(task_type)
+        task_key = load_route_api_key(api_key_ref, key_base_path)
+        if task_key:
+            return task_key
         return self.get_api_key("default", key_base_path)
+
+    def build_task_api_key_status(self, key_base_path: Optional[Path] = None) -> Dict:
+        tasks = [
+            ("word.smart_write", "智能编写"),
+            ("word.smart_format", "智能排版"),
+            ("word.proofread", "格式校对"),
+            ("word.technical_review", "技术文档审查"),
+        ]
+        status = {}
+        for task_type, label in tasks:
+            api_key_ref = self.get_task_api_key_ref(task_type)
+            task_key_configured = bool(load_route_api_key(api_key_ref, key_base_path))
+            status[task_type] = {
+                "label": label,
+                "apiKeyRef": api_key_ref,
+                "taskKeyConfigured": task_key_configured,
+                "configured": bool(self.settings.provider_base_url.strip() and self.get_api_key_for_task(task_type, key_base_path)),
+                "authSource": "task-file" if task_key_configured else self.get_auth_source(key_base_path),
+            }
+        return status
 
     def build_route_url(self, route: TaskRoute) -> str:
         return "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), route.path or self.settings.provider_chat_path)
@@ -716,7 +758,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.11.8-alpha",
+            "version": "0.12.0-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -725,6 +767,7 @@ class ProviderClient:
             "responseMode": self.settings.provider_mode,
             "configured": self.is_configured(key_base_path),
             "authSource": self.get_auth_source(key_base_path),
+            "taskApiKeys": self.build_task_api_key_status(key_base_path),
             "taskRouteCount": 0,
             "taskRouteConfiguredCount": 0,
             "routes": {},
@@ -742,7 +785,7 @@ class ProviderClient:
             trace_id,
             task_type,
             url,
-            self.get_auth_source(),
+            self.get_auth_source_for_task(task_type),
             len(query or ""),
             sorted((input_data or {}).keys()),
         )
@@ -762,7 +805,7 @@ class ProviderClient:
             data=payload,
             method="POST",
             headers={
-                "Authorization": "Bearer {0}".format(self.get_api_key()),
+                "Authorization": "Bearer {0}".format(self.get_api_key_for_task(task_type)),
                 "Content-Type": "application/json",
                 "X-Trace-Id": trace_id,
             },
@@ -817,6 +860,7 @@ class ProviderClient:
                 "skipReason": "provider_not_configured",
                 "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
                 "authSource": self.get_auth_source(),
+                "taskAuthSource": self.get_auth_source_for_task(task_type),
                 "request": {"body": build_provider_request_payload(self.settings, {}, query)},
             }
         )

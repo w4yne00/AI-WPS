@@ -24,6 +24,7 @@ cp -R "$ROOT_DIR/templates" "$TMP_DIR/packages/adapter-start-kit/"
 mkdir -p "$TMP_DIR/docs/operations"
 cp "$ROOT_DIR/docs/operations/dify-task-routes-path-apikeyref.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-single-workflow-task-routing.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/dify-smart-format-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/phase1-v0.9.1-deployment.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/AI-WPS-Dify多任务工作流节点配置手册-v0.10.0.docx" "$TMP_DIR/docs/operations/"
 

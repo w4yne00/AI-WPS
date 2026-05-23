@@ -36,6 +36,7 @@ class AppSettings:
     template_root: str = "./templates"
     timeout_seconds: int = 30
     task_routes: Dict[str, TaskRoute] = field(default_factory=dict)
+    task_api_key_refs: Dict[str, str] = field(default_factory=dict)
 
 
 def load_config_payload(config_path: Optional[Path] = None) -> dict:
@@ -110,6 +111,16 @@ def task_routes_to_dict(settings: AppSettings) -> dict:
     }
 
 
+def _parse_task_api_key_refs(payload: dict) -> Dict[str, str]:
+    refs = {}
+    for task_type, api_key_ref in payload.get("taskApiKeyRefs", {}).items():
+        task = str(task_type).strip()
+        ref = str(api_key_ref).strip()
+        if task and ref:
+            refs[task] = ref
+    return refs
+
+
 def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     path = config_path or DEFAULT_CONFIG_PATH
     if not path.exists():
@@ -120,6 +131,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     task_routes = _parse_task_routes(payload)
+    task_api_key_refs = _parse_task_api_key_refs(payload)
 
     return AppSettings(
         service_port=payload.get("servicePort", 18100),
@@ -136,4 +148,23 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         template_root=payload.get("templateRoot", "./templates"),
         timeout_seconds=payload.get("timeoutSeconds", 30),
         task_routes=task_routes,
+        task_api_key_refs=task_api_key_refs,
     )
+
+
+def save_task_api_key_ref(
+    task_type: str,
+    api_key_ref: str,
+    config_path: Optional[Path] = None,
+) -> None:
+    task = task_type.strip()
+    ref = api_key_ref.strip()
+    if not task or not ref:
+        raise ValueError("Task type and API key ref are required")
+    payload = load_config_payload(config_path)
+    refs = payload.get("taskApiKeyRefs", {})
+    if not isinstance(refs, dict):
+        refs = {}
+    refs[task] = ref
+    payload["taskApiKeyRefs"] = refs
+    save_config_payload(payload, config_path)

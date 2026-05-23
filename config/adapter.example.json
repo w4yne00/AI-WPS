@@ -9,5 +9,11 @@
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
   "timeoutSeconds": 30,
+  "taskApiKeyRefs": {
+    "word.smart_write": "word_smart_write",
+    "word.smart_format": "word_smart_format",
+    "word.proofread": "word_proofread",
+    "word.technical_review": "word_technical_review"
+  },
   "taskRoutes": {}
 }

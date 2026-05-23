@@ -76,6 +76,9 @@ class FormatChange(BaseModel):
     current_style: str = Field(alias="currentStyle")
     target_style: str = Field(alias="targetStyle")
     reason: str
+    target_properties: Dict[str, Any] = Field(default_factory=dict, alias="targetProperties")
+    role: Optional[str] = None
+    confidence: Optional[float] = None
 
 
 class RewriteResult(BaseModel):
@@ -112,6 +115,8 @@ class ProofreadResponseData(BaseModel):
 class FormatPreviewSummary(BaseModel):
     change_count: int = Field(alias="changeCount")
     template_id: str = Field(alias="templateId")
+    provider: str = "local"
+    page_setup_change_count: int = Field(default=0, alias="pageSetupChangeCount")
 
 
 class FormatPreviewResponseData(BaseModel):

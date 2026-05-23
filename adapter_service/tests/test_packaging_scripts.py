@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.11.8-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -54,15 +54,16 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-file-format-requirements", js)
 
-    def test_taskpane_settings_exposes_unified_key_without_task_routes_or_probe(self) -> None:
+    def test_taskpane_settings_exposes_unified_and_task_api_keys_without_probe(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
-        self.assertNotIn("task-routes-list", html)
         self.assertNotIn("renderTaskRoutes", js)
-        self.assertNotIn("/provider/task-api-key", js)
+        self.assertIn("task-api-key-list", html)
+        self.assertIn("/provider/task-api-key", js)
+        self.assertIn("word.smart_format", js)
         self.assertIn('id="provider-auth-line"', html)
         self.assertIn("setProviderAuthLine", js)
         self.assertIn("providerAuthSource", js)
