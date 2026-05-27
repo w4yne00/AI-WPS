@@ -19,6 +19,25 @@ def parse_word_request(payload):
     return WordDocumentRequest.parse_obj(payload)
 
 
+class RecordingSmartFormatProvider:
+    def __init__(self) -> None:
+        self.queries = []
+
+    def is_task_configured(self, task_type: str) -> bool:
+        return task_type == "word.smart_format"
+
+    def get_auth_source_for_task(self, task_type: str) -> str:
+        return "task-file"
+
+    def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
+        self.queries.append(query)
+        if '"paragraphIndex": 121' in query:
+            return {
+                "answer": '{"paragraphs":[{"paragraphIndex":121,"role":"caption","confidence":0.99}]}'
+            }
+        return {"answer": '{"paragraphs":[]}'}
+
+
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for formatter tests")
 class WordFormatterUnitTests(unittest.TestCase):
     def test_formatter_returns_template_properties_for_technical_roles(self) -> None:
@@ -82,6 +101,58 @@ class WordFormatterUnitTests(unittest.TestCase):
         caption = next(change for change in data["changes"] if change["paragraphIndex"] == 3)
         self.assertEqual(caption["role"], "caption")
         self.assertEqual(caption["targetProperties"]["alignment"], "center")
+
+    def test_formatter_classifies_all_paragraphs_in_long_document(self) -> None:
+        paragraphs = [
+            {
+                "index": index,
+                "text": "正文段落 {0}".format(index),
+                "styleName": "Body",
+                "fontName": "宋体",
+                "fontSize": 12,
+                "alignment": "justify",
+                "outlineLevel": 0,
+                "lineSpacing": 1.25,
+                "firstLineIndent": 640,
+            }
+            for index in range(1, 122)
+        ]
+        request = parse_word_request(
+            {
+                "documentId": "long-document.docx",
+                "scene": "word",
+                "selectionMode": "document",
+                "content": {
+                    "plainText": "\n".join(item["text"] for item in paragraphs),
+                    "paragraphs": paragraphs,
+                    "headings": [],
+                    "documentStructure": {
+                        "page_setup": {
+                            "marginTop": 1440,
+                            "marginBottom": 1440,
+                            "marginLeft": 1800,
+                            "marginRight": 1800,
+                        }
+                    },
+                },
+                "options": {
+                    "templateId": "technical-file-format-requirements",
+                    "trackChanges": True,
+                },
+            }
+        )
+        provider = RecordingSmartFormatProvider()
+
+        data = WordFormatter(provider_client=provider).preview(request, trace_id="trace-format-long")
+
+        self.assertEqual(len(provider.queries), 2)
+        tail_change = next(change for change in data["changes"] if change["paragraphIndex"] == 121)
+        self.assertEqual(tail_change["role"], "caption")
+        self.assertEqual(tail_change["targetStyle"], "caption")
+        self.assertEqual(data["summary"]["paragraphCount"], 121)
+        self.assertEqual(data["summary"]["aiClassifiedParagraphCount"], 1)
+        self.assertEqual(data["summary"]["localFallbackParagraphCount"], 120)
+        self.assertEqual(data["summary"]["aiBatchCount"], 2)
 
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")

@@ -1,6 +1,6 @@
 import json
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import FormatChange, Paragraph, WordDocumentRequest
@@ -30,6 +30,8 @@ ROLE_TEXT = {
     "body": "正文",
 }
 
+AI_ROLE_BATCH_SIZE = 120
+
 
 class WordFormatter:
     def __init__(
@@ -43,7 +45,8 @@ class WordFormatter:
     def preview(self, request: WordDocumentRequest, trace_id: str = "") -> Dict:
         requested_template = request.options.template_id or "general-office"
         template = self._resolve_template(requested_template)
-        ai_roles = self._classify_roles_with_ai(request, template, trace_id) if trace_id else {}
+        paragraphs = body_paragraphs(request)
+        ai_roles, ai_batch_count = self._classify_roles_with_ai(request, template, trace_id) if trace_id else ({}, 0)
         provider = "local"
         if ai_roles:
             provider = "enterprise-dify-chat/{0}".format(self.provider_client.get_auth_source_for_task("word.smart_format"))
@@ -56,6 +59,10 @@ class WordFormatter:
                 "templateId": template["id"],
                 "provider": provider,
                 "pageSetupChangeCount": page_change_count,
+                "paragraphCount": len(paragraphs),
+                "aiClassifiedParagraphCount": len(ai_roles),
+                "localFallbackParagraphCount": max(len(paragraphs) - len(ai_roles), 0),
+                "aiBatchCount": ai_batch_count,
             },
         }
 
@@ -139,44 +146,63 @@ class WordFormatter:
             confidence=1.0,
         )
 
-    def _classify_roles_with_ai(self, request: WordDocumentRequest, template: Dict, trace_id: str) -> Dict[int, Dict]:
+    def _classify_roles_with_ai(
+        self,
+        request: WordDocumentRequest,
+        template: Dict,
+        trace_id: str,
+    ) -> Tuple[Dict[int, Dict], int]:
         task_type = "word.smart_format"
         if not self.provider_client.is_task_configured(task_type):
-            return {}
-        prompt = self._build_role_prompt(request, template)
-        try:
-            body = self.provider_client.post_task(task_type, trace_id, {}, prompt)
-            answer = extract_answer(body)
-        except AdapterError:
-            return {}
-        payload = self._extract_json(answer)
-        if not isinstance(payload, dict):
-            return {}
-        items = payload.get("paragraphs", [])
-        if not isinstance(items, list):
-            return {}
-        roles: Dict[int, Dict] = {}
-        valid_roles = set((template.get("roleRules") or {}).keys()) | {"body"}
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            try:
-                index = int(item.get("paragraphIndex", item.get("paragraph_index")))
-            except (TypeError, ValueError):
-                continue
-            role = str(item.get("role", "")).strip()
-            if role not in valid_roles:
-                continue
-            confidence = item.get("confidence")
-            try:
-                confidence = float(confidence)
-            except (TypeError, ValueError):
-                confidence = 0.75
-            roles[index] = {"role": role, "confidence": max(0.0, min(1.0, confidence))}
-        return roles
+            return {}, 0
 
-    def _build_role_prompt(self, request: WordDocumentRequest, template: Dict) -> str:
-        paragraphs = body_paragraphs(request)[:120]
+        roles: Dict[int, Dict] = {}
+        batch_count = 0
+        valid_roles = set((template.get("roleRules") or {}).keys()) | {"body"}
+        paragraphs = body_paragraphs(request)
+        for start in range(0, len(paragraphs), AI_ROLE_BATCH_SIZE):
+            batch = paragraphs[start:start + AI_ROLE_BATCH_SIZE]
+            batch_indexes = {paragraph.index for paragraph in batch}
+            prompt = self._build_role_prompt(request, template, batch)
+            batch_count += 1
+            try:
+                body = self.provider_client.post_task(task_type, trace_id, {}, prompt)
+                answer = extract_answer(body)
+            except AdapterError:
+                continue
+            payload = self._extract_json(answer)
+            if not isinstance(payload, dict):
+                continue
+            items = payload.get("paragraphs", [])
+            if not isinstance(items, list):
+                continue
+            for item in items:
+                if not isinstance(item, dict):
+                    continue
+                try:
+                    index = int(item.get("paragraphIndex", item.get("paragraph_index")))
+                except (TypeError, ValueError):
+                    continue
+                if index not in batch_indexes:
+                    continue
+                role = str(item.get("role", "")).strip()
+                if role not in valid_roles:
+                    continue
+                confidence = item.get("confidence")
+                try:
+                    confidence = float(confidence)
+                except (TypeError, ValueError):
+                    confidence = 0.75
+                roles[index] = {"role": role, "confidence": max(0.0, min(1.0, confidence))}
+        return roles, batch_count
+
+    def _build_role_prompt(
+        self,
+        request: WordDocumentRequest,
+        template: Dict,
+        paragraphs: Optional[List[Paragraph]] = None,
+    ) -> str:
+        paragraphs = paragraphs if paragraphs is not None else body_paragraphs(request)
         role_names = sorted((template.get("roleRules") or {}).keys())
         payload = {
             "templateId": template.get("id"),

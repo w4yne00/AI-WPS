@@ -563,7 +563,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 "response": {
                     "status": 200,
                     "body": {
-                        "answer": "模型处理后的文本。",
+                        "answer": "# 标题\n\n1. 第一项\n2. 第二项\n\n**重点内容**",
                         "conversation_id": "conv-1",
                     },
                 },
@@ -580,7 +580,18 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("queryPreview", debug["request"])
         self.assertEqual(debug["response"]["status"], 200)
         self.assertEqual(debug["response"]["bodyKeys"], ["answer", "conversation_id"])
-        self.assertEqual(debug["response"]["answerLength"], len("模型处理后的文本。"))
+        self.assertEqual(debug["response"]["answerLength"], len("# 标题\n\n1. 第一项\n2. 第二项\n\n**重点内容**"))
+        self.assertEqual(
+            debug["response"]["answerFormat"],
+            {
+                "containsMarkdown": True,
+                "containsHeading": True,
+                "containsOrderedList": True,
+                "containsUnorderedList": False,
+                "containsBold": True,
+                "containsParagraphBreak": True,
+            },
+        )
         self.assertNotIn("Authorization", str(debug))
         self.assertNotIn(full_prompt, str(debug))
 

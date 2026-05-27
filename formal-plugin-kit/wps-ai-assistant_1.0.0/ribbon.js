@@ -54,7 +54,9 @@ function OnAction(control) {
     var mode = resolveMode(control.Id || control.id);
     var url = location.href.replace(/[^\/]*$/, "");
     closeCurrentTaskPane();
-    var taskPane = window.Application.CreateTaskPane(url + "taskpane.html?mode=" + encodeURIComponent(mode));
+    var taskPane = window.Application.CreateTaskPane(
+      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.12.2-alpha"
+    );
     window.Application.WpsAiAssistantTaskPane = taskPane;
     taskPane.Visible = true;
   } catch (error) {

@@ -75,12 +75,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.12.0-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.12.0-20260523` |
+| 当前版本 | `v0.12.2-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.12.2-20260527` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260523.tar.gz` |
+| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260527.tar.gz` |
 
 版本规则格式：
 
@@ -107,9 +107,10 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | Word 格式审校 | 检查标题层级、模板字体/字号/行距、重复空格、中文标点前空格和结构化文档质量问题 |
 | 技术文档审查 | 面向选中文本或全文，按可编辑提示词检查功能描述准确性、术语专业性、设计合理性和要求明确性 |
 | AI 文档质量审校 | 将 `documentStructure` 和本地规则发现传给企业 AI provider，分类返回错别字、语病、表述、逻辑和章节命名一致性问题；未配置密钥时安全跳过 |
-| Word 智能排版 | 以标准 Word 模板为规则源，结合本地规则和可选大模型段落角色识别，生成页面、标题、正文、图表题、注、列项、附录和表正文的排版预览，确认后再应用 |
+| Word 智能排版 | 以标准 Word 模板为规则源，完整文档按批次进行可选大模型段落角色识别，生成页面、标题、正文、图表题、注、列项、附录和表正文的排版预览，确认后再应用 |
 | Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 同时通过顶层 `query` 和 `inputs.query` 发送完整提示词 |
 | Markdown 结果预览 | 任务窗口结果区按 Markdown 渲染分段、换行、标题、列表、表格、引用、代码块和链接；复制与写回仍保留模型原文 |
+| 雾蓝银白界面 | 任务窗口及 Ribbon 图标统一采用明亮的蓝灰白苹果式简约配色，不改变原有任务流程和接口行为 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
 | 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
 | 设置与联调状态 | 设置页保留单一全局 API URL，支持统一 Dify Chat API Key 和按任务独立 API Key；未配置任务密钥时回退统一密钥 |
@@ -121,6 +122,8 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.12.2-alpha` | 修复长文档智能排版仅将前 120 个非空段落送入 AI 角色识别的问题：adapter 按批次覆盖全文并显示覆盖统计；任务窗口及 Ribbon 图标同步更新为明亮的雾蓝银白配色 |
+| `v0.12.1-alpha` | 修复现场任务窗格可能继续加载旧纯文本资源的问题：Ribbon 打开任务窗格和页面静态资源均附加构建版本参数，设置诊断区显示前端版本；`/provider/debug-last` 新增脱敏 Markdown 特征摘要，用于区分 Dify 返回内容和前端渲染问题 |
 | `v0.12.0-alpha` | 智能排版按上传的《技术文件格式及书写要求》模板重建规则：输出带 `targetProperties` 的排版预览，支持页面设置、标题、正文、图表题、注、列项、附录和表正文；设置页新增任务级 API Key，智能排版可使用独立 Dify key，未配置时回退统一 key |
 | `v0.11.8-alpha` | 增强任务窗口 Markdown 成品预览：保留正文分段和单换行，补充分隔线与表格渲染，结果区更接近 Dify 的排版层次 |
 | `v0.11.7-alpha` | 修复 uvicorn Word 路由缓存启动时 provider settings 的问题；设置页保存 API URL 后，智能编写会在配置判定和转发前重新读取最新配置，不再出现 health 已配置但任务仍走 mock |
@@ -278,7 +281,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 
 任务级 API Key 保存到 `run/provider_api_keys/<ref>`。例如智能排版可单独配置 `word.smart_format` 对应 Dify App 的 key；未配置任务级 key 时自动回退统一 provider API Key。未配置任何可用 key 时，`/word/smart-write` 会走本地 mock 响应，智能排版仍可使用本地模板规则生成预览。旧 `/word/rewrite` 端点保留作回滚兼容，插件界面不再调用。
 
-智能排版对应的 Dify 工作流配置见 [AI-WPS 智能排版 Dify 工作流配置手册](./docs/operations/dify-smart-format-workflow.md)。该工作流只负责段落角色识别，真实 Word 格式由本地模板规则执行。
+智能编写对应的 Dify SYSTEM 提示词、Markdown 输出和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能排版对应的配置见 [AI-WPS 智能排版 Dify 工作流配置手册](./docs/operations/dify-smart-format-workflow.md)；该工作流只负责段落角色识别，真实 Word 格式由本地模板规则执行。
 
 ## API 一览
 

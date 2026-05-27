@@ -1,5 +1,6 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
+  var FRONTEND_BUILD_VERSION = "0.12.2-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
   var TECHNICAL_REVIEW_PROMPTS = {
@@ -769,10 +770,23 @@
   function renderFormatChanges(summary, changes) {
     var lines = [
       "模板：" + summary.templateId,
-      "变更数：" + summary.changeCount,
-      "识别来源：" + (summary.provider || "local"),
-      ""
+      "待调整项：" + summary.changeCount
     ];
+    var hasCoverageStats = typeof summary.paragraphCount !== "undefined";
+
+    if (hasCoverageStats) {
+      lines.push("全文扫描段落：" + summary.paragraphCount);
+      lines.push(
+        "AI 识别段落：" + (summary.aiClassifiedParagraphCount || 0) +
+        " | 本地兜底段落：" + (summary.localFallbackParagraphCount || 0)
+      );
+    }
+    lines.push("识别来源：" + (summary.provider || "local"));
+    lines.push("");
+    if (hasCoverageStats) {
+      lines.push("以下仅显示需要调整的格式项，正文内容不会在预览中改写。");
+      lines.push("");
+    }
 
     if (!changes || !changes.length) {
       lines.push("当前文档暂无可预览的排版变更。");
@@ -1240,6 +1254,7 @@
   }
 
   bindEvents();
+  byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION;
   byId("technical-review-prompt").value = state.technicalReviewPrompt;
   renderFallbackTemplateOptions();
   switchMode(getInitialMode());

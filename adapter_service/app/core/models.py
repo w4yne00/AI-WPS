@@ -117,6 +117,10 @@ class FormatPreviewSummary(BaseModel):
     template_id: str = Field(alias="templateId")
     provider: str = "local"
     page_setup_change_count: int = Field(default=0, alias="pageSetupChangeCount")
+    paragraph_count: int = Field(default=0, alias="paragraphCount")
+    ai_classified_paragraph_count: int = Field(default=0, alias="aiClassifiedParagraphCount")
+    local_fallback_paragraph_count: int = Field(default=0, alias="localFallbackParagraphCount")
+    ai_batch_count: int = Field(default=0, alias="aiBatchCount")
 
 
 class FormatPreviewResponseData(BaseModel):

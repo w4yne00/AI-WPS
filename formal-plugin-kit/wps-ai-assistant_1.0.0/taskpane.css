@@ -1,17 +1,17 @@
 :root {
-  --bg: #f5f5f7;
+  --bg: #f4f7fc;
   --surface: rgba(255, 255, 255, 0.78);
   --surface-strong: rgba(255, 255, 255, 0.94);
-  --surface-soft: rgba(242, 242, 247, 0.72);
-  --hairline: rgba(60, 60, 67, 0.13);
-  --hairline-strong: rgba(60, 60, 67, 0.2);
-  --text: #1d1d1f;
-  --muted: #6e6e73;
-  --accent: #174f43;
-  --accent-press: #0f3b32;
-  --secondary: #f2f2f7;
+  --surface-soft: rgba(238, 244, 251, 0.78);
+  --hairline: rgba(64, 86, 111, 0.13);
+  --hairline-strong: rgba(64, 86, 111, 0.2);
+  --text: #182334;
+  --muted: #647286;
+  --accent: #386ea8;
+  --accent-press: #2c5a8b;
+  --secondary: #eef3f8;
   --danger: #b42318;
-  --shadow: 0 12px 30px rgba(0, 0, 0, 0.07);
+  --shadow: 0 12px 30px rgba(37, 57, 82, 0.07);
   --shadow-soft: 0 1px 0 rgba(255, 255, 255, 0.88) inset;
 }
 
@@ -20,7 +20,7 @@ body {
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background:
     radial-gradient(circle at 88% 0%, rgba(255, 255, 255, 0.95), transparent 26%),
-    radial-gradient(circle at 0% 18%, rgba(23, 79, 67, 0.08), transparent 28%),
+    radial-gradient(circle at 0% 18%, rgba(56, 110, 168, 0.08), transparent 28%),
     linear-gradient(180deg, #fafafa 0%, var(--bg) 100%);
   color: var(--text);
 }
@@ -222,8 +222,8 @@ input {
 select:focus,
 textarea:focus,
 input:focus {
-  border-color: rgba(23, 79, 67, 0.34);
-  box-shadow: 0 0 0 3px rgba(23, 79, 67, 0.08), var(--shadow-soft);
+  border-color: rgba(56, 110, 168, 0.34);
+  box-shadow: 0 0 0 3px rgba(56, 110, 168, 0.08), var(--shadow-soft);
 }
 
 textarea {
@@ -249,7 +249,7 @@ textarea {
   padding: 10px;
   border-radius: 16px;
   border: 1px solid var(--hairline);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(242, 242, 247, 0.78));
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.88), rgba(238, 244, 251, 0.78));
   box-shadow: var(--shadow-soft);
 }
 
@@ -294,13 +294,13 @@ textarea {
 button {
   border: 0;
   border-radius: 15px;
-  background: linear-gradient(180deg, #1e6a59 0%, var(--accent) 100%);
+  background: linear-gradient(180deg, #477eb8 0%, var(--accent) 100%);
   color: #fff;
   padding: 11px 12px;
   font-weight: 700;
   letter-spacing: 0.01em;
   cursor: pointer;
-  box-shadow: 0 10px 18px rgba(23, 79, 67, 0.18), var(--shadow-soft);
+  box-shadow: 0 10px 18px rgba(56, 110, 168, 0.18), var(--shadow-soft);
 }
 
 button.secondary-action {
@@ -457,10 +457,10 @@ button[disabled] {
 
 .markdown-output blockquote {
   padding: 8px 10px;
-  border-left: 3px solid rgba(23, 79, 67, 0.44);
+  border-left: 3px solid rgba(56, 110, 168, 0.44);
   border-radius: 8px;
-  background: rgba(23, 79, 67, 0.06);
-  color: #2f4f46;
+  background: rgba(56, 110, 168, 0.06);
+  color: #2f4660;
 }
 
 .markdown-output hr {
@@ -495,7 +495,7 @@ button[disabled] {
 
 .markdown-output th {
   font-weight: 760;
-  background: rgba(23, 79, 67, 0.08);
+  background: rgba(56, 110, 168, 0.08);
 }
 
 .markdown-output tbody tr:last-child td {

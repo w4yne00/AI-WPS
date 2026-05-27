@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.2-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -34,6 +34,11 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("/provider/debug-last", scripts["check_health.sh"])
         self.assertIn("provider=mock", scripts["show_logs.sh"])
         self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
+
+    def test_phase1_delivery_includes_smart_write_dify_manual(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
+
+        self.assertIn("dify-smart-write-workflow.md", script)
 
     def test_taskpane_technical_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
