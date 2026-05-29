@@ -12,22 +12,20 @@ if str(ROOT) not in sys.path:
 from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
 from app.services.provider_client import (
     ProviderClient,
-    build_document_proofread_payload,
+    build_document_review_prompt,
     build_provider_request_payload,
     build_route_request_payload,
     build_rewrite_prompt,
     build_smart_write_prompt,
-    build_typo_prompt,
     extract_answer,
     get_last_provider_debug,
-    get_default_technical_review_prompt,
+    get_default_document_review_prompt,
     get_route_api_key_path,
     save_local_api_key,
     save_route_api_key,
     clear_local_api_key,
     clear_route_api_key,
-    parse_document_proofread_issues,
-    parse_typo_issues,
+    parse_document_review_answer,
     record_provider_debug,
     reset_provider_debug,
 )
@@ -73,7 +71,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             """
             {
               "taskApiKeyRefs": {
-                "word.smart_format": "format_key"
+                "word.format_review": "format_key"
               }
             }
             """,
@@ -82,7 +80,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         settings = load_settings(config_file)
 
-        self.assertEqual(settings.task_api_key_refs["word.smart_format"], "format_key")
+        self.assertEqual(settings.task_api_key_refs["word.format_review"], "format_key")
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -97,12 +95,12 @@ class EnterpriseProviderTests(unittest.TestCase):
               "providerType": "enterprise-dify-workflow",
               "providerChatPath": "/workflows/run",
               "taskRoutes": {
-                "word.proofread": {
-                  "taskId": "word.proofread",
+                "word.document_review": {
+                  "taskId": "word.document_review",
                   "enabled": true
                 },
-                "word.technical_review": {
-                  "taskId": "word.technical_review",
+                "word.format_review": {
+                  "taskId": "word.format_review",
                   "enabled": false
                 }
               }
@@ -113,9 +111,9 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         settings = load_settings(config_file)
 
-        self.assertEqual(settings.task_routes["word.proofread"].task_id, "word.proofread")
-        self.assertTrue(settings.task_routes["word.proofread"].enabled)
-        self.assertFalse(settings.task_routes["word.technical_review"].enabled)
+        self.assertEqual(settings.task_routes["word.document_review"].task_id, "word.document_review")
+        self.assertTrue(settings.task_routes["word.document_review"].enabled)
+        self.assertFalse(settings.task_routes["word.format_review"].enabled)
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -130,10 +128,10 @@ class EnterpriseProviderTests(unittest.TestCase):
               "providerType": "enterprise-dify-workflow",
               "providerBaseUrl": "https://aibot.example/v1",
               "taskRoutes": {
-                "word.proofread": {
-                  "taskId": "word.proofread",
+                "word.document_review": {
+                  "taskId": "word.document_review",
                   "path": "/workflows/run",
-                  "apiKeyRef": "proofread",
+                  "apiKeyRef": "document_review",
                   "payloadStyle": "workflow",
                   "responseMode": "blocking",
                   "outputKey": "result",
@@ -146,10 +144,10 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         settings = load_settings(config_file)
-        route = settings.task_routes["word.proofread"]
+        route = settings.task_routes["word.document_review"]
 
         self.assertEqual(route.path, "/workflows/run")
-        self.assertEqual(route.api_key_ref, "proofread")
+        self.assertEqual(route.api_key_ref, "document_review")
         self.assertEqual(route.payload_style, "workflow")
         self.assertEqual(route.response_mode, "blocking")
         self.assertEqual(route.output_key, "result")
@@ -210,7 +208,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(route.api_key_ref, "custom_smart_write")
         self.assertEqual(route.payload_style, "chat")
         self.assertEqual(route.output_key, "answer")
-        self.assertNotIn("word.proofread", settings.task_routes)
+        self.assertNotIn("word.document_review", settings.task_routes)
 
         config_file.unlink()
         tmp_dir.rmdir()
@@ -226,14 +224,14 @@ class EnterpriseProviderTests(unittest.TestCase):
     def test_task_routes_to_dict_exposes_safe_summary(self) -> None:
         settings = load_settings()
         settings.task_routes = {
-            "word.proofread": type(
+            "word.document_review": type(
                 "Route",
                 (),
                 {
-                    "task_id": "word.proofread",
+                    "task_id": "word.document_review",
                     "enabled": True,
                     "path": "/workflows/run",
-                    "api_key_ref": "proofread",
+                    "api_key_ref": "document_review",
                     "payload_style": "workflow",
                     "response_mode": "blocking",
                     "output_key": "result",
@@ -243,12 +241,12 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         summary = task_routes_to_dict(settings)
 
-        self.assertEqual(summary["word.proofread"]["taskId"], "word.proofread")
-        self.assertTrue(summary["word.proofread"]["enabled"])
-        self.assertEqual(summary["word.proofread"]["path"], "/workflows/run")
-        self.assertEqual(summary["word.proofread"]["apiKeyRef"], "proofread")
-        self.assertEqual(summary["word.proofread"]["payloadStyle"], "workflow")
-        self.assertNotIn("apiKey", summary["word.proofread"])
+        self.assertEqual(summary["word.document_review"]["taskId"], "word.document_review")
+        self.assertTrue(summary["word.document_review"]["enabled"])
+        self.assertEqual(summary["word.document_review"]["path"], "/workflows/run")
+        self.assertEqual(summary["word.document_review"]["apiKeyRef"], "document_review")
+        self.assertEqual(summary["word.document_review"]["payloadStyle"], "workflow")
+        self.assertNotIn("apiKey", summary["word.document_review"])
 
     def test_build_route_request_payload_uses_unified_chat_query_shape(self) -> None:
         settings = load_settings()
@@ -258,7 +256,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             "Route",
             (),
             {
-                "task_id": "word.proofread",
+                "task_id": "word.document_review",
                 "payload_style": "workflow",
                 "response_mode": "streaming",
             },
@@ -267,7 +265,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         payload = build_route_request_payload(
             settings,
             route,
-            {"task_id": "word.proofread", "document_text": "正文"},
+            {"task_id": "word.document_review", "document_text": "正文"},
             "检查正文",
         )
 
@@ -446,12 +444,12 @@ class EnterpriseProviderTests(unittest.TestCase):
         previous = os.environ.get("ENTERPRISE_AI_API_KEY")
         os.environ["ENTERPRISE_AI_API_KEY"] = "env-secret"
         try:
-            save_route_api_key("proofread", "route-secret", tmp_dir)
+            save_route_api_key("document_review", "route-secret", tmp_dir)
             client = ProviderClient(load_settings())
             client.settings.provider_base_url = "https://aibot.example/v1"
-            self.assertEqual(client.get_api_key("proofread", tmp_dir), "route-secret")
-            clear_route_api_key("proofread", tmp_dir)
-            self.assertEqual(client.get_api_key("proofread", tmp_dir), "env-secret")
+            self.assertEqual(client.get_api_key("document_review", tmp_dir), "route-secret")
+            clear_route_api_key("document_review", tmp_dir)
+            self.assertEqual(client.get_api_key("document_review", tmp_dir), "env-secret")
         finally:
             if previous is None:
                 os.environ.pop("ENTERPRISE_AI_API_KEY", None)
@@ -459,7 +457,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 os.environ["ENTERPRISE_AI_API_KEY"] = previous
             if default_key.exists():
                 default_key.unlink()
-            route_key = tmp_dir / "provider_api_keys" / "proofread"
+            route_key = tmp_dir / "provider_api_keys" / "document_review"
             if route_key.exists():
                 route_key.unlink()
             route_dir = tmp_dir / "provider_api_keys"
@@ -475,14 +473,14 @@ class EnterpriseProviderTests(unittest.TestCase):
         try:
             settings = load_settings()
             settings.provider_base_url = "https://aibot.example/v1"
-            settings.task_api_key_refs = {"word.smart_format": "smart_format"}
+            settings.task_api_key_refs = {"word.format_review": "format_review"}
             client = ProviderClient(settings)
-            self.assertEqual(client.get_api_key_for_task("word.smart_format", tmp_dir), "default-secret")
-            save_route_api_key("smart_format", "format-secret", tmp_dir)
-            self.assertEqual(client.get_api_key_for_task("word.smart_format", tmp_dir), "format-secret")
+            self.assertEqual(client.get_api_key_for_task("word.format_review", tmp_dir), "default-secret")
+            save_route_api_key("format_review", "format-secret", tmp_dir)
+            self.assertEqual(client.get_api_key_for_task("word.format_review", tmp_dir), "format-secret")
             self.assertEqual(client.get_api_key_for_task("word.smart_write", tmp_dir), "default-secret")
         finally:
-            clear_route_api_key("smart_format", tmp_dir)
+            clear_route_api_key("format_review", tmp_dir)
             if default_key.exists():
                 default_key.unlink()
             route_dir = tmp_dir / "provider_api_keys"
@@ -537,7 +535,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             self.assertEqual(diagnostics["payloadStyle"], "chat")
             self.assertTrue(diagnostics["configured"])
             self.assertEqual(diagnostics["authSource"], "file")
-            self.assertIn("word.smart_format", diagnostics["taskApiKeys"])
+            self.assertIn("word.format_review", diagnostics["taskApiKeys"])
             self.assertEqual(diagnostics["routes"], {})
             self.assertNotIn("smart-secret", str(diagnostics))
         finally:
@@ -640,6 +638,28 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertGreater(debug["request"]["queryLength"], len("待改写原文"))
         self.assertNotIn("待改写原文", str(debug))
 
+    def test_record_skipped_debug_records_format_review_skip_reason(self) -> None:
+        settings = load_settings()
+        settings.provider_base_url = "https://aibot.example/v1"
+        client = ProviderClient(settings)
+        reset_provider_debug()
+
+        client.record_skipped_debug(
+            "word.format_review",
+            "trace-format-skip",
+            "格式审查未读取到正文段落，未调用 Dify。",
+            "no_paragraphs",
+            provider="local",
+        )
+        debug = get_last_provider_debug()
+
+        self.assertEqual(debug["traceId"], "trace-format-skip")
+        self.assertEqual(debug["taskType"], "word.format_review")
+        self.assertEqual(debug["provider"], "local")
+        self.assertEqual(debug["skipReason"], "no_paragraphs")
+        self.assertTrue(debug["providerBaseUrlConfigured"])
+        self.assertIn("request", debug)
+
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
         tmp_dir = Path("tmp-test-config")
         tmp_dir.mkdir(exist_ok=True)
@@ -697,10 +717,10 @@ class EnterpriseProviderTests(unittest.TestCase):
             encoding="utf-8",
         )
 
-        save_task_api_key_ref("word.smart_format", "format_key", config_file)
+        save_task_api_key_ref("word.format_review", "format_key", config_file)
         settings = load_settings(config_file)
 
-        self.assertEqual(settings.task_api_key_refs["word.smart_format"], "format_key")
+        self.assertEqual(settings.task_api_key_refs["word.format_review"], "format_key")
         self.assertEqual(settings.provider_base_url, "https://old.example/v1")
 
         config_file.unlink()
@@ -832,6 +852,34 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("不允许原样返回原文", prompt)
         self.assertIn("待处理原文：\n项目进展总体正常。", prompt)
 
+    def test_build_smart_write_prompt_uses_soetech_option_text(self) -> None:
+        prompt = build_smart_write_prompt(
+            text="项目已经完成初步建设。",
+            action="rewrite",
+            user_prompt="语言适合技术方案正文",
+            style="standard",
+            focus="acceptance",
+            length="expanded",
+        )
+
+        self.assertIn("国企技术方案常用的正式、准确、克制表达", prompt)
+        self.assertIn("交付物、验收标准、问题闭环、证据材料", prompt)
+        self.assertIn("不编造事实", prompt)
+        self.assertIn("语言适合技术方案正文", prompt)
+
+    def test_build_smart_write_prompt_preserves_legacy_option_aliases(self) -> None:
+        prompt = build_smart_write_prompt(
+            text="项目进展总体正常。",
+            action="rewrite",
+            style="formal",
+            focus="next_step",
+            length="default",
+        )
+
+        self.assertIn("国企技术方案常用的正式、准确、克制表达", prompt)
+        self.assertIn("解决措施、实施路径、责任分工、时间节点", prompt)
+        self.assertIn("保持与原文相近的篇幅", prompt)
+
     def test_extract_answer_reads_enterprise_chat_response(self) -> None:
         body = {
             "event": "message",
@@ -853,35 +901,49 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertEqual(extract_answer(body, output_key="result"), "{\"issues\":[]}")
 
-    def test_typo_prompt_and_parser_use_json_array(self) -> None:
-        prompt = build_typo_prompt("这是一个技术文挡。")
-
-        self.assertIn("只返回 JSON", prompt)
-        self.assertIn("这是一个技术文挡。", prompt)
-
-        issues = parse_typo_issues(
-            """
-            [
-              {"original": "文挡", "suggestion": "文档", "reason": "错别字"}
-            ]
-            """
-        )
-
-        self.assertEqual(
-            issues,
-            [{"original": "文挡", "suggestion": "文档", "reason": "错别字"}],
-        )
-
-    def test_default_technical_review_prompt_changes_by_document_type(self) -> None:
-        solution_prompt = get_default_technical_review_prompt("technical_solution")
-        acceptance_prompt = get_default_technical_review_prompt("contract_acceptance")
-        test_outline_prompt = get_default_technical_review_prompt("test_outline")
+    def test_default_document_review_prompt_changes_by_document_type(self) -> None:
+        solution_prompt = get_default_document_review_prompt("technical_solution")
+        acceptance_prompt = get_default_document_review_prompt("contract_acceptance")
+        test_outline_prompt = get_default_document_review_prompt("test_outline")
 
         self.assertIn("架构边界", solution_prompt)
         self.assertIn("验收证据", acceptance_prompt)
         self.assertIn("测试范围", test_outline_prompt)
         self.assertNotEqual(acceptance_prompt, solution_prompt)
         self.assertNotEqual(test_outline_prompt, solution_prompt)
+
+    def test_document_review_prompt_and_parser_use_markdown_json(self) -> None:
+        prompt = build_document_review_prompt(
+            "这是一个技术文挡。",
+            "technical_solution",
+            "重点检查错别字和表达逻辑。",
+        )
+        parsed = parse_document_review_answer(
+            """
+            ```json
+            {
+              "summary": "发现一项问题。",
+              "issues": [
+                {
+                  "category": "错别字",
+                  "severity": "高",
+                  "location": "第 1 段",
+                  "originalText": "文挡",
+                  "problem": "疑似错别字。",
+                  "suggestion": "改为“文档”。",
+                  "suggestedRewrite": "文档"
+                }
+              ]
+            }
+            ```
+            """
+        )
+
+        self.assertIn("重点检查错别字和表达逻辑。", prompt)
+        self.assertIn("typo、expression、logic、fluency、professional", prompt)
+        self.assertEqual(parsed["summary"], "发现一项问题。")
+        self.assertEqual(parsed["issues"][0]["category"], "typo")
+        self.assertEqual(parsed["issues"][0]["severity"], "high")
 
     @unittest.skipUnless(importlib.util.find_spec("pydantic"), "pydantic is required for model parsing")
     def test_document_structure_is_accepted_in_word_request(self) -> None:
@@ -928,37 +990,53 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(request.content.document_structure["doc_name"], "安全运行方案.docx")
         self.assertTrue(request.content.document_structure["capabilities"]["paragraph_style_extracted"])
 
-    def test_document_proofread_payload_sends_dify_user_inputs(self) -> None:
-        payload = build_document_proofread_payload(
-            document_text="一、总体要求\n正文内容",
-            document_structure={
-                "doc_name": "安全运行方案.docx",
-                "template_id": "technical-file-format-requirements",
-                "paragraphs": [{"index": 1, "text": "一、总体要求"}],
-            },
-            template_type="技术文件格式及书写要求",
-            template_version="v1",
-            trace_id="trace-proofread",
-            local_rule_findings=[
-                {
-                    "ruleId": "template_font",
-                    "category": "format",
-                    "paragraphIndex": 1,
-                    "message": "字体不符合模板。",
-                }
-            ],
-            task_id="word.proofread",
-        )
+    @unittest.skipUnless(importlib.util.find_spec("pydantic"), "pydantic is required for model parsing")
+    def test_word_request_coerces_host_object_shaped_values(self) -> None:
+        from app.core.models import WordDocumentRequest
 
-        input_data = payload["input_data"]
-        self.assertEqual(input_data["task_id"], "word.proofread")
-        self.assertEqual(input_data["taskType"], "word.proofread")
-        self.assertEqual(input_data["document_text"], "一、总体要求\n正文内容")
-        self.assertEqual(input_data["document_structure"]["doc_name"], "安全运行方案.docx")
-        self.assertEqual(input_data["template_type"], "技术文件格式及书写要求")
-        self.assertTrue(input_data["check_scope"]["check_expression"])
-        self.assertEqual(input_data["local_rule_findings"][0]["category"], "format")
-        self.assertIn("结构化 JSON", payload["query"])
+        payload = {
+            "scene": "word",
+            "selectionMode": "unexpected",
+            "content": {
+                "plainText": {"bad": "host-object"},
+                "paragraphs": [
+                    {
+                        "index": "1",
+                        "text": {"bad": "host-object"},
+                        "styleName": {"bad": "style-object"},
+                        "fontName": {"bad": "font-object"},
+                        "fontSize": {"bad": "size-object"},
+                        "outlineLevel": {"bad": "level-object"},
+                        "lineSpacing": {"bad": "spacing-object"},
+                        "bold": -1,
+                        "italic": "0",
+                        "underline": -4142,
+                    }
+                ],
+                "headings": {"bad": "not-list"},
+                "documentStructure": "not-dict",
+            },
+        }
+
+        if hasattr(WordDocumentRequest, "model_validate"):
+            request = WordDocumentRequest.model_validate(payload)
+        else:
+            request = WordDocumentRequest.parse_obj(payload)
+
+        self.assertEqual(request.document_id, "unnamed.docx")
+        self.assertEqual(request.selection_mode, "document")
+        self.assertEqual(request.content.plain_text, "")
+        self.assertEqual(len(request.content.paragraphs), 1)
+        paragraph = request.content.paragraphs[0]
+        self.assertEqual(paragraph.index, 1)
+        self.assertEqual(paragraph.text, "")
+        self.assertEqual(paragraph.style_name, "")
+        self.assertIsNone(paragraph.font_size)
+        self.assertTrue(paragraph.bold)
+        self.assertFalse(paragraph.italic)
+        self.assertEqual(paragraph.underline, -4142)
+        self.assertEqual(request.content.headings, [])
+        self.assertEqual(request.content.document_structure, {})
 
     def test_build_provider_request_payload_uses_unified_chat_sys_query_shape(self) -> None:
         settings = load_settings()
@@ -968,7 +1046,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         payload = build_provider_request_payload(
             settings=settings,
-            input_data={"task_id": "word.proofread", "taskType": "word.proofread"},
+            input_data={"task_id": "word.document_review", "taskType": "word.document_review"},
             query="请审校文档。",
         )
 
@@ -997,39 +1075,6 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(payload["conversation_id"], "")
         self.assertNotIn("input_data", payload)
         self.assertNotIn("mode", payload)
-
-    def test_parse_document_proofread_issues_supports_quality_categories(self) -> None:
-        issues = parse_document_proofread_issues(
-            """
-            {
-              "issues": [
-                {
-                  "category": "typo",
-                  "severity": "warning",
-                  "paragraphIndex": 2,
-                  "original": "文挡",
-                  "suggestion": "文档",
-                  "message": "疑似错别字",
-                  "reason": "应使用“文档”。",
-                  "confidence": 0.93
-                },
-                {
-                  "category": "heading_consistency",
-                  "severity": "info",
-                  "paragraphIndex": 5,
-                  "message": "章节命名不统一",
-                  "suggestion": "统一使用“安全能力设计”。"
-                }
-              ]
-            }
-            """
-        )
-
-        self.assertEqual(len(issues), 2)
-        self.assertEqual(issues[0]["category"], "typo")
-        self.assertEqual(issues[0]["original"], "文挡")
-        self.assertEqual(issues[1]["category"], "heading_consistency")
-
 
 if __name__ == "__main__":
     unittest.main()

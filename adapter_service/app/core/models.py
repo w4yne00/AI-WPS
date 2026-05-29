@@ -1,11 +1,51 @@
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, validator
+
+
+def _safe_str(value, default: str = "") -> str:
+    if value is None:
+        return default
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return default
+
+
+def _safe_float(value):
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value):
+    numeric = _safe_float(value)
+    if numeric is None:
+        return None
+    return int(round(numeric))
+
+
+def _safe_bool(value):
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "1", "-1", "yes", "y"}:
+            return True
+        if lowered in {"false", "0", "no", "n"}:
+            return False
+    return None
 
 
 class Paragraph(BaseModel):
-    index: int
-    text: str
+    index: int = 0
+    text: str = ""
     style_name: Optional[str] = Field(default=None, alias="styleName")
     font_name: Optional[str] = Field(default=None, alias="fontName")
     font_size: Optional[float] = Field(default=None, alias="fontSize")
@@ -18,21 +58,70 @@ class Paragraph(BaseModel):
     left_indent: Optional[float] = Field(default=None, alias="leftIndent")
     right_indent: Optional[float] = Field(default=None, alias="rightIndent")
     italic: Optional[bool] = None
-    underline: Optional[bool] = None
+    underline: Optional[Any] = None
     bold: Optional[bool] = None
+
+    @validator("text", pre=True, always=True)
+    def coerce_required_text(cls, value):
+        return _safe_str(value)
+
+    @validator("style_name", "font_name", "alignment", pre=True)
+    def coerce_optional_string(cls, value):
+        return _safe_str(value) if value is not None else None
+
+    @validator(
+        "font_size",
+        "line_spacing",
+        "first_line_indent",
+        "space_before",
+        "space_after",
+        "left_indent",
+        "right_indent",
+        pre=True,
+    )
+    def coerce_optional_float(cls, value):
+        return _safe_float(value)
+
+    @validator("index", "outline_level", pre=True, always=True)
+    def coerce_integer(cls, value):
+        return _safe_int(value) or 0
+
+    @validator("bold", "italic", pre=True)
+    def coerce_optional_bool(cls, value):
+        return _safe_bool(value)
 
 
 class Heading(BaseModel):
-    level: int
-    text: str
+    level: int = 0
+    text: str = ""
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
+
+    @validator("level", "paragraph_index", pre=True)
+    def coerce_heading_integer(cls, value):
+        return _safe_int(value)
+
+    @validator("text", pre=True, always=True)
+    def coerce_heading_text(cls, value):
+        return _safe_str(value)
 
 
 class DocumentContent(BaseModel):
-    plain_text: str = Field(alias="plainText")
-    paragraphs: List[Paragraph]
+    plain_text: str = Field(default="", alias="plainText")
+    paragraphs: List[Paragraph] = Field(default_factory=list)
     headings: List[Heading] = Field(default_factory=list)
     document_structure: Dict[str, Any] = Field(default_factory=dict, alias="documentStructure")
+
+    @validator("plain_text", pre=True, always=True)
+    def coerce_plain_text(cls, value):
+        return _safe_str(value)
+
+    @validator("paragraphs", "headings", pre=True, always=True)
+    def coerce_list(cls, value):
+        return value if isinstance(value, list) else []
+
+    @validator("document_structure", pre=True, always=True)
+    def coerce_document_structure(cls, value):
+        return value if isinstance(value, dict) else {}
 
 
 class RequestOptions(BaseModel):
@@ -48,37 +137,23 @@ class RequestOptions(BaseModel):
 
 
 class WordDocumentRequest(BaseModel):
-    document_id: str = Field(alias="documentId")
-    scene: Literal["word"]
-    selection_mode: Literal["document", "selection"] = Field(alias="selectionMode")
-    content: DocumentContent
+    document_id: str = Field(default="unnamed.docx", alias="documentId")
+    scene: Literal["word"] = "word"
+    selection_mode: Literal["document", "selection"] = Field(default="document", alias="selectionMode")
+    content: DocumentContent = Field(default_factory=DocumentContent)
     options: RequestOptions = Field(default_factory=RequestOptions)
 
+    @validator("document_id", pre=True, always=True)
+    def coerce_document_id(cls, value):
+        return _safe_str(value, "unnamed.docx") or "unnamed.docx"
 
-class Issue(BaseModel):
-    rule_id: str = Field(alias="ruleId")
-    severity: Literal["info", "warning", "error"]
-    message: str
-    category: str = "format"
-    paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
-    suggestion: Optional[str] = None
-    original: Optional[str] = None
-    replacement: Optional[str] = None
-    reason: Optional[str] = None
-    confidence: Optional[float] = None
-    source: str = "local"
-    evidence: Optional[str] = None
-    auto_fixable: bool = Field(default=False, alias="autoFixable")
+    @validator("scene", pre=True, always=True)
+    def coerce_scene(cls, value):
+        return "word"
 
-
-class FormatChange(BaseModel):
-    paragraph_index: int = Field(alias="paragraphIndex")
-    current_style: str = Field(alias="currentStyle")
-    target_style: str = Field(alias="targetStyle")
-    reason: str
-    target_properties: Dict[str, Any] = Field(default_factory=dict, alias="targetProperties")
-    role: Optional[str] = None
-    confidence: Optional[float] = None
+    @validator("selection_mode", pre=True, always=True)
+    def coerce_selection_mode(cls, value):
+        return value if value in {"document", "selection"} else "document"
 
 
 class RewriteResult(BaseModel):
@@ -89,8 +164,8 @@ class RewriteResult(BaseModel):
     provider: str = "mock"
 
 
-class TechnicalReviewIssue(BaseModel):
-    category: Literal["accuracy", "terminology", "design", "requirement"]
+class DocumentReviewIssue(BaseModel):
+    category: Literal["typo", "expression", "logic", "fluency", "professional"]
     severity: Literal["high", "medium", "low"]
     location: Optional[str] = None
     original_text: Optional[str] = Field(default=None, alias="originalText")
@@ -108,33 +183,48 @@ class ApiEnvelope(BaseModel):
     errors: List[dict]
 
 
-class ProofreadResponseData(BaseModel):
-    issues: List[Issue] = Field(default_factory=list)
+class FormatReviewIssue(BaseModel):
+    rule_id: str = Field(alias="ruleId")
+    category: Literal["format"] = "format"
+    severity: Literal["info", "warning", "error"] = "warning"
+    paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
+    role: str = "body"
+    message: str
+    current_value: str = Field(default="", alias="currentValue")
+    expected_value: str = Field(default="", alias="expectedValue")
+    suggestion: str = ""
 
 
-class FormatPreviewSummary(BaseModel):
-    change_count: int = Field(alias="changeCount")
+class FormatReviewSummary(BaseModel):
+    scope: Literal["document", "selection"] = "document"
     template_id: str = Field(alias="templateId")
-    provider: str = "local"
-    page_setup_change_count: int = Field(default=0, alias="pageSetupChangeCount")
     paragraph_count: int = Field(default=0, alias="paragraphCount")
+    issue_count: int = Field(default=0, alias="issueCount")
+    provider: str = "local"
     ai_classified_paragraph_count: int = Field(default=0, alias="aiClassifiedParagraphCount")
     local_fallback_paragraph_count: int = Field(default=0, alias="localFallbackParagraphCount")
     ai_batch_count: int = Field(default=0, alias="aiBatchCount")
+    ai_attempted: bool = Field(default=False, alias="aiAttempted")
+    ai_parse_error_count: int = Field(default=0, alias="aiParseErrorCount")
+    ai_request_error_count: int = Field(default=0, alias="aiRequestErrorCount")
+    ai_invalid_role_count: int = Field(default=0, alias="aiInvalidRoleCount")
+    ai_out_of_batch_count: int = Field(default=0, alias="aiOutOfBatchCount")
+    ai_fallback_reason: str = Field(default="", alias="aiFallbackReason")
 
 
-class FormatPreviewResponseData(BaseModel):
-    changes: List[FormatChange] = Field(default_factory=list)
-    summary: FormatPreviewSummary
+class FormatReviewResponseData(BaseModel):
+    summary: FormatReviewSummary
+    issues: List[FormatReviewIssue] = Field(default_factory=list)
 
 
 class RewriteResponseData(RewriteResult):
     pass
 
 
-class TechnicalReviewResponseData(BaseModel):
+class DocumentReviewResponseData(BaseModel):
     document_type: str = Field(alias="documentType")
     review_prompt: str = Field(alias="reviewPrompt")
+    scope: Literal["document", "selection"] = "document"
     summary: str
-    issues: List[TechnicalReviewIssue] = Field(default_factory=list)
+    issues: List[DocumentReviewIssue] = Field(default_factory=list)
     provider: str = "mock"

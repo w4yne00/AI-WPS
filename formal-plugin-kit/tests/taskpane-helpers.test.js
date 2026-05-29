@@ -112,6 +112,197 @@ function testBuildDocumentStructureForProofread() {
   assert.strictEqual(structure.capabilities.table_extracted, false);
 }
 
+function testCollectParagraphsSupportsWpsComCollection() {
+  const paragraphs = [
+    {
+      Text: "1 总则",
+      StyleNameLocal: "Heading 1",
+      Font: {
+        NameFarEast: "黑体",
+        Name: "SimHei",
+        Size: 16,
+        Bold: -1,
+        Italic: 0
+      },
+      ParagraphFormat: {
+        Alignment: 1,
+        OutlineLevel: 1,
+        LineSpacing: 300,
+        FirstLineIndent: 0
+      }
+    },
+    {
+      Text: "正文内容",
+      StyleNameLocal: "Normal",
+      Font: {
+        NameFarEast: "宋体",
+        Name: "SimSun",
+        Size: 12,
+        Bold: 0,
+        Italic: 0
+      },
+      ParagraphFormat: {
+        Alignment: 3,
+        OutlineLevel: 0,
+        LineSpacing: 300,
+        FirstLineIndent: 480
+      }
+    }
+  ];
+  const document = {
+    Paragraphs: {
+      Count: 2,
+      Item: function (index) {
+        return paragraphs[index - 1];
+      }
+    }
+  };
+
+  const result = helpers.collectParagraphs(document);
+
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].index, 1);
+  assert.strictEqual(result[0].text, "1 总则");
+  assert.strictEqual(result[0].fontName, "黑体");
+  assert.strictEqual(result[0].bold, true);
+  assert.strictEqual(result[1].index, 2);
+  assert.strictEqual(result[1].text, "正文内容");
+  assert.strictEqual(result[1].firstLineIndent, 480);
+}
+
+function testCollectParagraphsReadsRangeTextAndContentCollection() {
+  const paragraphs = [
+    {
+      Range: {
+        Text: "第一段标题\r",
+        Font: {
+          NameFarEast: "黑体",
+          Size: 16,
+          Bold: -1
+        },
+        ParagraphFormat: {
+          OutlineLevel: 1
+        },
+        Style: {
+          NameLocal: "标题 1"
+        }
+      }
+    },
+    {
+      Range: {
+        Text: "第二段正文\r",
+        Font: {
+          NameFarEast: "宋体",
+          Size: 12,
+          Bold: 0
+        },
+        ParagraphFormat: {
+          OutlineLevel: 0
+        },
+        Style: {
+          NameLocal: "正文"
+        }
+      }
+    }
+  ];
+  const document = {
+    Content: {
+      Paragraphs: {
+        Count: function () {
+          return 2;
+        },
+        Item: function (index) {
+          return paragraphs[index - 1];
+        }
+      }
+    }
+  };
+
+  const result = helpers.collectParagraphs(document);
+
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].text, "第一段标题");
+  assert.strictEqual(result[0].styleName, "标题 1");
+  assert.strictEqual(result[0].fontName, "黑体");
+  assert.strictEqual(result[1].text, "第二段正文");
+}
+
+function testCollectParagraphsFallsBackToDocumentText() {
+  const document = {
+    Content: {
+      Text: "第一段\n\n第二段\r第三段"
+    }
+  };
+
+  const result = helpers.collectParagraphs(document);
+
+  assert.strictEqual(result.length, 3);
+  assert.strictEqual(result[0].index, 1);
+  assert.strictEqual(result[0].text, "第一段");
+  assert.strictEqual(result[2].text, "第三段");
+}
+
+function testCollectParagraphsSanitizesHostObjectsBeforeJson() {
+  const document = {
+    Content: {
+      Paragraphs: {
+        Count: 1,
+        Item: function () {
+          return {
+            Range: {
+              Text: function () {
+                return "正文段落\r";
+              },
+              Font: {
+                NameFarEast: { value: "宋体对象" },
+                Size: { value: 12 },
+                Bold: -1,
+                Italic: 0,
+                Underline: -4142
+              },
+              ParagraphFormat: {
+                Alignment: { value: 3 },
+                OutlineLevel: { value: 0 },
+                LineSpacing: { value: 300 }
+              },
+              Style: {}
+            }
+          };
+        }
+      }
+    }
+  };
+
+  const result = helpers.collectParagraphs(document);
+  const encoded = JSON.stringify({ paragraphs: result });
+
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].text, "正文段落");
+  assert.strictEqual(result[0].styleName, "Body");
+  assert.strictEqual(result[0].fontName, "");
+  assert.strictEqual(result[0].fontSize, null);
+  assert.strictEqual(result[0].alignment, "left");
+  assert.strictEqual(result[0].outlineLevel, null);
+  assert.strictEqual(result[0].lineSpacing, null);
+  assert.strictEqual(result[0].underline, -4142);
+  assert.ok(encoded.includes('"text":"正文段落"'));
+  assert.ok(!encoded.includes("function"));
+  assert.ok(!encoded.includes("[object Object]"));
+}
+
+function testGetCollectionItemSupportsOneBasedWpsItem() {
+  const collection = {
+    Count: 2,
+    Item: function (index) {
+      return { value: "p" + index };
+    }
+  };
+
+  assert.strictEqual(helpers.getCollectionItem(collection, 1).value, "p1");
+  assert.strictEqual(helpers.getCollectionItem(collection, 2).value, "p2");
+  assert.strictEqual(helpers.getCollectionItem([{ value: "a" }], 1).value, "a");
+}
+
 function testRenderMarkdownFormatsCommonBlocks() {
   const html = helpers.renderMarkdown([
     "# 审查结果",
@@ -169,6 +360,11 @@ testResolveRewriteScope();
 testSelectionWritebackGuard();
 testGetWritableSelection();
 testBuildDocumentStructureForProofread();
+testCollectParagraphsSupportsWpsComCollection();
+testCollectParagraphsReadsRangeTextAndContentCollection();
+testCollectParagraphsFallsBackToDocumentText();
+testCollectParagraphsSanitizesHostObjectsBeforeJson();
+testGetCollectionItemSupportsOneBasedWpsItem();
 testRenderMarkdownFormatsCommonBlocks();
 testRenderMarkdownEscapesUnsafeHtmlAndLinks();
 

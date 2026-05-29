@@ -1,4 +1,5 @@
 from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -10,8 +11,9 @@ from app.api.word import router as word_router
 from app.core.errors import AdapterError
 from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
+from app.services.provider_client import record_provider_debug
 
-app = FastAPI(title="wps-ai-adapter", version="0.12.2-alpha")
+app = FastAPI(title="wps-ai-adapter", version="0.12.9-alpha")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -73,6 +75,59 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
             "message": exc.message,
             "data": {},
             "errors": [{"code": exc.code, "message": exc.message}],
+        },
+    )
+
+
+def _task_type_from_path(path: str) -> str:
+    return {
+        "/word/smart-write": "word.smart_write",
+        "/word/document-review": "word.document_review",
+        "/word/format-review": "word.format_review",
+    }.get(path, "adapter.validation")
+
+
+@app.exception_handler(RequestValidationError)
+async def handle_validation_error(request: Request, exc: RequestValidationError) -> JSONResponse:
+    trace_id = request.headers.get("X-Trace-Id", new_trace_id("validation"))
+    task_type = _task_type_from_path(request.url.path)
+    errors = [
+        {
+            "loc": ".".join(str(part) for part in item.get("loc", [])),
+            "type": str(item.get("type", "")),
+            "message": str(item.get("msg", ""))[:160],
+        }
+        for item in exc.errors()[:8]
+    ]
+    record_provider_debug(
+        {
+            "traceId": trace_id,
+            "taskType": task_type,
+            "provider": "adapter",
+            "skipReason": "request_validation_failed",
+            "validation": {
+                "path": request.url.path,
+                "errorCount": len(exc.errors()),
+                "errors": errors,
+            },
+        }
+    )
+    logger.warning(
+        "traceId=%s method=%s path=%s status=422 validationErrors=%s",
+        trace_id,
+        request.method,
+        request.url.path,
+        errors,
+    )
+    return JSONResponse(
+        status_code=422,
+        content={
+            "success": False,
+            "traceId": trace_id,
+            "taskType": task_type,
+            "message": "Request payload validation failed.",
+            "data": {"validation": {"errorCount": len(exc.errors()), "errors": errors}},
+            "errors": [{"code": "REQUEST_VALIDATION_FAILED", "message": "请求数据格式不符合 adapter 入参要求。"}],
         },
     )
 

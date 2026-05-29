@@ -1,93 +1,23 @@
 from fastapi import APIRouter
 
 from app.core.models import (
-    FormatPreviewResponseData,
-    FormatPreviewSummary,
-    ProofreadResponseData,
+    DocumentReviewResponseData,
+    FormatReviewResponseData,
+    FormatReviewSummary,
     RewriteResponseData,
-    TechnicalReviewResponseData,
     WordDocumentRequest,
 )
 from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
-from app.services.word.formatter import WordFormatter
-from app.services.word.proofreader import WordProofreader
+from app.services.word.document_reviewer import WordDocumentReviewer
+from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
-from app.services.word.technical_reviewer import WordTechnicalReviewer
 
 router = APIRouter()
-proofreader = WordProofreader()
-formatter = WordFormatter()
+format_reviewer = WordFormatReviewer()
 rewriter = WordRewriter()
-technical_reviewer = WordTechnicalReviewer()
+document_reviewer = WordDocumentReviewer()
 logger = get_logger(__name__)
-
-
-@router.post("/word/proofread")
-def proofread_word(request: WordDocumentRequest) -> dict:
-    trace_id = new_trace_id("word-proofread")
-    issues = proofreader.proofread(request, trace_id=trace_id)
-    payload = ProofreadResponseData(issues=issues)
-    logger.info(
-        "traceId=%s task=word.proofread templateId=%s issueCount=%s",
-        trace_id,
-        request.options.template_id or "general-office",
-        len(issues),
-    )
-    return {
-        "success": True,
-        "traceId": trace_id,
-        "taskType": "word.proofread",
-        "message": "completed",
-        "data": payload.dict(by_alias=True),
-        "errors": [],
-    }
-
-
-@router.post("/word/format-preview")
-def preview_format_word(request: WordDocumentRequest) -> dict:
-    trace_id = new_trace_id("word-format-preview")
-    preview = formatter.preview(request, trace_id=trace_id)
-    payload = FormatPreviewResponseData(
-        changes=preview["changes"],
-        summary=FormatPreviewSummary(**preview["summary"]),
-    )
-    logger.info(
-        "traceId=%s task=word.format_preview templateId=%s changeCount=%s",
-        trace_id,
-        payload.summary.template_id,
-        payload.summary.change_count,
-    )
-    return {
-        "success": True,
-        "traceId": trace_id,
-        "taskType": "word.format_preview",
-        "message": "completed",
-        "data": payload.dict(by_alias=True),
-        "errors": [],
-    }
-
-
-@router.post("/word/rewrite")
-def rewrite_word(request: WordDocumentRequest) -> dict:
-    trace_id = new_trace_id("word-rewrite")
-    mode = request.options.rewrite_action or "rewrite"
-    rewrite = rewriter.rewrite(request, trace_id=trace_id, mode=mode)
-    payload = RewriteResponseData(**rewrite)
-    logger.info(
-        "traceId=%s task=word.rewrite mode=%s sourceLength=%s",
-        trace_id,
-        mode,
-        len(payload.original_text),
-    )
-    return {
-        "success": True,
-        "traceId": trace_id,
-        "taskType": "word.rewrite",
-        "message": "completed",
-        "data": payload.dict(by_alias=True),
-        "errors": [],
-    }
 
 
 @router.post("/word/smart-write")
@@ -111,13 +41,13 @@ def smart_write_word(request: WordDocumentRequest) -> dict:
     }
 
 
-@router.post("/word/technical-review")
-def technical_review_word(request: WordDocumentRequest) -> dict:
-    trace_id = new_trace_id("word-technical-review")
-    review = technical_reviewer.review(request, trace_id=trace_id)
-    payload = TechnicalReviewResponseData(**review)
+@router.post("/word/document-review")
+def document_review_word(request: WordDocumentRequest) -> dict:
+    trace_id = new_trace_id("word-document-review")
+    review = document_reviewer.review(request, trace_id=trace_id)
+    payload = DocumentReviewResponseData(**review)
     logger.info(
-        "traceId=%s task=word.technical_review documentType=%s issueCount=%s",
+        "traceId=%s task=word.document_review documentType=%s issueCount=%s",
         trace_id,
         payload.document_type,
         len(payload.issues),
@@ -125,7 +55,31 @@ def technical_review_word(request: WordDocumentRequest) -> dict:
     return {
         "success": True,
         "traceId": trace_id,
-        "taskType": "word.technical_review",
+        "taskType": "word.document_review",
+        "message": "completed",
+        "data": payload.dict(by_alias=True),
+        "errors": [],
+    }
+
+
+@router.post("/word/format-review")
+def format_review_word(request: WordDocumentRequest) -> dict:
+    trace_id = new_trace_id("word-format-review")
+    review = format_reviewer.review(request, trace_id=trace_id)
+    payload = FormatReviewResponseData(
+        issues=review["issues"],
+        summary=FormatReviewSummary(**review["summary"]),
+    )
+    logger.info(
+        "traceId=%s task=word.format_review templateId=%s issueCount=%s",
+        trace_id,
+        payload.summary.template_id,
+        payload.summary.issue_count,
+    )
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "word.format_review",
         "message": "completed",
         "data": payload.dict(by_alias=True),
         "errors": [],

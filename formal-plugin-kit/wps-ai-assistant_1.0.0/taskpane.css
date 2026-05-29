@@ -114,6 +114,10 @@ body {
   display: block;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -182,15 +186,6 @@ body {
   color: var(--muted);
 }
 
-.field-help {
-  display: block;
-  margin-top: 6px;
-  min-height: 34px;
-  color: var(--muted);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
 select,
 textarea,
 input,
@@ -238,8 +233,69 @@ textarea {
 
 .rewrite-grid {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
+}
+
+#rewrite-options .field {
+  margin-bottom: 4px;
+}
+
+#rewrite-options .field span {
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+#rewrite-options select {
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+#rewrite-summary-card {
+  display: grid;
+  gap: 7px;
+  margin: 6px 0 0;
+  padding: 10px 12px;
+  border-radius: 14px;
+  border: 1px solid var(--hairline);
+  background: rgba(238, 244, 251, 0.76);
+  box-shadow: var(--shadow-soft);
+}
+
+#rewrite-summary-card span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+#rewrite-summary-card strong {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+#rewrite-summary-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+#rewrite-summary-card b {
+  color: var(--accent);
+}
+
+#rewrite-summary-card em {
+  font-style: normal;
+}
+
+#instruction-block {
+  margin-bottom: 8px;
+}
+
+#instruction-block textarea {
+  min-height: 46px;
+  padding: 8px 10px;
 }
 
 .prompt-fragment-card {
@@ -388,6 +444,11 @@ button[disabled] {
   max-height: 590px;
   overflow-wrap: anywhere;
   box-shadow: var(--shadow-soft);
+}
+
+body[data-task-mode="smartWrite"] #result-output {
+  min-height: 360px;
+  max-height: 680px;
 }
 
 .markdown-output h1,
@@ -701,6 +762,14 @@ button[disabled] {
     grid-template-columns: 1fr;
   }
 
+  #rewrite-options .rewrite-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  #rewrite-summary-card {
+    align-items: flex-start;
+  }
+
   .settings-head,
 .settings-card-head,
 .panel-head,
@@ -724,5 +793,11 @@ button[disabled] {
 
   .provider-side {
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 380px) {
+  #rewrite-options .rewrite-grid {
+    grid-template-columns: 1fr;
   }
 }

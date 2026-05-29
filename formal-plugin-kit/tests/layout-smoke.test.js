@@ -9,7 +9,7 @@ const manifest = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/manifest.json",
   "utf8"
 );
-assert.ok(manifest.includes('"version": "0.12.2-alpha"'));
+assert.ok(manifest.includes('"version": "0.12.9-alpha"'));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
@@ -34,9 +34,9 @@ assert.ok(!html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
 assert.ok(html.includes('id="diagnostics-section"'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.12.2-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.12.2-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.12.2-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.12.9-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.12.9-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.12.9-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
@@ -45,10 +45,34 @@ assert.ok(html.includes('识别范围'));
 assert.ok(html.includes('智能编写'));
 assert.ok(html.includes('id="write-action"'));
 assert.ok(html.includes('id="rewrite-options"'));
+assert.ok(html.includes('<option value="standard">技术方案正式</option>'));
+assert.ok(html.includes('<option value="structured">条理化说明</option>'));
+assert.ok(html.includes('<option value="reporting">汇报材料风格</option>'));
+assert.ok(html.includes('<option value="complete">保持信息完整</option>'));
+assert.ok(html.includes('<option value="conclusion_risk">结论与风险</option>'));
+assert.ok(html.includes('<option value="plan_next">措施与计划</option>'));
+assert.ok(html.includes('<option value="acceptance">验收与闭环</option>'));
+assert.ok(html.includes('<option value="same">保持篇幅</option>'));
+assert.ok(html.indexOf('<option value="same">保持篇幅</option>') < html.indexOf('<option value="concise">精简</option>'));
+assert.ok(!html.includes("默认正式"));
+assert.ok(!html.includes("更正式"));
+assert.ok(!html.includes("更有条理"));
+assert.ok(!html.includes("更像汇报材料"));
+assert.ok(!html.includes("突出下一步"));
+assert.ok(!html.includes("突出实施路径"));
+assert.ok(!html.includes('<option value="default">默认</option>'));
+assert.ok(html.includes('id="rewrite-summary-card"'));
+assert.ok(html.includes('id="rewrite-summary-text"'));
+assert.ok(html.includes('id="rewrite-style-detail"'));
+assert.ok(html.includes('id="rewrite-focus-detail"'));
+assert.ok(html.includes('id="rewrite-length-detail"'));
+assert.ok(html.includes('id="rewrite-output-detail"'));
 assert.ok(html.includes('id="template-options"'));
-assert.ok(html.includes('id="technical-review-options"'));
+assert.ok(html.includes('id="document-review-options"'));
+assert.ok(html.includes('id="fixed-template-options"'));
 assert.ok(html.includes('id="technical-document-type"'));
 assert.ok(html.includes('id="technical-review-prompt"'));
+assert.ok(html.includes('技术文件格式及书写要求'));
 assert.ok(html.includes('id="btn-run-primary"'));
 assert.ok(html.indexOf('id="btn-copy-result"') < html.indexOf('结果预览'));
 assert.ok(html.includes('class="markdown-output"'));
@@ -77,11 +101,20 @@ assert.ok(js.includes("startScopeWatcher"));
 assert.ok(js.includes("setInterval(updateScopeIndicator"));
 assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
-assert.ok(js.includes("technicalReview"));
-assert.ok(js.includes("/word/technical-review"));
-assert.ok(js.includes("DEFAULT_TECHNICAL_REVIEW_PROMPT"));
+assert.ok(js.includes("documentReview"));
+assert.ok(js.includes("formatReview"));
+assert.ok(js.includes("/word/document-review"));
+assert.ok(js.includes("/word/format-review"));
+assert.ok(js.includes("DEFAULT_DOCUMENT_REVIEW_PROMPT"));
 assert.ok(js.includes("saveProviderBaseUrl"));
 assert.ok(js.includes("/word/smart-write"));
+assert.ok(js.includes('rewriteStyle: "standard"'));
+assert.ok(js.includes('focusPoint: "complete"'));
+assert.ok(js.includes('lengthMode: "same"'));
+assert.ok(js.includes("技术方案常用的正式、准确、克制表达"));
+assert.ok(js.includes("验收标准、问题闭环"));
+assert.ok(js.includes("showPromptFragments: false"));
+assert.ok(js.includes('document.body.setAttribute("data-task-mode", state.currentMode)'));
 assert.ok(js.includes("setAdapterUnavailableState"));
 assert.ok(js.includes("describeFetchError"));
 assert.ok(js.includes("readAdapterJson"));
@@ -92,23 +125,30 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.2-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.9-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
-assert.ok(js.includes("word.smart_format"));
-assert.ok(js.includes("全文扫描段落"));
+assert.ok(js.includes("word.document_review"));
+assert.ok(js.includes("word.format_review"));
+assert.ok(js.includes("扫描段落"));
 assert.ok(js.includes("AI 识别段落"));
 assert.ok(js.includes("本地兜底段落"));
 assert.ok(js.includes("以下仅显示需要调整的格式项"));
+assert.ok(js.includes("未读取到正文段落，未调用 Dify"));
+assert.ok(js.includes("resolveSelectionScope(false)"));
 assert.ok(!js.includes("请输入大模型 API URL 后再保存"));
 assert.ok(!js.includes("renderProviderOptions"));
 assert.ok(!js.includes("setActiveProvider"));
 assert.ok(js.includes("本地适配服务暂不可用"));
+assert.ok(js.includes("fluency: \"通畅性\""));
 assert.ok(!js.includes('setHealthBadge("badge-error", "不可达")'));
 assert.ok(!js.includes("无法连接本地适配层"));
 assert.ok(!js.includes("runProbe"));
 assert.ok(!js.includes("/word/rewrite"));
+assert.ok(!js.includes("/word/proofread"));
+assert.ok(!js.includes("/word/technical-review"));
+assert.ok(!js.includes("/word/format-preview"));
 
 const css = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.css",
@@ -122,6 +162,11 @@ assert.ok(css.includes(".glass-card"));
 assert.ok(css.includes(".copy-button"));
 assert.ok(css.includes(".markdown-output"));
 assert.ok(css.includes(".markdown-table-wrap"));
+assert.ok(css.includes("[hidden]"));
+assert.ok(css.includes("body[data-task-mode=\"smartWrite\"] #result-output"));
+assert.ok(css.includes("#rewrite-summary-card"));
+assert.ok(css.includes("#rewrite-summary-card p"));
+assert.ok(css.includes("repeat(4, minmax(0, 1fr))"));
 assert.ok(css.includes("linear-gradient(180deg, #fafafa"));
 assert.ok(css.includes("--accent: #386ea8;"));
 assert.ok(css.includes("--accent-press: #2c5a8b;"));
@@ -138,13 +183,15 @@ const ribbon = fs.readFileSync(
 
 [
   "智能编写",
-  "格式校对",
-  "智能排版",
-  "技术文档审查",
+  "文档审查",
+  "格式审查",
   "设置"
 ].forEach((label) => {
   assert.ok(ribbon.includes(`label="${label}"`), `missing ribbon label ${label}`);
 });
+assert.ok(!ribbon.includes('label="格式校对"'));
+assert.ok(!ribbon.includes('label="智能排版"'));
+assert.ok(!ribbon.includes('label="技术文档审查"'));
 
 assert.ok(ribbon.includes('getImage="GetImage"'));
 assert.ok(!ribbon.includes('image="assets/'));
@@ -161,7 +208,7 @@ assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.12.2-alpha'));
+assert.ok(ribbonJs.includes('build=0.12.9-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 
 const uvicornStart = fs.readFileSync(

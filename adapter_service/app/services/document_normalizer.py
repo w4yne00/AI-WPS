@@ -4,7 +4,19 @@ from app.core.models import Heading, Paragraph, WordDocumentRequest
 
 
 def body_paragraphs(request: WordDocumentRequest) -> List[Paragraph]:
-    return [paragraph for paragraph in request.content.paragraphs if paragraph.text.strip()]
+    paragraphs = [paragraph for paragraph in request.content.paragraphs if paragraph.text.strip()]
+    if paragraphs:
+        return paragraphs
+
+    lines = [
+        line.strip()
+        for line in (request.content.plain_text or "").replace("\r", "\n").split("\n")
+        if line.strip()
+    ]
+    return [
+        Paragraph(index=index, text=line, styleName="Normal")
+        for index, line in enumerate(lines, start=1)
+    ]
 
 
 def headings(request: WordDocumentRequest) -> List[Heading]:

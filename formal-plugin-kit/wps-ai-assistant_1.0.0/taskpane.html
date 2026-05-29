@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WPS AI 助理</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.12.2-alpha" />
+    <link rel="stylesheet" href="./taskpane.css?v=0.12.9-alpha" />
   </head>
   <body>
     <div class="app">
@@ -40,36 +40,38 @@
               <label class="field">
                 <span id="style-field-label">表达风格</span>
                 <select id="rewrite-style">
-                  <option value="default">默认正式</option>
-                  <option value="formal">更正式</option>
-                  <option value="structured">更有条理</option>
-                  <option value="reporting">更像汇报材料</option>
+                  <option value="standard">技术方案正式</option>
+                  <option value="structured">条理化说明</option>
+                  <option value="reporting">汇报材料风格</option>
                 </select>
-                <small id="style-prompt-text" class="field-help">使用正式、清晰、简洁的中文表达。</small>
               </label>
 
               <label class="field">
                 <span>侧重点</span>
                 <select id="focus-point">
-                  <option value="default">保持完整</option>
-                  <option value="conclusion">突出结论</option>
-                  <option value="risk">突出风险</option>
-                  <option value="next_step">突出下一步</option>
-                  <option value="implementation">突出实施路径</option>
+                  <option value="complete">保持信息完整</option>
+                  <option value="conclusion_risk">结论与风险</option>
+                  <option value="plan_next">措施与计划</option>
+                  <option value="acceptance">验收与闭环</option>
                 </select>
-                <small id="focus-prompt-text" class="field-help">保持内容完整。</small>
               </label>
 
               <label class="field">
                 <span>篇幅</span>
                 <select id="length-mode">
-                  <option value="default">默认</option>
-                  <option value="concise">精简</option>
                   <option value="same">保持篇幅</option>
+                  <option value="concise">精简</option>
                   <option value="expanded">适度扩写</option>
                 </select>
-                <small id="length-prompt-text" class="field-help">保持原有篇幅附近。</small>
               </label>
+            </div>
+            <div id="rewrite-summary-card" class="rewrite-summary-card" aria-live="polite">
+              <span>当前要求</span>
+              <strong id="rewrite-summary-text">技术方案正式 / 保持信息完整 / 保持篇幅</strong>
+              <p><b>表达风格：</b><em id="rewrite-style-detail">采用国企技术方案常用的正式、准确、克制表达。</em></p>
+              <p><b>侧重点：</b><em id="rewrite-focus-detail">保留原文关键信息、事实、条件和结论。</em></p>
+              <p><b>篇幅：</b><em id="rewrite-length-detail">保持与原文相近的篇幅。</em></p>
+              <p><b>输出：</b><em id="rewrite-output-detail">不要原样返回待处理内容；只输出最终正文。</em></p>
             </div>
           </div>
 
@@ -80,7 +82,14 @@
             </label>
           </div>
 
-          <div id="technical-review-options" class="mode-block" hidden>
+          <div id="fixed-template-options" class="mode-block compact-template" hidden>
+            <label class="field">
+              <span>标准模板</span>
+              <input type="text" value="技术文件格式及书写要求" readonly />
+            </label>
+          </div>
+
+          <div id="document-review-options" class="mode-block" hidden>
             <label class="field">
               <span>文档类型</span>
               <select id="technical-document-type">
@@ -101,15 +110,15 @@
             <div id="prompt-fragment-card" class="prompt-fragment-card" hidden>
               <div>
                 <b>风格</b>
-                <p id="selected-style-prompt">使用正式、清晰、简洁的中文表达。</p>
+                <p id="selected-style-prompt">采用国企技术方案常用的正式、准确、克制表达。</p>
               </div>
               <div>
                 <b>侧重</b>
-                <p id="selected-focus-prompt">保持内容完整。</p>
+                <p id="selected-focus-prompt">保留原文关键信息、事实、条件和结论。</p>
               </div>
               <div>
                 <b>篇幅</b>
-                <p id="selected-length-prompt">保持原有篇幅附近。</p>
+                <p id="selected-length-prompt">保持与原文相近的篇幅。</p>
               </div>
               <div>
                 <b>输出</b>
@@ -219,7 +228,7 @@
         </section>
       </section>
     </div>
-    <script src="./taskpane-helpers.js?v=0.12.2-alpha"></script>
-    <script src="./taskpane.js?v=0.12.2-alpha"></script>
+    <script src="./taskpane-helpers.js?v=0.12.9-alpha"></script>
+    <script src="./taskpane.js?v=0.12.9-alpha"></script>
   </body>
 </html>

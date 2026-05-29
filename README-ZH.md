@@ -27,10 +27,9 @@
 </p>
 
 <p align="center">
-  <code>Word 审校</code>
-  <code>技术文档审查</code>
-  <code>自动格式预览</code>
-  <code>改写/续写</code>
+  <code>智能编写</code>
+  <code>文档审查</code>
+  <code>格式审查</code>
   <code>模板化规则</code>
   <code>运行时探测</code>
   <code>离线交付</code>
@@ -75,12 +74,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.12.2-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.12.2-20260527` |
+| 当前版本 | `v0.12.9-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.12.9-20260529` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260527.tar.gz` |
+| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260529.tar.gz` |
 
 版本规则格式：
 
@@ -102,12 +101,10 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 能力 | 说明 |
 | --- | --- |
 | WPS 原生任务窗格 | 支持麒麟/WPS 目标终端已验证的 `jsaddons` 手工导入结构 |
-| 五个任务入口 | WPS AI 助理选项卡提供智能编写、格式校对、智能排版、技术文档审查和设置 |
+| 四个任务入口 | WPS AI 助理选项卡提供智能编写、文档审查、格式审查和设置 |
 | 独立任务窗格模式 | 同一个任务窗格根据 Ribbon 点击入口切换为聚焦的 Word 工作流 |
-| Word 格式审校 | 检查标题层级、模板字体/字号/行距、重复空格、中文标点前空格和结构化文档质量问题 |
-| 技术文档审查 | 面向选中文本或全文，按可编辑提示词检查功能描述准确性、术语专业性、设计合理性和要求明确性 |
-| AI 文档质量审校 | 将 `documentStructure` 和本地规则发现传给企业 AI provider，分类返回错别字、语病、表述、逻辑和章节命名一致性问题；未配置密钥时安全跳过 |
-| Word 智能排版 | 以标准 Word 模板为规则源，完整文档按批次进行可选大模型段落角色识别，生成页面、标题、正文、图表题、注、列项、附录和表正文的排版预览，确认后再应用 |
+| 文档审查 | 面向选中文本或全文，独立 `word.document_review` Dify 工作流检查错别字、语言表达、逻辑、通畅性和对应文档类型专业性 |
+| 格式审查 | 按《技术文件格式及书写要求》模板检查选中文本或全文格式合规；可保留 AI 段落角色识别，但只输出检查意见，不再写回排版 |
 | Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 同时通过顶层 `query` 和 `inputs.query` 发送完整提示词 |
 | Markdown 结果预览 | 任务窗口结果区按 Markdown 渲染分段、换行、标题、列表、表格、引用、代码块和链接；复制与写回仍保留模型原文 |
 | 雾蓝银白界面 | 任务窗口及 Ribbon 图标统一采用明亮的蓝灰白苹果式简约配色，不改变原有任务流程和接口行为 |
@@ -122,6 +119,13 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.12.9-alpha` | 合并审查类入口：原格式校对与技术文档审查合并为“文档审查”并使用 `word.document_review`；原智能排版改为只检查不写回的“格式审查”并使用 `word.format_review`；清理旧 Word 路由，保持智能编写和任务级 API Key 选路逻辑不变 |
+| `v0.12.8-alpha` | 重构格式校对：保留本地确定性格式检测，并新增小批量 AI 文档质量审校，覆盖错别字、语病、表述、逻辑和通畅性；`word.proofread` 继续使用独立任务 API Key 和独立 Dify 工作流 |
+| `v0.12.7-alpha` | 修复目标机智能编写、智能排版 HTTP 422：前端发送前清洗 WPS 宿主对象属性，后端对缺失 `documentId/plainText`、对象形态字号/样式和 WPS 下划线枚举做容错；请求校验失败时 `/provider/debug-last` 会记录 `request_validation_failed` |
+| `v0.12.6-alpha` | 继续修复智能排版现场段落采集和诊断：支持 `Paragraph.Range.Text`、`Content.Paragraphs`、`Range().Paragraphs` 和全文文本拆段兜底；无段落、未配置任务密钥、Dify 返回不可解析时都会在结果预览和 `/provider/debug-last` 给出明确原因 |
+| `v0.12.5-alpha` | 修复 WPS COM 集合形态下智能排版读取到 0 个段落的问题：任务窗口支持 `Paragraphs.Count`/`Item()` 段落集合，应用预览也使用同一集合适配，并将智能排版固定为全文排版预览 |
+| `v0.12.4-alpha` | 加固智能排版 Dify 角色识别解析：兼容 `result`、`data`、`outputs` 等包裹层和 JSON 数组返回；AI 解析失败会在任务窗口显示明确提示，并继续使用本地模板规则兜底 |
+| `v0.12.3-alpha` | 优化智能编写任务窗口：压缩设置区并扩大 Markdown 结果预览；表达风格、侧重点、篇幅菜单按国企技术方案/汇报材料场景重新合并命名；adapter 提示词映射保留旧值兼容 |
 | `v0.12.2-alpha` | 修复长文档智能排版仅将前 120 个非空段落送入 AI 角色识别的问题：adapter 按批次覆盖全文并显示覆盖统计；任务窗口及 Ribbon 图标同步更新为明亮的雾蓝银白配色 |
 | `v0.12.1-alpha` | 修复现场任务窗格可能继续加载旧纯文本资源的问题：Ribbon 打开任务窗格和页面静态资源均附加构建版本参数，设置诊断区显示前端版本；`/provider/debug-last` 新增脱敏 Markdown 特征摘要，用于区分 Dify 返回内容和前端渲染问题 |
 | `v0.12.0-alpha` | 智能排版按上传的《技术文件格式及书写要求》模板重建规则：输出带 `targetProperties` 的排版预览，支持页面设置、标题、正文、图表题、注、列项、附录和表正文；设置页新增任务级 API Key，智能排版可使用独立 Dify key，未配置时回退统一 key |
@@ -266,9 +270,8 @@ cp config/adapter.example.json config/adapter.json
   "timeoutSeconds": 30,
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
-    "word.smart_format": "word_smart_format",
-    "word.proofread": "word_proofread",
-    "word.technical_review": "word_technical_review"
+    "word.document_review": "word_document_review",
+    "word.format_review": "word_format_review"
   }
 }
 ```
@@ -279,9 +282,9 @@ cp config/adapter.example.json config/adapter.json
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-任务级 API Key 保存到 `run/provider_api_keys/<ref>`。例如智能排版可单独配置 `word.smart_format` 对应 Dify App 的 key；未配置任务级 key 时自动回退统一 provider API Key。未配置任何可用 key 时，`/word/smart-write` 会走本地 mock 响应，智能排版仍可使用本地模板规则生成预览。旧 `/word/rewrite` 端点保留作回滚兼容，插件界面不再调用。
+任务级 API Key 保存到 `run/provider_api_keys/<ref>`。智能编写、文档审查、格式审查都可以配置各自独立的 Dify App Key；未配置任务级 key 时自动回退统一 provider API Key。未配置任何可用 key 时，`/word/smart-write` 会走本地 mock 响应，格式审查仍可使用本地模板规则生成检查结果。
 
-智能编写对应的 Dify SYSTEM 提示词、Markdown 输出和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能排版对应的配置见 [AI-WPS 智能排版 Dify 工作流配置手册](./docs/operations/dify-smart-format-workflow.md)；该工作流只负责段落角色识别，真实 Word 格式由本地模板规则执行。
+智能编写对应的 Dify SYSTEM 提示词、Markdown 输出和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。
 
 ## API 一览
 
@@ -296,19 +299,17 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |
 | `POST` | `/provider/task-api-key` | 保存某个任务的独立 Dify API Key |
 | `DELETE` | `/provider/task-api-key/{taskType}` | 清除某个任务的独立 Dify API Key |
-| `POST` | `/word/proofread` | Word 结构化审校 |
-| `POST` | `/word/format-preview` | Word 自动格式化预览 |
 | `POST` | `/word/smart-write` | 对当前选中文本进行智能编写，支持改写、续写、总结和自定义 |
-| `POST` | `/word/rewrite` | 旧改写/续写兼容端点，保留作回滚使用 |
-| `POST` | `/word/technical-review` | 技术文档审查，检查功能描述、术语、设计和要求明确性 |
+| `POST` | `/word/document-review` | 文档审查，检查错别字、语言表达、逻辑、通畅性和文档类型专业性 |
+| `POST` | `/word/format-review` | 格式审查，按标准模板输出格式合规检查意见 |
 
 统一响应结构：
 
 ```json
 {
   "success": true,
-  "traceId": "word-proofread-...",
-  "taskType": "word.proofread",
+  "traceId": "word-document-review-...",
+  "taskType": "word.document_review",
   "message": "completed",
   "data": {},
   "errors": []
@@ -384,7 +385,7 @@ npm run test
 - WPS 插件 task pane 与按钮入口
 - 文档/选区结构化读取
 - 本地适配服务健康检查、配置、模板、provider 状态
-- Word 审校、技术文档审查、格式预览、改写/续写接口
+- 智能编写、文档审查、格式审查接口
 - 预览后写回 Word 的基础能力
 - 运行时探测与离线交付脚本
 

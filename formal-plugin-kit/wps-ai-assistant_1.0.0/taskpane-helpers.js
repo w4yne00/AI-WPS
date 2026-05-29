@@ -361,6 +361,239 @@
     return null;
   }
 
+  function safeRead(object, key) {
+    if (!object) {
+      return undefined;
+    }
+    try {
+      return object[key];
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  function safeCall(fn, thisArg) {
+    if (typeof fn !== "function") {
+      return undefined;
+    }
+    try {
+      return fn.call(thisArg);
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  function resolveRange(object) {
+    var range = firstDefined(safeRead(object, "Range"), safeRead(object, "range"));
+    return typeof range === "function" ? safeCall(range, object) : range;
+  }
+
+  function normalizeParagraphText(text) {
+    return String(text || "")
+      .replace(/\u0007/g, "")
+      .replace(/\r/g, "\n")
+      .replace(/\n+$/g, "");
+  }
+
+  function toSafeString(value, fallback) {
+    var resolved = typeof value === "function" ? safeCall(value, null) : value;
+    if (typeof resolved === "undefined" || resolved === null) {
+      return fallback || "";
+    }
+    if (typeof resolved === "string") {
+      return resolved;
+    }
+    if (typeof resolved === "number" || typeof resolved === "boolean") {
+      return String(resolved);
+    }
+    return fallback || "";
+  }
+
+  function normalizeInteger(value) {
+    var numeric = normalizeNumber(typeof value === "function" ? safeCall(value, null) : value);
+    if (numeric === null) {
+      return null;
+    }
+    return Math.round(numeric);
+  }
+
+  function readText(object) {
+    var range = resolveRange(object);
+    return normalizeParagraphText(toSafeString(firstDefined(
+      safeRead(object, "Text"),
+      safeRead(object, "text"),
+      safeRead(range, "Text"),
+      safeRead(range, "text"),
+      safeRead(safeRead(object, "TextRange"), "Text"),
+      safeRead(safeRead(range, "TextRange"), "Text")
+    )));
+  }
+
+  function readDocumentText(document) {
+    var content = safeRead(document, "Content") || safeRead(document, "content");
+    var range = resolveRange(document);
+    return normalizeParagraphText(toSafeString(firstDefined(
+      safeRead(document, "Text"),
+      safeRead(document, "text"),
+      safeRead(content, "Text"),
+      safeRead(content, "text"),
+      safeRead(range, "Text"),
+      safeRead(range, "text")
+    )));
+  }
+
+  function readStyleName(paragraph) {
+    var range = resolveRange(paragraph);
+    var style = firstDefined(
+      safeRead(paragraph, "Style"),
+      safeRead(paragraph, "style"),
+      safeRead(range, "Style"),
+      safeRead(range, "style")
+    );
+    if (typeof style === "string") {
+      return style;
+    }
+    return toSafeString(firstDefined(
+      safeRead(paragraph, "StyleNameLocal"),
+      safeRead(paragraph, "styleName"),
+      safeRead(paragraph, "StyleName"),
+      safeRead(range, "StyleNameLocal"),
+      safeRead(range, "StyleName"),
+      safeRead(style, "NameLocal"),
+      safeRead(style, "Name"),
+      "Body"
+    ), "Body");
+  }
+
+  function readFont(paragraph) {
+    var range = resolveRange(paragraph);
+    return firstDefined(
+      safeRead(paragraph, "Font"),
+      safeRead(range, "Font"),
+      {}
+    );
+  }
+
+  function readParagraphFormat(paragraph) {
+    var range = resolveRange(paragraph);
+    return firstDefined(
+      safeRead(paragraph, "ParagraphFormat"),
+      safeRead(range, "ParagraphFormat"),
+      {}
+    );
+  }
+
+  function readCollectionCount(collection) {
+    if (!collection) {
+      return 0;
+    }
+    var count = typeof collection.length === "number" ? collection.length : null;
+    if (count === null) {
+      count = typeof collection.Count === "function" ? safeCall(collection.Count, collection) : safeRead(collection, "Count");
+    }
+    if (typeof count === "undefined" || count === null) {
+      count = typeof collection.count === "function" ? safeCall(collection.count, collection) : safeRead(collection, "count");
+    }
+    count = Number(count);
+    return isNaN(count) || count < 0 ? 0 : count;
+  }
+
+  function getCollectionItem(collection, oneBasedIndex) {
+    if (!collection || oneBasedIndex < 1) {
+      return null;
+    }
+    var zeroBasedIndex = oneBasedIndex - 1;
+    if (typeof collection.length === "number" && collection[zeroBasedIndex]) {
+      return collection[zeroBasedIndex];
+    }
+    if (typeof collection.Item === "function") {
+      return safeCall(function () { return collection.Item(oneBasedIndex); }, collection);
+    }
+    if (typeof collection.item === "function") {
+      return safeCall(function () { return collection.item(oneBasedIndex); }, collection);
+    }
+    return collection[oneBasedIndex] || collection[zeroBasedIndex] || null;
+  }
+
+  function getParagraphCollection(document) {
+    var content = safeRead(document, "Content") || safeRead(document, "content");
+    var range = resolveRange(document);
+    return firstDefined(
+      safeRead(document, "Paragraphs"),
+      safeRead(document, "paragraphs"),
+      safeRead(content, "Paragraphs"),
+      safeRead(content, "paragraphs"),
+      safeRead(range, "Paragraphs"),
+      safeRead(range, "paragraphs"),
+      []
+    );
+  }
+
+  function collectParagraphsFromText(text) {
+    var normalized = String(text || "").replace(/\r/g, "\n");
+    if (!normalized.trim()) {
+      return [];
+    }
+    return normalized.split(/\n+/).map(function (line) {
+      return line.trim();
+    }).filter(Boolean).map(function (line, index) {
+      return {
+        index: index + 1,
+        text: line,
+        styleName: "Normal",
+        fontName: "",
+        fontSize: 0,
+        bold: false,
+        italic: false,
+        underline: null,
+        alignment: "left",
+        outlineLevel: 0,
+        lineSpacing: null,
+        firstLineIndent: null,
+        spaceBefore: null,
+        spaceAfter: null,
+        leftIndent: null,
+        rightIndent: null
+      };
+    });
+  }
+
+  function collectParagraphs(document) {
+    var collection = getParagraphCollection(document);
+    var count = readCollectionCount(collection);
+    var items = [];
+    for (var i = 1; i <= count; i += 1) {
+      var paragraph = getCollectionItem(collection, i);
+      if (!paragraph) {
+        continue;
+      }
+      var font = readFont(paragraph);
+      var paragraphFormat = readParagraphFormat(paragraph);
+      items.push({
+        index: i,
+        text: readText(paragraph),
+        styleName: readStyleName(paragraph),
+        fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
+        fontSize: normalizeNumber(firstDefined(safeRead(font, "Size"), 0)),
+        bold: Boolean(safeRead(font, "Bold")),
+        italic: Boolean(safeRead(font, "Italic")),
+        underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
+        alignment: toSafeString(firstDefined(safeRead(paragraphFormat, "Alignment"), "left"), "left"),
+        outlineLevel: normalizeInteger(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), 0)),
+        lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
+        firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
+        spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
+        spaceAfter: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceAfter"), safeRead(paragraphFormat, "spaceAfter"), null)),
+        leftIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LeftIndent"), safeRead(paragraphFormat, "leftIndent"), null)),
+        rightIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "RightIndent"), safeRead(paragraphFormat, "rightIndent"), null))
+      });
+    }
+    if (items.length) {
+      return items;
+    }
+    return collectParagraphsFromText(readDocumentText(document));
+  }
+
   function buildDocumentStructure(options) {
     var paragraphs = options.paragraphs || [];
     var headings = options.headings || [];
@@ -415,6 +648,12 @@
     getWritableSelection: getWritableSelection,
     resolveRewriteScope: resolveRewriteScope,
     canApplyRewriteToSelection: canApplyRewriteToSelection,
+    readCollectionCount: readCollectionCount,
+    getCollectionItem: getCollectionItem,
+    getParagraphCollection: getParagraphCollection,
+    collectParagraphs: collectParagraphs,
+    readDocumentText: readDocumentText,
+    toSafeString: toSafeString,
     buildDocumentStructure: buildDocumentStructure
   };
 });

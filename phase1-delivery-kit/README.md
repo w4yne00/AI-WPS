@@ -1,6 +1,6 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.12.2-alpha`
+版本：`v0.12.9-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
@@ -46,17 +46,15 @@ bash scripts/phase1_smoke_test.sh
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
-- `docs/operations/dify-task-routes-path-apikeyref.md`：Dify 多任务路由部署手册。
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify SYSTEM 提示词、Markdown 输出和现场验证手册。
-- `docs/operations/dify-smart-format-workflow.md`：智能排版 Dify 段落角色识别工作流配置手册。
-- `docs/operations/AI-WPS-Dify多任务工作流节点配置手册-v0.10.0.docx`：Word 版 Dify 节点级配置手册。
-- `docs/operations/phase1-v0.9.1-deployment.md`：新版本部署手册。
+- `docs/operations/dify-document-review-workflow.md`：文档审查 Dify 工作流配置手册。
+- `docs/operations/dify-format-review-workflow.md`：格式审查 Dify 工作流配置手册。
 
 ## 安装后操作
 
 1. 关闭并重新打开 WPS。
 2. 确认 Ribbon 出现 `WPS AI 助理`。
 3. 打开设置页刷新配置。
-4. 验证智能编写、格式校对、智能排版和技术审查。
+4. 验证智能编写、文档审查和格式审查。
 5. 如果接入 Dify，确认每个任务命中对应的 Dify 应用或工作流。
 6. 确认任务窗口和 Ribbon 图标显示为雾蓝银白配色；若显示旧绿色，请完全关闭并重新启动 WPS 后复查。

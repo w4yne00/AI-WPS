@@ -37,7 +37,10 @@ class ConfigApiTests(unittest.TestCase):
         self.assertIn("providerBaseUrlConfigured", data)
         self.assertIn("providerAuthSource", data)
         self.assertIn("taskApiKeys", data)
-        self.assertIn("word.smart_format", data["taskApiKeys"])
+        self.assertEqual(
+            list(data["taskApiKeys"].keys()),
+            ["word.smart_write", "word.document_review", "word.format_review"],
+        )
         self.assertEqual(data["providerChatPath"], "/chat-messages")
         self.assertEqual(data["taskRouteConfiguredCount"], 0)
         self.assertIn("taskRoutes", data)

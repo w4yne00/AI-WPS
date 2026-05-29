@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.2-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.9-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -39,8 +39,10 @@ class PackagingScriptTests(unittest.TestCase):
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
 
         self.assertIn("dify-smart-write-workflow.md", script)
+        self.assertIn("dify-document-review-workflow.md", script)
+        self.assertIn("dify-format-review-workflow.md", script)
 
-    def test_taskpane_technical_review_has_three_document_types_and_prompt_map(self) -> None:
+    def test_taskpane_document_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
@@ -50,8 +52,8 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn('value="technical_solution"', html)
         self.assertIn('value="contract_acceptance"', html)
         self.assertIn('value="test_outline"', html)
-        self.assertIn("TECHNICAL_REVIEW_PROMPTS", js)
-        self.assertIn("applyTechnicalReviewPrompt", js)
+        self.assertIn("DOCUMENT_REVIEW_PROMPTS", js)
+        self.assertIn("applyDocumentReviewPrompt", js)
 
     def test_taskpane_merges_fallback_templates(self) -> None:
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
@@ -68,7 +70,10 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertNotIn("renderTaskRoutes", js)
         self.assertIn("task-api-key-list", html)
         self.assertIn("/provider/task-api-key", js)
-        self.assertIn("word.smart_format", js)
+        self.assertIn("word.smart_write", js)
+        self.assertIn("word.document_review", js)
+        self.assertIn("word.format_review", js)
+        self.assertNotIn("word.smart_format", js)
         self.assertIn('id="provider-auth-line"', html)
         self.assertIn("setProviderAuthLine", js)
         self.assertIn("providerAuthSource", js)
@@ -78,7 +83,7 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertNotIn('id="btn-probe"', html)
         self.assertNotIn("runProbe", js)
 
-    def test_smart_write_taskpane_exposes_prompt_fragments(self) -> None:
+    def test_smart_write_taskpane_uses_compact_prompt_controls(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
@@ -86,19 +91,29 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("智能编写", html)
         self.assertIn('id="write-action"', html)
+        self.assertIn('value="standard"', html)
+        self.assertIn("技术方案正式", html)
+        self.assertIn('id="rewrite-summary-card"', html)
+        self.assertIn("rewrite-style-detail", html)
+        self.assertIn("rewrite-focus-detail", html)
+        self.assertIn("rewrite-length-detail", html)
+        self.assertIn("rewrite-output-detail", html)
         self.assertIn("prompt-fragment-card", html)
         self.assertIn('id="prompt-fragment-card" class="prompt-fragment-card" hidden', html)
         self.assertIn("rewrite-prompt-label", html)
         self.assertIn("补充要求：请突出风险和下一步计划，压缩到200字以内。", html)
         self.assertIn("updateRewritePromptPreview", js)
-        self.assertIn("showPromptFragments: true", js)
+        self.assertIn("showPromptFragments: false", js)
+        self.assertIn('rewriteStyle: "standard"', js)
+        self.assertIn('focusPoint: "complete"', js)
+        self.assertIn('lengthMode: "same"', js)
         self.assertIn("prompt-fragment-card\").hidden = !shouldShowPromptFragments", js)
         self.assertIn("REWRITE_STYLE_PROMPTS", js)
         self.assertIn("不要原样返回待处理内容", js)
         self.assertIn("/word/smart-write", js)
         self.assertNotIn("/word/rewrite", js)
 
-    def test_ribbon_uses_five_current_entries_and_current_icons(self) -> None:
+    def test_ribbon_uses_current_entries_and_current_icons(self) -> None:
         ribbon = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml").read_text(
             encoding="utf-8"
         )
@@ -106,8 +121,10 @@ class PackagingScriptTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        for label in ["智能编写", "格式校对", "智能排版", "技术文档审查", "设置"]:
+        for label in ["智能编写", "文档审查", "格式审查", "设置"]:
             self.assertIn('label="{0}"'.format(label), ribbon)
+        for old_label in ["格式校对", "智能排版", "技术文档审查"]:
+            self.assertNotIn('label="{0}"'.format(old_label), ribbon)
         self.assertNotIn("智能改写", ribbon)
         self.assertNotIn("智能续写", ribbon)
         self.assertIn("btnAiSmartWrite", ribbon)

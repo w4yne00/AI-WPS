@@ -13,9 +13,8 @@ function OnAddinLoad(ribbonUI) {
 function resolveMode(controlId) {
   var modeMap = {
     btnAiSmartWrite: "smartWrite",
-    btnAiProofread: "proofread",
-    btnAiFormat: "format",
-    btnAiTechnicalReview: "technicalReview",
+    btnAiDocumentReview: "documentReview",
+    btnAiFormatReview: "formatReview",
     btnAiSettings: "settings",
     btnWpsAiAssistant: "smartWrite"
   };
@@ -24,9 +23,8 @@ function resolveMode(controlId) {
 
 var ribbonIconMap = {
   btnAiSmartWrite: "assets/icon-smart-write.png",
-  btnAiProofread: "assets/icon-proofread.png",
-  btnAiFormat: "assets/icon-format.png",
-  btnAiTechnicalReview: "assets/icon-review.png",
+  btnAiDocumentReview: "assets/icon-review.png",
+  btnAiFormatReview: "assets/icon-format.png",
   btnAiSettings: "assets/icon-settings.png",
   btnWpsAiAssistant: "assets/ai-assistant-32.png"
 };
@@ -55,7 +53,7 @@ function OnAction(control) {
     var url = location.href.replace(/[^\/]*$/, "");
     closeCurrentTaskPane();
     var taskPane = window.Application.CreateTaskPane(
-      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.12.2-alpha"
+      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.12.9-alpha"
     );
     window.Application.WpsAiAssistantTaskPane = taskPane;
     taskPane.Visible = true;

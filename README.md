@@ -27,10 +27,9 @@
 </p>
 
 <p align="center">
-  <code>Word Proofread</code>
-  <code>Technical Review</code>
-  <code>Format Preview</code>
-  <code>Rewrite / Continue</code>
+  <code>Smart Write</code>
+  <code>Document Review</code>
+  <code>Format Review</code>
   <code>Template Rules</code>
   <code>Runtime Probe</code>
   <code>Offline Delivery</code>
@@ -75,12 +74,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.12.2-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.12.2-20260527` |
+| Version | `v0.12.9-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.12.9-20260529` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260527.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260529.tar.gz` |
 
 Version rule format:
 
@@ -102,12 +101,10 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Five task entries | WPS AI tab exposes Smart Write, Proofread, Format Preview, Technical Review, and Settings as focused ribbon actions |
+| Four task entries | WPS AI tab exposes Smart Write, Document Review, Format Review, and Settings as focused ribbon actions |
 | Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
-| Word proofreading | Detects heading hierarchy, template font/size/line-spacing violations, repeated spaces, Chinese punctuation spacing, and structured document quality issues |
-| Technical document review | Reviews selected text or the whole document for functional accuracy, professional terminology, design rationality, and requirement clarity with an editable prompt |
-| AI document quality check | Sends `documentStructure` and local rule findings to the enterprise AI provider for categorized typos, grammar, expression, logic, and heading-consistency findings; falls back safely when no API key is configured |
-| Word smart format | Uses the standard Word template as the rule source, optionally classifies paragraph roles across the full document in batches, and previews page setup, headings, body text, captions, notes, lists, appendices, and table-body formatting before applying |
+| Document review | Uses selected text or the whole document and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism |
+| Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through both top-level `query` and `inputs.query` |
 | Markdown result preview | The task pane renders Markdown paragraphs, line breaks, headings, lists, tables, quotes, code blocks, and links while copy/apply actions keep the raw model text |
 | Frosted azure UI | The task pane and Ribbon icon artwork use a bright blue-gray and white Apple-like palette without changing task flow or API behavior |
@@ -122,6 +119,13 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.12.9-alpha` | Consolidated review modes: replaced Proofread and Technical Review with Document Review (`word.document_review`), changed Smart Format into read-only Format Review (`word.format_review`), removed obsolete word routes, and kept Smart Write plus task-level Dify API key routing intact |
+| `v0.12.8-alpha` | Redesigned Word proofreading around local deterministic format checks plus small-batch AI quality review for typo, grammar, expression, logic, and fluency issues; `word.proofread` keeps its independent task API key and Dify workflow |
+| `v0.12.7-alpha` | Fixed target-machine HTTP 422 in Smart Write and Smart Format: task pane payloads now sanitize WPS host-object properties before JSON serialization, backend request models tolerate missing `documentId/plainText`, object-shaped style/size values, and WPS underline enums, and validation failures record `request_validation_failed` in `/provider/debug-last` |
+| `v0.12.6-alpha` | Continued Smart Format field hardening: paragraph extraction reads `Paragraph.Range.Text`, `Content.Paragraphs`, `Range().Paragraphs`, and full-text fallback splits; no-paragraph, unconfigured-task-key, and unparseable-Dify-output cases are surfaced in the preview and `/provider/debug-last` |
+| `v0.12.5-alpha` | Fixed Smart Format reading zero paragraphs in WPS COM-style documents: the task pane supports `Paragraphs.Count`/`Item()` collections, applies format changes through the same collection adapter, and forces Smart Format preview to the whole document scope |
+| `v0.12.4-alpha` | Hardened Smart Format Dify role parsing: wrapped `result`/`data`/`outputs` JSON and JSON-array replies are accepted, failed AI role parsing is surfaced in the task pane, and local template fallback remains deterministic |
+| `v0.12.3-alpha` | Refined Smart Write for state-owned-enterprise technical solution/reporting use: compact task-pane controls enlarge the Markdown result preview, style/focus/length menus are consolidated, and legacy option values remain compatible in the adapter prompt builder |
 | `v0.12.2-alpha` | Fixed Smart Format for long documents by processing every non-empty paragraph in bounded AI-classification batches and reporting coverage statistics; refreshed the task pane and Ribbon artwork with the bright frosted-azure palette |
 | `v0.12.1-alpha` | Fixed target panes potentially continuing to load stale plain-text resources: task-pane and static-resource URLs now carry a build token, the diagnostics view exposes the loaded frontend version, and `/provider/debug-last` reports sanitized Markdown feature flags to distinguish Dify output from frontend rendering |
 | `v0.12.0-alpha` | Rebuilt Smart Format around the uploaded `技术文件格式及书写要求` Word template: format preview now carries `targetProperties` for page setup, headings, body text, captions, notes, lists, appendices, and table body; settings now support task-level API keys so Smart Format can use its own Dify key while falling back to the unified key when absent |
@@ -266,9 +270,8 @@ Important fields:
   "timeoutSeconds": 30,
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
-    "word.smart_format": "word_smart_format",
-    "word.proofread": "word_proofread",
-    "word.technical_review": "word_technical_review"
+    "word.document_review": "word_document_review",
+    "word.format_review": "word_format_review"
   }
 }
 ```
@@ -279,9 +282,9 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-Task-level API keys are stored under `run/provider_api_keys/<ref>`. For example, Smart Format can use a dedicated Dify app key through `word.smart_format`; when a task key is absent, the adapter falls back to the unified provider API key. When no usable key is configured, `/word/smart-write` returns a local mock response and Smart Format can still produce a local template-rule preview. The legacy `/word/rewrite` endpoint remains available for rollback compatibility but is no longer called by the add-in UI.
+Task-level API keys are stored under `run/provider_api_keys/<ref>`. Smart Write, Document Review, and Format Review can each use a dedicated Dify app key; when a task key is absent, the adapter falls back to the unified provider API key. When no usable key is configured, `/word/smart-write` returns a local mock response and Format Review still performs local template-rule checks.
 
-The Smart Write Dify system prompt, Markdown response requirements, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Format setup is documented in the [Smart Format Dify workflow guide](./docs/operations/dify-smart-format-workflow.md); that Dify app should classify paragraph roles only, while actual Word formatting is applied locally from the template rules.
+The Smart Write Dify system prompt, Markdown response requirements, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md).
 
 ## API Surface
 
@@ -296,19 +299,17 @@ The Smart Write Dify system prompt, Markdown response requirements, and verifica
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
 | `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
-| `POST` | `/word/proofread` | Structured Word proofreading |
-| `POST` | `/word/format-preview` | Word auto-format preview |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
-| `POST` | `/word/rewrite` | Legacy rewrite/continue endpoint retained for rollback compatibility |
-| `POST` | `/word/technical-review` | Technical document review for functional accuracy, terminology, design, and requirement clarity |
+| `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
+| `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
 
 Unified response envelope:
 
 ```json
 {
   "success": true,
-  "traceId": "word-proofread-...",
-  "taskType": "word.proofread",
+  "traceId": "word-document-review-...",
+  "taskType": "word.document_review",
   "message": "completed",
   "data": {},
   "errors": []
@@ -384,7 +385,7 @@ The current implementation covers the Phase 1 baseline:
 - WPS task pane and action buttons
 - Structured document/selection extraction
 - Local adapter health, config, templates, and provider status
-- Word proofreading, technical review, format preview, and rewrite/continue APIs
+- Smart Write, Document Review, and Format Review APIs
 - Preview-first Word write-back
 - Runtime probing and offline delivery scripts
 

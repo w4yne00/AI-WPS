@@ -1,9 +1,9 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.12.2-alpha";
+  var FRONTEND_BUILD_VERSION = "0.12.9-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
-  var TECHNICAL_REVIEW_PROMPTS = {
+  var DOCUMENT_REVIEW_PROMPTS = {
     technical_solution: [
       "请从以下维度审查技术方案内容：",
       "1. 功能描述准确性：检查功能边界、输入输出、前置条件、异常流程、权限和依赖是否描述清楚，避免夸大或遗漏关键约束。",
@@ -31,25 +31,30 @@
       "请优先指出会导致测试不可执行、不可复现、不可验收或覆盖不足的问题，并给出可落地修改建议。"
     ].join("\n")
   };
-  var DEFAULT_TECHNICAL_REVIEW_PROMPT = TECHNICAL_REVIEW_PROMPTS.technical_solution;
+  var DEFAULT_DOCUMENT_REVIEW_PROMPT = DOCUMENT_REVIEW_PROMPTS.technical_solution;
   var REWRITE_STYLE_PROMPTS = {
-    default: "使用正式、清晰、简洁的中文表达。",
-    formal: "使用正式、清晰、简洁的中文表达。",
-    structured: "使用结构清晰、层次分明的中文表达。",
-    reporting: "使用更像工作汇报材料的表达，突出结论与执行状态。"
+    standard: "采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述。",
+    default: "采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述。",
+    formal: "采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述。",
+    structured: "按“背景、问题、措施、结论”组织内容，强化层级、逻辑连接和可执行表述。",
+    reporting: "采用汇报材料表达，先给结论，再说明进展、问题、风险和下一步安排，语言稳健。"
   };
   var REWRITE_FOCUS_PROMPTS = {
-    default: "保持内容完整。",
-    conclusion: "优先突出结论和关键判断。",
-    risk: "优先突出风险、问题与影响。",
-    next_step: "优先突出下一步计划和行动项。",
-    implementation: "优先突出实施路径、步骤与安排。"
+    complete: "保留原文关键信息、事实、条件和约束，不遗漏责任、时间、对象和结论。",
+    default: "保留原文关键信息、事实、条件和约束，不遗漏责任、时间、对象和结论。",
+    conclusion: "优先突出核心结论、关键判断、主要风险、影响范围和需要关注的问题。",
+    risk: "优先突出核心结论、关键判断、主要风险、影响范围和需要关注的问题。",
+    conclusion_risk: "优先突出核心结论、关键判断、主要风险、影响范围和需要关注的问题。",
+    next_step: "优先突出解决措施、实施路径、责任分工、时间节点和下一步安排。",
+    implementation: "优先突出解决措施、实施路径、责任分工、时间节点和下一步安排。",
+    plan_next: "优先突出解决措施、实施路径、责任分工、时间节点和下一步安排。",
+    acceptance: "优先突出交付物、验收标准、问题闭环、证据材料和后续跟踪要求。"
   };
   var REWRITE_LENGTH_PROMPTS = {
-    default: "保持原有篇幅附近。",
-    concise: "尽量精简表达，避免冗余。",
-    same: "保持篇幅基本不变。",
-    expanded: "可适度扩写，使表达更完整。"
+    same: "保持与原文相近的篇幅，只优化措辞、结构和信息组织。",
+    default: "保持与原文相近的篇幅，只优化措辞、结构和信息组织。",
+    concise: "压缩冗余表达，保留关键信息和必要限定，输出更短更直接的版本。",
+    expanded: "在不编造事实的前提下补足必要背景、逻辑衔接、措施说明和结论表达。"
   };
   var REWRITE_OUTPUT_PROMPT = "不要原样返回待处理内容；只输出最终正文。";
   var fallbackTemplates = [
@@ -58,9 +63,8 @@
   ];
   var TASK_API_KEY_DEFS = [
     { taskType: "word.smart_write", label: "智能编写" },
-    { taskType: "word.smart_format", label: "智能排版" },
-    { taskType: "word.proofread", label: "格式校对" },
-    { taskType: "word.technical_review", label: "技术文档审查" }
+    { taskType: "word.document_review", label: "文档审查" },
+    { taskType: "word.format_review", label: "格式审查" }
   ];
   var modeConfig = {
     smartWrite: {
@@ -71,31 +75,26 @@
       doneText: "智能编写结果已生成。",
       showRewriteOptions: true,
       showInstruction: true,
-      showPromptFragments: true,
+      showPromptFragments: false,
       showTemplate: false
     },
-    proofread: {
-      title: "格式校对",
-      primaryText: "开始校对",
-      showRewriteOptions: false,
-      showInstruction: false,
-      showTemplate: true
-    },
-    format: {
-      title: "智能排版",
-      primaryText: "生成排版预览",
-      showRewriteOptions: false,
-      showInstruction: false,
-      showTemplate: true,
-      showTechnicalReviewOptions: false
-    },
-    technicalReview: {
-      title: "技术文档审查",
-      primaryText: "开始审查",
+    documentReview: {
+      title: "文档审查",
+      primaryText: "开始文档审查",
       showRewriteOptions: false,
       showInstruction: false,
       showTemplate: false,
-      showTechnicalReviewOptions: true
+      showDocumentReviewOptions: true,
+      showFixedTemplate: false
+    },
+    formatReview: {
+      title: "格式审查",
+      primaryText: "开始格式审查",
+      showRewriteOptions: false,
+      showInstruction: false,
+      showTemplate: false,
+      showDocumentReviewOptions: false,
+      showFixedTemplate: true
     },
     settings: {
       title: "设置"
@@ -105,15 +104,14 @@
     templates: [],
     selectedTemplateId: "technical-file-format-requirements",
     writeAction: "rewrite",
-    rewriteStyle: "default",
-    focusPoint: "default",
-    lengthMode: "default",
+    rewriteStyle: "standard",
+    focusPoint: "complete",
+    lengthMode: "same",
     userInstruction: "",
     technicalDocumentType: "technical_solution",
-    technicalReviewPrompt: DEFAULT_TECHNICAL_REVIEW_PROMPT,
+    technicalReviewPrompt: DEFAULT_DOCUMENT_REVIEW_PROMPT,
     traceId: "",
     pendingApplyAction: "",
-    formatChanges: [],
     rewriteResult: null,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
@@ -249,20 +247,35 @@
 
   function getRewritePromptFragments() {
     return {
-      style: REWRITE_STYLE_PROMPTS[state.rewriteStyle] || REWRITE_STYLE_PROMPTS.default,
-      focus: REWRITE_FOCUS_PROMPTS[state.focusPoint] || REWRITE_FOCUS_PROMPTS.default,
-      length: REWRITE_LENGTH_PROMPTS[state.lengthMode] || REWRITE_LENGTH_PROMPTS.default
+      style: REWRITE_STYLE_PROMPTS[state.rewriteStyle] || REWRITE_STYLE_PROMPTS.standard,
+      focus: REWRITE_FOCUS_PROMPTS[state.focusPoint] || REWRITE_FOCUS_PROMPTS.complete,
+      length: REWRITE_LENGTH_PROMPTS[state.lengthMode] || REWRITE_LENGTH_PROMPTS.same
     };
+  }
+
+  function getSelectedOptionText(selectId) {
+    var select = byId(selectId);
+    if (!select || !select.options || select.selectedIndex < 0) {
+      return "";
+    }
+    return select.options[select.selectedIndex].text || "";
   }
 
   function updateRewritePromptPreview() {
     var fragments = getRewritePromptFragments();
-    var shouldShowPromptFragments = state.currentMode === "smartWrite";
+    var config = modeConfig[state.currentMode] || modeConfig.smartWrite;
+    var shouldShowPromptFragments = state.currentMode === "smartWrite" && config.showPromptFragments;
     byId("rewrite-prompt-label").textContent = "编写要求";
     byId("prompt-fragment-card").hidden = !shouldShowPromptFragments;
-    byId("style-prompt-text").textContent = fragments.style;
-    byId("focus-prompt-text").textContent = fragments.focus;
-    byId("length-prompt-text").textContent = fragments.length;
+    byId("rewrite-summary-text").textContent = [
+      getSelectedOptionText("rewrite-style") || "技术方案正式",
+      getSelectedOptionText("focus-point") || "保持信息完整",
+      getSelectedOptionText("length-mode") || "保持篇幅"
+    ].join(" / ");
+    byId("rewrite-style-detail").textContent = fragments.style;
+    byId("rewrite-focus-detail").textContent = fragments.focus;
+    byId("rewrite-length-detail").textContent = fragments.length;
+    byId("rewrite-output-detail").textContent = REWRITE_OUTPUT_PROMPT;
     byId("selected-style-prompt").textContent = fragments.style;
     byId("selected-focus-prompt").textContent = fragments.focus;
     byId("selected-length-prompt").textContent = fragments.length;
@@ -277,6 +290,7 @@
   function switchMode(mode) {
     var config = modeConfig[mode] || modeConfig.smartWrite;
     state.currentMode = modeConfig[mode] ? mode : "smartWrite";
+    document.body.setAttribute("data-task-mode", state.currentMode);
     byId("task-title").textContent = config.title;
 
     if (state.currentMode === "settings") {
@@ -288,9 +302,11 @@
     byId("rewrite-options").hidden = !config.showRewriteOptions;
     byId("instruction-block").hidden = !config.showInstruction;
     byId("template-options").hidden = !config.showTemplate;
-    byId("technical-review-options").hidden = !config.showTechnicalReviewOptions;
+    byId("document-review-options").hidden = !config.showDocumentReviewOptions;
+    byId("fixed-template-options").hidden = !config.showFixedTemplate;
     byId("style-field-label").textContent = config.styleLabel || "表达风格";
     byId("btn-run-primary").textContent = config.primaryText;
+    byId("btn-apply").hidden = state.currentMode !== "smartWrite";
     updateRewritePromptPreview();
     state.pendingApplyAction = "";
     setApplyEnabled(false);
@@ -301,9 +317,31 @@
     return window.Application || window.wps || {};
   }
 
+  function callNoArgs(fn, thisArg) {
+    if (typeof fn !== "function") {
+      return null;
+    }
+    try {
+      return fn.call(thisArg);
+    } catch (error) {
+      return null;
+    }
+  }
+
   function getActiveDocument() {
     var app = getHostApplication();
-    return app.ActiveDocument || null;
+    var document = app.ActiveDocument || app.activeDocument || null;
+    if (typeof document === "function") {
+      document = callNoArgs(document, app);
+    }
+    return document || null;
+  }
+
+  function getDocumentName(document) {
+    if (helpers.toSafeString) {
+      return helpers.toSafeString(document && (document.Name || document.name), "unnamed.docx") || "unnamed.docx";
+    }
+    return (document && (document.Name || document.name)) || "unnamed.docx";
   }
 
   function getSelectionSources(document) {
@@ -317,6 +355,9 @@
   }
 
   function getParagraphs(document) {
+    if (helpers.getParagraphCollection) {
+      return helpers.getParagraphCollection(document);
+    }
     return (document && (document.Paragraphs || document.paragraphs)) || [];
   }
 
@@ -333,6 +374,9 @@
   }
 
   function collectParagraphs(document) {
+    if (helpers.collectParagraphs) {
+      return helpers.collectParagraphs(document);
+    }
     var paragraphs = getParagraphs(document);
     var items = [];
     for (var i = 0; i < paragraphs.length; i += 1) {
@@ -394,18 +438,22 @@
     }
 
     var paragraphs = collectParagraphs(document);
-    var plainText = document.Content && document.Content.Text
-      ? document.Content.Text
-      : paragraphs.map(function (item) { return item.text; }).join("\n");
+    var plainText = helpers.readDocumentText
+      ? helpers.readDocumentText(document)
+      : "";
+    if (!plainText) {
+      plainText = paragraphs.map(function (item) { return item.text; }).join("\n");
+    }
 
     if (selectionMode === "selection") {
       plainText = getSelectionText(document) || plainText;
     }
 
+    var documentName = getDocumentName(document);
     var headings = collectHeadings(paragraphs);
     var documentStructure = helpers.buildDocumentStructure
       ? helpers.buildDocumentStructure({
-        documentId: document.Name || "unnamed.docx",
+        documentId: documentName,
         templateId: state.selectedTemplateId,
         selectionMode: selectionMode,
         plainText: plainText,
@@ -416,7 +464,7 @@
       : {};
 
     return {
-      documentId: document.Name || "unnamed.docx",
+      documentId: documentName,
       scene: "word",
       selectionMode: selectionMode,
       content: {
@@ -495,6 +543,13 @@
     }).then(function (response) {
       return response.json().then(function (body) {
         if (!response.ok) {
+          var validation = body.data && body.data.validation;
+          if (validation && validation.errors && validation.errors.length) {
+            var details = validation.errors.map(function (item) {
+              return [item.loc, item.type, item.message].filter(Boolean).join(" | ");
+            }).join("\n");
+            throw new Error("HTTP " + response.status + " 请求数据校验失败：\n" + details);
+          }
           throw new Error((body.errors && body.errors[0] && body.errors[0].message) || body.message || ("HTTP " + response.status));
         }
         return body;
@@ -737,80 +792,77 @@
     });
   }
 
-  function renderIssues(issues) {
-    if (!issues || !issues.length) {
-      return "未发现需要处理的问题。";
-    }
-    var categoryText = {
-      format: "格式合规",
-      typo: "错别字",
-      grammar: "语病",
-      expression: "表述规范",
-      logic: "逻辑清晰",
-      heading_consistency: "章节命名"
+  function formatAiFallbackReason(reason) {
+    var reasonText = {
+      no_paragraphs: "未读取到正文段落，未调用 Dify；请确认当前文档对象能暴露正文段落或全文文本。",
+      provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
+      dify_response_not_role_json: "Dify 未返回段落角色 JSON，已使用本地模板规则。",
+      provider_request_failed: "Dify 请求失败，已使用本地模板规则。",
+      dify_response_no_valid_roles: "Dify 返回的角色无效，已使用本地模板规则。",
+      dify_returned_no_roles: "Dify 未返回有效段落角色，已使用本地模板规则。"
     };
-    return issues.map(function (issue) {
-      var category = categoryText[issue.category] || issue.category || "格式合规";
-      var original = issue.original ? ("原文：" + issue.original) : "";
-      var reason = issue.reason ? ("依据：" + issue.reason) : "";
-      return [
-        "类型：" + category,
-        "规则：" + issue.ruleId,
-        "级别：" + issue.severity,
-        "段落：" + (issue.paragraphIndex || "无"),
-        "说明：" + issue.message,
-        "建议：" + (issue.suggestion || "无"),
-        original,
-        reason,
-        "可自动修复：" + (issue.autoFixable ? "是" : "否")
-      ].filter(Boolean).join(" | ");
-    }).join("\n");
+    return reasonText[reason] || reason || "";
   }
 
-  function renderFormatChanges(summary, changes) {
+  function renderFormatReview(data) {
+    var summary = data.summary || {};
+    var issues = data.issues || [];
     var lines = [
       "模板：" + summary.templateId,
-      "待调整项：" + summary.changeCount
+      "检查范围：" + (summary.scope === "selection" ? "选中内容" : "全文"),
+      "发现问题：" + (summary.issueCount || issues.length || 0)
     ];
     var hasCoverageStats = typeof summary.paragraphCount !== "undefined";
 
     if (hasCoverageStats) {
-      lines.push("全文扫描段落：" + summary.paragraphCount);
+      lines.push("扫描段落：" + summary.paragraphCount);
       lines.push(
         "AI 识别段落：" + (summary.aiClassifiedParagraphCount || 0) +
         " | 本地兜底段落：" + (summary.localFallbackParagraphCount || 0)
       );
     }
     lines.push("识别来源：" + (summary.provider || "local"));
+    var aiFallbackText = formatAiFallbackReason(summary.aiFallbackReason);
+    if (aiFallbackText) {
+      lines.push("AI 识别提示：" + aiFallbackText);
+    }
+    if (summary.aiInvalidRoleCount || summary.aiOutOfBatchCount) {
+      lines.push(
+        "AI 无效角色：" + (summary.aiInvalidRoleCount || 0) +
+        " | 越界段落：" + (summary.aiOutOfBatchCount || 0)
+      );
+    }
     lines.push("");
     if (hasCoverageStats) {
-      lines.push("以下仅显示需要调整的格式项，正文内容不会在预览中改写。");
+      lines.push("以下仅显示需要调整的格式项，正文内容不会在检查中改写。");
       lines.push("");
     }
 
-    if (!changes || !changes.length) {
-      lines.push("当前文档暂无可预览的排版变更。");
+    if (!issues.length) {
+      lines.push("当前范围未发现明显格式问题。");
       return lines.join("\n");
     }
 
-    changes.forEach(function (change) {
-      lines.push(
-        "第 " + change.paragraphIndex + " 段：" +
-        change.currentStyle + " → " + change.targetStyle +
-        " | 角色：" + (change.role || "未识别") +
-        " | " + change.reason
-      );
+    issues.forEach(function (issue) {
+      lines.push("第 " + (issue.paragraphIndex || 0) + " 段：" + (issue.message || "格式问题"));
+      lines.push("角色：" + (issue.role || "未识别") + " | 规则：" + (issue.ruleId || "format"));
+      if (issue.currentValue || issue.expectedValue) {
+        lines.push("当前：" + (issue.currentValue || "未读取") + " | 应为：" + (issue.expectedValue || "未给出"));
+      }
+      lines.push("建议：" + (issue.suggestion || "按模板调整。"));
+      lines.push("");
     });
 
-    return lines.join("\n");
+    return lines.join("\n").trim();
   }
 
-  function renderTechnicalReview(data) {
+  function renderDocumentReview(data) {
     var categoryText = {
-      accuracy: "功能描述准确性",
-      terminology: "术语专业性",
-      design: "设计合理性",
-      requirement: "要求明确性"
+      typo: "错别字",
+      expression: "语言表达",
+      logic: "逻辑表达",
+      fluency: "通畅性",
+      professional: "专业性"
     };
     var severityText = {
       high: "高",
@@ -824,22 +876,23 @@
     };
     var issues = data.issues || [];
     var lines = [
-      "技术文档审查结果",
+      "文档审查结果",
       "",
       "文档类型：" + (documentTypeText[data.documentType] || data.documentType || "技术方案"),
+      "检查范围：" + (data.scope === "selection" ? "选中内容" : "全文"),
       "总体结论：" + (data.summary || "审查完成。"),
       ""
     ];
 
     if (!issues.length) {
-      lines.push("未发现明显技术文档审查问题。");
+      lines.push("未发现明显文档质量问题。");
       return lines.join("\n");
     }
 
     issues.forEach(function (issue, index) {
       lines.push(
         "[" + (severityText[issue.severity] || issue.severity || "中") + "] " +
-        (categoryText[issue.category] || issue.category || "技术审查") +
+        (categoryText[issue.category] || issue.category || "文档审查") +
         " #" + (index + 1)
       );
       lines.push("位置：" + (issue.location || "未定位"));
@@ -876,10 +929,10 @@
     fallbackCopy(text);
   }
 
-  function applyTechnicalReviewPrompt(documentType) {
-    var nextType = TECHNICAL_REVIEW_PROMPTS[documentType] ? documentType : "technical_solution";
+  function applyDocumentReviewPrompt(documentType) {
+    var nextType = DOCUMENT_REVIEW_PROMPTS[documentType] ? documentType : "technical_solution";
     state.technicalDocumentType = nextType;
-    state.technicalReviewPrompt = TECHNICAL_REVIEW_PROMPTS[nextType];
+    state.technicalReviewPrompt = DOCUMENT_REVIEW_PROMPTS[nextType];
     byId("technical-review-prompt").value = state.technicalReviewPrompt;
   }
 
@@ -898,115 +951,6 @@
       setStatus("复制失败，请手动选择结果文本。");
     }
     document.body.removeChild(textarea);
-  }
-
-  function twipsToPoints(value) {
-    var numeric = Number(value);
-    if (!isFinite(numeric)) {
-      return null;
-    }
-    return numeric / 20;
-  }
-
-  function applyPageSetup(document, properties) {
-    var setup = document && (document.PageSetup || document.pageSetup);
-    if (!setup || !properties) {
-      return;
-    }
-    var marginMap = [
-      ["marginTopTwips", "TopMargin"],
-      ["marginBottomTwips", "BottomMargin"],
-      ["marginLeftTwips", "LeftMargin"],
-      ["marginRightTwips", "RightMargin"]
-    ];
-    marginMap.forEach(function (item) {
-      var value = twipsToPoints(properties[item[0]]);
-      if (value !== null) {
-        setup[item[1]] = value;
-      }
-    });
-  }
-
-  function setIfPresent(target, key, value) {
-    if (typeof value !== "undefined" && value !== null) {
-      target[key] = value;
-    }
-  }
-
-  function applyParagraphStyle(paragraph, targetStyle, targetProperties) {
-    var properties = targetProperties || {};
-    paragraph.StyleNameLocal = targetStyle;
-    paragraph.styleName = targetStyle;
-    paragraph.Font = paragraph.Font || {};
-    paragraph.ParagraphFormat = paragraph.ParagraphFormat || {};
-
-    if (properties.fontName) {
-      paragraph.Font.NameFarEast = properties.fontName;
-      paragraph.Font.Name = properties.asciiFontName || properties.fontName;
-    }
-    setIfPresent(paragraph.Font, "Size", properties.fontSize);
-    if (typeof properties.bold === "boolean") {
-      paragraph.Font.Bold = properties.bold;
-    }
-    setIfPresent(paragraph.ParagraphFormat, "Alignment", properties.alignment);
-    setIfPresent(paragraph.ParagraphFormat, "LineSpacing", properties.lineSpacingTwips);
-    setIfPresent(paragraph.ParagraphFormat, "OutlineLevel", properties.outlineLevel);
-    var firstLineIndent = twipsToPoints(properties.firstLineIndentTwips);
-    var leftIndent = twipsToPoints(properties.leftIndentTwips);
-    var rightIndent = twipsToPoints(properties.rightIndentTwips);
-    var spaceBefore = twipsToPoints(properties.spaceBeforeTwips);
-    var spaceAfter = twipsToPoints(properties.spaceAfterTwips);
-    if (firstLineIndent !== null) {
-      paragraph.ParagraphFormat.FirstLineIndent = firstLineIndent;
-    }
-    if (leftIndent !== null) {
-      paragraph.ParagraphFormat.LeftIndent = leftIndent;
-    }
-    if (rightIndent !== null) {
-      paragraph.ParagraphFormat.RightIndent = rightIndent;
-    }
-    if (spaceBefore !== null) {
-      paragraph.ParagraphFormat.SpaceBefore = spaceBefore;
-    }
-    if (spaceAfter !== null) {
-      paragraph.ParagraphFormat.SpaceAfter = spaceAfter;
-    }
-
-    if (Object.keys(properties).length) {
-      return;
-    }
-
-    if (targetStyle === "Body" || targetStyle === "Normal") {
-      paragraph.Font.NameFarEast = "SimSun";
-      paragraph.Font.Name = "SimSun";
-      paragraph.Font.Size = 12;
-      paragraph.ParagraphFormat.OutlineLevel = 0;
-    } else if (targetStyle.indexOf("Heading") === 0) {
-      var level = Number(targetStyle.split(" ")[1] || 1);
-      paragraph.Font.NameFarEast = "SimHei";
-      paragraph.Font.Name = "SimHei";
-      paragraph.Font.Size = level === 1 ? 16 : 14;
-      paragraph.ParagraphFormat.OutlineLevel = level;
-    }
-  }
-
-  function applyFormatChanges() {
-    var document = getActiveDocument();
-    var paragraphs = getParagraphs(document);
-    state.formatChanges.forEach(function (change) {
-      if (change.paragraphIndex === 0) {
-        applyPageSetup(document, change.targetProperties || {});
-        return;
-      }
-      var paragraph = paragraphs[change.paragraphIndex - 1];
-      if (!paragraph) {
-        return;
-      }
-      applyParagraphStyle(paragraph, change.targetStyle, change.targetProperties || {});
-    });
-    state.pendingApplyAction = "";
-    setApplyEnabled(false);
-    setStatus("排版变更已应用。");
   }
 
   function applyRewrite() {
@@ -1045,58 +989,7 @@
     setStatus("结果已应用。");
   }
 
-  function runProofread() {
-    try {
-      state.latestDocumentPayload = extractDocument("document");
-    } catch (error) {
-      setStatus(error.message);
-      setResult(error.message);
-      return;
-    }
-
-    setStatus("正在执行格式校对...");
-    request("/word/proofread", state.latestDocumentPayload)
-      .then(function (body) {
-        state.pendingApplyAction = "";
-        setApplyEnabled(false);
-        setTrace(body.traceId);
-        setResult(renderIssues(body.data.issues));
-        setStatus("格式校对完成。");
-      })
-      .catch(function (error) {
-        var message = describeFetchError(error);
-        setStatus("格式校对失败：" + message);
-        setResult(message);
-      });
-  }
-
-  function runFormatPreview() {
-    try {
-      state.latestDocumentPayload = extractDocument("document");
-    } catch (error) {
-      setStatus(error.message);
-      setResult(error.message);
-      return;
-    }
-
-    setStatus("正在生成排版预览...");
-    request("/word/format-preview", state.latestDocumentPayload)
-      .then(function (body) {
-        state.pendingApplyAction = "format";
-        state.formatChanges = body.data.changes || [];
-        setApplyEnabled(true);
-        setTrace(body.traceId);
-        setResult(renderFormatChanges(body.data.summary, body.data.changes));
-        setStatus("排版预览已生成。");
-      })
-      .catch(function (error) {
-        var message = describeFetchError(error);
-        setStatus("排版预览失败：" + message);
-        setResult(message);
-      });
-  }
-
-  function runTechnicalReview() {
+  function runDocumentReview() {
     var scope = resolveSelectionScope(false);
     if (!scope.ok) {
       setStatus(scope.message);
@@ -1113,18 +1006,52 @@
       return;
     }
 
-    setStatus("正在执行技术文档审查...");
-    request("/word/technical-review", state.latestDocumentPayload)
+    setStatus("正在执行文档审查...");
+    request("/word/document-review", state.latestDocumentPayload)
       .then(function (body) {
         state.pendingApplyAction = "";
         setApplyEnabled(false);
         setTrace(body.traceId);
-        setResult(renderTechnicalReview(body.data || {}));
-        setStatus("技术文档审查完成。");
+        setResult(renderDocumentReview(body.data || {}));
+        setStatus("文档审查完成。");
       })
       .catch(function (error) {
         var message = describeFetchError(error);
-        setStatus("技术文档审查失败：" + message);
+        setStatus("文档审查失败：" + message);
+        setResult(message);
+      });
+  }
+
+  function runFormatReview() {
+    var scope = resolveSelectionScope(false);
+    if (!scope.ok) {
+      setStatus(scope.message);
+      setResult(scope.message);
+      return;
+    }
+
+    try {
+      state.latestDocumentPayload = extractDocument(scope.selectionMode);
+      state.latestDocumentPayload.options.templateId = "technical-file-format-requirements";
+      state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+    } catch (error) {
+      setStatus(error.message);
+      setResult(error.message);
+      return;
+    }
+
+    setStatus("正在执行格式审查...");
+    request("/word/format-review", state.latestDocumentPayload)
+      .then(function (body) {
+        state.pendingApplyAction = "";
+        setApplyEnabled(false);
+        setTrace(body.traceId);
+        setResult(renderFormatReview(body.data || {}));
+        setStatus("格式审查完成。");
+      })
+      .catch(function (error) {
+        var message = describeFetchError(error);
+        setStatus("格式审查失败：" + message);
         setResult(message);
       });
   }
@@ -1165,11 +1092,6 @@
   }
 
   function applyPreview() {
-    if (state.pendingApplyAction === "format") {
-      applyFormatChanges();
-      return;
-    }
-
     if (state.pendingApplyAction === "rewrite") {
       applyRewrite();
     }
@@ -1180,16 +1102,12 @@
       runSmartWriteAction();
       return;
     }
-    if (state.currentMode === "proofread") {
-      runProofread();
+    if (state.currentMode === "documentReview") {
+      runDocumentReview();
       return;
     }
-    if (state.currentMode === "format") {
-      runFormatPreview();
-      return;
-    }
-    if (state.currentMode === "technicalReview") {
-      runTechnicalReview();
+    if (state.currentMode === "formatReview") {
+      runFormatReview();
     }
   }
 
@@ -1216,7 +1134,7 @@
       state.userInstruction = event.target.value;
     });
     byId("technical-document-type").addEventListener("change", function (event) {
-      applyTechnicalReviewPrompt(event.target.value);
+      applyDocumentReviewPrompt(event.target.value);
     });
     byId("technical-review-prompt").addEventListener("input", function (event) {
       state.technicalReviewPrompt = event.target.value;

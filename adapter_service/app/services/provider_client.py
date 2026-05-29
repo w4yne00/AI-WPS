@@ -17,25 +17,30 @@ _LAST_PROVIDER_DEBUG: Dict = {}
 
 
 STYLE_TEXT = {
-    "default": "正式、清晰、简洁",
-    "formal": "正式、清晰、简洁",
-    "structured": "结构清晰、层次分明",
-    "reporting": "更像工作汇报材料，突出结论与执行状态",
+    "standard": "采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述",
+    "default": "采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述",
+    "formal": "采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述",
+    "structured": "按“背景、问题、措施、结论”组织内容，强化层级、逻辑连接和可执行表述",
+    "reporting": "采用汇报材料表达，先给结论，再说明进展、问题、风险和下一步安排，语言稳健",
 }
 
 FOCUS_TEXT = {
-    "default": "保持内容完整",
-    "conclusion": "优先突出结论和关键判断",
-    "risk": "优先突出风险、问题与影响",
-    "next_step": "优先突出下一步计划和行动项",
-    "implementation": "优先突出实施路径、步骤与安排",
+    "complete": "保留原文关键信息、事实、条件和约束，不遗漏责任、时间、对象和结论",
+    "default": "保留原文关键信息、事实、条件和约束，不遗漏责任、时间、对象和结论",
+    "conclusion": "优先突出核心结论、关键判断、主要风险、影响范围和需要关注的问题",
+    "risk": "优先突出核心结论、关键判断、主要风险、影响范围和需要关注的问题",
+    "conclusion_risk": "优先突出核心结论、关键判断、主要风险、影响范围和需要关注的问题",
+    "next_step": "优先突出解决措施、实施路径、责任分工、时间节点和下一步安排",
+    "implementation": "优先突出解决措施、实施路径、责任分工、时间节点和下一步安排",
+    "plan_next": "优先突出解决措施、实施路径、责任分工、时间节点和下一步安排",
+    "acceptance": "优先突出交付物、验收标准、问题闭环、证据材料和后续跟踪要求",
 }
 
 LENGTH_TEXT = {
-    "default": "保持原有篇幅附近",
-    "concise": "尽量精简表达，避免冗余",
-    "same": "保持篇幅基本不变",
-    "expanded": "可适度扩写，使表达更完整",
+    "same": "保持与原文相近的篇幅，只优化措辞、结构和信息组织",
+    "default": "保持与原文相近的篇幅，只优化措辞、结构和信息组织",
+    "concise": "压缩冗余表达，保留关键信息和必要限定，输出更短更直接的版本",
+    "expanded": "在不编造事实的前提下补足必要背景、逻辑衔接、措施说明和结论表达",
 }
 
 DOCUMENT_TYPE_TEXT = {
@@ -44,7 +49,7 @@ DOCUMENT_TYPE_TEXT = {
     "test_outline": "测试大纲和细则",
 }
 
-TECHNICAL_REVIEW_PROMPTS = {
+DOCUMENT_REVIEW_PROMPTS = {
     "technical_solution": "\n".join(
         [
             "请从以下维度审查技术方案内容：",
@@ -79,7 +84,7 @@ TECHNICAL_REVIEW_PROMPTS = {
     ),
 }
 
-DEFAULT_TECHNICAL_REVIEW_PROMPT = TECHNICAL_REVIEW_PROMPTS["technical_solution"]
+DEFAULT_DOCUMENT_REVIEW_PROMPT = DOCUMENT_REVIEW_PROMPTS["technical_solution"]
 
 
 def build_rewrite_prompt(
@@ -96,9 +101,9 @@ def build_rewrite_prompt(
         "请对下面内容进行{0}。".format(mode_text),
         "要求：",
         "1. 保留原意，不编造事实。",
-        "2. 使用{0}的中文表达。".format(STYLE_TEXT.get(style, STYLE_TEXT["default"])),
-        "3. {0}。".format(FOCUS_TEXT.get(focus, FOCUS_TEXT["default"])),
-        "4. {0}。".format(LENGTH_TEXT.get(length, LENGTH_TEXT["default"])),
+        "2. {0}。".format(STYLE_TEXT.get(style, STYLE_TEXT["standard"])),
+        "3. {0}。".format(FOCUS_TEXT.get(focus, FOCUS_TEXT["complete"])),
+        "4. {0}。".format(LENGTH_TEXT.get(length, LENGTH_TEXT["same"])),
         "5. 输出结果直接给出正文，不要解释你的处理过程。",
         "6. 不要原样返回待处理内容；如果原文已经较好，也必须在措辞、结构或信息组织上做出有效优化。",
     ]
@@ -139,9 +144,9 @@ def build_smart_write_prompt(
     lines = [
         "你是企业办公文档智能编写助手。",
         "任务类型：{0}".format(action_text),
-        "表达风格：{0}".format(STYLE_TEXT.get(style, STYLE_TEXT["default"])),
-        "侧重点：{0}".format(FOCUS_TEXT.get(focus, FOCUS_TEXT["default"])),
-        "篇幅要求：{0}".format(LENGTH_TEXT.get(length, LENGTH_TEXT["default"])),
+        "表达风格：{0}".format(STYLE_TEXT.get(style, STYLE_TEXT["standard"])),
+        "侧重点：{0}".format(FOCUS_TEXT.get(focus, FOCUS_TEXT["complete"])),
+        "篇幅要求：{0}".format(LENGTH_TEXT.get(length, LENGTH_TEXT["same"])),
     ]
     if user_prompt.strip():
         lines.extend(["用户补充要求：", user_prompt.strip()])
@@ -160,108 +165,40 @@ def build_smart_write_prompt(
     return "\n".join(lines)
 
 
-def build_typo_prompt(text: str) -> str:
-    return "\n".join(
-        [
-            "你是一名中文技术文件校对助手。",
-            "请检查下面文本中的错别字、用词错误、明显病句或疑似错误表达。",
-            "要求：",
-            "1. 只返回 JSON，不要输出解释性前后缀。",
-            "2. JSON 格式为数组，每一项包含 original、suggestion、reason。",
-            "3. 如果没有发现问题，返回空数组 []。",
-            "4. 不要改写全文，只指出明确或高度疑似的问题。",
-            "",
-            "待检查文本：",
-            text.strip(),
-        ]
-    )
+def get_default_document_review_prompt(document_type: str = "technical_solution") -> str:
+    return DOCUMENT_REVIEW_PROMPTS.get(document_type, DEFAULT_DOCUMENT_REVIEW_PROMPT)
 
 
-def get_default_technical_review_prompt(document_type: str = "technical_solution") -> str:
-    return TECHNICAL_REVIEW_PROMPTS.get(document_type, DEFAULT_TECHNICAL_REVIEW_PROMPT)
-
-
-def build_technical_review_prompt(
+def build_document_review_prompt(
     text: str,
     document_type: str,
     review_prompt: str = "",
 ) -> str:
-    prompt_text = review_prompt.strip() or get_default_technical_review_prompt(document_type)
+    prompt_text = review_prompt.strip() or get_default_document_review_prompt(document_type)
     document_type_text = DOCUMENT_TYPE_TEXT.get(document_type, "技术方案")
     return "\n".join(
         [
-            "你是一名资深技术文档审查专家。",
-            "请审查下面的文档内容，重点判断描述是否准确、术语是否专业、设计是否合理、要求是否明确。",
+            "你是一名企业文档审查专家。",
+            "请审查下面的文档内容，重点发现错别字、语言逻辑表达、通畅性和对应文档类型的专业性问题。",
             "文档类型：{0}".format(document_type_text),
             "",
             "审查重点：",
             prompt_text,
             "",
             "输出要求：",
-            "1. 只返回 JSON 对象，不要输出 Markdown、解释性前后缀或代码块。",
-            "2. JSON 顶层字段为 summary 和 issues。",
+            "1. 只返回一个 Markdown json 代码块，不要输出代码块以外的解释性文字。",
+            "2. json 顶层字段为 summary 和 issues。",
             "3. issues 为数组，每项包含 category、severity、location、originalText、problem、suggestion、suggestedRewrite。",
-            "4. category 只能使用 accuracy、terminology、design、requirement。",
+            "4. category 只能使用 typo、expression、logic、fluency、professional。",
             "5. severity 只能使用 high、medium、low。",
             "6. location 可用章节名、段落号或“选中文本”描述；无法定位时写“未定位”。",
             "7. suggestedRewrite 只针对可直接替换的局部文本给出，无法直接改写时留空字符串。",
+            "8. 不要检查字体、字号、行距、页边距等格式合规问题。",
             "",
             "待审查内容：",
             text.strip(),
         ]
     )
-
-
-def build_document_proofread_prompt() -> str:
-    return "\n".join(
-        [
-            "你是一名企业技术文档审校器，不是自由改写器。",
-            "请基于 input_data 中的 document_text、document_structure、template_type、check_scope 和 local_rule_findings 做综合审校。",
-            "审校范围包括：错别字、语病、表述不规范、逻辑不清、章节命名不统一。",
-            "格式合规问题请参考 local_rule_findings，不要虚构无法从结构化数据判断的页眉页脚、页码或表格深层格式问题。",
-            "必须只返回结构化 JSON，不要输出解释性前后缀。",
-            "JSON 格式：",
-            '{"issues":[{"category":"typo|grammar|expression|logic|heading_consistency","severity":"info|warning|error","paragraphIndex":1,"original":"原文片段","suggestion":"修改建议","message":"问题说明","reason":"判断依据","confidence":0.0}]}',
-            '如果没有发现问题，返回 {"issues":[]}。',
-        ]
-    )
-
-
-def build_document_proofread_payload(
-    document_text: str,
-    document_structure: Dict,
-    template_type: str,
-    template_version: str,
-    trace_id: str,
-    local_rule_findings: Optional[List[Dict]] = None,
-    task_id: str = "word.proofread",
-) -> Dict:
-    return {
-        "input_data": {
-            "scene": "word",
-            "task_id": task_id,
-            "taskType": task_id,
-            "proofread_mode": "document_quality",
-            "trace_id": trace_id,
-            "document_text": document_text,
-            "document_structure": document_structure,
-            "template_type": template_type,
-            "template_version": template_version,
-            "check_scope": {
-                "check_format": True,
-                "check_expression": True,
-                "check_typos": True,
-                "check_logic": True,
-                "check_heading_consistency": True,
-            },
-            "local_rule_findings": local_rule_findings or [],
-        },
-        "query": build_document_proofread_prompt(),
-        "conversation_id": "",
-        "mode": "blocking",
-        "user": "wps-ai-assistant",
-        "files": [],
-    }
 
 
 def infer_payload_style(path: str, provider_type: str = "") -> str:
@@ -384,6 +321,9 @@ def record_provider_debug(event: Dict) -> None:
             "status": error_info.get("status", ""),
             "message": _preview_text(str(error_info.get("message", "")), 160),
         }
+    validation_info = event.get("validation", {})
+    if isinstance(validation_info, dict) and validation_info:
+        debug["validation"] = validation_info
     for field in ("provider", "skipReason", "providerBaseUrlConfigured", "authSource", "taskAuthSource"):
         if field in event:
             debug[field] = event[field]
@@ -395,38 +335,6 @@ def get_last_provider_debug() -> Dict:
     return dict(_LAST_PROVIDER_DEBUG)
 
 
-def parse_typo_issues(answer: str) -> list:
-    raw = (answer or "").strip()
-    if not raw:
-        return []
-    start = raw.find("[")
-    end = raw.rfind("]")
-    if start >= 0 and end >= start:
-        raw = raw[start:end + 1]
-    try:
-        payload = json.loads(raw)
-    except json.JSONDecodeError:
-        return []
-    if not isinstance(payload, list):
-        return []
-    issues = []
-    for item in payload:
-        if not isinstance(item, dict):
-            continue
-        original = str(item.get("original", "")).strip()
-        suggestion = str(item.get("suggestion", "")).strip()
-        reason = str(item.get("reason", "")).strip()
-        if original and suggestion:
-            issues.append(
-                {
-                    "original": original,
-                    "suggestion": suggestion,
-                    "reason": reason,
-                }
-            )
-    return issues
-
-
 def _extract_json_payload(answer: str):
     raw = (answer or "").strip()
     if not raw:
@@ -435,6 +343,13 @@ def _extract_json_payload(answer: str):
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
+
+    fence = re.search(r"```(?:json)?\s*(.*?)```", raw, re.IGNORECASE | re.DOTALL)
+    if fence:
+        try:
+            return json.loads(fence.group(1).strip())
+        except json.JSONDecodeError:
+            pass
 
     object_start = raw.find("{")
     array_start = raw.find("[")
@@ -463,66 +378,19 @@ def _extract_json_payload(answer: str):
     return None
 
 
-def parse_document_proofread_issues(answer: str) -> List[Dict]:
-    payload = _extract_json_payload(answer)
-    if payload is None:
-        return []
-    if isinstance(payload, dict):
-        raw_issues = payload.get("issues", [])
-    elif isinstance(payload, list):
-        raw_issues = payload
-    else:
-        return []
-
-    allowed_categories = {
-        "typo",
-        "grammar",
-        "expression",
-        "logic",
-        "heading_consistency",
-    }
-    allowed_severities = {"info", "warning", "error"}
-    issues: List[Dict] = []
-    for item in raw_issues:
-        if not isinstance(item, dict):
-            continue
-        category = str(item.get("category", "expression")).strip() or "expression"
-        if category not in allowed_categories:
-            category = "expression"
-        severity = str(item.get("severity", "warning")).strip() or "warning"
-        if severity not in allowed_severities:
-            severity = "warning"
-        message = str(item.get("message", "")).strip()
-        suggestion = str(item.get("suggestion", item.get("replacement", ""))).strip()
-        original = str(item.get("original", "")).strip()
-        reason = str(item.get("reason", "")).strip()
-        if not (message or suggestion or original):
-            continue
-        parsed = {
-            "category": category,
-            "severity": severity,
-            "paragraphIndex": item.get("paragraphIndex", item.get("paragraph_index")),
-            "original": original,
-            "suggestion": suggestion,
-            "message": message or "AI detected a document quality issue.",
-            "reason": reason,
-            "confidence": item.get("confidence"),
-        }
-        issues.append(parsed)
-    return issues
-
-
-def _normalize_review_category(value: str) -> str:
+def _normalize_document_review_category(value: str) -> str:
     text = str(value or "").strip().lower()
-    if text in {"accuracy", "terminology", "design", "requirement"}:
+    if text in {"typo", "expression", "logic", "fluency", "professional"}:
         return text
-    if "术语" in text or "term" in text:
-        return "terminology"
-    if "设计" in text or "架构" in text or "design" in text:
-        return "design"
-    if "要求" in text or "需求" in text or "验收" in text or "require" in text:
-        return "requirement"
-    return "accuracy"
+    if "错" in text or "别字" in text or "typo" in text:
+        return "typo"
+    if "逻辑" in text or "logic" in text or "因果" in text or "矛盾" in text:
+        return "logic"
+    if "通畅" in text or "通顺" in text or "fluency" in text:
+        return "fluency"
+    if "专业" in text or "术语" in text or "professional" in text:
+        return "professional"
+    return "expression"
 
 
 def _normalize_review_severity(value: str) -> str:
@@ -536,7 +404,7 @@ def _normalize_review_severity(value: str) -> str:
     return "medium"
 
 
-def parse_technical_review_answer(answer: str) -> Dict:
+def parse_document_review_answer(answer: str) -> Dict:
     payload = _extract_json_payload(answer)
     if payload is None:
         return {
@@ -566,7 +434,7 @@ def parse_technical_review_answer(answer: str) -> Dict:
             continue
         issues.append(
             {
-                "category": _normalize_review_category(item.get("category", "")),
+                "category": _normalize_document_review_category(item.get("category", "")),
                 "severity": _normalize_review_severity(item.get("severity", "")),
                 "location": str(item.get("location", "") or "未定位").strip(),
                 "originalText": str(item.get("originalText", "")).strip(),
@@ -577,7 +445,7 @@ def parse_technical_review_answer(answer: str) -> Dict:
         )
 
     if not summary:
-        summary = "发现 {0} 项技术文档审查问题。".format(len(issues)) if issues else "未发现明显技术文档审查问题。"
+        summary = "发现 {0} 项文档审查问题。".format(len(issues)) if issues else "未发现明显文档审查问题。"
     return {
         "summary": summary,
         "issues": issues,
@@ -749,9 +617,8 @@ class ProviderClient:
     def build_task_api_key_status(self, key_base_path: Optional[Path] = None) -> Dict:
         tasks = [
             ("word.smart_write", "智能编写"),
-            ("word.smart_format", "智能排版"),
-            ("word.proofread", "格式校对"),
-            ("word.technical_review", "技术文档审查"),
+            ("word.document_review", "文档审查"),
+            ("word.format_review", "格式审查"),
         ]
         status = {}
         for task_type, label in tasks:
@@ -776,7 +643,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.12.2-alpha",
+            "version": "0.12.9-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -869,18 +736,35 @@ class ProviderClient:
                 raise ProviderTimeoutError() from exc
             raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
 
-    def record_unconfigured_debug(self, task_type: str, trace_id: str, query: str) -> None:
+    def record_skipped_debug(
+        self,
+        task_type: str,
+        trace_id: str,
+        query: str,
+        skip_reason: str,
+        provider: str = "local",
+    ) -> None:
+        self.refresh_settings()
         record_provider_debug(
             {
                 "traceId": trace_id,
                 "taskType": task_type,
-                "provider": "mock",
-                "skipReason": "provider_not_configured",
+                "provider": provider,
+                "skipReason": skip_reason,
                 "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
                 "authSource": self.get_auth_source(),
                 "taskAuthSource": self.get_auth_source_for_task(task_type),
                 "request": {"body": build_provider_request_payload(self.settings, {}, query)},
             }
+        )
+
+    def record_unconfigured_debug(self, task_type: str, trace_id: str, query: str) -> None:
+        self.record_skipped_debug(
+            task_type=task_type,
+            trace_id=trace_id,
+            query=query,
+            skip_reason="provider_not_configured",
+            provider="mock",
         )
 
     def smart_write(
@@ -974,51 +858,7 @@ class ProviderClient:
             "messageId": body.get("message_id", ""),
         }
 
-    def proofread_typos(self, text: str, trace_id: str) -> list:
-        source_text = text.strip()
-        if not source_text or not self.is_task_configured("word.proofread"):
-            return []
-
-        prompt = build_typo_prompt(source_text)
-        body = self.post_task(
-            "word.proofread",
-            trace_id,
-            {},
-            prompt,
-        )
-
-        answer = extract_answer(body)
-        logger.info("traceId=%s provider=enterprise-dify-chat task=word.proofread.typo", trace_id)
-        return parse_typo_issues(answer)
-
-    def proofread_document(
-        self,
-        document_text: str,
-        document_structure: Dict,
-        template_type: str,
-        template_version: str,
-        trace_id: str,
-        local_rule_findings: Optional[List[Dict]] = None,
-    ) -> List[Dict]:
-        if not document_text.strip() or not self.is_task_configured("word.proofread"):
-            return []
-
-        payload = build_document_proofread_payload(
-            document_text=document_text,
-            document_structure=document_structure,
-            template_type=template_type,
-            template_version=template_version,
-            trace_id=trace_id,
-            local_rule_findings=local_rule_findings,
-            task_id=self.resolve_task_route("word.proofread").task_id,
-        )
-        body = self.post_task("word.proofread", trace_id, {}, payload["query"])
-
-        answer = extract_answer(body)
-        logger.info("traceId=%s provider=enterprise-dify-chat task=word.proofread.document", trace_id)
-        return parse_document_proofread_issues(answer)
-
-    def technical_review(
+    def document_review(
         self,
         text: str,
         trace_id: str,
@@ -1026,7 +866,7 @@ class ProviderClient:
         review_prompt: str = "",
     ) -> Dict:
         source_text = text.strip()
-        prompt = build_technical_review_prompt(
+        prompt = build_document_review_prompt(
             text=source_text,
             document_type=document_type,
             review_prompt=review_prompt,
@@ -1039,32 +879,36 @@ class ProviderClient:
                 "prompt": prompt,
             }
 
-        if not self.is_task_configured("word.technical_review"):
-            logger.info("traceId=%s provider=mock task=word.technical_review", trace_id)
-            self.record_unconfigured_debug("word.technical_review", trace_id, prompt)
-            result = self._mock_technical_review(source_text, document_type)
+        task_type = "word.document_review"
+        if not self.is_task_configured(task_type):
+            logger.info("traceId=%s provider=mock task=word.document_review", trace_id)
+            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            result = self._mock_document_review(source_text, document_type)
             result["prompt"] = prompt
             return result
 
         body = self.post_task(
-            "word.technical_review",
+            task_type,
             trace_id,
             {},
             prompt,
         )
 
-        parsed = parse_technical_review_answer(
+        parsed = parse_document_review_answer(
             extract_answer(body)
         )
-        logger.info("traceId=%s provider=enterprise-dify-chat task=word.technical_review", trace_id)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.document_review", trace_id)
         return {
             "summary": parsed["summary"],
             "issues": parsed["issues"],
-            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source()),
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
         }
+
+    def format_review_roles(self, trace_id: str, input_data: Dict, prompt: str) -> Dict:
+        return self.post_task("word.format_review", trace_id, input_data, prompt)
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:
         prefix_map = {
@@ -1078,14 +922,14 @@ class ProviderClient:
             suffix = "\n附加要求已考虑：{0}".format(user_instruction.strip())
         return "{0}\n{1}{2}".format(prefix_map.get(mode, "改写结果："), text.strip(), suffix)
 
-    def _mock_technical_review(self, text: str, document_type: str) -> Dict:
+    def _mock_document_review(self, text: str, document_type: str) -> Dict:
         issues: List[Dict] = []
         vague_terms = ["相关", "等", "尽快", "友好", "高效", "优化", "合理", "多种", "必要时"]
         for term in vague_terms:
             if term in text:
                 issues.append(
                     {
-                        "category": "requirement",
+                        "category": "expression",
                         "severity": "medium",
                         "location": "未定位",
                         "originalText": term,
@@ -1101,7 +945,7 @@ class ProviderClient:
         ):
             issues.append(
                 {
-                    "category": "accuracy",
+                    "category": "professional",
                     "severity": "high",
                     "location": "接口描述",
                     "originalText": "",
@@ -1116,7 +960,7 @@ class ProviderClient:
         ):
             issues.append(
                 {
-                    "category": "design",
+                    "category": "professional",
                     "severity": "medium",
                     "location": "方案设计",
                     "originalText": "",
@@ -1131,7 +975,7 @@ class ProviderClient:
         ):
             issues.append(
                 {
-                    "category": "requirement",
+                    "category": "professional",
                     "severity": "high",
                     "location": "验收要求",
                     "originalText": "",
@@ -1146,7 +990,7 @@ class ProviderClient:
         ):
             issues.append(
                 {
-                    "category": "requirement",
+                    "category": "professional",
                     "severity": "medium",
                     "location": "测试说明",
                     "originalText": "",
@@ -1157,9 +1001,9 @@ class ProviderClient:
             )
 
         summary = (
-            "当前使用 mock 技术审查，发现 {0} 项可能影响实现或验收的问题。".format(len(issues))
+            "当前使用 mock 文档审查，发现 {0} 项可能影响理解、交付或验收的问题。".format(len(issues))
             if issues else
-            "当前使用 mock 技术审查，未发现明显技术文档审查问题。"
+            "当前使用 mock 文档审查，未发现明显问题。"
         )
         return {
             "summary": summary,
