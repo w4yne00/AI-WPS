@@ -30,7 +30,8 @@ ROLE_TEXT = {
     "body": "正文",
 }
 
-AI_ROLE_BATCH_SIZE = 120
+AI_ROLE_BATCH_SIZE = 20
+AI_ROLE_MAX_PARAGRAPHS = 40
 DEFAULT_TEMPLATE_ID = "technical-file-format-requirements"
 
 
@@ -53,7 +54,7 @@ class WordFormatReviewer:
         else:
             ai_roles, ai_batch_count = {}, 0
         provider = "local"
-        if ai_diagnostics.get("aiAttempted"):
+        if ai_roles:
             provider = "enterprise-dify-chat/{0}".format(self.provider_client.get_auth_source_for_task("word.format_review"))
         issues = self._build_issues(request, template, ai_roles)
         return {
@@ -261,8 +262,11 @@ class WordFormatReviewer:
         roles: Dict[int, Dict] = {}
         batch_count = 0
         valid_roles = set((template.get("roleRules") or {}).keys()) | {"body"}
-        for start in range(0, len(paragraphs), AI_ROLE_BATCH_SIZE):
-            batch = paragraphs[start:start + AI_ROLE_BATCH_SIZE]
+        ai_paragraphs = paragraphs[:AI_ROLE_MAX_PARAGRAPHS]
+        if len(paragraphs) > len(ai_paragraphs):
+            diagnostics["aiFallbackReason"] = "ai_budget_limited"
+        for start in range(0, len(ai_paragraphs), AI_ROLE_BATCH_SIZE):
+            batch = ai_paragraphs[start:start + AI_ROLE_BATCH_SIZE]
             batch_indexes = {paragraph.index for paragraph in batch}
             prompt = self._build_role_prompt(request, template, batch)
             if hasattr(self.provider_client, "build_task_input_data"):
@@ -289,6 +293,9 @@ class WordFormatReviewer:
                     body = self.provider_client.post_task(task_type, trace_id, input_data, prompt)
                 answer = extract_answer(body)
             except AdapterError:
+                diagnostics["aiRequestErrorCount"] += 1
+                continue
+            except (TypeError, ValueError, json.JSONDecodeError):
                 diagnostics["aiRequestErrorCount"] += 1
                 continue
             items = self._extract_role_items(answer)
@@ -324,7 +331,7 @@ class WordFormatReviewer:
                 diagnostics["aiFallbackReason"] = "provider_request_failed"
             elif diagnostics["aiInvalidRoleCount"] or diagnostics["aiOutOfBatchCount"]:
                 diagnostics["aiFallbackReason"] = "dify_response_no_valid_roles"
-            else:
+            elif not diagnostics["aiFallbackReason"]:
                 diagnostics["aiFallbackReason"] = "dify_returned_no_roles"
         return roles, batch_count, diagnostics
 

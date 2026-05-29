@@ -15,8 +15,9 @@ def parse_word_request(payload):
 
 
 class RecordingFormatReviewProvider:
-    def __init__(self, configured: bool = True) -> None:
+    def __init__(self, configured: bool = True, fail: bool = False) -> None:
         self.configured = configured
+        self.fail = fail
         self.calls = []
         self.skipped = []
 
@@ -28,6 +29,8 @@ class RecordingFormatReviewProvider:
 
     def format_review_roles(self, trace_id: str, input_data: dict, prompt: str) -> dict:
         self.calls.append({"traceId": trace_id, "inputData": input_data, "prompt": prompt})
+        if self.fail:
+            raise ValueError("invalid provider response")
         return {"answer": '{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}'}
 
     def record_unconfigured_debug(self, task_type: str, trace_id: str, query: str) -> None:
@@ -111,3 +114,18 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["aiFallbackReason"], "provider_not_configured")
         self.assertEqual(provider.calls, [])
         self.assertEqual(provider.skipped[0]["taskType"], "word.format_review")
+
+    def test_format_review_falls_back_when_ai_role_provider_fails(self) -> None:
+        provider = RecordingFormatReviewProvider(fail=True)
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            self._request("selection"),
+            trace_id="trace-format-provider-failed",
+        )
+
+        self.assertEqual(result["summary"]["scope"], "selection")
+        self.assertEqual(result["summary"]["provider"], "local")
+        self.assertEqual(result["summary"]["aiAttempted"], True)
+        self.assertEqual(result["summary"]["aiRequestErrorCount"], 1)
+        self.assertEqual(result["summary"]["aiFallbackReason"], "provider_request_failed")
+        self.assertGreaterEqual(result["summary"]["issueCount"], 1)

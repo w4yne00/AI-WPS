@@ -658,9 +658,17 @@ class ProviderClient:
             "routes": {},
         }
 
-    def post_task(self, task_type: str, trace_id: str, input_data: Dict, query: str) -> Dict:
+    def post_task(
+        self,
+        task_type: str,
+        trace_id: str,
+        input_data: Dict,
+        query: str,
+        timeout_seconds: Optional[int] = None,
+    ) -> Dict:
         self.refresh_settings()
         route_payload = build_provider_request_payload(self.settings, {}, query)
+        timeout = timeout_seconds or self.settings.timeout_seconds
         url = "{0}{1}".format(
             self.settings.provider_base_url.rstrip("/"),
             self.settings.provider_chat_path or "/chat-messages",
@@ -696,8 +704,25 @@ class ProviderClient:
             },
         )
         try:
-            with urllib_request.urlopen(req, timeout=self.settings.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
+            with urllib_request.urlopen(req, timeout=timeout) as response:
+                raw_body = response.read().decode("utf-8")
+                try:
+                    body = json.loads(raw_body)
+                except json.JSONDecodeError as exc:
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            "request": {"body": route_payload},
+                            "error": {
+                                "type": "JSONDecodeError",
+                                "message": "Provider returned non-JSON response.",
+                                "bodyPreview": raw_body[:240],
+                            },
+                        }
+                    )
+                    raise ProviderUnavailableError("Enterprise AI returned a non-JSON response.") from exc
                 record_provider_debug(
                     {
                         "traceId": trace_id,
@@ -908,7 +933,13 @@ class ProviderClient:
         }
 
     def format_review_roles(self, trace_id: str, input_data: Dict, prompt: str) -> Dict:
-        return self.post_task("word.format_review", trace_id, input_data, prompt)
+        return self.post_task(
+            "word.format_review",
+            trace_id,
+            input_data,
+            prompt,
+            timeout_seconds=min(self.settings.timeout_seconds, 8),
+        )
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:
         prefix_map = {
