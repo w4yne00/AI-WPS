@@ -151,7 +151,7 @@ DATE_TAG=20260531 bash packaging/build_phase1_delivery_kit.sh
 - JS helpers：通过。
 - `taskpane.js`、`ribbon.js` 语法检查：通过。
 - `git diff --check`：通过。
-- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`，SHA256：`e6d29a2ea9cb589bb15c95a7c5938334ab981524b3e99ab2810d3e7242134f19`。
+- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`，SHA256：`6bf0ceadc23c1c41e407fb4bd70d284a4e5b6d6a2b3ed628e184c5b5645d2251`。
 
 说明：当前 bundled Python 环境有 Pydantic，但没有 FastAPI，因此 FastAPI TestClient 相关 3 项按测试文件 skip；不依赖 FastAPI 的 provider、服务、前端、打包脚本和契约测试均已通过。
 
