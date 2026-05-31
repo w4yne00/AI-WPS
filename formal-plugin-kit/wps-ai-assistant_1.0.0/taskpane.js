@@ -1,8 +1,16 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.12.9-alpha";
+  var FRONTEND_BUILD_VERSION = "0.12.10-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
+  var FORMAT_REVIEW_EXTRACTION_OPTIONS = {
+    maxParagraphs: 80,
+    maxParagraphTextLength: 800,
+    maxPlainTextLength: 12000,
+    preferSelectionTextParagraphs: true,
+    avoidFullTextRead: true,
+    avoidFallbackTextRead: true
+  };
   var DOCUMENT_REVIEW_PROMPTS = {
     technical_solution: [
       "请从以下维度审查技术方案内容：",
@@ -367,25 +375,34 @@
       : "";
   }
 
+  function truncateText(text, maxLength) {
+    var value = String(text || "");
+    if (maxLength && value.length > maxLength) {
+      return value.slice(0, maxLength);
+    }
+    return value;
+  }
+
   function getWritableSelection(document) {
     return helpers.getWritableSelection
       ? helpers.getWritableSelection(getSelectionSources(document))
       : (document && document.Selection) || null;
   }
 
-  function collectParagraphs(document) {
+  function collectParagraphs(document, options) {
     if (helpers.collectParagraphs) {
-      return helpers.collectParagraphs(document);
+      return helpers.collectParagraphs(document, options);
     }
     var paragraphs = getParagraphs(document);
     var items = [];
-    for (var i = 0; i < paragraphs.length; i += 1) {
+    var maxParagraphs = options && options.maxParagraphs ? Math.min(paragraphs.length, options.maxParagraphs) : paragraphs.length;
+    for (var i = 0; i < maxParagraphs; i += 1) {
       var paragraph = paragraphs[i];
       var font = paragraph.Font || {};
       var paragraphFormat = paragraph.ParagraphFormat || {};
       items.push({
         index: i + 1,
-        text: paragraph.Text || paragraph.text || "",
+        text: truncateText(paragraph.Text || paragraph.text || "", options && options.maxParagraphTextLength),
         styleName: paragraph.StyleNameLocal || paragraph.styleName || "Body",
         fontName: font.NameFarEast || font.Name || "",
         fontSize: font.Size || 0,
@@ -431,23 +448,32 @@
     };
   }
 
-  function extractDocument(selectionMode, rewriteAction) {
+  function extractDocument(selectionMode, rewriteAction, extractionOptions) {
+    var options = extractionOptions || {};
     var document = getActiveDocument();
     if (!document) {
       throw new Error("未检测到活动文档。");
     }
 
-    var paragraphs = collectParagraphs(document);
-    var plainText = helpers.readDocumentText
-      ? helpers.readDocumentText(document)
-      : "";
-    if (!plainText) {
-      plainText = paragraphs.map(function (item) { return item.text; }).join("\n");
+    var selectedText = selectionMode === "selection" ? getSelectionText(document) : "";
+    var paragraphs = [];
+    var plainText = "";
+    if (options.preferSelectionTextParagraphs && selectedText && helpers.collectParagraphsFromText) {
+      plainText = selectedText;
+      paragraphs = helpers.collectParagraphsFromText(selectedText, options);
+    } else {
+      paragraphs = collectParagraphs(document, options);
+      if (!options.avoidFullTextRead && helpers.readDocumentText) {
+        plainText = helpers.readDocumentText(document);
+      }
+      if (!plainText) {
+        plainText = paragraphs.map(function (item) { return item.text; }).join("\n");
+      }
     }
-
     if (selectionMode === "selection") {
-      plainText = getSelectionText(document) || plainText;
+      plainText = selectedText || plainText;
     }
+    plainText = truncateText(plainText, options.maxPlainTextLength);
 
     var documentName = getDocumentName(document);
     var headings = collectHeadings(paragraphs);
@@ -1030,30 +1056,36 @@
       return;
     }
 
-    try {
-      state.latestDocumentPayload = extractDocument(scope.selectionMode);
-      state.latestDocumentPayload.options.templateId = "technical-file-format-requirements";
-      state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
-    } catch (error) {
-      setStatus(error.message);
-      setResult(error.message);
-      return;
-    }
+    setStatus("正在读取格式审查范围...");
+    setResult("正在读取格式审查范围，请稍候。");
+    setApplyEnabled(false);
 
-    setStatus("正在执行格式审查...");
-    request("/word/format-review", state.latestDocumentPayload)
-      .then(function (body) {
-        state.pendingApplyAction = "";
-        setApplyEnabled(false);
-        setTrace(body.traceId);
-        setResult(renderFormatReview(body.data || {}));
-        setStatus("格式审查完成。");
-      })
-      .catch(function (error) {
-        var message = describeFetchError(error);
-        setStatus("格式审查失败：" + message);
-        setResult(message);
-      });
+    setTimeout(function () {
+      try {
+        state.latestDocumentPayload = extractDocument(scope.selectionMode, null, FORMAT_REVIEW_EXTRACTION_OPTIONS);
+        state.latestDocumentPayload.options.templateId = "technical-file-format-requirements";
+        state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+      } catch (error) {
+        setStatus(error.message);
+        setResult(error.message);
+        return;
+      }
+
+      setStatus("正在执行格式审查...");
+      request("/word/format-review", state.latestDocumentPayload)
+        .then(function (body) {
+          state.pendingApplyAction = "";
+          setApplyEnabled(false);
+          setTrace(body.traceId);
+          setResult(renderFormatReview(body.data || {}));
+          setStatus("格式审查完成。");
+        })
+        .catch(function (error) {
+          var message = describeFetchError(error);
+          setStatus("格式审查失败：" + message);
+          setResult(message);
+        });
+    }, 0);
   }
 
   function runSmartWriteAction() {

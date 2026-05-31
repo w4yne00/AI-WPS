@@ -1,6 +1,6 @@
 {
   "name": "wps-ai-assistant",
-  "version": "0.12.9-alpha",
+  "version": "0.12.10-alpha",
   "description": "Phase 1 WPS AI assistant",
   "icons": {
     "32": "assets/ai-assistant-32.png",

@@ -9,7 +9,7 @@ const manifest = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/manifest.json",
   "utf8"
 );
-assert.ok(manifest.includes('"version": "0.12.9-alpha"'));
+assert.ok(manifest.includes('"version": "0.12.10-alpha"'));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
@@ -34,9 +34,9 @@ assert.ok(!html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
 assert.ok(html.includes('id="diagnostics-section"'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.12.9-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.12.9-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.12.9-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.12.10-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.12.10-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.12.10-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
@@ -125,12 +125,18 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.9-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.10-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
 assert.ok(js.includes("word.document_review"));
 assert.ok(js.includes("word.format_review"));
+assert.ok(js.includes("FORMAT_REVIEW_EXTRACTION_OPTIONS"));
+assert.ok(js.includes("maxParagraphs: 80"));
+assert.ok(js.includes("preferSelectionTextParagraphs: true"));
+assert.ok(js.includes("avoidFullTextRead: true"));
+assert.ok(js.includes("avoidFallbackTextRead: true"));
+assert.ok(js.includes("正在读取格式审查范围"));
 assert.ok(js.includes("扫描段落"));
 assert.ok(js.includes("AI 识别段落"));
 assert.ok(js.includes("本地兜底段落"));
@@ -208,7 +214,7 @@ assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.12.9-alpha'));
+assert.ok(ribbonJs.includes('build=0.12.10-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 
 const uvicornStart = fs.readFileSync(

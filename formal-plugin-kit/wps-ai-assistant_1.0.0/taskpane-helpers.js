@@ -361,6 +361,31 @@
     return null;
   }
 
+  function normalizePositiveInteger(value) {
+    var numeric = Number(value);
+    if (isNaN(numeric) || numeric <= 0) {
+      return null;
+    }
+    return Math.floor(numeric);
+  }
+
+  function normalizeCollectOptions(options) {
+    var source = typeof options === "number" ? { maxParagraphs: options } : (options || {});
+    return {
+      maxParagraphs: normalizePositiveInteger(source.maxParagraphs),
+      maxParagraphTextLength: normalizePositiveInteger(source.maxParagraphTextLength),
+      avoidFallbackTextRead: Boolean(source.avoidFallbackTextRead)
+    };
+  }
+
+  function limitTextLength(value, maxLength) {
+    var text = String(value || "");
+    if (maxLength && text.length > maxLength) {
+      return text.slice(0, maxLength);
+    }
+    return text;
+  }
+
   function safeRead(object, key) {
     if (!object) {
       return undefined;
@@ -529,17 +554,22 @@
     );
   }
 
-  function collectParagraphsFromText(text) {
+  function collectParagraphsFromText(text, options) {
+    var collectOptions = normalizeCollectOptions(options);
     var normalized = String(text || "").replace(/\r/g, "\n");
     if (!normalized.trim()) {
       return [];
     }
-    return normalized.split(/\n+/).map(function (line) {
+    var lines = normalized.split(/\n+/).map(function (line) {
       return line.trim();
-    }).filter(Boolean).map(function (line, index) {
+    }).filter(Boolean);
+    if (collectOptions.maxParagraphs) {
+      lines = lines.slice(0, collectOptions.maxParagraphs);
+    }
+    return lines.map(function (line, index) {
       return {
         index: index + 1,
-        text: line,
+        text: limitTextLength(line, collectOptions.maxParagraphTextLength),
         styleName: "Normal",
         fontName: "",
         fontSize: 0,
@@ -558,9 +588,13 @@
     });
   }
 
-  function collectParagraphs(document) {
+  function collectParagraphs(document, options) {
+    var collectOptions = normalizeCollectOptions(options);
     var collection = getParagraphCollection(document);
     var count = readCollectionCount(collection);
+    if (collectOptions.maxParagraphs) {
+      count = Math.min(count, collectOptions.maxParagraphs);
+    }
     var items = [];
     for (var i = 1; i <= count; i += 1) {
       var paragraph = getCollectionItem(collection, i);
@@ -571,7 +605,7 @@
       var paragraphFormat = readParagraphFormat(paragraph);
       items.push({
         index: i,
-        text: readText(paragraph),
+        text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
         styleName: readStyleName(paragraph),
         fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
         fontSize: normalizeNumber(firstDefined(safeRead(font, "Size"), 0)),
@@ -591,7 +625,10 @@
     if (items.length) {
       return items;
     }
-    return collectParagraphsFromText(readDocumentText(document));
+    if (collectOptions.avoidFallbackTextRead) {
+      return [];
+    }
+    return collectParagraphsFromText(readDocumentText(document), collectOptions);
   }
 
   function buildDocumentStructure(options) {
@@ -652,6 +689,7 @@
     getCollectionItem: getCollectionItem,
     getParagraphCollection: getParagraphCollection,
     collectParagraphs: collectParagraphs,
+    collectParagraphsFromText: collectParagraphsFromText,
     readDocumentText: readDocumentText,
     toSafeString: toSafeString,
     buildDocumentStructure: buildDocumentStructure

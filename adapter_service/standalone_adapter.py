@@ -29,7 +29,7 @@ from app.services.word.rewriter import WordRewriter
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.12.9-alpha"
+VERSION = "0.12.10-alpha"
 
 
 def parse_word_request(payload):

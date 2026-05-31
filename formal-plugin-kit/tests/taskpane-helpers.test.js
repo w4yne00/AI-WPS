@@ -242,6 +242,20 @@ function testCollectParagraphsFallsBackToDocumentText() {
   assert.strictEqual(result[2].text, "第三段");
 }
 
+function testCollectParagraphsCanSkipFallbackDocumentTextRead() {
+  const document = {
+    Content: {
+      Text: "第一段\n第二段"
+    }
+  };
+
+  const result = helpers.collectParagraphs(document, {
+    avoidFallbackTextRead: true
+  });
+
+  assert.strictEqual(result.length, 0);
+}
+
 function testCollectParagraphsSanitizesHostObjectsBeforeJson() {
   const document = {
     Content: {
@@ -288,6 +302,51 @@ function testCollectParagraphsSanitizesHostObjectsBeforeJson() {
   assert.ok(encoded.includes('"text":"正文段落"'));
   assert.ok(!encoded.includes("function"));
   assert.ok(!encoded.includes("[object Object]"));
+}
+
+function testCollectParagraphsCanLimitWpsComCollection() {
+  let calls = 0;
+  const document = {
+    Paragraphs: {
+      Count: 1000,
+      Item: function (index) {
+        calls += 1;
+        return {
+          Text: "第" + index + "段正文内容",
+          StyleNameLocal: "Normal",
+          Font: {
+            NameFarEast: "宋体",
+            Size: 12
+          },
+          ParagraphFormat: {
+            OutlineLevel: 0
+          }
+        };
+      }
+    }
+  };
+
+  const result = helpers.collectParagraphs(document, {
+    maxParagraphs: 3,
+    maxParagraphTextLength: 3
+  });
+
+  assert.strictEqual(calls, 3);
+  assert.strictEqual(result.length, 3);
+  assert.strictEqual(result[0].text, "第1段");
+  assert.strictEqual(result[2].index, 3);
+}
+
+function testCollectParagraphsFromTextCanLimitSelectionText() {
+  const result = helpers.collectParagraphsFromText("第一段很长\n第二段\n第三段", {
+    maxParagraphs: 2,
+    maxParagraphTextLength: 3
+  });
+
+  assert.strictEqual(result.length, 2);
+  assert.strictEqual(result[0].text, "第一段");
+  assert.strictEqual(result[1].text, "第二段");
+  assert.strictEqual(result[0].styleName, "Normal");
 }
 
 function testGetCollectionItemSupportsOneBasedWpsItem() {
@@ -363,7 +422,10 @@ testBuildDocumentStructureForProofread();
 testCollectParagraphsSupportsWpsComCollection();
 testCollectParagraphsReadsRangeTextAndContentCollection();
 testCollectParagraphsFallsBackToDocumentText();
+testCollectParagraphsCanSkipFallbackDocumentTextRead();
 testCollectParagraphsSanitizesHostObjectsBeforeJson();
+testCollectParagraphsCanLimitWpsComCollection();
+testCollectParagraphsFromTextCanLimitSelectionText();
 testGetCollectionItemSupportsOneBasedWpsItem();
 testRenderMarkdownFormatsCommonBlocks();
 testRenderMarkdownEscapesUnsafeHtmlAndLinks();

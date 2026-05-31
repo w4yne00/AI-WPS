@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
-DATE_TAG="$(date '+%Y%m%d')"
+DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
 

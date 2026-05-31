@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.9-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.10-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 

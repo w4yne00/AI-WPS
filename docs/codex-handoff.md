@@ -1,14 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-05-29
+更新时间：2026-05-31
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
 当前分支：`codex/smart-format-full-document-preview`
 
-当前版本：`v0.12.9-alpha`
+当前版本：`v0.12.10-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-0.12.9-20260529`
+版本规则号：`AI-WPS-P1-WORD-0.12.10-20260531`
+
+当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`
 
 ## 1. 当前项目状态
 
@@ -92,8 +94,9 @@ POST   /word/format-review
 - 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回。
 - 格式审查保留 AI 段落角色识别能力；Dify 不可用或返回不可解析时回退本地规则。
 - 2026-05-29 排查格式审查现场报“无法连接 adapter”：根因是 AI 段落角色识别作为可选能力时，Dify 非 JSON、超时或其它 provider 边界异常可能拖住/打断 `/word/format-review`。现已将格式审查 AI 角色识别限制为短预算调用：最多前 40 段、每批 20 段、单次 Dify 请求最多 8 秒；任何 provider 边界异常都会记录摘要并回退本地格式规则，保证前台能返回格式审查结果。
+- 2026-05-31 排查格式审查点击后任务窗格卡死且 Dify 无调用记录：根因是前端在发起 `fetch` 前同步扫描 WPS 全文 `Paragraphs`，大文档下会阻塞任务窗格。现已为格式审查增加专用限量抽取：最多读取 80 段、每段 800 字、正文 12000 字；框选文本时直接按选中文本构造段落，不再先扫描全文；点击后先刷新“正在读取格式审查范围”状态，再异步执行抽取和请求。
 - 任务窗口结果区继续只显示渲染后的 Markdown 成品；复制和写回仍使用原始模型文本。
-- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.9-alpha`。
+- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.10-alpha`。
 
 ## 4. 需要重点保护的既有逻辑
 
@@ -132,20 +135,24 @@ PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runt
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/taskpane-helpers.test.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js
+git diff --check
+DATE_TAG=20260531 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
-- Python 单测：`64 tests OK (skipped=3)`。
+- Python 单测：`65 tests OK (skipped=3)`。
 - JS layout smoke：通过。
 - JS helpers：通过。
 - `taskpane.js`、`ribbon.js` 语法检查：通过。
+- `git diff --check`：通过。
+- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`，SHA256：`e6d29a2ea9cb589bb15c95a7c5938334ab981524b3e99ab2810d3e7242134f19`。
 
 说明：当前 bundled Python 环境有 Pydantic，但没有 FastAPI，因此 FastAPI TestClient 相关 3 项按测试文件 skip；不依赖 FastAPI 的 provider、服务、前端、打包脚本和契约测试均已通过。
 
 ## 7. 目标机验证建议
 
-1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.9-alpha`。
+1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.10-alpha`。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 3. 分别保存“智能编写”“文档审查”“格式审查”的任务级 API Key。
 4. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，Dify 后台命中智能编写应用。

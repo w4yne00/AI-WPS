@@ -74,12 +74,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.12.9-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.12.9-20260529` |
+| 当前版本 | `v0.12.10-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-0.12.10-20260531` |
 | 当前阶段 | `P1` 平台底座 + Word |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260529.tar.gz` |
+| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz` |
 
 版本规则格式：
 
@@ -119,6 +119,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.12.10-alpha` | 修复格式审查在发起 adapter 请求前卡死的问题：格式审查前端改为限量读取 WPS 段落，框选文本时不再扫描全文，先刷新“正在读取”状态再异步抽取文档，并同步提升前端缓存版本确保目标机加载新资源 |
 | `v0.12.9-alpha` | 合并审查类入口：原格式校对与技术文档审查合并为“文档审查”并使用 `word.document_review`；原智能排版改为只检查不写回的“格式审查”并使用 `word.format_review`；清理旧 Word 路由，保持智能编写和任务级 API Key 选路逻辑不变 |
 | `v0.12.8-alpha` | 重构格式校对：保留本地确定性格式检测，并新增小批量 AI 文档质量审校，覆盖错别字、语病、表述、逻辑和通畅性；`word.proofread` 继续使用独立任务 API Key 和独立 Dify 工作流 |
 | `v0.12.7-alpha` | 修复目标机智能编写、智能排版 HTTP 422：前端发送前清洗 WPS 宿主对象属性，后端对缺失 `documentId/plainText`、对象形态字号/样式和 WPS 下划线枚举做容错；请求校验失败时 `/provider/debug-last` 会记录 `request_validation_failed` |

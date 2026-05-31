@@ -74,12 +74,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.12.9-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.12.9-20260529` |
+| Version | `v0.12.10-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.12.10-20260531` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260529.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz` |
 
 Version rule format:
 
@@ -119,6 +119,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.12.10-alpha` | Fixed Format Review task-pane freezes before adapter forwarding by limiting WPS paragraph extraction, processing selected text without scanning the whole document, deferring extraction until the status UI renders, and bumping frontend cache tokens for target-machine reloads |
 | `v0.12.9-alpha` | Consolidated review modes: replaced Proofread and Technical Review with Document Review (`word.document_review`), changed Smart Format into read-only Format Review (`word.format_review`), removed obsolete word routes, and kept Smart Write plus task-level Dify API key routing intact |
 | `v0.12.8-alpha` | Redesigned Word proofreading around local deterministic format checks plus small-batch AI quality review for typo, grammar, expression, logic, and fluency issues; `word.proofread` keeps its independent task API key and Dify workflow |
 | `v0.12.7-alpha` | Fixed target-machine HTTP 422 in Smart Write and Smart Format: task pane payloads now sanitize WPS host-object properties before JSON serialization, backend request models tolerate missing `documentId/plainText`, object-shaped style/size values, and WPS underline enums, and validation failures record `request_validation_failed` in `/provider/debug-last` |
