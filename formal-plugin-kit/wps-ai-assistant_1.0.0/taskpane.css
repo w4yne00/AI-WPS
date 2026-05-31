@@ -597,6 +597,27 @@ body[data-task-mode="smartWrite"] #result-output {
   font-weight: 760;
 }
 
+.diagnostics-card {
+  display: grid;
+  gap: 12px;
+}
+
+.diagnostics-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.diagnostics-output {
+  max-height: 260px;
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 #result-mode-chip {
   align-self: center;
   max-width: 220px;
@@ -758,6 +779,7 @@ body[data-task-mode="smartWrite"] #result-output {
   .rewrite-grid,
   .button-cluster,
   .diag-grid,
+  .diagnostics-actions,
   .inline-picker {
     grid-template-columns: 1fr;
   }

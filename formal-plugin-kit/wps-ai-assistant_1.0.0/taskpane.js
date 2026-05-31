@@ -129,6 +129,7 @@
     taskApiKeys: {},
     currentMode: "smartWrite",
     copyText: "",
+    diagnosticsCopyText: "",
     scopeWatcher: null
   };
 
@@ -601,6 +602,98 @@
     });
   }
 
+  function yesNo(value) {
+    return value ? "是" : "否";
+  }
+
+  function describeAuthSource(value) {
+    return {
+      env: "环境变量",
+      file: "统一密钥文件",
+      "task-file": "任务级密钥文件",
+      "route-file": "任务级密钥文件",
+      none: "未配置"
+    }[value] || value || "未检测";
+  }
+
+  function firstErrorMessage(result) {
+    if (!result || result.success !== false) {
+      return "";
+    }
+    return result.errors && result.errors[0] && result.errors[0].message
+      ? result.errors[0].message
+      : "请求失败";
+  }
+
+  function renderProviderDiagnostics(debugResult, statusResult, routesResult, taskKeysResult) {
+    var debug = (debugResult && debugResult.data) || {};
+    var status = (statusResult && statusResult.data) || {};
+    var routes = (routesResult && routesResult.data) || {};
+    var taskKeys = (taskKeysResult && taskKeysResult.data) || {};
+    var lines = ["最近一次任务诊断", ""];
+
+    if (firstErrorMessage(debugResult)) {
+      lines.push("- debug-last：" + firstErrorMessage(debugResult));
+    }
+    if (firstErrorMessage(statusResult)) {
+      lines.push("- provider/status：" + firstErrorMessage(statusResult));
+    }
+    if (firstErrorMessage(routesResult)) {
+      lines.push("- route-diagnostics：" + firstErrorMessage(routesResult));
+    }
+    if (firstErrorMessage(taskKeysResult)) {
+      lines.push("- task-api-keys：" + firstErrorMessage(taskKeysResult));
+    }
+
+    lines.push("- 任务类型：" + (debug.taskType || "未记录"));
+    lines.push("- traceId：" + (debug.traceId || "未记录"));
+    lines.push("- adapter 状态：" + (status.configured ? "provider 已配置" : "provider 未配置"));
+    lines.push("- provider 类型：" + (status.providerType || routes.providerType || "未检测"));
+    lines.push("- provider 名称：" + (status.providerName || "未检测"));
+    lines.push("- 统一 API URL 已配置：" + yesNo(routes.providerBaseUrlConfigured || debug.providerBaseUrlConfigured));
+    lines.push("- 认证来源：" + describeAuthSource(debug.taskAuthSource || debug.authSource || status.authSource || routes.authSource));
+    lines.push("- 请求路径：" + (debug.url || routes.url || "未进入 Dify 请求"));
+    lines.push("- fallback 原因：" + (debug.skipReason || "无"));
+
+    if (debug.request) {
+      lines.push("");
+      lines.push("## 请求摘要");
+      lines.push("- body 字段：" + (debug.request.bodyKeys || []).join(", "));
+      lines.push("- inputs 字段：" + (debug.request.inputsKeys || []).join(", "));
+      lines.push("- query 长度：" + (debug.request.queryLength || 0));
+      lines.push("- query 预览：" + (debug.request.queryPreview || "空"));
+      lines.push("- response_mode：" + (debug.request.responseMode || "未记录"));
+    }
+
+    if (debug.response) {
+      lines.push("");
+      lines.push("## 响应摘要");
+      lines.push("- HTTP 状态：" + (debug.response.status || "未记录"));
+      lines.push("- body 字段：" + (debug.response.bodyKeys || []).join(", "));
+      lines.push("- answer 长度：" + (debug.response.answerLength || 0));
+      if (debug.response.answerFormat) {
+        lines.push("- Markdown 特征：" + yesNo(debug.response.answerFormat.containsMarkdown));
+      }
+    }
+
+    if (debug.error) {
+      lines.push("");
+      lines.push("## 错误摘要");
+      lines.push("- 类型：" + (debug.error.type || "未记录"));
+      lines.push("- 状态：" + (debug.error.status || "未记录"));
+      lines.push("- 信息：" + (debug.error.message || "未记录"));
+    }
+
+    lines.push("");
+    lines.push("## 任务密钥状态");
+    Object.keys(taskKeys).forEach(function (taskType) {
+      var item = taskKeys[taskType] || {};
+      lines.push("- " + taskType + "：" + describeAuthSource(item.authSource) + "，已配置：" + yesNo(item.configured));
+    });
+
+    return lines.join("\n");
+  }
+
   function mergeTemplates(serverTemplates) {
     var merged = [];
     var seen = {};
@@ -650,6 +743,7 @@
         renderTemplateOptions();
       }
       setStatus("就绪");
+      refreshDiagnostics();
     }).catch(function (error) {
       setAdapterUnavailableState(error);
     });
@@ -818,6 +912,78 @@
     });
   }
 
+  var DOCUMENT_REVIEW_CATEGORY_ORDER = ["typo", "expression", "logic", "fluency", "professional", "other"];
+  var DOCUMENT_REVIEW_CATEGORY_TEXT = {
+    typo: "错别字",
+    expression: "语言表达",
+    logic: "逻辑表达",
+    fluency: "通畅性",
+    professional: "专业性",
+    other: "其他问题"
+  };
+  var REVIEW_SEVERITY_TEXT = {
+    high: "高",
+    medium: "中",
+    low: "低"
+  };
+  var FORMAT_REVIEW_GROUP_ORDER = [
+    "page_setup",
+    "heading",
+    "body_text",
+    "paragraph",
+    "caption_note",
+    "other"
+  ];
+  var FORMAT_REVIEW_GROUP_TEXT = {
+    page_setup: "页面设置",
+    heading: "标题层级",
+    body_text: "正文格式",
+    paragraph: "段落格式",
+    caption_note: "图表题/注释",
+    other: "其他格式项"
+  };
+
+  function groupItems(items, getKey) {
+    var grouped = {};
+    (items || []).forEach(function (item) {
+      var key = getKey(item) || "other";
+      if (!grouped[key]) {
+        grouped[key] = [];
+      }
+      grouped[key].push(item);
+    });
+    return grouped;
+  }
+
+  function getDocumentReviewCategory(issue) {
+    var category = issue && issue.category ? String(issue.category) : "";
+    return DOCUMENT_REVIEW_CATEGORY_TEXT[category] ? category : "other";
+  }
+
+  function getFormatReviewGroup(issue) {
+    var ruleId = String((issue && issue.ruleId) || "");
+    var role = String((issue && issue.role) || "");
+    if (ruleId === "page_setup") {
+      return "page_setup";
+    }
+    if (role.indexOf("heading") >= 0 || role.indexOf("title") >= 0) {
+      return "heading";
+    }
+    if (ruleId === "style_name") {
+      return "body_text";
+    }
+    if (ruleId === "font_name" || ruleId === "font_size") {
+      return "body_text";
+    }
+    if (ruleId === "line_spacing" || ruleId === "alignment" || ruleId === "first_line_indent") {
+      return "paragraph";
+    }
+    if (role.indexOf("caption") >= 0 || role.indexOf("note") >= 0 || ruleId.indexOf("caption") >= 0 || ruleId.indexOf("note") >= 0) {
+      return "caption_note";
+    }
+    return "other";
+  }
+
   function formatAiFallbackReason(reason) {
     var reasonText = {
       no_paragraphs: "未读取到正文段落，未调用 Dify；请确认当前文档对象能暴露正文段落或全文文本。",
@@ -830,11 +996,13 @@
     return reasonText[reason] || reason || "";
   }
 
-  function renderFormatReview(data) {
+  function renderGroupedFormatReview(data) {
     var summary = data.summary || {};
     var issues = data.issues || [];
     var lines = [
-      "模板：" + summary.templateId,
+      "格式审查结果",
+      "",
+      "模板：" + (summary.templateId || "technical-file-format-requirements"),
       "检查范围：" + (summary.scope === "selection" ? "选中内容" : "全文"),
       "发现问题：" + (summary.issueCount || issues.length || 0)
     ];
@@ -850,7 +1018,7 @@
     lines.push("识别来源：" + (summary.provider || "local"));
     var aiFallbackText = formatAiFallbackReason(summary.aiFallbackReason);
     if (aiFallbackText) {
-      lines.push("AI 识别提示：" + aiFallbackText);
+      lines.push("fallback 原因：" + aiFallbackText);
     }
     if (summary.aiInvalidRoleCount || summary.aiOutOfBatchCount) {
       lines.push(
@@ -859,42 +1027,38 @@
       );
     }
     lines.push("");
-    if (hasCoverageStats) {
-      lines.push("以下仅显示需要调整的格式项，正文内容不会在检查中改写。");
-      lines.push("");
-    }
+    lines.push("以下仅显示需要调整的格式项，正文内容不会在检查中改写。");
+    lines.push("");
 
     if (!issues.length) {
       lines.push("当前范围未发现明显格式问题。");
       return lines.join("\n");
     }
 
-    issues.forEach(function (issue) {
-      lines.push("第 " + (issue.paragraphIndex || 0) + " 段：" + (issue.message || "格式问题"));
-      lines.push("角色：" + (issue.role || "未识别") + " | 规则：" + (issue.ruleId || "format"));
-      if (issue.currentValue || issue.expectedValue) {
-        lines.push("当前：" + (issue.currentValue || "未读取") + " | 应为：" + (issue.expectedValue || "未给出"));
+    var grouped = groupItems(issues, getFormatReviewGroup);
+    FORMAT_REVIEW_GROUP_ORDER.forEach(function (group) {
+      var groupIssues = grouped[group] || [];
+      if (!groupIssues.length) {
+        return;
       }
-      lines.push("建议：" + (issue.suggestion || "按模板调整。"));
+      lines.push("## " + FORMAT_REVIEW_GROUP_TEXT[group] + "（" + groupIssues.length + "）");
       lines.push("");
+      groupIssues.forEach(function (issue, index) {
+        lines.push("### " + FORMAT_REVIEW_GROUP_TEXT[group] + " #" + (index + 1));
+        lines.push("- 段落号：" + (issue.paragraphIndex || 0));
+        lines.push("- 段落角色：" + (issue.role || "未识别"));
+        lines.push("- 问题说明：" + (issue.message || "格式问题"));
+        lines.push("- 当前值：" + (issue.currentValue || "未读取"));
+        lines.push("- 模板要求：" + (issue.expectedValue || "未给出"));
+        lines.push("- 建议操作：" + (issue.suggestion || "按模板调整。"));
+        lines.push("");
+      });
     });
 
     return lines.join("\n").trim();
   }
 
-  function renderDocumentReview(data) {
-    var categoryText = {
-      typo: "错别字",
-      expression: "语言表达",
-      logic: "逻辑表达",
-      fluency: "通畅性",
-      professional: "专业性"
-    };
-    var severityText = {
-      high: "高",
-      medium: "中",
-      low: "低"
-    };
+  function renderGroupedDocumentReview(data) {
     var documentTypeText = {
       technical_solution: "技术方案",
       contract_acceptance: "合同验收文档",
@@ -907,6 +1071,7 @@
       "文档类型：" + (documentTypeText[data.documentType] || data.documentType || "技术方案"),
       "检查范围：" + (data.scope === "selection" ? "选中内容" : "全文"),
       "总体结论：" + (data.summary || "审查完成。"),
+      "问题数量：" + issues.length,
       ""
     ];
 
@@ -915,22 +1080,28 @@
       return lines.join("\n");
     }
 
-    issues.forEach(function (issue, index) {
-      lines.push(
-        "[" + (severityText[issue.severity] || issue.severity || "中") + "] " +
-        (categoryText[issue.category] || issue.category || "文档审查") +
-        " #" + (index + 1)
-      );
-      lines.push("位置：" + (issue.location || "未定位"));
-      if (issue.originalText) {
-        lines.push("原文：" + issue.originalText);
+    var grouped = groupItems(issues, getDocumentReviewCategory);
+    DOCUMENT_REVIEW_CATEGORY_ORDER.forEach(function (category) {
+      var categoryIssues = grouped[category] || [];
+      if (!categoryIssues.length) {
+        return;
       }
-      lines.push("问题：" + (issue.problem || "未说明"));
-      lines.push("建议：" + (issue.suggestion || "无"));
-      if (issue.suggestedRewrite) {
-        lines.push("建议改写：" + issue.suggestedRewrite);
-      }
+      lines.push("## " + DOCUMENT_REVIEW_CATEGORY_TEXT[category] + "（" + categoryIssues.length + "）");
       lines.push("");
+      categoryIssues.forEach(function (issue, index) {
+        lines.push("### " + DOCUMENT_REVIEW_CATEGORY_TEXT[category] + " #" + (index + 1));
+        lines.push("- 严重程度：" + (REVIEW_SEVERITY_TEXT[issue.severity] || issue.severity || "中"));
+        lines.push("- 位置：" + (issue.location || "未定位"));
+        if (issue.originalText) {
+          lines.push("- 原文片段：" + issue.originalText);
+        }
+        lines.push("- 问题说明：" + (issue.problem || "未说明"));
+        lines.push("- 修改建议：" + (issue.suggestion || "无"));
+        if (issue.suggestedRewrite) {
+          lines.push("- 建议改写：" + issue.suggestedRewrite);
+        }
+        lines.push("");
+      });
     });
 
     return lines.join("\n").trim();
@@ -952,6 +1123,47 @@
       return;
     }
 
+    fallbackCopy(text);
+  }
+
+  function setDiagnosticsResult(text) {
+    var output = byId("last-task-diagnostics-output");
+    if (helpers.renderMarkdown) {
+      output.innerHTML = helpers.renderMarkdown(text);
+    } else {
+      output.textContent = text;
+    }
+    state.diagnosticsCopyText = text || "";
+  }
+
+  function refreshDiagnostics() {
+    setDiagnosticsResult("正在刷新最近一次任务诊断...");
+    return Promise.all([
+      readAdapterJson("/provider/debug-last"),
+      readAdapterJson("/provider/status"),
+      readAdapterJson("/provider/route-diagnostics"),
+      readAdapterJson("/provider/task-api-keys")
+    ]).then(function (results) {
+      var markdown = renderProviderDiagnostics(results[0], results[1], results[2], results[3]);
+      setDiagnosticsResult(markdown);
+      setStatus("诊断信息已刷新。");
+    });
+  }
+
+  function copyDiagnostics() {
+    var text = state.diagnosticsCopyText || byId("last-task-diagnostics-output").textContent || "";
+    if (!text.trim()) {
+      setStatus("暂无可复制的诊断信息。");
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        setStatus("诊断信息已复制。");
+      }).catch(function () {
+        fallbackCopy(text);
+      });
+      return;
+    }
     fallbackCopy(text);
   }
 
@@ -1038,7 +1250,7 @@
         state.pendingApplyAction = "";
         setApplyEnabled(false);
         setTrace(body.traceId);
-        setResult(renderDocumentReview(body.data || {}));
+        setResult(renderGroupedDocumentReview(body.data || {}));
         setStatus("文档审查完成。");
       })
       .catch(function (error) {
@@ -1077,7 +1289,7 @@
           state.pendingApplyAction = "";
           setApplyEnabled(false);
           setTrace(body.traceId);
-          setResult(renderFormatReview(body.data || {}));
+          setResult(renderGroupedFormatReview(body.data || {}));
           setStatus("格式审查完成。");
         })
         .catch(function (error) {
@@ -1175,6 +1387,8 @@
     byId("btn-save-api-key").addEventListener("click", saveProviderApiKey);
     byId("btn-clear-api-key").addEventListener("click", clearProviderApiKey);
     byId("btn-refresh").addEventListener("click", refreshConfig);
+    byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
+    byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("btn-edit-provider").addEventListener("click", function () {
       showProviderEditor(true);
     });
