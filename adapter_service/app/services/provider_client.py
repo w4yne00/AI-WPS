@@ -324,7 +324,16 @@ def record_provider_debug(event: Dict) -> None:
     validation_info = event.get("validation", {})
     if isinstance(validation_info, dict) and validation_info:
         debug["validation"] = validation_info
-    for field in ("provider", "skipReason", "providerBaseUrlConfigured", "authSource", "taskAuthSource"):
+    for field in (
+        "provider",
+        "providerName",
+        "providerType",
+        "skipReason",
+        "providerBaseUrlConfigured",
+        "authSource",
+        "taskAuthSource",
+        "taskApiKeyRef",
+    ):
         if field in event:
             debug[field] = event[field]
     _LAST_PROVIDER_DEBUG.clear()
@@ -658,6 +667,17 @@ class ProviderClient:
             "routes": {},
         }
 
+    def build_debug_metadata(self, task_type: str, provider: str = "enterprise-dify-chat") -> Dict:
+        return {
+            "provider": provider,
+            "providerName": self.settings.provider_name,
+            "providerType": self.settings.provider_type,
+            "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
+            "authSource": self.get_auth_source_for_task(task_type),
+            "taskAuthSource": self.get_auth_source_for_task(task_type),
+            "taskApiKeyRef": self.get_task_api_key_ref(task_type),
+        }
+
     def post_task(
         self,
         task_type: str,
@@ -690,6 +710,7 @@ class ProviderClient:
                 "traceId": trace_id,
                 "taskType": task_type,
                 "url": url,
+                **self.build_debug_metadata(task_type),
                 "request": {"body": route_payload},
             }
         )
@@ -714,6 +735,7 @@ class ProviderClient:
                             "traceId": trace_id,
                             "taskType": task_type,
                             "url": url,
+                            **self.build_debug_metadata(task_type),
                             "request": {"body": route_payload},
                             "error": {
                                 "type": "JSONDecodeError",
@@ -728,6 +750,7 @@ class ProviderClient:
                         "traceId": trace_id,
                         "taskType": task_type,
                         "url": url,
+                        **self.build_debug_metadata(task_type),
                         "request": {"body": route_payload},
                         "response": {"status": getattr(response, "status", 200), "body": body},
                     }
@@ -739,6 +762,7 @@ class ProviderClient:
                     "traceId": trace_id,
                     "taskType": task_type,
                     "url": url,
+                    **self.build_debug_metadata(task_type),
                     "request": {"body": route_payload},
                     "error": {"type": "HTTPError", "status": exc.code, "message": str(exc)},
                 }
@@ -753,6 +777,7 @@ class ProviderClient:
                     "traceId": trace_id,
                     "taskType": task_type,
                     "url": url,
+                    **self.build_debug_metadata(task_type),
                     "request": {"body": route_payload},
                     "error": {"type": "URLError", "message": str(reason)},
                 }
@@ -774,11 +799,8 @@ class ProviderClient:
             {
                 "traceId": trace_id,
                 "taskType": task_type,
-                "provider": provider,
+                **self.build_debug_metadata(task_type, provider=provider),
                 "skipReason": skip_reason,
-                "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
-                "authSource": self.get_auth_source(),
-                "taskAuthSource": self.get_auth_source_for_task(task_type),
                 "request": {"body": build_provider_request_payload(self.settings, {}, query)},
             }
         )

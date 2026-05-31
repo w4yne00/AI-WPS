@@ -555,6 +555,13 @@ class EnterpriseProviderTests(unittest.TestCase):
                 "traceId": "trace-debug",
                 "taskType": "word.smart_write",
                 "url": "https://aibot.example/v1/chat-messages",
+                "provider": "enterprise-dify-chat",
+                "providerName": "企业大模型接口",
+                "providerType": "enterprise-dify-chat",
+                "providerBaseUrlConfigured": True,
+                "authSource": "task-file",
+                "taskAuthSource": "task-file",
+                "taskApiKeyRef": "word_smart_write",
                 "request": {
                     "body": build_provider_request_payload(load_settings(), {}, full_prompt),
                 },
@@ -572,6 +579,13 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertEqual(debug["traceId"], "trace-debug")
         self.assertEqual(debug["taskType"], "word.smart_write")
+        self.assertEqual(debug["provider"], "enterprise-dify-chat")
+        self.assertEqual(debug["providerName"], "企业大模型接口")
+        self.assertEqual(debug["providerType"], "enterprise-dify-chat")
+        self.assertTrue(debug["providerBaseUrlConfigured"])
+        self.assertEqual(debug["authSource"], "task-file")
+        self.assertEqual(debug["taskAuthSource"], "task-file")
+        self.assertEqual(debug["taskApiKeyRef"], "word_smart_write")
         self.assertEqual(debug["request"]["bodyKeys"], ["conversation_id", "files", "inputs", "query", "response_mode", "user"])
         self.assertEqual(debug["request"]["inputsKeys"], ["query"])
         self.assertEqual(debug["request"]["queryLength"], len(full_prompt))
@@ -658,6 +672,8 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(debug["provider"], "local")
         self.assertEqual(debug["skipReason"], "no_paragraphs")
         self.assertTrue(debug["providerBaseUrlConfigured"])
+        self.assertEqual(debug["taskAuthSource"], "none")
+        self.assertEqual(debug["taskApiKeyRef"], "word_format_review")
         self.assertIn("request", debug)
 
     def test_load_settings_defaults_provider_base_url_to_empty(self) -> None:
