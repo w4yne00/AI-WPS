@@ -1,6 +1,6 @@
 # AI-WPS 文档审查 Dify 工作流配置手册
 
-适用版本：`v0.12.9-alpha`
+适用版本：`v0.12.11-alpha`
 
 适用任务：`word.document_review`
 
@@ -102,7 +102,7 @@ Dify 开始节点可以只使用系统自带 `sys.query`。如果现场已经自
 - 不要在 json 代码块外输出解释、寒暄或原文复述。
 ```
 
-如果当前 Dify 版本不能强制 JSON 输出，也可以保持普通 Markdown 输出，但必须让大模型把 JSON 放入 `json` 代码块。adapter 会从 Markdown 代码块中提取 JSON。
+如果当前 Dify 版本不能强制 JSON 输出，也可以保持普通 Markdown 输出，但必须让大模型把 JSON 放入 `json` 代码块。adapter 会从 Markdown 代码块中提取 JSON。文档审查可以输出 Markdown，但必须包含一个合法 `json` 代码块，adapter 从该代码块中提取 `summary` 和 `issues`。
 
 ## 5. 回复节点
 
@@ -138,3 +138,15 @@ http://127.0.0.1:18100/provider/debug-last
 如果 `provider=mock` 或 `skipReason=provider_not_configured`，说明统一 URL 或文档审查任务级 API Key 未形成有效配置。
 
 如果 Dify 后台有调用记录但 WPS 结果为空，优先检查回复节点是否绑定 LLM 输出正文，以及输出中是否包含合法 JSON 代码块。
+
+## 7. 现场诊断
+
+设置页“最近一次任务诊断”对应 adapter 的 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics`、`/provider/task-api-keys`。诊断信息只显示脱敏摘要，不显示完整原文和 API Key。
+
+如果前台结果异常，优先确认：
+
+1. `taskType` 是否为 `word.document_review`。
+2. `authSource` 或 `taskAuthSource` 是否为任务级密钥文件。
+3. `url` 是否为统一 API URL 拼接 `/chat-messages`。
+4. `request.bodyKeys` 是否包含 `inputs`、`query`、`response_mode`、`user`。
+5. `response.answerLength` 是否大于 0。

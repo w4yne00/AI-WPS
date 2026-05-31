@@ -9,7 +9,7 @@ const manifest = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/manifest.json",
   "utf8"
 );
-assert.ok(manifest.includes('"version": "0.12.10-alpha"'));
+assert.ok(manifest.includes('"version": "0.12.11-alpha"'));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
@@ -39,9 +39,9 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.12.10-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.12.10-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.12.10-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.12.11-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.12.11-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.12.11-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
@@ -142,7 +142,7 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.10-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.11-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
@@ -231,7 +231,7 @@ assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.12.10-alpha'));
+assert.ok(ribbonJs.includes('build=0.12.11-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 
 const uvicornStart = fs.readFileSync(

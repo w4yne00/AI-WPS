@@ -750,7 +750,7 @@ AI-WPS-P1-WORD-0.12.10-20260531
 with:
 
 ```text
-AI-WPS-P1-WORD-0.12.11-20260601
+AI-WPS-P1-WORD-0.12.11-20260531
 ```
 
 - [ ] **Step 2: Update README release notes**
@@ -800,7 +800,7 @@ In `docs/codex-handoff.md`, update:
 
 ```markdown
 当前版本：`v0.12.11-alpha`
-版本规则号：`AI-WPS-P1-WORD-0.12.11-20260601`
+版本规则号：`AI-WPS-P1-WORD-0.12.11-20260531`
 ```
 
 Add a current-version change note:
@@ -836,7 +836,7 @@ git commit -m "docs: prepare v0.12.11 stability release"
 ## Task 6: Full Regression And Delivery Package
 
 **Files:**
-- Create: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260601.tar.gz`
+- Create: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`
 
 - [ ] **Step 1: Run full backend tests**
 
@@ -876,17 +876,17 @@ Expected: no whitespace errors.
 Run:
 
 ```bash
-DATE_TAG=20260601 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260531 bash packaging/build_phase1_delivery_kit.sh
 ```
 
-Expected: package path `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260601.tar.gz` is printed.
+Expected: package path `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz` is printed.
 
 - [ ] **Step 5: Record package hash**
 
 Run:
 
 ```bash
-shasum -a 256 dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260601.tar.gz
+shasum -a 256 dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz
 ```
 
 Expected: one SHA256 line for the new delivery package.
@@ -896,7 +896,7 @@ Expected: one SHA256 line for the new delivery package.
 Run:
 
 ```bash
-git add dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260601.tar.gz docs/codex-handoff.md
+git add dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz docs/codex-handoff.md
 git commit -m "chore: package v0.12.11 delivery kit"
 ```
 

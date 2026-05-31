@@ -28,7 +28,7 @@ class ReviewModeContractTests(unittest.TestCase):
 
         diagnostics = client.build_route_diagnostics()
 
-        self.assertEqual(diagnostics["version"], "0.12.10-alpha")
+        self.assertEqual(diagnostics["version"], "0.12.11-alpha")
         self.assertEqual(
             list(diagnostics["taskApiKeys"].keys()),
             ["word.smart_write", "word.document_review", "word.format_review"],

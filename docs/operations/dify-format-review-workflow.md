@@ -1,6 +1,6 @@
 # AI-WPS 格式审查 Dify 工作流配置手册
 
-适用版本：`v0.12.9-alpha`
+适用版本：`v0.12.11-alpha`
 
 适用任务：`word.format_review`
 
@@ -99,6 +99,8 @@ adapter 请求体只依赖 Dify 官方字段：
 
 如果当前 Dify 版本不能强制 JSON 输出，也可以保持普通 Markdown 输出，但必须让大模型把 JSON 放入 `json` 代码块。adapter 会从 Markdown 代码块中提取 JSON；提取失败时会自动回退本地规则。
 
+格式审查的 AI 段落角色识别是可选增强。Dify 超时、无 JSON 或未配置时，adapter 会回退本地模板规则并在诊断里显示 fallback 原因。
+
 ## 5. 回复节点
 
 回复节点绑定 LLM 节点输出正文即可。不要绑定开始节点原始 `query`，否则 WPS 侧会看到原文或提示词返回。
@@ -137,3 +139,15 @@ http://127.0.0.1:18100/provider/debug-last
 1. 设置页是否保存了格式审查任务级 API Key；
 2. `/provider/debug-last.skipReason` 是否为 `provider_not_configured`；
 3. 当前 WPS 是否成功读取到选中文本或全文段落。
+
+## 7. 现场诊断
+
+设置页“最近一次任务诊断”对应 adapter 的 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics`、`/provider/task-api-keys`。诊断信息只显示脱敏摘要，不显示完整原文和 API Key。
+
+如果前台结果异常，优先确认：
+
+1. `taskType` 是否为 `word.format_review`。
+2. `authSource` 或 `taskAuthSource` 是否为任务级密钥文件。
+3. `url` 是否为统一 API URL 拼接 `/chat-messages`。
+4. `request.bodyKeys` 是否包含 `inputs`、`query`、`response_mode`、`user`。
+5. `response.answerLength` 是否大于 0，或是否记录了 `skipReason` / `error`。

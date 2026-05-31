@@ -6,9 +6,9 @@
 
 当前分支：`codex/smart-format-full-document-preview`
 
-当前版本：`v0.12.10-alpha`
+当前版本：`v0.12.11-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-0.12.10-20260531`
+版本规则号：`AI-WPS-P1-WORD-0.12.11-20260531`
 
 当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`
 
@@ -95,8 +95,12 @@ POST   /word/format-review
 - 格式审查保留 AI 段落角色识别能力；Dify 不可用或返回不可解析时回退本地规则。
 - 2026-05-29 排查格式审查现场报“无法连接 adapter”：根因是 AI 段落角色识别作为可选能力时，Dify 非 JSON、超时或其它 provider 边界异常可能拖住/打断 `/word/format-review`。现已将格式审查 AI 角色识别限制为短预算调用：最多前 40 段、每批 20 段、单次 Dify 请求最多 8 秒；任何 provider 边界异常都会记录摘要并回退本地格式规则，保证前台能返回格式审查结果。
 - 2026-05-31 排查格式审查点击后任务窗格卡死且 Dify 无调用记录：根因是前端在发起 `fetch` 前同步扫描 WPS 全文 `Paragraphs`，大文档下会阻塞任务窗格。现已为格式审查增加专用限量抽取：最多读取 80 段、每段 800 字、正文 12000 字；框选文本时直接按选中文本构造段落，不再先扫描全文；点击后先刷新“正在读取格式审查范围”状态，再异步执行抽取和请求。
+- 文档审查结果改为按错别字、语言表达、逻辑表达、通畅性、专业性分组展示，每条问题固定展示严重程度、位置、原文片段、问题说明、修改建议和建议改写。
+- 格式审查结果改为按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展示，每条问题固定展示段落号、段落角色、当前值、模板要求和建议操作。
+- 设置页新增“最近一次任务诊断”，聚合 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics` 和 `/provider/task-api-keys` 的脱敏摘要，并支持一键复制。
+- `/provider/debug-last` 增补 `providerName`、`providerType`、`taskApiKeyRef`、`taskAuthSource` 等脱敏字段，便于判断当前任务是否命中对应 Dify 应用密钥。
 - 任务窗口结果区继续只显示渲染后的 Markdown 成品；复制和写回仍使用原始模型文本。
-- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.10-alpha`。
+- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.11-alpha`。
 
 ## 4. 需要重点保护的既有逻辑
 
@@ -123,7 +127,8 @@ POST   /word/format-review
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify 配置手册。
 - `docs/operations/dify-document-review-workflow.md`：文档审查 Dify 配置手册。
 - `docs/operations/dify-format-review-workflow.md`：格式审查 Dify 配置手册。
-- `docs/superpowers/plans/2026-05-29-review-mode-consolidation-plan.md`：本轮执行计划。
+- `docs/superpowers/plans/2026-05-29-review-mode-consolidation-plan.md`：审查入口收敛执行计划。
+- `docs/superpowers/plans/2026-05-31-stability-enhancement-plan.md`：本轮稳定增强执行计划。
 
 ## 6. 本轮测试命令
 
@@ -152,7 +157,7 @@ DATE_TAG=20260531 bash packaging/build_phase1_delivery_kit.sh
 
 ## 7. 目标机验证建议
 
-1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.10-alpha`。
+1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.11-alpha`。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 3. 分别保存“智能编写”“文档审查”“格式审查”的任务级 API Key。
 4. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，Dify 后台命中智能编写应用。

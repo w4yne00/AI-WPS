@@ -1,6 +1,6 @@
 # AI-WPS 智能编写 Dify 工作流配置手册
 
-适用版本：`v0.12.9-alpha` 及以上
+适用版本：`v0.12.11-alpha` 及以上
 
 适用任务：`word.smart_write`
 
@@ -189,12 +189,12 @@ adapter 请求体形态如下：
 
 ## 7. WPS 任务窗口验证
 
-使用 `v0.12.9-alpha` 时，先完全退出并重新启动 WPS，避免旧页面缓存影响结果。
+使用 `v0.12.11-alpha` 时，先完全退出并重新启动 WPS，避免旧页面缓存影响结果。
 
 1. 打开“设置”，确认诊断区显示：
 
 ```text
-前端版本：0.12.9-alpha
+前端版本：0.12.11-alpha
 ```
 
 2. 进入“智能编写”，默认菜单应为“技术方案正式 / 保持信息完整 / 保持篇幅”，也可按材料场景切换为“条理化说明”“汇报材料风格”“结论与风险”“措施与计划”或“验收与闭环”。
@@ -238,7 +238,19 @@ http://127.0.0.1:18100/provider/debug-last
 - `containsMarkdown=false`：Dify 实际输出不包含 Markdown，请检查 SYSTEM 提示词是否已保存、回复节点是否直接绑定大模型正文。
 - `provider=mock`：adapter 未真实调用 Dify，请检查 API URL 与智能编写任务级 API Key。
 
-## 9. 注意事项
+## 9. 现场诊断
+
+设置页“最近一次任务诊断”对应 adapter 的 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics`、`/provider/task-api-keys`。诊断信息只显示脱敏摘要，不显示完整原文和 API Key。
+
+如果前台结果异常，优先确认：
+
+1. `taskType` 是否为 `word.smart_write`。
+2. `authSource` 或 `taskAuthSource` 是否为任务级密钥文件。
+3. `url` 是否为统一 API URL 拼接 `/chat-messages`。
+4. `request.bodyKeys` 是否包含 `inputs`、`query`、`response_mode`、`user`。
+5. `response.answerLength` 是否大于 0。
+
+## 10. 注意事项
 
 - Markdown 格式只作用于任务窗口预览；点击应用预览写入 Word 时，当前版本写入的是模型正文文本，不会将 Markdown 标记自动转换为 Word 标题或加粗样式。
 - 如果下一步需要将 Markdown 内容写回 Word 后也保留真实标题、列表和粗体，需要新增 Markdown 到 WPS 文档对象格式的写回能力，属于独立功能改造。

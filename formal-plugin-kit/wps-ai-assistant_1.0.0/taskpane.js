@@ -1,6 +1,6 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.12.10-alpha";
+  var FRONTEND_BUILD_VERSION = "0.12.11-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
   var FORMAT_REVIEW_EXTRACTION_OPTIONS = {
