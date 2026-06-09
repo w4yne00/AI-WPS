@@ -74,12 +74,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.12.11-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.12.11-20260531` |
+| Version | `v0.12.16-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.12.16-20260609` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260609.tar.gz` |
 
 Version rule format:
 
@@ -103,10 +103,10 @@ Rules:
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
 | Four task entries | WPS AI tab exposes Smart Write, Document Review, Format Review, and Settings as focused ribbon actions |
 | Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
-| Document review | Uses selected text or the whole document and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism |
-| Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting |
+| Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running Dify requests keep visible task-pane feedback |
+| Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through both top-level `query` and `inputs.query` |
-| Markdown result preview | The task pane renders Markdown paragraphs, line breaks, headings, lists, tables, quotes, code blocks, and links while copy/apply actions keep the raw model text |
+| Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
 | Frosted azure UI | The task pane and Ribbon icon artwork use a bright blue-gray and white Apple-like palette without changing task flow or API behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
@@ -119,6 +119,11 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.12.16-alpha` | Improves Format Review result readability: adds a review overview, priority checklist, grouped detail sections, Chinese labels for roles/rules/template/provider/AI fallback diagnostics, and localized values such as font `宋体`, size `小四（12pt）`, style names, alignment, line spacing, and indentation |
+| `v0.12.15-alpha` | Stabilizes Document Review in WPS: clicking Review now shows immediate read/submission/wait feedback, uses limited asynchronous extraction instead of blocking full-document scans, and displays raw Dify output when the model returns non-standard JSON or Markdown that cannot be parsed into the normal issue list |
+| `v0.12.14-alpha` | Fixes Smart Write output that collapsed two selected paragraphs into one line: the task pane now formats model output before preview and writeback, preserving existing line breaks, restoring likely paragraph breaks from sentence boundaries, and splitting inline Chinese numbering/headings when needed |
+| `v0.12.13-alpha` | Improves Smart Write handling for structured selections and structured model output: headings, lists, numbering, tables, and bold text now trigger structured preview and best-effort formatted writeback, while ordinary paragraphs still use plain preview and paragraph-shaped writeback to avoid redundant formatting |
+| `v0.12.12-alpha` | Fixes two Smart Write issues in selected-paragraph workflows: the task pane now reads selected text with a lightweight extraction path and defers adapter submission so it no longer scans the whole document before the request; Smart Write previews plain text with preserved line breaks and writes back using the original paragraph shape, while the prompt asks the model to preserve paragraph structure and avoid extra Markdown headings, lists, or tables |
 | `v0.12.11-alpha` | Groups Document Review results by typo, expression, logic, fluency, and professionalism; groups Format Review results by page setup, heading, body text, paragraph, caption/note, and other format items; adds a settings-page “recent task diagnostics” panel with sanitized adapter/provider/Dify request summaries; keeps Smart Write, Document Review, Format Review endpoints and task-level API key routing unchanged |
 | `v0.12.10-alpha` | Fixed Format Review task-pane freezes before adapter forwarding by limiting WPS paragraph extraction, processing selected text without scanning the whole document, deferring extraction until the status UI renders, and bumping frontend cache tokens for target-machine reloads |
 | `v0.12.9-alpha` | Consolidated review modes: replaced Proofread and Technical Review with Document Review (`word.document_review`), changed Smart Format into read-only Format Review (`word.format_review`), removed obsolete word routes, and kept Smart Write plus task-level Dify API key routing intact |
@@ -286,7 +291,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 
 Task-level API keys are stored under `run/provider_api_keys/<ref>`. Smart Write, Document Review, and Format Review can each use a dedicated Dify app key; when a task key is absent, the adapter falls back to the unified provider API key. When no usable key is configured, `/word/smart-write` returns a local mock response and Format Review still performs local template-rule checks.
 
-The Smart Write Dify system prompt, Markdown response requirements, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md).
+The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md).
 
 ## API Surface
 

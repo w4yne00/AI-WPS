@@ -1,16 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-05-31
+更新时间：2026-06-09
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
 当前分支：`codex/smart-format-full-document-preview`
 
-当前版本：`v0.12.11-alpha`
+当前版本：`v0.12.16-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-0.12.11-20260531`
+版本规则号：`AI-WPS-P1-WORD-0.12.16-20260609`
 
-当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`
+当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260609.tar.gz`
 
 ## 1. 当前项目状态
 
@@ -88,19 +88,29 @@ POST   /word/format-review
 
 - 前台 Ribbon 入口调整为“智能编写 / 文档审查 / 格式审查 / 设置”。
 - 删除旧 Word 路由和服务文件，只保留当前三条任务 API。
-- 智能编写只改前台展示：表达风格、侧重点、篇幅下方说明文字已统一挪入“当前要求”窗格，窗格按内容自动撑开；后台提示词和接口逻辑不改。
+- 智能编写主要面向鼠标框选的一个或几个段落：点击生成后先刷新“正在读取选中文本”状态，再异步执行选区轻量抽取；不再同步扫描全文段落，避免任务窗格在发起 adapter 请求前卡死。
+- 智能编写结果预览改为结构感知：普通段落按朴素文本回显并保留换行，避免额外套排版；当原文或模型结果包含标题、列表、序号、表格、加粗等结构时，自动使用安全 Markdown/结构化回显。
+- 智能编写结果在进入预览和写回前会先做分段规范化：已存在的换行保持不变；若用户框选连续多个段落但模型返回单行结果，会按原文段落数量和输出句意边界恢复自然段；内联中文序号、章节/条目标题也会自动拆行。
+- 智能编写写回选区时按内容结构选择策略：普通段落按原文段落形态做无样式文本替换；结构化内容尝试标题、列表、加粗等格式化写回，宿主不支持时降级为结构化文本。
+- 智能编写提示词新增约束：保持待处理原文的段落数量和换行结构；如果原文有多个段落，输出也应保留相近分段；原文已有标题、列表、序号、表格或强调格式时，应尽量保持对应结构和层级；不要额外新增原文没有、用户也未要求的 Markdown 标题、项目符号、编号列表或表格。
+- 智能编写设置展示：表达风格、侧重点、篇幅下方说明文字已统一挪入“当前要求”窗格，窗格按内容自动撑开。
 - 文档审查复用原技术审查的界面形态：文档类型为技术方案、合同验收文档、测试大纲及细则；不再选择文档模板，不再检查格式合规。
 - 文档审查支持选中文本和全文审查，用户可通过框选段落分段规避 Dify 输出长度和模型上下文限制。
+- 文档审查点击后先刷新“正在读取文档审查范围”状态，再异步执行限量抽取；最多读取 80 段、每段 800 字、正文 12000 字，框选文本时直接按选中文本拆段，不同步扫描全文。
+- 文档审查请求提交后会在 8 秒和 30 秒继续刷新等待 Dify 的状态，避免 Dify 慢返回时任务窗格看起来无反馈。
+- 文档审查 adapter 解析 Dify 返回时新增兜底：非标准 JSON、普通 Markdown 或未包含 `issues` 的 JSON 会保留为 `rawAnswer`，前端显示“原始模型回复”，便于区分 Dify 输出格式问题和前端渲染问题。
 - 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回。
 - 格式审查保留 AI 段落角色识别能力；Dify 不可用或返回不可解析时回退本地规则。
 - 2026-05-29 排查格式审查现场报“无法连接 adapter”：根因是 AI 段落角色识别作为可选能力时，Dify 非 JSON、超时或其它 provider 边界异常可能拖住/打断 `/word/format-review`。现已将格式审查 AI 角色识别限制为短预算调用：最多前 40 段、每批 20 段、单次 Dify 请求最多 8 秒；任何 provider 边界异常都会记录摘要并回退本地格式规则，保证前台能返回格式审查结果。
 - 2026-05-31 排查格式审查点击后任务窗格卡死且 Dify 无调用记录：根因是前端在发起 `fetch` 前同步扫描 WPS 全文 `Paragraphs`，大文档下会阻塞任务窗格。现已为格式审查增加专用限量抽取：最多读取 80 段、每段 800 字、正文 12000 字；框选文本时直接按选中文本构造段落，不再先扫描全文；点击后先刷新“正在读取格式审查范围”状态，再异步执行抽取和请求。
 - 文档审查结果改为按错别字、语言表达、逻辑表达、通畅性、专业性分组展示，每条问题固定展示严重程度、位置、原文片段、问题说明、修改建议和建议改写。
 - 格式审查结果改为按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展示，每条问题固定展示段落号、段落角色、当前值、模板要求和建议操作。
+- `v0.12.16-alpha` 起，格式审查结果预览改为“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”结构：优先处理清单用表格集中展示段落、问题类型、当前值、模板要求和建议，详细问题按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展开。
+- 格式审查预览层尽量中文化显示普通用户会看到的反馈：模板名显示为“技术文件格式及书写要求”，字体标准显示“宋体”，字号标准显示“小四（12pt）”，样式名、对齐、行距、首行缩进、页面设置、识别来源和 AI 兜底原因也转成中文可读表达。
 - 设置页新增“最近一次任务诊断”，聚合 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics` 和 `/provider/task-api-keys` 的脱敏摘要，并支持一键复制。
 - `/provider/debug-last` 增补 `providerName`、`providerType`、`taskApiKeyRef`、`taskAuthSource` 等脱敏字段，便于判断当前任务是否命中对应 Dify 应用密钥。
-- 任务窗口结果区继续只显示渲染后的 Markdown 成品；复制和写回仍使用原始模型文本。
-- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.11-alpha`。
+- 任务窗口结果区继续区分任务类型：智能编写按内容结构选择朴素或结构化回显，文档审查/格式审查/诊断继续显示安全渲染后的 Markdown 成品；复制和写回仍使用原始模型文本。
+- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.16-alpha`，确保目标机重新打开 WPS 后加载修复后的前端资源。
 
 ## 4. 需要重点保护的既有逻辑
 
@@ -111,6 +121,12 @@ POST   /word/format-review
 - `/provider/debug-last` 脱敏诊断，不泄露完整原文和密钥。
 - Markdown 安全渲染：HTML 转义，危险链接不可点击，复制仍保留原始文本。
 - WPS COM 对象容错：段落集合、选区文本、全文 Range 和宿主对象清洗逻辑不能被审查功能改动破坏。
+- 文档审查不能回退为同步全文扫描；`DOCUMENT_REVIEW_EXTRACTION_OPTIONS` 必须保留 `preferSelectionTextParagraphs`、`avoidFullTextRead`、`avoidFallbackTextRead`。
+- 文档审查 Dify 非标准返回也要在前台可见：`rawAnswer` 和 `parseFallbackReason` 是现场判断 Dify 输出格式问题的重要兜底。
+- 智能编写选区轻量抽取不能回退为同步全文段落扫描；`SMART_WRITE_EXTRACTION_OPTIONS` 必须保留 `preferSelectionTextParagraphs`、`avoidFullTextRead`、`avoidFallbackTextRead`。
+- 智能编写结果预览必须保持结构感知：简单段落不要额外套 Markdown 排版；标题、列表、序号、表格、加粗等结构存在时要尽量结构化回显和写回。
+- 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
+- 智能编写和文档审查逻辑不要因格式审查预览优化被改动；对应抽取限制、等待反馈、`rawAnswer` 兜底和写回策略都要保持当前行为。
 - uvicorn 优先、standalone 兜底的 adapter 启动方式，以及旧进程版本替换逻辑。
 
 ## 5. 当前关键文件
@@ -139,30 +155,32 @@ PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runt
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/layout-smoke.test.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/taskpane-helpers.test.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js
+/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js
 git diff --check
-DATE_TAG=20260531 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260609 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
-- Python 单测：`65 tests OK (skipped=3)`。
+- Python 单测：`66 tests OK (skipped=3)`。
 - JS layout smoke：通过。
-- JS helpers：通过。
-- `taskpane.js`、`ribbon.js` 语法检查：通过。
+- JS helpers：通过，覆盖连续两段单行输出自动分段、保留已有换行、内联中文序号/标题拆行，以及格式审查可读预览、中文字号/字体/样式/诊断反馈。
+- `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查：通过。
 - `git diff --check`：通过。
-- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260531.tar.gz`，SHA256：`6bf0ceadc23c1c41e407fb4bd70d284a4e5b6d6a2b3ed628e184c5b5645d2251`。
+- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260609.tar.gz`，SHA256：`c129fdca4867d43276fa23af75ce840059509e5a402892d067f8bacf4ae72465`。
+- 包内已校验 `manifest.json`、`taskpane.html`、`taskpane.js`、`taskpane-helpers.js` 和格式审查操作手册，均包含 `0.12.16-alpha` 及本次格式审查可读预览、中文字体/字号/样式/诊断反馈。
 
 说明：当前 bundled Python 环境有 Pydantic，但没有 FastAPI，因此 FastAPI TestClient 相关 3 项按测试文件 skip；不依赖 FastAPI 的 provider、服务、前端、打包脚本和契约测试均已通过。
 
 ## 7. 目标机验证建议
 
-1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.11-alpha`。
+1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.16-alpha`。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 3. 分别保存“智能编写”“文档审查”“格式审查”的任务级 API Key。
 4. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，Dify 后台命中智能编写应用。
 5. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示审查摘要和问题列表。
-6. 执行“格式审查”，可框选局部段落；确认 `/provider/debug-last.taskType=word.format_review` 或结果区显示本地规则兜底来源。
+6. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，识别来源显示“AI 辅助 + 本地规则”或“本地规则”。
 7. 如果 Dify 后台有调用但 WPS 结果为空，检查 Dify 回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
 8. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
 

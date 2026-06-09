@@ -414,6 +414,256 @@ function testRenderMarkdownEscapesUnsafeHtmlAndLinks() {
   assert.ok(html.includes('href="https://example.com?a=1&amp;b=2"'));
 }
 
+function testBuildMarkdownWritebackBlocksPreservesSupportedStructure() {
+  const blocks = helpers.buildMarkdownWritebackBlocks([
+    "# 总体要求",
+    "",
+    "第一段包含**重点**内容。",
+    "",
+    "- 第一项",
+    "- 第二项",
+    "",
+    "1. 步骤一",
+    "2. 步骤二"
+  ].join("\n"));
+
+  assert.strictEqual(blocks.length, 6);
+  assert.deepStrictEqual(blocks[0], {
+    type: "heading",
+    level: 1,
+    text: "总体要求",
+    runs: [{ text: "总体要求", bold: false }]
+  });
+  assert.strictEqual(blocks[1].type, "paragraph");
+  assert.strictEqual(blocks[1].text, "第一段包含重点内容。");
+  assert.deepStrictEqual(blocks[1].runs, [
+    { text: "第一段包含", bold: false },
+    { text: "重点", bold: true },
+    { text: "内容。", bold: false }
+  ]);
+  assert.strictEqual(blocks[2].type, "unorderedListItem");
+  assert.strictEqual(blocks[2].text, "第一项");
+  assert.strictEqual(blocks[3].type, "unorderedListItem");
+  assert.strictEqual(blocks[3].text, "第二项");
+  assert.strictEqual(blocks[4].type, "orderedListItem");
+  assert.strictEqual(blocks[4].ordinal, 1);
+  assert.strictEqual(blocks[5].type, "orderedListItem");
+  assert.strictEqual(blocks[5].ordinal, 2);
+  assert.deepStrictEqual(blocks[5].runs, [{ text: "步骤二", bold: false }]);
+}
+
+function testBuildMarkdownWritebackBlocksKeepsTechnicalUnderscores() {
+  const blocks = helpers.buildMarkdownWritebackBlocks("请配置 `API_KEY` 和 service_url。");
+
+  assert.strictEqual(blocks.length, 1);
+  assert.strictEqual(blocks[0].text, "请配置 API_KEY 和 service_url。");
+  assert.deepStrictEqual(blocks[0].runs, [
+    { text: "请配置 API_KEY 和 service_url。", bold: false }
+  ]);
+}
+
+function testHasStructuredSmartWriteContentDetectsDocumentStructure() {
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("普通正文，没有结构。"), false);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("# 一级标题\n正文"), true);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("- 第一项\n- 第二项"), true);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("1. 第一步\n2. 第二步"), true);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("一、总体要求\n正文内容"), true);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("| 项目 | 状态 |\n| --- | --- |\n| A | 完成 |"), true);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("字段A\t字段B\n值A\t值B"), true);
+  assert.strictEqual(helpers.hasStructuredSmartWriteContent("需要**重点关注**风险。"), true);
+}
+
+function testShouldUseStructuredSmartWriteResultUsesOriginalOrResultStructure() {
+  assert.strictEqual(helpers.shouldUseStructuredSmartWriteResult("普通原文", "普通结果"), false);
+  assert.strictEqual(helpers.shouldUseStructuredSmartWriteResult("一、总体要求\n正文", "优化后的正文"), true);
+  assert.strictEqual(helpers.shouldUseStructuredSmartWriteResult("普通原文", "## 优化标题\n正文"), true);
+}
+
+function testFormatSmartWriteResultSplitsSingleLineByOriginalParagraphs() {
+  const formatted = helpers.formatSmartWriteResult(
+    "第一段说明当前建设情况。\n\n第二段说明下一步计划。",
+    "当前建设工作整体推进正常，关键任务已按计划完成。下一步将继续跟踪遗留事项，明确责任人和完成时限。"
+  );
+
+  assert.strictEqual(
+    formatted,
+    "当前建设工作整体推进正常，关键任务已按计划完成。\n\n下一步将继续跟踪遗留事项，明确责任人和完成时限。"
+  );
+}
+
+function testFormatSmartWriteResultPreservesExistingLineBreaks() {
+  const formatted = helpers.formatSmartWriteResult(
+    "第一段。\n\n第二段。",
+    "第一段已经优化。\n\n第二段已经优化。"
+  );
+
+  assert.strictEqual(formatted, "第一段已经优化。\n\n第二段已经优化。");
+}
+
+function testFormatSmartWriteResultBreaksInlineChineseHeadings() {
+  const formatted = helpers.formatSmartWriteResult(
+    "一、总体要求\n正文",
+    "一、总体要求当前工作应保持闭环管理。二、下一步安排继续跟踪风险并明确责任。"
+  );
+
+  assert.strictEqual(
+    formatted,
+    "一、总体要求当前工作应保持闭环管理。\n\n二、下一步安排继续跟踪风险并明确责任。"
+  );
+}
+
+function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: {
+      scope: "selection",
+      templateId: "technical-file-format-requirements",
+      provider: "enterprise-dify-chat/task-file",
+      paragraphCount: 4,
+      issueCount: 4,
+      aiClassifiedParagraphCount: 2,
+      localFallbackParagraphCount: 2,
+      aiFallbackReason: "provider_request_failed"
+    },
+    issues: [
+      {
+        ruleId: "font_size",
+        paragraphIndex: 2,
+        role: "body",
+        message: "字号不符合模板要求。",
+        currentValue: "14pt",
+        expectedValue: "12pt",
+        suggestion: "建议字号调整为12pt。"
+      },
+      {
+        ruleId: "font_name",
+        paragraphIndex: 2,
+        role: "body",
+        message: "字体不符合模板要求。",
+        currentValue: "楷体",
+        expectedValue: "SimSun",
+        suggestion: "建议字体调整为宋体。"
+      },
+      {
+        ruleId: "alignment",
+        paragraphIndex: 3,
+        role: "heading1",
+        message: "对齐方式不符合模板要求。",
+        currentValue: "left",
+        expectedValue: "center",
+        suggestion: "建议对齐方式调整为center。"
+      },
+      {
+        ruleId: "first_line_indent",
+        paragraphIndex: 4,
+        role: "body",
+        message: "首行缩进不符合模板要求。",
+        currentValue: "0",
+        expectedValue: "480",
+        suggestion: "建议按模板设置首行缩进。"
+      }
+    ]
+  });
+
+  assert.ok(markdown.includes("## 审查概览"));
+  assert.ok(markdown.includes("## 优先处理清单"));
+  assert.ok(markdown.includes("## 详细问题"));
+  assert.ok(markdown.includes("## 诊断信息"));
+  assert.ok(markdown.includes("正文格式 2"));
+  assert.ok(markdown.includes("标题层级 1"));
+  assert.ok(markdown.includes("段落格式 1"));
+  assert.ok(markdown.includes("P2 | 字号 | 四号（14pt） | 小四（12pt） | 字号调整为小四。"));
+  assert.ok(markdown.includes("P2 | 字体 | 楷体 | 宋体 | 字体调整为宋体。"));
+  assert.ok(markdown.includes("P3 | 对齐方式 | 左对齐 | 居中 | 对齐方式调整为居中。"));
+  assert.ok(markdown.includes("P4 | 首行缩进 | 无首行缩进 | 首行缩进 2 字符（约 480 twips）"));
+  assert.ok(markdown.includes("#### P2 正文 - 字号不符合模板要求"));
+  assert.ok(markdown.includes("- 现状：四号（14pt）"));
+  assert.ok(markdown.includes("- 要求：小四（12pt）"));
+  assert.ok(markdown.includes("- 建议：字号调整为小四。"));
+  assert.ok(markdown.includes("- AI 兜底原因：Dify 请求失败，已使用本地模板规则。"));
+  assert.ok(!markdown.includes("font_size"));
+  assert.ok(!markdown.includes("body_text"));
+}
+
+function testRenderReadableFormatReviewHandlesNoIssues() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: {
+      scope: "document",
+      templateId: "technical-file-format-requirements",
+      provider: "local",
+      paragraphCount: 3,
+      issueCount: 0
+    },
+    issues: []
+  });
+
+  assert.ok(markdown.includes("问题总数：0"));
+  assert.ok(markdown.includes("当前范围未发现明显格式问题。"));
+  assert.ok(markdown.includes("识别来源：本地规则"));
+}
+
+function testRenderReadableFormatReviewLocalizesOtherFeedback() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: {
+      scope: "document",
+      templateId: "technical-file-format-requirements",
+      provider: "mock",
+      paragraphCount: 45,
+      issueCount: 3,
+      aiClassifiedParagraphCount: 40,
+      localFallbackParagraphCount: 5,
+      aiInvalidRoleCount: 1,
+      aiOutOfBatchCount: 2,
+      aiFallbackReason: "ai_budget_limited"
+    },
+    issues: [
+      {
+        ruleId: "page_setup",
+        paragraphIndex: 0,
+        role: "page_setup",
+        message: "页面设置不符合模板要求。",
+        currentValue: JSON.stringify({
+          paperSize: "A4",
+          marginTop: 1440,
+          marginBottom: 1440,
+          marginLeft: 1800,
+          marginRight: 1800
+        }),
+        expectedValue: "A4 页面及模板页边距",
+        suggestion: "建议按模板设置 A4 页面和页边距。"
+      },
+      {
+        ruleId: "style_name",
+        paragraphIndex: 1,
+        role: "document_title",
+        message: "段落样式不符合模板要求。",
+        currentValue: "Normal",
+        expectedValue: "文档标题",
+        suggestion: "建议按document_title套用模板样式。"
+      },
+      {
+        ruleId: "line_spacing",
+        paragraphIndex: 5,
+        role: "body",
+        message: "行距不符合模板要求。",
+        currentValue: "1.0倍",
+        expectedValue: "1.25倍",
+        suggestion: "建议行距调整为1.25倍。"
+      }
+    ]
+  });
+
+  assert.ok(markdown.includes("页面 | 页面设置 | 纸张：A4；页边距：上 1440、下 1440、左 1800、右 1800 | A4 页面及模板页边距"));
+  assert.ok(markdown.includes("P1 | 段落样式 | 正文样式（Normal） | 文档标题 | 按文档标题套用模板样式。"));
+  assert.ok(markdown.includes("P5 | 行距 | 单倍行距（1倍） | 1.25 倍行距 | 行距调整为 1.25 倍。"));
+  assert.ok(markdown.includes("- 模板：技术文件格式及书写要求"));
+  assert.ok(markdown.includes("- 识别来源：模拟服务"));
+  assert.ok(markdown.includes("- AI 兜底原因：文档段落较多，AI 角色识别仅处理前 40 段；其余段落已使用本地模板规则。"));
+  assert.ok(!markdown.includes("fallback"));
+  assert.ok(!markdown.includes("ai_budget_limited"));
+  assert.ok(!markdown.includes("technical-file-format-requirements"));
+  assert.ok(!markdown.includes("document_title"));
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
@@ -429,5 +679,15 @@ testCollectParagraphsFromTextCanLimitSelectionText();
 testGetCollectionItemSupportsOneBasedWpsItem();
 testRenderMarkdownFormatsCommonBlocks();
 testRenderMarkdownEscapesUnsafeHtmlAndLinks();
+testBuildMarkdownWritebackBlocksPreservesSupportedStructure();
+testBuildMarkdownWritebackBlocksKeepsTechnicalUnderscores();
+testHasStructuredSmartWriteContentDetectsDocumentStructure();
+testShouldUseStructuredSmartWriteResultUsesOriginalOrResultStructure();
+testFormatSmartWriteResultSplitsSingleLineByOriginalParagraphs();
+testFormatSmartWriteResultPreservesExistingLineBreaks();
+testFormatSmartWriteResultBreaksInlineChineseHeadings();
+testRenderReadableFormatReviewUsesChineseLabelsAndValues();
+testRenderReadableFormatReviewHandlesNoIssues();
+testRenderReadableFormatReviewLocalizesOtherFeedback();
 
 console.log("taskpane-helpers tests passed");

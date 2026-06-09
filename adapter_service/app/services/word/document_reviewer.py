@@ -34,5 +34,7 @@ class WordDocumentReviewer:
             "scope": request.selection_mode,
             "summary": provider_result.get("summary", ""),
             "issues": provider_result.get("issues", []),
+            "rawAnswer": provider_result.get("rawAnswer", ""),
+            "parseFallbackReason": provider_result.get("parseFallbackReason", ""),
             "provider": provider_result.get("provider", "mock"),
         }

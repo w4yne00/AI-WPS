@@ -28,7 +28,7 @@ class ReviewModeContractTests(unittest.TestCase):
 
         diagnostics = client.build_route_diagnostics()
 
-        self.assertEqual(diagnostics["version"], "0.12.11-alpha")
+        self.assertEqual(diagnostics["version"], "0.12.16-alpha")
         self.assertEqual(
             list(diagnostics["taskApiKeys"].keys()),
             ["word.smart_write", "word.document_review", "word.format_review"],
@@ -106,3 +106,22 @@ class DocumentReviewProviderTests(unittest.TestCase):
         self.assertEqual(parsed["issues"][0]["category"], "logic")
         self.assertEqual(parsed["issues"][0]["severity"], "high")
         self.assertEqual(parsed["issues"][0]["suggestedRewrite"], "系统支持对业务数据进行批量处理。")
+
+    def test_document_review_parser_preserves_unrecognized_json_answer(self) -> None:
+        provider_module = __import__(
+            "app.services.provider_client",
+            fromlist=["parse_document_review_answer"],
+        )
+
+        parsed = provider_module.parse_document_review_answer(
+            """
+            {
+              "result": "### 审查结果\\nDify 已指出表达问题，但没有按 issues 字段输出。"
+            }
+            """
+        )
+
+        self.assertEqual(parsed["issues"], [])
+        self.assertEqual(parsed["parseFallbackReason"], "unsupported_json_shape")
+        self.assertIn("未解析为标准问题列表", parsed["summary"])
+        self.assertIn("Dify 已指出表达问题", parsed["rawAnswer"])

@@ -228,3 +228,5 @@ class DocumentReviewResponseData(BaseModel):
     summary: str
     issues: List[DocumentReviewIssue] = Field(default_factory=list)
     provider: str = "mock"
+    raw_answer: str = Field(default="", alias="rawAnswer")
+    parse_fallback_reason: str = Field(default="", alias="parseFallbackReason")

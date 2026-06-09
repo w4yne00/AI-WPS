@@ -446,6 +446,10 @@ button[disabled] {
   box-shadow: var(--shadow-soft);
 }
 
+#result-output.plain-output {
+  white-space: pre-wrap;
+}
+
 body[data-task-mode="smartWrite"] #result-output {
   min-height: 360px;
   max-height: 680px;

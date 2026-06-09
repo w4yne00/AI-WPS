@@ -159,7 +159,11 @@ def build_smart_write_prompt(
             "要求：",
             "1. 必须基于待处理原文生成新内容。",
             "2. 不允许原样返回原文。",
-            "3. 只输出最终正文，不要解释处理过程。",
+            "3. 保持待处理原文的段落数量和换行结构，适合直接替换用户选中的段落。",
+            "4. 如果原文有多个段落，输出也应保留相近分段；不要把连续多个段落压成一整段。",
+            "5. 原文已有标题、列表、序号、表格或强调格式时，应尽量保持对应结构和层级。",
+            "6. 不要额外新增原文没有、用户也未要求的 Markdown 标题、项目符号、编号列表或表格。",
+            "7. 只输出最终正文，不要解释处理过程。",
         ]
     )
     return "\n".join(lines)
@@ -387,6 +391,29 @@ def _extract_json_payload(answer: str):
     return None
 
 
+def _extract_document_review_payload_text(payload: Dict) -> str:
+    if not isinstance(payload, dict):
+        return ""
+    for key in ("result", "answer", "text", "output", "content", "message"):
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    outputs = payload.get("outputs")
+    if isinstance(outputs, dict):
+        return _extract_document_review_payload_text(outputs)
+    return ""
+
+
+def _document_review_parse_fallback(raw_answer: str, reason: str, fallback_text: str = "") -> Dict:
+    raw_text = (fallback_text or raw_answer or "").strip()
+    return {
+        "summary": "Dify 已返回内容，但未解析为标准问题列表；下方显示原始回复。",
+        "issues": [],
+        "rawAnswer": raw_text,
+        "parseFallbackReason": reason,
+    }
+
+
 def _normalize_document_review_category(value: str) -> str:
     text = str(value or "").strip().lower()
     if text in {"typo", "expression", "logic", "fluency", "professional"}:
@@ -414,12 +441,12 @@ def _normalize_review_severity(value: str) -> str:
 
 
 def parse_document_review_answer(answer: str) -> Dict:
+    raw_answer = (answer or "").strip()
     payload = _extract_json_payload(answer)
     if payload is None:
-        return {
-            "summary": (answer or "").strip(),
-            "issues": [],
-        }
+        if raw_answer:
+            return _document_review_parse_fallback(raw_answer, "non_json_answer")
+        return {"summary": "", "issues": [], "rawAnswer": "", "parseFallbackReason": ""}
 
     if isinstance(payload, list):
         raw_issues = payload
@@ -427,8 +454,22 @@ def parse_document_review_answer(answer: str) -> Dict:
     elif isinstance(payload, dict):
         raw_issues = payload.get("issues", [])
         summary = str(payload.get("summary", "")).strip()
+        if not isinstance(raw_issues, list):
+            return _document_review_parse_fallback(
+                raw_answer,
+                "unsupported_json_shape",
+                _extract_document_review_payload_text(payload),
+            )
+        if not raw_issues and not summary:
+            fallback_text = _extract_document_review_payload_text(payload)
+            if fallback_text:
+                return _document_review_parse_fallback(
+                    raw_answer,
+                    "unsupported_json_shape",
+                    fallback_text,
+                )
     else:
-        return {"summary": "", "issues": []}
+        return _document_review_parse_fallback(raw_answer, "unsupported_json_shape")
 
     if not isinstance(raw_issues, list):
         raw_issues = []
@@ -458,6 +499,8 @@ def parse_document_review_answer(answer: str) -> Dict:
     return {
         "summary": summary,
         "issues": issues,
+        "rawAnswer": "",
+        "parseFallbackReason": "",
     }
 
 
@@ -652,7 +695,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.12.11-alpha",
+            "version": "0.12.16-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -941,13 +984,13 @@ class ProviderClient:
             prompt,
         )
 
-        parsed = parse_document_review_answer(
-            extract_answer(body)
-        )
+        parsed = parse_document_review_answer(extract_answer(body))
         logger.info("traceId=%s provider=enterprise-dify-chat task=word.document_review", trace_id)
         return {
             "summary": parsed["summary"],
             "issues": parsed["issues"],
+            "rawAnswer": parsed.get("rawAnswer", ""),
+            "parseFallbackReason": parsed.get("parseFallbackReason", ""),
             "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),

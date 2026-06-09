@@ -866,6 +866,10 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertIn("企业办公文档智能编写助手", prompt)
         self.assertIn("不允许原样返回原文", prompt)
+        self.assertIn("保持待处理原文的段落数量和换行结构", prompt)
+        self.assertIn("如果原文有多个段落，输出也应保留相近分段", prompt)
+        self.assertIn("原文已有标题、列表、序号、表格或强调格式时", prompt)
+        self.assertIn("不要额外新增原文没有、用户也未要求的 Markdown 标题、项目符号、编号列表或表格", prompt)
         self.assertIn("待处理原文：\n项目进展总体正常。", prompt)
 
     def test_build_smart_write_prompt_uses_soetech_option_text(self) -> None:

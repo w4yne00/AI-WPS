@@ -1,11 +1,27 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.12.11-alpha";
+  var FRONTEND_BUILD_VERSION = "0.12.16-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
   var FORMAT_REVIEW_EXTRACTION_OPTIONS = {
     maxParagraphs: 80,
     maxParagraphTextLength: 800,
+    maxPlainTextLength: 12000,
+    preferSelectionTextParagraphs: true,
+    avoidFullTextRead: true,
+    avoidFallbackTextRead: true
+  };
+  var DOCUMENT_REVIEW_EXTRACTION_OPTIONS = {
+    maxParagraphs: 80,
+    maxParagraphTextLength: 800,
+    maxPlainTextLength: 12000,
+    preferSelectionTextParagraphs: true,
+    avoidFullTextRead: true,
+    avoidFallbackTextRead: true
+  };
+  var SMART_WRITE_EXTRACTION_OPTIONS = {
+    maxParagraphs: 20,
+    maxParagraphTextLength: 2000,
     maxPlainTextLength: 12000,
     preferSelectionTextParagraphs: true,
     avoidFullTextRead: true,
@@ -238,6 +254,7 @@
   function setResult(text) {
     var output = byId("result-output");
     output.hidden = false;
+    output.classList.remove("plain-output");
     if (helpers.renderMarkdown) {
       output.innerHTML = helpers.renderMarkdown(text);
     } else {
@@ -246,8 +263,64 @@
     state.copyText = text || "";
   }
 
+  function setPlainResult(text, copyText) {
+    var output = byId("result-output");
+    output.hidden = false;
+    output.classList.add("plain-output");
+    output.textContent = text || "";
+    state.copyText = typeof copyText === "string" ? copyText : (text || "");
+  }
+
   function setRewriteResult(result) {
-    setResult(result.rewrittenText || "");
+    setPlainResult(result.rewrittenText || "");
+  }
+
+  function getLatestOriginalText() {
+    return state.latestDocumentPayload &&
+      state.latestDocumentPayload.content &&
+      state.latestDocumentPayload.content.plainText
+      ? state.latestDocumentPayload.content.plainText
+      : "";
+  }
+
+  function shouldUseStructuredSmartWriteResult(text) {
+    if (helpers.shouldUseStructuredSmartWriteResult) {
+      return helpers.shouldUseStructuredSmartWriteResult(getLatestOriginalText(), text);
+    }
+    if (helpers.hasStructuredSmartWriteContent) {
+      return helpers.hasStructuredSmartWriteContent(getLatestOriginalText()) ||
+        helpers.hasStructuredSmartWriteContent(text);
+    }
+    return false;
+  }
+
+  function normalizeSmartWriteResult(result) {
+    var source = result || {};
+    var normalized = {};
+    var key;
+    var text = source && source.rewrittenText ? source.rewrittenText : "";
+    var formattedText = helpers.formatSmartWriteResult
+      ? helpers.formatSmartWriteResult(getLatestOriginalText(), text)
+      : text;
+
+    for (key in source) {
+      if (Object.prototype.hasOwnProperty.call(source, key)) {
+        normalized[key] = source[key];
+      }
+    }
+    normalized.rewrittenText = formattedText;
+    return normalized;
+  }
+
+  function setSmartWriteResult(result) {
+    var normalized = normalizeSmartWriteResult(result);
+    var text = normalized.rewrittenText || "";
+    if (shouldUseStructuredSmartWriteResult(text)) {
+      setResult(text);
+      return normalized;
+    }
+    setPlainResult(text);
+    return normalized;
   }
 
   function setApplyEnabled(enabled) {
@@ -588,6 +661,14 @@
     var message = error && error.message ? error.message : String(error || "");
     if (message === "Failed to fetch" || message.indexOf("NetworkError") >= 0) {
       return "插件无法访问 http://127.0.0.1:18100。请确认 adapter 正在运行、端口为 18100，并重新打开任务窗格。";
+    }
+    return message;
+  }
+
+  function describeDocumentReviewError(error) {
+    var message = describeFetchError(error);
+    if (message.indexOf("插件无法访问 http://127.0.0.1:18100") === 0) {
+      return message + "\n\n如果 Dify 后台已经收到文档审查请求，通常说明 adapter 正在等待 Dify 返回或 Dify 返回过慢；请稍后在“设置-最近一次任务诊断”查看 trace 和 provider 状态。";
     }
     return message;
   }
@@ -997,6 +1078,10 @@
   }
 
   function renderGroupedFormatReview(data) {
+    if (helpers.renderReadableFormatReview) {
+      return helpers.renderReadableFormatReview(data);
+    }
+
     var summary = data.summary || {};
     var issues = data.issues || [];
     var lines = [
@@ -1065,6 +1150,8 @@
       test_outline: "测试大纲和细则"
     };
     var issues = data.issues || [];
+    var rawAnswer = data.rawAnswer || data.raw_answer || "";
+    var parseFallbackReason = data.parseFallbackReason || data.parse_fallback_reason || "";
     var lines = [
       "文档审查结果",
       "",
@@ -1075,7 +1162,20 @@
       ""
     ];
 
+    if (parseFallbackReason) {
+      lines.push("解析状态：Dify 已返回内容，但未解析为标准问题列表。");
+      lines.push("");
+    }
+
     if (!issues.length) {
+      if (rawAnswer) {
+        lines.push("未解析到结构化问题列表，以下展示 Dify 原始回复。");
+        lines.push("");
+        lines.push("## 原始模型回复");
+        lines.push("");
+        lines.push(rawAnswer);
+        return lines.join("\n").trim();
+      }
       lines.push("未发现明显文档质量问题。");
       return lines.join("\n");
     }
@@ -1191,11 +1291,226 @@
     document.body.removeChild(textarea);
   }
 
+  function blockToWritebackLine(block) {
+    if (!block) {
+      return "";
+    }
+    if (block.type === "unorderedListItem") {
+      return "• " + (block.text || "");
+    }
+    if (block.type === "orderedListItem") {
+      return String(block.ordinal || 1) + ". " + (block.text || "");
+    }
+    return block.text || "";
+  }
+
+  function blockWritebackPrefixLength(block) {
+    if (!block) {
+      return 0;
+    }
+    if (block.type === "unorderedListItem") {
+      return 2;
+    }
+    if (block.type === "orderedListItem") {
+      return String(block.ordinal || 1).length + 2;
+    }
+    return 0;
+  }
+
+  function buildWritebackPlainText(blocks) {
+    return blocks.map(blockToWritebackLine).filter(Boolean).join("\r");
+  }
+
+  function readValue(target, key) {
+    try {
+      return target ? target[key] : undefined;
+    } catch (error) {
+      return undefined;
+    }
+  }
+
+  function setValue(target, key, value) {
+    try {
+      if (target && typeof target[key] !== "undefined") {
+        target[key] = value;
+        return true;
+      }
+    } catch (error) {
+      return false;
+    }
+    return false;
+  }
+
+  function writeTextToTarget(target, text) {
+    if (!target) {
+      return false;
+    }
+    try {
+      if (target.Range && typeof target.Range.Text !== "undefined") {
+        target.Range.Text = text;
+        return true;
+      }
+      if (typeof target.Text !== "undefined") {
+        target.Text = text;
+        return true;
+      }
+    } catch (error) {
+      return false;
+    }
+    return false;
+  }
+
+  function getRangeFromTarget(target) {
+    if (!target) {
+      return null;
+    }
+    return readValue(target, "Range") || target;
+  }
+
+  function getRangeParagraph(range, index) {
+    var paragraphs = readValue(range, "Paragraphs");
+    if (!paragraphs) {
+      return null;
+    }
+    if (helpers.getCollectionItem) {
+      return helpers.getCollectionItem(paragraphs, index);
+    }
+    if (typeof paragraphs.Item === "function") {
+      try {
+        return paragraphs.Item(index);
+      } catch (error) {
+        return null;
+      }
+    }
+    return paragraphs[index] || paragraphs[index - 1] || null;
+  }
+
+  function applyParagraphWritebackFormatting(range, blocks) {
+    var formatted = false;
+    blocks.forEach(function (block, index) {
+      var paragraph = getRangeParagraph(range, index + 1);
+      var paragraphRange = getRangeFromTarget(paragraph);
+      var font = readValue(paragraphRange, "Font") || readValue(paragraph, "Font");
+      var headingLevel = Math.min(block.level || 1, 3);
+      var styleSet;
+
+      if (block.type === "heading") {
+        styleSet = setValue(paragraphRange, "Style", "标题 " + headingLevel);
+        if (!styleSet) {
+          styleSet = setValue(paragraphRange, "Style", "Heading " + headingLevel);
+        }
+        formatted = styleSet || formatted;
+        formatted = setValue(font, "Bold", true) || formatted;
+        formatted = setValue(font, "Size", headingLevel === 1 ? 16 : headingLevel === 2 ? 15 : 14) || formatted;
+      }
+    });
+    return formatted;
+  }
+
+  function duplicateRange(range) {
+    var duplicate = readValue(range, "Duplicate");
+    if (typeof duplicate === "function") {
+      return callNoArgs(duplicate, range);
+    }
+    return duplicate || null;
+  }
+
+  function applyBoldWritebackRuns(range, blocks) {
+    var start = Number(readValue(range, "Start"));
+    if (isNaN(start)) {
+      return false;
+    }
+
+    var formatted = false;
+    var offset = 0;
+    blocks.forEach(function (block) {
+      var line = blockToWritebackLine(block);
+      var prefixLength = blockWritebackPrefixLength(block);
+      var runOffset = prefixLength;
+
+      (block.runs || []).forEach(function (run) {
+        var runText = run.text || "";
+        var runRange;
+        if (run.bold && runText) {
+          runRange = duplicateRange(range);
+          if (runRange && typeof runRange.SetRange === "function") {
+            try {
+              runRange.SetRange(start + offset + runOffset, start + offset + runOffset + runText.length);
+              formatted = setValue(readValue(runRange, "Font"), "Bold", true) || formatted;
+            } catch (error) {
+              return;
+            }
+          }
+        }
+        runOffset += runText.length;
+      });
+
+      offset += line.length + 1;
+    });
+    return formatted;
+  }
+
+  function tryApplyFormattedRewrite(target, text) {
+    var blocks;
+    var plainText;
+    var range;
+    if (!helpers.buildMarkdownWritebackBlocks) {
+      return { ok: false, formatted: false, reason: "parser_unavailable" };
+    }
+
+    blocks = helpers.buildMarkdownWritebackBlocks(text);
+    plainText = buildWritebackPlainText(blocks);
+    if (!plainText) {
+      return { ok: false, formatted: false, reason: "empty" };
+    }
+    if (!writeTextToTarget(target, plainText)) {
+      return { ok: false, formatted: false, reason: "write_unavailable" };
+    }
+
+    range = getRangeFromTarget(target);
+    var paragraphFormatted = applyParagraphWritebackFormatting(range, blocks);
+    var boldFormatted = applyBoldWritebackRuns(range, blocks);
+    return {
+      ok: true,
+      formatted: paragraphFormatted || boldFormatted,
+      reason: "applied"
+    };
+  }
+
+  function applyRewriteText(target, text, options) {
+    var writeOptions = options || {};
+    var formattedResult;
+    var plainText;
+    if (writeOptions.preferPlainText) {
+      plainText = helpers.buildMarkdownWritebackBlocks
+        ? buildWritebackPlainText(helpers.buildMarkdownWritebackBlocks(text))
+        : text;
+      if (writeTextToTarget(target, plainText || text)) {
+        return { ok: true, formatted: false, reason: "plain_text_preferred" };
+      }
+      return { ok: false, formatted: false, reason: "plain_text_unavailable" };
+    }
+
+    formattedResult = tryApplyFormattedRewrite(target, text);
+    if (formattedResult.ok) {
+      return formattedResult;
+    }
+    if (writeTextToTarget(target, text)) {
+      return { ok: true, formatted: false, reason: "plain_text_fallback" };
+    }
+    return formattedResult;
+  }
+
   function applyRewrite() {
     var document = getActiveDocument();
+    var applyResult = null;
+    var rewrittenText;
+    var preferPlainText;
     if (!document || !state.rewriteResult) {
       return;
     }
+    rewrittenText = state.rewriteResult.rewrittenText || "";
+    preferPlainText = !shouldUseStructuredSmartWriteResult(rewrittenText);
 
     if (state.latestSelectionMode === "selection") {
       var writableSelection = getWritableSelection(document);
@@ -1212,19 +1527,55 @@
         setResult("当前宿主未暴露可写回的选区对象，请反馈当前 WPS 版本、操作路径和选区截图。");
         return;
       }
-      if (typeof writableSelection.Text !== "undefined") {
-        writableSelection.Text = state.rewriteResult.rewrittenText;
-      }
-      if (writableSelection.Range && typeof writableSelection.Range.Text !== "undefined") {
-        writableSelection.Range.Text = state.rewriteResult.rewrittenText;
+      applyResult = applyRewriteText(writableSelection, rewrittenText, {
+        preferPlainText: preferPlainText
+      });
+      if (!applyResult.ok) {
+        setStatus("结果写回失败，请复制结果后手动粘贴。");
+        setResult("当前宿主未开放可写回的正文对象，请复制结果后手动粘贴。");
+        return;
       }
     } else if (document.Content) {
-      document.Content.Text = state.rewriteResult.rewrittenText;
+      applyResult = applyRewriteText(document.Content, rewrittenText, {
+        preferPlainText: preferPlainText
+      });
+      if (!applyResult.ok) {
+        setStatus("结果写回失败，请复制结果后手动粘贴。");
+        setResult("当前宿主未开放可写回的正文对象，请复制结果后手动粘贴。");
+        return;
+      }
+    }
+
+    if (!applyResult) {
+      setStatus("结果写回失败，请复制结果后手动粘贴。");
+      setResult("当前宿主未开放可写回的正文对象，请复制结果后手动粘贴。");
+      return;
     }
 
     state.pendingApplyAction = "";
     setApplyEnabled(false);
-    setStatus("结果已应用。");
+    if (!preferPlainText) {
+      setStatus(applyResult.formatted ? "结果已尽量按结构化格式应用。" : "结果已按结构化文本应用。");
+    } else {
+      setStatus("结果已按原文段落形态应用。");
+    }
+  }
+
+  function startDocumentReviewWaitFeedback() {
+    var timers = [];
+    timers.push(setTimeout(function () {
+      setStatus("Dify 正在处理文档审查，请继续等待...");
+      setPlainResult("文档审查请求已提交，Dify 正在处理。较长文本或繁忙时可能需要更久，请保持 WPS 和 adapter 打开。");
+    }, 8000));
+    timers.push(setTimeout(function () {
+      setStatus("文档审查仍在等待 Dify 返回...");
+      setPlainResult("文档审查仍在等待 Dify 返回。若 Dify 后台已完成但此处长时间未更新，请到“设置-最近一次任务诊断”查看 trace 和 provider 状态。");
+    }, 30000));
+    return function () {
+      timers.forEach(function (timer) {
+        clearTimeout(timer);
+      });
+    };
   }
 
   function runDocumentReview() {
@@ -1235,29 +1586,41 @@
       return;
     }
 
-    try {
-      state.latestDocumentPayload = extractDocument(scope.selectionMode);
-      state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
-    } catch (error) {
-      setStatus(error.message);
-      setResult(error.message);
-      return;
-    }
+    setStatus("正在读取文档审查范围...");
+    setPlainResult("正在读取文档审查范围，请稍候。");
+    setApplyEnabled(false);
 
-    setStatus("正在执行文档审查...");
-    request("/word/document-review", state.latestDocumentPayload)
-      .then(function (body) {
-        state.pendingApplyAction = "";
-        setApplyEnabled(false);
-        setTrace(body.traceId);
-        setResult(renderGroupedDocumentReview(body.data || {}));
-        setStatus("文档审查完成。");
-      })
-      .catch(function (error) {
-        var message = describeFetchError(error);
-        setStatus("文档审查失败：" + message);
-        setResult(message);
-      });
+    setTimeout(function () {
+      var stopWaiting;
+      try {
+        state.latestDocumentPayload = extractDocument(scope.selectionMode, null, DOCUMENT_REVIEW_EXTRACTION_OPTIONS);
+        state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+      } catch (error) {
+        setStatus(error.message);
+        setResult(error.message);
+        return;
+      }
+
+      setStatus("正在提交文档审查请求...");
+      setPlainResult("文档审查请求已提交，正在等待 Dify 返回。");
+      stopWaiting = startDocumentReviewWaitFeedback();
+      request("/word/document-review", state.latestDocumentPayload)
+        .then(function (body) {
+          stopWaiting();
+          state.pendingApplyAction = "";
+          setApplyEnabled(false);
+          setTrace(body.traceId);
+          setResult(renderGroupedDocumentReview(body.data || {}));
+          setStatus("文档审查完成。");
+        })
+        .catch(function (error) {
+          var message;
+          stopWaiting();
+          message = describeDocumentReviewError(error);
+          setStatus("文档审查失败：" + message);
+          setResult(message);
+        });
+    }, 0);
   }
 
   function runFormatReview() {
@@ -1308,31 +1671,40 @@
       return;
     }
 
-    try {
-      state.latestDocumentPayload = extractDocument("selection", state.writeAction || "rewrite");
-      state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
-    } catch (error) {
-      setStatus(error.message);
-      setResult(error.message);
-      return;
-    }
-
     var config = modeConfig[state.currentMode] || modeConfig.smartWrite;
-    setStatus(config.runningText);
-    request("/word/smart-write", state.latestDocumentPayload)
-      .then(function (body) {
-        state.pendingApplyAction = "rewrite";
-        state.rewriteResult = body.data;
-        setApplyEnabled(true);
-        setTrace(body.traceId);
-        setRewriteResult(body.data);
-        setStatus(config.doneText);
-      })
-      .catch(function (error) {
-        var message = describeFetchError(error);
-        setStatus("生成失败：" + message);
-        setResult(message);
-      });
+    setStatus("正在读取选中文本...");
+    setPlainResult("正在读取选中文本，请稍候。");
+    setApplyEnabled(false);
+
+    setTimeout(function () {
+      try {
+        state.latestDocumentPayload = extractDocument(
+          "selection",
+          state.writeAction || "rewrite",
+          SMART_WRITE_EXTRACTION_OPTIONS
+        );
+        state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+      } catch (error) {
+        setStatus(error.message);
+        setResult(error.message);
+        return;
+      }
+
+      setStatus(config.runningText);
+      request("/word/smart-write", state.latestDocumentPayload)
+        .then(function (body) {
+          state.pendingApplyAction = "rewrite";
+          state.rewriteResult = setSmartWriteResult(body.data);
+          setApplyEnabled(true);
+          setTrace(body.traceId);
+          setStatus(config.doneText);
+        })
+        .catch(function (error) {
+          var message = describeFetchError(error);
+          setStatus("生成失败：" + message);
+          setResult(message);
+        });
+    }, 0);
   }
 
   function applyPreview() {
