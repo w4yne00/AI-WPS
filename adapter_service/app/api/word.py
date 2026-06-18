@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 from app.core.models import (
     DocumentReviewResponseData,
@@ -10,6 +11,7 @@ from app.core.models import (
 from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.word.document_reviewer import WordDocumentReviewer
+from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
 
@@ -17,6 +19,7 @@ router = APIRouter()
 format_reviewer = WordFormatReviewer()
 rewriter = WordRewriter()
 document_reviewer = WordDocumentReviewer()
+document_review_jobs = DocumentReviewJobStore(document_reviewer)
 logger = get_logger(__name__)
 
 
@@ -58,6 +61,48 @@ def document_review_word(request: WordDocumentRequest) -> dict:
         "taskType": "word.document_review",
         "message": "completed",
         "data": payload.dict(by_alias=True),
+        "errors": [],
+    }
+
+
+@router.post("/word/document-review/jobs")
+def start_document_review_job(request: WordDocumentRequest) -> dict:
+    trace_id = new_trace_id("word-document-review")
+    job = document_review_jobs.start(request, trace_id=trace_id)
+    logger.info("traceId=%s task=word.document_review jobStatus=%s", trace_id, job["status"])
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "word.document_review",
+        "message": "accepted",
+        "data": job,
+        "errors": [],
+    }
+
+
+@router.get("/word/document-review/jobs/{job_id}")
+def get_document_review_job(job_id: str):
+    job = document_review_jobs.get(job_id)
+    if not job:
+        return JSONResponse(
+            status_code=404,
+            content={
+                "success": False,
+                "traceId": job_id,
+                "taskType": "word.document_review",
+                "message": "文档审查后台任务不存在或已过期。",
+                "data": {"jobId": job_id, "status": "not_found"},
+                "errors": [{"code": "DOCUMENT_REVIEW_JOB_NOT_FOUND", "message": "文档审查后台任务不存在或已过期。"}],
+            },
+        )
+    if job.get("result"):
+        job = {**job, "result": DocumentReviewResponseData(**job["result"]).dict(by_alias=True)}
+    return {
+        "success": True,
+        "traceId": job.get("traceId", job_id),
+        "taskType": "word.document_review",
+        "message": job["status"],
+        "data": job,
         "errors": [],
     }
 

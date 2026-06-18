@@ -1,5 +1,6 @@
 from pathlib import Path
 import importlib.util
+import tempfile
 import unittest
 
 from app.core.config import load_settings
@@ -22,6 +23,26 @@ def test_load_settings_reads_example_file(tmp_path: Path) -> None:
 
     assert settings.service_port == 18100
     assert settings.dify_base_url == "http://intranet"
+
+
+def test_load_settings_defaults_timeout_for_slow_model_backend(tmp_path: Path) -> None:
+    config_file = tmp_path / "adapter.json"
+    config_file.write_text("{}", encoding="utf-8")
+
+    settings = load_settings(config_file)
+
+    assert settings.timeout_seconds == 75
+
+
+class ConfigSettingsTests(unittest.TestCase):
+    def test_load_settings_defaults_timeout_for_slow_model_backend(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_file = Path(tmp_dir) / "adapter.json"
+            config_file.write_text("{}", encoding="utf-8")
+
+            settings = load_settings(config_file)
+
+        self.assertEqual(settings.timeout_seconds, 75)
 
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")

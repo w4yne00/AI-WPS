@@ -15,9 +15,10 @@ def parse_word_request(payload):
 
 
 class RecordingFormatReviewProvider:
-    def __init__(self, configured: bool = True, fail: bool = False) -> None:
+    def __init__(self, configured: bool = True, fail: bool = False, answer: str = "") -> None:
         self.configured = configured
         self.fail = fail
+        self.answer = answer or '{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}'
         self.calls = []
         self.skipped = []
 
@@ -31,7 +32,7 @@ class RecordingFormatReviewProvider:
         self.calls.append({"traceId": trace_id, "inputData": input_data, "prompt": prompt})
         if self.fail:
             raise ValueError("invalid provider response")
-        return {"answer": '{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}'}
+        return {"answer": self.answer}
 
     def record_unconfigured_debug(self, task_type: str, trace_id: str, query: str) -> None:
         self.skipped.append({"taskType": task_type, "traceId": trace_id, "query": query})
@@ -129,3 +130,62 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["aiRequestErrorCount"], 1)
         self.assertEqual(result["summary"]["aiFallbackReason"], "provider_request_failed")
         self.assertGreaterEqual(result["summary"]["issueCount"], 1)
+
+    def test_format_review_ignores_think_tag_before_role_json(self) -> None:
+        provider = RecordingFormatReviewProvider(
+            answer='<think>{"draft": true, "reason": "内部分析"}</think>\n{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}'
+        )
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            self._request("selection"),
+            trace_id="trace-format-think",
+        )
+
+        self.assertEqual(result["summary"]["aiFallbackReason"], "")
+        self.assertEqual(result["summary"]["aiClassifiedParagraphCount"], 1)
+        self.assertEqual(result["summary"]["provider"], "enterprise-dify-chat/task-file")
+
+    def test_format_review_normalizes_wps_font_size_and_alignment_values(self) -> None:
+        request = parse_word_request(
+            {
+                "documentId": "format-review-normalized.docx",
+                "scene": "word",
+                "selectionMode": "selection",
+                "content": {
+                    "plainText": "正文内容",
+                    "paragraphs": [
+                        {
+                            "index": 4,
+                            "text": "正文内容",
+                            "styleName": "Normal",
+                            "fontName": "宋体",
+                            "fontSize": 0,
+                            "alignment": "3",
+                            "outlineLevel": 0,
+                            "lineSpacing": 1.25,
+                            "firstLineIndent": 640,
+                        }
+                    ],
+                    "headings": [],
+                    "documentStructure": {
+                        "page_setup": {
+                            "marginTop": 1440,
+                            "marginBottom": 1440,
+                            "marginLeft": 1800,
+                            "marginRight": 1800,
+                        }
+                    },
+                },
+                "options": {
+                    "templateId": "technical-file-format-requirements",
+                    "trackChanges": True,
+                },
+            }
+        )
+
+        result = WordFormatReviewer().review(request)
+
+        self.assertFalse(
+            any(issue["ruleId"] in {"font_size", "alignment"} for issue in result["issues"]),
+            result["issues"],
+        )

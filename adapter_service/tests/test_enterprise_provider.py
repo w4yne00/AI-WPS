@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+import socket
 import sys
 import os
 import importlib.util
@@ -10,6 +11,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
+from app.core.errors import ProviderTimeoutError
 from app.services.provider_client import (
     ProviderClient,
     build_document_review_prompt,
@@ -62,6 +64,54 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         config_file.unlink()
         tmp_dir.rmdir()
+
+    def test_format_review_roles_uses_slow_model_timeout_budget(self) -> None:
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self, settings: AppSettings) -> None:
+                super().__init__(settings)
+                self.captured_timeout = None
+
+            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+                self.captured_timeout = timeout_seconds
+                return {"answer": "[]"}
+
+        settings = AppSettings(timeout_seconds=75)
+        client = CapturingProviderClient(settings)
+
+        client.format_review_roles("trace-format-timeout", {}, "请识别段落角色")
+
+        self.assertEqual(client.captured_timeout, 60)
+
+    def test_document_review_uses_longer_timeout_budget(self) -> None:
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self, settings: AppSettings) -> None:
+                super().__init__(settings)
+                self.captured_timeout = None
+
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
+                return True
+
+            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+                self.captured_timeout = timeout_seconds
+                return {"answer": "{\"summary\":\"未发现问题。\",\"issues\":[]}"}
+
+        settings = AppSettings(timeout_seconds=75)
+        client = CapturingProviderClient(settings)
+
+        client.document_review("需要审查的较长文档。", "trace-doc-timeout", "technical_solution", "检查表达。")
+
+        self.assertEqual(client.captured_timeout, 1800)
+
+    def test_post_task_treats_socket_timeout_as_provider_timeout(self) -> None:
+        settings = AppSettings(
+            provider_base_url="https://aibot.example.com/v1",
+            timeout_seconds=75,
+        )
+        client = ProviderClient(settings)
+
+        with patch("app.services.provider_client.urllib_request.urlopen", side_effect=socket.timeout("timed out")):
+            with self.assertRaises(ProviderTimeoutError):
+                client.post_task("word.document_review", "trace-timeout", {}, "请审查文档。", timeout_seconds=150)
 
     def test_load_settings_reads_task_api_key_refs(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -661,7 +711,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         client.record_skipped_debug(
             "word.format_review",
             "trace-format-skip",
-            "格式审查未读取到正文段落，未调用 Dify。",
+            "格式审查未读取到正文段落，未调用模型后台。",
             "no_paragraphs",
             provider="local",
         )
@@ -910,11 +960,22 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertEqual(extract_answer(body), "这是改写后的文档内容。")
 
+    def test_extract_answer_removes_think_tag_content(self) -> None:
+        body = {
+            "answer": "<think>这里是深度思考过程，不应出现在预览中。</think>\n这是最终输出。"
+        }
+
+        result = extract_answer(body)
+
+        self.assertEqual(result, "这是最终输出。")
+        self.assertNotIn("think", result.lower())
+        self.assertNotIn("深度思考", result)
+
     def test_extract_answer_reads_workflow_outputs(self) -> None:
         body = {
             "data": {
                 "outputs": {
-                    "result": "{\"issues\":[]}"
+                    "result": "<think>{\"draft\":true}</think>\n{\"issues\":[]}"
                 }
             }
         }
@@ -939,7 +1000,9 @@ class EnterpriseProviderTests(unittest.TestCase):
             "重点检查错别字和表达逻辑。",
         )
         parsed = parse_document_review_answer(
-            """
+            extract_answer({
+                "answer": """
+            <think>先分析错别字和表达问题。</think>
             ```json
             {
               "summary": "发现一项问题。",
@@ -957,6 +1020,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             }
             ```
             """
+            })
         )
 
         self.assertIn("重点检查错别字和表达逻辑。", prompt)

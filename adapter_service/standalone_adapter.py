@@ -13,6 +13,7 @@ from app.core.models import (
     RewriteResponseData,
     WordDocumentRequest,
 )
+from app.core.tracing import new_trace_id
 from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
@@ -23,13 +24,15 @@ from app.services.provider_client import (
     save_route_api_key,
 )
 from app.services.word.document_reviewer import WordDocumentReviewer
+from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.12.16-alpha"
+VERSION = "0.13.7-alpha"
+DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 
 
 def parse_word_request(payload):
@@ -67,6 +70,17 @@ def document_review(payload):
     if hasattr(DocumentReviewResponseData, "model_validate"):
         return DocumentReviewResponseData.model_validate(data).model_dump(by_alias=True)
     return DocumentReviewResponseData(**data).dict(by_alias=True)
+
+
+def document_review_job_payload(job):
+    data = dict(job)
+    if data.get("result"):
+        if hasattr(DocumentReviewResponseData, "model_validate"):
+            result = DocumentReviewResponseData.model_validate(data["result"]).model_dump(by_alias=True)
+        else:
+            result = DocumentReviewResponseData(**data["result"]).dict(by_alias=True)
+        data["result"] = result
+    return data
 
 
 def format_review(payload):
@@ -208,6 +222,25 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope("standalone-provider-debug-last", "provider.debug_last", get_last_provider_debug()))
             return
 
+        if path.startswith("/word/document-review/jobs/"):
+            job_id = unquote(path.rsplit("/", 1)[-1])
+            job = DOCUMENT_REVIEW_JOB_STORE.get(job_id)
+            if not job:
+                self._write(
+                    404,
+                    envelope(
+                        job_id,
+                        "word.document_review",
+                        {"jobId": job_id, "status": "not_found"},
+                        success=False,
+                        message="文档审查后台任务不存在或已过期。",
+                        errors=[{"code": "DOCUMENT_REVIEW_JOB_NOT_FOUND", "message": "文档审查后台任务不存在或已过期。"}],
+                    ),
+                )
+                return
+            self._write(200, envelope(job.get("traceId", job_id), "word.document_review", document_review_job_payload(job), message=job["status"]))
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -225,6 +258,13 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/word/document-review":
             self._write(200, envelope("standalone-word-document-review", "word.document_review", document_review(payload)))
+            return
+
+        if path == "/word/document-review/jobs":
+            request = parse_word_request(payload)
+            trace_id = new_trace_id("standalone-word-document-review")
+            job = DOCUMENT_REVIEW_JOB_STORE.start(request, trace_id=trace_id)
+            self._write(200, envelope(trace_id, "word.document_review", document_review_job_payload(job), message="accepted"))
             return
 
         if path == "/word/format-review":

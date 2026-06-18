@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import socket
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib import error, request as urllib_request
@@ -14,6 +15,8 @@ logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 _LAST_PROVIDER_DEBUG: Dict = {}
+FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS = 60
+DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 
 
 STYLE_TEXT = {
@@ -198,6 +201,7 @@ def build_document_review_prompt(
             "6. location 可用章节名、段落号或“选中文本”描述；无法定位时写“未定位”。",
             "7. suggestedRewrite 只针对可直接替换的局部文本给出，无法直接改写时留空字符串。",
             "8. 不要检查字体、字号、行距、页边距等格式合规问题。",
+            "9. 只输出本次审查发现的问题列表；不要输出前端处理状态、复制动作或处理记录。",
             "",
             "待审查内容：",
             text.strip(),
@@ -407,7 +411,7 @@ def _extract_document_review_payload_text(payload: Dict) -> str:
 def _document_review_parse_fallback(raw_answer: str, reason: str, fallback_text: str = "") -> Dict:
     raw_text = (fallback_text or raw_answer or "").strip()
     return {
-        "summary": "Dify 已返回内容，但未解析为标准问题列表；下方显示原始回复。",
+        "summary": "模型后台已返回内容，但未解析为标准问题列表；下方显示原始回复。",
         "issues": [],
         "rawAnswer": raw_text,
         "parseFallbackReason": reason,
@@ -504,10 +508,16 @@ def parse_document_review_answer(answer: str) -> Dict:
     }
 
 
+def strip_think_tag_content(value: str) -> str:
+    return re.sub(r"<think\b[^>]*>.*?</think\s*>", "", str(value or ""), flags=re.IGNORECASE | re.DOTALL).strip()
+
+
 def extract_answer(body: Dict, output_key: str = "") -> str:
     answer = body.get("answer")
     if isinstance(answer, str) and answer.strip():
-        return answer.strip()
+        cleaned_answer = strip_think_tag_content(answer)
+        if cleaned_answer:
+            return cleaned_answer
 
     data = body.get("data", {})
     if isinstance(data, dict):
@@ -518,13 +528,17 @@ def extract_answer(body: Dict, output_key: str = "") -> str:
             for key in keys:
                 value = outputs.get(key)
                 if isinstance(value, str) and value.strip():
-                    return value.strip()
+                    cleaned_value = strip_think_tag_content(value)
+                    if cleaned_value:
+                        return cleaned_value
                 if isinstance(value, (dict, list)):
                     return json.dumps(value, ensure_ascii=False)
         for key in ("answer", "text", "rewrittenText"):
             value = data.get(key)
             if isinstance(value, str) and value.strip():
-                return value.strip()
+                cleaned_value = strip_think_tag_content(value)
+                if cleaned_value:
+                    return cleaned_value
 
     raise ProviderUnavailableError("Enterprise AI response did not contain an answer.")
 
@@ -695,7 +709,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.12.16-alpha",
+            "version": "0.13.7-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -828,6 +842,18 @@ class ProviderClient:
             if "timed out" in str(reason).lower():
                 raise ProviderTimeoutError() from exc
             raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **self.build_debug_metadata(task_type),
+                    "request": {"body": route_payload},
+                    "error": {"type": "TimeoutError", "message": str(exc)},
+                }
+            )
+            raise ProviderTimeoutError() from exc
 
     def record_skipped_debug(
         self,
@@ -982,6 +1008,7 @@ class ProviderClient:
             trace_id,
             {},
             prompt,
+            timeout_seconds=max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
         )
 
         parsed = parse_document_review_answer(extract_answer(body))
@@ -1003,7 +1030,7 @@ class ProviderClient:
             trace_id,
             input_data,
             prompt,
-            timeout_seconds=min(self.settings.timeout_seconds, 8),
+            timeout_seconds=min(self.settings.timeout_seconds, FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS),
         )
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:

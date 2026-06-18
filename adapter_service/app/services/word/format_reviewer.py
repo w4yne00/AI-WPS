@@ -153,15 +153,16 @@ class WordFormatReviewer:
                     "建议字体调整为{0}。".format(rule["fontName"]),
                 )
             )
-        if rule.get("fontSize") is not None and paragraph.font_size is not None:
-            if abs(float(paragraph.font_size) - float(rule["fontSize"])) > 0.01:
+        current_font_size = self._normalize_font_size(paragraph.font_size)
+        if rule.get("fontSize") is not None and current_font_size is not None:
+            if abs(current_font_size - float(rule["fontSize"])) > 0.01:
                 issues.append(
                     self._issue(
                         paragraph,
                         role,
                         "font_size",
                         "字号不符合模板要求。",
-                        "{0}pt".format(paragraph.font_size),
+                        "{0}pt".format(current_font_size),
                         "{0}pt".format(rule["fontSize"]),
                         "建议字号调整为{0}pt。".format(rule["fontSize"]),
                     )
@@ -180,15 +181,17 @@ class WordFormatReviewer:
                         "建议行距调整为{0}倍。".format(rule["lineSpacing"]),
                     )
                 )
-        if rule.get("alignment") and paragraph.alignment and str(paragraph.alignment).lower() != str(rule["alignment"]).lower():
+        current_alignment = self._normalize_alignment(paragraph.alignment)
+        expected_alignment = self._normalize_alignment(rule.get("alignment"))
+        if expected_alignment and current_alignment and current_alignment != expected_alignment:
             issues.append(
                 self._issue(
                     paragraph,
                     role,
                     "alignment",
                     "对齐方式不符合模板要求。",
-                    str(paragraph.alignment),
-                    str(rule["alignment"]),
+                    current_alignment,
+                    expected_alignment,
                     "建议对齐方式调整为{0}。".format(rule["alignment"]),
                 )
             )
@@ -243,7 +246,7 @@ class WordFormatReviewer:
                 self.provider_client.record_skipped_debug(
                     task_type,
                     trace_id,
-                    "格式审查未读取到正文段落，未调用 Dify。",
+                    "格式审查未读取到正文段落，未调用模型后台。",
                     "no_paragraphs",
                     provider="local",
                 )
@@ -485,6 +488,47 @@ class WordFormatReviewer:
         if role in role_rules:
             return role_rules[role]
         return template.get("body", {})
+
+    def _normalize_font_size(self, value) -> Optional[float]:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return None
+        return numeric if numeric > 0 else None
+
+    def _normalize_alignment(self, value) -> str:
+        if value is None:
+            return ""
+        text = str(value).strip()
+        lowered = text.lower()
+        mapping = {
+            "0": "left",
+            "1": "center",
+            "2": "right",
+            "3": "justify",
+            "4": "distribute",
+            "left": "left",
+            "center": "center",
+            "centered": "center",
+            "centre": "center",
+            "right": "right",
+            "justify": "justify",
+            "justified": "justify",
+            "distributed": "distribute",
+            "distribute": "distribute",
+            "左对齐": "left",
+            "居中": "center",
+            "居中对齐": "center",
+            "右对齐": "right",
+            "两端对齐": "justify",
+            "分散对齐": "distribute",
+            "wdalignparagraphleft": "left",
+            "wdalignparagraphcenter": "center",
+            "wdalignparagraphright": "right",
+            "wdalignparagraphjustify": "justify",
+            "wdalignparagraphdistribute": "distribute",
+        }
+        return mapping.get(lowered, mapping.get(text, lowered))
 
     def _font_matches(self, font_name: str, rule: Dict) -> bool:
         expected = [rule.get("fontName", "")]

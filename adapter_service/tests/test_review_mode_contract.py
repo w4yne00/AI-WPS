@@ -28,7 +28,7 @@ class ReviewModeContractTests(unittest.TestCase):
 
         diagnostics = client.build_route_diagnostics()
 
-        self.assertEqual(diagnostics["version"], "0.12.16-alpha")
+        self.assertEqual(diagnostics["version"], "0.13.7-alpha")
         self.assertEqual(
             list(diagnostics["taskApiKeys"].keys()),
             ["word.smart_write", "word.document_review", "word.format_review"],
@@ -102,6 +102,10 @@ class DocumentReviewProviderTests(unittest.TestCase):
         self.assertIn("技术方案", prompt)
         self.assertIn("重点检查表达逻辑。", prompt)
         self.assertIn("typo、expression、logic、fluency、professional", prompt)
+        self.assertIn("不要输出前端处理状态", prompt)
+        self.assertNotIn("已处理", prompt)
+        self.assertNotIn("已忽略", prompt)
+        self.assertNotIn("审查处理记录", prompt)
         self.assertEqual(parsed["summary"], "发现一项问题。")
         self.assertEqual(parsed["issues"][0]["category"], "logic")
         self.assertEqual(parsed["issues"][0]["severity"], "high")
@@ -123,5 +127,6 @@ class DocumentReviewProviderTests(unittest.TestCase):
 
         self.assertEqual(parsed["issues"], [])
         self.assertEqual(parsed["parseFallbackReason"], "unsupported_json_shape")
-        self.assertIn("未解析为标准问题列表", parsed["summary"])
+        self.assertIn("模型后台已返回内容", parsed["summary"])
+        self.assertNotIn("Dify", parsed["summary"])
         self.assertIn("Dify 已指出表达问题", parsed["rawAnswer"])

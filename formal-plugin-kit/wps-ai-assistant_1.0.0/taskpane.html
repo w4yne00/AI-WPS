@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WPS AI 助理</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.12.16-alpha" />
+    <link rel="stylesheet" href="./taskpane.css?v=0.13.7-alpha" />
   </head>
   <body>
     <div class="app">
@@ -140,6 +140,15 @@
             <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
             <div>
               <h2>结果预览</h2>
+              <div id="result-view-switch" class="result-view-switch" hidden>
+                <button type="button" id="btn-result-preview" class="view-switch-button active" aria-pressed="true">预览</button>
+                <button type="button" id="btn-result-compare" class="view-switch-button" aria-pressed="false">对照</button>
+                <button type="button" id="btn-result-plain" class="view-switch-button" aria-pressed="false">纯文本</button>
+              </div>
+              <div id="review-record-actions" class="review-record-actions" hidden>
+                <button type="button" id="btn-copy-review-record" class="view-switch-button">复制审查记录</button>
+                <button type="button" id="btn-preview-review-record" class="view-switch-button">预览审查记录</button>
+              </div>
             </div>
           </div>
           <div id="result-output" class="markdown-output">等待运行。</div>
@@ -175,8 +184,8 @@
                 </label>
 
                 <label class="field">
-                  <span>统一 Dify Chat API Key</span>
-                  <input id="provider-api-key" type="password" placeholder="粘贴统一 Dify Chat API Key" />
+                  <span>统一模型 API Key</span>
+                  <input id="provider-api-key" type="password" placeholder="粘贴统一模型 API Key" />
                 </label>
 
                 <div class="button-row settings-actions">
@@ -240,7 +249,7 @@
         </section>
       </section>
     </div>
-    <script src="./taskpane-helpers.js?v=0.12.16-alpha"></script>
-    <script src="./taskpane.js?v=0.12.16-alpha"></script>
+    <script src="./taskpane-helpers.js?v=0.13.7-alpha"></script>
+    <script src="./taskpane.js?v=0.13.7-alpha"></script>
   </body>
 </html>

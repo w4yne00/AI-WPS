@@ -293,15 +293,66 @@ function testCollectParagraphsSanitizesHostObjectsBeforeJson() {
   assert.strictEqual(result.length, 1);
   assert.strictEqual(result[0].text, "正文段落");
   assert.strictEqual(result[0].styleName, "Body");
-  assert.strictEqual(result[0].fontName, "");
-  assert.strictEqual(result[0].fontSize, null);
-  assert.strictEqual(result[0].alignment, "left");
-  assert.strictEqual(result[0].outlineLevel, null);
-  assert.strictEqual(result[0].lineSpacing, null);
+  assert.strictEqual(result[0].fontName, "宋体对象");
+  assert.strictEqual(result[0].fontSize, 12);
+  assert.strictEqual(result[0].alignment, "justify");
+  assert.strictEqual(result[0].outlineLevel, 0);
+  assert.strictEqual(result[0].lineSpacing, 300);
   assert.strictEqual(result[0].underline, -4142);
   assert.ok(encoded.includes('"text":"正文段落"'));
   assert.ok(!encoded.includes("function"));
   assert.ok(!encoded.includes("[object Object]"));
+}
+
+function testCollectParagraphsFromSelectionSourcesPreservesFormat() {
+  const selection = {
+    Range: {
+      Paragraphs: {
+        Count: 1,
+        Item: function () {
+          return {
+            Range: {
+              Text: "选中正文\r",
+              Font: {
+                NameFarEast: "宋体",
+                Size: { value: 12 },
+                Bold: 0
+              },
+              ParagraphFormat: {
+                Alignment: { value: 3 },
+                OutlineLevel: 0,
+                LineSpacing: 300,
+                FirstLineIndent: 640
+              },
+              Style: {
+                NameLocal: "Normal"
+              }
+            }
+          };
+        }
+      }
+    }
+  };
+
+  const result = helpers.collectParagraphsFromSelectionSources([selection], "选中正文", {
+    maxParagraphs: 5,
+    maxParagraphTextLength: 100
+  });
+
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].text, "选中正文");
+  assert.strictEqual(result[0].fontName, "宋体");
+  assert.strictEqual(result[0].fontSize, 12);
+  assert.strictEqual(result[0].alignment, "justify");
+  assert.strictEqual(result[0].firstLineIndent, 640);
+}
+
+function testCollectParagraphsFromTextDoesNotInventFormat() {
+  const result = helpers.collectParagraphsFromText("纯文本选区", {});
+
+  assert.strictEqual(result.length, 1);
+  assert.strictEqual(result[0].fontSize, null);
+  assert.strictEqual(result[0].alignment, "");
 }
 
 function testCollectParagraphsCanLimitWpsComCollection() {
@@ -397,6 +448,13 @@ function testRenderMarkdownFormatsCommonBlocks() {
   assert.ok(html.includes("<td>已完成</td>"));
   assert.ok(html.includes('<pre><code class="language-json">'));
   assert.ok(html.includes("{&quot;ok&quot;: true}"));
+}
+
+function testRenderMarkdownFormatsSmartWriteDiffHighlight() {
+  const html = helpers.renderMarkdown("改写后：==优化后的表述==");
+
+  assert.ok(html.includes('<mark class="smart-diff-highlight">优化后的表述</mark>'));
+  assert.ok(!html.includes("==优化后的表述=="));
 }
 
 function testRenderMarkdownEscapesUnsafeHtmlAndLinks() {
@@ -512,6 +570,99 @@ function testFormatSmartWriteResultBreaksInlineChineseHeadings() {
   );
 }
 
+function testBuildSmartWritePreviewModelUsesStructuredReadOnlyViews() {
+  const model = helpers.buildSmartWritePreviewModel({
+    originalText: "一、总体要求\n原文第一段。",
+    rewrittenText: "一、总体要求\n优化后第一段。\n\n- 第一项\n- 第二项",
+    rewriteMode: "rewrite"
+  });
+
+  assert.strictEqual(model.hasOriginal, true);
+  assert.strictEqual(model.hasStructuredResult, true);
+  assert.ok(model.previewMarkdown.includes("一、总体要求"));
+  assert.ok(model.previewMarkdown.includes("- 第一项"));
+  assert.ok(model.plainText.includes("优化后第一段。"));
+  assert.ok(model.comparisonMarkdown.includes("### 原文"));
+  assert.ok(model.comparisonMarkdown.includes("原文第一段。"));
+  assert.ok(model.comparisonMarkdown.includes("### 智能编写结果"));
+}
+
+function testBuildSmartWritePreviewModelHighlightsChangedResultText() {
+  const model = helpers.buildSmartWritePreviewModel({
+    originalText: "第一段原文。\n\n第二段保持不变。",
+    rewrittenText: "第一段优化后。\n\n第二段保持不变。",
+    rewriteMode: "rewrite"
+  });
+  const html = helpers.renderMarkdown(model.comparisonMarkdown);
+
+  assert.ok(model.comparisonMarkdown.includes("第一段==优化后==。"));
+  assert.ok(!model.comparisonMarkdown.includes("==第一段优化后。=="));
+  assert.ok(!model.comparisonMarkdown.includes("==第二段保持不变。=="));
+  assert.ok(html.includes('第一段<mark class="smart-diff-highlight">优化后</mark>。'));
+}
+
+function testBuildSmartWritePreviewModelHighlightsChangedWordsOnly() {
+  const model = helpers.buildSmartWritePreviewModel({
+    originalText: "第一段原文。",
+    rewrittenText: "第一段优化后。",
+    rewriteMode: "rewrite"
+  });
+  const html = helpers.renderMarkdown(model.comparisonMarkdown);
+
+  assert.ok(model.comparisonMarkdown.includes("第一段==优化后==。"));
+  assert.ok(!model.comparisonMarkdown.includes("==第一段优化后。=="));
+  assert.ok(html.includes('第一段<mark class="smart-diff-highlight">优化后</mark>。'));
+}
+
+function testBuildSmartWritePreviewModelHighlightsListItemTextOnly() {
+  const model = helpers.buildSmartWritePreviewModel({
+    originalText: "- 原始条目",
+    rewrittenText: "- 优化条目",
+    rewriteMode: "rewrite"
+  });
+  const html = helpers.renderMarkdown(model.comparisonMarkdown);
+
+  assert.ok(model.comparisonMarkdown.includes("- ==优化==条目"));
+  assert.ok(!model.comparisonMarkdown.includes("- ==优化条目=="));
+  assert.ok(html.includes('<li><mark class="smart-diff-highlight">优化</mark>条目</li>'));
+}
+
+function testBuildSmartWritePreviewModelHighlightsChangedTableCellsOnly() {
+  const model = helpers.buildSmartWritePreviewModel({
+    originalText: "| 项目 | 状态 |\n| --- | --- |\n| 任务 | 未完成 |",
+    rewrittenText: "| 项目 | 状态 |\n| --- | --- |\n| 任务 | 已完成 |",
+    rewriteMode: "rewrite"
+  });
+  const html = helpers.renderMarkdown(model.comparisonMarkdown);
+
+  assert.ok(model.comparisonMarkdown.includes("| 任务 | ==已==完成 |"));
+  assert.ok(!model.comparisonMarkdown.includes("| ==任务== |"));
+  assert.ok(html.includes('<mark class="smart-diff-highlight">已</mark>完成'));
+}
+
+function testBuildSmartWritePreviewModelSeparatesMultipleChangedSegments() {
+  const model = helpers.buildSmartWritePreviewModel({
+    originalText: "甲A乙B丙",
+    rewrittenText: "甲X乙Y丙",
+    rewriteMode: "rewrite"
+  });
+  const html = helpers.renderMarkdown(model.comparisonMarkdown);
+
+  assert.ok(model.comparisonMarkdown.includes("甲==X==乙==Y==丙"));
+  assert.ok(!model.comparisonMarkdown.includes("==X乙Y=="));
+  assert.ok(html.includes('甲<mark class="smart-diff-highlight">X</mark>乙<mark class="smart-diff-highlight">Y</mark>丙'));
+}
+
+function testBuildSmartWritePreviewModelHandlesEmptyResult() {
+  const model = helpers.buildSmartWritePreviewModel({});
+
+  assert.strictEqual(model.hasOriginal, false);
+  assert.strictEqual(model.hasStructuredResult, false);
+  assert.strictEqual(model.previewMarkdown, "");
+  assert.strictEqual(model.plainText, "");
+  assert.strictEqual(model.comparisonMarkdown, "");
+}
+
 function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
   const markdown = helpers.renderReadableFormatReview({
     summary: {
@@ -579,7 +730,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
   assert.ok(markdown.includes("- 现状：四号（14pt）"));
   assert.ok(markdown.includes("- 要求：小四（12pt）"));
   assert.ok(markdown.includes("- 建议：字号调整为小四。"));
-  assert.ok(markdown.includes("- AI 兜底原因：Dify 请求失败，已使用本地模板规则。"));
+  assert.ok(markdown.includes("- AI 兜底原因：模型后台请求失败，已使用本地模板规则。"));
   assert.ok(!markdown.includes("font_size"));
   assert.ok(!markdown.includes("body_text"));
 }
@@ -664,6 +815,50 @@ function testRenderReadableFormatReviewLocalizesOtherFeedback() {
   assert.ok(!markdown.includes("document_title"));
 }
 
+function testBuildDocumentReviewRecordUsesIssueStatuses() {
+  const record = helpers.buildDocumentReviewRecord({
+    summary: "发现 2 项问题。",
+    issues: [
+      {
+        category: "typo",
+        severity: "high",
+        location: "P1",
+        originalText: "错字",
+        problem: "存在错别字",
+        suggestion: "改为正确文字",
+        suggestedRewrite: "正确文字"
+      },
+      {
+        category: "logic",
+        severity: "medium",
+        location: "P2",
+        originalText: "表述",
+        problem: "逻辑不完整",
+        suggestion: "补充条件",
+        suggestedRewrite: "补充条件后的表述"
+      }
+    ]
+  }, {
+    "0": "done",
+    "1": "ignored"
+  });
+
+  assert.ok(record.includes("文档审查处理记录"));
+  assert.ok(record.includes("问题总数：2"));
+  assert.ok(record.includes("已处理：1"));
+  assert.ok(record.includes("已忽略：1"));
+  assert.ok(record.includes("错别字"));
+  assert.ok(record.includes("逻辑表达"));
+  assert.ok(record.includes("建议改写：补充条件后的表述"));
+}
+
+function testBuildDocumentReviewRecordHandlesEmptyIssues() {
+  const record = helpers.buildDocumentReviewRecord({ summary: "未发现问题。", issues: [] }, {});
+
+  assert.ok(record.includes("问题总数：0"));
+  assert.ok(record.includes("未发现需要处理的问题。"));
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
@@ -674,10 +869,13 @@ testCollectParagraphsReadsRangeTextAndContentCollection();
 testCollectParagraphsFallsBackToDocumentText();
 testCollectParagraphsCanSkipFallbackDocumentTextRead();
 testCollectParagraphsSanitizesHostObjectsBeforeJson();
+testCollectParagraphsFromSelectionSourcesPreservesFormat();
+testCollectParagraphsFromTextDoesNotInventFormat();
 testCollectParagraphsCanLimitWpsComCollection();
 testCollectParagraphsFromTextCanLimitSelectionText();
 testGetCollectionItemSupportsOneBasedWpsItem();
 testRenderMarkdownFormatsCommonBlocks();
+testRenderMarkdownFormatsSmartWriteDiffHighlight();
 testRenderMarkdownEscapesUnsafeHtmlAndLinks();
 testBuildMarkdownWritebackBlocksPreservesSupportedStructure();
 testBuildMarkdownWritebackBlocksKeepsTechnicalUnderscores();
@@ -686,8 +884,17 @@ testShouldUseStructuredSmartWriteResultUsesOriginalOrResultStructure();
 testFormatSmartWriteResultSplitsSingleLineByOriginalParagraphs();
 testFormatSmartWriteResultPreservesExistingLineBreaks();
 testFormatSmartWriteResultBreaksInlineChineseHeadings();
+testBuildSmartWritePreviewModelUsesStructuredReadOnlyViews();
+testBuildSmartWritePreviewModelHighlightsChangedResultText();
+testBuildSmartWritePreviewModelHighlightsChangedWordsOnly();
+testBuildSmartWritePreviewModelHighlightsListItemTextOnly();
+testBuildSmartWritePreviewModelHighlightsChangedTableCellsOnly();
+testBuildSmartWritePreviewModelSeparatesMultipleChangedSegments();
+testBuildSmartWritePreviewModelHandlesEmptyResult();
 testRenderReadableFormatReviewUsesChineseLabelsAndValues();
 testRenderReadableFormatReviewHandlesNoIssues();
 testRenderReadableFormatReviewLocalizesOtherFeedback();
+testBuildDocumentReviewRecordUsesIssueStatuses();
+testBuildDocumentReviewRecordHandlesEmptyIssues();
 
 console.log("taskpane-helpers tests passed");

@@ -1,6 +1,6 @@
 # AI-WPS 文档审查 Dify 工作流配置手册
 
-适用版本：`v0.12.16-alpha`
+适用版本：`v0.13.7-alpha`
 
 适用任务：`word.document_review`
 
@@ -36,6 +36,8 @@ adapter 请求体只依赖 Dify 官方字段：
 ```
 
 Dify 开始节点可以只使用系统自带 `sys.query`。如果现场已经自定义了 `query` 输入变量，也可以继续在 LLM 节点中引用 `query`，因为 adapter 会同步写入 `inputs.query`。
+
+说明：`v0.13.0-alpha` 之后任务窗格新增的问题处理状态、复制建议和审查记录都由 WPS 前端本地生成；Dify 工作流不要处理“已处理/已忽略/审查记录”等闭环状态，也不要执行任何正文写回动作。
 
 ## 3. 任务级 API Key
 
@@ -99,6 +101,7 @@ Dify 开始节点可以只使用系统自带 `sys.query`。如果现场已经自
 - severity 只能使用 high、medium、low；
 - location 尽量使用“第 N 段”或原文中的小标题；
 - issues 没有问题时返回空数组；
+- 不要输出“已处理”“已忽略”“审查处理记录”等前端闭环状态；
 - 不要在 json 代码块外输出解释、寒暄或原文复述。
 ```
 
@@ -137,7 +140,7 @@ http://127.0.0.1:18100/provider/debug-last
 
 如果 `provider=mock` 或 `skipReason=provider_not_configured`，说明统一 URL 或文档审查任务级 API Key 未形成有效配置。
 
-如果 Dify 后台有调用记录但 WPS 结果为空，优先检查回复节点是否绑定 LLM 输出正文，以及输出中是否包含合法 JSON 代码块。`v0.12.16-alpha` 起，即使 Dify 返回非标准 JSON 或普通 Markdown，adapter 也会把原始模型回复作为 `rawAnswer` 传回任务窗格；前台会显示“原始模型回复”，便于现场判断是 Dify 输出格式问题还是前端渲染问题。
+如果 Dify 后台有调用记录但 WPS 结果为空，优先检查回复节点是否绑定 LLM 输出正文，以及输出中是否包含合法 JSON 代码块。`v0.13.7-alpha` 起，文档审查 provider 等待预算为 1800 秒；前台轮询后台任务状态时最多容忍 240 次短暂查询失败、总等待 60 分钟，并在轮询阶段把 adapter 短暂不可达提示为“状态查询暂时未连上本地 adapter”，继续等待后台任务。即使 Dify 返回非标准 JSON、普通 Markdown，或文档审查 provider 超时/不可达，adapter 也会返回可读兜底信息，便于现场区分是 Dify 输出格式问题、Dify 执行超时、前端状态查询抖动，还是前端渲染问题。
 
 文档审查前端采用限量抽取和异步提交：
 

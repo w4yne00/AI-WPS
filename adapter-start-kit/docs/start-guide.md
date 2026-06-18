@@ -13,6 +13,8 @@
 - `scripts/show_logs.sh`
 - `scripts/enable_exec_permissions.sh`
 - `scripts/restart_adapter.sh`
+- `scripts/install_autostart.sh`
+- `scripts/uninstall_autostart.sh`
 
 ## 首次执行权限修复
 
@@ -75,3 +77,26 @@ bash scripts/show_logs.sh 50
 ```bash
 bash scripts/stop_adapter.sh 18100
 ```
+
+## 开机自启动
+
+麒麟 V10 目标机如果每次重启后 adapter 停止，可以安装 systemd 自启动服务：
+
+```bash
+bash scripts/install_autostart.sh 18100
+```
+
+安装后确认：
+
+```bash
+systemctl status ai-wps-adapter.service --no-pager
+bash scripts/status_adapter.sh 18100
+```
+
+取消自启动：
+
+```bash
+bash scripts/uninstall_autostart.sh
+```
+
+详细说明见 `docs/autostart-guide.md`。

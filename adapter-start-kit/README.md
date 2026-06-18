@@ -31,6 +31,15 @@ bash scripts/restart_adapter.sh
 bash scripts/stop_adapter.sh
 ```
 
+Autostart on Kylin V10 / systemd targets:
+
+```bash
+bash scripts/install_autostart.sh 18100
+systemctl status ai-wps-adapter.service --no-pager
+```
+
+See `docs/autostart-guide.md` for uninstall and troubleshooting commands.
+
 `check_health.sh` prints `/health`, `/provider/status`,
 `/provider/route-diagnostics`, and `/provider/debug-last`. A log line with
 `provider=mock` means the adapter did not forward that task to enterprise Dify;

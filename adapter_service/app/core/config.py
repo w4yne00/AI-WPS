@@ -34,7 +34,7 @@ class AppSettings:
     dify_workflow_id: str = "wps-word-rewrite"
     log_path: str = "./logs/adapter.log"
     template_root: str = "./templates"
-    timeout_seconds: int = 30
+    timeout_seconds: int = 75
     task_routes: Dict[str, TaskRoute] = field(default_factory=dict)
     task_api_key_refs: Dict[str, str] = field(default_factory=dict)
 
@@ -146,7 +146,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         dify_workflow_id=payload.get("difyWorkflowId", "wps-word-rewrite"),
         log_path=payload.get("logPath", "./logs/adapter.log"),
         template_root=payload.get("templateRoot", "./templates"),
-        timeout_seconds=payload.get("timeoutSeconds", 30),
+        timeout_seconds=payload.get("timeoutSeconds", 75),
         task_routes=task_routes,
         task_api_key_refs=task_api_key_refs,
     )

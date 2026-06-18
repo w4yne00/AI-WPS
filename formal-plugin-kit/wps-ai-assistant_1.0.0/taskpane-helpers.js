@@ -53,6 +53,7 @@
     });
 
     text = escapeHtml(text)
+      .replace(/==([^=\n]+)==/g, '<mark class="smart-diff-highlight">$1</mark>')
       .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
       .replace(/\*([^*]+)\*/g, "<em>$1</em>");
 
@@ -570,6 +571,247 @@
     return distributed.length >= 2 ? distributed.join("\n\n") : normalized;
   }
 
+  function normalizeSmartWriteComparisonLine(value) {
+    return String(value || "").replace(/\s+/g, "").trim();
+  }
+
+  function sanitizeSmartWriteHighlightText(value) {
+    return String(value || "").replace(/==/g, "＝");
+  }
+
+  function getSmartWriteCommonPrefixLength(left, right) {
+    var index = 0;
+    var maxLength = Math.min(left.length, right.length);
+    while (index < maxLength && left.charAt(index) === right.charAt(index)) {
+      index += 1;
+    }
+    return index;
+  }
+
+  function getSmartWriteCommonSuffixLength(left, right, prefixLength) {
+    var suffixLength = 0;
+    var maxLength = Math.min(left.length, right.length) - prefixLength;
+    while (
+      suffixLength < maxLength &&
+      left.charAt(left.length - 1 - suffixLength) === right.charAt(right.length - 1 - suffixLength)
+    ) {
+      suffixLength += 1;
+    }
+    return suffixLength;
+  }
+
+  function markSmartWriteInsertedSegment(value) {
+    return value ? "==" + sanitizeSmartWriteHighlightText(value) + "==" : "";
+  }
+
+  function markSmartWriteDiffSegments(originalText, rewrittenText) {
+    var original = String(originalText || "");
+    var rewritten = String(rewrittenText || "");
+    var originalLength = original.length;
+    var rewrittenLength = rewritten.length;
+    var matrixSize = originalLength * rewrittenLength;
+    var dp;
+    var i;
+    var j;
+    var pieces = [];
+    var pending = "";
+
+    if (!rewrittenLength) {
+      return "";
+    }
+    if (!originalLength) {
+      return markSmartWriteInsertedSegment(rewritten);
+    }
+    if (matrixSize > 40000) {
+      return markSmartWriteInsertedSegment(rewritten);
+    }
+
+    dp = new Array(originalLength + 1);
+    for (i = 0; i <= originalLength; i += 1) {
+      dp[i] = new Array(rewrittenLength + 1).fill(0);
+    }
+
+    for (i = originalLength - 1; i >= 0; i -= 1) {
+      for (j = rewrittenLength - 1; j >= 0; j -= 1) {
+        if (original.charAt(i) === rewritten.charAt(j)) {
+          dp[i][j] = dp[i + 1][j + 1] + 1;
+        } else {
+          dp[i][j] = Math.max(dp[i + 1][j], dp[i][j + 1]);
+        }
+      }
+    }
+
+    function flushPending() {
+      if (pending) {
+        pieces.push(markSmartWriteInsertedSegment(pending));
+        pending = "";
+      }
+    }
+
+    i = 0;
+    j = 0;
+    while (j < rewrittenLength) {
+      if (i < originalLength && original.charAt(i) === rewritten.charAt(j)) {
+        flushPending();
+        pieces.push(rewritten.charAt(j));
+        i += 1;
+        j += 1;
+      } else if (i < originalLength && (j >= rewrittenLength || dp[i + 1][j] >= dp[i][j + 1])) {
+        i += 1;
+      } else {
+        pending += rewritten.charAt(j);
+        j += 1;
+      }
+    }
+    flushPending();
+
+    return pieces.join("");
+  }
+
+  function markSmartWriteChangedText(originalValue, rewrittenValue) {
+    var rewritten = String(rewrittenValue || "");
+    var original = String(originalValue || "");
+    var edgeMatch = rewritten.match(/^(\s*)([\s\S]*?)(\s*)$/);
+    var leading = edgeMatch ? edgeMatch[1] : "";
+    var body = edgeMatch ? edgeMatch[2] : rewritten;
+    var trailing = edgeMatch ? edgeMatch[3] : "";
+    var originalBody = original.trim();
+    var prefixLength;
+    var suffixLength;
+    var changedStart;
+    var changedEnd;
+    var changedText;
+    var originalChangedText;
+
+    if (!body || normalizeSmartWriteComparisonLine(original) === normalizeSmartWriteComparisonLine(rewritten)) {
+      return rewritten;
+    }
+
+    prefixLength = getSmartWriteCommonPrefixLength(originalBody, body);
+    suffixLength = getSmartWriteCommonSuffixLength(originalBody, body, prefixLength);
+    changedStart = prefixLength;
+    changedEnd = body.length - suffixLength;
+    changedText = body.slice(changedStart, changedEnd);
+    originalChangedText = originalBody.slice(prefixLength, originalBody.length - suffixLength);
+
+    if (!changedText) {
+      return rewritten;
+    }
+
+    return leading +
+      body.slice(0, changedStart) +
+      markSmartWriteDiffSegments(originalChangedText, changedText) +
+      body.slice(changedEnd) +
+      trailing;
+  }
+
+  function getSmartWriteComparableLineText(line) {
+    var text = String(line || "");
+    var match = text.match(/^(\s*#{1,6}\s+)(.+)$/) ||
+      text.match(/^(\s*[-*+]\s+)(.+)$/) ||
+      text.match(/^(\s*\d+\.\s+)(.+)$/) ||
+      text.match(/^(>\s?)(.+)$/);
+    return match ? match[2] : text;
+  }
+
+  function markSmartWriteTableLine(originalLine, line) {
+    var originalCells = String(originalLine || "").split("|");
+    return String(line || "").split("|").map(function (cell, index) {
+      var trimmed = cell.trim();
+      if (!trimmed || /^:?-{3,}:?$/.test(trimmed)) {
+        return cell;
+      }
+      return markSmartWriteChangedText(originalCells[index] || "", cell);
+    }).join("|");
+  }
+
+  function markSmartWriteComparisonLine(originalLine, line) {
+    var text = String(line || "");
+    var originalText = String(originalLine || "");
+    var tableSeparator = /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(text);
+    var match;
+    if (!text.trim()) {
+      return text;
+    }
+    if (tableSeparator) {
+      return text;
+    }
+    if (text.indexOf("|") >= 0) {
+      return markSmartWriteTableLine(originalText, text);
+    }
+    match = text.match(/^(\s*#{1,6}\s+)(.+)$/);
+    if (match) {
+      return match[1] + markSmartWriteChangedText(getSmartWriteComparableLineText(originalText), match[2]);
+    }
+    match = text.match(/^(\s*[-*+]\s+)(.+)$/);
+    if (match) {
+      return match[1] + markSmartWriteChangedText(getSmartWriteComparableLineText(originalText), match[2]);
+    }
+    match = text.match(/^(\s*\d+\.\s+)(.+)$/);
+    if (match) {
+      return match[1] + markSmartWriteChangedText(getSmartWriteComparableLineText(originalText), match[2]);
+    }
+    match = text.match(/^(>\s?)(.+)$/);
+    if (match) {
+      return match[1] + markSmartWriteChangedText(getSmartWriteComparableLineText(originalText), match[2]);
+    }
+    return markSmartWriteChangedText(originalText, text);
+  }
+
+  function buildHighlightedSmartWriteResult(originalText, rewrittenText) {
+    var originalLines = normalizeSmartWriteLineBreaks(originalText)
+      .split("\n")
+      .map(function (line) {
+        return line.trim();
+      })
+      .filter(Boolean);
+    var rewrittenLines = normalizeSmartWriteLineBreaks(rewrittenText).split("\n");
+    var originalIndex = 0;
+    return rewrittenLines.map(function (line) {
+      var cleanLine = line.trim();
+      var originalLine;
+      var changed;
+      if (!cleanLine) {
+        return line;
+      }
+      originalLine = originalLines[originalIndex] || "";
+      changed = normalizeSmartWriteComparisonLine(cleanLine) !== normalizeSmartWriteComparisonLine(originalLine);
+      originalIndex += 1;
+      return changed ? markSmartWriteComparisonLine(originalLine, line) : line;
+    }).join("\n");
+  }
+
+  function buildSmartWritePreviewModel(result) {
+    var source = result || {};
+    var originalText = normalizeSmartWriteLineBreaks(source.originalText || "");
+    var rewrittenText = formatSmartWriteResult(originalText, source.rewrittenText || "");
+    var hasOriginal = Boolean(originalText);
+    var highlightedText = hasOriginal ? buildHighlightedSmartWriteResult(originalText, rewrittenText) : rewrittenText;
+    var comparisonMarkdown = "";
+
+    if (hasOriginal && rewrittenText) {
+      comparisonMarkdown = [
+        "### 原文",
+        "",
+        originalText,
+        "",
+        "### 智能编写结果",
+        "",
+        highlightedText
+      ].join("\n");
+    } else {
+      comparisonMarkdown = rewrittenText;
+    }
+
+    return {
+      previewMarkdown: rewrittenText,
+      plainText: rewrittenText,
+      comparisonMarkdown: comparisonMarkdown,
+      hasOriginal: hasOriginal,
+      hasStructuredResult: shouldUseStructuredSmartWriteResult(originalText, rewrittenText)
+    };
+  }
+
   var FORMAT_REVIEW_GROUP_ORDER = [
     "page_setup",
     "heading",
@@ -703,12 +945,12 @@
 
   function formatAiFallbackReason(reason) {
     var reasonText = {
-      no_paragraphs: "未读取到正文段落，未调用 Dify；请确认当前文档对象能暴露正文段落或全文文本。",
+      no_paragraphs: "未读取到正文段落，未调用模型后台；请确认当前文档对象能暴露正文段落或全文文本。",
       provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
-      dify_response_not_role_json: "Dify 未返回段落角色 JSON，已使用本地模板规则。",
-      provider_request_failed: "Dify 请求失败，已使用本地模板规则。",
-      dify_response_no_valid_roles: "Dify 返回的角色无效，已使用本地模板规则。",
-      dify_returned_no_roles: "Dify 未返回有效段落角色，已使用本地模板规则。",
+      dify_response_not_role_json: "模型后台未返回段落角色 JSON，已使用本地模板规则。",
+      provider_request_failed: "模型后台请求失败，已使用本地模板规则。",
+      dify_response_no_valid_roles: "模型后台返回的角色无效，已使用本地模板规则。",
+      dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。",
       ai_budget_limited: "文档段落较多，AI 角色识别仅处理前 40 段；其余段落已使用本地模板规则。"
     };
     return reasonText[reason] || (reason ? "未记录的 AI 兜底原因，已使用本地模板规则。" : "");
@@ -1004,6 +1246,80 @@
     return lines.join("\n").trim();
   }
 
+  var DOCUMENT_REVIEW_CATEGORY_TEXT = {
+    typo: "错别字",
+    expression: "语言表达",
+    logic: "逻辑表达",
+    fluency: "通畅性",
+    professional: "专业性"
+  };
+  var DOCUMENT_REVIEW_STATUS_TEXT = {
+    pending: "待处理",
+    done: "已处理",
+    ignored: "已忽略"
+  };
+
+  function buildDocumentReviewRecord(data, statusByIndex) {
+    var source = data || {};
+    var issues = source.issues || [];
+    var statuses = statusByIndex || {};
+    var counts = {
+      pending: 0,
+      done: 0,
+      ignored: 0
+    };
+    var lines = [
+      "文档审查处理记录",
+      "",
+      "## 处理概览",
+      "",
+      "- 审查摘要：" + (source.summary || "未提供"),
+      "- 问题总数：" + issues.length
+    ];
+
+    issues.forEach(function (_, index) {
+      var status = statuses[String(index)] || "pending";
+      if (!Object.prototype.hasOwnProperty.call(counts, status)) {
+        status = "pending";
+      }
+      counts[status] += 1;
+    });
+
+    lines.push("- 待处理：" + counts.pending);
+    lines.push("- 已处理：" + counts.done);
+    lines.push("- 已忽略：" + counts.ignored);
+    lines.push("");
+
+    if (!issues.length) {
+      lines.push("未发现需要处理的问题。");
+      return lines.join("\n").trim();
+    }
+
+    lines.push("## 问题清单");
+    lines.push("");
+    issues.forEach(function (issue, index) {
+      var status = statuses[String(index)] || "pending";
+      if (!DOCUMENT_REVIEW_STATUS_TEXT[status]) {
+        status = "pending";
+      }
+      lines.push(
+        "### " + (index + 1) + ". " +
+        (DOCUMENT_REVIEW_CATEGORY_TEXT[issue.category] || "其他问题") +
+        "（" + DOCUMENT_REVIEW_STATUS_TEXT[status] + "）"
+      );
+      lines.push("- 位置：" + (issue.location || "未标注"));
+      lines.push("- 原文：" + (issue.originalText || issue.original_text || "未提供"));
+      lines.push("- 问题：" + (issue.problem || "未提供"));
+      lines.push("- 建议：" + (issue.suggestion || "未提供"));
+      if (issue.suggestedRewrite || issue.suggested_rewrite) {
+        lines.push("- 建议改写：" + (issue.suggestedRewrite || issue.suggested_rewrite));
+      }
+      lines.push("");
+    });
+
+    return lines.join("\n").trim();
+  }
+
   function getEffectiveSelectionText(selectionOrSources) {
     if (!selectionOrSources) {
       return "";
@@ -1086,12 +1402,93 @@
     return { ok: true };
   }
 
+  function resolveScalarValue(value, depth) {
+    var resolved = typeof value === "function" ? safeCall(value, null) : value;
+    var keys;
+    var index;
+    var nested;
+    var primitive;
+    depth = depth || 0;
+    if (typeof resolved === "undefined" || resolved === null) {
+      return resolved;
+    }
+    if (typeof resolved === "string" || typeof resolved === "number" || typeof resolved === "boolean") {
+      return resolved;
+    }
+    if (depth >= 3 || Array.isArray(resolved) || typeof resolved !== "object") {
+      return undefined;
+    }
+    keys = ["value", "Value", "text", "Text"];
+    for (index = 0; index < keys.length; index += 1) {
+      nested = safeRead(resolved, keys[index]);
+      if (typeof nested !== "undefined" && nested !== null) {
+        return resolveScalarValue(nested, depth + 1);
+      }
+    }
+    if (typeof resolved.valueOf === "function" && resolved.valueOf !== Object.prototype.valueOf) {
+      primitive = safeCall(resolved.valueOf, resolved);
+      if (primitive !== resolved) {
+        return resolveScalarValue(primitive, depth + 1);
+      }
+    }
+    if (typeof resolved.toString === "function" && resolved.toString !== Object.prototype.toString) {
+      primitive = safeCall(resolved.toString, resolved);
+      if (primitive && primitive !== "[object Object]") {
+        return primitive;
+      }
+    }
+    return undefined;
+  }
+
   function normalizeNumber(value) {
-    if (value === null || typeof value === "undefined" || value === "") {
+    var resolved = resolveScalarValue(value);
+    if (resolved === null || typeof resolved === "undefined" || resolved === "") {
       return null;
     }
-    var numeric = Number(value);
+    var numeric = Number(resolved);
     return isNaN(numeric) ? null : numeric;
+  }
+
+  function normalizeFontSize(value) {
+    var numeric = normalizeNumber(value);
+    return numeric && numeric > 0 ? numeric : null;
+  }
+
+  function normalizeAlignmentValue(value, fallback) {
+    var resolved = resolveScalarValue(value);
+    var text;
+    var map = {
+      "0": "left",
+      "1": "center",
+      "2": "right",
+      "3": "justify",
+      "4": "distribute",
+      left: "left",
+      center: "center",
+      centered: "center",
+      centre: "center",
+      right: "right",
+      justify: "justify",
+      justified: "justify",
+      distributed: "distribute",
+      distribute: "distribute",
+      "左对齐": "left",
+      "居中": "center",
+      "居中对齐": "center",
+      "右对齐": "right",
+      "两端对齐": "justify",
+      "分散对齐": "distribute",
+      wdalignparagraphleft: "left",
+      wdalignparagraphcenter: "center",
+      wdalignparagraphright: "right",
+      wdalignparagraphjustify: "justify",
+      wdalignparagraphdistribute: "distribute"
+    };
+    if (typeof resolved === "undefined" || resolved === null || resolved === "") {
+      return fallback || "";
+    }
+    text = String(resolved).trim();
+    return map[text.toLowerCase()] || map[text] || text;
   }
 
   function firstDefined() {
@@ -1163,7 +1560,7 @@
   }
 
   function toSafeString(value, fallback) {
-    var resolved = typeof value === "function" ? safeCall(value, null) : value;
+    var resolved = resolveScalarValue(value);
     if (typeof resolved === "undefined" || resolved === null) {
       return fallback || "";
     }
@@ -1314,11 +1711,11 @@
         text: limitTextLength(line, collectOptions.maxParagraphTextLength),
         styleName: "Normal",
         fontName: "",
-        fontSize: 0,
+        fontSize: null,
         bold: false,
         italic: false,
         underline: null,
-        alignment: "left",
+        alignment: "",
         outlineLevel: 0,
         lineSpacing: null,
         firstLineIndent: null,
@@ -1350,11 +1747,11 @@
         text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
         styleName: readStyleName(paragraph),
         fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
-        fontSize: normalizeNumber(firstDefined(safeRead(font, "Size"), 0)),
+        fontSize: normalizeFontSize(safeRead(font, "Size")),
         bold: Boolean(safeRead(font, "Bold")),
         italic: Boolean(safeRead(font, "Italic")),
         underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
-        alignment: toSafeString(firstDefined(safeRead(paragraphFormat, "Alignment"), "left"), "left"),
+        alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
         outlineLevel: normalizeInteger(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), 0)),
         lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
         firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
@@ -1373,6 +1770,27 @@
     return collectParagraphsFromText(readDocumentText(document), collectOptions);
   }
 
+  function collectParagraphsFromSelectionSources(selectionSources, selectedText, options) {
+    var sources = Array.isArray(selectionSources) ? selectionSources : [selectionSources];
+    var collectOptions = normalizeCollectOptions(options);
+    var paragraphs;
+    var index;
+    for (index = 0; index < sources.length; index += 1) {
+      if (!sources[index]) {
+        continue;
+      }
+      paragraphs = collectParagraphs(sources[index], {
+        maxParagraphs: collectOptions.maxParagraphs,
+        maxParagraphTextLength: collectOptions.maxParagraphTextLength,
+        avoidFallbackTextRead: true
+      });
+      if (paragraphs.length) {
+        return paragraphs;
+      }
+    }
+    return collectParagraphsFromText(selectedText, options);
+  }
+
   function buildDocumentStructure(options) {
     var paragraphs = options.paragraphs || [];
     var headings = options.headings || [];
@@ -1387,11 +1805,11 @@
           text: paragraph.text || "",
           style_name: paragraph.styleName || paragraph.style_name || "",
           font_family: paragraph.fontName || paragraph.font_family || "",
-          font_size_pt: normalizeNumber(firstDefined(paragraph.fontSize, paragraph.font_size_pt)),
+          font_size_pt: normalizeFontSize(firstDefined(paragraph.fontSize, paragraph.font_size_pt)),
           bold: Boolean(paragraph.bold),
           italic: Boolean(paragraph.italic),
           underline: paragraph.underline || null,
-          alignment: paragraph.alignment || "",
+          alignment: normalizeAlignmentValue(paragraph.alignment, ""),
           outline_level: normalizeNumber(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
           line_spacing: normalizeNumber(firstDefined(paragraph.lineSpacing, paragraph.line_spacing)),
           first_line_indent: normalizeNumber(firstDefined(paragraph.firstLineIndent, paragraph.first_line_indent)),
@@ -1428,7 +1846,9 @@
     hasStructuredSmartWriteContent: hasStructuredSmartWriteContent,
     shouldUseStructuredSmartWriteResult: shouldUseStructuredSmartWriteResult,
     formatSmartWriteResult: formatSmartWriteResult,
+    buildSmartWritePreviewModel: buildSmartWritePreviewModel,
     renderReadableFormatReview: renderReadableFormatReview,
+    buildDocumentReviewRecord: buildDocumentReviewRecord,
     getEffectiveSelectionText: getEffectiveSelectionText,
     getWritableSelection: getWritableSelection,
     resolveRewriteScope: resolveRewriteScope,
@@ -1437,6 +1857,7 @@
     getCollectionItem: getCollectionItem,
     getParagraphCollection: getParagraphCollection,
     collectParagraphs: collectParagraphs,
+    collectParagraphsFromSelectionSources: collectParagraphsFromSelectionSources,
     collectParagraphsFromText: collectParagraphsFromText,
     readDocumentText: readDocumentText,
     toSafeString: toSafeString,

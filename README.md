@@ -74,12 +74,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.12.16-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.12.16-20260609` |
+| Version | `v0.13.7-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.13.7-20260618` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260609.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260618.tar.gz` |
 
 Version rule format:
 
@@ -103,15 +103,15 @@ Rules:
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
 | Four task entries | WPS AI tab exposes Smart Write, Document Review, Format Review, and Settings as focused ribbon actions |
 | Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
-| Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running Dify requests keep visible task-pane feedback |
+| Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running model-backend requests keep visible task-pane feedback |
 | Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through both top-level `query` and `inputs.query` |
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
 | Frosted azure UI | The task pane and Ribbon icon artwork use a bright blue-gray and white Apple-like palette without changing task flow or API behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Provider settings | Settings page keeps one global API URL and supports both a unified Dify Chat API key and task-level API keys; task keys override the unified fallback only for their own task |
-| Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks |
+| Provider settings | Settings page keeps one global API URL and supports both a unified model API key and task-level API keys; task keys override the unified fallback only for their own task |
+| Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package installs WPS add-in files, `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
 
@@ -119,7 +119,15 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.12.16-alpha` | Improves Format Review result readability: adds a review overview, priority checklist, grouped detail sections, Chinese labels for roles/rules/template/provider/AI fallback diagnostics, and localized values such as font `宋体`, size `小四（12pt）`, style names, alignment, line spacing, and indentation |
+| `v0.13.7-alpha` | Improves the Document Review record preview toggle: clicking “Preview review record” now switches to the generated review record, and clicking the same button again returns to the original Document Review result cards while preserving local issue states |
+| `v0.13.6-alpha` | Further hardens slow Document Review in model think mode: raises the provider wait budget to 1800 seconds, expands transient status-poll failure tolerance to 240 retries over 60 minutes, and softens polling-stage adapter fetch failures so the task pane keeps waiting instead of presenting a premature connection-failure interpretation |
+| `v0.13.5-alpha` | Hardens slow Document Review model-backend waits: raises the Document Review provider budget to 600 seconds, lets task-pane status polling tolerate up to 120 transient query failures over 30 minutes, and changes final feedback to point users to recent task diagnostics instead of reporting an immediate adapter/model connection failure |
+| `v0.13.4-alpha` | Fixes Format Review recognition for selected text: the task pane now reads selected `Selection/Range` paragraph formatting before falling back to plain text, unwraps WPS COM scalar values for font size and paragraph alignment, and the adapter treats `0pt` as unknown while normalizing WPS alignment values such as `3` to justified alignment |
+| `v0.13.3-alpha` | Improves long-text Document Review in model think mode: the Document Review provider budget is raised to 240 seconds, and task-pane polling now retries transient status-query failures instead of immediately clearing the background job and reporting an adapter connection failure |
+| `v0.13.2-alpha` | Stabilizes upgrades and slow model calls: the delivery installer preserves existing target-machine API URL, unified API key, and task-level API keys; Smart Write keeps the 75-second default timeout, Document Review submits a background job and polls for completion while using a longer 150-second provider budget, and Format Review role classification is capped at 60 seconds; task-pane feedback uses user-facing “model backend” wording |
+| `v0.13.1-alpha` | Fixes result-experience test issues: Smart Write comparison now highlights changed result text in yellow while preserving headings, lists, tables, and other structure where possible; Document Review now returns readable fallback diagnostics when the model backend times out, is unreachable, or the rich result renderer fails, avoiding blank task-pane results or misleading adapter feedback |
+| `v0.13.0-alpha` | Result experience release: integrates Kylin V10 systemd adapter autostart; adds read-only Smart Write result view switching for preview, original/result comparison, and plain text without changing writeback; adds Document Review issue states, copy actions, and generated review records |
+| `v0.12.16-alpha` | Improves Format Review result readability: adds a review overview, priority checklist, grouped detail sections, Chinese labels for roles/rules/template/provider/AI fallback diagnostics, and localized values such as font `宋体`, size `小四（12pt）`, style names, alignment, line spacing, and indentation; adds Kylin V10 systemd autostart install/uninstall scripts to the adapter start kit |
 | `v0.12.15-alpha` | Stabilizes Document Review in WPS: clicking Review now shows immediate read/submission/wait feedback, uses limited asynchronous extraction instead of blocking full-document scans, and displays raw Dify output when the model returns non-standard JSON or Markdown that cannot be parsed into the normal issue list |
 | `v0.12.14-alpha` | Fixes Smart Write output that collapsed two selected paragraphs into one line: the task pane now formats model output before preview and writeback, preserving existing line breaks, restoring likely paragraph breaks from sentence boundaries, and splitting inline Chinese numbering/headings when needed |
 | `v0.12.13-alpha` | Improves Smart Write handling for structured selections and structured model output: headings, lists, numbering, tables, and bold text now trigger structured preview and best-effort formatted writeback, while ordinary paragraphs still use plain preview and paragraph-shaped writeback to avoid redundant formatting |
@@ -274,7 +282,7 @@ Important fields:
   "providerMode": "blocking",
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
-  "timeoutSeconds": 30,
+  "timeoutSeconds": 75,
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
     "word.document_review": "word_document_review",
@@ -308,6 +316,8 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
 | `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
+| `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
+| `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails |
 | `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
 
 Unified response envelope:

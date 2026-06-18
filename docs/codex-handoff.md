@@ -1,16 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-06-09
+更新时间：2026-06-18
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
 当前分支：`codex/smart-format-full-document-preview`
 
-当前版本：`v0.12.16-alpha`
+当前版本：`v0.13.7-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-0.12.16-20260609`
+版本规则号：`AI-WPS-P1-WORD-0.13.7-20260618`
 
-当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260609.tar.gz`
+当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260618.tar.gz`
 
 ## 1. 当前项目状态
 
@@ -81,6 +81,8 @@ POST   /provider/task-api-key
 DELETE /provider/task-api-key/{taskType}
 POST   /word/smart-write
 POST   /word/document-review
+POST   /word/document-review/jobs
+GET    /word/document-review/jobs/{jobId}
 POST   /word/format-review
 ```
 
@@ -97,7 +99,7 @@ POST   /word/format-review
 - 文档审查复用原技术审查的界面形态：文档类型为技术方案、合同验收文档、测试大纲及细则；不再选择文档模板，不再检查格式合规。
 - 文档审查支持选中文本和全文审查，用户可通过框选段落分段规避 Dify 输出长度和模型上下文限制。
 - 文档审查点击后先刷新“正在读取文档审查范围”状态，再异步执行限量抽取；最多读取 80 段、每段 800 字、正文 12000 字，框选文本时直接按选中文本拆段，不同步扫描全文。
-- 文档审查请求提交后会在 8 秒和 30 秒继续刷新等待 Dify 的状态，避免 Dify 慢返回时任务窗格看起来无反馈。
+- 文档审查请求提交后会在 8 秒和 30 秒继续刷新等待模型后台的状态，避免模型后台慢返回时任务窗格看起来无反馈。
 - 文档审查 adapter 解析 Dify 返回时新增兜底：非标准 JSON、普通 Markdown 或未包含 `issues` 的 JSON 会保留为 `rawAnswer`，前端显示“原始模型回复”，便于区分 Dify 输出格式问题和前端渲染问题。
 - 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回。
 - 格式审查保留 AI 段落角色识别能力；Dify 不可用或返回不可解析时回退本地规则。
@@ -109,8 +111,25 @@ POST   /word/format-review
 - 格式审查预览层尽量中文化显示普通用户会看到的反馈：模板名显示为“技术文件格式及书写要求”，字体标准显示“宋体”，字号标准显示“小四（12pt）”，样式名、对齐、行距、首行缩进、页面设置、识别来源和 AI 兜底原因也转成中文可读表达。
 - 设置页新增“最近一次任务诊断”，聚合 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics` 和 `/provider/task-api-keys` 的脱敏摘要，并支持一键复制。
 - `/provider/debug-last` 增补 `providerName`、`providerType`、`taskApiKeyRef`、`taskAuthSource` 等脱敏字段，便于判断当前任务是否命中对应 Dify 应用密钥。
+- adapter 启动包新增麒麟 V10/systemd 开机自启动脚本：`scripts/install_autostart.sh` 安装 `ai-wps-adapter.service`，开机后复用现有 `scripts/start_adapter.sh 18100`；`scripts/uninstall_autostart.sh` 用于停止并移除自启动服务。
+- `v0.13.0-alpha` 起，智能编写结果预览新增只读“预览 / 对照 / 纯文本”切换；该切换只影响任务窗格显示，不改变复制文本、`state.rewriteResult` 和“应用预览”写回路径。
+- `v0.13.0-alpha` 起，文档审查结果以可处理问题卡片展示；每条问题支持标记“已处理/忽略”、复制修改建议、复制建议改写，并可生成本次审查处理记录。所有状态仅保存在前端任务窗格，不自动修改 Word 正文。
+- `v0.13.1-alpha` 起，智能编写“对照”视图会将改动后文字以黄色高亮显示；标题、列表、引用和表格行会尽量保留原 Markdown 结构，只在发生变化的字、词或短句上加高亮，未变化内容不高亮。该能力只影响任务窗格只读对照视图，不改变复制文本和写回逻辑。
+- `v0.13.1-alpha` 起，文档审查 provider 超时、不可达或认证失败时，adapter 不再让任务窗格只看到网络错误；`WordDocumentReviewer` 会返回可读兜底结果、`parseFallbackReason` 和 `rawAnswer`，设置页最近一次任务诊断仍保留 provider 脱敏错误摘要。
+- `v0.13.1-alpha` 起，文档审查前端结果渲染增加兜底：交互卡片渲染异常时自动退回简洁 Markdown 结果，避免模型后台已返回但任务窗格结果区空白。
+- 文档审查提示词新增约束：Dify 只输出本次审查发现的问题列表，不输出前端处理状态、复制动作或处理记录；问题处理状态和审查记录仍完全由 WPS 前端本地生成。
+- `v0.13.2-alpha` 起，交付包安装脚本在覆盖新版 adapter-start-kit 前会备份并恢复目标机已有 `config/adapter.json`、`run/provider_api_key` 和 `run/provider_api_keys/`，避免新版本安装清空 API URL、统一 API Key 和任务级 API Key。
+- `v0.13.2-alpha` 起，adapter 默认 `timeoutSeconds` 从 30 秒提高到 75 秒；智能编写使用该全局预算，文档审查使用更长的 150 秒 provider 预算，格式审查 AI 段落角色识别从 8 秒提高到 60 秒但仍保留上限，兼顾慢模型响应和格式审查可用性。
+- `v0.13.2-alpha` 起，文档审查前台改为提交后台任务并轮询 `/word/document-review/jobs/{jobId}`；adapter 后台继续等待模型后台返回，避免 think 模式或模型性能不足时任务窗格用长连接等待并误报“无法连接后台”。
+- `v0.13.2-alpha` 起，任务窗口前台反馈统一使用“模型后台”“模型接口”等说法，不再在用户可见反馈中显示“Dify 后台”等字样；内部 provider 类型和 Dify 配置手册仍保留技术名称。
+- `v0.13.2-alpha` 起，adapter 在统一抽取模型答案时会剥离 `<think>...</think>` 深度思考标签内容；智能编写、文档审查和格式审查结果预览只使用最终输出，普通无 think 标签的返回保持原样。
+- `v0.13.3-alpha` 起，文档审查长文本 think 模式稳定性增强：provider 等待预算从 150 秒提高到 240 秒；任务窗格轮询后台任务状态时，遇到短暂查询失败会保留 `jobId` 并继续自动重试，避免 100 秒以上长任务因一次状态查询抖动误报 adapter 连接失败。
+- `v0.13.4-alpha` 起，格式审查框选文本时优先读取 `Selection/Range` 段落格式，不再只按纯文本构造默认 `0pt/左对齐` 段落；前端会解包 WPS COM 标量返回值并规范化对齐枚举，adapter 侧也会把字号 `0` 视为未读取到字号、把对齐值 `3` 规范化为两端对齐后再判断。
+- `v0.13.5-alpha` 起，文档审查慢模型等待进一步增强：provider 等待预算提高到 600 秒；任务窗格状态轮询最多容忍 120 次短暂失败、总等待 30 分钟；最终失败反馈改为“文档审查状态查询多次失败”并引导查看最近一次任务诊断，避免模型仍在处理时被前台误判为连接失败。
+- `v0.13.6-alpha` 起，文档审查 think 模式慢响应继续增强：provider 等待预算提高到 1800 秒；任务窗格状态轮询最多容忍 240 次短暂失败、总等待 60 分钟；轮询阶段 adapter 短暂不可达时改为提示“状态查询暂时未连上本地 adapter”，继续等待后台任务，避免慢模型处理被前台解释为连接失败。
+- `v0.13.7-alpha` 起，文档审查“预览审查记录”按钮改为双态切换：首次点击显示审查记录预览，再次点击返回初始文档审查结果卡片视图，并保留本地问题处理状态和复制审查记录能力。
 - 任务窗口结果区继续区分任务类型：智能编写按内容结构选择朴素或结构化回显，文档审查/格式审查/诊断继续显示安全渲染后的 Markdown 成品；复制和写回仍使用原始模型文本。
-- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.12.16-alpha`，确保目标机重新打开 WPS 后加载修复后的前端资源。
+- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.13.7-alpha`，确保目标机重新打开 WPS 后加载修复后的前端资源。
 
 ## 4. 需要重点保护的既有逻辑
 
@@ -125,6 +144,10 @@ POST   /word/format-review
 - 文档审查 Dify 非标准返回也要在前台可见：`rawAnswer` 和 `parseFallbackReason` 是现场判断 Dify 输出格式问题的重要兜底。
 - 智能编写选区轻量抽取不能回退为同步全文段落扫描；`SMART_WRITE_EXTRACTION_OPTIONS` 必须保留 `preferSelectionTextParagraphs`、`avoidFullTextRead`、`avoidFallbackTextRead`。
 - 智能编写结果预览必须保持结构感知：简单段落不要额外套 Markdown 排版；标题、列表、序号、表格、加粗等结构存在时要尽量结构化回显和写回。
+- `v0.13.0-alpha` 以来的智能编写结果视图切换不能改动写回功能；`applyRewrite`、`tryApplyFormattedRewrite`、`buildMarkdownWritebackBlocks` 只允许作为既有能力保留，不在本版扩展。
+- `v0.13.1-alpha` 的对照高亮只允许作用于只读 comparison Markdown，不允许把 `==...==` 标记传入复制文本或写回正文。
+- 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key。
+- 文档审查闭环只能管理前端处理状态和复制审查记录，不允许自动写回或自动修改正文。
 - 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
 - 智能编写和文档审查逻辑不要因格式审查预览优化被改动；对应抽取限制、等待反馈、`rawAnswer` 兜底和写回策略都要保持当前行为。
 - uvicorn 优先、standalone 兜底的 adapter 启动方式，以及旧进程版本替换逻辑。
@@ -139,6 +162,7 @@ POST   /word/format-review
 - `adapter_service/standalone_adapter.py`：standalone 模式，与 FastAPI 当前输出保持一致。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html`、`taskpane.js`、`taskpane.css`、`taskpane-helpers.js`：当前任务窗格、设置页、Markdown 渲染和 WPS 读取逻辑。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml`、`ribbon.js`：当前 Ribbon 入口和图标映射。
+- `adapter-start-kit/scripts/install_autostart.sh`、`adapter-start-kit/scripts/uninstall_autostart.sh`、`adapter-start-kit/docs/autostart-guide.md`：麒麟 V10 目标机 systemd 开机自启动安装、卸载和运维说明。
 - `config/adapter.example.json`：默认 `enterprise-dify-chat`、`/chat-messages` 和三任务 `taskApiKeyRefs`。
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify 配置手册。
 - `docs/operations/dify-document-review-workflow.md`：文档审查 Dify 配置手册。
@@ -158,31 +182,32 @@ PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runt
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js
 git diff --check
-DATE_TAG=20260609 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260618 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
-- Python 单测：`66 tests OK (skipped=3)`。
-- JS layout smoke：通过。
-- JS helpers：通过，覆盖连续两段单行输出自动分段、保留已有换行、内联中文序号/标题拆行，以及格式审查可读预览、中文字号/字体/样式/诊断反馈。
+- Python 单测：`77 tests OK (skipped=3)`。
+- JS layout smoke：通过，覆盖 `0.13.7-alpha` 缓存参数、智能编写对照高亮、文档审查轮询短暂失败重试、文档审查渲染兜底、审查记录预览/返回结果双态切换、轮询阶段弱化 adapter 短暂不可达反馈、任务窗口“模型后台”文案、安装脚本运行时配置保护和 autostart 脚本引用。
+- JS helpers：通过，覆盖连续两段单行输出自动分段、保留已有换行、内联中文序号/标题拆行、智能编写只读预览模型、对照视图黄色高亮、文档审查处理记录，以及格式审查选区格式读取、中文字号/字体/样式/诊断反馈。
 - `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查：通过。
 - `git diff --check`：通过。
-- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260609.tar.gz`，SHA256：`c129fdca4867d43276fa23af75ce840059509e5a402892d067f8bacf4ae72465`。
-- 包内已校验 `manifest.json`、`taskpane.html`、`taskpane.js`、`taskpane-helpers.js` 和格式审查操作手册，均包含 `0.12.16-alpha` 及本次格式审查可读预览、中文字体/字号/样式/诊断反馈。
+- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260618.tar.gz`，SHA256：`034ee3d60172e9cd6435ee297c3f748211ddee5a07ed9c1b835a12ac9bef9ef4`。
+- 包内已校验 `install_phase1.sh`、`adapter.example.json`、`provider_client.py`、`manifest.json`、`taskpane.html`、`taskpane.js`、`taskpane-helpers.js`、文档审查后台任务服务和 adapter 自启动脚本，均包含 `0.13.7-alpha`、安装保留配置、智能编写 75 秒、文档审查 1800 秒、文档审查任务轮询 240 次短暂失败容忍和 60 分钟总等待、审查记录预览/返回结果双态切换、格式审查选区格式读取、格式审查角色识别 60 秒 timeout 和“模型后台”前台文案。
 
 说明：当前 bundled Python 环境有 Pydantic，但没有 FastAPI，因此 FastAPI TestClient 相关 3 项按测试文件 skip；不依赖 FastAPI 的 provider、服务、前端、打包脚本和契约测试均已通过。
 
 ## 7. 目标机验证建议
 
-1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.12.16-alpha`。
+1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.13.7-alpha`。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 3. 分别保存“智能编写”“文档审查”“格式审查”的任务级 API Key。
-4. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，Dify 后台命中智能编写应用。
+4. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，模型后台命中智能编写应用。
 5. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示审查摘要和问题列表。
 6. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，识别来源显示“AI 辅助 + 本地规则”或“本地规则”。
-7. 如果 Dify 后台有调用但 WPS 结果为空，检查 Dify 回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
-8. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
+7. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
+8. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
+9. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
 
 ## 8. 遗留项
 

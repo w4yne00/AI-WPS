@@ -1,8 +1,12 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.12.16-alpha";
+  var FRONTEND_BUILD_VERSION = "0.13.7-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
+  var DOCUMENT_REVIEW_POLL_INTERVAL_MS = 3000;
+  var DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS = 15000;
+  var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
+  var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var FORMAT_REVIEW_EXTRACTION_OPTIONS = {
     maxParagraphs: 80,
     maxParagraphTextLength: 800,
@@ -137,6 +141,14 @@
     traceId: "",
     pendingApplyAction: "",
     rewriteResult: null,
+    smartWritePreviewModel: null,
+    resultViewMode: "preview",
+    documentReviewData: null,
+    documentReviewIssueStatus: {},
+    documentReviewRecordPreviewVisible: false,
+    documentReviewJobId: "",
+    documentReviewPollStartedAt: 0,
+    documentReviewPollErrorCount: 0,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
     providerName: "未检测",
@@ -178,8 +190,8 @@
   function setProviderLine(providerName, configured) {
     var providerText = {
       "enterprise-chat-api": "企业接口",
-      "enterprise-dify-chat": "Dify Chat",
-      "enterprise-dify-workflow": "Dify 工作流",
+      "enterprise-dify-chat": "模型接口",
+      "enterprise-dify-workflow": "模型工作流",
       mock: "模拟接口"
     };
     var detail = providerText[providerName] || providerName || "未检测";
@@ -251,7 +263,7 @@
     node.textContent = text;
   }
 
-  function setResult(text) {
+  function setResult(text, copyText) {
     var output = byId("result-output");
     output.hidden = false;
     output.classList.remove("plain-output");
@@ -260,7 +272,7 @@
     } else {
       output.textContent = text;
     }
-    state.copyText = text || "";
+    state.copyText = typeof copyText === "string" ? copyText : (text || "");
   }
 
   function setPlainResult(text, copyText) {
@@ -273,6 +285,86 @@
 
   function setRewriteResult(result) {
     setPlainResult(result.rewrittenText || "");
+  }
+
+  function setResultViewSwitchVisible(visible) {
+    var node = byId("result-view-switch");
+    if (node) {
+      node.hidden = !visible;
+    }
+  }
+
+  function updateResultViewButtons() {
+    [
+      { id: "btn-result-preview", mode: "preview" },
+      { id: "btn-result-compare", mode: "compare" },
+      { id: "btn-result-plain", mode: "plain" }
+    ].forEach(function (item) {
+      var button = byId(item.id);
+      var active = state.resultViewMode === item.mode;
+      if (button) {
+        button.classList.toggle("active", active);
+        button.setAttribute("aria-pressed", active ? "true" : "false");
+      }
+    });
+  }
+
+  function resetSmartWritePreviewState() {
+    state.smartWritePreviewModel = null;
+    state.resultViewMode = "preview";
+    setResultViewSwitchVisible(false);
+    updateResultViewButtons();
+  }
+
+  function setReviewRecordActionsVisible(visible) {
+    var node = byId("review-record-actions");
+    var previewButton = byId("btn-preview-review-record");
+    if (node) {
+      node.hidden = !visible;
+    }
+    if (previewButton) {
+      previewButton.textContent = state.documentReviewRecordPreviewVisible ? "返回审查结果" : "预览审查记录";
+    }
+  }
+
+  function resetDocumentReviewState() {
+    state.documentReviewData = null;
+    state.documentReviewIssueStatus = {};
+    state.documentReviewRecordPreviewVisible = false;
+    state.documentReviewJobId = "";
+    state.documentReviewPollStartedAt = 0;
+    state.documentReviewPollErrorCount = 0;
+    setReviewRecordActionsVisible(false);
+  }
+
+  function renderSmartWritePreviewMode() {
+    var model = state.smartWritePreviewModel || {};
+    var copyText = state.rewriteResult && state.rewriteResult.rewrittenText
+      ? state.rewriteResult.rewrittenText
+      : (model.plainText || "");
+
+    updateResultViewButtons();
+    if (state.resultViewMode === "plain") {
+      setPlainResult(model.plainText || "", copyText);
+      return;
+    }
+    if (state.resultViewMode === "compare") {
+      setResult(model.comparisonMarkdown || model.previewMarkdown || "", copyText);
+      return;
+    }
+    if (model.hasStructuredResult) {
+      setResult(model.previewMarkdown || "", copyText);
+      return;
+    }
+    setPlainResult(model.previewMarkdown || "", copyText);
+  }
+
+  function setResultViewMode(mode) {
+    if (!state.smartWritePreviewModel) {
+      return;
+    }
+    state.resultViewMode = mode;
+    renderSmartWritePreviewMode();
   }
 
   function getLatestOriginalText() {
@@ -315,11 +407,26 @@
   function setSmartWriteResult(result) {
     var normalized = normalizeSmartWriteResult(result);
     var text = normalized.rewrittenText || "";
-    if (shouldUseStructuredSmartWriteResult(text)) {
-      setResult(text);
-      return normalized;
+    var previewSource = {};
+    var key;
+    for (key in normalized) {
+      if (Object.prototype.hasOwnProperty.call(normalized, key)) {
+        previewSource[key] = normalized[key];
+      }
     }
-    setPlainResult(text);
+    previewSource.originalText = previewSource.originalText || getLatestOriginalText();
+    state.smartWritePreviewModel = helpers.buildSmartWritePreviewModel
+      ? helpers.buildSmartWritePreviewModel(previewSource)
+      : {
+        previewMarkdown: text,
+        plainText: text,
+        comparisonMarkdown: text,
+        hasOriginal: Boolean(previewSource.originalText),
+        hasStructuredResult: shouldUseStructuredSmartWriteResult(text)
+      };
+    state.resultViewMode = "preview";
+    setResultViewSwitchVisible(Boolean(text));
+    renderSmartWritePreviewMode();
     return normalized;
   }
 
@@ -374,6 +481,8 @@
     state.currentMode = modeConfig[mode] ? mode : "smartWrite";
     document.body.setAttribute("data-task-mode", state.currentMode);
     byId("task-title").textContent = config.title;
+    resetSmartWritePreviewState();
+    resetDocumentReviewState();
 
     if (state.currentMode === "settings") {
       switchView("settings");
@@ -479,11 +588,11 @@
         text: truncateText(paragraph.Text || paragraph.text || "", options && options.maxParagraphTextLength),
         styleName: paragraph.StyleNameLocal || paragraph.styleName || "Body",
         fontName: font.NameFarEast || font.Name || "",
-        fontSize: font.Size || 0,
+        fontSize: font.Size || null,
         bold: Boolean(font.Bold),
         italic: Boolean(font.Italic),
         underline: font.Underline || null,
-        alignment: String(paragraphFormat.Alignment || "left"),
+        alignment: String(paragraphFormat.Alignment || ""),
         outlineLevel: paragraphFormat.OutlineLevel || 0,
         lineSpacing: paragraphFormat.LineSpacing || paragraphFormat.lineSpacing || null,
         firstLineIndent: paragraphFormat.FirstLineIndent || paragraphFormat.firstLineIndent || null,
@@ -525,6 +634,7 @@
   function extractDocument(selectionMode, rewriteAction, extractionOptions) {
     var options = extractionOptions || {};
     var document = getActiveDocument();
+    var selectionSources = [];
     if (!document) {
       throw new Error("未检测到活动文档。");
     }
@@ -532,9 +642,14 @@
     var selectedText = selectionMode === "selection" ? getSelectionText(document) : "";
     var paragraphs = [];
     var plainText = "";
+    if (selectionMode === "selection") {
+      selectionSources = getSelectionSources(document);
+    }
     if (options.preferSelectionTextParagraphs && selectedText && helpers.collectParagraphsFromText) {
       plainText = selectedText;
-      paragraphs = helpers.collectParagraphsFromText(selectedText, options);
+      paragraphs = helpers.collectParagraphsFromSelectionSources
+        ? helpers.collectParagraphsFromSelectionSources(selectionSources, selectedText, options)
+        : helpers.collectParagraphsFromText(selectedText, options);
     } else {
       paragraphs = collectParagraphs(document, options);
       if (!options.avoidFullTextRead && helpers.readDocumentText) {
@@ -644,13 +759,19 @@
       return response.json().then(function (body) {
         if (!response.ok) {
           var validation = body.data && body.data.validation;
+          var adapterError = (body.errors && body.errors[0]) || {};
+          var requestError;
           if (validation && validation.errors && validation.errors.length) {
             var details = validation.errors.map(function (item) {
               return [item.loc, item.type, item.message].filter(Boolean).join(" | ");
             }).join("\n");
-            throw new Error("HTTP " + response.status + " 请求数据校验失败：\n" + details);
+            requestError = new Error("HTTP " + response.status + " 请求数据校验失败：\n" + details);
+            requestError.adapterCode = "REQUEST_VALIDATION_FAILED";
+            throw requestError;
           }
-          throw new Error((body.errors && body.errors[0] && body.errors[0].message) || body.message || ("HTTP " + response.status));
+          requestError = new Error(adapterError.message || body.message || ("HTTP " + response.status));
+          requestError.adapterCode = adapterError.code || "";
+          throw requestError;
         }
         return body;
       });
@@ -667,8 +788,22 @@
 
   function describeDocumentReviewError(error) {
     var message = describeFetchError(error);
+    if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
+      return "模型后台文档审查未按时返回，adapter 已停止等待。请缩小审查范围后重试，或到“设置-最近一次任务诊断”查看 trace 和 provider 状态。";
+    }
     if (message.indexOf("插件无法访问 http://127.0.0.1:18100") === 0) {
-      return message + "\n\n如果 Dify 后台已经收到文档审查请求，通常说明 adapter 正在等待 Dify 返回或 Dify 返回过慢；请稍后在“设置-最近一次任务诊断”查看 trace 和 provider 状态。";
+      return message + "\n\n如果模型后台已经收到文档审查请求，通常说明 adapter 正在等待模型后台返回或模型后台返回过慢；请稍后在“设置-最近一次任务诊断”查看 trace 和 provider 状态。";
+    }
+    return message;
+  }
+
+  function describeDocumentReviewPollError(error) {
+    var message = describeFetchError(error);
+    if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
+      return "模型后台文档审查仍未按时返回，adapter 可能仍在等待或已返回超时诊断。";
+    }
+    if (message.indexOf("插件无法访问 http://127.0.0.1:18100") === 0) {
+      return "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败，将继续自动刷新。";
     }
     return message;
   }
@@ -733,7 +868,7 @@
     lines.push("- provider 名称：" + (status.providerName || "未检测"));
     lines.push("- 统一 API URL 已配置：" + yesNo(routes.providerBaseUrlConfigured || debug.providerBaseUrlConfigured));
     lines.push("- 认证来源：" + describeAuthSource(debug.taskAuthSource || debug.authSource || status.authSource || routes.authSource));
-    lines.push("- 请求路径：" + (debug.url || routes.url || "未进入 Dify 请求"));
+    lines.push("- 请求路径：" + (debug.url || routes.url || "未进入模型后台请求"));
     lines.push("- fallback 原因：" + (debug.skipReason || "无"));
 
     if (debug.request) {
@@ -864,7 +999,7 @@
     var input = byId("provider-api-key");
     var apiKey = (input.value || "").trim();
     if (!apiKey) {
-      setStatus("请输入统一 Dify Chat API Key。");
+      setStatus("请输入统一模型 API Key。");
       return;
     }
     request("/provider/api-key", { apiKey: apiKey })
@@ -1067,12 +1202,12 @@
 
   function formatAiFallbackReason(reason) {
     var reasonText = {
-      no_paragraphs: "未读取到正文段落，未调用 Dify；请确认当前文档对象能暴露正文段落或全文文本。",
+      no_paragraphs: "未读取到正文段落，未调用模型后台；请确认当前文档对象能暴露正文段落或全文文本。",
       provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
-      dify_response_not_role_json: "Dify 未返回段落角色 JSON，已使用本地模板规则。",
-      provider_request_failed: "Dify 请求失败，已使用本地模板规则。",
-      dify_response_no_valid_roles: "Dify 返回的角色无效，已使用本地模板规则。",
-      dify_returned_no_roles: "Dify 未返回有效段落角色，已使用本地模板规则。"
+      dify_response_not_role_json: "模型后台未返回段落角色 JSON，已使用本地模板规则。",
+      provider_request_failed: "模型后台请求失败，已使用本地模板规则。",
+      dify_response_no_valid_roles: "模型后台返回的角色无效，已使用本地模板规则。",
+      dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。"
     };
     return reasonText[reason] || reason || "";
   }
@@ -1163,13 +1298,13 @@
     ];
 
     if (parseFallbackReason) {
-      lines.push("解析状态：Dify 已返回内容，但未解析为标准问题列表。");
+      lines.push("解析状态：" + formatDocumentReviewFallbackReason(parseFallbackReason));
       lines.push("");
     }
 
     if (!issues.length) {
       if (rawAnswer) {
-        lines.push("未解析到结构化问题列表，以下展示 Dify 原始回复。");
+        lines.push("未解析到结构化问题列表，以下展示模型后台原始回复。");
         lines.push("");
         lines.push("## 原始模型回复");
         lines.push("");
@@ -1205,6 +1340,313 @@
     });
 
     return lines.join("\n").trim();
+  }
+
+  function formatDocumentReviewFallbackReason(reason) {
+    var reasonText = {
+      provider_timeout: "模型后台未按时返回，adapter 已停止等待。",
+      provider_unreachable: "模型后台或企业大模型接口暂不可达。",
+      provider_auth_failed: "模型后台或企业大模型接口认证失败。",
+      non_json_answer: "模型后台已返回内容，但不是标准 JSON 问题列表。",
+      unsupported_json_shape: "模型后台已返回 JSON，但未包含标准 issues 问题列表。"
+    };
+    return reasonText[reason] || "模型后台已返回内容，但未解析为标准问题列表。";
+  }
+
+  function escapeHtmlText(value) {
+    return helpers.escapeHtml ? helpers.escapeHtml(value) : String(value || "")
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
+  function getDocumentReviewRecordText() {
+    if (helpers.buildDocumentReviewRecord) {
+      return helpers.buildDocumentReviewRecord(state.documentReviewData || {}, state.documentReviewIssueStatus || {});
+    }
+    return renderGroupedDocumentReview(state.documentReviewData || {});
+  }
+
+  function getDocumentReviewStatus(index) {
+    return state.documentReviewIssueStatus[String(index)] || "pending";
+  }
+
+  function getDocumentReviewStatusText(status) {
+    return {
+      pending: "待处理",
+      done: "已处理",
+      ignored: "已忽略"
+    }[status] || "待处理";
+  }
+
+  function renderDocumentReviewInteractive(data) {
+    var output = byId("result-output");
+    var issues = data.issues || [];
+    var documentTypeText = {
+      technical_solution: "技术方案",
+      contract_acceptance: "合同验收文档",
+      test_outline: "测试大纲和细则"
+    };
+    var grouped = {};
+    var html = [];
+    var markdown = renderGroupedDocumentReview(data);
+
+    state.copyText = markdown;
+    output.hidden = false;
+    output.classList.remove("plain-output");
+
+    if (!issues.length) {
+      setResult(markdown, markdown);
+      setReviewRecordActionsVisible(Boolean(state.documentReviewData));
+      return;
+    }
+
+    issues.forEach(function (issue, index) {
+      var category = getDocumentReviewCategory(issue);
+      if (!grouped[category]) {
+        grouped[category] = [];
+      }
+      grouped[category].push({ issue: issue, index: index });
+    });
+
+    html.push('<div class="document-review-result">');
+    html.push('<section class="review-summary-box">');
+    html.push("<h3>文档审查结果</h3>");
+    html.push("<p>文档类型：" + escapeHtmlText(documentTypeText[data.documentType] || data.documentType || "技术方案") + "</p>");
+    html.push("<p>检查范围：" + (data.scope === "selection" ? "选中内容" : "全文") + "</p>");
+    html.push("<p>总体结论：" + escapeHtmlText(data.summary || "审查完成。") + "</p>");
+    html.push("<p>问题数量：" + issues.length + "</p>");
+    html.push("</section>");
+
+    DOCUMENT_REVIEW_CATEGORY_ORDER.forEach(function (category) {
+      var items = grouped[category] || [];
+      if (!items.length) {
+        return;
+      }
+      html.push('<section class="review-category-section">');
+      html.push("<h3>" + DOCUMENT_REVIEW_CATEGORY_TEXT[category] + "（" + items.length + "）</h3>");
+      items.forEach(function (entry, localIndex) {
+        var issue = entry.issue;
+        var index = entry.index;
+        var status = getDocumentReviewStatus(index);
+        html.push('<article class="review-issue-card" data-review-issue-index="' + index + '">');
+        html.push("<h4>" + DOCUMENT_REVIEW_CATEGORY_TEXT[category] + " #" + (localIndex + 1) + "</h4>");
+        html.push('<div class="review-issue-meta">');
+        html.push("<span>严重程度：" + escapeHtmlText(REVIEW_SEVERITY_TEXT[issue.severity] || issue.severity || "中") + "</span>");
+        html.push("<span>位置：" + escapeHtmlText(issue.location || "未定位") + "</span>");
+        html.push("</div>");
+        if (issue.originalText) {
+          html.push("<p><strong>原文片段：</strong>" + escapeHtmlText(issue.originalText) + "</p>");
+        }
+        html.push("<p><strong>问题说明：</strong>" + escapeHtmlText(issue.problem || "未说明") + "</p>");
+        html.push("<p><strong>修改建议：</strong>" + escapeHtmlText(issue.suggestion || "无") + "</p>");
+        if (issue.suggestedRewrite) {
+          html.push("<p><strong>建议改写：</strong>" + escapeHtmlText(issue.suggestedRewrite) + "</p>");
+        }
+        html.push('<div class="review-status-row">');
+        html.push('<span class="review-status-pill ' + status + '">' + getDocumentReviewStatusText(status) + "</span>");
+        html.push("</div>");
+        html.push('<div class="review-action-row">');
+        html.push('<button type="button" class="ghost-action" data-review-action="mark-done" data-issue-index="' + index + '">标记已处理</button>');
+        html.push('<button type="button" class="ghost-action" data-review-action="mark-ignored" data-issue-index="' + index + '">忽略</button>');
+        html.push('<button type="button" class="ghost-action" data-review-action="copy-suggestion" data-issue-index="' + index + '">复制建议</button>');
+        if (issue.suggestedRewrite) {
+          html.push('<button type="button" class="ghost-action" data-review-action="copy-rewrite" data-issue-index="' + index + '">复制改写</button>');
+        }
+        html.push("</div>");
+        html.push("</article>");
+      });
+      html.push("</section>");
+    });
+
+    html.push("</div>");
+    output.innerHTML = html.join("");
+    setReviewRecordActionsVisible(true);
+  }
+
+  function renderDocumentReviewResult(data) {
+    var markdown = renderGroupedDocumentReview(data || {});
+    state.documentReviewRecordPreviewVisible = false;
+    try {
+      renderDocumentReviewInteractive(data || {});
+      return true;
+    } catch (error) {
+      setResult(markdown, markdown);
+      setReviewRecordActionsVisible(Boolean(data));
+      return false;
+    }
+  }
+
+  function completeDocumentReview(data, traceId) {
+    state.pendingApplyAction = "";
+    setApplyEnabled(false);
+    if (traceId) {
+      setTrace(traceId);
+    }
+    state.documentReviewData = data || {};
+    state.documentReviewIssueStatus = {};
+    if (renderDocumentReviewResult(state.documentReviewData)) {
+      setStatus("文档审查完成。");
+    } else {
+      setStatus("文档审查完成，已使用简洁结果视图显示。");
+    }
+  }
+
+  function scheduleDocumentReviewPoll(jobId, stopWaiting, delayMs) {
+    setTimeout(function () {
+      pollDocumentReviewJob(jobId, stopWaiting);
+    }, delayMs);
+  }
+
+  function isFatalDocumentReviewPollError(error) {
+    return error && (
+      error.adapterCode === "DOCUMENT_REVIEW_JOB_NOT_FOUND" ||
+      error.adapterCode === "REQUEST_VALIDATION_FAILED"
+    );
+  }
+
+  function pollDocumentReviewJob(jobId, stopWaiting) {
+    if (!jobId || state.documentReviewJobId !== jobId) {
+      return;
+    }
+    request("/word/document-review/jobs/" + encodeURIComponent(jobId))
+      .then(function (body) {
+        var job = body.data || {};
+        if (state.documentReviewJobId !== jobId) {
+          return;
+        }
+        state.documentReviewPollErrorCount = 0;
+        setTrace(body.traceId || job.traceId || jobId);
+        if (job.status === "completed") {
+          state.documentReviewJobId = "";
+          state.documentReviewPollStartedAt = 0;
+          stopWaiting();
+          completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId);
+          return;
+        }
+        if (job.status === "failed") {
+          state.documentReviewJobId = "";
+          state.documentReviewPollStartedAt = 0;
+          stopWaiting();
+          setStatus("文档审查失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
+          setResult((job.error && job.error.message) || "后台任务执行失败。");
+          return;
+        }
+        setStatus("文档审查仍在模型后台处理中...");
+        scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_INTERVAL_MS);
+      })
+      .catch(function (error) {
+        var elapsed;
+        var message;
+        if (state.documentReviewJobId !== jobId) {
+          return;
+        }
+        message = describeDocumentReviewPollError(error);
+        state.documentReviewPollErrorCount = (state.documentReviewPollErrorCount || 0) + 1;
+        elapsed = Date.now() - (state.documentReviewPollStartedAt || Date.now());
+        if (
+          !isFatalDocumentReviewPollError(error) &&
+          state.documentReviewPollErrorCount <= DOCUMENT_REVIEW_POLL_MAX_ERRORS &&
+          elapsed <= DOCUMENT_REVIEW_POLL_MAX_WAIT_MS
+        ) {
+          setStatus("文档审查状态查询暂时失败，正在继续等待模型后台返回...");
+          setPlainResult([
+            "文档审查状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。",
+            "这不代表模型后台任务失败；如果模型后台已收到请求，请保持 WPS 和 adapter 打开。",
+            "已重试：" + state.documentReviewPollErrorCount + "/" + DOCUMENT_REVIEW_POLL_MAX_ERRORS,
+            "最近错误：" + message
+          ].join("\n"));
+          scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS);
+          return;
+        }
+        state.documentReviewJobId = "";
+        state.documentReviewPollStartedAt = 0;
+        state.documentReviewPollErrorCount = 0;
+        setStatus("文档审查状态查询持续失败，请查看最近一次任务诊断。");
+        setResult([
+          "文档审查状态查询持续失败，前台已暂停自动刷新。",
+          "这不代表模型后台任务失败；如果模型后台已收到请求，adapter 可能仍在等待模型后台返回，或目标机网络/任务窗格连接不稳定。",
+          "请到“设置-最近一次任务诊断”查看 trace、provider 状态和模型后台返回情况。",
+          "最近错误：" + message
+        ].join("\n"));
+        stopWaiting();
+      });
+  }
+
+  function writeClipboardText(text, successMessage) {
+    if (!String(text || "").trim()) {
+      setStatus("暂无可复制的内容。");
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(function () {
+        setStatus(successMessage);
+      }).catch(function () {
+        setStatus("复制失败，请手动选择文本复制。");
+      });
+      return;
+    }
+    setStatus("当前环境不支持自动复制，请手动选择文本复制。");
+  }
+
+  function handleDocumentReviewAction(event) {
+    var action = event.target.getAttribute("data-review-action");
+    var indexText = event.target.getAttribute("data-issue-index");
+    var index;
+    var issue;
+    if (!action) {
+      return;
+    }
+    index = Number(indexText);
+    issue = state.documentReviewData &&
+      state.documentReviewData.issues &&
+      state.documentReviewData.issues[index];
+    if (!issue) {
+      return;
+    }
+    if (action === "mark-done") {
+      state.documentReviewIssueStatus[String(index)] = "done";
+      renderDocumentReviewResult(state.documentReviewData);
+      setStatus("已标记为已处理。");
+      return;
+    }
+    if (action === "mark-ignored") {
+      state.documentReviewIssueStatus[String(index)] = "ignored";
+      renderDocumentReviewResult(state.documentReviewData);
+      setStatus("已标记为忽略。");
+      return;
+    }
+    if (action === "copy-suggestion") {
+      writeClipboardText(issue.suggestion || "", "修改建议已复制。");
+      return;
+    }
+    if (action === "copy-rewrite") {
+      writeClipboardText(issue.suggestedRewrite || "", "建议改写已复制。");
+    }
+  }
+
+  function copyDocumentReviewRecord() {
+    writeClipboardText(getDocumentReviewRecordText(), "审查记录已复制。");
+  }
+
+  function toggleDocumentReviewRecordPreview() {
+    var record;
+    if (!state.documentReviewData) {
+      setStatus("暂无可预览的审查记录。");
+      return;
+    }
+    if (state.documentReviewRecordPreviewVisible) {
+      renderDocumentReviewResult(state.documentReviewData);
+      setStatus("已返回文档审查结果。");
+      return;
+    }
+    record = getDocumentReviewRecordText();
+    state.documentReviewRecordPreviewVisible = true;
+    setResult(record, record);
+    setReviewRecordActionsVisible(true);
+    setStatus("正在预览审查记录。");
   }
 
   function copyResult() {
@@ -1564,12 +2006,12 @@
   function startDocumentReviewWaitFeedback() {
     var timers = [];
     timers.push(setTimeout(function () {
-      setStatus("Dify 正在处理文档审查，请继续等待...");
-      setPlainResult("文档审查请求已提交，Dify 正在处理。较长文本或繁忙时可能需要更久，请保持 WPS 和 adapter 打开。");
+      setStatus("模型后台正在处理文档审查，请继续等待...");
+      setPlainResult("文档审查请求已提交，模型后台正在处理。较长文本或繁忙时可能需要更久，请保持 WPS 和 adapter 打开。");
     }, 8000));
     timers.push(setTimeout(function () {
-      setStatus("文档审查仍在等待 Dify 返回...");
-      setPlainResult("文档审查仍在等待 Dify 返回。若 Dify 后台已完成但此处长时间未更新，请到“设置-最近一次任务诊断”查看 trace 和 provider 状态。");
+      setStatus("文档审查仍在等待模型后台返回...");
+      setPlainResult("文档审查仍在等待模型后台返回。若模型后台已完成但此处长时间未更新，请到“设置-最近一次任务诊断”查看 trace 和 provider 状态。");
     }, 30000));
     return function () {
       timers.forEach(function (timer) {
@@ -1580,6 +2022,8 @@
 
   function runDocumentReview() {
     var scope = resolveSelectionScope(false);
+    resetSmartWritePreviewState();
+    resetDocumentReviewState();
     if (!scope.ok) {
       setStatus(scope.message);
       setResult(scope.message);
@@ -1602,19 +2046,38 @@
       }
 
       setStatus("正在提交文档审查请求...");
-      setPlainResult("文档审查请求已提交，正在等待 Dify 返回。");
+      setPlainResult("文档审查请求已提交，正在等待模型后台返回。");
       stopWaiting = startDocumentReviewWaitFeedback();
-      request("/word/document-review", state.latestDocumentPayload)
+      request("/word/document-review/jobs", state.latestDocumentPayload)
         .then(function (body) {
-          stopWaiting();
-          state.pendingApplyAction = "";
-          setApplyEnabled(false);
-          setTrace(body.traceId);
-          setResult(renderGroupedDocumentReview(body.data || {}));
-          setStatus("文档审查完成。");
+          var job = body.data || {};
+          var jobId = job.jobId || body.traceId;
+          setTrace(body.traceId || job.traceId || jobId);
+          if (!jobId) {
+            stopWaiting();
+            setStatus("文档审查失败：adapter 未返回后台任务编号。");
+            setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+            return;
+          }
+          state.documentReviewJobId = jobId || "";
+          state.documentReviewPollStartedAt = Date.now();
+          state.documentReviewPollErrorCount = 0;
+          if (job.status === "completed") {
+            state.documentReviewJobId = "";
+            state.documentReviewPollStartedAt = 0;
+            stopWaiting();
+            completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId);
+            return;
+          }
+          setStatus("文档审查任务已提交，模型后台处理中...");
+          setPlainResult("文档审查任务已提交。adapter 会在后台等待模型后台返回，此处将自动刷新结果。");
+          pollDocumentReviewJob(state.documentReviewJobId, stopWaiting);
         })
         .catch(function (error) {
           var message;
+          state.documentReviewJobId = "";
+          state.documentReviewPollStartedAt = 0;
+          state.documentReviewPollErrorCount = 0;
           stopWaiting();
           message = describeDocumentReviewError(error);
           setStatus("文档审查失败：" + message);
@@ -1625,6 +2088,7 @@
 
   function runFormatReview() {
     var scope = resolveSelectionScope(false);
+    resetSmartWritePreviewState();
     if (!scope.ok) {
       setStatus(scope.message);
       setResult(scope.message);
@@ -1665,6 +2129,7 @@
 
   function runSmartWriteAction() {
     var selectionScope = resolveSelectionScope(true);
+    resetSmartWritePreviewState();
     if (!selectionScope.ok) {
       setStatus(selectionScope.message);
       setResult(selectionScope.message);
@@ -1780,6 +2245,18 @@
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
     byId("btn-run-primary").addEventListener("click", runPrimaryAction);
+    byId("result-output").addEventListener("click", handleDocumentReviewAction);
+    byId("btn-copy-review-record").addEventListener("click", copyDocumentReviewRecord);
+    byId("btn-preview-review-record").addEventListener("click", toggleDocumentReviewRecordPreview);
+    byId("btn-result-preview").addEventListener("click", function () {
+      setResultViewMode("preview");
+    });
+    byId("btn-result-compare").addEventListener("click", function () {
+      setResultViewMode("compare");
+    });
+    byId("btn-result-plain").addEventListener("click", function () {
+      setResultViewMode("plain");
+    });
   }
 
   if (!isTaskpanePage()) {

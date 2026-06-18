@@ -1,6 +1,6 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.12.10-alpha`
+版本：`v0.13.7-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 

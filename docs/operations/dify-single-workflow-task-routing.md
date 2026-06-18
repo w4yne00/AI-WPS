@@ -188,7 +188,7 @@ high, medium, low
   "providerChatPath": "/workflows/run",
   "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
   "providerMode": "blocking",
-  "timeoutSeconds": 30,
+  "timeoutSeconds": 75,
   "taskRoutes": {
     "word.rewrite": {"taskId": "word.rewrite", "enabled": true},
     "word.continue": {"taskId": "word.continue", "enabled": true},

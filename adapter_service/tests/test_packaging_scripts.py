@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.12.16-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.13.7-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -35,12 +35,42 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("provider=mock", scripts["show_logs.sh"])
         self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
 
+    def test_adapter_autostart_scripts_install_systemd_service(self) -> None:
+        install_script = (ROOT / "adapter-start-kit/scripts/install_autostart.sh").read_text(
+            encoding="utf-8"
+        )
+        uninstall_script = (ROOT / "adapter-start-kit/scripts/uninstall_autostart.sh").read_text(
+            encoding="utf-8"
+        )
+        guide = (ROOT / "adapter-start-kit/docs/autostart-guide.md").read_text(encoding="utf-8")
+
+        self.assertIn("ai-wps-adapter.service", install_script)
+        self.assertIn("systemctl enable --now", install_script)
+        self.assertIn("ExecStart=", install_script)
+        self.assertIn("scripts/start_adapter.sh", install_script)
+        self.assertIn("Restart=on-failure", install_script)
+        self.assertIn("User=", install_script)
+        self.assertIn("systemctl disable --now", uninstall_script)
+        self.assertIn("daemon-reload", uninstall_script)
+        self.assertIn("开机自启动", guide)
+        self.assertIn("bash scripts/install_autostart.sh", guide)
+
     def test_phase1_delivery_includes_smart_write_dify_manual(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
 
         self.assertIn("dify-smart-write-workflow.md", script)
         self.assertIn("dify-document-review-workflow.md", script)
         self.assertIn("dify-format-review-workflow.md", script)
+
+    def test_phase1_installer_preserves_adapter_runtime_configuration(self) -> None:
+        script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(encoding="utf-8")
+
+        self.assertIn("preserve_adapter_runtime_config", script)
+        self.assertIn("restore_adapter_runtime_config", script)
+        self.assertIn("config/adapter.json", script)
+        self.assertIn("run/provider_api_key", script)
+        self.assertIn("run/provider_api_keys", script)
+        self.assertNotIn('copy_dir "$ADAPTER_SOURCE" "$ADAPTER_TARGET"', script)
 
     def test_taskpane_document_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(

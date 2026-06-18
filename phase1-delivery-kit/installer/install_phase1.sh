@@ -14,6 +14,7 @@ PIP_BOOTSTRAP_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38-pip-bootstrap"
 RUNTIME_DEPS_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38"
 PUBLISH_SOURCE="$DELIVERY_ROOT/wps-jsaddons/publish.xml"
 ADAPTER_TARGET="$INSTALL_ROOT/adapter-start-kit"
+ADAPTER_CONFIG_BACKUP=""
 
 log() {
   printf '%s\n' "$*"
@@ -30,6 +31,50 @@ copy_dir() {
   rm -rf "$target_dir"
   mkdir -p "$(dirname "$target_dir")"
   cp -R "$source_dir" "$target_dir"
+}
+
+preserve_adapter_runtime_config() {
+  [ -d "$ADAPTER_TARGET" ] || return 0
+  ADAPTER_CONFIG_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/ai-wps-adapter-config.XXXXXX")"
+  mkdir -p "$ADAPTER_CONFIG_BACKUP/config" "$ADAPTER_CONFIG_BACKUP/run"
+
+  if [ -f "$ADAPTER_TARGET/config/adapter.json" ]; then
+    cp "$ADAPTER_TARGET/config/adapter.json" "$ADAPTER_CONFIG_BACKUP/config/adapter.json"
+    log "preserve_adapter_runtime_config=config/adapter.json"
+  fi
+  if [ -f "$ADAPTER_TARGET/run/provider_api_key" ]; then
+    cp "$ADAPTER_TARGET/run/provider_api_key" "$ADAPTER_CONFIG_BACKUP/run/provider_api_key"
+    log "preserve_adapter_runtime_config=run/provider_api_key"
+  fi
+  if [ -d "$ADAPTER_TARGET/run/provider_api_keys" ]; then
+    cp -R "$ADAPTER_TARGET/run/provider_api_keys" "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys"
+    log "preserve_adapter_runtime_config=run/provider_api_keys"
+  fi
+}
+
+restore_adapter_runtime_config() {
+  [ -n "$ADAPTER_CONFIG_BACKUP" ] || return 0
+  [ -d "$ADAPTER_CONFIG_BACKUP" ] || return 0
+
+  if [ -f "$ADAPTER_CONFIG_BACKUP/config/adapter.json" ]; then
+    mkdir -p "$ADAPTER_TARGET/config"
+    cp "$ADAPTER_CONFIG_BACKUP/config/adapter.json" "$ADAPTER_TARGET/config/adapter.json"
+    log "restore_adapter_runtime_config=config/adapter.json"
+  fi
+  if [ -f "$ADAPTER_CONFIG_BACKUP/run/provider_api_key" ]; then
+    mkdir -p "$ADAPTER_TARGET/run"
+    cp "$ADAPTER_CONFIG_BACKUP/run/provider_api_key" "$ADAPTER_TARGET/run/provider_api_key"
+    log "restore_adapter_runtime_config=run/provider_api_key"
+  fi
+  if [ -d "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys" ]; then
+    mkdir -p "$ADAPTER_TARGET/run"
+    rm -rf "$ADAPTER_TARGET/run/provider_api_keys"
+    cp -R "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys" "$ADAPTER_TARGET/run/provider_api_keys"
+    log "restore_adapter_runtime_config=run/provider_api_keys"
+  fi
+
+  rm -rf "$ADAPTER_CONFIG_BACKUP"
+  ADAPTER_CONFIG_BACKUP=""
 }
 
 enable_exec_permissions() {
@@ -117,7 +162,9 @@ install_wps_plugin() {
 install_adapter() {
   [ -d "$ADAPTER_SOURCE" ] || fail "adapter_source_missing"
   mkdir -p "$INSTALL_ROOT"
-  copy_dir "$ADAPTER_SOURCE" "$ADAPTER_TARGET"
+  preserve_adapter_runtime_config
+  copy_dir "$ADAPTER_SOURCE" "${ADAPTER_TARGET}"
+  restore_adapter_runtime_config
   enable_exec_permissions
   log "adapter_installed=$ADAPTER_TARGET"
 }

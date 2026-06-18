@@ -9,7 +9,11 @@ const manifest = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/manifest.json",
   "utf8"
 );
-assert.ok(manifest.includes('"version": "0.12.16-alpha"'));
+const helperJs = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js",
+  "utf8"
+);
+assert.ok(manifest.includes('"version": "0.13.7-alpha"'));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
@@ -39,10 +43,17 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.12.16-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.12.16-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.12.16-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.13.7-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.13.7-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.13.7-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
+assert.ok(html.includes('id="result-view-switch"'));
+assert.ok(html.includes('id="btn-result-preview"'));
+assert.ok(html.includes('id="btn-result-compare"'));
+assert.ok(html.includes('id="btn-result-plain"'));
+assert.ok(html.includes('id="review-record-actions"'));
+assert.ok(html.includes('id="btn-copy-review-record"'));
+assert.ok(html.includes('id="btn-preview-review-record"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
 assert.ok(html.includes('id="task-title"'));
@@ -109,6 +120,16 @@ assert.ok(js.includes("getInitialMode"));
 assert.ok(js.includes("documentReview"));
 assert.ok(js.includes("formatReview"));
 assert.ok(js.includes("/word/document-review"));
+assert.ok(js.includes("/word/document-review/jobs"));
+assert.ok(js.includes("pollDocumentReviewJob"));
+assert.ok(js.includes("DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240"));
+assert.ok(js.includes("DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS = 15000"));
+assert.ok(js.includes("DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000"));
+assert.ok(js.includes("documentReviewPollErrorCount"));
+assert.ok(js.includes("文档审查状态查询暂时失败"));
+assert.ok(js.includes("状态查询暂时未连上本地 adapter"));
+assert.ok(js.includes("这不代表模型后台任务失败"));
+assert.ok(js.includes("文档审查状态查询持续失败"));
 assert.ok(js.includes("DOCUMENT_REVIEW_EXTRACTION_OPTIONS"));
 assert.ok(js.includes('setPlainResult("正在读取文档审查范围，请稍候。")'));
 assert.ok(js.includes("startDocumentReviewWaitFeedback"));
@@ -156,24 +177,51 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.12.16-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.13.7-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
 assert.ok(js.includes("word.document_review"));
+assert.ok(js.includes("renderDocumentReviewResult"));
+assert.ok(js.includes("documentReviewRecordPreviewVisible"));
+assert.ok(js.includes("toggleDocumentReviewRecordPreview"));
+assert.ok(js.includes("返回审查结果"));
+assert.ok(js.includes("renderDocumentReviewResult(state.documentReviewData)"));
+assert.ok(js.includes("provider_timeout"));
 assert.ok(js.includes("word.format_review"));
 assert.ok(js.includes("FORMAT_REVIEW_EXTRACTION_OPTIONS"));
 assert.ok(js.includes("maxPlainTextLength: 12000"));
 assert.ok(js.includes("maxParagraphs: 80"));
 assert.ok(js.includes("preferSelectionTextParagraphs: true"));
+assert.ok(js.includes("collectParagraphsFromSelectionSources"));
 assert.ok(js.includes("avoidFullTextRead: true"));
 assert.ok(js.includes("avoidFallbackTextRead: true"));
 assert.ok(js.includes("正在读取格式审查范围"));
 assert.ok(js.includes("扫描段落"));
 assert.ok(js.includes("AI 识别段落"));
+assert.ok(helperJs.includes("buildHighlightedSmartWriteResult"));
+assert.ok(helperJs.includes("smart-diff-highlight"));
+assert.ok(helperJs.includes("collectParagraphsFromSelectionSources"));
+assert.ok(helperJs.includes("normalizeAlignmentValue"));
 assert.ok(js.includes("本地兜底段落"));
 assert.ok(js.includes("以下仅显示需要调整的格式项"));
-assert.ok(js.includes("未读取到正文段落，未调用 Dify"));
+assert.ok(js.includes("未读取到正文段落，未调用模型后台"));
+const taskpaneFrontendText = html + js + helperJs;
+assert.ok(taskpaneFrontendText.includes("模型后台"));
+[
+  "Dify 后台",
+  "Dify 正在",
+  "等待 Dify",
+  "未调用 Dify",
+  "Dify 未返回",
+  "Dify 请求失败",
+  "Dify 原始回复",
+  "Dify 已返回",
+  "Dify 文档审查",
+  "统一 Dify Chat API Key"
+].forEach(function (phrase) {
+  assert.ok(!taskpaneFrontendText.includes(phrase), phrase);
+});
 assert.ok(js.includes("resolveSelectionScope(false)"));
 assert.ok(!js.includes("请输入大模型 API URL 后再保存"));
 assert.ok(!js.includes("renderProviderOptions"));
@@ -199,6 +247,7 @@ assert.ok(css.includes(".action-bar"));
 assert.ok(css.includes(".glass-card"));
 assert.ok(css.includes(".copy-button"));
 assert.ok(css.includes(".markdown-output"));
+assert.ok(css.includes(".smart-diff-highlight"));
 assert.ok(css.includes("#result-output.plain-output"));
 assert.ok(css.includes(".markdown-table-wrap"));
 assert.ok(css.includes("[hidden]"));
@@ -247,7 +296,7 @@ assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.12.16-alpha'));
+assert.ok(ribbonJs.includes('build=0.13.7-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 
 const uvicornStart = fs.readFileSync(

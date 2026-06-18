@@ -389,6 +389,47 @@ button:active {
   font-weight: 700;
 }
 
+.result-view-switch {
+  display: inline-grid;
+  grid-template-columns: repeat(3, auto);
+  gap: 4px;
+  margin-top: 8px;
+  padding: 3px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: rgba(238, 244, 251, 0.88);
+}
+
+.view-switch-button {
+  min-height: 28px;
+  padding: 5px 10px;
+  border-radius: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.view-switch-button.active {
+  background: var(--surface-strong);
+  color: var(--accent);
+  box-shadow: var(--shadow-soft);
+}
+
+.review-record-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.review-record-actions .view-switch-button {
+  border: 1px solid var(--hairline);
+  background: var(--surface-strong);
+}
+
 .mini-button {
   min-width: 66px;
   padding: 8px 12px;
@@ -599,6 +640,94 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .markdown-output strong {
   font-weight: 760;
+}
+
+.markdown-output mark.smart-diff-highlight {
+  background: #fff3a3;
+  border-radius: 2px;
+  color: inherit;
+  padding: 0 2px;
+}
+
+.document-review-result {
+  display: grid;
+  gap: 12px;
+}
+
+.review-summary-box,
+.review-issue-card {
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-soft);
+}
+
+.review-summary-box {
+  padding: 12px;
+}
+
+.review-summary-box h3,
+.review-issue-card h4 {
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.review-summary-box p,
+.review-issue-card p {
+  margin: 6px 0 0;
+}
+
+.review-category-section {
+  display: grid;
+  gap: 8px;
+}
+
+.review-category-section h3 {
+  margin: 6px 0 0;
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.review-issue-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+}
+
+.review-issue-meta,
+.review-status-row,
+.review-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.review-issue-meta span,
+.review-status-pill {
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  background: rgba(238, 244, 251, 0.82);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-status-pill.done {
+  color: #0b6b42;
+  background: rgba(222, 247, 232, 0.82);
+}
+
+.review-status-pill.ignored {
+  color: #7a4f00;
+  background: rgba(255, 244, 214, 0.82);
+}
+
+.review-action-row button {
+  min-height: 28px;
+  padding: 5px 9px;
+  border-radius: 10px;
+  font-size: 12px;
 }
 
 .diagnostics-card {
