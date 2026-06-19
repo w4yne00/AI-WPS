@@ -17,9 +17,10 @@ class ReviewModeContractTests(unittest.TestCase):
 
         self.assertEqual(
             list(status.keys()),
-            ["word.smart_write", "word.document_review", "word.format_review"],
+            ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review"],
         )
         self.assertEqual(status["word.smart_write"]["apiKeyRef"], "word_smart_write")
+        self.assertEqual(status["word.smart_imitation"]["apiKeyRef"], "word_smart_imitation")
         self.assertEqual(status["word.document_review"]["apiKeyRef"], "word_document_review")
         self.assertEqual(status["word.format_review"]["apiKeyRef"], "word_format_review")
 
@@ -28,10 +29,10 @@ class ReviewModeContractTests(unittest.TestCase):
 
         diagnostics = client.build_route_diagnostics()
 
-        self.assertEqual(diagnostics["version"], "0.13.7-alpha")
+        self.assertEqual(diagnostics["version"], "0.14.0-alpha")
         self.assertEqual(
             list(diagnostics["taskApiKeys"].keys()),
-            ["word.smart_write", "word.document_review", "word.format_review"],
+            ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review"],
         )
 
     def test_executable_code_no_longer_references_deleted_word_routes(self) -> None:

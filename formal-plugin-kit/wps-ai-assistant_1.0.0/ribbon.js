@@ -13,6 +13,7 @@ function OnAddinLoad(ribbonUI) {
 function resolveMode(controlId) {
   var modeMap = {
     btnAiSmartWrite: "smartWrite",
+    btnAiSmartImitation: "smartImitation",
     btnAiDocumentReview: "documentReview",
     btnAiFormatReview: "formatReview",
     btnAiSettings: "settings",
@@ -23,6 +24,7 @@ function resolveMode(controlId) {
 
 var ribbonIconMap = {
   btnAiSmartWrite: "assets/icon-smart-write.png",
+  btnAiSmartImitation: "assets/icon-smart-imitation.png",
   btnAiDocumentReview: "assets/icon-review.png",
   btnAiFormatReview: "assets/icon-format.png",
   btnAiSettings: "assets/icon-settings.png",
@@ -53,7 +55,7 @@ function OnAction(control) {
     var url = location.href.replace(/[^\/]*$/, "");
     closeCurrentTaskPane();
     var taskPane = window.Application.CreateTaskPane(
-      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.13.7-alpha"
+      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.14.0-alpha"
     );
     window.Application.WpsAiAssistantTaskPane = taskPane;
     taskPane.Visible = true;

@@ -27,11 +27,12 @@ from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
+from app.services.word.smart_imitator import WordSmartImitator
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.13.7-alpha"
+VERSION = "0.14.0-alpha"
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 
 
@@ -59,6 +60,14 @@ def list_templates():
 def smart_write(payload):
     request = parse_word_request(payload)
     data = WordRewriter().smart_write(request, trace_id="standalone-word-smart-write")
+    if hasattr(RewriteResponseData, "model_validate"):
+        return RewriteResponseData.model_validate(data).model_dump(by_alias=True)
+    return RewriteResponseData(**data).dict(by_alias=True)
+
+
+def smart_imitation(payload):
+    request = parse_word_request(payload)
+    data = WordSmartImitator().imitate(request, trace_id="standalone-word-smart-imitation")
     if hasattr(RewriteResponseData, "model_validate"):
         return RewriteResponseData.model_validate(data).model_dump(by_alias=True)
     return RewriteResponseData(**data).dict(by_alias=True)
@@ -254,6 +263,10 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/word/smart-write":
             self._write(200, envelope("standalone-word-smart-write", "word.smart_write", smart_write(payload)))
+            return
+
+        if path == "/word/smart-imitation":
+            self._write(200, envelope("standalone-word-smart-imitation", "word.smart_imitation", smart_imitation(payload)))
             return
 
         if path == "/word/document-review":

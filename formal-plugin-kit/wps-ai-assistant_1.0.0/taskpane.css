@@ -231,6 +231,15 @@ textarea {
   line-height: 1.55;
 }
 
+#smart-imitation-options textarea {
+  min-height: 88px;
+  resize: vertical;
+}
+
+#imitation-template-text {
+  min-height: 132px;
+}
+
 .rewrite-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

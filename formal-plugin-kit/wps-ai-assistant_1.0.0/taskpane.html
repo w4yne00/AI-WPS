@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WPS AI 助理</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.13.7-alpha" />
+    <link rel="stylesheet" href="./taskpane.css?v=0.14.0-alpha" />
   </head>
   <body>
     <div class="app">
@@ -102,6 +102,23 @@
             <label class="field review-prompt-field" hidden>
               <span>审查重点提示词</span>
               <textarea id="technical-review-prompt" rows="8"></textarea>
+            </label>
+          </div>
+
+          <div id="smart-imitation-options" class="mode-block smart-imitation-options" hidden>
+            <label class="field" for="imitation-template-text">
+              <span>仿写模板</span>
+              <textarea id="imitation-template-text" rows="6" placeholder="可先在 Word 中选中文本，也可在此粘贴模板段落。"></textarea>
+            </label>
+
+            <label class="field" for="imitation-requirement">
+              <span>仿写需求</span>
+              <textarea id="imitation-requirement" rows="4" placeholder="说明要仿写成什么专业方向、用途、对象和语气。"></textarea>
+            </label>
+
+            <label class="field" for="imitation-reference-material">
+              <span>参考素材</span>
+              <textarea id="imitation-reference-material" rows="5" placeholder="选填。粘贴事实背景、参数、问题清单或项目材料。"></textarea>
             </label>
           </div>
 
@@ -249,7 +266,7 @@
         </section>
       </section>
     </div>
-    <script src="./taskpane-helpers.js?v=0.13.7-alpha"></script>
-    <script src="./taskpane.js?v=0.13.7-alpha"></script>
+    <script src="./taskpane-helpers.js?v=0.14.0-alpha"></script>
+    <script src="./taskpane.js?v=0.14.0-alpha"></script>
   </body>
 </html>

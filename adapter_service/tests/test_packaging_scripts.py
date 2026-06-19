@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.13.7-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.14.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -59,8 +59,17 @@ class PackagingScriptTests(unittest.TestCase):
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
 
         self.assertIn("dify-smart-write-workflow.md", script)
+        self.assertIn("dify-smart-imitation-workflow.md", script)
         self.assertIn("dify-document-review-workflow.md", script)
         self.assertIn("dify-format-review-workflow.md", script)
+
+    def test_smart_imitation_icon_and_config_are_packaged(self) -> None:
+        self.assertTrue(
+            (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png").exists()
+        )
+        self.assertTrue((ROOT / "docs/operations/dify-smart-imitation-workflow.md").exists())
+        config = (ROOT / "config/adapter.example.json").read_text(encoding="utf-8")
+        self.assertIn('"word.smart_imitation": "word_smart_imitation"', config)
 
     def test_phase1_installer_preserves_adapter_runtime_configuration(self) -> None:
         script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(encoding="utf-8")
@@ -101,6 +110,7 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("task-api-key-list", html)
         self.assertIn("/provider/task-api-key", js)
         self.assertIn("word.smart_write", js)
+        self.assertIn("word.smart_imitation", js)
         self.assertIn("word.document_review", js)
         self.assertIn("word.format_review", js)
         self.assertNotIn("word.smart_format", js)
@@ -151,14 +161,16 @@ class PackagingScriptTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        for label in ["智能编写", "文档审查", "格式审查", "设置"]:
+        for label in ["智能编写", "智能仿写", "文档审查", "格式审查", "设置"]:
             self.assertIn('label="{0}"'.format(label), ribbon)
         for old_label in ["格式校对", "智能排版", "技术文档审查"]:
             self.assertNotIn('label="{0}"'.format(old_label), ribbon)
         self.assertNotIn("智能改写", ribbon)
         self.assertNotIn("智能续写", ribbon)
         self.assertIn("btnAiSmartWrite", ribbon)
+        self.assertIn("btnAiSmartImitation", ribbon)
         self.assertNotIn("btnAiRewrite", ribbon)
         self.assertNotIn("btnAiContinue", ribbon)
         self.assertIn("icon-smart-write.png", ribbon_js)
+        self.assertIn("icon-smart-imitation.png", ribbon_js)
         self.assertIn("icon-review.png", ribbon_js)

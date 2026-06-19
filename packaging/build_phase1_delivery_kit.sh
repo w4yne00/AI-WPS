@@ -23,6 +23,7 @@ cp -R "$ROOT_DIR/config" "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/templates" "$TMP_DIR/packages/adapter-start-kit/"
 mkdir -p "$TMP_DIR/docs/operations"
 cp "$ROOT_DIR/docs/operations/dify-smart-write-workflow.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/dify-smart-imitation-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-document-review-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-format-review-workflow.md" "$TMP_DIR/docs/operations/"
 

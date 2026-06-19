@@ -4,7 +4,7 @@ set -euo pipefail
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PORT="${1:-18100}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
-EXPECTED_VERSION="${EXPECTED_VERSION:-0.13.7-alpha}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-0.14.0-alpha}"
 PID_FILE="$KIT_ROOT/run/adapter.pid"
 LOG_DIR="$KIT_ROOT/logs"
 LOG_FILE="$LOG_DIR/adapter.log"

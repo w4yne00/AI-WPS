@@ -13,7 +13,7 @@ from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
 
-app = FastAPI(title="wps-ai-adapter", version="0.13.7-alpha")
+app = FastAPI(title="wps-ai-adapter", version="0.14.0-alpha")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -82,6 +82,7 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
 def _task_type_from_path(path: str) -> str:
     return {
         "/word/smart-write": "word.smart_write",
+        "/word/smart-imitation": "word.smart_imitation",
         "/word/document-review": "word.document_review",
         "/word/document-review/jobs": "word.document_review",
         "/word/format-review": "word.format_review",

@@ -28,6 +28,7 @@
 
 <p align="center">
   <code>Smart Write</code>
+  <code>Smart Imitation</code>
   <code>Document Review</code>
   <code>Format Review</code>
   <code>Template Rules</code>
@@ -74,12 +75,12 @@ The current scope is **Phase 1: platform foundation + Word workflows**, designed
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.13.7-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.13.7-20260618` |
+| Version | `v0.14.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-0.14.0-20260619` |
 | Phase | `P1` platform foundation + Word |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260618.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260619.tar.gz` |
 
 Version rule format:
 
@@ -101,11 +102,12 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Four task entries | WPS AI tab exposes Smart Write, Document Review, Format Review, and Settings as focused ribbon actions |
+| Five task entries | WPS AI tab exposes Smart Write, Smart Imitation, Document Review, Format Review, and Settings as focused ribbon actions |
 | Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
 | Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running model-backend requests keep visible task-pane feedback |
 | Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through both top-level `query` and `inputs.query` |
+| Smart imitation | Adds an independent `word.smart_imitation` model workflow for template-based imitation writing with selected-text or pasted templates, required imitation requirements, optional reference material, and preview/plain-text/copy-only results without comparison or writeback |
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
 | Frosted azure UI | The task pane and Ribbon icon artwork use a bright blue-gray and white Apple-like palette without changing task flow or API behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
@@ -119,6 +121,8 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.14.0-alpha` | Adds the independent Smart Imitation workflow with a dedicated Ribbon entry, task-pane template/requirement/reference inputs, separate `word.smart_imitation` model-backend route, task-level API key, Dify workflow guide, and preview/plain-text/copy-only results without comparison or writeback |
+| `v0.13.8-alpha` | Hardens long-running Document Review when model think mode or local connections cross the 180-second range: the task pane now submits a recoverable client job ID, persists the active job locally, uses short status-query timeouts, resumes unfinished jobs after task-pane reload, and keeps low-frequency polling instead of discarding the job after transient adapter connection failures |
 | `v0.13.7-alpha` | Improves the Document Review record preview toggle: clicking “Preview review record” now switches to the generated review record, and clicking the same button again returns to the original Document Review result cards while preserving local issue states |
 | `v0.13.6-alpha` | Further hardens slow Document Review in model think mode: raises the provider wait budget to 1800 seconds, expands transient status-poll failure tolerance to 240 retries over 60 minutes, and softens polling-stage adapter fetch failures so the task pane keeps waiting instead of presenting a premature connection-failure interpretation |
 | `v0.13.5-alpha` | Hardens slow Document Review model-backend waits: raises the Document Review provider budget to 600 seconds, lets task-pane status polling tolerate up to 120 transient query failures over 30 minutes, and changes final feedback to point users to recent task diagnostics instead of reporting an immediate adapter/model connection failure |

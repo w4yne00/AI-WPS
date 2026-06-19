@@ -1,9 +1,22 @@
+import re
 import threading
 import time
 from typing import Dict, Optional
 
 from app.core.models import WordDocumentRequest
+from app.services.provider_client import DOCUMENT_REVIEW_TIMEOUT_SECONDS
 from app.services.word.document_reviewer import WordDocumentReviewer
+
+
+CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
+RUNNING_MESSAGE = "模型后台正在处理文档审查，adapter 会继续等待结果。"
+
+
+def normalize_client_job_id(value: str) -> str:
+    text = str(value or "").strip()
+    if CLIENT_JOB_ID_PATTERN.match(text):
+        return text
+    return ""
 
 
 class DocumentReviewJobStore:
@@ -14,21 +27,27 @@ class DocumentReviewJobStore:
         self._lock = threading.Lock()
 
     def start(self, request: WordDocumentRequest, trace_id: str) -> Dict:
+        job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
         job = {
-            "jobId": trace_id,
+            "jobId": job_id,
             "traceId": trace_id,
             "status": "running",
             "createdAt": time.time(),
             "updatedAt": time.time(),
+            "runningMessage": RUNNING_MESSAGE,
+            "providerTimeoutSeconds": DOCUMENT_REVIEW_TIMEOUT_SECONDS,
             "result": None,
             "error": None,
         }
         with self._lock:
-            self._jobs[trace_id] = job
+            existing = self._jobs.get(job_id)
+            if existing:
+                return self._public_job(existing)
+            self._jobs[job_id] = job
             self._trim_locked()
-        worker = threading.Thread(target=self._run, args=(trace_id, request), daemon=True)
+        worker = threading.Thread(target=self._run, args=(job_id, request, trace_id), daemon=True)
         worker.start()
-        return self.get(trace_id) or job
+        return self.get(job_id) or job
 
     def get(self, job_id: str) -> Optional[Dict]:
         with self._lock:
@@ -37,14 +56,15 @@ class DocumentReviewJobStore:
                 return None
             return self._public_job(job)
 
-    def _run(self, job_id: str, request: WordDocumentRequest) -> None:
+    def _run(self, job_id: str, request: WordDocumentRequest, trace_id: str) -> None:
         try:
-            result = self.reviewer.review(request, trace_id=job_id)
-            self._update(job_id, status="completed", result=result)
+            result = self.reviewer.review(request, trace_id=trace_id)
+            self._update(job_id, status="completed", result=result, runningMessage="")
         except Exception as exc:
             self._update(
                 job_id,
                 status="failed",
+                runningMessage="",
                 error={
                     "code": "DOCUMENT_REVIEW_JOB_FAILED",
                     "message": str(exc) or "文档审查后台任务执行失败。",
@@ -67,13 +87,19 @@ class DocumentReviewJobStore:
             self._jobs.pop(job["jobId"], None)
 
     def _public_job(self, job: Dict) -> Dict:
+        now = time.time()
         data = {
             "jobId": job["jobId"],
             "traceId": job["traceId"],
             "status": job["status"],
             "createdAt": job["createdAt"],
             "updatedAt": job["updatedAt"],
+            "elapsedSeconds": int(max(now - job.get("createdAt", now), 0)),
+            "heartbeatAgeSeconds": int(max(now - job.get("updatedAt", now), 0)),
+            "providerTimeoutSeconds": job.get("providerTimeoutSeconds", DOCUMENT_REVIEW_TIMEOUT_SECONDS),
         }
+        if job.get("runningMessage"):
+            data["runningMessage"] = job["runningMessage"]
         if job.get("result") is not None:
             data["result"] = job["result"]
         if job.get("error") is not None:

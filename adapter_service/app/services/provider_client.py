@@ -172,6 +172,32 @@ def build_smart_write_prompt(
     return "\n".join(lines)
 
 
+def build_smart_imitation_prompt(template_text: str, requirement: str, reference_material: str = "") -> str:
+    reference_text = reference_material.strip() or "未提供参考素材。"
+    return "\n".join(
+        [
+            "你是企业办公文档智能仿写助手。",
+            "",
+            "仿写模板：",
+            template_text.strip(),
+            "",
+            "仿写需求：",
+            requirement.strip(),
+            "",
+            "参考素材：",
+            reference_text,
+            "",
+            "要求：",
+            "1. 学习仿写模板的句式、层次、表达节奏和段落结构。",
+            "2. 生成内容必须服务于仿写需求。",
+            "3. 如提供参考素材，应优先基于参考素材，不编造事实、数据、结论或机构名称。",
+            "4. 不要照抄模板中的具体事实、对象、项目名称或数字，除非用户明确要求保留。",
+            "5. 尽量保持模板的段落数量、标题层级、列表结构和语气风格。",
+            "6. 只输出仿写后的正文，不解释仿写过程。",
+        ]
+    )
+
+
 def get_default_document_review_prompt(document_type: str = "technical_solution") -> str:
     return DOCUMENT_REVIEW_PROMPTS.get(document_type, DEFAULT_DOCUMENT_REVIEW_PROMPT)
 
@@ -683,6 +709,7 @@ class ProviderClient:
     def build_task_api_key_status(self, key_base_path: Optional[Path] = None) -> Dict:
         tasks = [
             ("word.smart_write", "智能编写"),
+            ("word.smart_imitation", "智能仿写"),
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
         ]
@@ -709,7 +736,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.13.7-alpha",
+            "version": "0.14.0-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -924,6 +951,35 @@ class ProviderClient:
         return {
             "rewrittenText": rewritten_text,
             "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source()),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
+
+    def smart_imitation(
+        self,
+        template_text: str,
+        requirement: str,
+        reference_material: str,
+        trace_id: str,
+    ) -> Dict:
+        prompt = build_smart_imitation_prompt(template_text, requirement, reference_material)
+        task_type = "word.smart_imitation"
+        if not self.is_task_configured(task_type):
+            logger.info("traceId=%s provider=mock task=word.smart_imitation", trace_id)
+            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            return {
+                "rewrittenText": self._mock_rewrite(template_text, "imitate", requirement),
+                "provider": "mock",
+                "prompt": prompt,
+            }
+
+        body = self.post_task(task_type, trace_id, {}, prompt)
+        rewritten_text = extract_answer(body)
+        logger.info("traceId=%s provider=enterprise-dify-chat task=word.smart_imitation", trace_id)
+        return {
+            "rewrittenText": rewritten_text,
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),

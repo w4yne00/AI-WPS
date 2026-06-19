@@ -11,6 +11,7 @@
   "timeoutSeconds": 75,
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
+    "word.smart_imitation": "word_smart_imitation",
     "word.document_review": "word_document_review",
     "word.format_review": "word_format_review"
   },

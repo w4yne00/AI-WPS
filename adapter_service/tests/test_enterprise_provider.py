@@ -12,12 +12,14 @@ if str(ROOT) not in sys.path:
 
 from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
 from app.core.errors import ProviderTimeoutError
+from app.core.models import WordDocumentRequest
 from app.services.provider_client import (
     ProviderClient,
     build_document_review_prompt,
     build_provider_request_payload,
     build_route_request_payload,
     build_rewrite_prompt,
+    build_smart_imitation_prompt,
     build_smart_write_prompt,
     extract_answer,
     get_last_provider_debug,
@@ -35,6 +37,77 @@ from app.services.template_loader import TemplateLoader
 
 
 class EnterpriseProviderTests(unittest.TestCase):
+    def test_word_request_accepts_smart_imitation_options(self):
+        payload = {
+            "documentId": "imitate.docx",
+            "scene": "word",
+            "selectionMode": "selection",
+            "content": {
+                "plainText": "模板段落。",
+                "paragraphs": [],
+                "headings": [],
+            },
+            "options": {
+                "imitationRequirement": "仿写成安全整改通知。",
+                "imitationReferenceMaterial": "整改对象：核心系统。",
+            },
+        }
+        if hasattr(WordDocumentRequest, "model_validate"):
+            request = WordDocumentRequest.model_validate(payload)
+        else:
+            request = WordDocumentRequest.parse_obj(payload)
+
+        self.assertEqual(request.options.imitation_requirement, "仿写成安全整改通知。")
+        self.assertEqual(request.options.imitation_reference_material, "整改对象：核心系统。")
+
+    def test_build_smart_imitation_prompt_includes_template_requirement_reference_and_constraints(self):
+        prompt = build_smart_imitation_prompt(
+            template_text="本项目坚持问题导向，持续完善闭环机制。",
+            requirement="仿写成网络安全整改说明。",
+            reference_material="整改范围：终端账号、日志审计、漏洞修复。",
+        )
+
+        self.assertIn("企业办公文档智能仿写助手", prompt)
+        self.assertIn("本项目坚持问题导向", prompt)
+        self.assertIn("仿写成网络安全整改说明", prompt)
+        self.assertIn("终端账号、日志审计、漏洞修复", prompt)
+        self.assertIn("不编造事实", prompt)
+        self.assertIn("只输出仿写后的正文", prompt)
+
+    def test_smart_imitation_uses_independent_task_type_and_task_key(self):
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self):
+                super().__init__(AppSettings())
+                self.calls = []
+
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
+                return True
+
+            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+                self.calls.append(
+                    {
+                        "taskType": task_type,
+                        "traceId": trace_id,
+                        "inputData": input_data,
+                        "query": query,
+                        "timeoutSeconds": timeout_seconds,
+                    }
+                )
+                return {"answer": "仿写后的正文。"}
+
+        provider = CapturingProviderClient()
+
+        result = provider.smart_imitation(
+            template_text="模板正文。",
+            requirement="仿写成技术风险提示。",
+            reference_material="风险：接口超时。",
+            trace_id="trace-smart-imitation",
+        )
+
+        self.assertEqual(result["rewrittenText"], "仿写后的正文。")
+        self.assertEqual(provider.calls[0]["taskType"], "word.smart_imitation")
+        self.assertIn("仿写成技术风险提示", provider.calls[0]["query"])
+
     def test_load_settings_reads_provider_fields(self) -> None:
         tmp_dir = Path("tmp-test-config")
         tmp_dir.mkdir(exist_ok=True)

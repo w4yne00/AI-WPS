@@ -1,12 +1,15 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.13.7-alpha";
+  var FRONTEND_BUILD_VERSION = "0.14.0-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
   var DOCUMENT_REVIEW_POLL_INTERVAL_MS = 3000;
   var DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS = 15000;
+  var DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS = 30000;
+  var DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 10000;
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
+  var DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-document-review-active-job-v1";
   var FORMAT_REVIEW_EXTRACTION_OPTIONS = {
     maxParagraphs: 80,
     maxParagraphTextLength: 800,
@@ -91,6 +94,7 @@
   ];
   var TASK_API_KEY_DEFS = [
     { taskType: "word.smart_write", label: "智能编写" },
+    { taskType: "word.smart_imitation", label: "智能仿写" },
     { taskType: "word.document_review", label: "文档审查" },
     { taskType: "word.format_review", label: "格式审查" }
   ];
@@ -105,6 +109,18 @@
       showInstruction: true,
       showPromptFragments: false,
       showTemplate: false
+    },
+    smartImitation: {
+      title: "智能仿写",
+      primaryText: "生成仿写内容",
+      runningText: "正在执行智能仿写...",
+      doneText: "智能仿写结果已生成。",
+      showRewriteOptions: false,
+      showInstruction: false,
+      showTemplate: false,
+      showDocumentReviewOptions: false,
+      showFixedTemplate: false,
+      showSmartImitationOptions: true
     },
     documentReview: {
       title: "文档审查",
@@ -138,6 +154,9 @@
     userInstruction: "",
     technicalDocumentType: "technical_solution",
     technicalReviewPrompt: DEFAULT_DOCUMENT_REVIEW_PROMPT,
+    imitationTemplateText: "",
+    imitationRequirement: "",
+    imitationReferenceMaterial: "",
     traceId: "",
     pendingApplyAction: "",
     rewriteResult: null,
@@ -185,6 +204,60 @@
   function setTrace(traceId) {
     state.traceId = traceId || "";
     byId("trace-line").textContent = traceId || "未检测";
+  }
+
+  function buildDocumentReviewClientJobId() {
+    return [
+      "client-doc-review",
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 10)
+    ].join("-");
+  }
+
+  function loadDocumentReviewActiveJob() {
+    var raw;
+    try {
+      raw = window.localStorage && window.localStorage.getItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveDocumentReviewActiveJob(job) {
+    if (!job || !job.jobId) {
+      return;
+    }
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+          jobId: job.jobId,
+          traceId: job.traceId || "",
+          startedAt: job.startedAt || Date.now(),
+          frontendVersion: FRONTEND_BUILD_VERSION
+        }));
+      }
+    } catch (error) {
+      // localStorage may be unavailable in some WPS WebView modes; polling still works in memory.
+    }
+  }
+
+  function clearDocumentReviewActiveJob(jobId) {
+    var active;
+    try {
+      if (!window.localStorage) {
+        return;
+      }
+      if (jobId) {
+        active = loadDocumentReviewActiveJob();
+        if (active && active.jobId && active.jobId !== jobId) {
+          return;
+        }
+      }
+      window.localStorage.removeItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+    } catch (error) {
+      // Ignore storage cleanup failures; they should not block task-pane rendering.
+    }
   }
 
   function setProviderLine(providerName, configured) {
@@ -316,6 +389,21 @@
     updateResultViewButtons();
   }
 
+  function hideCompareForSmartImitation() {
+    var compareButton = byId("btn-result-compare");
+    if (!compareButton) {
+      return;
+    }
+    if (state.currentMode !== "smartImitation") {
+      compareButton.hidden = false;
+      return;
+    }
+    compareButton.hidden = true;
+    if (state.resultViewMode === "compare") {
+      setResultViewMode("preview");
+    }
+  }
+
   function setReviewRecordActionsVisible(visible) {
     var node = byId("review-record-actions");
     var previewButton = byId("btn-preview-review-record");
@@ -363,7 +451,7 @@
     if (!state.smartWritePreviewModel) {
       return;
     }
-    state.resultViewMode = mode;
+    state.resultViewMode = state.currentMode === "smartImitation" && mode === "compare" ? "preview" : mode;
     renderSmartWritePreviewMode();
   }
 
@@ -495,13 +583,21 @@
     byId("template-options").hidden = !config.showTemplate;
     byId("document-review-options").hidden = !config.showDocumentReviewOptions;
     byId("fixed-template-options").hidden = !config.showFixedTemplate;
+    byId("smart-imitation-options").hidden = !config.showSmartImitationOptions;
     byId("style-field-label").textContent = config.styleLabel || "表达风格";
     byId("btn-run-primary").textContent = config.primaryText;
     byId("btn-apply").hidden = state.currentMode !== "smartWrite";
+    hideCompareForSmartImitation();
     updateRewritePromptPreview();
     state.pendingApplyAction = "";
     setApplyEnabled(false);
     setStatus("等待操作。");
+    if (state.currentMode === "smartImitation") {
+      fillSmartImitationTemplateFromSelection();
+    }
+    if (state.currentMode === "documentReview") {
+      resumeDocumentReviewActiveJob();
+    }
   }
 
   function getHostApplication() {
@@ -556,6 +652,24 @@
     return helpers.getEffectiveSelectionText
       ? helpers.getEffectiveSelectionText(getSelectionSources(document))
       : "";
+  }
+
+  function fillSmartImitationTemplateFromSelection() {
+    var document = getActiveDocument();
+    var selectedText = "";
+    if (!document || state.imitationTemplateText) {
+      return;
+    }
+    try {
+      selectedText = getSelectionText(document);
+    } catch (error) {
+      selectedText = "";
+    }
+    selectedText = String(selectedText || "").trim();
+    if (selectedText) {
+      state.imitationTemplateText = selectedText;
+      byId("imitation-template-text").value = selectedText;
+    }
   }
 
   function truncateText(text, maxLength) {
@@ -739,7 +853,10 @@
     state.scopeWatcher = setInterval(updateScopeIndicator, 800);
   }
 
-  function request(path, payload) {
+  function request(path, payload, requestOptions) {
+    var timeoutMs = requestOptions && requestOptions.timeoutMs;
+    var controller = null;
+    var timeoutId = null;
     var options = {
       method: payload ? "POST" : "GET"
     };
@@ -751,11 +868,23 @@
       options.body = JSON.stringify(payload);
     }
 
+    if (timeoutMs && typeof AbortController !== "undefined") {
+      controller = new AbortController();
+      options.signal = controller.signal;
+      timeoutId = setTimeout(function () {
+        controller.abort();
+      }, timeoutMs);
+    }
+
     return fetch(ADAPTER_BASE_URL + path, {
       method: options.method,
       headers: options.headers,
-      body: options.body
+      body: options.body,
+      signal: options.signal
     }).then(function (response) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
       return response.json().then(function (body) {
         if (!response.ok) {
           var validation = body.data && body.data.validation;
@@ -775,6 +904,11 @@
         }
         return body;
       });
+    }, function (error) {
+      if (timeoutId) {
+        clearTimeout(timeoutId);
+      }
+      throw error;
     });
   }
 
@@ -788,6 +922,9 @@
 
   function describeDocumentReviewError(error) {
     var message = describeFetchError(error);
+    if (error && error.name === "AbortError") {
+      return "文档审查任务提交请求超过 10 秒未返回，任务窗格将尝试按本地任务编号恢复查询。";
+    }
     if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
       return "模型后台文档审查未按时返回，adapter 已停止等待。请缩小审查范围后重试，或到“设置-最近一次任务诊断”查看 trace 和 provider 状态。";
     }
@@ -799,6 +936,9 @@
 
   function describeDocumentReviewPollError(error) {
     var message = describeFetchError(error);
+    if (error && error.name === "AbortError") {
+      return "状态查询请求超过 10 秒未返回，将继续自动刷新。";
+    }
     if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
       return "模型后台文档审查仍未按时返回，adapter 可能仍在等待或已返回超时诊断。";
     }
@@ -1511,7 +1651,9 @@
     if (!jobId || state.documentReviewJobId !== jobId) {
       return;
     }
-    request("/word/document-review/jobs/" + encodeURIComponent(jobId))
+    request("/word/document-review/jobs/" + encodeURIComponent(jobId), null, {
+      timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+    })
       .then(function (body) {
         var job = body.data || {};
         if (state.documentReviewJobId !== jobId) {
@@ -1519,7 +1661,13 @@
         }
         state.documentReviewPollErrorCount = 0;
         setTrace(body.traceId || job.traceId || jobId);
+        saveDocumentReviewActiveJob({
+          jobId: jobId,
+          traceId: body.traceId || job.traceId || "",
+          startedAt: state.documentReviewPollStartedAt || Date.now()
+        });
         if (job.status === "completed") {
+          clearDocumentReviewActiveJob(jobId);
           state.documentReviewJobId = "";
           state.documentReviewPollStartedAt = 0;
           stopWaiting();
@@ -1527,6 +1675,7 @@
           return;
         }
         if (job.status === "failed") {
+          clearDocumentReviewActiveJob(jobId);
           state.documentReviewJobId = "";
           state.documentReviewPollStartedAt = 0;
           stopWaiting();
@@ -1535,32 +1684,56 @@
           return;
         }
         setStatus("文档审查仍在模型后台处理中...");
+        if (job.elapsedSeconds || job.runningMessage) {
+          setPlainResult([
+            job.runningMessage || "模型后台正在处理文档审查。",
+            "已等待：" + (job.elapsedSeconds || 0) + " 秒",
+            "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
+            "任务编号：" + jobId
+          ].join("\n"));
+        }
         scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_INTERVAL_MS);
       })
       .catch(function (error) {
         var elapsed;
         var message;
+        var withinRetryBudget;
+        var retryDelay;
         if (state.documentReviewJobId !== jobId) {
           return;
         }
         message = describeDocumentReviewPollError(error);
         state.documentReviewPollErrorCount = (state.documentReviewPollErrorCount || 0) + 1;
         elapsed = Date.now() - (state.documentReviewPollStartedAt || Date.now());
-        if (
-          !isFatalDocumentReviewPollError(error) &&
-          state.documentReviewPollErrorCount <= DOCUMENT_REVIEW_POLL_MAX_ERRORS &&
-          elapsed <= DOCUMENT_REVIEW_POLL_MAX_WAIT_MS
-        ) {
-          setStatus("文档审查状态查询暂时失败，正在继续等待模型后台返回...");
+        if (!isFatalDocumentReviewPollError(error)) {
+          withinRetryBudget = (
+            state.documentReviewPollErrorCount <= DOCUMENT_REVIEW_POLL_MAX_ERRORS &&
+            elapsed <= DOCUMENT_REVIEW_POLL_MAX_WAIT_MS
+          );
+          retryDelay = withinRetryBudget
+            ? DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS
+            : DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS;
+          saveDocumentReviewActiveJob({
+            jobId: jobId,
+            traceId: state.traceId || "",
+            startedAt: state.documentReviewPollStartedAt || Date.now()
+          });
+          setStatus(withinRetryBudget
+            ? "文档审查状态查询暂时失败，正在继续等待模型后台返回..."
+            : "文档审查任务连接中断，正在尝试恢复状态查询...");
           setPlainResult([
-            "文档审查状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。",
+            withinRetryBudget
+              ? "文档审查状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。"
+              : "文档审查任务连接中断，前台不会丢弃任务编号，将继续低频自动刷新。",
             "这不代表模型后台任务失败；如果模型后台已收到请求，请保持 WPS 和 adapter 打开。",
             "已重试：" + state.documentReviewPollErrorCount + "/" + DOCUMENT_REVIEW_POLL_MAX_ERRORS,
+            "任务编号：" + jobId,
             "最近错误：" + message
           ].join("\n"));
-          scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS);
+          scheduleDocumentReviewPoll(jobId, stopWaiting, retryDelay);
           return;
         }
+        clearDocumentReviewActiveJob(jobId);
         state.documentReviewJobId = "";
         state.documentReviewPollStartedAt = 0;
         state.documentReviewPollErrorCount = 0;
@@ -1573,6 +1746,26 @@
         ].join("\n"));
         stopWaiting();
       });
+  }
+
+  function resumeDocumentReviewActiveJob() {
+    var active = loadDocumentReviewActiveJob();
+    if (!active || !active.jobId || state.currentMode !== "documentReview") {
+      return;
+    }
+    state.documentReviewJobId = active.jobId;
+    state.documentReviewPollStartedAt = active.startedAt || Date.now();
+    state.documentReviewPollErrorCount = 0;
+    setApplyEnabled(false);
+    setReviewRecordActionsVisible(false);
+    setTrace(active.traceId || active.jobId);
+    setStatus("已恢复未完成的文档审查任务，正在查询模型后台结果...");
+    setPlainResult([
+      "检测到未完成的文档审查任务，将继续查询 adapter 后台状态。",
+      "如果模型后台仍在处理，请保持 WPS 和 adapter 打开。",
+      "任务编号：" + active.jobId
+    ].join("\n"));
+    pollDocumentReviewJob(active.jobId, function () {});
   }
 
   function writeClipboardText(text, successMessage) {
@@ -2024,6 +2217,7 @@
     var scope = resolveSelectionScope(false);
     resetSmartWritePreviewState();
     resetDocumentReviewState();
+    clearDocumentReviewActiveJob();
     if (!scope.ok) {
       setStatus(scope.message);
       setResult(scope.message);
@@ -2036,6 +2230,8 @@
 
     setTimeout(function () {
       var stopWaiting;
+      var clientJobId;
+      var startedAt;
       try {
         state.latestDocumentPayload = extractDocument(scope.selectionMode, null, DOCUMENT_REVIEW_EXTRACTION_OPTIONS);
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
@@ -2048,21 +2244,44 @@
       setStatus("正在提交文档审查请求...");
       setPlainResult("文档审查请求已提交，正在等待模型后台返回。");
       stopWaiting = startDocumentReviewWaitFeedback();
-      request("/word/document-review/jobs", state.latestDocumentPayload)
+      clientJobId = buildDocumentReviewClientJobId();
+      startedAt = Date.now();
+      state.latestDocumentPayload.clientJobId = clientJobId;
+      state.documentReviewJobId = clientJobId;
+      state.documentReviewPollStartedAt = startedAt;
+      state.documentReviewPollErrorCount = 0;
+      saveDocumentReviewActiveJob({
+        jobId: clientJobId,
+        traceId: "",
+        startedAt: startedAt
+      });
+      request("/word/document-review/jobs", state.latestDocumentPayload, {
+        timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+      })
         .then(function (body) {
           var job = body.data || {};
-          var jobId = job.jobId || body.traceId;
+          var jobId = job.jobId || clientJobId || body.traceId;
+          if (state.documentReviewJobId !== clientJobId) {
+            return;
+          }
           setTrace(body.traceId || job.traceId || jobId);
           if (!jobId) {
+            clearDocumentReviewActiveJob(clientJobId);
             stopWaiting();
             setStatus("文档审查失败：adapter 未返回后台任务编号。");
             setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
             return;
           }
           state.documentReviewJobId = jobId || "";
-          state.documentReviewPollStartedAt = Date.now();
+          state.documentReviewPollStartedAt = startedAt;
           state.documentReviewPollErrorCount = 0;
+          saveDocumentReviewActiveJob({
+            jobId: jobId,
+            traceId: body.traceId || job.traceId || "",
+            startedAt: startedAt
+          });
           if (job.status === "completed") {
+            clearDocumentReviewActiveJob(jobId);
             state.documentReviewJobId = "";
             state.documentReviewPollStartedAt = 0;
             stopWaiting();
@@ -2075,13 +2294,28 @@
         })
         .catch(function (error) {
           var message;
-          state.documentReviewJobId = "";
-          state.documentReviewPollStartedAt = 0;
-          state.documentReviewPollErrorCount = 0;
-          stopWaiting();
           message = describeDocumentReviewError(error);
-          setStatus("文档审查失败：" + message);
-          setResult(message);
+          if (state.documentReviewJobId !== clientJobId) {
+            return;
+          }
+          if (isFatalDocumentReviewPollError(error)) {
+            clearDocumentReviewActiveJob(clientJobId);
+            state.documentReviewJobId = "";
+            state.documentReviewPollStartedAt = 0;
+            state.documentReviewPollErrorCount = 0;
+            stopWaiting();
+            setStatus("文档审查失败：" + message);
+            setResult(message);
+            return;
+          }
+          setStatus("文档审查提交响应未确认，正在按任务编号恢复状态查询...");
+          setPlainResult([
+            "文档审查任务可能已经提交到 adapter，但任务窗格没有收到确认响应。",
+            "将按本地任务编号继续查询；如果 adapter 未收到请求，会返回任务不存在。",
+            "任务编号：" + clientJobId,
+            "最近错误：" + message
+          ].join("\n"));
+          pollDocumentReviewJob(clientJobId, stopWaiting);
         });
     }, 0);
   }
@@ -2172,6 +2406,66 @@
     }, 0);
   }
 
+  function runSmartImitationAction() {
+    var templateText = String(byId("imitation-template-text").value || "").trim();
+    var requirement = String(byId("imitation-requirement").value || "").trim();
+    var referenceMaterial = String(byId("imitation-reference-material").value || "").trim();
+    var paragraphs;
+    var config = modeConfig[state.currentMode] || modeConfig.smartImitation;
+
+    resetSmartWritePreviewState();
+    state.pendingApplyAction = "";
+    setApplyEnabled(false);
+
+    if (!templateText) {
+      setStatus("请先提供仿写模板。");
+      setResult("请先提供仿写模板。");
+      return;
+    }
+    if (!requirement) {
+      setStatus("请填写仿写需求。");
+      setResult("请填写仿写需求。");
+      return;
+    }
+
+    paragraphs = helpers.collectParagraphsFromText
+      ? helpers.collectParagraphsFromText(templateText, SMART_WRITE_EXTRACTION_OPTIONS)
+      : [];
+
+    state.latestDocumentPayload = {
+      documentId: "smart-imitation",
+      scene: "word",
+      selectionMode: "selection",
+      content: {
+        plainText: templateText,
+        paragraphs: paragraphs,
+        headings: []
+      },
+      options: {
+        imitationRequirement: requirement,
+        imitationReferenceMaterial: referenceMaterial
+      }
+    };
+    state.latestSelectionMode = "selection";
+
+    setStatus(config.runningText);
+    setPlainResult("正在生成仿写内容，请稍候。");
+    request("/word/smart-imitation", state.latestDocumentPayload)
+      .then(function (body) {
+        state.pendingApplyAction = "";
+        state.rewriteResult = setSmartWriteResult(body.data);
+        setApplyEnabled(false);
+        setTrace(body.traceId);
+        hideCompareForSmartImitation();
+        setStatus(config.doneText);
+      })
+      .catch(function (error) {
+        var message = describeFetchError(error);
+        setStatus("生成失败：" + message);
+        setResult(message);
+      });
+  }
+
   function applyPreview() {
     if (state.pendingApplyAction === "rewrite") {
       applyRewrite();
@@ -2179,6 +2473,10 @@
   }
 
   function runPrimaryAction() {
+    if (state.currentMode === "smartImitation") {
+      runSmartImitationAction();
+      return;
+    }
     if (state.currentMode === "smartWrite") {
       runSmartWriteAction();
       return;
@@ -2219,6 +2517,15 @@
     });
     byId("technical-review-prompt").addEventListener("input", function (event) {
       state.technicalReviewPrompt = event.target.value;
+    });
+    byId("imitation-template-text").addEventListener("input", function (event) {
+      state.imitationTemplateText = event.target.value;
+    });
+    byId("imitation-requirement").addEventListener("input", function (event) {
+      state.imitationRequirement = event.target.value;
+    });
+    byId("imitation-reference-material").addEventListener("input", function (event) {
+      state.imitationReferenceMaterial = event.target.value;
     });
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
     byId("btn-save-api-key").addEventListener("click", saveProviderApiKey);

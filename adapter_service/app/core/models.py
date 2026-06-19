@@ -134,12 +134,15 @@ class RequestOptions(BaseModel):
     rewrite_action: str = Field(default="rewrite", alias="rewriteAction")
     technical_document_type: str = Field(default="technical_solution", alias="technicalDocumentType")
     technical_review_prompt: str = Field(default="", alias="technicalReviewPrompt")
+    imitation_requirement: str = Field(default="", alias="imitationRequirement")
+    imitation_reference_material: str = Field(default="", alias="imitationReferenceMaterial")
 
 
 class WordDocumentRequest(BaseModel):
     document_id: str = Field(default="unnamed.docx", alias="documentId")
     scene: Literal["word"] = "word"
     selection_mode: Literal["document", "selection"] = Field(default="document", alias="selectionMode")
+    client_job_id: str = Field(default="", alias="clientJobId")
     content: DocumentContent = Field(default_factory=DocumentContent)
     options: RequestOptions = Field(default_factory=RequestOptions)
 
@@ -154,6 +157,10 @@ class WordDocumentRequest(BaseModel):
     @validator("selection_mode", pre=True, always=True)
     def coerce_selection_mode(cls, value):
         return value if value in {"document", "selection"} else "document"
+
+    @validator("client_job_id", pre=True, always=True)
+    def coerce_client_job_id(cls, value):
+        return _safe_str(value)
 
 
 class RewriteResult(BaseModel):

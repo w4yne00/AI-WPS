@@ -57,8 +57,10 @@ class BlockingDocumentReviewProvider:
     def __init__(self) -> None:
         self.started = threading.Event()
         self.release = threading.Event()
+        self.call_count = 0
 
     def document_review(self, text: str, trace_id: str, document_type: str, review_prompt: str) -> dict:
+        self.call_count += 1
         self.started.set()
         self.release.wait(timeout=2)
         return {
@@ -110,6 +112,44 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertIsNotNone(completed)
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["summary"], "后台任务完成。")
+
+    def test_document_review_job_store_uses_client_job_id_idempotently_and_reports_running_diagnostics(self) -> None:
+        provider = BlockingDocumentReviewProvider()
+        store = DocumentReviewJobStore(reviewer=WordDocumentReviewer(provider_client=provider))
+        request = parse_word_request(
+            {
+                "documentId": "doc-review.docx",
+                "scene": "word",
+                "selectionMode": "selection",
+                "clientJobId": "client-review-180s-recovery",
+                "content": {
+                    "plainText": "需要长时间审查的选中文本。",
+                    "paragraphs": [],
+                    "headings": [],
+                },
+                "options": {
+                    "technicalDocumentType": "technical_solution",
+                    "technicalReviewPrompt": "",
+                },
+            }
+        )
+
+        started = store.start(request, trace_id="trace-server-first")
+        duplicate = store.start(request, trace_id="trace-server-second")
+
+        self.assertEqual(started["jobId"], "client-review-180s-recovery")
+        self.assertEqual(started["traceId"], "trace-server-first")
+        self.assertEqual(duplicate["jobId"], "client-review-180s-recovery")
+        self.assertEqual(duplicate["traceId"], "trace-server-first")
+        self.assertEqual(duplicate["status"], "running")
+        self.assertIn("elapsedSeconds", duplicate)
+        self.assertIn("heartbeatAgeSeconds", duplicate)
+        self.assertEqual(duplicate["providerTimeoutSeconds"], 1800)
+        self.assertIn("模型后台", duplicate["runningMessage"])
+        self.assertTrue(provider.started.wait(timeout=1))
+        self.assertEqual(provider.call_count, 1)
+
+        provider.release.set()
 
     def test_document_review_sends_selected_text_and_returns_scope(self) -> None:
         request = parse_word_request(

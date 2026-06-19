@@ -13,7 +13,7 @@ const helperJs = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js",
   "utf8"
 );
-assert.ok(manifest.includes('"version": "0.13.7-alpha"'));
+assert.ok(manifest.includes('"version": "0.14.0-alpha"'));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
@@ -43,9 +43,9 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.13.7-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.13.7-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.13.7-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.14.0-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.14.0-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.14.0-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="result-view-switch"'));
 assert.ok(html.includes('id="btn-result-preview"'));
@@ -86,6 +86,13 @@ assert.ok(html.includes('id="rewrite-output-detail"'));
 assert.ok(html.includes('id="template-options"'));
 assert.ok(html.includes('id="document-review-options"'));
 assert.ok(html.includes('id="fixed-template-options"'));
+assert.ok(html.includes('id="smart-imitation-options"'));
+assert.ok(html.includes('id="imitation-template-text"'));
+assert.ok(html.includes('id="imitation-requirement"'));
+assert.ok(html.includes('id="imitation-reference-material"'));
+assert.ok(html.includes("仿写模板"));
+assert.ok(html.includes("仿写需求"));
+assert.ok(html.includes("参考素材"));
 assert.ok(html.includes('id="technical-document-type"'));
 assert.ok(html.includes('id="technical-review-prompt"'));
 assert.ok(html.includes('技术文件格式及书写要求'));
@@ -124,12 +131,21 @@ assert.ok(js.includes("/word/document-review/jobs"));
 assert.ok(js.includes("pollDocumentReviewJob"));
 assert.ok(js.includes("DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240"));
 assert.ok(js.includes("DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS = 15000"));
+assert.ok(js.includes("DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS = 30000"));
+assert.ok(js.includes("DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 10000"));
 assert.ok(js.includes("DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000"));
+assert.ok(js.includes("DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY"));
+assert.ok(js.includes("buildDocumentReviewClientJobId"));
+assert.ok(js.includes("saveDocumentReviewActiveJob"));
+assert.ok(js.includes("loadDocumentReviewActiveJob"));
+assert.ok(js.includes("resumeDocumentReviewActiveJob"));
+assert.ok(js.includes("clearDocumentReviewActiveJob"));
+assert.ok(js.includes("clientJobId"));
 assert.ok(js.includes("documentReviewPollErrorCount"));
 assert.ok(js.includes("文档审查状态查询暂时失败"));
 assert.ok(js.includes("状态查询暂时未连上本地 adapter"));
 assert.ok(js.includes("这不代表模型后台任务失败"));
-assert.ok(js.includes("文档审查状态查询持续失败"));
+assert.ok(js.includes("文档审查任务连接中断，正在尝试恢复状态查询"));
 assert.ok(js.includes("DOCUMENT_REVIEW_EXTRACTION_OPTIONS"));
 assert.ok(js.includes('setPlainResult("正在读取文档审查范围，请稍候。")'));
 assert.ok(js.includes("startDocumentReviewWaitFeedback"));
@@ -150,6 +166,17 @@ assert.ok(js.includes("其他格式项"));
 assert.ok(js.includes("DEFAULT_DOCUMENT_REVIEW_PROMPT"));
 assert.ok(js.includes("saveProviderBaseUrl"));
 assert.ok(js.includes("/word/smart-write"));
+assert.ok(js.includes("smartImitation"));
+assert.ok(js.includes("/word/smart-imitation"));
+assert.ok(js.includes("runSmartImitationAction"));
+assert.ok(js.includes("imitationTemplateText"));
+assert.ok(js.includes("imitationRequirement"));
+assert.ok(js.includes("imitationReferenceMaterial"));
+assert.ok(js.includes("请先提供仿写模板。"));
+assert.ok(js.includes("请填写仿写需求。"));
+assert.ok(js.includes("setSmartWriteResult(body.data)"));
+assert.ok(js.includes('state.currentMode !== "smartImitation"'));
+assert.ok(js.includes("hideCompareForSmartImitation"));
 assert.ok(js.includes('rewriteStyle: "standard"'));
 assert.ok(js.includes('focusPoint: "complete"'));
 assert.ok(js.includes('lengthMode: "same"'));
@@ -177,7 +204,7 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.13.7-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.14.0-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
@@ -235,6 +262,8 @@ assert.ok(!js.includes("/word/rewrite"));
 assert.ok(!js.includes("/word/proofread"));
 assert.ok(!js.includes("/word/technical-review"));
 assert.ok(!js.includes("/word/format-preview"));
+assert.ok(!js.includes('state.pendingApplyAction = "imitation"'));
+assert.ok(!js.includes("applySmartImitation"));
 
 const css = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.css",
@@ -271,12 +300,15 @@ const ribbon = fs.readFileSync(
 
 [
   "智能编写",
+  "智能仿写",
   "文档审查",
   "格式审查",
   "设置"
 ].forEach((label) => {
   assert.ok(ribbon.includes(`label="${label}"`), `missing ribbon label ${label}`);
 });
+assert.ok(ribbon.includes('id="btnAiSmartImitation"'));
+assert.ok(ribbon.includes('label="智能仿写"'));
 assert.ok(!ribbon.includes('label="格式校对"'));
 assert.ok(!ribbon.includes('label="智能排版"'));
 assert.ok(!ribbon.includes('label="技术文档审查"'));
@@ -294,10 +326,15 @@ assert.ok(ribbonJs.includes("WpsAiAssistantTaskPane"));
 assert.ok(ribbonJs.includes("function GetImage"));
 assert.ok(ribbonJs.includes("ribbonIconMap"));
 assert.ok(ribbonJs.includes("return ribbonIconMap[controlId]"));
+assert.ok(ribbonJs.includes('btnAiSmartImitation: "smartImitation"'));
+assert.ok(ribbonJs.includes('btnAiSmartImitation: "assets/icon-smart-imitation.png"'));
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
+assert.ok(ribbonJs.includes("icon-smart-imitation.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.13.7-alpha'));
+assert.ok(ribbonJs.includes('build=0.14.0-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
+assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png"));
+assert.ok(js.includes('{ taskType: "word.smart_imitation", label: "智能仿写" }'));
 
 const uvicornStart = fs.readFileSync(
   "adapter-start-kit/scripts/start_uvicorn_adapter.sh",

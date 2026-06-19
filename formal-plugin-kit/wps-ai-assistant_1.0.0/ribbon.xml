@@ -4,6 +4,7 @@
       <tab id="wpsAiAssistantTab" label="WPS AI 助理">
         <group id="wpsAiAssistantGroup" label="文档处理">
           <button id="btnAiSmartWrite" label="智能编写" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiSmartImitation" label="智能仿写" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiDocumentReview" label="文档审查" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiFormatReview" label="格式审查" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />

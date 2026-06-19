@@ -13,11 +13,13 @@ from app.core.tracing import new_trace_id
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
+from app.services.word.smart_imitator import WordSmartImitator
 from app.services.word.rewriter import WordRewriter
 
 router = APIRouter()
 format_reviewer = WordFormatReviewer()
 rewriter = WordRewriter()
+smart_imitator = WordSmartImitator()
 document_reviewer = WordDocumentReviewer()
 document_review_jobs = DocumentReviewJobStore(document_reviewer)
 logger = get_logger(__name__)
@@ -38,6 +40,27 @@ def smart_write_word(request: WordDocumentRequest) -> dict:
         "success": True,
         "traceId": trace_id,
         "taskType": "word.smart_write",
+        "message": "completed",
+        "data": payload.dict(by_alias=True),
+        "errors": [],
+    }
+
+
+@router.post("/word/smart-imitation")
+def smart_imitation_word(request: WordDocumentRequest) -> dict:
+    trace_id = new_trace_id("word-smart-imitation")
+    imitation = smart_imitator.imitate(request, trace_id=trace_id)
+    payload = RewriteResponseData(**imitation)
+    logger.info(
+        "traceId=%s task=word.smart_imitation templateLength=%s resultLength=%s",
+        trace_id,
+        len(payload.original_text),
+        len(payload.rewritten_text),
+    )
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "word.smart_imitation",
         "message": "completed",
         "data": payload.dict(by_alias=True),
         "errors": [],

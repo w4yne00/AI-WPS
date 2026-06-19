@@ -1,0 +1,42 @@
+from typing import Dict, Optional
+
+from app.core.errors import AdapterError
+from app.core.models import WordDocumentRequest
+from app.services.provider_client import ProviderClient
+
+
+class WordSmartImitator:
+    def __init__(self, provider_client: Optional[ProviderClient] = None) -> None:
+        self.provider_client = provider_client or ProviderClient()
+
+    def imitate(self, request: WordDocumentRequest, trace_id: str) -> Dict:
+        template_text = self._extract_template_text(request)
+        requirement = request.options.imitation_requirement.strip()
+        reference_material = request.options.imitation_reference_material.strip()
+
+        if not template_text:
+            raise AdapterError("SMART_IMITATION_TEMPLATE_REQUIRED", "请先提供仿写模板。", status_code=400)
+        if not requirement:
+            raise AdapterError("SMART_IMITATION_REQUIREMENT_REQUIRED", "请填写仿写需求。", status_code=400)
+
+        provider_result = self.provider_client.smart_imitation(
+            template_text,
+            requirement,
+            reference_material,
+            trace_id,
+        )
+        return {
+            "originalText": template_text,
+            "rewrittenText": provider_result["rewrittenText"],
+            "rewriteMode": "imitate",
+            "diffHints": [],
+            "provider": provider_result.get("provider", "mock"),
+        }
+
+    def _extract_template_text(self, request: WordDocumentRequest) -> str:
+        template_text = request.content.plain_text.strip()
+        if not template_text:
+            template_text = "\n".join(
+                paragraph.text for paragraph in request.content.paragraphs if paragraph.text.strip()
+            ).strip()
+        return template_text
