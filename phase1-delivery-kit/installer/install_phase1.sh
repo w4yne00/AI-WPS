@@ -7,8 +7,10 @@ PORT="${PORT:-18100}"
 WPS_JSADDONS_DIR="${WPS_JSADDONS_DIR:-/home/cloud/.local/share/Kingsoft/wps/jsaddons}"
 INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$HOME/ai-wps-phase1}"
 
-PLUGIN_NAME="wps-ai-assistant_1.0.0"
-PLUGIN_SOURCE="$DELIVERY_ROOT/packages/$PLUGIN_NAME"
+WORD_PLUGIN_NAME="wps-ai-assistant_1.0.0"
+EXCEL_PLUGIN_NAME="wps-ai-assistant-et_1.0.0"
+WORD_PLUGIN_SOURCE="$DELIVERY_ROOT/packages/$WORD_PLUGIN_NAME"
+EXCEL_PLUGIN_SOURCE="$DELIVERY_ROOT/packages/$EXCEL_PLUGIN_NAME"
 ADAPTER_SOURCE="$DELIVERY_ROOT/packages/adapter-start-kit"
 PIP_BOOTSTRAP_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38-pip-bootstrap"
 RUNTIME_DEPS_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38"
@@ -135,11 +137,13 @@ install_runtime_deps() {
 }
 
 install_wps_plugin() {
-  [ -d "$PLUGIN_SOURCE" ] || fail "plugin_source_missing"
+  [ -d "$WORD_PLUGIN_SOURCE" ] || fail "word_plugin_source_missing"
+  [ -d "$EXCEL_PLUGIN_SOURCE" ] || fail "excel_plugin_source_missing"
   [ -f "$PUBLISH_SOURCE" ] || fail "publish_xml_missing"
 
   mkdir -p "$WPS_JSADDONS_DIR"
-  copy_dir "$PLUGIN_SOURCE" "$WPS_JSADDONS_DIR/$PLUGIN_NAME"
+  copy_dir "$WORD_PLUGIN_SOURCE" "$WPS_JSADDONS_DIR/$WORD_PLUGIN_NAME"
+  copy_dir "$EXCEL_PLUGIN_SOURCE" "$WPS_JSADDONS_DIR/$EXCEL_PLUGIN_NAME"
 
   if [ -f "$WPS_JSADDONS_DIR/publish.xml" ]; then
     cp "$WPS_JSADDONS_DIR/publish.xml" "$WPS_JSADDONS_DIR/publish.xml.bak.$(date '+%Y%m%d%H%M%S')"
@@ -147,7 +151,10 @@ install_wps_plugin() {
       printf '%s\n' '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       printf '%s\n' '<jsplugins>'
       printf '%s\n' '  <jsplugin name="wps-ai-assistant" url="file://" type="wps" enable="enable_dev" version="1.0.0"/>'
-      grep '<jsplugin ' "$WPS_JSADDONS_DIR/publish.xml" | grep -v 'name="wps-ai-assistant"' || true
+      printf '%s\n' '  <jsplugin name="wps-ai-assistant-et" url="file://" type="et" enable="enable_dev" version="1.0.0"/>'
+      grep '<jsplugin ' "$WPS_JSADDONS_DIR/publish.xml" \
+        | grep -v 'name="wps-ai-assistant"' \
+        | grep -v 'name="wps-ai-assistant-et"' || true
       printf '%s\n' '</jsplugins>'
     } > "$WPS_JSADDONS_DIR/publish.xml.tmp"
     mv "$WPS_JSADDONS_DIR/publish.xml.tmp" "$WPS_JSADDONS_DIR/publish.xml"
@@ -155,7 +162,8 @@ install_wps_plugin() {
     cp "$PUBLISH_SOURCE" "$WPS_JSADDONS_DIR/publish.xml"
   fi
 
-  log "wps_plugin_installed=$WPS_JSADDONS_DIR/$PLUGIN_NAME"
+  log "word_plugin_installed=$WPS_JSADDONS_DIR/$WORD_PLUGIN_NAME"
+  log "excel_plugin_installed=$WPS_JSADDONS_DIR/$EXCEL_PLUGIN_NAME"
   log "publish_xml_installed=$WPS_JSADDONS_DIR/publish.xml"
 }
 

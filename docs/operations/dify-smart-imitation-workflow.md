@@ -8,7 +8,7 @@
 
 ## 输入约定
 
-adapter 会把完整提示词放入 Dify `/chat-messages` 的顶层 `query` 和 `inputs.query`。Dify 工作流应直接把 `query` 传给 LLM 节点。
+adapter 始终把完整提示词放入 Dify `/chat-messages` 顶层 `query`。旧工作流默认同时获得 `inputs.query`；新版“用户输入”节点应在下游节点引用 `userinput.query`，HTTP 400 时 adapter 会自动切换输入格式。
 
 提示词内已包含：
 

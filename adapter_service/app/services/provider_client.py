@@ -2,6 +2,7 @@ import json
 import os
 import re
 import socket
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from urllib import error, request as urllib_request
@@ -9,14 +10,22 @@ from urllib import error, request as urllib_request
 from app.core.config import AppSettings, TaskRoute, load_settings
 from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.logging import get_logger
+from app.core.models import ExcelAnalysisRequest
+from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
 
 
 logger = get_logger(__name__)
 LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key"
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 _LAST_PROVIDER_DEBUG: Dict = {}
+_LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
 FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS = 60
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
+EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
+DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
+DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
+DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
+_PROVIDER_INPUT_MODE_CACHE: Dict[str, str] = {}
 
 
 STYLE_TEXT = {
@@ -198,6 +207,55 @@ def build_smart_imitation_prompt(template_text: str, requirement: str, reference
     )
 
 
+def _provider_safe_str(value) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, (str, int, float, bool)):
+        return str(value)
+    return ""
+
+
+def build_excel_analysis_prompt(request: ExcelAnalysisRequest) -> str:
+    headers = ", ".join(request.table.headers) if request.table.headers else "未识别到表头"
+    sample_lines = []
+    for row in request.table.rows[:30]:
+        sample_lines.append(" | ".join(_provider_safe_str(cell) for cell in row))
+    sample_text = "\n".join(sample_lines) if sample_lines else "无可用样本行。"
+    requirement = request.options.analysis_requirement.strip() or "请基于表格数据生成通用分析报告。"
+    truncated_text = "是，数据已截断，只能基于样本和统计信息分析。" if request.table.truncated else "否。"
+    scope_type_text = "选区" if request.scope.scope_type == "selection" else "当前工作表已用区域"
+    return "\n".join(
+        [
+            "你是企业表格数据分析助手。",
+            "请基于用户提交的 WPS 表格数据生成中文分析报告。",
+            "",
+            "工作簿：{0}".format(request.workbook_id),
+            "工作表：{0}".format(request.scope.sheet_name or "未命名工作表"),
+            "范围：{0}".format(request.scope.address or "未识别"),
+            "范围类型：{0}".format(scope_type_text),
+            "行数：{0}".format(request.table.row_count),
+            "列数：{0}".format(request.table.column_count),
+            "数据已截断：{0}".format(truncated_text),
+            "表头：{0}".format(headers),
+            "",
+            "用户分析要求：",
+            requirement,
+            "",
+            "样本数据：",
+            sample_text,
+            "",
+            "输出要求：",
+            "1. 只基于表格数据和用户分析要求，不编造不存在的事实、原因、结论或数据。",
+            "2. 默认输出一个 JSON 对象，字段为 structuredReport 和 plainText。",
+            "3. structuredReport 包含 overview、findings、risks、actions。",
+            "4. findings、risks、actions 均为字符串数组。",
+            "5. plainText 为可直接复制到 Word 或 PPT 的中文汇报段落。",
+            "6. 如果数据已截断，必须说明分析基于有限样本。",
+            "7. 不要输出公式，不要声称已经修改单元格，不要要求前端自动写回 Excel。",
+        ]
+    )
+
+
 def get_default_document_review_prompt(document_type: str = "technical_solution") -> str:
     return DOCUMENT_REVIEW_PROMPTS.get(document_type, DEFAULT_DOCUMENT_REVIEW_PROMPT)
 
@@ -250,9 +308,15 @@ def is_workflow_provider(settings: AppSettings) -> bool:
     return infer_payload_style(settings.provider_chat_path, settings.provider_type) == "workflow"
 
 
-def build_provider_request_payload(settings: AppSettings, input_data: Dict, query: str) -> Dict:
+def build_provider_request_payload(
+    settings: AppSettings,
+    input_data: Dict,
+    query: str,
+    input_mode: str = DIFY_INPUT_MODE_LEGACY,
+) -> Dict:
+    inputs = {"query": query} if input_mode == DIFY_INPUT_MODE_LEGACY else {}
     return {
-        "inputs": {"query": query},
+        "inputs": inputs,
         "query": query,
         "conversation_id": "",
         "response_mode": settings.provider_mode,
@@ -278,6 +342,78 @@ def _preview_text(value: str, limit: int = 4) -> str:
     if not text:
         return ""
     return text[:limit] + "..."
+
+
+def _provider_input_mode_cache_key(
+    settings: AppSettings,
+    task_type: str,
+    api_key_ref: str,
+) -> str:
+    return "|".join(
+        [
+            settings.provider_base_url.rstrip("/"),
+            settings.provider_chat_path or "/chat-messages",
+            task_type,
+            api_key_ref,
+        ]
+    )
+
+
+def _sanitize_provider_error_body(
+    raw: str,
+    query: str = "",
+    api_key: str = "",
+    limit: int = 480,
+) -> str:
+    del query, api_key
+    raw_text = str(raw or "")
+    byte_length = len(raw_text.encode("utf-8", errors="replace"))
+    try:
+        parsed = json.loads(raw_text)
+    except (TypeError, json.JSONDecodeError):
+        sanitized = json.dumps(
+            {
+                "summary": "provider_error_body_redacted",
+                "byteLength": byte_length,
+            },
+            separators=(",", ":"),
+        )
+    else:
+        sanitized_fields = {}
+        if isinstance(parsed, dict):
+            for field in ("code", "status", "type"):
+                value = parsed.get(field)
+                if isinstance(value, bool):
+                    continue
+                if isinstance(value, (str, int)):
+                    identifier = str(value)
+                    if re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}", identifier):
+                        sanitized_fields[field] = identifier
+        sanitized_fields["message"] = "[redacted]"
+        sanitized = json.dumps(
+            sanitized_fields,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    return str(sanitized)[:limit]
+
+
+def _read_http_error_body(
+    exc: error.HTTPError,
+    query: str = "",
+    api_key: str = "",
+    limit: int = 480,
+) -> str:
+    try:
+        raw = exc.read(4096).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+    return _sanitize_provider_error_body(
+        raw,
+        query=query,
+        api_key=api_key,
+        limit=limit,
+    )
 
 
 def _sanitize_provider_body(body: Dict) -> Dict:
@@ -328,7 +464,8 @@ def _sanitize_provider_response(body: Dict) -> Dict:
 
 
 def reset_provider_debug() -> None:
-    _LAST_PROVIDER_DEBUG.clear()
+    with _LAST_PROVIDER_DEBUG_LOCK:
+        _LAST_PROVIDER_DEBUG.clear()
 
 
 def record_provider_debug(event: Dict) -> None:
@@ -355,6 +492,28 @@ def record_provider_debug(event: Dict) -> None:
             "status": error_info.get("status", ""),
             "message": _preview_text(str(error_info.get("message", "")), 160),
         }
+        if "bodyPreview" in error_info:
+            debug["error"]["bodyPreview"] = _sanitize_provider_error_body(
+                str(error_info.get("bodyPreview", "")),
+                limit=480,
+            )
+    compatibility_error_info = event.get("compatibilityError", {})
+    if isinstance(compatibility_error_info, dict) and compatibility_error_info:
+        debug["compatibilityError"] = {
+            "type": str(compatibility_error_info.get("type", "")),
+            "status": compatibility_error_info.get("status", ""),
+            "message": _preview_text(
+                str(compatibility_error_info.get("message", "")),
+                160,
+            ),
+        }
+        if "bodyPreview" in compatibility_error_info:
+            debug["compatibilityError"]["bodyPreview"] = (
+                _sanitize_provider_error_body(
+                    str(compatibility_error_info.get("bodyPreview", "")),
+                    limit=480,
+                )
+            )
     validation_info = event.get("validation", {})
     if isinstance(validation_info, dict) and validation_info:
         debug["validation"] = validation_info
@@ -367,15 +526,22 @@ def record_provider_debug(event: Dict) -> None:
         "authSource",
         "taskAuthSource",
         "taskApiKeyRef",
+        "workflowProfileId",
+        "workflowProfileName",
+        "inputMode",
+        "compatibilityFallback",
+        "attemptCount",
     ):
         if field in event:
             debug[field] = event[field]
-    _LAST_PROVIDER_DEBUG.clear()
-    _LAST_PROVIDER_DEBUG.update(debug)
+    with _LAST_PROVIDER_DEBUG_LOCK:
+        _LAST_PROVIDER_DEBUG.clear()
+        _LAST_PROVIDER_DEBUG.update(debug)
 
 
 def get_last_provider_debug() -> Dict:
-    return dict(_LAST_PROVIDER_DEBUG)
+    with _LAST_PROVIDER_DEBUG_LOCK:
+        return dict(_LAST_PROVIDER_DEBUG)
 
 
 def _extract_json_payload(answer: str):
@@ -569,6 +735,40 @@ def extract_answer(body: Dict, output_key: str = "") -> str:
     raise ProviderUnavailableError("Enterprise AI response did not contain an answer.")
 
 
+def _excel_text_list(value) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [_provider_safe_str(item).strip() for item in value if _provider_safe_str(item).strip()]
+
+
+def parse_excel_analysis_answer(answer: str) -> Dict:
+    cleaned = strip_think_tag_content(answer or "").strip()
+    payload = _extract_json_payload(cleaned)
+    if isinstance(payload, dict):
+        report = payload.get("structuredReport") or payload.get("structured_report") or {}
+        if not isinstance(report, dict):
+            report = {}
+        return {
+            "structuredReport": {
+                "overview": _provider_safe_str(report.get("overview")).strip(),
+                "findings": _excel_text_list(report.get("findings")),
+                "risks": _excel_text_list(report.get("risks")),
+                "actions": _excel_text_list(report.get("actions")),
+            },
+            "plainText": _provider_safe_str(payload.get("plainText") or payload.get("plain_text") or cleaned).strip(),
+        }
+
+    return {
+        "structuredReport": {
+            "overview": "模型后台已返回表格分析结果，但未按结构化 JSON 输出。",
+            "findings": [],
+            "risks": [],
+            "actions": [],
+        },
+        "plainText": cleaned,
+    }
+
+
 def get_local_api_key_path(path: Optional[Path] = None) -> Path:
     return path or LOCAL_KEY_PATH
 
@@ -623,9 +823,16 @@ def normalize_task_api_key_ref(task_type: str) -> str:
 
 
 class ProviderClient:
-    def __init__(self, settings: Optional[AppSettings] = None) -> None:
+    def __init__(
+        self,
+        settings: Optional[AppSettings] = None,
+        workflow_profile_store: Optional[WorkflowProfileStore] = None,
+    ) -> None:
         self.settings = settings or load_settings()
         self.reload_settings = settings is None
+        self.workflow_profile_store = workflow_profile_store or (
+            WorkflowProfileStore() if settings is None else None
+        )
 
     def refresh_settings(self) -> None:
         if self.reload_settings:
@@ -679,8 +886,19 @@ class ProviderClient:
         return self.get_auth_source()
 
     def get_task_api_key_ref(self, task_type: str) -> str:
+        profile = self.get_active_workflow_profile(task_type)
+        if profile and profile.get("apiKeyRef"):
+            return str(profile["apiKeyRef"])
         refs = self.settings.task_api_key_refs or {}
         return refs.get(task_type) or normalize_task_api_key_ref(task_type)
+
+    def get_active_workflow_profile(self, task_type: str) -> Optional[Dict]:
+        if self.workflow_profile_store is None:
+            return None
+        try:
+            return self.workflow_profile_store.get_active_profile(task_type)
+        except WorkflowProfileError:
+            return None
 
     def get_auth_source_for_task(self, task_type: str, key_base_path: Optional[Path] = None) -> str:
         api_key_ref = self.get_task_api_key_ref(task_type)
@@ -712,9 +930,25 @@ class ProviderClient:
             ("word.smart_imitation", "智能仿写"),
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
+            ("excel.analysis", "Excel 智能分析"),
         ]
         status = {}
         for task_type, label in tasks:
+            profile_data = None
+            if self.workflow_profile_store is not None:
+                try:
+                    profile_data = self.workflow_profile_store.list_for_task(task_type)
+                except WorkflowProfileError:
+                    profile_data = None
+            active_id = str((profile_data or {}).get("activeProfileId", ""))
+            active_profile = next(
+                (
+                    item
+                    for item in (profile_data or {}).get("profiles", [])
+                    if item.get("id") == active_id
+                ),
+                {},
+            )
             api_key_ref = self.get_task_api_key_ref(task_type)
             task_key_configured = bool(load_route_api_key(api_key_ref, key_base_path))
             status[task_type] = {
@@ -723,6 +957,9 @@ class ProviderClient:
                 "taskKeyConfigured": task_key_configured,
                 "configured": bool(self.settings.provider_base_url.strip() and self.get_api_key_for_task(task_type, key_base_path)),
                 "authSource": "task-file" if task_key_configured else self.get_auth_source(key_base_path),
+                "activeProfileId": active_id,
+                "activeProfileName": str(active_profile.get("name", "")),
+                "profileCount": int((profile_data or {}).get("profileCount", 0)),
             }
         return status
 
@@ -736,7 +973,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.14.0-alpha",
+            "version": "0.16.0-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -751,16 +988,27 @@ class ProviderClient:
             "routes": {},
         }
 
-    def build_debug_metadata(self, task_type: str, provider: str = "enterprise-dify-chat") -> Dict:
-        return {
+    def build_debug_metadata(
+        self,
+        task_type: str,
+        provider: str = "enterprise-dify-chat",
+        workflow_profile: Optional[Dict] = None,
+        api_key_ref: str = "",
+    ) -> Dict:
+        profile = workflow_profile if workflow_profile is not None else self.get_active_workflow_profile(task_type)
+        metadata = {
             "provider": provider,
             "providerName": self.settings.provider_name,
             "providerType": self.settings.provider_type,
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "authSource": self.get_auth_source_for_task(task_type),
             "taskAuthSource": self.get_auth_source_for_task(task_type),
-            "taskApiKeyRef": self.get_task_api_key_ref(task_type),
+            "taskApiKeyRef": api_key_ref or self.get_task_api_key_ref(task_type),
         }
+        if profile:
+            metadata["workflowProfileId"] = str(profile.get("id", ""))
+            metadata["workflowProfileName"] = str(profile.get("name", ""))
+        return metadata
 
     def post_task(
         self,
@@ -771,116 +1019,221 @@ class ProviderClient:
         timeout_seconds: Optional[int] = None,
     ) -> Dict:
         self.refresh_settings()
-        route_payload = build_provider_request_payload(self.settings, {}, query)
         timeout = timeout_seconds or self.settings.timeout_seconds
         url = "{0}{1}".format(
             self.settings.provider_base_url.rstrip("/"),
             self.settings.provider_chat_path or "/chat-messages",
         )
+        workflow_profile = self.get_active_workflow_profile(task_type)
+        api_key_ref = (
+            str(workflow_profile.get("apiKeyRef", ""))
+            if workflow_profile
+            else self.get_task_api_key_ref(task_type)
+        )
+        task_api_key = load_route_api_key(api_key_ref) or self.get_api_key("default")
+        debug_metadata = self.build_debug_metadata(
+            task_type,
+            workflow_profile=workflow_profile,
+            api_key_ref=api_key_ref,
+        )
+        cache_key = _provider_input_mode_cache_key(
+            self.settings,
+            task_type,
+            api_key_ref,
+        )
+        preferred_mode = _PROVIDER_INPUT_MODE_CACHE.get(
+            cache_key,
+            DIFY_INPUT_MODE_LEGACY,
+        )
+        alternate_mode = (
+            DIFY_INPUT_MODE_USER_INPUT
+            if preferred_mode == DIFY_INPUT_MODE_LEGACY
+            else DIFY_INPUT_MODE_LEGACY
+        )
+        attempt_modes = (preferred_mode, alternate_mode)
         logger.info(
             "traceId=%s task=%s url=%s authSource=%s payloadStyle=chat queryLength=%s inputKeysIgnored=%s",
             trace_id,
             task_type,
             url,
-            self.get_auth_source_for_task(task_type),
+            "task-file" if load_route_api_key(api_key_ref) else self.get_auth_source(),
             len(query or ""),
             sorted((input_data or {}).keys()),
         )
-        payload = json.dumps(
-            route_payload
-        ).encode("utf-8")
-        record_provider_debug(
-            {
-                "traceId": trace_id,
-                "taskType": task_type,
-                "url": url,
-                **self.build_debug_metadata(task_type),
-                "request": {"body": route_payload},
+        compatibility_error = None
+        for attempt_index, input_mode in enumerate(attempt_modes, start=1):
+            attempt_metadata = {
+                "inputMode": input_mode,
+                "compatibilityFallback": attempt_index > 1,
+                "attemptCount": attempt_index,
             }
-        )
-        req = urllib_request.Request(
-            url,
-            data=payload,
-            method="POST",
-            headers={
-                "Authorization": "Bearer {0}".format(self.get_api_key_for_task(task_type)),
-                "Content-Type": "application/json",
-                "X-Trace-Id": trace_id,
-            },
-        )
-        try:
-            with urllib_request.urlopen(req, timeout=timeout) as response:
-                raw_body = response.read().decode("utf-8")
-                try:
-                    body = json.loads(raw_body)
-                except json.JSONDecodeError as exc:
+            route_payload = build_provider_request_payload(
+                self.settings,
+                {},
+                query,
+                input_mode=input_mode,
+            )
+            payload = json.dumps(route_payload).encode("utf-8")
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    **attempt_metadata,
+                    **(
+                        {"compatibilityError": compatibility_error}
+                        if compatibility_error
+                        else {}
+                    ),
+                    "request": {"body": route_payload},
+                }
+            )
+            req = urllib_request.Request(
+                url,
+                data=payload,
+                method="POST",
+                headers={
+                    "Authorization": "Bearer {0}".format(
+                        task_api_key
+                    ),
+                    "Content-Type": "application/json",
+                    "X-Trace-Id": trace_id,
+                },
+            )
+            try:
+                with urllib_request.urlopen(req, timeout=timeout) as response:
+                    raw_body = response.read().decode("utf-8")
+                    try:
+                        body = json.loads(raw_body)
+                    except json.JSONDecodeError as exc:
+                        record_provider_debug(
+                            {
+                                "traceId": trace_id,
+                                "taskType": task_type,
+                                "url": url,
+                                **debug_metadata,
+                                **attempt_metadata,
+                                **(
+                                    {"compatibilityError": compatibility_error}
+                                    if compatibility_error
+                                    else {}
+                                ),
+                                "request": {"body": route_payload},
+                                "error": {
+                                    "type": "JSONDecodeError",
+                                    "message": "Provider returned non-JSON response.",
+                                    "bodyPreview": _sanitize_provider_error_body(
+                                        raw_body,
+                                        query=query,
+                                        api_key=task_api_key,
+                                        limit=240,
+                                    ),
+                                },
+                            }
+                        )
+                        raise ProviderUnavailableError(
+                            "Enterprise AI returned a non-JSON response."
+                        ) from exc
+                    _PROVIDER_INPUT_MODE_CACHE[cache_key] = input_mode
                     record_provider_debug(
                         {
                             "traceId": trace_id,
                             "taskType": task_type,
                             "url": url,
-                            **self.build_debug_metadata(task_type),
+                            **debug_metadata,
+                            **attempt_metadata,
+                            **(
+                                {"compatibilityError": compatibility_error}
+                                if compatibility_error
+                                else {}
+                            ),
                             "request": {"body": route_payload},
-                            "error": {
-                                "type": "JSONDecodeError",
-                                "message": "Provider returned non-JSON response.",
-                                "bodyPreview": raw_body[:240],
+                            "response": {
+                                "status": getattr(response, "status", 200),
+                                "body": body,
                             },
                         }
                     )
-                    raise ProviderUnavailableError("Enterprise AI returned a non-JSON response.") from exc
+                    return body
+            except error.HTTPError as exc:
+                error_body = _read_http_error_body(
+                    exc,
+                    query=query,
+                    api_key=task_api_key,
+                )
+                error_info = {
+                    "type": "HTTPError",
+                    "status": exc.code,
+                    "message": str(exc),
+                    "bodyPreview": error_body,
+                }
+                if exc.code == 400 and attempt_index == 1:
+                    compatibility_error = error_info
                 record_provider_debug(
                     {
                         "traceId": trace_id,
                         "taskType": task_type,
                         "url": url,
-                        **self.build_debug_metadata(task_type),
+                        **debug_metadata,
+                        **attempt_metadata,
+                        **(
+                            {"compatibilityError": compatibility_error}
+                            if compatibility_error
+                            else {}
+                        ),
                         "request": {"body": route_payload},
-                        "response": {"status": getattr(response, "status", 200), "body": body},
+                        "error": error_info,
                     }
                 )
-                return body
-        except error.HTTPError as exc:
-            record_provider_debug(
-                {
-                    "traceId": trace_id,
-                    "taskType": task_type,
-                    "url": url,
-                    **self.build_debug_metadata(task_type),
-                    "request": {"body": route_payload},
-                    "error": {"type": "HTTPError", "status": exc.code, "message": str(exc)},
-                }
-            )
-            if exc.code in (401, 403):
-                raise ProviderAuthError() from exc
-            raise ProviderUnavailableError("Enterprise AI returned HTTP {0}.".format(exc.code)) from exc
-        except error.URLError as exc:
-            reason = getattr(exc, "reason", "")
-            record_provider_debug(
-                {
-                    "traceId": trace_id,
-                    "taskType": task_type,
-                    "url": url,
-                    **self.build_debug_metadata(task_type),
-                    "request": {"body": route_payload},
-                    "error": {"type": "URLError", "message": str(reason)},
-                }
-            )
-            if "timed out" in str(reason).lower():
+                if exc.code == 400 and attempt_index == 1:
+                    continue
+                if exc.code in (401, 403):
+                    raise ProviderAuthError() from exc
+                raise ProviderUnavailableError(
+                    "Enterprise AI returned HTTP {0}.".format(exc.code)
+                ) from exc
+            except error.URLError as exc:
+                reason = getattr(exc, "reason", "")
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": url,
+                        **debug_metadata,
+                        **attempt_metadata,
+                        **(
+                            {"compatibilityError": compatibility_error}
+                            if compatibility_error
+                            else {}
+                        ),
+                        "request": {"body": route_payload},
+                        "error": {"type": "URLError", "message": str(reason)},
+                    }
+                )
+                if "timed out" in str(reason).lower():
+                    raise ProviderTimeoutError() from exc
+                raise ProviderUnavailableError(
+                    "Enterprise AI endpoint is unreachable."
+                ) from exc
+            except (TimeoutError, socket.timeout) as exc:
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": url,
+                        **debug_metadata,
+                        **attempt_metadata,
+                        **(
+                            {"compatibilityError": compatibility_error}
+                            if compatibility_error
+                            else {}
+                        ),
+                        "request": {"body": route_payload},
+                        "error": {"type": "TimeoutError", "message": str(exc)},
+                    }
+                )
                 raise ProviderTimeoutError() from exc
-            raise ProviderUnavailableError("Enterprise AI endpoint is unreachable.") from exc
-        except (TimeoutError, socket.timeout) as exc:
-            record_provider_debug(
-                {
-                    "traceId": trace_id,
-                    "taskType": task_type,
-                    "url": url,
-                    **self.build_debug_metadata(task_type),
-                    "request": {"body": route_payload},
-                    "error": {"type": "TimeoutError", "message": str(exc)},
-                }
-            )
-            raise ProviderTimeoutError() from exc
 
     def record_skipped_debug(
         self,
@@ -909,6 +1262,49 @@ class ProviderClient:
             skip_reason="provider_not_configured",
             provider="mock",
         )
+
+    def excel_analysis(self, request: ExcelAnalysisRequest, trace_id: str) -> Dict:
+        prompt = build_excel_analysis_prompt(request)
+        task_type = "excel.analysis"
+        if not self.is_task_configured(task_type):
+            logger.info("traceId=%s provider=mock task=excel.analysis", trace_id)
+            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            return {
+                "structuredReport": {
+                    "overview": "已读取 {0} 行、{1} 列表格数据。".format(
+                        request.table.row_count,
+                        request.table.column_count,
+                    ),
+                    "findings": ["请配置 Excel 智能分析模型后台后获取完整分析。"],
+                    "risks": [],
+                    "actions": ["在设置页保存 excel.analysis 的任务级 API Key。"],
+                },
+                "plainText": "已读取表格数据。请配置 Excel 智能分析模型后台后生成正式分析报告。",
+                "provider": "mock",
+                "prompt": prompt,
+            }
+
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {
+                "scene": "excel",
+                "rowCount": request.table.row_count,
+                "columnCount": request.table.column_count,
+                "truncated": request.table.truncated,
+            },
+            prompt,
+            timeout_seconds=max(self.settings.timeout_seconds, EXCEL_ANALYSIS_TIMEOUT_SECONDS),
+        )
+        parsed = parse_excel_analysis_answer(extract_answer(body))
+        logger.info("traceId=%s provider=enterprise-dify-chat task=excel.analysis", trace_id)
+        return {
+            **parsed,
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
 
     def smart_write(
         self,

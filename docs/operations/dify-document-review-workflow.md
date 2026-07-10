@@ -35,7 +35,7 @@ adapter 请求体只依赖 Dify 官方字段：
 }
 ```
 
-Dify 开始节点可以只使用系统自带 `sys.query`。如果现场已经自定义了 `query` 输入变量，也可以继续在 LLM 节点中引用 `query`，因为 adapter 会同步写入 `inputs.query`。
+旧版 Dify 开始节点可继续引用自定义 `query` 输入变量，adapter 默认发送 `inputs.query`。新版“用户输入”节点应直接引用 `userinput.query`；如果新版接口因不接受 `inputs.query` 返回 HTTP 400，adapter 会自动改用顶层 `query` 和 `files` 重试。
 
 说明：`v0.13.0-alpha` 之后任务窗格新增的问题处理状态、复制建议和审查记录都由 WPS 前端本地生成；Dify 工作流不要处理“已处理/已忽略/审查记录”等闭环状态，也不要执行任何正文写回动作。
 

@@ -69,18 +69,18 @@
 
 AI-WPS is a WPS AI assistant for intranet office terminals. It uses a **WPS native JS/HTML add-in + local Python adapter service + enterprise AI API** architecture. The add-in stays lightweight, while rules, templates, configuration, logging, diagnostics, and AI orchestration live in the local adapter layer.
 
-The current scope is **Phase 1: platform foundation + Word workflows**, designed for Kylin V10 ARM, offline deployment, and intranet-only environments.
+The current scope is **Phase 1: platform foundation + Word and Excel workflows**, designed for Kylin V10 ARM, offline deployment, and intranet-only environments.
 
 ## Current Version
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.14.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-0.14.0-20260619` |
-| Phase | `P1` platform foundation + Word |
+| Version | `v0.16.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-0.16.0-20260710` |
+| Phase | `P1` platform foundation + Word + Excel |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260619.tar.gz` |
+| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260710.tar.gz` |
 
 Version rule format:
 
@@ -102,17 +102,19 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Five task entries | WPS AI tab exposes Smart Write, Smart Imitation, Document Review, Format Review, and Settings as focused ribbon actions |
-| Mode-specific task pane | One task pane switches into focused Word workflows based on the clicked ribbon action |
+| Host-specific Ribbon entries | Word exposes Smart Write, Smart Imitation, Document Review, Format Review, and Settings; Excel exposes only Excel Analysis and Settings |
+| Mode-specific task pane | Word and Excel use separate host add-ins so their buttons do not cross-display |
 | Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running model-backend requests keep visible task-pane feedback |
 | Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
-| Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through both top-level `query` and `inputs.query` |
+| Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through top-level `query` and automatically supports legacy `inputs.query` workflows |
 | Smart imitation | Adds an independent `word.smart_imitation` model workflow for template-based imitation writing with selected-text or pasted templates, required imitation requirements, optional reference material, and preview/plain-text/copy-only results without comparison or writeback |
+| Excel analysis | Provides a read-only `excel.analysis` model workflow for selected range or active used range analysis; long tasks use background jobs with recoverable polling, with structured report and plain paragraph views and no cell writeback |
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
 | Frosted azure UI | The task pane and Ribbon icon artwork use a bright blue-gray and white Apple-like palette without changing task flow or API behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Provider settings | Settings page keeps one global API URL and supports both a unified model API key and task-level API keys; task keys override the unified fallback only for their own task |
+| Workflow profiles | Smart Write, Smart Imitation, Document Review, Format Review, and Excel Analysis can each keep multiple named API-key profiles; task pages switch the active profile while settings manages creation, rename, key replacement, and inactive-profile deletion |
+| Provider settings | Settings keeps one global API URL and unified model API key; workflow profiles override the unified fallback only for their own task |
 | Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package installs WPS add-in files, `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
@@ -121,7 +123,10 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.14.0-alpha` | Adds the independent Smart Imitation workflow with a dedicated Ribbon entry, task-pane template/requirement/reference inputs, separate `word.smart_imitation` model-backend route, task-level API key, Dify workflow guide, and preview/plain-text/copy-only results without comparison or writeback |
+| `v0.16.0-alpha` | Adds named workflow profiles for all five tasks. Users can pre-save multiple Dify API keys, explicitly switch the active profile from each task pane, and manage names, notes, replacement keys, and inactive profiles in Settings. Existing task keys migrate to a reusable “Current configuration” profile, upgrades preserve all profile keys, and Word/Excel host isolation remains unchanged |
+| `v0.15.2-alpha` | Supports both legacy and current Dify Chatflow user inputs: legacy apps keep `inputs.query`, while User Input node apps receive top-level `query` and `files`. When the first request returns HTTP 400, the adapter retries once with the alternate shape and caches the successful mode without changing task prompts, timeouts, parsers, or frontend behavior |
+| `v0.15.1-alpha` | Moves Excel Analysis to the same long-running background-job pattern as Document Review: the task pane uses 10-second submit/status requests, persists the client job ID, recovers polling after connection interruptions, and the adapter allows up to 1800 seconds for the model backend |
+| `v0.15.0-alpha` | Adds the first Excel workflow, Excel 智能分析, with an Excel-only `et` add-in entry, read-only selected-range or used-range analysis, independent `excel.analysis` model task, structured report and plain paragraph views, and one installer that deploys both Word and Excel add-ins while preserving runtime configuration |
 | `v0.13.8-alpha` | Hardens long-running Document Review when model think mode or local connections cross the 180-second range: the task pane now submits a recoverable client job ID, persists the active job locally, uses short status-query timeouts, resumes unfinished jobs after task-pane reload, and keeps low-frequency polling instead of discarding the job after transient adapter connection failures |
 | `v0.13.7-alpha` | Improves the Document Review record preview toggle: clicking “Preview review record” now switches to the generated review record, and clicking the same button again returns to the original Document Review result cards while preserving local issue states |
 | `v0.13.6-alpha` | Further hardens slow Document Review in model think mode: raises the provider wait budget to 1800 seconds, expands transient status-poll failure tolerance to 240 retries over 60 minutes, and softens polling-stage adapter fetch failures so the task pane keeps waiting instead of presenting a premature connection-failure interpretation |
@@ -289,8 +294,10 @@ Important fields:
   "timeoutSeconds": 75,
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
+    "word.smart_imitation": "word_smart_imitation",
     "word.document_review": "word_document_review",
-    "word.format_review": "word_format_review"
+    "word.format_review": "word_format_review",
+    "excel.analysis": "excel_analysis"
   }
 }
 ```
@@ -301,9 +308,9 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-Task-level API keys are stored under `run/provider_api_keys/<ref>`. Smart Write, Document Review, and Format Review can each use a dedicated Dify app key; when a task key is absent, the adapter falls back to the unified provider API key. When no usable key is configured, `/word/smart-write` returns a local mock response and Format Review still performs local template-rule checks.
+Workflow-profile API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps only display metadata and key references. Smart Write, Smart Imitation, Document Review, Format Review, and Excel Analysis can each keep multiple Dify app keys; activation affects the next new task and missing task keys fall back to the unified provider key. See the [workflow profile operations guide](./docs/operations/workflow-profile-management.md).
 
-The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md).
+The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). Excel Analysis setup is documented in the [Excel Analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md).
 
 ## API Surface
 
@@ -314,6 +321,12 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `GET` | `/templates` | Available template list |
 | `GET` | `/provider/status` | Enterprise AI provider authentication status |
 | `GET` | `/provider/task-api-keys` | Task-level API key status summary |
+| `GET` | `/provider/workflow-profiles` | Named profiles and active selection for one task |
+| `POST` | `/provider/workflow-profiles` | Create a named workflow profile |
+| `PATCH` | `/provider/workflow-profiles/{profileId}` | Rename a profile or update its note |
+| `POST` | `/provider/workflow-profiles/{profileId}/api-key` | Replace one profile API key |
+| `POST` | `/provider/workflow-profiles/{profileId}/activate` | Activate a profile for its task |
+| `DELETE` | `/provider/workflow-profiles/{profileId}` | Delete an inactive profile |
 | `POST` | `/provider/api-key` | Save the unified Dify Chat API key |
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
@@ -323,6 +336,7 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
 | `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails |
 | `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
+| `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
 
 Unified response envelope:
 

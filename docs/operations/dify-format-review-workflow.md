@@ -44,7 +44,7 @@ adapter 请求体只依赖 Dify 官方字段：
 }
 ```
 
-开始节点可以只使用系统自带 `sys.query`。如果现场已经自定义了 `query` 输入变量，也可以继续引用，因为 adapter 同步写入 `inputs.query`。
+旧版开始节点可继续引用自定义 `query` 输入变量，adapter 默认发送 `inputs.query`。新版“用户输入”节点应引用 `userinput.query`；HTTP 400 时 adapter 会自动切换为顶层 `query` 和 `files` 输入格式。
 
 ## 3. 任务级 API Key
 

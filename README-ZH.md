@@ -69,18 +69,18 @@
 
 AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WPS 原生 JS/HTML 插件 + 本地 Python 适配服务 + 企业内网 AI 接口** 的架构，让插件侧保持轻量，把规则、模板、配置、日志、诊断和 AI 调用统一放在本地服务层处理。
 
-当前阶段聚焦 **Phase 1: 平台基础能力 + Word 场景**，目标是在 Kylin V10 ARM、离线部署、内网可用的环境中提供可演示、可验收、可继续扩展的基础版本。
+当前阶段聚焦 **Phase 1: 平台基础能力 + Word/Excel 场景**，目标是在 Kylin V10 ARM、离线部署、内网可用的环境中提供可演示、可验收、可继续扩展的基础版本。
 
 ## 当前版本
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.14.0-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-0.14.0-20260619` |
-| 当前阶段 | `P1` 平台底座 + Word |
+| 当前版本 | `v0.16.0-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-0.16.0-20260710` |
+| 当前阶段 | `P1` 平台底座 + Word + Excel |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260619.tar.gz` |
+| 一期交付包 | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260710.tar.gz` |
 
 版本规则格式：
 
@@ -102,17 +102,19 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 能力 | 说明 |
 | --- | --- |
 | WPS 原生任务窗格 | 支持麒麟/WPS 目标终端已验证的 `jsaddons` 手工导入结构 |
-| 五个任务入口 | WPS AI 助理选项卡提供智能编写、智能仿写、文档审查、格式审查和设置 |
-| 独立任务窗格模式 | 同一个任务窗格根据 Ribbon 点击入口切换为聚焦的 Word 工作流 |
+| 宿主区分入口 | Word 只显示智能编写、智能仿写、文档审查、格式审查和设置；Excel 只显示 Excel 智能分析和设置 |
+| 独立任务窗格模式 | Word 和 Excel 使用独立宿主插件，避免按钮互相交叉显示 |
 | 文档审查 | 面向选中文本或限量全文抽取，独立 `word.document_review` Dify 工作流检查错别字、语言表达、逻辑、通畅性和对应文档类型专业性；模型后台返回较慢时任务窗格会持续显示等待反馈 |
 | 格式审查 | 按《技术文件格式及书写要求》模板检查选中文本或全文格式合规；可保留 AI 段落角色识别，但只输出检查意见，不再写回排版；预览结果按概览、优先处理清单、分组详情和诊断信息展示，便于排查 |
-| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 同时通过顶层 `query` 和 `inputs.query` 发送完整提示词 |
+| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 通过顶层 `query` 发送完整提示词，并自动兼容旧工作流的 `inputs.query` |
 | 智能仿写 | 新增独立 `word.smart_imitation` 模型工作流，支持选中文本或手动粘贴仿写模板、必填仿写需求、选填参考素材，结果只提供预览、纯文本和复制，不提供对照和写回 |
+| Excel 智能分析 | 只读 `excel.analysis` 模型工作流，优先分析选中区域，无有效选区时分析当前工作表已用范围；长任务使用后台任务和可恢复轮询，结果提供结构化分析报告和汇报段落，不写回单元格 |
 | 结果预览 | 智能编写会先对选中多段文本的模型输出恢复段落换行，再按内容结构选择朴素或结构化回显：普通段落不额外套排版，标题、列表、序号、表格、加粗等结构尽量正常展示；文档审查、格式审查和诊断信息继续使用安全 Markdown 渲染 |
 | 雾蓝银白界面 | 任务窗口及 Ribbon 图标统一采用明亮的蓝灰白苹果式简约配色，不改变原有任务流程和接口行为 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
 | 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
-| 设置与联调状态 | 设置页保留单一全局 API URL，支持统一模型 API Key 和按任务独立 API Key；未配置任务密钥时回退统一密钥 |
+| 工作流配置档案 | 智能编写、智能仿写、文档审查、格式审查和 Excel 智能分析均可保存多个“自定义名称 + API Key”档案；功能页下拉切换当前档案，设置页集中新增、重命名、更换密钥和删除备用档案 |
+| 设置与联调状态 | 设置页保留单一全局 API URL 和统一模型 API Key；工作流档案未配置可用密钥时回退统一密钥 |
 | Adapter 运维诊断 | 启动包脚本统一管理 uvicorn adapter，健康检查同步显示 provider 配置、路由摘要和最后一次转发诊断；麒麟 V10 目标机可通过 systemd 脚本安装开机自启动 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
 | 一期交付总包 | 一个压缩包内置 WPS 插件、`publish.xml`、pip 引导、运行依赖、adapter、一键联调脚本和验收模板 |
@@ -121,7 +123,10 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
-| `v0.14.0-alpha` | 新增独立智能仿写工作流：Ribbon 增加“智能仿写”入口，任务窗口支持仿写模板、仿写需求、参考素材输入，adapter 使用独立 `word.smart_imitation` 模型后台路由和任务级 API Key，并新增 Dify 工作流配置手册；首版仅支持预览、纯文本和复制，不提供对照和写回 |
+| `v0.16.0-alpha` | 新增工作流配置档案：五个任务均可预存多个自定义名称和 API Key，在功能页通过下拉菜单明确切换，设置页支持新增、重命名、单独更换密钥和删除备用档案；旧任务级密钥自动迁移为“当前配置”，安装升级继续保留 API URL 和全部历史密钥，Word/Excel 仍严格分离 |
+| `v0.15.2-alpha` | 兼容新旧 Dify Chatflow 用户输入：旧工作流继续使用 `inputs.query`；新版“用户输入”节点通过顶层 `query` 和 `files` 接收内容。adapter 首次请求收到 HTTP 400 时自动切换格式并缓存成功模式，不改业务提示词、超时、结果解析和前端功能 |
+| `v0.15.1-alpha` | Excel 智能分析改为与文档审查一致的后台长任务模式：前端使用 10 秒短请求提交和查询状态，任务编号本地保存，连接抖动后持续恢复轮询；adapter 模型等待预算提高到 1800 秒，避免慢模型使任务窗格提前显示连接超时 |
+| `v0.15.0-alpha` | 新增首个 Excel 工作流“Excel 智能分析”：Excel 使用独立 `et` 插件入口，只读分析选区或当前工作表已用范围，adapter 新增独立 `excel.analysis` 模型任务，结果提供结构化分析报告和汇报段落；同一个安装包同时部署 Word/Excel 插件并保留目标机运行时配置 |
 | `v0.13.8-alpha` | 增强 180 秒附近长耗时文档审查的连接恢复：任务窗口提交可恢复的本地任务编号，保存未完成任务，状态查询使用 10 秒短请求，任务窗格重开后可继续查询，短暂 adapter 连接失败时低频恢复轮询而不丢弃任务 |
 | `v0.13.7-alpha` | 优化文档审查记录预览切换：点击“预览审查记录”后显示审查记录预览，再次点击同一按钮可返回初始文档审查结果卡片视图，并保留本地问题处理状态 |
 | `v0.13.6-alpha` | 继续增强 think 模式慢模型文档审查等待：文档审查 provider 等待预算提高到 1800 秒；任务窗格状态轮询最多容忍 240 次短暂失败、总等待 60 分钟；轮询阶段遇到 adapter 短暂不可达时改为提示“状态查询暂时未连上本地 adapter”，继续等待后台任务，避免用户把慢模型处理误判为连接失败 |
@@ -289,8 +294,10 @@ cp config/adapter.example.json config/adapter.json
   "timeoutSeconds": 75,
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
+    "word.smart_imitation": "word_smart_imitation",
     "word.document_review": "word_document_review",
-    "word.format_review": "word_format_review"
+    "word.format_review": "word_format_review",
+    "excel.analysis": "excel_analysis"
   }
 }
 ```
@@ -301,9 +308,9 @@ cp config/adapter.example.json config/adapter.json
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-任务级 API Key 保存到 `run/provider_api_keys/<ref>`。智能编写、文档审查、格式审查都可以配置各自独立的 Dify App Key；未配置任务级 key 时自动回退统一 provider API Key。未配置任何可用 key 时，`/word/smart-write` 会走本地 mock 响应，格式审查仍可使用本地模板规则生成检查结果。
+工作流档案的 API Key 保存到 `run/provider_api_keys/<ref>`，配置文件只记录自定义名称和密钥引用。智能编写、智能仿写、文档审查、格式审查和 Excel 智能分析都可以保存多个 Dify App Key；切换对下一次新任务生效。未配置任务密钥时自动回退统一 provider API Key。详细操作见 [工作流配置档案管理手册](./docs/operations/workflow-profile-management.md)。
 
-智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。
+智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Excel 智能分析对应配置见 [AI-WPS Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)。
 
 ## API 一览
 
@@ -314,6 +321,12 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `GET` | `/templates` | 获取可用模板列表 |
 | `GET` | `/provider/status` | 查看企业 AI provider 认证状态 |
 | `GET` | `/provider/task-api-keys` | 查看任务级 API Key 配置摘要 |
+| `GET` | `/provider/workflow-profiles` | 按任务查看工作流档案和当前选择 |
+| `POST` | `/provider/workflow-profiles` | 新增具名工作流档案 |
+| `PATCH` | `/provider/workflow-profiles/{profileId}` | 修改档案名称和备注 |
+| `POST` | `/provider/workflow-profiles/{profileId}/api-key` | 单独更换档案 API Key |
+| `POST` | `/provider/workflow-profiles/{profileId}/activate` | 将档案设为当前工作流 |
+| `DELETE` | `/provider/workflow-profiles/{profileId}` | 删除非当前工作流档案 |
 | `POST` | `/provider/api-key` | 保存统一 Dify Chat API Key |
 | `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |
 | `POST` | `/provider/task-api-key` | 保存某个任务的独立 Dify API Key |
@@ -323,6 +336,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/word/document-review/jobs` | 启动后台文档审查任务，适配模型后台慢响应 |
 | `GET` | `/word/document-review/jobs/{jobId}` | 轮询后台文档审查任务状态，直到完成或失败 |
 | `POST` | `/word/format-review` | 格式审查，按标准模板输出格式合规检查意见 |
+| `POST` | `/excel/analysis` | Excel 智能分析，只读分析选区或当前工作表已用范围 |
 
 统一响应结构：
 

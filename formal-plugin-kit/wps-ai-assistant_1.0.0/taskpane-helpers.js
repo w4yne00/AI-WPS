@@ -1837,6 +1837,57 @@
     };
   }
 
+  function normalizeWorkflowProfileData(data, taskType) {
+    var source = data && typeof data === "object" ? data : {};
+    var profiles = Array.isArray(source.profiles) ? source.profiles : [];
+    var normalized = profiles.filter(function (profile) {
+      return profile && profile.taskType === taskType && profile.id;
+    }).map(function (profile) {
+      return {
+        id: String(profile.id),
+        taskType: taskType,
+        name: String(profile.name || "未命名工作流"),
+        note: String(profile.note || ""),
+        keyConfigured: Boolean(profile.keyConfigured),
+        createdAt: String(profile.createdAt || ""),
+        updatedAt: String(profile.updatedAt || "")
+      };
+    });
+    var activeId = String(source.activeProfileId || "");
+    var activeExists = normalized.some(function (profile) {
+      return profile.id === activeId;
+    });
+    return {
+      taskType: taskType,
+      activeProfileId: activeExists ? activeId : "",
+      profileCount: normalized.length,
+      profiles: normalized
+    };
+  }
+
+  function getActiveWorkflowProfileName(data) {
+    var profiles = data && Array.isArray(data.profiles) ? data.profiles : [];
+    var activeId = data ? data.activeProfileId : "";
+    var index;
+    for (index = 0; index < profiles.length; index += 1) {
+      if (profiles[index].id === activeId) {
+        return profiles[index].name;
+      }
+    }
+    return "尚未配置";
+  }
+
+  function canDeleteWorkflowProfile(profile, activeProfileId) {
+    return Boolean(profile && profile.id && profile.id !== activeProfileId);
+  }
+
+  function workflowProfileStatusText(profile, activeProfileId) {
+    if (!profile || !profile.keyConfigured) {
+      return "密钥未配置";
+    }
+    return profile.id === activeProfileId ? "当前使用" : "可切换";
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -1861,6 +1912,10 @@
     collectParagraphsFromText: collectParagraphsFromText,
     readDocumentText: readDocumentText,
     toSafeString: toSafeString,
-    buildDocumentStructure: buildDocumentStructure
+    buildDocumentStructure: buildDocumentStructure,
+    normalizeWorkflowProfileData: normalizeWorkflowProfileData,
+    getActiveWorkflowProfileName: getActiveWorkflowProfileName,
+    canDeleteWorkflowProfile: canDeleteWorkflowProfile,
+    workflowProfileStatusText: workflowProfileStatusText
   };
 });

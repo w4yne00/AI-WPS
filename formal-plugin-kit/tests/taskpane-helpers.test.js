@@ -859,6 +859,34 @@ function testBuildDocumentReviewRecordHandlesEmptyIssues() {
   assert.ok(record.includes("未发现需要处理的问题。"));
 }
 
+function testNormalizeWorkflowProfileDataFiltersByTask() {
+  const data = helpers.normalizeWorkflowProfileData({
+    activeProfileId: "profile_word",
+    profiles: [
+      { id: "profile_word", taskType: "word.smart_write", name: "稳定版", keyConfigured: true },
+      { id: "profile_excel", taskType: "excel.analysis", name: "表格版", keyConfigured: true }
+    ]
+  }, "word.smart_write");
+
+  assert.strictEqual(data.activeProfileId, "profile_word");
+  assert.deepStrictEqual(data.profiles.map((item) => item.id), ["profile_word"]);
+  assert.strictEqual(helpers.getActiveWorkflowProfileName(data), "稳定版");
+  assert.strictEqual(helpers.canDeleteWorkflowProfile(data.profiles[0], "profile_word"), false);
+  assert.strictEqual(helpers.workflowProfileStatusText(data.profiles[0], "profile_word"), "当前使用");
+}
+
+function testNormalizeWorkflowProfileDataHandlesMalformedInput() {
+  const data = helpers.normalizeWorkflowProfileData({
+    activeProfileId: "missing",
+    profiles: [null, { id: "", taskType: "word.smart_write" }]
+  }, "word.smart_write");
+
+  assert.deepStrictEqual(data.profiles, []);
+  assert.strictEqual(data.activeProfileId, "");
+  assert.strictEqual(helpers.getActiveWorkflowProfileName(data), "尚未配置");
+  assert.strictEqual(helpers.workflowProfileStatusText({ id: "p", keyConfigured: false }, ""), "密钥未配置");
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
@@ -896,5 +924,7 @@ testRenderReadableFormatReviewHandlesNoIssues();
 testRenderReadableFormatReviewLocalizesOtherFeedback();
 testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();
+testNormalizeWorkflowProfileDataFiltersByTask();
+testNormalizeWorkflowProfileDataHandlesMalformedInput();
 
 console.log("taskpane-helpers tests passed");

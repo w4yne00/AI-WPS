@@ -1,0 +1,12 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon startFromScratch="false">
+    <tabs>
+      <tab id="wpsAiAssistantExcelTab" label="WPS AI 助理">
+        <group id="wpsAiAssistantExcelGroup" label="表格分析">
+          <button id="btnAiExcelAnalysis" label="Excel 智能分析" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

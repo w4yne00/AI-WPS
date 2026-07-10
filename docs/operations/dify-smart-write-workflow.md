@@ -53,7 +53,7 @@ taskType = word.smart_write
 sys.query
 ```
 
-无需另外创建 `source_text`、`write_action`、`style`、`focus`、`length` 或 `user_prompt` 输入字段。adapter 已将这些任务信息和原文组合为一份完整提示词，并同时传入顶层 `query` 和兼容字段 `inputs.query`。
+无需另外创建 `source_text`、`write_action`、`style`、`focus`、`length` 或 `user_prompt` 输入字段。adapter 已将这些任务信息和原文组合为一份完整提示词，并始终传入顶层 `query`；旧工作流默认同时获得兼容字段 `inputs.query`。
 
 adapter 请求体形态如下：
 
@@ -148,7 +148,7 @@ adapter 请求体形态如下：
 {{query}}
 ```
 
-此兼容方案下，adapter 的 `inputs.query` 会提供同一份完整提示词。
+此兼容方案下，adapter 默认通过 `inputs.query` 提供同一份完整提示词。新版“用户输入”节点应改为引用 `userinput.query`；若新版接口拒绝 `inputs.query` 并返回 HTTP 400，adapter 会自动切换格式。
 
 ## 6. 回复节点配置
 

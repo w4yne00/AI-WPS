@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.14.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.16.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -34,6 +34,15 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("/provider/debug-last", scripts["check_health.sh"])
         self.assertIn("provider=mock", scripts["show_logs.sh"])
         self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
+
+    def test_standalone_adapter_exposes_workflow_profile_management(self) -> None:
+        script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
+
+        self.assertIn('path == "/provider/workflow-profiles"', script)
+        self.assertIn("def do_PATCH", script)
+        self.assertIn('path.endswith("/activate")', script)
+        self.assertIn('path.endswith("/api-key")', script)
+        self.assertIn("WorkflowProfileStore", script)
 
     def test_adapter_autostart_scripts_install_systemd_service(self) -> None:
         install_script = (ROOT / "adapter-start-kit/scripts/install_autostart.sh").read_text(
@@ -62,6 +71,31 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("dify-smart-imitation-workflow.md", script)
         self.assertIn("dify-document-review-workflow.md", script)
         self.assertIn("dify-format-review-workflow.md", script)
+        self.assertIn("dify-excel-analysis-workflow.md", script)
+
+    def test_phase1_packaging_includes_word_and_excel_addins(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
+
+        self.assertIn("WORD_FORMAL_SRC", script)
+        self.assertIn("EXCEL_FORMAL_SRC", script)
+        self.assertIn("wps-ai-assistant_1.0.0", script)
+        self.assertIn("wps-ai-assistant-et_1.0.0", script)
+
+    def test_phase1_installer_installs_word_and_excel_addins(self) -> None:
+        script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('WORD_PLUGIN_NAME="wps-ai-assistant_1.0.0"', script)
+        self.assertIn('EXCEL_PLUGIN_NAME="wps-ai-assistant-et_1.0.0"', script)
+        self.assertIn('name="wps-ai-assistant"', script)
+        self.assertIn('type="wps"', script)
+        self.assertIn('name="wps-ai-assistant-et"', script)
+        self.assertIn('type="et"', script)
+        self.assertIn('grep -v \'name="wps-ai-assistant"\'', script)
+        self.assertIn('grep -v \'name="wps-ai-assistant-et"\'', script)
+        self.assertIn("preserve_adapter_runtime_config", script)
+        self.assertIn("restore_adapter_runtime_config", script)
 
     def test_smart_imitation_icon_and_config_are_packaged(self) -> None:
         self.assertTrue(
@@ -100,15 +134,16 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-file-format-requirements", js)
 
-    def test_taskpane_settings_exposes_unified_and_task_api_keys_without_probe(self) -> None:
+    def test_taskpane_settings_exposes_unified_key_and_workflow_profiles_without_probe(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
             encoding="utf-8"
         )
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
         self.assertNotIn("renderTaskRoutes", js)
-        self.assertIn("task-api-key-list", html)
-        self.assertIn("/provider/task-api-key", js)
+        self.assertIn("workflow-profile-manager", html)
+        self.assertIn("workflow-profile-select", html)
+        self.assertIn("/provider/workflow-profiles", js)
         self.assertIn("word.smart_write", js)
         self.assertIn("word.smart_imitation", js)
         self.assertIn("word.document_review", js)
@@ -174,3 +209,30 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("icon-smart-write.png", ribbon_js)
         self.assertIn("icon-smart-imitation.png", ribbon_js)
         self.assertIn("icon-review.png", ribbon_js)
+
+    def test_phase1_publish_xml_contains_word_and_excel_addins(self) -> None:
+        publish_xml = (ROOT / "phase1-delivery-kit/wps-jsaddons/publish.xml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('name="wps-ai-assistant"', publish_xml)
+        self.assertIn('type="wps"', publish_xml)
+        self.assertIn('name="wps-ai-assistant-et"', publish_xml)
+        self.assertIn('type="et"', publish_xml)
+
+    def test_excel_addin_contains_only_excel_ribbon_entries(self) -> None:
+        ribbon = (ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.xml").read_text(
+            encoding="utf-8"
+        )
+        ribbon_js = (ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.js").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('label="Excel 智能分析"', ribbon)
+        self.assertIn('label="设置"', ribbon)
+        self.assertNotIn('label="智能编写"', ribbon)
+        self.assertNotIn('label="智能仿写"', ribbon)
+        self.assertNotIn('label="文档审查"', ribbon)
+        self.assertNotIn('label="格式审查"', ribbon)
+        self.assertIn("btnAiExcelAnalysis", ribbon_js)
+        self.assertIn("icon-excel-analysis.png", ribbon_js)

@@ -3,11 +3,13 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
-from app.core.config import load_settings, save_provider_base_url, save_task_api_key_ref
+from app.core.config import load_settings, save_provider_base_url
 from app.core.models import (
     DocumentReviewResponseData,
+    ExcelAnalysisRequest,
+    ExcelAnalysisResponseData,
     FormatReviewResponseData,
     FormatReviewSummary,
     RewriteResponseData,
@@ -17,29 +19,37 @@ from app.core.tracing import new_trace_id
 from app.services.provider_client import (
     ProviderClient,
     clear_local_api_key,
-    clear_route_api_key,
     get_last_provider_debug,
     normalize_task_api_key_ref,
     save_local_api_key,
-    save_route_api_key,
 )
+from app.services.excel.analyzer import ExcelAnalyzer
+from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
+from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.14.0-alpha"
+VERSION = "0.16.0-alpha"
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
+EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 
 
 def parse_word_request(payload):
     if hasattr(WordDocumentRequest, "model_validate"):
         return WordDocumentRequest.model_validate(payload)
     return WordDocumentRequest.parse_obj(payload)
+
+
+def parse_excel_request(payload):
+    if hasattr(ExcelAnalysisRequest, "model_validate"):
+        return ExcelAnalysisRequest.model_validate(payload)
+    return ExcelAnalysisRequest.parse_obj(payload)
 
 
 def iter_template_documents():
@@ -104,6 +114,25 @@ def format_review(payload):
     return response.dict(by_alias=True)
 
 
+def excel_analysis(payload):
+    request = parse_excel_request(payload)
+    data = ExcelAnalyzer().analyze(request, trace_id="standalone-excel-analysis")
+    if hasattr(ExcelAnalysisResponseData, "model_validate"):
+        return ExcelAnalysisResponseData.model_validate(data).model_dump(by_alias=True)
+    return ExcelAnalysisResponseData(**data).dict(by_alias=True)
+
+
+def excel_analysis_job_payload(job):
+    data = dict(job)
+    if data.get("result"):
+        if hasattr(ExcelAnalysisResponseData, "model_validate"):
+            result = ExcelAnalysisResponseData.model_validate(data["result"]).model_dump(by_alias=True)
+        else:
+            result = ExcelAnalysisResponseData(**data["result"]).dict(by_alias=True)
+        data["result"] = result
+    return data
+
+
 def envelope(trace_id, task_type, data=None, success=True, message="completed", errors=None):
     return {
         "success": success,
@@ -118,7 +147,7 @@ def envelope(trace_id, task_type, data=None, success=True, message="completed", 
 class Handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Trace-Id")
 
     def _write(self, status_code, body):
@@ -140,7 +169,8 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if path == "/health":
             settings = load_settings()
             provider = ProviderClient(settings)
@@ -227,6 +257,16 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope("standalone-provider-task-api-keys", "provider.task_api_keys", provider.build_task_api_key_status()))
             return
 
+        if path == "/provider/workflow-profiles":
+            task_type = str(parse_qs(parsed.query).get("taskType", [""])[0]).strip()
+            try:
+                data = WorkflowProfileStore().list_for_task(task_type)
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
+            self._write(200, envelope("standalone-workflow-profiles", "provider.workflow_profiles", data))
+            return
+
         if path == "/provider/debug-last":
             self._write(200, envelope("standalone-provider-debug-last", "provider.debug_last", get_last_provider_debug()))
             return
@@ -250,6 +290,25 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope(job.get("traceId", job_id), "word.document_review", document_review_job_payload(job), message=job["status"]))
             return
 
+        if path.startswith("/excel/analysis/jobs/"):
+            job_id = unquote(path.rsplit("/", 1)[-1])
+            job = EXCEL_ANALYSIS_JOB_STORE.get(job_id)
+            if not job:
+                self._write(
+                    404,
+                    envelope(
+                        job_id,
+                        "excel.analysis",
+                        {"jobId": job_id, "status": "not_found"},
+                        success=False,
+                        message="Excel 智能分析后台任务不存在或已过期。",
+                        errors=[{"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": "Excel 智能分析后台任务不存在或已过期。"}],
+                    ),
+                )
+                return
+            self._write(200, envelope(job.get("traceId", job_id), "excel.analysis", excel_analysis_job_payload(job), message=job["status"]))
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -260,6 +319,42 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", "0"))
         raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
         payload = json.loads(raw_body or "{}")
+
+        if path == "/provider/workflow-profiles":
+            try:
+                profile = WorkflowProfileStore().create_profile(
+                    payload.get("taskType", ""),
+                    payload.get("name", ""),
+                    payload.get("apiKey", ""),
+                    note=payload.get("note", ""),
+                    activate=bool(payload.get("activate", False)),
+                )
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
+            self._write(200, envelope("standalone-workflow-profile", "provider.workflow_profile", {"profile": profile}, message="saved"))
+            return
+
+        profile_prefix = "/provider/workflow-profiles/"
+        if path.startswith(profile_prefix) and path.endswith("/api-key"):
+            profile_id = unquote(path[len(profile_prefix):-len("/api-key")]).strip("/")
+            try:
+                profile = WorkflowProfileStore().replace_api_key(profile_id, payload.get("apiKey", ""))
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
+            self._write(200, envelope("standalone-workflow-profile-key", "provider.workflow_profile", {"profile": profile}, message="saved"))
+            return
+
+        if path.startswith(profile_prefix) and path.endswith("/activate"):
+            profile_id = unquote(path[len(profile_prefix):-len("/activate")]).strip("/")
+            try:
+                data = WorkflowProfileStore().activate_profile(profile_id)
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
+            self._write(200, envelope("standalone-workflow-profile-activate", "provider.workflow_profile", data, message="activated"))
+            return
 
         if path == "/word/smart-write":
             self._write(200, envelope("standalone-word-smart-write", "word.smart_write", smart_write(payload)))
@@ -282,6 +377,17 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/word/format-review":
             self._write(200, envelope("standalone-word-format-review", "word.format_review", format_review(payload)))
+            return
+
+        if path == "/excel/analysis":
+            self._write(200, envelope("standalone-excel-analysis", "excel.analysis", excel_analysis(payload)))
+            return
+
+        if path == "/excel/analysis/jobs":
+            request = parse_excel_request(payload)
+            trace_id = new_trace_id("standalone-excel-analysis")
+            job = EXCEL_ANALYSIS_JOB_STORE.start(request, trace_id=trace_id)
+            self._write(200, envelope(trace_id, "excel.analysis", excel_analysis_job_payload(job), message="accepted"))
             return
 
         if path == "/provider/base-url":
@@ -315,12 +421,39 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/provider/task-api-key":
             task_type = str(payload.get("taskType", "")).strip()
             api_key_ref = str(payload.get("apiKeyRef") or normalize_task_api_key_ref(task_type)).strip()
-            save_task_api_key_ref(task_type, api_key_ref)
-            save_route_api_key(api_key_ref, payload.get("apiKey", ""))
+            try:
+                WorkflowProfileStore().save_legacy_task_api_key(task_type, api_key_ref, payload.get("apiKey", ""))
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
             client = ProviderClient()
             self._write(200, envelope("standalone-provider-task-api-key", "provider.task_api_key", client.build_task_api_key_status().get(task_type, {}), message="saved"))
             return
 
+        self._write(
+            404,
+            envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
+        )
+
+    def do_PATCH(self):
+        path = urlparse(self.path).path
+        length = int(self.headers.get("Content-Length", "0"))
+        raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
+        payload = json.loads(raw_body or "{}")
+        prefix = "/provider/workflow-profiles/"
+        if path.startswith(prefix):
+            profile_id = unquote(path[len(prefix):]).strip("/")
+            try:
+                profile = WorkflowProfileStore().update_profile(
+                    profile_id,
+                    payload.get("name", ""),
+                    payload.get("note", ""),
+                )
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
+            self._write(200, envelope("standalone-workflow-profile-update", "provider.workflow_profile", {"profile": profile}, message="saved"))
+            return
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -337,14 +470,47 @@ class Handler(BaseHTTPRequestHandler):
         prefix = "/provider/task-api-key/"
         if path.startswith(prefix):
             task_type = unquote(path[len(prefix):])
-            client = ProviderClient()
-            clear_route_api_key(client.get_task_api_key_ref(task_type))
+            try:
+                WorkflowProfileStore().clear_active_api_key(task_type)
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
             self._write(200, envelope("standalone-provider-task-api-key", "provider.task_api_key", ProviderClient().build_task_api_key_status().get(task_type, {}), message="cleared"))
+            return
+
+        profile_prefix = "/provider/workflow-profiles/"
+        if path.startswith(profile_prefix):
+            profile_id = unquote(path[len(profile_prefix):]).strip("/")
+            try:
+                data = WorkflowProfileStore().delete_profile(profile_id)
+            except WorkflowProfileError as error:
+                self._write_workflow_error(error)
+                return
+            self._write(200, envelope("standalone-workflow-profile-delete", "provider.workflow_profile", data, message="deleted"))
             return
 
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
+        )
+
+    def _write_workflow_error(self, error):
+        status_code = 404 if error.code == "WORKFLOW_PROFILE_NOT_FOUND" else 400
+        if error.code in {
+            "WORKFLOW_PROFILE_ACTIVE",
+            "WORKFLOW_PROFILE_LIMIT",
+            "WORKFLOW_PROFILE_NAME_DUPLICATE",
+        }:
+            status_code = 409
+        self._write(
+            status_code,
+            envelope(
+                "standalone-workflow-profile-error",
+                "provider.workflow_profile",
+                success=False,
+                message=error.message,
+                errors=[{"code": error.code, "message": error.message}],
+            ),
         )
 
 

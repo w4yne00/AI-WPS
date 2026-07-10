@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WPS AI 助理</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.14.0-alpha" />
+    <link rel="stylesheet" href="./taskpane.css?v=0.16.0-alpha" />
   </head>
   <body>
     <div class="app">
@@ -22,6 +22,15 @@
         <section id="scope-strip" class="scope-strip">
           <span class="scope-pill-label">识别范围</span>
           <strong id="scope-line">未检测</strong>
+        </section>
+
+        <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前工作流">
+          <label for="workflow-profile-select">当前工作流</label>
+          <select id="workflow-profile-select" aria-label="选择当前功能使用的工作流">
+            <option value="">正在读取...</option>
+          </select>
+          <button id="btn-activate-workflow-profile" class="ghost-action mini-button" type="button" disabled>切换</button>
+          <span id="workflow-profile-current" class="inline-status">未检测</span>
         </section>
 
         <section class="controls glass-card">
@@ -217,10 +226,10 @@
 
             <section class="settings-card">
               <div class="settings-card-head">
-                <h4>任务级 API Key</h4>
-                <span class="inline-status">未配置时使用统一密钥</span>
+                <h4>工作流配置管理</h4>
+                <span class="inline-status">可保存多个版本，切换后对下一次任务生效</span>
               </div>
-              <div id="task-api-key-list" class="task-routes-list"></div>
+              <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
             </section>
           </section>
 
@@ -266,7 +275,7 @@
         </section>
       </section>
     </div>
-    <script src="./taskpane-helpers.js?v=0.14.0-alpha"></script>
-    <script src="./taskpane.js?v=0.14.0-alpha"></script>
+    <script src="./taskpane-helpers.js?v=0.16.0-alpha"></script>
+    <script src="./taskpane.js?v=0.16.0-alpha"></script>
   </body>
 </html>

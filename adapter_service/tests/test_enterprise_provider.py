@@ -1,9 +1,14 @@
 import unittest
+import json
+from io import BytesIO
 from pathlib import Path
+from tempfile import TemporaryDirectory
 import socket
+import threading
 import sys
 import os
 import importlib.util
+from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,10 +16,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
-from app.core.errors import ProviderTimeoutError
-from app.core.models import WordDocumentRequest
+from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
+from app.core.models import ExcelAnalysisRequest, WordDocumentRequest
+from app.services import provider_client
 from app.services.provider_client import (
     ProviderClient,
+    build_excel_analysis_prompt,
     build_document_review_prompt,
     build_provider_request_payload,
     build_route_request_payload,
@@ -30,13 +37,728 @@ from app.services.provider_client import (
     clear_local_api_key,
     clear_route_api_key,
     parse_document_review_answer,
+    parse_excel_analysis_answer,
     record_provider_debug,
     reset_provider_debug,
 )
 from app.services.template_loader import TemplateLoader
+from app.services.workflow_profiles import WorkflowProfileStore
+
+
+class FakeProviderResponse:
+    status = 200
+
+    def __init__(self, body):
+        self.body = body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def read(self):
+        return json.dumps(self.body, ensure_ascii=False).encode("utf-8")
+
+
+def make_http_error(status, body):
+    return HTTPError(
+        "https://aibot.example/v1/chat-messages",
+        status,
+        "Bad Request",
+        {},
+        BytesIO(json.dumps(body, ensure_ascii=False).encode("utf-8")),
+    )
 
 
 class EnterpriseProviderTests(unittest.TestCase):
+    def _configured_provider_client(
+        self,
+        base_url="https://aibot.example/v1",
+        path="/chat-messages",
+        task_api_key_refs=None,
+    ):
+        return ProviderClient(
+            AppSettings(
+                provider_base_url=base_url,
+                provider_chat_path=path,
+                provider_mode="blocking",
+                task_api_key_refs=task_api_key_refs or {},
+            )
+        )
+
+    def test_active_workflow_profile_key_precedes_legacy_and_unified_keys(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            key_dir = root / "provider_api_keys"
+            store = WorkflowProfileStore(config_path, key_dir)
+            profile = store.create_profile("word.smart_write", "生产版", "app-profile", activate=True)
+            save_route_api_key("legacy_ref", "app-legacy", root)
+            save_local_api_key("app-unified", root / "provider_api_key")
+            settings = AppSettings(
+                provider_base_url="https://aibot.example/v1",
+                task_api_key_refs={"word.smart_write": "legacy_ref"},
+            )
+            client = ProviderClient(settings, workflow_profile_store=store)
+
+            key = client.get_api_key_for_task("word.smart_write", root)
+
+            self.assertEqual(key, "app-profile")
+            self.assertEqual(client.get_task_api_key_ref("word.smart_write"), profile["apiKeyRef"])
+
+    def test_workflow_profile_status_and_debug_are_sanitized(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = WorkflowProfileStore(config_path, root / "provider_api_keys")
+            profile = store.create_profile("excel.analysis", "表格生产版", "app-excel-secret", activate=True)
+            client = ProviderClient(
+                AppSettings(provider_base_url="https://aibot.example/v1"),
+                workflow_profile_store=store,
+            )
+
+            status = client.build_task_api_key_status(root)["excel.analysis"]
+            debug = client.build_debug_metadata("excel.analysis")
+
+            self.assertEqual(status["activeProfileId"], profile["id"])
+            self.assertEqual(status["activeProfileName"], "表格生产版")
+            self.assertEqual(status["profileCount"], 1)
+            self.assertEqual(debug["workflowProfileId"], profile["id"])
+            self.assertEqual(debug["workflowProfileName"], "表格生产版")
+            self.assertNotIn("app-excel-secret", json.dumps({"status": status, "debug": debug}, ensure_ascii=False))
+
+    def test_build_provider_request_payload_keeps_legacy_inputs_query(self) -> None:
+        self.assertEqual(
+            getattr(provider_client, "DIFY_INPUT_MODE_LEGACY", None),
+            "legacy-input-query",
+        )
+        settings = AppSettings(provider_mode="blocking")
+
+        payload = build_provider_request_payload(
+            settings,
+            {},
+            "完整提示词",
+            input_mode=provider_client.DIFY_INPUT_MODE_LEGACY,
+        )
+
+        self.assertEqual(payload["inputs"], {"query": "完整提示词"})
+        self.assertEqual(payload["query"], "完整提示词")
+        self.assertEqual(payload["files"], [])
+
+    def test_build_provider_request_payload_supports_user_input_node(self) -> None:
+        self.assertEqual(
+            getattr(provider_client, "DIFY_INPUT_MODE_USER_INPUT", None),
+            "user-input-node",
+        )
+        settings = AppSettings(provider_mode="blocking")
+
+        payload = build_provider_request_payload(
+            settings,
+            {},
+            "完整提示词",
+            input_mode=provider_client.DIFY_INPUT_MODE_USER_INPUT,
+        )
+
+        self.assertEqual(payload["inputs"], {})
+        self.assertEqual(payload["query"], "完整提示词")
+        self.assertEqual(payload["files"], [])
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_uses_and_caches_legacy_mode_on_first_success(
+        self,
+        urlopen,
+    ) -> None:
+        urlopen.return_value = FakeProviderResponse({"answer": "旧版工作流结果"})
+        client = self._configured_provider_client()
+        input_mode_cache = {}
+
+        with patch.object(
+            provider_client,
+            "_PROVIDER_INPUT_MODE_CACHE",
+            input_mode_cache,
+            create=True,
+        ):
+            result = client.post_task(
+                "word.smart_write",
+                "trace-legacy-success",
+                {},
+                "完整提示词",
+            )
+
+        request_body = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(result["answer"], "旧版工作流结果")
+        self.assertEqual(urlopen.call_count, 1)
+        self.assertEqual(request_body["inputs"], {"query": "完整提示词"})
+        self.assertEqual(
+            list(input_mode_cache.values()),
+            [provider_client.DIFY_INPUT_MODE_LEGACY],
+        )
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_retries_http_400_with_user_input_node(self, urlopen) -> None:
+        urlopen.side_effect = [
+            make_http_error(
+                400,
+                {
+                    "code": "invalid_param",
+                    "message": "query is not allowed in inputs",
+                },
+            ),
+            FakeProviderResponse({"answer": "新版工作流结果"}),
+        ]
+        client = self._configured_provider_client()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            result = client.post_task(
+                "word.smart_write",
+                "trace-new-dify",
+                {},
+                "完整提示词",
+            )
+
+        self.assertEqual(result["answer"], "新版工作流结果")
+        first_body = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        second_body = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertEqual(first_body["inputs"], {"query": "完整提示词"})
+        self.assertEqual(second_body["inputs"], {})
+        self.assertEqual(urlopen.call_count, 2)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_reuses_cached_user_input_mode(self, urlopen) -> None:
+        urlopen.side_effect = [
+            make_http_error(400, {"code": "invalid_param"}),
+            FakeProviderResponse({"answer": "第一次"}),
+            FakeProviderResponse({"answer": "第二次"}),
+        ]
+        client = self._configured_provider_client()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client.post_task("word.smart_write", "trace-first", {}, "第一次提示词")
+            client.post_task("word.smart_write", "trace-second", {}, "第二次提示词")
+
+        third_body = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual(third_body["inputs"], {})
+        self.assertEqual(urlopen.call_count, 3)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_input_mode_cache_is_isolated_by_task_type(self, urlopen) -> None:
+        urlopen.side_effect = [
+            make_http_error(400, {"code": "invalid_param"}),
+            FakeProviderResponse({"answer": "智能编写"}),
+            FakeProviderResponse({"answer": "文档审查"}),
+        ]
+        client = self._configured_provider_client()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client.post_task("word.smart_write", "trace-write", {}, "智能编写提示词")
+            client.post_task("word.document_review", "trace-review", {}, "文档审查提示词")
+
+        review_body = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual(review_body["inputs"], {"query": "文档审查提示词"})
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_input_mode_cache_is_isolated_by_provider_url(self, urlopen) -> None:
+        urlopen.side_effect = [
+            make_http_error(400, {"code": "invalid_param"}),
+            FakeProviderResponse({"answer": "地址 A"}),
+            FakeProviderResponse({"answer": "地址 B"}),
+        ]
+        client_a = self._configured_provider_client(base_url="https://a.example/v1")
+        client_b = self._configured_provider_client(base_url="https://b.example/v1")
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client_a.post_task("word.smart_write", "trace-a", {}, "地址 A 提示词")
+            client_b.post_task("word.smart_write", "trace-b", {}, "地址 B 提示词")
+
+        second_url_body = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual(second_url_body["inputs"], {"query": "地址 B 提示词"})
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_input_mode_cache_is_isolated_by_provider_path(self, urlopen) -> None:
+        urlopen.side_effect = [
+            make_http_error(400, {"code": "invalid_param"}),
+            FakeProviderResponse({"answer": "路径 A"}),
+            FakeProviderResponse({"answer": "路径 B"}),
+        ]
+        client_a = self._configured_provider_client(path="/chat-messages")
+        client_b = self._configured_provider_client(path="/alternate-chat-messages")
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client_a.post_task("word.smart_write", "trace-path-a", {}, "路径 A 提示词")
+            client_b.post_task("word.smart_write", "trace-path-b", {}, "路径 B 提示词")
+
+        second_path_body = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual(second_path_body["inputs"], {"query": "路径 B 提示词"})
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_input_mode_cache_is_isolated_by_task_api_key_ref(self, urlopen) -> None:
+        urlopen.side_effect = [
+            make_http_error(400, {"code": "invalid_param"}),
+            FakeProviderResponse({"answer": "密钥引用 A"}),
+            FakeProviderResponse({"answer": "密钥引用 B"}),
+        ]
+        client_a = self._configured_provider_client(
+            task_api_key_refs={"word.smart_write": "smart_write_a"}
+        )
+        client_b = self._configured_provider_client(
+            task_api_key_refs={"word.smart_write": "smart_write_b"}
+        )
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client_a.post_task("word.smart_write", "trace-ref-a", {}, "引用 A 提示词")
+            client_b.post_task("word.smart_write", "trace-ref-b", {}, "引用 B 提示词")
+
+        second_ref_body = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        self.assertEqual(second_ref_body["inputs"], {"query": "引用 B 提示词"})
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_does_not_retry_non_400_http_errors(self, urlopen) -> None:
+        client = self._configured_provider_client()
+        cases = (
+            (401, ProviderAuthError),
+            (403, ProviderAuthError),
+            (500, ProviderUnavailableError),
+        )
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            for status, expected_error in cases:
+                with self.subTest(status=status):
+                    urlopen.reset_mock()
+                    urlopen.side_effect = make_http_error(status, {"message": "provider error"})
+                    with self.assertRaises(expected_error):
+                        client.post_task(
+                            "word.smart_write",
+                            "trace-http-{0}".format(status),
+                            {},
+                            "完整提示词",
+                        )
+                    self.assertEqual(urlopen.call_count, 1)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_does_not_retry_network_errors_or_timeouts(self, urlopen) -> None:
+        client = self._configured_provider_client()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            urlopen.side_effect = URLError("connection reset")
+            with self.assertRaises(ProviderUnavailableError):
+                client.post_task("word.smart_write", "trace-network", {}, "完整提示词")
+            self.assertEqual(urlopen.call_count, 1)
+
+            urlopen.reset_mock()
+            urlopen.side_effect = socket.timeout("timed out")
+            with self.assertRaises(ProviderTimeoutError):
+                client.post_task("word.smart_write", "trace-timeout", {}, "完整提示词")
+            self.assertEqual(urlopen.call_count, 1)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_records_sanitized_compatibility_fallback_diagnostics(
+        self,
+        urlopen,
+    ) -> None:
+        prompt = "完整提示词-绝密"
+        urlopen.side_effect = [
+            make_http_error(
+                400,
+                {
+                    "code": "invalid_param",
+                    "message": "输入错误：{0}{1}".format(prompt, "X" * 1000),
+                    "query": prompt,
+                    "authorization": "Bearer task-secret",
+                },
+            ),
+            FakeProviderResponse({"answer": "新版工作流结果"}),
+        ]
+        client = self._configured_provider_client()
+        reset_provider_debug()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client.post_task("word.smart_write", "trace-debug-fallback", {}, prompt)
+
+        debug = get_last_provider_debug()
+        self.assertEqual(debug.get("inputMode"), "user-input-node")
+        self.assertTrue(debug.get("compatibilityFallback"))
+        self.assertEqual(debug.get("attemptCount"), 2)
+        self.assertEqual(debug["response"]["status"], 200)
+        self.assertNotIn("error", debug)
+        compatibility_error = debug.get("compatibilityError")
+        self.assertIsInstance(compatibility_error, dict)
+        self.assertEqual(compatibility_error["status"], 400)
+        body_preview = compatibility_error.get("bodyPreview")
+        self.assertIsInstance(body_preview, str)
+        self.assertIn("invalid_param", body_preview)
+        self.assertLessEqual(len(body_preview), 480)
+        self.assertNotIn(prompt, body_preview)
+        self.assertNotIn("task-secret", body_preview)
+        self.assertNotIn(prompt, json.dumps(debug, ensure_ascii=False))
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_redacts_long_query_fragments_from_compatibility_error(
+        self,
+        urlopen,
+    ) -> None:
+        prompt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-完整提示词"
+        echoed_fragment = prompt[5:31]
+        urlopen.side_effect = [
+            make_http_error(
+                400,
+                {
+                    "code": "invalid_param",
+                    "message": "输入片段：" + echoed_fragment,
+                },
+            ),
+            FakeProviderResponse({"answer": "新版工作流结果"}),
+        ]
+        client = self._configured_provider_client()
+        reset_provider_debug()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client.post_task("word.smart_write", "trace-fragment-redaction", {}, prompt)
+
+        body_preview = get_last_provider_debug()["compatibilityError"]["bodyPreview"]
+        self.assertIn("invalid_param", body_preview)
+        for index in range(len(prompt) - 15):
+            self.assertNotIn(prompt[index : index + 16], body_preview)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_redacts_non_aligned_query_fragment_from_error_message(
+        self,
+        urlopen,
+    ) -> None:
+        prompt = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+        echoed_fragment = prompt[1:9]
+        urlopen.side_effect = [
+            make_http_error(
+                400,
+                {
+                    "code": "invalid_param",
+                    "message": "输入片段：" + echoed_fragment,
+                },
+            ),
+            FakeProviderResponse({"answer": "新版工作流结果"}),
+        ]
+        client = self._configured_provider_client()
+        reset_provider_debug()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            client.post_task("word.smart_write", "trace-unaligned-redaction", {}, prompt)
+
+        body_preview = get_last_provider_debug()["compatibilityError"]["bodyPreview"]
+        self.assertIn("invalid_param", body_preview)
+        self.assertNotIn(echoed_fragment, body_preview)
+
+    def test_provider_debug_record_and_get_are_atomic(self) -> None:
+        cleared = threading.Event()
+        allow_update = threading.Event()
+        reader_started = threading.Event()
+        reader_done = threading.Event()
+        reader_results = []
+
+        class BlockingDebugDict(dict):
+            def clear(self):
+                super().clear()
+                cleared.set()
+                allow_update.wait(timeout=2)
+
+        shared_debug = BlockingDebugDict(
+            {
+                "traceId": "trace-old",
+                "taskType": "old.task",
+                "url": "https://old.example",
+            }
+        )
+
+        def write_debug():
+            record_provider_debug(
+                {
+                    "traceId": "trace-new",
+                    "taskType": "word.smart_write",
+                    "url": "https://new.example/v1/chat-messages",
+                }
+            )
+
+        def read_debug():
+            reader_started.set()
+            reader_results.append(get_last_provider_debug())
+            reader_done.set()
+
+        with patch.object(provider_client, "_LAST_PROVIDER_DEBUG", shared_debug):
+            writer = threading.Thread(target=write_debug)
+            reader = threading.Thread(target=read_debug)
+            writer.start()
+            self.assertTrue(cleared.wait(timeout=1))
+            reader.start()
+            self.assertTrue(reader_started.wait(timeout=1))
+            reader_finished_before_update = reader_done.wait(timeout=0.2)
+            allow_update.set()
+            writer.join(timeout=1)
+            reader.join(timeout=1)
+
+        self.assertFalse(reader_finished_before_update)
+        self.assertFalse(writer.is_alive())
+        self.assertFalse(reader.is_alive())
+        self.assertEqual(reader_results[0]["traceId"], "trace-new")
+        self.assertEqual(reader_results[0]["taskType"], "word.smart_write")
+
+    def test_read_http_error_body_limits_source_read_to_4096_bytes(self) -> None:
+        class RecordingBody:
+            def __init__(self):
+                self.read_sizes = []
+
+            def read(self, size=-1):
+                self.read_sizes.append(size)
+                return b'{"code":"invalid_param","message":"bad request"}'
+
+            def close(self):
+                return None
+
+        response_body = RecordingBody()
+        http_error = HTTPError(
+            "https://aibot.example/v1/chat-messages",
+            400,
+            "Bad Request",
+            {},
+            response_body,
+        )
+
+        body_preview = provider_client._read_http_error_body(http_error)
+
+        self.assertEqual(response_body.read_sizes, [4096])
+        self.assertIn("invalid_param", body_preview)
+
+    def test_truncated_non_json_error_body_never_echoes_escaped_query_fragment(
+        self,
+    ) -> None:
+        prompt = "甲敏感信息不得进入诊断输出乙"
+        query_fragment = prompt[1:9]
+        escaped_fragment = json.dumps(
+            query_fragment,
+            ensure_ascii=True,
+        )[1:-1]
+        raw_body = (
+            '{"code":"invalid_param","message":"'
+            + escaped_fragment
+            + ("X" * 5000)
+        ).encode("utf-8")
+
+        class TruncatedBody:
+            def read(self, size=-1):
+                return raw_body[:size]
+
+            def close(self):
+                return None
+
+        http_error = HTTPError(
+            "https://aibot.example/v1/chat-messages",
+            400,
+            "Bad Request",
+            {},
+            TruncatedBody(),
+        )
+
+        body_preview = provider_client._read_http_error_body(
+            http_error,
+            query=prompt,
+        )
+
+        self.assertNotIn(query_fragment, body_preview)
+        self.assertNotIn(escaped_fragment, body_preview)
+        self.assertIn("redacted", body_preview)
+
+    def test_provider_error_body_only_preserves_safe_identifier_fields(
+        self,
+    ) -> None:
+        body_preview = provider_client._sanitize_provider_error_body(
+            json.dumps(
+                {
+                    "code": "invalid_param",
+                    "status": "bad status",
+                    "type": "X" * 65,
+                    "message": "provider echoed sensitive content",
+                    "details": "more sensitive content",
+                }
+            )
+        )
+
+        sanitized = json.loads(body_preview)
+        self.assertEqual(sanitized["code"], "invalid_param")
+        self.assertEqual(sanitized["message"], "[redacted]")
+        self.assertNotIn("status", sanitized)
+        self.assertNotIn("type", sanitized)
+        self.assertNotIn("details", sanitized)
+        self.assertNotIn("sensitive content", body_preview)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_post_task_records_limited_sanitized_body_after_both_modes_fail(
+        self,
+        urlopen,
+    ) -> None:
+        prompt = "完整提示词-绝密"
+        urlopen.side_effect = [
+            make_http_error(400, {"code": "invalid_param", "message": "旧模式失败"}),
+            make_http_error(
+                400,
+                {
+                    "code": "invalid_param",
+                    "message": "输入错误：{0}{1}".format(prompt, "X" * 1000),
+                    "query": prompt,
+                    "authorization": "Bearer task-secret",
+                },
+            ),
+        ]
+        client = self._configured_provider_client()
+        reset_provider_debug()
+
+        with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+            with self.assertRaises(ProviderUnavailableError):
+                client.post_task("word.smart_write", "trace-debug-failed", {}, prompt)
+
+        debug = get_last_provider_debug()
+        self.assertEqual(debug.get("inputMode"), "user-input-node")
+        self.assertTrue(debug.get("compatibilityFallback"))
+        self.assertEqual(debug.get("attemptCount"), 2)
+        self.assertEqual(debug["error"]["status"], 400)
+        body_preview = debug["error"].get("bodyPreview")
+        self.assertIsInstance(body_preview, str)
+        self.assertIn("invalid_param", body_preview)
+        self.assertLessEqual(len(body_preview), 480)
+        self.assertNotIn(prompt, body_preview)
+        self.assertNotIn("task-secret", body_preview)
+        self.assertEqual(urlopen.call_count, 2)
+
+    def test_excel_analysis_request_accepts_table_payload(self):
+        request = ExcelAnalysisRequest.parse_obj(
+            {
+                "workbookId": "analysis.xlsx",
+                "scene": "excel",
+                "scope": {
+                    "type": "selection",
+                    "sheetName": "经营数据",
+                    "address": "A1:D4",
+                },
+                "table": {
+                    "headers": ["月份", "部门", "金额", "状态"],
+                    "rows": [
+                        ["2026-01", "市场部", "120000", "已完成"],
+                        ["2026-02", "市场部", "98000", "进行中"],
+                    ],
+                    "rowCount": 2,
+                    "columnCount": 4,
+                    "truncated": False,
+                },
+                "options": {"analysisRequirement": "关注金额变化和异常项。"},
+            }
+        )
+
+        self.assertEqual(request.scene, "excel")
+        self.assertEqual(request.scope.sheet_name, "经营数据")
+        self.assertEqual(request.scope.address, "A1:D4")
+        self.assertEqual(request.table.headers[0], "月份")
+        self.assertEqual(request.options.analysis_requirement, "关注金额变化和异常项。")
+
+    def test_build_excel_analysis_prompt_includes_range_headers_requirement_and_constraints(self):
+        request = ExcelAnalysisRequest.parse_obj(
+            {
+                "workbookId": "analysis.xlsx",
+                "scene": "excel",
+                "scope": {"type": "usedRange", "sheetName": "Sheet1", "address": "A1:C3"},
+                "table": {
+                    "headers": ["项目", "金额", "状态"],
+                    "rows": [["项目A", "100", "正常"], ["项目B", "300", "异常"]],
+                    "rowCount": 2,
+                    "columnCount": 3,
+                    "truncated": True,
+                },
+                "options": {"analysisRequirement": "生成经营分析。"},
+            }
+        )
+
+        prompt = build_excel_analysis_prompt(request)
+
+        self.assertIn("企业表格数据分析助手", prompt)
+        self.assertIn("工作表：Sheet1", prompt)
+        self.assertIn("范围：A1:C3", prompt)
+        self.assertIn("项目, 金额, 状态", prompt)
+        self.assertIn("生成经营分析", prompt)
+        self.assertIn("数据已截断", prompt)
+        self.assertIn("不要声称已经修改单元格", prompt)
+        self.assertIn("只基于表格数据", prompt)
+
+    def test_parse_excel_analysis_answer_accepts_json_and_falls_back_to_text(self):
+        parsed = parse_excel_analysis_answer(
+            """
+            ```json
+            {
+              "structuredReport": {
+                "overview": "共 2 行数据。",
+                "findings": ["金额集中在项目B。"],
+                "risks": ["项目B状态异常。"],
+                "actions": ["建议核查项目B。"]
+              },
+              "plainText": "本表显示项目B金额较高且状态异常，建议优先核查。"
+            }
+            ```
+            """
+        )
+
+        self.assertEqual(parsed["structuredReport"]["overview"], "共 2 行数据。")
+        self.assertEqual(parsed["structuredReport"]["findings"], ["金额集中在项目B。"])
+        self.assertIn("项目B金额较高", parsed["plainText"])
+
+        fallback = parse_excel_analysis_answer("### 分析结果\n项目B存在异常，建议核查。")
+        self.assertIn("模型后台已返回表格分析结果", fallback["structuredReport"]["overview"])
+        self.assertEqual(fallback["structuredReport"]["findings"], [])
+        self.assertIn("项目B存在异常", fallback["plainText"])
+
+    def test_excel_analysis_uses_independent_task_type_and_task_key(self):
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self):
+                super().__init__(AppSettings())
+                self.calls = []
+
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
+                return True
+
+            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+                self.calls.append(
+                    {
+                        "taskType": task_type,
+                        "traceId": trace_id,
+                        "inputData": input_data,
+                        "query": query,
+                        "timeoutSeconds": timeout_seconds,
+                    }
+                )
+                return {
+                    "answer": '{"structuredReport":{"overview":"概览","findings":["发现"],"risks":[],"actions":["建议"]},"plainText":"汇报段落"}'
+                }
+
+        request = ExcelAnalysisRequest.parse_obj(
+            {
+                "workbookId": "analysis.xlsx",
+                "scene": "excel",
+                "scope": {"type": "selection", "sheetName": "Sheet1", "address": "A1:B2"},
+                "table": {
+                    "headers": ["名称", "金额"],
+                    "rows": [["A", "1"]],
+                    "rowCount": 1,
+                    "columnCount": 2,
+                    "truncated": False,
+                },
+                "options": {"analysisRequirement": "生成简要分析。"},
+            }
+        )
+        provider = CapturingProviderClient()
+
+        result = provider.excel_analysis(request, trace_id="trace-excel-analysis")
+
+        self.assertEqual(provider.calls[0]["taskType"], "excel.analysis")
+        self.assertIn("生成简要分析", provider.calls[0]["query"])
+        self.assertEqual(provider.calls[0]["timeoutSeconds"], 1800)
+        self.assertEqual(result["plainText"], "汇报段落")
+
     def test_word_request_accepts_smart_imitation_options(self):
         payload = {
             "documentId": "imitate.docx",
@@ -653,6 +1375,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             client = ProviderClient(settings)
 
             diagnostics = client.build_route_diagnostics(key_base_path=tmp_dir)
+            self.assertEqual(diagnostics["version"], "0.16.0-alpha")
             self.assertEqual(diagnostics["url"], "https://aibot.example/v1/chat-messages")
             self.assertEqual(diagnostics["path"], "/chat-messages")
             self.assertEqual(diagnostics["payloadStyle"], "chat")

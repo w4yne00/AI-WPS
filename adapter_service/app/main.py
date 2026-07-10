@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.config import router as config_router
+from app.api.excel import router as excel_router
 from app.api.health import router as health_router
 from app.api.provider import router as provider_router
 from app.api.templates import router as templates_router
@@ -13,7 +14,7 @@ from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
 
-app = FastAPI(title="wps-ai-adapter", version="0.14.0-alpha")
+app = FastAPI(title="wps-ai-adapter", version="0.16.0-alpha")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -26,6 +27,7 @@ app.include_router(config_router)
 app.include_router(provider_router)
 app.include_router(templates_router)
 app.include_router(word_router)
+app.include_router(excel_router)
 
 logger = get_logger(__name__)
 
@@ -86,6 +88,8 @@ def _task_type_from_path(path: str) -> str:
         "/word/document-review": "word.document_review",
         "/word/document-review/jobs": "word.document_review",
         "/word/format-review": "word.format_review",
+        "/excel/analysis": "excel.analysis",
+        "/excel/analysis/jobs": "excel.analysis",
     }.get(path, "adapter.validation")
 
 

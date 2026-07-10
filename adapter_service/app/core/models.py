@@ -163,6 +163,128 @@ class WordDocumentRequest(BaseModel):
         return _safe_str(value)
 
 
+class ExcelAnalysisScope(BaseModel):
+    scope_type: Literal["selection", "usedRange"] = Field(default="selection", alias="type")
+    sheet_name: str = Field(default="", alias="sheetName")
+    address: str = ""
+
+    @validator("scope_type", pre=True, always=True)
+    def coerce_scope_type(cls, value):
+        return value if value in {"selection", "usedRange"} else "selection"
+
+    @validator("sheet_name", "address", pre=True, always=True)
+    def coerce_scope_text(cls, value):
+        return _safe_str(value)
+
+
+class ExcelAnalysisTable(BaseModel):
+    headers: List[str] = Field(default_factory=list)
+    rows: List[List[str]] = Field(default_factory=list)
+    row_count: int = Field(default=0, alias="rowCount")
+    column_count: int = Field(default=0, alias="columnCount")
+    truncated: bool = False
+
+    @validator("headers", pre=True, always=True)
+    def coerce_headers(cls, value):
+        if not isinstance(value, list):
+            return []
+        return [_safe_str(item) for item in value]
+
+    @validator("rows", pre=True, always=True)
+    def coerce_rows(cls, value):
+        if not isinstance(value, list):
+            return []
+        normalized = []
+        for row in value:
+            if isinstance(row, list):
+                normalized.append([_safe_str(cell) for cell in row])
+        return normalized
+
+    @validator("row_count", "column_count", pre=True, always=True)
+    def coerce_counts(cls, value):
+        return _safe_int(value) or 0
+
+    @validator("truncated", pre=True, always=True)
+    def coerce_truncated(cls, value):
+        return bool(_safe_bool(value))
+
+
+class ExcelAnalysisOptions(BaseModel):
+    analysis_requirement: str = Field(default="", alias="analysisRequirement")
+
+    @validator("analysis_requirement", pre=True, always=True)
+    def coerce_requirement(cls, value):
+        return _safe_str(value)
+
+
+class ExcelAnalysisRequest(BaseModel):
+    workbook_id: str = Field(default="active-workbook", alias="workbookId")
+    scene: Literal["excel"] = "excel"
+    client_job_id: str = Field(default="", alias="clientJobId")
+    scope: ExcelAnalysisScope = Field(default_factory=ExcelAnalysisScope)
+    table: ExcelAnalysisTable = Field(default_factory=ExcelAnalysisTable)
+    options: ExcelAnalysisOptions = Field(default_factory=ExcelAnalysisOptions)
+
+    @validator("workbook_id", pre=True, always=True)
+    def coerce_workbook_id(cls, value):
+        return _safe_str(value, "active-workbook") or "active-workbook"
+
+    @validator("scene", pre=True, always=True)
+    def coerce_excel_scene(cls, value):
+        return "excel"
+
+    @validator("client_job_id", pre=True, always=True)
+    def coerce_excel_client_job_id(cls, value):
+        return _safe_str(value)
+
+
+class ExcelRange(ExcelAnalysisTable):
+    address: str = ""
+
+    @validator("address", pre=True, always=True)
+    def coerce_address(cls, value):
+        return _safe_str(value)
+
+
+class ExcelWorksheet(BaseModel):
+    name: str = ""
+    active_range: ExcelRange = Field(default_factory=ExcelRange, alias="activeRange")
+
+    @validator("name", pre=True, always=True)
+    def coerce_name(cls, value):
+        return _safe_str(value)
+
+
+class ExcelWorkbookContext(BaseModel):
+    workbook_id: str = Field(default="active-workbook", alias="workbookId")
+    worksheets: List[ExcelWorksheet] = Field(default_factory=list)
+
+    @validator("workbook_id", pre=True, always=True)
+    def coerce_context_workbook_id(cls, value):
+        return _safe_str(value, "active-workbook") or "active-workbook"
+
+    @validator("worksheets", pre=True, always=True)
+    def coerce_worksheets(cls, value):
+        return value if isinstance(value, list) else []
+
+
+class ExcelStructuredReport(BaseModel):
+    overview: str = ""
+    findings: List[str] = Field(default_factory=list)
+    risks: List[str] = Field(default_factory=list)
+    actions: List[str] = Field(default_factory=list)
+
+
+class ExcelAnalysisResult(BaseModel):
+    structured_report: ExcelStructuredReport = Field(default_factory=ExcelStructuredReport, alias="structuredReport")
+    plain_text: str = Field(default="", alias="plainText")
+    provider: str = "mock"
+
+
+class ExcelAnalysisResponseData(ExcelAnalysisResult):
+    pass
+
+
 class RewriteResult(BaseModel):
     original_text: str = Field(alias="originalText")
     rewritten_text: str = Field(alias="rewrittenText")

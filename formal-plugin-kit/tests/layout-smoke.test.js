@@ -13,7 +13,54 @@ const helperJs = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js",
   "utf8"
 );
-assert.ok(manifest.includes('"version": "0.14.0-alpha"'));
+const excelHtml = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.html",
+  "utf8"
+);
+const excelJs = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.js",
+  "utf8"
+);
+const excelCss = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.css",
+  "utf8"
+);
+const excelRibbon = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.xml",
+  "utf8"
+);
+const excelRibbonJs = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.js",
+  "utf8"
+);
+const excelManifest = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/manifest.json",
+  "utf8"
+);
+const excelManifestXml = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/manifest.xml",
+  "utf8"
+);
+assert.ok(manifest.includes('"version": "0.16.0-alpha"'));
+assert.ok(excelManifest.includes('"name": "wps-ai-assistant-et"'));
+assert.ok(excelManifest.includes('"version": "0.16.0-alpha"'));
+assert.ok(excelManifestXml.includes("<wps:AppId>wps-ai-assistant-et</wps:AppId>"));
+assert.ok(excelManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
+assert.ok(excelRibbon.includes('label="WPS AI 助理"'));
+assert.ok(excelRibbon.includes('label="表格分析"'));
+assert.ok(excelRibbon.includes('id="btnAiExcelAnalysis"'));
+assert.ok(excelRibbon.includes('label="Excel 智能分析"'));
+assert.ok(excelRibbon.includes('id="btnAiSettings"'));
+assert.ok(excelRibbon.includes('label="设置"'));
+assert.ok(!excelRibbon.includes('label="智能编写"'));
+assert.ok(!excelRibbon.includes('label="智能仿写"'));
+assert.ok(!excelRibbon.includes('label="文档审查"'));
+assert.ok(!excelRibbon.includes('label="格式审查"'));
+assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "excelAnalysis"'));
+assert.ok(excelRibbonJs.includes('btnAiSettings: "settings"'));
+assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysis.png"'));
+assert.ok(excelRibbonJs.includes('build=0.16.0-alpha'));
+assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
@@ -43,9 +90,9 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.14.0-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.14.0-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.14.0-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.16.0-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.16.0-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.16.0-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="result-view-switch"'));
 assert.ok(html.includes('id="btn-result-preview"'));
@@ -56,6 +103,10 @@ assert.ok(html.includes('id="btn-copy-review-record"'));
 assert.ok(html.includes('id="btn-preview-review-record"'));
 assert.ok(html.includes('id="top-toolbox"'));
 assert.ok(html.includes('id="scope-strip"'));
+assert.ok(html.includes('id="workflow-profile-strip"'));
+assert.ok(html.includes('id="workflow-profile-select"'));
+assert.ok(html.includes('id="btn-activate-workflow-profile"'));
+assert.ok(html.includes('id="workflow-profile-manager"'));
 assert.ok(html.includes('id="task-title"'));
 assert.ok(html.includes('识别范围'));
 assert.ok(html.includes('智能编写'));
@@ -204,10 +255,14 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.14.0-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.16.0-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
+assert.ok(js.includes("/provider/workflow-profiles"));
+assert.ok(js.includes('method: "PATCH"'));
+assert.ok(js.includes('method: "DELETE"'));
+assert.ok(js.includes("/activate"));
 assert.ok(js.includes("word.document_review"));
 assert.ok(js.includes("renderDocumentReviewResult"));
 assert.ok(js.includes("documentReviewRecordPreviewVisible"));
@@ -258,6 +313,47 @@ assert.ok(js.includes("fluency: \"通畅性\""));
 assert.ok(!js.includes('setHealthBadge("badge-error", "不可达")'));
 assert.ok(!js.includes("无法连接本地适配层"));
 assert.ok(!js.includes("runProbe"));
+
+assert.ok(excelHtml.includes("Excel 智能分析"));
+assert.ok(excelHtml.includes('id="excel-analysis-options"'));
+assert.ok(excelHtml.includes('id="workflow-profile-strip"'));
+assert.ok(excelHtml.includes('id="workflow-profile-select"'));
+assert.ok(excelHtml.includes('id="btn-activate-workflow-profile"'));
+assert.ok(excelHtml.includes('id="workflow-profile-manager"'));
+assert.ok(excelHtml.includes('id="excel-analysis-requirement"'));
+assert.ok(excelHtml.includes('id="excel-range-summary"'));
+assert.ok(excelHtml.includes('id="btn-run-primary"'));
+assert.ok(excelHtml.includes('id="btn-copy-result"'));
+assert.ok(!excelHtml.includes('id="write-action"'));
+assert.ok(!excelHtml.includes('id="btn-apply"'));
+assert.ok(!excelHtml.includes("文档审查"));
+assert.ok(!excelHtml.includes("格式审查"));
+
+assert.ok(excelJs.includes("excelAnalysis"));
+assert.ok(excelJs.includes("/provider/workflow-profiles"));
+assert.ok(excelJs.includes('taskType: "excel.analysis"'));
+assert.ok(excelJs.includes("/excel/analysis"));
+assert.ok(excelJs.includes("/excel/analysis/jobs"));
+assert.ok(excelJs.includes("pollExcelAnalysisJob"));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_MAX_ERRORS = 240"));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS = 15000"));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS = 30000"));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS = 10000"));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_POLL_MAX_WAIT_MS = 60 * 60 * 1000"));
+assert.ok(excelJs.includes("clientJobId"));
+assert.ok(excelJs.includes("Excel 智能分析状态查询暂时失败"));
+assert.ok(excelJs.includes("这不代表模型后台任务失败"));
+assert.ok(excelJs.includes("runExcelAnalysisAction"));
+assert.ok(excelJs.includes("extractExcelRange"));
+assert.ok(excelJs.includes("analysisRequirement"));
+assert.ok(excelJs.includes("structuredReport"));
+assert.ok(excelJs.includes("plainText"));
+assert.ok(excelJs.includes('{ taskType: "excel.analysis", label: "Excel 智能分析" }'));
+assert.ok(!excelJs.includes("applyRewrite"));
+assert.ok(!excelJs.includes("tryApplyFormattedRewrite"));
+assert.ok(!excelJs.includes("/word/document-review"));
+
+assert.ok(excelCss.includes("excel-range-summary"));
 assert.ok(!js.includes("/word/rewrite"));
 assert.ok(!js.includes("/word/proofread"));
 assert.ok(!js.includes("/word/technical-review"));
@@ -312,6 +408,8 @@ assert.ok(ribbon.includes('label="智能仿写"'));
 assert.ok(!ribbon.includes('label="格式校对"'));
 assert.ok(!ribbon.includes('label="智能排版"'));
 assert.ok(!ribbon.includes('label="技术文档审查"'));
+assert.ok(!ribbon.includes('label="Excel 智能分析"'));
+assert.ok(!ribbon.includes('id="btnAiExcelAnalysis"'));
 
 assert.ok(ribbon.includes('getImage="GetImage"'));
 assert.ok(!ribbon.includes('image="assets/'));
@@ -331,7 +429,7 @@ assert.ok(ribbonJs.includes('btnAiSmartImitation: "assets/icon-smart-imitation.p
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-smart-imitation.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.14.0-alpha'));
+assert.ok(ribbonJs.includes('build=0.16.0-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png"));
 assert.ok(js.includes('{ taskType: "word.smart_imitation", label: "智能仿写" }'));

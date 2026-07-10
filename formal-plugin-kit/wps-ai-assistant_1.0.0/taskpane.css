@@ -163,6 +163,28 @@ body {
   text-align: right;
 }
 
+.workflow-profile-strip {
+  display: grid;
+  grid-template-columns: auto minmax(160px, 1fr) auto auto;
+  gap: 8px;
+  align-items: center;
+  margin: 0 2px 10px;
+  min-height: 40px;
+}
+
+.workflow-profile-strip label,
+.workflow-profile-strip .inline-status {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.workflow-profile-strip select {
+  min-height: 38px;
+  padding: 7px 10px;
+  border-radius: 8px;
+}
+
 .controls,
 .result-panel,
 .settings-shell {
@@ -913,6 +935,89 @@ body[data-task-mode="smartWrite"] #result-output {
   margin-top: 0;
 }
 
+.workflow-profile-manager {
+  display: grid;
+  gap: 18px;
+  margin-top: 12px;
+}
+
+.workflow-task-section {
+  display: grid;
+  gap: 10px;
+  padding-top: 16px;
+  border-top: 1px solid var(--hairline);
+}
+
+.workflow-task-section:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.workflow-task-head,
+.workflow-profile-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-task-head strong,
+.workflow-task-head span {
+  display: block;
+}
+
+.workflow-task-head div > span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workflow-profile-create,
+.workflow-profile-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  align-items: center;
+  padding: 10px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.workflow-profile-create input,
+.workflow-profile-row input {
+  min-height: 38px;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+
+.workflow-profile-row-head,
+.workflow-profile-actions {
+  grid-column: 1 / -1;
+}
+
+.workflow-activate-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.workflow-activate-check input {
+  width: 16px;
+  min-height: 16px;
+  box-shadow: none;
+}
+
+.workflow-profile-error {
+  margin: 0;
+  color: #9b2c2c;
+  font-size: 12px;
+}
+
+.danger-action {
+  color: #9b2c2c;
+}
+
 @media (max-width: 720px) {
   .app {
     padding: 12px;
@@ -922,8 +1027,19 @@ body[data-task-mode="smartWrite"] #result-output {
   .button-cluster,
   .diag-grid,
   .diagnostics-actions,
-  .inline-picker {
+  .inline-picker,
+  .workflow-profile-create,
+  .workflow-profile-row {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-profile-strip {
+    grid-template-columns: 1fr auto;
+  }
+
+  .workflow-profile-strip label,
+  .workflow-profile-strip .inline-status {
+    grid-column: 1 / -1;
   }
 
   #rewrite-options .rewrite-grid {
