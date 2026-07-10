@@ -232,13 +232,13 @@ adapter 返回的完成态业务结果包括：
     "重点关注跨系统接口稳定性"
   ],
   "conclusion": "项目按计划推进，下一阶段应集中完成接口联调和风险收敛。",
-  "plainText": "...",
+  "plainText": "项目总体进展\n\n1. 总体方案设计已完成\n2. 系统已进入联调验证阶段\n3. 重点关注跨系统接口稳定性\n\n项目按计划推进，下一阶段应集中完成接口联调和风险收敛。",
   "rawAnswer": null,
   "parseFallbackReason": null
 }
 ```
 
-任务外层状态继续使用现有后台任务语义：`queued`、`running`、`succeeded` 和 `failed`，并返回任务号、运行耗时、provider 等待预算和可读错误摘要。
+任务外层状态继续使用现有后台任务语义：`running`、`completed` 和 `failed`，并返回任务号、运行耗时、provider 等待预算和可读错误摘要。
 
 同一 `clientJobId` 只能发起一次模型任务。重复提交必须返回现有任务状态，不得重复调用模型后台。
 
