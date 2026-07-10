@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>WPS AI 助理 - PPT 宿主探针</title>
+    <link rel="stylesheet" href="./taskpane.css?v=0.17.0-alpha" />
+  </head>
+  <body data-task-mode="pptSlideAssistant">
+    <main class="app">
+      <header class="header">
+        <div>
+          <p class="eyebrow">WPS AI 助理</p>
+          <h1>PPT 宿主探针</h1>
+        </div>
+        <span class="build-badge">0.17.0-alpha</span>
+      </header>
+
+      <section class="scope-strip" aria-live="polite">
+        <span>当前状态</span>
+        <strong id="status-line">等待读取</strong>
+      </section>
+
+      <section class="control-panel">
+        <div class="limit-grid" aria-label="读取上限">
+          <span>当前页正文 3000 字</span>
+          <span>单文本框 1000 字</span>
+          <span>相邻页仅标题</span>
+        </div>
+        <button id="btn-read-current-slide" type="button">读取当前页</button>
+      </section>
+
+      <section class="result-panel">
+        <div class="panel-head">
+          <h2>只读探针结果</h2>
+          <span>不修改幻灯片</span>
+        </div>
+        <pre id="result-output">等待运行。</pre>
+      </section>
+    </main>
+    <script src="./taskpane-helpers.js?v=0.17.0-alpha"></script>
+    <script src="./taskpane.js?v=0.17.0-alpha"></script>
+  </body>
+</html>

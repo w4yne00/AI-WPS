@@ -41,6 +41,13 @@ const excelManifestXml = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant-et_1.0.0/manifest.xml",
   "utf8"
 );
+const pptRoot = "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
+const pptHtml = fs.readFileSync(`${pptRoot}/taskpane.html`, "utf8");
+const pptJs = fs.readFileSync(`${pptRoot}/taskpane.js`, "utf8");
+const pptRibbon = fs.readFileSync(`${pptRoot}/ribbon.xml`, "utf8");
+const pptRibbonJs = fs.readFileSync(`${pptRoot}/ribbon.js`, "utf8");
+const pptManifest = fs.readFileSync(`${pptRoot}/manifest.json`, "utf8");
+const pptManifestXml = fs.readFileSync(`${pptRoot}/manifest.xml`, "utf8");
 assert.ok(manifest.includes('"version": "0.16.0-alpha"'));
 assert.ok(excelManifest.includes('"name": "wps-ai-assistant-et"'));
 assert.ok(excelManifest.includes('"version": "0.16.0-alpha"'));
@@ -61,6 +68,30 @@ assert.ok(excelRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysis.png"'));
 assert.ok(excelRibbonJs.includes('build=0.16.0-alpha'));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
+assert.ok(pptManifest.includes('"name": "wps-ai-assistant-wpp"'));
+assert.ok(pptManifest.includes('"version": "0.17.0-alpha"'));
+assert.ok(pptManifestXml.includes("<wps:AppId>wps-ai-assistant-wpp</wps:AppId>"));
+assert.ok(pptManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
+assert.ok(pptRibbon.includes('label="WPS AI 助理"'));
+assert.ok(pptRibbon.includes('label="演示内容"'));
+assert.ok(pptRibbon.includes('label="PPT 单页助手"'));
+assert.ok(pptRibbon.includes('label="设置"'));
+assert.ok(!pptRibbon.includes("智能编写"));
+assert.ok(!pptRibbon.includes("智能仿写"));
+assert.ok(!pptRibbon.includes("文档审查"));
+assert.ok(!pptRibbon.includes("格式审查"));
+assert.ok(!pptRibbon.includes("Excel 智能分析"));
+assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "pptSlideAssistant"'));
+assert.ok(pptRibbonJs.includes('btnAiSettings: "settings"'));
+assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png"'));
+assert.ok(pptRibbonJs.includes("build=0.17.0-alpha"));
+assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
+assert.ok(pptHtml.includes('id="btn-read-current-slide"'));
+assert.ok(pptHtml.includes('id="result-output"'));
+assert.ok(pptJs.includes("extractPresentationSlide"));
+assert.ok(!pptJs.includes("Slides.Add"));
+assert.ok(!pptJs.includes("Shapes.Add"));
+assert.ok(!pptJs.includes("TextRange.Text ="));
 
 assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));

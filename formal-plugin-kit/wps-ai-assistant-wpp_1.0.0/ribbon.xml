@@ -1,0 +1,12 @@
+<customUI xmlns="http://schemas.microsoft.com/office/2006/01/customui" onLoad="OnAddinLoad">
+  <ribbon startFromScratch="false">
+    <tabs>
+      <tab id="wpsAiAssistantPptTab" label="WPS AI 助理">
+        <group id="wpsAiAssistantPptGroup" label="演示内容">
+          <button id="btnAiPptSlideAssistant" label="PPT 单页助手" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />
+        </group>
+      </tab>
+    </tabs>
+  </ribbon>
+</customUI>

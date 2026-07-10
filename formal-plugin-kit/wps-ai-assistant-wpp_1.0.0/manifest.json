@@ -1,0 +1,9 @@
+{
+  "name": "wps-ai-assistant-wpp",
+  "version": "0.17.0-alpha",
+  "description": "AI-WPS PPT single-slide assistant",
+  "icons": {
+    "32": "assets/ai-assistant-32.png"
+  },
+  "entry": "index.html"
+}
