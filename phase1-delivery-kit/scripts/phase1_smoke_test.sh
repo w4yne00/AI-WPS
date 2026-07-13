@@ -8,6 +8,7 @@ WPS_JSADDONS_DIR="${WPS_JSADDONS_DIR:-/home/cloud/.local/share/Kingsoft/wps/jsad
 INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$HOME/ai-wps-phase1}"
 PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant_1.0.0"
 EXCEL_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-et_1.0.0"
+PPT_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0"
 ADAPTER_DIR="$INSTALL_ROOT/adapter-start-kit"
 
 http_get() {
@@ -40,11 +41,20 @@ else
   exit 1
 fi
 
+if [ -d "$PPT_PLUGIN_DIR" ]; then
+  echo "wpp_plugin_dir=ok path=$PPT_PLUGIN_DIR"
+else
+  echo "wpp_plugin_dir=missing path=$PPT_PLUGIN_DIR"
+  exit 1
+fi
+
 if [ -f "$WPS_JSADDONS_DIR/publish.xml" ] \
   && grep -q 'name="wps-ai-assistant"' "$WPS_JSADDONS_DIR/publish.xml" \
   && grep -q 'type="wps"' "$WPS_JSADDONS_DIR/publish.xml" \
   && grep -q 'name="wps-ai-assistant-et"' "$WPS_JSADDONS_DIR/publish.xml" \
-  && grep -q 'type="et"' "$WPS_JSADDONS_DIR/publish.xml"; then
+  && grep -q 'type="et"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'name="wps-ai-assistant-wpp"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'type="wpp"' "$WPS_JSADDONS_DIR/publish.xml"; then
   echo "publish_xml=ok path=$WPS_JSADDONS_DIR/publish.xml"
 else
   echo "publish_xml=missing_or_invalid path=$WPS_JSADDONS_DIR/publish.xml"

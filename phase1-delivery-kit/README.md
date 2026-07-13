@@ -16,6 +16,7 @@ bash installer/install_phase1.sh
 
 - Word 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0`
 - Excel 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-et_1.0.0`
+- PPT 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-wpp_1.0.0`
 - `publish.xml`：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/publish.xml`
 - Adapter：`$HOME/ai-wps-phase1/adapter-start-kit`
 - Adapter 端口：`18100`
@@ -40,6 +41,7 @@ bash scripts/phase1_smoke_test.sh
 
 - `packages/wps-ai-assistant_1.0.0/`：WPS Word 正式一期插件。
 - `packages/wps-ai-assistant-et_1.0.0/`：WPS Excel 智能分析插件。
+- `packages/wps-ai-assistant-wpp_1.0.0/`：WPS PPT 单页助手插件。
 - `packages/adapter-start-kit/`：本地 adapter 启动包。
 - `packages/kylin-v10-arm-py38-pip-bootstrap/`：无 pip 目标机离线 pip 引导包。
 - `packages/kylin-v10-arm-py38/`：Python 3.8 ARM 离线运行依赖。
@@ -53,6 +55,7 @@ bash scripts/phase1_smoke_test.sh
 - `docs/operations/dify-document-review-workflow.md`：文档审查 Dify 工作流配置手册。
 - `docs/operations/dify-format-review-workflow.md`：格式审查 Dify 工作流配置手册。
 - `docs/operations/dify-excel-analysis-workflow.md`：Excel 智能分析 Dify 工作流配置手册。
+- `docs/operations/dify-ppt-slide-assistant-workflow.md`：PPT 单页助手 Dify 工作流配置手册。
 - `docs/operations/workflow-profile-management.md`：工作流档案新增、切换、迁移和密钥保护手册。
 
 ## 安装后操作
@@ -60,8 +63,9 @@ bash scripts/phase1_smoke_test.sh
 1. 关闭并重新打开 WPS。
 2. 打开 WPS Word，确认 `WPS AI 助理` 只显示 Word 专用按钮。
 3. 打开 WPS Excel，确认 `WPS AI 助理` 只显示 `Excel 智能分析` 和 `设置`。
-4. 打开设置页刷新配置。
-5. 验证智能编写、智能仿写、文档审查、格式审查和 Excel 智能分析。
+4. 打开 WPS 演示，确认 `WPS AI 助理` 只显示 `PPT 单页助手` 和 `设置`。
+5. 打开设置页刷新配置。
+6. 验证智能编写、智能仿写、文档审查、格式审查、Excel 智能分析和 PPT 单页助手。
 6. 如果接入 Dify，确认每个任务命中对应的 Dify 应用或工作流。
 7. 确认任务窗口和 Ribbon 图标显示为雾蓝银白配色；若显示旧绿色，请完全关闭并重新启动 WPS 后复查。
 8. Excel 智能分析长任务应持续显示模型后台处理状态；短暂连接失败后应保留任务编号并自动恢复查询。

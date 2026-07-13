@@ -90,6 +90,13 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("wps-ai-assistant_1.0.0", script)
         self.assertIn("wps-ai-assistant-et_1.0.0", script)
 
+    def test_phase1_packaging_includes_all_three_host_addins_and_ppt_guide(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
+
+        self.assertIn("PPT_FORMAL_SRC", script)
+        self.assertIn("wps-ai-assistant-wpp_1.0.0", script)
+        self.assertIn("dify-ppt-slide-assistant-workflow.md", script)
+
     def test_phase1_installer_installs_word_and_excel_addins(self) -> None:
         script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
@@ -105,6 +112,25 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn('grep -v \'name="wps-ai-assistant-et"\'', script)
         self.assertIn("preserve_adapter_runtime_config", script)
         self.assertIn("restore_adapter_runtime_config", script)
+
+    def test_phase1_installer_installs_ppt_addin_in_same_package(self) -> None:
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+        publish_xml = (ROOT / "phase1-delivery-kit/wps-jsaddons/publish.xml").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('PPT_PLUGIN_NAME="wps-ai-assistant-wpp_1.0.0"', installer)
+        self.assertIn('name="wps-ai-assistant-wpp"', installer)
+        self.assertIn('type="wpp"', installer)
+        self.assertIn('grep -v \'name="wps-ai-assistant-wpp"\'', installer)
+        self.assertIn('name="wps-ai-assistant-wpp"', publish_xml)
+        self.assertIn('type="wpp"', publish_xml)
+        self.assertIn("preserve_adapter_runtime_config", installer)
+        self.assertIn("config/adapter.json", installer)
+        self.assertIn("provider_api_key", installer)
+        self.assertIn("provider_api_keys", installer)
 
     def test_smart_imitation_icon_and_config_are_packaged(self) -> None:
         self.assertTrue(

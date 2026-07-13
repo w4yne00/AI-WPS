@@ -7,7 +7,8 @@
 - [ ] `python3 -c "import fastapi, uvicorn, pydantic, requests"` 执行成功。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0` 存在。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-et_1.0.0` 存在。
-- [ ] `~/.local/share/Kingsoft/wps/jsaddons/publish.xml` 存在，并包含 `wps-ai-assistant` 的 `type="wps"` 和 `wps-ai-assistant-et` 的 `type="et"`。
+- [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-wpp_1.0.0` 存在。
+- [ ] `publish.xml` 同时包含 Word 的 `type="wps"`、Excel 的 `type="et"` 和 PPT 的 `type="wpp"`。
 
 ## 2. Adapter 检查
 
@@ -33,6 +34,7 @@
 - [ ] 功能页下拉选择后，点击“切换”才改变当前工作流，并提示下一次任务生效。
 - [ ] 当前工作流不可直接删除，切换后可删除旧的备用档案。
 - [ ] Word 不显示 Excel 工作流档案，Excel 不显示 Word 工作流档案。
+- [ ] PPT 入口只显示：PPT 单页助手、设置，且只显示 PPT 工作流档案。
 - [ ] 清空 API URL 和 API Key 后状态显示未配置或模拟。
 
 ## 4. Word 一期能力检查
@@ -53,7 +55,15 @@
 - [ ] 状态查询短暂失败时保留任务编号，并自动恢复查询。
 - [ ] 不修改单元格、不新增工作表、不写回公式。
 
-## 6. 结论
+## 6. PPT 一期能力检查
+
+- [ ] 有有效正文时自动使用优化模式。
+- [ ] 标题页或空白页要求填写生成要求。
+- [ ] 结果支持预览、纯文本和四类复制。
+- [ ] 慢任务保留任务编号并可恢复查询。
+- [ ] 不修改幻灯片文字、版式、对象或备注。
+
+## 7. 结论
 
 - 验收人员：
 - 终端编号：

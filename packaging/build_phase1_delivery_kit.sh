@@ -9,6 +9,7 @@ TMP_DIR="$OUT_DIR/$KIT_NAME"
 
 WORD_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant_1.0.0"
 EXCEL_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant-et_1.0.0"
+PPT_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant-wpp_1.0.0"
 ADAPTER_SRC="$ROOT_DIR/adapter-start-kit"
 PIP_TAR="$ROOT_DIR/dist-offline-deps/kylin-v10-arm-py38-pip-bootstrap-20260506.tar.gz"
 RUNTIME_TAR="$ROOT_DIR/dist-offline-deps/kylin-v10-arm-py38-runtime-deps-20260506.tar.gz"
@@ -19,6 +20,7 @@ mkdir -p "$TMP_DIR/packages/adapter-start-kit" "$TMP_DIR/docs" "$TMP_DIR/install
 cp -R "$ROOT_DIR/phase1-delivery-kit/." "$TMP_DIR/"
 cp -R "$WORD_FORMAL_SRC" "$TMP_DIR/packages/wps-ai-assistant_1.0.0"
 cp -R "$EXCEL_FORMAL_SRC" "$TMP_DIR/packages/wps-ai-assistant-et_1.0.0"
+cp -R "$PPT_FORMAL_SRC" "$TMP_DIR/packages/wps-ai-assistant-wpp_1.0.0"
 cp -R "$ADAPTER_SRC/." "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/adapter_service" "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/config" "$TMP_DIR/packages/adapter-start-kit/"
@@ -29,6 +31,7 @@ cp "$ROOT_DIR/docs/operations/dify-smart-imitation-workflow.md" "$TMP_DIR/docs/o
 cp "$ROOT_DIR/docs/operations/dify-document-review-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-format-review-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-excel-analysis-workflow.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/dify-ppt-slide-assistant-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/workflow-profile-management.md" "$TMP_DIR/docs/operations/"
 
 tar -xzf "$PIP_TAR" -C "$TMP_DIR/packages"

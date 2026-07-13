@@ -2,4 +2,5 @@
 <jsplugins>
   <jsplugin name="wps-ai-assistant" url="file://" type="wps" enable="enable_dev" version="1.0.0"/>
   <jsplugin name="wps-ai-assistant-et" url="file://" type="et" enable="enable_dev" version="1.0.0"/>
+  <jsplugin name="wps-ai-assistant-wpp" url="file://" type="wpp" enable="enable_dev" version="1.0.0"/>
 </jsplugins>
