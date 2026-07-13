@@ -22,6 +22,7 @@ _LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
 FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS = 60
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
+PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
@@ -252,6 +253,50 @@ def build_excel_analysis_prompt(request: ExcelAnalysisRequest) -> str:
             "5. plainText 为可直接复制到 Word 或 PPT 的中文汇报段落。",
             "6. 如果数据已截断，必须说明分析基于有限样本。",
             "7. 不要输出公式，不要声称已经修改单元格，不要要求前端自动写回 Excel。",
+        ]
+    )
+
+
+def build_ppt_slide_prompt(context: Dict, user_instruction: str, mode: str) -> str:
+    text_blocks = context.get("textBlocks") or context.get("text_blocks") or []
+    if not isinstance(text_blocks, list):
+        text_blocks = []
+    body = "\n".join(
+        _provider_safe_str(item).strip()
+        for item in text_blocks
+        if _provider_safe_str(item).strip()
+    )
+    mode_text = "优化当前页已有内容" if mode == "optimize" else "根据当前页信息和补充要求生成本页内容"
+    return "\n".join(
+        [
+            "你是企业汇报材料 PPT 单页内容助手。",
+            "任务模式：{0}。".format(mode_text),
+            "",
+            "当前页序号：{0}".format(context.get("index", 1)),
+            "当前页主标题：{0}".format(_provider_safe_str(context.get("title")).strip() or "未识别"),
+            "当前页副标题：{0}".format(_provider_safe_str(context.get("subtitle")).strip() or "无"),
+            "前一页主标题：{0}".format(
+                _provider_safe_str(context.get("previousTitle") or context.get("previous_title")).strip() or "无"
+            ),
+            "后一页主标题：{0}".format(
+                _provider_safe_str(context.get("nextTitle") or context.get("next_title")).strip() or "无"
+            ),
+            "当前页内容已截断：{0}".format("是" if context.get("truncated") else "否"),
+            "",
+            "用户补充要求：",
+            _provider_safe_str(user_instruction).strip() or "无",
+            "",
+            "当前页正文：",
+            body or "无有效正文",
+            "",
+            "输出要求：",
+            "1. 只输出建议标题、核心要点和本页结论。",
+            "2. 核心要点必须为 3 至 5 条。",
+            "3. 不输出配色、版式、图标、图片、动画或页面操作建议。",
+            "4. 不声称已经修改 PPT，不输出深度思考过程。",
+            "5. 前后页标题只用于避免重复和保持衔接，不扩写相邻页面。",
+            "6. 使用固定 Markdown 分区：## 建议标题、## 核心要点、## 本页结论。",
+            "7. 不编造当前页和用户补充要求中没有的事实、数据、进度或结论。",
         ]
     )
 
@@ -766,6 +811,109 @@ def parse_excel_analysis_answer(answer: str) -> Dict:
             "actions": [],
         },
         "plainText": cleaned,
+    }
+
+
+def _ppt_text_list(value) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [_provider_safe_str(item).strip() for item in value if _provider_safe_str(item).strip()]
+
+
+def _build_ppt_plain_text(title: str, bullets: List[str], conclusion: str) -> str:
+    sections = []
+    if title:
+        sections.append(title)
+    if bullets:
+        sections.append("\n".join("{0}. {1}".format(index, item) for index, item in enumerate(bullets, 1)))
+    if conclusion:
+        sections.append(conclusion)
+    return "\n\n".join(sections)
+
+
+def _normalize_ppt_bullet(line: str) -> str:
+    return re.sub(r"^\s*(?:[-*+]\s+|\d+[.)、]\s*)", "", line or "").strip()
+
+
+def parse_ppt_slide_answer(answer: str) -> Dict:
+    cleaned = strip_think_tag_content(answer or "").strip()
+    payload = _extract_json_payload(cleaned)
+    if isinstance(payload, dict):
+        title = _provider_safe_str(payload.get("suggestedTitle") or payload.get("suggested_title")).strip()
+        bullets = _ppt_text_list(payload.get("bullets"))
+        conclusion = _provider_safe_str(payload.get("conclusion")).strip()
+        if title or bullets or conclusion:
+            return {
+                "suggestedTitle": title,
+                "bullets": bullets,
+                "conclusion": conclusion,
+                "plainText": _provider_safe_str(payload.get("plainText") or payload.get("plain_text")).strip()
+                or _build_ppt_plain_text(title, bullets, conclusion),
+                "rawAnswer": None,
+                "parseFallbackReason": None,
+            }
+
+    section_matches = list(
+        re.finditer(
+            r"^\s*#{1,6}\s*(建议标题|核心要点|本页结论)\s*$",
+            cleaned,
+            flags=re.MULTILINE,
+        )
+    )
+    sections = {}
+    for index, match in enumerate(section_matches):
+        end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(cleaned)
+        sections[match.group(1)] = cleaned[match.end():end].strip()
+    if sections:
+        title = next(
+            (line.strip() for line in sections.get("建议标题", "").splitlines() if line.strip()),
+            "",
+        )
+        bullets = [
+            normalized
+            for normalized in (_normalize_ppt_bullet(line) for line in sections.get("核心要点", "").splitlines())
+            if normalized
+        ]
+        conclusion = "\n".join(
+            line.strip()
+            for line in sections.get("本页结论", "").splitlines()
+            if line.strip()
+        )
+        if title or bullets or conclusion:
+            return {
+                "suggestedTitle": title,
+                "bullets": bullets,
+                "conclusion": conclusion,
+                "plainText": _build_ppt_plain_text(title, bullets, conclusion),
+                "rawAnswer": None,
+                "parseFallbackReason": None,
+            }
+
+    return {
+        "suggestedTitle": "",
+        "bullets": [],
+        "conclusion": "",
+        "plainText": cleaned,
+        "rawAnswer": cleaned,
+        "parseFallbackReason": "ppt_output_not_structured",
+    }
+
+
+def build_ppt_unconfigured_result(context: Dict, mode: str, prompt: str) -> Dict:
+    return {
+        "modeUsed": mode,
+        "suggestedTitle": context.get("title") or "PPT 单页内容建议",
+        "bullets": [
+            "已读取当前第 {0} 页内容。".format(context.get("index", 1)),
+            "当前尚未配置 PPT 单页助手工作流。",
+            "请在设置页保存并启用 ppt.slide_assistant 的工作流配置。",
+        ],
+        "conclusion": "完成模型后台配置后，可生成正式的本页标题、要点和结论。",
+        "plainText": "当前尚未配置 PPT 单页助手工作流，请先在设置页完成配置。",
+        "rawAnswer": None,
+        "parseFallbackReason": None,
+        "provider": "mock",
+        "prompt": prompt,
     }
 
 
@@ -1300,6 +1448,37 @@ class ProviderClient:
         logger.info("traceId=%s provider=enterprise-dify-chat task=excel.analysis", trace_id)
         return {
             **parsed,
+            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
+
+    def ppt_slide_assistant(self, context: Dict, user_instruction: str, mode: str, trace_id: str) -> Dict:
+        prompt = build_ppt_slide_prompt(context, user_instruction, mode)
+        task_type = "ppt.slide_assistant"
+        if not self.is_task_configured(task_type):
+            logger.info("traceId=%s provider=mock task=ppt.slide_assistant", trace_id)
+            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            return build_ppt_unconfigured_result(context, mode, prompt)
+
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {
+                "scene": "ppt",
+                "slideIndex": context["index"],
+                "mode": mode,
+                "truncated": context["truncated"],
+            },
+            prompt,
+            timeout_seconds=max(self.settings.timeout_seconds, PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS),
+        )
+        parsed = parse_ppt_slide_answer(extract_answer(body))
+        logger.info("traceId=%s provider=enterprise-dify-chat task=ppt.slide_assistant", trace_id)
+        return {
+            **parsed,
+            "modeUsed": mode,
             "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),

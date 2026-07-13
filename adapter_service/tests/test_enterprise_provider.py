@@ -17,12 +17,13 @@ if str(ROOT) not in sys.path:
 
 from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
 from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
-from app.core.models import ExcelAnalysisRequest, WordDocumentRequest
+from app.core.models import ExcelAnalysisRequest, PptSlideAssistantRequest, WordDocumentRequest
 from app.services import provider_client
 from app.services.provider_client import (
     ProviderClient,
     build_excel_analysis_prompt,
     build_document_review_prompt,
+    build_ppt_slide_prompt,
     build_provider_request_payload,
     build_route_request_payload,
     build_rewrite_prompt,
@@ -38,6 +39,7 @@ from app.services.provider_client import (
     clear_route_api_key,
     parse_document_review_answer,
     parse_excel_analysis_answer,
+    parse_ppt_slide_answer,
     record_provider_debug,
     reset_provider_debug,
 )
@@ -758,6 +760,206 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("生成简要分析", provider.calls[0]["query"])
         self.assertEqual(provider.calls[0]["timeoutSeconds"], 1800)
         self.assertEqual(result["plainText"], "汇报段落")
+
+    def test_ppt_slide_assistant_request_accepts_camel_case_payload(self):
+        request = PptSlideAssistantRequest.parse_obj(
+            {
+                "presentationId": "汇报材料.pptx",
+                "scene": "ppt",
+                "clientJobId": "client-ppt-slide-12345678",
+                "slide": {
+                    "index": 2,
+                    "title": "项目进展",
+                    "subtitle": "阶段成果与当前重点",
+                    "textBlocks": ["总体方案设计已完成", "正在开展接口联调"],
+                    "previousTitle": "项目背景",
+                    "nextTitle": "风险与措施",
+                    "truncated": False,
+                },
+                "userInstruction": "面向管理层，突出进展和风险。",
+            }
+        )
+
+        self.assertEqual(request.presentation_id, "汇报材料.pptx")
+        self.assertEqual(request.scene, "ppt")
+        self.assertEqual(request.client_job_id, "client-ppt-slide-12345678")
+        self.assertEqual(request.slide.subtitle, "阶段成果与当前重点")
+        self.assertEqual(request.slide.text_blocks[0], "总体方案设计已完成")
+        self.assertEqual(request.user_instruction, "面向管理层，突出进展和风险。")
+
+    def test_ppt_slide_assistant_request_discards_host_object_values(self):
+        request = PptSlideAssistantRequest.parse_obj(
+            {
+                "presentationId": {"Value": "不应进入提示词"},
+                "clientJobId": {"Value": "不应进入任务号"},
+                "slide": {
+                    "index": {"Value": 9},
+                    "title": {"Text": "不应进入标题"},
+                    "subtitle": {"Text": "不应进入副标题"},
+                    "textBlocks": ["有效正文", {"Text": "不应进入正文"}],
+                    "previousTitle": {"Text": "不应进入相邻标题"},
+                    "truncated": {"Value": True},
+                },
+                "userInstruction": {"Text": "不应进入要求"},
+            }
+        )
+
+        self.assertEqual(request.presentation_id, "active-presentation")
+        self.assertEqual(request.client_job_id, "")
+        self.assertEqual(request.slide.index, 1)
+        self.assertEqual(request.slide.title, "")
+        self.assertEqual(request.slide.subtitle, "")
+        self.assertEqual(request.slide.text_blocks, ["有效正文", ""])
+        self.assertEqual(request.slide.previous_title, "")
+        self.assertEqual(request.slide.truncated, False)
+        self.assertEqual(request.user_instruction, "")
+
+    def test_build_ppt_slide_prompt_keeps_subtitle_separate_and_limits_output(self):
+        context = {
+            "index": 2,
+            "title": "项目进展",
+            "subtitle": "阶段成果与当前重点",
+            "textBlocks": ["总体方案设计已完成", "正在开展接口联调"],
+            "previousTitle": "项目背景",
+            "nextTitle": "风险与措施",
+            "truncated": False,
+        }
+
+        prompt = build_ppt_slide_prompt(
+            context,
+            "面向管理层，突出进展和风险。",
+            "optimize",
+        )
+
+        self.assertIn("当前页主标题：项目进展", prompt)
+        self.assertIn("当前页副标题：阶段成果与当前重点", prompt)
+        self.assertIn("当前页正文：\n总体方案设计已完成\n正在开展接口联调", prompt)
+        self.assertIn("核心要点必须为 3 至 5 条", prompt)
+        self.assertIn("不输出配色、版式、图标、图片、动画或页面操作建议", prompt)
+        self.assertIn("不声称已经修改 PPT", prompt)
+        self.assertIn("前后页标题只用于避免重复和保持衔接", prompt)
+
+    def test_parse_ppt_slide_answer_accepts_json_markdown_think_and_raw_fallback(self):
+        parsed_json = parse_ppt_slide_answer(
+            """
+            {"suggestedTitle":"项目总体进展","bullets":["完成总体方案设计","进入接口联调","关注接口稳定性"],"conclusion":"项目按计划推进。"}
+            """
+        )
+        self.assertEqual(parsed_json["suggestedTitle"], "项目总体进展")
+        self.assertEqual(len(parsed_json["bullets"]), 3)
+        self.assertEqual(parsed_json["rawAnswer"], None)
+
+        markdown = """## 建议标题
+项目总体进展
+
+## 核心要点
+- 总体方案设计已完成
+- 系统进入联调阶段
+- 重点关注接口稳定性
+
+## 本页结论
+项目按计划推进，应集中完成联调和风险收敛。
+"""
+        parsed_markdown = parse_ppt_slide_answer(markdown)
+        self.assertEqual(parsed_markdown["suggestedTitle"], "项目总体进展")
+        self.assertEqual(len(parsed_markdown["bullets"]), 3)
+        self.assertEqual(parsed_markdown["rawAnswer"], None)
+        self.assertIn("1. 总体方案设计已完成", parsed_markdown["plainText"])
+
+        parsed_think = parse_ppt_slide_answer("<think>内部推理</think>\n" + markdown)
+        self.assertNotIn("内部推理", parsed_think["plainText"])
+        self.assertEqual(parsed_think["conclusion"], "项目按计划推进，应集中完成联调和风险收敛。")
+
+        fallback = parse_ppt_slide_answer("模型返回了一段无法分区的最终内容。")
+        self.assertIn("无法分区", fallback["rawAnswer"])
+        self.assertEqual(fallback["parseFallbackReason"], "ppt_output_not_structured")
+        self.assertEqual(fallback["bullets"], [])
+
+    def test_ppt_slide_assistant_uses_independent_task_type_and_timeout(self):
+        class CapturingProviderClient(ProviderClient):
+            def __init__(self):
+                super().__init__(AppSettings(timeout_seconds=75))
+                self.calls = []
+
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
+                return True
+
+            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+                self.calls.append(
+                    {
+                        "taskType": task_type,
+                        "traceId": trace_id,
+                        "inputData": input_data,
+                        "query": query,
+                        "timeoutSeconds": timeout_seconds,
+                    }
+                )
+                return {
+                    "answer": '{"suggestedTitle":"项目总体进展","bullets":["完成方案设计","进入接口联调","关注接口稳定性"],"conclusion":"项目按计划推进。"}'
+                }
+
+        provider = CapturingProviderClient()
+        context = {
+            "index": 2,
+            "title": "项目进展",
+            "subtitle": "阶段成果与当前重点",
+            "textBlocks": ["总体方案设计已完成", "正在开展接口联调"],
+            "previousTitle": "项目背景",
+            "nextTitle": "风险与措施",
+            "truncated": False,
+        }
+
+        result = provider.ppt_slide_assistant(
+            context,
+            "面向管理层，突出进展和风险。",
+            "optimize",
+            "trace-ppt-slide",
+        )
+
+        self.assertEqual(provider.calls[0]["taskType"], "ppt.slide_assistant")
+        self.assertEqual(provider.calls[0]["timeoutSeconds"], 1800)
+        self.assertEqual(
+            provider.calls[0]["inputData"],
+            {"scene": "ppt", "slideIndex": 2, "mode": "optimize", "truncated": False},
+        )
+        self.assertEqual(result["modeUsed"], "optimize")
+        self.assertEqual(result["suggestedTitle"], "项目总体进展")
+        self.assertTrue(result["provider"].startswith("enterprise-dify-chat/"))
+
+    def test_ppt_slide_assistant_returns_structured_unconfigured_result(self):
+        class UnconfiguredProviderClient(ProviderClient):
+            def __init__(self):
+                super().__init__(AppSettings())
+                self.debug_task_type = ""
+
+            def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
+                return False
+
+            def record_unconfigured_debug(self, task_type: str, trace_id: str, query: str) -> None:
+                self.debug_task_type = task_type
+
+        provider = UnconfiguredProviderClient()
+        result = provider.ppt_slide_assistant(
+            {
+                "index": 4,
+                "title": "项目进展",
+                "subtitle": "",
+                "textBlocks": [],
+                "previousTitle": "项目背景",
+                "nextTitle": "风险与措施",
+                "truncated": False,
+            },
+            "生成本页内容。",
+            "generate",
+            "trace-ppt-unconfigured",
+        )
+
+        self.assertEqual(provider.debug_task_type, "ppt.slide_assistant")
+        self.assertEqual(result["provider"], "mock")
+        self.assertEqual(result["modeUsed"], "generate")
+        self.assertEqual(result["suggestedTitle"], "项目进展")
+        self.assertEqual(len(result["bullets"]), 3)
+        self.assertIn("尚未配置", result["plainText"])
 
     def test_word_request_accepts_smart_imitation_options(self):
         payload = {

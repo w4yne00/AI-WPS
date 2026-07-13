@@ -285,6 +285,65 @@ class ExcelAnalysisResponseData(ExcelAnalysisResult):
     pass
 
 
+class PptSlideInput(BaseModel):
+    index: int = 1
+    title: str = ""
+    subtitle: str = ""
+    text_blocks: List[str] = Field(default_factory=list, alias="textBlocks")
+    previous_title: str = Field(default="", alias="previousTitle")
+    next_title: str = Field(default="", alias="nextTitle")
+    truncated: bool = False
+
+    @validator("index", pre=True, always=True)
+    def coerce_index(cls, value):
+        return _safe_int(value) or 1
+
+    @validator("title", "subtitle", "previous_title", "next_title", pre=True, always=True)
+    def coerce_slide_text(cls, value):
+        return _safe_str(value)
+
+    @validator("text_blocks", pre=True, always=True)
+    def coerce_text_blocks(cls, value):
+        if not isinstance(value, list):
+            return []
+        return [_safe_str(item) for item in value]
+
+    @validator("truncated", pre=True, always=True)
+    def coerce_slide_truncated(cls, value):
+        return bool(_safe_bool(value))
+
+
+class PptSlideAssistantRequest(BaseModel):
+    presentation_id: str = Field(default="active-presentation", alias="presentationId")
+    scene: Literal["ppt"] = "ppt"
+    client_job_id: str = Field(default="", alias="clientJobId")
+    slide: PptSlideInput = Field(default_factory=PptSlideInput)
+    user_instruction: str = Field(default="", alias="userInstruction")
+
+    @validator("presentation_id", pre=True, always=True)
+    def coerce_presentation_id(cls, value):
+        return _safe_str(value, "active-presentation") or "active-presentation"
+
+    @validator("scene", pre=True, always=True)
+    def coerce_ppt_scene(cls, value):
+        return "ppt"
+
+    @validator("client_job_id", "user_instruction", pre=True, always=True)
+    def coerce_ppt_request_text(cls, value):
+        return _safe_str(value)
+
+
+class PptSlideAssistantResponseData(BaseModel):
+    mode_used: Literal["generate", "optimize"] = Field(alias="modeUsed")
+    suggested_title: str = Field(default="", alias="suggestedTitle")
+    bullets: List[str] = Field(default_factory=list)
+    conclusion: str = ""
+    plain_text: str = Field(default="", alias="plainText")
+    raw_answer: Optional[str] = Field(default=None, alias="rawAnswer")
+    parse_fallback_reason: Optional[str] = Field(default=None, alias="parseFallbackReason")
+    provider: str = "mock"
+
+
 class RewriteResult(BaseModel):
     original_text: str = Field(alias="originalText")
     rewritten_text: str = Field(alias="rewrittenText")
