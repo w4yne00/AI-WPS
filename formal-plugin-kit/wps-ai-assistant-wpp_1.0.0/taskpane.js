@@ -4,6 +4,7 @@
   var helpers = window.WpsAiPptHelpers || {};
   var LIMITS = {
     maxTitleLength: 200,
+    maxSubtitleLength: 300,
     maxBlockLength: 1000,
     maxBodyLength: 3000,
     maxAdjacentTitleLength: 200

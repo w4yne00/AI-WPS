@@ -11,6 +11,7 @@
 - 当前演示文稿名称。
 - 当前幻灯片序号。
 - 当前页标题。
+- 当前页可选副标题。
 - 当前页普通文本框内容。
 - `TextFrame` 和 `TextFrame2` 文本。
 - 前一页和后一页标题。
@@ -91,7 +92,7 @@ test -f "$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js"
 新建至少 7 页演示文稿：
 
 1. 标准标题和正文页，标题为“项目背景”。
-2. 标准标题和两个正文文本框，标题为“项目进展”。
+2. 标准主标题、可选副标题和两个正文文本框，主标题为“项目进展”，副标题为“阶段成果与当前重点”。
 3. 标准标题和正文页，标题为“风险与措施”。
 4. 没有标题占位符，手工放置两个文本框。
 5. 只有标题，没有正文。
@@ -122,6 +123,7 @@ test -f "$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js"
   "slide": {
     "index": 2,
     "title": "项目进展",
+    "subtitle": "阶段成果与当前重点",
     "textBlocks": [
       "总体方案设计已完成",
       "正在开展接口联调"
@@ -133,7 +135,7 @@ test -f "$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js"
 }
 ```
 
-`presentationId` 应为当前文件名。`bodyCharacterCount` 应为两个正文文本框清洗后的字符总数。
+`presentationId` 应为当前文件名。`subtitleCharacterCount` 应为副标题字符数，`bodyCharacterCount` 应只统计两个正文文本框，`contentCharacterCount` 应为副标题与正文字符数之和。主标题和副标题都不能重复出现在 `textBlocks`。
 
 ## 7. 验收记录
 
@@ -143,6 +145,10 @@ test -f "$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js"
 | 宿主隔离 | 不显示 Word 和 Excel 专用按钮 | 未验证 |
 | 当前页序号 | 切换页面后 `slide.index` 同步变化 | 未验证 |
 | 标题占位符 | 标准标题正确进入 `slide.title` | 未验证 |
+| 标题包装对象 | `Shapes.Title` 与枚举对象引用不同时，主标题仍不进入 `textBlocks` | 未验证 |
+| 标准副标题 | 副标题占位符正确进入 `slide.subtitle` | 未验证 |
+| 普通文本框副标题 | 主标题下方紧邻短文本框正确进入 `slide.subtitle` | 未验证 |
+| 无副标题 | `slide.subtitle` 为空字符串，正文保持完整 | 未验证 |
 | 多文本框 | 每个正文文本框保持独立数组项 | 未验证 |
 | `TextFrame2` | 使用新版文本框时仍可读取文字 | 未验证 |
 | 相邻页标题 | 只读取前后各一页标题 | 未验证 |
@@ -151,7 +157,7 @@ test -f "$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js"
 | 空白页 | 标题和正文为空，不报错 | 未验证 |
 | 仅图片/图表页 | 不读取图片或图表数据，不报错 | 未验证 |
 | 超长文本框 | 单文本框最多 1000 字并标记截断 | 未验证 |
-| 超长当前页 | 正文合计最多 3000 字并标记截断 | 未验证 |
+| 超长当前页 | 副标题与正文合计最多 3000 字并标记截断 | 未验证 |
 | 响应性 | 点击读取时任务窗格不冻结 | 未验证 |
 | 只读保护 | 读取前后幻灯片内容和版式不变化 | 未验证 |
 

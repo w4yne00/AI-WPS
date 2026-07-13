@@ -174,6 +174,47 @@
       null;
   }
 
+  function getShapeId(shape) {
+    return safeText(safeRead(shape, "Id") || safeRead(shape, "ID") || safeRead(shape, "id"));
+  }
+
+  function getShapeName(shape) {
+    return safeText(safeRead(shape, "Name") || safeRead(shape, "name"));
+  }
+
+  function getShapeMetric(shape, key) {
+    var value = resolveScalarValue(safeRead(shape, key) || safeRead(shape, key.toLowerCase()));
+    var numeric = Number(value);
+    return isNaN(numeric) || numeric < 0 ? null : numeric;
+  }
+
+  function getPlaceholderType(shape) {
+    var format = resolveValue(safeRead(shape, "PlaceholderFormat"), shape) ||
+      resolveValue(safeRead(shape, "placeholderFormat"), shape);
+    return readNumber(format && (safeRead(format, "Type") || safeRead(format, "type")));
+  }
+
+  function shapesMatch(left, right) {
+    var leftId;
+    var rightId;
+    var leftName;
+    var rightName;
+    if (!left || !right) {
+      return false;
+    }
+    if (left === right) {
+      return true;
+    }
+    leftId = getShapeId(left);
+    rightId = getShapeId(right);
+    if (leftId && rightId && leftId === rightId) {
+      return true;
+    }
+    leftName = getShapeName(left);
+    rightName = getShapeName(right);
+    return Boolean(leftName && rightName && leftName === rightName);
+  }
+
   function readSlideTitleInfo(slide) {
     var shapes = getSlideShapes(slide);
     var titleShape = getExplicitTitleShape(shapes);
@@ -183,17 +224,112 @@
     var candidate;
     var candidateText;
     if (titleText) {
-      return { text: titleText, shape: titleShape };
+      count = getCollectionCount(shapes);
+      for (index = 1; index <= count; index += 1) {
+        candidate = getCollectionItem(shapes, index);
+        if (shapesMatch(candidate, titleShape)) {
+          return { text: titleText, shape: candidate, index: index };
+        }
+      }
+      for (index = 1; index <= count; index += 1) {
+        candidate = getCollectionItem(shapes, index);
+        if (readShapeText(candidate) === titleText) {
+          return { text: titleText, shape: candidate, index: index };
+        }
+      }
+      return { text: titleText, shape: titleShape, index: 0 };
     }
     count = getCollectionCount(shapes);
     for (index = 1; index <= count; index += 1) {
       candidate = getCollectionItem(shapes, index);
       candidateText = readShapeText(candidate);
       if (candidateText && candidateText.length <= 200) {
-        return { text: candidateText, shape: candidate };
+        return { text: candidateText, shape: candidate, index: index };
       }
     }
-    return { text: "", shape: null };
+    return { text: "", shape: null, index: 0 };
+  }
+
+  function buildSubtitleInfo(shape, index, maxLength) {
+    var rawText = readShapeText(shape);
+    return {
+      text: truncateText(rawText, maxLength),
+      shape: shape,
+      index: index,
+      truncated: Boolean(maxLength && rawText.length > maxLength)
+    };
+  }
+
+  function readSlideSubtitleInfo(slide, titleInfo, maxLength) {
+    var shapes = getSlideShapes(slide);
+    var count = getCollectionCount(shapes);
+    var candidates = [];
+    var index;
+    var shape;
+    var text;
+    var name;
+    var titleTop = getShapeMetric(titleInfo.shape, "Top");
+    var titleHeight = getShapeMetric(titleInfo.shape, "Height");
+    var titleBottom;
+    var maxGap;
+    var maxHeight;
+    var geometryCandidates;
+    for (index = 1; index <= count; index += 1) {
+      if (index === titleInfo.index) {
+        continue;
+      }
+      shape = getCollectionItem(shapes, index);
+      text = readShapeText(shape);
+      if (!text) {
+        continue;
+      }
+      candidates.push({
+        shape: shape,
+        index: index,
+        text: text,
+        name: getShapeName(shape),
+        placeholderType: getPlaceholderType(shape),
+        top: getShapeMetric(shape, "Top"),
+        height: getShapeMetric(shape, "Height")
+      });
+    }
+    for (index = 0; index < candidates.length; index += 1) {
+      if (candidates[index].placeholderType === 4) {
+        return buildSubtitleInfo(candidates[index].shape, candidates[index].index, maxLength);
+      }
+    }
+    for (index = 0; index < candidates.length; index += 1) {
+      name = candidates[index].name;
+      if (name && /(副标题|副標題|subtitle)/i.test(name)) {
+        return buildSubtitleInfo(candidates[index].shape, candidates[index].index, maxLength);
+      }
+    }
+    if (titleTop === null || titleHeight === null) {
+      return { text: "", shape: null, index: 0, truncated: false };
+    }
+    titleBottom = titleTop + titleHeight;
+    maxGap = Math.max(titleHeight * 3, 120);
+    maxHeight = Math.max(titleHeight * 2.5, 100);
+    geometryCandidates = candidates.filter(function (candidate) {
+      return candidate.text.length <= maxLength &&
+        candidate.top !== null &&
+        candidate.height !== null &&
+        candidate.top >= titleBottom - 4 &&
+        candidate.top - titleBottom <= maxGap &&
+        candidate.height <= maxHeight;
+    });
+    geometryCandidates.sort(function (left, right) {
+      var topDifference = left.top - right.top;
+      return topDifference || left.index - right.index;
+    });
+    if (geometryCandidates.length) {
+      return buildSubtitleInfo(
+        geometryCandidates[0].shape,
+        geometryCandidates[0].index,
+        maxLength
+      );
+    }
+    return { text: "", shape: null, index: 0, truncated: false };
   }
 
   function getSlideIndex(slide, slides) {
@@ -226,7 +362,7 @@
     };
   }
 
-  function collectBodyText(slide, titleShape, limits) {
+  function collectBodyText(slide, excludedIndexes, limits) {
     var shapes = getSlideShapes(slide);
     var count = getCollectionCount(shapes);
     var blocks = [];
@@ -239,7 +375,7 @@
     var remaining;
     for (index = 1; index <= count; index += 1) {
       shape = getCollectionItem(shapes, index);
-      if (shape === titleShape) {
+      if (excludedIndexes[index]) {
         continue;
       }
       text = readShapeText(shape);
@@ -278,6 +414,7 @@
   function extractPresentationSlide(app, options) {
     var limits = {
       maxTitleLength: readNumber(options && options.maxTitleLength) || 200,
+      maxSubtitleLength: readNumber(options && options.maxSubtitleLength) || 300,
       maxBlockLength: readNumber(options && options.maxBlockLength) || 1000,
       maxBodyLength: readNumber(options && options.maxBodyLength) || 3000,
       maxAdjacentTitleLength: readNumber(options && options.maxAdjacentTitleLength) || 200
@@ -288,6 +425,9 @@
     var slideIndex;
     var titleInfo;
     var title;
+    var subtitleInfo;
+    var subtitle;
+    var excludedIndexes;
     var body;
     var previous;
     var next;
@@ -306,20 +446,39 @@
     }
     titleInfo = readSlideTitleInfo(slide);
     title = truncateText(titleInfo.text, limits.maxTitleLength);
-    body = collectBodyText(slide, titleInfo.shape, limits);
+    subtitleInfo = readSlideSubtitleInfo(slide, titleInfo, limits.maxSubtitleLength);
+    subtitle = subtitleInfo.text;
+    excludedIndexes = {};
+    if (titleInfo.index) {
+      excludedIndexes[titleInfo.index] = true;
+    }
+    if (subtitleInfo.index) {
+      excludedIndexes[subtitleInfo.index] = true;
+    }
+    body = collectBodyText(slide, excludedIndexes, {
+      maxBlockLength: limits.maxBlockLength,
+      maxBodyLength: Math.max(limits.maxBodyLength - subtitle.length, 0)
+    });
     previous = readAdjacentTitle(slides, slideIndex, -1, limits.maxAdjacentTitleLength);
     next = readAdjacentTitle(slides, slideIndex, 1, limits.maxAdjacentTitleLength);
-    truncated = body.truncated || title.length < titleInfo.text.length || previous.truncated || next.truncated;
+    truncated = body.truncated ||
+      subtitleInfo.truncated ||
+      title.length < titleInfo.text.length ||
+      previous.truncated ||
+      next.truncated;
     return {
       presentationId: safeText(safeRead(presentation, "Name") || safeRead(presentation, "name"), "active-presentation") || "active-presentation",
       scene: "ppt",
       slide: {
         index: slideIndex,
         title: title,
+        subtitle: subtitle,
         textBlocks: body.blocks,
         previousTitle: previous.text,
         nextTitle: next.text,
+        subtitleCharacterCount: subtitle.length,
         bodyCharacterCount: body.bodyCharacterCount,
+        contentCharacterCount: subtitle.length + body.bodyCharacterCount,
         truncated: truncated
       }
     };

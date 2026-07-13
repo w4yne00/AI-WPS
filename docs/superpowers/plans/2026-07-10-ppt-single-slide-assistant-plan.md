@@ -161,6 +161,7 @@ const result = helpers.extractPresentationSlide(app, {
 assert.strictEqual(result.presentationId, "汇报材料.pptx");
 assert.strictEqual(result.slide.index, 2);
 assert.strictEqual(result.slide.title, "项目进展");
+assert.strictEqual(result.slide.subtitle, "");
 assert.deepStrictEqual(Array.from(result.slide.textBlocks), ["总体方案设计已完成", "正在开展接口联调"]);
 assert.strictEqual(result.slide.previousTitle, "项目背景");
 assert.strictEqual(result.slide.nextTitle, "风险与措施");
@@ -168,7 +169,7 @@ assert.strictEqual(result.slide.truncated, false);
 console.log("ppt taskpane helper tests passed");
 ```
 
-Add cases for `TextFrame2`, no title placeholder, title-only slide, blank slide, one 1200-character shape, and body content over 3000 characters.
+Add cases for `TextFrame2`, detached `Shapes.Title` wrappers, standard subtitle placeholders, geometry-based optional subtitles, no-subtitle slides, no title placeholder, title-only slide, blank slide, one 1200-character shape, and body content over 3000 characters. Main title and subtitle must never appear in `textBlocks`.
 
 - [ ] **Step 4: Run the helper test and verify it fails**
 
@@ -301,6 +302,7 @@ request = PptSlideAssistantRequest.parse_obj(
         "slide": {
             "index": 2,
             "title": "项目进展",
+            "subtitle": "阶段成果与当前重点",
             "textBlocks": ["总体方案设计已完成", "正在开展接口联调"],
             "previousTitle": "项目背景",
             "nextTitle": "风险与措施",
@@ -310,6 +312,7 @@ request = PptSlideAssistantRequest.parse_obj(
     }
 )
 self.assertEqual(request.scene, "ppt")
+self.assertEqual(request.slide.subtitle, "阶段成果与当前重点")
 self.assertEqual(request.slide.text_blocks[0], "总体方案设计已完成")
 self.assertEqual(request.user_instruction, "面向管理层，突出进展和风险。")
 ```
@@ -356,6 +359,7 @@ Add these model boundaries in `core/models.py`:
 class PptSlideInput(BaseModel):
     index: int = 1
     title: str = ""
+    subtitle: str = ""
     text_blocks: List[str] = Field(default_factory=list, alias="textBlocks")
     previous_title: str = Field(default="", alias="previousTitle")
     next_title: str = Field(default="", alias="nextTitle")
@@ -385,7 +389,7 @@ Use existing `_safe_str`, `_safe_int`, and `_safe_bool` validators so non-scalar
 
 - [ ] **Step 4: Implement the prompt builder and parser**
 
-Add `PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS` and `build_ppt_slide_prompt(context, user_instruction, mode)`.
+Add `PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS` and `build_ppt_slide_prompt(context, user_instruction, mode)`. The prompt must include the optional subtitle as a separate field and must not merge it into body text.
 
 The prompt must include these exact output constraints:
 
@@ -486,6 +490,7 @@ Add tests for exact limits:
 result = normalize_ppt_slide_request(
     self._request(
         title="题" * 250,
+        subtitle="副" * 400,
         text_blocks=["甲" * 1200, "乙" * 1800, "丙" * 1800],
         previous_title="前" * 250,
         next_title="后" * 250,
@@ -493,8 +498,9 @@ result = normalize_ppt_slide_request(
     )
 )
 self.assertEqual(len(result["title"]), 200)
+self.assertEqual(len(result["subtitle"]), 300)
 self.assertEqual(max(map(len, result["textBlocks"])), 1000)
-self.assertLessEqual(sum(map(len, result["textBlocks"])), 3000)
+self.assertLessEqual(len(result["subtitle"]) + sum(map(len, result["textBlocks"])), 3000)
 self.assertEqual(len(result["previousTitle"]), 200)
 self.assertEqual(len(result["nextTitle"]), 200)
 self.assertEqual(len(result["userInstruction"]), 1000)
@@ -506,6 +512,7 @@ Add mode tests:
 ```python
 self.assertEqual(determine_ppt_slide_mode({"textBlocks": ["有效正文达到二十个非空白字符用于优化模式判定"]}), "optimize")
 self.assertEqual(determine_ppt_slide_mode({"textBlocks": ["短内容"]}), "generate")
+self.assertEqual(determine_ppt_slide_mode({"subtitle": "只有副标题", "textBlocks": []}), "generate")
 ```
 
 Test that generate mode with blank instruction raises `PPT_SLIDE_INSTRUCTION_REQUIRED` and missing current slide raises `PPT_SLIDE_REQUIRED`.
@@ -530,6 +537,7 @@ Define constants in `slide_assistant.py`:
 
 ```python
 PPT_MAX_TITLE_LENGTH = 200
+PPT_MAX_SUBTITLE_LENGTH = 300
 PPT_MAX_BLOCK_LENGTH = 1000
 PPT_MAX_BODY_LENGTH = 3000
 PPT_MAX_ADJACENT_TITLE_LENGTH = 200
@@ -537,7 +545,7 @@ PPT_MAX_USER_INSTRUCTION_LENGTH = 1000
 PPT_OPTIMIZE_MIN_BODY_CHARS = 20
 ```
 
-`normalize_ppt_slide_request` must return a new dictionary and never mutate the Pydantic request. Count non-whitespace characters for mode selection. `PptSlideAssistant.assist` validates mode, calls `ProviderClient.ppt_slide_assistant`, and returns only response-model fields plus provider metadata.
+`normalize_ppt_slide_request` must return a new dictionary and never mutate the Pydantic request. Count only `textBlocks` non-whitespace characters for mode selection; title and subtitle do not satisfy the optimize threshold. Keep subtitle plus body text within 3000 characters. `PptSlideAssistant.assist` validates mode, calls `ProviderClient.ppt_slide_assistant`, and returns only response-model fields plus provider metadata.
 
 - [ ] **Step 5: Implement the idempotent job store**
 
@@ -781,7 +789,7 @@ Expected: FAIL for missing final controls and result builders.
 
 Use one unframed workflow strip, one compact controls panel, and one result panel. The result preview has three semantic sections and the copy actions remain in a fixed-height toolbar. Use `border-radius` no larger than 8px and stable button dimensions. At 420x900, long workflow names wrap or ellipsize without pushing buttons outside the pane.
 
-The primary action is always labeled `生成本页内容`; there is no generate/optimize selector. Show page index, title, body character count, adjacent-title availability, and truncation state in `ppt-slide-summary`.
+The primary action is always labeled `生成本页内容`; there is no generate/optimize selector. Show page index, title, optional subtitle, body character count, adjacent-title availability, and truncation state in `ppt-slide-summary`.
 
 - [ ] **Step 5: Implement submit and automatic mode flow**
 
