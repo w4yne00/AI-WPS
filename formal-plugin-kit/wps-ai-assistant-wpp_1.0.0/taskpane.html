@@ -3,39 +3,77 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WPS AI 助理 - PPT 宿主探针</title>
+    <title>WPS AI 助理 - PPT 单页助手</title>
     <link rel="stylesheet" href="./taskpane.css?v=0.17.0-alpha" />
   </head>
   <body data-task-mode="pptSlideAssistant">
     <main class="app">
       <header class="header">
-        <div>
-          <p class="eyebrow">WPS AI 助理</p>
-          <h1>PPT 宿主探针</h1>
-        </div>
+        <div><p class="eyebrow">WPS AI 助理</p><h1>PPT 单页助手</h1></div>
         <span class="build-badge">0.17.0-alpha</span>
       </header>
 
-      <section class="scope-strip" aria-live="polite">
-        <span>当前状态</span>
-        <strong id="status-line">等待读取</strong>
+      <section id="home-view">
+        <section class="status-strip" aria-live="polite">
+          <span>当前状态</span><strong id="status-line">等待操作</strong>
+        </section>
+
+        <section id="workflow-profile-strip" class="workflow-strip">
+          <label for="workflow-profile-select">当前工作流</label>
+          <div class="workflow-row">
+            <select id="workflow-profile-select"><option value="">正在读取...</option></select>
+            <button id="btn-activate-workflow-profile" class="secondary compact" type="button" disabled>切换</button>
+          </div>
+          <span id="workflow-profile-current" class="muted">当前：未检测</span>
+        </section>
+
+        <section class="control-panel">
+          <div id="ppt-slide-summary" class="slide-summary">点击生成后读取当前幻灯片。</div>
+          <label class="field" for="ppt-slide-instruction">
+            <span>补充要求</span>
+            <textarea id="ppt-slide-instruction" maxlength="1000" rows="3" placeholder="例如：面向管理层，突出当前进展、主要风险和下一步安排。"></textarea>
+          </label>
+          <button id="btn-run-primary" class="primary" type="button">生成本页内容</button>
+        </section>
+
+        <section class="result-panel">
+          <div class="panel-head">
+            <h2>结果预览</h2>
+            <div id="result-view-switch" class="segmented" hidden>
+              <button id="btn-result-preview" class="active" type="button" aria-pressed="true">预览</button>
+              <button id="btn-result-plain" type="button" aria-pressed="false">纯文本</button>
+            </div>
+          </div>
+          <div id="result-output" class="result-output">等待运行。</div>
+          <div class="copy-toolbar" aria-label="复制结果">
+            <button id="btn-copy-title" class="secondary" type="button" disabled>复制标题</button>
+            <button id="btn-copy-bullets" class="secondary" type="button" disabled>复制要点</button>
+            <button id="btn-copy-conclusion" class="secondary" type="button" disabled>复制结论</button>
+            <button id="btn-copy-result" class="secondary" type="button" disabled>复制完整结果</button>
+          </div>
+        </section>
       </section>
 
-      <section class="control-panel">
-        <div class="limit-grid" aria-label="读取上限">
-          <span>副标题 + 正文 3000 字</span>
-          <span>单文本框 1000 字</span>
-          <span>相邻页仅标题</span>
-        </div>
-        <button id="btn-read-current-slide" type="button">读取当前页</button>
-      </section>
-
-      <section class="result-panel">
-        <div class="panel-head">
-          <h2>只读探针结果</h2>
-          <span>不修改幻灯片</span>
-        </div>
-        <pre id="result-output">等待运行。</pre>
+      <section id="settings-view" hidden>
+        <section class="settings-panel">
+          <h2>模型接口</h2>
+          <label class="field"><span>API URL</span><input id="provider-base-url" type="text" placeholder="https://aibot.example.com/v1" /></label>
+          <label class="field"><span>统一 API Key</span><input id="provider-api-key" type="password" placeholder="输入后保存" /></label>
+          <div class="button-row">
+            <button id="btn-save-provider-url" type="button">保存地址</button>
+            <button id="btn-save-api-key" type="button">保存密钥</button>
+            <button id="btn-clear-api-key" class="secondary" type="button">清除密钥</button>
+          </div>
+        </section>
+        <section class="settings-panel">
+          <div class="panel-head"><h2>工作流配置</h2><span class="muted">仅 PPT 单页助手</span></div>
+          <div id="workflow-profile-manager"></div>
+        </section>
+        <section class="settings-panel">
+          <div class="panel-head"><h2>最近一次任务诊断</h2><button id="btn-refresh-diagnostics" class="secondary compact" type="button">刷新</button></div>
+          <pre id="diagnostics-output">尚未刷新诊断。</pre>
+          <button id="btn-copy-diagnostics" class="secondary" type="button">复制诊断信息</button>
+        </section>
       </section>
     </main>
     <script src="./taskpane-helpers.js?v=0.17.0-alpha"></script>

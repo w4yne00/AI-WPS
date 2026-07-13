@@ -526,11 +526,48 @@
     };
   }
 
+  function buildPptSlidePlainText(result) {
+    var data = result || {};
+    var sections = [];
+    var bullets = Array.isArray(data.bullets) ? data.bullets : [];
+    if (safeText(data.suggestedTitle)) {
+      sections.push(safeText(data.suggestedTitle));
+    }
+    if (bullets.length) {
+      sections.push(bullets.map(function (item, index) {
+        return (index + 1) + ". " + safeText(item);
+      }).join("\n"));
+    }
+    if (safeText(data.conclusion)) {
+      sections.push(safeText(data.conclusion));
+    }
+    return sections.join("\n\n");
+  }
+
+  function buildPptSlideMarkdown(result) {
+    var data = result || {};
+    var bullets = Array.isArray(data.bullets) ? data.bullets : [];
+    return [
+      "## 建议标题",
+      safeText(data.suggestedTitle) || "未返回建议标题",
+      "",
+      "## 核心要点",
+      bullets.length ? bullets.map(function (item) {
+        return "- " + safeText(item);
+      }).join("\n") : "未返回核心要点",
+      "",
+      "## 本页结论",
+      safeText(data.conclusion) || "未返回本页结论"
+    ].join("\n");
+  }
+
   global.WpsAiPptHelpers = {
     extractPresentationSlide: extractPresentationSlide,
     truncateText: truncateText,
     renderMarkdown: renderMarkdown,
     escapeHtml: escapeHtml,
-    normalizeWorkflowProfiles: normalizeWorkflowProfiles
+    normalizeWorkflowProfiles: normalizeWorkflowProfiles,
+    buildPptSlideMarkdown: buildPptSlideMarkdown,
+    buildPptSlidePlainText: buildPptSlidePlainText
   };
 }(window));

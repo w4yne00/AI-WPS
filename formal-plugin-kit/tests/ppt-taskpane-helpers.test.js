@@ -250,4 +250,24 @@ const limits = {
 }
 
 assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
+
+{
+  const markdown = helpers.buildPptSlideMarkdown({
+    suggestedTitle: "项目总体进展",
+    bullets: ["方案设计已完成", "系统进入联调阶段", "重点关注接口稳定性"],
+    conclusion: "项目按计划推进。"
+  });
+  assert.ok(markdown.includes("## 建议标题"));
+  assert.ok(markdown.includes("- 方案设计已完成"));
+  assert.ok(markdown.includes("## 本页结论"));
+}
+
+assert.strictEqual(
+  helpers.buildPptSlidePlainText({
+    suggestedTitle: "标题",
+    bullets: ["要点一", "要点二", "要点三"],
+    conclusion: "结论"
+  }),
+  "标题\n\n1. 要点一\n2. 要点二\n3. 要点三\n\n结论"
+);
 console.log("ppt taskpane helper tests passed");

@@ -86,8 +86,34 @@ assert.ok(pptRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png"'));
 assert.ok(pptRibbonJs.includes("build=0.17.0-alpha"));
 assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
-assert.ok(pptHtml.includes('id="btn-read-current-slide"'));
-assert.ok(pptHtml.includes('id="result-output"'));
+[
+  'id="workflow-profile-select"',
+  'id="ppt-slide-summary"',
+  'id="ppt-slide-instruction"',
+  'id="btn-run-primary"',
+  'id="btn-result-preview"',
+  'id="btn-result-plain"',
+  'id="btn-copy-title"',
+  'id="btn-copy-bullets"',
+  'id="btn-copy-conclusion"',
+  'id="btn-copy-result"'
+].forEach(token => assert.ok(pptHtml.includes(token), token));
+assert.ok(pptJs.includes("/ppt/slide-assistant/jobs"));
+assert.ok(pptJs.includes("ppt.slide_assistant"));
+assert.ok(pptJs.includes("clientJobId"));
+assert.ok(pptJs.includes("PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS = 10000"));
+assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_ERRORS = 240"));
+assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_WAIT_MS = 60 * 60 * 1000"));
+assert.ok(pptJs.includes("ai-wps-ppt-slide-assistant-active-job-v1"));
+[
+  "Slides.Add",
+  "Shapes.Add",
+  "TextRange.Text =",
+  "writeSlide",
+  "applySlide",
+  "insertSlide"
+].forEach(token => assert.ok(!pptJs.includes(token), token));
+assert.ok(!/id="[^"]*apply[^"]*"/i.test(pptHtml));
 assert.ok(pptJs.includes("extractPresentationSlide"));
 assert.ok(!pptJs.includes("Slides.Add"));
 assert.ok(!pptJs.includes("Shapes.Add"));
