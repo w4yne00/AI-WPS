@@ -14,7 +14,7 @@ def health() -> dict:
         "data": {
             "service": "wps-ai-adapter",
             "status": "ok",
-            "version": "0.16.0-alpha",
+            "version": "0.17.0-alpha",
             "mode": "uvicorn",
             "providerName": settings.provider_name,
             "providerType": settings.provider_type,

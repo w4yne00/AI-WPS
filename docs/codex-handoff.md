@@ -1,22 +1,22 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-07-10
+更新时间：2026-07-13
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`codex/smart-format-full-document-preview`
+当前分支：`main`
 
-当前版本：`v0.16.0-alpha`
+当前版本：`v0.17.0-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-0.16.0-20260710`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.17.0-20260713`
 
-当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260710.tar.gz`
+当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260713-v0170.tar.gz`
 
 ## 1. 当前项目状态
 
 AI-WPS 是面向公司内网办公终端的 WPS AI 助理插件。目标环境是麒麟 V10 ARM、WPS 12.1.2、Python 3.8、离线内网部署。系统采用 WPS 原生 JS/HTML 插件、本地 Python adapter、企业 Dify/大模型 HTTP API 三层架构。
 
-当前版本采用 Word/Excel 宿主分离的两个 WPS JS 插件入口。Word 侧 Ribbon 保留五个入口：
+当前版本采用 Word/Excel/PPT 宿主分离的三个 WPS JS 插件入口。Word 侧 Ribbon 保留五个入口：
 
 - 智能编写：`POST /word/smart-write`，任务类型 `word.smart_write`。
 - 智能仿写：`POST /word/smart-imitation`，任务类型 `word.smart_imitation`。
@@ -30,6 +30,13 @@ Excel 侧 Ribbon 只显示：
 - 设置：复用同一 adapter 配置、统一 API URL、统一模型 API Key 和 Excel 智能分析工作流配置档案。
 
 Excel 智能分析首版是只读分析能力：优先读取 Excel 当前选区，无有效选区时回退当前工作表已用范围；前端只提供分析报告预览、汇报段落和复制，不写回单元格，不新增工作表，不生成公式。
+
+PPT 侧 Ribbon 只显示：
+
+- PPT 单页助手：`POST /ppt/slide-assistant/jobs` 提交后台任务并轮询状态，任务类型 `ppt.slide_assistant`。
+- 设置：复用同一 adapter 配置、统一 API URL、统一模型 API Key 和 PPT 单页助手工作流配置档案。
+
+PPT 单页助手首版是只读内容辅助：读取当前页主标题、可选副标题、普通文本形状以及前后页标题；正文充分时自动优化，正文不足时按用户要求生成；结果只提供预览、纯文本和分类复制，不修改幻灯片文字、版式、对象或备注。
 
 ## 2. 当前接口与 Dify 入参
 
@@ -81,7 +88,8 @@ adapter 继续使用 Dify 官方 `/chat-messages`。旧工作流默认使用：
     "word.smart_imitation": "word_smart_imitation",
     "word.document_review": "word_document_review",
     "word.format_review": "word_format_review",
-    "excel.analysis": "excel_analysis"
+    "excel.analysis": "excel_analysis",
+    "ppt.slide_assistant": "ppt_slide_assistant"
   },
   "taskRoutes": {}
 }
@@ -117,13 +125,16 @@ POST   /word/format-review
 POST   /excel/analysis
 POST   /excel/analysis/jobs
 GET    /excel/analysis/jobs/{jobId}
+POST   /ppt/slide-assistant/jobs
+GET    /ppt/slide-assistant/jobs/{jobId}
 ```
 
 ## 3. 本版本关键变化
 
 - Word 前台 Ribbon 入口保持“智能编写 / 智能仿写 / 文档审查 / 格式审查 / 设置”。
 - Excel 前台 Ribbon 新增独立 `et` 插件入口，只显示“Excel 智能分析 / 设置”，不会显示 Word 专用按钮。
-- 安装包现在同时安装 `wps-ai-assistant_1.0.0` 和 `wps-ai-assistant-et_1.0.0`，`publish.xml` 同时包含 `type="wps"` 与 `type="et"`。
+- PPT 前台 Ribbon 新增独立 `wpp` 插件入口，只显示“PPT 单页助手 / 设置”，不会显示 Word 或 Excel 专用按钮。
+- 统一正式交付包通过一个安装脚本同时安装 `wps-ai-assistant_1.0.0`、`wps-ai-assistant-et_1.0.0` 和 `wps-ai-assistant-wpp_1.0.0`，`publish.xml` 同时包含 `type="wps"`、`type="et"` 与 `type="wpp"`。
 - 删除旧 Word 路由和服务文件，只保留当前四条任务 API。
 - 智能仿写作为独立新增工作流与智能编写并列：支持从 Word 选中文本自动带入模板，也支持在任务窗口手动粘贴模板；仿写需求必填，参考素材选填；adapter 通过 `/word/smart-imitation` 和 `word.smart_imitation` 调用独立模型后台任务。
 - 智能仿写首版只复用智能编写的结果预览、纯文本和复制能力；不显示对照视图，不提供“应用预览”，不写回 Word 正文。
@@ -173,9 +184,12 @@ GET    /excel/analysis/jobs/{jobId}
 - `v0.16.0-alpha` 起，五个任务均支持工作流配置档案：每个任务可保存最多 20 个“自定义名称 + API Key + 备注”档案，功能页通过下拉菜单明确切换，设置页支持新增、重命名、单独更换密钥和删除备用档案。
 - 旧 `taskApiKeyRefs` 首次读取时自动迁移为名为“当前配置”的档案，复用原密钥文件；激活档案时同步镜像旧映射，旧前端或回退版本仍使用最后一次选择。
 - API Key 正文继续只保存在 `run/provider_api_keys/`，新密钥文件权限为 `0600`；档案查询和 `/provider/debug-last` 仅返回档案 ID、名称、密钥引用和配置状态，不返回密钥正文。
-- Word 任务窗格只加载四类 Word 档案，Excel 任务窗格只加载 `excel.analysis` 档案；切换只影响下一次新任务，不改变已提交的文档审查或 Excel 后台任务。
+- Word 任务窗格只加载四类 Word 档案，Excel 任务窗格只加载 `excel.analysis` 档案，PPT 任务窗格只加载 `ppt.slide_assistant` 档案；切换只影响下一次新任务，不改变已提交的后台任务。
 - 任务窗口结果区继续区分任务类型：智能编写按内容结构选择朴素或结构化回显，文档审查/格式审查/诊断继续显示安全渲染后的 Markdown 成品；复制和写回仍使用原始模型文本。
-- adapter 版本、前端缓存参数、manifest、启动脚本版本统一更新到 `0.16.0-alpha`，确保目标机重新打开 WPS 后加载新工作流档案界面。
+- `v0.16.0-alpha` 的 adapter、前端缓存参数、manifest 和启动脚本曾统一更新，以确保目标机重新打开 WPS 后加载工作流档案界面。
+- `v0.17.0-alpha` 起，新增只读 PPT 单页助手：当前页输入区分主标题、可选副标题和普通正文形状，相邻页只读取标题；动态输入总预算 4600 字符，模型等待预算 1800 秒，前端通过可恢复后台任务轮询避免慢模型被误判为连接失败。
+- PPT 单页助手结果只提供预览、纯文本、复制标题、复制要点、复制结论和复制全文，不调用任何 WPS 演示写接口。
+- adapter、Word/Excel/PPT 前端缓存参数、manifest 和启动脚本统一更新到 `0.17.0-alpha`。
 
 ## 4. 需要重点保护的既有逻辑
 
@@ -196,7 +210,10 @@ GET    /excel/analysis/jobs/{jobId}
 - 智能仿写首版必须保持 preview/copy only：只复用智能编写的预览、纯文本和复制能力，不显示对照，不设置 `pendingApplyAction`，不调用任何 Word 写回路径。
 - Excel 智能分析首版必须保持 read-only：不调用任何 Excel 写回、插入公式、新增工作表或修改单元格路径；只允许选区/已用范围读取、预览、纯文本和复制。
 - Excel 智能分析长任务必须使用 `clientJobId` + `/excel/analysis/jobs/{jobId}` 的可恢复轮询链路；短暂状态查询失败不得清空任务号，同一 `clientJobId` 不得重复发起模型任务。
-- Word/Excel Ribbon 必须保持宿主隔离：Word `type="wps"` 插件不显示 Excel 智能分析；Excel `type="et"` 插件不显示智能编写、智能仿写、文档审查、格式审查。
+- PPT 单页助手必须保持 read-only：不得调用幻灯片、形状、文本、版式或备注写接口；只允许读取当前页和相邻页标题、预览、纯文本与复制。
+- PPT 单页助手长任务必须使用 `clientJobId` + `/ppt/slide-assistant/jobs/{jobId}` 的可恢复轮询链路；短暂状态查询失败不得清空任务号，同一 `clientJobId` 不得重复发起模型任务。
+- PPT 主标题和副标题必须分开识别；副标题是可选字段，不得混入 `textBlocks`，也不得覆盖主标题。
+- Word/Excel/PPT Ribbon 必须保持宿主隔离：Word `type="wps"`、Excel `type="et"`、PPT `type="wpp"` 只显示各自功能和设置。
 - 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key。
 - 文档审查闭环只能管理前端处理状态和复制审查记录，不允许自动写回或自动修改正文。
 - 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
@@ -207,9 +224,12 @@ GET    /excel/analysis/jobs/{jobId}
 
 - `adapter_service/app/api/word.py`：当前 Word 四任务路由。
 - `adapter_service/app/api/excel.py`：Excel 智能分析路由。
-- `adapter_service/app/services/provider_client.py`：统一 Dify Chat payload、任务级 API Key、脱敏 provider 调试记录、智能编写/智能仿写/文档审查/格式审查 provider 调用。
+- `adapter_service/app/api/ppt.py`：PPT 单页助手后台任务路由。
+- `adapter_service/app/services/provider_client.py`：统一 Dify Chat payload、任务级 API Key、脱敏 provider 调试记录，以及 Word/Excel/PPT provider 调用。
 - `adapter_service/app/services/excel/analyzer.py`：Excel 表格可用性校验和 provider 调用封装。
 - `adapter_service/app/services/excel/analysis_jobs.py`：Excel 智能分析幂等后台任务、运行状态和耗时诊断。
+- `adapter_service/app/services/ppt/slide_assistant.py`：PPT 单页输入预算、生成/优化模式和 provider 调用封装。
+- `adapter_service/app/services/ppt/slide_assistant_jobs.py`：PPT 单页助手幂等后台任务、运行状态和耗时诊断。
 - `adapter_service/app/services/word/smart_imitator.py`：智能仿写服务，负责模板抽取、必填校验、provider 调用和 rewrite 形态结果输出。
 - `adapter_service/app/services/word/document_reviewer.py`：文档审查服务，负责选区/全文、默认提示词、模型结果解析和问题列表输出。
 - `adapter_service/app/services/word/format_reviewer.py`：格式审查服务，负责模板规则检查、可选 AI 段落角色识别和本地兜底。
@@ -218,14 +238,16 @@ GET    /excel/analysis/jobs/{jobId}
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html`、`taskpane.js`、`taskpane.css`、`taskpane-helpers.js`：当前任务窗格、设置页、Markdown 渲染和 WPS 读取逻辑。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml`、`ribbon.js`：当前 Ribbon 入口和图标映射。
 - `formal-plugin-kit/wps-ai-assistant-et_1.0.0/`：Excel 专用插件包，包含 Excel 智能分析 Ribbon、任务窗格、图标和 manifest。
+- `formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/`：PPT 专用只读插件包，包含 PPT 单页助手 Ribbon、任务窗格、图标和 manifest。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png`：智能仿写 Ribbon 图标。
 - `adapter-start-kit/scripts/install_autostart.sh`、`adapter-start-kit/scripts/uninstall_autostart.sh`、`adapter-start-kit/docs/autostart-guide.md`：麒麟 V10 目标机 systemd 开机自启动安装、卸载和运维说明。
-- `config/adapter.example.json`：默认 `enterprise-dify-chat`、`/chat-messages`、四个 Word 任务和一个 Excel 任务的 `taskApiKeyRefs`。
+- `config/adapter.example.json`：默认 `enterprise-dify-chat`、`/chat-messages`、四个 Word 任务、一个 Excel 任务和一个 PPT 任务的 `taskApiKeyRefs`。
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify 配置手册。
 - `docs/operations/dify-smart-imitation-workflow.md`：智能仿写 Dify 配置手册。
 - `docs/operations/dify-document-review-workflow.md`：文档审查 Dify 配置手册。
 - `docs/operations/dify-format-review-workflow.md`：格式审查 Dify 配置手册。
 - `docs/operations/dify-excel-analysis-workflow.md`：Excel 智能分析 Dify 配置手册。
+- `docs/operations/dify-ppt-slide-assistant-workflow.md`：PPT 单页助手 Dify 配置手册。
 - `docs/superpowers/plans/2026-05-29-review-mode-consolidation-plan.md`：审查入口收敛执行计划。
 - `docs/superpowers/plans/2026-05-31-stability-enhancement-plan.md`：本轮稳定增强执行计划。
 
@@ -235,51 +257,51 @@ GET    /excel/analysis/jobs/{jobId}
 
 ```bash
 PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover adapter_service/tests -v
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/layout-smoke.test.js
 /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/taskpane-helpers.test.js
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.js
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane-helpers.js
-/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node --check formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.js
-PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m py_compile adapter_service/standalone_adapter.py adapter_service/app/api/provider.py adapter_service/app/api/word.py adapter_service/app/api/excel.py adapter_service/app/main.py adapter_service/app/services/workflow_profiles.py adapter_service/app/services/provider_client.py adapter_service/app/services/excel/analyzer.py adapter_service/app/services/excel/analysis_jobs.py adapter_service/app/services/word/smart_imitator.py adapter_service/app/core/models.py
+/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/ppt-taskpane-helpers.test.js
+/Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/node/bin/node formal-plugin-kit/tests/layout-smoke.test.js
+node --check <Word/Excel/PPT taskpane.js、taskpane-helpers.js、ribbon.js>
+PYTHONPATH=adapter_service python3 -m py_compile <adapter 与 PPT 关键 Python 文件>
+bash -n packaging/build_phase1_delivery_kit.sh
+bash -n phase1-delivery-kit/installer/install_phase1.sh
+bash -n phase1-delivery-kit/scripts/phase1_smoke_test.sh
 git diff --check
-DATE_TAG=20260710 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260713-v0170 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
-- Python 标准单测：`136 tests OK (skipped=8)`；工作区 bundled Python 缺少 FastAPI，相关接口测试按条件跳过。
-- 临时加载仓库离线 FastAPI 轮包后，工作流档案 4 项接口测试全部通过，覆盖 CRUD、激活、当前档案删除保护、重复名称冲突和旧任务密钥接口兼容。
-- JS layout smoke：通过，覆盖 `0.16.0-alpha` 缓存参数、Word/Excel Ribbon 与工作流档案宿主隔离、五类档案管理入口、明确切换动作，以及既有 Excel/文档审查长任务、智能编写写回和智能仿写只读契约。
-- JS helpers：通过，新增档案响应清洗、按任务过滤、当前档案名称和删除保护状态测试；原智能编写分段/对照、文档审查记录和格式审查中文化测试继续通过。
-- `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查：通过。
-- 420×900 窄任务窗格视觉检查：Word 设置页、Word 智能编写快捷选择器和 Excel 设置页均无控件重叠或宿主串项。
+- Python 标准单测：`155 tests OK (skipped=9)`；跳过项均为 bundled Python 缺少 FastAPI 时的条件跳过，standalone、provider、PPT 主副标题、输入预算、后台任务和工作流档案路径已执行。
+- JS layout smoke：通过，覆盖 `0.17.0-alpha` 三宿主版本缓存、Word/Excel/PPT Ribbon 隔离、PPT 只读约束、长任务轮询和既有 Word/Excel 契约。
+- Word 与 PPT JS helpers：通过；PPT helper 覆盖主标题、可选副标题、普通文本形状、相邻页标题和结构化结果清洗。
+- Word/Excel/PPT 共 9 个 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查：通过。
+- adapter 与 PPT 关键 Python 文件语法检查、构建/安装/冒烟脚本 `bash -n`：通过。
 - `git diff --check`：通过。
-- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260710.tar.gz`，SHA256：`2bdd8d1b651ecb86281f5a77b9ec38de8fb9d417697bdaf33fb2a55e9f04025d`。
-- 包内已校验同时包含 Word/Excel 插件、FastAPI/standalone 档案接口、`workflow_profiles.py` 和工作流档案运维手册，且未夹带运行时 `config/adapter.json`。
+- 已生成 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260713-v0170.tar.gz`，SHA256：`ff46fcd77640e840f74f33d0ddf62cb0df31d121f2434eae4817851a4b512e62`。
+- 包内已校验同时包含 Word、Excel、PPT 三个插件、一个安装脚本、合并 `publish.xml`、PPT Dify 手册和 adapter；安装逻辑继续备份恢复现场 API URL 与全部 API Key。
 
-说明：当前 bundled Python 环境有 Pydantic，但没有 FastAPI；本次通过仓库自带离线轮包临时加载 FastAPI 运行环境执行新增接口测试，没有修改项目依赖。
+说明：当前 bundled Python 环境有 Pydantic，但没有 FastAPI，因此 9 项 FastAPI 路由测试按既有条件跳过；未新增项目依赖。麒麟 V10/WPS 演示的最终模型联调和覆盖安装验收仍需在目标机执行。
 
 ## 7. 目标机验证建议
 
-1. 关闭并重新打开 WPS，确认设置页“前端版本”为 `0.16.0-alpha`。
+1. 使用统一正式交付包覆盖安装，关闭并重新打开 WPS，确认设置页“前端版本”为 `0.17.0-alpha`，且原 API URL 与 API Key 未丢失。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
-3. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“Excel 智能分析”保存两个具名工作流档案，切换后确认下一次任务命中所选档案。
+3. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“Excel 智能分析”“PPT 单页助手”保存两个具名工作流档案，切换后确认下一次任务命中所选档案。
 4. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，模型后台命中智能编写应用。
 5. 执行“智能仿写”，可先框选模板段落再打开任务；填写仿写需求和参考素材后确认 `/provider/debug-last.taskType=word.smart_imitation`，结果区只有预览/纯文本/复制，不显示对照和应用预览。
 6. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示审查摘要和问题列表。
 7. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，识别来源显示“AI 辅助 + 本地规则”或“本地规则”。
 8. 打开 WPS Excel，确认 Ribbon 下只有“Excel 智能分析”和“设置”；选择一块表格区域后执行分析，确认 `/provider/debug-last.taskType=excel.analysis`，结果区显示数据概览、关键发现、风险异常、建议动作和汇报段落。使用慢模型验证 180 秒以上任务仍持续轮询，不提前提示连接失败。
-9. 分别连接旧版 `inputs.query` 工作流和新版“用户输入”节点工作流；新版首次 HTTP 400 后应自动以 `inputs: {}` 重试成功，`/provider/debug-last.inputMode=user-input-node`，后续同任务不再先发送旧格式。
-10. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
-11. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
-12. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
+9. 打开 WPS 演示，确认 Ribbon 下只有“PPT 单页助手”和“设置”；分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。使用慢模型验证 180 秒以上任务仍持续轮询，结果区只预览和复制，幻灯片保持不变。
+10. 分别连接旧版 `inputs.query` 工作流和新版“用户输入”节点工作流；新版首次 HTTP 400 后应自动以 `inputs: {}` 重试成功，`/provider/debug-last.inputMode=user-input-node`，后续同任务不再先发送旧格式。
+11. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
+12. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
+13. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
 
 ## 8. 遗留项
 
 - 智能排版暂缓：目标机已确认任务级 API Key 选路可命中独立 Dify 工作流，但长文档角色识别受 Dify 输出最大值和模型上下文窗口限制影响。当前版本不再尝试自动写回排版，改为“格式审查”。
 - 文档审查要求 Dify 输出 Markdown 中的 JSON 代码块。若现场 Dify 只能输出普通 Markdown，也应至少保留一个合法 `json` 代码块；adapter 会从代码块中提取问题列表。
 - Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `Selection`、`UsedRange`、`Cells.Item(row, column)` 的可用性；前端已做多路径读取和已用范围兜底。
-- 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README、`dify-smart-imitation-workflow.md`、`dify-document-review-workflow.md`、`dify-format-review-workflow.md`、`dify-excel-analysis-workflow.md` 为准。
+- PPT/WPS WPP 的主标题和普通正文读取已在目标机初步验证；可选副标题识别修复、模型联调、长任务恢复和覆盖安装仍需用本正式包完成目标机验收。
+- 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README 及 `docs/operations/` 下六类工作流手册为准。

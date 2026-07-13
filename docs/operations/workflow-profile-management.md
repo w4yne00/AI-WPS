@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-`v0.16.0-alpha` 起，以下功能均可保存多个具名 Dify 工作流 API Key：
+`v0.16.0-alpha` 起，Word 和 Excel 功能可保存多个具名 Dify 工作流 API Key；`v0.17.0-alpha` 起，PPT 单页助手使用同一套档案机制：
 
 - Word：智能编写、智能仿写、文档审查、格式审查。
 - Excel：Excel 智能分析。

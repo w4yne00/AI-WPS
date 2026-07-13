@@ -38,7 +38,7 @@ from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfile
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.16.0-alpha"
+VERSION = "0.17.0-alpha"
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore()
