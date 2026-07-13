@@ -1,4 +1,6 @@
 import importlib.util
+from io import BytesIO
+import json
 import threading
 import time
 import unittest
@@ -223,6 +225,83 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(missing.status_code, 404)
         self.assertIn(b"PPT_SLIDE_JOB_NOT_FOUND", missing.body)
+
+    def test_standalone_parses_request_and_serializes_job_result(self):
+        import standalone_adapter
+
+        request = standalone_adapter.parse_ppt_request(
+            {
+                "presentationId": "汇报材料.pptx",
+                "scene": "ppt",
+                "clientJobId": "client-ppt-standalone",
+                "slide": {
+                    "index": 2,
+                    "title": "项目进展",
+                    "subtitle": "阶段成果",
+                    "textBlocks": ["正文内容达到二十个非空白字符用于模式判断测试"],
+                },
+                "userInstruction": "突出风险。",
+            }
+        )
+        completed_assistant = BlockingPptAssistant()
+        completed_assistant.release.set()
+        payload = standalone_adapter.ppt_slide_assistant_job_payload(
+            {
+                "jobId": "client-ppt-standalone",
+                "traceId": "trace-ppt-standalone",
+                "status": "completed",
+                "result": completed_assistant.assist(request, "trace-ppt-standalone"),
+            }
+        )
+
+        self.assertEqual(request.slide.subtitle, "阶段成果")
+        self.assertEqual(payload["result"]["modeUsed"], "optimize")
+        self.assertEqual(payload["result"]["suggestedTitle"], "后台任务完成")
+
+    def test_standalone_post_get_and_not_found_routes(self):
+        import standalone_adapter
+
+        assistant = BlockingPptAssistant()
+        store = PptSlideAssistantJobStore(assistant=assistant)
+        original_store = standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE
+        standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = store
+
+        def invoke(method, path, payload=None):
+            captured = {}
+            handler = object.__new__(standalone_adapter.Handler)
+            handler.path = path
+            raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+            handler.headers = {"Content-Length": str(len(raw))}
+            handler.rfile = BytesIO(raw)
+            handler._write = lambda status, body: captured.update(status=status, body=body)
+            getattr(handler, method)()
+            return captured
+
+        request_payload = {
+            "presentationId": "汇报材料.pptx",
+            "scene": "ppt",
+            "clientJobId": "client-ppt-route-standalone",
+            "slide": {
+                "index": 2,
+                "title": "项目进展",
+                "subtitle": "阶段成果",
+                "textBlocks": ["正文内容达到二十个非空白字符用于模式判断测试"],
+            },
+            "userInstruction": "突出风险。",
+        }
+        try:
+            submitted = invoke("do_POST", "/ppt/slide-assistant/jobs", request_payload)
+            running = invoke("do_GET", "/ppt/slide-assistant/jobs/client-ppt-route-standalone")
+            missing = invoke("do_GET", "/ppt/slide-assistant/jobs/missing-ppt-job")
+        finally:
+            assistant.release.set()
+            standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = original_store
+
+        self.assertEqual(submitted["status"], 200)
+        self.assertEqual(submitted["body"]["taskType"], "ppt.slide_assistant")
+        self.assertEqual(running["body"]["data"]["status"], "running")
+        self.assertEqual(missing["status"], 404)
+        self.assertEqual(missing["body"]["errors"][0]["code"], "PPT_SLIDE_JOB_NOT_FOUND")
 
 
 if __name__ == "__main__":

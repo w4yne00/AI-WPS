@@ -1079,6 +1079,7 @@ class ProviderClient:
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
             ("excel.analysis", "Excel 智能分析"),
+            ("ppt.slide_assistant", "PPT 单页助手"),
         ]
         status = {}
         for task_type, label in tasks:

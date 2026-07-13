@@ -10,7 +10,7 @@ HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 
 
 class ReviewModeContractTests(unittest.TestCase):
-    def test_task_api_key_status_exposes_only_current_word_tasks(self) -> None:
+    def test_task_api_key_status_exposes_all_current_tasks(self) -> None:
         client = ProviderClient(load_settings())
 
         status = client.build_task_api_key_status()
@@ -23,6 +23,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "word.document_review",
                 "word.format_review",
                 "excel.analysis",
+                "ppt.slide_assistant",
             ],
         )
         self.assertEqual(status["word.smart_write"]["apiKeyRef"], "word_smart_write")
@@ -30,6 +31,7 @@ class ReviewModeContractTests(unittest.TestCase):
         self.assertEqual(status["word.document_review"]["apiKeyRef"], "word_document_review")
         self.assertEqual(status["word.format_review"]["apiKeyRef"], "word_format_review")
         self.assertEqual(status["excel.analysis"]["apiKeyRef"], "excel_analysis")
+        self.assertEqual(status["ppt.slide_assistant"]["apiKeyRef"], "ppt_slide_assistant")
 
     def test_route_diagnostics_reports_new_version_and_current_tasks(self) -> None:
         client = ProviderClient(load_settings())
@@ -45,6 +47,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "word.document_review",
                 "word.format_review",
                 "excel.analysis",
+                "ppt.slide_assistant",
             ],
         )
 

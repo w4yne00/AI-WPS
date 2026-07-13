@@ -12,6 +12,8 @@ from app.core.models import (
     ExcelAnalysisResponseData,
     FormatReviewResponseData,
     FormatReviewSummary,
+    PptSlideAssistantRequest,
+    PptSlideAssistantResponseData,
     RewriteResponseData,
     WordDocumentRequest,
 )
@@ -25,6 +27,7 @@ from app.services.provider_client import (
 )
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
@@ -38,6 +41,7 @@ TEMPLATE_ROOT = ROOT_DIR / "templates"
 VERSION = "0.16.0-alpha"
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
+PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore()
 
 
 def parse_word_request(payload):
@@ -50,6 +54,12 @@ def parse_excel_request(payload):
     if hasattr(ExcelAnalysisRequest, "model_validate"):
         return ExcelAnalysisRequest.model_validate(payload)
     return ExcelAnalysisRequest.parse_obj(payload)
+
+
+def parse_ppt_request(payload):
+    if hasattr(PptSlideAssistantRequest, "model_validate"):
+        return PptSlideAssistantRequest.model_validate(payload)
+    return PptSlideAssistantRequest.parse_obj(payload)
 
 
 def iter_template_documents():
@@ -129,6 +139,17 @@ def excel_analysis_job_payload(job):
             result = ExcelAnalysisResponseData.model_validate(data["result"]).model_dump(by_alias=True)
         else:
             result = ExcelAnalysisResponseData(**data["result"]).dict(by_alias=True)
+        data["result"] = result
+    return data
+
+
+def ppt_slide_assistant_job_payload(job):
+    data = dict(job)
+    if data.get("result"):
+        if hasattr(PptSlideAssistantResponseData, "model_validate"):
+            result = PptSlideAssistantResponseData.model_validate(data["result"]).model_dump(by_alias=True)
+        else:
+            result = PptSlideAssistantResponseData(**data["result"]).dict(by_alias=True)
         data["result"] = result
     return data
 
@@ -309,6 +330,34 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope(job.get("traceId", job_id), "excel.analysis", excel_analysis_job_payload(job), message=job["status"]))
             return
 
+        if path.startswith("/ppt/slide-assistant/jobs/"):
+            job_id = unquote(path.rsplit("/", 1)[-1])
+            job = PPT_SLIDE_ASSISTANT_JOB_STORE.get(job_id)
+            if not job:
+                message = "PPT 单页助手后台任务不存在或已过期。"
+                self._write(
+                    404,
+                    envelope(
+                        job_id,
+                        "ppt.slide_assistant",
+                        {"jobId": job_id, "status": "not_found"},
+                        success=False,
+                        message=message,
+                        errors=[{"code": "PPT_SLIDE_JOB_NOT_FOUND", "message": message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "ppt.slide_assistant",
+                    ppt_slide_assistant_job_payload(job),
+                    message=job["status"],
+                ),
+            )
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -388,6 +437,21 @@ class Handler(BaseHTTPRequestHandler):
             trace_id = new_trace_id("standalone-excel-analysis")
             job = EXCEL_ANALYSIS_JOB_STORE.start(request, trace_id=trace_id)
             self._write(200, envelope(trace_id, "excel.analysis", excel_analysis_job_payload(job), message="accepted"))
+            return
+
+        if path == "/ppt/slide-assistant/jobs":
+            request = parse_ppt_request(payload)
+            trace_id = new_trace_id("standalone-ppt-slide-assistant")
+            job = PPT_SLIDE_ASSISTANT_JOB_STORE.start(request, trace_id=trace_id)
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "ppt.slide_assistant",
+                    ppt_slide_assistant_job_payload(job),
+                    message="accepted",
+                ),
+            )
             return
 
         if path == "/provider/base-url":

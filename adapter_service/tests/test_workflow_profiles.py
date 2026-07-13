@@ -119,6 +119,38 @@ class WorkflowProfileStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(WorkflowProfileError, "先切换"):
                 store.delete_profile(profile["id"])
 
+    def test_ppt_profiles_support_full_lifecycle(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config_path, key_dir = self._paths(Path(tmp))
+            store = WorkflowProfileStore(config_path, key_dir)
+            active = store.create_profile(
+                "ppt.slide_assistant",
+                "PPT 稳定版",
+                "app-ppt-stable",
+                note="普通模式",
+                activate=True,
+            )
+            candidate = store.create_profile(
+                "ppt.slide_assistant",
+                "PPT 候选版",
+                "app-ppt-candidate",
+            )
+
+            activated = store.activate_profile(candidate["id"])
+            renamed = store.update_profile(active["id"], "PPT 历史版", "保留回退")
+            replaced = store.replace_api_key(active["id"], "app-ppt-history-new")
+            listed = store.list_for_task("ppt.slide_assistant")
+            deleted = store.delete_profile(active["id"])
+
+            self.assertEqual(activated["activeProfileId"], candidate["id"])
+            self.assertEqual(renamed["name"], "PPT 历史版")
+            self.assertEqual(replaced["note"], "保留回退")
+            self.assertEqual(listed["profileCount"], 2)
+            self.assertEqual(deleted["profileCount"], 1)
+            self.assertFalse((key_dir / active["apiKeyRef"]).exists())
+            self.assertTrue((key_dir / candidate["apiKeyRef"]).exists())
+            self.assertNotIn("app-ppt", json.dumps(listed, ensure_ascii=False))
+
     def test_deleting_inactive_profile_removes_only_its_key_file(self) -> None:
         with TemporaryDirectory() as tmp:
             config_path, key_dir = self._paths(Path(tmp))

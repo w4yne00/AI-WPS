@@ -44,6 +44,15 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn('path.endswith("/api-key")', script)
         self.assertIn("WorkflowProfileStore", script)
 
+    def test_standalone_adapter_exposes_ppt_background_routes(self) -> None:
+        script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
+
+        self.assertIn("def parse_ppt_request", script)
+        self.assertIn("def ppt_slide_assistant_job_payload", script)
+        self.assertIn('path == "/ppt/slide-assistant/jobs"', script)
+        self.assertIn('path.startswith("/ppt/slide-assistant/jobs/")', script)
+        self.assertIn("PPT_SLIDE_JOB_NOT_FOUND", script)
+
     def test_adapter_autostart_scripts_install_systemd_service(self) -> None:
         install_script = (ROOT / "adapter-start-kit/scripts/install_autostart.sh").read_text(
             encoding="utf-8"
