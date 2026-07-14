@@ -54,6 +54,7 @@ class PptSlideAssistantJobStore:
             existing = self._jobs.get(job_id)
             if existing:
                 return self._public_job(existing)
+            self._make_room_for_new_job_locked()
             self._jobs[job_id] = job
             self._trim_locked()
         worker = threading.Thread(target=self._run, args=(job_id, request, trace_id), daemon=True)
@@ -107,6 +108,22 @@ class PptSlideAssistantJobStore:
         )
         for job in ordered[: max(len(self._jobs) - self.max_jobs, 0)]:
             self._jobs.pop(job["jobId"], None)
+
+    def _make_room_for_new_job_locked(self) -> None:
+        if len(self._jobs) < self.max_jobs:
+            return
+        completed = sorted(
+            (job for job in self._jobs.values() if job.get("status") != "running"),
+            key=lambda item: item.get("createdAt", 0),
+        )
+        while len(self._jobs) >= self.max_jobs and completed:
+            self._jobs.pop(completed.pop(0)["jobId"], None)
+        if len(self._jobs) >= self.max_jobs:
+            raise AdapterError(
+                "PPT_SLIDE_JOB_CAPACITY",
+                "当前智能总结任务较多，请等待已有任务完成后重试。",
+                status_code=429,
+            )
 
     def _public_job(self, job: Dict) -> Dict:
         now = time.time()

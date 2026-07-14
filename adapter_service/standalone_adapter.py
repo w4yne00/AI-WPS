@@ -383,7 +383,9 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except (TypeError, ValueError):
             length = 0
-        if path == "/ppt/document-files" and length <= 0:
+        if path == "/ppt/document-files" and (
+            length <= 0 or self.headers.get("Transfer-Encoding")
+        ):
             message = "上传请求缺少有效的 Content-Length，请重新选择文件。"
             self._write(
                 411,
@@ -559,7 +561,20 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                 )
                 return
-            job = PPT_SLIDE_ASSISTANT_JOB_STORE.start(request, trace_id=trace_id)
+            try:
+                job = PPT_SLIDE_ASSISTANT_JOB_STORE.start(request, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
             self._write(
                 200,
                 envelope(

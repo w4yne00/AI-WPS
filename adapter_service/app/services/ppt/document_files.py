@@ -2,6 +2,7 @@ import base64
 import binascii
 from dataclasses import dataclass
 from io import BytesIO
+import logging
 import os
 from pathlib import Path
 import secrets
@@ -22,6 +23,7 @@ PPT_DOCX_MAX_ENTRIES = 5000
 PPT_DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
 PPT_DOCX_MAX_REQUIRED_PART_BYTES = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"md", "docx"}
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -69,7 +71,10 @@ class PptDocumentFileStore:
 
     def _cleanup_loop(self, interval_seconds: float) -> None:
         while not self._cleanup_stop.wait(interval_seconds):
-            self.cleanup_expired()
+            try:
+                self.cleanup_expired()
+            except OSError as exc:
+                logger.warning("PPT document cleanup will retry after filesystem error: %s", exc)
 
     def store(
         self,

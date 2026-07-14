@@ -423,7 +423,7 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["suggestedTitle"], "后台任务完成")
 
-    def test_job_store_never_evicts_a_running_job_when_capacity_is_exceeded(self):
+    def test_job_store_rejects_new_job_without_evicting_running_job_at_capacity(self):
         assistant = BlockingPptAssistant()
         store = PptSlideAssistantJobStore(assistant=assistant, max_jobs=1)
 
@@ -432,13 +432,17 @@ class PptSlideAssistantTests(unittest.TestCase):
             trace_id="trace-ppt-running-first",
         )
         self.assertTrue(assistant.started.wait(timeout=1))
-        store.start(
-            self._request(client_job_id="client-ppt-running-second"),
-            trace_id="trace-ppt-running-second",
-        )
+        with self.assertRaises(AdapterError) as error:
+            store.start(
+                self._request(client_job_id="client-ppt-running-second"),
+                trace_id="trace-ppt-running-second",
+            )
 
         self.assertIsNotNone(store.get("client-ppt-running-first"))
-        self.assertIsNotNone(store.get("client-ppt-running-second"))
+        self.assertIsNone(store.get("client-ppt-running-second"))
+        self.assertEqual(error.exception.code, "PPT_SLIDE_JOB_CAPACITY")
+        self.assertEqual(error.exception.status_code, 429)
+        self.assertEqual(assistant.call_count, 1)
         assistant.release.set()
 
     def test_job_store_keeps_safe_slide_validation_message(self):
@@ -778,6 +782,18 @@ class PptSlideAssistantTests(unittest.TestCase):
 
             self.assertEqual(captured["status"], 411)
             self.assertEqual(captured["body"]["errors"][0]["code"], "CONTENT_LENGTH_REQUIRED")
+
+        captured = {}
+        handler = object.__new__(standalone_adapter.Handler)
+        handler.path = "/ppt/document-files"
+        handler.headers = {"Content-Length": "1", "Transfer-Encoding": "chunked"}
+        handler.rfile = FailOnRead()
+        handler._write = lambda status, body: captured.update(status=status, body=body)
+
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 411)
+        self.assertEqual(captured["body"]["errors"][0]["code"], "CONTENT_LENGTH_REQUIRED")
 
     def test_standalone_upload_returns_validation_envelope_for_malformed_json(self):
         import standalone_adapter

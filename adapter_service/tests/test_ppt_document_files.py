@@ -321,6 +321,30 @@ class PptDocumentFileStoreTests(unittest.TestCase):
         finally:
             store.close()
 
+    def test_cleanup_worker_continues_after_transient_filesystem_error(self):
+        store = PptDocumentFileStore(root_dir=self.root / "worker-retry")
+        calls = []
+        completed = threading.Event()
+
+        def flaky_cleanup():
+            calls.append(True)
+            if len(calls) == 1:
+                raise OSError("temporary cleanup failure")
+            completed.set()
+
+        store.cleanup_expired = flaky_cleanup
+        store._cleanup_thread = threading.Thread(
+            target=store._cleanup_loop,
+            args=(0.01,),
+            daemon=True,
+        )
+        store._cleanup_thread.start()
+        try:
+            self.assertTrue(completed.wait(timeout=1))
+            self.assertGreaterEqual(len(calls), 2)
+        finally:
+            store.close()
+
     def test_new_store_removes_fresh_orphan_left_by_previous_process(self):
         orphan = self.root / "pptdoc_orphan.md"
         orphan.write_bytes(b"fresh")
