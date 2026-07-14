@@ -8,6 +8,7 @@ import threading
 import sys
 import os
 import importlib.util
+from types import SimpleNamespace
 from urllib.error import HTTPError, URLError
 from unittest.mock import patch
 
@@ -23,6 +24,7 @@ from app.services.provider_client import (
     ProviderClient,
     build_excel_analysis_prompt,
     build_document_review_prompt,
+    build_ppt_document_prompt,
     build_ppt_slide_prompt,
     build_provider_request_payload,
     build_route_request_payload,
@@ -39,6 +41,7 @@ from app.services.provider_client import (
     clear_route_api_key,
     parse_document_review_answer,
     parse_excel_analysis_answer,
+    parse_ppt_document_answer,
     parse_ppt_slide_answer,
     record_provider_debug,
     reset_provider_debug,
@@ -61,6 +64,11 @@ class FakeProviderResponse:
 
     def read(self):
         return json.dumps(self.body, ensure_ascii=False).encode("utf-8")
+
+
+class RawProviderResponse(FakeProviderResponse):
+    def read(self):
+        return bytes(self.body)
 
 
 def make_http_error(status, body):
@@ -167,6 +175,38 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(payload["inputs"], {})
         self.assertEqual(payload["query"], "完整提示词")
         self.assertEqual(payload["files"], [])
+
+    def test_build_provider_request_payload_keeps_files_in_both_input_modes(self) -> None:
+        settings = AppSettings(provider_mode="blocking")
+        files = [
+            {
+                "type": "document",
+                "transfer_method": "local_file",
+                "upload_file_id": "file-dify-123",
+            }
+        ]
+
+        legacy = build_provider_request_payload(
+            settings,
+            {},
+            "总结文档",
+            input_mode=provider_client.DIFY_INPUT_MODE_LEGACY,
+            files=files,
+        )
+        modern = build_provider_request_payload(
+            settings,
+            {},
+            "总结文档",
+            input_mode=provider_client.DIFY_INPUT_MODE_USER_INPUT,
+            files=files,
+        )
+
+        self.assertEqual(legacy["inputs"], {"query": "总结文档"})
+        self.assertEqual(modern["inputs"], {})
+        self.assertEqual(legacy["files"], files)
+        self.assertEqual(modern["files"], files)
+        self.assertIsNot(legacy["files"], files)
+        self.assertIsNot(modern["files"], files)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_post_task_uses_and_caches_legacy_mode_on_first_success(
@@ -838,6 +878,300 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("不输出配色、版式、图标、图片、动画或页面操作建议", prompt)
         self.assertIn("不声称已经修改 PPT", prompt)
         self.assertIn("前后页标题只用于避免重复和保持衔接", prompt)
+
+    def test_build_ppt_document_prompt_requires_structured_read_only_deck_plan(self):
+        prompt = build_ppt_document_prompt(10, "面向管理层，突出风险和计划。")
+
+        self.assertIn("企业汇报材料智能总结助手", prompt)
+        self.assertIn("模型后台已收到一份文档附件", prompt)
+        self.assertIn("建议页数：10", prompt)
+        self.assertIn("面向管理层，突出风险和计划", prompt)
+        self.assertIn("deckTitle、documentSummary、recommendedSlideCount", prompt)
+        self.assertIn("subtitle 和 conclusion 可为空", prompt)
+        self.assertIn("不得声称已经创建或修改幻灯片", prompt)
+        self.assertIn("不得输出深度思考过程", prompt)
+
+    def test_parse_ppt_document_answer_normalizes_json_and_filters_think(self):
+        answer = "<think>internal reasoning</think>\n" + json.dumps(
+            {
+                "deckTitle": "项目进展汇报",
+                "documentSummary": "项目总体按计划推进。",
+                "recommendedSlideCount": 5,
+                "slides": [
+                    {
+                        "index": "1",
+                        "role": "封面",
+                        "title": "项目进展汇报",
+                        "subtitle": "阶段成果与下一步安排",
+                        "bullets": ["总体方案已完成", 123, ""],
+                        "conclusion": "",
+                        "layoutSuggestion": "居中标题",
+                        "visualSuggestion": "使用项目主视觉",
+                    },
+                    {
+                        "index": 0,
+                        "role": "目录",
+                        "title": "汇报目录",
+                        "bullets": ["项目进展", "风险与计划"],
+                    },
+                ],
+                "globalStyleAdvice": "使用宋体和雾蓝色强调。",
+                "plainText": "项目进展汇报",
+            },
+            ensure_ascii=False,
+        )
+
+        result = parse_ppt_document_answer(answer, requested_slide_count=5)
+
+        self.assertEqual(result["resultType"], "document")
+        self.assertEqual(result["recommendedSlideCount"], 5)
+        self.assertEqual(result["slides"][0]["index"], 1)
+        self.assertEqual(result["slides"][0]["bullets"], ["总体方案已完成", "123"])
+        self.assertEqual(result["slides"][0]["subtitle"], "阶段成果与下一步安排")
+        self.assertEqual(result["slides"][1]["index"], 2)
+        self.assertNotIn("internal reasoning", result["plainText"])
+        self.assertIsNone(result["rawAnswer"])
+        self.assertIsNone(result["parseFallbackReason"])
+
+    def test_parse_ppt_document_answer_preserves_raw_markdown_fallback(self):
+        result = parse_ppt_document_answer(
+            "<think>不应显示</think>\n# 汇报建议\n\n建议分为五页。",
+            requested_slide_count=7,
+        )
+
+        self.assertEqual(result["resultType"], "document")
+        self.assertEqual(result["recommendedSlideCount"], 10)
+        self.assertEqual(result["slides"], [])
+        self.assertIn("建议分为五页", result["rawAnswer"])
+        self.assertNotIn("不应显示", result["plainText"])
+        self.assertEqual(
+            result["parseFallbackReason"],
+            "模型后台未返回可解析的 PPT 文档总结 JSON。",
+        )
+
+    def test_parse_ppt_document_answer_keeps_user_requested_slide_count(self):
+        result = parse_ppt_document_answer(
+            json.dumps(
+                {
+                    "recommendedSlideCount": 5,
+                    "globalStyleAdvice": "统一使用雾蓝色强调。",
+                },
+                ensure_ascii=False,
+            ),
+            requested_slide_count=10,
+        )
+
+        self.assertEqual(result["recommendedSlideCount"], 10)
+        self.assertEqual(result["globalStyleAdvice"], "统一使用雾蓝色强调。")
+        self.assertIsNone(result["rawAnswer"])
+
+    @patch("app.services.provider_client.logger")
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_ppt_document_summary_uploads_with_one_auth_snapshot_and_retries_same_files(
+        self,
+        urlopen,
+        provider_logger,
+    ) -> None:
+        class SnapshotProviderClient(ProviderClient):
+            def __init__(self, settings):
+                super().__init__(settings)
+                self.auth_resolve_count = 0
+
+            def resolve_task_auth(self, task_type):
+                self.auth_resolve_count += 1
+                self.asserted_task_type = task_type
+                return {
+                    "providerBaseUrl": "https://aibot.example/v1",
+                    "providerChatPath": "/chat-messages",
+                    "workflowProfile": {
+                        "id": "profile-ppt-production",
+                        "name": "PPT 生产版",
+                        "apiKeyRef": "ppt_profile_key",
+                    },
+                    "workflowProfileId": "profile-ppt-production",
+                    "workflowProfileName": "PPT 生产版",
+                    "apiKeyRef": "ppt_profile_key",
+                    "apiKey": "app-ppt-profile-secret",
+                    "authSource": "task-file",
+                }
+
+        response = {
+            "answer": json.dumps(
+                {
+                    "deckTitle": "项目汇报",
+                    "documentSummary": "项目按计划推进。",
+                    "recommendedSlideCount": 5,
+                    "slides": [],
+                    "globalStyleAdvice": "保持简洁。",
+                    "plainText": "项目汇报",
+                },
+                ensure_ascii=False,
+            ),
+            "conversation_id": "conversation-ppt-document",
+            "message_id": "message-ppt-document",
+        }
+        responses = iter([
+            FakeProviderResponse({"id": "file-dify-123"}),
+            make_http_error(400, {"code": "invalid_param"}),
+            FakeProviderResponse(response),
+        ])
+        client = SnapshotProviderClient(
+            AppSettings(
+                provider_base_url="https://aibot.example/v1",
+                provider_chat_path="/chat-messages",
+                provider_mode="blocking",
+                timeout_seconds=75,
+            )
+        )
+        request_count = 0
+
+        def provider_response(request, timeout):
+            nonlocal request_count
+            request_count += 1
+            if request_count == 1:
+                client.settings.provider_base_url = ""
+                client.settings.provider_chat_path = "/changed-chat-messages"
+            next_response = next(responses)
+            if isinstance(next_response, Exception):
+                raise next_response
+            return next_response
+
+        urlopen.side_effect = provider_response
+        progress_messages = []
+
+        with TemporaryDirectory() as tmp:
+            original_name = "绝密原始文件名.md"
+            path = Path(tmp) / original_name
+            sensitive_content = "TOP-SECRET-DOCUMENT-CONTENT"
+            content = ("# Project report\n" + sensitive_content).encode("utf-8")
+            path.write_bytes(content)
+            staged = SimpleNamespace(
+                path=path,
+                extension="md",
+                mime_type="text/markdown",
+                size_bytes=len(content),
+            )
+            with patch.object(provider_client, "_PROVIDER_INPUT_MODE_CACHE", {}, create=True):
+                result = client.ppt_document_summary(
+                    staged,
+                    5,
+                    "突出风险与下一步计划。",
+                    "trace-ppt-document",
+                    progress_callback=progress_messages.append,
+                )
+
+        self.assertEqual(client.auth_resolve_count, 1)
+        self.assertEqual(client.asserted_task_type, "ppt.slide_assistant")
+        self.assertEqual(urlopen.call_count, 3)
+        upload_request = urlopen.call_args_list[0].args[0]
+        self.assertEqual(upload_request.full_url, "https://aibot.example/v1/files/upload")
+        self.assertEqual(upload_request.get_header("Authorization"), "Bearer app-ppt-profile-secret")
+        self.assertIn("multipart/form-data; boundary=", upload_request.get_header("Content-type"))
+        upload_body = upload_request.data.decode("utf-8")
+        self.assertIn('name="user"', upload_body)
+        self.assertIn("wps-ai-assistant", upload_body)
+        self.assertIn('filename="source.md"', upload_body)
+        self.assertNotIn(original_name, upload_body)
+        self.assertNotIn(original_name, upload_request.full_url)
+        self.assertNotIn(original_name, str(upload_request.header_items()))
+
+        first_chat_body = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        second_chat_body = json.loads(urlopen.call_args_list[2].args[0].data.decode("utf-8"))
+        expected_files = [
+            {
+                "type": "document",
+                "transfer_method": "local_file",
+                "upload_file_id": "file-dify-123",
+            }
+        ]
+        self.assertEqual(first_chat_body["inputs"], {"query": first_chat_body["query"]})
+        self.assertEqual(second_chat_body["inputs"], {})
+        self.assertEqual(first_chat_body["files"], expected_files)
+        self.assertEqual(second_chat_body["files"], expected_files)
+        self.assertEqual(
+            urlopen.call_args_list[1].args[0].full_url,
+            "https://aibot.example/v1/chat-messages",
+        )
+        self.assertEqual(
+            urlopen.call_args_list[2].args[0].full_url,
+            "https://aibot.example/v1/chat-messages",
+        )
+        self.assertEqual(
+            urlopen.call_args_list[1].args[0].get_header("Authorization"),
+            "Bearer app-ppt-profile-secret",
+        )
+        self.assertEqual(
+            urlopen.call_args_list[2].args[0].get_header("Authorization"),
+            "Bearer app-ppt-profile-secret",
+        )
+        self.assertEqual(progress_messages, ["模型后台正在解析文档并生成 PPT 建议。"])
+        self.assertEqual(result["resultType"], "document")
+        self.assertEqual(result["provider"], "enterprise-dify-chat/task-file")
+        self.assertEqual(result["conversationId"], "conversation-ppt-document")
+        self.assertNotIn(original_name, json.dumps(get_last_provider_debug(), ensure_ascii=False))
+        self.assertNotIn(original_name, str(provider_logger.info.call_args_list))
+        self.assertNotIn("app-ppt-profile-secret", json.dumps(get_last_provider_debug(), ensure_ascii=False))
+        self.assertNotIn("app-ppt-profile-secret", str(provider_logger.info.call_args_list))
+        self.assertNotIn(sensitive_content, json.dumps(get_last_provider_debug(), ensure_ascii=False))
+        self.assertNotIn(sensitive_content, str(provider_logger.info.call_args_list))
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["workflowProfileId"], "profile-ppt-production")
+        self.assertEqual(debug["workflowProfileName"], "PPT 生产版")
+        self.assertEqual(debug["taskApiKeyRef"], "ppt_profile_key")
+        self.assertEqual(debug["taskAuthSource"], "task-file")
+        self.assertTrue(debug["providerBaseUrlConfigured"])
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_upload_task_file_maps_provider_errors_and_rejects_missing_id(self, urlopen) -> None:
+        client = self._configured_provider_client()
+        task_auth = {
+            "providerBaseUrl": "https://aibot.example/v1",
+            "providerChatPath": "/chat-messages",
+            "workflowProfile": None,
+            "workflowProfileId": "",
+            "workflowProfileName": "",
+            "apiKeyRef": "ppt_slide_assistant",
+            "apiKey": "app-ppt-secret",
+            "authSource": "task-file",
+        }
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "source.docx"
+            path.write_bytes(b"fake-docx")
+            staged = SimpleNamespace(
+                path=path,
+                extension="docx",
+                mime_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                size_bytes=9,
+            )
+            cases = (
+                (make_http_error(401, {"message": "unauthorized"}), ProviderAuthError),
+                (make_http_error(403, {"message": "forbidden"}), ProviderAuthError),
+                (make_http_error(400, {"message": "invalid file"}), ProviderUnavailableError),
+                (make_http_error(500, {"message": "failed"}), ProviderUnavailableError),
+                (URLError("connection reset"), ProviderUnavailableError),
+                (URLError(socket.timeout("timed out")), ProviderTimeoutError),
+                (socket.timeout("timed out"), ProviderTimeoutError),
+                (FakeProviderResponse({"name": "missing id"}), ProviderUnavailableError),
+                (RawProviderResponse(b"not-json"), ProviderUnavailableError),
+            )
+            for outcome, expected_error in cases:
+                with self.subTest(expected_error=expected_error.__name__):
+                    urlopen.reset_mock()
+                    if isinstance(outcome, Exception):
+                        urlopen.side_effect = outcome
+                        urlopen.return_value = None
+                    else:
+                        urlopen.side_effect = None
+                        urlopen.return_value = outcome
+                    with self.assertRaises(expected_error):
+                        client.upload_task_file(
+                            "ppt.slide_assistant",
+                            "trace-upload-error",
+                            staged,
+                            task_auth=task_auth,
+                            timeout_seconds=75,
+                        )
+                    self.assertEqual(urlopen.call_count, 1)
 
     def test_parse_ppt_slide_answer_accepts_json_markdown_think_and_raw_fallback(self):
         parsed_json = parse_ppt_slide_answer(

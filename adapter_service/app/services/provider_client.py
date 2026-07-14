@@ -3,8 +3,9 @@ import os
 import re
 import socket
 import threading
+import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
 from app.core.config import AppSettings, TaskRoute, load_settings
@@ -23,6 +24,7 @@ FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS = 60
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
 PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
+PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
@@ -301,6 +303,21 @@ def build_ppt_slide_prompt(context: Dict, user_instruction: str, mode: str) -> s
     )
 
 
+def build_ppt_document_prompt(requested_slide_count: int, user_instruction: str = "") -> str:
+    slide_count = _normalize_ppt_document_slide_count(requested_slide_count)
+    return "\n".join(
+        [
+            "你是企业汇报材料智能总结助手。模型后台已收到一份文档附件。",
+            "请根据附件内容生成整套 PPT 方案，不得声称已经创建或修改幻灯片。",
+            "建议页数：{0}".format(slide_count),
+            "用户补充要求：{0}".format(_provider_safe_str(user_instruction).strip() or "无"),
+            "只返回 JSON 对象，字段固定为 deckTitle、documentSummary、recommendedSlideCount、slides、globalStyleAdvice、plainText。",
+            "slides 每项固定包含 index、role、title、subtitle、bullets、conclusion、layoutSuggestion、visualSuggestion。",
+            "subtitle 和 conclusion 可为空；bullets 每页 2 至 5 条；不得编造附件中不存在的事实和数据；不得输出深度思考过程。",
+        ]
+    )
+
+
 def get_default_document_review_prompt(document_type: str = "technical_solution") -> str:
     return DOCUMENT_REVIEW_PROMPTS.get(document_type, DEFAULT_DOCUMENT_REVIEW_PROMPT)
 
@@ -358,6 +375,7 @@ def build_provider_request_payload(
     input_data: Dict,
     query: str,
     input_mode: str = DIFY_INPUT_MODE_LEGACY,
+    files: Optional[List[Dict]] = None,
 ) -> Dict:
     inputs = {"query": query} if input_mode == DIFY_INPUT_MODE_LEGACY else {}
     return {
@@ -366,8 +384,33 @@ def build_provider_request_payload(
         "conversation_id": "",
         "response_mode": settings.provider_mode,
         "user": "wps-ai-assistant",
-        "files": [],
+        "files": list(files or []),
     }
+
+
+def encode_dify_file_upload(content: bytes, extension: str, mime_type: str) -> Tuple[bytes, str]:
+    safe_extension = str(extension or "").strip().lower().lstrip(".")
+    if safe_extension not in ("md", "docx"):
+        raise ValueError("Unsupported PPT document extension.")
+    safe_mime_type = str(mime_type or "").strip()
+    if not safe_mime_type or "\r" in safe_mime_type or "\n" in safe_mime_type:
+        safe_mime_type = "application/octet-stream"
+    boundary = "----ai-wps-{0}".format(uuid.uuid4().hex)
+    chunks = [
+        (
+            "--{0}\r\n"
+            "Content-Disposition: form-data; name=\"user\"\r\n\r\n"
+            "wps-ai-assistant\r\n"
+        ).format(boundary).encode("utf-8"),
+        (
+            "--{0}\r\n"
+            "Content-Disposition: form-data; name=\"file\"; filename=\"source.{1}\"\r\n"
+            "Content-Type: {2}\r\n\r\n"
+        ).format(boundary, safe_extension, safe_mime_type).encode("utf-8"),
+        bytes(content),
+        "\r\n--{0}--\r\n".format(boundary).encode("ascii"),
+    ]
+    return b"".join(chunks), "multipart/form-data; boundary={0}".format(boundary)
 
 
 def build_route_request_payload(settings: AppSettings, route: TaskRoute, input_data: Dict, query: str) -> Dict:
@@ -393,11 +436,13 @@ def _provider_input_mode_cache_key(
     settings: AppSettings,
     task_type: str,
     api_key_ref: str,
+    provider_base_url: str = "",
+    provider_chat_path: str = "",
 ) -> str:
     return "|".join(
         [
-            settings.provider_base_url.rstrip("/"),
-            settings.provider_chat_path or "/chat-messages",
+            provider_base_url or settings.provider_base_url.rstrip("/"),
+            provider_chat_path or settings.provider_chat_path or "/chat-messages",
             task_type,
             api_key_ref,
         ]
@@ -899,6 +944,117 @@ def parse_ppt_slide_answer(answer: str) -> Dict:
     }
 
 
+def _normalize_ppt_document_slide_count(value, fallback: int = 10) -> int:
+    try:
+        slide_count = int(value)
+    except (TypeError, ValueError):
+        slide_count = 0
+    if slide_count in PPT_DOCUMENT_SLIDE_COUNTS:
+        return slide_count
+    return fallback if fallback in PPT_DOCUMENT_SLIDE_COUNTS else 10
+
+
+def _ppt_document_text(value) -> str:
+    return strip_think_tag_content(_provider_safe_str(value)).strip()
+
+
+def _ppt_document_text_list(value) -> List[str]:
+    if not isinstance(value, list):
+        return []
+    return [text for text in (_ppt_document_text(item) for item in value) if text]
+
+
+def _build_ppt_document_plain_text(
+    deck_title: str,
+    document_summary: str,
+    slides: List[Dict],
+    global_style_advice: str,
+) -> str:
+    sections = []
+    if deck_title:
+        sections.append(deck_title)
+    if document_summary:
+        sections.append(document_summary)
+    for slide in slides:
+        slide_lines = ["第 {0} 页：{1}".format(slide["index"], slide.get("title") or "未命名页面")]
+        if slide.get("subtitle"):
+            slide_lines.append(slide["subtitle"])
+        slide_lines.extend("- {0}".format(item) for item in slide.get("bullets", []))
+        if slide.get("conclusion"):
+            slide_lines.append(slide["conclusion"])
+        sections.append("\n".join(slide_lines))
+    if global_style_advice:
+        sections.append("整体风格建议：{0}".format(global_style_advice))
+    return "\n\n".join(sections)
+
+
+def parse_ppt_document_answer(answer: str, requested_slide_count: int = 10) -> Dict:
+    requested_count = _normalize_ppt_document_slide_count(requested_slide_count)
+    cleaned = strip_think_tag_content(answer or "").strip()
+    payload = _extract_json_payload(cleaned)
+    if isinstance(payload, dict):
+        slides = []
+        raw_slides = payload.get("slides")
+        if isinstance(raw_slides, list):
+            for item in raw_slides:
+                if not isinstance(item, dict):
+                    continue
+                slides.append(
+                    {
+                        "index": len(slides) + 1,
+                        "role": _ppt_document_text(item.get("role")),
+                        "title": _ppt_document_text(item.get("title")),
+                        "subtitle": _ppt_document_text(item.get("subtitle")),
+                        "bullets": _ppt_document_text_list(item.get("bullets")),
+                        "conclusion": _ppt_document_text(item.get("conclusion")),
+                        "layoutSuggestion": _ppt_document_text(
+                            item.get("layoutSuggestion") or item.get("layout_suggestion")
+                        ),
+                        "visualSuggestion": _ppt_document_text(
+                            item.get("visualSuggestion") or item.get("visual_suggestion")
+                        ),
+                    }
+                )
+        deck_title = _ppt_document_text(payload.get("deckTitle") or payload.get("deck_title"))
+        document_summary = _ppt_document_text(
+            payload.get("documentSummary") or payload.get("document_summary")
+        )
+        global_style_advice = _ppt_document_text(
+            payload.get("globalStyleAdvice") or payload.get("global_style_advice")
+        )
+        plain_text = _ppt_document_text(payload.get("plainText") or payload.get("plain_text"))
+        if deck_title or document_summary or slides or global_style_advice or plain_text:
+            return {
+                "resultType": "document",
+                "deckTitle": deck_title,
+                "documentSummary": document_summary,
+                "recommendedSlideCount": requested_count,
+                "slides": slides,
+                "globalStyleAdvice": global_style_advice,
+                "plainText": plain_text
+                or _build_ppt_document_plain_text(
+                    deck_title,
+                    document_summary,
+                    slides,
+                    global_style_advice,
+                ),
+                "rawAnswer": None,
+                "parseFallbackReason": None,
+            }
+
+    return {
+        "resultType": "document",
+        "deckTitle": "",
+        "documentSummary": "模型后台已返回结果，但未按结构化 JSON 输出。",
+        "recommendedSlideCount": requested_count,
+        "slides": [],
+        "globalStyleAdvice": "",
+        "plainText": cleaned,
+        "rawAnswer": cleaned,
+        "parseFallbackReason": "模型后台未返回可解析的 PPT 文档总结 JSON。",
+    }
+
+
 def build_ppt_unconfigured_result(context: Dict, mode: str, prompt: str) -> Dict:
     return {
         "modeUsed": mode,
@@ -985,6 +1141,40 @@ class ProviderClient:
     def refresh_settings(self) -> None:
         if self.reload_settings:
             self.settings = load_settings()
+
+    def resolve_task_auth(self, task_type: str) -> Dict:
+        self.refresh_settings()
+        workflow_profile = self.get_active_workflow_profile(task_type)
+        if workflow_profile and workflow_profile.get("apiKeyRef"):
+            api_key_ref = str(workflow_profile.get("apiKeyRef", ""))
+        else:
+            refs = self.settings.task_api_key_refs or {}
+            api_key_ref = refs.get(task_type) or normalize_task_api_key_ref(task_type)
+
+        task_api_key = ""
+        if workflow_profile and self.workflow_profile_store is not None:
+            safe_ref = "".join(
+                ch for ch in api_key_ref if ch.isalnum() or ch in ("-", "_", ".")
+            )
+            if safe_ref == api_key_ref:
+                profile_key_path = self.workflow_profile_store.key_dir / safe_ref
+                if profile_key_path.exists():
+                    task_api_key = profile_key_path.read_text(encoding="utf-8").strip()
+        if not task_api_key:
+            task_api_key = load_route_api_key(api_key_ref)
+        auth_source = "task-file" if task_api_key else self.get_auth_source()
+        if not task_api_key:
+            task_api_key = self.get_api_key("default")
+        return {
+            "providerBaseUrl": self.settings.provider_base_url.rstrip("/"),
+            "providerChatPath": self.settings.provider_chat_path or "/chat-messages",
+            "workflowProfile": workflow_profile,
+            "workflowProfileId": str((workflow_profile or {}).get("id", "")),
+            "workflowProfileName": str((workflow_profile or {}).get("name", "")),
+            "apiKeyRef": api_key_ref,
+            "apiKey": task_api_key,
+            "authSource": auth_source,
+        }
 
     def resolve_task_route(self, task_type: str) -> TaskRoute:
         routes = self.settings.task_routes or {}
@@ -1143,21 +1333,192 @@ class ProviderClient:
         provider: str = "enterprise-dify-chat",
         workflow_profile: Optional[Dict] = None,
         api_key_ref: str = "",
+        task_auth: Optional[Dict] = None,
     ) -> Dict:
-        profile = workflow_profile if workflow_profile is not None else self.get_active_workflow_profile(task_type)
+        if task_auth is not None:
+            profile = task_auth.get("workflowProfile")
+            resolved_api_key_ref = str(task_auth.get("apiKeyRef", ""))
+            auth_source = str(task_auth.get("authSource", "")) or "none"
+            profile_id = str(task_auth.get("workflowProfileId", ""))
+            profile_name = str(task_auth.get("workflowProfileName", ""))
+            provider_base_url_configured = bool(
+                str(task_auth.get("providerBaseUrl", "")).strip()
+            )
+        else:
+            profile = workflow_profile if workflow_profile is not None else self.get_active_workflow_profile(task_type)
+            resolved_api_key_ref = api_key_ref or self.get_task_api_key_ref(task_type)
+            auth_source = self.get_auth_source_for_task(task_type)
+            profile_id = str((profile or {}).get("id", ""))
+            profile_name = str((profile or {}).get("name", ""))
+            provider_base_url_configured = bool(self.settings.provider_base_url.strip())
         metadata = {
             "provider": provider,
             "providerName": self.settings.provider_name,
             "providerType": self.settings.provider_type,
-            "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
-            "authSource": self.get_auth_source_for_task(task_type),
-            "taskAuthSource": self.get_auth_source_for_task(task_type),
-            "taskApiKeyRef": api_key_ref or self.get_task_api_key_ref(task_type),
+            "providerBaseUrlConfigured": provider_base_url_configured,
+            "authSource": auth_source,
+            "taskAuthSource": auth_source,
+            "taskApiKeyRef": resolved_api_key_ref,
         }
-        if profile:
-            metadata["workflowProfileId"] = str(profile.get("id", ""))
-            metadata["workflowProfileName"] = str(profile.get("name", ""))
+        if profile_id or profile:
+            metadata["workflowProfileId"] = profile_id or str(profile.get("id", ""))
+            metadata["workflowProfileName"] = profile_name or str(profile.get("name", ""))
         return metadata
+
+    def upload_task_file(
+        self,
+        task_type: str,
+        trace_id: str,
+        staged_document,
+        task_auth: Optional[Dict] = None,
+        timeout_seconds: Optional[int] = None,
+    ) -> str:
+        resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
+        provider_base_url = str(
+            resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
+        ).rstrip("/")
+        url = "{0}/files/upload".format(provider_base_url)
+        extension = str(getattr(staged_document, "extension", "") or "").lower().lstrip(".")
+        mime_type = str(getattr(staged_document, "mime_type", "") or "")
+        try:
+            content = Path(getattr(staged_document, "path")).read_bytes()
+            payload, content_type = encode_dify_file_upload(content, extension, mime_type)
+        except (OSError, TypeError, ValueError) as exc:
+            raise ProviderUnavailableError("PPT document could not be prepared for upload.") from exc
+
+        size_bytes = len(content)
+        timeout = timeout_seconds or self.settings.timeout_seconds
+        debug_metadata = self.build_debug_metadata(task_type, task_auth=resolved_task_auth)
+        safe_context = {
+            "stage": "file-upload",
+            "extension": extension,
+            "sizeBytes": size_bytes,
+        }
+        logger.info(
+            "traceId=%s task=%s stage=file-upload url=%s extension=%s sizeBytes=%s",
+            trace_id,
+            task_type,
+            url,
+            extension,
+            size_bytes,
+        )
+        req = urllib_request.Request(
+            url,
+            data=payload,
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(str(resolved_task_auth.get("apiKey", ""))),
+                "Content-Type": content_type,
+                "X-Trace-Id": trace_id,
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=timeout) as response:
+                raw_body = response.read().decode("utf-8")
+                try:
+                    body = json.loads(raw_body)
+                except json.JSONDecodeError as exc:
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            **debug_metadata,
+                            "validation": safe_context,
+                            "error": {
+                                "type": "JSONDecodeError",
+                                "message": "Provider file upload returned non-JSON response.",
+                                "bodyPreview": _sanitize_provider_error_body(raw_body, limit=240),
+                            },
+                        }
+                    )
+                    raise ProviderUnavailableError(
+                        "Enterprise AI file upload returned a non-JSON response."
+                    ) from exc
+                upload_file_id = _provider_safe_str(body.get("id") if isinstance(body, dict) else "").strip()
+                if not upload_file_id:
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            **debug_metadata,
+                            "validation": safe_context,
+                            "error": {
+                                "type": "ProviderResponseError",
+                                "message": "Provider file upload response did not contain an id.",
+                            },
+                        }
+                    )
+                    raise ProviderUnavailableError(
+                        "Enterprise AI file upload response did not contain an id."
+                    )
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": url,
+                        **debug_metadata,
+                        "validation": safe_context,
+                        "response": {
+                            "status": getattr(response, "status", 200),
+                            "body": body,
+                        },
+                    }
+                )
+                return upload_file_id
+        except error.HTTPError as exc:
+            error_info = {
+                "type": "HTTPError",
+                "status": exc.code,
+                "message": str(exc),
+                "bodyPreview": _read_http_error_body(
+                    exc,
+                    api_key=str(resolved_task_auth.get("apiKey", "")),
+                ),
+            }
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_context,
+                    "error": error_info,
+                }
+            )
+            if exc.code in (401, 403):
+                raise ProviderAuthError() from exc
+            raise ProviderUnavailableError(
+                "Enterprise AI file upload returned HTTP {0}.".format(exc.code)
+            ) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_context,
+                    "error": {"type": "URLError", "message": str(reason)},
+                }
+            )
+            if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+                raise ProviderTimeoutError() from exc
+            raise ProviderUnavailableError("Enterprise AI file upload endpoint is unreachable.") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_context,
+                    "error": {"type": "TimeoutError", "message": str(exc)},
+                }
+            )
+            raise ProviderTimeoutError() from exc
 
     def post_task(
         self,
@@ -1166,29 +1527,38 @@ class ProviderClient:
         input_data: Dict,
         query: str,
         timeout_seconds: Optional[int] = None,
+        files: Optional[List[Dict]] = None,
+        task_auth: Optional[Dict] = None,
     ) -> Dict:
-        self.refresh_settings()
+        resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
+        provider_base_url = str(
+            resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
+        ).rstrip("/")
+        provider_chat_path = str(
+            resolved_task_auth.get("providerChatPath")
+            or self.settings.provider_chat_path
+            or "/chat-messages"
+        )
         url = "{0}{1}".format(
-            self.settings.provider_base_url.rstrip("/"),
-            self.settings.provider_chat_path or "/chat-messages",
+            provider_base_url,
+            provider_chat_path,
         )
-        workflow_profile = self.get_active_workflow_profile(task_type)
-        api_key_ref = (
-            str(workflow_profile.get("apiKeyRef", ""))
-            if workflow_profile
-            else self.get_task_api_key_ref(task_type)
-        )
-        task_api_key = load_route_api_key(api_key_ref) or self.get_api_key("default")
+        workflow_profile = resolved_task_auth.get("workflowProfile")
+        api_key_ref = str(resolved_task_auth.get("apiKeyRef", ""))
+        task_api_key = str(resolved_task_auth.get("apiKey", ""))
         debug_metadata = self.build_debug_metadata(
             task_type,
             workflow_profile=workflow_profile,
             api_key_ref=api_key_ref,
+            task_auth=resolved_task_auth,
         )
         cache_key = _provider_input_mode_cache_key(
             self.settings,
             task_type,
             api_key_ref,
+            provider_base_url=provider_base_url,
+            provider_chat_path=provider_chat_path,
         )
         preferred_mode = _PROVIDER_INPUT_MODE_CACHE.get(
             cache_key,
@@ -1205,7 +1575,7 @@ class ProviderClient:
             trace_id,
             task_type,
             url,
-            "task-file" if load_route_api_key(api_key_ref) else self.get_auth_source(),
+            str(resolved_task_auth.get("authSource", "none")),
             len(query or ""),
             sorted((input_data or {}).keys()),
         )
@@ -1221,6 +1591,7 @@ class ProviderClient:
                 {},
                 query,
                 input_mode=input_mode,
+                files=files,
             )
             payload = json.dumps(route_payload).encode("utf-8")
             record_provider_debug(
@@ -1481,6 +1852,93 @@ class ProviderClient:
             **parsed,
             "modeUsed": mode,
             "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
+
+    def ppt_document_summary(
+        self,
+        staged_document,
+        requested_slide_count: int,
+        user_instruction: str,
+        trace_id: str,
+        progress_callback=None,
+    ) -> Dict:
+        task_type = "ppt.slide_assistant"
+        slide_count = _normalize_ppt_document_slide_count(requested_slide_count)
+        prompt = build_ppt_document_prompt(slide_count, user_instruction)
+        task_auth = self.resolve_task_auth(task_type)
+        if not str(task_auth.get("providerBaseUrl", "")).strip() or not str(
+            task_auth.get("apiKey", "")
+        ).strip():
+            logger.info("traceId=%s provider=mock task=ppt.slide_assistant sourceMode=document", trace_id)
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": "",
+                    **self.build_debug_metadata(task_type, provider="mock", task_auth=task_auth),
+                    "skipReason": "provider_not_configured",
+                    "request": {
+                        "body": build_provider_request_payload(self.settings, {}, prompt)
+                    },
+                }
+            )
+            return {
+                "resultType": "document",
+                "deckTitle": "",
+                "documentSummary": "当前尚未配置 PPT 智能总结工作流。",
+                "recommendedSlideCount": slide_count,
+                "slides": [],
+                "globalStyleAdvice": "",
+                "plainText": "请先在设置页完成 ppt.slide_assistant 工作流配置。",
+                "rawAnswer": None,
+                "parseFallbackReason": None,
+                "provider": "mock",
+                "prompt": prompt,
+            }
+
+        timeout = max(self.settings.timeout_seconds, PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS)
+        upload_file_id = self.upload_task_file(
+            task_type,
+            trace_id,
+            staged_document,
+            task_auth=task_auth,
+            timeout_seconds=timeout,
+        )
+        if progress_callback:
+            progress_callback("模型后台正在解析文档并生成 PPT 建议。")
+        files = [
+            {
+                "type": "document",
+                "transfer_method": "local_file",
+                "upload_file_id": upload_file_id,
+            }
+        ]
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {
+                "scene": "ppt",
+                "sourceMode": "document",
+                "requestedSlideCount": slide_count,
+            },
+            prompt,
+            timeout_seconds=timeout,
+            files=files,
+            task_auth=task_auth,
+        )
+        parsed = parse_ppt_document_answer(extract_answer(body), slide_count)
+        logger.info(
+            "traceId=%s provider=enterprise-dify-chat task=ppt.slide_assistant sourceMode=document",
+            trace_id,
+        )
+        return {
+            **parsed,
+            "provider": "enterprise-dify-chat/{0}".format(
+                str(task_auth.get("authSource", "none"))
+            ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
