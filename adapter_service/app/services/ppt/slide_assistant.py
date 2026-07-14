@@ -3,6 +3,7 @@ from typing import Dict, Optional
 
 from app.core.errors import AdapterError
 from app.core.models import PptSlideAssistantRequest
+from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.provider_client import ProviderClient
 
 
@@ -85,10 +86,46 @@ def determine_ppt_slide_mode(context: Dict) -> str:
 
 
 class PptSlideAssistant:
-    def __init__(self, provider_client: Optional[ProviderClient] = None) -> None:
+    def __init__(
+        self,
+        provider_client: Optional[ProviderClient] = None,
+        document_file_store: Optional[PptDocumentFileStore] = None,
+    ) -> None:
         self.provider_client = provider_client or ProviderClient()
+        self.document_file_store = document_file_store or PptDocumentFileStore()
 
-    def assist(self, request: PptSlideAssistantRequest, trace_id: str) -> Dict:
+    def assist(self, request: PptSlideAssistantRequest, trace_id: str, progress_callback=None) -> Dict:
+        if request.source_mode == "document":
+            return self._assist_document(request, trace_id, progress_callback)
+        return self._assist_slide(request, trace_id)
+
+    def _assist_document(
+        self,
+        request: PptSlideAssistantRequest,
+        trace_id: str,
+        progress_callback=None,
+    ) -> Dict:
+        if not request.file_token.strip():
+            raise AdapterError(
+                "PPT_DOCUMENT_FILE_REQUIRED",
+                "请先选择并上传 Markdown 或 Word 文档。",
+                status_code=400,
+            )
+        staged = self.document_file_store.consume(request.file_token)
+        try:
+            if progress_callback:
+                progress_callback("正在上传文档到模型后台。")
+            return self.provider_client.ppt_document_summary(
+                staged,
+                request.requested_slide_count,
+                (request.user_instruction or "")[:PPT_MAX_USER_INSTRUCTION_LENGTH],
+                trace_id,
+                progress_callback=progress_callback,
+            )
+        finally:
+            self.document_file_store.delete(staged)
+
+    def _assist_slide(self, request: PptSlideAssistantRequest, trace_id: str) -> Dict:
         context = normalize_ppt_slide_request(request)
         mode = determine_ppt_slide_mode(context)
         user_instruction = context.pop("userInstruction")
@@ -106,6 +143,7 @@ class PptSlideAssistant:
             trace_id,
         )
         return {
+            "resultType": "slide",
             "modeUsed": mode,
             "suggestedTitle": provider_result.get("suggestedTitle", ""),
             "bullets": provider_result.get("bullets", []),

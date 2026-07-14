@@ -3,13 +3,20 @@ import threading
 import time
 from typing import Dict, Optional
 
+from app.core.errors import AdapterError
 from app.core.models import PptSlideAssistantRequest
 from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.provider_client import PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS
 
 
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
-RUNNING_MESSAGE = "模型后台正在处理 PPT 单页内容，adapter 会继续等待结果。"
+RUNNING_MESSAGE = "模型后台正在处理当前页智能总结，adapter 会继续等待结果。"
+DOCUMENT_RUNNING_MESSAGE = "已接收文档，adapter 正在准备模型后台任务。"
+JOB_FAILED_MESSAGE = "智能总结后台任务执行失败，请稍后重试或查看最近一次任务诊断。"
+SAFE_DOCUMENT_ERROR_CODES = {
+    "PPT_DOCUMENT_FILE_REQUIRED",
+    "PPT_DOCUMENT_FILE_EXPIRED",
+}
 
 
 def normalize_client_job_id(value: str) -> str:
@@ -34,7 +41,9 @@ class PptSlideAssistantJobStore:
             "status": "running",
             "createdAt": time.time(),
             "updatedAt": time.time(),
-            "runningMessage": RUNNING_MESSAGE,
+            "runningMessage": (
+                DOCUMENT_RUNNING_MESSAGE if request.source_mode == "document" else RUNNING_MESSAGE
+            ),
             "providerTimeoutSeconds": PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS,
             "result": None,
             "error": None,
@@ -56,16 +65,25 @@ class PptSlideAssistantJobStore:
 
     def _run(self, job_id: str, request: PptSlideAssistantRequest, trace_id: str) -> None:
         try:
-            result = self.assistant.assist(request, trace_id=trace_id)
+            result = self.assistant.assist(
+                request,
+                trace_id=trace_id,
+                progress_callback=lambda message: self._update(job_id, runningMessage=message),
+            )
             self._update(job_id, status="completed", result=result, runningMessage="")
         except Exception as exc:
+            code = "PPT_SLIDE_JOB_FAILED"
+            message = JOB_FAILED_MESSAGE
+            if isinstance(exc, AdapterError) and exc.code in SAFE_DOCUMENT_ERROR_CODES:
+                code = exc.code
+                message = exc.message
             self._update(
                 job_id,
                 status="failed",
                 runningMessage="",
                 error={
-                    "code": "PPT_SLIDE_JOB_FAILED",
-                    "message": str(exc) or "PPT 单页助手后台任务执行失败。",
+                    "code": code,
+                    "message": message,
                 },
             )
 

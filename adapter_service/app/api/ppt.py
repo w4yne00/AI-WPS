@@ -1,15 +1,40 @@
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.core.models import PptSlideAssistantRequest, PptSlideAssistantResponseData
+from app.core.models import (
+    PptDocumentFileUploadRequest,
+    PptSlideAssistantRequest,
+    PptSlideAssistantResponseData,
+)
 from app.core.tracing import new_trace_id
+from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 
 
 router = APIRouter()
-ppt_slide_assistant = PptSlideAssistant()
+ppt_document_files = PptDocumentFileStore()
+ppt_slide_assistant = PptSlideAssistant(document_file_store=ppt_document_files)
 ppt_slide_jobs = PptSlideAssistantJobStore(ppt_slide_assistant)
+
+
+@router.post("/ppt/document-files")
+def upload_ppt_document_file(request: PptDocumentFileUploadRequest) -> dict:
+    trace_id = new_trace_id("ppt-document-file")
+    data = ppt_document_files.store(
+        request.file_name,
+        request.mime_type,
+        request.size_bytes,
+        request.content_base64,
+    )
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "ppt.slide_assistant",
+        "message": "文档已安全接收。",
+        "data": data,
+        "errors": [],
+    }
 
 
 @router.post("/ppt/slide-assistant/jobs")
@@ -30,7 +55,7 @@ def start_ppt_slide_assistant_job(request: PptSlideAssistantRequest) -> dict:
 def get_ppt_slide_assistant_job(job_id: str):
     job = ppt_slide_jobs.get(job_id)
     if not job:
-        message = "PPT 单页助手后台任务不存在或已过期。"
+        message = "智能总结后台任务不存在或已过期。"
         return JSONResponse(
             status_code=404,
             content={
@@ -43,9 +68,15 @@ def get_ppt_slide_assistant_job(job_id: str):
             },
         )
     if job.get("result"):
+        if hasattr(PptSlideAssistantResponseData, "model_validate"):
+            result = PptSlideAssistantResponseData.model_validate(job["result"]).model_dump(
+                by_alias=True
+            )
+        else:
+            result = PptSlideAssistantResponseData(**job["result"]).dict(by_alias=True)
         job = {
             **job,
-            "result": PptSlideAssistantResponseData(**job["result"]).dict(by_alias=True),
+            "result": result,
         }
     return {
         "success": True,

@@ -1,6 +1,10 @@
+import asyncio
+import base64
 import importlib.util
 from io import BytesIO
 import json
+from pathlib import Path
+import tempfile
 import threading
 import time
 import unittest
@@ -11,6 +15,7 @@ HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 if HAS_PYDANTIC:
     from app.core.errors import AdapterError
     from app.core.models import PptSlideAssistantRequest
+    from app.services.ppt.document_files import PptDocumentFileStore
     from app.services.ppt.slide_assistant import (
         PptSlideAssistant,
         determine_ppt_slide_mode,
@@ -20,6 +25,9 @@ if HAS_PYDANTIC:
 
 if HAS_PYDANTIC and HAS_FASTAPI:
     from app.api import ppt as ppt_api
+    from app import main as app_main
+    from fastapi.responses import JSONResponse
+    from starlette.requests import Request
 
 
 def parse_ppt_request(payload):
@@ -59,7 +67,7 @@ class BlockingPptAssistant:
         self.release = threading.Event()
         self.call_count = 0
 
-    def assist(self, request, trace_id):
+    def assist(self, request, trace_id, progress_callback=None):
         self.call_count += 1
         self.started.set()
         self.release.wait(timeout=2)
@@ -72,6 +80,62 @@ class BlockingPptAssistant:
             "rawAnswer": None,
             "parseFallbackReason": None,
             "provider": "job-test",
+        }
+
+
+class RecordingPptDocumentProvider:
+    def __init__(self, fail_message=""):
+        self.calls = []
+        self.fail_message = fail_message
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.block = False
+
+    def ppt_document_summary(
+        self,
+        staged_document,
+        requested_slide_count,
+        user_instruction,
+        trace_id,
+        progress_callback=None,
+    ):
+        self.calls.append(
+            {
+                "path": str(staged_document.path),
+                "requestedSlideCount": requested_slide_count,
+                "userInstruction": user_instruction,
+                "traceId": trace_id,
+            }
+        )
+        self.started.set()
+        if self.block:
+            self.release.wait(timeout=2)
+        if self.fail_message:
+            raise RuntimeError(self.fail_message)
+        if progress_callback:
+            progress_callback("模型后台正在解析文档并生成 PPT 建议。")
+        return {
+            "resultType": "document",
+            "deckTitle": "项目汇报建议",
+            "documentSummary": "文档围绕项目进展与风险展开。",
+            "recommendedSlideCount": requested_slide_count,
+            "slides": [
+                {
+                    "index": 1,
+                    "role": "封面",
+                    "title": "项目进展汇报",
+                    "subtitle": "阶段成果与下一步计划",
+                    "bullets": ["总体方案已完成"],
+                    "conclusion": "项目总体可控。",
+                    "layoutSuggestion": "标题居中",
+                    "visualSuggestion": "使用进度图",
+                }
+            ],
+            "globalStyleAdvice": "采用简洁商务风格。",
+            "plainText": "项目汇报建议",
+            "rawAnswer": None,
+            "parseFallbackReason": None,
+            "provider": "provider-test",
         }
 
 
@@ -105,6 +169,33 @@ class PptSlideAssistantTests(unittest.TestCase):
                 },
                 "userInstruction": instruction,
             }
+        )
+
+    def _document_request(
+        self,
+        file_token="",
+        requested_slide_count=10,
+        client_job_id="client-ppt-document",
+    ):
+        return parse_ppt_request(
+            {
+                "presentationId": "汇报材料.pptx",
+                "scene": "ppt",
+                "sourceMode": "document",
+                "clientJobId": client_job_id,
+                "fileToken": file_token,
+                "requestedSlideCount": requested_slide_count,
+                "userInstruction": "突出风险与计划",
+            }
+        )
+
+    @staticmethod
+    def _stage_markdown(store, file_name="现场方案.md", content=b"# Project\n\nContent"):
+        return store.store(
+            file_name,
+            "text/markdown",
+            len(content),
+            base64.b64encode(content).decode("ascii"),
         )
 
     def test_normalize_ppt_slide_request_enforces_all_budgets(self):
@@ -176,6 +267,134 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(provider.calls[0]["traceId"], "trace-ppt-assist")
         self.assertEqual(result["suggestedTitle"], "项目总体进展")
 
+    def test_document_mode_requires_uploaded_file_token(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            assistant = PptSlideAssistant(
+                provider_client=RecordingPptDocumentProvider(),
+                document_file_store=PptDocumentFileStore(Path(temp_dir)),
+            )
+
+            with self.assertRaises(AdapterError) as error:
+                assistant.assist(self._document_request(), trace_id="trace-ppt-document-missing")
+
+        self.assertEqual(error.exception.code, "PPT_DOCUMENT_FILE_REQUIRED")
+
+    def test_document_mode_calls_provider_and_deletes_staged_file(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir))
+            staged = self._stage_markdown(store)
+            provider = RecordingPptDocumentProvider()
+            messages = []
+            assistant = PptSlideAssistant(provider_client=provider, document_file_store=store)
+
+            result = assistant.assist(
+                self._document_request(staged["fileToken"], requested_slide_count=15),
+                trace_id="trace-ppt-document",
+                progress_callback=messages.append,
+            )
+
+            provider_path = Path(provider.calls[0]["path"])
+            self.assertEqual(result["resultType"], "document")
+            self.assertEqual(provider.calls[0]["requestedSlideCount"], 15)
+            self.assertFalse(provider_path.exists())
+            self.assertIn("正在上传文档到模型后台。", messages)
+            self.assertIn("模型后台正在解析文档并生成 PPT 建议。", messages)
+
+    def test_document_mode_deletes_staged_file_after_provider_failure(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir))
+            staged = self._stage_markdown(store)
+            provider = RecordingPptDocumentProvider(fail_message="provider failed")
+            assistant = PptSlideAssistant(provider_client=provider, document_file_store=store)
+
+            with self.assertRaises(RuntimeError):
+                assistant.assist(
+                    self._document_request(staged["fileToken"]),
+                    trace_id="trace-ppt-document-failed",
+                )
+
+            self.assertFalse(Path(provider.calls[0]["path"]).exists())
+
+    def test_document_mode_rejects_expired_or_consumed_token(self):
+        now = [1000.0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir), now=lambda: now[0])
+            staged = self._stage_markdown(store)
+            now[0] += 1801
+            assistant = PptSlideAssistant(
+                provider_client=RecordingPptDocumentProvider(),
+                document_file_store=store,
+            )
+
+            with self.assertRaises(AdapterError) as error:
+                assistant.assist(
+                    self._document_request(staged["fileToken"]),
+                    trace_id="trace-ppt-document-expired",
+                )
+
+        self.assertEqual(error.exception.code, "PPT_DOCUMENT_FILE_EXPIRED")
+
+    def test_document_job_duplicate_client_id_calls_provider_once_and_cleans_up(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir))
+            staged = self._stage_markdown(store)
+            provider = RecordingPptDocumentProvider()
+            provider.block = True
+            assistant = PptSlideAssistant(provider_client=provider, document_file_store=store)
+            jobs = PptSlideAssistantJobStore(assistant=assistant)
+            request = self._document_request(
+                staged["fileToken"], client_job_id="client-ppt-document-duplicate"
+            )
+
+            started = jobs.start(request, trace_id="trace-ppt-document-first")
+            duplicate = jobs.start(request, trace_id="trace-ppt-document-second")
+
+            self.assertTrue(provider.started.wait(timeout=1))
+            self.assertEqual(len(provider.calls), 1)
+            self.assertEqual(duplicate["traceId"], started["traceId"])
+            self.assertIn("模型后台", duplicate["runningMessage"])
+            provider.release.set()
+            completed = self._wait_for_job(jobs, "client-ppt-document-duplicate")
+            self.assertEqual(completed["status"], "completed")
+            self.assertFalse(Path(provider.calls[0]["path"]).exists())
+
+    def test_document_job_failure_does_not_expose_file_details(self):
+        original_name = "内部绝密方案.md"
+        encoded_content = base64.b64encode(b"secret body").decode("ascii")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir))
+            staged = store.store(original_name, "text/markdown", 11, encoded_content)
+            provider = RecordingPptDocumentProvider()
+            assistant = PptSlideAssistant(provider_client=provider, document_file_store=store)
+            provider.fail_message = "failed {0} {1} {2}".format(
+                original_name, encoded_content, str(store.root_dir)
+            )
+            jobs = PptSlideAssistantJobStore(assistant=assistant)
+            jobs.start(
+                self._document_request(
+                    staged["fileToken"], client_job_id="client-ppt-document-secret"
+                ),
+                trace_id="trace-ppt-document-secret",
+            )
+
+            failed = self._wait_for_job(jobs, "client-ppt-document-secret")
+            error_text = json.dumps(failed["error"], ensure_ascii=False)
+            self.assertEqual(failed["status"], "failed")
+            self.assertNotIn(original_name, error_text)
+            self.assertNotIn(encoded_content, error_text)
+            self.assertNotIn(str(store.root_dir), error_text)
+            self.assertFalse(Path(provider.calls[0]["path"]).exists())
+
+    @staticmethod
+    def _wait_for_job(store, job_id):
+        job = None
+        for _ in range(100):
+            job = store.get(job_id)
+            if job and job["status"] != "running":
+                return job
+            time.sleep(0.02)
+        return job
+
     def test_job_store_is_idempotent_and_completes_in_background(self):
         assistant = BlockingPptAssistant()
         store = PptSlideAssistantJobStore(assistant=assistant)
@@ -225,6 +444,118 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(missing.status_code, 404)
         self.assertIn(b"PPT_SLIDE_JOB_NOT_FOUND", missing.body)
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
+    def test_fastapi_upload_and_document_result_serialization(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir))
+            provider = RecordingPptDocumentProvider()
+            assistant = PptSlideAssistant(provider_client=provider, document_file_store=store)
+            jobs = PptSlideAssistantJobStore(assistant=assistant)
+            original_files = ppt_api.ppt_document_files
+            original_jobs = ppt_api.ppt_slide_jobs
+            ppt_api.ppt_document_files = store
+            ppt_api.ppt_slide_jobs = jobs
+            try:
+                content = b"# Summary"
+                uploaded = ppt_api.upload_ppt_document_file(
+                    ppt_api.PptDocumentFileUploadRequest(
+                        fileName="summary.md",
+                        mimeType="text/markdown",
+                        sizeBytes=len(content),
+                        contentBase64=base64.b64encode(content).decode("ascii"),
+                    )
+                )
+                ppt_api.start_ppt_slide_assistant_job(
+                    self._document_request(
+                        uploaded["data"]["fileToken"],
+                        client_job_id="client-ppt-document-fastapi",
+                    )
+                )
+                completed = self._wait_for_job(jobs, "client-ppt-document-fastapi")
+                response = ppt_api.get_ppt_slide_assistant_job("client-ppt-document-fastapi")
+            finally:
+                ppt_api.ppt_document_files = original_files
+                ppt_api.ppt_slide_jobs = original_jobs
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(uploaded["data"]["expiresInSeconds"], 1800)
+        self.assertEqual(response["data"]["result"]["resultType"], "document")
+        self.assertEqual(response["data"]["result"]["slides"][0]["subtitle"], "阶段成果与下一步计划")
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT middleware tests")
+    def test_fastapi_rejects_oversized_document_upload_before_call_next(self):
+        calls = []
+
+        async def call_next(_request):
+            calls.append(True)
+            return JSONResponse({"unexpected": True})
+
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/ppt/document-files",
+                "headers": [
+                    (
+                        b"content-length",
+                        str(app_main.PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES + 1).encode("ascii"),
+                    )
+                ],
+            }
+        )
+
+        response = asyncio.run(app_main.log_requests(request, call_next))
+        payload = json.loads(response.body.decode("utf-8"))
+
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(payload["errors"][0]["code"], "PPT_DOCUMENT_TOO_LARGE")
+        self.assertEqual(calls, [])
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT middleware tests")
+    def test_fastapi_upload_body_limit_ignores_invalid_length_and_other_routes(self):
+        calls = []
+
+        async def call_next(request):
+            calls.append(request.url.path)
+            return JSONResponse({"ok": True})
+
+        invalid_length_request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/ppt/document-files",
+                "headers": [(b"content-length", b"invalid")],
+            }
+        )
+        missing_length_request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/ppt/document-files",
+                "headers": [],
+            }
+        )
+        other_route_request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/word/smart-write",
+                "headers": [(b"content-length", b"999999999")],
+            }
+        )
+
+        invalid_response = asyncio.run(app_main.log_requests(invalid_length_request, call_next))
+        missing_response = asyncio.run(app_main.log_requests(missing_length_request, call_next))
+        other_response = asyncio.run(app_main.log_requests(other_route_request, call_next))
+
+        self.assertEqual(invalid_response.status_code, 200)
+        self.assertEqual(missing_response.status_code, 200)
+        self.assertEqual(other_response.status_code, 200)
+        self.assertEqual(
+            calls,
+            ["/ppt/document-files", "/ppt/document-files", "/word/smart-write"],
+        )
 
     def test_standalone_parses_request_and_serializes_job_result(self):
         import standalone_adapter
@@ -302,6 +633,92 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["body"]["data"]["status"], "running")
         self.assertEqual(missing["status"], 404)
         self.assertEqual(missing["body"]["errors"][0]["code"], "PPT_SLIDE_JOB_NOT_FOUND")
+
+    def test_standalone_upload_and_document_result_routes(self):
+        import standalone_adapter
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            store = PptDocumentFileStore(Path(temp_dir))
+            provider = RecordingPptDocumentProvider()
+            jobs = PptSlideAssistantJobStore(
+                assistant=PptSlideAssistant(provider_client=provider, document_file_store=store)
+            )
+            original_files = standalone_adapter.PPT_DOCUMENT_FILE_STORE
+            original_jobs = standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE
+            standalone_adapter.PPT_DOCUMENT_FILE_STORE = store
+            standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = jobs
+            try:
+                content = b"# Summary"
+                uploaded = self._invoke_standalone(
+                    standalone_adapter,
+                    "do_POST",
+                    "/ppt/document-files",
+                    {
+                        "fileName": "summary.md",
+                        "mimeType": "text/markdown",
+                        "sizeBytes": len(content),
+                        "contentBase64": base64.b64encode(content).decode("ascii"),
+                    },
+                )
+                submitted = self._invoke_standalone(
+                    standalone_adapter,
+                    "do_POST",
+                    "/ppt/slide-assistant/jobs",
+                    {
+                        "sourceMode": "document",
+                        "fileToken": uploaded["body"]["data"]["fileToken"],
+                        "requestedSlideCount": 10,
+                        "clientJobId": "client-ppt-document-standalone",
+                    },
+                )
+                completed = self._wait_for_job(jobs, "client-ppt-document-standalone")
+                response = self._invoke_standalone(
+                    standalone_adapter,
+                    "do_GET",
+                    "/ppt/slide-assistant/jobs/client-ppt-document-standalone",
+                )
+            finally:
+                standalone_adapter.PPT_DOCUMENT_FILE_STORE = original_files
+                standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = original_jobs
+
+        self.assertEqual(uploaded["status"], 200)
+        self.assertEqual(submitted["status"], 200)
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(response["body"]["data"]["result"]["resultType"], "document")
+        self.assertEqual(response["body"]["data"]["result"]["slides"][0]["title"], "项目进展汇报")
+
+    def test_standalone_rejects_oversized_document_upload_before_reading_body(self):
+        import standalone_adapter
+
+        class FailOnRead:
+            def read(self, _length):
+                raise AssertionError("request body must not be read")
+
+        captured = {}
+        handler = object.__new__(standalone_adapter.Handler)
+        handler.path = "/ppt/document-files"
+        handler.headers = {
+            "Content-Length": str(standalone_adapter.PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES + 1)
+        }
+        handler.rfile = FailOnRead()
+        handler._write = lambda status, body: captured.update(status=status, body=body)
+
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 413)
+        self.assertEqual(captured["body"]["errors"][0]["code"], "PPT_DOCUMENT_TOO_LARGE")
+
+    @staticmethod
+    def _invoke_standalone(module, method, path, payload=None):
+        captured = {}
+        handler = object.__new__(module.Handler)
+        handler.path = path
+        raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+        handler.headers = {"Content-Length": str(len(raw))}
+        handler.rfile = BytesIO(raw)
+        handler._write = lambda status, body: captured.update(status=status, body=body)
+        getattr(handler, method)()
+        return captured
 
 
 if __name__ == "__main__":

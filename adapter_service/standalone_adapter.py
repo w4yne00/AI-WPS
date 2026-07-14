@@ -6,12 +6,14 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from app.core.config import load_settings, save_provider_base_url
+from app.core.errors import AdapterError
 from app.core.models import (
     DocumentReviewResponseData,
     ExcelAnalysisRequest,
     ExcelAnalysisResponseData,
     FormatReviewResponseData,
     FormatReviewSummary,
+    PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
     PptSlideAssistantResponseData,
     RewriteResponseData,
@@ -27,6 +29,8 @@ from app.services.provider_client import (
 )
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+from app.services.ppt.document_files import PptDocumentFileStore
+from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
@@ -39,9 +43,13 @@ from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfile
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
 VERSION = "0.17.0-alpha"
+PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
-PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore()
+PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore()
+PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
+    PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
+)
 
 
 def parse_word_request(payload):
@@ -60,6 +68,12 @@ def parse_ppt_request(payload):
     if hasattr(PptSlideAssistantRequest, "model_validate"):
         return PptSlideAssistantRequest.model_validate(payload)
     return PptSlideAssistantRequest.parse_obj(payload)
+
+
+def parse_ppt_document_file_request(payload):
+    if hasattr(PptDocumentFileUploadRequest, "model_validate"):
+        return PptDocumentFileUploadRequest.model_validate(payload)
+    return PptDocumentFileUploadRequest.parse_obj(payload)
 
 
 def iter_template_documents():
@@ -334,7 +348,7 @@ class Handler(BaseHTTPRequestHandler):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = PPT_SLIDE_ASSISTANT_JOB_STORE.get(job_id)
             if not job:
-                message = "PPT 单页助手后台任务不存在或已过期。"
+                message = "智能总结后台任务不存在或已过期。"
                 self._write(
                     404,
                     envelope(
@@ -365,9 +379,58 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         path = urlparse(self.path).path
-        length = int(self.headers.get("Content-Length", "0"))
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except (TypeError, ValueError):
+            length = 0
+        if path == "/ppt/document-files" and length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
+            message = "上传请求超过 15 MB 限制，请重新选择文件。"
+            self._write(
+                413,
+                envelope(
+                    "standalone-ppt-document-file",
+                    "ppt.slide_assistant",
+                    success=False,
+                    message=message,
+                    errors=[{"code": "PPT_DOCUMENT_TOO_LARGE", "message": message}],
+                ),
+            )
+            return
         raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
         payload = json.loads(raw_body or "{}")
+
+        if path == "/ppt/document-files":
+            request = parse_ppt_document_file_request(payload)
+            trace_id = new_trace_id("standalone-ppt-document-file")
+            try:
+                data = PPT_DOCUMENT_FILE_STORE.store(
+                    request.file_name,
+                    request.mime_type,
+                    request.size_bytes,
+                    request.content_base64,
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "ppt.slide_assistant",
+                    data,
+                    message="文档已安全接收。",
+                ),
+            )
+            return
 
         if path == "/provider/workflow-profiles":
             try:

@@ -32,11 +32,39 @@ app.include_router(excel_router)
 app.include_router(ppt_router)
 
 logger = get_logger(__name__)
+PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     trace_id = request.headers.get("X-Trace-Id", new_trace_id("http"))
+    if request.url.path == "/ppt/document-files":
+        try:
+            content_length = int(request.headers.get("Content-Length", ""))
+        except (TypeError, ValueError):
+            content_length = 0
+        if content_length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
+            message = "上传请求超过 15 MB 限制，请重新选择文件。"
+            logger.warning(
+                "traceId=%s method=%s path=%s status=413 contentLength=%s",
+                trace_id,
+                request.method,
+                request.url.path,
+                content_length,
+            )
+            response = JSONResponse(
+                status_code=413,
+                content={
+                    "success": False,
+                    "traceId": trace_id,
+                    "taskType": "ppt.slide_assistant",
+                    "message": message,
+                    "data": {},
+                    "errors": [{"code": "PPT_DOCUMENT_TOO_LARGE", "message": message}],
+                },
+            )
+            response.headers["X-Trace-Id"] = trace_id
+            return response
     try:
         response = await call_next(request)
     except Exception:
@@ -93,6 +121,7 @@ def _task_type_from_path(path: str) -> str:
         "/excel/analysis": "excel.analysis",
         "/excel/analysis/jobs": "excel.analysis",
         "/ppt/slide-assistant/jobs": "ppt.slide_assistant",
+        "/ppt/document-files": "ppt.slide_assistant",
     }.get(path, "adapter.validation")
 
 
