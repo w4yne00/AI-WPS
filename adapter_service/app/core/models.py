@@ -389,6 +389,12 @@ class PptSlideAssistantRequest(BaseModel):
     def coerce_ppt_request_text(cls, value):
         return _safe_str(value)
 
+    @validator("slide", pre=True, always=True)
+    def preserve_legacy_default_slide(cls, value, values):
+        if values.get("source_mode") == "document":
+            return value
+        return value if value is not None else PptSlideInput()
+
     @validator("requested_slide_count", pre=True, always=True)
     def coerce_requested_slide_count(cls, value):
         count = _safe_int(value)

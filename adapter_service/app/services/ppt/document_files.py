@@ -10,12 +10,17 @@ import threading
 import time
 from typing import Dict, Optional
 import zipfile
+from xml.etree import ElementTree
 
 from app.core.errors import AdapterError
 
 
 PPT_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 PPT_DOCUMENT_EXPIRES_SECONDS = 1800
+PPT_DOCUMENT_MAX_BASE64_BYTES = ((PPT_DOCUMENT_MAX_BYTES + 2) // 3) * 4
+PPT_DOCX_MAX_ENTRIES = 5000
+PPT_DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
+PPT_DOCX_MAX_REQUIRED_PART_BYTES = 20 * 1024 * 1024
 ALLOWED_EXTENSIONS = {"md", "docx"}
 
 
@@ -40,7 +45,7 @@ class PptDocumentFileStore:
         self._now = now
         self._items: Dict[str, StagedPptDocument] = {}
         self._lock = threading.Lock()
-        self.cleanup_expired()
+        self._delete_restart_orphans()
 
     def store(
         self,
@@ -57,8 +62,23 @@ class PptDocumentFileStore:
                 status_code=400,
             )
 
+        declared_size = self._coerce_size(size_bytes)
+        encoded_content = str(content_base64 or "")
+        if declared_size < 1 or declared_size > PPT_DOCUMENT_MAX_BYTES:
+            raise AdapterError(
+                "PPT_DOCUMENT_TOO_LARGE",
+                "文件大小必须在 1 字节至 10 MB 之间。",
+                status_code=400,
+            )
+        if len(encoded_content) > PPT_DOCUMENT_MAX_BASE64_BYTES:
+            raise AdapterError(
+                "PPT_DOCUMENT_TOO_LARGE",
+                "文件大小必须在 1 字节至 10 MB 之间。",
+                status_code=400,
+            )
+
         try:
-            content = base64.b64decode(str(content_base64 or ""), validate=True)
+            content = base64.b64decode(encoded_content, validate=True)
         except (binascii.Error, ValueError):
             raise AdapterError(
                 "PPT_DOCUMENT_INVALID",
@@ -72,7 +92,7 @@ class PptDocumentFileStore:
                 "文件大小必须在 1 字节至 10 MB 之间。",
                 status_code=400,
             )
-        if self._coerce_size(size_bytes) != len(content):
+        if declared_size != len(content):
             raise AdapterError(
                 "PPT_DOCUMENT_INVALID",
                 "文件大小校验失败，请重新选择文件。",
@@ -144,6 +164,15 @@ class PptDocumentFileStore:
                 except FileNotFoundError:
                     pass
 
+    def _delete_restart_orphans(self) -> None:
+        for path in self.root_dir.glob("pptdoc_*.*"):
+            if path.suffix.lower().lstrip(".") not in ALLOWED_EXTENSIONS:
+                continue
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
     @staticmethod
     def _coerce_size(value) -> int:
         try:
@@ -166,16 +195,47 @@ class PptDocumentFileStore:
 
         try:
             with zipfile.ZipFile(BytesIO(content)) as archive:
-                names = set(archive.namelist())
+                entries = archive.infolist()
+                names = {item.filename for item in entries}
+                if len(entries) > PPT_DOCX_MAX_ENTRIES:
+                    raise ValueError("too many DOCX entries")
+                if sum(item.file_size for item in entries) > PPT_DOCX_MAX_UNCOMPRESSED_BYTES:
+                    raise ValueError("DOCX uncompressed content is too large")
+                required_names = ("[Content_Types].xml", "word/document.xml")
+                if any(name not in names for name in required_names):
+                    raise ValueError("missing required DOCX parts")
+                required_parts = []
+                for name in required_names:
+                    info = archive.getinfo(name)
+                    if info.file_size > PPT_DOCX_MAX_REQUIRED_PART_BYTES:
+                        raise ValueError("required DOCX part is too large")
+                    required_parts.append(archive.read(info))
+                if archive.testzip() is not None:
+                    raise ValueError("DOCX contains a corrupt ZIP entry")
         except (zipfile.BadZipFile, OSError):
             raise AdapterError(
                 "PPT_DOCUMENT_INVALID",
                 "Word 文档格式无效或文件已损坏。",
                 status_code=400,
             )
-        if "[Content_Types].xml" not in names or "word/document.xml" not in names:
+        except (KeyError, RuntimeError, ValueError):
             raise AdapterError(
                 "PPT_DOCUMENT_INVALID",
-                "Word 文档缺少必要结构。",
+                "Word 文档结构无效或文件已损坏。",
+                status_code=400,
+            )
+        try:
+            content_types_root = ElementTree.fromstring(required_parts[0])
+            document_root = ElementTree.fromstring(required_parts[1])
+        except ElementTree.ParseError:
+            raise AdapterError(
+                "PPT_DOCUMENT_INVALID",
+                "Word 文档 XML 结构无效。",
+                status_code=400,
+            )
+        if not content_types_root.tag.endswith("Types") or not document_root.tag.endswith("document"):
+            raise AdapterError(
+                "PPT_DOCUMENT_INVALID",
+                "Word 文档缺少有效的内容类型或正文结构。",
                 status_code=400,
             )

@@ -4,7 +4,9 @@ import os
 from pathlib import Path
 import stat
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 import zipfile
 
 from app.core.errors import AdapterError
@@ -26,11 +28,24 @@ def parse_model(model_class, payload):
     return model_class.parse_obj(payload)
 
 
-def build_docx(*names):
+CONTENT_TYPES_XML = b'''<?xml version="1.0" encoding="UTF-8"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml" />
+</Types>'''
+DOCUMENT_XML = b'''<?xml version="1.0" encoding="UTF-8"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body /></w:document>'''
+
+
+def build_docx(*names, contents=None):
+    part_contents = {
+        "[Content_Types].xml": CONTENT_TYPES_XML,
+        "word/document.xml": DOCUMENT_XML,
+    }
+    part_contents.update(contents or {})
     output = BytesIO()
     with zipfile.ZipFile(output, "w") as archive:
         for name in names:
-            archive.writestr(name, "<xml />")
+            archive.writestr(name, part_contents.get(name, b"<root />"))
     return output.getvalue()
 
 
@@ -69,6 +84,16 @@ class PptDocumentModelTests(unittest.TestCase):
                     {"sourceMode": "document", "requestedSlideCount": str(value)},
                 )
                 self.assertEqual(request.requested_slide_count, value)
+
+    def test_legacy_slide_request_without_slide_keeps_default_input(self):
+        request = parse_model(
+            PptSlideAssistantRequest,
+            {"userInstruction": "生成一页风险汇报"},
+        )
+
+        self.assertEqual(request.source_mode, "slide")
+        self.assertIsNotNone(request.slide)
+        self.assertEqual(request.slide.index, 1)
 
     def test_upload_and_document_result_models_accept_frontend_aliases(self):
         upload = parse_model(
@@ -184,6 +209,17 @@ class PptDocumentFileStoreTests(unittest.TestCase):
         content = b"x" * (PPT_DOCUMENT_MAX_BYTES + 1)
         self.assert_store_error("PPT_DOCUMENT_TOO_LARGE", "source.md", content)
 
+    def test_store_rejects_oversized_declaration_before_base64_decode(self):
+        with patch("app.services.ppt.document_files.base64.b64decode") as decode:
+            self.assert_store_error(
+                "PPT_DOCUMENT_TOO_LARGE",
+                "source.md",
+                b"ignored",
+                size_bytes=PPT_DOCUMENT_MAX_BYTES + 1,
+                content_base64="AAAA",
+            )
+        decode.assert_not_called()
+
     def test_store_rejects_non_utf8_markdown(self):
         self.assert_store_error("PPT_DOCUMENT_INVALID", "source.md", b"\xff\xfe\x00")
 
@@ -212,6 +248,27 @@ class PptDocumentFileStoreTests(unittest.TestCase):
         self.assertEqual(staged.extension, "docx")
         self.assertEqual(staged.size_bytes, len(content))
 
+    def test_store_rejects_docx_with_invalid_required_xml(self):
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            contents={
+                "[Content_Types].xml": b"not-xml",
+                "word/document.xml": b"not-xml",
+            },
+        )
+
+        self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_docx_over_uncompressed_budget(self):
+        content = build_docx("[Content_Types].xml", "word/document.xml")
+
+        with patch(
+            "app.services.ppt.document_files.PPT_DOCX_MAX_UNCOMPRESSED_BYTES",
+            10,
+        ):
+            self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
     @unittest.skipUnless(os.name == "posix", "POSIX permissions are required")
     def test_store_uses_private_directory_and_file_permissions(self):
         staged_payload = self._store("source.md", b"private")
@@ -237,17 +294,37 @@ class PptDocumentFileStoreTests(unittest.TestCase):
             self.store.consume(token)
         self.assertEqual(error.exception.code, "PPT_DOCUMENT_FILE_EXPIRED")
 
-    def test_new_store_removes_expired_orphan_left_by_previous_process(self):
+    def test_new_store_removes_fresh_orphan_left_by_previous_process(self):
         orphan = self.root / "pptdoc_orphan.md"
-        orphan.write_bytes(b"expired")
-        os.utime(str(orphan), (0, 0))
+        orphan.write_bytes(b"fresh")
 
         PptDocumentFileStore(
             root_dir=self.root,
-            now=lambda: PPT_DOCUMENT_EXPIRES_SECONDS + 1,
+            now=lambda: 100.0,
         )
 
         self.assertFalse(orphan.exists())
+
+    def test_concurrent_consume_allows_exactly_one_success(self):
+        staged_payload = self._store("source.md", b"one-time")
+        token = staged_payload["fileToken"]
+        successes = []
+        failures = []
+
+        def consume():
+            try:
+                successes.append(self.store.consume(token))
+            except AdapterError as error:
+                failures.append(error.code)
+
+        threads = [threading.Thread(target=consume) for _ in range(16)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(failures, ["PPT_DOCUMENT_FILE_EXPIRED"] * 15)
 
     def test_delete_is_idempotent_and_removes_staged_path(self):
         staged_payload = self._store("source.md", b"delete me")
