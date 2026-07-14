@@ -313,11 +313,63 @@ class PptSlideInput(BaseModel):
         return bool(_safe_bool(value))
 
 
+class PptDocumentFileUploadRequest(BaseModel):
+    file_name: str = Field(alias="fileName")
+    mime_type: str = Field(default="", alias="mimeType")
+    size_bytes: int = Field(alias="sizeBytes")
+    content_base64: str = Field(alias="contentBase64")
+
+    @validator("file_name", "mime_type", "content_base64", pre=True, always=True)
+    def coerce_document_upload_text(cls, value):
+        return _safe_str(value)
+
+    @validator("size_bytes", pre=True, always=True)
+    def coerce_document_upload_size(cls, value):
+        return _safe_int(value) or 0
+
+
+class PptDocumentSlide(BaseModel):
+    index: int
+    role: str = ""
+    title: str = ""
+    subtitle: str = ""
+    bullets: List[str] = Field(default_factory=list)
+    conclusion: str = ""
+    layout_suggestion: str = Field(default="", alias="layoutSuggestion")
+    visual_suggestion: str = Field(default="", alias="visualSuggestion")
+
+    @validator("index", pre=True, always=True)
+    def coerce_document_slide_index(cls, value):
+        return _safe_int(value) or 1
+
+    @validator(
+        "role",
+        "title",
+        "subtitle",
+        "conclusion",
+        "layout_suggestion",
+        "visual_suggestion",
+        pre=True,
+        always=True,
+    )
+    def coerce_document_slide_text(cls, value):
+        return _safe_str(value)
+
+    @validator("bullets", pre=True, always=True)
+    def coerce_document_slide_bullets(cls, value):
+        if not isinstance(value, list):
+            return []
+        return [_safe_str(item) for item in value]
+
+
 class PptSlideAssistantRequest(BaseModel):
     presentation_id: str = Field(default="active-presentation", alias="presentationId")
     scene: Literal["ppt"] = "ppt"
+    source_mode: Literal["slide", "document"] = Field(default="slide", alias="sourceMode")
     client_job_id: str = Field(default="", alias="clientJobId")
-    slide: PptSlideInput = Field(default_factory=PptSlideInput)
+    slide: Optional[PptSlideInput] = None
+    file_token: str = Field(default="", alias="fileToken")
+    requested_slide_count: int = Field(default=10, alias="requestedSlideCount")
     user_instruction: str = Field(default="", alias="userInstruction")
 
     @validator("presentation_id", pre=True, always=True)
@@ -328,16 +380,32 @@ class PptSlideAssistantRequest(BaseModel):
     def coerce_ppt_scene(cls, value):
         return "ppt"
 
-    @validator("client_job_id", "user_instruction", pre=True, always=True)
+    @validator("source_mode", pre=True, always=True)
+    def coerce_ppt_source_mode(cls, value):
+        normalized = _safe_str(value, "slide").strip().lower()
+        return normalized if normalized in {"slide", "document"} else "slide"
+
+    @validator("client_job_id", "file_token", "user_instruction", pre=True, always=True)
     def coerce_ppt_request_text(cls, value):
         return _safe_str(value)
 
+    @validator("requested_slide_count", pre=True, always=True)
+    def coerce_requested_slide_count(cls, value):
+        count = _safe_int(value)
+        return count if count in {5, 8, 10, 12, 15} else 10
+
 
 class PptSlideAssistantResponseData(BaseModel):
-    mode_used: Literal["generate", "optimize"] = Field(alias="modeUsed")
+    result_type: Literal["slide", "document"] = Field(default="slide", alias="resultType")
+    mode_used: Optional[Literal["generate", "optimize"]] = Field(default=None, alias="modeUsed")
     suggested_title: str = Field(default="", alias="suggestedTitle")
     bullets: List[str] = Field(default_factory=list)
     conclusion: str = ""
+    deck_title: str = Field(default="", alias="deckTitle")
+    document_summary: str = Field(default="", alias="documentSummary")
+    recommended_slide_count: Optional[int] = Field(default=None, alias="recommendedSlideCount")
+    slides: List[PptDocumentSlide] = Field(default_factory=list)
+    global_style_advice: str = Field(default="", alias="globalStyleAdvice")
     plain_text: str = Field(default="", alias="plainText")
     raw_answer: Optional[str] = Field(default=None, alias="rawAnswer")
     parse_fallback_reason: Optional[str] = Field(default=None, alias="parseFallbackReason")
