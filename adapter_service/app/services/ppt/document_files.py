@@ -35,7 +35,12 @@ class StagedPptDocument:
 
 
 class PptDocumentFileStore:
-    def __init__(self, root_dir: Optional[Path] = None, now=time.time) -> None:
+    def __init__(
+        self,
+        root_dir: Optional[Path] = None,
+        now=time.time,
+        cleanup_interval_seconds: float = 0,
+    ) -> None:
         self.root_dir = Path(
             root_dir
             or Path(tempfile.gettempdir()) / "ai-wps-adapter" / "ppt-document-files"
@@ -45,7 +50,26 @@ class PptDocumentFileStore:
         self._now = now
         self._items: Dict[str, StagedPptDocument] = {}
         self._lock = threading.Lock()
+        self._cleanup_stop = threading.Event()
+        self._cleanup_thread = None
         self._delete_restart_orphans()
+        if cleanup_interval_seconds > 0:
+            self._cleanup_thread = threading.Thread(
+                target=self._cleanup_loop,
+                args=(cleanup_interval_seconds,),
+                daemon=True,
+                name="ppt-document-cleanup",
+            )
+            self._cleanup_thread.start()
+
+    def close(self) -> None:
+        self._cleanup_stop.set()
+        if self._cleanup_thread and self._cleanup_thread.is_alive():
+            self._cleanup_thread.join(timeout=1)
+
+    def _cleanup_loop(self, interval_seconds: float) -> None:
+        while not self._cleanup_stop.wait(interval_seconds):
+            self.cleanup_expired()
 
     def store(
         self,

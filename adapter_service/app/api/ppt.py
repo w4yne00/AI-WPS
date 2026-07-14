@@ -13,7 +13,7 @@ from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
 
 
 router = APIRouter()
-ppt_document_files = PptDocumentFileStore()
+ppt_document_files = PptDocumentFileStore(cleanup_interval_seconds=60)
 ppt_slide_assistant = PptSlideAssistant(document_file_store=ppt_document_files)
 ppt_slide_jobs = PptSlideAssistantJobStore(ppt_slide_assistant)
 

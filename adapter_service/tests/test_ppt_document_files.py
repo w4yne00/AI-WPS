@@ -5,6 +5,7 @@ from pathlib import Path
 import stat
 import tempfile
 import threading
+import time
 import unittest
 from unittest.mock import patch
 import zipfile
@@ -293,6 +294,32 @@ class PptDocumentFileStoreTests(unittest.TestCase):
         with self.assertRaises(AdapterError) as error:
             self.store.consume(token)
         self.assertEqual(error.exception.code, "PPT_DOCUMENT_FILE_EXPIRED")
+
+    def test_cleanup_worker_removes_expired_unconsumed_file(self):
+        clock = [100.0]
+        store = PptDocumentFileStore(
+            root_dir=self.root / "worker",
+            now=lambda: clock[0],
+            cleanup_interval_seconds=0.01,
+        )
+        try:
+            staged_payload = store.store(
+                "source.md",
+                "text/markdown",
+                4,
+                base64.b64encode(b"test").decode("ascii"),
+            )
+            staged_path = store._items[staged_payload["fileToken"]].path
+            clock[0] += PPT_DOCUMENT_EXPIRES_SECONDS + 1
+
+            for _ in range(50):
+                if not staged_path.exists():
+                    break
+                time.sleep(0.01)
+
+            self.assertFalse(staged_path.exists())
+        finally:
+            store.close()
 
     def test_new_store_removes_fresh_orphan_left_by_previous_process(self):
         orphan = self.root / "pptdoc_orphan.md"

@@ -46,7 +46,7 @@ VERSION = "0.17.0-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
-PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore()
+PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
 )
@@ -383,6 +383,19 @@ class Handler(BaseHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except (TypeError, ValueError):
             length = 0
+        if path == "/ppt/document-files" and length <= 0:
+            message = "上传请求缺少有效的 Content-Length，请重新选择文件。"
+            self._write(
+                411,
+                envelope(
+                    "standalone-ppt-document-file",
+                    "ppt.slide_assistant",
+                    success=False,
+                    message=message,
+                    errors=[{"code": "CONTENT_LENGTH_REQUIRED", "message": message}],
+                ),
+            )
+            return
         if path == "/ppt/document-files" and length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
             message = "上传请求超过 15 MB 限制，请重新选择文件。"
             self._write(
@@ -396,13 +409,27 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
             return
-        raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
-        payload = json.loads(raw_body or "{}")
+        try:
+            raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            payload = json.loads(raw_body or "{}")
+        except (UnicodeDecodeError, ValueError):
+            message = "请求内容格式无效，请检查后重试。"
+            self._write(
+                400,
+                envelope(
+                    "standalone-validation",
+                    "ppt.slide_assistant" if path.startswith("/ppt/") else "adapter.validation",
+                    success=False,
+                    message=message,
+                    errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                ),
+            )
+            return
 
         if path == "/ppt/document-files":
-            request = parse_ppt_document_file_request(payload)
             trace_id = new_trace_id("standalone-ppt-document-file")
             try:
+                request = parse_ppt_document_file_request(payload)
                 data = PPT_DOCUMENT_FILE_STORE.store(
                     request.file_name,
                     request.mime_type,
@@ -418,6 +445,19 @@ class Handler(BaseHTTPRequestHandler):
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except ValueError:
+                message = "上传请求参数无效，请重新选择文件。"
+                self._write(
+                    400,
+                    envelope(
+                        trace_id,
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
                     ),
                 )
                 return
@@ -503,8 +543,22 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/ppt/slide-assistant/jobs":
-            request = parse_ppt_request(payload)
             trace_id = new_trace_id("standalone-ppt-slide-assistant")
+            try:
+                request = parse_ppt_request(payload)
+            except ValueError:
+                message = "智能总结请求参数无效，请重新读取内容后重试。"
+                self._write(
+                    400,
+                    envelope(
+                        trace_id,
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                    ),
+                )
+                return
             job = PPT_SLIDE_ASSISTANT_JOB_STORE.start(request, trace_id=trace_id)
             self._write(
                 200,

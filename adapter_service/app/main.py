@@ -43,6 +43,21 @@ async def log_requests(request: Request, call_next):
             content_length = int(request.headers.get("Content-Length", ""))
         except (TypeError, ValueError):
             content_length = 0
+        if content_length <= 0 or request.headers.get("Transfer-Encoding"):
+            message = "上传请求缺少有效的 Content-Length，请重新选择文件。"
+            response = JSONResponse(
+                status_code=411,
+                content={
+                    "success": False,
+                    "traceId": trace_id,
+                    "taskType": "ppt.slide_assistant",
+                    "message": message,
+                    "data": {},
+                    "errors": [{"code": "CONTENT_LENGTH_REQUIRED", "message": message}],
+                },
+            )
+            response.headers["X-Trace-Id"] = trace_id
+            return response
         if content_length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
             message = "上传请求超过 15 MB 限制，请重新选择文件。"
             logger.warning(
@@ -103,7 +118,7 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
         content={
             "success": False,
             "traceId": trace_id,
-            "taskType": "adapter.error",
+            "taskType": _task_type_from_path(request.url.path),
             "message": exc.message,
             "data": {},
             "errors": [{"code": exc.code, "message": exc.message}],

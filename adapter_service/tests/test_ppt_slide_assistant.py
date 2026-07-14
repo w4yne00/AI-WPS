@@ -423,6 +423,40 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["suggestedTitle"], "后台任务完成")
 
+    def test_job_store_never_evicts_a_running_job_when_capacity_is_exceeded(self):
+        assistant = BlockingPptAssistant()
+        store = PptSlideAssistantJobStore(assistant=assistant, max_jobs=1)
+
+        store.start(
+            self._request(client_job_id="client-ppt-running-first"),
+            trace_id="trace-ppt-running-first",
+        )
+        self.assertTrue(assistant.started.wait(timeout=1))
+        store.start(
+            self._request(client_job_id="client-ppt-running-second"),
+            trace_id="trace-ppt-running-second",
+        )
+
+        self.assertIsNotNone(store.get("client-ppt-running-first"))
+        self.assertIsNotNone(store.get("client-ppt-running-second"))
+        assistant.release.set()
+
+    def test_job_store_keeps_safe_slide_validation_message(self):
+        store = PptSlideAssistantJobStore(assistant=PptSlideAssistant())
+        request = parse_ppt_request(
+            {
+                "sourceMode": "slide",
+                "clientJobId": "client-ppt-slide-required",
+            }
+        )
+        request.slide = None
+
+        store.start(request, trace_id="trace-ppt-slide-required")
+        failed = self._wait_for_job(store, "client-ppt-slide-required")
+
+        self.assertEqual(failed["error"]["code"], "PPT_SLIDE_REQUIRED")
+        self.assertIn("当前幻灯片", failed["error"]["message"])
+
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
     def test_route_submit_status_and_not_found_envelopes(self):
         assistant = BlockingPptAssistant()
@@ -513,7 +547,7 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(calls, [])
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT middleware tests")
-    def test_fastapi_upload_body_limit_ignores_invalid_length_and_other_routes(self):
+    def test_fastapi_upload_body_limit_rejects_invalid_length_but_ignores_other_routes(self):
         calls = []
 
         async def call_next(request):
@@ -549,13 +583,30 @@ class PptSlideAssistantTests(unittest.TestCase):
         missing_response = asyncio.run(app_main.log_requests(missing_length_request, call_next))
         other_response = asyncio.run(app_main.log_requests(other_route_request, call_next))
 
-        self.assertEqual(invalid_response.status_code, 200)
-        self.assertEqual(missing_response.status_code, 200)
+        self.assertEqual(invalid_response.status_code, 411)
+        self.assertEqual(missing_response.status_code, 411)
         self.assertEqual(other_response.status_code, 200)
-        self.assertEqual(
-            calls,
-            ["/ppt/document-files", "/ppt/document-files", "/word/smart-write"],
+        self.assertEqual(calls, ["/word/smart-write"])
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT handler tests")
+    def test_fastapi_adapter_error_uses_ppt_task_type_for_upload(self):
+        request = Request(
+            {
+                "type": "http",
+                "method": "POST",
+                "path": "/ppt/document-files",
+                "headers": [],
+            }
         )
+        response = asyncio.run(
+            app_main.handle_adapter_error(
+                request,
+                AdapterError("PPT_DOCUMENT_INVALID", "文件无效。", status_code=400),
+            )
+        )
+        payload = json.loads(response.body.decode("utf-8"))
+
+        self.assertEqual(payload["taskType"], "ppt.slide_assistant")
 
     def test_standalone_parses_request_and_serializes_job_result(self):
         import standalone_adapter
@@ -707,6 +758,54 @@ class PptSlideAssistantTests(unittest.TestCase):
 
         self.assertEqual(captured["status"], 413)
         self.assertEqual(captured["body"]["errors"][0]["code"], "PPT_DOCUMENT_TOO_LARGE")
+
+    def test_standalone_rejects_invalid_document_upload_length_before_reading_body(self):
+        import standalone_adapter
+
+        class FailOnRead:
+            def read(self, _length):
+                raise AssertionError("request body must not be read")
+
+        for value in (None, "invalid", "0", "-1"):
+            captured = {}
+            handler = object.__new__(standalone_adapter.Handler)
+            handler.path = "/ppt/document-files"
+            handler.headers = {} if value is None else {"Content-Length": value}
+            handler.rfile = FailOnRead()
+            handler._write = lambda status, body: captured.update(status=status, body=body)
+
+            handler.do_POST()
+
+            self.assertEqual(captured["status"], 411)
+            self.assertEqual(captured["body"]["errors"][0]["code"], "CONTENT_LENGTH_REQUIRED")
+
+    def test_standalone_upload_returns_validation_envelope_for_malformed_json(self):
+        import standalone_adapter
+
+        captured = {}
+        handler = object.__new__(standalone_adapter.Handler)
+        handler.path = "/ppt/document-files"
+        handler.headers = {"Content-Length": "1"}
+        handler.rfile = BytesIO(b"{")
+        handler._write = lambda status, body: captured.update(status=status, body=body)
+
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(captured["body"]["errors"][0]["code"], "REQUEST_VALIDATION_FAILED")
+
+    def test_standalone_ppt_job_returns_validation_envelope_for_invalid_slide(self):
+        import standalone_adapter
+
+        response = self._invoke_standalone(
+            standalone_adapter,
+            "do_POST",
+            "/ppt/slide-assistant/jobs",
+            {"sourceMode": "slide", "slide": "invalid-host-value"},
+        )
+
+        self.assertEqual(response["status"], 400)
+        self.assertEqual(response["body"]["errors"][0]["code"], "REQUEST_VALIDATION_FAILED")
 
     @staticmethod
     def _invoke_standalone(module, method, path, payload=None):
