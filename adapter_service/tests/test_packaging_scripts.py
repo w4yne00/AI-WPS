@@ -82,6 +82,34 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("dify-format-review-workflow.md", script)
         self.assertIn("dify-excel-analysis-workflow.md", script)
 
+    def test_delivery_includes_excel_and_ppt_prompt_templates(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
+
+        self.assertIn("docs/prompt-templates", script)
+        template_names = [
+            "excel-smart-analysis-prompt-template.md",
+            "ppt-smart-summary-prompt-template.md",
+        ]
+        for name in template_names:
+            self.assertIn(name, script)
+            template_path = ROOT / "docs/prompt-templates" / name
+            self.assertTrue(template_path.is_file(), f"missing prompt template: {name}")
+            text = template_path.read_text(encoding="utf-8")
+            for required_text in [
+                "适用任务",
+                "输入",
+                "System Prompt",
+                "变量",
+                "输出契约",
+                "<think>",
+                "max token",
+                "错误",
+                "禁止事项",
+            ]:
+                self.assertIn(required_text, text)
+            self.assertNotIn("Bearer sk-", text)
+            self.assertNotIn("provider_api_key", text)
+
     def test_phase1_packaging_includes_word_and_excel_addins(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
 
