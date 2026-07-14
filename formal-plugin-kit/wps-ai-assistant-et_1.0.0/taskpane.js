@@ -17,7 +17,7 @@
     maxTotalTextLength: 20000
   };
   var TASK_API_KEY_DEFS = [
-    { taskType: "excel.analysis", label: "Excel 智能分析" }
+    { taskType: "excel.analysis", label: "智能分析" }
   ];
   var EXCEL_WORKFLOW_TASK_TYPE = "excel.analysis";
   var state = {
@@ -296,7 +296,7 @@
       return "状态查询请求超过 10 秒未返回，将继续自动刷新。";
     }
     if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
-      return "模型后台 Excel 智能分析仍未按时返回，adapter 可能仍在等待或已返回超时诊断。";
+      return "模型后台智能分析仍未按时返回，adapter 可能仍在等待或已返回超时诊断。";
     }
     if (message.indexOf("插件无法访问 http://127.0.0.1:18100") === 0) {
       return "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败，将继续自动刷新。";
@@ -622,12 +622,12 @@
   function startExcelAnalysisWaitFeedback() {
     var timers = [];
     timers.push(setTimeout(function () {
-      setStatus("模型后台正在处理 Excel 智能分析，请继续等待...");
-      setPlainResult("Excel 智能分析请求已提交，模型后台正在处理。数据量较大或繁忙时可能需要更久，请保持 WPS 和 adapter 打开。");
+      setStatus("模型后台正在处理智能分析，请继续等待...");
+      setPlainResult("智能分析请求已提交，模型后台正在处理。数据量较大或繁忙时可能需要更久，请保持 WPS 和 adapter 打开。");
     }, 8000));
     timers.push(setTimeout(function () {
-      setStatus("Excel 智能分析仍在等待模型后台返回...");
-      setPlainResult("Excel 智能分析仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复点击分析按钮。");
+      setStatus("智能分析仍在等待模型后台返回...");
+      setPlainResult("智能分析仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复点击分析按钮。");
     }, 30000));
     return function () {
       timers.forEach(function (timer) {
@@ -674,9 +674,9 @@
           state.excelAnalysisPollStartedAt = 0;
           stopWaiting();
           renderExcelAnalysisResult(job.result || {});
-          setStatus("Excel 智能分析报告已生成。");
+          setStatus("智能分析报告已生成。");
           refreshDiagnostics().then(function () {
-            setStatus("Excel 智能分析报告已生成。");
+            setStatus("智能分析报告已生成。");
           });
           return;
         }
@@ -685,13 +685,13 @@
           state.excelAnalysisJobId = "";
           state.excelAnalysisPollStartedAt = 0;
           stopWaiting();
-          setStatus("Excel 智能分析失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
+          setStatus("智能分析失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
           setResult((job.error && job.error.message) || "后台任务执行失败。");
           return;
         }
-        setStatus("Excel 智能分析仍在模型后台处理中...");
+        setStatus("智能分析仍在模型后台处理中...");
         setPlainResult([
-          job.runningMessage || "模型后台正在处理 Excel 智能分析。",
+          job.runningMessage || "模型后台正在处理智能分析。",
           "已等待：" + (job.elapsedSeconds || 0) + " 秒",
           "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
           "任务编号：" + jobId
@@ -723,12 +723,12 @@
             startedAt: state.excelAnalysisPollStartedAt || Date.now()
           });
           setStatus(withinRetryBudget
-            ? "Excel 智能分析状态查询暂时失败，正在继续等待模型后台返回..."
-            : "Excel 智能分析任务连接中断，正在尝试恢复状态查询...");
+            ? "智能分析状态查询暂时失败，正在继续等待模型后台返回..."
+            : "智能分析任务连接中断，正在尝试恢复状态查询...");
           setPlainResult([
             withinRetryBudget
-              ? "Excel 智能分析状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。"
-              : "Excel 智能分析任务连接中断，前台不会丢弃任务编号，将继续低频自动刷新。",
+              ? "智能分析状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。"
+              : "智能分析任务连接中断，前台不会丢弃任务编号，将继续低频自动刷新。",
             "这不代表模型后台任务失败；如果模型后台已收到请求，请保持 WPS 和 adapter 打开。",
             "已重试：" + state.excelAnalysisPollErrorCount + "/" + EXCEL_ANALYSIS_POLL_MAX_ERRORS,
             "任务编号：" + jobId,
@@ -742,7 +742,7 @@
         state.excelAnalysisPollStartedAt = 0;
         state.excelAnalysisPollErrorCount = 0;
         stopWaiting();
-        setStatus("Excel 智能分析状态查询持续失败，请查看最近一次任务诊断。");
+        setStatus("智能分析状态查询持续失败，请查看最近一次任务诊断。");
         setResult(message);
       });
   }
@@ -756,9 +756,9 @@
     state.excelAnalysisPollStartedAt = active.startedAt || Date.now();
     state.excelAnalysisPollErrorCount = 0;
     setTrace(active.traceId || active.jobId);
-    setStatus("已恢复未完成的 Excel 智能分析任务，正在查询模型后台结果...");
+    setStatus("已恢复未完成的智能分析任务，正在查询模型后台结果...");
     setPlainResult([
-      "检测到未完成的 Excel 智能分析任务，将继续查询 adapter 后台状态。",
+      "检测到未完成的智能分析任务，将继续查询 adapter 后台状态。",
       "如果模型后台仍在处理，请保持 WPS 和 adapter 打开。",
       "任务编号：" + active.jobId
     ].join("\n"));
@@ -805,7 +805,7 @@
         return;
       }
 
-      setStatus("正在提交 Excel 智能分析请求...");
+      setStatus("正在提交智能分析请求...");
       setPlainResult("正在等待模型后台生成分析报告。");
       stopWaiting = startExcelAnalysisWaitFeedback();
       clientJobId = buildExcelAnalysisClientJobId();
@@ -832,7 +832,7 @@
           if (!jobId) {
             clearExcelAnalysisActiveJob(clientJobId);
             stopWaiting();
-            setStatus("Excel 智能分析失败：adapter 未返回后台任务编号。");
+            setStatus("智能分析失败：adapter 未返回后台任务编号。");
             setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
             return;
           }
@@ -848,11 +848,11 @@
             state.excelAnalysisPollStartedAt = 0;
             stopWaiting();
             renderExcelAnalysisResult(job.result || {});
-            setStatus("Excel 智能分析报告已生成。");
+            setStatus("智能分析报告已生成。");
             return;
           }
-          setStatus("Excel 智能分析任务已提交，模型后台处理中...");
-          setPlainResult("Excel 智能分析任务已提交。adapter 会在后台等待模型后台返回，此处将自动刷新结果。");
+          setStatus("智能分析任务已提交，模型后台处理中...");
+          setPlainResult("智能分析任务已提交。adapter 会在后台等待模型后台返回，此处将自动刷新结果。");
           pollExcelAnalysisJob(jobId, stopWaiting);
         })
         .catch(function (error) {
@@ -865,13 +865,13 @@
             state.excelAnalysisJobId = "";
             state.excelAnalysisPollStartedAt = 0;
             stopWaiting();
-            setStatus("Excel 智能分析失败：" + message);
+            setStatus("智能分析失败：" + message);
             setResult(message);
             return;
           }
-          setStatus("Excel 智能分析提交响应未确认，正在按任务编号恢复状态查询...");
+          setStatus("智能分析提交响应未确认，正在按任务编号恢复状态查询...");
           setPlainResult([
-            "Excel 智能分析任务可能已经提交到 adapter，但任务窗格没有收到确认响应。",
+            "智能分析任务可能已经提交到 adapter，但任务窗格没有收到确认响应。",
             "将按本地任务编号继续查询；如果 adapter 未收到请求，会返回任务不存在。",
             "任务编号：" + clientJobId,
             "最近错误：" + message
@@ -1046,7 +1046,7 @@
       return;
     }
     rows.push('<section class="workflow-task-section" data-workflow-task="excel.analysis">');
-    rows.push('<div class="workflow-task-head"><div><strong>Excel 智能分析</strong><span>当前：' +
+    rows.push('<div class="workflow-task-head"><div><strong>智能分析</strong><span>当前：' +
       escaped(getActiveWorkflowProfileName(data)) + '</span></div><span class="provider-badge">' + data.profileCount + ' 个</span></div>');
     rows.push('<div class="workflow-profile-create">');
     rows.push('<input id="excel-create-profile-name" type="text" maxlength="40" placeholder="自定义工作流名称" />');
@@ -1470,7 +1470,7 @@
   function switchMode(mode) {
     state.currentMode = mode === "settings" ? "settings" : "excelAnalysis";
     document.body.setAttribute("data-task-mode", state.currentMode);
-    byId("task-title").textContent = state.currentMode === "settings" ? "设置" : "Excel 智能分析";
+    byId("task-title").textContent = state.currentMode === "settings" ? "设置" : "智能分析";
     switchView(state.currentMode === "settings" ? "settings" : "home");
     renderWorkflowProfileStrip();
     renderWorkflowProfileManager();

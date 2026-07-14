@@ -3,7 +3,7 @@
     <tabs>
       <tab id="wpsAiAssistantExcelTab" label="WPS AI 助理">
         <group id="wpsAiAssistantExcelGroup" label="表格分析">
-          <button id="btnAiExcelAnalysis" label="Excel 智能分析" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiExcelAnalysis" label="智能分析" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />
         </group>
       </tab>
