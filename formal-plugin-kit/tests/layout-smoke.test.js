@@ -44,13 +44,14 @@ const excelManifestXml = fs.readFileSync(
 const pptRoot = "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
 const pptHtml = fs.readFileSync(`${pptRoot}/taskpane.html`, "utf8");
 const pptJs = fs.readFileSync(`${pptRoot}/taskpane.js`, "utf8");
+const pptCss = fs.readFileSync(`${pptRoot}/taskpane.css`, "utf8");
 const pptRibbon = fs.readFileSync(`${pptRoot}/ribbon.xml`, "utf8");
 const pptRibbonJs = fs.readFileSync(`${pptRoot}/ribbon.js`, "utf8");
 const pptManifest = fs.readFileSync(`${pptRoot}/manifest.json`, "utf8");
 const pptManifestXml = fs.readFileSync(`${pptRoot}/manifest.xml`, "utf8");
-assert.ok(manifest.includes('"version": "0.17.0-alpha"'));
+assert.ok(manifest.includes('"version": "0.18.0-alpha"'));
 assert.ok(excelManifest.includes('"name": "wps-ai-assistant-et"'));
-assert.ok(excelManifest.includes('"version": "0.17.0-alpha"'));
+assert.ok(excelManifest.includes('"version": "0.18.0-alpha"'));
 assert.ok(excelManifestXml.includes("<wps:AppId>wps-ai-assistant-et</wps:AppId>"));
 assert.ok(excelManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
 assert.ok(excelRibbon.includes('label="WPS AI 助理"'));
@@ -67,15 +68,16 @@ assert.ok(!excelRibbon.includes('label="格式审查"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "excelAnalysis"'));
 assert.ok(excelRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysis.png"'));
-assert.ok(excelRibbonJs.includes('build=0.17.0-alpha'));
+assert.ok(excelRibbonJs.includes('build=0.18.0-alpha'));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
 assert.ok(pptManifest.includes('"name": "wps-ai-assistant-wpp"'));
-assert.ok(pptManifest.includes('"version": "0.17.0-alpha"'));
+assert.ok(pptManifest.includes('"version": "0.18.0-alpha"'));
 assert.ok(pptManifestXml.includes("<wps:AppId>wps-ai-assistant-wpp</wps:AppId>"));
 assert.ok(pptManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
 assert.ok(pptRibbon.includes('label="WPS AI 助理"'));
 assert.ok(pptRibbon.includes('label="演示内容"'));
-assert.ok(pptRibbon.includes('label="PPT 单页助手"'));
+assert.ok(pptRibbon.includes('label="智能总结"'));
+assert.ok(!pptRibbon.includes('label="PPT 单页助手"'));
 assert.ok(pptRibbon.includes('label="设置"'));
 assert.ok(!pptRibbon.includes("智能编写"));
 assert.ok(!pptRibbon.includes("智能仿写"));
@@ -85,10 +87,20 @@ assert.ok(!pptRibbon.includes("Excel 智能分析"));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "pptSlideAssistant"'));
 assert.ok(pptRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png"'));
-assert.ok(pptRibbonJs.includes("build=0.17.0-alpha"));
+assert.ok(pptRibbonJs.includes("build=0.18.0-alpha"));
 assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
 [
+  'id="task-title">智能总结',
+  'id="health-indicator"',
+  'id="btn-open-settings"',
   'id="workflow-profile-select"',
+  'id="ppt-source-slide"',
+  'id="ppt-source-document"',
+  'id="slide-summary-controls"',
+  'id="document-summary-controls"',
+  'id="ppt-document-file"',
+  'accept=".md,.docx"',
+  'id="ppt-slide-count"',
   'id="ppt-slide-summary"',
   'id="ppt-slide-instruction"',
   'id="btn-run-primary"',
@@ -99,16 +111,51 @@ assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
   'id="btn-copy-conclusion"',
   'id="btn-copy-result"'
 ].forEach(token => assert.ok(pptHtml.includes(token), token));
+assert.ok(pptHtml.includes("WPS AI 助理 - 智能总结"));
+assert.ok(!pptHtml.includes("PPT 单页助手"));
+assert.ok(!pptHtml.includes("build-badge"));
+[5, 8, 10, 12, 15].forEach(count => {
+  assert.ok(pptHtml.includes(`<option value="${count}"`), `PPT page count ${count}`);
+});
+assert.ok(pptHtml.includes('<option value="10" selected>10</option>'));
+assert.ok(pptHtml.includes('title="打开设置"'));
+assert.ok(pptHtml.includes('aria-label="打开设置"'));
+assert.ok(pptHtml.includes('title="复制完整方案"'));
+assert.ok(pptHtml.includes('aria-label="复制完整方案"'));
+assert.ok(pptJs.includes("/ppt/document-files"));
 assert.ok(pptJs.includes("/ppt/slide-assistant/jobs"));
 assert.ok(pptJs.includes("ppt.slide_assistant"));
+assert.ok(pptJs.includes('{ taskType: "ppt.slide_assistant", label: "智能总结" }'));
+assert.ok(!pptJs.includes("PPT 单页助手"));
+assert.ok(pptJs.includes("FileReader"));
+assert.ok(pptJs.includes("readAsDataURL"));
+assert.ok(pptJs.includes("sourceMode"));
+assert.ok(pptJs.includes("fileToken"));
+assert.ok(pptJs.includes("requestedSlideCount"));
+assert.ok(pptJs.includes("userInstruction"));
 assert.ok(pptJs.includes("clientJobId"));
 assert.ok(pptJs.includes("PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS = 10000"));
 assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_ERRORS = 240"));
 assert.ok(pptJs.includes("PPT_SLIDE_POLL_MAX_WAIT_MS = 60 * 60 * 1000"));
 assert.ok(pptJs.includes("ai-wps-ppt-slide-assistant-active-job-v1"));
+assert.ok(pptJs.includes('stage: "uploaded"'));
+assert.ok(pptJs.includes('active.stage === "uploaded"'));
+assert.ok(pptJs.includes("state.jobSourceMode"));
+assert.ok(pptJs.includes('state.busy = isDisabled'));
+assert.ok(pptJs.includes('"ppt-source-slide"'));
+assert.ok(pptJs.includes('"ppt-document-file"'));
+assert.ok(pptJs.includes('(statusMessage || "总结失败") + "：" + failureMessage'));
+assert.ok(pptJs.includes('"btn-open-settings"'));
+assert.ok(!pptJs.includes("button.disabled = false"));
 [
   "Slides.Add",
   "Shapes.Add",
+  ".Shapes.Add",
+  ".Slides.Add",
+  ".Text =",
+  ".TextRange.Text",
+  ".Delete()",
+  ".Apply",
   "TextRange.Text =",
   "writeSlide",
   "applySlide",
@@ -148,9 +195,9 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.17.0-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.17.0-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.17.0-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.18.0-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.18.0-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.18.0-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="result-view-switch"'));
 assert.ok(html.includes('id="btn-result-preview"'));
@@ -313,7 +360,7 @@ assert.ok(js.includes("showProviderEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.17.0-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.18.0-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
@@ -426,7 +473,7 @@ const css = fs.readFileSync(
   "utf8"
 );
 
-for (const hostCss of [css, excelCss]) {
+for (const hostCss of [css, excelCss, pptCss]) {
   assert.ok(hostCss.includes("--color-bg: #f3f6f8"));
   assert.ok(hostCss.includes("--color-surface: #ffffff"));
   assert.ok(hostCss.includes("--color-primary: #397894"));
@@ -450,6 +497,7 @@ for (const hostCss of [css, excelCss]) {
   assert.ok(radii.length > 0);
   assert.ok(radii.every((radius) => radius <= 8));
 }
+assert.ok(pptCss.includes("icon-ppt-slide-assistant.png"));
 assert.ok(css.includes("--surface"));
 assert.ok(css.includes("--hairline"));
 assert.ok(css.includes(".action-bar"));
@@ -512,7 +560,7 @@ assert.ok(ribbonJs.includes('btnAiSmartImitation: "assets/icon-smart-imitation.p
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-smart-imitation.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.17.0-alpha'));
+assert.ok(ribbonJs.includes('build=0.18.0-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png"));
 assert.ok(js.includes('{ taskType: "word.smart_imitation", label: "智能仿写" }'));

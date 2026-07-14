@@ -60,9 +60,9 @@ def get_excel_analysis_job(job_id: str):
                 "success": False,
                 "traceId": job_id,
                 "taskType": "excel.analysis",
-                "message": "Excel 智能分析后台任务不存在或已过期。",
+                "message": "智能分析后台任务不存在或已过期。",
                 "data": {"jobId": job_id, "status": "not_found"},
-                "errors": [{"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": "Excel 智能分析后台任务不存在或已过期。"}],
+                "errors": [{"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": "智能分析后台任务不存在或已过期。"}],
             },
         )
     if job.get("result"):

@@ -1061,11 +1061,11 @@ def build_ppt_unconfigured_result(context: Dict, mode: str, prompt: str) -> Dict
         "suggestedTitle": context.get("title") or "PPT 单页内容建议",
         "bullets": [
             "已读取当前第 {0} 页内容。".format(context.get("index", 1)),
-            "当前尚未配置 PPT 单页助手工作流。",
+            "当前尚未配置智能总结工作流。",
             "请在设置页保存并启用 ppt.slide_assistant 的工作流配置。",
         ],
         "conclusion": "完成模型后台配置后，可生成正式的本页标题、要点和结论。",
-        "plainText": "当前尚未配置 PPT 单页助手工作流，请先在设置页完成配置。",
+        "plainText": "当前尚未配置智能总结工作流，请先在设置页完成配置。",
         "rawAnswer": None,
         "parseFallbackReason": None,
         "provider": "mock",
@@ -1268,8 +1268,8 @@ class ProviderClient:
             ("word.smart_imitation", "智能仿写"),
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
-            ("excel.analysis", "Excel 智能分析"),
-            ("ppt.slide_assistant", "PPT 单页助手"),
+            ("excel.analysis", "智能分析"),
+            ("ppt.slide_assistant", "智能总结"),
         ]
         status = {}
         for task_type, label in tasks:
@@ -1312,7 +1312,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.17.0-alpha",
+            "version": "0.18.0-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -1795,11 +1795,11 @@ class ProviderClient:
                         request.table.row_count,
                         request.table.column_count,
                     ),
-                    "findings": ["请配置 Excel 智能分析模型后台后获取完整分析。"],
+                    "findings": ["请配置智能分析模型后台后获取完整分析。"],
                     "risks": [],
                     "actions": ["在设置页保存 excel.analysis 的任务级 API Key。"],
                 },
-                "plainText": "已读取表格数据。请配置 Excel 智能分析模型后台后生成正式分析报告。",
+                "plainText": "已读取表格数据。请配置智能分析模型后台后生成正式分析报告。",
                 "provider": "mock",
                 "prompt": prompt,
             }

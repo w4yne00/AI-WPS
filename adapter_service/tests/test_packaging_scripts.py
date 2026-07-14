@@ -10,7 +10,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.17.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.18.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -291,7 +291,7 @@ class PackagingScriptTests(unittest.TestCase):
             encoding="utf-8"
         )
 
-        self.assertIn('label="Excel 智能分析"', ribbon)
+        self.assertIn('label="智能分析"', ribbon)
         self.assertIn('label="设置"', ribbon)
         self.assertNotIn('label="智能编写"', ribbon)
         self.assertNotIn('label="智能仿写"', ribbon)

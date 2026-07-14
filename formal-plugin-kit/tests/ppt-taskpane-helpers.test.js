@@ -270,4 +270,77 @@ assert.strictEqual(
   }),
   "标题\n\n1. 要点一\n2. 要点二\n3. 要点三\n\n结论"
 );
+
+{
+  const markdownFile = helpers.validatePptDocumentFile({ name: "报告.md", size: 1024 });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(markdownFile)), {
+    valid: true,
+    extension: "md",
+    mimeType: "text/markdown"
+  });
+  assert.strictEqual(
+    helpers.validatePptDocumentFile({ name: "报告.pdf", size: 1024 }).code,
+    "PPT_DOCUMENT_TYPE_UNSUPPORTED"
+  );
+  assert.strictEqual(
+    helpers.validatePptDocumentFile({ name: "报告.docx", size: 10 * 1024 * 1024 + 1 }).code,
+    "PPT_DOCUMENT_TOO_LARGE"
+  );
+  assert.strictEqual(
+    helpers.validatePptDocumentFile({ name: "空文档.docx", size: 0 }).code,
+    "PPT_DOCUMENT_TOO_LARGE"
+  );
+}
+
+{
+  const result = helpers.normalizePptDocumentResult({
+    resultType: "document",
+    deckTitle: "  项目总结  ",
+    documentSummary: "项目进入联调阶段。",
+    globalStyleAdvice: "使用简洁图表。",
+    rawAnswer: "不应进入结构化复制文本",
+    slides: [
+      {
+        index: "2",
+        role: "内容页",
+        title: "进展",
+        subtitle: "阶段成果",
+        bullets: ["完成方案", "开始联调"],
+        conclusion: "总体可控",
+        layoutSuggestion: "左右分栏",
+        visualSuggestion: "使用里程碑图"
+      },
+      { index: 1, role: "封面", title: "封面" }
+    ]
+  });
+
+  assert.strictEqual(result.resultType, "document");
+  assert.strictEqual(result.deckTitle, "项目总结");
+  assert.deepStrictEqual(Array.from(result.slides, slideItem => slideItem.index), [1, 2]);
+  assert.ok(helpers.buildPptDocumentOutline(result).includes("1. 封面"));
+  assert.ok(helpers.buildPptDocumentOutline(result).includes("2. 进展"));
+  assert.ok(helpers.buildPptDocumentSlidePlainText(result.slides[1]).includes("版式建议：左右分栏"));
+  assert.ok(helpers.buildPptDocumentSlidePlainText(result.slides[1]).includes("视觉建议：使用里程碑图"));
+  assert.ok(helpers.buildPptDocumentPlainText(result).includes("文档摘要：项目进入联调阶段。"));
+  assert.ok(!helpers.buildPptDocumentPlainText(result).includes("不应进入结构化复制文本"));
+}
+
+assert.strictEqual(
+  helpers.buildPptDocumentPlainText({ resultType: "document", rawAnswer: "模型原始回复" }),
+  "模型原始回复"
+);
+
+{
+  const fallback = helpers.normalizePptDocumentResult({
+    resultType: "document",
+    documentSummary: "模型后台已返回结果，但未按结构化 JSON 输出。",
+    slides: [],
+    plainText: "真实的 Markdown 回复",
+    rawAnswer: "真实的 Markdown 回复",
+    parseFallbackReason: "模型后台未返回可解析的 PPT 文档总结 JSON。"
+  });
+
+  assert.strictEqual(helpers.buildPptDocumentOutline(fallback), "真实的 Markdown 回复");
+  assert.strictEqual(helpers.buildPptDocumentPlainText(fallback), "真实的 Markdown 回复");
+}
 console.log("ppt taskpane helper tests passed");

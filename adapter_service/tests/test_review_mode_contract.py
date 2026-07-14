@@ -38,7 +38,7 @@ class ReviewModeContractTests(unittest.TestCase):
 
         diagnostics = client.build_route_diagnostics()
 
-        self.assertEqual(diagnostics["version"], "0.17.0-alpha")
+        self.assertEqual(diagnostics["version"], "0.18.0-alpha")
         self.assertEqual(
             list(diagnostics["taskApiKeys"].keys()),
             [

@@ -9,7 +9,7 @@ from app.services.provider_client import EXCEL_ANALYSIS_TIMEOUT_SECONDS
 
 
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
-RUNNING_MESSAGE = "模型后台正在处理 Excel 智能分析，adapter 会继续等待结果。"
+RUNNING_MESSAGE = "模型后台正在处理智能分析，adapter 会继续等待结果。"
 
 
 def normalize_client_job_id(value: str) -> str:
@@ -65,7 +65,7 @@ class ExcelAnalysisJobStore:
                 runningMessage="",
                 error={
                     "code": "EXCEL_ANALYSIS_JOB_FAILED",
-                    "message": str(exc) or "Excel 智能分析后台任务执行失败。",
+                    "message": str(exc) or "智能分析后台任务执行失败。",
                 },
             )
 

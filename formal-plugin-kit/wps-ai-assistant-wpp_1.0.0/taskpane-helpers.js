@@ -561,6 +561,161 @@
     ].join("\n");
   }
 
+  function validatePptDocumentFile(file) {
+    var name = safeText(file && file.name);
+    var size = Number(file && file.size) || 0;
+    var match = name.toLowerCase().match(/\.([^.]+)$/);
+    var extension = match ? match[1] : "";
+    if (extension !== "md" && extension !== "docx") {
+      return {
+        valid: false,
+        code: "PPT_DOCUMENT_TYPE_UNSUPPORTED",
+        message: "仅支持 Markdown（.md）和 Word（.docx）文档。"
+      };
+    }
+    if (size < 1 || size > 10 * 1024 * 1024) {
+      return {
+        valid: false,
+        code: "PPT_DOCUMENT_TOO_LARGE",
+        message: "文件大小必须在 1 字节至 10 MB 之间。"
+      };
+    }
+    return {
+      valid: true,
+      extension: extension,
+      mimeType: extension === "md"
+        ? "text/markdown"
+        : "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    };
+  }
+
+  function normalizePptDocumentSlide(value, fallbackIndex) {
+    var slide = value || {};
+    var index = Number(slide.index);
+    var bullets = Array.isArray(slide.bullets) ? slide.bullets : [];
+    if (!isFinite(index) || index < 1) {
+      index = fallbackIndex || 1;
+    }
+    return {
+      index: Math.floor(index),
+      role: safeText(slide.role),
+      title: safeText(slide.title),
+      subtitle: safeText(slide.subtitle),
+      bullets: bullets.map(function (item) { return safeText(item); }).filter(Boolean),
+      conclusion: safeText(slide.conclusion),
+      layoutSuggestion: safeText(slide.layoutSuggestion),
+      visualSuggestion: safeText(slide.visualSuggestion)
+    };
+  }
+
+  function normalizePptDocumentResult(value) {
+    var data = value || {};
+    var slides = Array.isArray(data.slides) ? data.slides : [];
+    var requestedCount = Number(data.recommendedSlideCount);
+    return {
+      resultType: "document",
+      deckTitle: safeText(data.deckTitle),
+      documentSummary: safeText(data.documentSummary),
+      globalStyleAdvice: safeText(data.globalStyleAdvice),
+      recommendedSlideCount: isFinite(requestedCount) && requestedCount > 0
+        ? Math.floor(requestedCount)
+        : null,
+      slides: slides.map(function (slide, index) {
+        return normalizePptDocumentSlide(slide, index + 1);
+      }).sort(function (left, right) {
+        return left.index - right.index;
+      }),
+      plainText: safeText(data.plainText),
+      rawAnswer: safeText(data.rawAnswer),
+      parseFallbackReason: safeText(data.parseFallbackReason),
+      provider: safeText(data.provider)
+    };
+  }
+
+  function hasStructuredPptDocumentResult(result) {
+    return Boolean(
+      !result.parseFallbackReason &&
+      (result.deckTitle ||
+        result.documentSummary ||
+        result.globalStyleAdvice ||
+        result.slides.length)
+    );
+  }
+
+  function buildPptDocumentSlidePlainText(value) {
+    var slide = normalizePptDocumentSlide(value, 1);
+    var lines = [];
+    var heading = "第 " + slide.index + " 页";
+    if (slide.role) {
+      heading += "（" + slide.role + "）";
+    }
+    lines.push(heading);
+    if (slide.title) {
+      lines.push("标题：" + slide.title);
+    }
+    if (slide.subtitle) {
+      lines.push("副标题：" + slide.subtitle);
+    }
+    if (slide.bullets.length) {
+      lines.push("正文：\n" + slide.bullets.map(function (item, index) {
+        return (index + 1) + ". " + item;
+      }).join("\n"));
+    }
+    if (slide.conclusion) {
+      lines.push("结论：" + slide.conclusion);
+    }
+    if (slide.layoutSuggestion) {
+      lines.push("版式建议：" + slide.layoutSuggestion);
+    }
+    if (slide.visualSuggestion) {
+      lines.push("视觉建议：" + slide.visualSuggestion);
+    }
+    return lines.join("\n");
+  }
+
+  function buildPptDocumentOutline(value) {
+    var result = normalizePptDocumentResult(value);
+    var lines;
+    if (!hasStructuredPptDocumentResult(result)) {
+      return result.plainText || result.rawAnswer;
+    }
+    lines = result.slides.map(function (slide) {
+      var line = slide.index + ". " + (slide.title || "未命名页面");
+      if (slide.role) {
+        line += "（" + slide.role + "）";
+      }
+      if (slide.subtitle) {
+        line += " - " + slide.subtitle;
+      }
+      return line;
+    });
+    if (result.deckTitle) {
+      lines.unshift(result.deckTitle);
+    }
+    return lines.join("\n");
+  }
+
+  function buildPptDocumentPlainText(value) {
+    var result = normalizePptDocumentResult(value);
+    var sections = [];
+    if (!hasStructuredPptDocumentResult(result)) {
+      return result.plainText || result.rawAnswer;
+    }
+    if (result.deckTitle) {
+      sections.push("演示文稿标题：" + result.deckTitle);
+    }
+    if (result.documentSummary) {
+      sections.push("文档摘要：" + result.documentSummary);
+    }
+    if (result.globalStyleAdvice) {
+      sections.push("全局风格建议：" + result.globalStyleAdvice);
+    }
+    if (result.slides.length) {
+      sections.push(result.slides.map(buildPptDocumentSlidePlainText).join("\n\n"));
+    }
+    return sections.join("\n\n");
+  }
+
   global.WpsAiPptHelpers = {
     extractPresentationSlide: extractPresentationSlide,
     truncateText: truncateText,
@@ -568,6 +723,11 @@
     escapeHtml: escapeHtml,
     normalizeWorkflowProfiles: normalizeWorkflowProfiles,
     buildPptSlideMarkdown: buildPptSlideMarkdown,
-    buildPptSlidePlainText: buildPptSlidePlainText
+    buildPptSlidePlainText: buildPptSlidePlainText,
+    validatePptDocumentFile: validatePptDocumentFile,
+    normalizePptDocumentResult: normalizePptDocumentResult,
+    buildPptDocumentPlainText: buildPptDocumentPlainText,
+    buildPptDocumentOutline: buildPptDocumentOutline,
+    buildPptDocumentSlidePlainText: buildPptDocumentSlidePlainText
   };
 }(window));

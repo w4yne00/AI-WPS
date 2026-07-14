@@ -1,6 +1,6 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.17.0-alpha";
+  var FRONTEND_BUILD_VERSION = "0.18.0-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
   var EXCEL_ANALYSIS_POLL_INTERVAL_MS = 3000;

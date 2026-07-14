@@ -3,80 +3,133 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>WPS AI 助理 - PPT 单页助手</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.17.0-alpha" />
+    <title>WPS AI 助理 - 智能总结</title>
+    <link rel="stylesheet" href="./taskpane.css?v=0.18.0-alpha" />
   </head>
   <body data-task-mode="pptSlideAssistant">
-    <main class="app">
+    <div class="app">
       <header class="header">
-        <div><p class="eyebrow">WPS AI 助理</p><h1>PPT 单页助手</h1></div>
-        <span class="build-badge">0.17.0-alpha</span>
+        <div class="header-copy">
+          <p class="eyebrow">WPS AI 助理</p>
+          <h1 id="task-title">智能总结</h1>
+        </div>
+        <div id="top-toolbox" class="header-actions">
+          <button id="btn-open-settings" class="icon-button" type="button" title="打开设置" aria-label="打开设置">
+            <img class="settings-icon" src="./assets/icon-settings.png" alt="" />
+            <span class="back-icon" aria-hidden="true">←</span>
+          </button>
+          <div id="health-indicator" class="badge badge-warn" aria-live="polite">检测中</div>
+        </div>
       </header>
 
-      <section id="home-view">
+      <section id="home-view" class="view active">
         <section class="status-strip" aria-live="polite">
-          <span>当前状态</span><strong id="status-line">等待操作</strong>
+          <span>当前状态</span>
+          <strong id="status-line">等待操作</strong>
         </section>
 
-        <section id="workflow-profile-strip" class="workflow-strip">
+        <div class="source-segments" role="tablist" aria-label="总结来源">
+          <button id="ppt-source-slide" class="source-segment active" type="button" role="tab" aria-selected="true" aria-controls="slide-summary-controls">当前页总结</button>
+          <button id="ppt-source-document" class="source-segment" type="button" role="tab" aria-selected="false" aria-controls="document-summary-controls">文档总结</button>
+        </div>
+
+        <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前工作流">
           <label for="workflow-profile-select">当前工作流</label>
-          <div class="workflow-row">
-            <select id="workflow-profile-select"><option value="">正在读取...</option></select>
-            <button id="btn-activate-workflow-profile" class="secondary compact" type="button" disabled>切换</button>
-          </div>
-          <span id="workflow-profile-current" class="muted">当前：未检测</span>
+          <select id="workflow-profile-select" aria-label="选择智能总结工作流">
+            <option value="">正在读取...</option>
+          </select>
+          <button id="btn-activate-workflow-profile" class="ghost-action mini-button" type="button" disabled>切换</button>
+          <span id="workflow-profile-current" class="inline-status">未检测</span>
         </section>
 
-        <section class="control-panel">
-          <div id="ppt-slide-summary" class="slide-summary">点击生成后读取当前幻灯片。</div>
+        <section class="controls">
+          <section id="slide-summary-controls" class="source-panel" role="tabpanel" aria-labelledby="ppt-source-slide">
+            <div id="ppt-slide-summary" class="slide-summary">点击总结后读取当前幻灯片。</div>
+          </section>
+
+          <section id="document-summary-controls" class="source-panel document-controls" role="tabpanel" aria-labelledby="ppt-source-document" hidden>
+            <div class="file-control">
+              <label class="file-picker" for="ppt-document-file">选择 Markdown 或 Word 文档</label>
+              <input id="ppt-document-file" type="file" accept=".md,.docx" hidden />
+              <div id="ppt-document-file-summary" class="file-summary" aria-live="polite">尚未选择文件</div>
+            </div>
+            <label class="field" for="ppt-slide-count">
+              <span>建议页数</span>
+              <select id="ppt-slide-count">
+                <option value="5">5</option>
+                <option value="8">8</option>
+                <option value="10" selected>10</option>
+                <option value="12">12</option>
+                <option value="15">15</option>
+              </select>
+            </label>
+          </section>
+
           <label class="field" for="ppt-slide-instruction">
-            <span>补充要求</span>
+            <span id="ppt-instruction-label">补充要求</span>
             <textarea id="ppt-slide-instruction" maxlength="1000" rows="3" placeholder="例如：面向管理层，突出当前进展、主要风险和下一步安排。"></textarea>
           </label>
-          <button id="btn-run-primary" class="primary" type="button">生成本页内容</button>
+
+          <div class="action-bar">
+            <button id="btn-run-primary" type="button">生成本页总结</button>
+          </div>
         </section>
 
-        <section class="result-panel">
+        <section id="result-section" class="result-panel">
           <div class="panel-head">
             <h2>结果预览</h2>
-            <div id="result-view-switch" class="segmented" hidden>
-              <button id="btn-result-preview" class="active" type="button" aria-pressed="true">预览</button>
-              <button id="btn-result-plain" type="button" aria-pressed="false">纯文本</button>
+            <div id="result-view-switch" class="result-view-switch" hidden>
+              <button id="btn-result-preview" class="view-switch-button active" type="button" aria-pressed="true">预览</button>
+              <button id="btn-result-plain" class="view-switch-button" type="button" aria-pressed="false">纯文本</button>
             </div>
           </div>
           <div id="result-output" class="result-output">等待运行。</div>
-          <div class="copy-toolbar" aria-label="复制结果">
-            <button id="btn-copy-title" class="secondary" type="button" disabled>复制标题</button>
-            <button id="btn-copy-bullets" class="secondary" type="button" disabled>复制要点</button>
-            <button id="btn-copy-conclusion" class="secondary" type="button" disabled>复制结论</button>
-            <button id="btn-copy-result" class="secondary" type="button" disabled>复制完整结果</button>
+          <div id="slide-copy-toolbar" class="copy-toolbar" aria-label="复制当前页总结">
+            <button id="btn-copy-title" class="ghost-action" type="button" disabled>复制标题</button>
+            <button id="btn-copy-bullets" class="ghost-action" type="button" disabled>复制要点</button>
+            <button id="btn-copy-conclusion" class="ghost-action" type="button" disabled>复制结论</button>
+            <button id="btn-copy-result" class="ghost-action" type="button" disabled>复制完整结果</button>
+          </div>
+          <div id="document-copy-toolbar" class="copy-toolbar document-copy-toolbar" aria-label="复制文档总结" hidden>
+            <button id="btn-copy-outline" class="ghost-action" type="button" title="复制大纲" aria-label="复制大纲" disabled>复制大纲</button>
+            <button id="btn-copy-document-result" class="ghost-action" type="button" title="复制完整方案" aria-label="复制完整方案" disabled>复制完整方案</button>
           </div>
         </section>
       </section>
 
-      <section id="settings-view" hidden>
-        <section class="settings-panel">
-          <h2>模型接口</h2>
-          <label class="field"><span>API URL</span><input id="provider-base-url" type="text" placeholder="https://aibot.example.com/v1" /></label>
-          <label class="field"><span>统一 API Key</span><input id="provider-api-key" type="password" placeholder="输入后保存" /></label>
-          <div class="button-row">
-            <button id="btn-save-provider-url" type="button">保存地址</button>
-            <button id="btn-save-api-key" type="button">保存密钥</button>
-            <button id="btn-clear-api-key" class="secondary" type="button">清除密钥</button>
-          </div>
-        </section>
-        <section class="settings-panel">
-          <div class="panel-head"><h2>工作流配置</h2><span class="muted">仅 PPT 单页助手</span></div>
-          <div id="workflow-profile-manager"></div>
-        </section>
-        <section class="settings-panel">
-          <div class="panel-head"><h2>最近一次任务诊断</h2><button id="btn-refresh-diagnostics" class="secondary compact" type="button">刷新</button></div>
-          <pre id="diagnostics-output">尚未刷新诊断。</pre>
-          <button id="btn-copy-diagnostics" class="secondary" type="button">复制诊断信息</button>
+      <section id="settings-view" class="view">
+        <section class="settings-shell">
+          <section class="settings-card">
+            <div class="settings-card-head"><h2>模型接口</h2></div>
+            <label class="field"><span>API URL</span><input id="provider-base-url" type="text" placeholder="https://aibot.example.com/v1" /></label>
+            <label class="field"><span>统一 API Key</span><input id="provider-api-key" type="password" placeholder="输入后保存" /></label>
+            <div class="button-row settings-actions">
+              <button id="btn-save-provider-url" type="button">保存地址</button>
+              <button id="btn-save-api-key" type="button">保存密钥</button>
+              <button id="btn-clear-api-key" class="ghost-action" type="button">清除密钥</button>
+            </div>
+          </section>
+
+          <section class="settings-card">
+            <div class="settings-card-head">
+              <h2>工作流配置</h2>
+              <span class="inline-status">仅智能总结</span>
+            </div>
+            <div id="workflow-profile-manager"></div>
+          </section>
+
+          <section class="settings-card diagnostics-card">
+            <div class="settings-card-head">
+              <h2>最近一次任务诊断</h2>
+              <button id="btn-refresh-diagnostics" class="ghost-action mini-button" type="button">刷新</button>
+            </div>
+            <pre id="diagnostics-output">尚未刷新诊断。</pre>
+            <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
+          </section>
         </section>
       </section>
-    </main>
-    <script src="./taskpane-helpers.js?v=0.17.0-alpha"></script>
-    <script src="./taskpane.js?v=0.17.0-alpha"></script>
+    </div>
+    <script src="./taskpane-helpers.js?v=0.18.0-alpha"></script>
+    <script src="./taskpane.js?v=0.18.0-alpha"></script>
   </body>
 </html>

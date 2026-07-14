@@ -31,6 +31,8 @@
   <code>Smart Imitation</code>
   <code>Document Review</code>
   <code>Format Review</code>
+  <code>Excel Analysis</code>
+  <code>PPT Smart Summary</code>
   <code>Template Rules</code>
   <code>Runtime Probe</code>
   <code>Offline Delivery</code>
@@ -75,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.17.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.17.0-20260713` |
+| Version | `v0.18.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.18.0-20260714` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260713-v0170.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260714-v0180.tar.gz` |
 
 Version rule format:
 
@@ -102,28 +104,29 @@ Rules:
 | Capability | Description |
 | --- | --- |
 | WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Host-specific Ribbon entries | Word exposes Smart Write, Smart Imitation, Document Review, Format Review, and Settings; Excel exposes only Excel Analysis and Settings; PPT exposes only PPT Slide Assistant and Settings |
+| Host-specific Ribbon entries | Word exposes Smart Write, Smart Imitation, Document Review, Format Review, and Settings; Excel exposes only “智能分析” and Settings; PPT exposes only “智能总结” and Settings |
 | Mode-specific task pane | Word, Excel, and PPT use separate host add-ins so their buttons do not cross-display |
 | Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running model-backend requests keep visible task-pane feedback |
 | Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through top-level `query` and automatically supports legacy `inputs.query` workflows |
 | Smart imitation | Adds an independent `word.smart_imitation` model workflow for template-based imitation writing with selected-text or pasted templates, required imitation requirements, optional reference material, and preview/plain-text/copy-only results without comparison or writeback |
-| Excel analysis | Provides a read-only `excel.analysis` model workflow for selected range or active used range analysis; long tasks use background jobs with recoverable polling, with structured report and plain paragraph views and no cell writeback |
-| PPT slide assistant | Provides a read-only `ppt.slide_assistant` model workflow that reads the current slide title, optional subtitle, body text, and adjacent titles; it selects generate or optimize mode automatically, uses recoverable background polling, and only previews or copies results without modifying slides |
+| Excel “智能分析” | Provides a read-only `excel.analysis` model workflow for selected range or active used range analysis; long tasks use background jobs with recoverable polling, with structured report and plain paragraph views and no cell writeback |
+| PPT “智能总结” | Uses one `ppt.slide_assistant` workflow profile for two modes. Current-slide summary reads the title, optional subtitle, body text, and adjacent titles. Document summary accepts one UTF-8 `.md` or valid `.docx` file up to 10 MB and produces a complete 5/8/10/12/15-slide recommendation, defaulting to 10 slides. Both modes are preview/copy only and never write to the presentation |
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
-| Frosted azure UI | The task pane and Ribbon icon artwork use a bright blue-gray and white Apple-like palette without changing task flow or API behavior |
+| Unified three-host UI | Word, Excel, and PPT share the same restrained light-gray, white, mist-blue, and status-color visual system while preserving host isolation and existing task behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Workflow profiles | Smart Write, Smart Imitation, Document Review, Format Review, Excel Analysis, and PPT Slide Assistant can each keep multiple named API-key profiles; task pages switch the active profile while settings manages creation, rename, key replacement, and inactive-profile deletion |
+| Workflow profiles | Smart Write, Smart Imitation, Document Review, Format Review, “智能分析”, and “智能总结” can each keep multiple named API-key profiles; both PPT modes share the same `ppt.slide_assistant` profile and API key |
 | Provider settings | Settings keeps one global API URL and unified model API key; workflow profiles override the unified fallback only for their own task |
 | Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
-| Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together with `publish.xml`, pip bootstrap, runtime wheels, adapter service, smoke-test scripts, and acceptance templates |
+| Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together; overwrite installation preserves the existing API URL, unified API key, and workflow-profile keys, and the package includes Excel/PPT Markdown prompt templates |
 
 ## Latest Updates
 
 | Version | Update |
 | --- | --- |
+| `v0.18.0-alpha` | Renames the current Excel entry to “智能分析” and upgrades PPT to the dual-mode “智能总结”; adds secure single-file UTF-8 Markdown/DOCX upload, complete-deck 5/8/10/12/15-slide recommendations, 1800-second recoverable polling, a unified three-host visual system, Excel/PPT Markdown prompt templates, and one combined overwrite-install package that preserves the API URL and API keys |
 | `v0.17.0-alpha` | Adds the read-only PPT Slide Assistant with current-slide title, optional subtitle, body text, and adjacent-title extraction; generate/optimize modes, recoverable long-task polling, preview/plain-text and categorized copy actions; strict Word/Excel/PPT Ribbon isolation; and one combined upgrade package that preserves the target machine's API URL and API keys |
 | `v0.16.0-alpha` | Adds named workflow profiles for all five tasks. Users can pre-save multiple Dify API keys, explicitly switch the active profile from each task pane, and manage names, notes, replacement keys, and inactive profiles in Settings. Existing task keys migrate to a reusable “Current configuration” profile, upgrades preserve all profile keys, and Word/Excel host isolation remains unchanged |
 | `v0.15.2-alpha` | Supports both legacy and current Dify Chatflow user inputs: legacy apps keep `inputs.query`, while User Input node apps receive top-level `query` and `files`. When the first request returns HTTP 400, the adapter retries once with the alternate shape and caches the successful mode without changing task prompts, timeouts, parsers, or frontend behavior |
@@ -299,7 +302,8 @@ Important fields:
     "word.smart_imitation": "word_smart_imitation",
     "word.document_review": "word_document_review",
     "word.format_review": "word_format_review",
-    "excel.analysis": "excel_analysis"
+    "excel.analysis": "excel_analysis",
+    "ppt.slide_assistant": "ppt_slide_assistant"
   }
 }
 ```
@@ -310,9 +314,9 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-Workflow-profile API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps only display metadata and key references. Smart Write, Smart Imitation, Document Review, Format Review, and Excel Analysis can each keep multiple Dify app keys; activation affects the next new task and missing task keys fall back to the unified provider key. See the [workflow profile operations guide](./docs/operations/workflow-profile-management.md).
+Workflow-profile API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps only display metadata and key references. Smart Write, Smart Imitation, Document Review, Format Review, “智能分析”, and “智能总结” can each keep multiple Dify app keys; activation affects the next new task and missing task keys fall back to the unified provider key. PPT current-slide and document modes use the same resolved `ppt.slide_assistant` key for Dify `/files/upload` and `/chat-messages`. See the [workflow profile operations guide](./docs/operations/workflow-profile-management.md).
 
-The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). Excel Analysis setup is documented in the [Excel Analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md).
+The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). “智能分析” setup is documented in the [Excel analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md), and the two PPT “智能总结” modes are documented in the [PPT smart summary Dify workflow guide](./docs/operations/dify-ppt-slide-assistant-workflow.md). Deployable prompt templates are available under [`docs/prompt-templates/`](./docs/prompt-templates/).
 
 ## API Surface
 
@@ -334,11 +338,17 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
 | `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
+| `POST` | `/word/smart-imitation` | Preview/copy-only imitation writing from a template, requirements, and optional reference material |
 | `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
 | `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
 | `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails |
 | `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
 | `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
+| `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |
+| `GET` | `/excel/analysis/jobs/{jobId}` | Poll a background “智能分析” job |
+| `POST` | `/ppt/document-files` | Validate and stage one UTF-8 `.md` or valid `.docx` source file up to 10 MB behind a one-time token |
+| `POST` | `/ppt/slide-assistant/jobs` | Start a current-slide or document “智能总结” background job |
+| `GET` | `/ppt/slide-assistant/jobs/{jobId}` | Poll or resume a background “智能总结” job |
 
 Unified response envelope:
 
@@ -354,6 +364,8 @@ Unified response envelope:
 ```
 
 ## Offline Delivery
+
+The formal Phase 1 release is a single combined Word/Excel/PPT package with one installer. An overwrite installation keeps the target machine's existing `config/adapter.json`, unified API key, and `run/provider_api_keys/`; the package also carries the Excel and PPT Markdown prompt templates.
 
 Build the full offline bundle:
 
@@ -423,12 +435,13 @@ The current implementation covers the Phase 1 baseline:
 - Structured document/selection extraction
 - Local adapter health, config, templates, and provider status
 - Smart Write, Document Review, and Format Review APIs
+- Read-only Excel “智能分析” and dual-mode PPT “智能总结”
 - Preview-first Word write-back
 - Runtime probing and offline delivery scripts
 
 Phase 2 can extend the same adapter foundation with:
 
-- Excel report generation
+- Richer Excel report generation and multi-sheet workflows
 - Excel multi-sheet and multi-file comparison
-- PPT outline generation
+- Governed PPT generation workflows beyond the current preview/copy-only summary boundary
 - Richer enterprise templates, audit, permissions, and knowledge-base governance

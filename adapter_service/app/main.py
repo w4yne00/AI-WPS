@@ -15,7 +15,7 @@ from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
 
-app = FastAPI(title="wps-ai-adapter", version="0.17.0-alpha")
+app = FastAPI(title="wps-ai-adapter", version="0.18.0-alpha")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
