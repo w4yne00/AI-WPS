@@ -682,3 +682,10 @@ git commit -m "docs: record host-aware taskpane themes"
 ```
 
 Do not build a new delivery archive, bump the version, or push to GitHub unless the user requests those release actions separately.
+
+## Review Corrections Applied During Execution
+
+- Word 的设置快捷入口不得直接调用完整 `switchMode("settings")`。从任一已初始化功能页进入设置和返回时，仅切换 `home-view/settings-view`、标题和设置/返回图标；`state.currentMode`、结果 DOM、文档审查处理状态、未完成任务及回写可用性保持不变。只有通过 `?mode=settings` 直接打开设置时，返回才调用 `switchMode("smartWrite")` 初始化默认功能页。
+- PPT 使用 `#D36B2C` 作为顶部宿主识别色，使用 `#B95720` 作为通用白字操作底色，悬停/按下使用 `#99461A`；避免任何白字按钮继续使用对比度不足的亮橙。
+- Excel 范围摘要、当前工作流徽标和次级按钮悬停不得保留旧蓝色硬编码；PPT 文档选择入口不得保留旧蓝色浅背景。
+- `layout-smoke.test.js` 除主题变量外，还必须排除上述旧蓝色值，并检查 Word 设置快捷切换函数不包含预览、审查或回写状态重置调用。

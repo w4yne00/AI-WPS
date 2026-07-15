@@ -184,6 +184,7 @@
     workflowProfileSelections: {},
     workflowProfileMutationBusy: false,
     currentMode: "smartWrite",
+    lastTaskMode: "smartWrite",
     copyText: "",
     diagnosticsCopyText: "",
     scopeWatcher: null
@@ -574,15 +575,61 @@
     byId("settings-view").classList.toggle("active", viewName === "settings");
   }
 
+  function toggleSettingsShortcut() {
+    var settingsOpen = byId("settings-view").classList.contains("active");
+    var returnMode = state.lastTaskMode || "smartWrite";
+    var returnConfig;
+
+    if (!settingsOpen) {
+      if (state.currentMode !== "settings") {
+        state.lastTaskMode = state.currentMode;
+        returnMode = state.currentMode;
+      }
+      returnConfig = modeConfig[returnMode] || modeConfig.smartWrite;
+      switchView("settings");
+      document.body.setAttribute("data-task-mode", "settings");
+      byId("task-title").textContent = "设置";
+      byId("btn-open-settings").classList.add("is-back");
+      byId("btn-open-settings").setAttribute("title", "返回" + returnConfig.title);
+      byId("btn-open-settings").setAttribute("aria-label", "返回" + returnConfig.title);
+      renderWorkflowProfileManager();
+      return;
+    }
+
+    if (state.currentMode === "settings") {
+      switchMode(returnMode);
+      return;
+    }
+
+    returnConfig = modeConfig[state.currentMode] || modeConfig.smartWrite;
+    switchView("home");
+    document.body.setAttribute("data-task-mode", state.currentMode);
+    byId("task-title").textContent = returnConfig.title;
+    byId("btn-open-settings").classList.remove("is-back");
+    byId("btn-open-settings").setAttribute("title", "打开设置");
+    byId("btn-open-settings").setAttribute("aria-label", "打开设置");
+  }
+
   function switchMode(mode) {
-    var config = modeConfig[mode] || modeConfig.smartWrite;
-    state.currentMode = modeConfig[mode] ? mode : "smartWrite";
+    var requestedMode = modeConfig[mode] ? mode : "smartWrite";
+    var config = modeConfig[requestedMode] || modeConfig.smartWrite;
+    var settingsMode = requestedMode === "settings";
+    var returnTitle;
+
+    state.currentMode = requestedMode;
+    if (!settingsMode) {
+      state.lastTaskMode = requestedMode;
+    }
+    returnTitle = (modeConfig[state.lastTaskMode] || modeConfig.smartWrite).title;
     document.body.setAttribute("data-task-mode", state.currentMode);
     byId("task-title").textContent = config.title;
+    byId("btn-open-settings").classList.toggle("is-back", settingsMode);
+    byId("btn-open-settings").setAttribute("title", settingsMode ? "返回" + returnTitle : "打开设置");
+    byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回" + returnTitle : "打开设置");
     resetSmartWritePreviewState();
     resetDocumentReviewState();
 
-    if (state.currentMode === "settings") {
+    if (settingsMode) {
       switchView("settings");
       renderWorkflowProfileManager();
       return;
@@ -1093,7 +1140,7 @@
       var health = results[0];
       var templates = results[1];
       var config = results[2];
-      setHealthBadge("badge-ok", health.data.status);
+      setHealthBadge("badge-ok", "已连接");
       setTrace(health.traceId || "");
       setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
       if (config.success === false) {
@@ -2730,6 +2777,9 @@
   }
 
   function bindEvents() {
+    byId("btn-open-settings").addEventListener("click", function () {
+      toggleSettingsShortcut();
+    });
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
     });

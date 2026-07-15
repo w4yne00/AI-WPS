@@ -1,12 +1,12 @@
 :root {
-  --color-bg: #f3f6f8;
+  --color-bg: #f4f8f5;
   --color-surface: #ffffff;
-  --color-surface-muted: #eef3f5;
-  --color-border: #d5e0e5;
-  --color-text: #17262e;
-  --color-text-muted: #63757f;
-  --color-primary: #397894;
-  --color-primary-hover: #2f687f;
+  --color-surface-muted: #eaf6ef;
+  --color-border: #c8ddcf;
+  --color-text: #192a21;
+  --color-text-muted: #60766a;
+  --color-primary: #237a4b;
+  --color-primary-hover: #1b643d;
   --color-success: #2f7d5c;
   --color-warning: #a56a13;
   --color-danger: #a44242;
@@ -19,7 +19,7 @@
   --surface-strong: var(--color-surface);
   --surface-soft: var(--color-surface-muted);
   --hairline: var(--color-border);
-  --hairline-strong: #bdccd3;
+  --hairline-strong: #aecdb9;
   --text: var(--color-text);
   --muted: var(--color-text-muted);
   --accent: var(--color-primary);
@@ -32,6 +32,7 @@
 
 body {
   margin: 0;
+  border-top: 3px solid var(--color-primary);
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--color-bg);
   color: var(--text);
@@ -94,6 +95,45 @@ body {
   gap: 10px;
   margin-left: auto;
   padding-top: 2px;
+}
+
+.icon-button {
+  display: inline-flex;
+  width: var(--control-height);
+  min-width: var(--control-height);
+  height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: var(--surface-soft);
+}
+
+.icon-button img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.back-icon {
+  display: none;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.icon-button.is-back .settings-icon {
+  display: none;
+}
+
+.icon-button.is-back .back-icon {
+  display: inline;
 }
 
 .badge,
@@ -274,7 +314,7 @@ select:focus,
 textarea:focus,
 input:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(57, 120, 148, 0.14);
+  box-shadow: 0 0 0 3px rgba(35, 122, 75, 0.14);
 }
 
 textarea {
@@ -324,7 +364,7 @@ textarea {
   padding: 10px 12px;
   border-radius: var(--radius-panel);
   border: 1px solid var(--hairline);
-  background: rgba(238, 244, 251, 0.76);
+  background: var(--surface-soft);
   box-shadow: var(--shadow-soft);
 }
 
@@ -428,15 +468,6 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-}
-
-#btn-run-primary::before {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  content: "";
-  background: url("./assets/icon-excel-analysis.png") center / contain no-repeat;
 }
 
 button.secondary-action {
@@ -460,7 +491,7 @@ button:hover {
 button.secondary-action:hover,
 button.ghost-action:hover,
 .view-switch-button:hover {
-  background-color: #e3ebef;
+  background-color: var(--surface-soft);
   color: var(--color-text);
 }
 
@@ -655,10 +686,10 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .markdown-output blockquote {
   padding: 8px 10px;
-  border-left: 3px solid rgba(57, 120, 148, 0.44);
+  border-left: 3px solid rgba(35, 122, 75, 0.44);
   border-radius: 8px;
-  background: rgba(57, 120, 148, 0.06);
-  color: #2f4660;
+  background: rgba(35, 122, 75, 0.06);
+  color: var(--text);
 }
 
 .markdown-output hr {
@@ -693,7 +724,7 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .markdown-output th {
   font-weight: 760;
-  background: rgba(57, 120, 148, 0.08);
+  background: rgba(35, 122, 75, 0.08);
 }
 
 .markdown-output tbody tr:last-child td {
@@ -800,7 +831,7 @@ body[data-task-mode="smartWrite"] #result-output {
   padding: 3px 8px;
   border-radius: var(--radius-control);
   border: 1px solid var(--hairline);
-  background: rgba(238, 244, 251, 0.82);
+  background: var(--surface-soft);
   color: var(--muted);
   font-size: 12px;
 }
@@ -915,8 +946,8 @@ body[data-task-mode="smartWrite"] #result-output {
   justify-content: center;
   padding: 3px 8px;
   border-radius: var(--radius-control);
-  background: rgba(0, 122, 255, 0.12);
-  color: #0066cc;
+  background: rgba(35, 122, 75, 0.12);
+  color: var(--accent);
   font-size: 12px;
   font-weight: 700;
 }
@@ -1137,12 +1168,12 @@ body[data-task-mode="smartWrite"] #result-output {
 }
 
 .excel-range-summary {
-  border: 1px solid rgba(42, 111, 151, 0.18);
+  border: 1px solid rgba(35, 122, 75, 0.18);
   border-radius: 8px;
   padding: 10px 12px;
   margin-bottom: 10px;
   background: rgba(255, 255, 255, 0.72);
-  color: #24556f;
+  color: var(--accent);
   font-size: 13px;
   line-height: 1.5;
 }

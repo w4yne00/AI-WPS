@@ -1,12 +1,12 @@
 :root {
-  --color-bg: #f3f6f8;
+  --color-bg: #f4f7fb;
   --color-surface: #ffffff;
-  --color-surface-muted: #eef3f5;
-  --color-border: #d5e0e5;
-  --color-text: #17262e;
-  --color-text-muted: #63757f;
-  --color-primary: #397894;
-  --color-primary-hover: #2f687f;
+  --color-surface-muted: #eaf2fb;
+  --color-border: #c9d9e8;
+  --color-text: #182636;
+  --color-text-muted: #607386;
+  --color-primary: #2f6db3;
+  --color-primary-hover: #265c98;
   --color-success: #2f7d5c;
   --color-warning: #a56a13;
   --color-danger: #a44242;
@@ -19,7 +19,7 @@
   --surface-strong: var(--color-surface);
   --surface-soft: var(--color-surface-muted);
   --hairline: var(--color-border);
-  --hairline-strong: #bdccd3;
+  --hairline-strong: #adc4da;
   --text: var(--color-text);
   --muted: var(--color-text-muted);
   --accent: var(--color-primary);
@@ -32,6 +32,7 @@
 
 body {
   margin: 0;
+  border-top: 3px solid var(--color-primary);
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--color-bg);
   color: var(--text);
@@ -94,6 +95,45 @@ body {
   gap: 10px;
   margin-left: auto;
   padding-top: 2px;
+}
+
+.icon-button {
+  display: inline-flex;
+  width: var(--control-height);
+  min-width: var(--control-height);
+  height: var(--control-height);
+  align-items: center;
+  justify-content: center;
+  padding: 7px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  background: var(--surface-soft);
+}
+
+.icon-button img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.back-icon {
+  display: none;
+  font-size: 22px;
+  line-height: 1;
+}
+
+.icon-button.is-back .settings-icon {
+  display: none;
+}
+
+.icon-button.is-back .back-icon {
+  display: inline;
 }
 
 .badge,
@@ -274,7 +314,7 @@ select:focus,
 textarea:focus,
 input:focus {
   border-color: var(--color-primary);
-  box-shadow: 0 0 0 3px rgba(57, 120, 148, 0.14);
+  box-shadow: 0 0 0 3px rgba(47, 109, 179, 0.14);
 }
 
 textarea {
@@ -428,15 +468,6 @@ button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-}
-
-#btn-run-primary::before {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  content: "";
-  background: url("./assets/ai-assistant-32.png") center / contain no-repeat;
 }
 
 button.secondary-action {
@@ -655,9 +686,9 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .markdown-output blockquote {
   padding: 8px 10px;
-  border-left: 3px solid rgba(57, 120, 148, 0.44);
+  border-left: 3px solid rgba(47, 109, 179, 0.44);
   border-radius: 8px;
-  background: rgba(57, 120, 148, 0.06);
+  background: rgba(47, 109, 179, 0.06);
   color: #2f4660;
 }
 
@@ -693,7 +724,7 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .markdown-output th {
   font-weight: 760;
-  background: rgba(57, 120, 148, 0.08);
+  background: rgba(47, 109, 179, 0.08);
 }
 
 .markdown-output tbody tr:last-child td {

@@ -1,6 +1,22 @@
 const assert = require("assert");
 const fs = require("fs");
 
+function relativeLuminance(hex) {
+  const channels = [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
+  const linear = channels.map((value) => (
+    value <= 0.03928 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
+  ));
+  return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2];
+}
+
+function contrastRatio(first, second) {
+  const firstLuminance = relativeLuminance(first);
+  const secondLuminance = relativeLuminance(second);
+  const lighter = Math.max(firstLuminance, secondLuminance);
+  const darker = Math.min(firstLuminance, secondLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 const html = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html",
   "utf8"
@@ -207,6 +223,12 @@ assert.ok(html.includes('id="review-record-actions"'));
 assert.ok(html.includes('id="btn-copy-review-record"'));
 assert.ok(html.includes('id="btn-preview-review-record"'));
 assert.ok(html.includes('id="top-toolbox"'));
+assert.ok(html.includes('id="btn-open-settings"'));
+assert.ok(html.includes('class="icon-button"'));
+assert.ok(html.includes('class="settings-icon"'));
+assert.ok(html.includes('class="back-icon"'));
+assert.ok(html.includes('title="打开设置"'));
+assert.ok(html.includes('aria-label="打开设置"'));
 assert.ok(html.includes('id="scope-strip"'));
 assert.ok(html.includes('id="workflow-profile-strip"'));
 assert.ok(html.includes('id="workflow-profile-select"'));
@@ -280,6 +302,23 @@ assert.ok(js.includes("startScopeWatcher"));
 assert.ok(js.includes("setInterval(updateScopeIndicator"));
 assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
+assert.ok(js.includes('lastTaskMode: "smartWrite"'));
+assert.ok(js.includes('byId("btn-open-settings").addEventListener("click"'));
+assert.ok(js.includes("function toggleSettingsShortcut()"));
+assert.ok(js.includes("toggleSettingsShortcut();"));
+assert.ok(js.includes('setHealthBadge("badge-ok", "已连接")'));
+assert.ok(js.includes('classList.toggle("is-back", settingsMode)'));
+assert.ok(js.includes('settingsMode ? "返回" + returnTitle : "打开设置"'));
+assert.ok(!js.includes('setHealthBadge("badge-ok", health.data.status)'));
+const settingsShortcutStart = js.indexOf("function toggleSettingsShortcut()");
+const settingsShortcutEnd = js.indexOf("\n  function ", settingsShortcutStart + 1);
+const settingsShortcutSource = js.slice(settingsShortcutStart, settingsShortcutEnd);
+assert.ok(settingsShortcutStart >= 0);
+assert.ok(settingsShortcutSource.includes('switchView("settings")'));
+assert.ok(settingsShortcutSource.includes('switchView("home")'));
+assert.ok(!settingsShortcutSource.includes("resetSmartWritePreviewState"));
+assert.ok(!settingsShortcutSource.includes("resetDocumentReviewState"));
+assert.ok(!settingsShortcutSource.includes("setApplyEnabled"));
 assert.ok(js.includes("documentReview"));
 assert.ok(js.includes("formatReview"));
 assert.ok(js.includes("/word/document-review"));
@@ -421,6 +460,11 @@ assert.ok(!js.includes("runProbe"));
 
 assert.ok(excelHtml.includes("智能分析"));
 assert.ok(!excelHtml.includes("Excel 智能分析"));
+assert.ok(excelHtml.includes('id="btn-open-settings"'));
+assert.ok(excelHtml.includes('class="icon-button"'));
+assert.ok(excelHtml.includes('class="settings-icon"'));
+assert.ok(excelHtml.includes('class="back-icon"'));
+assert.ok(excelHtml.includes('title="打开设置"'));
 assert.ok(excelHtml.includes('id="excel-analysis-options"'));
 assert.ok(excelHtml.includes('id="workflow-profile-strip"'));
 assert.ok(excelHtml.includes('id="workflow-profile-select"'));
@@ -436,6 +480,11 @@ assert.ok(!excelHtml.includes("文档审查"));
 assert.ok(!excelHtml.includes("格式审查"));
 
 assert.ok(excelJs.includes("excelAnalysis"));
+assert.ok(excelJs.includes('byId("btn-open-settings").addEventListener("click"'));
+assert.ok(excelJs.includes('state.currentMode === "settings" ? "excelAnalysis" : "settings"'));
+assert.ok(excelJs.includes('setHealthBadge("badge-ok", "已连接")'));
+assert.ok(excelJs.includes('classList.toggle("is-back", settingsMode)'));
+assert.ok(!excelJs.includes('setHealthBadge("badge-ok", healthData.status || "就绪")'));
 assert.ok(excelJs.includes("/provider/workflow-profiles"));
 assert.ok(excelJs.includes('taskType: "excel.analysis"'));
 assert.ok(excelJs.includes("/excel/analysis"));
@@ -474,9 +523,7 @@ const css = fs.readFileSync(
 );
 
 for (const hostCss of [css, excelCss, pptCss]) {
-  assert.ok(hostCss.includes("--color-bg: #f3f6f8"));
   assert.ok(hostCss.includes("--color-surface: #ffffff"));
-  assert.ok(hostCss.includes("--color-primary: #397894"));
   assert.ok(hostCss.includes("--color-success: #2f7d5c"));
   assert.ok(hostCss.includes("--color-warning: #a56a13"));
   assert.ok(hostCss.includes("--color-danger: #a44242"));
@@ -488,16 +535,58 @@ for (const hostCss of [css, excelCss, pptCss]) {
   assert.ok(hostCss.includes("overflow-wrap: anywhere"));
   assert.ok(hostCss.includes("min-width: 0"));
   assert.ok(hostCss.includes("@media (max-width: 720px)"));
-  assert.ok(hostCss.includes("#btn-run-primary::before"));
-  assert.ok(hostCss.includes("width: 18px"));
-  assert.ok(hostCss.includes("height: 18px"));
   assert.ok(hostCss.includes(".settings-shell {\n  border: 0;\n  background: transparent;"));
   assert.ok(hostCss.includes("button.ghost-action:hover"));
   const radii = Array.from(hostCss.matchAll(/border-radius:\s*(\d+)px/g), (match) => Number(match[1]));
   assert.ok(radii.length > 0);
   assert.ok(radii.every((radius) => radius <= 8));
 }
-assert.ok(pptCss.includes("icon-ppt-slide-assistant.png"));
+assert.ok(css.includes("--color-primary: #2f6db3"));
+assert.ok(css.includes("--color-primary-hover: #265c98"));
+assert.ok(css.includes("--color-bg: #f4f7fb"));
+assert.ok(css.includes("--color-surface-muted: #eaf2fb"));
+assert.ok(css.includes("rgba(47, 109, 179"));
+assert.ok(!css.includes("rgba(57, 120, 148"));
+assert.ok(css.includes("border-top: 3px solid var(--color-primary)"));
+assert.ok(css.includes(".icon-button"));
+assert.ok(css.includes(".icon-button.is-back .settings-icon"));
+assert.ok(css.includes(".icon-button.is-back .back-icon"));
+assert.ok(!css.includes("#btn-run-primary::before"));
+assert.ok(excelCss.includes("--color-primary: #237a4b"));
+assert.ok(excelCss.includes("--color-primary-hover: #1b643d"));
+assert.ok(excelCss.includes("--color-bg: #f4f8f5"));
+assert.ok(excelCss.includes("--color-surface-muted: #eaf6ef"));
+assert.ok(excelCss.includes("rgba(35, 122, 75"));
+assert.ok(!excelCss.includes("rgba(57, 120, 148"));
+assert.ok(excelCss.includes("border-top: 3px solid var(--color-primary)"));
+assert.ok(excelCss.includes(".icon-button.is-back .settings-icon"));
+assert.ok(excelCss.includes(".icon-button.is-back .back-icon"));
+assert.ok(!excelCss.includes("#btn-run-primary::before"));
+assert.ok(!excelCss.includes("rgba(0, 122, 255"));
+assert.ok(!excelCss.includes("#0066cc"));
+assert.ok(!excelCss.includes("rgba(42, 111, 151"));
+assert.ok(!excelCss.includes("#24556f"));
+assert.ok(!excelCss.includes("#e3ebef"));
+assert.ok(!excelCss.includes("rgba(238, 244, 251"));
+assert.ok(!excelCss.includes("#2f4660"));
+assert.ok(pptCss.includes("--color-host: #d36b2c"));
+assert.ok(pptCss.includes("--color-primary: #b95720"));
+assert.ok(pptCss.includes("--color-primary-hover: #99461a"));
+assert.ok(pptCss.includes("--color-action: #b95720"));
+assert.ok(pptCss.includes("--color-action-hover: #99461a"));
+assert.ok(pptCss.includes("--color-bg: #fbf6f3"));
+assert.ok(pptCss.includes("--color-surface-muted: #fff1e7"));
+assert.ok(pptCss.includes("rgba(211, 107, 44, 0.42)"));
+assert.ok(!pptCss.includes("rgba(57, 120, 148"));
+assert.ok(pptCss.includes("border-top: 3px solid var(--color-host)"));
+assert.ok(!pptCss.includes("#btn-run-primary::before"));
+assert.ok(!pptCss.includes('background: url("./assets/icon-ppt-slide-assistant.png")'));
+assert.ok(!pptCss.includes("#f4f9fb"));
+assert.ok(!pptCss.includes("#eaf3f7"));
+assert.ok(!pptCss.includes("#bdccd3"));
+assert.ok(contrastRatio("#2f6db3", "#ffffff") >= 4.5);
+assert.ok(contrastRatio("#237a4b", "#ffffff") >= 4.5);
+assert.ok(contrastRatio("#b95720", "#ffffff") >= 4.5);
 assert.ok(css.includes("--surface"));
 assert.ok(css.includes("--hairline"));
 assert.ok(css.includes(".action-bar"));
@@ -514,7 +603,7 @@ assert.ok(css.includes("#rewrite-summary-card p"));
 assert.ok(css.includes("repeat(4, minmax(0, 1fr))"));
 assert.ok(css.includes("--accent: var(--color-primary);"));
 assert.ok(css.includes("--accent-press: var(--color-primary-hover);"));
-assert.ok(css.includes("rgba(57, 120, 148"));
+assert.ok(css.includes("rgba(47, 109, 179"));
 assert.ok(!css.includes("#174f43"));
 assert.ok(!css.includes("#1e6a59"));
 assert.ok(!css.includes("#0f3b32"));

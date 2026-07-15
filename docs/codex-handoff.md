@@ -1,6 +1,6 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-07-14
+更新时间：2026-07-15
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
@@ -141,6 +141,10 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 文档总结由 `POST /ppt/document-files` 返回 30 分钟一次性文件令牌，再通过现有后台任务接口提交；adapter 使用同一 PPT 档案密钥依次调用 Dify `/files/upload` 与 `/chat-messages`，不在本地提取正文。
 - 智能总结长任务沿用 1800 秒 provider 等待预算和可恢复轮询；状态查询短暂失败或重开任务窗格时保留任务号，不重复上传文件或发起模型任务。
 - Word、Excel、PPT 统一标题栏、连接状态、按钮、输入控件、结果区和设置页视觉；三宿主插件目录、Ribbon 入口、任务档案和业务行为继续隔离。
+- Word、Excel、PPT 任务窗格分别使用文字蓝、表格绿、演示橙的平衡宿主主题；布局和状态语义保持统一。
+- 三个宿主健康检查成功时统一显示“已连接”，不直接展示 adapter `/health` 的原始 `ok`。
+- Word 和 Excel 右上角新增与 PPT 一致的设置/返回快捷按钮；Word 返回进入设置前的功能，Excel 返回智能分析。
+- 三个宿主的主生成按钮均为高对比度纯文字按钮，不显示图片、SVG 或伪元素图标。
 - 统一正式交付包包含 `docs/prompt-templates/excel-smart-analysis-prompt-template.md` 与 `docs/prompt-templates/ppt-smart-summary-prompt-template.md`，仍由一个安装脚本覆盖安装三个宿主并保留现场 API URL、统一 API Key 和全部工作流档案密钥。
 - 统一正式交付包通过一个安装脚本同时安装 `wps-ai-assistant_1.0.0`、`wps-ai-assistant-et_1.0.0` 和 `wps-ai-assistant-wpp_1.0.0`，`publish.xml` 同时包含 `type="wps"`、`type="et"` 与 `type="wpp"`。
 - 删除旧 Word 路由和服务文件，只保留当前四条任务 API。
@@ -224,6 +228,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - PPT 文档任务必须使用同一个 `ppt.slide_assistant` 档案认证快照调用 `/files/upload` 和 `/chat-messages`；旧版与新版 Dify 输入模式回退时必须保留同一个 `files` 引用。
 - PPT 主标题和副标题必须分开识别；副标题是可选字段，不得混入 `textBlocks`，也不得覆盖主标题。
 - Word/Excel/PPT Ribbon 必须保持宿主隔离：Word `type="wps"`、Excel `type="et"`、PPT `type="wpp"` 只显示各自功能和设置。
+- Word/Excel/PPT 宿主配色、连接文案、设置快捷入口和纯文字主按钮均为前端展示层变化；不得借此改动 Word 回写、文档审查/智能分析/智能总结长任务恢复、模型请求或三个 Ribbon 的宿主隔离。
 - 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key。
 - 文档审查闭环只能管理前端处理状态和复制审查记录，不允许自动写回或自动修改正文。
 - 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
@@ -268,6 +273,10 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 ## 6. 验证状态
 
 `v0.18.0-alpha` 已执行本地自动化与静态界面验证：
+
+- 宿主主题增量已通过 `taskpane-helpers.test.js`、`ppt-taskpane-helpers.test.js`、`layout-smoke.test.js` 和三份任务窗格 JavaScript 语法检查。
+- 420×900 视口已检查 Word、Excel、PPT 的功能页和设置页：六个视图无横向溢出或标题栏重叠，均显示中文“已连接”，主生成按钮无图标伪元素。
+- Word 智能编写、智能仿写、文档审查、格式审查四种模式已执行设置往返检查，原结果 DOM 和回写按钮可用状态保持不变。
 
 ```bash
 PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover adapter_service/tests -v

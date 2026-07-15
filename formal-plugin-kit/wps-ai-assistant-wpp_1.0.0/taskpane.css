@@ -1,12 +1,15 @@
 :root {
-  --color-bg: #f3f6f8;
+  --color-bg: #fbf6f3;
   --color-surface: #ffffff;
-  --color-surface-muted: #eef3f5;
-  --color-border: #d5e0e5;
-  --color-text: #17262e;
-  --color-text-muted: #63757f;
-  --color-primary: #397894;
-  --color-primary-hover: #2f687f;
+  --color-surface-muted: #fff1e7;
+  --color-border: #ead6c9;
+  --color-text: #30231d;
+  --color-text-muted: #7b695f;
+  --color-host: #d36b2c;
+  --color-primary: #b95720;
+  --color-primary-hover: #99461a;
+  --color-action: #b95720;
+  --color-action-hover: #99461a;
   --color-success: #2f7d5c;
   --color-warning: #a56a13;
   --color-danger: #a44242;
@@ -36,6 +39,7 @@ body {
 }
 
 body {
+  border-top: 3px solid var(--color-host);
   background: var(--color-bg);
   color: var(--text);
   font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
@@ -62,7 +66,7 @@ button:focus-visible,
 input:focus-visible,
 textarea:focus-visible,
 select:focus-visible {
-  outline: 2px solid rgba(57, 120, 148, 0.42);
+  outline: 2px solid rgba(211, 107, 44, 0.42);
   outline-offset: 2px;
 }
 
@@ -287,7 +291,7 @@ select,
 input,
 textarea {
   width: 100%;
-  border: 1px solid #bdccd3;
+  border: 1px solid var(--hairline);
   border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--text);
@@ -344,7 +348,7 @@ textarea {
   padding: 8px 12px;
   border: 1px dashed var(--accent);
   border-radius: var(--radius-control);
-  background: #f4f9fb;
+  background: var(--surface-soft);
   color: var(--accent);
   font-weight: 700;
   text-align: center;
@@ -352,7 +356,7 @@ textarea {
 }
 
 .file-picker:hover {
-  background: #eaf3f7;
+  background: rgba(211, 107, 44, 0.12);
 }
 
 .action-bar {
@@ -384,15 +388,12 @@ button:disabled {
   width: 100%;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  background: var(--color-action);
+  color: #fff;
 }
 
-#btn-run-primary::before {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  content: "";
-  background: url("./assets/icon-ppt-slide-assistant.png") center / contain no-repeat;
+#btn-run-primary:hover {
+  background: var(--color-action-hover);
 }
 
 button.ghost-action {

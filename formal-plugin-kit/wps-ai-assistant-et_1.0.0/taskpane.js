@@ -1249,7 +1249,7 @@
       var health = results[0];
       var config = results[1];
       var healthData = health.data || {};
-      setHealthBadge("badge-ok", healthData.status || "就绪");
+      setHealthBadge("badge-ok", "已连接");
       setTrace(health.traceId || "");
       setProviderLine(healthData.providerType || "未检测", healthData.providerConfigured);
       if (config.success === false) {
@@ -1468,13 +1468,17 @@
   }
 
   function switchMode(mode) {
-    state.currentMode = mode === "settings" ? "settings" : "excelAnalysis";
+    var settingsMode = mode === "settings";
+    state.currentMode = settingsMode ? "settings" : "excelAnalysis";
     document.body.setAttribute("data-task-mode", state.currentMode);
-    byId("task-title").textContent = state.currentMode === "settings" ? "设置" : "智能分析";
-    switchView(state.currentMode === "settings" ? "settings" : "home");
+    byId("task-title").textContent = settingsMode ? "设置" : "智能分析";
+    byId("btn-open-settings").classList.toggle("is-back", settingsMode);
+    byId("btn-open-settings").setAttribute("title", settingsMode ? "返回智能分析" : "打开设置");
+    byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回智能分析" : "打开设置");
+    switchView(settingsMode ? "settings" : "home");
     renderWorkflowProfileStrip();
     renderWorkflowProfileManager();
-    if (state.currentMode === "excelAnalysis") {
+    if (!settingsMode) {
       updateScopeIndicator();
       resumeExcelAnalysisActiveJob();
       loadWorkflowProfiles();
@@ -1482,6 +1486,9 @@
   }
 
   function bindEvents() {
+    byId("btn-open-settings").addEventListener("click", function () {
+      switchMode(state.currentMode === "settings" ? "excelAnalysis" : "settings");
+    });
     byId("excel-analysis-requirement").addEventListener("input", function (event) {
       state.analysisRequirement = event.target.value;
     });
