@@ -38,8 +38,7 @@
           <select id="workflow-profile-select" aria-label="选择智能总结工作流">
             <option value="">正在读取...</option>
           </select>
-          <button id="btn-activate-workflow-profile" class="ghost-action mini-button" type="button" disabled>切换</button>
-          <span id="workflow-profile-current" class="inline-status">未检测</span>
+          <span id="workflow-switch-feedback" class="inline-status" aria-live="polite">未检测</span>
         </section>
 
         <section class="controls">
@@ -99,32 +98,84 @@
 
       <section id="settings-view" class="view">
         <section class="settings-shell">
-          <section class="settings-card">
-            <div class="settings-card-head"><h2>模型接口</h2></div>
-            <label class="field"><span>API URL</span><input id="provider-base-url" type="text" placeholder="https://aibot.example.com/v1" /></label>
-            <label class="field"><span>统一 API Key</span><input id="provider-api-key" type="password" placeholder="输入后保存" /></label>
-            <div class="button-row settings-actions">
-              <button id="btn-save-provider-url" type="button">保存地址</button>
-              <button id="btn-save-api-key" type="button">保存密钥</button>
-              <button id="btn-clear-api-key" class="ghost-action" type="button">清除密钥</button>
-            </div>
+          <section class="status-strip settings-status-strip" aria-live="polite">
+            <span>当前状态</span>
+            <strong id="settings-status-line">等待操作</strong>
+          </section>
+          <section id="workflow-settings-home" class="workflow-settings-home">
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <div>
+                  <h2>模型接口</h2>
+                  <p id="provider-url-summary" class="provider-url-summary">尚未读取 API URL</p>
+                </div>
+                <button id="btn-edit-provider-url" class="ghost-action mini-button" type="button">修改</button>
+              </div>
+              <div id="provider-url-editor" class="provider-url-editor" hidden>
+                <label class="field" for="provider-base-url">
+                  <span>API URL</span>
+                  <input id="provider-base-url" type="text" placeholder="https://aibot.example.com/v1" />
+                </label>
+                <div class="button-row settings-actions">
+                  <button id="btn-cancel-provider-url" class="ghost-action" type="button">取消</button>
+                  <button id="btn-save-provider-url" type="button">保存地址</button>
+                </div>
+              </div>
+            </section>
+
+            <section class="settings-card">
+              <div class="settings-card-head">
+                <div>
+                  <h2>工作流配置</h2>
+                  <p id="workflow-profile-count" class="inline-status">正在读取...</p>
+                </div>
+                <button id="btn-new-workflow-profile" type="button">新建工作流</button>
+              </div>
+              <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
+            </section>
+
+            <section class="settings-card diagnostics-card">
+              <div class="settings-card-head">
+                <h2>最近一次任务诊断</h2>
+                <button id="btn-refresh-diagnostics" class="ghost-action mini-button" type="button">刷新</button>
+              </div>
+              <pre id="diagnostics-output">尚未刷新诊断。</pre>
+              <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
+            </section>
           </section>
 
-          <section class="settings-card">
-            <div class="settings-card-head">
-              <h2>工作流配置</h2>
-              <span class="inline-status">仅智能总结</span>
+          <section id="workflow-editor-view" class="settings-card workflow-editor-view" hidden>
+            <div class="workflow-editor-head">
+              <button id="btn-back-workflow-editor" class="ghost-action mini-button" type="button">返回</button>
+              <div>
+                <h2 id="workflow-editor-title">新建工作流</h2>
+                <p id="workflow-editor-key-status" class="inline-status">新建时必须配置 Key</p>
+              </div>
             </div>
-            <div id="workflow-profile-manager"></div>
-          </section>
-
-          <section class="settings-card diagnostics-card">
-            <div class="settings-card-head">
-              <h2>最近一次任务诊断</h2>
-              <button id="btn-refresh-diagnostics" class="ghost-action mini-button" type="button">刷新</button>
+            <label class="field" for="workflow-editor-name">
+              <span>工作流名称</span>
+              <input id="workflow-editor-name" type="text" maxlength="40" autocomplete="off" />
+            </label>
+            <label class="field" for="workflow-editor-note">
+              <span>工作流备注</span>
+              <input id="workflow-editor-note" type="text" maxlength="200" placeholder="选填" autocomplete="off" />
+            </label>
+            <label class="field" for="workflow-editor-key">
+              <span>API Key</span>
+              <div class="workflow-key-control">
+                <input id="workflow-editor-key" type="password" autocomplete="new-password" placeholder="输入工作流 API Key" />
+                <button id="btn-toggle-workflow-key" class="ghost-action mini-button" type="button" aria-pressed="false">显示</button>
+              </div>
+            </label>
+            <p id="workflow-editor-error" class="workflow-editor-feedback" aria-live="polite"></p>
+            <label id="workflow-editor-activate-row" class="workflow-editor-check">
+              <input id="workflow-editor-activate" type="checkbox" />
+              <span>保存并设为当前</span>
+            </label>
+            <div class="workflow-editor-actions">
+              <button id="btn-cancel-workflow-editor" class="ghost-action" type="button">取消</button>
+              <button id="btn-save-workflow-editor" type="button">保存</button>
             </div>
-            <pre id="diagnostics-output">尚未刷新诊断。</pre>
-            <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
           </section>
         </section>
       </section>

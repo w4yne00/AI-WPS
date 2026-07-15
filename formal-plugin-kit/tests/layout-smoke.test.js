@@ -125,8 +125,17 @@ assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
   'id="btn-copy-title"',
   'id="btn-copy-bullets"',
   'id="btn-copy-conclusion"',
-  'id="btn-copy-result"'
+  'id="btn-copy-result"',
+  'id="workflow-switch-feedback"',
+  'id="workflow-settings-home"',
+  'id="workflow-editor-view"',
+  'id="workflow-profile-manager"'
 ].forEach(token => assert.ok(pptHtml.includes(token), token));
+assert.ok(!pptHtml.includes('id="btn-activate-workflow-profile"'));
+assert.ok(!pptHtml.includes('id="provider-name"'));
+assert.ok(!pptHtml.includes('id="provider-api-key"'));
+assert.ok(!pptHtml.includes('id="btn-save-api-key"'));
+assert.ok(!pptHtml.includes('id="btn-clear-api-key"'));
 assert.ok(pptHtml.includes("WPS AI 助理 - 智能总结"));
 assert.ok(!pptHtml.includes("PPT 单页助手"));
 assert.ok(!pptHtml.includes("build-badge"));
@@ -187,20 +196,14 @@ assert.ok(html.includes('id="home-view"'));
 assert.ok(html.includes('id="settings-view"'));
 assert.ok(html.includes('id="provider-base-url"'));
 assert.ok(html.includes('id="btn-save-provider-url"'));
-assert.ok(html.includes('id="provider-summary-card"'));
-assert.ok(html.includes('id="provider-edit-view"'));
-assert.ok(html.includes('id="btn-edit-provider"'));
-assert.ok(html.includes('id="btn-back-provider-summary"'));
 assert.ok(html.includes('id="provider-summary-url"'));
-assert.ok(html.includes('id="provider-name"'));
-assert.ok(html.includes('id="provider-auth-line"'));
-assert.ok(!html.includes('密钥：未检测'));
-assert.ok(html.indexOf('id="provider-summary-card"') < html.indexOf('id="provider-edit-view"'));
+assert.ok(!html.includes('id="provider-name"'));
+assert.ok(!html.includes('id="provider-auth-line"'));
 assert.ok(!html.includes('id="provider-active-select"'));
 assert.ok(!html.includes('id="btn-set-active-provider"'));
-assert.ok(html.includes('id="provider-api-key"'));
-assert.ok(html.includes('id="btn-save-api-key"'));
-assert.ok(html.includes('id="btn-clear-api-key"'));
+assert.ok(!html.includes('id="provider-api-key"'));
+assert.ok(!html.includes('id="btn-save-api-key"'));
+assert.ok(!html.includes('id="btn-clear-api-key"'));
 assert.ok(!html.includes('id="task-routes-list"'));
 assert.ok(!html.includes('id="btn-probe"'));
 assert.ok(html.includes('id="connection-settings-section"'));
@@ -232,7 +235,10 @@ assert.ok(html.includes('aria-label="打开设置"'));
 assert.ok(html.includes('id="scope-strip"'));
 assert.ok(html.includes('id="workflow-profile-strip"'));
 assert.ok(html.includes('id="workflow-profile-select"'));
-assert.ok(html.includes('id="btn-activate-workflow-profile"'));
+assert.ok(!html.includes('id="btn-activate-workflow-profile"'));
+assert.ok(html.includes('id="workflow-profile-current"'));
+assert.ok(html.includes('id="workflow-task-tabs"'));
+assert.ok(html.includes('id="workflow-settings-home"'));
 assert.ok(html.includes('id="workflow-profile-manager"'));
 assert.ok(html.includes('id="task-title"'));
 assert.ok(html.includes('识别范围'));
@@ -395,7 +401,7 @@ assert.ok(js.includes("结果已按原文段落形态应用。"));
 assert.ok(js.includes("结果已尽量按结构化格式应用。"));
 assert.ok(js.includes("插件无法访问 http://127.0.0.1:18100"));
 assert.ok(js.includes("当前适配服务版本较旧"));
-assert.ok(js.includes("showProviderEditor"));
+assert.ok(js.includes("closeProviderUrlEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
@@ -468,7 +474,12 @@ assert.ok(excelHtml.includes('title="打开设置"'));
 assert.ok(excelHtml.includes('id="excel-analysis-options"'));
 assert.ok(excelHtml.includes('id="workflow-profile-strip"'));
 assert.ok(excelHtml.includes('id="workflow-profile-select"'));
-assert.ok(excelHtml.includes('id="btn-activate-workflow-profile"'));
+assert.ok(!excelHtml.includes('id="btn-activate-workflow-profile"'));
+assert.ok(excelHtml.includes('id="workflow-switch-feedback"'));
+assert.ok(excelHtml.includes('id="workflow-settings-home"'));
+assert.ok(excelHtml.includes('id="workflow-editor-view"'));
+assert.ok(!excelHtml.includes('id="provider-api-key"'));
+assert.ok(!excelHtml.includes('id="provider-name"'));
 assert.ok(excelHtml.includes('id="workflow-profile-manager"'));
 assert.ok(excelHtml.includes('id="excel-analysis-requirement"'));
 assert.ok(excelHtml.includes('id="excel-range-summary"'));

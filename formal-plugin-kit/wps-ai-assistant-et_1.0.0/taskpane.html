@@ -29,12 +29,11 @@
         </section>
 
         <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前工作流">
-          <label for="workflow-profile-select">当前工作流</label>
+          <label for="workflow-profile-select">工作流</label>
           <select id="workflow-profile-select" aria-label="选择智能分析工作流">
             <option value="">正在读取...</option>
           </select>
-          <button id="btn-activate-workflow-profile" class="ghost-action mini-button" type="button" disabled>切换</button>
-          <span id="workflow-profile-current" class="inline-status">未检测</span>
+          <span id="workflow-switch-feedback" class="inline-status" aria-live="polite">未检测</span>
         </section>
 
         <section class="controls glass-card">
@@ -69,15 +68,13 @@
 
       <section id="settings-view" class="view">
         <section class="settings-shell glass-card">
+          <div id="settings-status-line" class="settings-status-line" aria-live="polite">等待操作。</div>
           <section id="connection-settings-section" class="settings-group">
             <section class="settings-card">
               <div id="provider-summary-card" class="provider-summary">
                 <div class="provider-main">
-                  <span id="provider-current-badge" class="provider-badge">当前</span>
-                  <h4 id="provider-summary-name">星辰 API</h4>
-                  <p id="provider-summary-type">企业大模型服务</p>
+                  <h4>大模型 API URL</h4>
                   <p id="provider-summary-url">未检测到服务地址</p>
-                  <p id="provider-auth-line">统一密钥：未配置</p>
                 </div>
                 <div class="provider-side">
                   <button id="btn-edit-provider" class="ghost-action mini-button" type="button">编辑</button>
@@ -86,24 +83,12 @@
 
               <div id="provider-edit-view" class="provider-editor" hidden>
                 <label class="field">
-                  <span>模型提供商名称</span>
-                  <input id="provider-name" type="text" placeholder="例如：星辰 API" />
-                </label>
-
-                <label class="field">
                   <span>大模型 API URL</span>
                   <input id="provider-base-url" type="text" placeholder="例如：https://aibot.example.com/v1" />
                 </label>
 
-                <label class="field">
-                  <span>统一模型 API Key</span>
-                  <input id="provider-api-key" type="password" placeholder="粘贴统一模型 API Key" />
-                </label>
-
                 <div class="button-row settings-actions">
                   <button id="btn-save-provider-url" type="button">保存地址</button>
-                  <button id="btn-save-api-key" type="button">保存密钥</button>
-                  <button id="btn-clear-api-key" class="ghost-action" type="button">清除密钥</button>
                   <button id="btn-refresh" class="ghost-action" type="button">刷新配置</button>
                   <button id="btn-back-provider-summary" class="ghost-action" type="button">完成</button>
                 </div>
@@ -111,11 +96,58 @@
             </section>
 
             <section class="settings-card">
-              <div class="settings-card-head">
-                <h4>工作流配置管理</h4>
-                <span class="inline-status">可保存多个版本，切换后对下一次任务生效</span>
-              </div>
-              <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
+              <section id="workflow-settings-home">
+                <div class="workflow-manager-head">
+                  <div>
+                    <h3 id="workflow-manager-title">工作流</h3>
+                    <p id="workflow-manager-summary">正在读取工作流配置...</p>
+                  </div>
+                  <button id="btn-new-workflow-profile" type="button">新建工作流</button>
+                </div>
+                <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
+              </section>
+
+              <section id="workflow-editor-view" class="workflow-editor-view" hidden>
+                <div class="workflow-editor-head">
+                  <button id="btn-workflow-editor-back" class="icon-button is-back" type="button" title="返回工作流列表" aria-label="返回工作流列表">
+                    <span class="back-icon" aria-hidden="true">←</span>
+                  </button>
+                  <h3 id="workflow-editor-title">新建工作流</h3>
+                </div>
+                <label class="field" for="workflow-editor-name">
+                  <span>工作流名称</span>
+                  <input id="workflow-editor-name" type="text" maxlength="40" />
+                </label>
+                <label class="field" for="workflow-editor-note">
+                  <span>工作流备注</span>
+                  <textarea id="workflow-editor-note" rows="3" maxlength="200" placeholder="选填"></textarea>
+                </label>
+                <label class="field" for="workflow-editor-key">
+                  <span id="workflow-editor-key-label">API Key</span>
+                  <input id="workflow-editor-key" type="password" autocomplete="off" />
+                </label>
+                <p id="workflow-editor-key-status" class="inline-status"></p>
+                <label class="workflow-activate-check" for="workflow-editor-activate">
+                  <input id="workflow-editor-activate" type="checkbox" />
+                  <span>保存并设为当前</span>
+                </label>
+                <div id="workflow-editor-error" class="workflow-profile-error" role="alert"></div>
+                <div class="workflow-editor-actions">
+                  <button id="btn-cancel-workflow-editor" class="ghost-action" type="button">取消</button>
+                  <button id="btn-save-workflow-editor" type="button">保存</button>
+                </div>
+              </section>
+
+              <section id="workflow-delete-dialog" class="workflow-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-delete-title" hidden>
+                <div class="workflow-delete-dialog-panel">
+                  <h3 id="workflow-delete-title">删除工作流</h3>
+                  <p>确认删除“<strong id="workflow-delete-name"></strong>”？删除后无法恢复其 Key。</p>
+                  <div class="workflow-editor-actions">
+                    <button id="btn-cancel-workflow-delete" class="ghost-action" type="button">取消</button>
+                    <button id="btn-confirm-workflow-delete" class="danger-action" type="button">删除</button>
+                  </div>
+                </div>
+              </section>
             </section>
           </section>
 

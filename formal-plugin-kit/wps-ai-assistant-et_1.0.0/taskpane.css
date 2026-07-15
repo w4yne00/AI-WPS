@@ -225,7 +225,7 @@ body {
 
 .workflow-profile-strip {
   display: grid;
-  grid-template-columns: auto minmax(160px, 1fr) auto auto;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
   margin: 0 2px 10px;
@@ -892,6 +892,13 @@ body[data-task-mode="smartWrite"] #result-output {
   margin-top: 14px;
 }
 
+.settings-status-line {
+  margin-bottom: 14px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .settings-group-title {
   display: flex;
   align-items: baseline;
@@ -1028,55 +1035,113 @@ body[data-task-mode="smartWrite"] #result-output {
 }
 
 .workflow-profile-manager {
-  display: grid;
-  gap: 18px;
+  min-width: 0;
   margin-top: 12px;
 }
 
-.workflow-task-section {
-  display: grid;
-  gap: 10px;
-}
-
-.workflow-task-head,
-.workflow-profile-row-head {
+.workflow-manager-head,
+.workflow-editor-head,
+.workflow-profile-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.workflow-task-head strong,
-.workflow-task-head span {
-  display: block;
+.workflow-manager-head h3,
+.workflow-manager-head p,
+.workflow-editor-head h3,
+.workflow-delete-dialog h3,
+.workflow-delete-dialog p {
+  margin: 0;
+  letter-spacing: 0;
 }
 
-.workflow-task-head div > span {
-  margin-top: 3px;
+.workflow-manager-head p {
+  margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
+  line-height: 1.4;
 }
 
-.workflow-profile-create,
-.workflow-profile-row {
+.workflow-profile-list {
+  min-width: 0;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.workflow-profile-list-row {
+  min-height: 58px;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1fr) auto;
   gap: 8px;
   align-items: center;
-  padding: 10px 0;
+  padding: 9px 0;
   border-top: 1px solid var(--hairline);
 }
 
-.workflow-profile-create input,
-.workflow-profile-row input {
-  min-height: 38px;
-  padding: 8px 10px;
-  border-radius: 8px;
+.workflow-profile-copy {
+  min-width: 0;
 }
 
-.workflow-profile-row-head,
+.workflow-profile-title {
+  justify-content: flex-start;
+}
+
+.workflow-profile-title strong {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.workflow-profile-note {
+  margin: 4px 0 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
 .workflow-profile-actions {
-  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.workflow-profile-actions button {
+  min-height: 32px;
+  padding: 6px 9px;
+}
+
+.workflow-empty-state {
+  padding: 18px 0;
+  border-top: 1px solid var(--hairline);
+  text-align: center;
+}
+
+.workflow-empty-state p {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-editor-view {
+  width: 100%;
+  min-width: 0;
+}
+
+.workflow-editor-head {
+  justify-content: flex-start;
+  margin-bottom: 16px;
+}
+
+.workflow-editor-key-status {
+  margin: -2px 0 10px;
 }
 
 .workflow-activate-check {
@@ -1093,14 +1158,60 @@ body[data-task-mode="smartWrite"] #result-output {
   box-shadow: none;
 }
 
+.workflow-editor-actions {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 10px;
+  background: var(--surface);
+}
+
 .workflow-profile-error {
-  margin: 0;
+  min-height: 18px;
+  margin: 8px 0 0;
   color: #9b2c2c;
   font-size: 12px;
+  line-height: 1.45;
 }
 
 .danger-action {
   color: #9b2c2c;
+}
+
+button.danger-action:not(:disabled) {
+  border-color: #d5a7a7;
+  background: #fff7f7;
+}
+
+.workflow-delete-dialog {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(25, 42, 33, 0.32);
+}
+
+.workflow-delete-dialog-panel {
+  width: min(100%, 360px);
+  padding: 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+  box-shadow: 0 12px 32px rgba(25, 42, 33, 0.2);
+}
+
+.workflow-delete-dialog p {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 
 @media (max-width: 720px) {
@@ -1113,8 +1224,7 @@ body[data-task-mode="smartWrite"] #result-output {
   .diag-grid,
   .diagnostics-actions,
   .inline-picker,
-  .workflow-profile-create,
-  .workflow-profile-row {
+  .workflow-profile-list-row {
     grid-template-columns: 1fr;
   }
 
@@ -1158,6 +1268,39 @@ body[data-task-mode="smartWrite"] #result-output {
 
   .provider-side {
     align-items: flex-start;
+  }
+}
+
+@media (max-width: 420px) {
+  .app {
+    padding: 10px;
+  }
+
+  .workflow-profile-strip {
+    grid-template-columns: minmax(0, 1fr);
+    margin-inline: 0;
+  }
+
+  .workflow-profile-strip label,
+  .workflow-profile-strip .inline-status {
+    grid-column: 1;
+  }
+
+  .workflow-manager-head {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .workflow-manager-head button {
+    width: 100%;
+  }
+
+  .workflow-profile-actions {
+    justify-content: flex-start;
+  }
+
+  .workflow-profile-actions button {
+    flex: 1 1 auto;
   }
 }
 

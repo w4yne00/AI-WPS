@@ -197,11 +197,25 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-file-format-requirements", js)
 
-    def test_taskpane_settings_exposes_unified_key_and_workflow_profiles_without_probe(self) -> None:
-        html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(
+    def test_taskpane_settings_hides_unified_key_but_keeps_compatibility(self) -> None:
+        host_dirs = [
+            "wps-ai-assistant_1.0.0",
+            "wps-ai-assistant-et_1.0.0",
+            "wps-ai-assistant-wpp_1.0.0",
+        ]
+        host_files = [
+            (
+                ROOT / "formal-plugin-kit" / host_dir / "taskpane.html",
+                ROOT / "formal-plugin-kit" / host_dir / "taskpane.js",
+            )
+            for host_dir in host_dirs
+        ]
+        html = host_files[0][0].read_text(encoding="utf-8")
+        js = host_files[0][1].read_text(encoding="utf-8")
+        standalone = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
         )
-        js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
         self.assertNotIn("renderTaskRoutes", js)
         self.assertIn("workflow-profile-manager", html)
@@ -212,12 +226,16 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("word.document_review", js)
         self.assertIn("word.format_review", js)
         self.assertNotIn("word.smart_format", js)
-        self.assertIn('id="provider-auth-line"', html)
-        self.assertIn("setProviderAuthLine", js)
-        self.assertIn("providerAuthSource", js)
-        self.assertIn('id="provider-api-key"', html)
-        self.assertIn('id="btn-save-api-key"', html)
-        self.assertIn('id="btn-clear-api-key"', html)
+        for host_html_path, host_js_path in host_files:
+            host_html = host_html_path.read_text(encoding="utf-8")
+            host_js = host_js_path.read_text(encoding="utf-8")
+            self.assertNotIn('id="provider-api-key"', host_html)
+            self.assertNotIn('id="btn-save-api-key"', host_html)
+            self.assertNotIn('id="btn-clear-api-key"', host_html)
+            self.assertNotIn('request("/provider/api-key"', host_js)
+        self.assertIn('path == "/provider/api-key"', standalone)
+        self.assertIn("run/provider_api_key", installer)
+        self.assertIn("run/provider_api_keys", installer)
         self.assertNotIn('id="btn-probe"', html)
         self.assertNotIn("runProbe", js)
 
