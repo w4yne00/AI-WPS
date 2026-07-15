@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.18.0-20260714`
 
-目标正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260714-v0180.tar.gz`（尚待构建并补录 SHA256，不得沿用旧包校验值）
+当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260714-v0180.tar.gz`，SHA256：`b41c241016c038d2c2c66a64dd5e7106ec813dc4e216b40446e2c0c03996f1e4`
 
 ## 1. 当前项目状态
 
@@ -298,7 +298,7 @@ DATE_TAG=20260714-v0180 bash packaging/build_phase1_delivery_kit.sh
 - Word/PPT JS helper、三宿主 layout smoke、Word/Excel/PPT 关键 JS 语法检查：通过；PPT helper 覆盖主标题、可选副标题、文件校验、结构化结果和真实 fallback 形态。
 - Playwright 以 `420×900` 检查 Word、Excel、PPT 当前页、PPT 文档和 PPT 设置视图：页面宽度均为 420 px，无横向溢出或控件重叠。
 - adapter 与关键 Python 文件语法检查，构建、安装、启动脚本 `bash -n`，以及 `git diff --check`：通过。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260714-v0180.tar.gz`，SHA256：`8486d5707fce3246d6ce107031dadc09a58edec918dfe8c8cc704988e59cf7dd`。
+- 已在三宿主主题调整后重新生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260714-v0180.tar.gz`，SHA256：`b41c241016c038d2c2c66a64dd5e7106ec813dc4e216b40446e2c0c03996f1e4`。
 - 包内已核对 Word、Excel、PPT 三个插件均为 `0.18.0-alpha`，并包含一个安装脚本、合并 `publish.xml`、adapter、PPT Dify 手册、Excel/PPT 两份 Markdown 提示词模板；安装脚本继续备份恢复现场 API URL、统一 API Key 和全部工作流 API Key。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
