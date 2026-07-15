@@ -1888,6 +1888,43 @@
     return profile.id === activeProfileId ? "当前使用" : "可切换";
   }
 
+  function workflowProfileOptionState(profile, activeProfileId) {
+    var item = profile || {};
+    var active = Boolean(item.id && item.id === activeProfileId);
+    var configured = Boolean(item.keyConfigured);
+    var name = String(item.name || "未命名工作流");
+    return {
+      id: String(item.id || ""),
+      label: (active ? "✓ " : "") + name + (configured ? "" : "（Key 未配置）"),
+      active: active,
+      disabled: !configured
+    };
+  }
+
+  function validateWorkflowProfileDraft(draft, mode) {
+    var value = draft || {};
+    var name = String(value.name || "").trim();
+    var note = String(value.note || "").trim();
+    var apiKey = String(value.apiKey || "").trim();
+    if (!name) {
+      return { ok: false, field: "name", message: "请输入工作流名称。" };
+    }
+    if (name.length > 40) {
+      return { ok: false, field: "name", message: "工作流名称不能超过 40 个字。" };
+    }
+    if (note.length > 200) {
+      return { ok: false, field: "note", message: "工作流备注不能超过 200 个字。" };
+    }
+    if (mode === "create" && !apiKey) {
+      return { ok: false, field: "apiKey", message: "请输入工作流 API Key。" };
+    }
+    return { ok: true, name: name, note: note, apiKey: apiKey };
+  }
+
+  function shouldActivateNewWorkflowProfile(profileCount, requested) {
+    return Number(profileCount || 0) === 0 || Boolean(requested);
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -1916,6 +1953,9 @@
     normalizeWorkflowProfileData: normalizeWorkflowProfileData,
     getActiveWorkflowProfileName: getActiveWorkflowProfileName,
     canDeleteWorkflowProfile: canDeleteWorkflowProfile,
-    workflowProfileStatusText: workflowProfileStatusText
+    workflowProfileStatusText: workflowProfileStatusText,
+    workflowProfileOptionState: workflowProfileOptionState,
+    validateWorkflowProfileDraft: validateWorkflowProfileDraft,
+    shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile
   };
 });

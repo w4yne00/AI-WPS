@@ -1,5 +1,38 @@
 const assert = require("assert");
 const helpers = require("../wps-ai-assistant_1.0.0/taskpane-helpers.js");
+const excelHelpers = require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js");
+
+function assertWorkflowUiContract(targetHelpers) {
+  assert.deepStrictEqual(
+    targetHelpers.workflowProfileOptionState(
+      { id: "p1", name: "生产版", keyConfigured: true },
+      "p1"
+    ),
+    { id: "p1", label: "✓ 生产版", active: true, disabled: false }
+  );
+  assert.strictEqual(
+    targetHelpers.workflowProfileOptionState(
+      { id: "p2", name: "旧版", keyConfigured: false },
+      "p1"
+    ).disabled,
+    true
+  );
+  assert.deepStrictEqual(
+    targetHelpers.validateWorkflowProfileDraft({ name: "", note: "", apiKey: "" }, "create"),
+    { ok: false, field: "name", message: "请输入工作流名称。" }
+  );
+  assert.deepStrictEqual(
+    targetHelpers.validateWorkflowProfileDraft({ name: "测试版", note: "", apiKey: "" }, "create"),
+    { ok: false, field: "apiKey", message: "请输入工作流 API Key。" }
+  );
+  assert.strictEqual(
+    targetHelpers.validateWorkflowProfileDraft({ name: "生产版", note: "稳定", apiKey: "" }, "edit").ok,
+    true
+  );
+  assert.strictEqual(targetHelpers.shouldActivateNewWorkflowProfile(0, false), true);
+  assert.strictEqual(targetHelpers.shouldActivateNewWorkflowProfile(2, false), false);
+  assert.strictEqual(targetHelpers.shouldActivateNewWorkflowProfile(2, true), true);
+}
 
 function testGetEffectiveSelectionText() {
   assert.strictEqual(
@@ -926,5 +959,7 @@ testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();
 testNormalizeWorkflowProfileDataFiltersByTask();
 testNormalizeWorkflowProfileDataHandlesMalformedInput();
+assertWorkflowUiContract(helpers);
+assertWorkflowUiContract(excelHelpers);
 
 console.log("taskpane-helpers tests passed");

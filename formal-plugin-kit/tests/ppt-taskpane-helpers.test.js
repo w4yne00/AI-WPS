@@ -11,6 +11,42 @@ vm.createContext(context);
 vm.runInContext(source, context);
 const helpers = context.window.WpsAiPptHelpers;
 
+function assertWorkflowUiContract(targetHelpers) {
+  function plain(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  assert.deepStrictEqual(
+    plain(targetHelpers.workflowProfileOptionState(
+      { id: "p1", name: "生产版", keyConfigured: true },
+      "p1"
+    )),
+    { id: "p1", label: "✓ 生产版", active: true, disabled: false }
+  );
+  assert.strictEqual(
+    targetHelpers.workflowProfileOptionState(
+      { id: "p2", name: "旧版", keyConfigured: false },
+      "p1"
+    ).disabled,
+    true
+  );
+  assert.deepStrictEqual(
+    plain(targetHelpers.validateWorkflowProfileDraft({ name: "", note: "", apiKey: "" }, "create")),
+    { ok: false, field: "name", message: "请输入工作流名称。" }
+  );
+  assert.deepStrictEqual(
+    plain(targetHelpers.validateWorkflowProfileDraft({ name: "测试版", note: "", apiKey: "" }, "create")),
+    { ok: false, field: "apiKey", message: "请输入工作流 API Key。" }
+  );
+  assert.strictEqual(
+    targetHelpers.validateWorkflowProfileDraft({ name: "生产版", note: "稳定", apiKey: "" }, "edit").ok,
+    true
+  );
+  assert.strictEqual(targetHelpers.shouldActivateNewWorkflowProfile(0, false), true);
+  assert.strictEqual(targetHelpers.shouldActivateNewWorkflowProfile(2, false), false);
+  assert.strictEqual(targetHelpers.shouldActivateNewWorkflowProfile(2, true), true);
+}
+
 function collection(items) {
   return {
     Count: items.length,
@@ -343,4 +379,5 @@ assert.strictEqual(
   assert.strictEqual(helpers.buildPptDocumentOutline(fallback), "真实的 Markdown 回复");
   assert.strictEqual(helpers.buildPptDocumentPlainText(fallback), "真实的 Markdown 回复");
 }
+assertWorkflowUiContract(helpers);
 console.log("ppt taskpane helper tests passed");
