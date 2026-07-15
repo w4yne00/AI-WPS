@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.18.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.18.0-20260714` |
+| Version | `v0.18.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.18.1-20260715` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260714-v0180.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260715-v0181.tar.gz` |
 
 Version rule format:
 
@@ -116,8 +116,8 @@ Rules:
 | Unified three-host UI | Word, Excel, and PPT share the same restrained light-gray, white, mist-blue, and status-color visual system while preserving host isolation and existing task behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
 | Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Workflow profiles | Smart Write, Smart Imitation, Document Review, Format Review, “智能分析”, and “智能总结” can each keep multiple named API-key profiles; both PPT modes share the same `ppt.slide_assistant` profile and API key |
-| Provider settings | Settings keeps one global API URL and unified model API key; workflow profiles override the unified fallback only for their own task |
+| Workflow profiles | Smart Write, Smart Imitation, Document Review, Format Review, “智能分析”, and “智能总结” each use a compact host-isolated profile list with name, note, API key, edit, and delete actions; selecting a task-page profile activates it immediately, while both PPT modes share `ppt.slide_assistant` |
+| Provider settings | Settings exposes one global API URL plus per-workflow names, notes, and API keys. The legacy unified-key fallback remains adapter-compatible and is preserved during overwrite installation, but is no longer shown in the task pane |
 | Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together; overwrite installation preserves the existing API URL, unified API key, and workflow-profile keys, and the package includes Excel/PPT Markdown prompt templates |
@@ -126,6 +126,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.18.1-alpha` | Streamlines workflow settings across Word, Excel, and PPT: removes unified-key controls from the task pane, keeps a compact host-isolated workflow list with full-width create/edit views, activates task-page selections immediately, protects active profiles from deletion, preserves existing keys when edits leave the key blank, and keeps adapter fallback and overwrite-install compatibility unchanged |
 | `v0.18.0-alpha` | Renames the current Excel entry to “智能分析” and upgrades PPT to the dual-mode “智能总结”; adds secure single-file UTF-8 Markdown/DOCX upload, complete-deck 5/8/10/12/15-slide recommendations, 1800-second recoverable polling, a unified three-host visual system, Excel/PPT Markdown prompt templates, and one combined overwrite-install package that preserves the API URL and API keys |
 | `v0.17.0-alpha` | Adds the read-only PPT Slide Assistant with current-slide title, optional subtitle, body text, and adjacent-title extraction; generate/optimize modes, recoverable long-task polling, preview/plain-text and categorized copy actions; strict Word/Excel/PPT Ribbon isolation; and one combined upgrade package that preserves the target machine's API URL and API keys |
 | `v0.16.0-alpha` | Adds named workflow profiles for all five tasks. Users can pre-save multiple Dify API keys, explicitly switch the active profile from each task pane, and manage names, notes, replacement keys, and inactive profiles in Settings. Existing task keys migrate to a reusable “Current configuration” profile, upgrades preserve all profile keys, and Word/Excel host isolation remains unchanged |

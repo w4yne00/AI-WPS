@@ -55,7 +55,7 @@ function OnAction(control) {
     var url = location.href.replace(/[^\/]*$/, "");
     closeCurrentTaskPane();
     var taskPane = window.Application.CreateTaskPane(
-      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.18.0-alpha"
+      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.18.1-alpha"
     );
     window.Application.WpsAiAssistantTaskPane = taskPane;
     taskPane.Visible = true;

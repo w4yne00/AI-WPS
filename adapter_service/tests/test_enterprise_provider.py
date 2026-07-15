@@ -1911,7 +1911,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             client = ProviderClient(settings)
 
             diagnostics = client.build_route_diagnostics(key_base_path=tmp_dir)
-            self.assertEqual(diagnostics["version"], "0.18.0-alpha")
+            self.assertEqual(diagnostics["version"], "0.18.1-alpha")
             self.assertEqual(diagnostics["url"], "https://aibot.example/v1/chat-messages")
             self.assertEqual(diagnostics["path"], "/chat-messages")
             self.assertEqual(diagnostics["payloadStyle"], "chat")

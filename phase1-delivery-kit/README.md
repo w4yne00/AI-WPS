@@ -1,14 +1,14 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.18.0-alpha`
+版本：`v0.18.1-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260714-v0180.tar.gz
-cd ai-wps-phase1-delivery-20260714-v0180
+tar -xzf ai-wps-phase1-delivery-20260715-v0181.tar.gz
+cd ai-wps-phase1-delivery-20260715-v0181
 bash installer/install_phase1.sh
 ```
 
@@ -69,9 +69,10 @@ bash scripts/phase1_smoke_test.sh
 5. 打开设置页刷新配置。
 6. 验证智能编写、智能仿写、文档审查、格式审查、智能分析和智能总结。
 7. 如果接入 Dify，确认每个任务命中对应的 Dify 应用或工作流。
-8. 确认任务窗口和 Ribbon 图标显示为雾蓝银白配色；若显示旧绿色，请完全关闭并重新启动 WPS 后复查。
+8. 确认 Word、Excel、PPT 任务窗口分别使用蓝色、绿色、橙色宿主主题；若仍显示旧界面，请完全关闭并重新启动 WPS 后复查。
 9. 智能分析和智能总结的 provider 等待预算为 1800 秒；超过 180 秒或短暂连接失败后应保留任务编号，重新打开任务窗格也能自动恢复查询。
 10. 旧版 Dify 工作流应继续读取 `inputs.query`；新版“用户输入”节点工作流应在首次 HTTP 400 后自动切换到顶层 `query/files` 并成功返回。
 11. 智能总结的文档模式应接受单个 UTF-8 `.md` 或有效 `.docx`（最大 10 MB），并可选择整套 5、8、10、12、15 页建议，默认 10 页。
 12. 智能总结只提供预览和复制，绝不自动创建或修改 PPT；同一个 `ppt.slide_assistant` 工作流档案和 API Key 必须用于 `/files/upload` 与 `/chat-messages`，Dify 文件分支必须连接 `userinput.files` 和文档提取节点。
 13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key 和 `run/provider_api_keys/`，确认现场 API URL 与全部密钥均被保留。
+14. 设置页只显示统一 API URL 和当前宿主的工作流档案；功能页下拉选择工作流后应立即激活，不再显示统一 Key 或额外“切换”按钮。

@@ -42,7 +42,7 @@ from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfile
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.18.0-alpha"
+VERSION = "0.18.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
