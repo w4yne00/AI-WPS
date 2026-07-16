@@ -2,7 +2,7 @@
 
 日期：2026-07-16
 
-状态：已完成交互式设计确认，等待用户复核书面规格
+状态：设计与书面规格已确认，等待按实施计划开发
 
 ## 1. 背景与目标
 
@@ -243,13 +243,20 @@ GET    /enterprise-knowledge/items?scope=...&type=...&query=...
 POST   /enterprise-knowledge/items
 PATCH  /enterprise-knowledge/items/{itemId}
 DELETE /enterprise-knowledge/items/{itemId}
+GET    /enterprise-knowledge/import-template.csv
+GET    /enterprise-knowledge/import-template.xlsx
 POST   /enterprise-knowledge/imports/preview
 POST   /enterprise-knowledge/imports/apply
 GET    /enterprise-knowledge/export.csv?scope=...
+GET    /enterprise-knowledge/backup
 GET    /enterprise-knowledge/diagnostics
 ```
 
+前端使用 JSON 请求上传导入预览文件，字段固定为 `fileName`、`mimeType`、`sizeBytes` 和 `contentBase64`。adapter 先校验声明大小与 Base64 解码后的实际大小，再进入 CSV/XLSX 解析；导入预览接口的 HTTP 请求体上限固定为 7 MB，以容纳 5 MB 原文件的 Base64 开销，其它接口继续沿用现有限制。
+
 导入预览返回 10 分钟有效的一次性预览令牌，正式写入时使用该令牌，避免前端重复传送和重新解析大文件。原始上传文件只在请求内存和临时解析阶段存在，预览完成后立即删除。
+
+模板下载接口由 adapter 使用同一份列定义生成 UTF-8 CSV 和无宏标准 XLSX，确保页面下载的模板与解析器始终一致。`export.csv` 只导出业务条目；`backup` 下载 SQLite 完整数据库快照，两者不得包含 API Key。
 
 现有三个 Word 任务接口不改变请求字段。响应结果增加可选字段：
 
