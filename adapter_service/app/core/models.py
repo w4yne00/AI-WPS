@@ -418,12 +418,29 @@ class PptSlideAssistantResponseData(BaseModel):
     provider: str = "mock"
 
 
+class KnowledgeUsageItem(BaseModel):
+    id: str
+    type: Literal["term", "style"]
+    name: str
+
+
+class KnowledgeUsage(BaseModel):
+    applied: bool
+    degraded: bool = False
+    degraded_reason: str = Field(default="", alias="degradedReason")
+    term_match_count: int = Field(default=0, alias="termMatchCount")
+    style_rule_count: int = Field(default=0, alias="styleRuleCount")
+    truncated_count: int = Field(default=0, alias="truncatedCount")
+    matched_items: List[KnowledgeUsageItem] = Field(default_factory=list, alias="matchedItems")
+
+
 class RewriteResult(BaseModel):
     original_text: str = Field(alias="originalText")
     rewritten_text: str = Field(alias="rewrittenText")
     rewrite_mode: str = Field(alias="rewriteMode")
     diff_hints: List[str] = Field(default_factory=list, alias="diffHints")
     provider: str = "mock"
+    knowledge_usage: Optional[KnowledgeUsage] = Field(default=None, alias="knowledgeUsage")
 
 
 class DocumentReviewIssue(BaseModel):
@@ -492,3 +509,4 @@ class DocumentReviewResponseData(BaseModel):
     provider: str = "mock"
     raw_answer: str = Field(default="", alias="rawAnswer")
     parse_fallback_reason: str = Field(default="", alias="parseFallbackReason")
+    knowledge_usage: Optional[KnowledgeUsage] = Field(default=None, alias="knowledgeUsage")
