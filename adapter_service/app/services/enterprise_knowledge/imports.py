@@ -1,11 +1,15 @@
 import csv
+import copy
 import io
 import posixpath
 import re
+import secrets
+import threading
+import time
 import unicodedata
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Dict, List, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
@@ -15,6 +19,7 @@ from app.services.enterprise_knowledge.models import (
     MAX_IMPORT_BYTES,
     MAX_IMPORT_ROWS,
     MAX_XLSX_EXPANDED_BYTES,
+    PREVIEW_TTL_SECONDS,
     KnowledgeError,
     normalize_key,
 )
@@ -37,6 +42,7 @@ IMPORT_COLUMNS = (
 LIST_SEPARATOR = "|"
 CSV_MIME = "text/csv"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CSV_EXPORT_MARKER = "#AI-WPS-ENTERPRISE-KNOWLEDGE-EXPORT:1"
 
 _GENERIC_IMPORT_MIMES = {"", "application/octet-stream"}
 _CSV_MIMES = _GENERIC_IMPORT_MIMES.union({CSV_MIME, "text/plain"})
@@ -108,6 +114,7 @@ class _ImportRow(dict):
     def __init__(self, values: Dict[str, str], row_number: int):
         super().__init__(values)
         self.row_number = row_number
+        self._sourceRow = row_number
 
 
 class _RowValidationError(Exception):
@@ -115,6 +122,130 @@ class _RowValidationError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
+
+
+class ImportPreviewStore:
+    def __init__(
+        self,
+        clock: Optional[Callable[[], float]] = None,
+        ttl_seconds: int = PREVIEW_TTL_SECONDS,
+        max_entries: int = 20,
+    ):
+        self._clock = clock or time.monotonic
+        self._ttl_seconds = int(ttl_seconds)
+        self._max_entries = int(max_entries)
+        if self._ttl_seconds <= 0 or self._max_entries <= 0:
+            raise ValueError("preview limits must be positive")
+        self._lock = threading.RLock()
+        self._entries: Dict[str, Dict[str, object]] = {}
+        self._sequence = 0
+
+    def create(
+        self,
+        file_name: str,
+        items: Sequence[Dict[str, object]],
+        conflicts: Sequence[Dict[str, object]],
+        errors: Optional[Sequence[Dict[str, object]]] = None,
+        stats: Optional[Dict[str, object]] = None,
+        file_meta: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        now = float(self._clock())
+        safe_meta = self._safe_file_meta(file_name, file_meta or {})
+        payload = {
+            "fileMeta": safe_meta,
+            "items": self._safe_copy(items),
+            "conflicts": self._safe_copy(conflicts),
+            "errors": self._safe_copy(errors or []),
+            "stats": self._safe_copy(stats or {}),
+        }
+        with self._lock:
+            self._purge_expired(now)
+            while len(self._entries) >= self._max_entries:
+                oldest_token = min(
+                    self._entries,
+                    key=lambda token: int(self._entries[token]["sequence"]),
+                )
+                del self._entries[oldest_token]
+            token = secrets.token_urlsafe(24)
+            while token in self._entries:
+                token = secrets.token_urlsafe(24)
+            self._sequence += 1
+            self._entries[token] = {
+                "expiresAt": now + self._ttl_seconds,
+                "sequence": self._sequence,
+                "payload": payload,
+            }
+        return {
+            "previewToken": token,
+            "expiresInSeconds": self._ttl_seconds,
+        }
+
+    def get(self, token: str) -> Dict[str, object]:
+        return self._take(token, consume=False)
+
+    def consume(self, token: str) -> Dict[str, object]:
+        return self._take(token, consume=True)
+
+    def live_count(self) -> int:
+        with self._lock:
+            self._purge_expired(float(self._clock()))
+            return len(self._entries)
+
+    def _take(self, token: str, consume: bool) -> Dict[str, object]:
+        clean_token = str(token or "")
+        now = float(self._clock())
+        with self._lock:
+            entry = self._entries.get(clean_token)
+            if entry is None:
+                raise KnowledgeError(
+                    "import_preview_not_found", "未找到导入预览，请重新选择文件。"
+                )
+            if now >= float(entry["expiresAt"]):
+                del self._entries[clean_token]
+                raise KnowledgeError(
+                    "import_preview_expired", "导入预览已过期，请重新选择文件。"
+                )
+            if consume:
+                del self._entries[clean_token]
+            return copy.deepcopy(entry["payload"])
+
+    def _purge_expired(self, now: float) -> None:
+        expired = [
+            token
+            for token, entry in self._entries.items()
+            if now >= float(entry["expiresAt"])
+        ]
+        for token in expired:
+            del self._entries[token]
+
+    @staticmethod
+    def _safe_file_meta(
+        file_name: str, file_meta: Dict[str, object]
+    ) -> Dict[str, object]:
+        safe = {"fileName": str(file_name or file_meta.get("fileName") or "")}
+        for key in ("format", "rowCount", "mimeType", "sizeBytes"):
+            if key in file_meta:
+                safe[key] = copy.deepcopy(file_meta[key])
+        return safe
+
+    @classmethod
+    def _safe_copy(cls, value):
+        if isinstance(value, bytes):
+            raise KnowledgeError(
+                "invalid_import_preview", "导入预览不能缓存原始文件内容。"
+            )
+        if isinstance(value, dict):
+            return {
+                str(key): cls._safe_copy(entry)
+                for key, entry in value.items()
+                if str(key) not in ("contentBase64", "rawBytes", "content")
+            }
+        if isinstance(value, (list, tuple)):
+            return [cls._safe_copy(entry) for entry in value]
+        return copy.deepcopy(value)
+
+
+DEFAULT_IMPORT_PREVIEW_STORE = ImportPreviewStore()
 
 
 def generate_csv_template() -> bytes:
@@ -127,9 +258,23 @@ def generate_csv_template() -> bytes:
 
 def csv_safe_cell(value: str) -> str:
     text = "" if value is None else str(value)
+    if text.startswith("'"):
+        return "'" + text
     trimmed = text.lstrip()
     if trimmed and trimmed[0] in ("=", "+", "-", "@"):
         return "'" + text
+    return text
+
+
+def csv_restore_cell(value: str) -> str:
+    text = "" if value is None else str(value)
+    if text.startswith("''"):
+        return text[1:]
+    if text.startswith("'"):
+        candidate = text[1:]
+        trimmed = candidate.lstrip()
+        if trimmed and trimmed[0] in ("=", "+", "-", "@"):
+            return candidate
     return text
 
 
@@ -227,6 +372,9 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
     try:
         reader = csv.reader(io.StringIO(text, newline=""), strict=True)
         headers = next(reader, None)
+        restore_export_cells = headers == [CSV_EXPORT_MARKER]
+        if restore_export_cells:
+            headers = next(reader, None)
         if headers is None or tuple(headers) != IMPORT_COLUMNS:
             raise KnowledgeError(
                 "invalid_import_headers", "导入文件表头与标准模板不一致。"
@@ -242,6 +390,8 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
                     "第 %d 行的列数与标准模板不一致。" % row_number,
                 )
             clean_values = [str(value).strip() for value in values]
+            if restore_export_cells:
+                clean_values = [csv_restore_cell(value) for value in clean_values]
             _validate_cell_lengths(clean_values, row_number)
             rows.append(
                 _ImportRow(dict(zip(IMPORT_COLUMNS, clean_values)), row_number)
@@ -304,12 +454,19 @@ def parse_xlsx(content: bytes, file_name: str) -> List[Dict[str, str]]:
 
 def validate_import_rows(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
     valid_items = []
+    item_rows = []
     errors = []
     term_tokens = set()
     style_names = set()
 
     for fallback_row_number, raw_row in enumerate(rows, start=2):
-        row_number = int(getattr(raw_row, "row_number", fallback_row_number))
+        row_number = int(
+            getattr(
+                raw_row,
+                "_sourceRow",
+                getattr(raw_row, "row_number", fallback_row_number),
+            )
+        )
         try:
             item = _map_row(raw_row)
             if item["type"] == "term":
@@ -327,6 +484,7 @@ def validate_import_rows(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
                     )
                 style_names.add(style_key)
             valid_items.append(item)
+            item_rows.append({"rowNumber": row_number, "item": item})
         except _RowValidationError as exc:
             errors.append(
                 {
@@ -336,7 +494,293 @@ def validate_import_rows(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
                 }
             )
 
-    return {"items": valid_items, "errors": errors, "rowCount": len(rows)}
+    return {
+        "items": valid_items,
+        "itemRows": item_rows,
+        "errors": errors,
+        "rowCount": len(rows),
+    }
+
+
+def build_import_preview(
+    store,
+    validated_result: Dict[str, object],
+    file_meta: Dict[str, object],
+    preview_store: Optional[ImportPreviewStore] = None,
+) -> Dict[str, object]:
+    previews = preview_store or DEFAULT_IMPORT_PREVIEW_STORE
+    errors = list(validated_result.get("errors") or [])
+    item_rows = _validated_item_rows(validated_result)
+    existing_terms = store.list_items("global", "term")
+    term_owners = {}
+    for existing in existing_terms:
+        for token in _term_tokens(existing):
+            term_owners[token] = existing
+
+    existing_styles = {}
+    for scope in sorted(set(_SCOPE_MAP.values())):
+        for existing in store.list_items(scope, "style"):
+            existing_styles[(scope, normalize_key(existing["name"]))] = existing
+
+    operations = []
+    conflicts = []
+    new_count = 0
+    update_count = 0
+    for entry in item_rows:
+        row_number = int(entry["rowNumber"])
+        item = entry["item"]
+        if item.get("type") == "term":
+            preferred_key = normalize_key(item["preferredText"])
+            preferred_owner = term_owners.get(preferred_key)
+            update_target = None
+            if preferred_owner is not None and preferred_key == normalize_key(
+                preferred_owner["preferredText"]
+            ):
+                update_target = preferred_owner
+            colliding_owners = []
+            for token in _term_tokens(item):
+                owner = term_owners.get(token)
+                if owner is not None and (
+                    update_target is None or owner["id"] != update_target["id"]
+                ):
+                    colliding_owners.append(owner)
+            if colliding_owners:
+                existing = sorted(
+                    colliding_owners,
+                    key=lambda candidate: (
+                        normalize_key(candidate["preferredText"]),
+                        candidate["id"],
+                    ),
+                )[0]
+                conflicts.append(
+                    _term_conflict(row_number, item, existing)
+                )
+            elif update_target is not None:
+                operations.append(
+                    {
+                        "rowNumber": row_number,
+                        "action": "update",
+                        "existingItemId": update_target["id"],
+                        "item": copy.deepcopy(item),
+                    }
+                )
+                update_count += 1
+            else:
+                operations.append(
+                    {
+                        "rowNumber": row_number,
+                        "action": "create",
+                        "item": copy.deepcopy(item),
+                    }
+                )
+                new_count += 1
+        elif item.get("type") == "style":
+            existing = existing_styles.get(
+                (item["scope"], normalize_key(item["name"]))
+            )
+            if existing is None:
+                operations.append(
+                    {
+                        "rowNumber": row_number,
+                        "action": "create",
+                        "item": copy.deepcopy(item),
+                    }
+                )
+                new_count += 1
+            else:
+                operations.append(
+                    {
+                        "rowNumber": row_number,
+                        "action": "update",
+                        "existingItemId": existing["id"],
+                        "item": copy.deepcopy(item),
+                    }
+                )
+                update_count += 1
+        else:
+            raise KnowledgeError(
+                "invalid_knowledge_type", "知识条目类型必须为 term 或 style。"
+            )
+
+    stats = {
+        "newCount": new_count,
+        "updateCount": update_count,
+        "conflictCount": len(conflicts),
+        "errorCount": len(errors),
+    }
+    meta = dict(file_meta or {})
+    meta.setdefault("rowCount", validated_result.get("rowCount", len(item_rows)))
+    token_result = previews.create(
+        str(meta.get("fileName") or ""),
+        operations,
+        conflicts,
+        errors=errors,
+        stats=stats,
+        file_meta=meta,
+    )
+    return dict(
+        token_result,
+        errors=copy.deepcopy(errors),
+        conflicts=copy.deepcopy(conflicts),
+        **stats
+    )
+
+
+def apply_import_preview(
+    store,
+    preview_token: str,
+    conflict_decisions: Optional[Sequence[Dict[str, object]]] = None,
+    preview_store: Optional[ImportPreviewStore] = None,
+) -> Dict[str, object]:
+    previews = preview_store or DEFAULT_IMPORT_PREVIEW_STORE
+    preview = previews.consume(preview_token)
+    conflicts = list(preview.get("conflicts") or [])
+    decisions = _normalize_conflict_decisions(conflict_decisions or [], conflicts)
+    for conflict in conflicts:
+        row_number = int(conflict["rowNumber"])
+        decision = decisions.get(row_number, "keep_existing")
+        if decision not in tuple(conflict.get("allowedDecisions") or ()):
+            raise KnowledgeError(
+                "invalid_import_decision",
+                "第 %d 行的冲突处理方式无效。" % row_number,
+            )
+
+    stats = dict(preview.get("stats") or {})
+    store_stats = {
+        "conflictCount": int(stats.get("conflictCount", 0)),
+        "errorCount": int(stats.get("errorCount", 0)),
+    }
+    return store.apply_preview(
+        list(preview.get("items") or []),
+        dict(preview.get("fileMeta") or {}),
+        stats=store_stats,
+    )
+
+
+def export_csv(store, scope: str) -> bytes:
+    items = []
+    if scope == "global":
+        items.extend(store.list_items("global", "term"))
+    items.extend(store.list_items(scope, "style"))
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([CSV_EXPORT_MARKER])
+    writer.writerow(IMPORT_COLUMNS)
+    for item in items:
+        writer.writerow([csv_safe_cell(value) for value in _export_row(item)])
+    return b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+
+
+def _validated_item_rows(
+    validated_result: Dict[str, object]
+) -> List[Dict[str, object]]:
+    entries = validated_result.get("itemRows")
+    if entries is not None:
+        return copy.deepcopy(list(entries))
+    return [
+        {"rowNumber": index, "item": copy.deepcopy(item)}
+        for index, item in enumerate(validated_result.get("items") or [], start=2)
+    ]
+
+
+def _term_conflict(
+    row_number: int,
+    incoming: Dict[str, object],
+    existing: Dict[str, object],
+) -> Dict[str, object]:
+    return {
+        "rowNumber": row_number,
+        "type": "term_text_conflict",
+        "incomingName": incoming["preferredText"],
+        "existingItemId": existing["id"],
+        "existingName": existing["preferredText"],
+        "allowedDecisions": ["keep_existing", "skip"],
+        "defaultDecision": "keep_existing",
+        "message": "第 %d 行：术语写法与库内“%s”冲突，只能保留库内标准或跳过该行。"
+        % (row_number, existing["preferredText"]),
+    }
+
+
+def _normalize_conflict_decisions(
+    decisions: Sequence[Dict[str, object]],
+    conflicts: Sequence[Dict[str, object]],
+) -> Dict[int, str]:
+    conflict_rows = {int(conflict["rowNumber"]) for conflict in conflicts}
+    normalized = {}
+    if isinstance(decisions, dict):
+        iterable = [
+            {"rowNumber": row_number, "decision": decision}
+            for row_number, decision in decisions.items()
+        ]
+    else:
+        iterable = decisions
+    for entry in iterable:
+        try:
+            row_number = int(entry.get("rowNumber"))
+        except (AttributeError, TypeError, ValueError):
+            raise KnowledgeError(
+                "invalid_import_decision", "导入冲突处理行号无效。"
+            )
+        decision = str(entry.get("decision") or "")
+        if row_number not in conflict_rows or row_number in normalized:
+            raise KnowledgeError(
+                "invalid_import_decision", "导入冲突处理行号无效或重复。"
+            )
+        if decision not in ("keep_existing", "skip"):
+            raise KnowledgeError(
+                "invalid_import_decision",
+                "第 %d 行只允许保留库内标准或跳过。" % row_number,
+            )
+        normalized[row_number] = decision
+    return normalized
+
+
+def _export_row(item: Dict[str, object]) -> Tuple[str, ...]:
+    priority_labels = {"high": "高", "medium": "中", "low": "低"}
+    scope_labels = {
+        "global": "全局",
+        "word.smart_write": "智能编写",
+        "word.smart_imitation": "智能仿写",
+        "word.document_review": "文档审查",
+    }
+    if item["type"] == "term":
+        variants = ["别名:" + value for value in item["aliases"]]
+        variants.extend("禁用:" + value for value in item["forbiddenVariants"])
+        return (
+            "术语",
+            "全局",
+            item["category"],
+            item["preferredText"],
+            _join_escaped_list(variants),
+            "",
+            "",
+            _join_escaped_list(item["contextKeywords"]),
+            priority_labels[item["priority"]],
+            "否",
+            "是" if item["enabled"] else "否",
+            item["note"],
+        )
+    return (
+        "风格",
+        scope_labels[item["scope"]],
+        item["name"],
+        item["ruleText"],
+        "",
+        item["positiveExample"],
+        item["negativeExample"],
+        _join_escaped_list(item["contextKeywords"]),
+        priority_labels[item["priority"]],
+        "是" if item["alwaysApply"] else "否",
+        "是" if item["enabled"] else "否",
+        item["note"],
+    )
+
+
+def _join_escaped_list(values: Sequence[str]) -> str:
+    return LIST_SEPARATOR.join(
+        str(value).replace("\\", "\\\\").replace(LIST_SEPARATOR, "\\|")
+        for value in values
+    )
 
 
 def _validate_file_size(content: bytes) -> None:
@@ -772,7 +1216,10 @@ def _rich_text_value(container: ElementTree.Element) -> str:
 
 
 def _map_row(raw_row: Dict[str, str]) -> Dict[str, object]:
-    row = {column: str(raw_row.get(column, "") or "").strip() for column in IMPORT_COLUMNS}
+    row = {
+        column: str(raw_row.get(column, "") or "").strip()
+        for column in IMPORT_COLUMNS
+    }
     item_type = _mapped_value(row["类型"], _TYPE_MAP, "条目类型必须为“术语”或“风格”。")
     scope = _mapped_value(row["适用范围"], _SCOPE_MAP, "适用范围无效。")
     priority = _mapped_value(row["优先级"], _PRIORITY_MAP, "优先级必须为“高”“中”或“低”。")

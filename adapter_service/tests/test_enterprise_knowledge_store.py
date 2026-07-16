@@ -1,7 +1,9 @@
 import json
 import sqlite3
 import stat
+import threading
 import unittest
+from datetime import datetime as real_datetime
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -459,6 +461,220 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(summary["styleCount"], 1)
             self.assertEqual(summary["status"], "ready")
             self.assertTrue(summary["updatedAt"].endswith("Z"))
+
+    def test_apply_preview_creates_preimport_backup_and_rotates_to_three(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make_store(tmp)
+
+            for index in range(5):
+                result = store.apply_preview(
+                    [term_payload("名称%d" % index)],
+                    {
+                        "fileName": "terms-%d.csv" % index,
+                        "format": "csv",
+                        "rowCount": 1,
+                    },
+                )
+                self.assertEqual(result["createdCount"], 1)
+
+            backups = list(root.glob("enterprise_knowledge.db.backup-*"))
+            self.assertEqual(len(backups), 3)
+            self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
+            for backup in backups:
+                with sqlite3.connect(str(backup)) as connection:
+                    count = connection.execute(
+                        "SELECT COUNT(*) FROM knowledge_terms"
+                    ).fetchone()[0]
+                self.assertLess(count, 5)
+
+    def test_backup_name_collision_keeps_distinct_preimport_snapshots(self):
+        class FrozenDatetime:
+            @classmethod
+            def now(cls, timezone_value):
+                del timezone_value
+                return real_datetime(2026, 7, 16, 12, 0, 0, 123456)
+
+            @classmethod
+            def strptime(cls, value, pattern):
+                return real_datetime.strptime(value, pattern)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make_store(tmp)
+            with patch(
+                "app.services.enterprise_knowledge.store.datetime",
+                FrozenDatetime,
+            ):
+                store.apply_preview(
+                    [term_payload("名称一")],
+                    {"fileName": "one.csv", "format": "csv", "rowCount": 1},
+                )
+                store.apply_preview(
+                    [term_payload("名称二")],
+                    {"fileName": "two.csv", "format": "csv", "rowCount": 1},
+                )
+
+            backups = sorted(root.glob("enterprise_knowledge.db.backup-*"))
+            self.assertEqual(len(backups), 2)
+            with sqlite3.connect(str(backups[-1])) as connection:
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM knowledge_terms"
+                ).fetchone()[0]
+            self.assertEqual(count, 1)
+
+    def test_apply_preview_without_item_writes_does_not_create_backup(self):
+        with TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+
+            result = store.apply_preview(
+                [],
+                {"fileName": "skipped.csv", "format": "csv", "rowCount": 1},
+                stats={"conflictCount": 1},
+            )
+
+            self.assertEqual(result["createdCount"], 0)
+            self.assertEqual(result["updatedCount"], 0)
+            self.assertEqual(
+                list(Path(tmp).glob("enterprise_knowledge.db.backup-*")), []
+            )
+
+    def test_failed_preview_apply_rolls_back_updates_import_record_and_new_backup(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "enterprise_knowledge.db"
+            store = EnterpriseKnowledgeStore(db_path)
+            first = store.create_item(term_payload("标准名称", ["第一别名"]))
+            store.create_item(term_payload("另一个名称", ["第二别名"]))
+
+            with self.assertRaises(KnowledgeError) as raised:
+                store.apply_preview(
+                    [
+                        {
+                            "action": "update",
+                            "existingItemId": first["id"],
+                            "item": term_payload(
+                                "标准名称", ["第一别名"], note="不应保留"
+                            ),
+                        },
+                        {
+                            "action": "create",
+                            "item": term_payload("冲突名称", ["第二别名"]),
+                        },
+                    ],
+                    {"fileName": "bad.csv", "format": "csv", "rowCount": 2},
+                )
+
+            self.assertEqual(raised.exception.code, "term_text_conflict")
+            self.assertEqual(store.get_item(first["id"])["note"], "测试备注")
+            self.assertEqual(store.summary()["termCount"], 2)
+            self.assertEqual(
+                list(Path(tmp).glob("enterprise_knowledge.db.backup-*")), []
+            )
+            with sqlite3.connect(str(db_path)) as connection:
+                import_count = connection.execute(
+                    "SELECT COUNT(*) FROM knowledge_imports"
+                ).fetchone()[0]
+            self.assertEqual(import_count, 0)
+
+    def test_apply_preview_serializes_concurrent_backup_and_write_cycles(self):
+        with TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            barrier = threading.Barrier(4)
+            failures = []
+
+            def apply(index):
+                barrier.wait()
+                try:
+                    store.apply_preview(
+                        [term_payload("并发名称%d" % index)],
+                        {
+                            "fileName": "concurrent-%d.csv" % index,
+                            "format": "csv",
+                            "rowCount": 1,
+                        },
+                    )
+                except Exception as exc:
+                    failures.append(exc)
+
+            threads = [threading.Thread(target=apply, args=(index,)) for index in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+
+            self.assertEqual(failures, [])
+            self.assertEqual(store.summary()["termCount"], 4)
+            self.assertEqual(
+                len(list(Path(tmp).glob("enterprise_knowledge.db.backup-*"))), 3
+            )
+
+    def test_database_snapshot_bytes_is_consistent_private_and_removes_temp_file(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make_store(tmp)
+            store.create_item(term_payload("标准名称"))
+
+            snapshot = store.database_snapshot_bytes()
+
+            snapshot_path = root / "downloaded.db"
+            snapshot_path.write_bytes(snapshot)
+            snapshot_path.chmod(0o600)
+            with sqlite3.connect(str(snapshot_path)) as connection:
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM knowledge_terms"
+                ).fetchone()[0]
+                integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
+            self.assertEqual(count, 1)
+            self.assertEqual(integrity, "ok")
+            self.assertEqual(list(root.glob(".enterprise-knowledge-snapshot-*")), [])
+
+    def test_database_snapshot_removes_temp_file_when_sqlite_backup_fails(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self.make_store(tmp)
+            with patch.object(
+                store,
+                "_backup_database_to",
+                side_effect=sqlite3.OperationalError("backup failed"),
+            ):
+                with self.assertRaises(sqlite3.OperationalError):
+                    store.database_snapshot_bytes()
+
+            self.assertEqual(list(root.glob(".enterprise-knowledge-snapshot-*")), [])
+
+    def test_post_commit_backup_rotation_error_keeps_successful_import_semantics(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "enterprise_knowledge.db"
+            store = EnterpriseKnowledgeStore(db_path)
+
+            with patch.object(
+                store,
+                "_rotate_backups",
+                side_effect=OSError("temporary rotation failure"),
+            ):
+                with self.assertLogs(
+                    "app.services.enterprise_knowledge.store", level="WARNING"
+                ) as captured:
+                    result = store.apply_preview(
+                        [term_payload("轮换失败仍写入")],
+                        {
+                            "fileName": "rotation.csv",
+                            "format": "csv",
+                            "rowCount": 1,
+                        },
+                    )
+
+            self.assertEqual(result["createdCount"], 1)
+            self.assertEqual(store.summary()["termCount"], 1)
+            self.assertIn("备份轮换失败", " ".join(captured.output))
+            with sqlite3.connect(str(db_path)) as connection:
+                import_count = connection.execute(
+                    "SELECT COUNT(*) FROM knowledge_imports"
+                ).fetchone()[0]
+            self.assertEqual(import_count, 1)
+            self.assertEqual(
+                len(list(Path(tmp).glob("enterprise_knowledge.db.backup-*"))), 1
+            )
 
 
 if __name__ == "__main__":

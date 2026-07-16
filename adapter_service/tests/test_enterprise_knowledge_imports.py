@@ -1,9 +1,11 @@
 import csv
 import io
+import threading
 import unittest
 import warnings
 import zipfile
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.services.enterprise_knowledge import imports as knowledge_imports
@@ -11,6 +13,10 @@ from app.services.enterprise_knowledge.imports import (
     CSV_MIME,
     IMPORT_COLUMNS,
     XLSX_MIME,
+    ImportPreviewStore,
+    apply_import_preview,
+    build_import_preview,
+    export_csv,
     generate_csv_template,
     generate_xlsx_template,
     parse_csv,
@@ -25,6 +31,18 @@ from app.services.enterprise_knowledge.models import (
     MAX_XLSX_EXPANDED_BYTES,
     KnowledgeError,
 )
+from app.services.enterprise_knowledge.store import EnterpriseKnowledgeStore
+
+
+class FakeClock:
+    def __init__(self, value=1000.0):
+        self.value = value
+
+    def __call__(self):
+        return self.value
+
+    def advance(self, seconds):
+        self.value += seconds
 
 
 def csv_bytes(rows, headers=IMPORT_COLUMNS, encoding="utf-8-sig"):
@@ -33,6 +51,27 @@ def csv_bytes(rows, headers=IMPORT_COLUMNS, encoding="utf-8-sig"):
     writer.writerow(headers)
     writer.writerows(rows)
     return output.getvalue().encode(encoding)
+
+
+EXPECTED_CSV_EXPORT_MARKER = "#AI-WPS-ENTERPRISE-KNOWLEDGE-EXPORT:1"
+
+
+def marked_csv_bytes(rows, marker=EXPECTED_CSV_EXPORT_MARKER):
+    output = io.StringIO(newline="")
+    writer = csv.writer(output, lineterminator="\n")
+    writer.writerow([marker])
+    writer.writerow(IMPORT_COLUMNS)
+    writer.writerows(rows)
+    return output.getvalue().encode("utf-8-sig")
+
+
+def exported_dict_rows(content):
+    reader = csv.reader(io.StringIO(content.decode("utf-8-sig")))
+    marker = next(reader)
+    if marker != [EXPECTED_CSV_EXPORT_MARKER]:
+        raise AssertionError("missing versioned AI-WPS CSV export marker")
+    headers = next(reader)
+    return [dict(zip(headers, values)) for values in reader]
 
 
 def row_values(**overrides):
@@ -266,6 +305,11 @@ class EnterpriseKnowledgeImportTemplateTests(unittest.TestCase):
         self.assertEqual(tuple(csv_rows[0].keys()), IMPORT_COLUMNS)
         self.assertEqual(tuple(xlsx_rows[0].keys()), IMPORT_COLUMNS)
         self.assertEqual(csv_rows, xlsx_rows)
+        first_record = next(
+            csv.reader(io.StringIO(first_csv.decode("utf-8-sig")))
+        )
+        self.assertEqual(tuple(first_record), IMPORT_COLUMNS)
+        self.assertNotEqual(first_record, [EXPECTED_CSV_EXPORT_MARKER])
         self.assertIn("字面 | 写作 \\|", csv_rows[0]["备注"])
         self.assertIn("反斜杠写作 \\\\", csv_rows[0]["备注"])
 
@@ -734,8 +778,30 @@ class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
                 knowledge_imports.csv_safe_cell(value),
                 "'" + value,
             )
-        for value in ("普通文本", "1+1", "'=already-safe", ""):
+        for value in ("'=already-safe", "'普通文本", "''双引号"):
+            self.assertEqual(
+                knowledge_imports.csv_safe_cell(value),
+                "'" + value,
+            )
+        for value in ("普通文本", "1+1", ""):
             self.assertEqual(knowledge_imports.csv_safe_cell(value), value)
+        for value in (
+            "=1+1",
+            "+cmd",
+            "-2+3",
+            "@SUM(A1:A2)",
+            "'=原始单引号公式文本",
+            "'普通文本",
+            "''双单引号",
+            "普通文本",
+            "",
+        ):
+            self.assertEqual(
+                knowledge_imports.csv_restore_cell(
+                    knowledge_imports.csv_safe_cell(value)
+                ),
+                value,
+            )
 
     def test_maps_chinese_style_scope_priority_and_booleans(self):
         row = row_values(
@@ -850,6 +916,501 @@ class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
         result = validate_import_rows(parse_csv(content, "blank-line.csv"))
         self.assertEqual(result["errors"][0]["row"], 3)
         self.assertIn("第 3 行", result["errors"][0]["message"])
+
+    def test_valid_items_retain_source_rows_for_preview_without_changing_payloads(self):
+        content = csv_bytes(
+            [
+                [],
+                row_values(),
+                row_values(**{"标准写法/规则": "第二个标准名称", "别名/禁用写法": ""}),
+            ]
+        )
+        result = validate_import_rows(parse_csv(content, "rows.csv"))
+
+        self.assertEqual([entry["rowNumber"] for entry in result["itemRows"]], [3, 4])
+        self.assertEqual(
+            [entry["item"] for entry in result["itemRows"]], result["items"]
+        )
+
+    def test_versioned_export_marker_restores_values_and_tracks_physical_rows(self):
+        protected = row_values(
+            **{
+                "标准写法/规则": "'=本系统公式文本",
+                "备注": "''本系统单引号文本",
+            }
+        )
+        rows = parse_csv(marked_csv_bytes([protected]), "marked.csv")
+        self.assertEqual(getattr(rows[0], "_sourceRow"), 3)
+        self.assertEqual(rows[0]["标准写法/规则"], "=本系统公式文本")
+        self.assertEqual(rows[0]["备注"], "'本系统单引号文本")
+
+        result = validate_import_rows(rows)
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(result["itemRows"][0]["rowNumber"], 3)
+        self.assertEqual(result["items"][0]["preferredText"], "=本系统公式文本")
+        self.assertEqual(result["items"][0]["note"], "'本系统单引号文本")
+
+    def test_plain_csv_preserves_formula_quote_and_double_quote_prefixes(self):
+        rows = parse_csv(
+            csv_bytes(
+                [
+                    row_values(
+                        **{
+                            "标准写法/规则": "'=外部安全文本",
+                            "备注": "''外部双单引号文本",
+                        }
+                    ),
+                    row_values(
+                        **{
+                            "标准写法/规则": "''外部双单引号标准写法",
+                            "别名/禁用写法": "",
+                            "备注": "'=外部安全备注",
+                        }
+                    ),
+                ]
+            ),
+            "external.csv",
+        )
+        self.assertEqual([getattr(row, "_sourceRow") for row in rows], [2, 3])
+
+        result = validate_import_rows(rows)
+        self.assertEqual(result["errors"], [])
+        self.assertEqual(
+            [item["preferredText"] for item in result["items"]],
+            ["'=外部安全文本", "''外部双单引号标准写法"],
+        )
+        self.assertEqual(
+            [item["note"] for item in result["items"]],
+            ["''外部双单引号文本", "'=外部安全备注"],
+        )
+
+    def test_xlsx_preserves_formula_quote_and_double_quote_prefixes(self):
+        for value in ("'=外部安全文本", "''外部双单引号文本"):
+            with self.subTest(value=value):
+                base = generate_xlsx_template()
+                with zipfile.ZipFile(io.BytesIO(base)) as archive:
+                    sheet = archive.read("xl/worksheets/sheet1.xml")
+                payload = rebuild_zip(
+                    base,
+                    replacements={
+                        "xl/worksheets/sheet1.xml": sheet.replace(
+                            "卫星互联网运营管理平台".encode("utf-8"),
+                            value.encode("utf-8"),
+                            1,
+                        )
+                    },
+                )
+                rows = parse_xlsx(payload, "external.xlsx")
+                self.assertEqual(getattr(rows[0], "_sourceRow"), 2)
+                result = validate_import_rows(rows)
+                self.assertEqual(result["errors"], [])
+                self.assertEqual(result["items"][0]["preferredText"], value)
+
+    def test_approximate_or_extra_column_export_markers_do_not_trigger_restore(self):
+        near_markers = (
+            EXPECTED_CSV_EXPORT_MARKER + " ",
+            EXPECTED_CSV_EXPORT_MARKER.lower(),
+            "#AI-WPS-ENTERPRISE-KNOWLEDGE-EXPORT:2",
+        )
+        for marker in near_markers:
+            with self.subTest(marker=marker):
+                with self.assertRaises(KnowledgeError) as raised:
+                    parse_csv(marked_csv_bytes([row_values()], marker=marker), "near.csv")
+                self.assertEqual(raised.exception.code, "invalid_import_headers")
+
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerow([EXPECTED_CSV_EXPORT_MARKER, "extra"])
+        writer.writerow(IMPORT_COLUMNS)
+        writer.writerow(row_values())
+        with self.assertRaises(KnowledgeError) as raised:
+            parse_csv(output.getvalue().encode("utf-8-sig"), "extra.csv")
+        self.assertEqual(raised.exception.code, "invalid_import_headers")
+
+
+def import_term(preferred_text, aliases=None, forbidden=None, **overrides):
+    payload = {
+        "type": "term",
+        "scope": "global",
+        "category": "系统",
+        "preferredText": preferred_text,
+        "aliases": list(aliases or []),
+        "forbiddenVariants": list(forbidden or []),
+        "definition": "统一名称说明",
+        "contextKeywords": ["平台", "运营"],
+        "priority": "high",
+        "enabled": True,
+        "note": "导入测试",
+    }
+    payload.update(overrides)
+    return payload
+
+
+def import_style(scope, name, **overrides):
+    payload = {
+        "type": "style",
+        "scope": scope,
+        "name": name,
+        "ruleText": "先给出结论，再说明依据。",
+        "positiveExample": "总体方案已完成。",
+        "negativeExample": "经过大量工作终于完成。",
+        "contextKeywords": ["汇报", "进展"],
+        "alwaysApply": False,
+        "priority": "medium",
+        "enabled": True,
+        "note": "导入测试",
+    }
+    payload.update(overrides)
+    return payload
+
+
+class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
+    def test_preview_token_is_secret_single_use_and_expires_on_monotonic_clock(self):
+        clock = FakeClock()
+        items = [import_term("标准名称")]
+        with patch(
+            "app.services.enterprise_knowledge.imports.secrets.token_urlsafe",
+            return_value="preview-secret",
+        ) as token_urlsafe:
+            previews = ImportPreviewStore(clock=clock)
+            preview = previews.create(
+                "terms.csv",
+                items,
+                conflicts=[],
+                stats={"newCount": 1},
+                file_meta={"format": "csv", "rowCount": 1},
+            )
+
+        token_urlsafe.assert_called_once_with(24)
+        self.assertEqual(preview["previewToken"], "preview-secret")
+        self.assertEqual(previews.get("preview-secret")["items"], items)
+        self.assertEqual(previews.consume("preview-secret")["items"], items)
+        with self.assertRaises(KnowledgeError) as consumed:
+            previews.consume("preview-secret")
+        self.assertEqual(consumed.exception.code, "import_preview_not_found")
+
+        second = previews.create("terms.csv", items, conflicts=[])
+        clock.advance(600)
+        with self.assertRaises(KnowledgeError) as expired:
+            previews.get(second["previewToken"])
+        self.assertEqual(expired.exception.code, "import_preview_expired")
+
+    def test_preview_store_is_defensive_bounded_and_never_caches_upload_content(self):
+        clock = FakeClock()
+        previews = ImportPreviewStore(clock=clock, max_entries=20)
+        source_item = import_term("名称0")
+        first = previews.create(
+            "terms.csv",
+            [source_item],
+            conflicts=[],
+            file_meta={
+                "format": "csv",
+                "rowCount": 1,
+                "contentBase64": "must-not-be-cached",
+                "rawBytes": b"must-not-be-cached",
+            },
+        )
+        source_item["preferredText"] = "外部修改"
+        cached = previews.get(first["previewToken"])
+        self.assertEqual(cached["items"][0]["preferredText"], "名称0")
+        self.assertNotIn("contentBase64", repr(previews._entries))
+        self.assertNotIn("must-not-be-cached", repr(previews._entries))
+
+        tokens = [first["previewToken"]]
+        for index in range(1, 21):
+            clock.advance(1)
+            tokens.append(
+                previews.create(
+                    "terms-%d.csv" % index,
+                    [import_term("名称%d" % index)],
+                    conflicts=[],
+                )["previewToken"]
+            )
+        self.assertEqual(previews.live_count(), 20)
+        with self.assertRaises(KnowledgeError) as evicted:
+            previews.get(tokens[0])
+        self.assertEqual(evicted.exception.code, "import_preview_not_found")
+
+    def test_concurrent_preview_consume_has_exactly_one_winner(self):
+        previews = ImportPreviewStore()
+        token = previews.create(
+            "terms.csv", [import_term("标准名称")], conflicts=[]
+        )["previewToken"]
+        barrier = threading.Barrier(8)
+        successes = []
+        failures = []
+
+        def consume():
+            barrier.wait()
+            try:
+                successes.append(previews.consume(token))
+            except KnowledgeError as exc:
+                failures.append(exc.code)
+
+        threads = [threading.Thread(target=consume) for _ in range(8)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(failures, ["import_preview_not_found"] * 7)
+
+    def test_preview_classifies_create_update_and_database_conflicts_with_rows(self):
+        with TemporaryDirectory() as tmp:
+            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            existing_term = store.create_item(
+                import_term("标准名称", ["已有别名"], ["已有禁用写法"])
+            )
+            existing_style = store.create_item(
+                import_style("word.smart_write", "结论先行")
+            )
+            validated = {
+                "items": [
+                    import_term("新增名称"),
+                    import_term("标准名称", ["已有别名", "新别名"]),
+                    import_term("冲突名称", ["已有禁用写法"]),
+                    import_style(
+                        "word.smart_write",
+                        "结论先行",
+                        ruleText="更新后的规则。",
+                    ),
+                ],
+                "itemRows": [
+                    {"rowNumber": 2, "item": import_term("新增名称")},
+                    {
+                        "rowNumber": 3,
+                        "item": import_term("标准名称", ["已有别名", "新别名"]),
+                    },
+                    {
+                        "rowNumber": 4,
+                        "item": import_term("冲突名称", ["已有禁用写法"]),
+                    },
+                    {
+                        "rowNumber": 5,
+                        "item": import_style(
+                            "word.smart_write",
+                            "结论先行",
+                            ruleText="更新后的规则。",
+                        ),
+                    },
+                ],
+                "errors": [
+                    {"row": 6, "code": "invalid_import_row", "message": "第 6 行：字段无效。"}
+                ],
+                "rowCount": 5,
+            }
+            previews = ImportPreviewStore()
+
+            result = build_import_preview(
+                store,
+                validated,
+                {"fileName": "knowledge.csv", "format": "csv", "rowCount": 5},
+                preview_store=previews,
+            )
+
+            self.assertEqual(
+                {
+                    key: result[key]
+                    for key in ("newCount", "updateCount", "conflictCount", "errorCount")
+                },
+                {"newCount": 1, "updateCount": 2, "conflictCount": 1, "errorCount": 1},
+            )
+            conflict = result["conflicts"][0]
+            self.assertEqual(conflict["rowNumber"], 4)
+            self.assertEqual(conflict["incomingName"], "冲突名称")
+            self.assertEqual(conflict["existingItemId"], existing_term["id"])
+            self.assertEqual(conflict["allowedDecisions"], ["keep_existing", "skip"])
+            self.assertIn("第 4 行", conflict["message"])
+            cached = previews.get(result["previewToken"])
+            self.assertEqual(
+                [operation["action"] for operation in cached["items"]],
+                ["create", "update", "update"],
+            )
+            self.assertEqual(cached["items"][1]["existingItemId"], existing_term["id"])
+            self.assertEqual(cached["items"][2]["existingItemId"], existing_style["id"])
+
+    def test_apply_consumes_preview_and_atomically_creates_updates_and_records_import(self):
+        with TemporaryDirectory() as tmp:
+            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            existing = store.create_item(import_term("标准名称", ["旧别名"]))
+            validated = {
+                "items": [
+                    import_term("标准名称", ["新别名"], note="已更新"),
+                    import_style("global", "结论先行"),
+                    import_term("冲突名称", ["旧别名"]),
+                ],
+                "itemRows": [
+                    {"rowNumber": 2, "item": import_term("标准名称", ["新别名"], note="已更新")},
+                    {"rowNumber": 3, "item": import_style("global", "结论先行")},
+                    {"rowNumber": 4, "item": import_term("冲突名称", ["旧别名"])},
+                ],
+                "errors": [],
+                "rowCount": 3,
+            }
+            previews = ImportPreviewStore()
+            preview = build_import_preview(
+                store,
+                validated,
+                {"fileName": "knowledge.csv", "format": "csv", "rowCount": 3},
+                preview_store=previews,
+            )
+
+            result = apply_import_preview(
+                store,
+                preview["previewToken"],
+                [{"rowNumber": 4, "decision": "keep_existing"}],
+                preview_store=previews,
+            )
+
+            self.assertEqual(result["createdCount"], 1)
+            self.assertEqual(result["updatedCount"], 1)
+            self.assertEqual(result["conflictCount"], 1)
+            self.assertEqual(store.get_item(existing["id"])["aliases"], ["新别名"])
+            self.assertEqual(store.summary()["totalCount"], 2)
+            with self.assertRaises(KnowledgeError) as reused:
+                apply_import_preview(
+                    store,
+                    preview["previewToken"],
+                    [],
+                    preview_store=previews,
+                )
+            self.assertEqual(reused.exception.code, "import_preview_not_found")
+
+    def test_apply_rejects_term_overwrite_decision_after_consuming_token(self):
+        with TemporaryDirectory() as tmp:
+            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store.create_item(import_term("标准名称", ["已有别名"]))
+            validated = {
+                "items": [import_term("冲突名称", ["已有别名"])],
+                "itemRows": [
+                    {"rowNumber": 2, "item": import_term("冲突名称", ["已有别名"])}
+                ],
+                "errors": [],
+                "rowCount": 1,
+            }
+            previews = ImportPreviewStore()
+            preview = build_import_preview(
+                store,
+                validated,
+                {"fileName": "terms.csv", "format": "csv", "rowCount": 1},
+                preview_store=previews,
+            )
+
+            with self.assertRaises(KnowledgeError) as invalid:
+                apply_import_preview(
+                    store,
+                    preview["previewToken"],
+                    [{"rowNumber": 2, "decision": "overwrite"}],
+                    preview_store=previews,
+                )
+            self.assertEqual(invalid.exception.code, "invalid_import_decision")
+            with self.assertRaises(KnowledgeError) as consumed:
+                previews.get(preview["previewToken"])
+            self.assertEqual(consumed.exception.code, "import_preview_not_found")
+
+    def test_export_csv_filters_scope_escapes_lists_and_blocks_formulas(self):
+        with TemporaryDirectory() as tmp:
+            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store.create_item(
+                import_term(
+                    "标准|名称\\一期",
+                    ["别名|甲", "路径\\乙"],
+                    ["禁用|名称"],
+                    category="=危险分类",
+                    contextKeywords=["关键|词", "路径\\词"],
+                )
+            )
+            store.create_item(import_style("global", "全局规则"))
+            store.create_item(import_style("word.smart_write", "编写规则"))
+
+            exported = export_csv(store, "global")
+            self.assertTrue(exported.startswith(b"\xef\xbb\xbf"))
+            rows = exported_dict_rows(exported)
+            self.assertEqual(len(rows), 2)
+            term_row = next(row for row in rows if row["类型"] == "术语")
+            self.assertEqual(term_row["名称"], "'=危险分类")
+            self.assertEqual(term_row["标准写法/规则"], r"标准|名称\一期")
+
+            validation = validate_import_rows(parse_csv(exported, "export.csv"))
+            exported_term = next(item for item in validation["items"] if item["type"] == "term")
+            self.assertEqual(exported_term["aliases"], ["别名|甲", r"路径\乙"])
+            self.assertEqual(exported_term["forbiddenVariants"], ["禁用|名称"])
+            self.assertEqual(exported_term["contextKeywords"], ["关键|词", r"路径\词"])
+
+            task_rows = exported_dict_rows(export_csv(store, "word.smart_write"))
+            self.assertEqual([row["名称"] for row in task_rows], ["编写规则"])
+
+    def test_export_csv_formula_escaping_round_trips_every_business_field(self):
+        with TemporaryDirectory() as tmp:
+            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            term = import_term(
+                "=标准写法",
+                ["+别名首项", "'原始单引号别名"],
+                ["-禁用首项", "'原始单引号禁用写法"],
+                category="'原始单引号分类",
+                contextKeywords=["@关键词首项", "'原始单引号关键词"],
+                note="'原始单引号术语备注",
+            )
+            style = import_style(
+                "global",
+                "+规则名称",
+                ruleText="-规则正文",
+                positiveExample="@推荐示例",
+                negativeExample="=不推荐示例",
+                contextKeywords=["+风格关键词首项", "'原始单引号风格关键词"],
+                note="=风格备注",
+            )
+            store.create_item(term)
+            store.create_item(style)
+
+            exported = export_csv(store, "global")
+            exported_rows = exported_dict_rows(exported)
+            term_csv = next(row for row in exported_rows if row["类型"] == "术语")
+            style_csv = next(row for row in exported_rows if row["类型"] == "风格")
+            self.assertEqual(term_csv["名称"], "''原始单引号分类")
+            self.assertEqual(term_csv["标准写法/规则"], "'=标准写法")
+            self.assertEqual(term_csv["关键词"].startswith("'@"), True)
+            self.assertEqual(term_csv["备注"], "''原始单引号术语备注")
+            self.assertEqual(style_csv["名称"], "'+规则名称")
+            self.assertEqual(style_csv["标准写法/规则"], "'-规则正文")
+            self.assertEqual(style_csv["推荐示例"], "'@推荐示例")
+            self.assertEqual(style_csv["不推荐示例"], "'=不推荐示例")
+            self.assertEqual(style_csv["关键词"].startswith("'+"), True)
+            self.assertEqual(style_csv["备注"], "'=风格备注")
+
+            validated = validate_import_rows(parse_csv(exported, "export.csv"))
+            self.assertEqual(validated["errors"], [])
+            round_trip_term = next(
+                item for item in validated["items"] if item["type"] == "term"
+            )
+            round_trip_style = next(
+                item for item in validated["items"] if item["type"] == "style"
+            )
+            for key in (
+                "category",
+                "preferredText",
+                "aliases",
+                "forbiddenVariants",
+                "contextKeywords",
+                "priority",
+                "enabled",
+                "note",
+            ):
+                self.assertEqual(round_trip_term[key], term[key], key)
+            for key in (
+                "scope",
+                "name",
+                "ruleText",
+                "positiveExample",
+                "negativeExample",
+                "contextKeywords",
+                "alwaysApply",
+                "priority",
+                "enabled",
+                "note",
+            ):
+                self.assertEqual(round_trip_style[key], style[key], key)
 
 
 if __name__ == "__main__":

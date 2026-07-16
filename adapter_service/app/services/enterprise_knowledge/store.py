@@ -1,5 +1,10 @@
 import json
+import logging
+import os
+import re
 import sqlite3
+import tempfile
+import threading
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -8,10 +13,14 @@ from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .models import (
     KNOWLEDGE_SCOPES,
+    MAX_DATABASE_BACKUPS,
     PRIORITIES,
     KnowledgeError,
     normalize_key,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 def _utc_now() -> str:
@@ -43,6 +52,7 @@ def _read_json_list(value: str) -> List[str]:
 class EnterpriseKnowledgeStore:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
+        self._write_lock = threading.RLock()
         self.db_path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         self.db_path.parent.chmod(0o700)
         if self.db_path.exists():
@@ -198,64 +208,31 @@ class EnterpriseKnowledgeStore:
             return self._get_item(connection, item_id)
 
     def create_item(self, payload: Dict[str, object]) -> Dict[str, object]:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            return self._create_item(connection, payload)
+        with self._write_lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return self._create_item(connection, payload)
 
     def update_item(
         self, item_id: str, payload: Dict[str, object]
     ) -> Dict[str, object]:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            existing = self._get_item(connection, item_id)
-            requested_type = payload.get("type")
-            if requested_type is not None and requested_type != existing["type"]:
-                raise KnowledgeError(
-                    "invalid_knowledge_type", "知识条目类型不能在修改时变更。"
-                )
-            merged = dict(existing)
-            merged.update(payload)
-            merged["type"] = existing["type"]
-            if existing["type"] == "term":
-                clean = self._validate_term(merged)
-                self._ensure_term_tokens_available(connection, clean, item_id)
-                connection.execute(
-                    """
-                    UPDATE knowledge_terms SET
-                        scope = ?, category = ?, preferred_text = ?,
-                        preferred_normalized = ?, aliases = ?,
-                        forbidden_variants = ?, definition = ?,
-                        context_keywords = ?, priority = ?, enabled = ?, note = ?,
-                        updated_at = ?
-                    WHERE id = ?
-                    """,
-                    self._term_values(clean, _utc_now()) + (item_id,),
-                )
-            else:
-                clean = self._validate_style(merged)
-                self._ensure_style_name_available(connection, clean, item_id)
-                connection.execute(
-                    """
-                    UPDATE style_rules SET
-                        scope = ?, name = ?, name_normalized = ?, rule_text = ?,
-                        positive_example = ?, negative_example = ?,
-                        context_keywords = ?, always_apply = ?, priority = ?,
-                        enabled = ?, note = ?, updated_at = ?
-                    WHERE id = ?
-                    """,
-                    self._style_values(clean, _utc_now()) + (item_id,),
-                )
-            return self._get_item(connection, item_id)
+        with self._write_lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return self._update_item(connection, item_id, payload)
 
     def delete_item(self, item_id: str) -> Dict[str, object]:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            existing = self._get_item(connection, item_id)
-            table = (
-                "knowledge_terms" if existing["type"] == "term" else "style_rules"
-            )
-            connection.execute("DELETE FROM %s WHERE id = ?" % table, (item_id,))
-            return existing
+        with self._write_lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = self._get_item(connection, item_id)
+                table = (
+                    "knowledge_terms"
+                    if existing["type"] == "term"
+                    else "style_rules"
+                )
+                connection.execute("DELETE FROM %s WHERE id = ?" % table, (item_id,))
+                return existing
 
     def enabled_items(
         self, task_scope: str
@@ -284,47 +261,215 @@ class EnterpriseKnowledgeStore:
         items: Sequence[Dict[str, object]],
         import_meta: Dict[str, object],
     ) -> Dict[str, object]:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            created = []
-            has_terms = any(
-                isinstance(item, dict) and item.get("type") == "term"
-                for item in items
-            )
-            term_token_owners = (
-                self._load_term_token_owners(connection) if has_terms else None
-            )
-            for item in items:
-                item_owners = (
-                    term_token_owners
-                    if isinstance(item, dict) and item.get("type") == "term"
-                    else None
-                )
-                created.append(
-                    self._create_item(
-                        connection,
-                        item,
-                        term_token_owners=item_owners,
+        return self.apply_preview(items, import_meta)
+
+    def apply_preview(
+        self,
+        operations: Sequence[Dict[str, object]],
+        import_meta: Dict[str, object],
+        stats: Optional[Dict[str, int]] = None,
+    ) -> Dict[str, object]:
+        normalized_operations = self._normalize_import_operations(operations)
+        backup_path = None
+        with self._write_lock:
+            if normalized_operations:
+                backup_path = self._create_preimport_backup()
+            try:
+                with self._connect() as connection:
+                    connection.execute("BEGIN IMMEDIATE")
+                    has_terms = any(
+                        operation["item"].get("type") == "term"
+                        for operation in normalized_operations
                     )
-                )
-            import_record = self._record_import(
-                connection,
-                import_meta,
-                {
-                    "createdCount": len(created),
-                    "updatedCount": 0,
-                    "conflictCount": 0,
-                    "errorCount": 0,
-                },
-            )
-            return {"items": created, "import": import_record}
+                    term_token_owners = (
+                        self._load_term_token_owners(connection)
+                        if has_terms
+                        else None
+                    )
+                    changed_items = []
+                    created_count = 0
+                    updated_count = 0
+                    for operation in normalized_operations:
+                        item = operation["item"]
+                        item_owners = (
+                            term_token_owners
+                            if item.get("type") == "term"
+                            else None
+                        )
+                        if operation["action"] == "create":
+                            changed_items.append(
+                                self._create_item(
+                                    connection,
+                                    item,
+                                    term_token_owners=item_owners,
+                                )
+                            )
+                            created_count += 1
+                        else:
+                            changed_items.append(
+                                self._update_item(
+                                    connection,
+                                    operation["existingItemId"],
+                                    item,
+                                    term_token_owners=item_owners,
+                                )
+                            )
+                            updated_count += 1
+                    counts = {
+                        "createdCount": created_count,
+                        "updatedCount": updated_count,
+                        "conflictCount": int((stats or {}).get("conflictCount", 0)),
+                        "errorCount": int((stats or {}).get("errorCount", 0)),
+                    }
+                    import_record = self._record_import(
+                        connection, import_meta, counts
+                    )
+            except Exception:
+                if backup_path is not None:
+                    try:
+                        backup_path.unlink()
+                    except FileNotFoundError:
+                        pass
+                raise
+
+            if backup_path is not None:
+                try:
+                    self._rotate_backups()
+                except OSError as exc:
+                    logger.warning(
+                        "企业知识库导入后备份轮换失败，将在后续导入重试：%s",
+                        exc,
+                    )
+            return dict(counts, items=changed_items, **{"import": import_record})
 
     def record_import(
         self, import_meta: Dict[str, object], stats: Dict[str, int]
     ) -> Dict[str, object]:
-        with self._connect() as connection:
-            connection.execute("BEGIN IMMEDIATE")
-            return self._record_import(connection, import_meta, stats)
+        with self._write_lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                return self._record_import(connection, import_meta, stats)
+
+    def export_csv(self, scope: str) -> bytes:
+        from .imports import export_csv
+
+        return export_csv(self, scope)
+
+    def database_snapshot_bytes(self) -> bytes:
+        with self._write_lock:
+            descriptor, raw_path = tempfile.mkstemp(
+                prefix=".enterprise-knowledge-snapshot-",
+                suffix=".db",
+                dir=str(self.db_path.parent),
+            )
+            os.close(descriptor)
+            snapshot_path = Path(raw_path)
+            snapshot_path.chmod(0o600)
+            try:
+                self._backup_database_to(snapshot_path)
+                snapshot_path.chmod(0o600)
+                return snapshot_path.read_bytes()
+            finally:
+                try:
+                    snapshot_path.unlink()
+                except FileNotFoundError:
+                    pass
+
+    def _create_preimport_backup(self) -> Path:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_path = None
+        descriptor = None
+        for collision_index in range(1000):
+            suffix = "" if collision_index == 0 else "-%d" % collision_index
+            candidate = self.db_path.with_name(
+                self.db_path.name + ".backup-" + timestamp + suffix
+            )
+            try:
+                descriptor = os.open(
+                    str(candidate),
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o600,
+                )
+                backup_path = candidate
+                break
+            except FileExistsError:
+                continue
+        if backup_path is None or descriptor is None:
+            raise KnowledgeError(
+                "knowledge_backup_unavailable", "无法创建导入前知识库备份。"
+            )
+        os.close(descriptor)
+        try:
+            self._backup_database_to(backup_path)
+            backup_path.chmod(0o600)
+            return backup_path
+        except Exception:
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+
+    def _backup_database_to(self, target_path: Path) -> None:
+        with self._connect() as source:
+            with sqlite3.connect(str(target_path), timeout=30.0) as target:
+                source.backup(target)
+        Path(target_path).chmod(0o600)
+
+    def _rotate_backups(self) -> None:
+        backup_paths = list(
+            self.db_path.parent.glob(self.db_path.name + ".backup-*")
+        )
+        backup_paths.sort(key=self._backup_sort_key, reverse=True)
+        for stale_path in backup_paths[MAX_DATABASE_BACKUPS:]:
+            stale_path.unlink()
+
+    @staticmethod
+    def _backup_sort_key(path: Path) -> Tuple[int, float, int, str]:
+        match = re.search(r"\.backup-(\d{8}T\d{12}Z)(?:-(\d+))?$", path.name)
+        if match:
+            try:
+                parsed = datetime.strptime(match.group(1), "%Y%m%dT%H%M%S%fZ")
+                collision_index = int(match.group(2) or 0)
+                return (
+                    1,
+                    parsed.replace(tzinfo=timezone.utc).timestamp(),
+                    collision_index,
+                    path.name,
+                )
+            except ValueError:
+                pass
+        return (0, path.stat().st_mtime, 0, path.name)
+
+    @staticmethod
+    def _normalize_import_operations(
+        operations: Sequence[Dict[str, object]],
+    ) -> List[Dict[str, object]]:
+        normalized = []
+        for entry in operations:
+            if not isinstance(entry, dict):
+                raise KnowledgeError(
+                    "invalid_import_operation", "导入写入项必须为对象。"
+                )
+            if "action" not in entry:
+                normalized.append({"action": "create", "item": dict(entry)})
+                continue
+            action = entry.get("action")
+            item = entry.get("item")
+            if action not in ("create", "update") or not isinstance(item, dict):
+                raise KnowledgeError(
+                    "invalid_import_operation", "导入写入操作无效。"
+                )
+            operation = {"action": action, "item": dict(item)}
+            if action == "update":
+                existing_item_id = str(entry.get("existingItemId") or "")
+                if not existing_item_id:
+                    raise KnowledgeError(
+                        "invalid_import_operation", "导入更新项缺少目标条目。"
+                    )
+                operation["existingItemId"] = existing_item_id
+            normalized.append(operation)
+        return normalized
 
     def _create_item(
         self,
@@ -373,6 +518,66 @@ class EnterpriseKnowledgeStore:
         else:
             raise KnowledgeError(
                 "invalid_knowledge_type", "知识条目类型必须为 term 或 style。"
+            )
+        return self._get_item(connection, item_id)
+
+    def _update_item(
+        self,
+        connection: sqlite3.Connection,
+        item_id: str,
+        payload: Dict[str, object],
+        term_token_owners: Optional[Dict[str, str]] = None,
+    ) -> Dict[str, object]:
+        existing = self._get_item(connection, item_id)
+        requested_type = payload.get("type")
+        if requested_type is not None and requested_type != existing["type"]:
+            raise KnowledgeError(
+                "invalid_knowledge_type", "知识条目类型不能在修改时变更。"
+            )
+        merged = dict(existing)
+        merged.update(payload)
+        merged["type"] = existing["type"]
+        if existing["type"] == "term":
+            clean = self._validate_term(merged)
+            if term_token_owners is None:
+                self._ensure_term_tokens_available(connection, clean, item_id)
+            else:
+                for token in self._normalized_term_tokens(existing):
+                    if term_token_owners.get(token) == item_id:
+                        del term_token_owners[token]
+                self._ensure_term_tokens_available(
+                    connection,
+                    clean,
+                    token_owners=term_token_owners,
+                )
+            connection.execute(
+                """
+                UPDATE knowledge_terms SET
+                    scope = ?, category = ?, preferred_text = ?,
+                    preferred_normalized = ?, aliases = ?,
+                    forbidden_variants = ?, definition = ?,
+                    context_keywords = ?, priority = ?, enabled = ?, note = ?,
+                    updated_at = ?
+                WHERE id = ?
+                """,
+                self._term_values(clean, _utc_now()) + (item_id,),
+            )
+            if term_token_owners is not None:
+                for token in self._normalized_term_tokens(clean):
+                    term_token_owners[token] = item_id
+        else:
+            clean = self._validate_style(merged)
+            self._ensure_style_name_available(connection, clean, item_id)
+            connection.execute(
+                """
+                UPDATE style_rules SET
+                    scope = ?, name = ?, name_normalized = ?, rule_text = ?,
+                    positive_example = ?, negative_example = ?,
+                    context_keywords = ?, always_apply = ?, priority = ?,
+                    enabled = ?, note = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                self._style_values(clean, _utc_now()) + (item_id,),
             )
         return self._get_item(connection, item_id)
 
