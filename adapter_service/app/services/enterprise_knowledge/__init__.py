@@ -17,6 +17,11 @@ from .models import (
     normalize_key,
     public_usage,
 )
+from .service import (
+    EnterpriseKnowledgeService,
+    default_database_path,
+    get_enterprise_knowledge_service,
+)
 
 __all__ = [
     "KNOWLEDGE_SCOPES",
@@ -36,4 +41,7 @@ __all__ = [
     "KnowledgeMatchResult",
     "normalize_key",
     "public_usage",
+    "EnterpriseKnowledgeService",
+    "default_database_path",
+    "get_enterprise_knowledge_service",
 ]

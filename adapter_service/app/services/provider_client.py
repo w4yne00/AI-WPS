@@ -4,6 +4,7 @@ import re
 import socket
 import threading
 import uuid
+from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
@@ -29,6 +30,20 @@ DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
 _PROVIDER_INPUT_MODE_CACHE: Dict[str, str] = {}
+_KNOWLEDGE_DEBUG_BOOLEAN_FIELDS = (
+    "knowledgeApplied",
+    "knowledgeDegraded",
+)
+_KNOWLEDGE_DEBUG_COUNT_FIELDS = (
+    "knowledgeTermCount",
+    "knowledgeStyleCount",
+    "knowledgeTruncatedCount",
+    "knowledgeElapsedMs",
+)
+_KNOWLEDGE_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_KNOWLEDGE_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_PROVIDER_DEBUG_STAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+_MAX_KNOWLEDGE_DEBUG_ITEM_IDS = 20
 
 
 STYLE_TEXT = {
@@ -607,6 +622,9 @@ def record_provider_debug(event: Dict) -> None:
     validation_info = event.get("validation", {})
     if isinstance(validation_info, dict) and validation_info:
         debug["validation"] = validation_info
+    stage = event.get("stage")
+    if isinstance(stage, str) and _PROVIDER_DEBUG_STAGE_RE.fullmatch(stage):
+        debug["stage"] = stage
     for field in (
         "provider",
         "providerName",
@@ -629,9 +647,47 @@ def record_provider_debug(event: Dict) -> None:
         _LAST_PROVIDER_DEBUG.update(debug)
 
 
+def merge_provider_debug(trace_id: str, patch: Dict) -> None:
+    if not isinstance(patch, dict):
+        return
+
+    sanitized = {}
+    for field in _KNOWLEDGE_DEBUG_BOOLEAN_FIELDS:
+        value = patch.get(field)
+        if isinstance(value, bool):
+            sanitized[field] = value
+    for field in _KNOWLEDGE_DEBUG_COUNT_FIELDS:
+        value = patch.get(field)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            sanitized[field] = value
+
+    if "knowledgeErrorCode" in patch:
+        error_code = patch.get("knowledgeErrorCode")
+        if error_code == "" or (
+            isinstance(error_code, str)
+            and _KNOWLEDGE_ERROR_CODE_RE.fullmatch(error_code)
+        ):
+            sanitized["knowledgeErrorCode"] = error_code
+
+    item_ids = patch.get("knowledgeItemIds")
+    if isinstance(item_ids, (list, tuple)):
+        safe_ids = []
+        for item_id in item_ids:
+            if len(safe_ids) >= _MAX_KNOWLEDGE_DEBUG_ITEM_IDS:
+                break
+            if isinstance(item_id, str) and _KNOWLEDGE_ITEM_ID_RE.fullmatch(item_id):
+                safe_ids.append(item_id)
+        sanitized["knowledgeItemIds"] = safe_ids
+
+    with _LAST_PROVIDER_DEBUG_LOCK:
+        if _LAST_PROVIDER_DEBUG.get("traceId") != trace_id:
+            return
+        _LAST_PROVIDER_DEBUG.update(sanitized)
+
+
 def get_last_provider_debug() -> Dict:
     with _LAST_PROVIDER_DEBUG_LOCK:
-        return dict(_LAST_PROVIDER_DEBUG)
+        return deepcopy(_LAST_PROVIDER_DEBUG)
 
 
 def _extract_json_payload(answer: str):

@@ -35,6 +35,7 @@ from app.services.provider_client import (
     get_last_provider_debug,
     get_default_document_review_prompt,
     get_route_api_key_path,
+    merge_provider_debug,
     save_local_api_key,
     save_route_api_key,
     clear_local_api_key,
@@ -543,6 +544,211 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertFalse(reader.is_alive())
         self.assertEqual(reader_results[0]["traceId"], "trace-new")
         self.assertEqual(reader_results[0]["taskType"], "word.smart_write")
+
+    def test_provider_debug_merge_requires_matching_trace_and_preserves_stage(self) -> None:
+        reset_provider_debug()
+        record_provider_debug(
+            {
+                "traceId": "trace-a",
+                "taskType": "word.smart_write",
+                "stage": "request",
+                "provider": "mock",
+            }
+        )
+
+        merge_provider_debug(
+            "trace-a",
+            {
+                "knowledgeApplied": True,
+                "knowledgeTermCount": 2,
+                "sourceText": "公司绝密原文",
+                "stage": "knowledge",
+                "provider": "overwritten",
+            },
+        )
+
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["traceId"], "trace-a")
+        self.assertEqual(debug["stage"], "request")
+        self.assertEqual(debug["provider"], "mock")
+        self.assertTrue(debug["knowledgeApplied"])
+        self.assertEqual(debug["knowledgeTermCount"], 2)
+        self.assertNotIn("sourceText", debug)
+
+    def test_provider_debug_merge_with_mismatched_trace_is_noop(self) -> None:
+        reset_provider_debug()
+        record_provider_debug(
+            {
+                "traceId": "trace-current",
+                "taskType": "word.smart_write",
+                "stage": "response",
+            }
+        )
+        before = get_last_provider_debug()
+
+        merge_provider_debug(
+            "trace-stale",
+            {"knowledgeApplied": True, "knowledgeItemIds": ["term-1"]},
+        )
+
+        self.assertEqual(get_last_provider_debug(), before)
+
+    def test_provider_debug_record_cannot_interleave_after_merge_trace_check(self) -> None:
+        trace_checked = threading.Event()
+        allow_merge = threading.Event()
+        record_done = threading.Event()
+
+        class BlockingTraceDebugDict(dict):
+            def get(self, key, default=None):
+                value = super().get(key, default)
+                if key == "traceId":
+                    trace_checked.set()
+                    allow_merge.wait(timeout=2)
+                return value
+
+        shared_debug = BlockingTraceDebugDict(
+            {
+                "traceId": "trace-old",
+                "taskType": "word.smart_write",
+                "stage": "response",
+            }
+        )
+
+        def merge_old_trace():
+            merge_provider_debug(
+                "trace-old",
+                {"knowledgeApplied": True, "knowledgeTermCount": 1},
+            )
+
+        def record_new_trace():
+            record_provider_debug(
+                {
+                    "traceId": "trace-new",
+                    "taskType": "word.smart_write",
+                    "stage": "request",
+                }
+            )
+            record_done.set()
+
+        with patch.object(provider_client, "_LAST_PROVIDER_DEBUG", shared_debug):
+            merger = threading.Thread(target=merge_old_trace)
+            recorder = threading.Thread(target=record_new_trace)
+            merger.start()
+            self.assertTrue(trace_checked.wait(timeout=1))
+            recorder.start()
+            record_finished_before_merge = record_done.wait(timeout=0.2)
+            allow_merge.set()
+            merger.join(timeout=1)
+            recorder.join(timeout=1)
+            final_debug = get_last_provider_debug()
+
+        self.assertFalse(record_finished_before_merge)
+        self.assertFalse(merger.is_alive())
+        self.assertFalse(recorder.is_alive())
+        self.assertEqual(final_debug["traceId"], "trace-new")
+        self.assertEqual(final_debug["stage"], "request")
+        self.assertNotIn("knowledgeApplied", final_debug)
+        self.assertNotIn("knowledgeTermCount", final_debug)
+
+    def test_provider_debug_record_only_accepts_short_safe_stage(self) -> None:
+        reset_provider_debug()
+        record_provider_debug(
+            {
+                "traceId": "trace-sensitive-stage",
+                "stage": "/secret/database/path",
+            }
+        )
+
+        self.assertNotIn("stage", get_last_provider_debug())
+
+        record_provider_debug(
+            {
+                "traceId": "trace-safe-stage",
+                "stage": "provider-response",
+            }
+        )
+
+        self.assertEqual(get_last_provider_debug()["stage"], "provider-response")
+
+    def test_provider_debug_merge_whitelists_types_and_rejects_sensitive_fields(self) -> None:
+        reset_provider_debug()
+        record_provider_debug(
+            {
+                "traceId": "trace-safe",
+                "taskType": "word.smart_write",
+                "stage": "error",
+                "error": {"type": "HTTPError", "message": "existing"},
+            }
+        )
+        existing_error = get_last_provider_debug()["error"]
+
+        merge_provider_debug(
+            "trace-safe",
+            {
+                "knowledgeApplied": "yes",
+                "knowledgeDegraded": False,
+                "knowledgeErrorCode": "../../secret/path",
+                "knowledgeTermCount": 3,
+                "knowledgeStyleCount": object(),
+                "knowledgeTruncatedCount": -1,
+                "knowledgeElapsedMs": 12,
+                "sourceText": "secret source",
+                "fileContent": "secret file",
+                "ruleText": "full rule",
+                "path": "/secret/database.db",
+                "apiKey": "secret-key",
+                "traceId": "trace-overwrite",
+                "stage": "knowledge",
+                "error": {"message": "overwritten"},
+            },
+        )
+
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["traceId"], "trace-safe")
+        self.assertEqual(debug["stage"], "error")
+        self.assertEqual(debug["error"], existing_error)
+        self.assertFalse(debug["knowledgeDegraded"])
+        self.assertEqual(debug["knowledgeTermCount"], 3)
+        self.assertEqual(debug["knowledgeElapsedMs"], 12)
+        for field in (
+            "knowledgeApplied",
+            "knowledgeErrorCode",
+            "knowledgeStyleCount",
+            "knowledgeTruncatedCount",
+            "sourceText",
+            "fileContent",
+            "ruleText",
+            "path",
+            "apiKey",
+        ):
+            self.assertNotIn(field, debug)
+        json.dumps(debug, ensure_ascii=False)
+
+    def test_provider_debug_merge_caps_sanitizes_and_detaches_item_ids(self) -> None:
+        reset_provider_debug()
+        record_provider_debug({"traceId": "trace-ids", "stage": "response"})
+        item_ids = [
+            "valid-00",
+            "/secret/path",
+            "含敏感文本",
+            {"id": "not-serializable-as-id"},
+        ] + ["valid-%02d" % index for index in range(1, 25)]
+
+        merge_provider_debug("trace-ids", {"knowledgeItemIds": item_ids})
+        item_ids[0] = "mutated-input"
+        item_ids.append("late-input")
+
+        first = get_last_provider_debug()
+        self.assertEqual(len(first["knowledgeItemIds"]), 20)
+        self.assertEqual(first["knowledgeItemIds"][0], "valid-00")
+        self.assertNotIn("/secret/path", first["knowledgeItemIds"])
+        self.assertNotIn("含敏感文本", first["knowledgeItemIds"])
+        first["knowledgeItemIds"].append("mutated-output")
+
+        second = get_last_provider_debug()
+        self.assertEqual(len(second["knowledgeItemIds"]), 20)
+        self.assertNotIn("mutated-output", second["knowledgeItemIds"])
+        json.dumps(second, ensure_ascii=False)
 
     def test_read_http_error_body_limits_source_read_to_4096_bytes(self) -> None:
         class RecordingBody:
