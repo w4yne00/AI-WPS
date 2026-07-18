@@ -2,14 +2,19 @@ import base64
 import csv
 import asyncio
 import gc
+import http.client
 import importlib.util
 import io
 import json
 import os
 from pathlib import Path
+import select
 import sqlite3
+import socket
 import subprocess
 import sys
+import threading
+import time
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 import unittest
@@ -878,6 +883,783 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("exists=False", result.stdout)
         self.assertFalse(field_db.exists())
+
+
+class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
+    def setUp(self):
+        import standalone_adapter
+
+        self.standalone = standalone_adapter
+        self.temp_dir = TemporaryDirectory()
+        self.db_path = Path(self.temp_dir.name) / "standalone-knowledge.db"
+        self.service = EnterpriseKnowledgeService(EnterpriseKnowledgeStore(self.db_path))
+        self.preview_store = ImportPreviewStore()
+        self.service_patch = patch.object(
+            self.standalone,
+            "get_enterprise_knowledge_service",
+            return_value=self.service,
+            create=True,
+        )
+        self.preview_patch = patch.object(
+            self.standalone,
+            "DEFAULT_IMPORT_PREVIEW_STORE",
+            self.preview_store,
+            create=True,
+        )
+        self.service_patch.start()
+        self.preview_patch.start()
+
+    def tearDown(self):
+        self.preview_patch.stop()
+        self.service_patch.stop()
+        self.temp_dir.cleanup()
+
+    def dispatch(self, method, path, payload=None, query="", body_size=None):
+        return self.standalone.dispatch_enterprise_knowledge(
+            method,
+            path,
+            query=query,
+            payload=payload,
+            body_size=body_size,
+        )
+
+    def raw_http_request(
+        self,
+        host,
+        port,
+        request_bytes,
+        shutdown_write=True,
+        timeout=3,
+    ):
+        connection = socket.create_connection((host, port), timeout=timeout)
+        connection.settimeout(timeout)
+        try:
+            connection.sendall(request_bytes)
+            if shutdown_write:
+                connection.shutdown(socket.SHUT_WR)
+            return self.read_raw_http_response(connection)
+        finally:
+            connection.close()
+
+    @staticmethod
+    def read_raw_http_response(connection):
+        chunks = []
+        while True:
+            chunk = connection.recv(65536)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        raw_response = b"".join(chunks)
+        header_bytes, body = raw_response.split(b"\r\n\r\n", 1)
+        header_lines = header_bytes.decode("latin-1").split("\r\n")
+        status = int(header_lines[0].split(" ", 2)[1])
+        headers = {}
+        for line in header_lines[1:]:
+            name, value = line.split(":", 1)
+            headers[name.lower()] = value.strip()
+        return status, headers, json.loads(body.decode("utf-8"))
+
+    def test_standalone_crud_summary_list_and_error_status_parity(self):
+        created = self.dispatch("POST", "/enterprise-knowledge/items", term_payload())
+        item_id = created["body"]["data"]["item"]["id"]
+        listed = self.dispatch(
+            "GET",
+            "/enterprise-knowledge/items",
+            query="scope=global&type=term&query=%E7%BD%91%E7%AE%A1",
+        )
+        updated = self.dispatch(
+            "PATCH",
+            "/enterprise-knowledge/items/%s" % item_id,
+            {"note": "独立适配器更新"},
+        )
+        summary = self.dispatch("GET", "/enterprise-knowledge/summary")
+        duplicate = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/items",
+            term_payload("另一标准", ["卫星网管平台"]),
+        )
+        deleted = self.dispatch("DELETE", "/enterprise-knowledge/items/%s" % item_id)
+        missing = self.dispatch("DELETE", "/enterprise-knowledge/items/%s" % item_id)
+
+        self.assertEqual(created["status"], 200)
+        self.assertEqual(created["body"]["taskType"], "enterprise.knowledge")
+        self.assertTrue(created["body"]["traceId"])
+        self.assertEqual(
+            created["headers"]["X-Trace-Id"], created["body"]["traceId"]
+        )
+        self.assertEqual(listed["body"]["data"]["count"], 1)
+        self.assertEqual(updated["body"]["data"]["item"]["note"], "独立适配器更新")
+        self.assertEqual(summary["body"]["data"]["totalCount"], 1)
+        self.assertEqual(duplicate["status"], 409)
+        self.assertEqual(duplicate["body"]["errors"][0]["code"], "TERM_TEXT_CONFLICT")
+        self.assertTrue(deleted["body"]["data"]["deleted"])
+        self.assertEqual(missing["status"], 404)
+
+    def test_standalone_preview_apply_is_single_use_and_validates_upload(self):
+        content = generate_csv_template()
+        preview_payload = {
+            "fileName": "terms.csv",
+            "mimeType": CSV_MIME,
+            "sizeBytes": len(content),
+            "contentBase64": base64.b64encode(content).decode("ascii"),
+        }
+        preview = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/imports/preview",
+            preview_payload,
+            body_size=len(json.dumps(preview_payload).encode("utf-8")),
+        )
+        token = preview["body"]["data"]["previewToken"]
+        applied = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/imports/apply",
+            {"previewToken": token, "acceptedConflictRows": []},
+        )
+        reused = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/imports/apply",
+            {"previewToken": token, "acceptedConflictRows": []},
+        )
+        invalid_base64 = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/imports/preview",
+            dict(preview_payload, contentBase64="not base64"),
+        )
+        size_mismatch = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/imports/preview",
+            dict(preview_payload, sizeBytes=len(content) + 1),
+        )
+        oversized_body = self.dispatch(
+            "POST",
+            "/enterprise-knowledge/imports/preview",
+            preview_payload,
+            body_size=7 * 1024 * 1024 + 1,
+        )
+
+        self.assertEqual(preview["status"], 200)
+        self.assertEqual(applied["status"], 200)
+        self.assertEqual(reused["status"], 404)
+        self.assertEqual(invalid_base64["status"], 400)
+        self.assertEqual(size_mismatch["status"], 400)
+        self.assertEqual(oversized_body["status"], 413)
+        self.assertEqual(
+            oversized_body["body"]["errors"][0]["code"],
+            "IMPORT_REQUEST_TOO_LARGE",
+        )
+
+    def test_standalone_templates_export_backup_and_diagnostics_are_binary_safe(self):
+        self.dispatch("POST", "/enterprise-knowledge/items", term_payload())
+        csv_template = self.dispatch(
+            "GET", "/enterprise-knowledge/import-template.csv"
+        )
+        xlsx_template = self.dispatch(
+            "GET", "/enterprise-knowledge/import-template.xlsx"
+        )
+        exported = self.dispatch(
+            "GET", "/enterprise-knowledge/export.csv", query="scope=global"
+        )
+        backup = self.dispatch("GET", "/enterprise-knowledge/backup")
+        diagnostics = self.dispatch("GET", "/enterprise-knowledge/diagnostics")
+
+        for response in (csv_template, xlsx_template, exported, backup):
+            self.assertEqual(response["status"], 200)
+            self.assertTrue(response["headers"]["X-Trace-Id"])
+            self.assertEqual(response["headers"]["Content-Length"], str(len(response["content"])))
+            self.assertRegex(
+                response["headers"]["Content-Disposition"],
+                r'^attachment; filename="[\x20-\x7e]+"$',
+            )
+        self.assertTrue(xlsx_template["content"].startswith(b"PK"))
+        self.assertTrue(backup["content"].startswith(b"SQLite format 3\x00"))
+        self.assertEqual(diagnostics["status"], 200)
+        self.assertEqual(diagnostics["body"]["taskType"], "enterprise.knowledge")
+
+    def test_standalone_dispatch_ignores_unrelated_routes_and_hides_storage_paths(self):
+        self.assertIsNone(self.dispatch("GET", "/health"))
+        self.assertIsNone(self.dispatch("GET", "/enterprise-knowledge-legacy"))
+        failing_store = SimpleNamespace(
+            summary=lambda: (_ for _ in ()).throw(
+                KnowledgeError("knowledge_data_corrupt", "/secret/field.db")
+            )
+        )
+        with patch.object(
+            self.standalone,
+            "get_enterprise_knowledge_service",
+            return_value=SimpleNamespace(store=failing_store),
+        ):
+            response = self.dispatch("GET", "/enterprise-knowledge/summary")
+
+        self.assertEqual(response["status"], 503)
+        self.assertEqual(
+            response["headers"]["X-Trace-Id"], response["body"]["traceId"]
+        )
+        self.assertNotIn("/secret", json.dumps(response["body"], ensure_ascii=False))
+
+    def test_standalone_known_wrong_method_is_405_and_unknown_path_is_404(self):
+        wrong_method = self.dispatch(
+            "GET", "/enterprise-knowledge/imports/apply"
+        )
+        unknown = self.dispatch("GET", "/enterprise-knowledge/unknown")
+
+        self.assertEqual(wrong_method["status"], 405)
+        self.assertEqual(wrong_method["headers"]["Allow"], "POST")
+        self.assertEqual(
+            wrong_method["headers"]["X-Trace-Id"],
+            wrong_method["body"]["traceId"],
+        )
+        self.assertEqual(unknown["status"], 404)
+        self.assertEqual(unknown["body"]["errors"][0]["code"], "NOT_FOUND")
+        self.assertEqual(
+            unknown["headers"]["X-Trace-Id"], unknown["body"]["traceId"]
+        )
+
+    def test_standalone_chunked_preview_stops_reading_when_actual_body_crosses_limit(self):
+        first = b"a" * (4 * 1024 * 1024)
+        crossing = b"b" * (3 * 1024 * 1024 + 1)
+        unread = b"must-not-be-buffered"
+        encoded = (
+            ("%x\r\n" % len(first)).encode("ascii")
+            + first
+            + b"\r\n"
+            + ("%x\r\n" % len(crossing)).encode("ascii")
+            + crossing
+            + b"\r\n"
+            + ("%x\r\n" % len(unread)).encode("ascii")
+            + unread
+            + b"\r\n0\r\n\r\n"
+        )
+        stream = io.BytesIO(encoded)
+        handler = object.__new__(self.standalone.Handler)
+        handler.headers = {"Transfer-Encoding": "chunked"}
+        handler.rfile = stream
+
+        body, rejection = handler._read_enterprise_preview_body()
+
+        self.assertIsNone(body)
+        self.assertEqual(rejection["status"], 413)
+        self.assertEqual(
+            rejection["body"]["errors"][0]["code"],
+            "IMPORT_REQUEST_TOO_LARGE",
+        )
+        self.assertLess(stream.tell(), len(encoded) - len(unread))
+
+    def test_standalone_http_handler_wires_json_binary_and_preview_limit(self):
+        try:
+            server = self.standalone.ThreadingHTTPServer(
+                ("127.0.0.1", 0), self.standalone.Handler
+            )
+        except PermissionError:
+            self.skipTest("local sockets are unavailable in this sandbox")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        try:
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request("GET", "/enterprise-knowledge/import-template.csv")
+            template = connection.getresponse()
+            template_body = template.read()
+            self.assertEqual(template.status, 200)
+            self.assertTrue(template.getheader("X-Trace-Id"))
+            self.assertEqual(template.getheader("Content-Length"), str(len(template_body)))
+            self.assertEqual(
+                template.getheader("Content-Disposition"),
+                'attachment; filename="enterprise-knowledge-import-template.csv"',
+            )
+            connection.close()
+
+            item_body = json.dumps(term_payload(), ensure_ascii=False).encode("utf-8")
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "POST",
+                "/enterprise-knowledge/items",
+                body=item_body,
+                headers={"Content-Type": "application/json"},
+            )
+            created = connection.getresponse()
+            created_payload = json.loads(created.read().decode("utf-8"))
+            self.assertEqual(created.status, 200)
+            self.assertEqual(created_payload["taskType"], "enterprise.knowledge")
+            self.assertEqual(
+                created.getheader("X-Trace-Id"), created_payload["traceId"]
+            )
+            connection.close()
+
+            item_id = created_payload["data"]["item"]["id"]
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "PATCH",
+                "/enterprise-knowledge/items/%s" % item_id,
+                body=b"{",
+                headers={"Content-Type": "application/json"},
+            )
+            malformed_patch = connection.getresponse()
+            malformed_patch_payload = json.loads(
+                malformed_patch.read().decode("utf-8")
+            )
+            self.assertEqual(malformed_patch.status, 400)
+            self.assertEqual(
+                malformed_patch_payload["taskType"], "enterprise.knowledge"
+            )
+            self.assertEqual(
+                malformed_patch.getheader("X-Trace-Id"),
+                malformed_patch_payload["traceId"],
+            )
+            connection.close()
+
+            update_body = json.dumps(
+                {"note": "真实 HTTP 更新", "enabled": False},
+                ensure_ascii=False,
+            ).encode("utf-8")
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "PATCH",
+                "/enterprise-knowledge/items/%s" % item_id,
+                body=update_body,
+                headers={"Content-Type": "application/json"},
+            )
+            updated = connection.getresponse()
+            updated_payload = json.loads(updated.read().decode("utf-8"))
+            self.assertEqual(updated.status, 200)
+            self.assertEqual(
+                updated.getheader("X-Trace-Id"), updated_payload["traceId"]
+            )
+            self.assertEqual(updated_payload["data"]["item"]["note"], "真实 HTTP 更新")
+            self.assertFalse(updated_payload["data"]["item"]["enabled"])
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "GET",
+                "/enterprise-knowledge/items?scope=global&type=term",
+            )
+            listed = connection.getresponse()
+            listed_payload = json.loads(listed.read().decode("utf-8"))
+            self.assertEqual(listed.status, 200)
+            self.assertEqual(listed_payload["data"]["items"][0]["id"], item_id)
+            self.assertEqual(
+                listed_payload["data"]["items"][0]["note"], "真实 HTTP 更新"
+            )
+            self.assertFalse(listed_payload["data"]["items"][0]["enabled"])
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "POST",
+                "/enterprise-knowledge/items",
+                body=b"{",
+                headers={"Content-Type": "application/json"},
+            )
+            malformed = connection.getresponse()
+            malformed_payload = json.loads(malformed.read().decode("utf-8"))
+            self.assertEqual(malformed.status, 400)
+            self.assertEqual(
+                malformed_payload["taskType"], "enterprise.knowledge"
+            )
+            self.assertEqual(
+                malformed_payload["errors"][0]["code"],
+                "REQUEST_VALIDATION_FAILED",
+            )
+            self.assertEqual(
+                malformed.getheader("X-Trace-Id"),
+                malformed_payload["traceId"],
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "POST",
+                "/enterprise-knowledge/summary",
+                body=b"{",
+                headers={"Content-Type": "application/json"},
+            )
+            post_summary = connection.getresponse()
+            post_summary_payload = json.loads(
+                post_summary.read().decode("utf-8")
+            )
+            self.assertEqual(post_summary.status, 405)
+            self.assertEqual(post_summary.getheader("Allow"), "GET")
+            self.assertEqual(
+                post_summary_payload["taskType"], "enterprise.knowledge"
+            )
+            self.assertEqual(
+                post_summary.getheader("X-Trace-Id"),
+                post_summary_payload["traceId"],
+            )
+            self.assertEqual(
+                post_summary.getheader("Access-Control-Allow-Origin"), "*"
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "POST",
+                "/enterprise-knowledge/items/%s" % item_id,
+                body=b"{",
+                headers={"Content-Type": "application/json"},
+            )
+            post_item = connection.getresponse()
+            post_item_payload = json.loads(post_item.read().decode("utf-8"))
+            self.assertEqual(post_item.status, 405)
+            self.assertEqual(post_item.getheader("Allow"), "PATCH, DELETE")
+            self.assertEqual(post_item_payload["taskType"], "enterprise.knowledge")
+            self.assertEqual(
+                post_item.getheader("X-Trace-Id"), post_item_payload["traceId"]
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "PUT",
+                "/enterprise-knowledge/summary",
+                body=b"{",
+                headers={"Content-Type": "application/json"},
+            )
+            put_summary = connection.getresponse()
+            put_summary_payload = json.loads(
+                put_summary.read().decode("utf-8")
+            )
+            self.assertEqual(put_summary.status, 405)
+            self.assertEqual(put_summary.getheader("Allow"), "GET")
+            self.assertEqual(
+                put_summary_payload["taskType"], "enterprise.knowledge"
+            )
+            self.assertEqual(
+                put_summary.getheader("X-Trace-Id"),
+                put_summary_payload["traceId"],
+            )
+            self.assertEqual(
+                put_summary.getheader("Access-Control-Allow-Origin"), "*"
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request("PUT", "/health", body=b"{}")
+            non_knowledge_put = connection.getresponse()
+            non_knowledge_put.read()
+            self.assertEqual(non_knowledge_put.status, 501)
+            self.assertIsNone(non_knowledge_put.getheader("X-Trace-Id"))
+            self.assertIsNone(
+                non_knowledge_put.getheader("Access-Control-Allow-Origin")
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request("GET", "/enterprise-knowledge/imports/apply")
+            wrong_method = connection.getresponse()
+            wrong_method_payload = json.loads(
+                wrong_method.read().decode("utf-8")
+            )
+            self.assertEqual(wrong_method.status, 405)
+            self.assertEqual(wrong_method.getheader("Allow"), "POST")
+            self.assertEqual(
+                wrong_method.getheader("X-Trace-Id"),
+                wrong_method_payload["traceId"],
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request("GET", "/enterprise-knowledge/unknown")
+            unknown = connection.getresponse()
+            unknown_payload = json.loads(unknown.read().decode("utf-8"))
+            self.assertEqual(unknown.status, 404)
+            self.assertEqual(unknown_payload["errors"][0]["code"], "NOT_FOUND")
+            self.assertEqual(
+                unknown.getheader("X-Trace-Id"), unknown_payload["traceId"]
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request(
+                "POST",
+                "/enterprise-knowledge/imports/preview",
+                body=b"{}",
+                headers={
+                    "Content-Type": "application/json",
+                    "Content-Length": str(7 * 1024 * 1024 + 1),
+                },
+            )
+            oversized = connection.getresponse()
+            oversized_payload = json.loads(oversized.read().decode("utf-8"))
+            self.assertEqual(oversized.status, 413)
+            self.assertEqual(
+                oversized_payload["errors"][0]["code"],
+                "IMPORT_REQUEST_TOO_LARGE",
+            )
+            connection.close()
+
+            connection = http.client.HTTPConnection(host, port, timeout=5)
+            connection.request("GET", "/health")
+            health = connection.getresponse()
+            health_payload = json.loads(health.read().decode("utf-8"))
+            self.assertEqual(health.status, 200)
+            self.assertEqual(health_payload["taskType"], "adapter.health")
+            self.assertIsNone(health.getheader("X-Trace-Id"))
+            connection.close()
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
+
+    def test_standalone_raw_http_rejects_ambiguous_and_unbounded_bodies(self):
+        try:
+            server = self.standalone.ThreadingHTTPServer(
+                ("127.0.0.1", 0), self.standalone.Handler
+            )
+        except PermissionError:
+            self.skipTest("local sockets are unavailable in this sandbox")
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        host, port = server.server_address
+        preview_path = "/enterprise-knowledge/imports/preview"
+        items_path = "/enterprise-knowledge/items"
+
+        def request(method, path, headers=b"", body=b"", **kwargs):
+            raw = (
+                ("%s %s HTTP/1.1\r\n" % (method, path)).encode("ascii")
+                + b"Host: 127.0.0.1\r\n"
+                + headers
+                + b"\r\n"
+                + body
+            )
+            return self.raw_http_request(host, port, raw, **kwargs)
+
+        try:
+            framing_cases = (
+                (
+                    b"Content-Length: 2\r\nTransfer-Encoding: chunked\r\n",
+                    b"2\r\n{}\r\n0\r\n\r\n",
+                ),
+                (
+                    b"Transfer-Encoding: notchunked\r\n",
+                    b"0\r\n\r\n",
+                ),
+                (
+                    b"Transfer-Encoding: gzip, chunked\r\n",
+                    b"0\r\n\r\n",
+                ),
+                (
+                    b"Transfer-Encoding: chunked\r\nTransfer-Encoding: chunked\r\n",
+                    b"0\r\n\r\n",
+                ),
+                (
+                    b"Content-Length: 2\r\nContent-Length: 2\r\n",
+                    b"{}",
+                ),
+            )
+            for headers, body in framing_cases:
+                with self.subTest(headers=headers):
+                    status, response_headers, payload = request(
+                        "POST", preview_path, headers, body
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        payload["errors"][0]["code"],
+                        "INVALID_REQUEST_FRAMING",
+                    )
+                    self.assertEqual(
+                        response_headers["x-trace-id"], payload["traceId"]
+                    )
+
+            non_preview_cases = (
+                (b"Transfer-Encoding: chunked\r\n", b"0\r\n\r\n"),
+                (b"Content-Length: -1\r\n", b""),
+                (b"Content-Length: " + b"9" * 5000 + b"\r\n", b""),
+                (
+                    b"Content-Length: 2\r\nContent-Length: 2\r\n",
+                    b"{}",
+                ),
+            )
+            for headers, body in non_preview_cases:
+                with self.subTest(non_preview_headers=headers):
+                    status, _, payload = request(
+                        "POST", items_path, headers, body
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        payload["errors"][0]["code"],
+                        "INVALID_REQUEST_FRAMING",
+                    )
+
+            status, _, payload = request(
+                "POST",
+                items_path,
+                b"Content-Length: 1048577\r\n",
+            )
+            self.assertEqual(status, 413)
+            self.assertEqual(
+                payload["errors"][0]["code"],
+                "ENTERPRISE_JSON_REQUEST_TOO_LARGE",
+            )
+
+            many_chunks = b"1\r\na\r\n" * 1025 + b"0\r\n\r\n"
+            status, _, payload = request(
+                "POST",
+                preview_path,
+                b"Transfer-Encoding: chunked\r\n",
+                many_chunks,
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(
+                payload["errors"][0]["code"], "INVALID_CHUNKED_BODY"
+            )
+
+            invalid_chunk_syntax = (
+                b"2;\x00\r\n{}\r\n0\r\n\r\n",
+                b"2;\r\n{}\r\n0\r\n\r\n",
+                b"2;name=\r\n{}\r\n0\r\n\r\n",
+                b"2;name=\"unterminated\r\n{}\r\n0\r\n\r\n",
+                b"2;name=\"bad\\\r\n{}\r\n0\r\n\r\n",
+                b"2;name=\"bad\x00value\"\r\n{}\r\n0\r\n\r\n",
+                b"2;name=\"ok\r\n\tcontinued\"\r\n{}\r\n0\r\n\r\n",
+                b"2;" + b"a" * 125 + b"\r\n{}\r\n0\r\n\r\n",
+                b"2\r\n{}\r\n0\r\n: value\r\n\r\n",
+                b"2\r\n{}\r\n0\r\nBad Name: value\r\n\r\n",
+                b"2\r\n{}\r\n0\r\nX-Test: bad\x00value\r\n\r\n",
+            )
+            for body in invalid_chunk_syntax:
+                with self.subTest(invalid_chunk_body=body):
+                    status, _, payload = request(
+                        "POST",
+                        preview_path,
+                        b"Transfer-Encoding: chunked\r\n",
+                        body,
+                    )
+                    self.assertEqual(status, 400)
+                    self.assertEqual(
+                        payload["errors"][0]["code"], "INVALID_CHUNKED_BODY"
+                    )
+
+            preview_content = generate_csv_template()
+            preview_request = json.dumps(
+                {
+                    "fileName": "terms.csv",
+                    "mimeType": CSV_MIME,
+                    "sizeBytes": len(preview_content),
+                    "contentBase64": base64.b64encode(preview_content).decode("ascii"),
+                },
+                ensure_ascii=False,
+            ).encode("utf-8")
+            ordinary_chunked = (
+                ("%x\r\n" % len(preview_request)).encode("ascii")
+                + preview_request
+                + b"\r\n0\r\n\r\n"
+            )
+            status, _, payload = request(
+                "POST",
+                preview_path,
+                b"Transfer-Encoding: chunked\r\n",
+                ordinary_chunked,
+            )
+            self.assertEqual(status, 200)
+            self.assertTrue(payload["data"]["previewToken"])
+
+            chunk_size = ("%x" % len(preview_request)).encode("ascii")
+            valid_extension_bodies = (
+                chunk_size
+                + b";mode=token;flag\r\n"
+                + preview_request
+                + b"\r\n0\r\n\r\n",
+                chunk_size
+                + b"\t;\tmeta\t=\t\"a\\\"b\\\\c\"\r\n"
+                + preview_request
+                + b"\r\n0\r\n\r\n",
+                chunk_size
+                + b"\r\n"
+                + preview_request
+                + b"\r\n0;done=yes\r\n\r\n",
+            )
+            for body in valid_extension_bodies:
+                with self.subTest(valid_chunk_extension=body[:80]):
+                    status, _, payload = request(
+                        "POST",
+                        preview_path,
+                        b"Transfer-Encoding: chunked\r\n",
+                        body,
+                    )
+                    self.assertEqual(status, 200)
+                    self.assertTrue(payload["data"]["previewToken"])
+
+            too_many_trailers = (
+                b"1\r\n{\r\n0\r\n"
+                + b"X-Test: value\r\n" * 65
+                + b"\r\n"
+            )
+            status, _, payload = request(
+                "POST",
+                preview_path,
+                b"Transfer-Encoding: chunked\r\n",
+                too_many_trailers,
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(
+                payload["errors"][0]["code"], "INVALID_CHUNKED_BODY"
+            )
+
+            status, _, payload = request(
+                "POST",
+                items_path,
+                b"Content-Length: 10\r\n",
+                b"{}",
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(
+                payload["errors"][0]["code"], "INCOMPLETE_REQUEST_BODY"
+            )
+
+            with patch.object(
+                self.standalone,
+                "ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS",
+                0.1,
+                create=True,
+            ):
+                status, _, payload = request(
+                    "POST",
+                    items_path,
+                    b"Content-Length: 10\r\n",
+                    b"{",
+                    shutdown_write=False,
+                )
+            self.assertEqual(status, 400)
+            self.assertEqual(
+                payload["errors"][0]["code"], "REQUEST_BODY_TIMEOUT"
+            )
+
+            with patch.object(
+                self.standalone,
+                "ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS",
+                0.12,
+                create=True,
+            ):
+                connection = socket.create_connection((host, port), timeout=3)
+                connection.settimeout(3)
+                try:
+                    connection.sendall(
+                        b"POST /enterprise-knowledge/items HTTP/1.1\r\n"
+                        b"Host: 127.0.0.1\r\n"
+                        b"Content-Length: 4\r\n\r\n"
+                        b"{"
+                    )
+                    for byte in b"  }":
+                        time.sleep(0.07)
+                        readable, _, _ = select.select([connection], [], [], 0)
+                        if readable:
+                            break
+                        try:
+                            connection.sendall(bytes((byte,)))
+                        except OSError:
+                            break
+                    status, _, payload = self.read_raw_http_response(connection)
+                finally:
+                    connection.close()
+            self.assertEqual(status, 400)
+            self.assertEqual(
+                payload["errors"][0]["code"], "REQUEST_BODY_TIMEOUT"
+            )
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=5)
 
 
 if __name__ == "__main__":

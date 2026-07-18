@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
+import base64
+import binascii
 import json
+import re
+import socket
+import sqlite3
 import sys
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
@@ -29,6 +35,18 @@ from app.services.provider_client import (
 )
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+from app.services.enterprise_knowledge.imports import (
+    DEFAULT_IMPORT_PREVIEW_STORE,
+    XLSX_MIME,
+    apply_import_preview,
+    build_import_preview,
+    generate_csv_template,
+    generate_xlsx_template,
+    parse_import_file,
+    validate_import_rows,
+)
+from app.services.enterprise_knowledge.models import KnowledgeError, MAX_IMPORT_BYTES
+from app.services.enterprise_knowledge.service import get_enterprise_knowledge_service
 from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
@@ -44,6 +62,66 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
 VERSION = "0.18.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
+ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
+# CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.
+ENTERPRISE_KNOWLEDGE_JSON_REQUEST_MAX_BYTES = 1 * 1024 * 1024
+ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS = 5.0
+ENTERPRISE_KNOWLEDGE_MAX_CHUNK_COUNT = 1024
+ENTERPRISE_KNOWLEDGE_MAX_CHUNK_LINE_BYTES = 128
+ENTERPRISE_KNOWLEDGE_MAX_TRAILER_COUNT = 64
+ENTERPRISE_KNOWLEDGE_MAX_TRAILER_BYTES = 16 * 1024
+ENTERPRISE_KNOWLEDGE_MAX_TRAILER_LINE_BYTES = 2048
+ENTERPRISE_KNOWLEDGE_TASK_TYPE = "enterprise.knowledge"
+_SAFE_KNOWLEDGE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_HTTP_TOKEN_BYTES_RE = re.compile(br"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_SAFE_TRAILER_VALUE_BYTES_RE = re.compile(br"^[\x09\x20-\x7e\x80-\xff]*$")
+_HTTP_TCHAR_BYTES = frozenset(
+    b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+)
+_KNOWLEDGE_NOT_FOUND_CODES = {
+    "knowledge_item_not_found",
+    "import_preview_not_found",
+    "import_preview_expired",
+}
+_KNOWLEDGE_CONFLICT_CODES = {"term_text_conflict", "style_name_conflict"}
+_KNOWLEDGE_TOO_LARGE_CODES = {"import_file_too_large"}
+_KNOWLEDGE_UNAVAILABLE_CODES = {
+    "knowledge_data_corrupt",
+    "knowledge_store_unavailable",
+    "knowledge_storage_unavailable",
+    "knowledge_io_error",
+    "knowledge_internal_error",
+    "knowledge_initializing",
+}
+_KNOWLEDGE_ITEM_FIELDS = {
+    "type",
+    "scope",
+    "category",
+    "preferredText",
+    "aliases",
+    "forbiddenVariants",
+    "definition",
+    "contextKeywords",
+    "priority",
+    "enabled",
+    "note",
+    "name",
+    "ruleText",
+    "positiveExample",
+    "negativeExample",
+    "alwaysApply",
+}
+_KNOWLEDGE_STATIC_ROUTE_METHODS = {
+    "/enterprise-knowledge/summary": ("GET",),
+    "/enterprise-knowledge/items": ("GET", "POST"),
+    "/enterprise-knowledge/import-template.csv": ("GET",),
+    "/enterprise-knowledge/import-template.xlsx": ("GET",),
+    "/enterprise-knowledge/imports/preview": ("POST",),
+    "/enterprise-knowledge/imports/apply": ("POST",),
+    "/enterprise-knowledge/export.csv": ("GET",),
+    "/enterprise-knowledge/backup": ("GET",),
+    "/enterprise-knowledge/diagnostics": ("GET",),
+}
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
@@ -179,6 +257,360 @@ def envelope(trace_id, task_type, data=None, success=True, message="completed", 
     }
 
 
+def _knowledge_json(data=None, message="completed", status=200):
+    trace_id = new_trace_id("enterprise-knowledge")
+    return {
+        "status": status,
+        "headers": {"X-Trace-Id": trace_id},
+        "body": envelope(
+            trace_id,
+            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            data or {},
+            message=message,
+        ),
+    }
+
+
+def _knowledge_bytes(content, content_type, file_name):
+    trace_id = new_trace_id("enterprise-knowledge")
+    return {
+        "status": 200,
+        "content": content,
+        "headers": {
+            "Content-Type": content_type,
+            "Content-Disposition": 'attachment; filename="%s"' % file_name,
+            "Content-Length": str(len(content)),
+            "X-Trace-Id": trace_id,
+        },
+    }
+
+
+def _knowledge_error(error):
+    if isinstance(error, AdapterError):
+        code = error.code
+        message = error.message
+        status = error.status_code
+    elif isinstance(error, KnowledgeError):
+        raw_code = str(error.code or "")
+        safe_code = raw_code if _SAFE_KNOWLEDGE_CODE_RE.fullmatch(raw_code) else "knowledge_error"
+        code = safe_code.upper()
+        if raw_code in _KNOWLEDGE_NOT_FOUND_CODES:
+            status, message = 404, "未找到指定知识条目或导入预览。"
+        elif raw_code in _KNOWLEDGE_CONFLICT_CODES:
+            status, message = 409, error.message
+        elif raw_code in _KNOWLEDGE_TOO_LARGE_CODES:
+            status, message = 413, "导入文件超过 5 MB 限制。"
+        elif raw_code in _KNOWLEDGE_UNAVAILABLE_CODES or any(
+            marker in raw_code
+            for marker in (
+                "corrupt",
+                "unavailable",
+                "storage",
+                "store",
+                "database",
+                "_io",
+                "internal",
+            )
+        ):
+            status, message = 503, "企业知识库暂时不可用，请稍后重试。"
+        elif raw_code.startswith(("invalid_", "unsupported_", "import_", "duplicate_")):
+            status, message = 400, error.message
+        else:
+            status, message = 400, "企业知识请求无法处理。"
+    elif isinstance(error, (OSError, sqlite3.DatabaseError)):
+        code = "KNOWLEDGE_STORAGE_UNAVAILABLE"
+        status, message = 503, "企业知识库暂时不可用，请稍后重试。"
+    else:
+        code = "KNOWLEDGE_SERVICE_UNAVAILABLE"
+        status, message = 503, "企业知识库暂时不可用，请稍后重试。"
+
+    trace_id = new_trace_id("enterprise-knowledge")
+    return {
+        "status": status,
+        "headers": {"X-Trace-Id": trace_id},
+        "body": envelope(
+            trace_id,
+            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            success=False,
+            message=message,
+            errors=[{"code": code, "message": message}],
+        ),
+    }
+
+
+def _knowledge_validation(
+    message="请求参数无效，请检查后重试。",
+    code="REQUEST_VALIDATION_FAILED",
+):
+    trace_id = new_trace_id("enterprise-knowledge")
+    return {
+        "status": 400,
+        "headers": {"X-Trace-Id": trace_id},
+        "body": envelope(
+            trace_id,
+            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            success=False,
+            message=message,
+            errors=[{"code": code, "message": message}],
+        ),
+    }
+
+
+def _knowledge_body_too_large():
+    message = "企业知识导入预览请求超过 7 MB 限制。"
+    trace_id = new_trace_id("enterprise-knowledge")
+    return {
+        "status": 413,
+        "headers": {"X-Trace-Id": trace_id},
+        "body": envelope(
+            trace_id,
+            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            success=False,
+            message=message,
+            errors=[{"code": "IMPORT_REQUEST_TOO_LARGE", "message": message}],
+        ),
+    }
+
+
+def _knowledge_request_error(status, code, message):
+    trace_id = new_trace_id("enterprise-knowledge")
+    return {
+        "status": status,
+        "headers": {"X-Trace-Id": trace_id},
+        "body": envelope(
+            trace_id,
+            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            success=False,
+            message=message,
+            errors=[{"code": code, "message": message}],
+        ),
+    }
+
+
+def _knowledge_store():
+    return get_enterprise_knowledge_service().store
+
+
+def _is_enterprise_knowledge_path(path):
+    return path == "/enterprise-knowledge" or path.startswith(
+        "/enterprise-knowledge/"
+    )
+
+
+def enterprise_knowledge_allowed_methods(path):
+    methods = _KNOWLEDGE_STATIC_ROUTE_METHODS.get(path)
+    if methods is not None:
+        return methods
+    item_prefix = "/enterprise-knowledge/items/"
+    if path.startswith(item_prefix):
+        raw_item_id = path[len(item_prefix):]
+        if raw_item_id and "/" not in raw_item_id and "/" not in unquote(raw_item_id):
+            return ("PATCH", "DELETE")
+    return None
+
+
+def _knowledge_route_error(status, code, message, allowed_methods=()):
+    trace_id = new_trace_id("enterprise-knowledge")
+    headers = {"X-Trace-Id": trace_id}
+    if allowed_methods:
+        headers["Allow"] = ", ".join(allowed_methods)
+    return {
+        "status": status,
+        "headers": headers,
+        "body": envelope(
+            trace_id,
+            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            success=False,
+            message=message,
+            errors=[{"code": code, "message": message}],
+        ),
+    }
+
+
+def _required_text(payload, field):
+    value = payload.get(field)
+    if not isinstance(value, str) or not value.strip():
+        raise KnowledgeError("invalid_request", "%s 不能为空。" % field)
+    return value
+
+
+def _decode_knowledge_import(payload):
+    allowed = {"fileName", "mimeType", "sizeBytes", "contentBase64"}
+    if not isinstance(payload, dict) or set(payload) != allowed:
+        raise KnowledgeError("invalid_import_request", "导入预览参数不完整。")
+    file_name = _required_text(payload, "fileName")
+    mime_type = _required_text(payload, "mimeType")
+    size_bytes = payload.get("sizeBytes")
+    content_base64 = payload.get("contentBase64")
+    if isinstance(size_bytes, bool) or not isinstance(size_bytes, int):
+        raise KnowledgeError("invalid_import_size", "导入文件大小无效。")
+    if not isinstance(content_base64, str):
+        raise KnowledgeError("invalid_import_base64", "导入文件 Base64 内容无效。")
+    try:
+        content = base64.b64decode(content_base64.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, ValueError, binascii.Error):
+        raise KnowledgeError("invalid_import_base64", "导入文件 Base64 内容无效。")
+    if size_bytes < 0 or size_bytes != len(content):
+        raise KnowledgeError(
+            "import_size_mismatch", "声明的文件大小与实际内容不一致。"
+        )
+    if len(content) > MAX_IMPORT_BYTES:
+        raise KnowledgeError("import_file_too_large", "导入文件超过 5 MB 限制。")
+    return file_name, mime_type, content
+
+
+def _parse_import_decisions(payload):
+    if not isinstance(payload, dict) or set(payload) - {"previewToken", "acceptedConflictRows"}:
+        raise KnowledgeError("invalid_import_request", "导入应用参数无效。")
+    token = _required_text(payload, "previewToken")
+    decisions = payload.get("acceptedConflictRows", [])
+    if not isinstance(decisions, list):
+        raise KnowledgeError("invalid_import_request", "冲突处理决定格式无效。")
+    normalized = []
+    for decision in decisions:
+        if not isinstance(decision, dict) or set(decision) != {"rowNumber", "decision"}:
+            raise KnowledgeError("invalid_import_request", "冲突处理决定格式无效。")
+        row_number = decision.get("rowNumber")
+        action = decision.get("decision")
+        if (
+            isinstance(row_number, bool)
+            or not isinstance(row_number, int)
+            or not isinstance(action, str)
+        ):
+            raise KnowledgeError("invalid_import_request", "冲突处理决定格式无效。")
+        normalized.append({"rowNumber": row_number, "decision": action})
+    return token, normalized
+
+
+def dispatch_enterprise_knowledge(method, path, query="", payload=None, body_size=None):
+    if not _is_enterprise_knowledge_path(path):
+        return None
+    method = str(method or "").upper()
+    allowed_methods = enterprise_knowledge_allowed_methods(path)
+    if allowed_methods is None:
+        return _knowledge_route_error(
+            404,
+            "NOT_FOUND",
+            "企业知识接口不存在。",
+        )
+    if method not in allowed_methods:
+        return _knowledge_route_error(
+            405,
+            "METHOD_NOT_ALLOWED",
+            "企业知识接口不支持当前请求方法。",
+            allowed_methods,
+        )
+    payload = payload if payload is not None else {}
+    if (
+        method == "POST"
+        and path == "/enterprise-knowledge/imports/preview"
+        and body_size is not None
+        and body_size > ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES
+    ):
+        return _knowledge_body_too_large()
+
+    try:
+        params = parse_qs(query or "", keep_blank_values=True)
+        if method == "GET" and path == "/enterprise-knowledge/summary":
+            return _knowledge_json(_knowledge_store().summary())
+        if method == "GET" and path == "/enterprise-knowledge/items":
+            scope = str(params.get("scope", [""])[0]).strip()
+            item_type = str(params.get("type", [""])[0]).strip()
+            search = str(params.get("query", [""])[0])
+            if not scope or not item_type:
+                return _knowledge_validation()
+            items = _knowledge_store().list_items(scope, item_type, search)
+            return _knowledge_json(
+                {
+                    "scope": scope,
+                    "type": item_type,
+                    "query": search,
+                    "count": len(items),
+                    "items": items,
+                }
+            )
+        if method == "POST" and path == "/enterprise-knowledge/items":
+            if not isinstance(payload, dict) or set(payload) - _KNOWLEDGE_ITEM_FIELDS:
+                return _knowledge_validation()
+            return _knowledge_json(
+                {"item": _knowledge_store().create_item(dict(payload))}, "created"
+            )
+
+        item_prefix = "/enterprise-knowledge/items/"
+        if path.startswith(item_prefix) and path != item_prefix:
+            item_id = unquote(path[len(item_prefix):]).strip("/")
+            if "/" in item_id or not item_id:
+                return _knowledge_validation()
+            if method == "PATCH":
+                if not isinstance(payload, dict) or set(payload) - _KNOWLEDGE_ITEM_FIELDS:
+                    return _knowledge_validation()
+                item = _knowledge_store().update_item(item_id, dict(payload))
+                return _knowledge_json({"item": item}, "updated")
+            if method == "DELETE":
+                item = _knowledge_store().delete_item(item_id)
+                return _knowledge_json({"deleted": True, "item": item}, "deleted")
+
+        if method == "GET" and path == "/enterprise-knowledge/import-template.csv":
+            return _knowledge_bytes(
+                generate_csv_template(),
+                "text/csv",
+                "enterprise-knowledge-import-template.csv",
+            )
+        if method == "GET" and path == "/enterprise-knowledge/import-template.xlsx":
+            return _knowledge_bytes(
+                generate_xlsx_template(),
+                XLSX_MIME,
+                "enterprise-knowledge-import-template.xlsx",
+            )
+        if method == "POST" and path == "/enterprise-knowledge/imports/preview":
+            file_name, mime_type, content = _decode_knowledge_import(payload)
+            rows = parse_import_file(file_name, mime_type, content)
+            validated = validate_import_rows(rows)
+            suffix = Path(file_name).suffix.lower().lstrip(".")
+            preview = build_import_preview(
+                _knowledge_store(),
+                validated,
+                {
+                    "fileName": file_name,
+                    "format": suffix,
+                    "rowCount": validated.get("rowCount", len(rows)),
+                    "mimeType": mime_type,
+                    "sizeBytes": len(content),
+                },
+                preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
+            )
+            return _knowledge_json(preview, "previewed")
+        if method == "POST" and path == "/enterprise-knowledge/imports/apply":
+            token, decisions = _parse_import_decisions(payload)
+            result = apply_import_preview(
+                _knowledge_store(),
+                token,
+                decisions,
+                preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
+            )
+            return _knowledge_json(result, "applied")
+        if method == "GET" and path == "/enterprise-knowledge/export.csv":
+            scope = str(params.get("scope", [""])[0]).strip()
+            if not scope:
+                return _knowledge_validation()
+            return _knowledge_bytes(
+                _knowledge_store().export_csv(scope),
+                "text/csv",
+                "enterprise-knowledge-export.csv",
+            )
+        if method == "GET" and path == "/enterprise-knowledge/backup":
+            return _knowledge_bytes(
+                _knowledge_store().database_snapshot_bytes(),
+                "application/vnd.sqlite3",
+                "enterprise-knowledge-backup.db",
+            )
+        if method == "GET" and path == "/enterprise-knowledge/diagnostics":
+            return _knowledge_json(get_enterprise_knowledge_service().diagnostics())
+        return _knowledge_route_error(404, "NOT_FOUND", "企业知识接口不存在。")
+    except Exception as error:
+        return _knowledge_error(error)
+
+
 class Handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
@@ -194,6 +626,327 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def _write_bytes(self, status_code, content, headers):
+        self.send_response(status_code)
+        self._set_cors_headers()
+        for name, value in headers.items():
+            self.send_header(name, value)
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _write_knowledge_response(self, response):
+        if "body" in response:
+            payload = json.dumps(
+                response["body"], ensure_ascii=False
+            ).encode("utf-8")
+            headers = {
+                "Content-Type": "application/json; charset=utf-8",
+                "Content-Length": str(len(payload)),
+            }
+            headers.update(response.get("headers", {}))
+            self._write_bytes(response["status"], payload, headers)
+            return
+        self._write_bytes(response["status"], response["content"], response["headers"])
+
+    def _reject_enterprise_knowledge_route_or_method(self, method, path):
+        if not _is_enterprise_knowledge_path(path):
+            return False
+        allowed_methods = enterprise_knowledge_allowed_methods(path)
+        if allowed_methods is not None and method in allowed_methods:
+            return False
+        self.close_connection = True
+        self._write_knowledge_response(
+            dispatch_enterprise_knowledge(method, path)
+        )
+        return True
+
+    def _header_values(self, name):
+        get_all = getattr(self.headers, "get_all", None)
+        if callable(get_all):
+            return [str(value) for value in (get_all(name) or [])]
+        value = self.headers.get(name)
+        return [] if value is None else [str(value)]
+
+    def _enterprise_body_framing(self, preview):
+        content_lengths = self._header_values("Content-Length")
+        transfer_encodings = self._header_values("Transfer-Encoding")
+        framing_error = _knowledge_request_error(
+            400,
+            "INVALID_REQUEST_FRAMING",
+            "请求体传输格式无效，请检查后重试。",
+        )
+        if len(content_lengths) > 1 or len(transfer_encodings) > 1:
+            return None, None, framing_error
+        if transfer_encodings:
+            if (
+                not preview
+                or content_lengths
+                or transfer_encodings[0].strip().lower() != "chunked"
+            ):
+                return None, None, framing_error
+            return "chunked", None, None
+
+        if not content_lengths:
+            return "content-length", 0, None
+        raw_length = content_lengths[0].strip()
+        if len(raw_length) > 20 or not re.fullmatch(r"[0-9]+", raw_length):
+            return None, None, framing_error
+        length = int(raw_length)
+        limit = (
+            ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES
+            if preview
+            else ENTERPRISE_KNOWLEDGE_JSON_REQUEST_MAX_BYTES
+        )
+        if length > limit:
+            if preview:
+                return None, None, _knowledge_body_too_large()
+            return None, None, _knowledge_request_error(
+                413,
+                "ENTERPRISE_JSON_REQUEST_TOO_LARGE",
+                "企业知识 JSON 请求超过 1 MB 限制。",
+            )
+        return "content-length", length, None
+
+    def _read_enterprise_body(self, preview):
+        mode, length, rejection = self._enterprise_body_framing(preview)
+        if rejection is not None:
+            return None, rejection
+
+        connection = getattr(self, "connection", None)
+        previous_timeout = None
+        timeout_changed = False
+        deadline = (
+            time.monotonic()
+            + ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS
+        )
+        try:
+            if connection is not None:
+                previous_timeout = connection.gettimeout()
+                timeout_changed = True
+            if mode == "chunked":
+                return self._read_enterprise_chunked_body(deadline)
+            if not length:
+                return b"{}", None
+            body = self._read_enterprise_exact(length, deadline)
+            if len(body) != length:
+                return None, _knowledge_request_error(
+                    400,
+                    "INCOMPLETE_REQUEST_BODY",
+                    "请求体不完整，请重新提交。",
+                )
+            return body, None
+        except (socket.timeout, TimeoutError):
+            return None, _knowledge_request_error(
+                400,
+                "REQUEST_BODY_TIMEOUT",
+                "读取请求体超时，请重新提交。",
+            )
+        except OSError:
+            return None, _knowledge_request_error(
+                400,
+                "INCOMPLETE_REQUEST_BODY",
+                "请求体不完整，请重新提交。",
+            )
+        finally:
+            if timeout_changed:
+                try:
+                    connection.settimeout(previous_timeout)
+                except OSError:
+                    pass
+
+    def _set_enterprise_read_timeout(self, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise socket.timeout("enterprise request-body deadline exceeded")
+        connection = getattr(self, "connection", None)
+        if connection is not None:
+            connection.settimeout(remaining)
+
+    def _read_enterprise_once(self, size, deadline):
+        self._set_enterprise_read_timeout(deadline)
+        read_once = getattr(self.rfile, "read1", None)
+        if callable(read_once):
+            return read_once(size)
+        return self.rfile.read(size)
+
+    def _read_enterprise_exact(self, size, deadline):
+        content = bytearray()
+        while len(content) < size:
+            part = self._read_enterprise_once(size - len(content), deadline)
+            if not part:
+                break
+            content.extend(part)
+        return bytes(content)
+
+    def _read_enterprise_line(self, limit, deadline):
+        line = bytearray()
+        while len(line) <= limit:
+            part = self._read_enterprise_once(1, deadline)
+            if not part:
+                break
+            line.extend(part)
+            if part == b"\n":
+                break
+        return bytes(line)
+
+    @staticmethod
+    def _skip_chunk_bws(value, index):
+        while index < len(value) and value[index] in (9, 32):
+            index += 1
+        return index
+
+    @staticmethod
+    def _consume_chunk_token(value, index):
+        start = index
+        while index < len(value) and value[index] in _HTTP_TCHAR_BYTES:
+            index += 1
+        return index if index > start else None
+
+    @staticmethod
+    def _consume_chunk_quoted_string(value, index):
+        if index >= len(value) or value[index] != 34:
+            return None
+        index += 1
+        while index < len(value):
+            octet = value[index]
+            if octet == 34:
+                return index + 1
+            if octet == 92:
+                index += 1
+                if index >= len(value):
+                    return None
+                escaped = value[index]
+                if not (
+                    escaped in (9, 32)
+                    or 33 <= escaped <= 126
+                    or 128 <= escaped <= 255
+                ):
+                    return None
+                index += 1
+                continue
+            if (
+                octet in (9, 32, 33)
+                or 35 <= octet <= 91
+                or 93 <= octet <= 126
+                or 128 <= octet <= 255
+            ):
+                index += 1
+                continue
+            return None
+        return None
+
+    def _valid_chunk_extensions(self, value, index):
+        while index < len(value):
+            index = self._skip_chunk_bws(value, index)
+            if index >= len(value) or value[index] != 59:
+                return False
+            index = self._skip_chunk_bws(value, index + 1)
+            token_end = self._consume_chunk_token(value, index)
+            if token_end is None:
+                return False
+            index = token_end
+
+            equals_index = self._skip_chunk_bws(value, index)
+            if equals_index < len(value) and value[equals_index] == 61:
+                index = self._skip_chunk_bws(value, equals_index + 1)
+                if index >= len(value):
+                    return False
+                if value[index] == 34:
+                    value_end = self._consume_chunk_quoted_string(value, index)
+                else:
+                    value_end = self._consume_chunk_token(value, index)
+                if value_end is None:
+                    return False
+                index = value_end
+        return True
+
+    def _parse_enterprise_chunk_size(self, value):
+        size_end = 0
+        while size_end < len(value) and value[size_end] in b"0123456789abcdefABCDEF":
+            size_end += 1
+        if size_end == 0 or not self._valid_chunk_extensions(value, size_end):
+            return None
+        return int(value[:size_end], 16)
+
+    def _read_enterprise_chunked_body(self, deadline):
+        body = bytearray()
+        chunk_count = 0
+        while True:
+            size_line = self._read_enterprise_line(
+                ENTERPRISE_KNOWLEDGE_MAX_CHUNK_LINE_BYTES,
+                deadline,
+            )
+            if (
+                not size_line
+                or len(size_line) > ENTERPRISE_KNOWLEDGE_MAX_CHUNK_LINE_BYTES
+                or not size_line.endswith(b"\r\n")
+            ):
+                return None, self._invalid_chunked_body()
+            chunk_size = self._parse_enterprise_chunk_size(size_line[:-2])
+            if chunk_size is None:
+                return None, self._invalid_chunked_body()
+            if chunk_size == 0:
+                return self._read_enterprise_trailers(body, deadline)
+
+            chunk_count += 1
+            if chunk_count > ENTERPRISE_KNOWLEDGE_MAX_CHUNK_COUNT:
+                return None, self._invalid_chunked_body()
+            if (
+                len(body) + chunk_size
+                > ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES
+            ):
+                del body
+                return None, _knowledge_body_too_large()
+            chunk = self._read_enterprise_exact(chunk_size, deadline)
+            terminator = self._read_enterprise_exact(2, deadline)
+            if len(chunk) != chunk_size or terminator != b"\r\n":
+                return None, self._invalid_chunked_body()
+            body.extend(chunk)
+
+    def _read_enterprise_trailers(self, body, deadline):
+        trailer_count = 0
+        trailer_bytes = 0
+        while True:
+            trailer = self._read_enterprise_line(
+                ENTERPRISE_KNOWLEDGE_MAX_TRAILER_LINE_BYTES,
+                deadline,
+            )
+            if not trailer:
+                return None, self._invalid_chunked_body()
+            trailer_bytes += len(trailer)
+            if (
+                len(trailer) > ENTERPRISE_KNOWLEDGE_MAX_TRAILER_LINE_BYTES
+                or trailer_bytes > ENTERPRISE_KNOWLEDGE_MAX_TRAILER_BYTES
+                or not trailer.endswith(b"\r\n")
+            ):
+                return None, self._invalid_chunked_body()
+            if trailer == b"\r\n":
+                return bytes(body), None
+            trailer_count += 1
+            if trailer_count > ENTERPRISE_KNOWLEDGE_MAX_TRAILER_COUNT:
+                return None, self._invalid_chunked_body()
+            name, separator, value = trailer[:-2].partition(b":")
+            if (
+                not separator
+                or not _HTTP_TOKEN_BYTES_RE.fullmatch(name)
+                or not _SAFE_TRAILER_VALUE_BYTES_RE.fullmatch(value)
+            ):
+                return None, self._invalid_chunked_body()
+
+    @staticmethod
+    def _invalid_chunked_body():
+        return _knowledge_request_error(
+            400,
+            "INVALID_CHUNKED_BODY",
+            "分块请求格式无效，请检查后重试。",
+        )
+
+    def _read_enterprise_preview_body(self):
+        return self._read_enterprise_body(preview=True)
+
+    def _read_enterprise_json_body(self):
+        return self._read_enterprise_body(preview=False)
+
     def log_message(self, fmt, *args):
         sys.stdout.write(fmt % args + "\n")
         sys.stdout.flush()
@@ -206,6 +959,12 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        knowledge_response = dispatch_enterprise_knowledge(
+            "GET", path, query=parsed.query
+        )
+        if knowledge_response is not None:
+            self._write_knowledge_response(knowledge_response)
+            return
         if path == "/health":
             settings = load_settings()
             provider = ProviderClient(settings)
@@ -378,43 +1137,61 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_POST(self):
-        path = urlparse(self.path).path
-        try:
-            length = int(self.headers.get("Content-Length", "0"))
-        except (TypeError, ValueError):
-            length = 0
-        if path == "/ppt/document-files" and (
-            length <= 0 or self.headers.get("Transfer-Encoding")
-        ):
-            message = "上传请求缺少有效的 Content-Length，请重新选择文件。"
-            self._write(
-                411,
-                envelope(
-                    "standalone-ppt-document-file",
-                    "ppt.slide_assistant",
-                    success=False,
-                    message=message,
-                    errors=[{"code": "CONTENT_LENGTH_REQUIRED", "message": message}],
-                ),
-            )
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if self._reject_enterprise_knowledge_route_or_method("POST", path):
             return
-        if path == "/ppt/document-files" and length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
-            message = "上传请求超过 15 MB 限制，请重新选择文件。"
-            self._write(
-                413,
-                envelope(
-                    "standalone-ppt-document-file",
-                    "ppt.slide_assistant",
-                    success=False,
-                    message=message,
-                    errors=[{"code": "PPT_DOCUMENT_TOO_LARGE", "message": message}],
-                ),
-            )
-            return
+        is_knowledge = _is_enterprise_knowledge_path(path)
+        if is_knowledge:
+            if path == "/enterprise-knowledge/imports/preview":
+                raw_bytes, rejection = self._read_enterprise_preview_body()
+            else:
+                raw_bytes, rejection = self._read_enterprise_json_body()
+            if rejection is not None:
+                self.close_connection = True
+                self._write_knowledge_response(rejection)
+                return
+        else:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except (TypeError, ValueError):
+                length = 0
+            if path == "/ppt/document-files" and (
+                length <= 0 or self.headers.get("Transfer-Encoding")
+            ):
+                message = "上传请求缺少有效的 Content-Length，请重新选择文件。"
+                self._write(
+                    411,
+                    envelope(
+                        "standalone-ppt-document-file",
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "CONTENT_LENGTH_REQUIRED", "message": message}],
+                    ),
+                )
+                return
+            if path == "/ppt/document-files" and length > PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES:
+                message = "上传请求超过 15 MB 限制，请重新选择文件。"
+                self._write(
+                    413,
+                    envelope(
+                        "standalone-ppt-document-file",
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "PPT_DOCUMENT_TOO_LARGE", "message": message}],
+                    ),
+                )
+                return
+            raw_bytes = self.rfile.read(length) if length else b"{}"
         try:
-            raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            raw_body = raw_bytes.decode("utf-8")
             payload = json.loads(raw_body or "{}")
         except (UnicodeDecodeError, ValueError):
+            if _is_enterprise_knowledge_path(path):
+                self._write_knowledge_response(_knowledge_validation())
+                return
             message = "请求内容格式无效，请检查后重试。"
             self._write(
                 400,
@@ -426,6 +1203,17 @@ class Handler(BaseHTTPRequestHandler):
                     errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
                 ),
             )
+            return
+
+        knowledge_response = dispatch_enterprise_knowledge(
+            "POST",
+            path,
+            query=parsed.query,
+            payload=payload,
+            body_size=len(raw_bytes),
+        )
+        if knowledge_response is not None:
+            self._write_knowledge_response(knowledge_response)
             return
 
         if path == "/ppt/document-files":
@@ -632,10 +1420,38 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_PATCH(self):
-        path = urlparse(self.path).path
-        length = int(self.headers.get("Content-Length", "0"))
-        raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
-        payload = json.loads(raw_body or "{}")
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if self._reject_enterprise_knowledge_route_or_method("PATCH", path):
+            return
+        try:
+            if _is_enterprise_knowledge_path(path):
+                raw_bytes, rejection = self._read_enterprise_json_body()
+                if rejection is not None:
+                    self.close_connection = True
+                    self._write_knowledge_response(rejection)
+                    return
+                raw_body = raw_bytes.decode("utf-8")
+            else:
+                length = int(self.headers.get("Content-Length", "0"))
+                raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
+            payload = json.loads(raw_body or "{}")
+        except (TypeError, ValueError, UnicodeDecodeError):
+            if _is_enterprise_knowledge_path(path):
+                self._write_knowledge_response(_knowledge_validation())
+                return
+            self._write(400, envelope("standalone-validation", "adapter.validation", success=False, message="请求内容格式无效，请检查后重试。"))
+            return
+        knowledge_response = dispatch_enterprise_knowledge(
+            "PATCH",
+            path,
+            query=parsed.query,
+            payload=payload,
+            body_size=len(raw_bytes) if _is_enterprise_knowledge_path(path) else length,
+        )
+        if knowledge_response is not None:
+            self._write_knowledge_response(knowledge_response)
+            return
         prefix = "/provider/workflow-profiles/"
         if path.startswith(prefix):
             profile_id = unquote(path[len(prefix):]).strip("/")
@@ -655,8 +1471,25 @@ class Handler(BaseHTTPRequestHandler):
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
         )
 
-    def do_DELETE(self):
+    def do_PUT(self):
         path = urlparse(self.path).path
+        if _is_enterprise_knowledge_path(path):
+            self.close_connection = True
+            self._write_knowledge_response(
+                dispatch_enterprise_knowledge("PUT", path)
+            )
+            return
+        self.send_error(501, "Unsupported method (%r)" % self.command)
+
+    def do_DELETE(self):
+        parsed = urlparse(self.path)
+        path = parsed.path
+        knowledge_response = dispatch_enterprise_knowledge(
+            "DELETE", path, query=parsed.query
+        )
+        if knowledge_response is not None:
+            self._write_knowledge_response(knowledge_response)
+            return
         if path == "/provider/api-key":
             clear_local_api_key()
             client = ProviderClient()
