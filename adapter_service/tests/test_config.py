@@ -60,7 +60,14 @@ class ConfigApiTests(unittest.TestCase):
         self.assertIn("taskApiKeys", data)
         self.assertEqual(
             list(data["taskApiKeys"].keys()),
-            ["word.smart_write", "word.document_review", "word.format_review"],
+            [
+                "word.smart_write",
+                "word.smart_imitation",
+                "word.document_review",
+                "word.format_review",
+                "excel.analysis",
+                "ppt.slide_assistant",
+            ],
         )
         self.assertEqual(data["providerChatPath"], "/chat-messages")
         self.assertEqual(data["taskRouteConfiguredCount"], 0)

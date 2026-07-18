@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.config import router as config_router
+from app.api.enterprise_knowledge import router as enterprise_knowledge_router
 from app.api.excel import router as excel_router
 from app.api.health import router as health_router
 from app.api.ppt import router as ppt_router
@@ -16,13 +17,6 @@ from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
 
 app = FastAPI(title="wps-ai-adapter", version="0.18.1-alpha")
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 app.include_router(health_router)
 app.include_router(config_router)
 app.include_router(provider_router)
@@ -30,14 +24,158 @@ app.include_router(templates_router)
 app.include_router(word_router)
 app.include_router(excel_router)
 app.include_router(ppt_router)
+app.include_router(enterprise_knowledge_router)
 
 logger = get_logger(__name__)
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
+ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
+
+
+class EnterpriseKnowledgeImportBodyLimitMiddleware:
+    def __init__(self, app, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = int(max_bytes)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if not self._is_preview_request(scope):
+            await self.app(scope, receive, send)
+            return
+
+        buffered_body = bytearray()
+        content_length = self._content_length(scope)
+        saw_request = False
+        disconnected = False
+
+        while True:
+            message = await receive()
+            message_type = message.get("type")
+            if message_type == "http.disconnect":
+                disconnected = True
+                del message
+                break
+            if message_type != "http.request":
+                del message
+                continue
+
+            saw_request = True
+            chunk = message.get("body", b"")
+            next_received_bytes = len(buffered_body) + len(chunk)
+            if next_received_bytes > self.max_bytes:
+                del chunk, message
+                await self._reject(
+                    scope,
+                    receive,
+                    send,
+                    self._trace_id(scope),
+                    next_received_bytes,
+                )
+                return
+
+            buffered_body.extend(chunk)
+            more_body = bool(message.get("more_body", False))
+            del chunk, message
+            if not more_body:
+                if content_length > self.max_bytes:
+                    await self._reject(
+                        scope,
+                        receive,
+                        send,
+                        self._trace_id(scope),
+                        content_length,
+                    )
+                    return
+                break
+
+        consolidated_body = bytes(buffered_body)
+        del buffered_body
+        replay_step = 0
+
+        async def replay_receive():
+            nonlocal replay_step
+            if saw_request and replay_step == 0:
+                replay_step = 1
+                return {
+                    "type": "http.request",
+                    "body": consolidated_body,
+                    "more_body": disconnected,
+                }
+            if disconnected:
+                replay_step = 2
+                return {"type": "http.disconnect"}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    def _is_preview_request(scope) -> bool:
+        return (
+            scope.get("type") == "http"
+            and scope.get("method") == "POST"
+            and scope.get("path") == "/enterprise-knowledge/imports/preview"
+        )
+
+    @staticmethod
+    def _header(scope, name: bytes):
+        for key, value in scope.get("headers", []):
+            if key.lower() == name:
+                return value.decode("latin-1")
+        return None
+
+    @classmethod
+    def _trace_id(cls, scope) -> str:
+        state_trace_id = scope.get("state", {}).get("request_trace_id")
+        if state_trace_id is not None:
+            return str(state_trace_id)
+        header_trace_id = cls._header(scope, b"x-trace-id")
+        if header_trace_id is not None:
+            return header_trace_id
+        return new_trace_id("http")
+
+    @classmethod
+    def _content_length(cls, scope) -> int:
+        try:
+            return int(cls._header(scope, b"content-length") or "")
+        except (TypeError, ValueError):
+            return 0
+
+    async def _reject(
+        self,
+        scope,
+        receive,
+        send,
+        trace_id: str,
+        content_length: int,
+    ) -> None:
+        scope.setdefault("state", {})["enterprise_knowledge_body_limit_rejected"] = True
+        message = "企业知识导入预览请求超过 7 MB 限制。"
+        logger.warning(
+            "traceId=%s method=%s path=%s status=413 contentLength=%s",
+            trace_id,
+            scope.get("method", ""),
+            scope.get("path", ""),
+            content_length,
+        )
+        response = JSONResponse(
+            status_code=413,
+            content={
+                "success": False,
+                "traceId": trace_id,
+                "taskType": "enterprise.knowledge",
+                "message": message,
+                "data": {},
+                "errors": [
+                    {"code": "IMPORT_REQUEST_TOO_LARGE", "message": message}
+                ],
+            },
+        )
+        response.headers["X-Trace-Id"] = trace_id
+        await response(scope, receive, send)
 
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     trace_id = request.headers.get("X-Trace-Id", new_trace_id("http"))
+    request.state.request_trace_id = trace_id
     if request.url.path == "/ppt/document-files":
         try:
             content_length = int(request.headers.get("Content-Length", ""))
@@ -83,15 +221,20 @@ async def log_requests(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception:
-        logger.exception(
-            "traceId=%s method=%s path=%s status=500",
-            trace_id,
-            request.method,
-            request.url.path,
-        )
+        if not getattr(
+            request.state, "enterprise_knowledge_body_limit_rejected", False
+        ):
+            logger.exception(
+                "traceId=%s method=%s path=%s status=500",
+                trace_id,
+                request.method,
+                request.url.path,
+            )
         raise
 
     response.headers["X-Trace-Id"] = trace_id
+    if getattr(request.state, "enterprise_knowledge_body_limit_rejected", False):
+        return response
     logger.info(
         "traceId=%s method=%s path=%s status=%s",
         trace_id,
@@ -100,6 +243,19 @@ async def log_requests(request: Request, call_next):
         response.status_code,
     )
     return response
+
+
+app.add_middleware(
+    EnterpriseKnowledgeImportBodyLimitMiddleware,
+    max_bytes=ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES,
+)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.exception_handler(AdapterError)
@@ -127,6 +283,8 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
 
 
 def _task_type_from_path(path: str) -> str:
+    if path.startswith("/enterprise-knowledge/"):
+        return "enterprise.knowledge"
     return {
         "/word/smart-write": "word.smart_write",
         "/word/smart-imitation": "word.smart_imitation",
@@ -165,15 +323,17 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
             },
         }
     )
+    status_code = 400 if request.url.path.startswith("/enterprise-knowledge/") else 422
     logger.warning(
-        "traceId=%s method=%s path=%s status=422 validationErrors=%s",
+        "traceId=%s method=%s path=%s status=%s validationErrors=%s",
         trace_id,
         request.method,
         request.url.path,
+        status_code,
         errors,
     )
     return JSONResponse(
-        status_code=422,
+        status_code=status_code,
         content={
             "success": False,
             "traceId": trace_id,
