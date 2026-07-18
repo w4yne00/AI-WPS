@@ -104,6 +104,12 @@
     documentReview: "word.document_review",
     formatReview: "word.format_review"
   };
+  var KNOWLEDGE_SCOPE_DEFS = [
+    { scope: "global", label: "全局企业规范", caption: "企业术语与通用写作规则" },
+    { scope: "word.smart_write", label: "智能编写补充", caption: "仅在智能编写中使用的风格规则" },
+    { scope: "word.smart_imitation", label: "智能仿写补充", caption: "仅在智能仿写中使用的风格规则" },
+    { scope: "word.document_review", label: "文档审查补充", caption: "仅在文档审查中检查的风格规则" }
+  ];
   var modeConfig = {
     smartWrite: {
       title: "智能编写",
@@ -186,6 +192,19 @@
     workflowProfileMutationBusy: false,
     settingsWorkflowTaskType: "word.smart_write",
     workflowProfileEditor: null,
+    knowledgeView: "home",
+    knowledgeScope: "global",
+    knowledgeType: "term",
+    knowledgeItems: [],
+    knowledgeSummary: null,
+    knowledgeLoadSequence: 0,
+    knowledgeMutationBusy: false,
+    knowledgeEditor: null,
+    knowledgeEditorDirty: false,
+    knowledgeSummaryState: "idle",
+    knowledgeListError: "",
+    knowledgeSearch: "",
+    knowledgeSearchTimer: null,
     currentMode: "smartWrite",
     lastTaskMode: "smartWrite",
     copyText: "",
@@ -213,6 +232,13 @@
       return true;
     }
     return !window.confirm || window.confirm("当前工作流编辑内容尚未保存，确认放弃修改？");
+  }
+
+  function confirmKnowledgeEditorDiscard() {
+    if (!state.knowledgeEditor || !state.knowledgeEditorDirty) {
+      return true;
+    }
+    return !window.confirm || window.confirm("当前知识条目尚未保存，确认放弃修改？");
   }
 
   function isTaskpanePage() {
@@ -663,13 +689,21 @@
       byId("btn-open-settings").classList.add("is-back");
       byId("btn-open-settings").setAttribute("title", "返回" + returnConfig.title);
       byId("btn-open-settings").setAttribute("aria-label", "返回" + returnConfig.title);
+      setKnowledgeView("home");
+      loadKnowledgeSummary();
       return;
     }
 
-    if (!confirmWorkflowEditorDiscard()) {
+    if (state.knowledgeMutationBusy) {
+      setStatus("企业知识条目正在保存，请稍候。");
+      return;
+    }
+    if (!confirmWorkflowEditorDiscard() || !confirmKnowledgeEditorDiscard()) {
       return;
     }
     state.workflowProfileEditor = null;
+    clearKnowledgeEditorState();
+    setKnowledgeView("home");
 
     if (state.currentMode === "settings") {
       switchMode(returnMode);
@@ -707,6 +741,8 @@
     if (settingsMode) {
       switchView("settings");
       renderWorkflowProfileManager();
+      setKnowledgeView("home");
+      loadKnowledgeSummary();
       return;
     }
 
@@ -1032,10 +1068,12 @@
             }).join("\n");
             requestError = new Error("HTTP " + response.status + " 请求数据校验失败：\n" + details);
             requestError.adapterCode = "REQUEST_VALIDATION_FAILED";
+            requestError.httpStatus = response.status;
             throw requestError;
           }
           requestError = new Error(adapterError.message || body.message || ("HTTP " + response.status));
           requestError.adapterCode = adapterError.code || "";
+          requestError.httpStatus = response.status;
           throw requestError;
         }
         return body;
@@ -1847,6 +1885,456 @@
     } else if (action === "delete") {
       deleteWorkflowProfile(profileId, taskType);
     }
+  }
+
+  function getKnowledgeScopeDefinition(scope) {
+    var index;
+    for (index = 0; index < KNOWLEDGE_SCOPE_DEFS.length; index += 1) {
+      if (KNOWLEDGE_SCOPE_DEFS[index].scope === scope) {
+        return KNOWLEDGE_SCOPE_DEFS[index];
+      }
+    }
+    return KNOWLEDGE_SCOPE_DEFS[0];
+  }
+
+  function renderKnowledgeManagerView() {
+    var view = state.knowledgeView || "home";
+    var home = view === "home";
+    byId("connection-settings-section").hidden = !home;
+    byId("diagnostics-section").hidden = !home;
+    byId("knowledge-scope-view").hidden = view !== "scope";
+    byId("knowledge-list-view").hidden = view !== "list";
+    byId("knowledge-editor-view").hidden = view !== "editor";
+  }
+
+  function setKnowledgeView(view) {
+    state.knowledgeView = view;
+    renderKnowledgeManagerView();
+  }
+
+  function formatKnowledgeUpdatedAt(value) {
+    var text = String(value || "").trim();
+    if (!text) {
+      return "尚无更新时间";
+    }
+    return "最近更新：" + text.replace("T", " ").replace(/\.\d+Z$/, "").replace(/Z$/, "");
+  }
+
+  function renderKnowledgeSummary() {
+    var summary = state.knowledgeSummary || {};
+    var statusNode = byId("knowledge-summary-status");
+    var enterButton = byId("btn-open-knowledge-manager");
+    var retryButton = byId("btn-retry-knowledge-summary");
+    byId("knowledge-summary-total").textContent = String(Math.max(0, Number(summary.totalCount) || 0));
+    byId("knowledge-summary-enabled").textContent = String(Math.max(0, Number(summary.enabledCount) || 0));
+    byId("knowledge-summary-updated").textContent = formatKnowledgeUpdatedAt(summary.updatedAt);
+    enterButton.disabled = state.knowledgeSummaryState !== "ready";
+    retryButton.hidden = state.knowledgeSummaryState !== "error";
+    if (state.knowledgeSummaryState === "loading") {
+      statusNode.textContent = "正在读取...";
+    } else if (state.knowledgeSummaryState === "ready") {
+      statusNode.textContent = "可用";
+    } else if (state.knowledgeSummaryState === "unsupported") {
+      statusNode.textContent = "当前 adapter 版本不支持企业知识库";
+    } else if (state.knowledgeSummaryState === "error") {
+      statusNode.textContent = "企业知识库暂不可用";
+    } else {
+      statusNode.textContent = "尚未读取";
+    }
+  }
+
+  function loadKnowledgeSummary() {
+    var requestId = state.knowledgeLoadSequence + 1;
+    state.knowledgeLoadSequence = requestId;
+    state.knowledgeSummaryState = "loading";
+    renderKnowledgeSummary();
+    return request("/enterprise-knowledge/summary").then(function (body) {
+      if (state.knowledgeLoadSequence !== requestId) {
+        return null;
+      }
+      state.knowledgeSummary = body.data || {};
+      state.knowledgeSummaryState = "ready";
+      renderKnowledgeSummary();
+      return state.knowledgeSummary;
+    }).catch(function (error) {
+      if (state.knowledgeLoadSequence !== requestId) {
+        return null;
+      }
+      state.knowledgeSummary = null;
+      state.knowledgeSummaryState = error && error.httpStatus === 404 ? "unsupported" : "error";
+      renderKnowledgeSummary();
+      return null;
+    });
+  }
+
+  function openKnowledgeScopeView() {
+    if (state.knowledgeSummaryState !== "ready") {
+      return;
+    }
+    setKnowledgeView("scope");
+  }
+
+  function renderKnowledgeTypeSwitch() {
+    var buttons = byId("knowledge-type-switch").querySelectorAll("[data-knowledge-type]");
+    var index;
+    for (index = 0; index < buttons.length; index += 1) {
+      var type = buttons[index].getAttribute("data-knowledge-type");
+      var active = type === state.knowledgeType;
+      buttons[index].classList.toggle("active", active);
+      buttons[index].setAttribute("aria-selected", active ? "true" : "false");
+      buttons[index].disabled = state.knowledgeMutationBusy || (type === "term" && state.knowledgeScope !== "global");
+    }
+  }
+
+  function renderKnowledgeList() {
+    var scopeDefinition = getKnowledgeScopeDefinition(state.knowledgeScope);
+    var list = byId("knowledge-item-list");
+    var statusNode = byId("knowledge-list-status");
+    var retryButton = byId("btn-retry-knowledge-list");
+    var addButton = byId("btn-knowledge-add");
+    list.textContent = "";
+    byId("knowledge-list-title").textContent = scopeDefinition.label;
+    byId("knowledge-list-caption").textContent = scopeDefinition.caption;
+    byId("knowledge-search-input").value = state.knowledgeSearch;
+    renderKnowledgeTypeSwitch();
+    addButton.disabled = state.knowledgeMutationBusy || Boolean(state.knowledgeListError);
+    retryButton.hidden = !state.knowledgeListError;
+    if (state.knowledgeListError) {
+      statusNode.textContent = "企业知识库暂不可用，未显示空列表。";
+      return;
+    }
+    if (!state.knowledgeItems.length) {
+      statusNode.textContent = "当前范围暂无" + (state.knowledgeType === "term" ? "术语。" : "风格规则。");
+      return;
+    }
+    statusNode.textContent = "共 " + state.knowledgeItems.length + " 条" + (state.knowledgeType === "term" ? "术语" : "风格规则");
+    state.knowledgeItems.forEach(function (item) {
+      var row = document.createElement("button");
+      var text = document.createElement("span");
+      var title = document.createElement("strong");
+      var note = document.createElement("small");
+      var status = document.createElement("span");
+      row.type = "button";
+      row.className = "knowledge-item-row";
+      row.setAttribute("data-knowledge-item-id", String(item.id || ""));
+      title.textContent = String(item.type === "term" ? item.preferredText || "未命名术语" : item.name || "未命名规则");
+      note.textContent = String(item.note || (item.type === "term" ? item.definition || "暂无说明" : item.ruleText || "暂无说明"));
+      status.className = "provider-badge";
+      status.textContent = item.enabled === false ? "已停用" : "已启用";
+      text.appendChild(title);
+      text.appendChild(note);
+      row.appendChild(text);
+      row.appendChild(status);
+      list.appendChild(row);
+    });
+  }
+
+  function loadKnowledgeItems() {
+    var requestId = state.knowledgeLoadSequence + 1;
+    state.knowledgeLoadSequence = requestId;
+    state.knowledgeListError = "";
+    byId("knowledge-list-status").textContent = "正在读取...";
+    byId("knowledge-item-list").textContent = "";
+    return request("/enterprise-knowledge/items?scope=" + encodeURIComponent(state.knowledgeScope) +
+      "&type=" + encodeURIComponent(state.knowledgeType) +
+      "&query=" + encodeURIComponent(state.knowledgeSearch)).then(function (body) {
+      if (state.knowledgeLoadSequence !== requestId) {
+        return null;
+      }
+      state.knowledgeItems = body.data && Array.isArray(body.data.items) ? body.data.items : [];
+      renderKnowledgeList();
+      return state.knowledgeItems;
+    }).catch(function (error) {
+      if (state.knowledgeLoadSequence !== requestId) {
+        return null;
+      }
+      state.knowledgeItems = [];
+      state.knowledgeListError = describeFetchError(error);
+      renderKnowledgeList();
+      return null;
+    });
+  }
+
+  function openKnowledgeList(scope) {
+    state.knowledgeScope = getKnowledgeScopeDefinition(scope).scope;
+    state.knowledgeType = state.knowledgeScope === "global" ? state.knowledgeType : "style";
+    state.knowledgeSearch = "";
+    state.knowledgeItems = [];
+    state.knowledgeListError = "";
+    setKnowledgeView("list");
+    renderKnowledgeList();
+    loadKnowledgeItems();
+  }
+
+  function joinKnowledgeList(values) {
+    return Array.isArray(values) ? values.join(" | ") : "";
+  }
+
+  function splitKnowledgeList(value) {
+    return String(value || "").split("|").map(function (item) {
+      return item.trim();
+    }).filter(function (item) {
+      return Boolean(item);
+    });
+  }
+
+  function setKnowledgeEditorError(message, field) {
+    var errorNode = byId("knowledge-editor-error");
+    var fieldIds = {
+      preferredText: "knowledge-preferred-text",
+      name: "knowledge-style-name",
+      ruleText: "knowledge-rule-text",
+      scope: "knowledge-editor-caption"
+    };
+    var errorIds = {
+      preferredText: "knowledge-preferred-error",
+      name: "knowledge-style-name-error",
+      ruleText: "knowledge-rule-error"
+    };
+    ["preferredText", "name", "ruleText"].forEach(function (fieldName) {
+      var input = byId(fieldIds[fieldName]);
+      var fieldError = byId(errorIds[fieldName]);
+      input.removeAttribute("aria-invalid");
+      fieldError.textContent = "";
+      fieldError.hidden = true;
+    });
+    errorNode.textContent = String(message || "");
+    errorNode.hidden = !message;
+    if (message && errorIds[field]) {
+      byId(errorIds[field]).textContent = String(message);
+      byId(errorIds[field]).hidden = false;
+      byId(fieldIds[field]).setAttribute("aria-invalid", "true");
+    }
+    if (message && fieldIds[field] && byId(fieldIds[field]) && byId(fieldIds[field]).focus) {
+      byId(fieldIds[field]).focus();
+    }
+  }
+
+  function clearKnowledgeEditorState() {
+    var ids = [
+      "knowledge-preferred-text", "knowledge-aliases", "knowledge-forbidden-variants",
+      "knowledge-definition", "knowledge-style-name", "knowledge-rule-text",
+      "knowledge-positive-example", "knowledge-negative-example", "knowledge-note",
+      "knowledge-category", "knowledge-context-keywords"
+    ];
+    ids.forEach(function (id) {
+      byId(id).value = "";
+    });
+    state.knowledgeEditor = null;
+    state.knowledgeEditorDirty = false;
+    setKnowledgeEditorError("", "");
+  }
+
+  function setKnowledgeEditorControlsDisabled(disabled) {
+    var controls = byId("knowledge-editor-view").querySelectorAll("button, input, textarea, select");
+    var index;
+    for (index = 0; index < controls.length; index += 1) {
+      controls[index].disabled = Boolean(disabled);
+    }
+  }
+
+  function renderKnowledgeEditor() {
+    var editor = state.knowledgeEditor || {};
+    var item = editor.item || {};
+    var type = editor.type || state.knowledgeType;
+    var scopeDefinition = getKnowledgeScopeDefinition(editor.scope || state.knowledgeScope);
+    byId("knowledge-editor-title").textContent = editor.mode === "edit" ? "编辑知识条目" : "新增知识条目";
+    byId("knowledge-editor-caption").textContent = scopeDefinition.label + " · " + (type === "term" ? "术语" : "风格规则");
+    byId("knowledge-term-fields").hidden = type !== "term";
+    byId("knowledge-style-fields").hidden = type !== "style";
+    byId("knowledge-category-field").hidden = type !== "term";
+    byId("knowledge-always-apply-field").hidden = type !== "style";
+    byId("knowledge-preferred-text").value = String(item.preferredText || "");
+    byId("knowledge-aliases").value = joinKnowledgeList(item.aliases);
+    byId("knowledge-forbidden-variants").value = joinKnowledgeList(item.forbiddenVariants);
+    byId("knowledge-definition").value = String(item.definition || "");
+    byId("knowledge-style-name").value = String(item.name || "");
+    byId("knowledge-rule-text").value = String(item.ruleText || "");
+    byId("knowledge-positive-example").value = String(item.positiveExample || "");
+    byId("knowledge-negative-example").value = String(item.negativeExample || "");
+    byId("knowledge-note").value = String(item.note || "");
+    byId("knowledge-category").value = String(item.category || "");
+    byId("knowledge-context-keywords").value = joinKnowledgeList(item.contextKeywords);
+    byId("knowledge-priority").value = String(item.priority || "medium");
+    byId("knowledge-always-apply").checked = Boolean(item.alwaysApply);
+    byId("knowledge-enabled").checked = item.enabled !== false;
+    byId("knowledge-editor-advanced").open = false;
+    byId("btn-knowledge-delete").hidden = editor.mode !== "edit";
+    setKnowledgeEditorError("", "");
+    setKnowledgeEditorControlsDisabled(state.knowledgeMutationBusy);
+  }
+
+  function openKnowledgeEditor(item) {
+    state.knowledgeEditor = {
+      mode: item ? "edit" : "create",
+      item: item || {},
+      type: item && item.type ? item.type : state.knowledgeType,
+      scope: item && item.scope ? item.scope : state.knowledgeScope
+    };
+    state.knowledgeEditorDirty = false;
+    setKnowledgeView("editor");
+    renderKnowledgeEditor();
+  }
+
+  function readKnowledgeDraft() {
+    var editor = state.knowledgeEditor || {};
+    var type = editor.type || state.knowledgeType;
+    var draft = {
+      type: type,
+      scope: editor.scope || state.knowledgeScope,
+      contextKeywords: splitKnowledgeList(byId("knowledge-context-keywords").value),
+      priority: byId("knowledge-priority").value || "medium",
+      enabled: Boolean(byId("knowledge-enabled").checked),
+      note: String(byId("knowledge-note").value || "").trim()
+    };
+    if (type === "term") {
+      draft.category = String(byId("knowledge-category").value || "").trim();
+      draft.preferredText = String(byId("knowledge-preferred-text").value || "").trim();
+      draft.aliases = splitKnowledgeList(byId("knowledge-aliases").value);
+      draft.forbiddenVariants = splitKnowledgeList(byId("knowledge-forbidden-variants").value);
+      draft.definition = String(byId("knowledge-definition").value || "").trim();
+    } else {
+      draft.name = String(byId("knowledge-style-name").value || "").trim();
+      draft.ruleText = String(byId("knowledge-rule-text").value || "").trim();
+      draft.positiveExample = String(byId("knowledge-positive-example").value || "").trim();
+      draft.negativeExample = String(byId("knowledge-negative-example").value || "").trim();
+      draft.alwaysApply = Boolean(byId("knowledge-always-apply").checked);
+    }
+    return draft;
+  }
+
+  function setKnowledgeMutationBusy(busy) {
+    state.knowledgeMutationBusy = Boolean(busy);
+    setKnowledgeEditorControlsDisabled(state.knowledgeMutationBusy);
+  }
+
+  function saveKnowledgeItem() {
+    var editor = state.knowledgeEditor;
+    var draft;
+    var validation;
+    var path;
+    var options;
+    if (!editor || state.knowledgeMutationBusy) {
+      return;
+    }
+    draft = readKnowledgeDraft();
+    validation = helpers.validateKnowledgeDraft ? helpers.validateKnowledgeDraft(draft) : { ok: true, field: "", message: "" };
+    if (!validation.ok) {
+      setKnowledgeEditorError(validation.message, validation.field);
+      return;
+    }
+    path = "/enterprise-knowledge/items";
+    options = null;
+    if (editor.mode === "edit") {
+      path += "/" + encodeURIComponent(String(editor.item.id || ""));
+      options = { method: "PATCH" };
+    }
+    setKnowledgeEditorError("", "");
+    setKnowledgeMutationBusy(true);
+    request(path, draft, options).then(function () {
+      state.knowledgeEditorDirty = false;
+      clearKnowledgeEditorState();
+      setKnowledgeView("list");
+      setKnowledgeMutationBusy(false);
+      return loadKnowledgeItems().then(function () {
+        loadKnowledgeSummary();
+        setStatus("企业知识条目已保存。");
+      });
+    }).catch(function (error) {
+      var field = error && error.adapterCode === "STYLE_NAME_CONFLICT" ? "name" : "preferredText";
+      setKnowledgeMutationBusy(false);
+      setKnowledgeEditorError(describeFetchError(error), field);
+    });
+  }
+
+  function deleteKnowledgeItem() {
+    var editor = state.knowledgeEditor;
+    var item;
+    var itemName;
+    if (!editor || editor.mode !== "edit" || state.knowledgeMutationBusy) {
+      return;
+    }
+    item = editor.item || {};
+    itemName = String(item.type === "term" ? item.preferredText || "该术语" : item.name || "该规则");
+    if (window.confirm && !window.confirm("确认删除“" + itemName + "”？删除后无法恢复。")) {
+      return;
+    }
+    setKnowledgeMutationBusy(true);
+    request("/enterprise-knowledge/items/" + encodeURIComponent(String(item.id || "")), null, { method: "DELETE" })
+      .then(function () {
+        state.knowledgeEditorDirty = false;
+        clearKnowledgeEditorState();
+        setKnowledgeView("list");
+        setKnowledgeMutationBusy(false);
+        return loadKnowledgeItems().then(function () {
+          loadKnowledgeSummary();
+          setStatus("企业知识条目已删除。");
+        });
+      }).catch(function (error) {
+        setKnowledgeMutationBusy(false);
+        setKnowledgeEditorError("删除失败：" + describeFetchError(error), "");
+      });
+  }
+
+  function closeKnowledgeEditor() {
+    if (!confirmKnowledgeEditorDiscard()) {
+      return;
+    }
+    clearKnowledgeEditorState();
+    setKnowledgeView("list");
+    renderKnowledgeList();
+  }
+
+  function handleKnowledgeScopeClick(event) {
+    var target = event.target;
+    while (target && target !== byId("knowledge-scope-list") && !target.getAttribute("data-knowledge-scope")) {
+      target = target.parentNode;
+    }
+    if (target && target.getAttribute("data-knowledge-scope")) {
+      openKnowledgeList(target.getAttribute("data-knowledge-scope"));
+    }
+  }
+
+  function handleKnowledgeTypeClick(event) {
+    var type = event.target.getAttribute("data-knowledge-type");
+    if (!type || state.knowledgeMutationBusy || (type === "term" && state.knowledgeScope !== "global")) {
+      return;
+    }
+    state.knowledgeType = type;
+    state.knowledgeItems = [];
+    state.knowledgeListError = "";
+    renderKnowledgeList();
+    loadKnowledgeItems();
+  }
+
+  function handleKnowledgeListClick(event) {
+    var target = event.target;
+    var itemId;
+    var item;
+    while (target && target !== byId("knowledge-item-list") && !target.getAttribute("data-knowledge-item-id")) {
+      target = target.parentNode;
+    }
+    itemId = target && target.getAttribute("data-knowledge-item-id");
+    if (!itemId) {
+      return;
+    }
+    item = state.knowledgeItems.filter(function (candidate) {
+      return String(candidate.id || "") === itemId;
+    })[0];
+    if (item) {
+      openKnowledgeEditor(item);
+    }
+  }
+
+  function scheduleKnowledgeSearch(value) {
+    state.knowledgeSearch = String(value || "");
+    if (state.knowledgeSearchTimer) {
+      clearTimeout(state.knowledgeSearchTimer);
+    }
+    state.knowledgeSearchTimer = setTimeout(function () {
+      state.knowledgeSearchTimer = null;
+      loadKnowledgeItems();
+    }, 250);
   }
 
   function renderTemplateOptions() {
@@ -3151,6 +3639,40 @@
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
     byId("workflow-profile-manager").addEventListener("change", markWorkflowProfileEditorDirty);
+    byId("btn-open-knowledge-manager").addEventListener("click", openKnowledgeScopeView);
+    byId("btn-retry-knowledge-summary").addEventListener("click", loadKnowledgeSummary);
+    byId("btn-knowledge-scope-back").addEventListener("click", function () {
+      setKnowledgeView("home");
+    });
+    byId("knowledge-scope-list").addEventListener("click", handleKnowledgeScopeClick);
+    byId("btn-knowledge-list-back").addEventListener("click", function () {
+      setKnowledgeView("scope");
+    });
+    byId("knowledge-type-switch").addEventListener("click", handleKnowledgeTypeClick);
+    byId("knowledge-search-input").addEventListener("input", function (event) {
+      scheduleKnowledgeSearch(event.target.value);
+    });
+    byId("btn-knowledge-add").addEventListener("click", function () {
+      if (!state.knowledgeListError && !state.knowledgeMutationBusy) {
+        openKnowledgeEditor(null);
+      }
+    });
+    byId("knowledge-item-list").addEventListener("click", handleKnowledgeListClick);
+    byId("btn-retry-knowledge-list").addEventListener("click", loadKnowledgeItems);
+    byId("btn-knowledge-editor-back").addEventListener("click", closeKnowledgeEditor);
+    byId("btn-cancel-knowledge-editor").addEventListener("click", closeKnowledgeEditor);
+    byId("btn-save-knowledge-item").addEventListener("click", saveKnowledgeItem);
+    byId("btn-knowledge-delete").addEventListener("click", deleteKnowledgeItem);
+    byId("knowledge-editor-view").addEventListener("input", function () {
+      if (state.knowledgeEditor) {
+        state.knowledgeEditorDirty = true;
+      }
+    });
+    byId("knowledge-editor-view").addEventListener("change", function () {
+      if (state.knowledgeEditor) {
+        state.knowledgeEditorDirty = true;
+      }
+    });
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
     byId("btn-run-primary").addEventListener("click", runPrimaryAction);
@@ -3179,6 +3701,8 @@
   byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION;
   byId("technical-review-prompt").value = state.technicalReviewPrompt;
   renderFallbackTemplateOptions();
+  renderKnowledgeManagerView();
+  renderKnowledgeSummary();
   switchMode(getInitialMode());
   refreshConfig();
   startScopeWatcher();

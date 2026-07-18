@@ -1986,6 +1986,28 @@
     });
   }
 
+  function validateKnowledgeDraft(value) {
+    var draft = value && typeof value === "object" ? value : {};
+    var type = String(draft.type || "");
+    var scope = String(draft.scope || "");
+    if (type !== "term" && type !== "style") {
+      return { ok: false, field: "type", message: "请选择知识类型。" };
+    }
+    if (type === "term" && scope !== "global") {
+      return { ok: false, field: "scope", message: "企业术语首版仅支持全局范围。" };
+    }
+    if (type === "term" && !String(draft.preferredText || "").trim()) {
+      return { ok: false, field: "preferredText", message: "请输入标准写法。" };
+    }
+    if (type === "style" && !String(draft.name || "").trim()) {
+      return { ok: false, field: "name", message: "请输入规则名称。" };
+    }
+    if (type === "style" && !String(draft.ruleText || "").trim()) {
+      return { ok: false, field: "ruleText", message: "请输入写作规则。" };
+    }
+    return { ok: true, field: "", message: "" };
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -2020,6 +2042,7 @@
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
     normalizeKnowledgeUsage: normalizeKnowledgeUsage,
     knowledgeUsageSummary: knowledgeUsageSummary,
-    knowledgeUsageDetails: knowledgeUsageDetails
+    knowledgeUsageDetails: knowledgeUsageDetails,
+    validateKnowledgeDraft: validateKnowledgeDraft
   };
 });
