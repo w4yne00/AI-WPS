@@ -164,6 +164,7 @@ def build_smart_write_prompt(
     style: str = "default",
     focus: str = "default",
     length: str = "default",
+    enterprise_knowledge_block: str = "",
 ) -> str:
     action_text = {
         "rewrite": "改写润色",
@@ -180,6 +181,8 @@ def build_smart_write_prompt(
     ]
     if user_prompt.strip():
         lines.extend(["用户补充要求：", user_prompt.strip()])
+    if enterprise_knowledge_block.strip():
+        lines.extend(["", enterprise_knowledge_block.strip()])
     lines.extend(
         [
             "",
@@ -199,11 +202,18 @@ def build_smart_write_prompt(
     return "\n".join(lines)
 
 
-def build_smart_imitation_prompt(template_text: str, requirement: str, reference_material: str = "") -> str:
+def build_smart_imitation_prompt(
+    template_text: str,
+    requirement: str,
+    reference_material: str = "",
+    enterprise_knowledge_block: str = "",
+) -> str:
     reference_text = reference_material.strip() or "未提供参考素材。"
-    return "\n".join(
+    lines = ["你是企业办公文档智能仿写助手。"]
+    if enterprise_knowledge_block.strip():
+        lines.extend(["", enterprise_knowledge_block.strip()])
+    lines.extend(
         [
-            "你是企业办公文档智能仿写助手。",
             "",
             "仿写模板：",
             template_text.strip(),
@@ -223,6 +233,7 @@ def build_smart_imitation_prompt(template_text: str, requirement: str, reference
             "6. 只输出仿写后的正文，不解释仿写过程。",
         ]
     )
+    return "\n".join(lines)
 
 
 def _provider_safe_str(value) -> str:
@@ -341,33 +352,39 @@ def build_document_review_prompt(
     text: str,
     document_type: str,
     review_prompt: str = "",
+    enterprise_knowledge_block: str = "",
 ) -> str:
     prompt_text = review_prompt.strip() or get_default_document_review_prompt(document_type)
     document_type_text = DOCUMENT_TYPE_TEXT.get(document_type, "技术方案")
-    return "\n".join(
+    lines = [
+        "你是一名企业文档审查专家。",
+        "请审查下面的文档内容，重点发现错别字、语言逻辑表达、通畅性和对应文档类型的专业性问题。",
+        "文档类型：{0}".format(document_type_text),
+        "",
+        "审查重点：",
+        prompt_text,
+        "",
+        "输出要求：",
+        "1. 只返回一个 Markdown json 代码块，不要输出代码块以外的解释性文字。",
+        "2. json 顶层字段为 summary 和 issues。",
+        "3. issues 为数组，每项包含 category、severity、location、originalText、problem、suggestion、suggestedRewrite。",
+        "4. category 只能使用 typo、expression、logic、fluency、professional。",
+        "5. severity 只能使用 high、medium、low。",
+        "6. location 可用章节名、段落号或“选中文本”描述；无法定位时写“未定位”。",
+        "7. suggestedRewrite 只针对可直接替换的局部文本给出，无法直接改写时留空字符串。",
+        "8. 不要检查字体、字号、行距、页边距等格式合规问题。",
+        "9. 只输出本次审查发现的问题列表；不要输出前端处理状态、复制动作或处理记录。",
+    ]
+    if enterprise_knowledge_block.strip():
+        lines.extend(["", enterprise_knowledge_block.strip()])
+    lines.extend(
         [
-            "你是一名企业文档审查专家。",
-            "请审查下面的文档内容，重点发现错别字、语言逻辑表达、通畅性和对应文档类型的专业性问题。",
-            "文档类型：{0}".format(document_type_text),
-            "",
-            "审查重点：",
-            prompt_text,
-            "",
-            "输出要求：",
-            "1. 只返回一个 Markdown json 代码块，不要输出代码块以外的解释性文字。",
-            "2. json 顶层字段为 summary 和 issues。",
-            "3. issues 为数组，每项包含 category、severity、location、originalText、problem、suggestion、suggestedRewrite。",
-            "4. category 只能使用 typo、expression、logic、fluency、professional。",
-            "5. severity 只能使用 high、medium、low。",
-            "6. location 可用章节名、段落号或“选中文本”描述；无法定位时写“未定位”。",
-            "7. suggestedRewrite 只针对可直接替换的局部文本给出，无法直接改写时留空字符串。",
-            "8. 不要检查字体、字号、行距、页边距等格式合规问题。",
-            "9. 只输出本次审查发现的问题列表；不要输出前端处理状态、复制动作或处理记录。",
             "",
             "待审查内容：",
             text.strip(),
         ]
     )
+    return "\n".join(lines)
 
 
 def infer_payload_style(path: str, provider_type: str = "") -> str:
@@ -2010,6 +2027,7 @@ class ProviderClient:
         focus: str = "default",
         length: str = "default",
         selection_mode: str = "selection",
+        enterprise_knowledge_block: str = "",
     ) -> Dict:
         prompt = build_smart_write_prompt(
             text=text,
@@ -2018,6 +2036,7 @@ class ProviderClient:
             style=style,
             focus=focus,
             length=length,
+            enterprise_knowledge_block=enterprise_knowledge_block,
         )
         task_type = "word.smart_write"
         if not self.is_task_configured(task_type):
@@ -2052,8 +2071,14 @@ class ProviderClient:
         requirement: str,
         reference_material: str,
         trace_id: str,
+        enterprise_knowledge_block: str = "",
     ) -> Dict:
-        prompt = build_smart_imitation_prompt(template_text, requirement, reference_material)
+        prompt = build_smart_imitation_prompt(
+            template_text,
+            requirement,
+            reference_material,
+            enterprise_knowledge_block=enterprise_knowledge_block,
+        )
         task_type = "word.smart_imitation"
         if not self.is_task_configured(task_type):
             logger.info("traceId=%s provider=mock task=word.smart_imitation", trace_id)
@@ -2126,12 +2151,14 @@ class ProviderClient:
         trace_id: str,
         document_type: str = "technical_solution",
         review_prompt: str = "",
+        enterprise_knowledge_block: str = "",
     ) -> Dict:
         source_text = text.strip()
         prompt = build_document_review_prompt(
             text=source_text,
             document_type=document_type,
             review_prompt=review_prompt,
+            enterprise_knowledge_block=enterprise_knowledge_block,
         )
         if not source_text:
             return {

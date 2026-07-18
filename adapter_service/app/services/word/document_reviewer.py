@@ -2,15 +2,22 @@ from typing import Dict, Optional
 
 from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import WordDocumentRequest
+from app.services.enterprise_knowledge import EnterpriseKnowledgeService, get_enterprise_knowledge_service
 from app.services.provider_client import (
     ProviderClient,
     get_default_document_review_prompt,
+    merge_provider_debug,
 )
 
 
 class WordDocumentReviewer:
-    def __init__(self, provider_client: Optional[ProviderClient] = None) -> None:
+    def __init__(
+        self,
+        provider_client: Optional[ProviderClient] = None,
+        knowledge_service: Optional[EnterpriseKnowledgeService] = None,
+    ) -> None:
         self.provider_client = provider_client or ProviderClient()
+        self.knowledge_service = knowledge_service
 
     def review(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         source_text = request.content.plain_text.strip()
@@ -23,12 +30,17 @@ class WordDocumentReviewer:
         if not review_prompt:
             review_prompt = get_default_document_review_prompt(request.options.technical_document_type)
 
+        knowledge = self._get_knowledge_service().prepare(
+            "word.document_review",
+            [source_text, request.options.technical_document_type, review_prompt],
+        )
         try:
             provider_result = self.provider_client.document_review(
                 source_text,
                 trace_id,
                 document_type=request.options.technical_document_type,
                 review_prompt=review_prompt,
+                enterprise_knowledge_block=knowledge.prompt_block,
             )
         except ProviderTimeoutError:
             provider_result = self._provider_fallback(
@@ -44,6 +56,8 @@ class WordDocumentReviewer:
                 exc.code.lower(),
                 "enterprise-dify-chat/error",
             )
+        finally:
+            merge_provider_debug(trace_id, knowledge.diagnostic_patch())
         return {
             "documentType": request.options.technical_document_type,
             "reviewPrompt": review_prompt,
@@ -53,7 +67,13 @@ class WordDocumentReviewer:
             "rawAnswer": provider_result.get("rawAnswer", ""),
             "parseFallbackReason": provider_result.get("parseFallbackReason", ""),
             "provider": provider_result.get("provider", "mock"),
+            "knowledgeUsage": knowledge.usage,
         }
+
+    def _get_knowledge_service(self) -> EnterpriseKnowledgeService:
+        if self.knowledge_service is not None:
+            return self.knowledge_service
+        return get_enterprise_knowledge_service()
 
     def _provider_fallback(self, summary: str, detail: str, reason: str, provider: str) -> Dict:
         return {

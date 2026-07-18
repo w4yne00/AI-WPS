@@ -1529,9 +1529,11 @@ class EnterpriseProviderTests(unittest.TestCase):
             template_text="本项目坚持问题导向，持续完善闭环机制。",
             requirement="仿写成网络安全整改说明。",
             reference_material="整改范围：终端账号、日志审计、漏洞修复。",
+            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertIn("企业办公文档智能仿写助手", prompt)
+        self.assertLess(prompt.index("企业术语与写作规范"), prompt.index("仿写模板："))
         self.assertIn("本项目坚持问题导向", prompt)
         self.assertIn("仿写成网络安全整改说明", prompt)
         self.assertIn("终端账号、日志审计、漏洞修复", prompt)
@@ -1566,10 +1568,15 @@ class EnterpriseProviderTests(unittest.TestCase):
             requirement="仿写成技术风险提示。",
             reference_material="风险：接口超时。",
             trace_id="trace-smart-imitation",
+            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertEqual(result["rewrittenText"], "仿写后的正文。")
         self.assertEqual(provider.calls[0]["taskType"], "word.smart_imitation")
+        self.assertLess(
+            provider.calls[0]["query"].index("企业术语与写作规范"),
+            provider.calls[0]["query"].index("仿写模板："),
+        )
         self.assertIn("仿写成技术风险提示", provider.calls[0]["query"])
 
     def test_load_settings_reads_provider_fields(self) -> None:
@@ -1607,6 +1614,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             def __init__(self, settings: AppSettings) -> None:
                 super().__init__(settings)
                 self.captured_timeout = None
+                self.captured_query = ""
 
             def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
                 self.captured_timeout = timeout_seconds
@@ -1630,14 +1638,26 @@ class EnterpriseProviderTests(unittest.TestCase):
 
             def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
                 self.captured_timeout = timeout_seconds
+                self.captured_query = query
                 return {"answer": "{\"summary\":\"未发现问题。\",\"issues\":[]}"}
 
         settings = AppSettings(timeout_seconds=75)
         client = CapturingProviderClient(settings)
 
-        client.document_review("需要审查的较长文档。", "trace-doc-timeout", "technical_solution", "检查表达。")
+        client.document_review(
+            "需要审查的较长文档。",
+            "trace-doc-timeout",
+            "technical_solution",
+            "检查表达。",
+            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
+        )
 
         self.assertEqual(client.captured_timeout, 1800)
+        self.assertLess(
+            client.captured_query.index("企业术语与写作规范"),
+            client.captured_query.index("待审查内容："),
+        )
+        self.assertIn("category 只能使用", client.captured_query)
 
     def test_post_task_treats_socket_timeout_as_provider_timeout(self) -> None:
         settings = AppSettings(
@@ -2016,12 +2036,18 @@ class EnterpriseProviderTests(unittest.TestCase):
             focus="risk",
             length="same",
             selection_mode="selection",
+            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertEqual(result["rewrittenText"], "智能编写后的文本。")
         self.assertEqual(client.captured_input_data, {})
+        self.assertLess(
+            client.captured_query.index("企业术语与写作规范"),
+            client.captured_query.index("待处理原文："),
+        )
         self.assertIn("待处理原文：\n原文内容", client.captured_query)
         self.assertIn("不允许原样返回原文", client.captured_query)
+        self.assertIn("不要额外新增原文没有", client.captured_query)
 
     def test_route_api_key_uses_ref_file_before_default_key(self) -> None:
         tmp_dir = Path("tmp-test-route-keys")
@@ -2459,6 +2485,97 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("原文已有标题、列表、序号、表格或强调格式时", prompt)
         self.assertIn("不要额外新增原文没有、用户也未要求的 Markdown 标题、项目符号、编号列表或表格", prompt)
         self.assertIn("待处理原文：\n项目进展总体正常。", prompt)
+
+    def test_empty_enterprise_knowledge_keeps_all_word_prompts_byte_identical(self) -> None:
+        expected_smart_write = "\n".join(
+            [
+                "你是企业办公文档智能编写助手。",
+                "任务类型：改写润色",
+                "表达风格：采用国企技术方案常用的正式、准确、克制表达，术语统一，避免口语化和夸张表述",
+                "侧重点：保留原文关键信息、事实、条件和约束，不遗漏责任、时间、对象和结论",
+                "篇幅要求：保持与原文相近的篇幅，只优化措辞、结构和信息组织",
+                "",
+                "待处理原文：",
+                "原文内容。",
+                "",
+                "要求：",
+                "1. 必须基于待处理原文生成新内容。",
+                "2. 不允许原样返回原文。",
+                "3. 保持待处理原文的段落数量和换行结构，适合直接替换用户选中的段落。",
+                "4. 如果原文有多个段落，输出也应保留相近分段；不要把连续多个段落压成一整段。",
+                "5. 原文已有标题、列表、序号、表格或强调格式时，应尽量保持对应结构和层级。",
+                "6. 不要额外新增原文没有、用户也未要求的 Markdown 标题、项目符号、编号列表或表格。",
+                "7. 只输出最终正文，不要解释处理过程。",
+            ]
+        )
+        expected_imitation = "\n".join(
+            [
+                "你是企业办公文档智能仿写助手。",
+                "",
+                "仿写模板：",
+                "模板正文。",
+                "",
+                "仿写需求：",
+                "生成风险提示。",
+                "",
+                "参考素材：",
+                "未提供参考素材。",
+                "",
+                "要求：",
+                "1. 学习仿写模板的句式、层次、表达节奏和段落结构。",
+                "2. 生成内容必须服务于仿写需求。",
+                "3. 如提供参考素材，应优先基于参考素材，不编造事实、数据、结论或机构名称。",
+                "4. 不要照抄模板中的具体事实、对象、项目名称或数字，除非用户明确要求保留。",
+                "5. 尽量保持模板的段落数量、标题层级、列表结构和语气风格。",
+                "6. 只输出仿写后的正文，不解释仿写过程。",
+            ]
+        )
+        expected_review = "\n".join(
+            [
+                "你是一名企业文档审查专家。",
+                "请审查下面的文档内容，重点发现错别字、语言逻辑表达、通畅性和对应文档类型的专业性问题。",
+                "文档类型：技术方案",
+                "",
+                "审查重点：",
+                "检查表达。",
+                "",
+                "输出要求：",
+                "1. 只返回一个 Markdown json 代码块，不要输出代码块以外的解释性文字。",
+                "2. json 顶层字段为 summary 和 issues。",
+                "3. issues 为数组，每项包含 category、severity、location、originalText、problem、suggestion、suggestedRewrite。",
+                "4. category 只能使用 typo、expression、logic、fluency、professional。",
+                "5. severity 只能使用 high、medium、low。",
+                "6. location 可用章节名、段落号或“选中文本”描述；无法定位时写“未定位”。",
+                "7. suggestedRewrite 只针对可直接替换的局部文本给出，无法直接改写时留空字符串。",
+                "8. 不要检查字体、字号、行距、页边距等格式合规问题。",
+                "9. 只输出本次审查发现的问题列表；不要输出前端处理状态、复制动作或处理记录。",
+                "",
+                "待审查内容：",
+                "待审查正文。",
+            ]
+        )
+
+        self.assertEqual(
+            build_smart_write_prompt("原文内容。", "rewrite", enterprise_knowledge_block=""),
+            expected_smart_write,
+        )
+        self.assertEqual(
+            build_smart_imitation_prompt(
+                "模板正文。",
+                "生成风险提示。",
+                enterprise_knowledge_block="",
+            ),
+            expected_imitation,
+        )
+        self.assertEqual(
+            build_document_review_prompt(
+                "待审查正文。",
+                "technical_solution",
+                "检查表达。",
+                enterprise_knowledge_block="",
+            ),
+            expected_review,
+        )
 
     def test_build_smart_write_prompt_uses_soetech_option_text(self) -> None:
         prompt = build_smart_write_prompt(
