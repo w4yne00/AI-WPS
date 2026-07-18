@@ -379,6 +379,57 @@
     setPlainResult(result.rewrittenText || "");
   }
 
+  function clearKnowledgeUsage() {
+    var strip = byId("knowledge-usage-strip");
+    var summary = byId("knowledge-usage-summary");
+    var details = byId("knowledge-usage-details");
+    var list = byId("knowledge-usage-list");
+    if (summary) {
+      summary.textContent = "";
+    }
+    if (list) {
+      list.textContent = "";
+    }
+    if (details) {
+      details.hidden = true;
+      details.open = false;
+    }
+    if (strip) {
+      strip.hidden = true;
+    }
+  }
+
+  function renderKnowledgeUsage(value, taskType) {
+    var strip = byId("knowledge-usage-strip");
+    var summary = byId("knowledge-usage-summary");
+    var details = byId("knowledge-usage-details");
+    var list = byId("knowledge-usage-list");
+    var usage = helpers.normalizeKnowledgeUsage
+      ? helpers.normalizeKnowledgeUsage(value)
+      : null;
+    var summaryText;
+    var detailItems;
+
+    clearKnowledgeUsage();
+    if (!usage || !strip || !summary || !details || !list) {
+      return;
+    }
+    summaryText = helpers.knowledgeUsageSummary
+      ? helpers.knowledgeUsageSummary(usage, taskType)
+      : "";
+    detailItems = helpers.knowledgeUsageDetails
+      ? helpers.knowledgeUsageDetails(usage)
+      : [];
+    summary.textContent = summaryText;
+    detailItems.forEach(function (item) {
+      var row = document.createElement("li");
+      row.textContent = item;
+      list.appendChild(row);
+    });
+    details.hidden = detailItems.length === 0;
+    strip.hidden = false;
+  }
+
   function setResultViewSwitchVisible(visible) {
     var node = byId("result-view-switch");
     if (node) {
@@ -404,6 +455,7 @@
   function resetSmartWritePreviewState() {
     state.smartWritePreviewModel = null;
     state.resultViewMode = "preview";
+    clearKnowledgeUsage();
     setResultViewSwitchVisible(false);
     updateResultViewButtons();
   }
@@ -443,6 +495,7 @@
     state.documentReviewData = null;
     state.documentReviewIssueStatus = {};
     state.documentReviewRecordPreviewVisible = false;
+    clearKnowledgeUsage();
     setDocumentReviewJobId("");
     state.documentReviewPollStartedAt = 0;
     state.documentReviewPollErrorCount = 0;
@@ -516,7 +569,7 @@
     return normalized;
   }
 
-  function setSmartWriteResult(result) {
+  function setSmartWriteResult(result, taskType) {
     var normalized = normalizeSmartWriteResult(result);
     var text = normalized.rewrittenText || "";
     var previewSource = {};
@@ -539,6 +592,7 @@
     state.resultViewMode = "preview";
     setResultViewSwitchVisible(Boolean(text));
     renderSmartWritePreviewMode();
+    renderKnowledgeUsage(normalized.knowledgeUsage, taskType);
     return normalized;
   }
 
@@ -2160,6 +2214,7 @@
   function renderDocumentReviewResult(data) {
     var markdown = renderGroupedDocumentReview(data || {});
     state.documentReviewRecordPreviewVisible = false;
+    renderKnowledgeUsage(data && data.knowledgeUsage, "word.document_review");
     try {
       renderDocumentReviewInteractive(data || {});
       return true;
@@ -2945,7 +3000,7 @@
       request("/word/smart-write", state.latestDocumentPayload)
         .then(function (body) {
           state.pendingApplyAction = "rewrite";
-          state.rewriteResult = setSmartWriteResult(body.data);
+          state.rewriteResult = setSmartWriteResult(body.data, "word.smart_write");
           setApplyEnabled(true);
           setTrace(body.traceId);
           setStatus(config.doneText);
@@ -3005,7 +3060,7 @@
     request("/word/smart-imitation", state.latestDocumentPayload)
       .then(function (body) {
         state.pendingApplyAction = "";
-        state.rewriteResult = setSmartWriteResult(body.data);
+        state.rewriteResult = setSmartWriteResult(body.data, "word.smart_imitation");
         setApplyEnabled(false);
         setTrace(body.traceId);
         hideCompareForSmartImitation();

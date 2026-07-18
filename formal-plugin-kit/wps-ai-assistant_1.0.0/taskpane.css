@@ -595,6 +595,44 @@ button[disabled] {
   flex-wrap: wrap;
 }
 
+.knowledge-usage-strip {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface-muted);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.knowledge-usage-summary {
+  margin: 0;
+  font-weight: 650;
+}
+
+.knowledge-usage-details {
+  margin-top: 6px;
+  color: var(--muted);
+}
+
+.knowledge-usage-details summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.knowledge-usage-list {
+  margin: 7px 0 0;
+  padding-left: 20px;
+}
+
+.knowledge-usage-list li + li {
+  margin-top: 3px;
+}
+
 #result-output {
   min-height: 285px;
   margin: 10px 0 0;

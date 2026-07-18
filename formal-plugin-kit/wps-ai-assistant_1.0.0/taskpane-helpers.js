@@ -1925,6 +1925,67 @@
     return Number(profileCount || 0) === 0 || Boolean(requested);
   }
 
+  function normalizeKnowledgeUsageCount(value) {
+    var number = Number(value);
+    if (!isFinite(number) || number < 0) {
+      return 0;
+    }
+    return Math.floor(number);
+  }
+
+  function normalizeKnowledgeUsage(value) {
+    var source;
+    var matchedItems;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    source = value;
+    matchedItems = Array.isArray(source.matchedItems) ? source.matchedItems : [];
+    return {
+      applied: Boolean(source.applied),
+      degraded: Boolean(source.degraded),
+      degradedReason: String(source.degradedReason || ""),
+      termMatchCount: normalizeKnowledgeUsageCount(source.termMatchCount),
+      styleRuleCount: normalizeKnowledgeUsageCount(source.styleRuleCount),
+      truncatedCount: normalizeKnowledgeUsageCount(source.truncatedCount),
+      matchedItems: matchedItems.filter(function (item) {
+        return item &&
+          (item.type === "term" || item.type === "style") &&
+          String(item.name || "").trim();
+      }).slice(0, 20).map(function (item) {
+        return {
+          id: String(item.id || ""),
+          type: item.type,
+          name: String(item.name || "").trim()
+        };
+      })
+    };
+  }
+
+  function knowledgeUsageSummary(value, taskType) {
+    var usage = normalizeKnowledgeUsage(value);
+    var action;
+    if (!usage) {
+      return "";
+    }
+    if (!usage.applied || usage.degraded) {
+      return "企业知识未应用，本次结果仅使用模型工作流生成";
+    }
+    action = taskType === "word.document_review" ? "已检查" : "已应用";
+    return "企业知识：" + action + " " + usage.termMatchCount +
+      " 条术语、" + usage.styleRuleCount + " 条风格规则";
+  }
+
+  function knowledgeUsageDetails(value) {
+    var usage = normalizeKnowledgeUsage(value);
+    if (!usage) {
+      return [];
+    }
+    return usage.matchedItems.map(function (item) {
+      return (item.type === "term" ? "术语" : "风格规则") + "：" + item.name;
+    });
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -1956,6 +2017,9 @@
     workflowProfileStatusText: workflowProfileStatusText,
     workflowProfileOptionState: workflowProfileOptionState,
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
-    shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile
+    shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
+    normalizeKnowledgeUsage: normalizeKnowledgeUsage,
+    knowledgeUsageSummary: knowledgeUsageSummary,
+    knowledgeUsageDetails: knowledgeUsageDetails
   };
 });

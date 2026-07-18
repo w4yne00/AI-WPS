@@ -920,6 +920,80 @@ function testNormalizeWorkflowProfileDataHandlesMalformedInput() {
   assert.strictEqual(helpers.workflowProfileStatusText({ id: "p", keyConfigured: false }, ""), "密钥未配置");
 }
 
+function testNormalizeKnowledgeUsageHandlesMissingAndMalformedMetadata() {
+  assert.deepStrictEqual(helpers.normalizeKnowledgeUsage(null), null);
+  assert.deepStrictEqual(helpers.normalizeKnowledgeUsage([]), null);
+
+  const normalized = helpers.normalizeKnowledgeUsage({
+    applied: true,
+    degraded: false,
+    degradedReason: 123,
+    termMatchCount: -2,
+    styleRuleCount: 3.8,
+    truncatedCount: "4",
+    matchedItems: [
+      { id: "t1", type: "term", name: "卫星互联网运营管理平台" },
+      { id: "s1", type: "style", name: "先结论后说明" },
+      { id: "x1", type: "unknown", name: "不应显示" },
+      null
+    ]
+  });
+
+  assert.deepStrictEqual(normalized, {
+    applied: true,
+    degraded: false,
+    degradedReason: "123",
+    termMatchCount: 0,
+    styleRuleCount: 3,
+    truncatedCount: 4,
+    matchedItems: [
+      { id: "t1", type: "term", name: "卫星互联网运营管理平台" },
+      { id: "s1", type: "style", name: "先结论后说明" }
+    ]
+  });
+}
+
+function testKnowledgeUsageSummaryUsesTaskSpecificChineseVerb() {
+  const usage = { applied: true, termMatchCount: 2, styleRuleCount: 1 };
+
+  assert.strictEqual(
+    helpers.knowledgeUsageSummary(usage, "word.smart_write"),
+    "企业知识：已应用 2 条术语、1 条风格规则"
+  );
+  assert.strictEqual(
+    helpers.knowledgeUsageSummary(usage, "word.smart_imitation"),
+    "企业知识：已应用 2 条术语、1 条风格规则"
+  );
+  assert.strictEqual(
+    helpers.knowledgeUsageSummary(usage, "word.document_review"),
+    "企业知识：已检查 2 条术语、1 条风格规则"
+  );
+  assert.strictEqual(
+    helpers.knowledgeUsageSummary({ applied: false, degraded: true }, "word.document_review"),
+    "企业知识未应用，本次结果仅使用模型工作流生成"
+  );
+  assert.strictEqual(helpers.knowledgeUsageSummary(null, "word.smart_write"), "");
+}
+
+function testKnowledgeUsageDetailsFiltersLabelsAndCapsItems() {
+  const matchedItems = [];
+  for (let index = 0; index < 24; index += 1) {
+    matchedItems.push({
+      id: `item-${index}`,
+      type: index % 2 === 0 ? "term" : "style",
+      name: `规则 ${index}`
+    });
+  }
+  matchedItems.splice(3, 0, { id: "ignored", type: "other", name: "不应显示" });
+
+  const details = helpers.knowledgeUsageDetails({ matchedItems });
+
+  assert.strictEqual(details.length, 20);
+  assert.strictEqual(details[0], "术语：规则 0");
+  assert.strictEqual(details[1], "风格规则：规则 1");
+  assert.ok(!details.some((item) => item.includes("不应显示")));
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
@@ -959,6 +1033,9 @@ testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();
 testNormalizeWorkflowProfileDataFiltersByTask();
 testNormalizeWorkflowProfileDataHandlesMalformedInput();
+testNormalizeKnowledgeUsageHandlesMissingAndMalformedMetadata();
+testKnowledgeUsageSummaryUsesTaskSpecificChineseVerb();
+testKnowledgeUsageDetailsFiltersLabelsAndCapsItems();
 assertWorkflowUiContract(helpers);
 assertWorkflowUiContract(excelHelpers);
 
