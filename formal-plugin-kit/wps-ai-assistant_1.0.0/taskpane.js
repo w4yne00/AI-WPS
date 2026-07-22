@@ -193,6 +193,10 @@
     workflowProfileMutationBusy: false,
     settingsWorkflowTaskType: "word.smart_write",
     workflowProfileEditor: null,
+    configRefreshRequestId: 0,
+    modelInterfaceDetectable: false,
+    settingsRefreshController: null,
+    workflowHelpPinned: false,
     knowledgeView: "home",
     knowledgeScope: "global",
     knowledgeType: "term",
@@ -320,7 +324,7 @@
     }
   }
 
-  function setProviderLine(providerName, configured) {
+  function setProviderLine(providerName) {
     var providerText = {
       "enterprise-chat-api": "企业接口",
       "enterprise-dify-chat": "模型接口",
@@ -328,9 +332,6 @@
       mock: "模拟接口"
     };
     var detail = providerText[providerName] || providerName || "未检测";
-    if (typeof configured === "boolean") {
-      detail += configured ? " / 已配置" : " / 未配置";
-    }
     state.providerName = detail;
     byId("provider-line").textContent = "接口：" + detail;
     byId("settings-provider-line").textContent = "接口：" + detail;
@@ -342,8 +343,10 @@
   }
 
   function setProviderBaseUrl(baseUrl) {
+    var summary = byId("provider-summary-url");
     state.providerBaseUrl = baseUrl || "";
-    byId("provider-summary-url").textContent = state.providerBaseUrl || "未配置大模型 API URL";
+    summary.textContent = state.providerBaseUrl || "未配置接口地址";
+    summary.setAttribute("title", state.providerBaseUrl || "未配置接口地址");
     byId("provider-base-url").value = state.providerBaseUrl;
   }
 
@@ -360,11 +363,35 @@
     renderWorkflowProfileStrip();
   }
 
+  function renderModelInterfaceState(detectable) {
+    var taskTypes = TASK_API_KEY_DEFS.map(function (item) {
+      return item.taskType;
+    });
+    var profilesByTask = {};
+    var modelState;
+    var badge = byId("provider-readiness-badge");
+    var summary = byId("provider-summary-url");
+    taskTypes.forEach(function (taskType) {
+      profilesByTask[taskType] = getWorkflowProfileData(taskType);
+    });
+    modelState = helpers.deriveModelInterfaceState({
+      detectable: detectable,
+      providerBaseUrl: state.providerBaseUrl,
+      taskTypes: taskTypes,
+      profilesByTask: profilesByTask
+    });
+    badge.className = "readiness-badge is-" + modelState.code;
+    badge.textContent = modelState.label;
+    summary.textContent = state.providerBaseUrl || "未配置接口地址";
+    summary.setAttribute("title", state.providerBaseUrl || "未配置接口地址");
+    byId("diagnostics-summary").textContent = modelState.label;
+  }
+
   function setAdapterUnavailableState(error) {
     var message = error && error.message ? error.message : "端口未监听";
     setHealthBadge("badge-warn", "待启动");
     setTrace("");
-    setProviderLine("mock", false);
+    setProviderLine("mock");
     setProviderName("本地 mock");
     setStatus("本地适配服务暂不可用。");
     setResult([
@@ -673,6 +700,27 @@
   function switchView(viewName) {
     byId("home-view").classList.toggle("active", viewName === "home");
     byId("settings-view").classList.toggle("active", viewName === "settings");
+    syncSettingsRefreshController();
+  }
+
+  function syncSettingsRefreshController() {
+    var settingsView = byId("settings-view");
+    var shouldRun;
+    if (!state.settingsRefreshController) {
+      return;
+    }
+    shouldRun = Boolean(
+      settingsView &&
+      byId("settings-view").classList.contains("active") &&
+      document.visibilityState !== "hidden" &&
+      state.knowledgeView === "home" &&
+      !state.workflowProfileEditor
+    );
+    if (shouldRun) {
+      state.settingsRefreshController.start();
+    } else {
+      state.settingsRefreshController.stop();
+    }
   }
 
   function toggleSettingsShortcut() {
@@ -710,7 +758,7 @@
     }
     state.workflowProfileEditor = null;
     clearKnowledgeEditorState();
-    setKnowledgeView("home");
+    setKnowledgeView("home", true);
 
     if (state.currentMode === "settings") {
       switchMode(returnMode);
@@ -1249,6 +1297,8 @@
   }
 
   function refreshConfig() {
+    var requestId = state.configRefreshRequestId + 1;
+    state.configRefreshRequestId = requestId;
     setStatus("正在刷新配置...");
     return request("/health").then(function (health) {
       return Promise.all([
@@ -1260,9 +1310,12 @@
       var health = results[0];
       var templates = results[1];
       var config = results[2];
+      if (state.configRefreshRequestId !== requestId) {
+        return null;
+      }
       setHealthBadge("badge-ok", "已连接");
       setTrace(health.traceId || "");
-      setProviderLine(health.data.providerType || "未检测", health.data.providerConfigured);
+      setProviderLine(health.data.providerType || "未检测");
       if (config.success === false) {
         applyProviderConfig({
           providerName: health.data.providerName || "企业大模型接口",
@@ -1280,11 +1333,22 @@
         renderTemplateOptions();
       }
       return refreshAllWorkflowProfiles().then(function () {
+        if (state.configRefreshRequestId !== requestId) {
+          return null;
+        }
+        state.modelInterfaceDetectable = true;
+        renderModelInterfaceState(state.modelInterfaceDetectable);
         setStatus("就绪");
-        refreshDiagnostics();
+        return results;
       });
     }).catch(function (error) {
+      if (state.configRefreshRequestId !== requestId) {
+        return null;
+      }
+      state.modelInterfaceDetectable = false;
+      renderModelInterfaceState(state.modelInterfaceDetectable);
       setAdapterUnavailableState(error);
+      return null;
     });
   }
 
@@ -1432,6 +1496,7 @@
         state.workflowProfileSelections[taskType] = state.workflowProfiles[taskType].activeProfileId || "";
         renderWorkflowProfileStrip();
         renderWorkflowProfileManager();
+        renderModelInterfaceState(state.modelInterfaceDetectable);
         return state.workflowProfiles[taskType];
       })
       .catch(function (error) {
@@ -1447,6 +1512,7 @@
         };
         renderWorkflowProfileStrip();
         renderWorkflowProfileManager();
+        renderModelInterfaceState(state.modelInterfaceDetectable);
         return null;
       });
   }
@@ -1539,8 +1605,47 @@
       var active = buttons[index].getAttribute("data-workflow-task-tab") === taskType;
       buttons[index].classList.toggle("active", active);
       buttons[index].setAttribute("aria-selected", active ? "true" : "false");
+      buttons[index].tabIndex = active ? 0 : -1;
       buttons[index].disabled = state.workflowProfileMutationBusy;
     }
+  }
+
+  function handleWorkflowTaskTabKeydown(event) {
+    var buttons = byId("workflow-task-tabs").querySelectorAll("[data-workflow-task-tab]");
+    var currentIndex = Array.prototype.indexOf.call(buttons, event.target);
+    var nextIndex = currentIndex;
+    var nextButton;
+    if (currentIndex < 0 || state.workflowProfileMutationBusy) {
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+    } else if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % buttons.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = buttons.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    nextButton = buttons[nextIndex];
+    nextButton.click();
+    nextButton.focus();
+    if (typeof nextButton.scrollIntoView === "function") {
+      nextButton.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
+    }
+  }
+
+  function setWorkflowHelpOpen(open, pinned) {
+    var button = byId("workflow-help-button");
+    var popover = byId("workflow-help-popover");
+    if (typeof pinned === "boolean") {
+      state.workflowHelpPinned = pinned;
+    }
+    popover.hidden = !open;
+    button.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
   function syncWorkflowProfileManagerBusyState() {
@@ -1589,6 +1694,7 @@
       var profile = editor.mode === "edit" ? getWorkflowProfileById(taskType, editor.profileId) : null;
       if (editor.mode === "edit" && !profile) {
         state.workflowProfileEditor = null;
+        syncSettingsRefreshController();
         renderWorkflowProfileManager();
         return;
       }
@@ -1637,8 +1743,11 @@
           helpers.workflowProfileStatusText(profile, data.activeProfileId) :
           (isActive ? "当前使用" : (profile.keyConfigured ? "可切换" : "密钥未配置"));
         rows.push('<div class="workflow-profile-row" data-profile-id="' + escapeWorkflowText(profile.id) + '">');
-        rows.push('<div class="workflow-profile-summary"><strong>' + escapeWorkflowText(profile.name) + '</strong><span>' +
-          escapeWorkflowText(profile.note || "暂无备注") + '</span></div>');
+        rows.push('<div class="workflow-profile-summary"><strong>' + escapeWorkflowText(profile.name) + '</strong>');
+        if (profile.note) {
+          rows.push('<span class="workflow-profile-note">' + escapeWorkflowText(profile.note) + '</span>');
+        }
+        rows.push('</div>');
         rows.push('<span class="provider-badge">' + escapeWorkflowText(statusText) + '</span>');
         rows.push('<div class="workflow-profile-actions">');
         if (!isActive && profile.keyConfigured) {
@@ -1663,6 +1772,7 @@
     state.workflowProfileEditor = null;
     renderWorkflowTaskTabs();
     return loadWorkflowProfiles(taskType).then(function () {
+      syncSettingsRefreshController();
       setStatus(message);
     });
   }
@@ -1749,6 +1859,7 @@
       state.workflowProfileEditor = null;
       renderWorkflowTaskTabs();
       return loadWorkflowProfiles(taskType).then(function () {
+        syncSettingsRefreshController();
         setStatus("名称和备注已保存，但密钥更换失败：" + describeFetchError(error));
       });
     });
@@ -1790,6 +1901,7 @@
         renderWorkflowProfileStrip();
         renderWorkflowTaskTabs();
         renderWorkflowProfileManager();
+        renderModelInterfaceState(state.modelInterfaceDetectable);
         setStatus("工作流已切换，从下一次任务开始生效。");
       })
       .catch(function (error) {
@@ -1848,6 +1960,7 @@
     }
     state.settingsWorkflowTaskType = taskType;
     state.workflowProfileEditor = null;
+    syncSettingsRefreshController();
     renderWorkflowTaskTabs();
     renderWorkflowProfileManager();
     if (!state.workflowProfiles[taskType]) {
@@ -1870,9 +1983,11 @@
         return;
       }
       state.workflowProfileEditor = { mode: "create", taskType: taskType, profileId: "", dirty: false };
+      syncSettingsRefreshController();
       renderWorkflowProfileManager();
     } else if (action === "edit-open") {
       state.workflowProfileEditor = { mode: "edit", taskType: taskType, profileId: profileId, dirty: false };
+      syncSettingsRefreshController();
       renderWorkflowProfileManager();
     } else if (action === "editor-cancel") {
       if (!confirmWorkflowEditorDiscard()) {
@@ -1880,6 +1995,7 @@
       }
       state.workflowProfileEditor = null;
       renderWorkflowProfileManager();
+      syncSettingsRefreshController();
     } else if (action === "reload") {
       setStatus("正在重新读取工作流配置...");
       loadWorkflowProfiles(taskType);
@@ -1945,10 +2061,17 @@
     }, 0);
   }
 
-  function setKnowledgeView(view) {
+  function setKnowledgeView(view, suppressRefreshSync) {
+    var diagnosticsDisclosure = byId("diagnostics-disclosure");
+    if (view === "home" && diagnosticsDisclosure) {
+      diagnosticsDisclosure.open = false;
+    }
     state.knowledgeView = view;
     renderKnowledgeManagerView();
     focusKnowledgeView(view);
+    if (!suppressRefreshSync) {
+      syncSettingsRefreshController();
+    }
   }
 
   function formatKnowledgeUpdatedAt(value) {
@@ -3473,6 +3596,12 @@
     });
   }
 
+  function handleDiagnosticsDisclosureToggle(event) {
+    if (event.currentTarget.open) {
+      refreshDiagnostics();
+    }
+  }
+
   function copyDiagnostics() {
     var text = state.diagnosticsCopyText || byId("last-task-diagnostics-output").textContent || "";
     if (!text.trim()) {
@@ -4084,6 +4213,9 @@
   }
 
   function bindEvents() {
+    var workflowHelpButton = byId("workflow-help-button");
+    var workflowHelpPopover = byId("workflow-help-popover");
+    var workflowHelpHeading = document.querySelector(".workflow-settings-heading");
     byId("btn-open-settings").addEventListener("click", function () {
       toggleSettingsShortcut();
     });
@@ -4131,8 +4263,42 @@
     });
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
+    byId("diagnostics-disclosure").addEventListener("toggle", handleDiagnosticsDisclosureToggle);
     byId("workflow-profile-select").addEventListener("change", handleWorkflowProfileSelectionChange);
     byId("workflow-task-tabs").addEventListener("click", handleWorkflowTaskTabClick);
+    byId("workflow-task-tabs").addEventListener("keydown", handleWorkflowTaskTabKeydown);
+    workflowHelpButton.addEventListener("click", function () {
+      var pinned = !state.workflowHelpPinned;
+      setWorkflowHelpOpen(pinned, pinned);
+    });
+    workflowHelpButton.addEventListener("mouseenter", function () {
+      setWorkflowHelpOpen(true);
+    });
+    workflowHelpButton.addEventListener("focusin", function () {
+      setWorkflowHelpOpen(true);
+    });
+    workflowHelpButton.addEventListener("mouseleave", function () {
+      if (!state.workflowHelpPinned) {
+        setWorkflowHelpOpen(false, false);
+      }
+    });
+    workflowHelpButton.addEventListener("focusout", function (event) {
+      if (!state.workflowHelpPinned && !workflowHelpButton.contains(event.relatedTarget)) {
+        setWorkflowHelpOpen(false, false);
+      }
+    });
+    document.addEventListener("click", function (event) {
+      if (!workflowHelpHeading.contains(event.target) && !workflowHelpPopover.contains(event.target)) {
+        setWorkflowHelpOpen(false, false);
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !workflowHelpPopover.hidden) {
+        setWorkflowHelpOpen(false, false);
+        workflowHelpButton.focus();
+      }
+    });
+    document.addEventListener("visibilitychange", syncSettingsRefreshController);
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
     byId("workflow-profile-manager").addEventListener("change", markWorkflowProfileEditorDirty);
@@ -4236,7 +4402,13 @@
   renderFallbackTemplateOptions();
   renderKnowledgeManagerView();
   renderKnowledgeSummary();
+  state.settingsRefreshController = helpers.createSettingsRefreshController({
+    intervalMs: 30000,
+    refresh: refreshConfig
+  });
   switchMode(getInitialMode());
-  refreshConfig();
+  if (!state.settingsRefreshController.isRunning()) {
+    refreshConfig();
+  }
   startScopeWatcher();
 })();

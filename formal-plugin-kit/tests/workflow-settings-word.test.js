@@ -19,6 +19,10 @@ function loadPureFunction(name, helpers = {}) {
   return vm.runInNewContext(`(${functionSource(name)})`, { helpers });
 }
 
+function loadFunction(name, context = {}) {
+  return vm.runInNewContext(`(${functionSource(name)})`, context);
+}
+
 const taskDefinitions = [
   ["word.smart_write", "智能编写"],
   ["word.smart_imitation", "智能仿写"],
@@ -51,6 +55,94 @@ assert.ok(!managerSource.includes("TASK_API_KEY_DEFS.forEach"));
 assert.ok(managerSource.includes('data-workflow-action="create-open"'));
 assert.ok(managerSource.includes('data-workflow-action="edit-open"'));
 assert.ok(managerSource.includes("canDeleteWorkflowProfile"));
+assert.ok(!managerSource.includes('profile.note || "暂无备注"'));
+assert.ok(managerSource.includes("if (profile.note)"));
+assert.ok(managerSource.includes("workflow-profile-note"));
+
+// Live model-interface state is derived from the URL and active workflow profiles.
+[
+  "configRefreshRequestId: 0",
+  "modelInterfaceDetectable: false",
+  "settingsRefreshController: null",
+  "workflowHelpPinned: false"
+].forEach((token) => assert.ok(js.includes(token), token));
+
+const modelInterfaceSource = functionSource("renderModelInterfaceState");
+assert.ok(modelInterfaceSource.includes("TASK_API_KEY_DEFS.map"));
+assert.ok(modelInterfaceSource.includes("getWorkflowProfileData"));
+assert.ok(modelInterfaceSource.includes("helpers.deriveModelInterfaceState"));
+assert.ok(modelInterfaceSource.includes('"readiness-badge is-" + modelState.code'));
+assert.ok(modelInterfaceSource.includes("modelState.label"));
+assert.ok(modelInterfaceSource.includes('byId("provider-summary-url")'));
+assert.ok(modelInterfaceSource.includes('setAttribute("title"'));
+assert.ok(modelInterfaceSource.includes('byId("diagnostics-summary")'));
+
+const refreshConfigSource = functionSource("refreshConfig");
+assert.ok(refreshConfigSource.includes("state.configRefreshRequestId + 1"));
+assert.ok(refreshConfigSource.includes("state.configRefreshRequestId = requestId"));
+assert.ok(refreshConfigSource.includes("state.configRefreshRequestId !== requestId"));
+assert.ok(refreshConfigSource.includes("refreshAllWorkflowProfiles"));
+assert.ok(refreshConfigSource.includes("state.modelInterfaceDetectable = true"));
+assert.ok(refreshConfigSource.includes("state.modelInterfaceDetectable = false"));
+assert.ok(refreshConfigSource.includes("renderModelInterfaceState"));
+assert.ok(!refreshConfigSource.includes("providerConfigured"));
+assert.ok(!refreshConfigSource.includes("refreshDiagnostics"));
+assert.ok(refreshConfigSource.indexOf("state.configRefreshRequestId !== requestId") < refreshConfigSource.indexOf("setHealthBadge"));
+assert.ok(refreshConfigSource.lastIndexOf("state.configRefreshRequestId !== requestId") < refreshConfigSource.lastIndexOf("setAdapterUnavailableState"));
+
+const providerLineSource = functionSource("setProviderLine");
+assert.ok(providerLineSource.startsWith("function setProviderLine(providerName)"));
+assert.ok(!providerLineSource.includes("configured"));
+
+const loadProfilesSource = functionSource("loadWorkflowProfiles");
+assert.ok(loadProfilesSource.includes("renderModelInterfaceState(state.modelInterfaceDetectable)"));
+
+const settingsRefreshSource = functionSource("syncSettingsRefreshController");
+assert.ok(settingsRefreshSource.includes('byId("settings-view").classList.contains("active")'));
+assert.ok(settingsRefreshSource.includes('document.visibilityState !== "hidden"'));
+assert.ok(settingsRefreshSource.includes('state.knowledgeView === "home"'));
+assert.ok(settingsRefreshSource.includes("!state.workflowProfileEditor"));
+assert.ok(settingsRefreshSource.includes("state.settingsRefreshController.start()"));
+assert.ok(settingsRefreshSource.includes("state.settingsRefreshController.stop()"));
+
+const initControllerIndex = js.lastIndexOf("helpers.createSettingsRefreshController");
+const firstSwitchModeIndex = js.lastIndexOf("switchMode(getInitialMode())");
+assert.ok(initControllerIndex >= 0 && initControllerIndex < firstSwitchModeIndex);
+assert.ok(js.includes("intervalMs: 30000"));
+assert.ok(js.includes('document.addEventListener("visibilitychange", syncSettingsRefreshController)'));
+
+const refreshLifecycleState = {
+  knowledgeView: "home",
+  workflowProfileEditor: null,
+  settingsRefreshController: {
+    startCount: 0,
+    stopCount: 0,
+    start() { this.startCount += 1; },
+    stop() { this.stopCount += 1; }
+  }
+};
+let settingsViewActive = true;
+const refreshLifecycleDocument = { visibilityState: "visible" };
+const syncSettingsRefresh = loadFunction("syncSettingsRefreshController", {
+  state: refreshLifecycleState,
+  document: refreshLifecycleDocument,
+  byId: () => ({ classList: { contains: () => settingsViewActive } })
+});
+syncSettingsRefresh();
+assert.strictEqual(refreshLifecycleState.settingsRefreshController.startCount, 1);
+refreshLifecycleDocument.visibilityState = "hidden";
+syncSettingsRefresh();
+assert.strictEqual(refreshLifecycleState.settingsRefreshController.stopCount, 1);
+refreshLifecycleDocument.visibilityState = "visible";
+refreshLifecycleState.knowledgeView = "scope";
+syncSettingsRefresh();
+refreshLifecycleState.knowledgeView = "home";
+refreshLifecycleState.workflowProfileEditor = { mode: "edit" };
+syncSettingsRefresh();
+refreshLifecycleState.workflowProfileEditor = null;
+settingsViewActive = false;
+syncSettingsRefresh();
+assert.strictEqual(refreshLifecycleState.settingsRefreshController.stopCount, 4);
 
 // The host must delegate decisions to the shared helper API when it is available.
 [
@@ -120,6 +212,14 @@ const toggleSource = functionSource("toggleSettingsShortcut");
 assert.ok(toggleSource.includes('switchView("settings")'));
 assert.ok(toggleSource.includes('switchView("home")'));
 
+const diagnosticsToggleSource = functionSource("handleDiagnosticsDisclosureToggle");
+assert.ok(diagnosticsToggleSource.includes("event.currentTarget.open"));
+assert.ok(diagnosticsToggleSource.includes("refreshDiagnostics()"));
+const knowledgeViewSource = functionSource("setKnowledgeView");
+assert.ok(knowledgeViewSource.includes('view === "home"'));
+assert.ok(knowledgeViewSource.includes("diagnosticsDisclosure.open = false"));
+assert.ok(knowledgeViewSource.includes("syncSettingsRefreshController()"));
+
 const reviewFailures = [];
 
 function reviewCheck(name, check) {
@@ -164,6 +264,18 @@ reviewCheck("dirty workflow editor uses one discard confirmation", () => {
   assert.ok(functionSource("handleWorkflowProfileManagerAction").includes("confirmWorkflowEditorDiscard()"));
   assert.ok(toggleSource.includes("confirmWorkflowEditorDiscard()"));
   assert.ok(functionSource("bindEvents").includes('addEventListener("input", markWorkflowProfileEditorDirty)'));
+});
+
+reviewCheck("workflow tabs support roving keyboard navigation", () => {
+  const tabsSource = functionSource("renderWorkflowTaskTabs");
+  const keydownSource = functionSource("handleWorkflowTaskTabKeydown");
+  assert.ok(tabsSource.includes("tabIndex = active ? 0 : -1"));
+  ["ArrowLeft", "ArrowRight", "Home", "End", "preventDefault", ".click()", ".focus()", "scrollIntoView"].forEach(
+    (token) => assert.ok(keydownSource.includes(token), token)
+  );
+  assert.ok(keydownSource.includes('behavior: "smooth"'));
+  assert.ok(keydownSource.includes('block: "nearest"'));
+  assert.ok(keydownSource.includes('inline: "nearest"'));
 });
 
 reviewCheck("first workflow activation checkbox is checked in the DOM", () => {

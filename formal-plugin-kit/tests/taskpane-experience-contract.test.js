@@ -340,6 +340,33 @@ assert.ok(excelJs.includes('byId("btn-edit-provider-url")'), "Excel JS missing p
 assert.ok(pptJs.includes('byId("provider-summary-url")'), "PPT JS missing provider summary reference");
 assert.ok(!pptJs.includes('byId("provider-url-summary")'), "PPT JS still references old provider summary ID");
 
+const wordHelpSource = functionSource(wordJs, "setWorkflowHelpOpen");
+assert.ok(wordHelpSource.includes("workflowHelpPinned"), "Word help state is not explicit");
+assert.ok(wordHelpSource.includes("popover.hidden = !open"), "Word help hidden state is not synchronized");
+assert.ok(wordHelpSource.includes('setAttribute("aria-expanded"'), "Word help aria state is not synchronized");
+const wordBindEvents = functionSource(wordJs, "bindEvents");
+assert.ok(
+  wordBindEvents.includes('workflowHelpButton.addEventListener("mouseenter"'),
+  "Word help hover must be scoped to the information button"
+);
+assert.ok(
+  wordBindEvents.includes('workflowHelpButton.addEventListener("focusin"'),
+  "Word help focus must be scoped to the information button"
+);
+[
+  'byId("workflow-help-button")',
+  'addEventListener("click"',
+  'addEventListener("mouseenter"',
+  'addEventListener("focusin"',
+  'addEventListener("mouseleave"',
+  'addEventListener("focusout"',
+  'document.addEventListener("click"',
+  'document.addEventListener("keydown"',
+  'event.key === "Escape"',
+  'addEventListener("toggle"',
+  'addEventListener("keydown", handleWorkflowTaskTabKeydown)'
+].forEach((token) => assert.ok(wordBindEvents.includes(token), `Word interaction binding missing ${token}`));
+
 const renderKnowledgeManagerView = functionSource(wordJs, "renderKnowledgeManagerView");
 assert.ok(
   renderKnowledgeManagerView.includes('byId("diagnostics-disclosure")'),
