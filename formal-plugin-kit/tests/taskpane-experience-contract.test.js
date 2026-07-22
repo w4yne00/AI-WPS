@@ -48,66 +48,113 @@ const commonIds = [
   "btn-copy-diagnostics"
 ];
 
-function elementWithId(html, tag, id) {
-  const match = html.match(new RegExp(`<${tag}\\b[^>]*\\bid="${id}"[^>]*>`, "i"));
-  assert.ok(match, `missing <${tag}>#${id}`);
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getTag(html, id) {
+  const match = html.match(new RegExp(`<[a-z][^>]*\\bid="${escapeRegExp(id)}"[^>]*>`, "i"));
+  assert.ok(match, `missing element #${id}`);
   return match[0];
+}
+
+function getTagWithAttribute(html, tagName, attribute, value) {
+  const match = html.match(
+    new RegExp(`<${tagName}\\b[^>]*\\b${attribute}="${escapeRegExp(value)}"[^>]*>`, "i")
+  );
+  assert.ok(match, `missing <${tagName}> with ${attribute}="${value}"`);
+  return match[0];
+}
+
+function collectHtmlIds(html) {
+  return new Set(Array.from(html.matchAll(/\bid="([^"]+)"/g), (match) => match[1]));
+}
+
+function collectLiteralByIds(js) {
+  return new Set(Array.from(js.matchAll(/\bbyId\("([^"]+)"\)/g), (match) => match[1]));
+}
+
+function hasClass(tag, className) {
+  const match = tag.match(/\bclass="([^"]*)"/i);
+  return Boolean(match && match[1].split(/\s+/).includes(className));
+}
+
+function assertElementTextStartsWith(html, tag, text, message) {
+  const start = html.indexOf(tag);
+  assert.ok(start >= 0 && html.slice(start + tag.length).startsWith(text), message);
+}
+
+function functionSource(js, name) {
+  const start = js.indexOf(`  function ${name}(`);
+  assert.notStrictEqual(start, -1, `missing function ${name}`);
+  const next = js.indexOf("\n  function ", start + 3);
+  return js.slice(start, next === -1 ? js.length : next);
 }
 
 hosts.forEach((host) => {
   const html = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.html"), "utf8");
   const js = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.js"), "utf8");
+  const htmlIds = collectHtmlIds(html);
 
   commonIds.forEach((id) => {
-    assert.ok(html.includes(`id="${id}"`), `${host.name} missing #${id}`);
+    assert.ok(htmlIds.has(id), `${host.name} missing #${id}`);
   });
-  assert.ok(
-    html.includes('id="provider-summary-card" class="settings-card model-interface-card"'),
-    `${host.name} missing model interface card contract`
-  );
+  collectLiteralByIds(js).forEach((id) => {
+    assert.ok(htmlIds.has(id), `${host.name} JS references missing #${id}`);
+  });
+
+  const providerCard = getTag(html, "provider-summary-card");
+  assert.ok(providerCard.startsWith("<section"), `${host.name} provider summary must be a section`);
+  assert.ok(hasClass(providerCard, "settings-card"), `${host.name} provider summary missing settings-card`);
+  assert.ok(hasClass(providerCard, "model-interface-card"), `${host.name} provider summary missing model-interface-card`);
   assert.ok(html.includes('class="model-interface-heading"'), `${host.name} missing model interface heading`);
   assert.ok(html.includes('class="model-interface-row"'), `${host.name} missing model interface row`);
-  assert.ok(
-    html.includes('id="provider-readiness-badge" class="readiness-badge is-unavailable" aria-live="polite">无法检测'),
-    `${host.name} missing initial provider readiness state`
-  );
-  assert.ok(
-    html.includes('id="provider-summary-url" class="provider-url-summary" title="">未配置接口地址'),
-    `${host.name} missing initial provider URL summary`
-  );
-  assert.ok(
-    html.includes('id="btn-edit-provider-url" class="text-action"') &&
-      html.includes('id="btn-edit-provider-url" class="text-action" type="button">修改</button>'),
-    `${host.name} missing provider edit action`
-  );
 
-  const helpButton = elementWithId(html, "button", "workflow-help-button");
+  const readinessBadge = getTag(html, "provider-readiness-badge");
+  assert.ok(hasClass(readinessBadge, "readiness-badge"), `${host.name} readiness badge class mismatch`);
+  assert.ok(hasClass(readinessBadge, "is-unavailable"), `${host.name} readiness state class mismatch`);
+  assert.ok(readinessBadge.includes('aria-live="polite"'), `${host.name} readiness badge must be live`);
+  assertElementTextStartsWith(html, readinessBadge, "无法检测", `${host.name} readiness initial text mismatch`);
+
+  const providerSummary = getTag(html, "provider-summary-url");
+  assert.ok(hasClass(providerSummary, "provider-url-summary"), `${host.name} provider URL class mismatch`);
+  assert.ok(providerSummary.includes('title=""'), `${host.name} provider URL title mismatch`);
+  assertElementTextStartsWith(html, providerSummary, "未配置接口地址", `${host.name} provider URL initial text mismatch`);
+
+  const editProviderButton = getTag(html, "btn-edit-provider-url");
+  assert.ok(editProviderButton.startsWith("<button"), `${host.name} provider edit action must be a button`);
+  assert.ok(hasClass(editProviderButton, "text-action"), `${host.name} provider edit action class mismatch`);
+  assert.ok(editProviderButton.includes('type="button"'), `${host.name} provider edit action type mismatch`);
+  assertElementTextStartsWith(html, editProviderButton, "修改", `${host.name} provider edit action text mismatch`);
+
+  const helpButton = getTag(html, "workflow-help-button");
   assert.ok(helpButton.includes('aria-expanded="false"'), `${host.name} help button must start collapsed`);
   assert.ok(helpButton.includes('aria-controls="workflow-help-popover"'), `${host.name} help button missing controls`);
-  assert.ok(
-    html.includes('id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden'),
-    `${host.name} missing hidden workflow help popover`
-  );
+
+  const helpPopover = getTag(html, "workflow-help-popover");
+  assert.ok(hasClass(helpPopover, "workflow-help-popover"), `${host.name} help popover class mismatch`);
+  assert.ok(helpPopover.includes('role="tooltip"'), `${host.name} help popover role mismatch`);
+  assert.ok(/\shidden(?:\s|>)/.test(helpPopover), `${host.name} help popover must start hidden`);
   assert.ok(
     html.includes("每项任务可保存多个工作流，可在任务页选择当前使用的工作流。"),
     `${host.name} missing workflow help copy`
   );
 
-  const taskTabs = elementWithId(html, "div", "workflow-task-tabs");
+  const taskTabs = getTag(html, "workflow-task-tabs");
   assert.ok(taskTabs.includes('role="tablist"'), `${host.name} task tabs missing tablist role`);
   assert.ok(taskTabs.includes(`aria-label="${host.tabsLabel}"`), `${host.name} task tabs label mismatch`);
-  assert.ok(
-    new RegExp(`<button\\b[^>]*role="tab"[^>]*data-workflow-task-tab="${host.task.replace(".", "\\.")}"[^>]*aria-selected="true"[^>]*>${host.label}</button>`).test(html),
-    `${host.name} missing selected ${host.task} tab`
-  );
+  const selectedTaskTab = getTagWithAttribute(html, "button", "data-workflow-task-tab", host.task);
+  assert.ok(selectedTaskTab.includes('role="tab"'), `${host.name} task button missing tab role`);
+  assert.ok(selectedTaskTab.includes('aria-selected="true"'), `${host.name} current task tab is not selected`);
+  assertElementTextStartsWith(html, selectedTaskTab, host.label, `${host.name} task tab label mismatch`);
 
-  assert.ok(!html.includes('id="btn-refresh"'), `${host.name} still includes #btn-refresh`);
+  assert.ok(!htmlIds.has("btn-refresh"), `${host.name} still includes #btn-refresh`);
   assert.ok(
     !html.includes("每项任务可保存多个工作流</span>"),
     `${host.name} still renders persistent multi-workflow copy`
   );
   assert.strictEqual(
-    html.includes('id="enterprise-knowledge-summary-card"'),
+    htmlIds.has("enterprise-knowledge-summary-card"),
     host.hasKnowledge,
     `${host.name} enterprise knowledge isolation mismatch`
   );
@@ -130,5 +177,24 @@ assert.ok(wordJs.includes('byId("btn-edit-provider-url")'), "Word JS missing pro
 assert.ok(excelJs.includes('byId("btn-edit-provider-url")'), "Excel JS missing provider edit binding");
 assert.ok(pptJs.includes('byId("provider-summary-url")'), "PPT JS missing provider summary reference");
 assert.ok(!pptJs.includes('byId("provider-url-summary")'), "PPT JS still references old provider summary ID");
+
+const renderKnowledgeManagerView = functionSource(wordJs, "renderKnowledgeManagerView");
+assert.ok(
+  renderKnowledgeManagerView.includes('byId("diagnostics-disclosure")'),
+  "Word knowledge subviews must control the diagnostics disclosure"
+);
+assert.ok(
+  renderKnowledgeManagerView.includes("diagnosticsDisclosure.hidden = false"),
+  "Word settings home must show the diagnostics disclosure"
+);
+assert.ok(
+  renderKnowledgeManagerView.indexOf("diagnosticsDisclosure.open = false") <
+    renderKnowledgeManagerView.indexOf("diagnosticsDisclosure.hidden = true"),
+  "Word knowledge subviews must collapse diagnostics before hiding it"
+);
+assert.ok(
+  !renderKnowledgeManagerView.includes('byId("diagnostics-section").hidden'),
+  "Word knowledge subviews must not hide the diagnostics content directly"
+);
 
 console.log("taskpane experience markup contract passed");

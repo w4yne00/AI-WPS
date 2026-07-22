@@ -1907,8 +1907,14 @@
   function renderKnowledgeManagerView() {
     var view = state.knowledgeView || "home";
     var home = view === "home";
+    var diagnosticsDisclosure = byId("diagnostics-disclosure");
     byId("connection-settings-section").hidden = !home;
-    byId("diagnostics-section").hidden = !home;
+    if (home) {
+      diagnosticsDisclosure.hidden = false;
+    } else {
+      diagnosticsDisclosure.open = false;
+      diagnosticsDisclosure.hidden = true;
+    }
     byId("knowledge-scope-view").hidden = view !== "scope";
     byId("knowledge-list-view").hidden = view !== "list";
     byId("knowledge-editor-view").hidden = view !== "editor";
