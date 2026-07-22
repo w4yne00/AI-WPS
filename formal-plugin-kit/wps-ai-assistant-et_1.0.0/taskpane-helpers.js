@@ -1877,6 +1877,81 @@
     return "尚未配置";
   }
 
+  function deriveModelInterfaceState(input) {
+    var source = input || {};
+    var taskTypes = Array.isArray(source.taskTypes) ? source.taskTypes : [];
+    var profilesByTask = source.profilesByTask || {};
+    var readyCount = 0;
+    var totalCount = taskTypes.length;
+    var taskIndex;
+    var profileIndex;
+    var data;
+    var profiles;
+
+    if (source.detectable === false) {
+      return { code: "unavailable", label: "无法检测", readyCount: 0, totalCount: totalCount };
+    }
+
+    for (taskIndex = 0; taskIndex < taskTypes.length; taskIndex += 1) {
+      data = profilesByTask[taskTypes[taskIndex]] || {};
+      profiles = Array.isArray(data.profiles) ? data.profiles : [];
+      for (profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
+        if (profiles[profileIndex]
+          && profiles[profileIndex].id === data.activeProfileId
+          && profiles[profileIndex].keyConfigured) {
+          readyCount += 1;
+          break;
+        }
+      }
+    }
+
+    if (!String(source.providerBaseUrl || "").trim() || totalCount === 0 || readyCount === 0) {
+      return { code: "unconfigured", label: "未配置", readyCount: readyCount, totalCount: totalCount };
+    }
+    if (readyCount === totalCount) {
+      return { code: "ready", label: "已就绪", readyCount: readyCount, totalCount: totalCount };
+    }
+    return {
+      code: "partial",
+      label: "部分就绪 · " + readyCount + "/" + totalCount,
+      readyCount: readyCount,
+      totalCount: totalCount
+    };
+  }
+
+  function createSettingsRefreshController(options) {
+    var settings = options || {};
+    var refresh = typeof settings.refresh === "function" ? settings.refresh : function () {};
+    var setIntervalFn = typeof settings.setIntervalFn === "function"
+      ? settings.setIntervalFn
+      : (typeof setInterval === "function" ? setInterval : function () { return 0; });
+    var clearIntervalFn = typeof settings.clearIntervalFn === "function"
+      ? settings.clearIntervalFn
+      : (typeof clearInterval === "function" ? clearInterval : function () {});
+    var intervalMs = typeof settings.intervalMs === "number" ? settings.intervalMs : 30000;
+    var timerId = null;
+
+    return {
+      start: function () {
+        if (timerId !== null) {
+          return;
+        }
+        refresh();
+        timerId = setIntervalFn(refresh, intervalMs);
+      },
+      stop: function () {
+        if (timerId === null) {
+          return;
+        }
+        clearIntervalFn(timerId);
+        timerId = null;
+      },
+      isRunning: function () {
+        return timerId !== null;
+      }
+    };
+  }
+
   function canDeleteWorkflowProfile(profile, activeProfileId) {
     return Boolean(profile && profile.id && profile.id !== activeProfileId);
   }
@@ -1952,6 +2027,8 @@
     buildDocumentStructure: buildDocumentStructure,
     normalizeWorkflowProfileData: normalizeWorkflowProfileData,
     getActiveWorkflowProfileName: getActiveWorkflowProfileName,
+    deriveModelInterfaceState: deriveModelInterfaceState,
+    createSettingsRefreshController: createSettingsRefreshController,
     canDeleteWorkflowProfile: canDeleteWorkflowProfile,
     workflowProfileStatusText: workflowProfileStatusText,
     workflowProfileOptionState: workflowProfileOptionState,

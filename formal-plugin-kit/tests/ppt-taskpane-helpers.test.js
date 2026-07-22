@@ -11,6 +11,74 @@ vm.createContext(context);
 vm.runInContext(source, context);
 const helpers = context.window.WpsAiPptHelpers;
 
+function assertSettingsContracts(targetHelpers) {
+  function plain(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  assert.deepStrictEqual(
+    plain(targetHelpers.deriveModelInterfaceState({
+      detectable: true,
+      providerBaseUrl: "https://model.example.test/v1",
+      taskTypes: ["ppt.slide_assistant"],
+      profilesByTask: {
+        "ppt.slide_assistant": {
+          activeProfileId: "ppt-active",
+          profiles: [
+            { id: "ppt-active", keyConfigured: true },
+            { id: "ppt-backup", keyConfigured: true }
+          ]
+        }
+      }
+    })),
+    { code: "ready", label: "已就绪", readyCount: 1, totalCount: 1 }
+  );
+
+  let refreshCount = 0;
+  let intervalCount = 0;
+  let clearCount = 0;
+  let intervalCallback = null;
+  let scheduledIntervalMs = null;
+  let clearedTimerId = null;
+  const controller = targetHelpers.createSettingsRefreshController({
+    refresh: function () {
+      refreshCount += 1;
+    },
+    setIntervalFn: function (callback, intervalMs) {
+      intervalCount += 1;
+      intervalCallback = callback;
+      scheduledIntervalMs = intervalMs;
+      return 23;
+    },
+    clearIntervalFn: function (timerId) {
+      clearCount += 1;
+      clearedTimerId = timerId;
+    }
+  });
+
+  assert.strictEqual(controller.isRunning(), false);
+  controller.start();
+  assert.strictEqual(refreshCount, 1);
+  assert.strictEqual(intervalCount, 1);
+  assert.strictEqual(scheduledIntervalMs, 30000);
+  assert.strictEqual(controller.isRunning(), true);
+
+  controller.start();
+  assert.strictEqual(refreshCount, 1);
+  assert.strictEqual(intervalCount, 1);
+
+  intervalCallback();
+  assert.strictEqual(refreshCount, 2);
+
+  controller.stop();
+  assert.strictEqual(clearCount, 1);
+  assert.strictEqual(clearedTimerId, 23);
+  assert.strictEqual(controller.isRunning(), false);
+
+  controller.stop();
+  assert.strictEqual(clearCount, 1);
+}
+
 function assertWorkflowUiContract(targetHelpers) {
   function plain(value) {
     return JSON.parse(JSON.stringify(value));
@@ -380,4 +448,5 @@ assert.strictEqual(
   assert.strictEqual(helpers.buildPptDocumentPlainText(fallback), "真实的 Markdown 回复");
 }
 assertWorkflowUiContract(helpers);
+assertSettingsContracts(helpers);
 console.log("ppt taskpane helper tests passed");

@@ -2,6 +2,120 @@ const assert = require("assert");
 const helpers = require("../wps-ai-assistant_1.0.0/taskpane-helpers.js");
 const excelHelpers = require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js");
 
+function assertSettingsStateContract(targetHelpers) {
+  const baseInput = {
+    detectable: true,
+    providerBaseUrl: " https://model.example.test/v1 ",
+    taskTypes: ["task.one", "task.two"],
+    profilesByTask: {
+      "task.one": {
+        activeProfileId: "one-active",
+        profiles: [
+          { id: "one-active", keyConfigured: false },
+          { id: "one-backup", keyConfigured: true }
+        ]
+      },
+      "task.two": {
+        activeProfileId: "two-active",
+        profiles: [{ id: "two-active", keyConfigured: true }]
+      }
+    }
+  };
+
+  assert.deepStrictEqual(targetHelpers.deriveModelInterfaceState(baseInput), {
+    code: "partial",
+    label: "部分就绪 · 1/2",
+    readyCount: 1,
+    totalCount: 2
+  });
+  assert.deepStrictEqual(
+    targetHelpers.deriveModelInterfaceState(Object.assign({}, baseInput, { providerBaseUrl: "  " })),
+    { code: "unconfigured", label: "未配置", readyCount: 1, totalCount: 2 }
+  );
+  assert.deepStrictEqual(
+    targetHelpers.deriveModelInterfaceState(Object.assign({}, baseInput, { detectable: false })),
+    { code: "unavailable", label: "无法检测", readyCount: 0, totalCount: 2 }
+  );
+  assert.deepStrictEqual(
+    targetHelpers.deriveModelInterfaceState({
+      detectable: true,
+      providerBaseUrl: "https://model.example.test/v1",
+      taskTypes: ["task.one", "task.two"],
+      profilesByTask: {
+        "task.one": {
+          activeProfileId: "one-active",
+          profiles: [{ id: "one-active", keyConfigured: true }]
+        },
+        "task.two": {
+          activeProfileId: "two-active",
+          profiles: [{ id: "two-active", keyConfigured: true }]
+        }
+      }
+    }),
+    { code: "ready", label: "已就绪", readyCount: 2, totalCount: 2 }
+  );
+  assert.deepStrictEqual(
+    targetHelpers.deriveModelInterfaceState({
+      detectable: true,
+      providerBaseUrl: "https://model.example.test/v1",
+      taskTypes: ["task.one"],
+      profilesByTask: {
+        "task.one": {
+          activeProfileId: "missing",
+          profiles: [{ id: "backup", keyConfigured: true }]
+        }
+      }
+    }),
+    { code: "unconfigured", label: "未配置", readyCount: 0, totalCount: 1 }
+  );
+}
+
+function assertSettingsRefreshControllerContract(targetHelpers) {
+  let refreshCount = 0;
+  let intervalCount = 0;
+  let clearCount = 0;
+  let intervalCallback = null;
+  let scheduledIntervalMs = null;
+  let clearedTimerId = null;
+  const controller = targetHelpers.createSettingsRefreshController({
+    refresh: function () {
+      refreshCount += 1;
+    },
+    setIntervalFn: function (callback, intervalMs) {
+      intervalCount += 1;
+      intervalCallback = callback;
+      scheduledIntervalMs = intervalMs;
+      return 17;
+    },
+    clearIntervalFn: function (timerId) {
+      clearCount += 1;
+      clearedTimerId = timerId;
+    }
+  });
+
+  assert.strictEqual(controller.isRunning(), false);
+  controller.start();
+  assert.strictEqual(refreshCount, 1);
+  assert.strictEqual(intervalCount, 1);
+  assert.strictEqual(scheduledIntervalMs, 30000);
+  assert.strictEqual(controller.isRunning(), true);
+
+  controller.start();
+  assert.strictEqual(refreshCount, 1);
+  assert.strictEqual(intervalCount, 1);
+
+  intervalCallback();
+  assert.strictEqual(refreshCount, 2);
+
+  controller.stop();
+  assert.strictEqual(clearCount, 1);
+  assert.strictEqual(clearedTimerId, 17);
+  assert.strictEqual(controller.isRunning(), false);
+
+  controller.stop();
+  assert.strictEqual(clearCount, 1);
+}
+
 function assertWorkflowUiContract(targetHelpers) {
   assert.deepStrictEqual(
     targetHelpers.workflowProfileOptionState(
@@ -1038,5 +1152,9 @@ testKnowledgeUsageSummaryUsesTaskSpecificChineseVerb();
 testKnowledgeUsageDetailsFiltersLabelsAndCapsItems();
 assertWorkflowUiContract(helpers);
 assertWorkflowUiContract(excelHelpers);
+assertSettingsStateContract(helpers);
+assertSettingsStateContract(excelHelpers);
+assertSettingsRefreshControllerContract(helpers);
+assertSettingsRefreshControllerContract(excelHelpers);
 
 console.log("taskpane-helpers tests passed");
