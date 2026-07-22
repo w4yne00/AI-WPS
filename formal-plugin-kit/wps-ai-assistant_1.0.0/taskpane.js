@@ -7,6 +7,7 @@
   var DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS = 15000;
   var DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS = 30000;
   var DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 10000;
+  var KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS = 15000;
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-document-review-active-job-v1";
@@ -205,6 +206,12 @@
     knowledgeListError: "",
     knowledgeSearch: "",
     knowledgeSearchTimer: null,
+    knowledgeImportStep: "select",
+    knowledgeImportPreview: null,
+    knowledgeImportBusy: false,
+    knowledgeImportSequence: 0,
+    knowledgeImportReader: null,
+    knowledgeImportReturnView: "scope",
     currentMode: "smartWrite",
     lastTaskMode: "smartWrite",
     copyText: "",
@@ -1905,19 +1912,62 @@
     byId("knowledge-scope-view").hidden = view !== "scope";
     byId("knowledge-list-view").hidden = view !== "list";
     byId("knowledge-editor-view").hidden = view !== "editor";
+    byId("knowledge-import-view").hidden = view !== "import";
+  }
+
+  function focusKnowledgeView(view) {
+    var targetIds = {
+      home: "btn-open-knowledge-manager",
+      scope: "knowledge-scope-title",
+      list: "knowledge-list-title",
+      editor: "knowledge-editor-title",
+      import: "knowledge-import-title"
+    };
+    var targetId = targetIds[view];
+    if (!targetId) {
+      return;
+    }
+    setTimeout(function () {
+      var target;
+      if (state.knowledgeView !== view) {
+        return;
+      }
+      target = byId(targetId);
+      if (target && target.focus) {
+        target.focus();
+      }
+    }, 0);
   }
 
   function setKnowledgeView(view) {
     state.knowledgeView = view;
     renderKnowledgeManagerView();
+    focusKnowledgeView(view);
   }
 
   function formatKnowledgeUpdatedAt(value) {
-    var text = String(value || "").trim();
+    var text;
+    var date;
+    if (helpers.formatKnowledgeUpdatedAt) {
+      return helpers.formatKnowledgeUpdatedAt(value);
+    }
+    text = String(value || "").trim();
     if (!text) {
       return "尚无更新时间";
     }
-    return "最近更新：" + text.replace("T", " ").replace(/\.\d+Z$/, "").replace(/Z$/, "");
+    date = new Date(text);
+    if (!isFinite(date.getTime())) {
+      return "最近更新：" + text;
+    }
+    return "最近更新：" + new Intl.DateTimeFormat("zh-CN", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hour12: false
+    }).format(date);
   }
 
   function renderKnowledgeSummary() {
@@ -1983,6 +2033,7 @@
       buttons[index].classList.toggle("active", active);
       buttons[index].setAttribute("aria-selected", active ? "true" : "false");
       buttons[index].disabled = state.knowledgeMutationBusy || (type === "term" && state.knowledgeScope !== "global");
+      buttons[index].tabIndex = active ? 0 : -1;
     }
   }
 
@@ -2224,24 +2275,24 @@
       return;
     }
     path = "/enterprise-knowledge/items";
-    options = null;
+    options = { timeoutMs: KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS };
     if (editor.mode === "edit") {
       path += "/" + encodeURIComponent(String(editor.item.id || ""));
-      options = { method: "PATCH" };
+      options.method = "PATCH";
     }
     setKnowledgeEditorError("", "");
     setKnowledgeMutationBusy(true);
     request(path, draft, options).then(function () {
+      setKnowledgeMutationBusy(false);
       state.knowledgeEditorDirty = false;
       clearKnowledgeEditorState();
       setKnowledgeView("list");
-      setKnowledgeMutationBusy(false);
       return loadKnowledgeItems().then(function () {
         loadKnowledgeSummary();
         setStatus("企业知识条目已保存。");
       });
     }).catch(function (error) {
-      var field = error && error.adapterCode === "STYLE_NAME_CONFLICT" ? "name" : "preferredText";
+      var field = helpers.knowledgeConflictField ? helpers.knowledgeConflictField(error) : "";
       setKnowledgeMutationBusy(false);
       setKnowledgeEditorError(describeFetchError(error), field);
     });
@@ -2260,12 +2311,15 @@
       return;
     }
     setKnowledgeMutationBusy(true);
-    request("/enterprise-knowledge/items/" + encodeURIComponent(String(item.id || "")), null, { method: "DELETE" })
+    request("/enterprise-knowledge/items/" + encodeURIComponent(String(item.id || "")), null, {
+      method: "DELETE",
+      timeoutMs: KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS
+    })
       .then(function () {
+        setKnowledgeMutationBusy(false);
         state.knowledgeEditorDirty = false;
         clearKnowledgeEditorState();
         setKnowledgeView("list");
-        setKnowledgeMutationBusy(false);
         return loadKnowledgeItems().then(function () {
           loadKnowledgeSummary();
           setStatus("企业知识条目已删除。");
@@ -2297,6 +2351,10 @@
 
   function handleKnowledgeTypeClick(event) {
     var type = event.target.getAttribute("data-knowledge-type");
+    selectKnowledgeType(type);
+  }
+
+  function selectKnowledgeType(type) {
     if (!type || state.knowledgeMutationBusy || (type === "term" && state.knowledgeScope !== "global")) {
       return;
     }
@@ -2305,6 +2363,38 @@
     state.knowledgeListError = "";
     renderKnowledgeList();
     loadKnowledgeItems();
+  }
+
+  function handleKnowledgeTypeKeydown(event) {
+    var keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
+    var buttons;
+    var enabledButtons;
+    var currentIndex;
+    var nextIndex;
+    var type;
+    if (keys.indexOf(event.key) < 0) {
+      return;
+    }
+    buttons = Array.prototype.slice.call(byId("knowledge-type-switch").querySelectorAll("[data-knowledge-type]"));
+    enabledButtons = buttons.filter(function (button) {
+      return !button.disabled;
+    });
+    if (!enabledButtons.length) {
+      return;
+    }
+    currentIndex = enabledButtons.indexOf(event.target);
+    if (currentIndex < 0) {
+      currentIndex = 0;
+    }
+    nextIndex = helpers.nextKnowledgeTabIndex ?
+      helpers.nextKnowledgeTabIndex(currentIndex, event.key, enabledButtons.length) : currentIndex;
+    if (nextIndex < 0 || !enabledButtons[nextIndex]) {
+      return;
+    }
+    event.preventDefault();
+    enabledButtons[nextIndex].focus();
+    type = enabledButtons[nextIndex].getAttribute("data-knowledge-type");
+    selectKnowledgeType(type);
   }
 
   function handleKnowledgeListClick(event) {
@@ -2335,6 +2425,404 @@
       state.knowledgeSearchTimer = null;
       loadKnowledgeItems();
     }, 250);
+  }
+
+  function setKnowledgeImportBusy(busy) {
+    var controls = byId("knowledge-import-view").querySelectorAll("button, input, select");
+    var index;
+    state.knowledgeImportBusy = Boolean(busy);
+    for (index = 0; index < controls.length; index += 1) {
+      controls[index].disabled = state.knowledgeImportBusy;
+    }
+  }
+
+  function releaseKnowledgeImportReader(abortRead, expectedReader) {
+    var reader = expectedReader || state.knowledgeImportReader;
+    if (!reader) {
+      return;
+    }
+    if (!expectedReader || state.knowledgeImportReader === expectedReader) {
+      state.knowledgeImportReader = null;
+    }
+    reader.onload = null;
+    reader.onerror = null;
+    if (abortRead && reader.readyState === 1 && reader.abort) {
+      reader.abort();
+    }
+  }
+
+  function renderKnowledgeImportStep() {
+    var steps = byId("knowledge-import-steps").querySelectorAll("[data-import-step]");
+    var order = { select: 0, validate: 1, conflicts: 2, apply: 3 };
+    var activeIndex = order[state.knowledgeImportStep] || 0;
+    var index;
+    for (index = 0; index < steps.length; index += 1) {
+      steps[index].classList.toggle(
+        "active",
+        order[steps[index].getAttribute("data-import-step")] <= activeIndex
+      );
+      if (order[steps[index].getAttribute("data-import-step")] === activeIndex) {
+        steps[index].setAttribute("aria-current", "step");
+      } else {
+        steps[index].removeAttribute("aria-current");
+      }
+    }
+  }
+
+  function clearKnowledgeImportPreview(message, clearFile) {
+    state.knowledgeImportPreview = null;
+    state.knowledgeImportStep = "select";
+    if (clearFile) {
+      byId("knowledge-import-file").value = "";
+    }
+    byId("knowledge-import-preview-panel").hidden = true;
+    byId("knowledge-import-error-list").textContent = "";
+    byId("knowledge-import-conflict-list").textContent = "";
+    byId("knowledge-import-errors-section").hidden = true;
+    byId("knowledge-import-conflicts-section").hidden = true;
+    byId("knowledge-import-errors-title").textContent = "校验错误";
+    byId("knowledge-import-conflicts-title").textContent = "冲突处理";
+    byId("knowledge-import-status").textContent = message || "请选择文件。";
+    renderKnowledgeImportStep();
+  }
+
+  function resetKnowledgeImport(message) {
+    state.knowledgeImportSequence += 1;
+    releaseKnowledgeImportReader(true);
+    setKnowledgeImportBusy(false);
+    clearKnowledgeImportPreview(message, true);
+  }
+
+  function openKnowledgeImport() {
+    if (state.knowledgeImportBusy) {
+      return;
+    }
+    state.knowledgeImportReturnView = state.knowledgeView === "list" ? "list" : "scope";
+    resetKnowledgeImport("");
+    setKnowledgeView("import");
+  }
+
+  function closeKnowledgeImport() {
+    if (state.knowledgeImportBusy) {
+      return;
+    }
+    resetKnowledgeImport("");
+    setKnowledgeView(state.knowledgeImportReturnView === "list" ? "list" : "scope");
+  }
+
+  function handleKnowledgeImportFileChange(event) {
+    var file = event.target.files && event.target.files[0];
+    var validation;
+    state.knowledgeImportSequence += 1;
+    clearKnowledgeImportPreview(file ? "已选择文件，可开始校验。" : "请选择文件。", false);
+    if (!file) {
+      return;
+    }
+    validation = helpers.validateKnowledgeImportFile ? helpers.validateKnowledgeImportFile(file) : { ok: true };
+    if (!validation.ok) {
+      byId("knowledge-import-status").textContent = validation.message;
+    }
+  }
+
+  function arrayBufferToKnowledgeBase64(arrayBuffer) {
+    var bytes = new Uint8Array(arrayBuffer);
+    var chunks = [];
+    var chunkSize = 32768;
+    var offset;
+    for (offset = 0; offset < bytes.length; offset += chunkSize) {
+      chunks.push(String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunkSize)));
+    }
+    var encoded = window.btoa(chunks.join(""));
+    bytes = null;
+    chunks.length = 0;
+    return encoded;
+  }
+
+  function renderKnowledgeImportPreview() {
+    var preview = state.knowledgeImportPreview;
+    var errorsSection = byId("knowledge-import-errors-section");
+    var conflictsSection = byId("knowledge-import-conflicts-section");
+    var errorList = byId("knowledge-import-error-list");
+    var conflictList = byId("knowledge-import-conflict-list");
+    var applyButton = byId("btn-apply-knowledge-import");
+    errorList.textContent = "";
+    conflictList.textContent = "";
+    if (!preview) {
+      byId("knowledge-import-preview-panel").hidden = true;
+      return;
+    }
+    byId("knowledge-import-preview-panel").hidden = false;
+    byId("knowledge-import-new-count").textContent = String(preview.stats.newCount);
+    byId("knowledge-import-update-count").textContent = String(preview.stats.updateCount);
+    byId("knowledge-import-conflict-count").textContent = String(preview.stats.conflictCount);
+    byId("knowledge-import-error-count").textContent = String(preview.stats.errorCount);
+    byId("knowledge-import-errors-title").textContent = helpers.knowledgeImportCountLabel ?
+      helpers.knowledgeImportCountLabel("校验错误", preview.stats.errorCount, preview.errors.length) : "校验错误";
+    byId("knowledge-import-conflicts-title").textContent = helpers.knowledgeImportCountLabel ?
+      helpers.knowledgeImportCountLabel("冲突处理", preview.stats.conflictCount, preview.conflicts.length) : "冲突处理";
+    preview.errors.forEach(function (item) {
+      var row = document.createElement("li");
+      row.textContent = item.message;
+      errorList.appendChild(row);
+    });
+    errorsSection.hidden = preview.errors.length === 0;
+    preview.conflicts.forEach(function (item) {
+      var row = document.createElement("div");
+      var message = document.createElement("span");
+      var select = document.createElement("select");
+      var keep = document.createElement("option");
+      var skip = document.createElement("option");
+      row.className = "knowledge-import-conflict-row";
+      message.textContent = item.message;
+      select.setAttribute("data-knowledge-conflict-row", String(item.rowNumber));
+      keep.value = "keep_existing";
+      keep.textContent = "保留库内标准";
+      skip.value = "skip";
+      skip.textContent = "跳过该行";
+      select.appendChild(keep);
+      select.appendChild(skip);
+      select.value = helpers.normalizeKnowledgeConflictDecision ?
+        helpers.normalizeKnowledgeConflictDecision(item.decision) : "keep_existing";
+      row.appendChild(message);
+      row.appendChild(select);
+      conflictList.appendChild(row);
+    });
+    conflictsSection.hidden = preview.conflicts.length === 0;
+    applyButton.disabled = state.knowledgeImportBusy || !preview.previewToken;
+    applyButton.textContent = preview.conflicts.length ? "按当前选择应用" : "应用无冲突项";
+  }
+
+  function previewKnowledgeImport() {
+    var input = byId("knowledge-import-file");
+    var file = input.files && input.files[0];
+    var validation = helpers.validateKnowledgeImportFile ?
+      helpers.validateKnowledgeImportFile(file) : { ok: Boolean(file), message: "请选择导入文件。" };
+    var reader;
+    var requestId;
+    if (state.knowledgeImportBusy) {
+      return;
+    }
+    if (!validation.ok) {
+      byId("knowledge-import-status").textContent = validation.message;
+      return;
+    }
+    reader = new FileReader();
+    requestId = state.knowledgeImportSequence + 1;
+    state.knowledgeImportSequence = requestId;
+    state.knowledgeImportReader = reader;
+    setKnowledgeImportBusy(true);
+    state.knowledgeImportStep = "validate";
+    renderKnowledgeImportStep();
+    byId("knowledge-import-status").textContent = "正在读取并校验文件...";
+    reader.onerror = function () {
+      if (state.knowledgeImportSequence !== requestId) {
+        return;
+      }
+      releaseKnowledgeImportReader(false, reader);
+      input.value = "";
+      setKnowledgeImportBusy(false);
+      state.knowledgeImportStep = "select";
+      renderKnowledgeImportStep();
+      byId("knowledge-import-status").textContent = "无法读取所选文件，请重新选择。";
+    };
+    reader.onload = function (event) {
+      var arrayBuffer = event && event.target ? event.target.result : reader.result;
+      var contentBase64 = "";
+      var payload = null;
+      var previewRequest;
+      function releaseLargeReferences() {
+        var isCurrentRequest = state.knowledgeImportSequence === requestId;
+        arrayBuffer = null;
+        contentBase64 = "";
+        payload = null;
+        file = null;
+        if (isCurrentRequest) {
+          input.value = "";
+        }
+        releaseKnowledgeImportReader(false, reader);
+        reader = null;
+        if (isCurrentRequest) {
+          setKnowledgeImportBusy(false);
+          renderKnowledgeImportPreview();
+        }
+      }
+      try {
+        contentBase64 = arrayBufferToKnowledgeBase64(arrayBuffer);
+        payload = helpers.buildKnowledgeImportRequest ?
+          helpers.buildKnowledgeImportRequest(file, contentBase64) : null;
+        previewRequest = request("/enterprise-knowledge/imports/preview", payload);
+      } catch (error) {
+        if (state.knowledgeImportSequence === requestId) {
+          state.knowledgeImportStep = "select";
+          byId("knowledge-import-status").textContent = "文件编码失败，请重新选择。";
+          renderKnowledgeImportStep();
+        }
+        releaseLargeReferences();
+        return;
+      }
+      previewRequest.then(function (body) {
+        if (state.knowledgeImportSequence !== requestId) {
+          return;
+        }
+        state.knowledgeImportPreview = helpers.normalizeKnowledgeImportPreview ?
+          helpers.normalizeKnowledgeImportPreview(body.data || {}) : body.data;
+        if (!state.knowledgeImportPreview || !state.knowledgeImportPreview.previewToken) {
+          throw new Error("校验结果缺少导入预览编号。");
+        }
+        state.knowledgeImportStep = state.knowledgeImportPreview.conflicts.length ? "conflicts" : "apply";
+        byId("knowledge-import-status").textContent = state.knowledgeImportPreview.conflicts.length ?
+          "校验完成，请处理冲突后应用。" : "校验完成，可应用导入。";
+        renderKnowledgeImportPreview();
+      }).catch(function (error) {
+        if (state.knowledgeImportSequence !== requestId) {
+          return;
+        }
+        state.knowledgeImportPreview = null;
+        state.knowledgeImportStep = "select";
+        byId("knowledge-import-status").textContent = "校验失败：" + describeFetchError(error);
+        renderKnowledgeImportPreview();
+        renderKnowledgeImportStep();
+      }).then(function () {
+        releaseLargeReferences();
+      });
+    };
+    reader.readAsArrayBuffer(file);
+  }
+
+  function handleKnowledgeConflictDecision(event) {
+    var rowNumber = Number(event.target.getAttribute("data-knowledge-conflict-row"));
+    var preview = state.knowledgeImportPreview;
+    if (!rowNumber || !preview) {
+      return;
+    }
+    preview.conflicts.forEach(function (item) {
+      if (item.rowNumber === rowNumber) {
+        item.decision = helpers.normalizeKnowledgeConflictDecision ?
+          helpers.normalizeKnowledgeConflictDecision(event.target.value) : "keep_existing";
+        event.target.value = item.decision;
+      }
+    });
+  }
+
+  function applyKnowledgeImport() {
+    var preview = state.knowledgeImportPreview;
+    var acceptedConflictRows;
+    if (!preview || !preview.previewToken || state.knowledgeImportBusy) {
+      return;
+    }
+    acceptedConflictRows = helpers.buildKnowledgeImportApplyRequest ?
+      helpers.buildKnowledgeImportApplyRequest(preview).acceptedConflictRows : [];
+    setKnowledgeImportBusy(true);
+    state.knowledgeImportStep = "apply";
+    renderKnowledgeImportStep();
+    byId("knowledge-import-status").textContent = "正在应用导入结果...";
+    request("/enterprise-knowledge/imports/apply", {
+      previewToken: preview.previewToken,
+      acceptedConflictRows: acceptedConflictRows
+    }).then(function (body) {
+      var result = body.data || {};
+      state.knowledgeImportPreview = null;
+      byId("knowledge-import-preview-panel").hidden = true;
+      byId("knowledge-import-status").textContent = "导入完成：新增 " +
+        String(result.createdCount || 0) + " 条，更新 " + String(result.updatedCount || 0) + " 条。";
+      setKnowledgeImportBusy(false);
+      loadKnowledgeSummary();
+    }).catch(function (error) {
+      setKnowledgeImportBusy(false);
+      if (helpers.isKnowledgePreviewExpired && helpers.isKnowledgePreviewExpired(error)) {
+        resetKnowledgeImport("导入预览已过期，请重新选择文件。");
+        return;
+      }
+      byId("knowledge-import-status").textContent = "应用失败：" + describeFetchError(error);
+      renderKnowledgeImportPreview();
+    });
+  }
+
+  function downloadKnowledgeFile(path, fileName) {
+    var objectUrl = "";
+    var anchor = null;
+    function cleanup() {
+      if (anchor) {
+        anchor.href = "";
+      }
+      if (anchor && anchor.parentNode) {
+        anchor.parentNode.removeChild(anchor);
+      }
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl);
+      }
+    }
+    return fetch(ADAPTER_BASE_URL + path).then(function (response) {
+      if (!response.ok) {
+        throw new Error("HTTP " + response.status);
+      }
+      return response.blob();
+    }).then(function (blob) {
+      objectUrl = URL.createObjectURL(blob);
+      anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = fileName;
+      anchor.hidden = true;
+      document.body.appendChild(anchor);
+      anchor.click();
+      return true;
+    }).then(function (result) {
+      cleanup();
+      return result;
+    }, function (error) {
+      cleanup();
+      throw error;
+    });
+  }
+
+  function runKnowledgeDownload(path, fileName, successMessage) {
+    var statusNode = state.knowledgeView === "import" ? byId("knowledge-import-status") : null;
+    if (statusNode) {
+      statusNode.textContent = "正在准备下载...";
+    } else {
+      setStatus("正在准备下载...");
+    }
+    downloadKnowledgeFile(path, fileName).then(function () {
+      if (statusNode) {
+        statusNode.textContent = successMessage;
+      } else {
+        setStatus(successMessage);
+      }
+    }).catch(function (error) {
+      if (statusNode) {
+        statusNode.textContent = "下载失败：" + describeFetchError(error);
+      } else {
+        setStatus("下载失败：" + describeFetchError(error));
+      }
+    });
+  }
+
+  function handleKnowledgeMenuAction(event) {
+    var target = event.target;
+    var action;
+    while (target && target !== byId("knowledge-overflow-menu") && !target.getAttribute("data-knowledge-menu-action")) {
+      target = target.parentNode;
+    }
+    action = target && target.getAttribute("data-knowledge-menu-action");
+    if (!action) {
+      return;
+    }
+    byId("knowledge-overflow-menu").open = false;
+    if (action === "import") {
+      openKnowledgeImport();
+    } else if (action === "export") {
+      runKnowledgeDownload(
+        "/enterprise-knowledge/export.csv?scope=" + encodeURIComponent(state.knowledgeScope),
+        "enterprise-knowledge-export.csv",
+        "当前范围已导出。"
+      );
+    } else if (action === "backup") {
+      runKnowledgeDownload(
+        "/enterprise-knowledge/backup",
+        "enterprise-knowledge-backup.db",
+        "企业知识库备份已下载。"
+      );
+    }
   }
 
   function renderTemplateOptions() {
@@ -3649,6 +4137,7 @@
       setKnowledgeView("scope");
     });
     byId("knowledge-type-switch").addEventListener("click", handleKnowledgeTypeClick);
+    byId("knowledge-type-switch").addEventListener("keydown", handleKnowledgeTypeKeydown);
     byId("knowledge-search-input").addEventListener("input", function (event) {
       scheduleKnowledgeSearch(event.target.value);
     });
@@ -3672,6 +4161,41 @@
       if (state.knowledgeEditor) {
         state.knowledgeEditorDirty = true;
       }
+    });
+    byId("btn-knowledge-import-entry").addEventListener("click", openKnowledgeImport);
+    byId("knowledge-overflow-menu").addEventListener("click", handleKnowledgeMenuAction);
+    byId("btn-knowledge-import-back").addEventListener("click", closeKnowledgeImport);
+    byId("knowledge-import-file").addEventListener("change", handleKnowledgeImportFileChange);
+    byId("btn-preview-knowledge-import").addEventListener("click", previewKnowledgeImport);
+    byId("knowledge-import-conflict-list").addEventListener("change", handleKnowledgeConflictDecision);
+    byId("btn-apply-knowledge-import").addEventListener("click", applyKnowledgeImport);
+    byId("btn-knowledge-download-csv-template").addEventListener("click", function () {
+      runKnowledgeDownload(
+        "/enterprise-knowledge/import-template.csv",
+        "enterprise-knowledge-import-template.csv",
+        "CSV 导入模板已下载。"
+      );
+    });
+    byId("btn-knowledge-download-xlsx-template").addEventListener("click", function () {
+      runKnowledgeDownload(
+        "/enterprise-knowledge/import-template.xlsx",
+        "enterprise-knowledge-import-template.xlsx",
+        "XLSX 导入模板已下载。"
+      );
+    });
+    byId("btn-knowledge-export-scope").addEventListener("click", function () {
+      runKnowledgeDownload(
+        "/enterprise-knowledge/export.csv?scope=" + encodeURIComponent(state.knowledgeScope),
+        "enterprise-knowledge-export.csv",
+        "当前范围已导出。"
+      );
+    });
+    byId("btn-knowledge-download-backup").addEventListener("click", function () {
+      runKnowledgeDownload(
+        "/enterprise-knowledge/backup",
+        "enterprise-knowledge-backup.db",
+        "企业知识库备份已下载。"
+      );
     });
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);

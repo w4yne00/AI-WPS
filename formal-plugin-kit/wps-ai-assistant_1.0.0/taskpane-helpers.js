@@ -2008,6 +2008,164 @@
     return { ok: true, field: "", message: "" };
   }
 
+  function knowledgeConflictField(error) {
+    var code = String(error && error.adapterCode || "").toUpperCase();
+    if (code === "TERM_TEXT_CONFLICT") {
+      return "preferredText";
+    }
+    if (code === "STYLE_NAME_CONFLICT") {
+      return "name";
+    }
+    return "";
+  }
+
+  function nextKnowledgeTabIndex(currentIndex, key, count) {
+    var total = Math.max(0, Math.floor(Number(count) || 0));
+    var current = Math.max(0, Math.min(total - 1, Math.floor(Number(currentIndex) || 0)));
+    if (!total) {
+      return -1;
+    }
+    if (key === "Home") {
+      return 0;
+    }
+    if (key === "End") {
+      return total - 1;
+    }
+    if (key === "ArrowRight") {
+      return (current + 1) % total;
+    }
+    if (key === "ArrowLeft") {
+      return (current - 1 + total) % total;
+    }
+    return current;
+  }
+
+  function formatKnowledgeUpdatedAt(value) {
+    var text = String(value || "").trim();
+    var date;
+    var formatted;
+    if (!text) {
+      return "尚无更新时间";
+    }
+    date = new Date(text);
+    if (!isFinite(date.getTime())) {
+      return "最近更新：" + text;
+    }
+    try {
+      formatted = new Intl.DateTimeFormat("zh-CN", {
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false
+      }).format(date);
+    } catch (error) {
+      formatted = text;
+    }
+    return "最近更新：" + formatted;
+  }
+
+  function validateKnowledgeImportFile(file) {
+    var name = String(file && file.name || "").toLowerCase();
+    var size = Number(file && file.size);
+    if (!/\.(csv|xlsx)$/.test(name)) {
+      return { ok: false, message: "请选择 CSV 或 XLSX 文件。" };
+    }
+    if (!isFinite(size) || size < 0 || size > 5 * 1024 * 1024) {
+      return { ok: false, message: "导入文件不能超过 5 MB。" };
+    }
+    return { ok: true, message: "" };
+  }
+
+  function buildKnowledgeImportRequest(file, contentBase64) {
+    return {
+      fileName: String(file && file.name || ""),
+      mimeType: String(file && file.type || "application/octet-stream"),
+      sizeBytes: Math.max(0, Math.floor(Number(file && file.size) || 0)),
+      contentBase64: String(contentBase64 || "")
+    };
+  }
+
+  function normalizeKnowledgeConflictDecision(value) {
+    return value === "skip" ? "skip" : "keep_existing";
+  }
+
+  function knowledgeImportRowLabel(value) {
+    var row = Math.max(0, Math.floor(Number(value && (value.row || value.rowNumber)) || 0));
+    var message = String(value && value.message || "").trim();
+    if (/^第\s*\d+\s*行/.test(message)) {
+      return message;
+    }
+    return (row ? "第 " + row + " 行：" : "") + (message || "该行无法导入。");
+  }
+
+  function normalizeKnowledgeImportPreview(value) {
+    var source = value && typeof value === "object" ? value : {};
+    var errors = Array.isArray(source.errors) ? source.errors : [];
+    var conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
+    function totalCount(value, fallback) {
+      var number = Number(value);
+      return isFinite(number) && number >= 0 ? Math.floor(number) : fallback;
+    }
+    return {
+      previewToken: String(source.previewToken || ""),
+      stats: {
+        newCount: totalCount(source.newCount, 0),
+        updateCount: totalCount(source.updateCount, 0),
+        conflictCount: totalCount(source.conflictCount, conflicts.length),
+        errorCount: totalCount(source.errorCount, errors.length)
+      },
+      errors: errors.slice(0, 100).map(function (item) {
+        return {
+          row: normalizeKnowledgeUsageCount(item && (item.row || item.rowNumber)),
+          message: knowledgeImportRowLabel(item)
+        };
+      }),
+      conflicts: conflicts.slice(0, 100).map(function (item) {
+        return {
+          rowNumber: normalizeKnowledgeUsageCount(item && (item.rowNumber || item.row)),
+          message: knowledgeImportRowLabel(item),
+          incomingName: String(item && item.incomingName || ""),
+          existingName: String(item && item.existingName || ""),
+          decision: "keep_existing"
+        };
+      })
+    };
+  }
+
+  function knowledgeImportCountLabel(label, totalCount, visibleCount) {
+    var total = Math.max(0, Math.floor(Number(totalCount) || 0));
+    var visible = Math.max(0, Math.floor(Number(visibleCount) || 0));
+    if (visible < total) {
+      return String(label || "") + "（显示前 " + visible + " 条，共 " + total + " 条）";
+    }
+    return String(label || "") + "（共 " + total + " 条）";
+  }
+
+  function buildKnowledgeImportApplyRequest(preview) {
+    var source = preview && typeof preview === "object" ? preview : {};
+    var conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
+    return {
+      previewToken: String(source.previewToken || ""),
+      acceptedConflictRows: conflicts.map(function (item) {
+        return {
+          rowNumber: Math.max(0, Math.floor(Number(item && item.rowNumber) || 0)),
+          decision: normalizeKnowledgeConflictDecision(item && item.decision)
+        };
+      }).filter(function (item) {
+        return item.rowNumber > 0;
+      })
+    };
+  }
+
+  function isKnowledgePreviewExpired(error) {
+    var code = String(error && error.adapterCode || "").toUpperCase();
+    return Boolean(error && (error.httpStatus === 404 || error.httpStatus === 410)) ||
+      code === "IMPORT_PREVIEW_NOT_FOUND" || code === "IMPORT_PREVIEW_EXPIRED";
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -2043,6 +2201,17 @@
     normalizeKnowledgeUsage: normalizeKnowledgeUsage,
     knowledgeUsageSummary: knowledgeUsageSummary,
     knowledgeUsageDetails: knowledgeUsageDetails,
-    validateKnowledgeDraft: validateKnowledgeDraft
+    validateKnowledgeDraft: validateKnowledgeDraft,
+    knowledgeConflictField: knowledgeConflictField,
+    nextKnowledgeTabIndex: nextKnowledgeTabIndex,
+    formatKnowledgeUpdatedAt: formatKnowledgeUpdatedAt,
+    validateKnowledgeImportFile: validateKnowledgeImportFile,
+    buildKnowledgeImportRequest: buildKnowledgeImportRequest,
+    normalizeKnowledgeConflictDecision: normalizeKnowledgeConflictDecision,
+    knowledgeImportRowLabel: knowledgeImportRowLabel,
+    normalizeKnowledgeImportPreview: normalizeKnowledgeImportPreview,
+    knowledgeImportCountLabel: knowledgeImportCountLabel,
+    buildKnowledgeImportApplyRequest: buildKnowledgeImportApplyRequest,
+    isKnowledgePreviewExpired: isKnowledgePreviewExpired
   };
 });

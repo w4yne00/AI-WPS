@@ -298,7 +298,7 @@
             <div class="knowledge-subview-head">
               <button id="btn-knowledge-scope-back" class="ghost-action mini-button" type="button">返回设置</button>
               <div>
-                <h3>企业术语与写作规范</h3>
+                <h3 id="knowledge-scope-title" tabindex="-1">企业术语与写作规范</h3>
                 <p>按使用范围管理，不影响工作流切换。</p>
               </div>
             </div>
@@ -316,14 +316,14 @@
                 <span><strong>文档审查补充</strong><small>仅在文档审查中检查的风格规则</small></span><span aria-hidden="true">›</span>
               </button>
             </div>
-            <button id="btn-knowledge-import-entry" class="knowledge-import-entry ghost-action" type="button" disabled>批量导入</button>
+            <button id="btn-knowledge-import-entry" class="knowledge-import-entry ghost-action" type="button">批量导入</button>
           </section>
 
           <section id="knowledge-list-view" class="knowledge-subview" hidden>
             <div class="knowledge-subview-head">
               <button id="btn-knowledge-list-back" class="ghost-action mini-button" type="button">返回范围</button>
               <div>
-                <h3 id="knowledge-list-title">全局企业规范</h3>
+                <h3 id="knowledge-list-title" tabindex="-1">全局企业规范</h3>
                 <p id="knowledge-list-caption">管理企业术语与写作规则。</p>
               </div>
             </div>
@@ -336,7 +336,11 @@
                 <button id="btn-knowledge-add" class="knowledge-icon-button" type="button" title="新增知识条目" aria-label="新增知识条目">+</button>
                 <details id="knowledge-overflow-menu" class="knowledge-overflow-menu">
                   <summary title="更多操作" aria-label="更多操作">⋯</summary>
-                  <div><button type="button" disabled>批量导入</button><button type="button" disabled>导出当前范围</button></div>
+                  <div>
+                    <button type="button" data-knowledge-menu-action="import">批量导入</button>
+                    <button type="button" data-knowledge-menu-action="export">导出当前范围</button>
+                    <button type="button" data-knowledge-menu-action="backup">下载完整备份</button>
+                  </div>
                 </details>
               </div>
             </div>
@@ -353,7 +357,7 @@
             <div class="knowledge-subview-head">
               <button id="btn-knowledge-editor-back" class="ghost-action mini-button" type="button">返回列表</button>
               <div>
-                <h3 id="knowledge-editor-title">新增知识条目</h3>
+                <h3 id="knowledge-editor-title" tabindex="-1">新增知识条目</h3>
                 <p id="knowledge-editor-caption">全局企业规范</p>
               </div>
             </div>
@@ -386,6 +390,54 @@
               <button id="btn-cancel-knowledge-editor" class="ghost-action" type="button">取消</button>
             </div>
             <button id="btn-knowledge-delete" class="ghost-action danger-action knowledge-delete-action" type="button" hidden>删除此条目</button>
+          </section>
+
+          <section id="knowledge-import-view" class="knowledge-subview" hidden>
+            <div class="knowledge-subview-head">
+              <button id="btn-knowledge-import-back" class="ghost-action mini-button" type="button">返回范围</button>
+              <div>
+                <h3 id="knowledge-import-title" tabindex="-1">批量导入企业知识</h3>
+                <p>选择标准 CSV 或 XLSX 模板，先校验再写入。</p>
+              </div>
+            </div>
+            <ol id="knowledge-import-steps" class="knowledge-import-steps" aria-label="导入步骤">
+              <li data-import-step="select" class="active">选择文件</li>
+              <li data-import-step="validate">校验</li>
+              <li data-import-step="conflicts">处理冲突</li>
+              <li data-import-step="apply">应用</li>
+            </ol>
+            <div class="knowledge-download-actions">
+              <button id="btn-knowledge-download-csv-template" class="ghost-action" type="button">CSV 模板</button>
+              <button id="btn-knowledge-download-xlsx-template" class="ghost-action" type="button">XLSX 模板</button>
+              <button id="btn-knowledge-export-scope" class="ghost-action" type="button">导出当前范围</button>
+              <button id="btn-knowledge-download-backup" class="ghost-action" type="button">完整备份</button>
+            </div>
+            <section id="knowledge-import-select-panel" class="knowledge-import-panel">
+              <label class="field">
+                <span>导入文件</span>
+                <input id="knowledge-import-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+              </label>
+              <p class="knowledge-import-hint">文件最大 5 MB；仅解析标准模板首个工作表。</p>
+              <button id="btn-preview-knowledge-import" type="button">校验文件</button>
+            </section>
+            <p id="knowledge-import-status" class="knowledge-list-status" aria-live="polite">请选择文件。</p>
+            <section id="knowledge-import-preview-panel" class="knowledge-import-panel" hidden>
+              <div class="knowledge-import-stats">
+                <span>新增 <strong id="knowledge-import-new-count">0</strong></span>
+                <span>更新 <strong id="knowledge-import-update-count">0</strong></span>
+                <span>冲突 <strong id="knowledge-import-conflict-count">0</strong></span>
+                <span>错误 <strong id="knowledge-import-error-count">0</strong></span>
+              </div>
+              <section id="knowledge-import-errors-section" hidden>
+                <h4 id="knowledge-import-errors-title">校验错误</h4>
+                <ul id="knowledge-import-error-list" class="knowledge-import-result-list"></ul>
+              </section>
+              <section id="knowledge-import-conflicts-section" hidden>
+                <h4 id="knowledge-import-conflicts-title">冲突处理</h4>
+                <div id="knowledge-import-conflict-list" class="knowledge-import-conflict-list"></div>
+              </section>
+              <button id="btn-apply-knowledge-import" type="button">应用无冲突项</button>
+            </section>
           </section>
         </section>
       </section>

@@ -1554,6 +1554,116 @@ body[data-task-mode="smartWrite"] #result-output {
   margin-top: 8px;
 }
 
+.knowledge-import-steps {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  counter-reset: import-step;
+}
+
+.knowledge-import-steps li {
+  min-width: 0;
+  padding: 7px 3px;
+  border-bottom: 2px solid var(--hairline);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-import-steps li.active {
+  border-bottom-color: var(--color-primary);
+  color: var(--color-primary);
+  font-weight: 650;
+}
+
+.knowledge-download-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.knowledge-download-actions button {
+  min-width: 0;
+  white-space: normal;
+}
+
+.knowledge-import-panel {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0;
+  border-top: 1px solid var(--hairline);
+}
+
+.knowledge-import-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.knowledge-import-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.knowledge-import-stats span {
+  padding: 8px 3px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.knowledge-import-stats strong {
+  display: block;
+  margin-top: 3px;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.knowledge-import-panel h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  letter-spacing: 0;
+}
+
+.knowledge-import-result-list,
+.knowledge-import-conflict-list {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.knowledge-import-result-list li,
+.knowledge-import-conflict-row {
+  padding: 8px 10px;
+  border-left: 3px solid var(--hairline);
+  background: var(--color-surface-muted);
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.knowledge-import-conflict-row {
+  display: grid;
+  gap: 7px;
+}
+
+.knowledge-import-conflict-row select {
+  width: 100%;
+}
+
 @media (max-width: 720px) {
   .app {
     padding: 12px;
