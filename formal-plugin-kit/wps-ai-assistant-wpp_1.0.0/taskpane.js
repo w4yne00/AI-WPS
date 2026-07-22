@@ -1224,11 +1224,11 @@
     request("/config").then(function (body) {
       state.providerBaseUrl = safeText(body.data && body.data.providerBaseUrl);
       byId("provider-base-url").value = state.providerBaseUrl;
-      byId("provider-url-summary").textContent = state.providerBaseUrl || "尚未配置 API URL";
+      byId("provider-summary-url").textContent = state.providerBaseUrl || "尚未配置 API URL";
     }).catch(function () {
       state.providerBaseUrl = "";
       byId("provider-base-url").value = "";
-      byId("provider-url-summary").textContent = "API URL 读取失败";
+      byId("provider-summary-url").textContent = "API URL 读取失败";
     });
     loadProfiles();
     refreshDiagnostics();
@@ -1408,7 +1408,7 @@
         providerName: "企业大模型接口"
       }).then(function () {
         state.providerBaseUrl = safeText(byId("provider-base-url").value);
-        byId("provider-url-summary").textContent = state.providerBaseUrl || "尚未配置 API URL";
+        byId("provider-summary-url").textContent = state.providerBaseUrl || "尚未配置 API URL";
         hideProviderUrlEditor(false);
         setStatus("API URL 已保存。");
         checkHealth();

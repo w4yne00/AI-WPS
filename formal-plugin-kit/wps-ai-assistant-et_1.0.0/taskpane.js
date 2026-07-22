@@ -1379,11 +1379,15 @@
   function showProviderEditor() {
     byId("provider-edit-view").hidden = false;
     byId("provider-summary-card").classList.add("editing");
+    byId("btn-edit-provider-url").hidden = true;
+    byId("provider-base-url").focus();
   }
 
   function hideProviderEditor() {
+    byId("provider-base-url").value = state.providerBaseUrl || "";
     byId("provider-edit-view").hidden = true;
     byId("provider-summary-card").classList.remove("editing");
+    byId("btn-edit-provider-url").hidden = false;
   }
 
   function setAdapterUnavailableState(error) {
@@ -1622,8 +1626,7 @@
       setResultViewMode("plain");
     });
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
-    byId("btn-refresh").addEventListener("click", refreshConfig);
-    byId("btn-edit-provider").addEventListener("click", showProviderEditor);
+    byId("btn-edit-provider-url").addEventListener("click", showProviderEditor);
     byId("btn-back-provider-summary").addEventListener("click", hideProviderEditor);
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);

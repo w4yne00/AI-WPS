@@ -51,9 +51,14 @@ function assertCompactMarkupContract() {
     'id="provider-api-key"',
     'id="btn-save-api-key"',
     'id="btn-clear-api-key"',
-    'id="btn-activate-workflow-profile"',
-    'id="workflow-task-tabs"'
+    'id="btn-activate-workflow-profile"'
   ].forEach((marker) => assert.ok(!html.includes(marker), marker));
+
+  assert.ok(html.includes('id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务"'));
+  assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>'));
+  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 1, "Excel must expose one task tab");
+  ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review", "ppt.slide_assistant"]
+    .forEach((task) => assert.ok(!html.includes(`data-workflow-task-tab="${task}"`), `Excel exposes ${task}`));
 
   assert.ok(html.includes('id="provider-base-url"'));
   assert.ok(html.includes('id="btn-save-provider-url"'));

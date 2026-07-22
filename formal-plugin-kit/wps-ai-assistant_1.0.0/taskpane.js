@@ -4119,7 +4119,10 @@
     });
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
     byId("btn-cancel-provider-url").addEventListener("click", closeProviderUrlEditor);
-    byId("btn-refresh").addEventListener("click", refreshConfig);
+    byId("btn-edit-provider-url").addEventListener("click", function () {
+      byId("provider-url-details").open = true;
+      byId("provider-base-url").focus();
+    });
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("workflow-profile-select").addEventListener("change", handleWorkflowProfileSelectionChange);

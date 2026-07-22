@@ -56,6 +56,7 @@ function elementWithId(html, tag, id) {
 
 hosts.forEach((host) => {
   const html = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.html"), "utf8");
+  const js = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.js"), "utf8");
 
   commonIds.forEach((id) => {
     assert.ok(html.includes(`id="${id}"`), `${host.name} missing #${id}`);
@@ -110,9 +111,13 @@ hosts.forEach((host) => {
     host.hasKnowledge,
     `${host.name} enterprise knowledge isolation mismatch`
   );
+  assert.ok(!js.includes('byId("btn-refresh")'), `${host.name} JS still references removed #btn-refresh`);
 });
 
 const wordHtml = fs.readFileSync(path.join(ROOT, hosts[0].dir, "taskpane.html"), "utf8");
+const wordJs = fs.readFileSync(path.join(ROOT, hosts[0].dir, "taskpane.js"), "utf8");
+const excelJs = fs.readFileSync(path.join(ROOT, hosts[1].dir, "taskpane.js"), "utf8");
+const pptJs = fs.readFileSync(path.join(ROOT, hosts[2].dir, "taskpane.js"), "utf8");
 [
   "word.smart_write",
   "word.smart_imitation",
@@ -121,5 +126,9 @@ const wordHtml = fs.readFileSync(path.join(ROOT, hosts[0].dir, "taskpane.html"),
 ].forEach((task) => {
   assert.ok(wordHtml.includes(`data-workflow-task-tab="${task}"`), `Word missing ${task} tab`);
 });
+assert.ok(wordJs.includes('byId("btn-edit-provider-url")'), "Word JS missing provider edit binding");
+assert.ok(excelJs.includes('byId("btn-edit-provider-url")'), "Excel JS missing provider edit binding");
+assert.ok(pptJs.includes('byId("provider-summary-url")'), "PPT JS missing provider summary reference");
+assert.ok(!pptJs.includes('byId("provider-url-summary")'), "PPT JS still references old provider summary ID");
 
 console.log("taskpane experience markup contract passed");
