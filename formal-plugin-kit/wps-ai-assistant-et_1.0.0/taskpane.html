@@ -70,17 +70,15 @@
         <section class="settings-shell glass-card">
           <div id="settings-status-line" class="settings-status-line" aria-live="polite">等待操作。</div>
           <section id="connection-settings-section" class="settings-group">
-            <section class="settings-card">
-              <div id="provider-summary-card" class="provider-summary">
-                <div class="provider-main">
-                  <h4>大模型 API URL</h4>
-                  <p id="provider-summary-url">未检测到服务地址</p>
-                </div>
-                <div class="provider-side">
-                  <button id="btn-edit-provider" class="ghost-action mini-button" type="button">编辑</button>
-                </div>
+            <section id="provider-summary-card" class="settings-card model-interface-card">
+              <div class="model-interface-heading">
+                <h4>模型接口</h4>
+                <span id="provider-readiness-badge" class="readiness-badge is-unavailable" aria-live="polite">无法检测</span>
               </div>
-
+              <div class="model-interface-row">
+                <p id="provider-summary-url" class="provider-url-summary" title="">未配置接口地址</p>
+                <button id="btn-edit-provider-url" class="text-action" type="button">修改</button>
+              </div>
               <div id="provider-edit-view" class="provider-editor" hidden>
                 <label class="field">
                   <span>大模型 API URL</span>
@@ -89,13 +87,20 @@
 
                 <div class="button-row settings-actions">
                   <button id="btn-save-provider-url" type="button">保存地址</button>
-                  <button id="btn-refresh" class="ghost-action" type="button">刷新配置</button>
-                  <button id="btn-back-provider-summary" class="ghost-action" type="button">完成</button>
+                  <button id="btn-back-provider-summary" class="ghost-action" type="button">取消</button>
                 </div>
               </div>
             </section>
 
-            <section class="settings-card">
+            <section class="settings-card workflow-settings-card">
+              <div class="workflow-settings-heading">
+                <h4>工作流设置</h4>
+                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看多工作流说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
+              </div>
+              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个工作流，可在任务页选择当前使用的工作流。</div>
+              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务">
+                <button type="button" role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>
+              </div>
               <section id="workflow-settings-home">
                 <div class="workflow-manager-head">
                   <div>
@@ -151,45 +156,48 @@
             </section>
           </section>
 
-          <section id="diagnostics-section" class="settings-group">
-            <section class="settings-card">
-              <div class="settings-card-head">
-                <h4>联调状态</h4>
-                <span class="inline-status" id="settings-provider-line">接口：未检测</span>
-              </div>
+          <details id="diagnostics-disclosure" class="advanced-diagnostics">
+            <summary aria-controls="diagnostics-section"><span>高级诊断</span><span id="diagnostics-summary" class="inline-status">按需查看</span></summary>
+            <div id="diagnostics-section" class="advanced-diagnostics-content">
+              <section class="settings-card">
+                <div class="settings-card-head">
+                  <h4>联调状态</h4>
+                  <span class="inline-status" id="settings-provider-line">接口：未检测</span>
+                </div>
 
-              <div class="diag-grid">
-                <div class="diag-item">
-                  <span class="diag-label">追踪号</span>
-                  <strong id="trace-line">未检测</strong>
+                <div class="diag-grid">
+                  <div class="diag-item">
+                    <span class="diag-label">追踪号</span>
+                    <strong id="trace-line">未检测</strong>
+                  </div>
+                  <div class="diag-item">
+                    <span class="diag-label">识别范围</span>
+                    <strong id="settings-scope-line">未检测</strong>
+                  </div>
+                  <div class="diag-item">
+                    <span class="diag-label">接口状态</span>
+                    <strong id="provider-line">未检测</strong>
+                  </div>
+                  <div class="diag-item">
+                    <span class="diag-label">前端版本</span>
+                    <strong id="frontend-version-line">未检测</strong>
+                  </div>
                 </div>
-                <div class="diag-item">
-                  <span class="diag-label">识别范围</span>
-                  <strong id="settings-scope-line">未检测</strong>
-                </div>
-                <div class="diag-item">
-                  <span class="diag-label">接口状态</span>
-                  <strong id="provider-line">未检测</strong>
-                </div>
-                <div class="diag-item">
-                  <span class="diag-label">前端版本</span>
-                  <strong id="frontend-version-line">未检测</strong>
-                </div>
-              </div>
-            </section>
+              </section>
 
-            <section id="last-task-diagnostics-card" class="settings-card diagnostics-card">
-              <div class="settings-card-head">
-                <h4>最近一次任务诊断</h4>
-                <span class="inline-status">脱敏摘要</span>
-              </div>
-              <div class="button-row diagnostics-actions">
-                <button id="btn-refresh-diagnostics" class="ghost-action" type="button">刷新诊断</button>
-                <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
-              </div>
-              <div id="last-task-diagnostics-output" class="markdown-output diagnostics-output">尚未刷新诊断。</div>
-            </section>
-          </section>
+              <section id="last-task-diagnostics-card" class="settings-card diagnostics-card">
+                <div class="settings-card-head">
+                  <h4>最近一次任务诊断</h4>
+                  <span class="inline-status">脱敏摘要</span>
+                </div>
+                <div class="button-row diagnostics-actions">
+                  <button id="btn-refresh-diagnostics" class="ghost-action" type="button">刷新诊断</button>
+                  <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
+                </div>
+                <div id="last-task-diagnostics-output" class="markdown-output diagnostics-output">尚未刷新诊断。</div>
+              </section>
+            </div>
+          </details>
         </section>
       </section>
     </div>

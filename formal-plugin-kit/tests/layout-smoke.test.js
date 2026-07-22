@@ -65,6 +65,19 @@ const pptRibbon = fs.readFileSync(`${pptRoot}/ribbon.xml`, "utf8");
 const pptRibbonJs = fs.readFileSync(`${pptRoot}/ribbon.js`, "utf8");
 const pptManifest = fs.readFileSync(`${pptRoot}/manifest.json`, "utf8");
 const pptManifestXml = fs.readFileSync(`${pptRoot}/manifest.xml`, "utf8");
+
+for (const hostHtml of [html, excelHtml, pptHtml]) {
+  assert.ok(hostHtml.includes('id="provider-summary-card" class="settings-card model-interface-card"'));
+  assert.ok(hostHtml.includes('id="provider-readiness-badge"'));
+  assert.ok(hostHtml.includes('id="btn-edit-provider-url"'));
+  assert.ok(hostHtml.includes('id="workflow-task-tabs"'));
+  assert.ok(hostHtml.includes('id="diagnostics-disclosure" class="advanced-diagnostics"'));
+  assert.ok(hostHtml.includes('id="diagnostics-section" class="advanced-diagnostics-content"'));
+  assert.ok(hostHtml.includes('id="btn-refresh-diagnostics"'));
+  assert.ok(hostHtml.includes('id="btn-copy-diagnostics"'));
+  assert.ok(!hostHtml.includes('id="btn-refresh"'));
+}
+
 assert.ok(manifest.includes('"version": "0.19.0-alpha"'));
 assert.ok(excelManifest.includes('"name": "wps-ai-assistant-et"'));
 assert.ok(excelManifest.includes('"version": "0.19.0-alpha"'));

@@ -4,10 +4,16 @@ const path = require("path");
 
 const ROOT = path.resolve(__dirname, "..");
 const hosts = [
-  { name: "Word", dir: "wps-ai-assistant_1.0.0", hasTaskTabs: true },
-  { name: "Excel", dir: "wps-ai-assistant-et_1.0.0", hasTaskTabs: false },
-  { name: "PPT", dir: "wps-ai-assistant-wpp_1.0.0", hasTaskTabs: false }
+  {
+    name: "Word",
+    dir: "wps-ai-assistant_1.0.0",
+    tasks: ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review"]
+  },
+  { name: "Excel", dir: "wps-ai-assistant-et_1.0.0", tasks: ["excel.analysis"] },
+  { name: "PPT", dir: "wps-ai-assistant-wpp_1.0.0", tasks: ["ppt.slide_assistant"] }
 ];
+
+const allTasks = hosts.flatMap((host) => host.tasks);
 
 const commonMarkup = [
   'id="workflow-settings-home"',
@@ -44,11 +50,13 @@ hosts.forEach((host) => {
     assert.ok(css.includes(selector), `${host.name} missing ${selector}`);
   });
 
-  assert.strictEqual(
-    html.includes('id="workflow-task-tabs"'),
-    host.hasTaskTabs,
-    `${host.name} task-tab isolation mismatch`
-  );
+  assert.ok(html.includes('id="workflow-task-tabs"'), `${host.name} missing task tabs`);
+  host.tasks.forEach((task) => {
+    assert.ok(html.includes(`data-workflow-task-tab="${task}"`), `${host.name} missing ${task} tab`);
+  });
+  allTasks.filter((task) => !host.tasks.includes(task)).forEach((task) => {
+    assert.ok(!html.includes(`data-workflow-task-tab="${task}"`), `${host.name} exposes foreign ${task} tab`);
+  });
   assert.ok(js.includes("validateWorkflowProfileDraft"), `${host.name} must validate editor drafts`);
   assert.ok(js.includes("shouldActivateNewWorkflowProfile"), `${host.name} must default first-profile activation`);
   assert.ok(js.includes("activateWorkflowProfile"), `${host.name} must support immediate profile activation`);

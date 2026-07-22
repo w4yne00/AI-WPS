@@ -103,13 +103,14 @@
             <strong id="settings-status-line">等待操作</strong>
           </section>
           <section id="workflow-settings-home" class="workflow-settings-home">
-            <section class="settings-card">
-              <div class="settings-card-head">
-                <div>
-                  <h2>模型接口</h2>
-                  <p id="provider-url-summary" class="provider-url-summary">尚未读取 API URL</p>
-                </div>
-                <button id="btn-edit-provider-url" class="ghost-action mini-button" type="button">修改</button>
+            <section id="provider-summary-card" class="settings-card model-interface-card">
+              <div class="model-interface-heading">
+                <h4>模型接口</h4>
+                <span id="provider-readiness-badge" class="readiness-badge is-unavailable" aria-live="polite">无法检测</span>
+              </div>
+              <div class="model-interface-row">
+                <p id="provider-summary-url" class="provider-url-summary" title="">未配置接口地址</p>
+                <button id="btn-edit-provider-url" class="text-action" type="button">修改</button>
               </div>
               <div id="provider-url-editor" class="provider-url-editor" hidden>
                 <label class="field" for="provider-base-url">
@@ -123,25 +124,35 @@
               </div>
             </section>
 
-            <section class="settings-card">
+            <section class="settings-card workflow-settings-card">
+              <div class="workflow-settings-heading">
+                <h4>工作流设置</h4>
+                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看多工作流说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
+              </div>
+              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个工作流，可在任务页选择当前使用的工作流。</div>
+              <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="PPT 任务">
+                <button type="button" role="tab" data-workflow-task-tab="ppt.slide_assistant" aria-selected="true">智能总结</button>
+              </div>
               <div class="settings-card-head">
-                <div>
-                  <h2>工作流配置</h2>
-                  <p id="workflow-profile-count" class="inline-status">正在读取...</p>
-                </div>
+                <p id="workflow-profile-count" class="inline-status">正在读取...</p>
                 <button id="btn-new-workflow-profile" type="button">新建工作流</button>
               </div>
               <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
             </section>
 
-            <section class="settings-card diagnostics-card">
-              <div class="settings-card-head">
-                <h2>最近一次任务诊断</h2>
-                <button id="btn-refresh-diagnostics" class="ghost-action mini-button" type="button">刷新</button>
+            <details id="diagnostics-disclosure" class="advanced-diagnostics">
+              <summary aria-controls="diagnostics-section"><span>高级诊断</span><span id="diagnostics-summary" class="inline-status">按需查看</span></summary>
+              <div id="diagnostics-section" class="advanced-diagnostics-content">
+                <section class="settings-card diagnostics-card">
+                  <div class="settings-card-head">
+                    <h4>最近一次任务诊断</h4>
+                    <button id="btn-refresh-diagnostics" class="ghost-action mini-button" type="button">刷新</button>
+                  </div>
+                  <pre id="diagnostics-output">尚未刷新诊断。</pre>
+                  <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
+                </section>
               </div>
-              <pre id="diagnostics-output">尚未刷新诊断。</pre>
-              <button id="btn-copy-diagnostics" class="ghost-action" type="button">复制诊断信息</button>
-            </section>
+            </details>
           </section>
 
           <section id="workflow-editor-view" class="settings-card workflow-editor-view" hidden>
