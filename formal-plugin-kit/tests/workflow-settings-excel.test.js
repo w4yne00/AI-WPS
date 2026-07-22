@@ -14,6 +14,10 @@ function functionSource(name) {
   return js.slice(start, next === -1 ? js.length : next);
 }
 
+function loadFunction(name, context = {}) {
+  return vm.runInNewContext(`(${functionSource(name)})`, context);
+}
+
 function assertIncludesAll(source, markers) {
   markers.forEach((marker) => assert.ok(source.includes(marker), marker));
 }
@@ -83,7 +87,7 @@ function assertCompactCssContract() {
 
 function assertFixedExcelWorkflowContract() {
   assert.ok(js.includes('var EXCEL_WORKFLOW_TASK_TYPE = "excel.analysis";'));
-  assert.ok(!js.includes("function renderWorkflowTaskTabs()"));
+  assert.ok(js.includes("function renderWorkflowTaskTabs()"));
   assertIncludesAll(js, [
     "helpers.workflowProfileOptionState",
     "helpers.validateWorkflowProfileDraft",
@@ -272,6 +276,120 @@ function assertExcelAnalysisPreservationContract() {
   ].forEach((marker) => assert.ok(!switchMode.includes(marker), marker));
 }
 
+function assertLiveSettingsExperienceContract() {
+  [
+    "configRefreshRequestId: 0",
+    "configRefreshPromise: null",
+    "configRefreshActiveRequestId: 0",
+    "configRefreshQueued: false",
+    "modelInterfaceDetectable: false",
+    "modelInterfaceConfigDetectable: false",
+    "settingsRefreshController: null",
+    "workflowHelpPinned: false",
+    'settingsProbeTraceId: ""'
+  ].forEach((token) => assert.ok(js.includes(token), token));
+
+  const providerLine = functionSource("setProviderLine");
+  assert.ok(providerLine.startsWith("  function setProviderLine(providerName)"));
+  assert.ok(!providerLine.includes("configured"));
+
+  const modelInterface = functionSource("renderModelInterfaceState");
+  assertIncludesAll(modelInterface, [
+    "EXCEL_WORKFLOW_TASK_TYPE",
+    "getWorkflowProfileData",
+    "helpers.deriveModelInterfaceState",
+    '"readiness-badge is-" + modelState.code',
+    "modelState.label",
+    'byId("provider-summary-url")',
+    'setAttribute("title"',
+    'byId("diagnostics-summary")'
+  ]);
+
+  const refresh = functionSource("refreshConfig");
+  assertIncludesAll(refresh, [
+    "state.configRefreshRequestId + 1",
+    "state.configRefreshRequestId = requestId",
+    "state.configRefreshRequestId !== requestId",
+    "state.configRefreshPromise",
+    "state.configRefreshQueued",
+    "SETTINGS_REFRESH_REQUEST_TIMEOUT_MS",
+    "loadWorkflowProfiles(requestId",
+    "state.modelInterfaceDetectable = true",
+    "state.modelInterfaceDetectable = false",
+    "renderModelInterfaceState"
+  ]);
+  ["providerConfigured", "refreshDiagnostics", "setStatus(", "setResult(", "setTrace(", "setAdapterUnavailableState(", ".finally("].forEach(
+    (token) => assert.ok(!refresh.includes(token), token)
+  );
+
+  const loadProfiles = functionSource("loadWorkflowProfiles");
+  assertIncludesAll(loadProfiles, [
+    "previousProfileData",
+    "configRefreshRequestId",
+    "requestOptions",
+    "renderModelInterfaceState(state.modelInterfaceDetectable)"
+  ]);
+  assert.ok(!loadProfiles.includes("state.workflowProfileSelection = \"\""));
+
+  const saveUrl = functionSource("saveProviderBaseUrl");
+  assert.ok(saveUrl.indexOf("invalidateConfigRefresh()") >= 0);
+  assert.ok(saveUrl.indexOf("invalidateConfigRefresh()") < saveUrl.indexOf("refreshConfig()"));
+
+  const syncRefresh = functionSource("syncSettingsRefreshController");
+  assertIncludesAll(syncRefresh, [
+    'byId("settings-view").classList.contains("active")',
+    'document.visibilityState !== "hidden"',
+    "!state.workflowEditor.open",
+    "state.settingsRefreshController.start()",
+    "state.settingsRefreshController.stop()",
+    "invalidateConfigRefresh()"
+  ]);
+  const controllerIndex = js.lastIndexOf("helpers.createSettingsRefreshController");
+  const switchIndex = js.lastIndexOf("switchMode(getInitialMode())");
+  assert.ok(controllerIndex >= 0 && controllerIndex < switchIndex);
+  assert.ok(js.includes("intervalMs: 30000"));
+  assert.ok(js.includes('document.addEventListener("visibilitychange", syncSettingsRefreshController)'));
+
+  const diagnostics = functionSource("handleDiagnosticsDisclosureToggle");
+  assertIncludesAll(diagnostics, ["event.currentTarget.open", "refreshDiagnostics()"]);
+  const switchMode = functionSource("switchMode");
+  assert.ok(switchMode.includes('byId("diagnostics-disclosure").open = false'));
+
+  const manager = functionSource("renderWorkflowProfileManager");
+  assert.ok(manager.includes("if (profile.note)"));
+  assert.ok(manager.includes("workflow-profile-note"));
+  assert.ok(!manager.includes('profile.note || "无备注"'));
+  assert.ok(!manager.includes('profile.note || "暂无备注"'));
+
+  const tabs = functionSource("renderWorkflowTaskTabs");
+  const tabKeys = functionSource("handleWorkflowTaskTabKeydown");
+  assert.ok(tabs.includes("tabIndex = active ? 0 : -1"));
+  ["ArrowLeft", "ArrowRight", "Home", "End", "preventDefault", ".click()", ".focus()", "scrollWorkflowTaskTabIntoView"].forEach(
+    (token) => assert.ok(tabKeys.includes(token), token)
+  );
+  const scroll = functionSource("scrollWorkflowTaskTabIntoView");
+  assertIncludesAll(scroll, [
+    "prefers-reduced-motion: reduce",
+    'behavior: reducedMotion ? "auto" : "smooth"',
+    'block: "nearest"',
+    'inline: "nearest"',
+    "scrollIntoView(true)"
+  ]);
+
+  const bind = functionSource("bindEvents");
+  assertIncludesAll(bind, [
+    'byId("workflow-task-tabs").addEventListener("keydown"',
+    'byId("diagnostics-disclosure").addEventListener("toggle"',
+    'workflowHelpButton.addEventListener("click"',
+    'workflowHelpButton.addEventListener("mouseenter"',
+    'workflowHelpButton.addEventListener("focusin"',
+    'document.addEventListener("click"',
+    'document.addEventListener("keydown"',
+    'event.key === "Escape"',
+    "workflowHelpButton.focus()"
+  ]);
+}
+
 assertCompactMarkupContract();
 assertCompactCssContract();
 assertFixedExcelWorkflowContract();
@@ -280,5 +398,302 @@ assertEditorSaveContract();
 assertDeleteAndBusyContracts();
 assertExcelHostReviewFixContracts();
 assertExcelAnalysisPreservationContract();
+assertLiveSettingsExperienceContract();
 
-console.log("Excel workflow settings source contracts passed");
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise;
+    reject = rejectPromise;
+  });
+  return { promise, resolve, reject };
+}
+
+function createRefreshHarness(options = {}) {
+  const health = options.health || deferred();
+  const calls = {
+    requests: 0,
+    requestTimeouts: [],
+    jsonTimeouts: [],
+    settingsStatus: [],
+    renderDetectable: [],
+    healthBadges: [],
+    providerLines: [],
+    taskStatus: 0,
+    taskResult: 0,
+    taskTrace: 0,
+    adapterUnavailable: 0
+  };
+  const state = {
+    configRefreshRequestId: 0,
+    configRefreshPromise: null,
+    configRefreshActiveRequestId: 0,
+    configRefreshQueued: false,
+    modelInterfaceDetectable: true,
+    modelInterfaceConfigDetectable: true,
+    settingsProbeTraceId: "",
+    providerBaseUrl: "https://cached.example.test/v1",
+    analysisResult: { structuredReport: "既有分析" },
+    copyText: "既有分析",
+    diagnosticsCopyText: "既有诊断"
+  };
+  const context = {
+    state,
+    SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
+    request(path, payload, requestOptions) {
+      assert.strictEqual(path, "/health");
+      calls.requests += 1;
+      calls.requestTimeouts.push(requestOptions && requestOptions.timeoutMs);
+      return health.promise;
+    },
+    readAdapterJson(path, requestOptions) {
+      calls.jsonTimeouts.push(requestOptions && requestOptions.timeoutMs);
+      return Promise.resolve(options.config || {
+        success: true,
+        data: { providerBaseUrl: "https://fresh.example.test/v1" }
+      });
+    },
+    loadWorkflowProfiles() {
+      return options.profilePromise || Promise.resolve(options.profileResult === undefined ? {} : options.profileResult);
+    },
+    setSettingsStatus(value) { calls.settingsStatus.push(value); },
+    setHealthBadge(mode, text) { calls.healthBadges.push([mode, text]); },
+    setProviderLine(value) { calls.providerLines.push(value); },
+    applyProviderConfig() {},
+    renderModelInterfaceState(value) { calls.renderDetectable.push(value); },
+    describeFetchError(error) { return error && error.message || String(error); },
+    isSettingsRefreshEligible() { return false; },
+    setStatus() { calls.taskStatus += 1; },
+    setResult() { calls.taskResult += 1; },
+    setTrace() { calls.taskTrace += 1; },
+    setAdapterUnavailableState() { calls.adapterUnavailable += 1; }
+  };
+  return { health, calls, state, refreshConfig: loadFunction("refreshConfig", context) };
+}
+
+async function runSettingsBehaviorTests() {
+  const configFailure = createRefreshHarness({
+    config: { success: false, data: {}, errors: [{ message: "配置读取失败" }] }
+  });
+  const configFailurePromise = configFailure.refreshConfig();
+  configFailure.health.resolve({ traceId: "probe-1", data: { providerType: "enterprise-dify-chat" } });
+  await configFailurePromise;
+  assert.deepStrictEqual(configFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
+  assert.strictEqual(configFailure.state.settingsProbeTraceId, "probe-1");
+  assert.strictEqual(configFailure.state.modelInterfaceDetectable, false);
+  assert.deepStrictEqual(configFailure.state.analysisResult, { structuredReport: "既有分析" });
+  assert.strictEqual(configFailure.state.copyText, "既有分析");
+  assert.strictEqual(configFailure.calls.taskStatus, 0);
+  assert.strictEqual(configFailure.calls.taskResult, 0);
+  assert.strictEqual(configFailure.calls.taskTrace, 0);
+  assert.strictEqual(configFailure.calls.adapterUnavailable, 0);
+
+  const healthFailure = createRefreshHarness();
+  const healthFailurePromise = healthFailure.refreshConfig();
+  healthFailure.health.reject(new Error("adapter 未启动"));
+  await healthFailurePromise;
+  assert.deepStrictEqual(healthFailure.calls.healthBadges.at(-1), ["badge-warn", "待启动"]);
+  assert.strictEqual(healthFailure.state.modelInterfaceDetectable, false);
+  assert.strictEqual(healthFailure.calls.taskResult, 0);
+
+  const profileFailure = createRefreshHarness({ profileResult: null });
+  const profileFailurePromise = profileFailure.refreshConfig();
+  profileFailure.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  await profileFailurePromise;
+  assert.deepStrictEqual(profileFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
+  assert.strictEqual(profileFailure.state.modelInterfaceDetectable, false);
+
+  const concurrent = createRefreshHarness();
+  const firstRefresh = concurrent.refreshConfig();
+  const secondRefresh = concurrent.refreshConfig();
+  assert.strictEqual(firstRefresh, secondRefresh);
+  assert.strictEqual(concurrent.calls.requests, 1);
+  concurrent.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  await firstRefresh;
+  assert.strictEqual(concurrent.state.modelInterfaceDetectable, true);
+  assert.deepStrictEqual(concurrent.calls.requestTimeouts, [8000]);
+  assert.deepStrictEqual(concurrent.calls.jsonTimeouts, [8000]);
+
+  const stopped = createRefreshHarness();
+  const stoppedPromise = stopped.refreshConfig();
+  let running = true;
+  stopped.state.workflowEditor = { open: false };
+  stopped.state.settingsRefreshController = {
+    start() { running = true; },
+    stop() { running = false; },
+    isRunning() { return running; }
+  };
+  const stopRefresh = loadFunction("syncSettingsRefreshController", {
+    state: stopped.state,
+    document: { visibilityState: "visible" },
+    byId: () => ({ classList: { contains: () => false } }),
+    invalidateConfigRefresh() { stopped.state.configRefreshRequestId += 1; }
+  });
+  stopRefresh();
+  stopped.health.resolve({ traceId: "late", data: { providerType: "enterprise-dify-chat" } });
+  await stoppedPromise;
+  assert.strictEqual(running, false);
+  assert.deepStrictEqual(stopped.calls.healthBadges, []);
+  assert.deepStrictEqual(stopped.calls.renderDetectable, []);
+
+  const lifecycleState = {
+    configRefreshRequestId: 0,
+    configRefreshQueued: false,
+    workflowEditor: { open: false },
+    settingsRefreshController: {
+      starts: 0,
+      stops: 0,
+      running: false,
+      start() { this.starts += 1; this.running = true; },
+      stop() { this.stops += 1; this.running = false; },
+      isRunning() { return this.running; }
+    }
+  };
+  let settingsActive = true;
+  const lifecycleDocument = { visibilityState: "visible" };
+  const syncLifecycle = loadFunction("syncSettingsRefreshController", {
+    state: lifecycleState,
+    document: lifecycleDocument,
+    byId: () => ({ classList: { contains: () => settingsActive } }),
+    invalidateConfigRefresh() {
+      lifecycleState.configRefreshRequestId += 1;
+      lifecycleState.configRefreshQueued = false;
+    }
+  });
+  syncLifecycle();
+  lifecycleDocument.visibilityState = "hidden";
+  syncLifecycle();
+  lifecycleDocument.visibilityState = "visible";
+  syncLifecycle();
+  lifecycleState.workflowEditor.open = true;
+  syncLifecycle();
+  lifecycleState.workflowEditor.open = false;
+  syncLifecycle();
+  settingsActive = false;
+  syncLifecycle();
+  assert.strictEqual(lifecycleState.settingsRefreshController.starts, 3);
+  assert.strictEqual(lifecycleState.settingsRefreshController.stops, 3);
+  assert.strictEqual(lifecycleState.configRefreshRequestId, 3);
+
+  let diagnosticsRefreshes = 0;
+  const toggleDiagnostics = loadFunction("handleDiagnosticsDisclosureToggle", {
+    refreshDiagnostics() { diagnosticsRefreshes += 1; }
+  });
+  toggleDiagnostics({ currentTarget: { open: false } });
+  toggleDiagnostics({ currentTarget: { open: true } });
+  assert.strictEqual(diagnosticsRefreshes, 1);
+
+  const helpState = { workflowHelpPinned: false };
+  const helpButton = {
+    expanded: "false",
+    setAttribute(name, value) { if (name === "aria-expanded") this.expanded = value; }
+  };
+  const helpPopover = { hidden: true };
+  const setHelpOpen = loadFunction("setWorkflowHelpOpen", {
+    state: helpState,
+    byId(id) { return id === "workflow-help-button" ? helpButton : helpPopover; }
+  });
+  setHelpOpen(true, true);
+  assert.strictEqual(helpState.workflowHelpPinned, true);
+  assert.strictEqual(helpPopover.hidden, false);
+  assert.strictEqual(helpButton.expanded, "true");
+  setHelpOpen(false, false);
+  assert.strictEqual(helpPopover.hidden, true);
+
+  let prevented = 0;
+  let clicked = 0;
+  let focused = 0;
+  let scrolled = 0;
+  const onlyTab = {
+    click() { clicked += 1; },
+    focus() { focused += 1; }
+  };
+  const handleTabKey = loadFunction("handleWorkflowTaskTabKeydown", {
+    state: { workflowProfileMutationBusy: false },
+    byId() { return { querySelectorAll() { return [onlyTab]; } }; },
+    scrollWorkflowTaskTabIntoView() { scrolled += 1; }
+  });
+  handleTabKey({ target: onlyTab, key: "End", preventDefault() { prevented += 1; } });
+  assert.deepStrictEqual([prevented, clicked, focused, scrolled], [1, 1, 1, 1]);
+
+  const cachedProfiles = {
+    taskType: "excel.analysis",
+    activeProfileId: "stable-active",
+    profileCount: 2,
+    profiles: [
+      { id: "stable-active", name: "稳定主档案", keyConfigured: true },
+      { id: "stable-backup", name: "稳定备用档案", keyConfigured: true }
+    ]
+  };
+  const loadState = {
+    configRefreshRequestId: 0,
+    modelInterfaceDetectable: false,
+    modelInterfaceConfigDetectable: true,
+    workflowProfiles: cachedProfiles,
+    workflowProfileSelection: "stable-backup",
+    workflowProfileLoadSequence: 0
+  };
+  const failedLoad = loadFunction("loadWorkflowProfiles", {
+    state: loadState,
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    request() { return Promise.reject(new Error("临时读取失败")); },
+    describeFetchError(error) { return error.message; },
+    emptyWorkflowProfileData() { return { taskType: "excel.analysis", activeProfileId: "", profileCount: 0, profiles: [] }; },
+    normalizeWorkflowProfileData(value) { return value; },
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    renderModelInterfaceState() {}
+  });
+  await failedLoad();
+  assert.strictEqual(loadState.workflowProfiles.activeProfileId, "stable-active");
+  assert.deepStrictEqual(loadState.workflowProfiles.profiles, cachedProfiles.profiles);
+  assert.strictEqual(loadState.workflowProfileSelection, "stable-backup");
+  assert.strictEqual(loadState.workflowProfiles.loadError, "临时读取失败");
+
+  const restoredState = {
+    configRefreshRequestId: 0,
+    modelInterfaceDetectable: false,
+    modelInterfaceConfigDetectable: true,
+    workflowProfiles: cachedProfiles,
+    workflowProfileSelection: "stable-backup",
+    workflowProfileLoadSequence: 0
+  };
+  const restoredLoad = loadFunction("loadWorkflowProfiles", {
+    state: restoredState,
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    request() { return Promise.resolve({ data: cachedProfiles }); },
+    describeFetchError(error) { return error.message; },
+    emptyWorkflowProfileData() { return { taskType: "excel.analysis", activeProfileId: "", profileCount: 0, profiles: [] }; },
+    normalizeWorkflowProfileData(value) { return value; },
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    renderModelInterfaceState() {}
+  });
+  await restoredLoad();
+  assert.strictEqual(restoredState.modelInterfaceDetectable, true);
+
+  const reducedCalls = [];
+  loadFunction("scrollWorkflowTaskTabIntoView", {
+    window: { matchMedia: () => ({ matches: true }) }
+  })({ scrollIntoView(value) { reducedCalls.push(value); } });
+  assert.strictEqual(reducedCalls[0].behavior, "auto");
+
+  const fallbackCalls = [];
+  loadFunction("scrollWorkflowTaskTabIntoView", {
+    window: { matchMedia: () => ({ matches: false }) }
+  })({
+    scrollIntoView(value) {
+      fallbackCalls.push(value);
+      if (typeof value === "object") throw new Error("旧 WebView");
+    }
+  });
+  assert.strictEqual(fallbackCalls[1], true);
+}
+
+runSettingsBehaviorTests().then(() => {
+  console.log("Excel workflow settings source contracts passed");
+}).catch((error) => {
+  console.error(error);
+  process.exitCode = 1;
+});
