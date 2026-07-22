@@ -48,6 +48,18 @@ const commonIds = [
   "btn-copy-diagnostics"
 ];
 
+const commonCssMarkers = [
+  ".model-interface-card",
+  ".readiness-badge",
+  ".workflow-settings-heading",
+  ".workflow-help-popover",
+  ".workflow-task-tabs",
+  ".advanced-diagnostics",
+  ":focus-visible",
+  ":active",
+  "@media (prefers-reduced-motion: reduce)"
+];
+
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -94,7 +106,24 @@ function functionSource(js, name) {
 hosts.forEach((host) => {
   const html = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.html"), "utf8");
   const js = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.js"), "utf8");
+  const css = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.css"), "utf8");
   const htmlIds = collectHtmlIds(html);
+
+  commonCssMarkers.forEach((marker) => {
+    assert.ok(css.includes(marker), `${host.name} CSS missing ${marker}`);
+  });
+  assert.ok(css.includes("--host-accent: var(--color-primary);"), `${host.name} host accent mapping mismatch`);
+  assert.ok(
+    css.includes("--host-accent-soft: var(--color-surface-muted);"),
+    `${host.name} soft host accent mapping mismatch`
+  );
+  assert.ok(css.includes("--border-color: var(--color-border);"), `${host.name} border mapping mismatch`);
+  assert.ok(
+    css.includes('font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;'),
+    `${host.name} body font stack mismatch`
+  );
+  assert.ok(!css.includes("backdrop-filter"), `${host.name} CSS must not use backdrop-filter`);
+  assert.ok(!/letter-spacing\s*:\s*-/.test(css), `${host.name} CSS must not use negative letter spacing`);
 
   commonIds.forEach((id) => {
     assert.ok(htmlIds.has(id), `${host.name} missing #${id}`);

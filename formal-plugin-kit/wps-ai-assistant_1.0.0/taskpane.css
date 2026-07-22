@@ -7,6 +7,9 @@
   --color-text-muted: #607386;
   --color-primary: #2f6db3;
   --color-primary-hover: #265c98;
+  --host-accent: var(--color-primary);
+  --host-accent-soft: var(--color-surface-muted);
+  --border-color: var(--color-border);
   --color-success: #2f7d5c;
   --color-warning: #a56a13;
   --color-danger: #a44242;
@@ -33,7 +36,7 @@
 body {
   margin: 0;
   border-top: 3px solid var(--color-primary);
-  font-family: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
   background: var(--color-bg);
   color: var(--text);
   overflow-x: hidden;
@@ -1726,5 +1729,285 @@ body[data-task-mode="smartWrite"] #result-output {
 @media (max-width: 380px) {
   #rewrite-options .rewrite-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+/* Shared restrained settings and interaction treatment. */
+.model-interface-card,
+.workflow-settings-card,
+.advanced-diagnostics {
+  position: relative;
+  max-width: 100%;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  box-shadow: none;
+}
+
+.model-interface-heading,
+.model-interface-row,
+.workflow-settings-heading {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.model-interface-heading,
+.workflow-settings-heading {
+  position: relative;
+  min-height: 28px;
+}
+
+.model-interface-heading h4,
+.workflow-settings-heading h4 {
+  min-width: 0;
+  margin: 0;
+  letter-spacing: 0;
+}
+
+.model-interface-row {
+  margin-top: 8px;
+}
+
+.provider-url-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.text-action {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 8px;
+  border: 1px solid var(--border-color);
+  background: var(--color-surface);
+  color: var(--host-accent);
+  font-size: 12px;
+}
+
+.readiness-badge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  min-width: 76px;
+  min-height: 26px;
+  align-items: center;
+  justify-content: center;
+  padding: 3px 8px;
+  border: 1px solid #cfd5dc;
+  border-radius: var(--radius-control);
+  background: #f3f4f6;
+  color: #5f6873;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.readiness-badge.is-ready {
+  border-color: #b9ddce;
+  background: #edf7f2;
+  color: var(--color-success);
+}
+
+.readiness-badge.is-partial {
+  border-color: #ead4ae;
+  background: #fff7e8;
+  color: var(--color-warning);
+}
+
+.readiness-badge.is-unconfigured,
+.readiness-badge.is-unavailable {
+  border-color: #cfd5dc;
+  background: #f3f4f6;
+  color: #5f6873;
+}
+
+.info-button {
+  display: inline-flex;
+  flex: 0 0 28px;
+  width: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  background: var(--color-surface);
+  color: var(--host-accent);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.workflow-help-popover {
+  position: absolute;
+  z-index: 10;
+  top: 48px;
+  right: 14px;
+  width: max-content;
+  max-width: min(260px, calc(100% - 28px));
+  padding: 9px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-panel);
+  background: var(--color-surface);
+  color: var(--color-text);
+  box-shadow: 0 4px 12px rgba(23, 38, 46, 0.12);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.workflow-task-tabs {
+  display: flex;
+  max-width: 100%;
+  gap: 4px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 4px 10px 5px 0;
+  border-bottom: 1px solid var(--border-color);
+  box-shadow: inset -10px 0 8px -12px var(--border-color);
+  scrollbar-width: thin;
+}
+
+.workflow-task-tabs button {
+  flex: 0 0 auto;
+  min-width: max-content;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--color-text-muted);
+  white-space: nowrap;
+}
+
+.workflow-task-tabs button.active,
+.workflow-task-tabs button[aria-selected="true"] {
+  border-color: var(--border-color);
+  background: var(--host-accent-soft);
+  color: var(--host-accent);
+}
+
+.advanced-diagnostics {
+  margin-top: 12px;
+  overflow: hidden;
+}
+
+.advanced-diagnostics > summary {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 12px;
+  color: var(--color-text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.advanced-diagnostics > summary::-webkit-details-marker {
+  display: none;
+}
+
+.advanced-diagnostics-content {
+  padding: 0 12px 12px;
+  opacity: 1;
+  transform: translateY(0);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.advanced-diagnostics:not([open]) > .advanced-diagnostics-content {
+  opacity: 0;
+  transform: translateY(-2px);
+}
+
+.advanced-diagnostics-content > .settings-card {
+  margin: 0;
+  padding: 12px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.advanced-diagnostics-content > .settings-card + .settings-card {
+  border-top: 1px solid var(--border-color);
+}
+
+button,
+.workflow-task-tabs button,
+.advanced-diagnostics > summary {
+  transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, opacity 160ms ease, transform 100ms ease;
+}
+
+button:active,
+.workflow-task-tabs button:active,
+.advanced-diagnostics > summary:active {
+  transform: scale(0.98);
+  transition-duration: 100ms;
+}
+
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.advanced-diagnostics > summary:focus-visible {
+  outline: 2px solid var(--host-accent);
+  outline-offset: 2px;
+}
+
+@media (max-width: 420px) {
+  .model-interface-row,
+  .workflow-settings-toolbar,
+  .workflow-manager-head,
+  .workflow-profile-row,
+  .workflow-profile-list-row {
+    align-items: flex-start;
+  }
+
+  .workflow-settings-toolbar,
+  .workflow-manager-head {
+    flex-wrap: wrap;
+  }
+
+  .workflow-profile-actions,
+  .diagnostics-actions,
+  .provider-url-actions {
+    flex-wrap: wrap;
+  }
+
+  .diagnostics-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .workflow-profile-actions button,
+  .diagnostics-actions button,
+  .provider-url-actions button {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+
+  .workflow-help-popover {
+    right: 0;
+    max-width: min(260px, calc(100vw - 40px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
   }
 }
