@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
-KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}"
+KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0190"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
 
 WORD_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant_1.0.0"

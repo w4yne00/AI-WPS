@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.18.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.18.1-20260715` |
+| Version | `v0.19.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.19.0-20260722` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260715-v0181.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260722-v0190.tar.gz` |
 
 Version rule format:
 
@@ -127,6 +127,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.19.0-alpha` | Adds Word enterprise terminology and writing-rule knowledge for Smart Write, Smart Imitation, and Document Review. The local SQLite-backed manager supports scoped CRUD, CSV/XLSX import preview with conflict skipping, CSV export, database backup, result usage summaries, and fail-open degraded feedback. Excel/PPT behavior and all existing writeback paths remain unchanged; overwrite installation preserves the knowledge database and up to three existing backups |
 | `v0.18.1-alpha` | Streamlines workflow settings across Word, Excel, and PPT: removes unified-key controls from the task pane, keeps a compact host-isolated workflow list with full-width create/edit views, activates task-page selections immediately, protects active profiles from deletion, preserves existing keys when edits leave the key blank, and keeps adapter fallback and overwrite-install compatibility unchanged |
 | `v0.18.0-alpha` | Renames the current Excel entry to “智能分析” and upgrades PPT to the dual-mode “智能总结”; adds secure single-file UTF-8 Markdown/DOCX upload, complete-deck 5/8/10/12/15-slide recommendations, 1800-second recoverable polling, a unified three-host visual system, Excel/PPT Markdown prompt templates, and one combined overwrite-install package that preserves the API URL and API keys |
 | `v0.17.0-alpha` | Adds the read-only PPT Slide Assistant with current-slide title, optional subtitle, body text, and adjacent-title extraction; generate/optimize modes, recoverable long-task polling, preview/plain-text and categorized copy actions; strict Word/Excel/PPT Ribbon isolation; and one combined upgrade package that preserves the target machine's API URL and API keys |
@@ -339,6 +340,16 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
 | `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
+| `GET` | `/enterprise-knowledge/summary` | Knowledge counts and availability for the Word manager |
+| `GET` / `POST` | `/enterprise-knowledge/items` | List or create terminology and writing-rule items |
+| `PATCH` / `DELETE` | `/enterprise-knowledge/items/{itemId}` | Update or delete one knowledge item |
+| `GET` | `/enterprise-knowledge/import-template.csv` | Download the CSV import template |
+| `GET` | `/enterprise-knowledge/import-template.xlsx` | Download the XLSX import template |
+| `POST` | `/enterprise-knowledge/imports/preview` | Validate an import and issue a short-lived preview token |
+| `POST` | `/enterprise-knowledge/imports/apply` | Apply one unused import preview with conflict skipping |
+| `GET` | `/enterprise-knowledge/export.csv` | Export filtered knowledge items as CSV |
+| `GET` | `/enterprise-knowledge/backup` | Download a consistent SQLite database backup |
+| `GET` | `/enterprise-knowledge/diagnostics` | Sanitized knowledge-store health diagnostics |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
 | `POST` | `/word/smart-imitation` | Preview/copy-only imitation writing from a template, requirements, and optional reference material |
 | `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |

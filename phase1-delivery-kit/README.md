@@ -1,14 +1,14 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.18.1-alpha`
+版本：`v0.19.0-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260715-v0181.tar.gz
-cd ai-wps-phase1-delivery-20260715-v0181
+tar -xzf ai-wps-phase1-delivery-20260722-v0190.tar.gz
+cd ai-wps-phase1-delivery-20260722-v0190
 bash installer/install_phase1.sh
 ```
 
@@ -57,6 +57,9 @@ bash scripts/phase1_smoke_test.sh
 - `docs/operations/dify-excel-analysis-workflow.md`：Excel“智能分析”Dify 工作流配置手册。
 - `docs/operations/dify-ppt-slide-assistant-workflow.md`：PPT“智能总结”双模式 Dify 工作流配置手册。
 - `docs/operations/workflow-profile-management.md`：工作流档案新增、切换、迁移和密钥保护手册。
+- `docs/operations/enterprise-knowledge-management.md`：Word 企业术语与风格规则维护、导入、导出、备份和恢复手册。
+- `docs/import-templates/enterprise-knowledge-import-template.csv`：企业知识 CSV 导入模板。
+- `docs/import-templates/enterprise-knowledge-import-template.xlsx`：企业知识 XLSX 导入模板。
 - `docs/prompt-templates/excel-smart-analysis-prompt-template.md`：Excel“智能分析”提示词工程模板。
 - `docs/prompt-templates/ppt-smart-summary-prompt-template.md`：PPT“智能总结”当前页/文档双模式提示词工程模板。
 
@@ -74,5 +77,6 @@ bash scripts/phase1_smoke_test.sh
 10. 旧版 Dify 工作流应继续读取 `inputs.query`；新版“用户输入”节点工作流应在首次 HTTP 400 后自动切换到顶层 `query/files` 并成功返回。
 11. 智能总结的文档模式应接受单个 UTF-8 `.md` 或有效 `.docx`（最大 10 MB），并可选择整套 5、8、10、12、15 页建议，默认 10 页。
 12. 智能总结只提供预览和复制，绝不自动创建或修改 PPT；同一个 `ppt.slide_assistant` 工作流档案和 API Key 必须用于 `/files/upload` 与 `/chat-messages`，Dify 文件分支必须连接 `userinput.files` 和文档提取节点。
-13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key 和 `run/provider_api_keys/`，确认现场 API URL 与全部密钥均被保留。
+13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、`run/enterprise_knowledge.db` 和最多三份已有知识库备份，确认现场配置和企业知识均被保留。
 14. 设置页只显示统一 API URL 和当前宿主的工作流档案；功能页下拉选择工作流后应立即激活，不再显示统一 Key 或额外“切换”按钮。
+15. 在 Word 设置页维护企业术语和风格规则，分别验证新增、修改、删除、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；知识库不可用时任务仍应继续并明确显示降级提示。
