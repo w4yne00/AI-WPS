@@ -58,6 +58,8 @@ assert.ok(managerSource.includes("canDeleteWorkflowProfile"));
 assert.ok(!managerSource.includes('profile.note || "暂无备注"'));
 assert.ok(managerSource.includes("if (profile.note)"));
 assert.ok(managerSource.includes("workflow-profile-note"));
+assert.ok(!managerSource.includes("else if (!data.profiles.length)"));
+assert.ok(managerSource.includes("if (data.profiles.length)"));
 
 // Live model-interface state is derived from the URL and active workflow profiles.
 [
@@ -92,7 +94,7 @@ assert.ok(refreshConfigSource.includes("renderModelInterfaceState"));
 assert.ok(!refreshConfigSource.includes("providerConfigured"));
 assert.ok(!refreshConfigSource.includes("refreshDiagnostics"));
 assert.ok(!refreshConfigSource.includes("setStatus("));
-assert.ok(!refreshConfigSource.includes("setTrace("));
+assert.ok(refreshConfigSource.includes("setTrace("));
 assert.ok(!refreshConfigSource.includes("setResult("));
 assert.ok(!refreshConfigSource.includes("setAdapterUnavailableState("));
 assert.ok(!refreshConfigSource.includes(".finally("));
@@ -106,6 +108,7 @@ assert.ok(!providerLineSource.includes("configured"));
 const loadProfilesSource = functionSource("loadWorkflowProfiles");
 assert.ok(loadProfilesSource.includes("renderModelInterfaceState(state.modelInterfaceDetectable)"));
 assert.ok(loadProfilesSource.includes("configRefreshRequestId"));
+assert.ok(loadProfilesSource.includes("previousProfileData"));
 
 const saveProviderUrlSource = functionSource("saveProviderBaseUrl");
 const invalidateBeforeUrlRefresh = saveProviderUrlSource.indexOf("invalidateConfigRefresh()");
@@ -363,8 +366,10 @@ function createRefreshHarness(options = {}) {
     jsonTimeouts: [],
     settingsStatus: [],
     renderDetectable: [],
+    healthBadges: [],
+    providerLines: [],
+    traces: [],
     setStatus: 0,
-    setTrace: 0,
     setResult: 0,
     setAdapterUnavailableState: 0,
     applyProviderConfig: 0
@@ -376,6 +381,7 @@ function createRefreshHarness(options = {}) {
     configRefreshQueued: false,
     modelInterfaceDetectable: true,
     providerBaseUrl: "https://cached.example.test/v1",
+    rewriteResult: { text: "既有任务结果" },
     copyText: "既有任务结果",
     diagnosticsCopyText: "既有诊断"
   };
@@ -401,8 +407,9 @@ function createRefreshHarness(options = {}) {
       return Promise.resolve(options.profileResults || [{}, {}, {}, {}]);
     },
     setSettingsStatus(message) { calls.settingsStatus.push(message); },
-    setHealthBadge() {},
-    setProviderLine() {},
+    setHealthBadge(mode, text) { calls.healthBadges.push([mode, text]); },
+    setProviderLine(value) { calls.providerLines.push(value); },
+    setTrace(value) { calls.traces.push(value); },
     applyProviderConfig() { calls.applyProviderConfig += 1; },
     resolveSelectionScope() {},
     renderFallbackTemplateOptions() {},
@@ -412,7 +419,6 @@ function createRefreshHarness(options = {}) {
     describeFetchError(error) { return error && error.message || String(error); },
     isSettingsRefreshEligible() { return false; },
     setStatus() { calls.setStatus += 1; },
-    setTrace() { calls.setTrace += 1; },
     setResult() { calls.setResult += 1; },
     setAdapterUnavailableState() { calls.setAdapterUnavailableState += 1; }
   };
@@ -429,17 +435,34 @@ async function runSettingsRefreshBehaviorTests() {
     config: { success: false, data: {}, errors: [{ message: "配置读取失败" }] }
   });
   const configFailurePromise = configFailure.refreshConfig();
-  configFailure.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  configFailure.health.resolve({ traceId: "health-config-failure", data: { providerType: "enterprise-dify-chat" } });
   await configFailurePromise;
   assert.strictEqual(configFailure.state.modelInterfaceDetectable, false);
   assert.strictEqual(configFailure.calls.renderDetectable.at(-1), false);
   assert.strictEqual(configFailure.calls.applyProviderConfig, 0);
   assert.strictEqual(configFailure.state.copyText, "既有任务结果");
   assert.strictEqual(configFailure.state.diagnosticsCopyText, "既有诊断");
+  assert.deepStrictEqual(configFailure.state.rewriteResult, { text: "既有任务结果" });
+  assert.deepStrictEqual(configFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
+  assert.deepStrictEqual(configFailure.calls.providerLines, ["enterprise-dify-chat"]);
+  assert.deepStrictEqual(configFailure.calls.traces, ["health-config-failure"]);
   assert.strictEqual(configFailure.calls.setStatus, 0);
-  assert.strictEqual(configFailure.calls.setTrace, 0);
   assert.strictEqual(configFailure.calls.setResult, 0);
   assert.strictEqual(configFailure.calls.setAdapterUnavailableState, 0);
+
+  const healthFailure = createRefreshHarness();
+  healthFailure.calls.healthBadges.push(["badge-ok", "已连接"]);
+  const healthFailurePromise = healthFailure.refreshConfig();
+  healthFailure.health.reject(new Error("本地 adapter 未启动"));
+  await healthFailurePromise;
+  assert.deepStrictEqual(healthFailure.calls.healthBadges.at(-1), ["badge-warn", "待启动"]);
+  assert.strictEqual(healthFailure.calls.healthBadges.length, 2);
+  assert.strictEqual(healthFailure.state.modelInterfaceDetectable, false);
+  assert.strictEqual(healthFailure.calls.renderDetectable.at(-1), false);
+  assert.strictEqual(healthFailure.state.copyText, "既有任务结果");
+  assert.deepStrictEqual(healthFailure.state.rewriteResult, { text: "既有任务结果" });
+  assert.strictEqual(healthFailure.calls.setResult, 0);
+  assert.strictEqual(healthFailure.calls.setAdapterUnavailableState, 0);
 
   const profileFailure = createRefreshHarness({ profileResults: [{}, null, {}, {}] });
   const profileFailurePromise = profileFailure.refreshConfig();
@@ -447,6 +470,7 @@ async function runSettingsRefreshBehaviorTests() {
   await profileFailurePromise;
   assert.strictEqual(profileFailure.state.modelInterfaceDetectable, false);
   assert.strictEqual(profileFailure.calls.renderDetectable.at(-1), false);
+  assert.deepStrictEqual(profileFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
 
   const concurrent = createRefreshHarness();
   const firstRefresh = concurrent.refreshConfig();
@@ -479,7 +503,7 @@ async function runSettingsRefreshBehaviorTests() {
   await stoppedPromise;
   assert.deepStrictEqual(stopped.calls.renderDetectable, []);
   assert.strictEqual(stopped.calls.setStatus, 0);
-  assert.strictEqual(stopped.calls.setTrace, 0);
+  assert.deepStrictEqual(stopped.calls.traces, []);
   assert.strictEqual(stopped.calls.setResult, 0);
 
   const lateProfiles = deferred();
@@ -525,6 +549,63 @@ async function runSettingsRefreshBehaviorTests() {
   });
   assert.strictEqual(fallbackCalls.length, 2);
   assert.strictEqual(fallbackCalls[1], true);
+
+  const cachedTaskType = "word.smart_write";
+  const cachedProfiles = {
+    taskType: cachedTaskType,
+    activeProfileId: "stable-active",
+    profileCount: 2,
+    profiles: [
+      { id: "stable-active", name: "稳定主档案", keyConfigured: true },
+      { id: "stable-backup", name: "稳定备用档案", keyConfigured: true }
+    ]
+  };
+  const loadState = {
+    configRefreshRequestId: 0,
+    modelInterfaceDetectable: true,
+    workflowProfiles: { [cachedTaskType]: cachedProfiles },
+    workflowProfileSelections: { [cachedTaskType]: "stable-backup" }
+  };
+  let loadRenderCount = 0;
+  const loadProfilesFailure = loadFunction("loadWorkflowProfiles", {
+    state: loadState,
+    request() { return Promise.reject(new Error("临时读取失败")); },
+    nextWorkflowProfileRequestId() { return 1; },
+    isWorkflowProfileRequestCurrent() { return true; },
+    describeFetchError(error) { return error.message; },
+    renderWorkflowProfileStrip() { loadRenderCount += 1; },
+    renderWorkflowProfileManager() { loadRenderCount += 1; },
+    renderModelInterfaceState() { loadRenderCount += 1; }
+  });
+  const failedLoadResult = await loadProfilesFailure(cachedTaskType);
+  assert.strictEqual(failedLoadResult, null);
+  assert.strictEqual(loadState.workflowProfiles[cachedTaskType].activeProfileId, "stable-active");
+  assert.deepStrictEqual(loadState.workflowProfiles[cachedTaskType].profiles, cachedProfiles.profiles);
+  assert.strictEqual(loadState.workflowProfileSelections[cachedTaskType], "stable-backup");
+  assert.strictEqual(loadState.workflowProfiles[cachedTaskType].loadError, "临时读取失败");
+  assert.strictEqual(loadRenderCount, 3);
+
+  const emptyLoadState = {
+    configRefreshRequestId: 0,
+    modelInterfaceDetectable: true,
+    workflowProfiles: {},
+    workflowProfileSelections: {}
+  };
+  const firstLoadFailure = loadFunction("loadWorkflowProfiles", {
+    state: emptyLoadState,
+    request() { return Promise.reject(new Error("首次读取失败")); },
+    nextWorkflowProfileRequestId() { return 1; },
+    isWorkflowProfileRequestCurrent() { return true; },
+    describeFetchError(error) { return error.message; },
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    renderModelInterfaceState() {}
+  });
+  await firstLoadFailure(cachedTaskType);
+  assert.strictEqual(emptyLoadState.workflowProfiles[cachedTaskType].activeProfileId, "");
+  assert.strictEqual(Array.isArray(emptyLoadState.workflowProfiles[cachedTaskType].profiles), true);
+  assert.strictEqual(emptyLoadState.workflowProfiles[cachedTaskType].profiles.length, 0);
+  assert.strictEqual(emptyLoadState.workflowProfiles[cachedTaskType].loadError, "首次读取失败");
 }
 
 runSettingsRefreshBehaviorTests().then(() => {

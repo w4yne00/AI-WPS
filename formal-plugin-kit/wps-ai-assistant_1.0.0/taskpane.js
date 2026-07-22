@@ -1328,6 +1328,7 @@
     var requestId;
     var refreshOperation;
     var refreshPromise;
+    var healthConnected = false;
 
     function releaseRefresh(result) {
       var shouldRestart = false;
@@ -1357,24 +1358,32 @@
     refreshOperation = request("/health", null, {
       timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
     }).then(function (health) {
+      var healthData;
+      if (state.configRefreshRequestId !== requestId) {
+        return null;
+      }
+      healthData = health.data || {};
+      healthConnected = true;
+      setHealthBadge("badge-ok", "已连接");
+      setTrace(health.traceId || "");
+      setProviderLine(healthData.providerType || "未检测");
       return Promise.all([
         Promise.resolve(health),
         readAdapterJson("/templates", { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
         readAdapterJson("/config", { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
       ]);
     }).then(function (results) {
-      var health = results[0];
+      if (!results) {
+        return null;
+      }
       var templates = results[1];
       var config = results[2];
-      var healthData = health.data || {};
       if (state.configRefreshRequestId !== requestId) {
         return null;
       }
       if (config.success === false) {
         throw new Error(config.errors && config.errors[0] && config.errors[0].message || "配置读取失败");
       }
-      setHealthBadge("badge-ok", "已连接");
-      setProviderLine(healthData.providerType || "未检测");
       applyProviderConfig(config.data || {});
       if (templates.success === false) {
         renderFallbackTemplateOptions();
@@ -1406,6 +1415,9 @@
       if (state.configRefreshRequestId !== requestId) {
         return null;
       }
+      if (!healthConnected) {
+        setHealthBadge("badge-warn", "待启动");
+      }
       state.modelInterfaceDetectable = false;
       renderModelInterfaceState(state.modelInterfaceDetectable);
       setSettingsStatus("配置刷新失败：" + describeFetchError(error));
@@ -1414,6 +1426,9 @@
 
     refreshPromise = refreshOperation.then(releaseRefresh, function (error) {
       if (state.configRefreshRequestId === requestId) {
+        if (!healthConnected) {
+          setHealthBadge("badge-warn", "待启动");
+        }
         state.modelInterfaceDetectable = false;
         renderModelInterfaceState(state.modelInterfaceDetectable);
         setSettingsStatus("配置刷新失败：" + describeFetchError(error));
@@ -1556,9 +1571,11 @@
 
   function loadWorkflowProfiles(taskType, configRefreshRequestId, requestOptions) {
     var requestId;
+    var previousProfileData;
     if (!taskType) {
       return Promise.resolve(null);
     }
+    previousProfileData = state.workflowProfiles[taskType] || null;
     requestId = nextWorkflowProfileRequestId(taskType);
     return request(
       "/provider/workflow-profiles?taskType=" + encodeURIComponent(taskType),
@@ -1578,17 +1595,30 @@
         return state.workflowProfiles[taskType];
       })
       .catch(function (error) {
+        var loadError;
+        var preservedProfileData;
         if (!isWorkflowProfileRequestCurrent(taskType, requestId) ||
             (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
           return null;
         }
-        state.workflowProfiles[taskType] = {
-          taskType: taskType,
-          activeProfileId: "",
-          profileCount: 0,
-          profiles: [],
-          loadError: describeFetchError(error)
-        };
+        loadError = describeFetchError(error);
+        if (previousProfileData) {
+          preservedProfileData = {};
+          Object.keys(previousProfileData).forEach(function (key) {
+            preservedProfileData[key] = previousProfileData[key];
+          });
+          preservedProfileData.loadError = loadError;
+          state.workflowProfiles[taskType] = preservedProfileData;
+        } else {
+          state.workflowProfiles[taskType] = {
+            taskType: taskType,
+            activeProfileId: "",
+            profileCount: 0,
+            profiles: [],
+            loadError: loadError
+          };
+        }
+        state.modelInterfaceDetectable = false;
         renderWorkflowProfileStrip();
         renderWorkflowProfileManager();
         renderModelInterfaceState(state.modelInterfaceDetectable);
@@ -1836,9 +1866,11 @@
       rows.push('<div class="workflow-profile-error-actions"><p class="workflow-profile-error">无法读取工作流配置：' +
         escapeWorkflowText(data.loadError) + '</p><button type="button" class="ghost-action mini-button" data-workflow-action="reload" data-task-type="' +
         taskType + '"' + disabledAttribute + '>重新读取</button></div>');
-    } else if (!data.profiles.length) {
+    }
+    if (!data.profiles.length && !data.loadError) {
       rows.push('<p class="workflow-profile-empty">尚未配置工作流。</p>');
-    } else {
+    }
+    if (data.profiles.length) {
       rows.push('<div class="workflow-profile-list">');
       data.profiles.forEach(function (profile) {
         var isActive = profile.id === data.activeProfileId;
