@@ -2,6 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}"
@@ -25,7 +26,7 @@ cp -R "$ADAPTER_SRC/." "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/adapter_service" "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/config" "$TMP_DIR/packages/adapter-start-kit/"
 cp -R "$ROOT_DIR/templates" "$TMP_DIR/packages/adapter-start-kit/"
-mkdir -p "$TMP_DIR/docs/operations" "$TMP_DIR/docs/prompt-templates"
+mkdir -p "$TMP_DIR/docs/operations" "$TMP_DIR/docs/prompt-templates" "$TMP_DIR/docs/import-templates"
 cp "$ROOT_DIR/docs/operations/dify-smart-write-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-smart-imitation-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-document-review-workflow.md" "$TMP_DIR/docs/operations/"
@@ -33,8 +34,27 @@ cp "$ROOT_DIR/docs/operations/dify-format-review-workflow.md" "$TMP_DIR/docs/ope
 cp "$ROOT_DIR/docs/operations/dify-excel-analysis-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-ppt-slide-assistant-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/workflow-profile-management.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/enterprise-knowledge-management.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/prompt-templates/excel-smart-analysis-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/ppt-smart-summary-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
+
+PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" - "$TMP_DIR/docs/import-templates" <<'PY'
+from pathlib import Path
+import sys
+
+from app.services.enterprise_knowledge.imports import (
+    generate_csv_template,
+    generate_xlsx_template,
+)
+
+output_dir = Path(sys.argv[1])
+(output_dir / "enterprise-knowledge-import-template.csv").write_bytes(
+    generate_csv_template()
+)
+(output_dir / "enterprise-knowledge-import-template.xlsx").write_bytes(
+    generate_xlsx_template()
+)
+PY
 
 tar -xzf "$PIP_TAR" -C "$TMP_DIR/packages"
 mv "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap-20260506" "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap"

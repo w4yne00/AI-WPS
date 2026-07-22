@@ -1,3 +1,5 @@
+import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -177,6 +179,97 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("run/provider_api_key", script)
         self.assertIn("run/provider_api_keys", script)
         self.assertNotIn('copy_dir "$ADAPTER_SOURCE" "$ADAPTER_TARGET"', script)
+
+    def test_phase1_installer_preserves_enterprise_knowledge_database(self) -> None:
+        script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("run/enterprise_knowledge.db", script)
+        self.assertIn("enterprise_knowledge.db.backup-*", script)
+        self.assertIn("preserve_adapter_runtime_config", script)
+        self.assertIn("restore_adapter_runtime_config", script)
+        self.assertIn('[ -e "$knowledge_backup" ] || continue', script)
+
+    def test_phase1_installer_restores_live_knowledge_files_after_replacement(self) -> None:
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+        function_prefix = installer.split("enable_exec_permissions() {", 1)[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter_target = Path(temp_dir) / "adapter-start-kit"
+            run_dir = adapter_target / "run"
+            run_dir.mkdir(parents=True)
+            (run_dir / "enterprise_knowledge.db").write_text("live-db", encoding="utf-8")
+            for index in range(1, 6):
+                (run_dir / f"enterprise_knowledge.db.backup-{index}").write_text(
+                    f"backup-{index}", encoding="utf-8"
+                )
+
+            harness = Path(temp_dir) / "preserve-test.sh"
+            harness.write_text(
+                function_prefix
+                + "\nADAPTER_TARGET=\"$1\"\n"
+                + "ADAPTER_CONFIG_BACKUP=\"\"\n"
+                + "preserve_adapter_runtime_config\n"
+                + "rm -rf \"$ADAPTER_TARGET\"\n"
+                + "mkdir -p \"$ADAPTER_TARGET/run\"\n"
+                + "restore_adapter_runtime_config\n",
+                encoding="utf-8",
+            )
+            result = subprocess.run(
+                ["bash", str(harness), str(adapter_target)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                (run_dir / "enterprise_knowledge.db").read_text(encoding="utf-8"),
+                "live-db",
+            )
+            restored_backups = sorted(run_dir.glob("enterprise_knowledge.db.backup-*"))
+            self.assertEqual(
+                [path.name for path in restored_backups],
+                [
+                    "enterprise_knowledge.db.backup-3",
+                    "enterprise_knowledge.db.backup-4",
+                    "enterprise_knowledge.db.backup-5",
+                ],
+            )
+
+    def test_phase1_delivery_generates_knowledge_templates_and_includes_guide(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
+            encoding="utf-8"
+        )
+        guide = ROOT / "docs/operations/enterprise-knowledge-management.md"
+
+        self.assertIn("docs/import-templates", script)
+        self.assertIn("generate_csv_template", script)
+        self.assertIn("generate_xlsx_template", script)
+        self.assertIn("enterprise-knowledge-import-template.csv", script)
+        self.assertIn("enterprise-knowledge-import-template.xlsx", script)
+        self.assertIn("enterprise-knowledge-management.md", script)
+        self.assertTrue(guide.is_file(), "missing enterprise knowledge operations guide")
+
+        text = guide.read_text(encoding="utf-8")
+        for required_text in [
+            "全局术语",
+            "智能编写",
+            "智能仿写",
+            "文档审查",
+            "5 MB",
+            "|",
+            "保留库内标准",
+            "CSV 导出",
+            "完整备份",
+            "降级",
+            "diagnostics",
+            "损坏",
+        ]:
+            self.assertIn(required_text, text)
 
     def test_taskpane_document_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(

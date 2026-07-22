@@ -38,6 +38,11 @@ copy_dir() {
 }
 
 preserve_adapter_runtime_config() {
+  local knowledge_backup
+  local knowledge_backup_index
+  local knowledge_backup_start
+  local -a knowledge_backups=()
+
   [ -d "$ADAPTER_TARGET" ] || return 0
   ADAPTER_CONFIG_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/ai-wps-adapter-config.XXXXXX")"
   mkdir -p "$ADAPTER_CONFIG_BACKUP/config" "$ADAPTER_CONFIG_BACKUP/run"
@@ -54,9 +59,28 @@ preserve_adapter_runtime_config() {
     cp -R "$ADAPTER_TARGET/run/provider_api_keys" "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys"
     log "preserve_adapter_runtime_config=run/provider_api_keys"
   fi
+  if [ -f "$ADAPTER_TARGET/run/enterprise_knowledge.db" ]; then
+    cp "$ADAPTER_TARGET/run/enterprise_knowledge.db" "$ADAPTER_CONFIG_BACKUP/run/enterprise_knowledge.db"
+    log "preserve_adapter_runtime_config=run/enterprise_knowledge.db"
+  fi
+  for knowledge_backup in "$ADAPTER_TARGET"/run/enterprise_knowledge.db.backup-*; do
+    [ -e "$knowledge_backup" ] || continue
+    knowledge_backups+=("$knowledge_backup")
+  done
+  knowledge_backup_start=0
+  if [ "${#knowledge_backups[@]}" -gt 3 ]; then
+    knowledge_backup_start=$((${#knowledge_backups[@]} - 3))
+  fi
+  for ((knowledge_backup_index=knowledge_backup_start; knowledge_backup_index<${#knowledge_backups[@]}; knowledge_backup_index+=1)); do
+    knowledge_backup="${knowledge_backups[$knowledge_backup_index]}"
+    cp "$knowledge_backup" "$ADAPTER_CONFIG_BACKUP/run/$(basename "$knowledge_backup")"
+    log "preserve_adapter_runtime_config=run/$(basename "$knowledge_backup")"
+  done
 }
 
 restore_adapter_runtime_config() {
+  local knowledge_backup
+
   [ -n "$ADAPTER_CONFIG_BACKUP" ] || return 0
   [ -d "$ADAPTER_CONFIG_BACKUP" ] || return 0
 
@@ -76,6 +100,17 @@ restore_adapter_runtime_config() {
     cp -R "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys" "$ADAPTER_TARGET/run/provider_api_keys"
     log "restore_adapter_runtime_config=run/provider_api_keys"
   fi
+  if [ -f "$ADAPTER_CONFIG_BACKUP/run/enterprise_knowledge.db" ]; then
+    mkdir -p "$ADAPTER_TARGET/run"
+    cp "$ADAPTER_CONFIG_BACKUP/run/enterprise_knowledge.db" "$ADAPTER_TARGET/run/enterprise_knowledge.db"
+    log "restore_adapter_runtime_config=run/enterprise_knowledge.db"
+  fi
+  for knowledge_backup in "$ADAPTER_CONFIG_BACKUP"/run/enterprise_knowledge.db.backup-*; do
+    [ -e "$knowledge_backup" ] || continue
+    mkdir -p "$ADAPTER_TARGET/run"
+    cp "$knowledge_backup" "$ADAPTER_TARGET/run/$(basename "$knowledge_backup")"
+    log "restore_adapter_runtime_config=run/$(basename "$knowledge_backup")"
+  done
 
   rm -rf "$ADAPTER_CONFIG_BACKUP"
   ADAPTER_CONFIG_BACKUP=""
