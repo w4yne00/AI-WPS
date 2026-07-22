@@ -695,6 +695,11 @@ async function runSettingsBehaviorTests() {
   assert.strictEqual(providerState.settingsRefreshController.starts, 1);
   hideProviderEditor();
   assert.strictEqual(providerState.settingsRefreshController.starts, 1);
+  showProviderEditor();
+  assert.strictEqual(providerState.settingsRefreshController.stops, 2);
+  hideProviderEditor({ type: "click", currentTarget: { id: "btn-back-provider-summary" } });
+  assert.strictEqual(providerState.settingsRefreshController.starts, 2);
+  assert.strictEqual(providerState.settingsRefreshController.running, true);
 
   const saveCalls = { hide: 0, invalidate: 0, refresh: 0, sync: 0 };
   const saveState = { providerBaseUrl: "", providerUrlEditorOpen: true };

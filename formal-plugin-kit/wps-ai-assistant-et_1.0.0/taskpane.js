@@ -1543,7 +1543,7 @@
     byId("provider-edit-view").hidden = true;
     byId("provider-summary-card").classList.remove("editing");
     byId("btn-edit-provider-url").hidden = false;
-    if (!suppressRefreshSync) {
+    if (suppressRefreshSync !== true) {
       syncSettingsRefreshController();
     }
   }
