@@ -178,8 +178,8 @@ function assertExcelHostReviewFixContracts() {
 
   assert.ok(html.includes('id="settings-status-line"'), "settings must expose a live status line");
   assertIncludesAll(setStatus, [
-    'byId("status-line").textContent',
-    'byId("settings-status-line").textContent'
+    'setNodeTextIfChanged(byId("status-line")',
+    'setNodeTextIfChanged(byId("settings-status-line")'
   ]);
 
   assert.ok(js.includes("workflowProfileLoadSequence: 0"), "workflow GETs need a request sequence");
@@ -304,7 +304,7 @@ function assertLiveSettingsExperienceContract() {
     '"readiness-badge is-" + modelState.code',
     "modelState.label",
     'byId("provider-summary-url")',
-    'setAttribute("title"',
+    'setNodeAttributeIfChanged(summary, "title"',
     'byId("diagnostics-summary")'
   ]);
 
@@ -325,6 +325,8 @@ function assertLiveSettingsExperienceContract() {
     "state.modelInterfaceDetectable = false",
     "renderModelInterfaceState"
   ]);
+  assert.ok(refresh.includes("profileResult.superseded"));
+  assert.ok(refresh.includes("profileResult.failed"));
   ["providerConfigured", "refreshDiagnostics", "setStatus(", "setResult(", "setTrace(", "setAdapterUnavailableState(", ".finally("].forEach(
     (token) => assert.ok(!refresh.includes(token), token)
   );
@@ -336,6 +338,8 @@ function assertLiveSettingsExperienceContract() {
     "requestOptions",
     "renderModelInterfaceState(state.modelInterfaceDetectable)"
   ]);
+  assert.ok(loadProfiles.includes("superseded: true"));
+  assert.ok(loadProfiles.includes("failed: true"));
   assert.ok(!loadProfiles.includes("state.workflowProfileSelection = \"\""));
 
   const saveUrl = functionSource("saveProviderBaseUrl");
@@ -350,6 +354,7 @@ function assertLiveSettingsExperienceContract() {
     'document.visibilityState !== "hidden"',
     "!state.workflowEditor.open",
     "!state.providerUrlEditorOpen",
+    "!state.workflowProfileMutationBusy",
     "state.settingsRefreshController.start()",
     "state.settingsRefreshController.stop()",
     "invalidateConfigRefresh()"
@@ -366,6 +371,14 @@ function assertLiveSettingsExperienceContract() {
   const refreshDiagnostics = functionSource("refreshDiagnostics");
   assert.ok(refreshDiagnostics.includes("setSettingsStatus"));
   assert.ok(!refreshDiagnostics.includes("setStatus("));
+  const copyDiagnostics = functionSource("copyDiagnostics");
+  assert.ok(copyDiagnostics.includes("setSettingsStatus"));
+  assert.ok(copyDiagnostics.includes("fallbackCopy(text, setSettingsStatus)"));
+  assert.ok(copyDiagnostics.includes("return navigator.clipboard.writeText"));
+  assert.ok(!copyDiagnostics.includes("setStatus("));
+  const fallbackCopy = functionSource("fallbackCopy");
+  assert.ok(fallbackCopy.includes("feedback"));
+  assert.ok(functionSource("copyResult").includes("fallbackCopy(text)"));
   const switchMode = functionSource("switchMode");
   assert.ok(switchMode.includes('byId("diagnostics-disclosure").open = false'));
 
@@ -413,6 +426,18 @@ function assertLiveSettingsExperienceContract() {
     "state.providerUrlEditorOpen = false",
     "syncSettingsRefreshController()"
   ]);
+
+  const mutationBusy = functionSource("setWorkflowMutationBusy");
+  assert.ok(mutationBusy.includes("syncSettingsRefreshController()"));
+
+  const healthBadge = functionSource("setHealthBadge");
+  const workflowStrip = functionSource("renderWorkflowProfileStrip");
+  assert.ok(healthBadge.includes("setNodeClassNameIfChanged"));
+  assert.ok(healthBadge.includes("setNodeTextIfChanged"));
+  assert.ok(workflowStrip.includes("setNodeTextIfChanged("));
+  assert.ok(workflowStrip.includes("feedback,"));
+  assert.ok(modelInterface.includes("setNodeClassNameIfChanged"));
+  assert.ok(modelInterface.includes("setNodeTextIfChanged"));
 }
 
 assertCompactMarkupContract();
@@ -464,6 +489,7 @@ function createRefreshHarness(options = {}) {
     providerBaseUrl: "https://cached.example.test/v1",
     providerUrlEditorOpen: false,
     workflowEditor: { open: false },
+    workflowProfileMutationBusy: false,
     analysisResult: { structuredReport: "既有分析" },
     copyText: "既有分析",
     diagnosticsCopyText: "既有诊断"
@@ -537,6 +563,14 @@ async function runSettingsBehaviorTests() {
   assert.deepStrictEqual(profileFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
   assert.strictEqual(profileFailure.state.modelInterfaceDetectable, false);
 
+  const supersededProfile = createRefreshHarness({ profileResult: { superseded: true } });
+  const supersededProfilePromise = supersededProfile.refreshConfig({ silent: true });
+  supersededProfile.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  await supersededProfilePromise;
+  assert.strictEqual(supersededProfile.state.modelInterfaceDetectable, true);
+  assert.deepStrictEqual(supersededProfile.calls.renderDetectable, []);
+  assert.deepStrictEqual(supersededProfile.calls.settingsStatus, []);
+
   const concurrent = createRefreshHarness();
   const firstRefresh = concurrent.refreshConfig();
   const secondRefresh = concurrent.refreshConfig();
@@ -590,11 +624,65 @@ async function runSettingsBehaviorTests() {
   assert.deepStrictEqual(stopped.calls.healthBadges, []);
   assert.deepStrictEqual(stopped.calls.renderDetectable, []);
 
+  const interleavedProfileResult = deferred();
+  const interleaved = createRefreshHarness({ profilePromise: interleavedProfileResult.promise });
+  interleaved.state.busy = false;
+  interleaved.state.settingsRefreshController = {
+    starts: 0,
+    stops: 0,
+    running: true,
+    start() {
+      if (!this.running) { this.starts += 1; this.running = true; }
+    },
+    stop() {
+      if (this.running) { this.stops += 1; this.running = false; }
+    },
+    isRunning() { return this.running; }
+  };
+  const interleavedControls = {};
+  const interleavedById = (id) => {
+    if (id === "settings-view") return { classList: { contains() { return true; } } };
+    interleavedControls[id] = interleavedControls[id] || { disabled: false };
+    return interleavedControls[id];
+  };
+  const interleavedSync = loadFunction("syncSettingsRefreshController", {
+    state: interleaved.state,
+    document: { visibilityState: "visible" },
+    byId: interleavedById,
+    invalidateConfigRefresh() {
+      interleaved.state.configRefreshRequestId += 1;
+      interleaved.state.configRefreshQueued = false;
+      interleaved.state.configRefreshQueuedSilent = true;
+    }
+  });
+  const setInterleavedMutationBusy = loadFunction("setWorkflowMutationBusy", {
+    state: interleaved.state,
+    byId: interleavedById,
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    renderWorkflowTaskTabs() {},
+    syncSettingsRefreshController: interleavedSync
+  });
+  const interleavedRefresh = interleaved.refreshConfig({ silent: true });
+  interleaved.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  await Promise.resolve();
+  await Promise.resolve();
+  setInterleavedMutationBusy(true);
+  assert.strictEqual(interleaved.state.settingsRefreshController.stops, 1);
+  interleavedProfileResult.resolve({ failed: true });
+  await interleavedRefresh;
+  assert.strictEqual(interleaved.state.modelInterfaceDetectable, true);
+  assert.deepStrictEqual(interleaved.calls.renderDetectable, []);
+  assert.deepStrictEqual(interleaved.calls.settingsStatus, []);
+  setInterleavedMutationBusy(false);
+  assert.strictEqual(interleaved.state.settingsRefreshController.starts, 1);
+
   const lifecycleState = {
     configRefreshRequestId: 0,
     configRefreshQueued: false,
     workflowEditor: { open: false },
     providerUrlEditorOpen: false,
+    workflowProfileMutationBusy: false,
     settingsRefreshController: {
       starts: 0,
       stops: 0,
@@ -624,11 +712,72 @@ async function runSettingsBehaviorTests() {
   syncLifecycle();
   lifecycleState.workflowEditor.open = false;
   syncLifecycle();
+  lifecycleState.workflowProfileMutationBusy = true;
+  syncLifecycle();
+  lifecycleState.workflowProfileMutationBusy = false;
+  syncLifecycle();
   settingsActive = false;
   syncLifecycle();
-  assert.strictEqual(lifecycleState.settingsRefreshController.starts, 3);
-  assert.strictEqual(lifecycleState.settingsRefreshController.stops, 3);
-  assert.strictEqual(lifecycleState.configRefreshRequestId, 3);
+  assert.strictEqual(lifecycleState.settingsRefreshController.starts, 4);
+  assert.strictEqual(lifecycleState.settingsRefreshController.stops, 4);
+  assert.strictEqual(lifecycleState.configRefreshRequestId, 4);
+
+  const mutationControls = {};
+  const mutationState = {
+    busy: false,
+    workflowProfileMutationBusy: false,
+    workflowEditor: { open: false },
+    providerUrlEditorOpen: false,
+    configRefreshRequestId: 0,
+    configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
+    settingsRefreshController: {
+      starts: 0,
+      stops: 0,
+      running: true,
+      start() {
+        if (!this.running) { this.starts += 1; this.running = true; }
+      },
+      stop() {
+        if (this.running) { this.stops += 1; this.running = false; }
+      },
+      isRunning() { return this.running; }
+    }
+  };
+  const mutationById = (id) => {
+    if (id === "settings-view") {
+      return { classList: { contains() { return true; } } };
+    }
+    mutationControls[id] = mutationControls[id] || { disabled: false };
+    return mutationControls[id];
+  };
+  const mutationSync = loadFunction("syncSettingsRefreshController", {
+    state: mutationState,
+    document: { visibilityState: "visible" },
+    byId: mutationById,
+    invalidateConfigRefresh() {
+      mutationState.configRefreshRequestId += 1;
+      mutationState.configRefreshQueued = false;
+      mutationState.configRefreshQueuedSilent = true;
+    }
+  });
+  const setMutationBusy = loadFunction("setWorkflowMutationBusy", {
+    state: mutationState,
+    byId: mutationById,
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    renderWorkflowTaskTabs() {},
+    syncSettingsRefreshController: mutationSync
+  });
+  setMutationBusy(true); // Activation begins while automatic refresh is running.
+  assert.strictEqual(mutationState.settingsRefreshController.stops, 1);
+  assert.strictEqual(mutationState.configRefreshRequestId, 1);
+  setMutationBusy(false);
+  assert.strictEqual(mutationState.settingsRefreshController.starts, 1);
+  setMutationBusy(true); // Deletion begins after activation completes.
+  setMutationBusy(false);
+  assert.strictEqual(mutationState.settingsRefreshController.stops, 2);
+  assert.strictEqual(mutationState.settingsRefreshController.starts, 2);
 
   const providerNodes = {
     "provider-edit-view": { hidden: true },
@@ -769,6 +918,160 @@ async function runSettingsBehaviorTests() {
   assert.deepStrictEqual(diagnosticsSettingsStatus, ["诊断信息已刷新。"]);
   assert.strictEqual(diagnosticsTaskStatusCalls, 0);
 
+  const copySettingsStatus = [];
+  let copyTaskStatusCalls = 0;
+  let fallbackFeedback = null;
+  const copyDiagnostics = loadFunction("copyDiagnostics", {
+    state: { diagnosticsCopyText: "诊断内容" },
+    byId() { return { textContent: "" }; },
+    navigator: {
+      clipboard: {
+        writeText() { return Promise.reject(new Error("clipboard unavailable")); }
+      }
+    },
+    setSettingsStatus(message) { copySettingsStatus.push(message); },
+    setStatus() { copyTaskStatusCalls += 1; },
+    fallbackCopy(text, feedback) {
+      assert.strictEqual(text, "诊断内容");
+      fallbackFeedback = feedback;
+      feedback("诊断信息已通过兼容方式复制。");
+    }
+  });
+  await copyDiagnostics();
+  assert.strictEqual(fallbackFeedback instanceof Function, true);
+  assert.deepStrictEqual(copySettingsStatus, ["诊断信息已通过兼容方式复制。"]);
+  assert.strictEqual(copyTaskStatusCalls, 0);
+
+  const successfulCopySettings = [];
+  await loadFunction("copyDiagnostics", {
+    state: { diagnosticsCopyText: "诊断内容" },
+    byId() { return { textContent: "" }; },
+    navigator: { clipboard: { writeText() { return Promise.resolve(); } } },
+    setSettingsStatus(message) { successfulCopySettings.push(message); },
+    setStatus() { copyTaskStatusCalls += 1; },
+    fallbackCopy() { throw new Error("successful clipboard copy must not fall back"); }
+  })();
+  assert.deepStrictEqual(successfulCopySettings, ["诊断信息已复制。"]);
+  assert.strictEqual(copyTaskStatusCalls, 0);
+
+  const emptyCopyStatus = [];
+  loadFunction("copyDiagnostics", {
+    state: { diagnosticsCopyText: "" },
+    byId() { return { textContent: "" }; },
+    navigator: {},
+    setSettingsStatus(message) { emptyCopyStatus.push(message); },
+    setStatus() { copyTaskStatusCalls += 1; },
+    fallbackCopy() { throw new Error("empty diagnostics must not copy"); }
+  })();
+  assert.deepStrictEqual(emptyCopyStatus, ["暂无可复制的诊断信息。"]);
+  assert.strictEqual(copyTaskStatusCalls, 0);
+
+  function trackedNode(textValue, classValue) {
+    let textWrites = 0;
+    let classWrites = 0;
+    let text = textValue;
+    let className = classValue;
+    const node = {};
+    Object.defineProperty(node, "textContent", {
+      get() { return text; },
+      set(value) { textWrites += 1; text = value; }
+    });
+    Object.defineProperty(node, "className", {
+      get() { return className; },
+      set(value) { classWrites += 1; className = value; }
+    });
+    node.counts = () => ({ textWrites, classWrites });
+    return node;
+  }
+
+  const healthNode = trackedNode("已连接", "badge badge-ok");
+  const setNodeTextIfChanged = loadFunction("setNodeTextIfChanged");
+  const setNodeClassNameIfChanged = loadFunction("setNodeClassNameIfChanged");
+  const setHealthBadge = loadFunction("setHealthBadge", {
+    byId() { return healthNode; },
+    setNodeTextIfChanged,
+    setNodeClassNameIfChanged
+  });
+  setHealthBadge("badge-ok", "已连接");
+  setHealthBadge("badge-ok", "已连接");
+  assert.deepStrictEqual(healthNode.counts(), { textWrites: 0, classWrites: 0 });
+  setHealthBadge("badge-warn", "待启动");
+  assert.deepStrictEqual(healthNode.counts(), { textWrites: 1, classWrites: 1 });
+
+  const settingsStatusNode = trackedNode("就绪", "");
+  const setSettingsStatus = loadFunction("setSettingsStatus", {
+    byId() { return settingsStatusNode; },
+    setNodeTextIfChanged
+  });
+  setSettingsStatus("就绪");
+  setSettingsStatus("就绪");
+  assert.strictEqual(settingsStatusNode.counts().textWrites, 0);
+  setSettingsStatus("配置刷新失败");
+  assert.strictEqual(settingsStatusNode.counts().textWrites, 1);
+
+  const readinessBadge = trackedNode("已就绪", "readiness-badge is-ready");
+  const diagnosticsSummary = trackedNode("已就绪", "");
+  const providerSummary = trackedNode("https://ready.example.test/v1", "");
+  providerSummary.title = "https://ready.example.test/v1";
+  providerSummary.setAttribute = function (name, value) { this[name] = value; };
+  const readinessState = {
+    providerBaseUrl: "https://ready.example.test/v1",
+    workflowProfiles: { activeProfileId: "active", profiles: [{ id: "active", keyConfigured: true }] }
+  };
+  const renderReadiness = loadFunction("renderModelInterfaceState", {
+    state: readinessState,
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    getWorkflowProfileData() { return readinessState.workflowProfiles; },
+    helpers: {
+      deriveModelInterfaceState(input) {
+        return input.detectable
+          ? { code: "ready", label: "已就绪" }
+          : { code: "unavailable", label: "无法检测" };
+      }
+    },
+    byId(id) {
+      if (id === "provider-readiness-badge") return readinessBadge;
+      if (id === "provider-summary-url") return providerSummary;
+      return diagnosticsSummary;
+    },
+    setNodeTextIfChanged,
+    setNodeClassNameIfChanged,
+    setNodeAttributeIfChanged: loadFunction("setNodeAttributeIfChanged")
+  });
+  renderReadiness(true);
+  renderReadiness(true);
+  assert.deepStrictEqual(readinessBadge.counts(), { textWrites: 0, classWrites: 0 });
+  assert.strictEqual(diagnosticsSummary.counts().textWrites, 0);
+  renderReadiness(false);
+  assert.deepStrictEqual(readinessBadge.counts(), { textWrites: 1, classWrites: 1 });
+  assert.strictEqual(diagnosticsSummary.counts().textWrites, 1);
+
+  const workflowFeedback = trackedNode("当前：主流程", "");
+  setNodeTextIfChanged(workflowFeedback, "当前：主流程");
+  setNodeTextIfChanged(workflowFeedback, "当前：主流程");
+  assert.strictEqual(workflowFeedback.counts().textWrites, 0);
+  setNodeTextIfChanged(workflowFeedback, "正在切换...");
+  assert.strictEqual(workflowFeedback.counts().textWrites, 1);
+
+  const normalCopyFeedback = [];
+  const normalCopyDocument = {
+    body: { appendChild() {}, removeChild() {} },
+    createElement() {
+      return {
+        value: "",
+        style: {},
+        setAttribute() {},
+        select() {}
+      };
+    },
+    execCommand() { return true; }
+  };
+  loadFunction("fallbackCopy", {
+    document: normalCopyDocument,
+    setStatus(message) { normalCopyFeedback.push(message); }
+  })("普通分析结果");
+  assert.deepStrictEqual(normalCopyFeedback, ["结果已复制。"]);
+
   const helpState = { workflowHelpPinned: false };
   const helpButton = {
     expanded: "false",
@@ -811,6 +1114,43 @@ async function runSettingsBehaviorTests() {
       { id: "stable-backup", name: "稳定备用档案", keyConfigured: true }
     ]
   };
+  const firstProfileRequest = deferred();
+  const secondProfileRequest = deferred();
+  const supersededLoadState = {
+    configRefreshRequestId: 0,
+    modelInterfaceDetectable: true,
+    modelInterfaceConfigDetectable: true,
+    workflowProfiles: cachedProfiles,
+    workflowProfileSelection: "stable-active",
+    workflowProfileLoadSequence: 0
+  };
+  let profileRequestCount = 0;
+  let supersededRenderCount = 0;
+  const supersededLoad = loadFunction("loadWorkflowProfiles", {
+    state: supersededLoadState,
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    request() {
+      profileRequestCount += 1;
+      return profileRequestCount === 1 ? firstProfileRequest.promise : secondProfileRequest.promise;
+    },
+    describeFetchError(error) { return error.message; },
+    emptyWorkflowProfileData() { return { taskType: "excel.analysis", activeProfileId: "", profileCount: 0, profiles: [] }; },
+    normalizeWorkflowProfileData(value) { return value; },
+    renderWorkflowProfileStrip() { supersededRenderCount += 1; },
+    renderWorkflowProfileManager() { supersededRenderCount += 1; },
+    renderModelInterfaceState() { supersededRenderCount += 1; }
+  });
+  const oldLoadPromise = supersededLoad();
+  const currentLoadPromise = supersededLoad();
+  firstProfileRequest.reject(new Error("旧请求被新请求取代"));
+  const oldLoadResult = await oldLoadPromise;
+  assert.strictEqual(oldLoadResult.superseded, true);
+  assert.strictEqual(supersededLoadState.modelInterfaceDetectable, true);
+  assert.strictEqual(supersededRenderCount, 0);
+  secondProfileRequest.resolve({ data: cachedProfiles });
+  await currentLoadPromise;
+  assert.strictEqual(supersededRenderCount, 3);
+
   const loadState = {
     configRefreshRequestId: 0,
     modelInterfaceDetectable: false,
@@ -830,7 +1170,8 @@ async function runSettingsBehaviorTests() {
     renderWorkflowProfileManager() {},
     renderModelInterfaceState() {}
   });
-  await failedLoad();
+  const failedLoadResult = await failedLoad();
+  assert.strictEqual(failedLoadResult.failed, true);
   assert.strictEqual(loadState.workflowProfiles.activeProfileId, "stable-active");
   assert.deepStrictEqual(loadState.workflowProfiles.profiles, cachedProfiles.profiles);
   assert.strictEqual(loadState.workflowProfileSelection, "stable-backup");

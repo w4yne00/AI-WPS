@@ -61,6 +61,36 @@
     return document.getElementById(id);
   }
 
+  function setNodeTextIfChanged(node, value) {
+    var nextValue = value || "";
+    if (node && node.textContent !== nextValue) {
+      node.textContent = nextValue;
+      return true;
+    }
+    return false;
+  }
+
+  function setNodeClassNameIfChanged(node, value) {
+    var nextValue = value || "";
+    if (node && node.className !== nextValue) {
+      node.className = nextValue;
+      return true;
+    }
+    return false;
+  }
+
+  function setNodeAttributeIfChanged(node, name, value) {
+    var nextValue = value || "";
+    if (node && node.getAttribute && node.getAttribute(name) === nextValue) {
+      return false;
+    }
+    if (node && node.setAttribute) {
+      node.setAttribute(name, nextValue);
+      return true;
+    }
+    return false;
+  }
+
   function isTaskpanePage() {
     return Boolean(byId(TASKPANE_ROOT_ID));
   }
@@ -152,12 +182,12 @@
   }
 
   function setStatus(message) {
-    byId("status-line").textContent = message || "";
-    byId("settings-status-line").textContent = message || "";
+    setNodeTextIfChanged(byId("status-line"), message || "");
+    setNodeTextIfChanged(byId("settings-status-line"), message || "");
   }
 
   function setSettingsStatus(message) {
-    byId("settings-status-line").textContent = message || "";
+    setNodeTextIfChanged(byId("settings-status-line"), message || "");
   }
 
   function setAnalysisBusy(isBusy) {
@@ -227,8 +257,8 @@
 
   function setHealthBadge(mode, text) {
     var node = byId("health-indicator");
-    node.className = "badge " + mode;
-    node.textContent = text;
+    setNodeClassNameIfChanged(node, "badge " + mode);
+    setNodeTextIfChanged(node, text);
   }
 
   function setScopeLine(label) {
@@ -921,8 +951,9 @@
     }, 0);
   }
 
-  function fallbackCopy(text) {
+  function fallbackCopy(text, feedback) {
     var textarea = document.createElement("textarea");
+    var report = typeof feedback === "function" ? feedback : setStatus;
     textarea.value = text;
     textarea.setAttribute("readonly", "readonly");
     textarea.style.position = "fixed";
@@ -931,9 +962,9 @@
     textarea.select();
     try {
       document.execCommand("copy");
-      setStatus("结果已复制。");
+      report("结果已复制。");
     } catch (error) {
-      setStatus("复制失败，请手动选择结果文本。");
+      report("复制失败，请手动选择结果文本。");
     }
     document.body.removeChild(textarea);
   }
@@ -963,16 +994,18 @@
       mock: "模拟接口"
     };
     var detail = providerText[providerName] || providerName || "未检测";
-    byId("provider-line").textContent = "接口：" + detail;
-    byId("settings-provider-line").textContent = "接口：" + detail;
+    setNodeTextIfChanged(byId("provider-line"), "接口：" + detail);
+    setNodeTextIfChanged(byId("settings-provider-line"), "接口：" + detail);
   }
 
   function setProviderBaseUrl(baseUrl) {
     var summary = byId("provider-summary-url");
     state.providerBaseUrl = baseUrl || "";
-    summary.textContent = state.providerBaseUrl || "未配置接口地址";
-    summary.setAttribute("title", state.providerBaseUrl || "未配置接口地址");
-    byId("provider-base-url").value = state.providerBaseUrl;
+    setNodeTextIfChanged(summary, state.providerBaseUrl || "未配置接口地址");
+    setNodeAttributeIfChanged(summary, "title", state.providerBaseUrl || "未配置接口地址");
+    if (byId("provider-base-url").value !== state.providerBaseUrl) {
+      byId("provider-base-url").value = state.providerBaseUrl;
+    }
   }
 
   function applyProviderConfig(configData) {
@@ -995,11 +1028,11 @@
       taskTypes: [EXCEL_WORKFLOW_TASK_TYPE],
       profilesByTask: profilesByTask
     });
-    badge.className = "readiness-badge is-" + modelState.code;
-    badge.textContent = modelState.label;
-    summary.textContent = state.providerBaseUrl || "未配置接口地址";
-    summary.setAttribute("title", state.providerBaseUrl || "未配置接口地址");
-    byId("diagnostics-summary").textContent = modelState.label;
+    setNodeClassNameIfChanged(badge, "readiness-badge is-" + modelState.code);
+    setNodeTextIfChanged(badge, modelState.label);
+    setNodeTextIfChanged(summary, state.providerBaseUrl || "未配置接口地址");
+    setNodeAttributeIfChanged(summary, "title", state.providerBaseUrl || "未配置接口地址");
+    setNodeTextIfChanged(byId("diagnostics-summary"), modelState.label);
   }
 
   function emptyWorkflowProfileData() {
@@ -1040,7 +1073,7 @@
       .then(function (body) {
         if (requestSequence !== state.workflowProfileLoadSequence ||
             (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
-          return null;
+          return { superseded: true };
         }
         state.workflowProfiles = normalizeWorkflowProfileData(body.data || {});
         state.workflowProfileSelection = state.workflowProfiles.activeProfileId || "";
@@ -1056,7 +1089,7 @@
         var preservedProfileData;
         if (requestSequence !== state.workflowProfileLoadSequence ||
             (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
-          return null;
+          return { superseded: true };
         }
         if (previousProfileData) {
           preservedProfileData = {};
@@ -1073,7 +1106,7 @@
         renderWorkflowProfileStrip();
         renderWorkflowProfileManager();
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        return null;
+        return { failed: true };
       });
   }
 
@@ -1112,9 +1145,10 @@
       });
     }
     select.disabled = state.busy || state.workflowProfileMutationBusy || !data.profiles.length;
-    feedback.textContent = state.workflowProfileMutationBusy
-      ? "正在切换..."
-      : "当前：" + getActiveWorkflowProfileName(data);
+    setNodeTextIfChanged(
+      feedback,
+      state.workflowProfileMutationBusy ? "正在切换..." : "当前：" + getActiveWorkflowProfileName(data)
+    );
   }
 
   function escaped(value) {
@@ -1271,6 +1305,7 @@
     renderWorkflowProfileStrip();
     renderWorkflowProfileManager();
     renderWorkflowTaskTabs();
+    syncSettingsRefreshController();
   }
 
   function finishWorkflowMutation(message) {
@@ -1446,7 +1481,10 @@
       state.workflowProfileSelection = previousProfileId;
       renderWorkflowProfileStrip();
       setStatus(!profile || !profile.keyConfigured ? "该工作流未配置 Key，不能切换。" : "当前正忙，请稍后切换工作流。");
-      byId("workflow-switch-feedback").textContent = "当前：" + getActiveWorkflowProfileName(getWorkflowProfileData());
+      setNodeTextIfChanged(
+        byId("workflow-switch-feedback"),
+        "当前：" + getActiveWorkflowProfileName(getWorkflowProfileData())
+      );
       return;
     }
     state.workflowProfileSelection = profileId;
@@ -1464,8 +1502,10 @@
         state.workflowProfileSelection = previousProfileId;
         setWorkflowMutationBusy(false);
         setStatus("切换工作流失败：" + describeFetchError(error));
-        byId("workflow-switch-feedback").textContent = "切换失败，当前：" +
-          getActiveWorkflowProfileName(getWorkflowProfileData());
+        setNodeTextIfChanged(
+          byId("workflow-switch-feedback"),
+          "切换失败，当前：" + getActiveWorkflowProfileName(getWorkflowProfileData())
+        );
       });
   }
 
@@ -1640,7 +1680,10 @@
         if (state.configRefreshRequestId !== requestId) {
           return null;
         }
-        if (!profileResult) {
+        if (profileResult && profileResult.superseded) {
+          return null;
+        }
+        if (!profileResult || profileResult.failed) {
           throw new Error("工作流配置读取失败");
         }
         state.modelInterfaceDetectable = true;
@@ -1827,18 +1870,17 @@
   function copyDiagnostics() {
     var text = state.diagnosticsCopyText || byId("last-task-diagnostics-output").textContent || "";
     if (!text.trim()) {
-      setStatus("暂无可复制的诊断信息。");
+      setSettingsStatus("暂无可复制的诊断信息。");
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () {
-        setStatus("诊断信息已复制。");
+      return navigator.clipboard.writeText(text).then(function () {
+        setSettingsStatus("诊断信息已复制。");
       }).catch(function () {
-        fallbackCopy(text);
+        fallbackCopy(text, setSettingsStatus);
       });
-      return;
     }
-    fallbackCopy(text);
+    fallbackCopy(text, setSettingsStatus);
   }
 
   function switchView(viewName) {
@@ -1858,7 +1900,8 @@
       byId("settings-view").classList.contains("active") &&
       document.visibilityState !== "hidden" &&
       !state.workflowEditor.open &&
-      !state.providerUrlEditorOpen
+      !state.providerUrlEditorOpen &&
+      !state.workflowProfileMutationBusy
     );
     if (shouldRun) {
       state.settingsRefreshController.start();
@@ -1875,7 +1918,8 @@
       settingsView.classList.contains("active") &&
       document.visibilityState !== "hidden" &&
       !state.workflowEditor.open &&
-      !state.providerUrlEditorOpen
+      !state.providerUrlEditorOpen &&
+      !state.workflowProfileMutationBusy
     );
   }
 
