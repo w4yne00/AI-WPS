@@ -8,6 +8,7 @@
   var DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS = 30000;
   var DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 10000;
   var KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS = 15000;
+  var SETTINGS_REFRESH_REQUEST_TIMEOUT_MS = 8000;
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-document-review-active-job-v1";
@@ -194,6 +195,9 @@
     settingsWorkflowTaskType: "word.smart_write",
     workflowProfileEditor: null,
     configRefreshRequestId: 0,
+    configRefreshPromise: null,
+    configRefreshActiveRequestId: 0,
+    configRefreshQueued: false,
     modelInterfaceDetectable: false,
     settingsRefreshController: null,
     workflowHelpPinned: false,
@@ -233,6 +237,13 @@
     if (statusLine) {
       statusLine.textContent = message;
     }
+    if (settingsStatusLine) {
+      settingsStatusLine.textContent = message;
+    }
+  }
+
+  function setSettingsStatus(message) {
+    var settingsStatusLine = byId("settings-status-line");
     if (settingsStatusLine) {
       settingsStatusLine.textContent = message;
     }
@@ -718,9 +729,26 @@
     );
     if (shouldRun) {
       state.settingsRefreshController.start();
-    } else {
+    } else if (state.settingsRefreshController.isRunning()) {
       state.settingsRefreshController.stop();
+      invalidateConfigRefresh();
     }
+  }
+
+  function isSettingsRefreshEligible() {
+    var settingsView = byId("settings-view");
+    return Boolean(
+      settingsView &&
+      settingsView.classList.contains("active") &&
+      document.visibilityState !== "hidden" &&
+      state.knowledgeView === "home" &&
+      !state.workflowProfileEditor
+    );
+  }
+
+  function invalidateConfigRefresh() {
+    state.configRefreshRequestId += 1;
+    state.configRefreshQueued = false;
   }
 
   function toggleSettingsShortcut() {
@@ -1177,8 +1205,8 @@
     return message;
   }
 
-  function readAdapterJson(path) {
-    return request(path).catch(function (error) {
+  function readAdapterJson(path, requestOptions) {
+    return request(path, null, requestOptions).catch(function (error) {
       return {
         success: false,
         data: {},
@@ -1297,48 +1325,81 @@
   }
 
   function refreshConfig() {
-    var requestId = state.configRefreshRequestId + 1;
+    var requestId;
+    var refreshOperation;
+    var refreshPromise;
+
+    function releaseRefresh(result) {
+      var shouldRestart = false;
+      if (state.configRefreshPromise === refreshPromise) {
+        state.configRefreshPromise = null;
+        state.configRefreshActiveRequestId = 0;
+        shouldRestart = state.configRefreshQueued;
+        state.configRefreshQueued = false;
+      }
+      if (shouldRestart && isSettingsRefreshEligible()) {
+        return refreshConfig();
+      }
+      return result;
+    }
+
+    if (state.configRefreshPromise) {
+      if (state.configRefreshActiveRequestId !== state.configRefreshRequestId) {
+        state.configRefreshQueued = true;
+      }
+      return state.configRefreshPromise;
+    }
+
+    requestId = state.configRefreshRequestId + 1;
     state.configRefreshRequestId = requestId;
-    setStatus("正在刷新配置...");
-    return request("/health").then(function (health) {
+    state.configRefreshActiveRequestId = requestId;
+    setSettingsStatus("正在刷新配置...");
+    refreshOperation = request("/health", null, {
+      timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
+    }).then(function (health) {
       return Promise.all([
         Promise.resolve(health),
-        readAdapterJson("/templates"),
-        readAdapterJson("/config")
+        readAdapterJson("/templates", { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+        readAdapterJson("/config", { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
       ]);
     }).then(function (results) {
       var health = results[0];
       var templates = results[1];
       var config = results[2];
+      var healthData = health.data || {};
       if (state.configRefreshRequestId !== requestId) {
         return null;
       }
-      setHealthBadge("badge-ok", "已连接");
-      setTrace(health.traceId || "");
-      setProviderLine(health.data.providerType || "未检测");
       if (config.success === false) {
-        applyProviderConfig({
-          providerName: health.data.providerName || "企业大模型接口",
-          providerBaseUrl: state.providerBaseUrl
-        });
-        setResult("当前适配服务版本较旧或缺少 /config 接口，请使用新版 adapter-start-kit 后再保存模型配置。\n后台返回：" + config.errors[0].message);
-      } else {
-        applyProviderConfig(config.data || {});
+        throw new Error(config.errors && config.errors[0] && config.errors[0].message || "配置读取失败");
       }
-      resolveSelectionScope(false);
+      setHealthBadge("badge-ok", "已连接");
+      setProviderLine(healthData.providerType || "未检测");
+      applyProviderConfig(config.data || {});
       if (templates.success === false) {
         renderFallbackTemplateOptions();
       } else {
         state.templates = mergeTemplates(templates.data.templates || []);
         renderTemplateOptions();
       }
-      return refreshAllWorkflowProfiles().then(function () {
+      return refreshAllWorkflowProfiles(requestId, {
+        timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
+      }).then(function (profileResults) {
+        var profileIndex;
         if (state.configRefreshRequestId !== requestId) {
           return null;
         }
+        if (!profileResults || profileResults.length !== TASK_API_KEY_DEFS.length) {
+          throw new Error("工作流配置读取不完整");
+        }
+        for (profileIndex = 0; profileIndex < profileResults.length; profileIndex += 1) {
+          if (!profileResults[profileIndex]) {
+            throw new Error("工作流配置读取失败");
+          }
+        }
         state.modelInterfaceDetectable = true;
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        setStatus("就绪");
+        setSettingsStatus("就绪");
         return results;
       });
     }).catch(function (error) {
@@ -1347,9 +1408,20 @@
       }
       state.modelInterfaceDetectable = false;
       renderModelInterfaceState(state.modelInterfaceDetectable);
-      setAdapterUnavailableState(error);
+      setSettingsStatus("配置刷新失败：" + describeFetchError(error));
       return null;
     });
+
+    refreshPromise = refreshOperation.then(releaseRefresh, function (error) {
+      if (state.configRefreshRequestId === requestId) {
+        state.modelInterfaceDetectable = false;
+        renderModelInterfaceState(state.modelInterfaceDetectable);
+        setSettingsStatus("配置刷新失败：" + describeFetchError(error));
+      }
+      return releaseRefresh(null);
+    });
+    state.configRefreshPromise = refreshPromise;
+    return refreshPromise;
   }
 
   function renderFallbackTemplateOptions() {
@@ -1378,6 +1450,7 @@
         setProviderBaseUrl(savedUrl);
         closeProviderUrlEditor();
         setStatus("大模型 API URL 已保存。");
+        invalidateConfigRefresh();
         return refreshConfig();
       })
       .catch(function (error) {
@@ -1481,15 +1554,20 @@
     };
   }
 
-  function loadWorkflowProfiles(taskType) {
+  function loadWorkflowProfiles(taskType, configRefreshRequestId, requestOptions) {
     var requestId;
     if (!taskType) {
       return Promise.resolve(null);
     }
     requestId = nextWorkflowProfileRequestId(taskType);
-    return request("/provider/workflow-profiles?taskType=" + encodeURIComponent(taskType))
+    return request(
+      "/provider/workflow-profiles?taskType=" + encodeURIComponent(taskType),
+      null,
+      requestOptions
+    )
       .then(function (body) {
-        if (!isWorkflowProfileRequestCurrent(taskType, requestId)) {
+        if (!isWorkflowProfileRequestCurrent(taskType, requestId) ||
+            (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
           return null;
         }
         state.workflowProfiles[taskType] = normalizeWorkflowProfileData(body.data || {}, taskType);
@@ -1500,7 +1578,8 @@
         return state.workflowProfiles[taskType];
       })
       .catch(function (error) {
-        if (!isWorkflowProfileRequestCurrent(taskType, requestId)) {
+        if (!isWorkflowProfileRequestCurrent(taskType, requestId) ||
+            (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
           return null;
         }
         state.workflowProfiles[taskType] = {
@@ -1517,9 +1596,9 @@
       });
   }
 
-  function refreshAllWorkflowProfiles() {
+  function refreshAllWorkflowProfiles(configRefreshRequestId, requestOptions) {
     return Promise.all(TASK_API_KEY_DEFS.map(function (item) {
-      return loadWorkflowProfiles(item.taskType);
+      return loadWorkflowProfiles(item.taskType, configRefreshRequestId, requestOptions);
     }));
   }
 
@@ -1610,6 +1689,33 @@
     }
   }
 
+  function scrollWorkflowTaskTabIntoView(button) {
+    var reducedMotion = false;
+    if (!button || typeof button.scrollIntoView !== "function") {
+      return;
+    }
+    try {
+      reducedMotion = Boolean(
+        window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      );
+    } catch (error) {
+      reducedMotion = false;
+    }
+    try {
+      button.scrollIntoView({
+        behavior: reducedMotion ? "auto" : "smooth",
+        block: "nearest",
+        inline: "nearest"
+      });
+    } catch (error) {
+      try {
+        button.scrollIntoView(true);
+      } catch (fallbackError) {
+        // Older WPS WebViews may not expose a working scrollIntoView implementation.
+      }
+    }
+  }
+
   function handleWorkflowTaskTabKeydown(event) {
     var buttons = byId("workflow-task-tabs").querySelectorAll("[data-workflow-task-tab]");
     var currentIndex = Array.prototype.indexOf.call(buttons, event.target);
@@ -1633,9 +1739,7 @@
     nextButton = buttons[nextIndex];
     nextButton.click();
     nextButton.focus();
-    if (typeof nextButton.scrollIntoView === "function") {
-      nextButton.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "nearest" });
-    }
+    scrollWorkflowTaskTabIntoView(nextButton);
   }
 
   function setWorkflowHelpOpen(open, pinned) {

@@ -414,7 +414,7 @@ assert.ok(js.includes("tryApplyFormattedRewrite"));
 assert.ok(js.includes("结果已按原文段落形态应用。"));
 assert.ok(js.includes("结果已尽量按结构化格式应用。"));
 assert.ok(js.includes("插件无法访问 http://127.0.0.1:18100"));
-assert.ok(js.includes("当前适配服务版本较旧"));
+assert.ok(!js.includes("当前适配服务版本较旧"));
 assert.ok(js.includes("closeProviderUrlEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
