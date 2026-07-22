@@ -85,7 +85,7 @@ function assertSettingsRefreshControllerContract(targetHelpers) {
       intervalCount += 1;
       intervalCallback = callback;
       scheduledIntervalMs = intervalMs;
-      return 17;
+      return 0;
     },
     clearIntervalFn: function (timerId) {
       clearCount += 1;
@@ -109,7 +109,7 @@ function assertSettingsRefreshControllerContract(targetHelpers) {
 
   controller.stop();
   assert.strictEqual(clearCount, 1);
-  assert.strictEqual(clearedTimerId, 17);
+  assert.strictEqual(clearedTimerId, 0);
   assert.strictEqual(controller.isRunning(), false);
 
   controller.stop();

@@ -16,6 +16,25 @@ function assertSettingsContracts(targetHelpers) {
     return JSON.parse(JSON.stringify(value));
   }
 
+  const readyInput = {
+    detectable: true,
+    providerBaseUrl: "https://model.example.test/v1",
+    taskTypes: ["ppt.slide_assistant"],
+    profilesByTask: {
+      "ppt.slide_assistant": {
+        activeProfileId: "ppt-active",
+        profiles: [
+          { id: "ppt-active", keyConfigured: true },
+          { id: "ppt-backup", keyConfigured: true }
+        ]
+      }
+    }
+  };
+
+  assert.deepStrictEqual(
+    plain(targetHelpers.deriveModelInterfaceState(readyInput)),
+    { code: "ready", label: "已就绪", readyCount: 1, totalCount: 1 }
+  );
   assert.deepStrictEqual(
     plain(targetHelpers.deriveModelInterfaceState({
       detectable: true,
@@ -25,13 +44,25 @@ function assertSettingsContracts(targetHelpers) {
         "ppt.slide_assistant": {
           activeProfileId: "ppt-active",
           profiles: [
-            { id: "ppt-active", keyConfigured: true },
+            { id: "ppt-active", keyConfigured: false },
             { id: "ppt-backup", keyConfigured: true }
           ]
         }
       }
     })),
-    { code: "ready", label: "已就绪", readyCount: 1, totalCount: 1 }
+    { code: "unconfigured", label: "未配置", readyCount: 0, totalCount: 1 }
+  );
+  assert.deepStrictEqual(
+    plain(targetHelpers.deriveModelInterfaceState(Object.assign({}, readyInput, {
+      detectable: false
+    }))),
+    { code: "unavailable", label: "无法检测", readyCount: 0, totalCount: 1 }
+  );
+  assert.deepStrictEqual(
+    plain(targetHelpers.deriveModelInterfaceState(Object.assign({}, readyInput, {
+      providerBaseUrl: "  "
+    }))),
+    { code: "unconfigured", label: "未配置", readyCount: 1, totalCount: 1 }
   );
 
   let refreshCount = 0;
@@ -48,7 +79,7 @@ function assertSettingsContracts(targetHelpers) {
       intervalCount += 1;
       intervalCallback = callback;
       scheduledIntervalMs = intervalMs;
-      return 23;
+      return 0;
     },
     clearIntervalFn: function (timerId) {
       clearCount += 1;
@@ -72,7 +103,7 @@ function assertSettingsContracts(targetHelpers) {
 
   controller.stop();
   assert.strictEqual(clearCount, 1);
-  assert.strictEqual(clearedTimerId, 23);
+  assert.strictEqual(clearedTimerId, 0);
   assert.strictEqual(controller.isRunning(), false);
 
   controller.stop();
