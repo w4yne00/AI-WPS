@@ -281,11 +281,14 @@ function assertLiveSettingsExperienceContract() {
     "configRefreshRequestId: 0",
     "configRefreshPromise: null",
     "configRefreshActiveRequestId: 0",
+    "configRefreshActiveSilent: false",
     "configRefreshQueued: false",
+    "configRefreshQueuedSilent: true",
     "modelInterfaceDetectable: false",
     "modelInterfaceConfigDetectable: false",
     "settingsRefreshController: null",
     "workflowHelpPinned: false",
+    "providerUrlEditorOpen: false",
     'settingsProbeTraceId: ""'
   ].forEach((token) => assert.ok(js.includes(token), token));
 
@@ -307,11 +310,15 @@ function assertLiveSettingsExperienceContract() {
 
   const refresh = functionSource("refreshConfig");
   assertIncludesAll(refresh, [
+    "options",
+    "silent",
     "state.configRefreshRequestId + 1",
     "state.configRefreshRequestId = requestId",
     "state.configRefreshRequestId !== requestId",
     "state.configRefreshPromise",
     "state.configRefreshQueued",
+    "state.configRefreshActiveSilent",
+    "state.configRefreshQueuedSilent",
     "SETTINGS_REFRESH_REQUEST_TIMEOUT_MS",
     "loadWorkflowProfiles(requestId",
     "state.modelInterfaceDetectable = true",
@@ -332,14 +339,17 @@ function assertLiveSettingsExperienceContract() {
   assert.ok(!loadProfiles.includes("state.workflowProfileSelection = \"\""));
 
   const saveUrl = functionSource("saveProviderBaseUrl");
+  const saveUrlRefreshIndex = saveUrl.indexOf("refreshConfig({ silent: false })");
   assert.ok(saveUrl.indexOf("invalidateConfigRefresh()") >= 0);
-  assert.ok(saveUrl.indexOf("invalidateConfigRefresh()") < saveUrl.indexOf("refreshConfig()"));
+  assert.ok(saveUrlRefreshIndex >= 0);
+  assert.ok(saveUrl.indexOf("invalidateConfigRefresh()") < saveUrlRefreshIndex);
 
   const syncRefresh = functionSource("syncSettingsRefreshController");
   assertIncludesAll(syncRefresh, [
     'byId("settings-view").classList.contains("active")',
     'document.visibilityState !== "hidden"',
     "!state.workflowEditor.open",
+    "!state.providerUrlEditorOpen",
     "state.settingsRefreshController.start()",
     "state.settingsRefreshController.stop()",
     "invalidateConfigRefresh()"
@@ -348,10 +358,14 @@ function assertLiveSettingsExperienceContract() {
   const switchIndex = js.lastIndexOf("switchMode(getInitialMode())");
   assert.ok(controllerIndex >= 0 && controllerIndex < switchIndex);
   assert.ok(js.includes("intervalMs: 30000"));
+  assert.ok(js.includes("refreshConfig({ silent: true })"));
   assert.ok(js.includes('document.addEventListener("visibilitychange", syncSettingsRefreshController)'));
 
   const diagnostics = functionSource("handleDiagnosticsDisclosureToggle");
   assertIncludesAll(diagnostics, ["event.currentTarget.open", "refreshDiagnostics()"]);
+  const refreshDiagnostics = functionSource("refreshDiagnostics");
+  assert.ok(refreshDiagnostics.includes("setSettingsStatus"));
+  assert.ok(!refreshDiagnostics.includes("setStatus("));
   const switchMode = functionSource("switchMode");
   assert.ok(switchMode.includes('byId("diagnostics-disclosure").open = false'));
 
@@ -388,6 +402,17 @@ function assertLiveSettingsExperienceContract() {
     'event.key === "Escape"',
     "workflowHelpButton.focus()"
   ]);
+
+  const showProviderEditor = functionSource("showProviderEditor");
+  const hideProviderEditor = functionSource("hideProviderEditor");
+  assertIncludesAll(showProviderEditor, [
+    "state.providerUrlEditorOpen = true",
+    "syncSettingsRefreshController()"
+  ]);
+  assertIncludesAll(hideProviderEditor, [
+    "state.providerUrlEditorOpen = false",
+    "syncSettingsRefreshController()"
+  ]);
 }
 
 assertCompactMarkupContract();
@@ -423,17 +448,22 @@ function createRefreshHarness(options = {}) {
     taskStatus: 0,
     taskResult: 0,
     taskTrace: 0,
-    adapterUnavailable: 0
+    adapterUnavailable: 0,
+    applyProviderConfig: 0
   };
   const state = {
     configRefreshRequestId: 0,
     configRefreshPromise: null,
     configRefreshActiveRequestId: 0,
+    configRefreshActiveSilent: false,
     configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
     modelInterfaceDetectable: true,
     modelInterfaceConfigDetectable: true,
     settingsProbeTraceId: "",
     providerBaseUrl: "https://cached.example.test/v1",
+    providerUrlEditorOpen: false,
+    workflowEditor: { open: false },
     analysisResult: { structuredReport: "既有分析" },
     copyText: "既有分析",
     diagnosticsCopyText: "既有诊断"
@@ -460,7 +490,10 @@ function createRefreshHarness(options = {}) {
     setSettingsStatus(value) { calls.settingsStatus.push(value); },
     setHealthBadge(mode, text) { calls.healthBadges.push([mode, text]); },
     setProviderLine(value) { calls.providerLines.push(value); },
-    applyProviderConfig() {},
+    applyProviderConfig(value) {
+      calls.applyProviderConfig += 1;
+      if (options.applyProviderConfig) options.applyProviderConfig(value);
+    },
     renderModelInterfaceState(value) { calls.renderDetectable.push(value); },
     describeFetchError(error) { return error && error.message || String(error); },
     isSettingsRefreshEligible() { return false; },
@@ -515,6 +548,26 @@ async function runSettingsBehaviorTests() {
   assert.deepStrictEqual(concurrent.calls.requestTimeouts, [8000]);
   assert.deepStrictEqual(concurrent.calls.jsonTimeouts, [8000]);
 
+  const silent = createRefreshHarness();
+  const silentPromise = silent.refreshConfig({ silent: true });
+  silent.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  await silentPromise;
+  assert.deepStrictEqual(silent.calls.settingsStatus, []);
+
+  const silentFailure = createRefreshHarness();
+  const silentFailurePromise = silentFailure.refreshConfig({ silent: true });
+  silentFailure.health.reject(new Error("静默刷新失败"));
+  await silentFailurePromise;
+  assert.deepStrictEqual(silentFailure.calls.settingsStatus, ["配置刷新失败：静默刷新失败"]);
+
+  const promoted = createRefreshHarness();
+  const promotedSilent = promoted.refreshConfig({ silent: true });
+  const promotedInteractive = promoted.refreshConfig({ silent: false });
+  assert.strictEqual(promotedSilent, promotedInteractive);
+  promoted.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  await promotedInteractive;
+  assert.deepStrictEqual(promoted.calls.settingsStatus, ["正在刷新配置...", "就绪"]);
+
   const stopped = createRefreshHarness();
   const stoppedPromise = stopped.refreshConfig();
   let running = true;
@@ -541,6 +594,7 @@ async function runSettingsBehaviorTests() {
     configRefreshRequestId: 0,
     configRefreshQueued: false,
     workflowEditor: { open: false },
+    providerUrlEditorOpen: false,
     settingsRefreshController: {
       starts: 0,
       stops: 0,
@@ -576,6 +630,118 @@ async function runSettingsBehaviorTests() {
   assert.strictEqual(lifecycleState.settingsRefreshController.stops, 3);
   assert.strictEqual(lifecycleState.configRefreshRequestId, 3);
 
+  const providerNodes = {
+    "provider-edit-view": { hidden: true },
+    "provider-summary-card": { classList: { add() {}, remove() {} } },
+    "btn-edit-provider-url": { hidden: false },
+    "provider-base-url": { value: "用户草稿", focus() {} }
+  };
+  const providerState = {
+    configRefreshRequestId: 0,
+    configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
+    providerBaseUrl: "https://stable.example.test/v1",
+    providerUrlEditorOpen: false,
+    workflowEditor: { open: false },
+    settingsRefreshController: {
+      starts: 0,
+      stops: 0,
+      running: true,
+      start() {
+        if (!this.running) {
+          this.starts += 1;
+          this.running = true;
+        }
+      },
+      stop() {
+        if (this.running) {
+          this.stops += 1;
+          this.running = false;
+        }
+      },
+      isRunning() { return this.running; }
+    }
+  };
+  const providerSync = loadFunction("syncSettingsRefreshController", {
+    state: providerState,
+    document: { visibilityState: "visible" },
+    byId() { return { classList: { contains() { return true; } } }; },
+    invalidateConfigRefresh() {
+      providerState.configRefreshRequestId += 1;
+      providerState.configRefreshQueued = false;
+      providerState.configRefreshQueuedSilent = true;
+    }
+  });
+  const showProviderEditor = loadFunction("showProviderEditor", {
+    state: providerState,
+    byId(id) { return providerNodes[id]; },
+    syncSettingsRefreshController: providerSync
+  });
+  const hideProviderEditor = loadFunction("hideProviderEditor", {
+    state: providerState,
+    byId(id) { return providerNodes[id]; },
+    syncSettingsRefreshController: providerSync
+  });
+  showProviderEditor();
+  assert.strictEqual(providerState.providerUrlEditorOpen, true);
+  assert.strictEqual(providerNodes["provider-edit-view"].hidden, false);
+  assert.strictEqual(providerNodes["provider-base-url"].value, "用户草稿");
+  assert.strictEqual(providerState.settingsRefreshController.stops, 1);
+  assert.strictEqual(providerState.configRefreshRequestId, 1);
+  hideProviderEditor();
+  assert.strictEqual(providerState.providerUrlEditorOpen, false);
+  assert.strictEqual(providerNodes["provider-edit-view"].hidden, true);
+  assert.strictEqual(providerNodes["provider-base-url"].value, providerState.providerBaseUrl);
+  assert.strictEqual(providerState.settingsRefreshController.starts, 1);
+  hideProviderEditor();
+  assert.strictEqual(providerState.settingsRefreshController.starts, 1);
+
+  const saveCalls = { hide: 0, invalidate: 0, refresh: 0, sync: 0 };
+  const saveState = { providerBaseUrl: "", providerUrlEditorOpen: true };
+  const saveProviderBaseUrl = loadFunction("saveProviderBaseUrl", {
+    state: saveState,
+    byId() { return { value: " https://saved.example.test/v1 " }; },
+    setSettingsStatus() {},
+    request(path, payload) {
+      assert.strictEqual(path, "/provider/base-url");
+      assert.strictEqual(payload.baseUrl, "https://saved.example.test/v1");
+      return Promise.resolve({ data: { providerBaseUrl: "https://saved.example.test/v1" } });
+    },
+    setProviderBaseUrl(value) { saveState.providerBaseUrl = value; },
+    hideProviderEditor(suppressRefreshSync) {
+      assert.strictEqual(suppressRefreshSync, true);
+      saveState.providerUrlEditorOpen = false;
+      saveCalls.hide += 1;
+    },
+    invalidateConfigRefresh() { saveCalls.invalidate += 1; },
+    refreshConfig(options) {
+      assert.strictEqual(options.silent, false);
+      saveCalls.refresh += 1;
+      return Promise.resolve();
+    },
+    syncSettingsRefreshController() { saveCalls.sync += 1; },
+    describeFetchError(error) { return error.message; }
+  });
+  await saveProviderBaseUrl();
+  assert.strictEqual(saveState.providerBaseUrl, "https://saved.example.test/v1");
+  assert.strictEqual(saveState.providerUrlEditorOpen, false);
+  assert.deepStrictEqual(saveCalls, { hide: 1, invalidate: 1, refresh: 1, sync: 1 });
+
+  const draftInput = { value: "用户正在输入的新地址" };
+  const draftRefresh = createRefreshHarness({
+    applyProviderConfig(value) {
+      draftInput.value = value.providerBaseUrl || "";
+    }
+  });
+  const draftPromise = draftRefresh.refreshConfig({ silent: true });
+  draftRefresh.state.configRefreshRequestId += 1;
+  draftRefresh.health.resolve({ traceId: "stale", data: { providerType: "enterprise-dify-chat" } });
+  await draftPromise;
+  assert.strictEqual(draftRefresh.calls.renderDetectable.length, 0);
+  assert.strictEqual(draftRefresh.calls.providerLines.length, 0);
+  assert.strictEqual(draftRefresh.calls.applyProviderConfig, 0);
+  assert.strictEqual(draftInput.value, "用户正在输入的新地址");
+
   let diagnosticsRefreshes = 0;
   const toggleDiagnostics = loadFunction("handleDiagnosticsDisclosureToggle", {
     refreshDiagnostics() { diagnosticsRefreshes += 1; }
@@ -583,6 +749,20 @@ async function runSettingsBehaviorTests() {
   toggleDiagnostics({ currentTarget: { open: false } });
   toggleDiagnostics({ currentTarget: { open: true } });
   assert.strictEqual(diagnosticsRefreshes, 1);
+
+  const diagnosticsSettingsStatus = [];
+  let diagnosticsTaskStatusCalls = 0;
+  const refreshDiagnostics = loadFunction("refreshDiagnostics", {
+    state: { diagnosticsCopyText: "" },
+    readAdapterJson() { return Promise.resolve({ success: true, data: {} }); },
+    setDiagnosticsResult() {},
+    renderProviderDiagnostics() { return "诊断结果"; },
+    setSettingsStatus(message) { diagnosticsSettingsStatus.push(message); },
+    setStatus() { diagnosticsTaskStatusCalls += 1; }
+  });
+  await refreshDiagnostics();
+  assert.deepStrictEqual(diagnosticsSettingsStatus, ["诊断信息已刷新。"]);
+  assert.strictEqual(diagnosticsTaskStatusCalls, 0);
 
   const helpState = { workflowHelpPinned: false };
   const helpButton = {

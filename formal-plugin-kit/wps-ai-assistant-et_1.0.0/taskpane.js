@@ -35,11 +35,14 @@
     configRefreshRequestId: 0,
     configRefreshPromise: null,
     configRefreshActiveRequestId: 0,
+    configRefreshActiveSilent: false,
     configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
     modelInterfaceDetectable: false,
     modelInterfaceConfigDetectable: false,
     settingsRefreshController: null,
     workflowHelpPinned: false,
+    providerUrlEditorOpen: false,
     settingsProbeTraceId: "",
     workflowProfiles: null,
     workflowProfileSelection: "",
@@ -1526,17 +1529,23 @@
   }
 
   function showProviderEditor() {
+    state.providerUrlEditorOpen = true;
     byId("provider-edit-view").hidden = false;
     byId("provider-summary-card").classList.add("editing");
     byId("btn-edit-provider-url").hidden = true;
     byId("provider-base-url").focus();
+    syncSettingsRefreshController();
   }
 
-  function hideProviderEditor() {
+  function hideProviderEditor(suppressRefreshSync) {
+    state.providerUrlEditorOpen = false;
     byId("provider-base-url").value = state.providerBaseUrl || "";
     byId("provider-edit-view").hidden = true;
     byId("provider-summary-card").classList.remove("editing");
     byId("btn-edit-provider-url").hidden = false;
+    if (!suppressRefreshSync) {
+      syncSettingsRefreshController();
+    }
   }
 
   function setAdapterUnavailableState(error) {
@@ -1552,30 +1561,43 @@
     ].join("\n"));
   }
 
-  function refreshConfig() {
+  function refreshConfig(options) {
     var requestId;
     var refreshOperation;
     var refreshPromise;
     var healthConnected = false;
     var configLoaded = false;
+    var silent = Boolean(options && options.silent);
 
     function releaseRefresh(result) {
       var shouldRestart = false;
+      var restartSilent = true;
       if (state.configRefreshPromise === refreshPromise) {
         state.configRefreshPromise = null;
         state.configRefreshActiveRequestId = 0;
+        state.configRefreshActiveSilent = false;
         shouldRestart = state.configRefreshQueued;
+        restartSilent = state.configRefreshQueuedSilent;
         state.configRefreshQueued = false;
+        state.configRefreshQueuedSilent = true;
       }
       if (shouldRestart && isSettingsRefreshEligible()) {
-        return refreshConfig();
+        return refreshConfig({ silent: restartSilent });
       }
       return result;
     }
 
     if (state.configRefreshPromise) {
       if (state.configRefreshActiveRequestId !== state.configRefreshRequestId) {
+        if (!state.configRefreshQueued) {
+          state.configRefreshQueuedSilent = silent;
+        } else {
+          state.configRefreshQueuedSilent = state.configRefreshQueuedSilent && silent;
+        }
         state.configRefreshQueued = true;
+      } else if (!silent && state.configRefreshActiveSilent) {
+        state.configRefreshActiveSilent = false;
+        setSettingsStatus("正在刷新配置...");
       }
       return state.configRefreshPromise;
     }
@@ -1583,7 +1605,10 @@
     requestId = state.configRefreshRequestId + 1;
     state.configRefreshRequestId = requestId;
     state.configRefreshActiveRequestId = requestId;
-    setSettingsStatus("正在刷新配置...");
+    state.configRefreshActiveSilent = silent;
+    if (!silent) {
+      setSettingsStatus("正在刷新配置...");
+    }
     refreshOperation = request("/health", null, {
       timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
     }).then(function (health) {
@@ -1620,7 +1645,9 @@
         }
         state.modelInterfaceDetectable = true;
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        setSettingsStatus("就绪");
+        if (!state.configRefreshActiveSilent) {
+          setSettingsStatus("就绪");
+        }
         return config;
       });
     }).catch(function (error) {
@@ -1661,17 +1688,21 @@
 
   function saveProviderBaseUrl() {
     var baseUrl = (byId("provider-base-url").value || "").trim();
-    setStatus("正在保存大模型 API URL...");
-    request("/provider/base-url", { baseUrl: baseUrl })
+    setSettingsStatus("正在保存大模型 API URL...");
+    return request("/provider/base-url", { baseUrl: baseUrl })
       .then(function (body) {
         var data = body.data || {};
+        var refreshPromise;
         setProviderBaseUrl(typeof data.providerBaseUrl === "string" ? data.providerBaseUrl : baseUrl);
-        setStatus("大模型 API URL 已保存。");
+        hideProviderEditor(true);
+        setSettingsStatus("大模型 API URL 已保存。");
         invalidateConfigRefresh();
-        return refreshConfig();
+        refreshPromise = refreshConfig({ silent: false });
+        syncSettingsRefreshController();
+        return refreshPromise;
       })
       .catch(function (error) {
-        setStatus("保存大模型 API URL 失败：" + describeFetchError(error));
+        setSettingsStatus("保存大模型 API URL 失败：" + describeFetchError(error));
       });
   }
 
@@ -1783,7 +1814,7 @@
       readAdapterJson("/provider/task-api-keys")
     ]).then(function (results) {
       setDiagnosticsResult(renderProviderDiagnostics(results[0], results[1], results[2], results[3]));
-      setStatus("诊断信息已刷新。");
+      setSettingsStatus("诊断信息已刷新。");
     });
   }
 
@@ -1826,7 +1857,8 @@
       settingsView &&
       byId("settings-view").classList.contains("active") &&
       document.visibilityState !== "hidden" &&
-      !state.workflowEditor.open
+      !state.workflowEditor.open &&
+      !state.providerUrlEditorOpen
     );
     if (shouldRun) {
       state.settingsRefreshController.start();
@@ -1842,13 +1874,15 @@
       settingsView &&
       settingsView.classList.contains("active") &&
       document.visibilityState !== "hidden" &&
-      !state.workflowEditor.open
+      !state.workflowEditor.open &&
+      !state.providerUrlEditorOpen
     );
   }
 
   function invalidateConfigRefresh() {
     state.configRefreshRequestId += 1;
     state.configRefreshQueued = false;
+    state.configRefreshQueuedSilent = true;
   }
 
   function getInitialMode() {
@@ -1869,6 +1903,9 @@
       byId("diagnostics-disclosure").open = false;
     }
     switchView(settingsMode ? "settings" : "home");
+    if (settingsMode) {
+      refreshConfig({ silent: false });
+    }
     renderWorkflowProfileStrip();
     renderWorkflowProfileManager();
     renderWorkflowTaskTabs();
@@ -1976,11 +2013,13 @@
   renderWorkflowProfileManager();
   state.settingsRefreshController = helpers.createSettingsRefreshController({
     intervalMs: 30000,
-    refresh: refreshConfig
+    refresh: function () {
+      return refreshConfig({ silent: true });
+    }
   });
   switchMode(getInitialMode());
   if (!state.settingsRefreshController.isRunning()) {
-    refreshConfig();
+    refreshConfig({ silent: true });
   }
   startScopeWatcher();
 })();
