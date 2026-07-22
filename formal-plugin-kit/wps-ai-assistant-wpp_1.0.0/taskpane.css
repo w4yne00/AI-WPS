@@ -1067,7 +1067,7 @@ button.ghost-action:hover {
 
 .advanced-diagnostics {
   margin-top: 12px;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .advanced-diagnostics > summary {
@@ -1088,14 +1088,22 @@ button.ghost-action:hover {
 
 .advanced-diagnostics-content {
   padding: 0 12px 12px;
-  opacity: 1;
-  transform: translateY(0);
-  transition: opacity 160ms ease, transform 160ms ease;
 }
 
-.advanced-diagnostics:not([open]) > .advanced-diagnostics-content {
-  opacity: 0;
-  transform: translateY(-2px);
+@keyframes disclosure-in {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.advanced-diagnostics[open] > .advanced-diagnostics-content {
+  animation: disclosure-in 160ms ease-out;
 }
 
 .advanced-diagnostics-content > .settings-card {

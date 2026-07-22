@@ -55,6 +55,8 @@ const commonCssMarkers = [
   ".workflow-help-popover",
   ".workflow-task-tabs",
   ".advanced-diagnostics",
+  "@keyframes disclosure-in",
+  ".advanced-diagnostics[open]",
   ":focus-visible",
   ":active",
   "@media (prefers-reduced-motion: reduce)"
@@ -86,6 +88,11 @@ function collectLiteralByIds(js) {
   return new Set(Array.from(js.matchAll(/\bbyId\("([^"]+)"\)/g), (match) => match[1]));
 }
 
+function cssRuleBodies(css, selector) {
+  const pattern = new RegExp(`(?:^|\\n)[ \\t]*${escapeRegExp(selector)}[ \\t]*\\{([^}]*)\\}`, "g");
+  return Array.from(css.matchAll(pattern), (match) => match[1]);
+}
+
 function hasClass(tag, className) {
   const match = tag.match(/\bclass="([^"]*)"/i);
   return Boolean(match && match[1].split(/\s+/).includes(className));
@@ -111,6 +118,11 @@ hosts.forEach((host) => {
 
   commonCssMarkers.forEach((marker) => {
     assert.ok(css.includes(marker), `${host.name} CSS missing ${marker}`);
+  });
+  const diagnosticsRules = cssRuleBodies(css, ".advanced-diagnostics");
+  assert.ok(diagnosticsRules.length > 0, `${host.name} CSS missing .advanced-diagnostics rule`);
+  diagnosticsRules.forEach((body) => {
+    assert.ok(!/overflow\s*:\s*hidden/.test(body), `${host.name} diagnostics must not clip focus outline`);
   });
   assert.ok(css.includes("--host-accent: var(--color-primary);"), `${host.name} host accent mapping mismatch`);
   assert.ok(
