@@ -8,6 +8,7 @@
   --color-primary: #2f6db3;
   --color-primary-hover: #265c98;
   --host-accent: var(--color-primary);
+  --host-accent-strong: var(--color-primary);
   --host-accent-soft: var(--color-surface-muted);
   --border-color: var(--color-border);
   --color-success: #2f7d5c;
@@ -1850,7 +1851,7 @@ body[data-task-mode="smartWrite"] #result-output {
 .info-button:hover {
   border-color: var(--border-color);
   background: var(--host-accent-soft);
-  color: var(--host-accent);
+  color: var(--host-accent-strong);
 }
 
 .workflow-help-popover {

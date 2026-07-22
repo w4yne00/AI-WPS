@@ -10,7 +10,8 @@ const hosts = [
     task: "word.smart_write",
     label: "智能编写",
     tabsLabel: "Word 任务",
-    hasKnowledge: true
+    hasKnowledge: true,
+    strongAccentMapping: "var(--color-primary)"
   },
   {
     name: "Excel",
@@ -18,7 +19,8 @@ const hosts = [
     task: "excel.analysis",
     label: "智能分析",
     tabsLabel: "Excel 任务",
-    hasKnowledge: false
+    hasKnowledge: false,
+    strongAccentMapping: "var(--color-primary)"
   },
   {
     name: "PPT",
@@ -26,7 +28,8 @@ const hosts = [
     task: "ppt.slide_assistant",
     label: "智能总结",
     tabsLabel: "PPT 任务",
-    hasKnowledge: false
+    hasKnowledge: false,
+    strongAccentMapping: "var(--color-primary-hover)"
   }
 ];
 
@@ -131,6 +134,38 @@ function extractCssBlock(css, header) {
   assert.fail(`unclosed CSS block ${header}`);
 }
 
+function cssVariable(css, name) {
+  const match = css.match(new RegExp(`${escapeRegExp(name)}\\s*:\\s*([^;]+);`));
+  assert.ok(match, `missing CSS variable ${name}`);
+  return match[1].trim();
+}
+
+function resolveCssColor(css, name) {
+  const value = cssVariable(css, name);
+  const reference = value.match(/^var\((--[^)]+)\)$/);
+  return reference ? resolveCssColor(css, reference[1]) : value;
+}
+
+function hexToRgb(hex) {
+  const value = hex.replace("#", "");
+  return [0, 2, 4].map((offset) => parseInt(value.slice(offset, offset + 2), 16) / 255);
+}
+
+function relativeLuminance(hex) {
+  const channels = hexToRgb(hex).map((value) => (
+    value <= 0.04045 ? value / 12.92 : Math.pow((value + 0.055) / 1.055, 2.4)
+  ));
+  return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2];
+}
+
+function contrastRatio(foreground, background) {
+  const foregroundLuminance = relativeLuminance(foreground);
+  const backgroundLuminance = relativeLuminance(background);
+  const lighter = Math.max(foregroundLuminance, backgroundLuminance);
+  const darker = Math.min(foregroundLuminance, backgroundLuminance);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 function hasClass(tag, className) {
   const match = tag.match(/\bclass="([^"]*)"/i);
   return Boolean(match && match[1].split(/\s+/).includes(className));
@@ -167,7 +202,7 @@ hosts.forEach((host) => {
   [textActionHover, infoButtonHover].forEach((body) => {
     assert.ok(body.includes("border-color: var(--border-color);"), `${host.name} utility hover border mismatch`);
     assert.ok(body.includes("background: var(--host-accent-soft);"), `${host.name} utility hover background mismatch`);
-    assert.ok(body.includes("color: var(--host-accent);"), `${host.name} utility hover color mismatch`);
+    assert.ok(body.includes("color: var(--host-accent-strong);"), `${host.name} utility hover color mismatch`);
   });
   const popoverRule = extractCssRule(css, ".workflow-help-popover", "width: 260px;");
   const fallbackMaxWidth = popoverRule.indexOf("max-width: calc(100vw - 40px);");
@@ -195,6 +230,18 @@ hosts.forEach((host) => {
   assert.notStrictEqual(sharedStart, -1, `${host.name} CSS missing shared interaction tail`);
   sharedCssTails.push(css.slice(sharedStart).replace(/\r\n/g, "\n").trim());
   assert.ok(css.includes("--host-accent: var(--color-primary);"), `${host.name} host accent mapping mismatch`);
+  assert.strictEqual(
+    cssVariable(css, "--host-accent-strong"),
+    host.strongAccentMapping,
+    `${host.name} strong host accent mapping mismatch`
+  );
+  const strongAccent = resolveCssColor(css, "--host-accent-strong");
+  const softAccent = resolveCssColor(css, "--host-accent-soft");
+  const utilityContrast = contrastRatio(strongAccent, softAccent);
+  assert.ok(
+    utilityContrast >= 4.5,
+    `${host.name} secondary action contrast ${utilityContrast.toFixed(2)} is below 4.5`
+  );
   assert.ok(
     css.includes("--host-accent-soft: var(--color-surface-muted);"),
     `${host.name} soft host accent mapping mismatch`
