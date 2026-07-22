@@ -61,6 +61,8 @@ const commonCssMarkers = [
   ":active",
   "@media (prefers-reduced-motion: reduce)"
 ];
+const sharedCssMarker = "/* Shared restrained settings and interaction treatment. */";
+const sharedCssTails = [];
 
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -91,6 +93,42 @@ function collectLiteralByIds(js) {
 function cssRuleBodies(css, selector) {
   const pattern = new RegExp(`(?:^|\\n)[ \\t]*${escapeRegExp(selector)}[ \\t]*\\{([^}]*)\\}`, "g");
   return Array.from(css.matchAll(pattern), (match) => match[1]);
+}
+
+function extractCssRules(css, selector) {
+  const rules = [];
+  for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+    const selectors = match[1]
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .split(",")
+      .map((value) => value.trim());
+    if (selectors.includes(selector)) {
+      rules.push(match[2]);
+    }
+  }
+  return rules;
+}
+
+function extractCssRule(css, selector, requiredDeclaration) {
+  const rules = extractCssRules(css, selector);
+  const rule = requiredDeclaration
+    ? rules.find((body) => body.includes(requiredDeclaration))
+    : rules[rules.length - 1];
+  assert.notStrictEqual(rule, undefined, `missing CSS rule ${selector}`);
+  return rule;
+}
+
+function extractCssBlock(css, header) {
+  const start = css.indexOf(header);
+  assert.notStrictEqual(start, -1, `missing CSS block ${header}`);
+  const open = css.indexOf("{", start);
+  let depth = 0;
+  for (let index = open; index < css.length; index += 1) {
+    if (css[index] === "{") depth += 1;
+    if (css[index] === "}") depth -= 1;
+    if (depth === 0) return css.slice(open + 1, index);
+  }
+  assert.fail(`unclosed CSS block ${header}`);
 }
 
 function hasClass(tag, className) {
@@ -124,6 +162,38 @@ hosts.forEach((host) => {
   diagnosticsRules.forEach((body) => {
     assert.ok(!/overflow\s*:\s*hidden/.test(body), `${host.name} diagnostics must not clip focus outline`);
   });
+  const textActionHover = extractCssRule(css, ".text-action:hover");
+  const infoButtonHover = extractCssRule(css, ".info-button:hover");
+  [textActionHover, infoButtonHover].forEach((body) => {
+    assert.ok(body.includes("border-color: var(--border-color);"), `${host.name} utility hover border mismatch`);
+    assert.ok(body.includes("background: var(--host-accent-soft);"), `${host.name} utility hover background mismatch`);
+    assert.ok(body.includes("color: var(--host-accent);"), `${host.name} utility hover color mismatch`);
+  });
+  const popoverRule = extractCssRule(css, ".workflow-help-popover", "width: 260px;");
+  const fallbackMaxWidth = popoverRule.indexOf("max-width: calc(100vw - 40px);");
+  const modernMaxWidth = popoverRule.indexOf("max-width: min(260px, calc(100vw - 40px));");
+  assert.ok(fallbackMaxWidth >= 0, `${host.name} popover missing calc fallback`);
+  assert.ok(modernMaxWidth > fallbackMaxWidth, `${host.name} popover fallback order mismatch`);
+  assert.ok(
+    popoverRule.indexOf("width: max-content;") > popoverRule.indexOf("width: 260px;"),
+    `${host.name} popover width fallback order mismatch`
+  );
+  const tabsRule = extractCssRule(css, ".workflow-task-tabs", "padding:");
+  assert.ok(tabsRule.includes("padding: 4px 10px 5px 4px;"), `${host.name} tabs must preserve focus outline space`);
+  const disclosureOpenRule = extractCssRule(css, ".advanced-diagnostics[open] > .advanced-diagnostics-content");
+  assert.ok(
+    disclosureOpenRule.includes("animation: disclosure-in 160ms ease-out;"),
+    `${host.name} disclosure animation mismatch`
+  );
+  assert.ok(css.includes("button:active:not(:disabled),"), `${host.name} active selector must exclude disabled buttons`);
+  assert.ok(!/(?:^|\n)button:active\s*,/.test(css), `${host.name} CSS includes bare grouped button:active`);
+  assert.ok(!/(?:^|\n)button:active\s*\{/.test(css), `${host.name} CSS includes bare button:active rule`);
+  const reducedMotion = extractCssBlock(css, "@media (prefers-reduced-motion: reduce)");
+  assert.ok(reducedMotion.includes("transition-duration: 0.01ms !important;"), `${host.name} reduced transition mismatch`);
+  assert.ok(reducedMotion.includes("animation-duration: 0.01ms !important;"), `${host.name} reduced animation mismatch`);
+  const sharedStart = css.indexOf(sharedCssMarker);
+  assert.notStrictEqual(sharedStart, -1, `${host.name} CSS missing shared interaction tail`);
+  sharedCssTails.push(css.slice(sharedStart).replace(/\r\n/g, "\n").trim());
   assert.ok(css.includes("--host-accent: var(--color-primary);"), `${host.name} host accent mapping mismatch`);
   assert.ok(
     css.includes("--host-accent-soft: var(--color-surface-muted);"),
@@ -200,6 +270,10 @@ hosts.forEach((host) => {
     `${host.name} enterprise knowledge isolation mismatch`
   );
   assert.ok(!js.includes('byId("btn-refresh")'), `${host.name} JS still references removed #btn-refresh`);
+});
+
+sharedCssTails.slice(1).forEach((tail, index) => {
+  assert.strictEqual(tail, sharedCssTails[0], `${hosts[index + 1].name} shared interaction CSS drifted`);
 });
 
 const wordHtml = fs.readFileSync(path.join(ROOT, hosts[0].dir, "taskpane.html"), "utf8");

@@ -1016,13 +1016,22 @@ button.ghost-action:hover {
   font-weight: 700;
 }
 
+.text-action:hover,
+.info-button:hover {
+  border-color: var(--border-color);
+  background: var(--host-accent-soft);
+  color: var(--host-accent);
+}
+
 .workflow-help-popover {
   position: absolute;
   z-index: 10;
   top: 48px;
   right: 14px;
+  width: 260px;
+  max-width: calc(100vw - 40px);
   width: max-content;
-  max-width: min(260px, calc(100% - 28px));
+  max-width: min(260px, calc(100vw - 40px));
   padding: 9px 10px;
   border: 1px solid var(--border-color);
   border-radius: var(--radius-panel);
@@ -1040,7 +1049,7 @@ button.ghost-action:hover {
   gap: 4px;
   overflow-x: auto;
   overscroll-behavior-x: contain;
-  padding: 4px 10px 5px 0;
+  padding: 4px 10px 5px 4px;
   border-bottom: 1px solid var(--border-color);
   box-shadow: inset -10px 0 8px -12px var(--border-color);
   scrollbar-width: thin;
@@ -1125,8 +1134,7 @@ button,
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, opacity 160ms ease, transform 100ms ease;
 }
 
-button:active,
-.workflow-task-tabs button:active,
+button:active:not(:disabled),
 .advanced-diagnostics > summary:active {
   transform: scale(0.98);
   transition-duration: 100ms;
