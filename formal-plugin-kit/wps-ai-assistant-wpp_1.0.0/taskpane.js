@@ -2,7 +2,7 @@
   "use strict";
 
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.19.0-alpha";
+  var FRONTEND_BUILD_VERSION = "0.19.1-alpha";
   var PPT_WORKFLOW_TASK_TYPE = "ppt.slide_assistant";
   var TASK_API_KEY_DEFS = [
     { taskType: "ppt.slide_assistant", label: "智能总结" }

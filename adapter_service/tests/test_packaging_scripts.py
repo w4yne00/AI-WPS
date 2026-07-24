@@ -12,7 +12,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.19.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.19.1-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -271,12 +271,12 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(required_text, text)
 
-    def test_phase1_delivery_uses_v0190_release_name(self) -> None:
+    def test_phase1_delivery_uses_v0191_release_name(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0190"', script)
+        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0191"', script)
 
     def test_taskpane_document_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(

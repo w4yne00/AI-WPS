@@ -6,11 +6,11 @@
 
 当前分支：`main`
 
-当前版本：`v0.19.0-alpha`
+当前版本：`v0.19.1-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.19.0-20260722`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.19.1-20260724`
 
-当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260722-v0190.tar.gz`，SHA256：`da90da333c4224b40f385bb7df5d1598d051c5b6462212bd9095ec643ef14b1b`
+当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz`，SHA256：`7ee6276cf10ed95c2db7a73940ebaaef6f559eae399dd8b3b413d3686561063e`
 
 ## 1. 当前项目状态
 
@@ -146,6 +146,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 
 ## 3. 本版本关键变化
 
+- `v0.19.1-alpha` 是三宿主任务窗格体验补丁版，只调整界面、设置状态探测和交互保护，不新增或改动智能编写、智能仿写、文档审查、格式审查、智能分析、智能总结及任何回写链路。
 - Word、Excel、PPT 的任务页与设置页完成同构体验更新：继续保持 Word 蓝、Excel 绿、PPT 橙宿主配色，统一使用系统字体、8px 以内圆角、克制的按压/披露动效和清晰键盘焦点；任务主按钮继续使用高对比度纯文字，不增加图标。
 - 三宿主设置首页统一为“模型接口 / 工作流设置 / 高级诊断”渐进披露结构。模型接口状态不再读取 adapter 的统一 Key 配置标记，而是按当前宿主的统一 API URL、真实任务类型和工作流档案计算“无法检测 / 未配置 / 部分就绪 / 已就绪”。
 - 设置状态刷新仅在设置首页可见、页面未隐藏、URL/工作流编辑器未打开且工作流未变更时运行；进入设置立即读取，随后每 30 秒刷新。配置探测使用 8 秒短预算、单飞请求和迟到响应废弃，绝不改变 Word 文档审查、Excel 智能分析或 PPT 智能总结的长任务等待预算。
@@ -318,7 +319,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 
 ## 6. 验证状态
 
-`v0.19.0-alpha` 已执行本地自动化、静态契约和交付包验证。企业知识覆盖数据契约、SQLite 存储、匹配预算、导入安全、预览令牌、CRUD/API、standalone 一致性、Word 三任务注入、故障降级、管理界面、覆盖安装和发布元数据。
+`v0.19.1-alpha` 已执行本地自动化、静态契约、真实浏览器布局和交付包验证。除继续覆盖企业知识、工作流档案、三宿主任务链路和覆盖安装外，本轮重点验证设置状态刷新隔离、异步顺序保护、编辑保护、紧凑布局、可扩展选项卡及诊断渐进披露。
 
 ```bash
 PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s adapter_service/tests -v
@@ -326,16 +327,17 @@ for test_file in formal-plugin-kit/tests/*.test.js; do node "$test_file"; done
 node --check <Word/Excel/PPT taskpane.js、taskpane-helpers.js、ribbon.js>
 bash -n packaging/build_phase1_delivery_kit.sh phase1-delivery-kit/installer/install_phase1.sh phase1-delivery-kit/scripts/phase1_smoke_test.sh
 git diff --check
-DATE_TAG=20260722 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260724 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
 - Python 全量单测：`384 tests OK (skipped=39)`；跳过项来自当前 bundled Python 缺 FastAPI 和沙箱禁用本地 socket。standalone 企业知识 HTTP 分发、数据层、导入安全、匹配、Word 注入与降级、provider、后台任务、PPT 文件和覆盖安装行为均已执行。
-- 版本与打包专项：`30 tests OK (skipped=1)`；全部 8 个前端测试文件、三宿主 layout smoke 和 Word 企业知识管理/结果契约通过。
+- 全部 9 个前端测试文件通过，覆盖三宿主 layout smoke、设置刷新与编辑保护、任务状态隔离、Word 企业知识管理和结果契约。
 - Word/Excel/PPT 的 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，构建/安装/联调脚本 `bash -n` 及 `git diff --check`：通过。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260722-v0190.tar.gz`，大小约 8.1 MB，SHA256：`da90da333c4224b40f385bb7df5d1598d051c5b6462212bd9095ec643ef14b1b`。
-- 包内已核对 Word、Excel、PPT 三个插件均为 `0.19.0-alpha`；只包含一个安装脚本和一个含 `wps/et/wpp` 的 `publish.xml`，包含企业知识手册、CSV/XLSX 导入模板、Excel/PPT 提示词模板，且不携带现场 `enterprise_knowledge.db` 或备份文件。
+- 真实 Chromium 已在 420×900 和 320×700 下完成三宿主任务页、设置页、帮助提示及折叠诊断验收；页面无横向溢出，Word 四任务选项卡在窄屏下按设计横向滚动。
+- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz`，大小约 8.1 MB，SHA256：`7ee6276cf10ed95c2db7a73940ebaaef6f559eae399dd8b3b413d3686561063e`。
+- 包内已核对 Word、Excel、PPT 三个插件均为 `0.19.1-alpha`；只包含一个安装脚本和一个含 `wps/et/wpp` 的 `publish.xml`，包含企业知识手册、CSV/XLSX 导入模板、Excel/PPT 提示词模板，且不携带现场 `enterprise_knowledge.db`、密钥目录、日志或备份文件。
 - 安装行为测试已使用临时目录验证：覆盖安装后恢复企业知识主库和按时间保留的最新三份已有备份，同时继续保护 API URL、统一 API Key 与全部工作流 API Key。
 - 受当前浏览器自动化账户额度限制，本版本未完成新知识管理页面截图检查；Mac 开发机也无法替代麒麟 V10/WPS 真机交互验收。
 
@@ -343,7 +345,7 @@ DATE_TAG=20260722 bash packaging/build_phase1_delivery_kit.sh
 
 ## 7. 目标机验证建议
 
-1. 使用 `20260722-v0190` 单一正式交付包覆盖安装，关闭并重新打开 WPS，确认设置页“前端版本”为 `0.19.0-alpha`，且原 API URL、统一 API Key、`run/provider_api_keys/`、`run/enterprise_knowledge.db` 和最新三份已有知识库备份未丢失。
+1. 使用 `20260724-v0191` 单一正式交付包覆盖安装，关闭并重新打开 WPS，确认设置页“前端版本”为 `0.19.1-alpha`，且原 API URL、统一 API Key、`run/provider_api_keys/`、`run/enterprise_knowledge.db` 和最新三份已有知识库备份未丢失。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 3. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“智能总结”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用同一个 `ppt.slide_assistant` 档案。
 4. 在 Word 设置页进入企业知识管理，验证术语和风格规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造知识库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。
@@ -365,5 +367,5 @@ DATE_TAG=20260722 bash packaging/build_phase1_delivery_kit.sh
 - 智能排版暂缓：目标机已确认任务级 API Key 选路可命中独立 Dify 工作流，但长文档角色识别受 Dify 输出最大值和模型上下文窗口限制影响。当前版本不再尝试自动写回排版，改为“格式审查”。
 - 文档审查要求 Dify 输出 Markdown 中的 JSON 代码块。若现场 Dify 只能输出普通 Markdown，也应至少保留一个合法 `json` 代码块；adapter 会从代码块中提取问题列表。
 - Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `Selection`、`UsedRange`、`Cells.Item(row, column)` 的可用性；前端已做多路径读取和已用范围兜底。
-- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、企业知识管理和覆盖安装仍需用 `v0.19.0-alpha` 正式包完成目标机验收。
+- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、企业知识管理和覆盖安装仍需用 `v0.19.1-alpha` 正式包完成目标机验收。
 - 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README 及 `docs/operations/` 下当前手册为准。

@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.19.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.19.0-20260722` |
+| Version | `v0.19.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.19.1-20260724` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260722-v0190.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz` |
 
 Version rule format:
 
@@ -127,6 +127,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.19.1-alpha` | Refines the shared Word, Excel, and PPT task-pane experience without changing business workflows: compact host-colored task and settings views, live model-interface readiness derived from each host's URL and workflow profiles, scalable task tabs, optional workflow notes, contextual help, and collapsed advanced diagnostics. Settings probes now use an isolated 8-second budget, single-flight refresh, stale-response protection, and edit-aware pausing so they cannot overwrite task status, results, long-running job state, or unsaved settings |
 | `v0.19.0-alpha` | Adds Word enterprise terminology and writing-rule knowledge for Smart Write, Smart Imitation, and Document Review. The local SQLite-backed manager supports scoped CRUD, CSV/XLSX import preview with conflict skipping, CSV export, database backup, result usage summaries, and fail-open degraded feedback. Excel/PPT behavior and all existing writeback paths remain unchanged; overwrite installation preserves the knowledge database and up to three existing backups |
 | `v0.18.1-alpha` | Streamlines workflow settings across Word, Excel, and PPT: removes unified-key controls from the task pane, keeps a compact host-isolated workflow list with full-width create/edit views, activates task-page selections immediately, protects active profiles from deletion, preserves existing keys when edits leave the key blank, and keeps adapter fallback and overwrite-install compatibility unchanged |
 | `v0.18.0-alpha` | Renames the current Excel entry to “智能分析” and upgrades PPT to the dual-mode “智能总结”; adds secure single-file UTF-8 Markdown/DOCX upload, complete-deck 5/8/10/12/15-slide recommendations, 1800-second recoverable polling, a unified three-host visual system, Excel/PPT Markdown prompt templates, and one combined overwrite-install package that preserves the API URL and API keys |
