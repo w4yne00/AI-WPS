@@ -11,6 +11,7 @@
   var PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS = 15000;
   var PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS = 30000;
   var PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS = 10000;
+  var SETTINGS_REFRESH_REQUEST_TIMEOUT_MS = 8000;
   var PPT_SLIDE_POLL_MAX_ERRORS = 240;
   var PPT_SLIDE_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY = "ai-wps-ppt-slide-assistant-active-job-v1";
@@ -38,13 +39,53 @@
     selectedProfileId: "",
     workflowProfileMutationBusy: false,
     profileLoadRequestId: 0,
-    workflowEditor: { mode: "create", profileId: "", dirty: false },
+    workflowEditor: { open: false, mode: "create", profileId: "", dirty: false },
     providerBaseUrl: "",
-    diagnosticsText: ""
+    diagnosticsText: "",
+    configRefreshRequestId: 0,
+    configRefreshPromise: null,
+    configRefreshActiveRequestId: 0,
+    configRefreshActiveSilent: false,
+    configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
+    modelInterfaceDetectable: false,
+    settingsRefreshController: null,
+    workflowHelpPinned: false,
+    providerUrlEditorOpen: false
   };
 
   function byId(id) {
     return document.getElementById(id);
+  }
+
+  function setNodeTextIfChanged(node, value) {
+    var nextValue = value || "";
+    if (node && node.textContent !== nextValue) {
+      node.textContent = nextValue;
+      return true;
+    }
+    return false;
+  }
+
+  function setNodeClassNameIfChanged(node, value) {
+    var nextValue = value || "";
+    if (node && node.className !== nextValue) {
+      node.className = nextValue;
+      return true;
+    }
+    return false;
+  }
+
+  function setNodeAttributeIfChanged(node, name, value) {
+    var nextValue = value || "";
+    if (node && node.getAttribute && node.getAttribute(name) === nextValue) {
+      return false;
+    }
+    if (node && node.setAttribute) {
+      node.setAttribute(name, nextValue);
+      return true;
+    }
+    return false;
   }
 
   function safeText(value) {
@@ -56,12 +97,12 @@
   function setStatus(message) {
     var homeStatus = byId("status-line");
     var settingsStatus = byId("settings-status-line");
-    if (homeStatus) {
-      homeStatus.textContent = message || "";
-    }
-    if (settingsStatus) {
-      settingsStatus.textContent = message || "";
-    }
+    setNodeTextIfChanged(homeStatus, message || "");
+    setNodeTextIfChanged(settingsStatus, message || "");
+  }
+
+  function setSettingsStatus(message) {
+    setNodeTextIfChanged(byId("settings-status-line"), message || "");
   }
 
   function setHealthBadge(className, text) {
@@ -69,8 +110,8 @@
     if (!node) {
       return;
     }
-    node.className = "badge " + className;
-    node.textContent = text;
+    setNodeClassNameIfChanged(node, "badge " + className);
+    setNodeTextIfChanged(node, text);
   }
 
   function getWppApplication() {
@@ -721,25 +762,26 @@
     }
   }
 
-  function copyText(text, successMessage) {
+  function copyText(text, successMessage, feedback) {
     var value = safeText(text);
+    var report = typeof feedback === "function" ? feedback : setStatus;
     if (!value) {
-      setStatus("暂无可复制的内容。");
+      report("暂无可复制的内容。");
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(value).then(function () {
-        setStatus(successMessage);
+      return navigator.clipboard.writeText(value).then(function () {
+        report(successMessage);
       }).catch(function () {
-        copyTextFallback(value, successMessage);
+        copyTextFallback(value, successMessage, report);
       });
-      return;
     }
-    copyTextFallback(value, successMessage);
+    copyTextFallback(value, successMessage, report);
   }
 
-  function copyTextFallback(value, message) {
+  function copyTextFallback(value, message, feedback) {
     var area = document.createElement("textarea");
+    var report = typeof feedback === "function" ? feedback : setStatus;
     area.value = value;
     area.setAttribute("readonly", "readonly");
     area.style.position = "fixed";
@@ -748,9 +790,9 @@
     area.select();
     try {
       document.execCommand("copy");
-      setStatus(message);
+      report(message);
     } catch (error) {
-      setStatus("复制失败，请手动选择结果文本。");
+      report("复制失败，请手动选择结果文本。");
     }
     document.body.removeChild(area);
   }
@@ -852,6 +894,122 @@
       .replace(/'/g, "&#39;");
   }
 
+  function setProviderBaseUrl(baseUrl) {
+    var summary = byId("provider-summary-url");
+    state.providerBaseUrl = safeText(baseUrl);
+    setNodeTextIfChanged(summary, state.providerBaseUrl || "未配置接口地址");
+    setNodeAttributeIfChanged(summary, "title", state.providerBaseUrl || "未配置接口地址");
+    if (!state.providerUrlEditorOpen && byId("provider-base-url").value !== state.providerBaseUrl) {
+      byId("provider-base-url").value = state.providerBaseUrl;
+    }
+  }
+
+  function renderModelInterfaceState(detectable) {
+    var profilesByTask = {};
+    var result;
+    var badge = byId("provider-readiness-badge");
+    var summary = byId("provider-summary-url");
+    profilesByTask[PPT_WORKFLOW_TASK_TYPE] = state.profiles;
+    result = helpers.deriveModelInterfaceState({
+      detectable: detectable,
+      providerBaseUrl: state.providerBaseUrl,
+      taskTypes: [PPT_WORKFLOW_TASK_TYPE],
+      profilesByTask: profilesByTask
+    });
+    setNodeClassNameIfChanged(badge, "readiness-badge is-" + result.code);
+    setNodeTextIfChanged(badge, result.label);
+    setNodeTextIfChanged(summary, state.providerBaseUrl || "未配置接口地址");
+    setNodeAttributeIfChanged(summary, "title", state.providerBaseUrl || "未配置接口地址");
+    setNodeTextIfChanged(byId("diagnostics-summary"), result.label);
+  }
+
+  function renderWorkflowTaskTabs() {
+    var tabs = byId("workflow-task-tabs");
+    var buttons;
+    var index;
+    if (!tabs) {
+      return;
+    }
+    buttons = tabs.querySelectorAll("[data-workflow-task-tab]");
+    for (index = 0; index < buttons.length; index += 1) {
+      var active = buttons[index].getAttribute("data-workflow-task-tab") === PPT_WORKFLOW_TASK_TYPE;
+      buttons[index].classList.toggle("active", active);
+      buttons[index].setAttribute("aria-selected", active ? "true" : "false");
+      buttons[index].tabIndex = active ? 0 : -1;
+      buttons[index].disabled = state.workflowProfileMutationBusy;
+    }
+  }
+
+  function scrollWorkflowTaskTabIntoView(button) {
+    var reducedMotion = false;
+    if (!button || typeof button.scrollIntoView !== "function") {
+      return;
+    }
+    try {
+      reducedMotion = Boolean(
+        window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      );
+    } catch (error) {
+      reducedMotion = false;
+    }
+    try {
+      button.scrollIntoView({
+        behavior: reducedMotion ? "auto" : "smooth",
+        block: "nearest",
+        inline: "nearest"
+      });
+    } catch (error) {
+      try {
+        button.scrollIntoView(true);
+      } catch (fallbackError) {
+        // Older WPS WebViews may not support the options overload.
+      }
+    }
+  }
+
+  function handleWorkflowTaskTabClick(event) {
+    if (event.target.getAttribute("data-workflow-task-tab") === PPT_WORKFLOW_TASK_TYPE) {
+      renderWorkflowTaskTabs();
+      scrollWorkflowTaskTabIntoView(event.target);
+    }
+  }
+
+  function handleWorkflowTaskTabKeydown(event) {
+    var buttons = byId("workflow-task-tabs").querySelectorAll("[data-workflow-task-tab]");
+    var currentIndex = Array.prototype.indexOf.call(buttons, event.target);
+    var nextIndex = currentIndex;
+    var nextButton;
+    if (currentIndex < 0 || state.workflowProfileMutationBusy || !buttons.length) {
+      return;
+    }
+    if (event.key === "ArrowLeft") {
+      nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+    } else if (event.key === "ArrowRight") {
+      nextIndex = (currentIndex + 1) % buttons.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = buttons.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    nextButton = buttons[nextIndex];
+    nextButton.click();
+    nextButton.focus();
+    scrollWorkflowTaskTabIntoView(nextButton);
+  }
+
+  function setWorkflowHelpOpen(open, pinned) {
+    var button = byId("workflow-help-button");
+    var popover = byId("workflow-help-popover");
+    if (typeof pinned === "boolean") {
+      state.workflowHelpPinned = pinned;
+    }
+    popover.hidden = !open;
+    button.setAttribute("aria-expanded", open ? "true" : "false");
+  }
+
   function renderProfileStrip() {
     var select = byId("workflow-profile-select");
     var selectedProfileId = state.selectedProfileId || state.profiles.activeProfileId;
@@ -875,7 +1033,7 @@
       });
     }
     select.disabled = state.busy || state.workflowProfileMutationBusy || !state.profiles.profiles.length;
-    byId("workflow-switch-feedback").textContent = "当前：" + activeProfileName();
+    setNodeTextIfChanged(byId("workflow-switch-feedback"), "当前：" + activeProfileName());
   }
 
   function renderProfileManager() {
@@ -890,13 +1048,13 @@
       ? "读取失败"
       : (state.profiles.profiles.length + " 个工作流");
     if (state.profiles.loadError) {
-      manager.innerHTML = '<div class="workflow-load-error"><p class="workflow-profile-error">无法读取工作流配置：' +
+      html.push('<div class="workflow-load-error"><p class="workflow-profile-error">无法读取工作流配置：' +
         escaped(state.profiles.loadError) + '</p><button type="button" class="ghost-action" ' +
-        'data-profile-action="retry">重新读取</button></div>';
-      return;
+        'data-profile-action="retry">重新读取</button></div>');
     }
     if (!state.profiles.profiles.length) {
-      manager.innerHTML = '<p class="workflow-empty-state">尚未配置智能总结工作流，请先新建并填写独立 API Key。</p>';
+      html.push('<p class="workflow-empty-state">尚未配置智能总结工作流，请先新建并填写独立 API Key。</p>');
+      manager.innerHTML = html.join("");
       return;
     }
     html.push('<div class="workflow-profile-list">');
@@ -908,8 +1066,11 @@
       html.push('<div class="workflow-profile-list-row" data-profile-id="' + id + '">');
       html.push('<div class="workflow-profile-copy"><div class="workflow-profile-name-line"><strong>' +
         escaped(profile.name || "未命名工作流") + '</strong><span class="workflow-profile-state">' +
-        status + '</span></div><p class="workflow-profile-note">' +
-        escaped(profile.note || "无备注") + '</p></div>');
+        status + '</span></div>');
+      if (profile.note) {
+        html.push('<p class="workflow-profile-note">' + escaped(profile.note) + '</p>');
+      }
+      html.push('</div>');
       html.push('<div class="workflow-profile-actions">');
       html.push('<button type="button" class="ghost-action" data-profile-action="edit" data-profile-id="' + id + '"' + disabled + '>编辑</button>');
       if (!active) {
@@ -924,35 +1085,55 @@
     manager.innerHTML = html.join("");
   }
 
-  function loadProfiles() {
+  function loadProfiles(configRefreshRequestId, requestOptions) {
     var requestId = state.profileLoadRequestId + 1;
+    var previousProfiles = state.profiles;
+    var previousSelection = state.selectedProfileId;
     state.profileLoadRequestId = requestId;
     return request(
-      "/provider/workflow-profiles?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE)
+      "/provider/workflow-profiles?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE),
+      null,
+      requestOptions
     ).then(function (body) {
-      if (requestId !== state.profileLoadRequestId) {
-        return null;
+      if (requestId !== state.profileLoadRequestId ||
+          (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
+        return { superseded: true };
       }
       state.profiles = helpers.normalizeWorkflowProfiles(body.data || {});
       state.selectedProfileId = state.profiles.activeProfileId;
       renderProfileStrip();
       renderProfileManager();
+      renderModelInterfaceState(state.modelInterfaceDetectable);
       return state.profiles;
     }).catch(function (error) {
-      if (requestId !== state.profileLoadRequestId) {
-        return null;
+      var preservedProfiles;
+      if (requestId !== state.profileLoadRequestId ||
+          (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
+        return { superseded: true };
       }
-      state.profiles = {
-        taskType: PPT_WORKFLOW_TASK_TYPE,
-        activeProfileId: "",
-        profileCount: 0,
-        profiles: [],
-        loadError: error && error.message ? error.message : "本地 adapter 暂时不可用"
-      };
-      state.selectedProfileId = "";
+      if (previousProfiles) {
+        preservedProfiles = {};
+        Object.keys(previousProfiles).forEach(function (key) {
+          preservedProfiles[key] = previousProfiles[key];
+        });
+        preservedProfiles.loadError = error && error.message ? error.message : "本地 adapter 暂时不可用";
+        state.profiles = preservedProfiles;
+        state.selectedProfileId = previousSelection;
+      } else {
+        state.profiles = {
+          taskType: PPT_WORKFLOW_TASK_TYPE,
+          activeProfileId: "",
+          profileCount: 0,
+          profiles: [],
+          loadError: error && error.message ? error.message : "本地 adapter 暂时不可用"
+        };
+        state.selectedProfileId = "";
+      }
+      state.modelInterfaceDetectable = false;
       renderProfileStrip();
       renderProfileManager();
-      return null;
+      renderModelInterfaceState(state.modelInterfaceDetectable);
+      return { failed: true };
     });
   }
 
@@ -979,7 +1160,9 @@
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
     renderProfileStrip();
     renderProfileManager();
+    renderWorkflowTaskTabs();
     updateWorkflowEditorControls();
+    syncSettingsRefreshController();
   }
 
   function showWorkflowSettingsHome() {
@@ -995,6 +1178,7 @@
       return;
     }
     state.workflowEditor = {
+      open: true,
       mode: editing ? "edit" : "create",
       profileId: editing ? profile.id : "",
       dirty: false
@@ -1017,6 +1201,7 @@
     byId("workflow-settings-home").hidden = true;
     byId("workflow-editor-view").hidden = false;
     updateWorkflowEditorControls();
+    syncSettingsRefreshController();
     byId("workflow-editor-name").focus();
   }
 
@@ -1025,10 +1210,11 @@
         !window.confirm("当前工作流设置尚未保存，确认放弃修改并返回吗？")) {
       return false;
     }
-    state.workflowEditor = { mode: "create", profileId: "", dirty: false };
+    state.workflowEditor = { open: false, mode: "create", profileId: "", dirty: false };
     byId("workflow-editor-key").value = "";
     byId("workflow-editor-error").textContent = "";
     showWorkflowSettingsHome();
+    syncSettingsRefreshController();
     return true;
   }
 
@@ -1201,10 +1387,10 @@
 
   function refreshDiagnostics() {
     return Promise.all([
-      request("/provider/debug-last"),
-      request("/provider/status"),
-      request("/provider/route-diagnostics"),
-      request("/provider/task-api-keys")
+      request("/provider/debug-last", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+      request("/provider/status", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+      request("/provider/route-diagnostics", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+      request("/provider/task-api-keys", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
     ]).then(function (items) {
       state.diagnosticsText = JSON.stringify({
         frontendBuild: FRONTEND_BUILD_VERSION,
@@ -1215,37 +1401,159 @@
         taskApiKeys: items[3].data || {}
       }, null, 2);
       byId("diagnostics-output").textContent = state.diagnosticsText;
+      setSettingsStatus("诊断信息已刷新。");
     }).catch(function (error) {
       byId("diagnostics-output").textContent = "诊断读取失败：" + error.message;
+      setSettingsStatus("诊断读取失败：" + error.message);
     });
   }
 
-  function refreshSettings() {
-    request("/config").then(function (body) {
-      state.providerBaseUrl = safeText(body.data && body.data.providerBaseUrl);
-      byId("provider-base-url").value = state.providerBaseUrl;
-      byId("provider-summary-url").textContent = state.providerBaseUrl || "尚未配置 API URL";
-    }).catch(function () {
-      state.providerBaseUrl = "";
-      byId("provider-base-url").value = "";
-      byId("provider-summary-url").textContent = "API URL 读取失败";
+  function handleDiagnosticsDisclosureToggle(event) {
+    if (event.currentTarget.open) {
+      refreshDiagnostics();
+    }
+  }
+
+  function copyDiagnostics() {
+    copyText(state.diagnosticsText, "诊断信息已复制。", setSettingsStatus);
+  }
+
+  function invalidateSettingsRefresh() {
+    state.configRefreshRequestId += 1;
+    state.configRefreshQueued = false;
+    state.configRefreshQueuedSilent = true;
+  }
+
+  function isSettingsRefreshEligible() {
+    return Boolean(
+      state.currentView === "settings" &&
+      document.visibilityState !== "hidden" &&
+      !state.workflowEditor.open &&
+      !state.providerUrlEditorOpen &&
+      !state.workflowProfileMutationBusy
+    );
+  }
+
+  function syncSettingsRefreshController() {
+    if (!state.settingsRefreshController) {
+      return;
+    }
+    if (isSettingsRefreshEligible()) {
+      state.settingsRefreshController.start();
+    } else if (state.settingsRefreshController.isRunning()) {
+      state.settingsRefreshController.stop();
+      invalidateSettingsRefresh();
+    }
+  }
+
+  function refreshSettings(options) {
+    var requestId;
+    var refreshOperation;
+    var refreshPromise;
+    var silent = Boolean(options && options.silent);
+
+    function releaseRefresh(result) {
+      var shouldRestart = false;
+      var restartSilent = true;
+      if (state.configRefreshPromise === refreshPromise) {
+        state.configRefreshPromise = null;
+        state.configRefreshActiveRequestId = 0;
+        state.configRefreshActiveSilent = false;
+        shouldRestart = state.configRefreshQueued;
+        restartSilent = state.configRefreshQueuedSilent;
+        state.configRefreshQueued = false;
+        state.configRefreshQueuedSilent = true;
+      }
+      if (shouldRestart && isSettingsRefreshEligible()) {
+        return refreshSettings({ silent: restartSilent });
+      }
+      return result;
+    }
+
+    if (state.configRefreshPromise) {
+      if (state.configRefreshActiveRequestId !== state.configRefreshRequestId) {
+        if (!state.configRefreshQueued) {
+          state.configRefreshQueuedSilent = silent;
+        } else {
+          state.configRefreshQueuedSilent = state.configRefreshQueuedSilent && silent;
+        }
+        state.configRefreshQueued = true;
+      } else if (!silent && state.configRefreshActiveSilent) {
+        state.configRefreshActiveSilent = false;
+        setSettingsStatus("正在刷新配置...");
+      }
+      return state.configRefreshPromise;
+    }
+
+    requestId = state.configRefreshRequestId + 1;
+    state.configRefreshRequestId = requestId;
+    state.configRefreshActiveRequestId = requestId;
+    state.configRefreshActiveSilent = silent;
+    if (!silent) {
+      setSettingsStatus("正在刷新配置...");
+    }
+
+    refreshOperation = Promise.all([
+      request("/config", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+      loadProfiles(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
+    ]).then(function (items) {
+      var profileResult = items[1];
+      if (state.configRefreshRequestId !== requestId) {
+        return null;
+      }
+      if (profileResult && profileResult.superseded) {
+        return null;
+      }
+      if (!profileResult || profileResult.failed) {
+        throw new Error("工作流配置读取失败");
+      }
+      setProviderBaseUrl(items[0].data && items[0].data.providerBaseUrl);
+      state.modelInterfaceDetectable = true;
+      renderModelInterfaceState(state.modelInterfaceDetectable);
+      if (!state.configRefreshActiveSilent) {
+        setSettingsStatus("就绪");
+      }
+      return items;
+    }).catch(function (error) {
+      if (state.configRefreshRequestId !== requestId) {
+        return null;
+      }
+      state.modelInterfaceDetectable = false;
+      renderModelInterfaceState(state.modelInterfaceDetectable);
+      setSettingsStatus("配置刷新失败：" + (error && error.message ? error.message : "无法读取"));
+      return null;
     });
-    loadProfiles();
-    refreshDiagnostics();
+
+    refreshPromise = refreshOperation.then(releaseRefresh, function (error) {
+      if (state.configRefreshRequestId === requestId) {
+        state.modelInterfaceDetectable = false;
+        renderModelInterfaceState(state.modelInterfaceDetectable);
+        setSettingsStatus("配置刷新失败：" + (error && error.message ? error.message : "无法读取"));
+      }
+      return releaseRefresh(null);
+    });
+    state.configRefreshPromise = refreshPromise;
+    return refreshPromise;
   }
 
   function showProviderUrlEditor() {
+    state.providerUrlEditorOpen = true;
     byId("provider-url-editor").hidden = false;
     byId("btn-edit-provider-url").hidden = true;
     byId("provider-base-url").focus();
+    syncSettingsRefreshController();
   }
 
-  function hideProviderUrlEditor(resetValue) {
+  function hideProviderUrlEditor(resetValue, suppressRefreshSync) {
+    state.providerUrlEditorOpen = false;
     if (resetValue) {
       byId("provider-base-url").value = state.providerBaseUrl;
     }
     byId("provider-url-editor").hidden = true;
     byId("btn-edit-provider-url").hidden = false;
+    if (suppressRefreshSync !== true) {
+      syncSettingsRefreshController();
+    }
   }
 
   function checkHealth() {
@@ -1307,14 +1615,19 @@
     byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回智能总结" : "打开设置");
     if (settingsMode) {
       closeWorkflowEditor(true);
-      hideProviderUrlEditor(true);
-      refreshSettings();
+      hideProviderUrlEditor(true, true);
+      byId("diagnostics-disclosure").open = false;
     } else {
       resumeJob();
     }
+    renderWorkflowTaskTabs();
+    syncSettingsRefreshController();
   }
 
   function bindEvents() {
+    var workflowHelpButton = byId("workflow-help-button");
+    var workflowHelpPopover = byId("workflow-help-popover");
+    var workflowHelpHeading = document.querySelector(".workflow-settings-heading");
     byId("btn-open-settings").addEventListener("click", function () {
       if (state.currentView === "settings" && !byId("workflow-editor-view").hidden &&
           !closeWorkflowEditor(false)) {
@@ -1395,9 +1708,42 @@
       byId("btn-toggle-workflow-key").setAttribute("aria-pressed", showing ? "false" : "true");
     });
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
-    byId("btn-copy-diagnostics").addEventListener("click", function () {
-      copyText(state.diagnosticsText, "诊断信息已复制。");
+    byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
+    byId("diagnostics-disclosure").addEventListener("toggle", handleDiagnosticsDisclosureToggle);
+    byId("workflow-task-tabs").addEventListener("click", handleWorkflowTaskTabClick);
+    byId("workflow-task-tabs").addEventListener("keydown", handleWorkflowTaskTabKeydown);
+    workflowHelpButton.addEventListener("click", function () {
+      var pinned = !state.workflowHelpPinned;
+      setWorkflowHelpOpen(pinned, pinned);
     });
+    workflowHelpButton.addEventListener("mouseenter", function () {
+      setWorkflowHelpOpen(true);
+    });
+    workflowHelpButton.addEventListener("focusin", function () {
+      setWorkflowHelpOpen(true);
+    });
+    workflowHelpButton.addEventListener("mouseleave", function () {
+      if (!state.workflowHelpPinned) {
+        setWorkflowHelpOpen(false, false);
+      }
+    });
+    workflowHelpButton.addEventListener("focusout", function (event) {
+      if (!state.workflowHelpPinned && !workflowHelpButton.contains(event.relatedTarget)) {
+        setWorkflowHelpOpen(false, false);
+      }
+    });
+    document.addEventListener("click", function (event) {
+      if (!workflowHelpHeading.contains(event.target) && !workflowHelpPopover.contains(event.target)) {
+        setWorkflowHelpOpen(false, false);
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && !workflowHelpPopover.hidden) {
+        setWorkflowHelpOpen(false, false);
+        workflowHelpButton.focus();
+      }
+    });
+    document.addEventListener("visibilitychange", syncSettingsRefreshController);
     byId("btn-edit-provider-url").addEventListener("click", showProviderUrlEditor);
     byId("btn-cancel-provider-url").addEventListener("click", function () {
       hideProviderUrlEditor(true);
@@ -1407,23 +1753,35 @@
         baseUrl: safeText(byId("provider-base-url").value),
         providerName: "企业大模型接口"
       }).then(function () {
-        state.providerBaseUrl = safeText(byId("provider-base-url").value);
-        byId("provider-summary-url").textContent = state.providerBaseUrl || "尚未配置 API URL";
-        hideProviderUrlEditor(false);
-        setStatus("API URL 已保存。");
-        checkHealth();
+        var savedBaseUrl = safeText(byId("provider-base-url").value);
+        setProviderBaseUrl(savedBaseUrl);
+        hideProviderUrlEditor(false, true);
+        setSettingsStatus("API URL 已保存。");
+        invalidateSettingsRefresh();
+        refreshSettings({ silent: false });
+        syncSettingsRefreshController();
       }).catch(function (error) {
-        setStatus("API URL 保存失败：" + error.message);
+        setSettingsStatus("API URL 保存失败：" + error.message);
       });
     });
   }
 
   function initialize() {
+    var initialView = queryMode() === "settings" ? "settings" : "home";
     bindEvents();
     setSourceMode("slide");
-    loadProfiles();
-    checkHealth();
-    switchView(queryMode() === "settings" ? "settings" : "home");
+    state.settingsRefreshController = helpers.createSettingsRefreshController({
+      intervalMs: 30000,
+      refresh: function () {
+        checkHealth();
+        return refreshSettings({ silent: true });
+      }
+    });
+    switchView(initialView);
+    if (initialView === "home") {
+      checkHealth();
+      loadProfiles();
+    }
   }
 
   if (document.readyState === "loading") {

@@ -263,6 +263,77 @@ function testNarrowLayoutContract() {
   assert.ok(!css.includes(".workflow-profile-list-row .settings-card"), "workflow rows must not nest cards");
 }
 
+function testLiveSettingsExperienceContract() {
+  const refresh = functionSource("refreshSettings");
+  const manager = functionSource("renderProfileManager");
+  const loadProfiles = functionSource("loadProfiles");
+  const syncRefresh = functionSource("syncSettingsRefreshController");
+  const refreshEligibility = functionSource("isSettingsRefreshEligible");
+  const diagnostics = functionSource("refreshDiagnostics");
+  const copyDiagnostics = functionSource("copyDiagnostics");
+  const bindings = functionSource("bindEvents");
+
+  includesAll(js, [
+    "settingsRefreshController",
+    "configRefreshRequestId",
+    "configRefreshPromise",
+    "modelInterfaceDetectable",
+    "providerUrlEditorOpen",
+    "workflowHelpPinned",
+    "deriveModelInterfaceState"
+  ], "PPT live settings state");
+  includesAll(functionSource("renderModelInterfaceState"), [
+    "profilesByTask[PPT_WORKFLOW_TASK_TYPE]",
+    "taskTypes: [PPT_WORKFLOW_TASK_TYPE]",
+    'byId("provider-readiness-badge")',
+    'byId("diagnostics-summary")'
+  ], "PPT model interface readiness");
+  includesAll(refresh, [
+    "configRefreshRequestId",
+    "configRefreshPromise",
+    "SETTINGS_REFRESH_REQUEST_TIMEOUT_MS",
+    "loadProfiles(requestId",
+    "renderModelInterfaceState",
+    "releaseRefresh"
+  ], "PPT guarded settings refresh");
+  excludesAll(refresh, [
+    "refreshDiagnostics()",
+    "setStatus(",
+    "setResult("
+  ], "PPT settings refresh isolation");
+  includesAll(loadProfiles, [
+    "previousProfiles",
+    "superseded: true",
+    "failed: true",
+    "loadError"
+  ], "PPT profile refresh preservation");
+  assert.ok(!manager.includes('profile.note || "无备注"'), "empty PPT notes must not render a placeholder");
+  includesAll(refreshEligibility, [
+    'state.currentView === "settings"',
+    'document.visibilityState !== "hidden"',
+    "!state.workflowEditor.open",
+    "!state.providerUrlEditorOpen",
+    "!state.workflowProfileMutationBusy"
+  ], "PPT refresh eligibility");
+  includesAll(syncRefresh, [
+    "isSettingsRefreshEligible()",
+    "invalidateSettingsRefresh"
+  ], "PPT refresh lifecycle");
+  assert.ok(diagnostics.includes("setSettingsStatus"), "diagnostics feedback must stay in settings");
+  assert.ok(!diagnostics.includes("setStatus("), "diagnostics must not overwrite task status");
+  includesAll(copyDiagnostics, [
+    "state.diagnosticsText",
+    "setSettingsStatus"
+  ], "PPT diagnostics copy isolation");
+  includesAll(bindings, [
+    'byId("workflow-task-tabs").addEventListener("keydown"',
+    'byId("diagnostics-disclosure").addEventListener("toggle"',
+    'document.addEventListener("visibilitychange"',
+    '"workflow-help-button"',
+    '"workflow-help-popover"'
+  ], "PPT settings interaction bindings");
+}
+
 testStaticMarkupContract();
 testStatusAndMutationBusyContract();
 testFixedTaskAndHelperContract();
@@ -272,5 +343,6 @@ testProfileLoadFailureAndRequestOrderingContract();
 testEscapedFallbackContract();
 testPptWorkflowPreservationContract();
 testNarrowLayoutContract();
+testLiveSettingsExperienceContract();
 
 console.log("PPT workflow settings source contract passed.");
