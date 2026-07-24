@@ -13,6 +13,14 @@ from .models import (
 
 
 _HEADER = "写作规范（必须遵守）："
+_PRECEDENCE_LINES = (
+    "[固定优先级]",
+    "1. 保护项：原文中的事实、专有名词、数字、日期、责任主体、条款和规范性强度不得被下层要求改写。",
+    "2. 用户本次明确要求：在不改变保护项的前提下，优先执行用户本次提出的目标、范围和格式要求。",
+    "3. 组织层：组织术语和组织规则优先于产品预置规范。",
+    "4. 预置层：按当前规范场景应用预置术语和文体规则。",
+    "5. 通用去模板化规则：只优化表达，不得削弱正式度、事实、责任或规范性强度。",
+)
 _FOOTER = "以上规范不得要求新增原文不存在、用户也未要求的标题、列表、表格或事实。"
 _REVIEW_INSTRUCTION = (
     "文档审查中，发现上述术语或写作规范违规时，必须按 professional 类问题报告。"
@@ -23,6 +31,8 @@ _TERM_MATCH_ALIAS = 1
 _TERM_MATCH_FORBIDDEN = 2
 _TERM_MATCH_NONE = 3
 _MAX_INDEX_STATES = 100000
+_RESERVED_STYLE_RULES = 5
+_RESERVED_ANTI_TEMPLATE_RULES = 3
 
 
 class _LiteralIndex:
@@ -220,6 +230,7 @@ def _payload_sort_key(item: Dict) -> Tuple[str, str]:
 
 def _term_sort_key(item: Dict, match_class: int) -> Tuple[object, ...]:
     return (
+        _term_precedence_rank(item),
         match_class,
         _priority_rank(item),
         normalize_key(str(item.get("preferredText", ""))),
@@ -228,8 +239,14 @@ def _term_sort_key(item: Dict, match_class: int) -> Tuple[object, ...]:
     )
 
 
+def _term_precedence_rank(item: Dict) -> int:
+    layer = item.get("layer")
+    return 0 if layer == "organization" or (not layer and not item.get("packId")) else 1
+
+
 def _style_sort_key(item: Dict, task_scope: str) -> Tuple[object, ...]:
     return (
+        _style_precedence_rank(item),
         0 if item.get("scope") == task_scope else 1,
         0 if bool(item.get("alwaysApply", False)) else 1,
         _priority_rank(item),
@@ -237,6 +254,69 @@ def _style_sort_key(item: Dict, task_scope: str) -> Tuple[object, ...]:
         str(item.get("id", "")),
         _payload_sort_key(item),
     )
+
+
+def _style_precedence_rank(item: Dict) -> int:
+    category = normalize_key(str(item.get("category", "")))
+    if "保护" in category:
+        return 0
+    layer = item.get("layer")
+    if layer == "organization" or (not layer and not item.get("packId")):
+        return 1
+    if item.get("type") == "anti_template":
+        return 3
+    return 2
+
+
+def _select_rule_candidates(matched_styles: Sequence[Dict]) -> List[Dict]:
+    selected = [
+        item
+        for item in matched_styles
+        if _style_precedence_rank(item) <= 1
+    ][:MAX_STYLE_RULES]
+    selected_ids = {id(item) for item in selected}
+    remaining_slots = MAX_STYLE_RULES - len(selected)
+    if remaining_slots <= 0:
+        return selected
+
+    lower_precedence = [
+        item for item in matched_styles if id(item) not in selected_ids
+    ]
+    style_count = sum(item.get("type") != "anti_template" for item in selected)
+    anti_template_count = len(selected) - style_count
+    style_slots = max(0, _RESERVED_STYLE_RULES - style_count)
+    anti_template_slots = max(
+        0,
+        _RESERVED_ANTI_TEMPLATE_RULES - anti_template_count,
+    )
+
+    for item in lower_precedence:
+        is_anti_template = item.get("type") == "anti_template"
+        if is_anti_template and anti_template_slots > 0:
+            selected.append(item)
+            selected_ids.add(id(item))
+            anti_template_slots -= 1
+            remaining_slots -= 1
+        elif not is_anti_template and style_slots > 0:
+            selected.append(item)
+            selected_ids.add(id(item))
+            style_slots -= 1
+            remaining_slots -= 1
+        if remaining_slots == 0:
+            break
+
+    if remaining_slots > 0:
+        for item in lower_precedence:
+            if id(item) in selected_ids:
+                continue
+            selected.append(item)
+            selected_ids.add(id(item))
+            remaining_slots -= 1
+            if remaining_slots == 0:
+                break
+    return [
+        item for item in matched_styles if id(item) in selected_ids
+    ]
 
 
 def _add_term_tokens(
@@ -255,6 +335,15 @@ def _add_term_tokens(
                 token_targets.setdefault(token, set()).add(
                     (item_id, match_class, candidate_index)
                 )
+
+
+def _term_forms(item: Dict) -> set:
+    values = (
+        [str(item.get("preferredText", ""))]
+        + _values(item, "aliases")
+        + _values(item, "forbiddenVariants")
+    )
+    return {normalize_key(value) for value in values if normalize_key(value)}
 
 
 def _add_style_tokens(
@@ -301,11 +390,23 @@ def match_writing_policy(
 
     matched_terms = []
     seen_term_ids = set()
+    claimed_term_form_ranks = {}
     for term, _match_class in term_candidates:
         item_id = str(term.get("id", ""))
-        if item_id not in seen_term_ids:
-            matched_terms.append(term)
-            seen_term_ids.add(item_id)
+        term_forms = _term_forms(term)
+        precedence_rank = _term_precedence_rank(term)
+        if item_id in seen_term_ids or any(
+            claimed_term_form_ranks.get(form, precedence_rank) < precedence_rank
+            for form in term_forms
+        ):
+            continue
+        matched_terms.append(term)
+        seen_term_ids.add(item_id)
+        for form in term_forms:
+            claimed_term_form_ranks[form] = min(
+                precedence_rank,
+                claimed_term_form_ranks.get(form, precedence_rank),
+            )
 
     relevant_styles = [
         style
@@ -313,19 +414,16 @@ def match_writing_policy(
         if bool(style.get("enabled", True))
         and style.get("scope") in ("global", task_scope)
     ]
-    task_style_names = {
-        normalize_key(str(style.get("name", "")))
-        for style in relevant_styles
-        if style.get("scope") == task_scope
-    }
-    candidate_styles = [
-        style
-        for style in relevant_styles
-        if not (
-            style.get("scope") == "global"
-            and normalize_key(str(style.get("name", ""))) in task_style_names
-        )
-    ]
+    styles_by_name = {}
+    for style in relevant_styles:
+        name_key = normalize_key(str(style.get("name", "")))
+        current = styles_by_name.get(name_key)
+        if current is None or _style_sort_key(
+            style,
+            task_scope,
+        ) < _style_sort_key(current, task_scope):
+            styles_by_name[name_key] = style
+    candidate_styles = list(styles_by_name.values())
     qualified_style_indexes = {
         candidate_index
         for candidate_index, style in enumerate(candidate_styles)
@@ -394,15 +492,22 @@ def _render_style(item: Dict) -> str:
 
 
 def _compose_prompt(
-    term_entries: Sequence[str], style_entries: Sequence[str], task_scope: str
+    term_entries: Sequence[str],
+    style_entries: Sequence[str],
+    anti_template_entries: Sequence[str],
+    task_scope: str,
 ) -> str:
     parts = [_HEADER]
+    parts.extend(_PRECEDENCE_LINES)
     if term_entries:
         parts.extend(("", "[术语]"))
         parts.extend(term_entries)
     if style_entries:
-        parts.extend(("", "[风格]"))
+        parts.extend(("", "[文体]"))
         parts.extend(style_entries)
+    if anti_template_entries:
+        parts.extend(("", "[去模板化]"))
+        parts.extend(anti_template_entries)
     if task_scope == "word.document_review":
         parts.extend(("", _REVIEW_INSTRUCTION))
     parts.extend(("", _FOOTER))
@@ -423,13 +528,14 @@ def build_match_result(
             applied=True,
             terms=0,
             styles=0,
+            anti_templates=0,
             truncated=0,
             matched_items=[],
         )
-        return WritingPolicyMatchResult("", usage, ())
+        return WritingPolicyMatchResult("", usage, (), audit_terms=())
 
     term_candidates = matched_terms[:MAX_TERM_MATCHES]
-    style_candidates = matched_styles[:MAX_STYLE_RULES]
+    style_candidates = _select_rule_candidates(matched_styles)
     truncated = (
         len(matched_terms)
         - len(term_candidates)
@@ -441,6 +547,8 @@ def build_match_result(
     included_term_entries = []
     included_styles = []
     included_style_entries = []
+    included_anti_templates = []
+    included_anti_template_entries = []
     character_budget_exhausted = False
 
     for term in term_candidates:
@@ -449,7 +557,10 @@ def build_match_result(
             continue
         entry = _render_term(term)
         candidate_prompt = _compose_prompt(
-            included_term_entries + [entry], included_style_entries, task_scope
+            included_term_entries + [entry],
+            included_style_entries,
+            included_anti_template_entries,
+            task_scope,
         )
         if len(candidate_prompt) > MAX_PROMPT_CHARS:
             truncated += 1
@@ -463,18 +574,29 @@ def build_match_result(
             truncated += 1
             continue
         entry = _render_style(style)
+        is_anti_template = style.get("type") == "anti_template"
         candidate_prompt = _compose_prompt(
-            included_term_entries, included_style_entries + [entry], task_scope
+            included_term_entries,
+            included_style_entries + ([] if is_anti_template else [entry]),
+            included_anti_template_entries + ([entry] if is_anti_template else []),
+            task_scope,
         )
         if len(candidate_prompt) > MAX_PROMPT_CHARS:
             truncated += 1
             character_budget_exhausted = True
             continue
-        included_styles.append(style)
-        included_style_entries.append(entry)
+        if is_anti_template:
+            included_anti_templates.append(style)
+            included_anti_template_entries.append(entry)
+        else:
+            included_styles.append(style)
+            included_style_entries.append(entry)
 
     prompt_block = _compose_prompt(
-        included_term_entries, included_style_entries, task_scope
+        included_term_entries,
+        included_style_entries,
+        included_anti_template_entries,
+        task_scope,
     )
     public_items = [
         {"id": item.get("id"), "type": "term", "name": item.get("preferredText")}
@@ -482,14 +604,30 @@ def build_match_result(
     ] + [
         {"id": item.get("id"), "type": "style", "name": item.get("name")}
         for item in included_styles
+    ] + [
+        {
+            "id": item.get("id"),
+            "type": "anti_template",
+            "name": item.get("name"),
+        }
+        for item in included_anti_templates
     ]
     usage = public_usage(
         applied=True,
         terms=len(included_terms),
         styles=len(included_styles),
+        anti_templates=len(included_anti_templates),
         truncated=truncated,
         matched_items=public_items,
     )
     matched_item_ids = tuple(str(item.get("id", "")) for item in included_terms)
     matched_item_ids += tuple(str(item.get("id", "")) for item in included_styles)
-    return WritingPolicyMatchResult(prompt_block, usage, matched_item_ids)
+    matched_item_ids += tuple(
+        str(item.get("id", "")) for item in included_anti_templates
+    )
+    return WritingPolicyMatchResult(
+        prompt_block,
+        usage,
+        matched_item_ids,
+        audit_terms=term_candidates,
+    )

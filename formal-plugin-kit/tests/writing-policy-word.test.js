@@ -26,6 +26,21 @@ assert.ok(wordHtml.indexOf('id="writing-policy-usage-strip"') < wordHtml.indexOf
 assert.ok(/<section[^>]*id="writing-policy-usage-strip"[^>]*hidden/.test(wordHtml));
 assert.ok(!excelHtml.includes('id="writing-policy-usage-strip"'));
 assert.ok(!pptHtml.includes('id="writing-policy-usage-strip"'));
+assert.ok(wordHtml.includes('id="writing-policy-scene-block"'));
+assert.ok(wordHtml.includes('id="writing-policy-scene"'));
+[
+  "auto",
+  "yangqi",
+  "cybersecurity",
+  "official",
+  "disabled"
+].forEach((value) => assert.ok(wordHtml.includes(`value="${value}"`), value));
+assert.ok(!excelHtml.includes('id="writing-policy-scene"'));
+assert.ok(!pptHtml.includes('id="writing-policy-scene"'));
+assert.ok(wordHtml.includes('id="writing-policy-audit-summary"'));
+assert.ok(wordHtml.includes('id="writing-policy-audit-details"'));
+assert.ok(wordHtml.includes('id="writing-policy-needs-review"'));
+assert.ok(wordHtml.includes('id="writing-policy-expression-suggestions"'));
 
 assert.ok(wordCss.includes(".writing-policy-usage-strip"));
 assert.ok(wordCss.includes(".writing-policy-usage-summary"));
@@ -37,6 +52,21 @@ assert.ok(renderSource.includes("helpers.writingPolicyUsageDetails"));
 assert.ok(renderSource.includes("textContent"));
 assert.ok(renderSource.includes("document.createElement(\"li\")"));
 assert.ok(!renderSource.includes("innerHTML"));
+
+const auditRenderSource = functionSource("renderWritingPolicyAudit");
+assert.ok(auditRenderSource.includes("helpers.normalizeWritingPolicyAudit"));
+assert.ok(auditRenderSource.includes("需要核对"));
+assert.ok(auditRenderSource.includes("表达建议"));
+assert.ok(auditRenderSource.includes("textContent"));
+assert.ok(!auditRenderSource.includes("innerHTML"));
+
+const smartWriteActionSource = functionSource("runSmartWriteAction");
+assert.ok(smartWriteActionSource.includes("getWritingPolicyScene"));
+assert.ok(!smartWriteActionSource.includes('writingPolicyScene = "auto"'));
+
+const modeVisibilitySource = functionSource("switchMode");
+assert.ok(modeVisibilitySource.includes('"writing-policy-scene-block"'));
+assert.ok(modeVisibilitySource.includes('state.currentMode !== "smartWrite"'));
 
 const clearSource = functionSource("clearWritingPolicyUsage");
 assert.ok(clearSource.includes("hidden = true"));

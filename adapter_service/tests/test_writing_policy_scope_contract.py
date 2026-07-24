@@ -1,4 +1,5 @@
 import importlib
+import importlib.util
 import unittest
 from pathlib import Path
 
@@ -8,7 +9,11 @@ from app.core.models import (
     WritingPolicyAudit,
     WritingPolicyUsage,
 )
-from app.main import app
+
+
+HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
+if HAS_FASTAPI:
+    from app.main import app
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -34,6 +39,7 @@ class WritingPolicyScopeContractTests(unittest.TestCase):
         with self.assertRaises(ModuleNotFoundError):
             importlib.import_module("app.services.enterprise_knowledge")
 
+    @unittest.skipUnless(HAS_FASTAPI, "FastAPI dependency is not installed")
     def test_management_routes_expose_only_writing_policy_prefix(self):
         route_paths = {route.path for route in app.routes}
         self.assertIn("/writing-policies/summary", route_paths)

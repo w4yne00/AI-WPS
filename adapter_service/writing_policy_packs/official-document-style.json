@@ -1,0 +1,271 @@
+{
+  "schemaVersion": 1,
+  "packId": "official-document-style",
+  "version": "1.0.0",
+  "name": "党政公文文体",
+  "sceneIds": [
+    "official"
+  ],
+  "source": {
+    "name": "党政机关公文处理工作条例与党政机关公文格式",
+    "version": "中办发〔2012〕14号；GB/T 9704-2012（2025复审继续有效）",
+    "commit": "0000000000000000000000000000000000000000",
+    "license": "官方制度与国家标准引用；条目为原创归纳"
+  },
+  "review": {
+    "reviewedAt": "2026-07-25",
+    "reviewedBy": "Wayne",
+    "manifest": "official-document-style.review.json"
+  },
+  "entries": [
+    {
+      "id": "rule.official.style.001",
+      "type": "style",
+      "category": "文种适配",
+      "name": "文种与行文目的保持一致",
+      "ruleText": "仅在原文或用户已经明确文种时按该文种组织表达，不根据短文本擅自推断或变更决议、决定、通知、请示、报告、批复、函、纪要等文种。",
+      "positiveExample": "用户明确为请示时，正文聚焦请求批准的事项和理由。",
+      "negativeExample": "把普通情况说明自动改写成正式请示。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [],
+      "priority": 96,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第八条"
+      ]
+    },
+    {
+      "id": "rule.official.style.002",
+      "type": "style",
+      "category": "准确规范",
+      "name": "保持实事求是和准确规范",
+      "ruleText": "公文表达应以已知事实和明确依据为限，做到准确、规范、精简；不得为增强语气补造政策依据、领导意见或执行成效。",
+      "positiveExample": "根据已提供的会议纪要，列明已确认事项和待落实任务。",
+      "negativeExample": "补写“经上级充分肯定”以增强材料权威性。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [],
+      "priority": 94,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第五条",
+        "党政机关公文处理工作条例:第十九条"
+      ]
+    },
+    {
+      "id": "rule.official.style.003",
+      "type": "style",
+      "category": "标题表达",
+      "name": "标题准确标示发文事由",
+      "ruleText": "原文含标题或用户要求拟写标题时，标题应准确、简要地概括事由，并与机关名称、文种等已有要素保持一致，不加入无依据的宣传性定语。",
+      "positiveExample": "关于开展网络安全专项检查的通知",
+      "negativeExample": "关于全面开创网络安全工作崭新局面的重要通知",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "标题",
+        "通知",
+        "请示",
+        "报告"
+      ],
+      "priority": 78,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第九条",
+        "GB/T 9704-2012:7.3.1"
+      ]
+    },
+    {
+      "id": "rule.official.style.004",
+      "type": "style",
+      "category": "行文对象",
+      "name": "主送对象和责任对象明确",
+      "ruleText": "涉及主送机关、承办单位或执行对象时，应保持原有名称和隶属关系，不能把确定对象泛化为“有关单位”或新增未给出的受文机关。",
+      "positiveExample": "各直属单位按职责完成自查，并于规定时间报送结果。",
+      "negativeExample": "各有关方面认真抓好贯彻落实。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "主送",
+        "报送",
+        "承办",
+        "直属单位"
+      ],
+      "priority": 92,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第九条"
+      ]
+    },
+    {
+      "id": "rule.official.style.005",
+      "type": "style",
+      "category": "请示报告",
+      "name": "请示坚持一文一事",
+      "ruleText": "原文明确为请示时，一个文本只围绕一项主要请示事项组织理由和请求，不并列夹带与该事项无直接关系的其他请求。",
+      "positiveExample": "围绕申请调整项目期限说明原因、影响和拟请批准事项。",
+      "negativeExample": "在经费请示中同时夹带人员编制和办公用房申请。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "请示",
+        "申请",
+        "恳请批准"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第十五条"
+      ]
+    },
+    {
+      "id": "rule.official.style.006",
+      "type": "style",
+      "category": "请示报告",
+      "name": "不得在报告中夹带请示事项",
+      "ruleText": "原文明确为报告时，只陈述情况、问题和工作进展，不新增请求审批、批复或决定的事项；需要请示的内容应由用户另行确认文种。",
+      "positiveExample": "报告完成情况、存在问题和下一步安排，不要求上级批准。",
+      "negativeExample": "在情况报告结尾加入“以上方案妥否，请批示”。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "报告",
+        "批示",
+        "审批"
+      ],
+      "priority": 90,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第十五条"
+      ]
+    },
+    {
+      "id": "rule.official.style.007",
+      "type": "style",
+      "category": "部署执行",
+      "name": "部署事项写明任务和时限",
+      "ruleText": "布置工作时，应在已有材料范围内写清任务、责任主体、完成时限和报送要求；原文未提供时限时不得自行补写具体日期。",
+      "positiveExample": "各单位完成自查后，由信息化部门汇总；报送时间沿用原通知要求。",
+      "negativeExample": "各单位务必于本月底前完成全部工作。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "落实",
+        "完成",
+        "报送",
+        "时限"
+      ],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第三条",
+        "党政机关公文处理工作条例:第十九条"
+      ]
+    },
+    {
+      "id": "rule.official.style.008",
+      "type": "style",
+      "category": "依据引用",
+      "name": "政策依据引用保持原貌",
+      "ruleText": "法规、规章、标准、公文标题和发文字号属于保护内容，应按原文保留名称、年份、括号和编号，不凭记忆补齐或改写。",
+      "positiveExample": "沿用原文“中办发〔2012〕14号”的完整写法。",
+      "negativeExample": "把未给出的发文字号补写为推测编号。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "依据",
+        "根据",
+        "发文字号",
+        "条例"
+      ],
+      "priority": 100,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第十九条",
+        "GB/T 9704-2012:7.2.5"
+      ]
+    },
+    {
+      "id": "rule.official.style.009",
+      "type": "style",
+      "category": "安全保密",
+      "name": "不扩写涉密和敏感信息",
+      "ruleText": "涉及密级、保密期限、知悉范围或内部敏感事项时，只保留用户提供的必要表述，不推断密级、不扩大传播范围，也不补写具体敏感细节。",
+      "positiveExample": "保留原文已有密级和发送范围，不增加接收对象。",
+      "negativeExample": "根据内容自行判断为秘密级并补写内部人员名单。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [
+        "秘密",
+        "机密",
+        "绝密",
+        "内部"
+      ],
+      "priority": 100,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第五条",
+        "党政机关公文处理工作条例:第二十六条"
+      ]
+    },
+    {
+      "id": "rule.official.style.010",
+      "type": "anti_template",
+      "category": "精简高效",
+      "name": "删除无实质内容的表态铺垫",
+      "ruleText": "在不削弱正式度和规范性要求的前提下，删除与办理事项无关的形势铺垫、重复表态和一般性号召，保留具体政策、任务和责任。",
+      "positiveExample": "直接说明检查范围、责任单位和报送要求。",
+      "negativeExample": "站在新的历史起点上，各单位要以更高站位开创崭新局面。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "official"
+      ],
+      "contextKeywords": [],
+      "priority": 58,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "党政机关公文处理工作条例:第五条",
+        "教育部公文处理规定:第十条"
+      ]
+    }
+  ]
+}

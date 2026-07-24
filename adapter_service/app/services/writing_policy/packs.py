@@ -130,10 +130,11 @@ class PackSource:
     license: str
 
     def public_dict(self) -> Dict[str, str]:
+        public_commit = "" if self.commit == ("0" * 40) else self.commit
         return {
             "name": self.name,
             "version": self.version,
-            "commit": self.commit,
+            "commit": public_commit,
             "license": self.license,
         }
 
@@ -215,8 +216,10 @@ class WritingPolicyPackSnapshot:
                         "aliases": list(item["aliases"]),
                         "forbiddenVariants": list(item["forbiddenVariants"]),
                         "definition": item["definition"],
+                        "contextKeywords": list(item["contextKeywords"]),
                         "priority": _legacy_priority(item["priority"]),
                         "enabled": True,
+                        "layer": "preset",
                         "packId": item["packId"],
                         "packVersion": item["packVersion"],
                     }
@@ -227,7 +230,8 @@ class WritingPolicyPackSnapshot:
             styles.append(
                 {
                     "id": item["id"],
-                    "type": "style",
+                    "type": item_type,
+                    "category": item["category"],
                     "name": item["name"],
                     "ruleText": item["ruleText"],
                     "positiveExample": item["positiveExample"],
@@ -237,6 +241,7 @@ class WritingPolicyPackSnapshot:
                     "scope": scope,
                     "alwaysApply": True,
                     "enabled": True,
+                    "layer": "preset",
                     "packId": item["packId"],
                     "packVersion": item["packVersion"],
                 }

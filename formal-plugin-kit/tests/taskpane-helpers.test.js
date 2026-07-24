@@ -1059,10 +1059,16 @@ function testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata() {
     applied: true,
     degraded: false,
     degradedReason: "123",
+    requestedScene: "auto",
+    scene: "auto",
+    sceneLabel: "",
+    autoFallback: false,
     packName: "G企技术写作基础",
+    packNames: [],
     presetVersion: "1.0.0",
     termMatchCount: 0,
     styleRuleCount: 3,
+    antiTemplateRuleCount: 0,
     truncatedCount: 4,
     matchedItems: [
       { id: "t1", type: "term", name: "卫星互联网运营管理平台" },
@@ -1122,6 +1128,48 @@ function testWritingPolicyUsageDetailsFiltersLabelsAndCapsItems() {
   assert.ok(!details.some((item) => item.includes("不应显示")));
 }
 
+function testWritingPolicySceneAndAuditNormalization() {
+  assert.strictEqual(helpers.normalizeWritingPolicyScene("cybersecurity"), "cybersecurity");
+  assert.strictEqual(helpers.normalizeWritingPolicyScene("unknown"), "auto");
+  assert.strictEqual(
+    helpers.writingPolicySceneStorageKey("word.smart_write"),
+    "ai-wps:writing-policy-scene:word.smart_write"
+  );
+
+  const audit = helpers.normalizeWritingPolicyAudit({
+    enabled: true,
+    passed: false,
+    degraded: false,
+    summary: "写作规范检查发现需要人工核对的内容。",
+    needsReview: [
+      {
+        code: "protected_number_changed",
+        label: "数字发生变化",
+        message: "请核对数字。",
+        evidence: "2026"
+      }
+    ],
+    expressionSuggestions: [
+      {
+        code: "template_expression_t1",
+        tier: "T1",
+        label: "模板化表达",
+        message: "建议改得更直接。",
+        evidence: "值得注意的是"
+      }
+    ]
+  });
+
+  assert.strictEqual(audit.summary, "写作规范检查发现需要人工核对的内容。");
+  assert.strictEqual(audit.needsReview.length, 1);
+  assert.strictEqual(audit.expressionSuggestions.length, 1);
+  assert.strictEqual(audit.expressionSuggestions[0].tier, "T1");
+  assert.strictEqual(
+    helpers.writingPolicyAuditFindingText(audit.needsReview[0]),
+    "数字发生变化：请核对数字。（2026）"
+  );
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
@@ -1164,6 +1212,7 @@ testNormalizeWorkflowProfileDataHandlesMalformedInput();
 testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata();
 testWritingPolicyUsageSummaryUsesTaskSpecificChineseVerb();
 testWritingPolicyUsageDetailsFiltersLabelsAndCapsItems();
+testWritingPolicySceneAndAuditNormalization();
 assertWorkflowUiContract(helpers);
 assertWorkflowUiContract(excelHelpers);
 assertSettingsStateContract(helpers);

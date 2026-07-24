@@ -157,6 +157,29 @@ class WritingPolicyServiceTests(unittest.TestCase):
         self.assertEqual(diagnostics["writingPolicyElapsedMs"], 125)
         self.assertNotIn("旧平台", json.dumps(diagnostics, ensure_ascii=False))
 
+    def test_audit_failure_is_nonblocking_and_returns_chinese_degradation(self):
+        service = WritingPolicyService(store=StaticStore([term_item()], []))
+        prepared = service.prepare("word.smart_write", ["旧平台"])
+
+        with patch.object(
+            service_module,
+            "audit_writing_policy_result",
+            side_effect=RuntimeError("sensitive source /secret"),
+            create=True,
+        ):
+            audit = service.audit(prepared, "旧平台", "标准平台")
+
+        self.assertTrue(audit["enabled"])
+        self.assertFalse(audit["passed"])
+        self.assertTrue(audit["degraded"])
+        self.assertEqual(
+            audit["summary"],
+            "写作规范检查暂时不可用，结果仍可正常预览、复制或写回。",
+        )
+        self.assertEqual(audit["needsReview"], [])
+        self.assertEqual(audit["expressionSuggestions"], [])
+        self.assertNotIn("secret", json.dumps(audit, ensure_ascii=False))
+
     def test_prepare_degrades_stably_for_writing_policy_os_and_unknown_errors(self):
         sensitive_source = "公司绝密原文"
         cases = (

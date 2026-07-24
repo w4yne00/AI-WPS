@@ -8,7 +8,7 @@
 - License: MIT
 - Copyright: Copyright (c) 2026 Wayne
 
-The G企技术写作基础 preset pack is derived from the short-text writing core reviewed from this version.
+The G企技术写作基础 preset pack is derived from the short-text writing core reviewed from this version. The 技术文件文体 preset pack is an original product-oriented summary based on the same reviewed core.
 
 ```text
 MIT License
@@ -33,3 +33,15 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Official regulations and national standards
+
+The 党政公文文体 and 网络安全术语 packs cite official regulations and Chinese national standards by title, article, or standard number. Their rule text and short definitions are original product-oriented summaries; the source text is not redistributed in these packs.
+
+- 《党政机关公文处理工作条例》（中办发〔2012〕14号）
+- GB/T 9704-2012《党政机关公文格式》
+- GB/T 25069-2022《信息安全技术 术语》
+- GB/T 22239-2019《信息安全技术 网络安全等级保护基本要求》
+- GB/T 35273-2020《信息安全技术 个人信息安全规范》
+- 《中华人民共和国个人信息保护法》
+- 《关键信息基础设施安全保护条例》

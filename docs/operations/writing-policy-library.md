@@ -9,17 +9,22 @@
 - **智能仿写文体规则**：仅在 `word.smart_imitation` 中参与提示词组装。
 - **文档审查文体规则**：仅在 `word.document_review` 中参与提示词组装。
 
-任务窗口只显示本次匹配的数量和最多 20 条名称，不改变智能编写回写、对照、复制或文档审查状态逻辑。切换 Dify 工作流不会切换规范库，规范条目由本机 adapter 独立保存。
+智能编写任务窗口提供“自动匹配 / G企技术材料 / 网络安全技术材料 / 党政公文 / 不使用写作规范”五项选择，并在本机按任务记忆。自动匹配采用保守策略：不能可靠判断时只加载 G企技术写作基础规范，不擅自推断为网络安全材料或党政公文。
+
+结果区显示本次场景、术语、文体和去模板化规则数量，并在需要时展开“需要核对”和“表达建议”。前者只提示数字、日期、责任主体、条款、明确专有名词、型号标识、规范性强度或标准术语发生变化，后者只提示明确的模板化表达线索。两类检查均不阻断预览、复制、对照或写回。切换模型工作流不会切换规范库，规范条目由本机 adapter 独立保存。
 
 ## 预置规范只读浏览
 
-Word 的“设置 → 写作规范库”首先展示随版本发布的预置规范。当前 G企技术写作基础包只读显示包版本、来源标签、完整提交、许可证、稳定条目 ID 和规则内容；“管理组织规范”继续进入本机组织数据管理。
+Word 的“设置 → 写作规范库”首先展示随版本发布的四个预置规范包：G企技术写作基础、技术文件文体、网络安全术语和党政公文文体。每个包只读显示版本、来源、许可证、稳定条目 ID 和规则内容；Git 来源同时显示完整提交，政府制度和国家标准来源显示制度编号或标准号。“管理组织规范”继续进入本机组织数据管理。
 
 adapter 与 standalone adapter 提供相同的只读接口：
 
 ```text
 GET /writing-policies/packs
 GET /writing-policies/items?layer=preset&packId=yangqi-tech-writing-base
+GET /writing-policies/items?layer=preset&packId=technical-document-style
+GET /writing-policies/items?layer=preset&packId=cybersecurity-terminology
+GET /writing-policies/items?layer=preset&packId=official-document-style
 ```
 
 预置包候选、人工门禁和来源处理规则见 [`../writing-policy-sources.md`](../writing-policy-sources.md)。

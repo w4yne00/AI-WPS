@@ -131,10 +131,13 @@ class WritingPolicyBaselineTests(unittest.TestCase):
             ).read_text(encoding="utf-8")
         )
 
-        self.assertEqual(len(packs), 1)
-        self.assertEqual(packs[0]["packId"], "yangqi-tech-writing-base")
-        self.assertEqual(packs[0]["version"], "1.0.0")
-        self.assertEqual(packs[0]["entryCount"], 17)
+        base_pack = next(
+            pack
+            for pack in packs
+            if pack["packId"] == "yangqi-tech-writing-base"
+        )
+        self.assertEqual(base_pack["version"], "1.0.0")
+        self.assertEqual(base_pack["entryCount"], 17)
         self.assertEqual(
             {item["id"] for item in snapshot.public_items("yangqi-tech-writing-base")},
             {"rule.yangqi.base.%03d" % index for index in range(1, 18)},
@@ -165,6 +168,83 @@ class WritingPolicyBaselineTests(unittest.TestCase):
                 )
                 for item in items
             },
+        )
+
+    def test_bundled_snapshot_contains_four_traceable_reviewed_packs(self):
+        root = default_pack_directory()
+        snapshot = load_pack_snapshot(root)
+        packs = {pack["packId"]: pack for pack in snapshot.public_packs()}
+
+        self.assertEqual(
+            set(packs),
+            {
+                "yangqi-tech-writing-base",
+                "technical-document-style",
+                "official-document-style",
+                "cybersecurity-terminology",
+            },
+        )
+        for pack_id, pack in packs.items():
+            with self.subTest(pack_id=pack_id):
+                self.assertEqual(pack["version"], "1.0.0")
+                self.assertTrue(pack["source"]["name"])
+                self.assertTrue(pack["source"]["version"])
+                self.assertTrue(pack["source"]["license"])
+                self.assertGreater(pack["entryCount"], 0)
+
+                review = json.loads(
+                    (root / ("%s.review.json" % pack_id)).read_text(
+                        encoding="utf-8"
+                    )
+                )
+                items = snapshot.public_items(pack_id)
+                self.assertEqual(review["packId"], pack_id)
+                self.assertEqual(review["packVersion"], pack["version"])
+                self.assertEqual(len(review["decisions"]), len(items))
+                self.assertTrue(
+                    all(
+                        decision["decision"] == "approved"
+                        for decision in review["decisions"]
+                    )
+                )
+                self.assertEqual(
+                    {
+                        decision["id"]: decision["contentSha256"]
+                        for decision in review["decisions"]
+                    },
+                    {
+                        item["id"]: entry_content_sha256(
+                            {
+                                key: value
+                                for key, value in item.items()
+                                if key
+                                not in {
+                                    "packId",
+                                    "packName",
+                                    "packVersion",
+                                    "layer",
+                                    "source",
+                                }
+                            }
+                        )
+                        for item in items
+                    },
+                )
+        self.assertEqual(
+            packs["yangqi-tech-writing-base"]["source"]["commit"],
+            "d3640165569071251248a5fafb2def6ef2fe2cf4",
+        )
+        self.assertEqual(
+            packs["technical-document-style"]["source"]["commit"],
+            "d3640165569071251248a5fafb2def6ef2fe2cf4",
+        )
+        self.assertEqual(
+            packs["official-document-style"]["source"]["commit"],
+            "",
+        )
+        self.assertEqual(
+            packs["cybersecurity-terminology"]["source"]["commit"],
+            "",
         )
 
     @unittest.skipUnless(HAS_FASTAPI, "FastAPI dependency is not installed")

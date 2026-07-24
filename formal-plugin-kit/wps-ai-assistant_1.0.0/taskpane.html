@@ -134,6 +134,18 @@
             </label>
           </div>
 
+          <label id="writing-policy-scene-block" class="field compact-policy-field" for="writing-policy-scene">
+            <span>写作规范</span>
+            <select id="writing-policy-scene">
+              <option value="auto">自动匹配</option>
+              <option value="yangqi">G企技术材料</option>
+              <option value="cybersecurity">网络安全技术材料</option>
+              <option value="official">党政公文</option>
+              <option value="disabled">不使用写作规范</option>
+            </select>
+            <small>自动匹配无法可靠判断时，仅使用 G企技术写作基础规范。</small>
+          </label>
+
           <label id="instruction-block" class="field">
             <span id="rewrite-prompt-label">编写要求</span>
             <div id="prompt-fragment-card" class="prompt-fragment-card" hidden>
@@ -185,6 +197,18 @@
             <details id="writing-policy-usage-details" class="writing-policy-usage-details" hidden>
               <summary>查看命中明细</summary>
               <ul id="writing-policy-usage-list" class="writing-policy-usage-list"></ul>
+            </details>
+            <p id="writing-policy-audit-summary" class="writing-policy-audit-summary"></p>
+            <details id="writing-policy-audit-details" class="writing-policy-audit-details" hidden>
+              <summary>查看检查详情</summary>
+              <section id="writing-policy-needs-review" class="writing-policy-audit-group" hidden>
+                <h3>需要核对</h3>
+                <ul id="writing-policy-needs-review-list"></ul>
+              </section>
+              <section id="writing-policy-expression-suggestions" class="writing-policy-audit-group" hidden>
+                <h3>表达建议</h3>
+                <ul id="writing-policy-expression-suggestions-list"></ul>
+              </section>
             </details>
           </section>
           <div id="result-output" class="markdown-output">等待运行。</div>

@@ -39,6 +39,7 @@ class WritingPolicyError(Exception):
 class WritingPolicyMatchResult:
     prompt_block: str
     matched_item_ids: Tuple[str, ...]
+    _audit_terms: Tuple[Dict[str, object], ...] = field(repr=False)
     _usage: Dict[str, object] = field(repr=False)
     _diagnostic: Dict[str, object] = field(repr=False)
 
@@ -48,9 +49,15 @@ class WritingPolicyMatchResult:
         usage: Dict[str, object],
         matched_item_ids: Tuple[str, ...],
         diagnostic: Optional[Dict[str, object]] = None,
+        audit_terms: Iterable[Mapping[str, object]] = (),
     ):
         object.__setattr__(self, "prompt_block", prompt_block)
         object.__setattr__(self, "matched_item_ids", tuple(matched_item_ids))
+        object.__setattr__(
+            self,
+            "_audit_terms",
+            tuple(deepcopy(dict(item)) for item in audit_terms),
+        )
         object.__setattr__(self, "_usage", deepcopy(usage))
         object.__setattr__(self, "_diagnostic", deepcopy(diagnostic or {}))
 
@@ -61,6 +68,10 @@ class WritingPolicyMatchResult:
     @property
     def diagnostic(self) -> Dict[str, object]:
         return deepcopy(self._diagnostic)
+
+    @property
+    def audit_terms(self) -> Tuple[Dict[str, object], ...]:
+        return tuple(deepcopy(item) for item in self._audit_terms)
 
     def diagnostic_patch(self) -> Dict[str, object]:
         return deepcopy(self._diagnostic)
@@ -78,6 +89,7 @@ def public_usage(
     styles: int,
     truncated: int,
     matched_items: Iterable[Mapping[str, object]],
+    anti_templates: int = 0,
     degraded: bool = False,
     degraded_reason: str = "",
 ) -> Dict[str, object]:
@@ -99,6 +111,7 @@ def public_usage(
         "degradedReason": degraded_reason,
         "termMatchCount": terms,
         "styleRuleCount": styles,
+        "antiTemplateRuleCount": anti_templates,
         "truncatedCount": truncated,
         "matchedItems": public_items,
     }

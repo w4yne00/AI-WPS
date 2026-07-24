@@ -1,0 +1,943 @@
+{
+  "schemaVersion": 1,
+  "packId": "cybersecurity-terminology",
+  "version": "1.0.0",
+  "name": "网络安全术语",
+  "sceneIds": [
+    "cybersecurity"
+  ],
+  "source": {
+    "name": "GB/T 25069-2022 信息安全技术 术语及相关现行标准",
+    "version": "GB/T 25069-2022",
+    "commit": "0000000000000000000000000000000000000000",
+    "license": "国家标准引用；定义为面向产品的原创简释"
+  },
+  "review": {
+    "reviewedAt": "2026-07-25",
+    "reviewedBy": "Wayne",
+    "manifest": "cybersecurity-terminology.review.json"
+  },
+  "entries": [
+    {
+      "id": "term.cyber.001",
+      "type": "term",
+      "category": "基础概念",
+      "preferredText": "网络安全",
+      "aliases": [
+        "网络空间安全"
+      ],
+      "forbiddenVariants": [
+        "网安安全"
+      ],
+      "definition": "通过管理和技术措施保护网络及其数据、服务和运行活动的安全状态。",
+      "contextKeywords": [
+        "网络",
+        "系统",
+        "安全"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.002",
+      "type": "term",
+      "category": "基础概念",
+      "preferredText": "信息安全",
+      "aliases": [],
+      "forbiddenVariants": [
+        "信息安保"
+      ],
+      "definition": "保护信息的保密性、完整性和可用性，并按需要保持其他安全属性。",
+      "contextKeywords": [
+        "信息",
+        "数据",
+        "安全"
+      ],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.003",
+      "type": "term",
+      "category": "安全属性",
+      "preferredText": "保密性",
+      "aliases": [
+        "机密性"
+      ],
+      "forbiddenVariants": [
+        "保秘性"
+      ],
+      "definition": "信息不向未授权个人、实体或过程泄露或提供的属性。",
+      "contextKeywords": [
+        "未授权",
+        "泄露",
+        "访问"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.004",
+      "type": "term",
+      "category": "安全属性",
+      "preferredText": "完整性",
+      "aliases": [],
+      "forbiddenVariants": [
+        "完整型"
+      ],
+      "definition": "信息、系统或资产保持准确、完备且未被未授权改变的属性。",
+      "contextKeywords": [
+        "篡改",
+        "校验",
+        "数据"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.005",
+      "type": "term",
+      "category": "安全属性",
+      "preferredText": "可用性",
+      "aliases": [],
+      "forbiddenVariants": [
+        "可使用性"
+      ],
+      "definition": "经授权实体需要时能够访问和使用信息、服务或资源的属性。",
+      "contextKeywords": [
+        "服务",
+        "访问",
+        "连续"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.006",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "身份鉴别",
+      "aliases": [
+        "身份认证"
+      ],
+      "forbiddenVariants": [
+        "身份验证别"
+      ],
+      "definition": "确认实体所声称身份是否真实的过程。",
+      "contextKeywords": [
+        "用户",
+        "登录",
+        "凭据"
+      ],
+      "priority": 90,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022",
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.007",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "访问控制",
+      "aliases": [
+        "存取控制"
+      ],
+      "forbiddenVariants": [
+        "访问管控控制"
+      ],
+      "definition": "依据既定策略限制主体访问客体及执行操作的机制。",
+      "contextKeywords": [
+        "权限",
+        "主体",
+        "资源"
+      ],
+      "priority": 90,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022",
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.008",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "最小权限",
+      "aliases": [
+        "最小特权"
+      ],
+      "forbiddenVariants": [
+        "最低权限原则"
+      ],
+      "definition": "仅授予完成既定任务所必需权限的安全原则。",
+      "contextKeywords": [
+        "授权",
+        "账户",
+        "权限"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.009",
+      "type": "term",
+      "category": "监测审计",
+      "preferredText": "安全审计",
+      "aliases": [
+        "信息安全审计"
+      ],
+      "forbiddenVariants": [
+        "安全审核计"
+      ],
+      "definition": "对安全相关活动和记录进行检查、分析并形成可追溯证据的过程。",
+      "contextKeywords": [
+        "日志",
+        "记录",
+        "追溯"
+      ],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022",
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.010",
+      "type": "term",
+      "category": "恶意活动",
+      "preferredText": "恶意代码",
+      "aliases": [
+        "恶意软件"
+      ],
+      "forbiddenVariants": [
+        "病毒代码"
+      ],
+      "definition": "为实施未授权或有害行为而编写或利用的程序代码。",
+      "contextKeywords": [
+        "病毒",
+        "木马",
+        "程序"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.011",
+      "type": "term",
+      "category": "风险管理",
+      "preferredText": "脆弱性",
+      "aliases": [
+        "漏洞",
+        "弱点"
+      ],
+      "forbiddenVariants": [
+        "脆弱点漏洞"
+      ],
+      "definition": "可能被威胁利用并造成不利影响的资产、控制或过程弱点。",
+      "contextKeywords": [
+        "扫描",
+        "修复",
+        "威胁"
+      ],
+      "priority": 90,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.012",
+      "type": "term",
+      "category": "风险管理",
+      "preferredText": "威胁",
+      "aliases": [
+        "安全威胁"
+      ],
+      "forbiddenVariants": [
+        "威胁源事件"
+      ],
+      "definition": "可能利用脆弱性并对资产或组织造成不利影响的潜在原因。",
+      "contextKeywords": [
+        "攻击",
+        "风险",
+        "资产"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.013",
+      "type": "term",
+      "category": "风险管理",
+      "preferredText": "信息安全风险",
+      "aliases": [
+        "安全风险"
+      ],
+      "forbiddenVariants": [
+        "风险隐患值"
+      ],
+      "definition": "威胁利用脆弱性造成损害时，其发生条件与后果的综合表征。",
+      "contextKeywords": [
+        "可能性",
+        "影响",
+        "评估"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022",
+        "GB/T 20984-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.014",
+      "type": "term",
+      "category": "事件响应",
+      "preferredText": "网络安全事件",
+      "aliases": [
+        "信息安全事件"
+      ],
+      "forbiddenVariants": [
+        "网络事故事件"
+      ],
+      "definition": "对网络、系统、数据或业务安全产生或可能产生不利影响的事件。",
+      "contextKeywords": [
+        "告警",
+        "处置",
+        "影响"
+      ],
+      "priority": 90,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.015",
+      "type": "term",
+      "category": "事件响应",
+      "preferredText": "应急响应",
+      "aliases": [
+        "安全应急响应"
+      ],
+      "forbiddenVariants": [
+        "紧急响应处置"
+      ],
+      "definition": "针对安全事件开展准备、发现、分析、遏制、恢复和复盘的活动。",
+      "contextKeywords": [
+        "事件",
+        "预案",
+        "处置"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.016",
+      "type": "term",
+      "category": "边界防护",
+      "preferredText": "入侵检测",
+      "aliases": [
+        "入侵检测系统"
+      ],
+      "forbiddenVariants": [
+        "侵入检测"
+      ],
+      "definition": "监视并分析活动以识别潜在入侵行为的安全能力。",
+      "contextKeywords": [
+        "告警",
+        "流量",
+        "攻击"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.017",
+      "type": "term",
+      "category": "边界防护",
+      "preferredText": "入侵防御",
+      "aliases": [
+        "入侵防御系统"
+      ],
+      "forbiddenVariants": [
+        "入侵防护御"
+      ],
+      "definition": "发现入侵活动后采取阻断或限制措施的安全能力。",
+      "contextKeywords": [
+        "阻断",
+        "攻击",
+        "流量"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.018",
+      "type": "term",
+      "category": "边界防护",
+      "preferredText": "防火墙",
+      "aliases": [
+        "网络防火墙"
+      ],
+      "forbiddenVariants": [
+        "防火强"
+      ],
+      "definition": "依据安全策略控制不同网络区域之间通信的系统或组件。",
+      "contextKeywords": [
+        "边界",
+        "策略",
+        "流量"
+      ],
+      "priority": 80,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.019",
+      "type": "term",
+      "category": "恢复保障",
+      "preferredText": "数据备份",
+      "aliases": [
+        "备份"
+      ],
+      "forbiddenVariants": [
+        "数据备分"
+      ],
+      "definition": "为恢复需要而复制并保存数据副本的活动。",
+      "contextKeywords": [
+        "恢复",
+        "副本",
+        "存储"
+      ],
+      "priority": 80,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.020",
+      "type": "term",
+      "category": "恢复保障",
+      "preferredText": "灾难恢复",
+      "aliases": [
+        "灾备恢复"
+      ],
+      "forbiddenVariants": [
+        "容灾恢复备份"
+      ],
+      "definition": "灾难发生后恢复信息系统、数据和业务能力的过程。",
+      "contextKeywords": [
+        "灾备",
+        "恢复",
+        "中断"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.021",
+      "type": "term",
+      "category": "恢复保障",
+      "preferredText": "业务连续性",
+      "aliases": [
+        "业务持续性"
+      ],
+      "forbiddenVariants": [
+        "业务连续保障性"
+      ],
+      "definition": "组织在中断期间按预定水平持续提供产品或服务的能力。",
+      "contextKeywords": [
+        "中断",
+        "恢复",
+        "服务"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.022",
+      "type": "term",
+      "category": "密码应用",
+      "preferredText": "密码技术",
+      "aliases": [
+        "密码学技术"
+      ],
+      "forbiddenVariants": [
+        "加密密码技术"
+      ],
+      "definition": "利用密码算法和协议实现保密、鉴别、完整性等安全目标的技术。",
+      "contextKeywords": [
+        "算法",
+        "密钥",
+        "加密"
+      ],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.023",
+      "type": "term",
+      "category": "密码应用",
+      "preferredText": "加密",
+      "aliases": [
+        "数据加密"
+      ],
+      "forbiddenVariants": [
+        "编码加密化"
+      ],
+      "definition": "使用密码算法将明文转换为密文的过程。",
+      "contextKeywords": [
+        "明文",
+        "密文",
+        "算法"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.024",
+      "type": "term",
+      "category": "密码应用",
+      "preferredText": "解密",
+      "aliases": [
+        "数据解密"
+      ],
+      "forbiddenVariants": [
+        "反加密"
+      ],
+      "definition": "使用密码算法将密文恢复为明文的过程。",
+      "contextKeywords": [
+        "密文",
+        "明文",
+        "密钥"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.025",
+      "type": "term",
+      "category": "密码应用",
+      "preferredText": "密钥",
+      "aliases": [
+        "密码密钥"
+      ],
+      "forbiddenVariants": [
+        "秘钥"
+      ],
+      "definition": "控制密码运算结果或过程的参数。",
+      "contextKeywords": [
+        "算法",
+        "加密",
+        "签名"
+      ],
+      "priority": 94,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.026",
+      "type": "term",
+      "category": "密码应用",
+      "preferredText": "数字签名",
+      "aliases": [
+        "电子签名值"
+      ],
+      "forbiddenVariants": [
+        "数字签字"
+      ],
+      "definition": "使用密码变换生成、用于验证数据来源和完整性的签名数据。",
+      "contextKeywords": [
+        "验签",
+        "证书",
+        "完整性"
+      ],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.027",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "认证",
+      "aliases": [
+        "真实性确认"
+      ],
+      "forbiddenVariants": [
+        "鉴权认证化"
+      ],
+      "definition": "对实体身份或数据来源等声明进行确认的过程。",
+      "contextKeywords": [
+        "身份",
+        "证书",
+        "声明"
+      ],
+      "priority": 80,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.028",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "授权",
+      "aliases": [
+        "权限授予"
+      ],
+      "forbiddenVariants": [
+        "受权"
+      ],
+      "definition": "向主体授予访问资源或执行操作权限的过程。",
+      "contextKeywords": [
+        "权限",
+        "角色",
+        "访问"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.029",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "零信任",
+      "aliases": [
+        "零信任架构"
+      ],
+      "forbiddenVariants": [
+        "零可信"
+      ],
+      "definition": "不因网络位置默认信任访问主体，并持续进行验证和授权的安全理念。",
+      "contextKeywords": [
+        "持续验证",
+        "访问",
+        "身份"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.030",
+      "type": "term",
+      "category": "身份与访问",
+      "preferredText": "多因素认证",
+      "aliases": [
+        "多因子认证"
+      ],
+      "forbiddenVariants": [
+        "双重密码认证"
+      ],
+      "definition": "组合两类或以上不同因素验证主体身份的认证方式。",
+      "contextKeywords": [
+        "口令",
+        "令牌",
+        "生物特征"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.031",
+      "type": "term",
+      "category": "数据安全",
+      "preferredText": "个人信息",
+      "aliases": [
+        "个人数据"
+      ],
+      "forbiddenVariants": [
+        "私人信息数据"
+      ],
+      "definition": "以电子或其他方式记录、与已识别或可识别自然人有关的信息。",
+      "contextKeywords": [
+        "自然人",
+        "识别",
+        "处理"
+      ],
+      "priority": 94,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 35273-2020",
+        "中华人民共和国个人信息保护法"
+      ]
+    },
+    {
+      "id": "term.cyber.032",
+      "type": "term",
+      "category": "数据安全",
+      "preferredText": "敏感个人信息",
+      "aliases": [
+        "敏感个人数据"
+      ],
+      "forbiddenVariants": [
+        "个人敏感信息数据"
+      ],
+      "definition": "一旦泄露或被非法使用，容易危害自然人人格尊严或人身、财产安全的个人信息。",
+      "contextKeywords": [
+        "生物识别",
+        "金融账户",
+        "行踪轨迹"
+      ],
+      "priority": 96,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "中华人民共和国个人信息保护法:第二十八条"
+      ]
+    },
+    {
+      "id": "term.cyber.033",
+      "type": "term",
+      "category": "数据安全",
+      "preferredText": "数据脱敏",
+      "aliases": [
+        "脱敏处理"
+      ],
+      "forbiddenVariants": [
+        "数据去敏"
+      ],
+      "definition": "通过变换或遮蔽降低数据直接暴露敏感内容风险的处理。",
+      "contextKeywords": [
+        "遮蔽",
+        "敏感",
+        "展示"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.034",
+      "type": "term",
+      "category": "数据安全",
+      "preferredText": "数据泄露",
+      "aliases": [
+        "信息泄露"
+      ],
+      "forbiddenVariants": [
+        "数据漏泄"
+      ],
+      "definition": "数据被未授权披露、传输、获取或公开的安全事件。",
+      "contextKeywords": [
+        "未授权",
+        "外泄",
+        "披露"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.035",
+      "type": "term",
+      "category": "供应链",
+      "preferredText": "供应链安全",
+      "aliases": [
+        "网络安全供应链安全"
+      ],
+      "forbiddenVariants": [
+        "供应安全链"
+      ],
+      "definition": "对产品和服务从设计、采购、交付到运维各环节相关安全风险的管理。",
+      "contextKeywords": [
+        "供应商",
+        "采购",
+        "组件"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 25069-2022"
+      ]
+    },
+    {
+      "id": "term.cyber.036",
+      "type": "term",
+      "category": "等级保护",
+      "preferredText": "网络安全等级保护",
+      "aliases": [
+        "等级保护",
+        "等保"
+      ],
+      "forbiddenVariants": [
+        "信息安全等级保护制度"
+      ],
+      "definition": "按网络重要程度和受破坏后的影响实施分级保护、监督和管理的制度安排。",
+      "contextKeywords": [
+        "定级",
+        "备案",
+        "测评"
+      ],
+      "priority": 96,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.037",
+      "type": "term",
+      "category": "等级保护",
+      "preferredText": "安全区域边界",
+      "aliases": [
+        "区域边界安全"
+      ],
+      "forbiddenVariants": [
+        "安全边界区域"
+      ],
+      "definition": "等级保护安全通用要求中用于约束区域间通信和边界防护的安全层面。",
+      "contextKeywords": [
+        "边界",
+        "通信",
+        "访问控制"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.038",
+      "type": "term",
+      "category": "等级保护",
+      "preferredText": "安全计算环境",
+      "aliases": [
+        "计算环境安全"
+      ],
+      "forbiddenVariants": [
+        "安全运行计算环境"
+      ],
+      "definition": "等级保护安全通用要求中覆盖主体、客体和计算资源保护的安全层面。",
+      "contextKeywords": [
+        "主机",
+        "应用",
+        "数据"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.039",
+      "type": "term",
+      "category": "等级保护",
+      "preferredText": "安全管理中心",
+      "aliases": [
+        "安全管理平台"
+      ],
+      "forbiddenVariants": [
+        "管理安全中心"
+      ],
+      "definition": "等级保护安全通用要求中承担系统管理、审计管理和集中安全管理的安全层面。",
+      "contextKeywords": [
+        "集中管理",
+        "审计",
+        "系统管理"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "GB/T 22239-2019"
+      ]
+    },
+    {
+      "id": "term.cyber.040",
+      "type": "term",
+      "category": "关键信息基础设施",
+      "preferredText": "关键信息基础设施",
+      "aliases": [
+        "关基设施"
+      ],
+      "forbiddenVariants": [
+        "关键基础信息设施"
+      ],
+      "definition": "一旦遭到破坏、丧失功能或数据泄露，可能严重危害国家安全、国计民生或公共利益的重要网络设施和信息系统。",
+      "contextKeywords": [
+        "运营者",
+        "重要网络",
+        "安全保护"
+      ],
+      "priority": 98,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "关键信息基础设施安全保护条例:第二条"
+      ]
+    }
+  ]
+}

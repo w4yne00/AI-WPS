@@ -497,9 +497,15 @@ class WritingPolicyHttpTests(unittest.TestCase):
         )
 
         self.assertEqual(packs.status_code, 200)
-        self.assertEqual(packs.json()["data"]["count"], 1)
+        pack_data = packs.json()["data"]
+        self.assertEqual(pack_data["count"], 4)
+        base_pack = next(
+            pack
+            for pack in pack_data["packs"]
+            if pack["packId"] == "yangqi-tech-writing-base"
+        )
         self.assertEqual(
-            packs.json()["data"]["packs"][0]["source"]["version"],
+            base_pack["source"]["version"],
             "v1.1.0",
         )
         self.assertEqual(items.status_code, 200)
@@ -1038,9 +1044,15 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
         )
 
         self.assertEqual(packs["status"], 200)
-        self.assertEqual(packs["body"]["data"]["count"], 1)
+        pack_data = packs["body"]["data"]
+        self.assertEqual(pack_data["count"], 4)
+        base_pack = next(
+            pack
+            for pack in pack_data["packs"]
+            if pack["packId"] == "yangqi-tech-writing-base"
+        )
         self.assertEqual(
-            packs["body"]["data"]["packs"][0]["source"]["license"],
+            base_pack["source"]["license"],
             "MIT",
         )
         self.assertEqual(items["status"], 200)

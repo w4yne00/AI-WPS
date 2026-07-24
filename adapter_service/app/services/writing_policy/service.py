@@ -7,9 +7,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
+from .audit import audit_writing_policy_result
 from .matcher import build_match_result
 from .models import WritingPolicyError, WritingPolicyMatchResult, public_usage
 from .packs import WritingPolicyPackSnapshot, load_pack_snapshot
+from .scenes import SCENE_LABELS, SCENE_PACK_IDS, resolve_scene
 from .store import WritingPolicyStore
 
 
@@ -137,35 +139,49 @@ class WritingPolicyService:
     ) -> WritingPolicyMatchResult:
         started_at = _safe_clock_value(self._clock)
         try:
-            if scene == "disabled":
-                terms, styles = [], []
+            resolution = resolve_scene(scene, source_parts)
+            if resolution.resolved_scene == "disabled":
+                usage = public_usage(
+                    applied=False,
+                    terms=0,
+                    styles=0,
+                    truncated=0,
+                    matched_items=[],
+                )
+                usage.update(self._scene_usage(resolution, ()))
+                matched = WritingPolicyMatchResult("", usage, ())
+                selected_packs = ()
             else:
                 terms, styles = self.store.enabled_items(task_scope)
-            preset = None
-            if task_scope == "word.smart_write" and scene in ("auto", "yangqi"):
-                preset = self._base_pack()
-                if preset is not None:
+                selected_packs = self._selected_packs(
+                    task_scope,
+                    resolution,
+                )
+                for preset in reversed(selected_packs):
+                    pack_scene = (
+                        "yangqi"
+                        if preset["packId"] == "yangqi-tech-writing-base"
+                        else resolution.resolved_scene
+                    )
                     preset_terms, preset_styles = self.pack_snapshot.matcher_items(
                         preset["packId"],
                         "smart_write",
-                        "yangqi",
+                        pack_scene,
                     )
                     terms = preset_terms + list(terms)
                     styles = preset_styles + list(styles)
-            matched = build_match_result(terms, styles, task_scope, source_parts)
+                matched = build_match_result(
+                    terms,
+                    styles,
+                    task_scope,
+                    source_parts,
+                )
         except Exception as error:
             return self._degraded_result(error, started_at)
 
         elapsed_ms = _elapsed_ms(started_at, _safe_clock_value(self._clock))
         usage = matched.usage
-        if preset is not None:
-            usage.update(
-                {
-                    "scene": "yangqi",
-                    "presetVersion": preset["version"],
-                    "packName": preset["name"],
-                }
-            )
+        usage.update(self._scene_usage(resolution, selected_packs))
         patch = _diagnostic_patch(
             applied=bool(usage.get("applied", False)),
             degraded=bool(usage.get("degraded", False)),
@@ -182,7 +198,44 @@ class WritingPolicyService:
             usage,
             matched.matched_item_ids,
             patch,
+            audit_terms=matched.audit_terms,
         )
+
+    def audit(
+        self,
+        match_result: WritingPolicyMatchResult,
+        source_text: str,
+        result_text: str,
+    ) -> Dict[str, object]:
+        usage = match_result.usage
+        if not bool(usage.get("applied", False)):
+            return {
+                "enabled": False,
+                "passed": True,
+                "degraded": False,
+                "degradedReason": "",
+                "summary": "本次未使用写作规范检查",
+                "needsReview": [],
+                "expressionSuggestions": [],
+            }
+        try:
+            audit = audit_writing_policy_result(
+                source_text,
+                result_text,
+                match_result.audit_terms,
+            )
+        except Exception:
+            return {
+                "enabled": True,
+                "passed": False,
+                "degraded": True,
+                "degradedReason": "写作规范检查暂时不可用。",
+                "summary": "写作规范检查暂时不可用，结果仍可正常预览、复制或写回。",
+                "needsReview": [],
+                "expressionSuggestions": [],
+            }
+        audit["enabled"] = True
+        return audit
 
     def list_packs(self):
         return self.pack_snapshot.public_packs()
@@ -190,11 +243,44 @@ class WritingPolicyService:
     def list_preset_items(self, pack_id: str):
         return self.pack_snapshot.public_items(pack_id)
 
-    def _base_pack(self):
-        for pack in self.pack_snapshot.public_packs():
-            if pack["packId"] == "yangqi-tech-writing-base":
-                return pack
-        return None
+    def _selected_packs(self, task_scope: str, resolution):
+        if task_scope != "word.smart_write":
+            return ()
+        packs_by_id = {
+            pack["packId"]: pack
+            for pack in self.pack_snapshot.public_packs()
+        }
+        pack_ids = SCENE_PACK_IDS.get(resolution.resolved_scene, ())
+        if resolution.auto_fallback:
+            pack_ids = ("yangqi-tech-writing-base",)
+        return tuple(
+            packs_by_id[pack_id]
+            for pack_id in pack_ids
+            if pack_id in packs_by_id
+        )
+
+    def _scene_usage(self, resolution, selected_packs):
+        result = {
+            "requestedScene": resolution.requested_scene,
+            "scene": resolution.resolved_scene,
+            "sceneLabel": SCENE_LABELS.get(
+                resolution.resolved_scene,
+                SCENE_LABELS["yangqi"],
+            ),
+            "autoFallback": bool(resolution.auto_fallback),
+            "packNames": [pack["name"] for pack in selected_packs],
+            "presetVersions": [
+                {
+                    "packId": pack["packId"],
+                    "version": pack["version"],
+                }
+                for pack in selected_packs
+            ],
+        }
+        if len(selected_packs) == 1:
+            result["packName"] = selected_packs[0]["name"]
+            result["presetVersion"] = selected_packs[0]["version"]
+        return result
 
     def diagnostics(self) -> Dict[str, object]:
         with self._diagnostic_lock:

@@ -105,10 +105,28 @@ class FakeWritingPolicyService:
                 "writingPolicyItemIds": [] if degraded else ["t1"],
             },
         )
+        self.audit_calls = []
+        self.audit_result = {
+            "enabled": not degraded,
+            "passed": not degraded,
+            "degraded": False,
+            "degradedReason": "",
+            "summary": (
+                "已完成写作规范检查"
+                if not degraded
+                else "本次未使用写作规范检查"
+            ),
+            "needsReview": [],
+            "expressionSuggestions": [],
+        }
 
-    def prepare(self, task_scope, source_parts):
-        self.calls.append((task_scope, list(source_parts)))
+    def prepare(self, task_scope, source_parts, scene="auto"):
+        self.calls.append((task_scope, list(source_parts), scene))
         return self.result
+
+    def audit(self, match_result, source_text, result_text):
+        self.audit_calls.append((match_result, source_text, result_text))
+        return dict(self.audit_result)
 
 
 class RecordingSmartWriteProvider:
@@ -181,12 +199,18 @@ class LegacySmartWriteProvider:
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for smart write tests")
 class WordRewriterWritingPolicyTests(unittest.TestCase):
-    def _request(self, plain_text="原始正文。", user_instruction="突出风险。"):
+    def _request(
+        self,
+        plain_text="原始正文。",
+        user_instruction="突出风险。",
+        writing_policy_scene="auto",
+    ):
         return parse_word_request(
             {
                 "documentId": "smart-write.docx",
                 "scene": "word",
                 "selectionMode": "selection",
+                "writingPolicyScene": writing_policy_scene,
                 "content": {"plainText": plain_text, "paragraphs": [], "headings": []},
                 "options": {
                     "rewriteAction": "rewrite",
@@ -244,7 +268,7 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
 
         self.assertEqual(
             writing_policy.calls,
-            [("word.smart_write", ["原始正文。", "突出风险。"])],
+            [("word.smart_write", ["原始正文。", "突出风险。"], "auto")],
         )
         self.assertEqual(provider.calls[0]["writingPolicyBlock"], writing_policy.result.prompt_block)
         self.assertEqual(provider.calls[0]["text"], "原始正文。")
@@ -252,7 +276,38 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         self.assertEqual(provider.calls[0]["userPrompt"], "突出风险。")
         self.assertEqual(provider.calls[0]["selectionMode"], "selection")
         self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
+        self.assertEqual(result["writingPolicyAudit"], writing_policy.audit_result)
+        self.assertEqual(len(writing_policy.audit_calls), 1)
+        self.assertEqual(
+            writing_policy.audit_calls[0][1:],
+            ("原始正文。", "智能编写后的正文。"),
+        )
         self.assertEqual(result["diffHints"], ["Text content changed", "Expanded content length"])
+
+    def test_smart_write_passes_explicit_writing_policy_scene_in_one_provider_call(self):
+        provider = RecordingSmartWriteProvider()
+        writing_policy = FakeWritingPolicyService()
+
+        result = WordRewriter(
+            provider,
+            writing_policy_service=writing_policy,
+        ).smart_write(
+            self._request(writing_policy_scene="cybersecurity"),
+            "trace-smart-write-cybersecurity",
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(
+            writing_policy.calls,
+            [
+                (
+                    "word.smart_write",
+                    ["原始正文。", "突出风险。"],
+                    "cybersecurity",
+                )
+            ],
+        )
+        self.assertEqual(result["writingPolicyAudit"]["summary"], "已完成写作规范检查")
 
     def test_smart_write_resolves_default_writing_policy_only_when_task_runs(self):
         provider = RecordingSmartWriteProvider()

@@ -423,7 +423,7 @@ class PptSlideAssistantResponseData(BaseModel):
 
 class WritingPolicyUsageItem(BaseModel):
     id: str
-    type: Literal["term", "style"]
+    type: Literal["term", "style", "anti_template"]
     name: str
 
 
@@ -431,16 +431,33 @@ class WritingPolicyUsage(BaseModel):
     applied: bool
     degraded: bool = False
     degraded_reason: str = Field(default="", alias="degradedReason")
+    requested_scene: Optional[str] = Field(default=None, alias="requestedScene")
     scene: Optional[str] = None
+    scene_label: str = Field(default="", alias="sceneLabel")
+    auto_fallback: bool = Field(default=False, alias="autoFallback")
     preset_version: Optional[str] = Field(default=None, alias="presetVersion")
     pack_name: Optional[str] = Field(default=None, alias="packName")
+    pack_names: List[str] = Field(default_factory=list, alias="packNames")
+    preset_versions: List[Dict[str, str]] = Field(
+        default_factory=list,
+        alias="presetVersions",
+    )
     term_match_count: int = Field(default=0, alias="termMatchCount")
     style_rule_count: int = Field(default=0, alias="styleRuleCount")
+    anti_template_rule_count: int = Field(
+        default=0,
+        alias="antiTemplateRuleCount",
+    )
     truncated_count: int = Field(default=0, alias="truncatedCount")
     matched_items: List[WritingPolicyUsageItem] = Field(default_factory=list, alias="matchedItems")
 
 
 class WritingPolicyAudit(BaseModel):
+    enabled: bool = True
+    passed: bool = False
+    degraded: bool = False
+    degraded_reason: str = Field(default="", alias="degradedReason")
+    summary: str = ""
     needs_review: List[Dict[str, Any]] = Field(default_factory=list, alias="needsReview")
     expression_suggestions: List[Dict[str, Any]] = Field(
         default_factory=list,

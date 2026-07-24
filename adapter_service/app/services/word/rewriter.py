@@ -38,9 +38,11 @@ class WordRewriter:
     def smart_write(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         source_text = self._extract_source_text(request)
         action = request.options.rewrite_action or "rewrite"
-        writing_policy = self._get_writing_policy_service().prepare(
+        writing_policy_service = self._get_writing_policy_service()
+        writing_policy = writing_policy_service.prepare(
             "word.smart_write",
             [source_text, request.options.user_instruction],
+            scene=request.writing_policy_scene,
         )
         try:
             provider_result = self.provider_client.smart_write(
@@ -57,6 +59,11 @@ class WordRewriter:
         finally:
             merge_provider_debug(trace_id, writing_policy.diagnostic_patch())
         rewritten_text = provider_result["rewrittenText"]
+        writing_policy_audit = writing_policy_service.audit(
+            writing_policy,
+            source_text,
+            rewritten_text,
+        )
         return {
             "originalText": source_text,
             "rewrittenText": rewritten_text,
@@ -64,10 +71,7 @@ class WordRewriter:
             "diffHints": self._build_diff_hints(source_text, rewritten_text),
             "provider": provider_result.get("provider", "mock"),
             "writingPolicyUsage": writing_policy.usage,
-            "writingPolicyAudit": {
-                "needsReview": [],
-                "expressionSuggestions": [],
-            },
+            "writingPolicyAudit": writing_policy_audit,
         }
 
     def _get_writing_policy_service(self) -> WritingPolicyService:

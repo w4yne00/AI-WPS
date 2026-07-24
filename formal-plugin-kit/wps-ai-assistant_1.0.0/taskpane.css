@@ -14,6 +14,7 @@
   --color-success: #2f7d5c;
   --color-warning: #a56a13;
   --color-danger: #a44242;
+  --color-warning-text: #8a5a16;
   --radius-control: 6px;
   --radius-panel: 8px;
   --shadow-panel: 0 1px 3px rgba(23, 38, 46, 0.08);
@@ -635,6 +636,50 @@ button[disabled] {
 
 .writing-policy-usage-list li + li {
   margin-top: 3px;
+}
+
+.compact-policy-field small {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.writing-policy-audit-summary {
+  margin: 7px 0 0;
+  color: var(--muted);
+}
+
+.writing-policy-audit-details {
+  margin-top: 6px;
+}
+
+.writing-policy-audit-details > summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.writing-policy-audit-group {
+  margin-top: 8px;
+}
+
+.writing-policy-audit-group h3 {
+  margin: 0;
+  font-size: 13px;
+}
+
+.writing-policy-audit-group ul {
+  margin: 5px 0 0;
+  padding-left: 20px;
+}
+
+#writing-policy-needs-review h3 {
+  color: var(--color-danger);
+}
+
+#writing-policy-expression-suggestions h3 {
+  color: var(--color-warning-text);
 }
 
 #result-output {

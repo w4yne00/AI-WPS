@@ -1,0 +1,18 @@
+{
+  "packId": "official-document-style",
+  "packVersion": "1.0.0",
+  "reviewedAt": "2026-07-25",
+  "reviewedBy": "Wayne",
+  "decisions": [
+    {"id": "rule.official.style.001", "decision": "approved", "note": "用户明确确认本包全部条目通过。", "contentSha256": "3e9780b05c18cbed4c6e2f04462ca93dd3be650cc0300e6c372fae1a103feb22"},
+    {"id": "rule.official.style.002", "decision": "approved", "note": "", "contentSha256": "4b2f4e5c9f33280d940c1fffeeb26cb956797a444630e987272902d40da5f101"},
+    {"id": "rule.official.style.003", "decision": "approved", "note": "", "contentSha256": "2743acbdde48d7fc0ed73194cdadd233ecc60d828be09b885ddf84510ab00682"},
+    {"id": "rule.official.style.004", "decision": "approved", "note": "", "contentSha256": "01181066789e32277527ca8805428ac49342c27cee326e3f1ae31281e2030ac5"},
+    {"id": "rule.official.style.005", "decision": "approved", "note": "", "contentSha256": "5a9a41b351d6a3719648a25f309e7edd30f458d4d8abd9f1e987128ec90d82d4"},
+    {"id": "rule.official.style.006", "decision": "approved", "note": "", "contentSha256": "8f827626cdf8a391e0dbe8174385e5232fc1903033787a9e6feb83bdaf0e3f1e"},
+    {"id": "rule.official.style.007", "decision": "approved", "note": "", "contentSha256": "66a403b27a49dff446f095ef14778934749fb954910f95f2c4fd5793111588db"},
+    {"id": "rule.official.style.008", "decision": "approved", "note": "", "contentSha256": "3e6e942ebe22f9476b4430512d7485f003ed4d713b34645ccfa5f1d26d6a7ce0"},
+    {"id": "rule.official.style.009", "decision": "approved", "note": "", "contentSha256": "8b7ddf9ee78cf167d0a1a0d3d00f4898a76d0f2757a932de4aa5523b9f274ff2"},
+    {"id": "rule.official.style.010", "decision": "approved", "note": "", "contentSha256": "d56c766473070f2a073287ba517f06d295da00fa4973b88125499e651bd1d61d"}
+  ]
+}

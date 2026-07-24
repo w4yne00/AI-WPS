@@ -60,8 +60,19 @@ class EmptyWritingPolicyResult:
 
 
 class FakeWritingPolicyService:
-    def prepare(self, task_scope, source_parts):
+    def prepare(self, task_scope, source_parts, scene="auto"):
         return EmptyWritingPolicyResult()
+
+    def audit(self, _match_result, _source_text, _result_text):
+        return {
+            "enabled": True,
+            "passed": True,
+            "degraded": False,
+            "degradedReason": "",
+            "summary": "已完成写作规范检查",
+            "needsReview": [],
+            "expressionSuggestions": [],
+        }
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for WordDocumentRequest parsing")

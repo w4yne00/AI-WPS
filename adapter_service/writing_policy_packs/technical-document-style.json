@@ -1,0 +1,391 @@
+{
+  "schemaVersion": 1,
+  "packId": "technical-document-style",
+  "version": "1.0.0",
+  "name": "技术文件文体",
+  "sceneIds": [
+    "yangqi",
+    "cybersecurity"
+  ],
+  "source": {
+    "name": "yangqi-tech-writing",
+    "version": "v1.1.0",
+    "commit": "d3640165569071251248a5fafb2def6ef2fe2cf4",
+    "license": "MIT"
+  },
+  "review": {
+    "reviewedAt": "2026-07-25",
+    "reviewedBy": "Wayne",
+    "manifest": "technical-document-style.review.json"
+  },
+  "entries": [
+    {
+      "id": "rule.technical.style.001",
+      "type": "style",
+      "category": "信息组织",
+      "name": "先给结论再展开依据",
+      "ruleText": "段落承担判断或建议时，先写可执行结论，再补充依据、条件和影响，不用铺垫代替结论。",
+      "positiveExample": "建议采用分区部署方案；该方案可隔离故障域，并兼顾现网改造边界。",
+      "negativeExample": "在当前形势下，相关工作具有重要意义，现将有关情况说明如下。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 78,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L97-L101"
+      ]
+    },
+    {
+      "id": "rule.technical.style.002",
+      "type": "style",
+      "category": "信息组织",
+      "name": "区分现状问题目标方案",
+      "ruleText": "同一段落中应明确区分现状、问题、目标和方案，避免把事实判断、原因推测和建议动作混写为一个结论。",
+      "positiveExample": "现状为接口无重试机制；主要风险是瞬时故障导致任务失败；本次目标是补齐幂等重试。",
+      "negativeExample": "接口存在问题，因此需要全面优化并提升整体能力。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "现状",
+        "问题",
+        "目标",
+        "方案"
+      ],
+      "priority": 76,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L97"
+      ]
+    },
+    {
+      "id": "rule.technical.style.003",
+      "type": "style",
+      "category": "可执行性",
+      "name": "写清对象动作条件边界和验证",
+      "ruleText": "描述措施时，应尽量写清实施对象、具体动作、触发条件、适用边界和验证方式，避免只写原则性口号。",
+      "positiveExample": "运维人员在变更窗口内更新访问策略，并通过回归用例验证授权结果。",
+      "negativeExample": "持续强化管理，全面提升系统保障水平。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L98"
+      ]
+    },
+    {
+      "id": "rule.technical.style.004",
+      "type": "style",
+      "category": "责任表达",
+      "name": "明确责任主体和协同关系",
+      "ruleText": "涉及实施、审核、验收或整改时，应明确牵头主体、配合主体及各自动作，不以“相关部门”笼统代替责任分工。",
+      "positiveExample": "信息化部门牵头完成改造，业务部门配合确认流程，安全部门负责复核策略。",
+      "negativeExample": "由相关部门共同推进并做好后续工作。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "负责",
+        "牵头",
+        "配合",
+        "整改"
+      ],
+      "priority": 90,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L57-L63"
+      ]
+    },
+    {
+      "id": "rule.technical.style.005",
+      "type": "style",
+      "category": "指标表达",
+      "name": "量化指标保留口径",
+      "ruleText": "涉及数量、比例、时限或性能指标时，保留原有数值、单位、统计口径和适用条件；信息不足时不得补造目标值。",
+      "positiveExample": "接口响应时间按现有口径控制在 2 秒以内，统计范围不含离线批处理任务。",
+      "negativeExample": "系统性能将提升至行业领先水平。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "指标",
+        "比例",
+        "时限",
+        "性能"
+      ],
+      "priority": 94,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L57-L63"
+      ]
+    },
+    {
+      "id": "rule.technical.style.006",
+      "type": "style",
+      "category": "方案比选",
+      "name": "比选说明维度来源和取舍",
+      "ruleText": "方案比选应明确比较维度、信息来源、约束条件和取舍理由；缺少数据时只给出比选框架，不直接宣布最优方案。",
+      "positiveExample": "从改造成本、兼容性和恢复时间三个维度比较，现有材料仅支持兼容性判断，成本仍待询价。",
+      "negativeExample": "综合来看，方案二无疑是最佳选择。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "比选",
+        "方案一",
+        "方案二",
+        "选型"
+      ],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L99"
+      ]
+    },
+    {
+      "id": "rule.technical.style.007",
+      "type": "style",
+      "category": "风险约束",
+      "name": "风险与约束对应措施",
+      "ruleText": "列示风险时，应说明触发条件、影响范围和对应控制措施；不能确认的原因使用待核实表述，不写成既定事实。",
+      "positiveExample": "若旧终端不支持新协议，可能影响登录；上线前应完成兼容性验证并保留回退方案。",
+      "negativeExample": "系统存在较大风险，必须高度重视。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "风险",
+        "约束",
+        "影响"
+      ],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L97-L99"
+      ]
+    },
+    {
+      "id": "rule.technical.style.008",
+      "type": "style",
+      "category": "验收表达",
+      "name": "验收条件可验证",
+      "ruleText": "验收要求应对应可观察结果、检查方法和通过条件，不使用“效果良好”“满足需要”等无法复核的结论。",
+      "positiveExample": "以 50 个并发请求连续运行 30 分钟，无超时且错误率不高于原定阈值时通过。",
+      "negativeExample": "系统运行稳定、体验良好即可验收。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "验收",
+        "测试",
+        "通过"
+      ],
+      "priority": 88,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L26-L28"
+      ]
+    },
+    {
+      "id": "rule.technical.style.009",
+      "type": "style",
+      "category": "证据状态",
+      "name": "区分已确认和待确认信息",
+      "ruleText": "对影响决策、承诺或验收的内容，应区分已确认事实、材料推断和待确认事项，不把缺少依据的信息写成确定结论。",
+      "positiveExample": "现有日志确认发生 3 次超时；根因尚待结合链路监控进一步核实。",
+      "negativeExample": "经分析，超时均由网络抖动造成。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 92,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L19-L20"
+      ]
+    },
+    {
+      "id": "rule.technical.style.010",
+      "type": "style",
+      "category": "术语一致",
+      "name": "同一对象保持同一称谓",
+      "ruleText": "同一系统、平台、单位或角色在同一材料中使用统一名称；首次出现的简称应有明确对应关系。",
+      "positiveExample": "卫星互联网运营管理平台（以下简称运营平台）由信息化部门维护，后文统一使用“运营平台”。",
+      "negativeExample": "管理平台、业务系统和该平台在后文交替指代同一对象。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 80,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L57-L63"
+      ]
+    },
+    {
+      "id": "rule.technical.style.011",
+      "type": "style",
+      "category": "结构层级",
+      "name": "层级服务于信息关系",
+      "ruleText": "标题、序号和列表只在原文或用户要求存在对应结构时使用，层级应表达并列、包含或先后关系，不为视觉整齐机械拆分。",
+      "positiveExample": "原文已有三项并列措施时，保持同级序号并分别写明动作。",
+      "negativeExample": "把一个完整短段强行拆成背景、意义、路径、保障四个标题。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 74,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L23-L25"
+      ]
+    },
+    {
+      "id": "rule.technical.style.012",
+      "type": "style",
+      "category": "规范强度",
+      "name": "保持规范性词强度",
+      "ruleText": "不得在改写中擅自互换“应”“必须”“不得”“可以”“建议”等规范性词；确需调整时应以用户明确要求为依据。",
+      "positiveExample": "原文“不得外传”在改写后仍保持禁止性要求。",
+      "negativeExample": "把“必须完成”弱化为“建议完成”。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "应",
+        "必须",
+        "不得",
+        "可以",
+        "建议"
+      ],
+      "priority": 98,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L57-L63"
+      ]
+    },
+    {
+      "id": "rule.technical.style.013",
+      "type": "style",
+      "category": "正式语体",
+      "name": "正式但不夸大",
+      "ruleText": "使用准确、克制、可核验的技术表达，避免“全面领先”“彻底解决”“革命性提升”等缺少依据的宣传性判断。",
+      "positiveExample": "本次改造可减少重复配置步骤，具体节省时间以试运行数据为准。",
+      "negativeExample": "本方案将彻底解决所有痛点，实现跨越式提升。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 72,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L98-L101"
+      ]
+    },
+    {
+      "id": "rule.technical.style.014",
+      "type": "style",
+      "category": "正式语体",
+      "name": "保留必要的规范重复",
+      "ruleText": "责任、条件和禁止性要求为避免歧义而需要重复时可以保留，不为追求句式变化删除关键限定或改写固定术语。",
+      "positiveExample": "各阶段分别重申适用的审批条件，确保执行人员无需跨段推断。",
+      "negativeExample": "为避免重复而省略第二项措施中的审批前提。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 70,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L100"
+      ]
+    },
+    {
+      "id": "rule.technical.style.015",
+      "type": "style",
+      "category": "决策支持",
+      "name": "显式列出待决事项",
+      "ruleText": "材料存在信息缺口或需要审批选择时，应把待补材料、待确认责任和待决方案明确列出，不以模糊结论掩盖缺口。",
+      "positiveExample": "待确认事项：许可证数量、割接窗口和回退责任人。",
+      "negativeExample": "其他事项后续结合实际统筹考虑。",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [
+        "待确认",
+        "待决",
+        "审批"
+      ],
+      "priority": 80,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L97"
+      ]
+    }
+  ]
+}

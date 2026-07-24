@@ -2020,14 +2020,25 @@
       applied: Boolean(source.applied),
       degraded: Boolean(source.degraded),
       degradedReason: String(source.degradedReason || ""),
+      requestedScene: normalizeWritingPolicyScene(source.requestedScene),
+      scene: normalizeWritingPolicyScene(source.scene),
+      sceneLabel: String(source.sceneLabel || "").trim(),
+      autoFallback: Boolean(source.autoFallback),
       packName: String(source.packName || "").trim(),
+      packNames: (Array.isArray(source.packNames) ? source.packNames : [])
+        .map(function (item) {
+          return String(item || "").trim();
+        })
+        .filter(Boolean)
+        .slice(0, 4),
       presetVersion: String(source.presetVersion || "").trim(),
       termMatchCount: normalizeWritingPolicyUsageCount(source.termMatchCount),
       styleRuleCount: normalizeWritingPolicyUsageCount(source.styleRuleCount),
+      antiTemplateRuleCount: normalizeWritingPolicyUsageCount(source.antiTemplateRuleCount),
       truncatedCount: normalizeWritingPolicyUsageCount(source.truncatedCount),
       matchedItems: matchedItems.filter(function (item) {
         return item &&
-          (item.type === "term" || item.type === "style") &&
+          (item.type === "term" || item.type === "style" || item.type === "anti_template") &&
           String(item.name || "").trim();
       }).slice(0, 20).map(function (item) {
         return {
@@ -2037,6 +2048,65 @@
         };
       })
     };
+  }
+
+  function normalizeWritingPolicyScene(value) {
+    var scene = String(value || "").trim();
+    return ["auto", "yangqi", "cybersecurity", "official", "disabled"].indexOf(scene) >= 0
+      ? scene
+      : "auto";
+  }
+
+  function writingPolicySceneStorageKey(taskType) {
+    return "ai-wps:writing-policy-scene:" + String(taskType || "word.smart_write");
+  }
+
+  function normalizeWritingPolicyAuditFinding(value) {
+    var source = value && typeof value === "object" ? value : {};
+    return {
+      code: String(source.code || "").slice(0, 80),
+      tier: /^(T1|T2|T3)$/.test(String(source.tier || "")) ? String(source.tier) : "",
+      label: String(source.label || "").trim().slice(0, 80),
+      message: String(source.message || "").trim().slice(0, 240),
+      evidence: String(source.evidence || "").trim().slice(0, 80)
+    };
+  }
+
+  function normalizeWritingPolicyAudit(value) {
+    var source;
+    var needsReview;
+    var expressionSuggestions;
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return null;
+    }
+    source = value;
+    needsReview = Array.isArray(source.needsReview) ? source.needsReview : [];
+    expressionSuggestions = Array.isArray(source.expressionSuggestions)
+      ? source.expressionSuggestions
+      : [];
+    return {
+      enabled: source.enabled !== false,
+      passed: Boolean(source.passed),
+      degraded: Boolean(source.degraded),
+      degradedReason: String(source.degradedReason || "").trim().slice(0, 240),
+      summary: String(source.summary || "").trim().slice(0, 240),
+      needsReview: needsReview.slice(0, 12).map(normalizeWritingPolicyAuditFinding),
+      expressionSuggestions: expressionSuggestions
+        .slice(0, 12)
+        .map(normalizeWritingPolicyAuditFinding)
+    };
+  }
+
+  function writingPolicyAuditFindingText(value) {
+    var finding = normalizeWritingPolicyAuditFinding(value);
+    var text = finding.label || finding.message || "请核对该项内容";
+    if (finding.label && finding.message) {
+      text += "：" + finding.message;
+    }
+    if (finding.evidence) {
+      text += "（" + finding.evidence + "）";
+    }
+    return text;
   }
 
   function writingPolicyUsageSummary(value, taskType) {
@@ -2049,6 +2119,11 @@
       return "写作规范未应用，本次结果仅使用模型工作流生成";
     }
     action = taskType === "word.document_review" ? "已检查" : "已应用";
+    if (usage.sceneLabel) {
+      return "写作规范：" + action + " " + usage.sceneLabel + "（" +
+        usage.termMatchCount + " 条术语、" + usage.styleRuleCount +
+        " 条文体规则、" + usage.antiTemplateRuleCount + " 条去模板化规则）";
+    }
     if (usage.packName && usage.presetVersion) {
       return "写作规范：" + action + " " + usage.packName + " v" +
         usage.presetVersion + "（" +
@@ -2064,7 +2139,10 @@
       return [];
     }
     return usage.matchedItems.map(function (item) {
-      return (item.type === "term" ? "术语" : "文体规则") + "：" + item.name;
+      var label = item.type === "term"
+        ? "术语"
+        : (item.type === "anti_template" ? "去模板化规则" : "文体规则");
+      return label + "：" + item.name;
     });
   }
 
@@ -2283,6 +2361,10 @@
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
     normalizeWritingPolicyUsage: normalizeWritingPolicyUsage,
+    normalizeWritingPolicyScene: normalizeWritingPolicyScene,
+    writingPolicySceneStorageKey: writingPolicySceneStorageKey,
+    normalizeWritingPolicyAudit: normalizeWritingPolicyAudit,
+    writingPolicyAuditFindingText: writingPolicyAuditFindingText,
     writingPolicyUsageSummary: writingPolicyUsageSummary,
     writingPolicyUsageDetails: writingPolicyUsageDetails,
     validateWritingPolicyDraft: validateWritingPolicyDraft,

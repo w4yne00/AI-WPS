@@ -22,6 +22,8 @@ from .service import (
     default_database_path,
     get_writing_policy_service,
 )
+from .scenes import SCENE_LABELS, SCENE_PACK_IDS, SceneResolution, resolve_scene
+from .audit import audit_writing_policy_result
 from .packs import (
     WritingPolicyPack,
     WritingPolicyPackSnapshot,
@@ -50,6 +52,11 @@ __all__ = [
     "normalize_key",
     "public_usage",
     "WritingPolicyService",
+    "SCENE_LABELS",
+    "SCENE_PACK_IDS",
+    "SceneResolution",
+    "resolve_scene",
+    "audit_writing_policy_result",
     "default_database_path",
     "get_writing_policy_service",
     "WritingPolicyPack",

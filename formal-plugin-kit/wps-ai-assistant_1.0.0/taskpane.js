@@ -226,6 +226,7 @@
     writingPolicyImportSequence: 0,
     writingPolicyImportReader: null,
     writingPolicyImportReturnView: "scope",
+    writingPolicyScene: "auto",
     writingPolicyAudit: null,
     currentMode: "smartWrite",
     lastTaskMode: "smartWrite",
@@ -507,6 +508,82 @@
     if (strip) {
       strip.hidden = true;
     }
+    clearWritingPolicyAudit();
+  }
+
+  function clearWritingPolicyAudit() {
+    var summary = byId("writing-policy-audit-summary");
+    var details = byId("writing-policy-audit-details");
+    var needsReview = byId("writing-policy-needs-review");
+    var suggestions = byId("writing-policy-expression-suggestions");
+    var needsReviewList = byId("writing-policy-needs-review-list");
+    var suggestionList = byId("writing-policy-expression-suggestions-list");
+    if (summary) {
+      summary.textContent = "";
+    }
+    if (needsReviewList) {
+      needsReviewList.textContent = "";
+    }
+    if (suggestionList) {
+      suggestionList.textContent = "";
+    }
+    if (needsReview) {
+      needsReview.hidden = true;
+    }
+    if (suggestions) {
+      suggestions.hidden = true;
+    }
+    if (details) {
+      details.hidden = true;
+      details.open = false;
+    }
+  }
+
+  function appendWritingPolicyAuditFindings(list, findings) {
+    findings.forEach(function (finding) {
+      var row = document.createElement("li");
+      row.textContent = helpers.writingPolicyAuditFindingText
+        ? helpers.writingPolicyAuditFindingText(finding)
+        : String(finding && finding.message || "");
+      list.appendChild(row);
+    });
+  }
+
+  function renderWritingPolicyAudit(value) {
+    var strip = byId("writing-policy-usage-strip");
+    var summary = byId("writing-policy-audit-summary");
+    var details = byId("writing-policy-audit-details");
+    var needsReview = byId("writing-policy-needs-review");
+    var suggestions = byId("writing-policy-expression-suggestions");
+    var needsReviewList = byId("writing-policy-needs-review-list");
+    var suggestionList = byId("writing-policy-expression-suggestions-list");
+    var audit = helpers.normalizeWritingPolicyAudit
+      ? helpers.normalizeWritingPolicyAudit(value)
+      : null;
+
+    clearWritingPolicyAudit();
+    if (!audit || !summary || !details || !needsReview || !suggestions ||
+        !needsReviewList || !suggestionList) {
+      return;
+    }
+    summary.textContent = audit.summary || (
+      audit.passed ? "已完成写作规范检查" : "写作规范检查已完成"
+    );
+    appendWritingPolicyAuditFindings(needsReviewList, audit.needsReview);
+    appendWritingPolicyAuditFindings(suggestionList, audit.expressionSuggestions);
+    needsReview.hidden = audit.needsReview.length === 0;
+    suggestions.hidden = audit.expressionSuggestions.length === 0;
+    details.hidden = audit.needsReview.length === 0 &&
+      audit.expressionSuggestions.length === 0;
+    if (!needsReview.hidden) {
+      needsReview.setAttribute("aria-label", "需要核对");
+    }
+    if (!suggestions.hidden) {
+      suggestions.setAttribute("aria-label", "表达建议");
+    }
+    if (strip) {
+      strip.hidden = false;
+    }
   }
 
   function renderWritingPolicyUsage(value, taskType) {
@@ -704,6 +781,7 @@
     renderSmartWritePreviewMode();
     state.writingPolicyAudit = normalized.writingPolicyAudit || null;
     renderWritingPolicyUsage(normalized.writingPolicyUsage, taskType);
+    renderWritingPolicyAudit(state.writingPolicyAudit);
     return normalized;
   }
 
@@ -883,6 +961,7 @@
     byId("document-review-options").hidden = !config.showDocumentReviewOptions;
     byId("fixed-template-options").hidden = !config.showFixedTemplate;
     byId("smart-imitation-options").hidden = !config.showSmartImitationOptions;
+    byId("writing-policy-scene-block").hidden = state.currentMode !== "smartWrite";
     byId("style-field-label").textContent = config.styleLabel || "表达风格";
     byId("btn-run-primary").textContent = config.primaryText;
     byId("btn-apply").hidden = state.currentMode !== "smartWrite";
@@ -4397,7 +4476,7 @@
           state.writeAction || "rewrite",
           SMART_WRITE_EXTRACTION_OPTIONS
         );
-        state.latestDocumentPayload.writingPolicyScene = "auto";
+        state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
         setStatus(error.message);
@@ -4483,6 +4562,52 @@
       });
   }
 
+  function getWritingPolicyScene() {
+    var select = byId("writing-policy-scene");
+    var scene = helpers.normalizeWritingPolicyScene
+      ? helpers.normalizeWritingPolicyScene(select && select.value)
+      : "auto";
+    state.writingPolicyScene = scene;
+    return scene;
+  }
+
+  function saveWritingPolicyScene(value) {
+    var scene = helpers.normalizeWritingPolicyScene
+      ? helpers.normalizeWritingPolicyScene(value)
+      : "auto";
+    var key = helpers.writingPolicySceneStorageKey
+      ? helpers.writingPolicySceneStorageKey("word.smart_write")
+      : "ai-wps:writing-policy-scene:word.smart_write";
+    state.writingPolicyScene = scene;
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(key, scene);
+      }
+    } catch (error) {
+      // Some WPS WebView modes disable localStorage; the in-memory choice still works.
+    }
+  }
+
+  function restoreWritingPolicyScene() {
+    var select = byId("writing-policy-scene");
+    var key = helpers.writingPolicySceneStorageKey
+      ? helpers.writingPolicySceneStorageKey("word.smart_write")
+      : "ai-wps:writing-policy-scene:word.smart_write";
+    var scene = "auto";
+    try {
+      scene = window.localStorage ? window.localStorage.getItem(key) : "auto";
+    } catch (error) {
+      scene = "auto";
+    }
+    scene = helpers.normalizeWritingPolicyScene
+      ? helpers.normalizeWritingPolicyScene(scene)
+      : "auto";
+    state.writingPolicyScene = scene;
+    if (select) {
+      select.value = scene;
+    }
+  }
+
   function applyPreview() {
     if (state.pendingApplyAction === "rewrite") {
       applyRewrite();
@@ -4538,6 +4663,9 @@
     });
     byId("user-instruction").addEventListener("input", function (event) {
       state.userInstruction = event.target.value;
+    });
+    byId("writing-policy-scene").addEventListener("change", function (event) {
+      saveWritingPolicyScene(event.target.value);
     });
     byId("technical-document-type").addEventListener("change", function (event) {
       applyDocumentReviewPrompt(event.target.value);
@@ -4707,6 +4835,7 @@
   renderFallbackTemplateOptions();
   renderWritingPolicyManagerView();
   renderWritingPolicySummary();
+  restoreWritingPolicyScene();
   state.settingsRefreshController = helpers.createSettingsRefreshController({
     intervalMs: 30000,
     refresh: function () {
