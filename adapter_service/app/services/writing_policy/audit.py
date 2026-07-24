@@ -34,6 +34,59 @@ _IDENTIFIER_RE = re.compile(
     r"[A-Za-z0-9]+(?:[._-][A-Za-z0-9]+)+(?![A-Za-z0-9_.-])"
 )
 _NORMATIVE_WORDS = ("必须", "不得", "严禁", "应", "可以", "建议")
+_ALL_PROTECTED_CATEGORY_WORDS = ("事实", "保护项")
+_PROTECTED_CATEGORY_WORDS = {
+    "date": ("日期", "时间"),
+    "standard": ("标准编号", "标准"),
+    "clause": ("条款编号", "条款"),
+    "number": ("数字", "数值", "数量", "比例", "时限", "参数"),
+    "responsibility": ("责任主体", "责任部门", "责任单位", "主体"),
+    "proper_noun": (
+        "专有名词",
+        "专名",
+        "项目名称",
+        "系统名称",
+        "平台名称",
+        "机构名称",
+        "组织名称",
+    ),
+    "identifier": ("标识符", "型号", "版本号", "版本"),
+    "normative": ("规范性强度", "规范性词", "要求强度"),
+}
+_TEMPLATE_CONTENT_LIMITERS = (
+    "结构",
+    "句式",
+    "层次",
+    "段落",
+    "标题",
+    "列表",
+    "序号",
+    "顺序",
+    "路标",
+    "表达节奏",
+    "格式",
+    "排版",
+    "样式",
+    "语气",
+    "风格",
+    "术语",
+    "用词",
+) + tuple(
+    keyword
+    for keywords in _PROTECTED_CATEGORY_WORDS.values()
+    for keyword in keywords
+)
+_LIMITED_TEMPLATE_CONTENT_RE = re.compile(
+    r"模板内容(?:中|里)?的?(?:原有)?(?:%s)"
+    % "|".join(
+        re.escape(value)
+        for value in sorted(
+            _TEMPLATE_CONTENT_LIMITERS,
+            key=len,
+            reverse=True,
+        )
+    )
+)
 _T1_PATTERNS = (
     ("值得注意的是", re.compile(r"值得注意的是")),
     ("需要指出的是", re.compile(r"需要指出的是")),
@@ -107,6 +160,57 @@ def _protected_proper_nouns(text: str) -> Tuple[str, ...]:
         for match in pattern.finditer(text)
     ]
     return tuple(dict.fromkeys(values))
+
+
+def explicitly_preserved_source_fragments(
+    source_text: str,
+    preservation_clauses: Sequence[str],
+) -> str:
+    source = str(source_text or "")
+    clauses = tuple(str(clause or "") for clause in preservation_clauses)
+    preserve_all = any(
+        keyword in clause
+        for clause in clauses
+        for keyword in _ALL_PROTECTED_CATEGORY_WORDS
+    ) or any(
+        "模板内容" in clause
+        and not _LIMITED_TEMPLATE_CONTENT_RE.search(clause)
+        for clause in clauses
+    )
+
+    groups = (
+        ("date", _tokens(_DATE_RE, source), lambda value: value),
+        ("standard", _tokens(_STANDARD_RE, source), lambda value: value),
+        ("clause", _tokens(_CLAUSE_RE, source), lambda value: value),
+        ("number", _tokens(_NUMBER_RE, source), lambda value: value),
+        (
+            "responsibility",
+            _responsibility_subjects(source),
+            lambda value: value + "负责",
+        ),
+        (
+            "proper_noun",
+            _protected_proper_nouns(source),
+            lambda value: "“%s”" % value,
+        ),
+        ("identifier", _tokens(_IDENTIFIER_RE, source), lambda value: value),
+        (
+            "normative",
+            tuple(word for word in _NORMATIVE_WORDS if word in source),
+            lambda value: value,
+        ),
+    )
+    fragments = []
+    for category, values, render in groups:
+        category_requested = preserve_all or any(
+            keyword in clause
+            for clause in clauses
+            for keyword in _PROTECTED_CATEGORY_WORDS[category]
+        )
+        for value in values:
+            if category_requested or any(value in clause for clause in clauses):
+                fragments.append(render(value))
+    return "；".join(dict.fromkeys(fragments))
 
 
 def _audit_protected_values(

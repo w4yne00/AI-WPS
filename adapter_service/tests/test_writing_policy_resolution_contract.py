@@ -97,6 +97,49 @@ class WritingPolicyResolutionContractTests(unittest.TestCase):
             result.prompt_block.index("删除空泛铺垫"),
         )
 
+    def test_smart_imitation_places_template_intent_above_presets_and_anti_template_rules(self):
+        organization = _style(
+            "rule.organization.imitation",
+            "组织仿写要求",
+            layer="organization",
+            scope="word.smart_imitation",
+        )
+        preset = _style(
+            "rule.preset.imitation",
+            "预置仿写文体",
+            layer="preset",
+            scope="word.smart_imitation",
+        )
+        anti_template = _style(
+            "rule.anti.imitation",
+            "仿写去模板化",
+            item_type="anti_template",
+            layer="preset",
+            scope="word.smart_imitation",
+        )
+
+        result = build_match_result(
+            [],
+            [anti_template, preset, organization],
+            "word.smart_imitation",
+            ["用户明确要求保留模板的两段式结构。"],
+        )
+
+        self.assertIn("仿写模板的结构与句式意图", result.prompt_block)
+        self.assertIn("不得破坏用户明确要求保留的模板结构", result.prompt_block)
+        self.assertLess(
+            result.prompt_block.index("组织术语和组织规则"),
+            result.prompt_block.index("仿写模板的结构与句式意图"),
+        )
+        self.assertLess(
+            result.prompt_block.index("仿写模板的结构与句式意图"),
+            result.prompt_block.index("5. 预置层"),
+        )
+        self.assertLess(
+            result.prompt_block.index("预置仿写文体"),
+            result.prompt_block.index("仿写去模板化"),
+        )
+
     def test_organization_terms_replace_conflicting_preset_terms(self):
         organization = _term(
             "term.organization",

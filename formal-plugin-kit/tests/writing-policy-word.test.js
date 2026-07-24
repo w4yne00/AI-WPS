@@ -64,9 +64,21 @@ const smartWriteActionSource = functionSource("runSmartWriteAction");
 assert.ok(smartWriteActionSource.includes("getWritingPolicyScene"));
 assert.ok(!smartWriteActionSource.includes('writingPolicyScene = "auto"'));
 
+const smartImitationActionSource = functionSource("runSmartImitationAction");
+assert.ok(smartImitationActionSource.includes("getWritingPolicyScene()"));
+assert.ok(!smartImitationActionSource.includes('writingPolicyScene: "auto"'));
+
 const modeVisibilitySource = functionSource("switchMode");
 assert.ok(modeVisibilitySource.includes('"writing-policy-scene-block"'));
-assert.ok(modeVisibilitySource.includes('state.currentMode !== "smartWrite"'));
+assert.ok(modeVisibilitySource.includes('"smartWrite", "smartImitation"'));
+assert.ok(modeVisibilitySource.includes("restoreWritingPolicyScene()"));
+
+const saveSceneSource = functionSource("saveWritingPolicyScene");
+const restoreSceneSource = functionSource("restoreWritingPolicyScene");
+assert.ok(saveSceneSource.includes("getCurrentWorkflowTaskType()"));
+assert.ok(restoreSceneSource.includes("getCurrentWorkflowTaskType()"));
+assert.ok(!saveSceneSource.includes('writingPolicySceneStorageKey("word.smart_write")'));
+assert.ok(!restoreSceneSource.includes('writingPolicySceneStorageKey("word.smart_write")'));
 
 const clearSource = functionSource("clearWritingPolicyUsage");
 assert.ok(clearSource.includes("hidden = true"));

@@ -18,6 +18,10 @@ from .store import WritingPolicyStore
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _ITEM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _MAX_DIAGNOSTIC_ITEM_IDS = 20
+_PRESET_TASK_TYPES = {
+    "word.smart_write": "smart_write",
+    "word.smart_imitation": "smart_imitate",
+}
 _INITIALIZATION_BACKOFF_SECONDS = 5.0
 _INITIALIZATION_CLOCK = time.monotonic
 _SERVICE_LOCK = threading.Lock()
@@ -165,7 +169,7 @@ class WritingPolicyService:
                     )
                     preset_terms, preset_styles = self.pack_snapshot.matcher_items(
                         preset["packId"],
-                        "smart_write",
+                        _PRESET_TASK_TYPES[task_scope],
                         pack_scene,
                     )
                     terms = preset_terms + list(terms)
@@ -244,7 +248,7 @@ class WritingPolicyService:
         return self.pack_snapshot.public_items(pack_id)
 
     def _selected_packs(self, task_scope: str, resolution):
-        if task_scope != "word.smart_write":
+        if task_scope not in _PRESET_TASK_TYPES:
             return ()
         packs_by_id = {
             pack["packId"]: pack

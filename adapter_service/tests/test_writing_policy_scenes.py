@@ -66,6 +66,39 @@ class WritingPolicySceneTests(unittest.TestCase):
         self.assertIn("网络安全等级保护", cybersecurity.prompt_block)
         self.assertIn("密钥", cybersecurity.prompt_block)
 
+    def test_smart_imitation_uses_scene_packs_and_imitation_scoped_rules(self):
+        result = self.service.prepare(
+            "word.smart_imitation",
+            [
+                "模板采用两段式风险提示。",
+                "仿写成网络安全整改说明。",
+                "等保测评发现访问控制漏洞。",
+            ],
+            scene="cybersecurity",
+        )
+
+        self.assertEqual(result.usage["requestedScene"], "cybersecurity")
+        self.assertEqual(result.usage["scene"], "cybersecurity")
+        self.assertEqual(
+            result.usage["packNames"],
+            ["G企技术写作基础", "技术文件文体", "网络安全术语"],
+        )
+        self.assertTrue(result.usage["applied"])
+        self.assertGreater(result.usage["styleRuleCount"], 0)
+        self.assertIn("仿写模板的结构与句式意图", result.prompt_block)
+        self.assertIn("网络安全等级保护", result.prompt_block)
+        self.assertIn("访问控制", result.prompt_block)
+        self.assertLessEqual(len(result.prompt_block), MAX_PROMPT_CHARS)
+
+        official = self.service.prepare(
+            "word.smart_imitation",
+            ["模板采用通知结构。", "请仿写为正式公文。"],
+            scene="official",
+        )
+        self.assertGreater(official.usage["styleRuleCount"], 0)
+        self.assertGreater(official.usage["antiTemplateRuleCount"], 0)
+        self.assertIn("仿写模板的结构与句式意图", official.prompt_block)
+
     def test_auto_matching_is_conservative_and_explainable(self):
         cases = (
             (

@@ -1135,6 +1135,10 @@ function testWritingPolicySceneAndAuditNormalization() {
     helpers.writingPolicySceneStorageKey("word.smart_write"),
     "ai-wps:writing-policy-scene:word.smart_write"
   );
+  assert.strictEqual(
+    helpers.writingPolicySceneStorageKey("word.smart_imitation"),
+    "ai-wps:writing-policy-scene:word.smart_imitation"
+  );
 
   const audit = helpers.normalizeWritingPolicyAudit({
     enabled: true,

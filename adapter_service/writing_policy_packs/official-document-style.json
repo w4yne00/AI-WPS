@@ -27,7 +27,8 @@
       "positiveExample": "用户明确为请示时，正文聚焦请求批准的事项和理由。",
       "negativeExample": "把普通情况说明自动改写成正式请示。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -48,7 +49,8 @@
       "positiveExample": "根据已提供的会议纪要，列明已确认事项和待落实任务。",
       "negativeExample": "补写“经上级充分肯定”以增强材料权威性。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -70,7 +72,8 @@
       "positiveExample": "关于开展网络安全专项检查的通知",
       "negativeExample": "关于全面开创网络安全工作崭新局面的重要通知",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -97,7 +100,8 @@
       "positiveExample": "各直属单位按职责完成自查，并于规定时间报送结果。",
       "negativeExample": "各有关方面认真抓好贯彻落实。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -123,7 +127,8 @@
       "positiveExample": "围绕申请调整项目期限说明原因、影响和拟请批准事项。",
       "negativeExample": "在经费请示中同时夹带人员编制和办公用房申请。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -148,7 +153,8 @@
       "positiveExample": "报告完成情况、存在问题和下一步安排，不要求上级批准。",
       "negativeExample": "在情况报告结尾加入“以上方案妥否，请批示”。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -173,7 +179,8 @@
       "positiveExample": "各单位完成自查后，由信息化部门汇总；报送时间沿用原通知要求。",
       "negativeExample": "各单位务必于本月底前完成全部工作。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -200,7 +207,8 @@
       "positiveExample": "沿用原文“中办发〔2012〕14号”的完整写法。",
       "negativeExample": "把未给出的发文字号补写为推测编号。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -227,7 +235,8 @@
       "positiveExample": "保留原文已有密级和发送范围，不增加接收对象。",
       "negativeExample": "根据内容自行判断为秘密级并补写内部人员名单。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"
@@ -254,7 +263,8 @@
       "positiveExample": "直接说明检查范围、责任单位和报送要求。",
       "negativeExample": "站在新的历史起点上，各单位要以更高站位开创崭新局面。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "official"

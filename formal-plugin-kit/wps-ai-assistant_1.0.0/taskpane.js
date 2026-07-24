@@ -929,6 +929,7 @@
     var requestedMode = modeConfig[mode] ? mode : "smartWrite";
     var config = modeConfig[requestedMode] || modeConfig.smartWrite;
     var settingsMode = requestedMode === "settings";
+    var writingPolicyMode;
     var returnTitle;
 
     state.currentMode = requestedMode;
@@ -961,7 +962,11 @@
     byId("document-review-options").hidden = !config.showDocumentReviewOptions;
     byId("fixed-template-options").hidden = !config.showFixedTemplate;
     byId("smart-imitation-options").hidden = !config.showSmartImitationOptions;
-    byId("writing-policy-scene-block").hidden = state.currentMode !== "smartWrite";
+    writingPolicyMode = ["smartWrite", "smartImitation"].indexOf(state.currentMode) >= 0;
+    byId("writing-policy-scene-block").hidden = !writingPolicyMode;
+    if (writingPolicyMode) {
+      restoreWritingPolicyScene();
+    }
     byId("style-field-label").textContent = config.styleLabel || "表达风格";
     byId("btn-run-primary").textContent = config.primaryText;
     byId("btn-apply").hidden = state.currentMode !== "smartWrite";
@@ -4531,7 +4536,7 @@
       documentId: "smart-imitation",
       scene: "word",
       selectionMode: "selection",
-      writingPolicyScene: "auto",
+      writingPolicyScene: getWritingPolicyScene(),
       content: {
         plainText: templateText,
         paragraphs: paragraphs,
@@ -4575,9 +4580,10 @@
     var scene = helpers.normalizeWritingPolicyScene
       ? helpers.normalizeWritingPolicyScene(value)
       : "auto";
+    var taskType = getCurrentWorkflowTaskType();
     var key = helpers.writingPolicySceneStorageKey
-      ? helpers.writingPolicySceneStorageKey("word.smart_write")
-      : "ai-wps:writing-policy-scene:word.smart_write";
+      ? helpers.writingPolicySceneStorageKey(taskType)
+      : "ai-wps:writing-policy-scene:" + taskType;
     state.writingPolicyScene = scene;
     try {
       if (window.localStorage) {
@@ -4590,9 +4596,10 @@
 
   function restoreWritingPolicyScene() {
     var select = byId("writing-policy-scene");
+    var taskType = getCurrentWorkflowTaskType();
     var key = helpers.writingPolicySceneStorageKey
-      ? helpers.writingPolicySceneStorageKey("word.smart_write")
-      : "ai-wps:writing-policy-scene:word.smart_write";
+      ? helpers.writingPolicySceneStorageKey(taskType)
+      : "ai-wps:writing-policy-scene:" + taskType;
     var scene = "auto";
     try {
       scene = window.localStorage ? window.localStorage.getItem(key) : "auto";

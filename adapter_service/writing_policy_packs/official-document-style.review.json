@@ -4,15 +4,15 @@
   "reviewedAt": "2026-07-25",
   "reviewedBy": "Wayne",
   "decisions": [
-    {"id": "rule.official.style.001", "decision": "approved", "note": "用户明确确认本包全部条目通过。", "contentSha256": "3e9780b05c18cbed4c6e2f04462ca93dd3be650cc0300e6c372fae1a103feb22"},
-    {"id": "rule.official.style.002", "decision": "approved", "note": "", "contentSha256": "4b2f4e5c9f33280d940c1fffeeb26cb956797a444630e987272902d40da5f101"},
-    {"id": "rule.official.style.003", "decision": "approved", "note": "", "contentSha256": "2743acbdde48d7fc0ed73194cdadd233ecc60d828be09b885ddf84510ab00682"},
-    {"id": "rule.official.style.004", "decision": "approved", "note": "", "contentSha256": "01181066789e32277527ca8805428ac49342c27cee326e3f1ae31281e2030ac5"},
-    {"id": "rule.official.style.005", "decision": "approved", "note": "", "contentSha256": "5a9a41b351d6a3719648a25f309e7edd30f458d4d8abd9f1e987128ec90d82d4"},
-    {"id": "rule.official.style.006", "decision": "approved", "note": "", "contentSha256": "8f827626cdf8a391e0dbe8174385e5232fc1903033787a9e6feb83bdaf0e3f1e"},
-    {"id": "rule.official.style.007", "decision": "approved", "note": "", "contentSha256": "66a403b27a49dff446f095ef14778934749fb954910f95f2c4fd5793111588db"},
-    {"id": "rule.official.style.008", "decision": "approved", "note": "", "contentSha256": "3e6e942ebe22f9476b4430512d7485f003ed4d713b34645ccfa5f1d26d6a7ce0"},
-    {"id": "rule.official.style.009", "decision": "approved", "note": "", "contentSha256": "8b7ddf9ee78cf167d0a1a0d3d00f4898a76d0f2757a932de4aa5523b9f274ff2"},
-    {"id": "rule.official.style.010", "decision": "approved", "note": "", "contentSha256": "d56c766473070f2a073287ba517f06d295da00fa4973b88125499e651bd1d61d"}
+    {"id": "rule.official.style.001", "decision": "approved", "note": "用户明确确认本包全部条目通过。", "contentSha256": "86e8e1ce16688b2e5a9643bded36871904eef178aac7fb33bba59170f387bab2"},
+    {"id": "rule.official.style.002", "decision": "approved", "note": "", "contentSha256": "2751f2ff874ba0bc88d0dc2a9e8659db6bc726a6fcb13d24d2469b77e1af9699"},
+    {"id": "rule.official.style.003", "decision": "approved", "note": "", "contentSha256": "64ee00c6e669553584537c7a137a9f850a0d4692418c061490d149304e888e15"},
+    {"id": "rule.official.style.004", "decision": "approved", "note": "", "contentSha256": "90a5b62e2b21eeec267dab365b1cf050f27ec8481ce7ec0ef44c42112a5a1e0e"},
+    {"id": "rule.official.style.005", "decision": "approved", "note": "", "contentSha256": "991e36c65bc166280bef348b7c2cc71fc2afefd5c4c5aeb375f545718b77aaad"},
+    {"id": "rule.official.style.006", "decision": "approved", "note": "", "contentSha256": "53ba9b1621a41ee1753abd985bee749d95de19ff00cb27d73fd696a4ec0a51ce"},
+    {"id": "rule.official.style.007", "decision": "approved", "note": "", "contentSha256": "aabba40267787cd6a424301af4cf0ef678ef946e9ebf9cff9ef054b795f03a9b"},
+    {"id": "rule.official.style.008", "decision": "approved", "note": "", "contentSha256": "f60361c45d31a95fb241cc5220408e1b5d1c56a27e616d61260e901c77beef90"},
+    {"id": "rule.official.style.009", "decision": "approved", "note": "", "contentSha256": "36561161370eae55ce481a700ac90e0084023f6a225611779b65bf4e7a67925b"},
+    {"id": "rule.official.style.010", "decision": "approved", "note": "", "contentSha256": "f9493c2108876d312dca8eb7241a8a9642fc8f9385ad1dac2f6d5e507a2dc73f"}
   ]
 }

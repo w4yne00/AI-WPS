@@ -23,7 +23,10 @@ from .service import (
     get_writing_policy_service,
 )
 from .scenes import SCENE_LABELS, SCENE_PACK_IDS, SceneResolution, resolve_scene
-from .audit import audit_writing_policy_result
+from .audit import (
+    audit_writing_policy_result,
+    explicitly_preserved_source_fragments,
+)
 from .packs import (
     WritingPolicyPack,
     WritingPolicyPackSnapshot,
@@ -57,6 +60,7 @@ __all__ = [
     "SceneResolution",
     "resolve_scene",
     "audit_writing_policy_result",
+    "explicitly_preserved_source_fragments",
     "default_database_path",
     "get_writing_policy_service",
     "WritingPolicyPack",

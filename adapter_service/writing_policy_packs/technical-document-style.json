@@ -28,7 +28,8 @@
       "positiveExample": "建议采用分区部署方案；该方案可隔离故障域，并兼顾现网改造边界。",
       "negativeExample": "在当前形势下，相关工作具有重要意义，现将有关情况说明如下。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -50,7 +51,8 @@
       "positiveExample": "现状为接口无重试机制；主要风险是瞬时故障导致任务失败；本次目标是补齐幂等重试。",
       "negativeExample": "接口存在问题，因此需要全面优化并提升整体能力。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -77,7 +79,8 @@
       "positiveExample": "运维人员在变更窗口内更新访问策略，并通过回归用例验证授权结果。",
       "negativeExample": "持续强化管理，全面提升系统保障水平。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -99,7 +102,8 @@
       "positiveExample": "信息化部门牵头完成改造，业务部门配合确认流程，安全部门负责复核策略。",
       "negativeExample": "由相关部门共同推进并做好后续工作。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -126,7 +130,8 @@
       "positiveExample": "接口响应时间按现有口径控制在 2 秒以内，统计范围不含离线批处理任务。",
       "negativeExample": "系统性能将提升至行业领先水平。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -153,7 +158,8 @@
       "positiveExample": "从改造成本、兼容性和恢复时间三个维度比较，现有材料仅支持兼容性判断，成本仍待询价。",
       "negativeExample": "综合来看，方案二无疑是最佳选择。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -180,7 +186,8 @@
       "positiveExample": "若旧终端不支持新协议，可能影响登录；上线前应完成兼容性验证并保留回退方案。",
       "negativeExample": "系统存在较大风险，必须高度重视。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -206,7 +213,8 @@
       "positiveExample": "以 50 个并发请求连续运行 30 分钟，无超时且错误率不高于原定阈值时通过。",
       "negativeExample": "系统运行稳定、体验良好即可验收。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -232,7 +240,8 @@
       "positiveExample": "现有日志确认发生 3 次超时；根因尚待结合链路监控进一步核实。",
       "negativeExample": "经分析，超时均由网络抖动造成。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -254,7 +263,8 @@
       "positiveExample": "卫星互联网运营管理平台（以下简称运营平台）由信息化部门维护，后文统一使用“运营平台”。",
       "negativeExample": "管理平台、业务系统和该平台在后文交替指代同一对象。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -276,7 +286,8 @@
       "positiveExample": "原文已有三项并列措施时，保持同级序号并分别写明动作。",
       "negativeExample": "把一个完整短段强行拆成背景、意义、路径、保障四个标题。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -298,7 +309,8 @@
       "positiveExample": "原文“不得外传”在改写后仍保持禁止性要求。",
       "negativeExample": "把“必须完成”弱化为“建议完成”。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -326,7 +338,8 @@
       "positiveExample": "本次改造可减少重复配置步骤，具体节省时间以试运行数据为准。",
       "negativeExample": "本方案将彻底解决所有痛点，实现跨越式提升。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -348,7 +361,8 @@
       "positiveExample": "各阶段分别重申适用的审批条件，确保执行人员无需跨段推断。",
       "negativeExample": "为避免重复而省略第二项措施中的审批前提。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",
@@ -370,7 +384,8 @@
       "positiveExample": "待确认事项：许可证数量、割接窗口和回退责任人。",
       "negativeExample": "其他事项后续结合实际统筹考虑。",
       "taskTypes": [
-        "smart_write"
+        "smart_write",
+        "smart_imitate"
       ],
       "sceneIds": [
         "yangqi",

@@ -21,6 +21,15 @@ _PRECEDENCE_LINES = (
     "4. 预置层：按当前规范场景应用预置术语和文体规则。",
     "5. 通用去模板化规则：只优化表达，不得削弱正式度、事实、责任或规范性强度。",
 )
+_SMART_IMITATION_PRECEDENCE_LINES = (
+    "[固定优先级]",
+    "1. 保护项：参考素材和用户要求中的事实、专有名词、数字、日期、责任主体、条款和规范性强度不得被下层要求改写。",
+    "2. 用户本次明确要求：在不改变保护项的前提下，优先执行用户本次提出的目标、范围和格式要求。",
+    "3. 组织层：组织术语和组织规则优先于仿写模板及产品预置规范。",
+    "4. 仿写模板的结构与句式意图：在不违反以上要求的前提下，高于预置文体规则。",
+    "5. 预置层：按当前规范场景应用预置术语和文体规则。",
+    "6. 通用去模板化规则：只优化表达，不得破坏用户明确要求保留的模板结构，也不得削弱正式度、事实、责任或规范性强度。",
+)
 _FOOTER = "以上规范不得要求新增原文不存在、用户也未要求的标题、列表、表格或事实。"
 _REVIEW_INSTRUCTION = (
     "文档审查中，发现上述术语或写作规范违规时，必须按 professional 类问题报告。"
@@ -498,7 +507,11 @@ def _compose_prompt(
     task_scope: str,
 ) -> str:
     parts = [_HEADER]
-    parts.extend(_PRECEDENCE_LINES)
+    parts.extend(
+        _SMART_IMITATION_PRECEDENCE_LINES
+        if task_scope == "word.smart_imitation"
+        else _PRECEDENCE_LINES
+    )
     if term_entries:
         parts.extend(("", "[术语]"))
         parts.extend(term_entries)

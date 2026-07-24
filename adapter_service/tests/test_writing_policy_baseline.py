@@ -48,7 +48,7 @@ def _write_approved_pack(root: Path):
                 "ruleText": "保留原文中的事实、数字、责任主体和规范性强度。",
                 "positiveExample": "",
                 "negativeExample": "",
-                "taskTypes": ["smart_write"],
+                "taskTypes": ["smart_write", "smart_imitate"],
                 "sceneIds": ["yangqi"],
                 "contextKeywords": [],
                 "priority": 90,
@@ -96,7 +96,7 @@ class WritingPolicyBaselineTests(unittest.TestCase):
     def tearDown(self):
         self.temporary_directory.cleanup()
 
-    def test_smart_write_auto_applies_base_pack_but_other_tasks_do_not(self):
+    def test_smart_write_and_imitation_auto_apply_base_pack(self):
         smart_write = self.service.prepare(
             "word.smart_write",
             ["请改写这段材料。"],
@@ -118,7 +118,10 @@ class WritingPolicyBaselineTests(unittest.TestCase):
         self.assertEqual(smart_write.usage["presetVersion"], "1.0.0")
         self.assertEqual(smart_write.usage["packName"], "G企技术写作基础")
         self.assertEqual(smart_write.usage["styleRuleCount"], 1)
-        self.assertEqual(imitation.prompt_block, "")
+        self.assertIn("保护事实和责任边界", imitation.prompt_block)
+        self.assertIn("仿写模板的结构与句式意图", imitation.prompt_block)
+        self.assertEqual(imitation.usage["scene"], "yangqi")
+        self.assertEqual(imitation.usage["styleRuleCount"], 1)
         self.assertEqual(disabled.prompt_block, "")
 
     def test_bundled_base_pack_contains_the_17_human_approved_entries(self):
@@ -245,7 +248,29 @@ class WritingPolicyBaselineTests(unittest.TestCase):
         self.assertEqual(
             packs["cybersecurity-terminology"]["source"]["commit"],
             "",
-        )
+                )
+
+    def test_bundled_style_packs_are_scoped_for_smart_imitation(self):
+        snapshot = load_pack_snapshot(default_pack_directory())
+
+        for pack_id in (
+            "yangqi-tech-writing-base",
+            "technical-document-style",
+            "official-document-style",
+        ):
+            with self.subTest(pack_id=pack_id):
+                style_items = [
+                    item
+                    for item in snapshot.public_items(pack_id)
+                    if item["type"] in {"style", "anti_template"}
+                ]
+                self.assertTrue(style_items)
+                self.assertTrue(
+                    all(
+                        "smart_imitate" in item["taskTypes"]
+                        for item in style_items
+                    )
+                )
 
     @unittest.skipUnless(HAS_FASTAPI, "FastAPI dependency is not installed")
     def test_read_only_api_lists_pack_source_version_and_items(self):
