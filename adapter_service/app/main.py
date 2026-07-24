@@ -4,7 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.api.config import router as config_router
-from app.api.enterprise_knowledge import router as enterprise_knowledge_router
+from app.api.writing_policies import router as writing_policy_router
 from app.api.excel import router as excel_router
 from app.api.health import router as health_router
 from app.api.ppt import router as ppt_router
@@ -24,14 +24,14 @@ app.include_router(templates_router)
 app.include_router(word_router)
 app.include_router(excel_router)
 app.include_router(ppt_router)
-app.include_router(enterprise_knowledge_router)
+app.include_router(writing_policy_router)
 
 logger = get_logger(__name__)
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
-ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
+WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 
 
-class EnterpriseKnowledgeImportBodyLimitMiddleware:
+class WritingPolicyImportBodyLimitMiddleware:
     def __init__(self, app, max_bytes: int) -> None:
         self.app = app
         self.max_bytes = int(max_bytes)
@@ -111,7 +111,7 @@ class EnterpriseKnowledgeImportBodyLimitMiddleware:
         return (
             scope.get("type") == "http"
             and scope.get("method") == "POST"
-            and scope.get("path") == "/enterprise-knowledge/imports/preview"
+            and scope.get("path") == "/writing-policies/imports/preview"
         )
 
     @staticmethod
@@ -146,8 +146,8 @@ class EnterpriseKnowledgeImportBodyLimitMiddleware:
         trace_id: str,
         content_length: int,
     ) -> None:
-        scope.setdefault("state", {})["enterprise_knowledge_body_limit_rejected"] = True
-        message = "企业知识导入预览请求超过 7 MB 限制。"
+        scope.setdefault("state", {})["writing_policy_body_limit_rejected"] = True
+        message = "写作规范导入预览请求超过 7 MB 限制。"
         logger.warning(
             "traceId=%s method=%s path=%s status=413 contentLength=%s",
             trace_id,
@@ -160,7 +160,7 @@ class EnterpriseKnowledgeImportBodyLimitMiddleware:
             content={
                 "success": False,
                 "traceId": trace_id,
-                "taskType": "enterprise.knowledge",
+                "taskType": "writing_policy",
                 "message": message,
                 "data": {},
                 "errors": [
@@ -222,7 +222,7 @@ async def log_requests(request: Request, call_next):
         response = await call_next(request)
     except Exception:
         if not getattr(
-            request.state, "enterprise_knowledge_body_limit_rejected", False
+            request.state, "writing_policy_body_limit_rejected", False
         ):
             logger.exception(
                 "traceId=%s method=%s path=%s status=500",
@@ -233,7 +233,7 @@ async def log_requests(request: Request, call_next):
         raise
 
     response.headers["X-Trace-Id"] = trace_id
-    if getattr(request.state, "enterprise_knowledge_body_limit_rejected", False):
+    if getattr(request.state, "writing_policy_body_limit_rejected", False):
         return response
     logger.info(
         "traceId=%s method=%s path=%s status=%s",
@@ -246,8 +246,8 @@ async def log_requests(request: Request, call_next):
 
 
 app.add_middleware(
-    EnterpriseKnowledgeImportBodyLimitMiddleware,
-    max_bytes=ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES,
+    WritingPolicyImportBodyLimitMiddleware,
+    max_bytes=WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES,
 )
 app.add_middleware(
     CORSMiddleware,
@@ -283,8 +283,8 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
 
 
 def _task_type_from_path(path: str) -> str:
-    if path.startswith("/enterprise-knowledge/"):
-        return "enterprise.knowledge"
+    if path.startswith("/writing-policies/"):
+        return "writing_policy"
     return {
         "/word/smart-write": "word.smart_write",
         "/word/smart-imitation": "word.smart_imitation",
@@ -323,7 +323,7 @@ async def handle_validation_error(request: Request, exc: RequestValidationError)
             },
         }
     )
-    status_code = 400 if request.url.path.startswith("/enterprise-knowledge/") else 422
+    status_code = 400 if request.url.path.startswith("/writing-policies/") else 422
     logger.warning(
         "traceId=%s method=%s path=%s status=%s validationErrors=%s",
         trace_id,

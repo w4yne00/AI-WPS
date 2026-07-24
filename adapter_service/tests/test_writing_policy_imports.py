@@ -8,8 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app.services.enterprise_knowledge import imports as knowledge_imports
-from app.services.enterprise_knowledge.imports import (
+from app.services.writing_policy import imports as writing_policy_imports
+from app.services.writing_policy.imports import (
     CSV_MIME,
     IMPORT_COLUMNS,
     XLSX_MIME,
@@ -24,14 +24,14 @@ from app.services.enterprise_knowledge.imports import (
     parse_xlsx,
     validate_import_rows,
 )
-from app.services.enterprise_knowledge.models import (
+from app.services.writing_policy.models import (
     MAX_CELL_CHARS,
     MAX_IMPORT_BYTES,
     MAX_IMPORT_ROWS,
     MAX_XLSX_EXPANDED_BYTES,
-    KnowledgeError,
+    WritingPolicyError,
 )
-from app.services.enterprise_knowledge.store import EnterpriseKnowledgeStore
+from app.services.writing_policy.store import WritingPolicyStore
 
 
 class FakeClock:
@@ -53,7 +53,7 @@ def csv_bytes(rows, headers=IMPORT_COLUMNS, encoding="utf-8-sig"):
     return output.getvalue().encode(encoding)
 
 
-EXPECTED_CSV_EXPORT_MARKER = "#AI-WPS-ENTERPRISE-KNOWLEDGE-EXPORT:1"
+EXPECTED_CSV_EXPORT_MARKER = "#AI-WPS-WRITING-POLICY-EXPORT:1"
 
 
 def marked_csv_bytes(rows, marker=EXPECTED_CSV_EXPORT_MARKER):
@@ -292,7 +292,7 @@ def extend_shared_strings_workbook(insertion):
     )
 
 
-class EnterpriseKnowledgeImportTemplateTests(unittest.TestCase):
+class WritingPolicyImportTemplateTests(unittest.TestCase):
     def test_generated_templates_are_deterministic_and_share_headers(self):
         first_csv = generate_csv_template()
         first_xlsx = generate_xlsx_template()
@@ -364,17 +364,17 @@ class EnterpriseKnowledgeImportTemplateTests(unittest.TestCase):
         self.assertEqual(parse_xlsx(inline, "inline.xlsx")[0]["类型"], "术语")
 
 
-class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
+class WritingPolicyImportParsingTests(unittest.TestCase):
     def assert_error_code(self, code, callback):
-        with self.assertRaises(KnowledgeError) as raised:
+        with self.assertRaises(WritingPolicyError) as raised:
             callback()
         self.assertEqual(raised.exception.code, code)
         self.assertTrue(raised.exception.message)
 
     def test_parse_import_file_dispatches_csv_and_xlsx(self):
-        csv_rows = parse_import_file("knowledge.CSV", CSV_MIME, generate_csv_template())
+        csv_rows = parse_import_file("writing_policy.CSV", CSV_MIME, generate_csv_template())
         xlsx_rows = parse_import_file(
-            "knowledge.XLSX", XLSX_MIME, generate_xlsx_template()
+            "writing_policy.XLSX", XLSX_MIME, generate_xlsx_template()
         )
         self.assertEqual(csv_rows, xlsx_rows)
 
@@ -388,16 +388,16 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
             "application/octet-stream",
             "",
         ):
-            self.assertTrue(parse_import_file("knowledge.csv", mime_type, csv_content))
+            self.assertTrue(parse_import_file("writing_policy.csv", mime_type, csv_content))
         for mime_type in (XLSX_MIME, "application/octet-stream", ""):
             self.assertTrue(
-                parse_import_file("knowledge.xlsx", mime_type, xlsx_content)
+                parse_import_file("writing_policy.xlsx", mime_type, xlsx_content)
             )
         for file_name, mime_type, content in (
-            ("knowledge.csv", XLSX_MIME, csv_content),
-            ("knowledge.xlsx", CSV_MIME, xlsx_content),
-            ("knowledge.xlsx", "text/plain", xlsx_content),
-            ("knowledge.csv", "application/pdf", csv_content),
+            ("writing_policy.csv", XLSX_MIME, csv_content),
+            ("writing_policy.xlsx", CSV_MIME, xlsx_content),
+            ("writing_policy.xlsx", "text/plain", xlsx_content),
+            ("writing_policy.csv", "application/pdf", csv_content),
         ):
             self.assert_error_code(
                 "import_mime_mismatch",
@@ -409,12 +409,12 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
     def test_rejects_unsupported_type_and_files_over_five_megabytes(self):
         self.assert_error_code(
             "unsupported_import_type",
-            lambda: parse_import_file("knowledge.xls", "application/vnd.ms-excel", b"x"),
+            lambda: parse_import_file("writing_policy.xls", "application/vnd.ms-excel", b"x"),
         )
         self.assert_error_code(
             "import_file_too_large",
             lambda: parse_import_file(
-                "knowledge.csv", CSV_MIME, b"x" * (MAX_IMPORT_BYTES + 1)
+                "writing_policy.csv", CSV_MIME, b"x" * (MAX_IMPORT_BYTES + 1)
             ),
         )
 
@@ -441,7 +441,7 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
             lambda: parse_csv(csv_bytes(too_many_rows), "too-many.csv"),
         )
         long_cell = row_values(**{"标准写法/规则": "字" * (MAX_CELL_CHARS + 1)})
-        with self.assertRaises(KnowledgeError) as raised:
+        with self.assertRaises(WritingPolicyError) as raised:
             parse_csv(csv_bytes([long_cell]), "long.csv")
         self.assertEqual(raised.exception.code, "import_cell_too_long")
         self.assertIn("第 2 行", raised.exception.message)
@@ -526,20 +526,20 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
 
     def test_xlsx_enforces_worksheet_element_and_depth_budgets_before_dom_parse(self):
         self.assertGreaterEqual(
-            getattr(knowledge_imports, "MAX_XLSX_WORKSHEET_ELEMENTS", 0),
+            getattr(writing_policy_imports, "MAX_XLSX_WORKSHEET_ELEMENTS", 0),
             185100,
         )
         self.assertGreaterEqual(
-            getattr(knowledge_imports, "MAX_XLSX_WORKSHEET_DEPTH", 0), 6
+            getattr(writing_policy_imports, "MAX_XLSX_WORKSHEET_DEPTH", 0), 6
         )
         with patch.object(
-            knowledge_imports, "MAX_XLSX_WORKSHEET_ELEMENTS", 10, create=True
+            writing_policy_imports, "MAX_XLSX_WORKSHEET_ELEMENTS", 10, create=True
         ):
             self.assert_error_code(
                 "unsafe_xlsx",
                 lambda: parse_xlsx(generate_xlsx_template(), "too-many-elements.xlsx"),
             )
-        depth = getattr(knowledge_imports, "MAX_XLSX_WORKSHEET_DEPTH", 32) + 1
+        depth = getattr(writing_policy_imports, "MAX_XLSX_WORKSHEET_DEPTH", 32) + 1
         deeply_nested = workbook_with_unsafe_second_sheet(
             (b"<x>" * depth) + (b"</x>" * depth)
         )
@@ -551,7 +551,7 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
     def test_shared_strings_rejects_more_than_template_cell_budget(self):
         item_limit = (MAX_IMPORT_ROWS + 1) * len(IMPORT_COLUMNS)
         self.assertEqual(
-            getattr(knowledge_imports, "MAX_XLSX_SHARED_STRING_ITEMS", 0),
+            getattr(writing_policy_imports, "MAX_XLSX_SHARED_STRING_ITEMS", 0),
             item_limit,
         )
         extra_count = item_limit - (len(IMPORT_COLUMNS) * 2) + 1
@@ -567,7 +567,7 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
 
     def test_shared_strings_rejects_excessive_xml_depth(self):
         depth_limit = getattr(
-            knowledge_imports, "MAX_XLSX_SHARED_STRING_DEPTH", 0
+            writing_policy_imports, "MAX_XLSX_SHARED_STRING_DEPTH", 0
         )
         self.assertGreaterEqual(depth_limit, 4)
         nested = (
@@ -585,18 +585,18 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
 
     def test_shared_strings_rejects_excessive_element_count(self):
         element_limit = getattr(
-            knowledge_imports, "MAX_XLSX_SHARED_STRING_ELEMENTS", 0
+            writing_policy_imports, "MAX_XLSX_SHARED_STRING_ELEMENTS", 0
         )
         self.assertGreater(
             element_limit,
-            getattr(knowledge_imports, "MAX_XLSX_SHARED_STRING_ITEMS", 0),
+            getattr(writing_policy_imports, "MAX_XLSX_SHARED_STRING_ITEMS", 0),
         )
         extra_elements = b"<x/>" * 80
         payload = extend_shared_strings_workbook(
             b"<si>" + extra_elements + b"</si>"
         )
         with patch.object(
-            knowledge_imports, "MAX_XLSX_SHARED_STRING_ELEMENTS", 60, create=True
+            writing_policy_imports, "MAX_XLSX_SHARED_STRING_ELEMENTS", 60, create=True
         ):
             self.assert_error_code(
                 "unsafe_xlsx",
@@ -707,13 +707,13 @@ class EnterpriseKnowledgeImportParsingTests(unittest.TestCase):
             },
         )
         for payload in (corrupt, dot_segment, empty_segment, normalized_duplicate):
-            with self.assertRaises(KnowledgeError):
+            with self.assertRaises(WritingPolicyError):
                 parse_xlsx(payload, "bad.xlsx")
 
 
-class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
+class WritingPolicyImportValidationTests(unittest.TestCase):
     def parse_rows(self, *rows):
-        return parse_csv(csv_bytes(list(rows)), "knowledge.csv")
+        return parse_csv(csv_bytes(list(rows)), "writing_policy.csv")
 
     def test_maps_chinese_term_row_to_stable_payload(self):
         result = validate_import_rows(self.parse_rows(row_values()))
@@ -775,16 +775,16 @@ class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
         self.assertEqual(result["items"][0]["preferredText"], formula_like)
         for value in ("=1+1", " +cmd", "-2+3", "\t@SUM(A1:A2)"):
             self.assertEqual(
-                knowledge_imports.csv_safe_cell(value),
+                writing_policy_imports.csv_safe_cell(value),
                 "'" + value,
             )
         for value in ("'=already-safe", "'普通文本", "''双引号"):
             self.assertEqual(
-                knowledge_imports.csv_safe_cell(value),
+                writing_policy_imports.csv_safe_cell(value),
                 "'" + value,
             )
         for value in ("普通文本", "1+1", ""):
-            self.assertEqual(knowledge_imports.csv_safe_cell(value), value)
+            self.assertEqual(writing_policy_imports.csv_safe_cell(value), value)
         for value in (
             "=1+1",
             "+cmd",
@@ -797,8 +797,8 @@ class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
             "",
         ):
             self.assertEqual(
-                knowledge_imports.csv_restore_cell(
-                    knowledge_imports.csv_safe_cell(value)
+                writing_policy_imports.csv_restore_cell(
+                    writing_policy_imports.csv_safe_cell(value)
                 ),
                 value,
             )
@@ -1010,11 +1010,11 @@ class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
         near_markers = (
             EXPECTED_CSV_EXPORT_MARKER + " ",
             EXPECTED_CSV_EXPORT_MARKER.lower(),
-            "#AI-WPS-ENTERPRISE-KNOWLEDGE-EXPORT:2",
+            "#AI-WPS-WRITING-POLICY-EXPORT:2",
         )
         for marker in near_markers:
             with self.subTest(marker=marker):
-                with self.assertRaises(KnowledgeError) as raised:
+                with self.assertRaises(WritingPolicyError) as raised:
                     parse_csv(marked_csv_bytes([row_values()], marker=marker), "near.csv")
                 self.assertEqual(raised.exception.code, "invalid_import_headers")
 
@@ -1023,7 +1023,7 @@ class EnterpriseKnowledgeImportValidationTests(unittest.TestCase):
         writer.writerow([EXPECTED_CSV_EXPORT_MARKER, "extra"])
         writer.writerow(IMPORT_COLUMNS)
         writer.writerow(row_values())
-        with self.assertRaises(KnowledgeError) as raised:
+        with self.assertRaises(WritingPolicyError) as raised:
             parse_csv(output.getvalue().encode("utf-8-sig"), "extra.csv")
         self.assertEqual(raised.exception.code, "invalid_import_headers")
 
@@ -1064,12 +1064,12 @@ def import_style(scope, name, **overrides):
     return payload
 
 
-class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
+class WritingPolicyImportLifecycleTests(unittest.TestCase):
     def test_preview_token_is_secret_single_use_and_expires_on_monotonic_clock(self):
         clock = FakeClock()
         items = [import_term("标准名称")]
         with patch(
-            "app.services.enterprise_knowledge.imports.secrets.token_urlsafe",
+            "app.services.writing_policy.imports.secrets.token_urlsafe",
             return_value="preview-secret",
         ) as token_urlsafe:
             previews = ImportPreviewStore(clock=clock)
@@ -1085,13 +1085,13 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
         self.assertEqual(preview["previewToken"], "preview-secret")
         self.assertEqual(previews.get("preview-secret")["items"], items)
         self.assertEqual(previews.consume("preview-secret")["items"], items)
-        with self.assertRaises(KnowledgeError) as consumed:
+        with self.assertRaises(WritingPolicyError) as consumed:
             previews.consume("preview-secret")
         self.assertEqual(consumed.exception.code, "import_preview_not_found")
 
         second = previews.create("terms.csv", items, conflicts=[])
         clock.advance(600)
-        with self.assertRaises(KnowledgeError) as expired:
+        with self.assertRaises(WritingPolicyError) as expired:
             previews.get(second["previewToken"])
         self.assertEqual(expired.exception.code, "import_preview_expired")
 
@@ -1127,7 +1127,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
                 )["previewToken"]
             )
         self.assertEqual(previews.live_count(), 20)
-        with self.assertRaises(KnowledgeError) as evicted:
+        with self.assertRaises(WritingPolicyError) as evicted:
             previews.get(tokens[0])
         self.assertEqual(evicted.exception.code, "import_preview_not_found")
 
@@ -1144,7 +1144,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
             barrier.wait()
             try:
                 successes.append(previews.consume(token))
-            except KnowledgeError as exc:
+            except WritingPolicyError as exc:
                 failures.append(exc.code)
 
         threads = [threading.Thread(target=consume) for _ in range(8)]
@@ -1158,7 +1158,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
 
     def test_preview_classifies_create_update_and_database_conflicts_with_rows(self):
         with TemporaryDirectory() as tmp:
-            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
             existing_term = store.create_item(
                 import_term("标准名称", ["已有别名"], ["已有禁用写法"])
             )
@@ -1205,7 +1205,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
             result = build_import_preview(
                 store,
                 validated,
-                {"fileName": "knowledge.csv", "format": "csv", "rowCount": 5},
+                {"fileName": "writing_policy.csv", "format": "csv", "rowCount": 5},
                 preview_store=previews,
             )
 
@@ -1232,7 +1232,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
 
     def test_apply_consumes_preview_and_atomically_creates_updates_and_records_import(self):
         with TemporaryDirectory() as tmp:
-            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
             existing = store.create_item(import_term("标准名称", ["旧别名"]))
             validated = {
                 "items": [
@@ -1252,7 +1252,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
             preview = build_import_preview(
                 store,
                 validated,
-                {"fileName": "knowledge.csv", "format": "csv", "rowCount": 3},
+                {"fileName": "writing_policy.csv", "format": "csv", "rowCount": 3},
                 preview_store=previews,
             )
 
@@ -1268,7 +1268,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
             self.assertEqual(result["conflictCount"], 1)
             self.assertEqual(store.get_item(existing["id"])["aliases"], ["新别名"])
             self.assertEqual(store.summary()["totalCount"], 2)
-            with self.assertRaises(KnowledgeError) as reused:
+            with self.assertRaises(WritingPolicyError) as reused:
                 apply_import_preview(
                     store,
                     preview["previewToken"],
@@ -1279,7 +1279,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
 
     def test_apply_rejects_term_overwrite_decision_after_consuming_token(self):
         with TemporaryDirectory() as tmp:
-            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
             store.create_item(import_term("标准名称", ["已有别名"]))
             validated = {
                 "items": [import_term("冲突名称", ["已有别名"])],
@@ -1297,7 +1297,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
                 preview_store=previews,
             )
 
-            with self.assertRaises(KnowledgeError) as invalid:
+            with self.assertRaises(WritingPolicyError) as invalid:
                 apply_import_preview(
                     store,
                     preview["previewToken"],
@@ -1305,13 +1305,13 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
                     preview_store=previews,
                 )
             self.assertEqual(invalid.exception.code, "invalid_import_decision")
-            with self.assertRaises(KnowledgeError) as consumed:
+            with self.assertRaises(WritingPolicyError) as consumed:
                 previews.get(preview["previewToken"])
             self.assertEqual(consumed.exception.code, "import_preview_not_found")
 
     def test_export_csv_filters_scope_escapes_lists_and_blocks_formulas(self):
         with TemporaryDirectory() as tmp:
-            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
             store.create_item(
                 import_term(
                     "标准|名称\\一期",
@@ -1343,7 +1343,7 @@ class EnterpriseKnowledgeImportLifecycleTests(unittest.TestCase):
 
     def test_export_csv_formula_escaping_round_trips_every_business_field(self):
         with TemporaryDirectory() as tmp:
-            store = EnterpriseKnowledgeStore(Path(tmp) / "enterprise_knowledge.db")
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
             term = import_term(
                 "=标准写法",
                 ["+别名首项", "'原始单引号别名"],

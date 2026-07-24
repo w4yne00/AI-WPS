@@ -6,12 +6,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app.services.enterprise_knowledge.models import KnowledgeError
-from app.services.enterprise_knowledge import service as service_module
-from app.services.enterprise_knowledge.service import (
-    EnterpriseKnowledgeService,
+from app.services.writing_policy.models import WritingPolicyError
+from app.services.writing_policy import service as service_module
+from app.services.writing_policy.service import (
+    WritingPolicyService,
     default_database_path,
-    get_enterprise_knowledge_service,
+    get_writing_policy_service,
 )
 
 
@@ -90,34 +90,34 @@ class MutableClock:
             self.value += seconds
 
 
-class EnterpriseKnowledgeServiceTests(unittest.TestCase):
+class WritingPolicyServiceTests(unittest.TestCase):
     def setUp(self):
-        service_module._reset_enterprise_knowledge_services()
+        service_module._reset_writing_policy_services()
 
     def tearDown(self):
-        service_module._reset_enterprise_knowledge_services()
+        service_module._reset_writing_policy_services()
 
     def test_default_database_path_prefers_trimmed_environment_value(self):
         with patch.dict(
             os.environ,
-            {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": "  runtime/custom.db  "},
+            {"AI_WPS_WRITING_POLICY_DB": "  runtime/custom.db  "},
         ):
             self.assertEqual(default_database_path(), Path("runtime/custom.db"))
 
     def test_default_database_path_falls_back_to_repository_run_directory(self):
         with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("AI_WPS_ENTERPRISE_KNOWLEDGE_DB", None)
+            os.environ.pop("AI_WPS_WRITING_POLICY_DB", None)
             expected = (
                 Path(service_module.__file__).resolve().parents[4]
                 / "run"
-                / "enterprise_knowledge.db"
+                / "writing_policies.db"
             )
 
             self.assertEqual(default_database_path(), expected)
 
     def test_prepare_success_returns_match_statistics_and_safe_diagnostics(self):
         store = StaticStore([term_item()], [style_item()])
-        service = EnterpriseKnowledgeService(
+        service = WritingPolicyService(
             store=store,
             clock=SequenceClock(10.0, 10.125),
         )
@@ -130,39 +130,39 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
         self.assertEqual(result.usage["termMatchCount"], 1)
         self.assertEqual(result.usage["styleRuleCount"], 1)
         self.assertEqual(result.matched_item_ids, ("term-1", "style-1"))
-        self.assertIn("企业术语与写作规范", result.prompt_block)
+        self.assertIn("写作规范", result.prompt_block)
         self.assertEqual(
             result.diagnostic_patch(),
             {
-                "knowledgeApplied": True,
-                "knowledgeDegraded": False,
-                "knowledgeErrorCode": "",
-                "knowledgeTermCount": 1,
-                "knowledgeStyleCount": 1,
-                "knowledgeTruncatedCount": 0,
-                "knowledgeElapsedMs": 125,
-                "knowledgeItemIds": ["term-1", "style-1"],
+                "writingPolicyApplied": True,
+                "writingPolicyDegraded": False,
+                "writingPolicyErrorCode": "",
+                "writingPolicyTermCount": 1,
+                "writingPolicyStyleCount": 1,
+                "writingPolicyTruncatedCount": 0,
+                "writingPolicyElapsedMs": 125,
+                "writingPolicyItemIds": ["term-1", "style-1"],
             },
         )
         diagnostics = service.diagnostics()
         self.assertEqual(diagnostics["stage"], "prepared")
-        self.assertEqual(diagnostics["knowledgeElapsedMs"], 125)
+        self.assertEqual(diagnostics["writingPolicyElapsedMs"], 125)
         self.assertNotIn("旧平台", json.dumps(diagnostics, ensure_ascii=False))
 
-    def test_prepare_degrades_stably_for_knowledge_os_and_unknown_errors(self):
+    def test_prepare_degrades_stably_for_writing_policy_os_and_unknown_errors(self):
         sensitive_source = "公司绝密原文"
         cases = (
             (
-                KnowledgeError("knowledge_data_corrupt", "原文泄漏 /secret/db.sqlite"),
-                "knowledge_data_corrupt",
+                WritingPolicyError("writing_policy_data_corrupt", "原文泄漏 /secret/db.sqlite"),
+                "writing_policy_data_corrupt",
             ),
-            (OSError("database unavailable at /secret/db.sqlite"), "knowledge_io_error"),
-            (RuntimeError("unexpected 公司绝密原文 /secret/path"), "knowledge_internal_error"),
+            (OSError("database unavailable at /secret/db.sqlite"), "writing_policy_io_error"),
+            (RuntimeError("unexpected 公司绝密原文 /secret/path"), "writing_policy_internal_error"),
         )
 
         for error, expected_code in cases:
             with self.subTest(error=type(error).__name__):
-                service = EnterpriseKnowledgeService(
+                service = WritingPolicyService(
                     store=BrokenStore(error),
                     clock=SequenceClock(1.0, 1.01),
                 )
@@ -179,7 +179,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 self.assertEqual(result.usage["matchedItems"], [])
                 self.assertEqual(result.matched_item_ids, ())
                 self.assertEqual(
-                    result.diagnostic_patch()["knowledgeErrorCode"],
+                    result.diagnostic_patch()["writingPolicyErrorCode"],
                     expected_code,
                 )
                 serialized = json.dumps(
@@ -194,16 +194,16 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 self.assertNotIn("/secret", serialized)
                 self.assertNotIn(str(error), serialized)
 
-    def test_prepare_replaces_invalid_knowledge_error_code(self):
-        service = EnterpriseKnowledgeService(
-            store=BrokenStore(KnowledgeError("../../secret-path", "sensitive"))
+    def test_prepare_replaces_invalid_writing_policy_error_code(self):
+        service = WritingPolicyService(
+            store=BrokenStore(WritingPolicyError("../../secret-path", "sensitive"))
         )
 
         result = service.prepare("word.smart_write", ["source"])
 
         self.assertEqual(
-            result.diagnostic_patch()["knowledgeErrorCode"],
-            "knowledge_error",
+            result.diagnostic_patch()["writingPolicyErrorCode"],
+            "writing_policy_error",
         )
 
     def test_clock_failure_or_negative_elapsed_never_breaks_preparation(self):
@@ -213,7 +213,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
 
         for clock in (BrokenClock(), SequenceClock(5.0, 4.0)):
             with self.subTest(clock=type(clock).__name__):
-                service = EnterpriseKnowledgeService(
+                service = WritingPolicyService(
                     store=StaticStore([term_item()], []),
                     clock=clock,
                 )
@@ -223,46 +223,46 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 self.assertTrue(result.usage["applied"])
                 self.assertFalse(result.usage["degraded"])
                 self.assertEqual(
-                    result.diagnostic_patch()["knowledgeElapsedMs"], 0
+                    result.diagnostic_patch()["writingPolicyElapsedMs"], 0
                 )
                 self.assertNotIn("secret", str(service.diagnostics()))
 
     def test_diagnostics_returns_defensive_deep_copy(self):
-        service = EnterpriseKnowledgeService(
+        service = WritingPolicyService(
             store=StaticStore([term_item()], []),
         )
         service.prepare("word.smart_write", ["旧平台"])
 
         first = service.diagnostics()
-        first["knowledgeItemIds"].append("mutated")
+        first["writingPolicyItemIds"].append("mutated")
         first["stage"] = "mutated"
 
         second = service.diagnostics()
-        self.assertEqual(second["knowledgeItemIds"], ["term-1"])
+        self.assertEqual(second["writingPolicyItemIds"], ["term-1"])
         self.assertEqual(second["stage"], "prepared")
 
     def test_singleton_is_keyed_by_resolved_path_and_changes_with_environment(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            first_path = root / "one" / "knowledge.db"
-            equivalent_first_path = root / "one" / ".." / "one" / "knowledge.db"
-            second_path = root / "two" / "knowledge.db"
+            first_path = root / "one" / "writing_policies.db"
+            equivalent_first_path = root / "one" / ".." / "one" / "writing_policies.db"
+            second_path = root / "two" / "writing_policies.db"
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(first_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(first_path)},
             ):
-                first = get_enterprise_knowledge_service()
+                first = get_writing_policy_service()
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(equivalent_first_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(equivalent_first_path)},
             ):
-                same = get_enterprise_knowledge_service()
+                same = get_writing_policy_service()
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(second_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(second_path)},
             ):
-                second = get_enterprise_knowledge_service()
+                second = get_writing_policy_service()
 
             self.assertIs(first, same)
             self.assertIsNot(first, second)
@@ -271,19 +271,19 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
 
     def test_failed_store_construction_is_not_cached_and_later_success_is_reused(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "knowledge.db"
+            db_path = Path(tmp) / "writing_policies.db"
             successful_store = StaticStore([term_item()], [])
             clock = MutableClock(100.0)
             sensitive_error = OSError(
-                "database unavailable at /secret/enterprise-knowledge.db"
+                "database unavailable at /secret/writing-policies.db"
             )
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=[sensitive_error, successful_store],
             ) as store_constructor, patch.object(
                 service_module,
@@ -291,17 +291,17 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 clock,
                 create=True,
             ):
-                failed = get_enterprise_knowledge_service()
+                failed = get_writing_policy_service()
                 failed_result = failed.prepare("word.smart_write", ["公司原文"])
-                in_backoff = get_enterprise_knowledge_service()
+                in_backoff = get_writing_policy_service()
                 clock.advance(5.0)
-                recovered = get_enterprise_knowledge_service()
-                reused = get_enterprise_knowledge_service()
+                recovered = get_writing_policy_service()
+                reused = get_writing_policy_service()
 
             self.assertTrue(failed_result.usage["degraded"])
             self.assertEqual(
-                failed_result.diagnostic_patch()["knowledgeErrorCode"],
-                "knowledge_io_error",
+                failed_result.diagnostic_patch()["writingPolicyErrorCode"],
+                "writing_policy_io_error",
             )
             self.assertNotIn("/secret", str(failed.diagnostics()))
             self.assertIs(failed, in_backoff)
@@ -313,32 +313,32 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
             )
 
     def test_invalid_expanduser_path_degrades_without_cache_and_recovers(self):
-        invalid_path = "~ai_wps_codex_missing_user_42/secret/knowledge.db"
+        invalid_path = "~ai_wps_codex_missing_user_42/secret/writing_policies.db"
 
         with patch.dict(
             os.environ,
-            {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": invalid_path},
+            {"AI_WPS_WRITING_POLICY_DB": invalid_path},
         ):
-            failed = get_enterprise_knowledge_service()
+            failed = get_writing_policy_service()
             failed_result = failed.prepare("word.smart_write", ["公司原文"])
 
         self.assertTrue(failed_result.usage["degraded"])
         self.assertEqual(
-            failed_result.diagnostic_patch()["knowledgeErrorCode"],
-            "knowledge_internal_error",
+            failed_result.diagnostic_patch()["writingPolicyErrorCode"],
+            "writing_policy_internal_error",
         )
         self.assertNotIn(invalid_path, str(failed_result.diagnostic_patch()))
         self.assertNotIn(invalid_path, str(failed.diagnostics()))
         self.assertEqual(service_module._SERVICES_BY_PATH, {})
 
         with TemporaryDirectory() as tmp:
-            valid_path = Path(tmp) / "knowledge.db"
+            valid_path = Path(tmp) / "writing_policies.db"
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(valid_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(valid_path)},
             ):
-                recovered = get_enterprise_knowledge_service()
-                reused = get_enterprise_knowledge_service()
+                recovered = get_writing_policy_service()
+                reused = get_writing_policy_service()
 
             self.assertIsNot(failed, recovered)
             self.assertIs(recovered, reused)
@@ -348,7 +348,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
 
     def test_concurrent_failure_backoff_and_recovery_are_singleflight(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "knowledge.db"
+            db_path = Path(tmp) / "writing_policies.db"
             clock = MutableClock(200.0)
             state_lock = threading.Lock()
             state = {"calls": 0, "failing": True}
@@ -361,7 +361,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                     state["calls"] += 1
                     failing = state["failing"]
                 if failing:
-                    raise OSError("database unavailable at /secret/knowledge.db")
+                    raise OSError("database unavailable at /secret/writing_policies.db")
                 retry_entered.set()
                 release_retry.wait(timeout=2)
                 return successful_store
@@ -376,7 +376,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 def load_service():
                     try:
                         barrier.wait(timeout=2)
-                        result = get_enterprise_knowledge_service()
+                        result = get_writing_policy_service()
                         with result_lock:
                             results.append(result)
                             if len(results) >= 11:
@@ -400,10 +400,10 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=construct_store,
             ), patch.object(
                 service_module,
@@ -414,7 +414,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 failed_results, _ = run_wave()
                 calls_after_failure = state["calls"]
                 backoff_results = [
-                    get_enterprise_knowledge_service() for _ in range(5)
+                    get_writing_policy_service() for _ in range(5)
                 ]
                 calls_during_backoff = state["calls"]
 
@@ -424,8 +424,8 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 retry_results, retry_followers_returned = run_wave(
                     wait_for_retry=True
                 )
-                recovered = get_enterprise_knowledge_service()
-                reused = get_enterprise_knowledge_service()
+                recovered = get_writing_policy_service()
+                reused = get_writing_policy_service()
 
             self.assertEqual(len(failed_results), 12)
             self.assertTrue(
@@ -444,7 +444,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
 
     def test_slow_initialization_returns_initializing_degradation_to_followers(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "knowledge.db"
+            db_path = Path(tmp) / "writing_policies.db"
             constructor_entered = threading.Event()
             release_constructor = threading.Event()
             follower_done = threading.Event()
@@ -457,18 +457,18 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 return StaticStore([term_item()], [])
 
             def initialize():
-                initializer_results.append(get_enterprise_knowledge_service())
+                initializer_results.append(get_writing_policy_service())
 
             def follow():
-                follower_results.append(get_enterprise_knowledge_service())
+                follower_results.append(get_writing_policy_service())
                 follower_done.set()
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=construct_store,
             ) as store_constructor:
                 initializer = threading.Thread(target=initialize)
@@ -493,8 +493,8 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
             )
             self.assertTrue(follower_result.usage["degraded"])
             self.assertEqual(
-                follower_result.diagnostic_patch()["knowledgeErrorCode"],
-                "knowledge_initializing",
+                follower_result.diagnostic_patch()["writingPolicyErrorCode"],
+                "writing_policy_initializing",
             )
 
     def test_slow_initialization_for_one_path_does_not_block_another_path(self):
@@ -508,7 +508,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
             results = {}
 
             def configured_path():
-                if threading.current_thread().name == "knowledge-path-first":
+                if threading.current_thread().name == "writing_policy-path-first":
                     return first_path
                 return second_path
 
@@ -519,7 +519,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 return StaticStore([], [])
 
             def load(name):
-                results[name] = get_enterprise_knowledge_service()
+                results[name] = get_writing_policy_service()
                 if name == "second":
                     second_done.set()
 
@@ -529,18 +529,18 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 side_effect=configured_path,
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=construct_store,
             ) as store_constructor:
                 first = threading.Thread(
                     target=load,
                     args=("first",),
-                    name="knowledge-path-first",
+                    name="writing_policy-path-first",
                 )
                 second = threading.Thread(
                     target=load,
                     args=("second",),
-                    name="knowledge-path-second",
+                    name="writing_policy-path-second",
                 )
                 first.start()
                 self.assertTrue(first_entered.wait(timeout=1))
@@ -574,11 +574,11 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 side_effect=configured_paths,
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=construct_store,
             ) as store_constructor:
-                failed = get_enterprise_knowledge_service()
-                healthy = get_enterprise_knowledge_service()
+                failed = get_writing_policy_service()
+                healthy = get_writing_policy_service()
 
             self.assertTrue(
                 failed.prepare("word.smart_write", ["公司原文"]).usage["degraded"]
@@ -594,21 +594,21 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
             pass
 
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "knowledge.db"
+            db_path = Path(tmp) / "writing_policies.db"
             successful_store = StaticStore([term_item()], [])
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=[InitializationAbort(), successful_store],
             ) as store_constructor:
                 with self.assertRaises(InitializationAbort):
-                    get_enterprise_knowledge_service()
-                recovered = get_enterprise_knowledge_service()
-                reused = get_enterprise_knowledge_service()
+                    get_writing_policy_service()
+                recovered = get_writing_policy_service()
+                reused = get_writing_policy_service()
 
             self.assertEqual(store_constructor.call_count, 2)
             self.assertIs(recovered, reused)
@@ -631,16 +631,16 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 raise RetryClockAbort()
 
         with TemporaryDirectory() as tmp:
-            db_path = (Path(tmp) / "knowledge.db").resolve()
+            db_path = (Path(tmp) / "writing_policies.db").resolve()
             successful_store = StaticStore([term_item()], [])
             failing_clock = FailingRetryClock()
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=[OSError("database unavailable"), successful_store],
             ) as store_constructor:
                 with patch.object(
@@ -649,7 +649,7 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                     failing_clock,
                 ):
                     with self.assertRaises(RetryClockAbort):
-                        get_enterprise_knowledge_service()
+                        get_writing_policy_service()
 
                 self.assertNotIn(db_path, service_module._INITIALIZING_BY_PATH)
                 self.assertNotIn(db_path, service_module._INITIALIZATION_FAILURES)
@@ -659,8 +659,8 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                     "_INITIALIZATION_CLOCK",
                     MutableClock(400.0),
                 ):
-                    recovered = get_enterprise_knowledge_service()
-                    reused = get_enterprise_knowledge_service()
+                    recovered = get_writing_policy_service()
+                    reused = get_writing_policy_service()
 
             self.assertEqual(store_constructor.call_count, 2)
             self.assertIs(recovered, reused)
@@ -684,29 +684,29 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 super().__setitem__(key, value)
 
         with TemporaryDirectory() as tmp:
-            db_path = (Path(tmp) / "knowledge.db").resolve()
+            db_path = (Path(tmp) / "writing_policies.db").resolve()
             service_cache = FailingServiceCache()
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
                 "_SERVICES_BY_PATH",
                 service_cache,
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=[StaticStore(), StaticStore([term_item()], [])],
             ) as store_constructor:
                 with self.assertRaises(PublishAbort):
-                    get_enterprise_knowledge_service()
+                    get_writing_policy_service()
 
                 self.assertNotIn(db_path, service_module._INITIALIZING_BY_PATH)
                 self.assertEqual(service_cache, {})
 
-                recovered = get_enterprise_knowledge_service()
-                reused = get_enterprise_knowledge_service()
+                recovered = get_writing_policy_service()
+                reused = get_writing_policy_service()
 
             self.assertEqual(store_constructor.call_count, 2)
             self.assertIs(recovered, reused)
@@ -715,14 +715,14 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
             )
 
     def test_reset_clears_success_failure_and_inflight_states(self):
-        path = Path("/tmp/enterprise-knowledge-reset.db").resolve()
-        service_module._SERVICES_BY_PATH[path] = EnterpriseKnowledgeService(
+        path = Path("/tmp/writing-policies-reset.db").resolve()
+        service_module._SERVICES_BY_PATH[path] = WritingPolicyService(
             StaticStore()
         )
         service_module._INITIALIZATION_FAILURES[path] = object()
         service_module._INITIALIZING_BY_PATH[path] = object()
 
-        service_module._reset_enterprise_knowledge_services()
+        service_module._reset_writing_policy_services()
 
         self.assertEqual(service_module._SERVICES_BY_PATH, {})
         self.assertEqual(service_module._INITIALIZATION_FAILURES, {})
@@ -730,11 +730,11 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
 
     def test_singleton_concurrent_access_constructs_one_instance(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "knowledge.db"
+            db_path = Path(tmp) / "writing_policies.db"
             barrier = threading.Barrier(12)
             services = []
             errors = []
-            real_store_class = service_module.EnterpriseKnowledgeStore
+            real_store_class = service_module.WritingPolicyStore
             constructed_paths = []
 
             def construct_store(path):
@@ -744,16 +744,16 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
             def load_service():
                 try:
                     barrier.wait(timeout=2)
-                    services.append(get_enterprise_knowledge_service())
+                    services.append(get_writing_policy_service())
                 except Exception as exc:
                     errors.append(exc)
 
             with patch.dict(
                 os.environ,
-                {"AI_WPS_ENTERPRISE_KNOWLEDGE_DB": str(db_path)},
+                {"AI_WPS_WRITING_POLICY_DB": str(db_path)},
             ), patch.object(
                 service_module,
-                "EnterpriseKnowledgeStore",
+                "WritingPolicyStore",
                 side_effect=construct_store,
             ):
                 threads = [threading.Thread(target=load_service) for _ in range(12)]
@@ -761,8 +761,8 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                     thread.start()
                 for thread in threads:
                     thread.join(timeout=3)
-                cached = get_enterprise_knowledge_service()
-                reused = get_enterprise_knowledge_service()
+                cached = get_writing_policy_service()
+                reused = get_writing_policy_service()
 
             self.assertEqual(errors, [])
             self.assertEqual(len(services), 12)
@@ -775,8 +775,8 @@ class EnterpriseKnowledgeServiceTests(unittest.TestCase):
                 else:
                     self.assertTrue(result.usage["degraded"])
                     self.assertEqual(
-                        result.diagnostic_patch()["knowledgeErrorCode"],
-                        "knowledge_initializing",
+                        result.diagnostic_patch()["writingPolicyErrorCode"],
+                        "writing_policy_initializing",
                     )
 
 

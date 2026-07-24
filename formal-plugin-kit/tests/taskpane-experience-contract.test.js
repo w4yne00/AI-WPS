@@ -10,7 +10,7 @@ const hosts = [
     task: "word.smart_write",
     label: "智能编写",
     tabsLabel: "Word 任务",
-    hasKnowledge: true,
+    hasWritingPolicy: true,
     strongAccentMapping: "var(--color-primary)"
   },
   {
@@ -19,7 +19,7 @@ const hosts = [
     task: "excel.analysis",
     label: "智能分析",
     tabsLabel: "Excel 任务",
-    hasKnowledge: false,
+    hasWritingPolicy: false,
     strongAccentMapping: "var(--color-primary)"
   },
   {
@@ -28,7 +28,7 @@ const hosts = [
     task: "ppt.slide_assistant",
     label: "智能总结",
     tabsLabel: "PPT 任务",
-    hasKnowledge: false,
+    hasWritingPolicy: false,
     strongAccentMapping: "var(--color-primary-hover)"
   }
 ];
@@ -312,9 +312,9 @@ hosts.forEach((host) => {
     `${host.name} still renders persistent multi-workflow copy`
   );
   assert.strictEqual(
-    htmlIds.has("enterprise-knowledge-summary-card"),
-    host.hasKnowledge,
-    `${host.name} enterprise knowledge isolation mismatch`
+    htmlIds.has("writing-policies-summary-card"),
+    host.hasWritingPolicy,
+    `${host.name} enterprise writingPolicy isolation mismatch`
   );
   assert.ok(!js.includes('byId("btn-refresh")'), `${host.name} JS still references removed #btn-refresh`);
 });
@@ -367,23 +367,23 @@ assert.ok(
   'addEventListener("keydown", handleWorkflowTaskTabKeydown)'
 ].forEach((token) => assert.ok(wordBindEvents.includes(token), `Word interaction binding missing ${token}`));
 
-const renderKnowledgeManagerView = functionSource(wordJs, "renderKnowledgeManagerView");
+const renderWritingPolicyManagerView = functionSource(wordJs, "renderWritingPolicyManagerView");
 assert.ok(
-  renderKnowledgeManagerView.includes('byId("diagnostics-disclosure")'),
-  "Word knowledge subviews must control the diagnostics disclosure"
+  renderWritingPolicyManagerView.includes('byId("diagnostics-disclosure")'),
+  "Word writingPolicy subviews must control the diagnostics disclosure"
 );
 assert.ok(
-  renderKnowledgeManagerView.includes("diagnosticsDisclosure.hidden = false"),
+  renderWritingPolicyManagerView.includes("diagnosticsDisclosure.hidden = false"),
   "Word settings home must show the diagnostics disclosure"
 );
 assert.ok(
-  renderKnowledgeManagerView.indexOf("diagnosticsDisclosure.open = false") <
-    renderKnowledgeManagerView.indexOf("diagnosticsDisclosure.hidden = true"),
-  "Word knowledge subviews must collapse diagnostics before hiding it"
+  renderWritingPolicyManagerView.indexOf("diagnosticsDisclosure.open = false") <
+    renderWritingPolicyManagerView.indexOf("diagnosticsDisclosure.hidden = true"),
+  "Word writingPolicy subviews must collapse diagnostics before hiding it"
 );
 assert.ok(
-  !renderKnowledgeManagerView.includes('byId("diagnostics-section").hidden'),
-  "Word knowledge subviews must not hide the diagnostics content directly"
+  !renderWritingPolicyManagerView.includes('byId("diagnostics-section").hidden'),
+  "Word writingPolicy subviews must not hide the diagnostics content directly"
 );
 
 console.log("taskpane experience markup contract passed");

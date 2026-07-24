@@ -118,18 +118,18 @@ PATCH  /provider/workflow-profiles/{profileId}
 POST   /provider/workflow-profiles/{profileId}/api-key
 POST   /provider/workflow-profiles/{profileId}/activate
 DELETE /provider/workflow-profiles/{profileId}
-GET    /enterprise-knowledge/summary
-GET    /enterprise-knowledge/items
-POST   /enterprise-knowledge/items
-PATCH  /enterprise-knowledge/items/{itemId}
-DELETE /enterprise-knowledge/items/{itemId}
-GET    /enterprise-knowledge/import-template.csv
-GET    /enterprise-knowledge/import-template.xlsx
-POST   /enterprise-knowledge/imports/preview
-POST   /enterprise-knowledge/imports/apply
-GET    /enterprise-knowledge/export.csv
-GET    /enterprise-knowledge/backup
-GET    /enterprise-knowledge/diagnostics
+GET    /writing-policies/summary
+GET    /writing-policies/items
+POST   /writing-policies/items
+PATCH  /writing-policies/items/{itemId}
+DELETE /writing-policies/items/{itemId}
+GET    /writing-policies/import-template.csv
+GET    /writing-policies/import-template.xlsx
+POST   /writing-policies/imports/preview
+POST   /writing-policies/imports/apply
+GET    /writing-policies/export.csv
+GET    /writing-policies/backup
+GET    /writing-policies/diagnostics
 POST   /word/smart-write
 POST   /word/smart-imitation
 POST   /word/document-review
@@ -155,13 +155,13 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 高级诊断默认折叠，仅在用户展开或手动刷新时请求诊断；诊断刷新和复制反馈只写设置页状态，不覆盖任务页状态、结果或复制内容。自动刷新对相同状态采用 changed-only DOM 更新，避免 `aria-live` 每 30 秒重复播报。
 - PPT 设置页的网络不可达和设置探测超时反馈已中文化；`Failed to fetch` 等浏览器原始错误不再直接展示给用户。`checkHealth()` 继续只负责右上角“已连接/未连接”，模型接口就绪度由 `/config` 与 `ppt.slide_assistant` 档案独立计算。
 - 三宿主前端 9 项测试、6 个 taskpane/helper 脚本语法检查和 `git diff --check` 已通过；真实 Chromium 在 420×900、320×700 下完成任务页和设置页验收，三宿主均无页面横向溢出，Word 四任务选项卡在 320px 下按设计横向滚动。
-- `v0.19.0-alpha` 新增仅作用于 Word 的企业术语与风格规则知识库，智能编写、智能仿写和文档审查在提交模型前按全局及任务范围匹配；Excel、PPT 不接入该知识库。
-- 企业知识使用本地 SQLite `run/enterprise_knowledge.db` 保存；术语支持规范名称、别名和说明，风格规则支持名称、规则正文、备注和 `global / word.smart_write / word.smart_imitation / word.document_review` 范围。
-- Word 设置页新增下钻式知识管理：概览页保持紧凑，进入管理页后可新增、修改、删除、筛选，并支持最大 5 MB 的 CSV/XLSX 预览导入、冲突跳过、CSV 导出和完整数据库备份。
-- 导入预览令牌有效期 10 分钟且只能应用一次；冲突策略固定为保留已有项并跳过冲突，不提供覆盖导入，避免批量误改现场知识。
-- 智能编写、智能仿写和文档审查结果区显示本次使用的术语/规则数量；知识库不可读、损坏或暂时不可用时采用 fail-open，任务继续调用模型并明确显示降级提示。
-- 知识匹配和管理诊断不记录 API Key、原文全文、规则正文或术语说明；`/enterprise-knowledge/diagnostics` 只提供脱敏健康信息。
-- 覆盖安装除继续保护 API URL 与各类 API Key 外，还会恢复 `run/enterprise_knowledge.db` 和最多三份已有 `backup-*` 知识库备份；交付包自带 CSV/XLSX 导入模板和企业知识运维手册。
+- `v0.19.0-alpha` 新增仅作用于 Word 的写作规范库，智能编写、智能仿写和文档审查在提交模型前按全局及任务范围匹配；Excel、PPT 不接入该规范库。
+- 写作规范使用本地 SQLite `run/writing_policies.db` 保存；术语支持规范名称、别名和说明，文体规则支持名称、规则正文、备注和 `global / word.smart_write / word.smart_imitation / word.document_review` 范围。
+- Word 设置页新增下钻式规范管理：概览页保持紧凑，进入管理页后可新增、修改、删除、筛选，并支持最大 5 MB 的 CSV/XLSX 预览导入、冲突跳过、CSV 导出和完整数据库备份。
+- 导入预览令牌有效期 10 分钟且只能应用一次；冲突策略固定为保留已有项并跳过冲突，不提供覆盖导入，避免批量误改现场规范。
+- 智能编写、智能仿写和文档审查结果区显示本次使用的术语/规则数量；规范库不可读、损坏或暂时不可用时采用 fail-open，任务继续调用模型并明确显示降级提示。
+- 规范匹配和管理诊断不记录 API Key、原文全文、规则正文或术语说明；`/writing-policies/diagnostics` 只提供脱敏健康信息。
+- 覆盖安装除继续保护 API URL 与各类 API Key 外，还会恢复 `run/writing_policies.db` 和最多三份已有 `backup-*` 规范库备份；交付包自带 CSV/XLSX 导入模板和写作规范运维手册。
 - 本版本不改变智能编写既有回写、智能仿写只读、文档审查闭环、格式审查规则、Excel 智能分析和 PPT 智能总结链路。
 - `v0.18.1-alpha` 统一收敛三宿主设置交互：设置首页只保留统一 API URL 和当前宿主工作流列表，去掉统一 Key 与模型提供商名称输入；adapter 的统一 Key 回退接口和覆盖安装保护继续保留。
 - Word 按智能编写、智能仿写、文档审查、格式审查四个页签分别管理档案；Excel 固定管理 `excel.analysis`，PPT 固定管理 `ppt.slide_assistant`，三个宿主的数据和界面互不交叉。
@@ -243,11 +243,11 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 设置页 30 秒探测必须继续与业务任务隔离：不得覆盖任务页状态、结果正文、复制内容、任务 trace、后台任务号或回写状态；URL/工作流编辑期间必须暂停并废弃在途探测，不能用迟到响应覆盖用户草稿。
 - 工作流档案临时读取失败必须保留上一份稳定 `profiles`、`activeProfileId` 和用户选择；请求被更新操作取代时应视为 superseded，不得误报“无法检测”或清空档案。
 - 设置页配置探测保持 8 秒短预算和单飞机制；不得把该预算传入文档审查、Excel 智能分析或 PPT 智能总结的模型请求与长任务轮询。
-- 企业知识匹配必须保持 fail-open：数据库不可读、损坏、迁移失败或匹配异常时，只能返回脱敏降级信息，不能阻断智能编写、智能仿写或文档审查。
-- 企业知识只允许注入 Word 智能编写、智能仿写和文档审查；不得扩散到格式审查、Excel 智能分析或 PPT 智能总结。
-- 企业知识诊断和任务日志不得包含 API Key、原文全文、规范术语说明或风格规则正文；前端结果只展示命中数量、名称摘要和降级状态。
+- 写作规范匹配必须保持 fail-open：数据库不可读、损坏、迁移失败或匹配异常时，只能返回脱敏降级信息，不能阻断智能编写、智能仿写或文档审查。
+- 写作规范只允许注入 Word 智能编写、智能仿写和文档审查；不得扩散到格式审查、Excel 智能分析或 PPT 智能总结。
+- 写作规范诊断和任务日志不得包含 API Key、原文全文、规范术语说明或文体规则正文；前端结果只展示命中数量、名称摘要和降级状态。
 - CSV/XLSX 导入必须先预览后应用，预览令牌保持 10 分钟有效且单次使用；冲突项只能跳过并保留现场已有知识，不得静默覆盖。
-- 覆盖安装必须继续保护 `run/enterprise_knowledge.db` 和最多三份已有 `backup-*` 知识库备份，不能把包内空库覆盖到目标机。
+- 覆盖安装必须继续保护 `run/writing_policies.db` 和最多三份已有 `backup-*` 规范库备份，不能把包内空库覆盖到目标机。
 - 智能编写 Dify 调用、任务级 API Key 选路和“不允许原样返回”的提示词约束。
 - 智能编写新菜单值和旧值兼容映射：前端只展示新选项，adapter 仍识别旧 payload 值。
 - `/chat-messages` 顶层 `query` 必须始终携带完整提示词；旧模式同时携带 `inputs.query`，新版“用户输入”节点模式保持 `inputs: {}`，两种模式不得修改提示词正文。
@@ -272,7 +272,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - PPT 主标题和副标题必须分开识别；副标题是可选字段，不得混入 `textBlocks`，也不得覆盖主标题。
 - Word/Excel/PPT Ribbon 必须保持宿主隔离：Word `type="wps"`、Excel `type="et"`、PPT `type="wpp"` 只显示各自功能和设置。
 - Word/Excel/PPT 宿主配色、连接文案、设置快捷入口和纯文字主按钮均为前端展示层变化；不得借此改动 Word 回写、文档审查/智能分析/智能总结长任务恢复、模型请求或三个 Ribbon 的宿主隔离。
-- 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key，也不得覆盖企业知识数据库和应保留的备份。
+- 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key，也不得覆盖写作规范数据库和应保留的备份。
 - 文档审查闭环只能管理前端处理状态和复制审查记录，不允许自动写回或自动修改正文。
 - 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
 - 智能编写和文档审查逻辑不要因格式审查预览优化被改动；对应抽取限制、等待反馈、`rawAnswer` 兜底和写回策略都要保持当前行为。
@@ -280,8 +280,8 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 
 ## 5. 当前关键文件
 
-- `adapter_service/app/api/enterprise_knowledge.py`：企业知识 CRUD、模板、导入预览/应用、导出、备份和诊断接口。
-- `adapter_service/app/services/enterprise_knowledge/`：SQLite 存储、匹配、导入解析、预览令牌、备份和 fail-open 服务边界。
+- `adapter_service/app/api/writing_policies.py`：写作规范 CRUD、模板、导入预览/应用、导出、备份和诊断接口。
+- `adapter_service/app/services/writing_policy/`：SQLite 存储、匹配、导入解析、预览令牌、备份和 fail-open 服务边界。
 - `adapter_service/app/api/word.py`：当前 Word 四任务路由。
 - `adapter_service/app/api/excel.py`：智能分析路由。
 - `adapter_service/app/api/ppt.py`：PPT 文档文件入口和智能总结后台任务路由。
@@ -310,16 +310,16 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - `docs/operations/dify-excel-analysis-workflow.md`：Excel“智能分析”Dify 配置手册。
 - `docs/operations/dify-ppt-slide-assistant-workflow.md`：PPT“智能总结”双模式 Dify 配置手册。
 - `docs/operations/workflow-profile-management.md`：Word/Excel/PPT 工作流档案、切换和密钥保护手册。
-- `docs/operations/enterprise-knowledge-management.md`：Word 企业术语和风格规则维护、导入、导出、备份、降级与恢复手册。
+- `docs/operations/writing-policy-library.md`：Word 写作规范维护、导入、导出、备份、降级与恢复手册。
 - `docs/prompt-templates/excel-smart-analysis-prompt-template.md`：Excel“智能分析”Markdown 提示词模板。
 - `docs/prompt-templates/ppt-smart-summary-prompt-template.md`：PPT“智能总结”当前页/文档双模式 Markdown 提示词模板。
 - `docs/superpowers/plans/2026-05-29-review-mode-consolidation-plan.md`：审查入口收敛执行计划。
 - `docs/superpowers/plans/2026-05-31-stability-enhancement-plan.md`：本轮稳定增强执行计划。
-- `docs/superpowers/plans/2026-07-16-enterprise-terminology-style-knowledge-implementation-plan.md`：Word 企业术语与风格规则知识实现及发布计划。
+- `docs/superpowers/plans/2026-07-16-enterprise-terminology-style-knowledge-implementation-plan.md`：Word 写作规范库实现及发布计划。
 
 ## 6. 验证状态
 
-`v0.19.1-alpha` 已执行本地自动化、静态契约、真实浏览器布局和交付包验证。除继续覆盖企业知识、工作流档案、三宿主任务链路和覆盖安装外，本轮重点验证设置状态刷新隔离、异步顺序保护、编辑保护、紧凑布局、可扩展选项卡及诊断渐进披露。
+`v0.19.1-alpha` 已执行本地自动化、静态契约、真实浏览器布局和交付包验证。除继续覆盖写作规范、工作流档案、三宿主任务链路和覆盖安装外，本轮重点验证设置状态刷新隔离、异步顺序保护、编辑保护、紧凑布局、可扩展选项卡及诊断渐进披露。
 
 ```bash
 PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s adapter_service/tests -v
@@ -332,27 +332,27 @@ DATE_TAG=20260724 bash packaging/build_phase1_delivery_kit.sh
 
 当前结果：
 
-- Python 全量单测：`384 tests OK (skipped=39)`；跳过项来自当前 bundled Python 缺 FastAPI 和沙箱禁用本地 socket。standalone 企业知识 HTTP 分发、数据层、导入安全、匹配、Word 注入与降级、provider、后台任务、PPT 文件和覆盖安装行为均已执行。
-- 全部 9 个前端测试文件通过，覆盖三宿主 layout smoke、设置刷新与编辑保护、任务状态隔离、Word 企业知识管理和结果契约。
+- Python 全量单测：`384 tests OK (skipped=39)`；跳过项来自当前 bundled Python 缺 FastAPI 和沙箱禁用本地 socket。standalone 写作规范 HTTP 分发、数据层、导入安全、匹配、Word 注入与降级、provider、后台任务、PPT 文件和覆盖安装行为均已执行。
+- 全部 9 个前端测试文件通过，覆盖三宿主 layout smoke、设置刷新与编辑保护、任务状态隔离、Word 写作规范管理和结果契约。
 - Word/Excel/PPT 的 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，构建/安装/联调脚本 `bash -n` 及 `git diff --check`：通过。
 - 真实 Chromium 已在 420×900 和 320×700 下完成三宿主任务页、设置页、帮助提示及折叠诊断验收；页面无横向溢出，Word 四任务选项卡在窄屏下按设计横向滚动。
 - 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz`，大小约 8.1 MB，SHA256：`7ee6276cf10ed95c2db7a73940ebaaef6f559eae399dd8b3b413d3686561063e`。
-- 包内已核对 Word、Excel、PPT 三个插件均为 `0.19.1-alpha`；只包含一个安装脚本和一个含 `wps/et/wpp` 的 `publish.xml`，包含企业知识手册、CSV/XLSX 导入模板、Excel/PPT 提示词模板，且不携带现场 `enterprise_knowledge.db`、密钥目录、日志或备份文件。
-- 安装行为测试已使用临时目录验证：覆盖安装后恢复企业知识主库和按时间保留的最新三份已有备份，同时继续保护 API URL、统一 API Key 与全部工作流 API Key。
-- 受当前浏览器自动化账户额度限制，本版本未完成新知识管理页面截图检查；Mac 开发机也无法替代麒麟 V10/WPS 真机交互验收。
+- 包内已核对 Word、Excel、PPT 三个插件均为 `0.19.1-alpha`；只包含一个安装脚本和一个含 `wps/et/wpp` 的 `publish.xml`，包含写作规范手册、CSV/XLSX 导入模板、Excel/PPT 提示词模板，且不携带现场 `writing_policies.db`、密钥目录、日志或备份文件。
+- 安装行为测试已使用临时目录验证：覆盖安装后恢复写作规范主库和按时间保留的最新三份已有备份，同时继续保护 API URL、统一 API Key 与全部工作流 API Key。
+- 受当前浏览器自动化账户额度限制，本版本未完成新规范管理页面截图检查；Mac 开发机也无法替代麒麟 V10/WPS 真机交互验收。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
 
 ## 7. 目标机验证建议
 
-1. 使用 `20260724-v0191` 单一正式交付包覆盖安装，关闭并重新打开 WPS，确认设置页“前端版本”为 `0.19.1-alpha`，且原 API URL、统一 API Key、`run/provider_api_keys/`、`run/enterprise_knowledge.db` 和最新三份已有知识库备份未丢失。
+1. 使用 `20260724-v0191` 单一正式交付包覆盖安装，关闭并重新打开 WPS，确认设置页“前端版本”为 `0.19.1-alpha`，且原 API URL、统一 API Key、`run/provider_api_keys/`、`run/writing_policies.db` 和最新三份已有规范库备份未丢失。
 2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 3. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“智能总结”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用同一个 `ppt.slide_assistant` 档案。
-4. 在 Word 设置页进入企业知识管理，验证术语和风格规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造知识库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。
+4. 在 Word 设置页进入写作规范管理，验证术语和文体规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造规范库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。
 5. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，模型后台命中智能编写应用；结果显示本次命中的术语/规则摘要，既有对照和写回行为不变。
 6. 执行“智能仿写”，可先框选模板段落再打开任务；填写仿写需求和参考素材后确认 `/provider/debug-last.taskType=word.smart_imitation`，结果区显示知识命中摘要，且只有预览/纯文本/复制，不显示对照和应用预览。
 7. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示知识命中摘要、审查摘要和问题列表。
-8. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，且不使用企业知识。
+8. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，且不使用写作规范。
 9. 打开 WPS Excel，确认 Ribbon 下只有“智能分析”和“设置”；选择一块表格区域后执行分析，确认 `/provider/debug-last.taskType=excel.analysis`，结果区显示数据概览、关键发现、风险异常、建议动作和汇报段落。使用慢模型验证 180 秒以上任务仍持续轮询，不提前提示连接失败。
 10. 打开 WPS 演示，确认 Ribbon 下只有“智能总结”和“设置”；在当前页模式分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。
 11. 在文档模式分别测试 UTF-8 `.md`、有效 `.docx`、损坏 DOCX、不支持类型和超过 10 MB 文件；确认页数只允许 5、8、10、12、15 且默认 10，结果给出整套逐页建议和复制动作，任何场景都不修改 PPT。
@@ -367,5 +367,5 @@ DATE_TAG=20260724 bash packaging/build_phase1_delivery_kit.sh
 - 智能排版暂缓：目标机已确认任务级 API Key 选路可命中独立 Dify 工作流，但长文档角色识别受 Dify 输出最大值和模型上下文窗口限制影响。当前版本不再尝试自动写回排版，改为“格式审查”。
 - 文档审查要求 Dify 输出 Markdown 中的 JSON 代码块。若现场 Dify 只能输出普通 Markdown，也应至少保留一个合法 `json` 代码块；adapter 会从代码块中提取问题列表。
 - Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `Selection`、`UsedRange`、`Cells.Item(row, column)` 的可用性；前端已做多路径读取和已用范围兜底。
-- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、企业知识管理和覆盖安装仍需用 `v0.19.1-alpha` 正式包完成目标机验收。
+- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、写作规范管理和覆盖安装仍需用 `v0.19.1-alpha` 正式包完成目标机验收。
 - 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README 及 `docs/operations/` 下当前手册为准。

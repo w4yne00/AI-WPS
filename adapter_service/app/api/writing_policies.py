@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from app.core.errors import AdapterError
 from app.core.tracing import new_trace_id
-from app.services.enterprise_knowledge.imports import (
+from app.services.writing_policy.imports import (
     DEFAULT_IMPORT_PREVIEW_STORE,
     XLSX_MIME,
     apply_import_preview,
@@ -21,28 +21,28 @@ from app.services.enterprise_knowledge.imports import (
     parse_import_file,
     validate_import_rows,
 )
-from app.services.enterprise_knowledge.models import KnowledgeError, MAX_IMPORT_BYTES
-from app.services.enterprise_knowledge.service import get_enterprise_knowledge_service
+from app.services.writing_policy.models import WritingPolicyError, MAX_IMPORT_BYTES
+from app.services.writing_policy.service import get_writing_policy_service
 
 
 router = APIRouter()
-TASK_TYPE = "enterprise.knowledge"
+TASK_TYPE = "writing_policy"
 _SAFE_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _NOT_FOUND_CODES = {
-    "knowledge_item_not_found",
+    "writing_policy_item_not_found",
     "import_preview_not_found",
     "import_preview_expired",
 }
 _CONFLICT_CODES = {"term_text_conflict", "style_name_conflict"}
 _TOO_LARGE_CODES = {"import_file_too_large"}
 _UNAVAILABLE_CODES = {
-    "knowledge_data_corrupt",
-    "knowledge_store_unavailable",
-    "knowledge_storage_unavailable",
-    "knowledge_io_error",
-    "knowledge_internal_error",
-    "knowledge_initializing",
+    "writing_policy_data_corrupt",
+    "writing_policy_store_unavailable",
+    "writing_policy_storage_unavailable",
+    "writing_policy_io_error",
+    "writing_policy_internal_error",
+    "writing_policy_initializing",
 }
 
 
@@ -60,7 +60,7 @@ else:
             extra = "forbid"
 
 
-class KnowledgeItemRequest(_AliasModel):
+class WritingPolicyItemRequest(_AliasModel):
     type: Optional[str] = None
     scope: Optional[str] = None
     category: Optional[str] = None
@@ -111,7 +111,7 @@ def _model_payload(model: BaseModel, *, exclude_none: bool = False) -> Dict[str,
 def _envelope(data: Dict[str, object], message: str = "completed") -> dict:
     return {
         "success": True,
-        "traceId": new_trace_id("enterprise-knowledge"),
+        "traceId": new_trace_id("writing-policies"),
         "taskType": TASK_TYPE,
         "message": message,
         "data": data,
@@ -119,10 +119,10 @@ def _envelope(data: Dict[str, object], message: str = "completed") -> dict:
     }
 
 
-def _safe_knowledge_code(code: object) -> str:
+def _safe_writing_policy_code(code: object) -> str:
     value = str(code or "")
     if not _SAFE_ERROR_CODE_RE.fullmatch(value):
-        value = "knowledge_error"
+        value = "writing_policy_error"
     return value.upper()
 
 
@@ -146,11 +146,11 @@ def _is_unavailable_code(code: str) -> bool:
 def _adapter_error(error: Exception) -> AdapterError:
     if isinstance(error, AdapterError):
         return error
-    if isinstance(error, KnowledgeError):
+    if isinstance(error, WritingPolicyError):
         code = str(error.code or "")
-        public_code = _safe_knowledge_code(code)
+        public_code = _safe_writing_policy_code(code)
         if code in _NOT_FOUND_CODES:
-            return AdapterError(public_code, "未找到指定知识条目或导入预览。", 404)
+            return AdapterError(public_code, "未找到指定规范条目或导入预览。", 404)
         if code in _CONFLICT_CODES:
             return AdapterError(public_code, error.message, 409)
         if code in _TOO_LARGE_CODES:
@@ -158,7 +158,7 @@ def _adapter_error(error: Exception) -> AdapterError:
         if _is_unavailable_code(code):
             return AdapterError(
                 public_code,
-                "企业知识库暂时不可用，请稍后重试。",
+                "写作规范库暂时不可用，请稍后重试。",
                 503,
             )
         known_input_prefixes = (
@@ -169,16 +169,16 @@ def _adapter_error(error: Exception) -> AdapterError:
         )
         if code.startswith(known_input_prefixes):
             return AdapterError(public_code, error.message, 400)
-        return AdapterError(public_code, "企业知识请求无法处理。", 400)
+        return AdapterError(public_code, "写作规范请求无法处理。", 400)
     if isinstance(error, (OSError, sqlite3.DatabaseError)):
         return AdapterError(
-            "KNOWLEDGE_STORAGE_UNAVAILABLE",
-            "企业知识库暂时不可用，请稍后重试。",
+            "WRITING_POLICY_STORAGE_UNAVAILABLE",
+            "写作规范库暂时不可用，请稍后重试。",
             503,
         )
     return AdapterError(
-        "KNOWLEDGE_SERVICE_UNAVAILABLE",
-        "企业知识库暂时不可用，请稍后重试。",
+        "WRITING_POLICY_SERVICE_UNAVAILABLE",
+        "写作规范库暂时不可用，请稍后重试。",
         503,
     )
 
@@ -188,10 +188,10 @@ def _raise_mapped(error: Exception):
 
 
 def _store():
-    return get_enterprise_knowledge_service().store
+    return get_writing_policy_service().store
 
 
-@router.get("/enterprise-knowledge/summary")
+@router.get("/writing-policies/summary")
 def get_summary() -> dict:
     try:
         return _envelope(_store().summary())
@@ -199,7 +199,7 @@ def get_summary() -> dict:
         _raise_mapped(error)
 
 
-@router.get("/enterprise-knowledge/items")
+@router.get("/writing-policies/items")
 def list_items(
     scope: str,
     item_type: str = Query(alias="type"),
@@ -220,8 +220,8 @@ def list_items(
         _raise_mapped(error)
 
 
-@router.post("/enterprise-knowledge/items")
-def create_item(request: KnowledgeItemRequest) -> dict:
+@router.post("/writing-policies/items")
+def create_item(request: WritingPolicyItemRequest) -> dict:
     try:
         item = _store().create_item(_model_payload(request, exclude_none=True))
         return _envelope({"item": item}, "created")
@@ -229,10 +229,10 @@ def create_item(request: KnowledgeItemRequest) -> dict:
         _raise_mapped(error)
 
 
-@router.patch("/enterprise-knowledge/items/{itemId}")
+@router.patch("/writing-policies/items/{itemId}")
 def update_item(
     item_id: str = PathParameter(alias="itemId"),
-    request: KnowledgeItemRequest = Body(),
+    request: WritingPolicyItemRequest = Body(),
 ) -> dict:
     try:
         item = _store().update_item(
@@ -243,7 +243,7 @@ def update_item(
         _raise_mapped(error)
 
 
-@router.delete("/enterprise-knowledge/items/{itemId}")
+@router.delete("/writing-policies/items/{itemId}")
 def delete_item(item_id: str = PathParameter(alias="itemId")) -> dict:
     try:
         item = _store().delete_item(item_id)
@@ -262,25 +262,25 @@ def _download(content: bytes, media_type: str, filename: str) -> Response:
     )
 
 
-@router.get("/enterprise-knowledge/import-template.csv")
+@router.get("/writing-policies/import-template.csv")
 def download_csv_template() -> Response:
     try:
         return _download(
             generate_csv_template(),
             "text/csv",
-            "enterprise-knowledge-import-template.csv",
+            "writing-policies-import-template.csv",
         )
     except Exception as error:
         _raise_mapped(error)
 
 
-@router.get("/enterprise-knowledge/import-template.xlsx")
+@router.get("/writing-policies/import-template.xlsx")
 def download_xlsx_template() -> Response:
     try:
         return _download(
             generate_xlsx_template(),
             XLSX_MIME,
-            "enterprise-knowledge-import-template.xlsx",
+            "writing-policies-import-template.xlsx",
         )
     except Exception as error:
         _raise_mapped(error)
@@ -291,17 +291,17 @@ def _decode_import_content(request: ImportPreviewRequest) -> bytes:
         encoded = request.content_base64.encode("ascii")
         content = base64.b64decode(encoded, validate=True)
     except (UnicodeEncodeError, ValueError, binascii.Error):
-        raise KnowledgeError("invalid_import_base64", "导入文件 Base64 内容无效。")
+        raise WritingPolicyError("invalid_import_base64", "导入文件 Base64 内容无效。")
     if request.size_bytes < 0 or request.size_bytes != len(content):
-        raise KnowledgeError(
+        raise WritingPolicyError(
             "import_size_mismatch", "声明的文件大小与实际内容不一致。"
         )
     if len(content) > MAX_IMPORT_BYTES:
-        raise KnowledgeError("import_file_too_large", "导入文件超过 5 MB 限制。")
+        raise WritingPolicyError("import_file_too_large", "导入文件超过 5 MB 限制。")
     return content
 
 
-@router.post("/enterprise-knowledge/imports/preview")
+@router.post("/writing-policies/imports/preview")
 def preview_import(request: ImportPreviewRequest) -> dict:
     try:
         content = _decode_import_content(request)
@@ -325,7 +325,7 @@ def preview_import(request: ImportPreviewRequest) -> dict:
         _raise_mapped(error)
 
 
-@router.post("/enterprise-knowledge/imports/apply")
+@router.post("/writing-policies/imports/apply")
 def apply_import(request: ImportApplyRequest) -> dict:
     try:
         decisions = [
@@ -342,33 +342,33 @@ def apply_import(request: ImportApplyRequest) -> dict:
         _raise_mapped(error)
 
 
-@router.get("/enterprise-knowledge/export.csv")
-def export_knowledge_csv(scope: str) -> Response:
+@router.get("/writing-policies/export.csv")
+def export_writing_policy_csv(scope: str) -> Response:
     try:
         return _download(
             _store().export_csv(scope),
             "text/csv",
-            "enterprise-knowledge-export.csv",
+            "writing-policies-export.csv",
         )
     except Exception as error:
         _raise_mapped(error)
 
 
-@router.get("/enterprise-knowledge/backup")
-def backup_knowledge() -> Response:
+@router.get("/writing-policies/backup")
+def backup_writing_policy() -> Response:
     try:
         return _download(
             _store().database_snapshot_bytes(),
             "application/vnd.sqlite3",
-            "enterprise-knowledge-backup.db",
+            "writing-policies-backup.db",
         )
     except Exception as error:
         _raise_mapped(error)
 
 
-@router.get("/enterprise-knowledge/diagnostics")
+@router.get("/writing-policies/diagnostics")
 def get_diagnostics() -> dict:
     try:
-        return _envelope(get_enterprise_knowledge_service().diagnostics())
+        return _envelope(get_writing_policy_service().diagnostics())
     except Exception as error:
         _raise_mapped(error)

@@ -180,11 +180,11 @@
               </div>
             </div>
           </div>
-          <section id="knowledge-usage-strip" class="knowledge-usage-strip" aria-live="polite" hidden>
-            <p id="knowledge-usage-summary" class="knowledge-usage-summary"></p>
-            <details id="knowledge-usage-details" class="knowledge-usage-details" hidden>
+          <section id="writing-policy-usage-strip" class="writing-policy-usage-strip" aria-live="polite" hidden>
+            <p id="writing-policy-usage-summary" class="writing-policy-usage-summary"></p>
+            <details id="writing-policy-usage-details" class="writing-policy-usage-details" hidden>
               <summary>查看命中明细</summary>
-              <ul id="knowledge-usage-list" class="knowledge-usage-list"></ul>
+              <ul id="writing-policy-usage-list" class="writing-policy-usage-list"></ul>
             </details>
           </section>
           <div id="result-output" class="markdown-output">等待运行。</div>
@@ -237,20 +237,20 @@
               </div>
             </section>
 
-            <section id="enterprise-knowledge-summary-card" class="settings-card knowledge-summary-card">
+            <section id="writing-policies-summary-card" class="settings-card writing-policy-summary-card">
               <div class="settings-card-head">
                 <div>
-                  <h4>企业术语与写作规范</h4>
-                  <span id="knowledge-summary-status" class="inline-status">正在读取...</span>
+                  <h4>写作规范库</h4>
+                  <span id="writing-policy-summary-status" class="inline-status">正在读取...</span>
                 </div>
-                <button id="btn-open-knowledge-manager" class="ghost-action mini-button" type="button" disabled>进入管理</button>
+                <button id="btn-open-writing-policy-manager" class="ghost-action mini-button" type="button" disabled>进入管理</button>
               </div>
-              <div class="knowledge-summary-metrics" aria-live="polite">
-                <span><strong id="knowledge-summary-total">0</strong> 条知识</span>
-                <span><strong id="knowledge-summary-enabled">0</strong> 条启用</span>
+              <div class="writing-policy-summary-metrics" aria-live="polite">
+                <span><strong id="writing-policy-summary-total">0</strong> 条规范</span>
+                <span><strong id="writing-policy-summary-enabled">0</strong> 条启用</span>
               </div>
-              <p id="knowledge-summary-updated" class="knowledge-summary-updated">尚无更新时间</p>
-              <button id="btn-retry-knowledge-summary" class="ghost-action mini-button" type="button" hidden>重新读取</button>
+              <p id="writing-policy-summary-updated" class="writing-policy-summary-updated">尚无更新时间</p>
+              <button id="btn-retry-writing-policy-summary" class="ghost-action mini-button" type="button" hidden>重新读取</button>
             </section>
           </section>
 
@@ -297,149 +297,149 @@
             </div>
           </details>
 
-          <section id="knowledge-scope-view" class="knowledge-subview" hidden>
-            <div class="knowledge-subview-head">
-              <button id="btn-knowledge-scope-back" class="ghost-action mini-button" type="button">返回设置</button>
+          <section id="writing-policy-scope-view" class="writing-policy-subview" hidden>
+            <div class="writing-policy-subview-head">
+              <button id="btn-writing-policy-scope-back" class="ghost-action mini-button" type="button">返回设置</button>
               <div>
-                <h3 id="knowledge-scope-title" tabindex="-1">企业术语与写作规范</h3>
+                <h3 id="writing-policy-scope-title" tabindex="-1">写作规范</h3>
                 <p>按使用范围管理，不影响工作流切换。</p>
               </div>
             </div>
-            <div id="knowledge-scope-list" class="knowledge-scope-list">
-              <button type="button" data-knowledge-scope="global">
-                <span><strong>全局企业规范</strong><small>企业术语与通用写作规则</small></span><span aria-hidden="true">›</span>
+            <div id="writing-policy-scope-list" class="writing-policy-scope-list">
+              <button type="button" data-writing-policy-scope="global">
+                <span><strong>全局组织规范</strong><small>术语规范与通用文体规则</small></span><span aria-hidden="true">›</span>
               </button>
-              <button type="button" data-knowledge-scope="word.smart_write">
-                <span><strong>智能编写补充</strong><small>仅在智能编写中使用的风格规则</small></span><span aria-hidden="true">›</span>
+              <button type="button" data-writing-policy-scope="word.smart_write">
+                <span><strong>智能编写补充</strong><small>仅在智能编写中使用的文体规则</small></span><span aria-hidden="true">›</span>
               </button>
-              <button type="button" data-knowledge-scope="word.smart_imitation">
-                <span><strong>智能仿写补充</strong><small>仅在智能仿写中使用的风格规则</small></span><span aria-hidden="true">›</span>
+              <button type="button" data-writing-policy-scope="word.smart_imitation">
+                <span><strong>智能仿写补充</strong><small>仅在智能仿写中使用的文体规则</small></span><span aria-hidden="true">›</span>
               </button>
-              <button type="button" data-knowledge-scope="word.document_review">
-                <span><strong>文档审查补充</strong><small>仅在文档审查中检查的风格规则</small></span><span aria-hidden="true">›</span>
+              <button type="button" data-writing-policy-scope="word.document_review">
+                <span><strong>文档审查补充</strong><small>仅在文档审查中检查的文体规则</small></span><span aria-hidden="true">›</span>
               </button>
             </div>
-            <button id="btn-knowledge-import-entry" class="knowledge-import-entry ghost-action" type="button">批量导入</button>
+            <button id="btn-writing-policy-import-entry" class="writing-policy-import-entry ghost-action" type="button">批量导入</button>
           </section>
 
-          <section id="knowledge-list-view" class="knowledge-subview" hidden>
-            <div class="knowledge-subview-head">
-              <button id="btn-knowledge-list-back" class="ghost-action mini-button" type="button">返回范围</button>
+          <section id="writing-policy-list-view" class="writing-policy-subview" hidden>
+            <div class="writing-policy-subview-head">
+              <button id="btn-writing-policy-list-back" class="ghost-action mini-button" type="button">返回范围</button>
               <div>
-                <h3 id="knowledge-list-title" tabindex="-1">全局企业规范</h3>
-                <p id="knowledge-list-caption">管理企业术语与写作规则。</p>
+                <h3 id="writing-policy-list-title" tabindex="-1">全局组织规范</h3>
+                <p id="writing-policy-list-caption">管理术语规范与文体规则。</p>
               </div>
             </div>
-            <div class="knowledge-list-toolbar">
-              <div id="knowledge-type-switch" class="knowledge-type-switch" role="tablist" aria-label="知识类型">
-                <button type="button" role="tab" data-knowledge-type="term">术语</button>
-                <button type="button" role="tab" data-knowledge-type="style">风格</button>
+            <div class="writing-policy-list-toolbar">
+              <div id="writing-policy-type-switch" class="writing-policy-type-switch" role="tablist" aria-label="规范类型">
+                <button type="button" role="tab" data-writing-policy-type="term">术语规范</button>
+                <button type="button" role="tab" data-writing-policy-type="style">文体规则</button>
               </div>
-              <div class="knowledge-list-actions">
-                <button id="btn-knowledge-add" class="knowledge-icon-button" type="button" title="新增知识条目" aria-label="新增知识条目">+</button>
-                <details id="knowledge-overflow-menu" class="knowledge-overflow-menu">
+              <div class="writing-policy-list-actions">
+                <button id="btn-writing-policy-add" class="writing-policy-icon-button" type="button" title="新增规范条目" aria-label="新增规范条目">+</button>
+                <details id="writing-policy-overflow-menu" class="writing-policy-overflow-menu">
                   <summary title="更多操作" aria-label="更多操作">⋯</summary>
                   <div>
-                    <button type="button" data-knowledge-menu-action="import">批量导入</button>
-                    <button type="button" data-knowledge-menu-action="export">导出当前范围</button>
-                    <button type="button" data-knowledge-menu-action="backup">下载完整备份</button>
+                    <button type="button" data-writing-policy-menu-action="import">批量导入</button>
+                    <button type="button" data-writing-policy-menu-action="export">导出当前范围</button>
+                    <button type="button" data-writing-policy-menu-action="backup">下载完整备份</button>
                   </div>
                 </details>
               </div>
             </div>
-            <label class="field knowledge-search-field">
+            <label class="field writing-policy-search-field">
               <span>搜索</span>
-              <input id="knowledge-search-input" type="search" placeholder="输入名称、别名或关键词" autocomplete="off" />
+              <input id="writing-policy-search-input" type="search" placeholder="输入名称、别名或关键词" autocomplete="off" />
             </label>
-            <div id="knowledge-list-status" class="knowledge-list-status" aria-live="polite">正在读取...</div>
-            <div id="knowledge-item-list" class="knowledge-item-list"></div>
-            <button id="btn-retry-knowledge-list" class="ghost-action" type="button" hidden>重新读取</button>
+            <div id="writing-policy-list-status" class="writing-policy-list-status" aria-live="polite">正在读取...</div>
+            <div id="writing-policy-item-list" class="writing-policy-item-list"></div>
+            <button id="btn-retry-writing-policy-list" class="ghost-action" type="button" hidden>重新读取</button>
           </section>
 
-          <section id="knowledge-editor-view" class="knowledge-subview" hidden>
-            <div class="knowledge-subview-head">
-              <button id="btn-knowledge-editor-back" class="ghost-action mini-button" type="button">返回列表</button>
+          <section id="writing-policy-editor-view" class="writing-policy-subview" hidden>
+            <div class="writing-policy-subview-head">
+              <button id="btn-writing-policy-editor-back" class="ghost-action mini-button" type="button">返回列表</button>
               <div>
-                <h3 id="knowledge-editor-title" tabindex="-1">新增知识条目</h3>
-                <p id="knowledge-editor-caption">全局企业规范</p>
+                <h3 id="writing-policy-editor-title" tabindex="-1">新增规范条目</h3>
+                <p id="writing-policy-editor-caption">全局企业规范</p>
               </div>
             </div>
-            <p id="knowledge-editor-error" class="knowledge-editor-error" role="alert" hidden></p>
-            <div id="knowledge-term-fields" class="knowledge-editor-fields">
-              <label class="field"><span>标准写法</span><input id="knowledge-preferred-text" type="text" maxlength="2000" /><small id="knowledge-preferred-error" class="knowledge-field-error" hidden></small></label>
-              <label class="field"><span>别名</span><textarea id="knowledge-aliases" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
-              <label class="field"><span>禁用写法</span><textarea id="knowledge-forbidden-variants" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
-              <label class="field"><span>定义与使用说明</span><textarea id="knowledge-definition" rows="4" maxlength="2000"></textarea></label>
+            <p id="writing-policy-editor-error" class="writing-policy-editor-error" role="alert" hidden></p>
+            <div id="writing-policy-term-fields" class="writing-policy-editor-fields">
+              <label class="field"><span>标准写法</span><input id="writing-policy-preferred-text" type="text" maxlength="2000" /><small id="writing-policy-preferred-error" class="writing-policy-field-error" hidden></small></label>
+              <label class="field"><span>别名</span><textarea id="writing-policy-aliases" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
+              <label class="field"><span>禁用写法</span><textarea id="writing-policy-forbidden-variants" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
+              <label class="field"><span>定义与使用说明</span><textarea id="writing-policy-definition" rows="4" maxlength="2000"></textarea></label>
             </div>
-            <div id="knowledge-style-fields" class="knowledge-editor-fields" hidden>
-              <label class="field"><span>规则名称</span><input id="knowledge-style-name" type="text" maxlength="2000" /><small id="knowledge-style-name-error" class="knowledge-field-error" hidden></small></label>
-              <label class="field"><span>写作规则</span><textarea id="knowledge-rule-text" rows="4" maxlength="2000"></textarea><small id="knowledge-rule-error" class="knowledge-field-error" hidden></small></label>
-              <label class="field"><span>正面示例</span><textarea id="knowledge-positive-example" rows="3" maxlength="2000"></textarea></label>
-              <label class="field"><span>反面示例</span><textarea id="knowledge-negative-example" rows="3" maxlength="2000"></textarea></label>
+            <div id="writing-policy-style-fields" class="writing-policy-editor-fields" hidden>
+              <label class="field"><span>规则名称</span><input id="writing-policy-style-name" type="text" maxlength="2000" /><small id="writing-policy-style-name-error" class="writing-policy-field-error" hidden></small></label>
+              <label class="field"><span>写作规则</span><textarea id="writing-policy-rule-text" rows="4" maxlength="2000"></textarea><small id="writing-policy-rule-error" class="writing-policy-field-error" hidden></small></label>
+              <label class="field"><span>正面示例</span><textarea id="writing-policy-positive-example" rows="3" maxlength="2000"></textarea></label>
+              <label class="field"><span>反面示例</span><textarea id="writing-policy-negative-example" rows="3" maxlength="2000"></textarea></label>
             </div>
-            <label class="field"><span>备注</span><textarea id="knowledge-note" rows="3" maxlength="2000" placeholder="选填"></textarea></label>
-            <details id="knowledge-editor-advanced" class="knowledge-editor-advanced">
+            <label class="field"><span>备注</span><textarea id="writing-policy-note" rows="3" maxlength="2000" placeholder="选填"></textarea></label>
+            <details id="writing-policy-editor-advanced" class="writing-policy-editor-advanced">
               <summary>高级设置</summary>
-              <div class="knowledge-editor-fields">
-                <label id="knowledge-category-field" class="field"><span>分类</span><input id="knowledge-category" type="text" maxlength="2000" /></label>
-                <label class="field"><span>上下文关键词</span><textarea id="knowledge-context-keywords" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
-                <label class="field"><span>优先级</span><select id="knowledge-priority"><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
-                <label id="knowledge-always-apply-field" class="knowledge-check"><input id="knowledge-always-apply" type="checkbox" /> 始终应用此风格规则</label>
-                <label class="knowledge-check"><input id="knowledge-enabled" type="checkbox" checked /> 启用此条目</label>
+              <div class="writing-policy-editor-fields">
+                <label id="writing-policy-category-field" class="field"><span>分类</span><input id="writing-policy-category" type="text" maxlength="2000" /></label>
+                <label class="field"><span>上下文关键词</span><textarea id="writing-policy-context-keywords" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
+                <label class="field"><span>优先级</span><select id="writing-policy-priority"><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
+                <label id="writing-policy-always-apply-field" class="writing-policy-check"><input id="writing-policy-always-apply" type="checkbox" /> 始终应用此文体规则</label>
+                <label class="writing-policy-check"><input id="writing-policy-enabled" type="checkbox" checked /> 启用此条目</label>
               </div>
             </details>
-            <div class="button-row knowledge-editor-actions">
-              <button id="btn-save-knowledge-item" type="button">保存</button>
-              <button id="btn-cancel-knowledge-editor" class="ghost-action" type="button">取消</button>
+            <div class="button-row writing-policy-editor-actions">
+              <button id="btn-save-writing-policy-item" type="button">保存</button>
+              <button id="btn-cancel-writing-policy-editor" class="ghost-action" type="button">取消</button>
             </div>
-            <button id="btn-knowledge-delete" class="ghost-action danger-action knowledge-delete-action" type="button" hidden>删除此条目</button>
+            <button id="btn-writing-policy-delete" class="ghost-action danger-action writing-policy-delete-action" type="button" hidden>删除此条目</button>
           </section>
 
-          <section id="knowledge-import-view" class="knowledge-subview" hidden>
-            <div class="knowledge-subview-head">
-              <button id="btn-knowledge-import-back" class="ghost-action mini-button" type="button">返回范围</button>
+          <section id="writing-policy-import-view" class="writing-policy-subview" hidden>
+            <div class="writing-policy-subview-head">
+              <button id="btn-writing-policy-import-back" class="ghost-action mini-button" type="button">返回范围</button>
               <div>
-                <h3 id="knowledge-import-title" tabindex="-1">批量导入企业知识</h3>
+                <h3 id="writing-policy-import-title" tabindex="-1">批量导入写作规范</h3>
                 <p>选择标准 CSV 或 XLSX 模板，先校验再写入。</p>
               </div>
             </div>
-            <ol id="knowledge-import-steps" class="knowledge-import-steps" aria-label="导入步骤">
+            <ol id="writing-policy-import-steps" class="writing-policy-import-steps" aria-label="导入步骤">
               <li data-import-step="select" class="active">选择文件</li>
               <li data-import-step="validate">校验</li>
               <li data-import-step="conflicts">处理冲突</li>
               <li data-import-step="apply">应用</li>
             </ol>
-            <div class="knowledge-download-actions">
-              <button id="btn-knowledge-download-csv-template" class="ghost-action" type="button">CSV 模板</button>
-              <button id="btn-knowledge-download-xlsx-template" class="ghost-action" type="button">XLSX 模板</button>
-              <button id="btn-knowledge-export-scope" class="ghost-action" type="button">导出当前范围</button>
-              <button id="btn-knowledge-download-backup" class="ghost-action" type="button">完整备份</button>
+            <div class="writing-policy-download-actions">
+              <button id="btn-writing-policy-download-csv-template" class="ghost-action" type="button">CSV 模板</button>
+              <button id="btn-writing-policy-download-xlsx-template" class="ghost-action" type="button">XLSX 模板</button>
+              <button id="btn-writing-policy-export-scope" class="ghost-action" type="button">导出当前范围</button>
+              <button id="btn-writing-policy-download-backup" class="ghost-action" type="button">完整备份</button>
             </div>
-            <section id="knowledge-import-select-panel" class="knowledge-import-panel">
+            <section id="writing-policy-import-select-panel" class="writing-policy-import-panel">
               <label class="field">
                 <span>导入文件</span>
-                <input id="knowledge-import-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
+                <input id="writing-policy-import-file" type="file" accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
               </label>
-              <p class="knowledge-import-hint">文件最大 5 MB；仅解析标准模板首个工作表。</p>
-              <button id="btn-preview-knowledge-import" type="button">校验文件</button>
+              <p class="writing-policy-import-hint">文件最大 5 MB；仅解析标准模板首个工作表。</p>
+              <button id="btn-preview-writing-policy-import" type="button">校验文件</button>
             </section>
-            <p id="knowledge-import-status" class="knowledge-list-status" aria-live="polite">请选择文件。</p>
-            <section id="knowledge-import-preview-panel" class="knowledge-import-panel" hidden>
-              <div class="knowledge-import-stats">
-                <span>新增 <strong id="knowledge-import-new-count">0</strong></span>
-                <span>更新 <strong id="knowledge-import-update-count">0</strong></span>
-                <span>冲突 <strong id="knowledge-import-conflict-count">0</strong></span>
-                <span>错误 <strong id="knowledge-import-error-count">0</strong></span>
+            <p id="writing-policy-import-status" class="writing-policy-list-status" aria-live="polite">请选择文件。</p>
+            <section id="writing-policy-import-preview-panel" class="writing-policy-import-panel" hidden>
+              <div class="writing-policy-import-stats">
+                <span>新增 <strong id="writing-policy-import-new-count">0</strong></span>
+                <span>更新 <strong id="writing-policy-import-update-count">0</strong></span>
+                <span>冲突 <strong id="writing-policy-import-conflict-count">0</strong></span>
+                <span>错误 <strong id="writing-policy-import-error-count">0</strong></span>
               </div>
-              <section id="knowledge-import-errors-section" hidden>
-                <h4 id="knowledge-import-errors-title">校验错误</h4>
-                <ul id="knowledge-import-error-list" class="knowledge-import-result-list"></ul>
+              <section id="writing-policy-import-errors-section" hidden>
+                <h4 id="writing-policy-import-errors-title">校验错误</h4>
+                <ul id="writing-policy-import-error-list" class="writing-policy-import-result-list"></ul>
               </section>
-              <section id="knowledge-import-conflicts-section" hidden>
-                <h4 id="knowledge-import-conflicts-title">冲突处理</h4>
-                <div id="knowledge-import-conflict-list" class="knowledge-import-conflict-list"></div>
+              <section id="writing-policy-import-conflicts-section" hidden>
+                <h4 id="writing-policy-import-conflicts-title">冲突处理</h4>
+                <div id="writing-policy-import-conflict-list" class="writing-policy-import-conflict-list"></div>
               </section>
-              <button id="btn-apply-knowledge-import" type="button">应用无冲突项</button>
+              <button id="btn-apply-writing-policy-import" type="button">应用无冲突项</button>
             </section>
           </section>
         </section>

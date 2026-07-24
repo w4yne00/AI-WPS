@@ -15,9 +15,9 @@ if HAS_PYDANTIC:
     from app.core.config import AppSettings
     from app.core.errors import ProviderUnavailableError
     from app.core.models import WordDocumentRequest
-    from app.services.enterprise_knowledge import KnowledgeMatchResult
-    from app.services.enterprise_knowledge import service as knowledge_service_module
-    from app.services.enterprise_knowledge.store import EnterpriseKnowledgeStore
+    from app.services.writing_policy import WritingPolicyMatchResult
+    from app.services.writing_policy import service as writing_policy_service_module
+    from app.services.writing_policy.store import WritingPolicyStore
     from app.services.provider_client import (
         ProviderClient,
         get_last_provider_debug,
@@ -28,7 +28,7 @@ if HAS_PYDANTIC:
     from app.services.word.rewriter import WordRewriter
 
 
-PROJECT_KNOWLEDGE_DB = Path(__file__).resolve().parents[2] / "run" / "enterprise_knowledge.db"
+PROJECT_WRITING_POLICY_DB = Path(__file__).resolve().parents[2] / "run" / "writing_policies.db"
 _MISSING_ENV = object()
 
 
@@ -42,26 +42,26 @@ def database_signature(path):
 
 def restore_database_env(previous):
     if previous is _MISSING_ENV:
-        os.environ.pop("AI_WPS_ENTERPRISE_KNOWLEDGE_DB", None)
+        os.environ.pop("AI_WPS_WRITING_POLICY_DB", None)
     else:
-        os.environ["AI_WPS_ENTERPRISE_KNOWLEDGE_DB"] = previous
+        os.environ["AI_WPS_WRITING_POLICY_DB"] = previous
 
 
 @contextmanager
-def isolated_default_knowledge_database(test_case):
-    project_signature = database_signature(PROJECT_KNOWLEDGE_DB)
-    previous = os.environ.get("AI_WPS_ENTERPRISE_KNOWLEDGE_DB", _MISSING_ENV)
+def isolated_default_writing_policy_database(test_case):
+    project_signature = database_signature(PROJECT_WRITING_POLICY_DB)
+    previous = os.environ.get("AI_WPS_WRITING_POLICY_DB", _MISSING_ENV)
     with TemporaryDirectory() as tmp:
-        db_path = Path(tmp) / "enterprise_knowledge.db"
-        knowledge_service_module._reset_enterprise_knowledge_services()
-        os.environ["AI_WPS_ENTERPRISE_KNOWLEDGE_DB"] = str(db_path)
+        db_path = Path(tmp) / "writing_policies.db"
+        writing_policy_service_module._reset_writing_policy_services()
+        os.environ["AI_WPS_WRITING_POLICY_DB"] = str(db_path)
         try:
             yield db_path
         finally:
-            knowledge_service_module._reset_enterprise_knowledge_services()
+            writing_policy_service_module._reset_writing_policy_services()
             restore_database_env(previous)
             test_case.assertEqual(
-                database_signature(PROJECT_KNOWLEDGE_DB),
+                database_signature(PROJECT_WRITING_POLICY_DB),
                 project_signature,
             )
 
@@ -78,31 +78,31 @@ def parse_word_request(payload):
     return WordDocumentRequest.parse_obj(payload)
 
 
-class FakeKnowledgeService:
-    def __init__(self, prompt_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。", degraded=False):
+class FakeWritingPolicyService:
+    def __init__(self, prompt_block="写作规范（必须遵守）：\n- 使用标准术语。", degraded=False):
         self.calls = []
         self.usage = {
             "applied": not degraded,
             "degraded": degraded,
-            "degradedReason": "企业知识服务暂时不可用，已跳过企业知识增强。" if degraded else "",
+            "degradedReason": "写作规范服务暂时不可用，已跳过写作规范增强。" if degraded else "",
             "termMatchCount": 0 if degraded else 1,
             "styleRuleCount": 0,
             "truncatedCount": 0,
             "matchedItems": [] if degraded else [{"id": "t1", "type": "term", "name": "标准术语"}],
         }
-        self.result = KnowledgeMatchResult(
+        self.result = WritingPolicyMatchResult(
             "" if degraded else prompt_block,
             self.usage,
             () if degraded else ("t1",),
             {
-                "knowledgeApplied": not degraded,
-                "knowledgeDegraded": degraded,
-                "knowledgeErrorCode": "knowledge_io_error" if degraded else "",
-                "knowledgeTermCount": 0 if degraded else 1,
-                "knowledgeStyleCount": 0,
-                "knowledgeTruncatedCount": 0,
-                "knowledgeElapsedMs": 3,
-                "knowledgeItemIds": [] if degraded else ["t1"],
+                "writingPolicyApplied": not degraded,
+                "writingPolicyDegraded": degraded,
+                "writingPolicyErrorCode": "writing_policy_io_error" if degraded else "",
+                "writingPolicyTermCount": 0 if degraded else 1,
+                "writingPolicyStyleCount": 0,
+                "writingPolicyTruncatedCount": 0,
+                "writingPolicyElapsedMs": 3,
+                "writingPolicyItemIds": [] if degraded else ["t1"],
             },
         )
 
@@ -125,7 +125,7 @@ class RecordingSmartWriteProvider:
         focus,
         length,
         selection_mode,
-        enterprise_knowledge_block,
+        writing_policy_block,
     ):
         self.calls.append(
             {
@@ -137,7 +137,7 @@ class RecordingSmartWriteProvider:
                 "focus": focus,
                 "length": length,
                 "selectionMode": selection_mode,
-                "enterpriseKnowledgeBlock": enterprise_knowledge_block,
+                "writingPolicyBlock": writing_policy_block,
             }
         )
         return {
@@ -180,7 +180,7 @@ class LegacySmartWriteProvider:
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for smart write tests")
-class WordRewriterKnowledgeTests(unittest.TestCase):
+class WordRewriterWritingPolicyTests(unittest.TestCase):
     def _request(self, plain_text="原始正文。", user_instruction="突出风险。"):
         return parse_word_request(
             {
@@ -198,7 +198,7 @@ class WordRewriterKnowledgeTests(unittest.TestCase):
             }
         )
 
-    def test_module_import_does_not_change_enterprise_knowledge_environment(self):
+    def test_module_import_does_not_change_writing_policy_environment(self):
         script = "\n".join(
             [
                 "import importlib.machinery",
@@ -214,14 +214,14 @@ class WordRewriterKnowledgeTests(unittest.TestCase):
                 "app_main = types.ModuleType('app.main')",
                 "app_main.app = object()",
                 "sys.modules['app.main'] = app_main",
-                "before = os.environ.get('AI_WPS_ENTERPRISE_KNOWLEDGE_DB')",
+                "before = os.environ.get('AI_WPS_WRITING_POLICY_DB')",
                 "import adapter_service.tests.test_word_rewrite",
-                "after = os.environ.get('AI_WPS_ENTERPRISE_KNOWLEDGE_DB')",
+                "after = os.environ.get('AI_WPS_WRITING_POLICY_DB')",
                 "assert after == before, (before, after)",
             ]
         )
         env = os.environ.copy()
-        env["AI_WPS_ENTERPRISE_KNOWLEDGE_DB"] = "discovery-sentinel.db"
+        env["AI_WPS_WRITING_POLICY_DB"] = "discovery-sentinel.db"
         completed = subprocess.run(
             [sys.executable, "-c", script],
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -233,81 +233,81 @@ class WordRewriterKnowledgeTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_smart_write_prepares_and_returns_enterprise_knowledge(self):
+    def test_smart_write_prepares_and_returns_writing_policy(self):
         provider = RecordingSmartWriteProvider()
-        knowledge = FakeKnowledgeService()
+        writing_policy = FakeWritingPolicyService()
 
-        result = WordRewriter(provider, knowledge_service=knowledge).smart_write(
+        result = WordRewriter(provider, writing_policy_service=writing_policy).smart_write(
             self._request(),
-            "trace-smart-write-knowledge",
+            "trace-smart-write-writing_policy",
         )
 
         self.assertEqual(
-            knowledge.calls,
+            writing_policy.calls,
             [("word.smart_write", ["原始正文。", "突出风险。"])],
         )
-        self.assertEqual(provider.calls[0]["enterpriseKnowledgeBlock"], knowledge.result.prompt_block)
+        self.assertEqual(provider.calls[0]["writingPolicyBlock"], writing_policy.result.prompt_block)
         self.assertEqual(provider.calls[0]["text"], "原始正文。")
         self.assertEqual(provider.calls[0]["action"], "rewrite")
         self.assertEqual(provider.calls[0]["userPrompt"], "突出风险。")
         self.assertEqual(provider.calls[0]["selectionMode"], "selection")
-        self.assertEqual(result["knowledgeUsage"], knowledge.result.usage)
+        self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
         self.assertEqual(result["diffHints"], ["Text content changed", "Expanded content length"])
 
-    def test_smart_write_resolves_default_knowledge_only_when_task_runs(self):
+    def test_smart_write_resolves_default_writing_policy_only_when_task_runs(self):
         provider = RecordingSmartWriteProvider()
-        knowledge = FakeKnowledgeService()
+        writing_policy = FakeWritingPolicyService()
 
         with patch.object(
             rewriter_module,
-            "get_enterprise_knowledge_service",
-            return_value=knowledge,
+            "get_writing_policy_service",
+            return_value=writing_policy,
         ) as getter:
             rewriter = WordRewriter(provider)
             getter.assert_not_called()
 
             result = rewriter.smart_write(
                 self._request(),
-                "trace-smart-write-lazy-knowledge",
+                "trace-smart-write-lazy-writing_policy",
             )
 
         getter.assert_called_once_with()
-        self.assertEqual(provider.calls[0]["enterpriseKnowledgeBlock"], knowledge.result.prompt_block)
-        self.assertEqual(result["knowledgeUsage"], knowledge.result.usage)
+        self.assertEqual(provider.calls[0]["writingPolicyBlock"], writing_policy.result.prompt_block)
+        self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
 
-    def test_smart_write_degraded_knowledge_still_calls_provider(self):
+    def test_smart_write_degraded_writing_policy_still_calls_provider(self):
         provider = RecordingSmartWriteProvider()
-        knowledge = FakeKnowledgeService(degraded=True)
+        writing_policy = FakeWritingPolicyService(degraded=True)
 
-        result = WordRewriter(provider, knowledge_service=knowledge).smart_write(
+        result = WordRewriter(provider, writing_policy_service=writing_policy).smart_write(
             self._request(),
             "trace-smart-write-degraded",
         )
 
         self.assertEqual(len(provider.calls), 1)
-        self.assertEqual(provider.calls[0]["enterpriseKnowledgeBlock"], "")
-        self.assertEqual(result["knowledgeUsage"], knowledge.result.usage)
-        self.assertTrue(result["knowledgeUsage"]["degraded"])
+        self.assertEqual(provider.calls[0]["writingPolicyBlock"], "")
+        self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
+        self.assertTrue(result["writingPolicyUsage"]["degraded"])
 
-    def test_smart_write_defaults_to_empty_enterprise_knowledge_service(self):
+    def test_smart_write_defaults_to_empty_writing_policy_service(self):
         provider = RecordingSmartWriteProvider()
-        with isolated_default_knowledge_database(self) as db_path:
+        with isolated_default_writing_policy_database(self) as db_path:
             rewriter = WordRewriter(provider)
             self.assertFalse(db_path.exists())
 
             result = rewriter.smart_write(self._request(), "trace-smart-write-default")
 
             self.assertTrue(db_path.exists())
-        self.assertEqual(provider.calls[0]["enterpriseKnowledgeBlock"], "")
-        self.assertTrue(result["knowledgeUsage"]["applied"])
-        self.assertFalse(result["knowledgeUsage"]["degraded"])
-        self.assertEqual(result["knowledgeUsage"]["termMatchCount"], 0)
-        self.assertEqual(result["knowledgeUsage"]["matchedItems"], [])
+        self.assertEqual(provider.calls[0]["writingPolicyBlock"], "")
+        self.assertTrue(result["writingPolicyUsage"]["applied"])
+        self.assertFalse(result["writingPolicyUsage"]["degraded"])
+        self.assertEqual(result["writingPolicyUsage"]["termMatchCount"], 0)
+        self.assertEqual(result["writingPolicyUsage"]["matchedItems"], [])
 
     def test_default_smart_write_injects_enabled_term_from_temporary_sqlite(self):
         provider = RecordingSmartWriteProvider()
-        with isolated_default_knowledge_database(self) as db_path:
-            EnterpriseKnowledgeStore(db_path).create_item(
+        with isolated_default_writing_policy_database(self) as db_path:
+            WritingPolicyStore(db_path).create_item(
                 {
                     "type": "term",
                     "scope": "global",
@@ -328,20 +328,20 @@ class WordRewriterKnowledgeTests(unittest.TestCase):
                 "trace-smart-write-real-sqlite",
             )
 
-        knowledge_block = provider.calls[0]["enterpriseKnowledgeBlock"]
-        self.assertIn("企业术语与写作规范", knowledge_block)
-        self.assertIn("企业大模型接口", knowledge_block)
-        self.assertTrue(result["knowledgeUsage"]["applied"])
-        self.assertFalse(result["knowledgeUsage"]["degraded"])
-        self.assertEqual(result["knowledgeUsage"]["termMatchCount"], 1)
-        self.assertEqual(len(result["knowledgeUsage"]["matchedItems"]), 1)
+        writing_policy_block = provider.calls[0]["writingPolicyBlock"]
+        self.assertIn("写作规范", writing_policy_block)
+        self.assertIn("企业大模型接口", writing_policy_block)
+        self.assertTrue(result["writingPolicyUsage"]["applied"])
+        self.assertFalse(result["writingPolicyUsage"]["degraded"])
+        self.assertEqual(result["writingPolicyUsage"]["termMatchCount"], 1)
+        self.assertEqual(len(result["writingPolicyUsage"]["matchedItems"]), 1)
 
-    def test_smart_write_provider_error_still_merges_knowledge_debug(self):
+    def test_smart_write_provider_error_still_merges_writing_policy_debug(self):
         reset_provider_debug()
-        knowledge = FakeKnowledgeService()
+        writing_policy = FakeWritingPolicyService()
 
         with self.assertRaises(ProviderUnavailableError):
-            WordRewriter(FailingSmartWriteProvider(), knowledge_service=knowledge).smart_write(
+            WordRewriter(FailingSmartWriteProvider(), writing_policy_service=writing_policy).smart_write(
                 self._request(),
                 "trace-smart-write-error",
             )
@@ -350,25 +350,25 @@ class WordRewriterKnowledgeTests(unittest.TestCase):
         self.assertEqual(debug["stage"], "request")
         self.assertEqual(debug["provider"], "enterprise-dify-chat")
         self.assertEqual(debug["error"]["type"], "ProviderUnavailableError")
-        self.assertTrue(debug["knowledgeApplied"])
-        self.assertEqual(debug["knowledgeItemIds"], ["t1"])
+        self.assertTrue(debug["writingPolicyApplied"])
+        self.assertEqual(debug["writingPolicyItemIds"], ["t1"])
 
-    def test_smart_write_rejects_provider_without_enterprise_knowledge_contract(self):
+    def test_smart_write_rejects_provider_without_writing_policy_contract(self):
         with self.assertRaises(TypeError):
             WordRewriter(
                 LegacySmartWriteProvider(),
-                knowledge_service=FakeKnowledgeService(),
+                writing_policy_service=FakeWritingPolicyService(),
             ).smart_write(
                 self._request(),
                 "trace-smart-write-legacy-provider",
             )
 
-    def test_smart_write_mock_debug_keeps_skip_reason_and_merges_knowledge(self):
+    def test_smart_write_mock_debug_keeps_skip_reason_and_merges_writing_policy(self):
         reset_provider_debug()
-        knowledge = FakeKnowledgeService()
+        writing_policy = FakeWritingPolicyService()
         provider = ProviderClient(AppSettings(provider_base_url=""))
 
-        result = WordRewriter(provider, knowledge_service=knowledge).smart_write(
+        result = WordRewriter(provider, writing_policy_service=writing_policy).smart_write(
             self._request(),
             "trace-smart-write-mock",
         )
@@ -378,36 +378,36 @@ class WordRewriterKnowledgeTests(unittest.TestCase):
         self.assertNotIn("stage", debug)
         self.assertEqual(debug["skipReason"], "provider_not_configured")
         self.assertEqual(debug["provider"], "mock")
-        self.assertTrue(debug["knowledgeApplied"])
+        self.assertTrue(debug["writingPolicyApplied"])
 
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 class WordRewriteApiTests(unittest.TestCase):
-    def test_config_then_health_import_does_not_initialize_enterprise_knowledge_store(self) -> None:
+    def test_config_then_health_import_does_not_initialize_writing_policy_store(self) -> None:
         script = "\n".join(
             [
                 "import os",
                 "from unittest.mock import patch",
-                "from app.services.enterprise_knowledge import service as knowledge_service_module",
+                "from app.services.writing_policy import service as writing_policy_service_module",
                 "from app.services.word import document_reviewer as document_reviewer_module",
                 "from app.services.word import rewriter as rewriter_module",
                 "from app.services.word import smart_imitator as smart_imitator_module",
-                "before = os.environ.get('AI_WPS_ENTERPRISE_KNOWLEDGE_DB')",
-                "with patch.object(rewriter_module, 'get_enterprise_knowledge_service') as write_getter, \\",
-                "     patch.object(smart_imitator_module, 'get_enterprise_knowledge_service') as imitation_getter, \\",
-                "     patch.object(document_reviewer_module, 'get_enterprise_knowledge_service') as review_getter, \\",
-                "     patch.object(knowledge_service_module, 'EnterpriseKnowledgeStore') as store:",
+                "before = os.environ.get('AI_WPS_WRITING_POLICY_DB')",
+                "with patch.object(rewriter_module, 'get_writing_policy_service') as write_getter, \\",
+                "     patch.object(smart_imitator_module, 'get_writing_policy_service') as imitation_getter, \\",
+                "     patch.object(document_reviewer_module, 'get_writing_policy_service') as review_getter, \\",
+                "     patch.object(writing_policy_service_module, 'WritingPolicyStore') as store:",
                 "    import adapter_service.tests.test_config",
                 "    import adapter_service.tests.test_health",
                 "    write_getter.assert_not_called()",
                 "    imitation_getter.assert_not_called()",
                 "    review_getter.assert_not_called()",
                 "    store.assert_not_called()",
-                "assert os.environ.get('AI_WPS_ENTERPRISE_KNOWLEDGE_DB') == before",
+                "assert os.environ.get('AI_WPS_WRITING_POLICY_DB') == before",
             ]
         )
         env = os.environ.copy()
-        env["AI_WPS_ENTERPRISE_KNOWLEDGE_DB"] = "config-health-import-sentinel.db"
+        env["AI_WPS_WRITING_POLICY_DB"] = "config-health-import-sentinel.db"
         completed = subprocess.run(
             [sys.executable, "-c", script],
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -419,22 +419,22 @@ class WordRewriteApiTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
 
-    def test_app_main_reload_does_not_initialize_enterprise_knowledge_store(self) -> None:
+    def test_app_main_reload_does_not_initialize_writing_policy_store(self) -> None:
         parent_main_module = sys.modules.get("app.main")
         script = "\n".join(
             [
                 "import importlib",
                 "import os",
                 "from unittest.mock import patch",
-                "from app.services.enterprise_knowledge import service as knowledge_service_module",
+                "from app.services.writing_policy import service as writing_policy_service_module",
                 "from app.services.word import document_reviewer as document_reviewer_module",
                 "from app.services.word import rewriter as rewriter_module",
                 "from app.services.word import smart_imitator as smart_imitator_module",
-                "before = os.environ.get('AI_WPS_ENTERPRISE_KNOWLEDGE_DB')",
-                "with patch.object(rewriter_module, 'get_enterprise_knowledge_service') as write_getter, \\",
-                "     patch.object(smart_imitator_module, 'get_enterprise_knowledge_service') as imitation_getter, \\",
-                "     patch.object(document_reviewer_module, 'get_enterprise_knowledge_service') as review_getter, \\",
-                "     patch.object(knowledge_service_module, 'EnterpriseKnowledgeStore') as store:",
+                "before = os.environ.get('AI_WPS_WRITING_POLICY_DB')",
+                "with patch.object(rewriter_module, 'get_writing_policy_service') as write_getter, \\",
+                "     patch.object(smart_imitator_module, 'get_writing_policy_service') as imitation_getter, \\",
+                "     patch.object(document_reviewer_module, 'get_writing_policy_service') as review_getter, \\",
+                "     patch.object(writing_policy_service_module, 'WritingPolicyStore') as store:",
                 "    import app.api.word as word_api_module",
                 "    import app.main as app_main_module",
                 "    importlib.reload(word_api_module)",
@@ -443,11 +443,11 @@ class WordRewriteApiTests(unittest.TestCase):
                 "    imitation_getter.assert_not_called()",
                 "    review_getter.assert_not_called()",
                 "    store.assert_not_called()",
-                "assert os.environ.get('AI_WPS_ENTERPRISE_KNOWLEDGE_DB') == before",
+                "assert os.environ.get('AI_WPS_WRITING_POLICY_DB') == before",
             ]
         )
         env = os.environ.copy()
-        env["AI_WPS_ENTERPRISE_KNOWLEDGE_DB"] = "app-main-reload-sentinel.db"
+        env["AI_WPS_WRITING_POLICY_DB"] = "app-main-reload-sentinel.db"
         completed = subprocess.run(
             [sys.executable, "-c", script],
             cwd=str(Path(__file__).resolve().parents[2]),
@@ -491,7 +491,7 @@ class WordRewriteApiTests(unittest.TestCase):
             }
         }
 
-        with isolated_default_knowledge_database(self) as db_path:
+        with isolated_default_writing_policy_database(self) as db_path:
             client = TestClient(app)
             response = client.post("/word/smart-write", json=payload)
 

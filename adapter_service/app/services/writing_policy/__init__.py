@@ -1,5 +1,5 @@
 from .models import (
-    KNOWLEDGE_SCOPES,
+    WRITING_POLICY_SCOPES,
     MAX_CELL_CHARS,
     MAX_DATABASE_BACKUPS,
     MAX_IMPORT_BYTES,
@@ -12,19 +12,19 @@ from .models import (
     PREVIEW_TTL_SECONDS,
     PRIORITIES,
     TASK_SCOPES,
-    KnowledgeError,
-    KnowledgeMatchResult,
+    WritingPolicyError,
+    WritingPolicyMatchResult,
     normalize_key,
     public_usage,
 )
 from .service import (
-    EnterpriseKnowledgeService,
+    WritingPolicyService,
     default_database_path,
-    get_enterprise_knowledge_service,
+    get_writing_policy_service,
 )
 
 __all__ = [
-    "KNOWLEDGE_SCOPES",
+    "WRITING_POLICY_SCOPES",
     "TASK_SCOPES",
     "PRIORITIES",
     "MAX_IMPORT_BYTES",
@@ -37,11 +37,11 @@ __all__ = [
     "MAX_PUBLIC_MATCHED_ITEMS",
     "PREVIEW_TTL_SECONDS",
     "MAX_DATABASE_BACKUPS",
-    "KnowledgeError",
-    "KnowledgeMatchResult",
+    "WritingPolicyError",
+    "WritingPolicyMatchResult",
     "normalize_key",
     "public_usage",
-    "EnterpriseKnowledgeService",
+    "WritingPolicyService",
     "default_database_path",
-    "get_enterprise_knowledge_service",
+    "get_writing_policy_service",
 ]

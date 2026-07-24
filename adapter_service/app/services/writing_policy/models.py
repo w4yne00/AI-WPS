@@ -5,13 +5,13 @@ from dataclasses import dataclass, field
 from typing import Dict, Iterable, Mapping, Optional, Tuple
 
 
-KNOWLEDGE_SCOPES = (
+WRITING_POLICY_SCOPES = (
     "global",
     "word.smart_write",
     "word.smart_imitation",
     "word.document_review",
 )
-TASK_SCOPES = KNOWLEDGE_SCOPES[1:]
+TASK_SCOPES = WRITING_POLICY_SCOPES[1:]
 PRIORITIES = ("high", "medium", "low")
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
@@ -28,7 +28,7 @@ MAX_DATABASE_BACKUPS = 3
 _WHITESPACE_RE = re.compile(r"\s+")
 
 
-class KnowledgeError(Exception):
+class WritingPolicyError(Exception):
     def __init__(self, code: str, message: str):
         super().__init__(message)
         self.code = code
@@ -36,7 +36,7 @@ class KnowledgeError(Exception):
 
 
 @dataclass(frozen=True, init=False)
-class KnowledgeMatchResult:
+class WritingPolicyMatchResult:
     prompt_block: str
     matched_item_ids: Tuple[str, ...]
     _usage: Dict[str, object] = field(repr=False)

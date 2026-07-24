@@ -30,20 +30,20 @@ DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
 _PROVIDER_INPUT_MODE_CACHE: Dict[str, str] = {}
-_KNOWLEDGE_DEBUG_BOOLEAN_FIELDS = (
-    "knowledgeApplied",
-    "knowledgeDegraded",
+_WRITING_POLICY_DEBUG_BOOLEAN_FIELDS = (
+    "writingPolicyApplied",
+    "writingPolicyDegraded",
 )
-_KNOWLEDGE_DEBUG_COUNT_FIELDS = (
-    "knowledgeTermCount",
-    "knowledgeStyleCount",
-    "knowledgeTruncatedCount",
-    "knowledgeElapsedMs",
+_WRITING_POLICY_DEBUG_COUNT_FIELDS = (
+    "writingPolicyTermCount",
+    "writingPolicyStyleCount",
+    "writingPolicyTruncatedCount",
+    "writingPolicyElapsedMs",
 )
-_KNOWLEDGE_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_KNOWLEDGE_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
+_WRITING_POLICY_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+_WRITING_POLICY_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PROVIDER_DEBUG_STAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
-_MAX_KNOWLEDGE_DEBUG_ITEM_IDS = 20
+_MAX_WRITING_POLICY_DEBUG_ITEM_IDS = 20
 
 
 STYLE_TEXT = {
@@ -164,7 +164,7 @@ def build_smart_write_prompt(
     style: str = "default",
     focus: str = "default",
     length: str = "default",
-    enterprise_knowledge_block: str = "",
+    writing_policy_block: str = "",
 ) -> str:
     action_text = {
         "rewrite": "改写润色",
@@ -181,8 +181,8 @@ def build_smart_write_prompt(
     ]
     if user_prompt.strip():
         lines.extend(["用户补充要求：", user_prompt.strip()])
-    if enterprise_knowledge_block.strip():
-        lines.extend(["", enterprise_knowledge_block.strip()])
+    if writing_policy_block.strip():
+        lines.extend(["", writing_policy_block.strip()])
     lines.extend(
         [
             "",
@@ -206,12 +206,12 @@ def build_smart_imitation_prompt(
     template_text: str,
     requirement: str,
     reference_material: str = "",
-    enterprise_knowledge_block: str = "",
+    writing_policy_block: str = "",
 ) -> str:
     reference_text = reference_material.strip() or "未提供参考素材。"
     lines = ["你是企业办公文档智能仿写助手。"]
-    if enterprise_knowledge_block.strip():
-        lines.extend(["", enterprise_knowledge_block.strip()])
+    if writing_policy_block.strip():
+        lines.extend(["", writing_policy_block.strip()])
     lines.extend(
         [
             "",
@@ -352,7 +352,7 @@ def build_document_review_prompt(
     text: str,
     document_type: str,
     review_prompt: str = "",
-    enterprise_knowledge_block: str = "",
+    writing_policy_block: str = "",
 ) -> str:
     prompt_text = review_prompt.strip() or get_default_document_review_prompt(document_type)
     document_type_text = DOCUMENT_TYPE_TEXT.get(document_type, "技术方案")
@@ -375,8 +375,8 @@ def build_document_review_prompt(
         "8. 不要检查字体、字号、行距、页边距等格式合规问题。",
         "9. 只输出本次审查发现的问题列表；不要输出前端处理状态、复制动作或处理记录。",
     ]
-    if enterprise_knowledge_block.strip():
-        lines.extend(["", enterprise_knowledge_block.strip()])
+    if writing_policy_block.strip():
+        lines.extend(["", writing_policy_block.strip()])
     lines.extend(
         [
             "",
@@ -669,32 +669,32 @@ def merge_provider_debug(trace_id: str, patch: Dict) -> None:
         return
 
     sanitized = {}
-    for field in _KNOWLEDGE_DEBUG_BOOLEAN_FIELDS:
+    for field in _WRITING_POLICY_DEBUG_BOOLEAN_FIELDS:
         value = patch.get(field)
         if isinstance(value, bool):
             sanitized[field] = value
-    for field in _KNOWLEDGE_DEBUG_COUNT_FIELDS:
+    for field in _WRITING_POLICY_DEBUG_COUNT_FIELDS:
         value = patch.get(field)
         if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
             sanitized[field] = value
 
-    if "knowledgeErrorCode" in patch:
-        error_code = patch.get("knowledgeErrorCode")
+    if "writingPolicyErrorCode" in patch:
+        error_code = patch.get("writingPolicyErrorCode")
         if error_code == "" or (
             isinstance(error_code, str)
-            and _KNOWLEDGE_ERROR_CODE_RE.fullmatch(error_code)
+            and _WRITING_POLICY_ERROR_CODE_RE.fullmatch(error_code)
         ):
-            sanitized["knowledgeErrorCode"] = error_code
+            sanitized["writingPolicyErrorCode"] = error_code
 
-    item_ids = patch.get("knowledgeItemIds")
+    item_ids = patch.get("writingPolicyItemIds")
     if isinstance(item_ids, (list, tuple)):
         safe_ids = []
         for item_id in item_ids:
-            if len(safe_ids) >= _MAX_KNOWLEDGE_DEBUG_ITEM_IDS:
+            if len(safe_ids) >= _MAX_WRITING_POLICY_DEBUG_ITEM_IDS:
                 break
-            if isinstance(item_id, str) and _KNOWLEDGE_ITEM_ID_RE.fullmatch(item_id):
+            if isinstance(item_id, str) and _WRITING_POLICY_ITEM_ID_RE.fullmatch(item_id):
                 safe_ids.append(item_id)
-        sanitized["knowledgeItemIds"] = safe_ids
+        sanitized["writingPolicyItemIds"] = safe_ids
 
     with _LAST_PROVIDER_DEBUG_LOCK:
         if _LAST_PROVIDER_DEBUG.get("traceId") != trace_id:
@@ -2027,7 +2027,7 @@ class ProviderClient:
         focus: str = "default",
         length: str = "default",
         selection_mode: str = "selection",
-        enterprise_knowledge_block: str = "",
+        writing_policy_block: str = "",
     ) -> Dict:
         prompt = build_smart_write_prompt(
             text=text,
@@ -2036,7 +2036,7 @@ class ProviderClient:
             style=style,
             focus=focus,
             length=length,
-            enterprise_knowledge_block=enterprise_knowledge_block,
+            writing_policy_block=writing_policy_block,
         )
         task_type = "word.smart_write"
         if not self.is_task_configured(task_type):
@@ -2071,13 +2071,13 @@ class ProviderClient:
         requirement: str,
         reference_material: str,
         trace_id: str,
-        enterprise_knowledge_block: str = "",
+        writing_policy_block: str = "",
     ) -> Dict:
         prompt = build_smart_imitation_prompt(
             template_text,
             requirement,
             reference_material,
-            enterprise_knowledge_block=enterprise_knowledge_block,
+            writing_policy_block=writing_policy_block,
         )
         task_type = "word.smart_imitation"
         if not self.is_task_configured(task_type):
@@ -2151,14 +2151,14 @@ class ProviderClient:
         trace_id: str,
         document_type: str = "technical_solution",
         review_prompt: str = "",
-        enterprise_knowledge_block: str = "",
+        writing_policy_block: str = "",
     ) -> Dict:
         source_text = text.strip()
         prompt = build_document_review_prompt(
             text=source_text,
             document_type=document_type,
             review_prompt=review_prompt,
-            enterprise_knowledge_block=enterprise_knowledge_block,
+            writing_policy_block=writing_policy_block,
         )
         if not source_text:
             return {

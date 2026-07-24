@@ -599,7 +599,7 @@ button[disabled] {
   flex-wrap: wrap;
 }
 
-.knowledge-usage-strip {
+.writing-policy-usage-strip {
   margin: 10px 0 0;
   padding: 10px 12px;
   border: 1px solid var(--hairline);
@@ -611,29 +611,29 @@ button[disabled] {
   line-height: 1.55;
 }
 
-.knowledge-usage-summary {
+.writing-policy-usage-summary {
   margin: 0;
   font-weight: 650;
 }
 
-.knowledge-usage-details {
+.writing-policy-usage-details {
   margin-top: 6px;
   color: var(--muted);
 }
 
-.knowledge-usage-details summary {
+.writing-policy-usage-details summary {
   width: fit-content;
   cursor: pointer;
   color: var(--accent);
   font-weight: 650;
 }
 
-.knowledge-usage-list {
+.writing-policy-usage-list {
   margin: 7px 0 0;
   padding-left: 20px;
 }
 
-.knowledge-usage-list li + li {
+.writing-policy-usage-list li + li {
   margin-top: 3px;
 }
 
@@ -1285,12 +1285,12 @@ body[data-task-mode="smartWrite"] #result-output {
   color: #9b2c2c;
 }
 
-.knowledge-summary-card {
+.writing-policy-summary-card {
   display: grid;
   gap: 10px;
 }
 
-.knowledge-summary-metrics {
+.writing-policy-summary-metrics {
   display: flex;
   flex-wrap: wrap;
   gap: 8px 18px;
@@ -1298,13 +1298,13 @@ body[data-task-mode="smartWrite"] #result-output {
   font-size: 13px;
 }
 
-.knowledge-summary-metrics strong {
+.writing-policy-summary-metrics strong {
   color: var(--text);
   font-size: 18px;
 }
 
-.knowledge-summary-updated,
-.knowledge-subview-head p {
+.writing-policy-summary-updated,
+.writing-policy-subview-head p {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
@@ -1312,7 +1312,7 @@ body[data-task-mode="smartWrite"] #result-output {
   overflow-wrap: anywhere;
 }
 
-.knowledge-subview {
+.writing-policy-subview {
   display: grid;
   gap: 14px;
   width: 100%;
@@ -1320,11 +1320,11 @@ body[data-task-mode="smartWrite"] #result-output {
   max-width: 100%;
 }
 
-.knowledge-subview[hidden] {
+.writing-policy-subview[hidden] {
   display: none;
 }
 
-.knowledge-subview-head {
+.writing-policy-subview-head {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
@@ -1333,7 +1333,7 @@ body[data-task-mode="smartWrite"] #result-output {
   border-bottom: 1px solid var(--hairline);
 }
 
-.knowledge-subview-head h3 {
+.writing-policy-subview-head h3 {
   margin: 0 0 3px;
   font-size: 17px;
   line-height: 1.35;
@@ -1341,14 +1341,14 @@ body[data-task-mode="smartWrite"] #result-output {
   overflow-wrap: anywhere;
 }
 
-.knowledge-scope-list,
-.knowledge-item-list {
+.writing-policy-scope-list,
+.writing-policy-item-list {
   display: grid;
   border-top: 1px solid var(--hairline);
 }
 
-.knowledge-scope-list > button,
-.knowledge-item-row {
+.writing-policy-scope-list > button,
+.writing-policy-item-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
@@ -1365,44 +1365,44 @@ body[data-task-mode="smartWrite"] #result-output {
   text-align: left;
 }
 
-.knowledge-scope-list > button:hover,
-.knowledge-item-row:hover {
+.writing-policy-scope-list > button:hover,
+.writing-policy-item-row:hover {
   background: var(--color-primary-soft);
 }
 
-.knowledge-scope-list strong,
-.knowledge-scope-list small,
-.knowledge-item-row strong,
-.knowledge-item-row small {
+.writing-policy-scope-list strong,
+.writing-policy-scope-list small,
+.writing-policy-item-row strong,
+.writing-policy-item-row small {
   display: block;
   overflow-wrap: anywhere;
 }
 
-.knowledge-scope-list small,
-.knowledge-item-row small {
+.writing-policy-scope-list small,
+.writing-policy-item-row small {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.4;
 }
 
-.knowledge-import-entry {
+.writing-policy-import-entry {
   justify-self: start;
 }
 
-.knowledge-list-toolbar,
-.knowledge-list-actions,
-.knowledge-type-switch {
+.writing-policy-list-toolbar,
+.writing-policy-list-actions,
+.writing-policy-type-switch {
   display: flex;
   align-items: center;
 }
 
-.knowledge-list-toolbar {
+.writing-policy-list-toolbar {
   justify-content: space-between;
   gap: 10px;
 }
 
-.knowledge-type-switch {
+.writing-policy-type-switch {
   flex: 1;
   max-width: 210px;
   border: 1px solid var(--hairline);
@@ -1410,7 +1410,7 @@ body[data-task-mode="smartWrite"] #result-output {
   overflow: hidden;
 }
 
-.knowledge-type-switch button {
+.writing-policy-type-switch button {
   flex: 1;
   min-width: 0;
   min-height: 34px;
@@ -1421,17 +1421,17 @@ body[data-task-mode="smartWrite"] #result-output {
   color: var(--muted);
 }
 
-.knowledge-type-switch button.active {
+.writing-policy-type-switch button.active {
   background: var(--color-primary);
   color: #fff;
 }
 
-.knowledge-list-actions {
+.writing-policy-list-actions {
   gap: 6px;
 }
 
-.knowledge-icon-button,
-.knowledge-overflow-menu > summary {
+.writing-policy-icon-button,
+.writing-policy-overflow-menu > summary {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -1447,20 +1447,20 @@ body[data-task-mode="smartWrite"] #result-output {
   line-height: 1;
 }
 
-.knowledge-overflow-menu {
+.writing-policy-overflow-menu {
   position: relative;
 }
 
-.knowledge-overflow-menu > summary {
+.writing-policy-overflow-menu > summary {
   cursor: pointer;
   list-style: none;
 }
 
-.knowledge-overflow-menu > summary::-webkit-details-marker {
+.writing-policy-overflow-menu > summary::-webkit-details-marker {
   display: none;
 }
 
-.knowledge-overflow-menu > div {
+.writing-policy-overflow-menu > div {
   position: absolute;
   z-index: 5;
   top: 39px;
@@ -1474,32 +1474,32 @@ body[data-task-mode="smartWrite"] #result-output {
   box-shadow: var(--shadow-panel);
 }
 
-.knowledge-overflow-menu button {
+.writing-policy-overflow-menu button {
   border: 0;
   background: transparent;
   color: var(--text);
   text-align: left;
 }
 
-.knowledge-search-field {
+.writing-policy-search-field {
   min-width: 0;
 }
 
-.knowledge-list-status,
-.knowledge-editor-error {
+.writing-policy-list-status,
+.writing-policy-editor-error {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
 }
 
-.knowledge-editor-error {
+.writing-policy-editor-error {
   padding: 9px 10px;
   border-left: 3px solid #b42318;
   background: #fff1f0;
   color: #8f1d16;
 }
 
-.knowledge-field-error {
+.writing-policy-field-error {
   display: block;
   margin-top: 5px;
   color: #8f1d16;
@@ -1507,37 +1507,37 @@ body[data-task-mode="smartWrite"] #result-output {
   line-height: 1.4;
 }
 
-.knowledge-field-error[hidden] {
+.writing-policy-field-error[hidden] {
   display: none;
 }
 
-.knowledge-editor-fields [aria-invalid="true"] {
+.writing-policy-editor-fields [aria-invalid="true"] {
   border-color: #b42318;
 }
 
-.knowledge-editor-fields {
+.writing-policy-editor-fields {
   display: grid;
   gap: 12px;
   min-width: 0;
 }
 
-.knowledge-editor-advanced {
+.writing-policy-editor-advanced {
   border-top: 1px solid var(--hairline);
   border-bottom: 1px solid var(--hairline);
   padding: 10px 0;
 }
 
-.knowledge-editor-advanced summary {
+.writing-policy-editor-advanced summary {
   cursor: pointer;
   color: var(--color-primary);
   font-weight: 650;
 }
 
-.knowledge-editor-advanced[open] summary {
+.writing-policy-editor-advanced[open] summary {
   margin-bottom: 12px;
 }
 
-.knowledge-check {
+.writing-policy-check {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -1545,22 +1545,22 @@ body[data-task-mode="smartWrite"] #result-output {
   font-size: 13px;
 }
 
-.knowledge-check input {
+.writing-policy-check input {
   width: 16px;
   min-height: 16px;
   box-shadow: none;
 }
 
-.knowledge-editor-actions {
+.writing-policy-editor-actions {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.knowledge-delete-action {
+.writing-policy-delete-action {
   justify-self: start;
   margin-top: 8px;
 }
 
-.knowledge-import-steps {
+.writing-policy-import-steps {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 4px;
@@ -1570,7 +1570,7 @@ body[data-task-mode="smartWrite"] #result-output {
   counter-reset: import-step;
 }
 
-.knowledge-import-steps li {
+.writing-policy-import-steps li {
   min-width: 0;
   padding: 7px 3px;
   border-bottom: 2px solid var(--hairline);
@@ -1580,24 +1580,24 @@ body[data-task-mode="smartWrite"] #result-output {
   overflow-wrap: anywhere;
 }
 
-.knowledge-import-steps li.active {
+.writing-policy-import-steps li.active {
   border-bottom-color: var(--color-primary);
   color: var(--color-primary);
   font-weight: 650;
 }
 
-.knowledge-download-actions {
+.writing-policy-download-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 7px;
 }
 
-.knowledge-download-actions button {
+.writing-policy-download-actions button {
   min-width: 0;
   white-space: normal;
 }
 
-.knowledge-import-panel {
+.writing-policy-import-panel {
   display: grid;
   gap: 12px;
   min-width: 0;
@@ -1605,20 +1605,20 @@ body[data-task-mode="smartWrite"] #result-output {
   border-top: 1px solid var(--hairline);
 }
 
-.knowledge-import-hint {
+.writing-policy-import-hint {
   margin: 0;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
 }
 
-.knowledge-import-stats {
+.writing-policy-import-stats {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 6px;
 }
 
-.knowledge-import-stats span {
+.writing-policy-import-stats span {
   padding: 8px 3px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-control);
@@ -1628,21 +1628,21 @@ body[data-task-mode="smartWrite"] #result-output {
   text-align: center;
 }
 
-.knowledge-import-stats strong {
+.writing-policy-import-stats strong {
   display: block;
   margin-top: 3px;
   color: var(--text);
   font-size: 16px;
 }
 
-.knowledge-import-panel h4 {
+.writing-policy-import-panel h4 {
   margin: 0 0 8px;
   font-size: 14px;
   letter-spacing: 0;
 }
 
-.knowledge-import-result-list,
-.knowledge-import-conflict-list {
+.writing-policy-import-result-list,
+.writing-policy-import-conflict-list {
   display: grid;
   gap: 7px;
   margin: 0;
@@ -1650,8 +1650,8 @@ body[data-task-mode="smartWrite"] #result-output {
   list-style: none;
 }
 
-.knowledge-import-result-list li,
-.knowledge-import-conflict-row {
+.writing-policy-import-result-list li,
+.writing-policy-import-conflict-row {
   padding: 8px 10px;
   border-left: 3px solid var(--hairline);
   background: var(--color-surface-muted);
@@ -1661,12 +1661,12 @@ body[data-task-mode="smartWrite"] #result-output {
   overflow-wrap: anywhere;
 }
 
-.knowledge-import-conflict-row {
+.writing-policy-import-conflict-row {
   display: grid;
   gap: 7px;
 }
 
-.knowledge-import-conflict-row select {
+.writing-policy-import-conflict-row select {
   width: 100%;
 }
 

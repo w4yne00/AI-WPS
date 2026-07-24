@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
 from .matcher import build_match_result
-from .models import KnowledgeError, KnowledgeMatchResult, public_usage
-from .store import EnterpriseKnowledgeStore
+from .models import WritingPolicyError, WritingPolicyMatchResult, public_usage
+from .store import WritingPolicyStore
 
 
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
@@ -18,29 +18,29 @@ _MAX_DIAGNOSTIC_ITEM_IDS = 20
 _INITIALIZATION_BACKOFF_SECONDS = 5.0
 _INITIALIZATION_CLOCK = time.monotonic
 _SERVICE_LOCK = threading.Lock()
-_SERVICES_BY_PATH = {}  # type: Dict[Path, EnterpriseKnowledgeService]
+_SERVICES_BY_PATH = {}  # type: Dict[Path, WritingPolicyService]
 _INITIALIZING_BY_PATH = {}  # type: Dict[Path, object]
 _INITIALIZATION_FAILURES = {}  # type: Dict[Path, object]
 
 
 def default_database_path() -> Path:
-    configured = os.getenv("AI_WPS_ENTERPRISE_KNOWLEDGE_DB", "").strip()
+    configured = os.getenv("AI_WPS_WRITING_POLICY_DB", "").strip()
     if configured:
         return Path(configured)
     return (
         Path(__file__).resolve().parents[4]
         / "run"
-        / "enterprise_knowledge.db"
+        / "writing_policies.db"
     )
 
 
 def _safe_error_code(error: Exception) -> str:
-    if isinstance(error, KnowledgeError):
+    if isinstance(error, WritingPolicyError):
         code = str(error.code or "")
-        return code if _ERROR_CODE_RE.fullmatch(code) else "knowledge_error"
+        return code if _ERROR_CODE_RE.fullmatch(code) else "writing_policy_error"
     if isinstance(error, OSError):
-        return "knowledge_io_error"
-    return "knowledge_internal_error"
+        return "writing_policy_io_error"
+    return "writing_policy_internal_error"
 
 
 def _safe_item_ids(values: Sequence[str]):
@@ -90,18 +90,18 @@ def _diagnostic_patch(
     item_ids: Sequence[str],
 ) -> Dict[str, object]:
     return {
-        "knowledgeApplied": bool(applied),
-        "knowledgeDegraded": bool(degraded),
-        "knowledgeErrorCode": error_code,
-        "knowledgeTermCount": _nonnegative_int(term_count),
-        "knowledgeStyleCount": _nonnegative_int(style_count),
-        "knowledgeTruncatedCount": _nonnegative_int(truncated_count),
-        "knowledgeElapsedMs": _nonnegative_int(elapsed_ms),
-        "knowledgeItemIds": _safe_item_ids(item_ids),
+        "writingPolicyApplied": bool(applied),
+        "writingPolicyDegraded": bool(degraded),
+        "writingPolicyErrorCode": error_code,
+        "writingPolicyTermCount": _nonnegative_int(term_count),
+        "writingPolicyStyleCount": _nonnegative_int(style_count),
+        "writingPolicyTruncatedCount": _nonnegative_int(truncated_count),
+        "writingPolicyElapsedMs": _nonnegative_int(elapsed_ms),
+        "writingPolicyItemIds": _safe_item_ids(item_ids),
     }
 
 
-class EnterpriseKnowledgeService:
+class WritingPolicyService:
     def __init__(
         self,
         store: object,
@@ -128,7 +128,7 @@ class EnterpriseKnowledgeService:
         self,
         task_scope: str,
         source_parts: Sequence[str],
-    ) -> KnowledgeMatchResult:
+    ) -> WritingPolicyMatchResult:
         started_at = _safe_clock_value(self._clock)
         try:
             terms, styles = self.store.enabled_items(task_scope)
@@ -149,7 +149,7 @@ class EnterpriseKnowledgeService:
             item_ids=matched.matched_item_ids,
         )
         self._record_diagnostic("prepared", patch)
-        return KnowledgeMatchResult(
+        return WritingPolicyMatchResult(
             matched.prompt_block,
             usage,
             matched.matched_item_ids,
@@ -164,7 +164,7 @@ class EnterpriseKnowledgeService:
         self,
         error: Exception,
         started_at: Optional[float],
-    ) -> KnowledgeMatchResult:
+    ) -> WritingPolicyMatchResult:
         elapsed_ms = _elapsed_ms(started_at, _safe_clock_value(self._clock))
         error_code = _safe_error_code(error)
         usage = public_usage(
@@ -174,7 +174,7 @@ class EnterpriseKnowledgeService:
             truncated=0,
             matched_items=[],
             degraded=True,
-            degraded_reason="企业知识服务暂时不可用，已跳过企业知识增强。",
+            degraded_reason="写作规范服务暂时不可用，已跳过写作规范增强。",
         )
         patch = _diagnostic_patch(
             applied=False,
@@ -187,7 +187,7 @@ class EnterpriseKnowledgeService:
             item_ids=(),
         )
         self._record_diagnostic("degraded", patch)
-        return KnowledgeMatchResult("", usage, (), patch)
+        return WritingPolicyMatchResult("", usage, (), patch)
 
     def _record_diagnostic(self, stage: str, patch: Dict[str, object]) -> None:
         diagnostic = dict(deepcopy(patch), stage=stage)
@@ -200,23 +200,23 @@ class _UnavailableStore:
         self.error_code = error_code
 
     def enabled_items(self, task_scope: str):
-        raise KnowledgeError(
+        raise WritingPolicyError(
             self.error_code,
-            "企业知识库暂时不可用。",
+            "写作规范库暂时不可用。",
         )
 
 
-def _degraded_service(error: Exception) -> EnterpriseKnowledgeService:
-    return EnterpriseKnowledgeService(
+def _degraded_service(error: Exception) -> WritingPolicyService:
+    return WritingPolicyService(
         store=_UnavailableStore(_safe_error_code(error))
     )
 
 
-def _initializing_service() -> EnterpriseKnowledgeService:
+def _initializing_service() -> WritingPolicyService:
     return _degraded_service(
-        KnowledgeError(
-            "knowledge_initializing",
-            "企业知识库正在初始化。",
+        WritingPolicyError(
+            "writing_policy_initializing",
+            "写作规范库正在初始化。",
         )
     )
 
@@ -227,7 +227,7 @@ def _release_initialization(db_path: Path, token: object) -> None:
             del _INITIALIZING_BY_PATH[db_path]
 
 
-def get_enterprise_knowledge_service() -> EnterpriseKnowledgeService:
+def get_writing_policy_service() -> WritingPolicyService:
     try:
         db_path = default_database_path().expanduser().resolve()
     except Exception as error:
@@ -253,8 +253,8 @@ def get_enterprise_knowledge_service() -> EnterpriseKnowledgeService:
 
     try:
         try:
-            store = EnterpriseKnowledgeStore(db_path)
-            service = EnterpriseKnowledgeService(store=store)
+            store = WritingPolicyStore(db_path)
+            service = WritingPolicyService(store=store)
         except Exception as error:
             failed_service = _degraded_service(error)
             retry_after = _initialization_now() + _INITIALIZATION_BACKOFF_SECONDS
@@ -279,7 +279,7 @@ def get_enterprise_knowledge_service() -> EnterpriseKnowledgeService:
         _release_initialization(db_path, token)
 
 
-def _reset_enterprise_knowledge_services() -> None:
+def _reset_writing_policy_services() -> None:
     with _SERVICE_LOCK:
         _SERVICES_BY_PATH.clear()
         _INITIALIZATION_FAILURES.clear()

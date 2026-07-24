@@ -2000,7 +2000,7 @@
     return Number(profileCount || 0) === 0 || Boolean(requested);
   }
 
-  function normalizeKnowledgeUsageCount(value) {
+  function normalizeWritingPolicyUsageCount(value) {
     var number = Number(value);
     if (!isFinite(number) || number < 0) {
       return 0;
@@ -2008,7 +2008,7 @@
     return Math.floor(number);
   }
 
-  function normalizeKnowledgeUsage(value) {
+  function normalizeWritingPolicyUsage(value) {
     var source;
     var matchedItems;
     if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -2020,9 +2020,9 @@
       applied: Boolean(source.applied),
       degraded: Boolean(source.degraded),
       degradedReason: String(source.degradedReason || ""),
-      termMatchCount: normalizeKnowledgeUsageCount(source.termMatchCount),
-      styleRuleCount: normalizeKnowledgeUsageCount(source.styleRuleCount),
-      truncatedCount: normalizeKnowledgeUsageCount(source.truncatedCount),
+      termMatchCount: normalizeWritingPolicyUsageCount(source.termMatchCount),
+      styleRuleCount: normalizeWritingPolicyUsageCount(source.styleRuleCount),
+      truncatedCount: normalizeWritingPolicyUsageCount(source.truncatedCount),
       matchedItems: matchedItems.filter(function (item) {
         return item &&
           (item.type === "term" || item.type === "style") &&
@@ -2037,36 +2037,36 @@
     };
   }
 
-  function knowledgeUsageSummary(value, taskType) {
-    var usage = normalizeKnowledgeUsage(value);
+  function writingPolicyUsageSummary(value, taskType) {
+    var usage = normalizeWritingPolicyUsage(value);
     var action;
     if (!usage) {
       return "";
     }
     if (!usage.applied || usage.degraded) {
-      return "企业知识未应用，本次结果仅使用模型工作流生成";
+      return "写作规范未应用，本次结果仅使用模型工作流生成";
     }
     action = taskType === "word.document_review" ? "已检查" : "已应用";
-    return "企业知识：" + action + " " + usage.termMatchCount +
-      " 条术语、" + usage.styleRuleCount + " 条风格规则";
+    return "写作规范：" + action + " " + usage.termMatchCount +
+      " 条术语、" + usage.styleRuleCount + " 条文体规则";
   }
 
-  function knowledgeUsageDetails(value) {
-    var usage = normalizeKnowledgeUsage(value);
+  function writingPolicyUsageDetails(value) {
+    var usage = normalizeWritingPolicyUsage(value);
     if (!usage) {
       return [];
     }
     return usage.matchedItems.map(function (item) {
-      return (item.type === "term" ? "术语" : "风格规则") + "：" + item.name;
+      return (item.type === "term" ? "术语" : "文体规则") + "：" + item.name;
     });
   }
 
-  function validateKnowledgeDraft(value) {
+  function validateWritingPolicyDraft(value) {
     var draft = value && typeof value === "object" ? value : {};
     var type = String(draft.type || "");
     var scope = String(draft.scope || "");
     if (type !== "term" && type !== "style") {
-      return { ok: false, field: "type", message: "请选择知识类型。" };
+      return { ok: false, field: "type", message: "请选择规范类型。" };
     }
     if (type === "term" && scope !== "global") {
       return { ok: false, field: "scope", message: "企业术语首版仅支持全局范围。" };
@@ -2083,7 +2083,7 @@
     return { ok: true, field: "", message: "" };
   }
 
-  function knowledgeConflictField(error) {
+  function writingPolicyConflictField(error) {
     var code = String(error && error.adapterCode || "").toUpperCase();
     if (code === "TERM_TEXT_CONFLICT") {
       return "preferredText";
@@ -2094,7 +2094,7 @@
     return "";
   }
 
-  function nextKnowledgeTabIndex(currentIndex, key, count) {
+  function nextWritingPolicyTabIndex(currentIndex, key, count) {
     var total = Math.max(0, Math.floor(Number(count) || 0));
     var current = Math.max(0, Math.min(total - 1, Math.floor(Number(currentIndex) || 0)));
     if (!total) {
@@ -2115,7 +2115,7 @@
     return current;
   }
 
-  function formatKnowledgeUpdatedAt(value) {
+  function formatWritingPolicyUpdatedAt(value) {
     var text = String(value || "").trim();
     var date;
     var formatted;
@@ -2142,7 +2142,7 @@
     return "最近更新：" + formatted;
   }
 
-  function validateKnowledgeImportFile(file) {
+  function validateWritingPolicyImportFile(file) {
     var name = String(file && file.name || "").toLowerCase();
     var size = Number(file && file.size);
     if (!/\.(csv|xlsx)$/.test(name)) {
@@ -2154,7 +2154,7 @@
     return { ok: true, message: "" };
   }
 
-  function buildKnowledgeImportRequest(file, contentBase64) {
+  function buildWritingPolicyImportRequest(file, contentBase64) {
     return {
       fileName: String(file && file.name || ""),
       mimeType: String(file && file.type || "application/octet-stream"),
@@ -2163,11 +2163,11 @@
     };
   }
 
-  function normalizeKnowledgeConflictDecision(value) {
+  function normalizeWritingPolicyConflictDecision(value) {
     return value === "skip" ? "skip" : "keep_existing";
   }
 
-  function knowledgeImportRowLabel(value) {
+  function writingPolicyImportRowLabel(value) {
     var row = Math.max(0, Math.floor(Number(value && (value.row || value.rowNumber)) || 0));
     var message = String(value && value.message || "").trim();
     if (/^第\s*\d+\s*行/.test(message)) {
@@ -2176,7 +2176,7 @@
     return (row ? "第 " + row + " 行：" : "") + (message || "该行无法导入。");
   }
 
-  function normalizeKnowledgeImportPreview(value) {
+  function normalizeWritingPolicyImportPreview(value) {
     var source = value && typeof value === "object" ? value : {};
     var errors = Array.isArray(source.errors) ? source.errors : [];
     var conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
@@ -2194,14 +2194,14 @@
       },
       errors: errors.slice(0, 100).map(function (item) {
         return {
-          row: normalizeKnowledgeUsageCount(item && (item.row || item.rowNumber)),
-          message: knowledgeImportRowLabel(item)
+          row: normalizeWritingPolicyUsageCount(item && (item.row || item.rowNumber)),
+          message: writingPolicyImportRowLabel(item)
         };
       }),
       conflicts: conflicts.slice(0, 100).map(function (item) {
         return {
-          rowNumber: normalizeKnowledgeUsageCount(item && (item.rowNumber || item.row)),
-          message: knowledgeImportRowLabel(item),
+          rowNumber: normalizeWritingPolicyUsageCount(item && (item.rowNumber || item.row)),
+          message: writingPolicyImportRowLabel(item),
           incomingName: String(item && item.incomingName || ""),
           existingName: String(item && item.existingName || ""),
           decision: "keep_existing"
@@ -2210,7 +2210,7 @@
     };
   }
 
-  function knowledgeImportCountLabel(label, totalCount, visibleCount) {
+  function writingPolicyImportCountLabel(label, totalCount, visibleCount) {
     var total = Math.max(0, Math.floor(Number(totalCount) || 0));
     var visible = Math.max(0, Math.floor(Number(visibleCount) || 0));
     if (visible < total) {
@@ -2219,7 +2219,7 @@
     return String(label || "") + "（共 " + total + " 条）";
   }
 
-  function buildKnowledgeImportApplyRequest(preview) {
+  function buildWritingPolicyImportApplyRequest(preview) {
     var source = preview && typeof preview === "object" ? preview : {};
     var conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
     return {
@@ -2227,7 +2227,7 @@
       acceptedConflictRows: conflicts.map(function (item) {
         return {
           rowNumber: Math.max(0, Math.floor(Number(item && item.rowNumber) || 0)),
-          decision: normalizeKnowledgeConflictDecision(item && item.decision)
+          decision: normalizeWritingPolicyConflictDecision(item && item.decision)
         };
       }).filter(function (item) {
         return item.rowNumber > 0;
@@ -2235,7 +2235,7 @@
     };
   }
 
-  function isKnowledgePreviewExpired(error) {
+  function isWritingPolicyPreviewExpired(error) {
     var code = String(error && error.adapterCode || "").toUpperCase();
     return Boolean(error && (error.httpStatus === 404 || error.httpStatus === 410)) ||
       code === "IMPORT_PREVIEW_NOT_FOUND" || code === "IMPORT_PREVIEW_EXPIRED";
@@ -2275,20 +2275,20 @@
     workflowProfileOptionState: workflowProfileOptionState,
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
-    normalizeKnowledgeUsage: normalizeKnowledgeUsage,
-    knowledgeUsageSummary: knowledgeUsageSummary,
-    knowledgeUsageDetails: knowledgeUsageDetails,
-    validateKnowledgeDraft: validateKnowledgeDraft,
-    knowledgeConflictField: knowledgeConflictField,
-    nextKnowledgeTabIndex: nextKnowledgeTabIndex,
-    formatKnowledgeUpdatedAt: formatKnowledgeUpdatedAt,
-    validateKnowledgeImportFile: validateKnowledgeImportFile,
-    buildKnowledgeImportRequest: buildKnowledgeImportRequest,
-    normalizeKnowledgeConflictDecision: normalizeKnowledgeConflictDecision,
-    knowledgeImportRowLabel: knowledgeImportRowLabel,
-    normalizeKnowledgeImportPreview: normalizeKnowledgeImportPreview,
-    knowledgeImportCountLabel: knowledgeImportCountLabel,
-    buildKnowledgeImportApplyRequest: buildKnowledgeImportApplyRequest,
-    isKnowledgePreviewExpired: isKnowledgePreviewExpired
+    normalizeWritingPolicyUsage: normalizeWritingPolicyUsage,
+    writingPolicyUsageSummary: writingPolicyUsageSummary,
+    writingPolicyUsageDetails: writingPolicyUsageDetails,
+    validateWritingPolicyDraft: validateWritingPolicyDraft,
+    writingPolicyConflictField: writingPolicyConflictField,
+    nextWritingPolicyTabIndex: nextWritingPolicyTabIndex,
+    formatWritingPolicyUpdatedAt: formatWritingPolicyUpdatedAt,
+    validateWritingPolicyImportFile: validateWritingPolicyImportFile,
+    buildWritingPolicyImportRequest: buildWritingPolicyImportRequest,
+    normalizeWritingPolicyConflictDecision: normalizeWritingPolicyConflictDecision,
+    writingPolicyImportRowLabel: writingPolicyImportRowLabel,
+    normalizeWritingPolicyImportPreview: normalizeWritingPolicyImportPreview,
+    writingPolicyImportCountLabel: writingPolicyImportCountLabel,
+    buildWritingPolicyImportApplyRequest: buildWritingPolicyImportApplyRequest,
+    isWritingPolicyPreviewExpired: isWritingPolicyPreviewExpired
   };
 });

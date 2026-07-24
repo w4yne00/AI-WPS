@@ -12,10 +12,10 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 from .models import (
-    KNOWLEDGE_SCOPES,
+    WRITING_POLICY_SCOPES,
     MAX_DATABASE_BACKUPS,
     PRIORITIES,
-    KnowledgeError,
+    WritingPolicyError,
     normalize_key,
 )
 
@@ -37,19 +37,19 @@ def _read_json_list(value: str) -> List[str]:
     try:
         loaded = json.loads(value)
     except (TypeError, ValueError):
-        raise KnowledgeError(
-            "knowledge_data_corrupt", "企业知识库中的列表数据已损坏。"
+        raise WritingPolicyError(
+            "writing_policy_data_corrupt", "写作规范库中的列表数据已损坏。"
         )
     if not isinstance(loaded, list) or any(
         not isinstance(item, str) for item in loaded
     ):
-        raise KnowledgeError(
-            "knowledge_data_corrupt", "企业知识库中的列表数据已损坏。"
+        raise WritingPolicyError(
+            "writing_policy_data_corrupt", "写作规范库中的列表数据已损坏。"
         )
     return list(loaded)
 
 
-class EnterpriseKnowledgeStore:
+class WritingPolicyStore:
     def __init__(self, db_path: Path):
         self.db_path = Path(db_path)
         self._write_lock = threading.RLock()
@@ -79,7 +79,7 @@ class EnterpriseKnowledgeStore:
         with self._connect() as connection:
             connection.executescript(
                 """
-                CREATE TABLE IF NOT EXISTS knowledge_terms (
+                CREATE TABLE IF NOT EXISTS writing_policy_terms (
                     id TEXT PRIMARY KEY,
                     scope TEXT NOT NULL CHECK (scope = 'global'),
                     category TEXT NOT NULL,
@@ -113,7 +113,7 @@ class EnterpriseKnowledgeStore:
                     updated_at TEXT NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS knowledge_imports (
+                CREATE TABLE IF NOT EXISTS writing_policy_imports (
                     id TEXT PRIMARY KEY,
                     imported_at TEXT NOT NULL,
                     file_name TEXT NOT NULL,
@@ -126,12 +126,12 @@ class EnterpriseKnowledgeStore:
                     result TEXT NOT NULL
                 );
 
-                CREATE INDEX IF NOT EXISTS idx_knowledge_terms_scope
-                    ON knowledge_terms(scope);
-                CREATE INDEX IF NOT EXISTS idx_knowledge_terms_enabled
-                    ON knowledge_terms(enabled);
-                CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_terms_preferred_normalized
-                    ON knowledge_terms(preferred_normalized);
+                CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_scope
+                    ON writing_policy_terms(scope);
+                CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_enabled
+                    ON writing_policy_terms(enabled);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_writing_policy_terms_preferred_normalized
+                    ON writing_policy_terms(preferred_normalized);
                 CREATE INDEX IF NOT EXISTS idx_style_rules_scope
                     ON style_rules(scope);
                 CREATE INDEX IF NOT EXISTS idx_style_rules_enabled
@@ -146,7 +146,7 @@ class EnterpriseKnowledgeStore:
             term_row = connection.execute(
                 "SELECT COUNT(*) AS total, "
                 "COALESCE(SUM(enabled), 0) AS enabled, "
-                "MAX(updated_at) AS updated_at FROM knowledge_terms"
+                "MAX(updated_at) AS updated_at FROM writing_policy_terms"
             ).fetchone()
             style_row = connection.execute(
                 "SELECT COUNT(*) AS total, "
@@ -178,7 +178,7 @@ class EnterpriseKnowledgeStore:
         with self._connect() as connection:
             if item_type == "term":
                 rows = connection.execute(
-                    "SELECT * FROM knowledge_terms WHERE scope = ? "
+                    "SELECT * FROM writing_policy_terms WHERE scope = ? "
                     "ORDER BY preferred_normalized, id",
                     (scope,),
                 ).fetchall()
@@ -191,8 +191,8 @@ class EnterpriseKnowledgeStore:
                 ).fetchall()
                 items = [self._style_from_row(row) for row in rows]
             else:
-                raise KnowledgeError(
-                    "invalid_knowledge_type", "知识条目类型必须为 term 或 style。"
+                raise WritingPolicyError(
+                    "invalid_writing_policy_type", "规范条目类型必须为 term 或 style。"
                 )
 
         if not normalized_query:
@@ -227,7 +227,7 @@ class EnterpriseKnowledgeStore:
                 connection.execute("BEGIN IMMEDIATE")
                 existing = self._get_item(connection, item_id)
                 table = (
-                    "knowledge_terms"
+                    "writing_policy_terms"
                     if existing["type"] == "term"
                     else "style_rules"
                 )
@@ -240,7 +240,7 @@ class EnterpriseKnowledgeStore:
         self._validate_scope(task_scope)
         with self._connect() as connection:
             term_rows = connection.execute(
-                "SELECT * FROM knowledge_terms "
+                "SELECT * FROM writing_policy_terms "
                 "WHERE scope = 'global' AND enabled = 1 "
                 "ORDER BY preferred_normalized, id"
             ).fetchall()
@@ -337,7 +337,7 @@ class EnterpriseKnowledgeStore:
                     self._rotate_backups()
                 except OSError as exc:
                     logger.warning(
-                        "企业知识库导入后备份轮换失败，将在后续导入重试：%s",
+                        "写作规范库导入后备份轮换失败，将在后续导入重试：%s",
                         exc,
                     )
             return dict(counts, items=changed_items, **{"import": import_record})
@@ -358,7 +358,7 @@ class EnterpriseKnowledgeStore:
     def database_snapshot_bytes(self) -> bytes:
         with self._write_lock:
             descriptor, raw_path = tempfile.mkstemp(
-                prefix=".enterprise-knowledge-snapshot-",
+                prefix=".writing-policies-snapshot-",
                 suffix=".db",
                 dir=str(self.db_path.parent),
             )
@@ -395,8 +395,8 @@ class EnterpriseKnowledgeStore:
             except FileExistsError:
                 continue
         if backup_path is None or descriptor is None:
-            raise KnowledgeError(
-                "knowledge_backup_unavailable", "无法创建导入前知识库备份。"
+            raise WritingPolicyError(
+                "writing_policy_backup_unavailable", "无法创建导入前规范库备份。"
             )
         os.close(descriptor)
         try:
@@ -448,7 +448,7 @@ class EnterpriseKnowledgeStore:
         normalized = []
         for entry in operations:
             if not isinstance(entry, dict):
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "invalid_import_operation", "导入写入项必须为对象。"
                 )
             if "action" not in entry:
@@ -457,14 +457,14 @@ class EnterpriseKnowledgeStore:
             action = entry.get("action")
             item = entry.get("item")
             if action not in ("create", "update") or not isinstance(item, dict):
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "invalid_import_operation", "导入写入操作无效。"
                 )
             operation = {"action": action, "item": dict(item)}
             if action == "update":
                 existing_item_id = str(entry.get("existingItemId") or "")
                 if not existing_item_id:
-                    raise KnowledgeError(
+                    raise WritingPolicyError(
                         "invalid_import_operation", "导入更新项缺少目标条目。"
                     )
                 operation["existingItemId"] = existing_item_id
@@ -478,7 +478,7 @@ class EnterpriseKnowledgeStore:
         term_token_owners: Optional[Dict[str, str]] = None,
     ) -> Dict[str, object]:
         if not isinstance(payload, dict):
-            raise KnowledgeError("invalid_knowledge_item", "知识条目必须为对象。")
+            raise WritingPolicyError("invalid_writing_policy_item", "规范条目必须为对象。")
         item_type = payload.get("type")
         item_id = str(uuid.uuid4())
         now = _utc_now()
@@ -491,7 +491,7 @@ class EnterpriseKnowledgeStore:
             )
             connection.execute(
                 """
-                INSERT INTO knowledge_terms (
+                INSERT INTO writing_policy_terms (
                     id, scope, category, preferred_text, preferred_normalized,
                     aliases, forbidden_variants, definition, context_keywords,
                     priority, enabled, note, created_at, updated_at
@@ -516,8 +516,8 @@ class EnterpriseKnowledgeStore:
                 (item_id,) + self._style_values(clean, now, include_created=True),
             )
         else:
-            raise KnowledgeError(
-                "invalid_knowledge_type", "知识条目类型必须为 term 或 style。"
+            raise WritingPolicyError(
+                "invalid_writing_policy_type", "规范条目类型必须为 term 或 style。"
             )
         return self._get_item(connection, item_id)
 
@@ -531,8 +531,8 @@ class EnterpriseKnowledgeStore:
         existing = self._get_item(connection, item_id)
         requested_type = payload.get("type")
         if requested_type is not None and requested_type != existing["type"]:
-            raise KnowledgeError(
-                "invalid_knowledge_type", "知识条目类型不能在修改时变更。"
+            raise WritingPolicyError(
+                "invalid_writing_policy_type", "规范条目类型不能在修改时变更。"
             )
         merged = dict(existing)
         merged.update(payload)
@@ -552,7 +552,7 @@ class EnterpriseKnowledgeStore:
                 )
             connection.execute(
                 """
-                UPDATE knowledge_terms SET
+                UPDATE writing_policy_terms SET
                     scope = ?, category = ?, preferred_text = ?,
                     preferred_normalized = ?, aliases = ?,
                     forbidden_variants = ?, definition = ?,
@@ -601,7 +601,7 @@ class EnterpriseKnowledgeStore:
         }
         connection.execute(
             """
-            INSERT INTO knowledge_imports (
+            INSERT INTO writing_policy_imports (
                 id, imported_at, file_name, format, row_count, created_count,
                 updated_count, conflict_count, error_count, result
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -625,7 +625,7 @@ class EnterpriseKnowledgeStore:
         self, connection: sqlite3.Connection, item_id: str
     ) -> Dict[str, object]:
         row = connection.execute(
-            "SELECT * FROM knowledge_terms WHERE id = ?", (item_id,)
+            "SELECT * FROM writing_policy_terms WHERE id = ?", (item_id,)
         ).fetchone()
         if row is not None:
             return self._term_from_row(row)
@@ -634,7 +634,7 @@ class EnterpriseKnowledgeStore:
         ).fetchone()
         if row is not None:
             return self._style_from_row(row)
-        raise KnowledgeError("knowledge_item_not_found", "未找到指定知识条目。")
+        raise WritingPolicyError("writing_policy_item_not_found", "未找到指定规范条目。")
 
     def _ensure_term_tokens_available(
         self,
@@ -650,7 +650,7 @@ class EnterpriseKnowledgeStore:
             else self._load_term_token_owners(connection, exclude_id)
         )
         if incoming.intersection(owners):
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "term_text_conflict",
                 "标准写法、别名或禁用写法与已有术语冲突。",
             )
@@ -662,7 +662,7 @@ class EnterpriseKnowledgeStore:
     ) -> Dict[str, str]:
         rows = connection.execute(
             "SELECT id, preferred_text, aliases, forbidden_variants "
-            "FROM knowledge_terms WHERE id != ?",
+            "FROM writing_policy_terms WHERE id != ?",
             (exclude_id or "",),
         ).fetchall()
         owners = {}
@@ -704,16 +704,16 @@ class EnterpriseKnowledgeStore:
             (item["scope"], normalize_key(item["name"]), exclude_id or ""),
         ).fetchone()
         if row is not None:
-            raise KnowledgeError(
-                "style_name_conflict", "当前范围已存在同名风格规则。"
+            raise WritingPolicyError(
+                "style_name_conflict", "当前范围已存在同名文体规则。"
             )
 
     def _validate_term(self, payload: Dict[str, object]) -> Dict[str, object]:
         scope = self._clean_text(payload.get("scope", "global"))
         self._validate_scope(scope)
         if scope != "global":
-            raise KnowledgeError(
-                "invalid_knowledge_scope", "首版术语仅允许使用 global 范围。"
+            raise WritingPolicyError(
+                "invalid_writing_policy_scope", "首版术语仅允许使用 global 范围。"
             )
         clean = {
             "scope": scope,
@@ -748,7 +748,7 @@ class EnterpriseKnowledgeStore:
             or preferred.intersection(forbidden)
             or aliases.intersection(forbidden)
         ):
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "term_text_conflict",
                 "同一术语的标准写法、别名和禁用写法不能重复。",
             )
@@ -781,25 +781,25 @@ class EnterpriseKnowledgeStore:
 
     @staticmethod
     def _validate_scope(scope: str) -> None:
-        if scope not in KNOWLEDGE_SCOPES:
-            raise KnowledgeError(
-                "invalid_knowledge_scope", "知识条目的适用范围无效。"
+        if scope not in WRITING_POLICY_SCOPES:
+            raise WritingPolicyError(
+                "invalid_writing_policy_scope", "规范条目的适用范围无效。"
             )
 
     @staticmethod
     def _validate_priority(value: object) -> str:
         priority = str(value or "")
         if priority not in PRIORITIES:
-            raise KnowledgeError(
-                "invalid_knowledge_priority", "优先级必须为 high、medium 或 low。"
+            raise WritingPolicyError(
+                "invalid_writing_policy_priority", "优先级必须为 high、medium 或 low。"
             )
         return priority
 
     @staticmethod
     def _validate_bool(value: object, field_name: str) -> bool:
         if not isinstance(value, bool):
-            raise KnowledgeError(
-                "invalid_knowledge_item", "%s 必须为布尔值。" % field_name
+            raise WritingPolicyError(
+                "invalid_writing_policy_item", "%s 必须为布尔值。" % field_name
             )
         return value
 
@@ -810,13 +810,13 @@ class EnterpriseKnowledgeStore:
     def _required_text(self, value: object, message: str) -> str:
         clean = self._clean_text(value)
         if not clean:
-            raise KnowledgeError("invalid_knowledge_item", message)
+            raise WritingPolicyError("invalid_writing_policy_item", message)
         return clean
 
     def _clean_list(self, value: object, field_name: str) -> List[str]:
         if not isinstance(value, (list, tuple)):
-            raise KnowledgeError(
-                "invalid_knowledge_item", "%s 必须为列表。" % field_name
+            raise WritingPolicyError(
+                "invalid_writing_policy_item", "%s 必须为列表。" % field_name
             )
         result = []
         seen = set()
@@ -833,9 +833,9 @@ class EnterpriseKnowledgeStore:
         try:
             result = int(value)
         except (TypeError, ValueError):
-            raise KnowledgeError("invalid_import_record", "导入统计必须为整数。")
+            raise WritingPolicyError("invalid_import_record", "导入统计必须为整数。")
         if result < 0:
-            raise KnowledgeError("invalid_import_record", "导入统计不能为负数。")
+            raise WritingPolicyError("invalid_import_record", "导入统计不能为负数。")
         return result
 
     @staticmethod

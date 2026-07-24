@@ -7,7 +7,7 @@
   var DOCUMENT_REVIEW_POLL_ERROR_RETRY_DELAY_MS = 15000;
   var DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS = 30000;
   var DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS = 10000;
-  var KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS = 15000;
+  var WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS = 15000;
   var SETTINGS_REFRESH_REQUEST_TIMEOUT_MS = 8000;
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
@@ -106,11 +106,11 @@
     documentReview: "word.document_review",
     formatReview: "word.format_review"
   };
-  var KNOWLEDGE_SCOPE_DEFS = [
+  var WRITING_POLICY_SCOPE_DEFS = [
     { scope: "global", label: "全局企业规范", caption: "企业术语与通用写作规则" },
-    { scope: "word.smart_write", label: "智能编写补充", caption: "仅在智能编写中使用的风格规则" },
-    { scope: "word.smart_imitation", label: "智能仿写补充", caption: "仅在智能仿写中使用的风格规则" },
-    { scope: "word.document_review", label: "文档审查补充", caption: "仅在文档审查中检查的风格规则" }
+    { scope: "word.smart_write", label: "智能编写补充", caption: "仅在智能编写中使用的文体规则" },
+    { scope: "word.smart_imitation", label: "智能仿写补充", caption: "仅在智能仿写中使用的文体规则" },
+    { scope: "word.document_review", label: "文档审查补充", caption: "仅在文档审查中检查的文体规则" }
   ];
   var modeConfig = {
     smartWrite: {
@@ -204,25 +204,26 @@
     settingsRefreshController: null,
     workflowHelpPinned: false,
     providerUrlEditorOpen: false,
-    knowledgeView: "home",
-    knowledgeScope: "global",
-    knowledgeType: "term",
-    knowledgeItems: [],
-    knowledgeSummary: null,
-    knowledgeLoadSequence: 0,
-    knowledgeMutationBusy: false,
-    knowledgeEditor: null,
-    knowledgeEditorDirty: false,
-    knowledgeSummaryState: "idle",
-    knowledgeListError: "",
-    knowledgeSearch: "",
-    knowledgeSearchTimer: null,
-    knowledgeImportStep: "select",
-    knowledgeImportPreview: null,
-    knowledgeImportBusy: false,
-    knowledgeImportSequence: 0,
-    knowledgeImportReader: null,
-    knowledgeImportReturnView: "scope",
+    writingPolicyView: "home",
+    writingPolicyScope: "global",
+    writingPolicyType: "term",
+    writingPolicyItems: [],
+    writingPolicySummary: null,
+    writingPolicyLoadSequence: 0,
+    writingPolicyMutationBusy: false,
+    writingPolicyEditor: null,
+    writingPolicyEditorDirty: false,
+    writingPolicySummaryState: "idle",
+    writingPolicyListError: "",
+    writingPolicySearch: "",
+    writingPolicySearchTimer: null,
+    writingPolicyImportStep: "select",
+    writingPolicyImportPreview: null,
+    writingPolicyImportBusy: false,
+    writingPolicyImportSequence: 0,
+    writingPolicyImportReader: null,
+    writingPolicyImportReturnView: "scope",
+    writingPolicyAudit: null,
     currentMode: "smartWrite",
     lastTaskMode: "smartWrite",
     copyText: "",
@@ -289,11 +290,11 @@
     return !window.confirm || window.confirm("当前工作流编辑内容尚未保存，确认放弃修改？");
   }
 
-  function confirmKnowledgeEditorDiscard() {
-    if (!state.knowledgeEditor || !state.knowledgeEditorDirty) {
+  function confirmWritingPolicyEditorDiscard() {
+    if (!state.writingPolicyEditor || !state.writingPolicyEditorDirty) {
       return true;
     }
-    return !window.confirm || window.confirm("当前知识条目尚未保存，确认放弃修改？");
+    return !window.confirm || window.confirm("当前规范条目尚未保存，确认放弃修改？");
   }
 
   function isTaskpanePage() {
@@ -485,11 +486,11 @@
     setPlainResult(result.rewrittenText || "");
   }
 
-  function clearKnowledgeUsage() {
-    var strip = byId("knowledge-usage-strip");
-    var summary = byId("knowledge-usage-summary");
-    var details = byId("knowledge-usage-details");
-    var list = byId("knowledge-usage-list");
+  function clearWritingPolicyUsage() {
+    var strip = byId("writing-policy-usage-strip");
+    var summary = byId("writing-policy-usage-summary");
+    var details = byId("writing-policy-usage-details");
+    var list = byId("writing-policy-usage-list");
     if (summary) {
       summary.textContent = "";
     }
@@ -505,26 +506,26 @@
     }
   }
 
-  function renderKnowledgeUsage(value, taskType) {
-    var strip = byId("knowledge-usage-strip");
-    var summary = byId("knowledge-usage-summary");
-    var details = byId("knowledge-usage-details");
-    var list = byId("knowledge-usage-list");
-    var usage = helpers.normalizeKnowledgeUsage
-      ? helpers.normalizeKnowledgeUsage(value)
+  function renderWritingPolicyUsage(value, taskType) {
+    var strip = byId("writing-policy-usage-strip");
+    var summary = byId("writing-policy-usage-summary");
+    var details = byId("writing-policy-usage-details");
+    var list = byId("writing-policy-usage-list");
+    var usage = helpers.normalizeWritingPolicyUsage
+      ? helpers.normalizeWritingPolicyUsage(value)
       : null;
     var summaryText;
     var detailItems;
 
-    clearKnowledgeUsage();
+    clearWritingPolicyUsage();
     if (!usage || !strip || !summary || !details || !list) {
       return;
     }
-    summaryText = helpers.knowledgeUsageSummary
-      ? helpers.knowledgeUsageSummary(usage, taskType)
+    summaryText = helpers.writingPolicyUsageSummary
+      ? helpers.writingPolicyUsageSummary(usage, taskType)
       : "";
-    detailItems = helpers.knowledgeUsageDetails
-      ? helpers.knowledgeUsageDetails(usage)
+    detailItems = helpers.writingPolicyUsageDetails
+      ? helpers.writingPolicyUsageDetails(usage)
       : [];
     summary.textContent = summaryText;
     detailItems.forEach(function (item) {
@@ -561,7 +562,7 @@
   function resetSmartWritePreviewState() {
     state.smartWritePreviewModel = null;
     state.resultViewMode = "preview";
-    clearKnowledgeUsage();
+    clearWritingPolicyUsage();
     setResultViewSwitchVisible(false);
     updateResultViewButtons();
   }
@@ -601,7 +602,7 @@
     state.documentReviewData = null;
     state.documentReviewIssueStatus = {};
     state.documentReviewRecordPreviewVisible = false;
-    clearKnowledgeUsage();
+    clearWritingPolicyUsage();
     setDocumentReviewJobId("");
     state.documentReviewPollStartedAt = 0;
     state.documentReviewPollErrorCount = 0;
@@ -698,7 +699,8 @@
     state.resultViewMode = "preview";
     setResultViewSwitchVisible(Boolean(text));
     renderSmartWritePreviewMode();
-    renderKnowledgeUsage(normalized.knowledgeUsage, taskType);
+    state.writingPolicyAudit = normalized.writingPolicyAudit || null;
+    renderWritingPolicyUsage(normalized.writingPolicyUsage, taskType);
     return normalized;
   }
 
@@ -759,7 +761,7 @@
       settingsView &&
       byId("settings-view").classList.contains("active") &&
       document.visibilityState !== "hidden" &&
-      state.knowledgeView === "home" &&
+      state.writingPolicyView === "home" &&
       !state.workflowProfileEditor &&
       !state.providerUrlEditorOpen &&
       !state.workflowProfileMutationBusy
@@ -778,7 +780,7 @@
       settingsView &&
       settingsView.classList.contains("active") &&
       document.visibilityState !== "hidden" &&
-      state.knowledgeView === "home" &&
+      state.writingPolicyView === "home" &&
       !state.workflowProfileEditor &&
       !state.providerUrlEditorOpen &&
       !state.workflowProfileMutationBusy
@@ -812,21 +814,21 @@
       byId("btn-open-settings").classList.add("is-back");
       byId("btn-open-settings").setAttribute("title", "返回" + returnConfig.title);
       byId("btn-open-settings").setAttribute("aria-label", "返回" + returnConfig.title);
-      setKnowledgeView("home");
-      loadKnowledgeSummary();
+      setWritingPolicyView("home");
+      loadWritingPolicySummary();
       return;
     }
 
-    if (state.knowledgeMutationBusy) {
-      setStatus("企业知识条目正在保存，请稍候。");
+    if (state.writingPolicyMutationBusy) {
+      setStatus("写作规范条目正在保存，请稍候。");
       return;
     }
-    if (!confirmWorkflowEditorDiscard() || !confirmKnowledgeEditorDiscard()) {
+    if (!confirmWorkflowEditorDiscard() || !confirmWritingPolicyEditorDiscard()) {
       return;
     }
     state.workflowProfileEditor = null;
-    clearKnowledgeEditorState();
-    setKnowledgeView("home", true);
+    clearWritingPolicyEditorState();
+    setWritingPolicyView("home", true);
 
     if (state.currentMode === "settings") {
       switchMode(returnMode);
@@ -864,8 +866,8 @@
     if (settingsMode) {
       switchView("settings");
       renderWorkflowProfileManager();
-      setKnowledgeView("home");
-      loadKnowledgeSummary();
+      setWritingPolicyView("home");
+      loadWritingPolicySummary();
       return;
     }
 
@@ -2211,18 +2213,18 @@
     }
   }
 
-  function getKnowledgeScopeDefinition(scope) {
+  function getWritingPolicyScopeDefinition(scope) {
     var index;
-    for (index = 0; index < KNOWLEDGE_SCOPE_DEFS.length; index += 1) {
-      if (KNOWLEDGE_SCOPE_DEFS[index].scope === scope) {
-        return KNOWLEDGE_SCOPE_DEFS[index];
+    for (index = 0; index < WRITING_POLICY_SCOPE_DEFS.length; index += 1) {
+      if (WRITING_POLICY_SCOPE_DEFS[index].scope === scope) {
+        return WRITING_POLICY_SCOPE_DEFS[index];
       }
     }
-    return KNOWLEDGE_SCOPE_DEFS[0];
+    return WRITING_POLICY_SCOPE_DEFS[0];
   }
 
-  function renderKnowledgeManagerView() {
-    var view = state.knowledgeView || "home";
+  function renderWritingPolicyManagerView() {
+    var view = state.writingPolicyView || "home";
     var home = view === "home";
     var diagnosticsDisclosure = byId("diagnostics-disclosure");
     byId("connection-settings-section").hidden = !home;
@@ -2232,19 +2234,19 @@
       diagnosticsDisclosure.open = false;
       diagnosticsDisclosure.hidden = true;
     }
-    byId("knowledge-scope-view").hidden = view !== "scope";
-    byId("knowledge-list-view").hidden = view !== "list";
-    byId("knowledge-editor-view").hidden = view !== "editor";
-    byId("knowledge-import-view").hidden = view !== "import";
+    byId("writing-policy-scope-view").hidden = view !== "scope";
+    byId("writing-policy-list-view").hidden = view !== "list";
+    byId("writing-policy-editor-view").hidden = view !== "editor";
+    byId("writing-policy-import-view").hidden = view !== "import";
   }
 
-  function focusKnowledgeView(view) {
+  function focusWritingPolicyView(view) {
     var targetIds = {
-      home: "btn-open-knowledge-manager",
-      scope: "knowledge-scope-title",
-      list: "knowledge-list-title",
-      editor: "knowledge-editor-title",
-      import: "knowledge-import-title"
+      home: "btn-open-writing-policy-manager",
+      scope: "writing-policy-scope-title",
+      list: "writing-policy-list-title",
+      editor: "writing-policy-editor-title",
+      import: "writing-policy-import-title"
     };
     var targetId = targetIds[view];
     if (!targetId) {
@@ -2252,7 +2254,7 @@
     }
     setTimeout(function () {
       var target;
-      if (state.knowledgeView !== view) {
+      if (state.writingPolicyView !== view) {
         return;
       }
       target = byId(targetId);
@@ -2262,24 +2264,24 @@
     }, 0);
   }
 
-  function setKnowledgeView(view, suppressRefreshSync) {
+  function setWritingPolicyView(view, suppressRefreshSync) {
     var diagnosticsDisclosure = byId("diagnostics-disclosure");
     if (view === "home" && diagnosticsDisclosure) {
       diagnosticsDisclosure.open = false;
     }
-    state.knowledgeView = view;
-    renderKnowledgeManagerView();
-    focusKnowledgeView(view);
+    state.writingPolicyView = view;
+    renderWritingPolicyManagerView();
+    focusWritingPolicyView(view);
     if (!suppressRefreshSync) {
       syncSettingsRefreshController();
     }
   }
 
-  function formatKnowledgeUpdatedAt(value) {
+  function formatWritingPolicyUpdatedAt(value) {
     var text;
     var date;
-    if (helpers.formatKnowledgeUpdatedAt) {
-      return helpers.formatKnowledgeUpdatedAt(value);
+    if (helpers.formatWritingPolicyUpdatedAt) {
+      return helpers.formatWritingPolicyUpdatedAt(value);
     }
     text = String(value || "").trim();
     if (!text) {
@@ -2300,104 +2302,104 @@
     }).format(date);
   }
 
-  function renderKnowledgeSummary() {
-    var summary = state.knowledgeSummary || {};
-    var statusNode = byId("knowledge-summary-status");
-    var enterButton = byId("btn-open-knowledge-manager");
-    var retryButton = byId("btn-retry-knowledge-summary");
-    byId("knowledge-summary-total").textContent = String(Math.max(0, Number(summary.totalCount) || 0));
-    byId("knowledge-summary-enabled").textContent = String(Math.max(0, Number(summary.enabledCount) || 0));
-    byId("knowledge-summary-updated").textContent = formatKnowledgeUpdatedAt(summary.updatedAt);
-    enterButton.disabled = state.knowledgeSummaryState !== "ready";
-    retryButton.hidden = state.knowledgeSummaryState !== "error";
-    if (state.knowledgeSummaryState === "loading") {
+  function renderWritingPolicySummary() {
+    var summary = state.writingPolicySummary || {};
+    var statusNode = byId("writing-policy-summary-status");
+    var enterButton = byId("btn-open-writing-policy-manager");
+    var retryButton = byId("btn-retry-writing-policy-summary");
+    byId("writing-policy-summary-total").textContent = String(Math.max(0, Number(summary.totalCount) || 0));
+    byId("writing-policy-summary-enabled").textContent = String(Math.max(0, Number(summary.enabledCount) || 0));
+    byId("writing-policy-summary-updated").textContent = formatWritingPolicyUpdatedAt(summary.updatedAt);
+    enterButton.disabled = state.writingPolicySummaryState !== "ready";
+    retryButton.hidden = state.writingPolicySummaryState !== "error";
+    if (state.writingPolicySummaryState === "loading") {
       statusNode.textContent = "正在读取...";
-    } else if (state.knowledgeSummaryState === "ready") {
+    } else if (state.writingPolicySummaryState === "ready") {
       statusNode.textContent = "可用";
-    } else if (state.knowledgeSummaryState === "unsupported") {
-      statusNode.textContent = "当前 adapter 版本不支持企业知识库";
-    } else if (state.knowledgeSummaryState === "error") {
-      statusNode.textContent = "企业知识库暂不可用";
+    } else if (state.writingPolicySummaryState === "unsupported") {
+      statusNode.textContent = "当前 adapter 版本不支持写作规范库";
+    } else if (state.writingPolicySummaryState === "error") {
+      statusNode.textContent = "写作规范库暂不可用";
     } else {
       statusNode.textContent = "尚未读取";
     }
   }
 
-  function loadKnowledgeSummary() {
-    var requestId = state.knowledgeLoadSequence + 1;
-    state.knowledgeLoadSequence = requestId;
-    state.knowledgeSummaryState = "loading";
-    renderKnowledgeSummary();
-    return request("/enterprise-knowledge/summary").then(function (body) {
-      if (state.knowledgeLoadSequence !== requestId) {
+  function loadWritingPolicySummary() {
+    var requestId = state.writingPolicyLoadSequence + 1;
+    state.writingPolicyLoadSequence = requestId;
+    state.writingPolicySummaryState = "loading";
+    renderWritingPolicySummary();
+    return request("/writing-policies/summary").then(function (body) {
+      if (state.writingPolicyLoadSequence !== requestId) {
         return null;
       }
-      state.knowledgeSummary = body.data || {};
-      state.knowledgeSummaryState = "ready";
-      renderKnowledgeSummary();
-      return state.knowledgeSummary;
+      state.writingPolicySummary = body.data || {};
+      state.writingPolicySummaryState = "ready";
+      renderWritingPolicySummary();
+      return state.writingPolicySummary;
     }).catch(function (error) {
-      if (state.knowledgeLoadSequence !== requestId) {
+      if (state.writingPolicyLoadSequence !== requestId) {
         return null;
       }
-      state.knowledgeSummary = null;
-      state.knowledgeSummaryState = error && error.httpStatus === 404 ? "unsupported" : "error";
-      renderKnowledgeSummary();
+      state.writingPolicySummary = null;
+      state.writingPolicySummaryState = error && error.httpStatus === 404 ? "unsupported" : "error";
+      renderWritingPolicySummary();
       return null;
     });
   }
 
-  function openKnowledgeScopeView() {
-    if (state.knowledgeSummaryState !== "ready") {
+  function openWritingPolicyScopeView() {
+    if (state.writingPolicySummaryState !== "ready") {
       return;
     }
-    setKnowledgeView("scope");
+    setWritingPolicyView("scope");
   }
 
-  function renderKnowledgeTypeSwitch() {
-    var buttons = byId("knowledge-type-switch").querySelectorAll("[data-knowledge-type]");
+  function renderWritingPolicyTypeSwitch() {
+    var buttons = byId("writing-policy-type-switch").querySelectorAll("[data-writing-policy-type]");
     var index;
     for (index = 0; index < buttons.length; index += 1) {
-      var type = buttons[index].getAttribute("data-knowledge-type");
-      var active = type === state.knowledgeType;
+      var type = buttons[index].getAttribute("data-writing-policy-type");
+      var active = type === state.writingPolicyType;
       buttons[index].classList.toggle("active", active);
       buttons[index].setAttribute("aria-selected", active ? "true" : "false");
-      buttons[index].disabled = state.knowledgeMutationBusy || (type === "term" && state.knowledgeScope !== "global");
+      buttons[index].disabled = state.writingPolicyMutationBusy || (type === "term" && state.writingPolicyScope !== "global");
       buttons[index].tabIndex = active ? 0 : -1;
     }
   }
 
-  function renderKnowledgeList() {
-    var scopeDefinition = getKnowledgeScopeDefinition(state.knowledgeScope);
-    var list = byId("knowledge-item-list");
-    var statusNode = byId("knowledge-list-status");
-    var retryButton = byId("btn-retry-knowledge-list");
-    var addButton = byId("btn-knowledge-add");
+  function renderWritingPolicyList() {
+    var scopeDefinition = getWritingPolicyScopeDefinition(state.writingPolicyScope);
+    var list = byId("writing-policy-item-list");
+    var statusNode = byId("writing-policy-list-status");
+    var retryButton = byId("btn-retry-writing-policy-list");
+    var addButton = byId("btn-writing-policy-add");
     list.textContent = "";
-    byId("knowledge-list-title").textContent = scopeDefinition.label;
-    byId("knowledge-list-caption").textContent = scopeDefinition.caption;
-    byId("knowledge-search-input").value = state.knowledgeSearch;
-    renderKnowledgeTypeSwitch();
-    addButton.disabled = state.knowledgeMutationBusy || Boolean(state.knowledgeListError);
-    retryButton.hidden = !state.knowledgeListError;
-    if (state.knowledgeListError) {
-      statusNode.textContent = "企业知识库暂不可用，未显示空列表。";
+    byId("writing-policy-list-title").textContent = scopeDefinition.label;
+    byId("writing-policy-list-caption").textContent = scopeDefinition.caption;
+    byId("writing-policy-search-input").value = state.writingPolicySearch;
+    renderWritingPolicyTypeSwitch();
+    addButton.disabled = state.writingPolicyMutationBusy || Boolean(state.writingPolicyListError);
+    retryButton.hidden = !state.writingPolicyListError;
+    if (state.writingPolicyListError) {
+      statusNode.textContent = "写作规范库暂不可用，未显示空列表。";
       return;
     }
-    if (!state.knowledgeItems.length) {
-      statusNode.textContent = "当前范围暂无" + (state.knowledgeType === "term" ? "术语。" : "风格规则。");
+    if (!state.writingPolicyItems.length) {
+      statusNode.textContent = "当前范围暂无" + (state.writingPolicyType === "term" ? "术语。" : "文体规则。");
       return;
     }
-    statusNode.textContent = "共 " + state.knowledgeItems.length + " 条" + (state.knowledgeType === "term" ? "术语" : "风格规则");
-    state.knowledgeItems.forEach(function (item) {
+    statusNode.textContent = "共 " + state.writingPolicyItems.length + " 条" + (state.writingPolicyType === "term" ? "术语" : "文体规则");
+    state.writingPolicyItems.forEach(function (item) {
       var row = document.createElement("button");
       var text = document.createElement("span");
       var title = document.createElement("strong");
       var note = document.createElement("small");
       var status = document.createElement("span");
       row.type = "button";
-      row.className = "knowledge-item-row";
-      row.setAttribute("data-knowledge-item-id", String(item.id || ""));
+      row.className = "writing-policy-item-row";
+      row.setAttribute("data-writing-policy-item-id", String(item.id || ""));
       title.textContent = String(item.type === "term" ? item.preferredText || "未命名术语" : item.name || "未命名规则");
       note.textContent = String(item.note || (item.type === "term" ? item.definition || "暂无说明" : item.ruleText || "暂无说明"));
       status.className = "provider-badge";
@@ -2410,48 +2412,48 @@
     });
   }
 
-  function loadKnowledgeItems() {
-    var requestId = state.knowledgeLoadSequence + 1;
-    state.knowledgeLoadSequence = requestId;
-    state.knowledgeListError = "";
-    byId("knowledge-list-status").textContent = "正在读取...";
-    byId("knowledge-item-list").textContent = "";
-    return request("/enterprise-knowledge/items?scope=" + encodeURIComponent(state.knowledgeScope) +
-      "&type=" + encodeURIComponent(state.knowledgeType) +
-      "&query=" + encodeURIComponent(state.knowledgeSearch)).then(function (body) {
-      if (state.knowledgeLoadSequence !== requestId) {
+  function loadWritingPolicyItems() {
+    var requestId = state.writingPolicyLoadSequence + 1;
+    state.writingPolicyLoadSequence = requestId;
+    state.writingPolicyListError = "";
+    byId("writing-policy-list-status").textContent = "正在读取...";
+    byId("writing-policy-item-list").textContent = "";
+    return request("/writing-policies/items?scope=" + encodeURIComponent(state.writingPolicyScope) +
+      "&type=" + encodeURIComponent(state.writingPolicyType) +
+      "&query=" + encodeURIComponent(state.writingPolicySearch)).then(function (body) {
+      if (state.writingPolicyLoadSequence !== requestId) {
         return null;
       }
-      state.knowledgeItems = body.data && Array.isArray(body.data.items) ? body.data.items : [];
-      renderKnowledgeList();
-      return state.knowledgeItems;
+      state.writingPolicyItems = body.data && Array.isArray(body.data.items) ? body.data.items : [];
+      renderWritingPolicyList();
+      return state.writingPolicyItems;
     }).catch(function (error) {
-      if (state.knowledgeLoadSequence !== requestId) {
+      if (state.writingPolicyLoadSequence !== requestId) {
         return null;
       }
-      state.knowledgeItems = [];
-      state.knowledgeListError = describeFetchError(error);
-      renderKnowledgeList();
+      state.writingPolicyItems = [];
+      state.writingPolicyListError = describeFetchError(error);
+      renderWritingPolicyList();
       return null;
     });
   }
 
-  function openKnowledgeList(scope) {
-    state.knowledgeScope = getKnowledgeScopeDefinition(scope).scope;
-    state.knowledgeType = state.knowledgeScope === "global" ? state.knowledgeType : "style";
-    state.knowledgeSearch = "";
-    state.knowledgeItems = [];
-    state.knowledgeListError = "";
-    setKnowledgeView("list");
-    renderKnowledgeList();
-    loadKnowledgeItems();
+  function openWritingPolicyList(scope) {
+    state.writingPolicyScope = getWritingPolicyScopeDefinition(scope).scope;
+    state.writingPolicyType = state.writingPolicyScope === "global" ? state.writingPolicyType : "style";
+    state.writingPolicySearch = "";
+    state.writingPolicyItems = [];
+    state.writingPolicyListError = "";
+    setWritingPolicyView("list");
+    renderWritingPolicyList();
+    loadWritingPolicyItems();
   }
 
-  function joinKnowledgeList(values) {
+  function joinWritingPolicyList(values) {
     return Array.isArray(values) ? values.join(" | ") : "";
   }
 
-  function splitKnowledgeList(value) {
+  function splitWritingPolicyList(value) {
     return String(value || "").split("|").map(function (item) {
       return item.trim();
     }).filter(function (item) {
@@ -2459,18 +2461,18 @@
     });
   }
 
-  function setKnowledgeEditorError(message, field) {
-    var errorNode = byId("knowledge-editor-error");
+  function setWritingPolicyEditorError(message, field) {
+    var errorNode = byId("writing-policy-editor-error");
     var fieldIds = {
-      preferredText: "knowledge-preferred-text",
-      name: "knowledge-style-name",
-      ruleText: "knowledge-rule-text",
-      scope: "knowledge-editor-caption"
+      preferredText: "writing-policy-preferred-text",
+      name: "writing-policy-style-name",
+      ruleText: "writing-policy-rule-text",
+      scope: "writing-policy-editor-caption"
     };
     var errorIds = {
-      preferredText: "knowledge-preferred-error",
-      name: "knowledge-style-name-error",
-      ruleText: "knowledge-rule-error"
+      preferredText: "writing-policy-preferred-error",
+      name: "writing-policy-style-name-error",
+      ruleText: "writing-policy-rule-error"
     };
     ["preferredText", "name", "ruleText"].forEach(function (fieldName) {
       var input = byId(fieldIds[fieldName]);
@@ -2491,148 +2493,148 @@
     }
   }
 
-  function clearKnowledgeEditorState() {
+  function clearWritingPolicyEditorState() {
     var ids = [
-      "knowledge-preferred-text", "knowledge-aliases", "knowledge-forbidden-variants",
-      "knowledge-definition", "knowledge-style-name", "knowledge-rule-text",
-      "knowledge-positive-example", "knowledge-negative-example", "knowledge-note",
-      "knowledge-category", "knowledge-context-keywords"
+      "writing-policy-preferred-text", "writing-policy-aliases", "writing-policy-forbidden-variants",
+      "writing-policy-definition", "writing-policy-style-name", "writing-policy-rule-text",
+      "writing-policy-positive-example", "writing-policy-negative-example", "writing-policy-note",
+      "writing-policy-category", "writing-policy-context-keywords"
     ];
     ids.forEach(function (id) {
       byId(id).value = "";
     });
-    state.knowledgeEditor = null;
-    state.knowledgeEditorDirty = false;
-    setKnowledgeEditorError("", "");
+    state.writingPolicyEditor = null;
+    state.writingPolicyEditorDirty = false;
+    setWritingPolicyEditorError("", "");
   }
 
-  function setKnowledgeEditorControlsDisabled(disabled) {
-    var controls = byId("knowledge-editor-view").querySelectorAll("button, input, textarea, select");
+  function setWritingPolicyEditorControlsDisabled(disabled) {
+    var controls = byId("writing-policy-editor-view").querySelectorAll("button, input, textarea, select");
     var index;
     for (index = 0; index < controls.length; index += 1) {
       controls[index].disabled = Boolean(disabled);
     }
   }
 
-  function renderKnowledgeEditor() {
-    var editor = state.knowledgeEditor || {};
+  function renderWritingPolicyEditor() {
+    var editor = state.writingPolicyEditor || {};
     var item = editor.item || {};
-    var type = editor.type || state.knowledgeType;
-    var scopeDefinition = getKnowledgeScopeDefinition(editor.scope || state.knowledgeScope);
-    byId("knowledge-editor-title").textContent = editor.mode === "edit" ? "编辑知识条目" : "新增知识条目";
-    byId("knowledge-editor-caption").textContent = scopeDefinition.label + " · " + (type === "term" ? "术语" : "风格规则");
-    byId("knowledge-term-fields").hidden = type !== "term";
-    byId("knowledge-style-fields").hidden = type !== "style";
-    byId("knowledge-category-field").hidden = type !== "term";
-    byId("knowledge-always-apply-field").hidden = type !== "style";
-    byId("knowledge-preferred-text").value = String(item.preferredText || "");
-    byId("knowledge-aliases").value = joinKnowledgeList(item.aliases);
-    byId("knowledge-forbidden-variants").value = joinKnowledgeList(item.forbiddenVariants);
-    byId("knowledge-definition").value = String(item.definition || "");
-    byId("knowledge-style-name").value = String(item.name || "");
-    byId("knowledge-rule-text").value = String(item.ruleText || "");
-    byId("knowledge-positive-example").value = String(item.positiveExample || "");
-    byId("knowledge-negative-example").value = String(item.negativeExample || "");
-    byId("knowledge-note").value = String(item.note || "");
-    byId("knowledge-category").value = String(item.category || "");
-    byId("knowledge-context-keywords").value = joinKnowledgeList(item.contextKeywords);
-    byId("knowledge-priority").value = String(item.priority || "medium");
-    byId("knowledge-always-apply").checked = Boolean(item.alwaysApply);
-    byId("knowledge-enabled").checked = item.enabled !== false;
-    byId("knowledge-editor-advanced").open = false;
-    byId("btn-knowledge-delete").hidden = editor.mode !== "edit";
-    setKnowledgeEditorError("", "");
-    setKnowledgeEditorControlsDisabled(state.knowledgeMutationBusy);
+    var type = editor.type || state.writingPolicyType;
+    var scopeDefinition = getWritingPolicyScopeDefinition(editor.scope || state.writingPolicyScope);
+    byId("writing-policy-editor-title").textContent = editor.mode === "edit" ? "编辑规范条目" : "新增规范条目";
+    byId("writing-policy-editor-caption").textContent = scopeDefinition.label + " · " + (type === "term" ? "术语" : "文体规则");
+    byId("writing-policy-term-fields").hidden = type !== "term";
+    byId("writing-policy-style-fields").hidden = type !== "style";
+    byId("writing-policy-category-field").hidden = type !== "term";
+    byId("writing-policy-always-apply-field").hidden = type !== "style";
+    byId("writing-policy-preferred-text").value = String(item.preferredText || "");
+    byId("writing-policy-aliases").value = joinWritingPolicyList(item.aliases);
+    byId("writing-policy-forbidden-variants").value = joinWritingPolicyList(item.forbiddenVariants);
+    byId("writing-policy-definition").value = String(item.definition || "");
+    byId("writing-policy-style-name").value = String(item.name || "");
+    byId("writing-policy-rule-text").value = String(item.ruleText || "");
+    byId("writing-policy-positive-example").value = String(item.positiveExample || "");
+    byId("writing-policy-negative-example").value = String(item.negativeExample || "");
+    byId("writing-policy-note").value = String(item.note || "");
+    byId("writing-policy-category").value = String(item.category || "");
+    byId("writing-policy-context-keywords").value = joinWritingPolicyList(item.contextKeywords);
+    byId("writing-policy-priority").value = String(item.priority || "medium");
+    byId("writing-policy-always-apply").checked = Boolean(item.alwaysApply);
+    byId("writing-policy-enabled").checked = item.enabled !== false;
+    byId("writing-policy-editor-advanced").open = false;
+    byId("btn-writing-policy-delete").hidden = editor.mode !== "edit";
+    setWritingPolicyEditorError("", "");
+    setWritingPolicyEditorControlsDisabled(state.writingPolicyMutationBusy);
   }
 
-  function openKnowledgeEditor(item) {
-    state.knowledgeEditor = {
+  function openWritingPolicyEditor(item) {
+    state.writingPolicyEditor = {
       mode: item ? "edit" : "create",
       item: item || {},
-      type: item && item.type ? item.type : state.knowledgeType,
-      scope: item && item.scope ? item.scope : state.knowledgeScope
+      type: item && item.type ? item.type : state.writingPolicyType,
+      scope: item && item.scope ? item.scope : state.writingPolicyScope
     };
-    state.knowledgeEditorDirty = false;
-    setKnowledgeView("editor");
-    renderKnowledgeEditor();
+    state.writingPolicyEditorDirty = false;
+    setWritingPolicyView("editor");
+    renderWritingPolicyEditor();
   }
 
-  function readKnowledgeDraft() {
-    var editor = state.knowledgeEditor || {};
-    var type = editor.type || state.knowledgeType;
+  function readWritingPolicyDraft() {
+    var editor = state.writingPolicyEditor || {};
+    var type = editor.type || state.writingPolicyType;
     var draft = {
       type: type,
-      scope: editor.scope || state.knowledgeScope,
-      contextKeywords: splitKnowledgeList(byId("knowledge-context-keywords").value),
-      priority: byId("knowledge-priority").value || "medium",
-      enabled: Boolean(byId("knowledge-enabled").checked),
-      note: String(byId("knowledge-note").value || "").trim()
+      scope: editor.scope || state.writingPolicyScope,
+      contextKeywords: splitWritingPolicyList(byId("writing-policy-context-keywords").value),
+      priority: byId("writing-policy-priority").value || "medium",
+      enabled: Boolean(byId("writing-policy-enabled").checked),
+      note: String(byId("writing-policy-note").value || "").trim()
     };
     if (type === "term") {
-      draft.category = String(byId("knowledge-category").value || "").trim();
-      draft.preferredText = String(byId("knowledge-preferred-text").value || "").trim();
-      draft.aliases = splitKnowledgeList(byId("knowledge-aliases").value);
-      draft.forbiddenVariants = splitKnowledgeList(byId("knowledge-forbidden-variants").value);
-      draft.definition = String(byId("knowledge-definition").value || "").trim();
+      draft.category = String(byId("writing-policy-category").value || "").trim();
+      draft.preferredText = String(byId("writing-policy-preferred-text").value || "").trim();
+      draft.aliases = splitWritingPolicyList(byId("writing-policy-aliases").value);
+      draft.forbiddenVariants = splitWritingPolicyList(byId("writing-policy-forbidden-variants").value);
+      draft.definition = String(byId("writing-policy-definition").value || "").trim();
     } else {
-      draft.name = String(byId("knowledge-style-name").value || "").trim();
-      draft.ruleText = String(byId("knowledge-rule-text").value || "").trim();
-      draft.positiveExample = String(byId("knowledge-positive-example").value || "").trim();
-      draft.negativeExample = String(byId("knowledge-negative-example").value || "").trim();
-      draft.alwaysApply = Boolean(byId("knowledge-always-apply").checked);
+      draft.name = String(byId("writing-policy-style-name").value || "").trim();
+      draft.ruleText = String(byId("writing-policy-rule-text").value || "").trim();
+      draft.positiveExample = String(byId("writing-policy-positive-example").value || "").trim();
+      draft.negativeExample = String(byId("writing-policy-negative-example").value || "").trim();
+      draft.alwaysApply = Boolean(byId("writing-policy-always-apply").checked);
     }
     return draft;
   }
 
-  function setKnowledgeMutationBusy(busy) {
-    state.knowledgeMutationBusy = Boolean(busy);
-    setKnowledgeEditorControlsDisabled(state.knowledgeMutationBusy);
+  function setWritingPolicyMutationBusy(busy) {
+    state.writingPolicyMutationBusy = Boolean(busy);
+    setWritingPolicyEditorControlsDisabled(state.writingPolicyMutationBusy);
   }
 
-  function saveKnowledgeItem() {
-    var editor = state.knowledgeEditor;
+  function saveWritingPolicyItem() {
+    var editor = state.writingPolicyEditor;
     var draft;
     var validation;
     var path;
     var options;
-    if (!editor || state.knowledgeMutationBusy) {
+    if (!editor || state.writingPolicyMutationBusy) {
       return;
     }
-    draft = readKnowledgeDraft();
-    validation = helpers.validateKnowledgeDraft ? helpers.validateKnowledgeDraft(draft) : { ok: true, field: "", message: "" };
+    draft = readWritingPolicyDraft();
+    validation = helpers.validateWritingPolicyDraft ? helpers.validateWritingPolicyDraft(draft) : { ok: true, field: "", message: "" };
     if (!validation.ok) {
-      setKnowledgeEditorError(validation.message, validation.field);
+      setWritingPolicyEditorError(validation.message, validation.field);
       return;
     }
-    path = "/enterprise-knowledge/items";
-    options = { timeoutMs: KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS };
+    path = "/writing-policies/items";
+    options = { timeoutMs: WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS };
     if (editor.mode === "edit") {
       path += "/" + encodeURIComponent(String(editor.item.id || ""));
       options.method = "PATCH";
     }
-    setKnowledgeEditorError("", "");
-    setKnowledgeMutationBusy(true);
+    setWritingPolicyEditorError("", "");
+    setWritingPolicyMutationBusy(true);
     request(path, draft, options).then(function () {
-      setKnowledgeMutationBusy(false);
-      state.knowledgeEditorDirty = false;
-      clearKnowledgeEditorState();
-      setKnowledgeView("list");
-      return loadKnowledgeItems().then(function () {
-        loadKnowledgeSummary();
-        setStatus("企业知识条目已保存。");
+      setWritingPolicyMutationBusy(false);
+      state.writingPolicyEditorDirty = false;
+      clearWritingPolicyEditorState();
+      setWritingPolicyView("list");
+      return loadWritingPolicyItems().then(function () {
+        loadWritingPolicySummary();
+        setStatus("写作规范条目已保存。");
       });
     }).catch(function (error) {
-      var field = helpers.knowledgeConflictField ? helpers.knowledgeConflictField(error) : "";
-      setKnowledgeMutationBusy(false);
-      setKnowledgeEditorError(describeFetchError(error), field);
+      var field = helpers.writingPolicyConflictField ? helpers.writingPolicyConflictField(error) : "";
+      setWritingPolicyMutationBusy(false);
+      setWritingPolicyEditorError(describeFetchError(error), field);
     });
   }
 
-  function deleteKnowledgeItem() {
-    var editor = state.knowledgeEditor;
+  function deleteWritingPolicyItem() {
+    var editor = state.writingPolicyEditor;
     var item;
     var itemName;
-    if (!editor || editor.mode !== "edit" || state.knowledgeMutationBusy) {
+    if (!editor || editor.mode !== "edit" || state.writingPolicyMutationBusy) {
       return;
     }
     item = editor.item || {};
@@ -2640,62 +2642,62 @@
     if (window.confirm && !window.confirm("确认删除“" + itemName + "”？删除后无法恢复。")) {
       return;
     }
-    setKnowledgeMutationBusy(true);
-    request("/enterprise-knowledge/items/" + encodeURIComponent(String(item.id || "")), null, {
+    setWritingPolicyMutationBusy(true);
+    request("/writing-policies/items/" + encodeURIComponent(String(item.id || "")), null, {
       method: "DELETE",
-      timeoutMs: KNOWLEDGE_MANAGEMENT_REQUEST_TIMEOUT_MS
+      timeoutMs: WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS
     })
       .then(function () {
-        setKnowledgeMutationBusy(false);
-        state.knowledgeEditorDirty = false;
-        clearKnowledgeEditorState();
-        setKnowledgeView("list");
-        return loadKnowledgeItems().then(function () {
-          loadKnowledgeSummary();
-          setStatus("企业知识条目已删除。");
+        setWritingPolicyMutationBusy(false);
+        state.writingPolicyEditorDirty = false;
+        clearWritingPolicyEditorState();
+        setWritingPolicyView("list");
+        return loadWritingPolicyItems().then(function () {
+          loadWritingPolicySummary();
+          setStatus("写作规范条目已删除。");
         });
       }).catch(function (error) {
-        setKnowledgeMutationBusy(false);
-        setKnowledgeEditorError("删除失败：" + describeFetchError(error), "");
+        setWritingPolicyMutationBusy(false);
+        setWritingPolicyEditorError("删除失败：" + describeFetchError(error), "");
       });
   }
 
-  function closeKnowledgeEditor() {
-    if (!confirmKnowledgeEditorDiscard()) {
+  function closeWritingPolicyEditor() {
+    if (!confirmWritingPolicyEditorDiscard()) {
       return;
     }
-    clearKnowledgeEditorState();
-    setKnowledgeView("list");
-    renderKnowledgeList();
+    clearWritingPolicyEditorState();
+    setWritingPolicyView("list");
+    renderWritingPolicyList();
   }
 
-  function handleKnowledgeScopeClick(event) {
+  function handleWritingPolicyScopeClick(event) {
     var target = event.target;
-    while (target && target !== byId("knowledge-scope-list") && !target.getAttribute("data-knowledge-scope")) {
+    while (target && target !== byId("writing-policy-scope-list") && !target.getAttribute("data-writing-policy-scope")) {
       target = target.parentNode;
     }
-    if (target && target.getAttribute("data-knowledge-scope")) {
-      openKnowledgeList(target.getAttribute("data-knowledge-scope"));
+    if (target && target.getAttribute("data-writing-policy-scope")) {
+      openWritingPolicyList(target.getAttribute("data-writing-policy-scope"));
     }
   }
 
-  function handleKnowledgeTypeClick(event) {
-    var type = event.target.getAttribute("data-knowledge-type");
-    selectKnowledgeType(type);
+  function handleWritingPolicyTypeClick(event) {
+    var type = event.target.getAttribute("data-writing-policy-type");
+    selectWritingPolicyType(type);
   }
 
-  function selectKnowledgeType(type) {
-    if (!type || state.knowledgeMutationBusy || (type === "term" && state.knowledgeScope !== "global")) {
+  function selectWritingPolicyType(type) {
+    if (!type || state.writingPolicyMutationBusy || (type === "term" && state.writingPolicyScope !== "global")) {
       return;
     }
-    state.knowledgeType = type;
-    state.knowledgeItems = [];
-    state.knowledgeListError = "";
-    renderKnowledgeList();
-    loadKnowledgeItems();
+    state.writingPolicyType = type;
+    state.writingPolicyItems = [];
+    state.writingPolicyListError = "";
+    renderWritingPolicyList();
+    loadWritingPolicyItems();
   }
 
-  function handleKnowledgeTypeKeydown(event) {
+  function handleWritingPolicyTypeKeydown(event) {
     var keys = ["ArrowLeft", "ArrowRight", "Home", "End"];
     var buttons;
     var enabledButtons;
@@ -2705,7 +2707,7 @@
     if (keys.indexOf(event.key) < 0) {
       return;
     }
-    buttons = Array.prototype.slice.call(byId("knowledge-type-switch").querySelectorAll("[data-knowledge-type]"));
+    buttons = Array.prototype.slice.call(byId("writing-policy-type-switch").querySelectorAll("[data-writing-policy-type]"));
     enabledButtons = buttons.filter(function (button) {
       return !button.disabled;
     });
@@ -2716,63 +2718,63 @@
     if (currentIndex < 0) {
       currentIndex = 0;
     }
-    nextIndex = helpers.nextKnowledgeTabIndex ?
-      helpers.nextKnowledgeTabIndex(currentIndex, event.key, enabledButtons.length) : currentIndex;
+    nextIndex = helpers.nextWritingPolicyTabIndex ?
+      helpers.nextWritingPolicyTabIndex(currentIndex, event.key, enabledButtons.length) : currentIndex;
     if (nextIndex < 0 || !enabledButtons[nextIndex]) {
       return;
     }
     event.preventDefault();
     enabledButtons[nextIndex].focus();
-    type = enabledButtons[nextIndex].getAttribute("data-knowledge-type");
-    selectKnowledgeType(type);
+    type = enabledButtons[nextIndex].getAttribute("data-writing-policy-type");
+    selectWritingPolicyType(type);
   }
 
-  function handleKnowledgeListClick(event) {
+  function handleWritingPolicyListClick(event) {
     var target = event.target;
     var itemId;
     var item;
-    while (target && target !== byId("knowledge-item-list") && !target.getAttribute("data-knowledge-item-id")) {
+    while (target && target !== byId("writing-policy-item-list") && !target.getAttribute("data-writing-policy-item-id")) {
       target = target.parentNode;
     }
-    itemId = target && target.getAttribute("data-knowledge-item-id");
+    itemId = target && target.getAttribute("data-writing-policy-item-id");
     if (!itemId) {
       return;
     }
-    item = state.knowledgeItems.filter(function (candidate) {
+    item = state.writingPolicyItems.filter(function (candidate) {
       return String(candidate.id || "") === itemId;
     })[0];
     if (item) {
-      openKnowledgeEditor(item);
+      openWritingPolicyEditor(item);
     }
   }
 
-  function scheduleKnowledgeSearch(value) {
-    state.knowledgeSearch = String(value || "");
-    if (state.knowledgeSearchTimer) {
-      clearTimeout(state.knowledgeSearchTimer);
+  function scheduleWritingPolicySearch(value) {
+    state.writingPolicySearch = String(value || "");
+    if (state.writingPolicySearchTimer) {
+      clearTimeout(state.writingPolicySearchTimer);
     }
-    state.knowledgeSearchTimer = setTimeout(function () {
-      state.knowledgeSearchTimer = null;
-      loadKnowledgeItems();
+    state.writingPolicySearchTimer = setTimeout(function () {
+      state.writingPolicySearchTimer = null;
+      loadWritingPolicyItems();
     }, 250);
   }
 
-  function setKnowledgeImportBusy(busy) {
-    var controls = byId("knowledge-import-view").querySelectorAll("button, input, select");
+  function setWritingPolicyImportBusy(busy) {
+    var controls = byId("writing-policy-import-view").querySelectorAll("button, input, select");
     var index;
-    state.knowledgeImportBusy = Boolean(busy);
+    state.writingPolicyImportBusy = Boolean(busy);
     for (index = 0; index < controls.length; index += 1) {
-      controls[index].disabled = state.knowledgeImportBusy;
+      controls[index].disabled = state.writingPolicyImportBusy;
     }
   }
 
-  function releaseKnowledgeImportReader(abortRead, expectedReader) {
-    var reader = expectedReader || state.knowledgeImportReader;
+  function releaseWritingPolicyImportReader(abortRead, expectedReader) {
+    var reader = expectedReader || state.writingPolicyImportReader;
     if (!reader) {
       return;
     }
-    if (!expectedReader || state.knowledgeImportReader === expectedReader) {
-      state.knowledgeImportReader = null;
+    if (!expectedReader || state.writingPolicyImportReader === expectedReader) {
+      state.writingPolicyImportReader = null;
     }
     reader.onload = null;
     reader.onerror = null;
@@ -2781,10 +2783,10 @@
     }
   }
 
-  function renderKnowledgeImportStep() {
-    var steps = byId("knowledge-import-steps").querySelectorAll("[data-import-step]");
+  function renderWritingPolicyImportStep() {
+    var steps = byId("writing-policy-import-steps").querySelectorAll("[data-import-step]");
     var order = { select: 0, validate: 1, conflicts: 2, apply: 3 };
-    var activeIndex = order[state.knowledgeImportStep] || 0;
+    var activeIndex = order[state.writingPolicyImportStep] || 0;
     var index;
     for (index = 0; index < steps.length; index += 1) {
       steps[index].classList.toggle(
@@ -2799,62 +2801,62 @@
     }
   }
 
-  function clearKnowledgeImportPreview(message, clearFile) {
-    state.knowledgeImportPreview = null;
-    state.knowledgeImportStep = "select";
+  function clearWritingPolicyImportPreview(message, clearFile) {
+    state.writingPolicyImportPreview = null;
+    state.writingPolicyImportStep = "select";
     if (clearFile) {
-      byId("knowledge-import-file").value = "";
+      byId("writing-policy-import-file").value = "";
     }
-    byId("knowledge-import-preview-panel").hidden = true;
-    byId("knowledge-import-error-list").textContent = "";
-    byId("knowledge-import-conflict-list").textContent = "";
-    byId("knowledge-import-errors-section").hidden = true;
-    byId("knowledge-import-conflicts-section").hidden = true;
-    byId("knowledge-import-errors-title").textContent = "校验错误";
-    byId("knowledge-import-conflicts-title").textContent = "冲突处理";
-    byId("knowledge-import-status").textContent = message || "请选择文件。";
-    renderKnowledgeImportStep();
+    byId("writing-policy-import-preview-panel").hidden = true;
+    byId("writing-policy-import-error-list").textContent = "";
+    byId("writing-policy-import-conflict-list").textContent = "";
+    byId("writing-policy-import-errors-section").hidden = true;
+    byId("writing-policy-import-conflicts-section").hidden = true;
+    byId("writing-policy-import-errors-title").textContent = "校验错误";
+    byId("writing-policy-import-conflicts-title").textContent = "冲突处理";
+    byId("writing-policy-import-status").textContent = message || "请选择文件。";
+    renderWritingPolicyImportStep();
   }
 
-  function resetKnowledgeImport(message) {
-    state.knowledgeImportSequence += 1;
-    releaseKnowledgeImportReader(true);
-    setKnowledgeImportBusy(false);
-    clearKnowledgeImportPreview(message, true);
+  function resetWritingPolicyImport(message) {
+    state.writingPolicyImportSequence += 1;
+    releaseWritingPolicyImportReader(true);
+    setWritingPolicyImportBusy(false);
+    clearWritingPolicyImportPreview(message, true);
   }
 
-  function openKnowledgeImport() {
-    if (state.knowledgeImportBusy) {
+  function openWritingPolicyImport() {
+    if (state.writingPolicyImportBusy) {
       return;
     }
-    state.knowledgeImportReturnView = state.knowledgeView === "list" ? "list" : "scope";
-    resetKnowledgeImport("");
-    setKnowledgeView("import");
+    state.writingPolicyImportReturnView = state.writingPolicyView === "list" ? "list" : "scope";
+    resetWritingPolicyImport("");
+    setWritingPolicyView("import");
   }
 
-  function closeKnowledgeImport() {
-    if (state.knowledgeImportBusy) {
+  function closeWritingPolicyImport() {
+    if (state.writingPolicyImportBusy) {
       return;
     }
-    resetKnowledgeImport("");
-    setKnowledgeView(state.knowledgeImportReturnView === "list" ? "list" : "scope");
+    resetWritingPolicyImport("");
+    setWritingPolicyView(state.writingPolicyImportReturnView === "list" ? "list" : "scope");
   }
 
-  function handleKnowledgeImportFileChange(event) {
+  function handleWritingPolicyImportFileChange(event) {
     var file = event.target.files && event.target.files[0];
     var validation;
-    state.knowledgeImportSequence += 1;
-    clearKnowledgeImportPreview(file ? "已选择文件，可开始校验。" : "请选择文件。", false);
+    state.writingPolicyImportSequence += 1;
+    clearWritingPolicyImportPreview(file ? "已选择文件，可开始校验。" : "请选择文件。", false);
     if (!file) {
       return;
     }
-    validation = helpers.validateKnowledgeImportFile ? helpers.validateKnowledgeImportFile(file) : { ok: true };
+    validation = helpers.validateWritingPolicyImportFile ? helpers.validateWritingPolicyImportFile(file) : { ok: true };
     if (!validation.ok) {
-      byId("knowledge-import-status").textContent = validation.message;
+      byId("writing-policy-import-status").textContent = validation.message;
     }
   }
 
-  function arrayBufferToKnowledgeBase64(arrayBuffer) {
+  function arrayBufferToWritingPolicyBase64(arrayBuffer) {
     var bytes = new Uint8Array(arrayBuffer);
     var chunks = [];
     var chunkSize = 32768;
@@ -2868,28 +2870,28 @@
     return encoded;
   }
 
-  function renderKnowledgeImportPreview() {
-    var preview = state.knowledgeImportPreview;
-    var errorsSection = byId("knowledge-import-errors-section");
-    var conflictsSection = byId("knowledge-import-conflicts-section");
-    var errorList = byId("knowledge-import-error-list");
-    var conflictList = byId("knowledge-import-conflict-list");
-    var applyButton = byId("btn-apply-knowledge-import");
+  function renderWritingPolicyImportPreview() {
+    var preview = state.writingPolicyImportPreview;
+    var errorsSection = byId("writing-policy-import-errors-section");
+    var conflictsSection = byId("writing-policy-import-conflicts-section");
+    var errorList = byId("writing-policy-import-error-list");
+    var conflictList = byId("writing-policy-import-conflict-list");
+    var applyButton = byId("btn-apply-writing-policy-import");
     errorList.textContent = "";
     conflictList.textContent = "";
     if (!preview) {
-      byId("knowledge-import-preview-panel").hidden = true;
+      byId("writing-policy-import-preview-panel").hidden = true;
       return;
     }
-    byId("knowledge-import-preview-panel").hidden = false;
-    byId("knowledge-import-new-count").textContent = String(preview.stats.newCount);
-    byId("knowledge-import-update-count").textContent = String(preview.stats.updateCount);
-    byId("knowledge-import-conflict-count").textContent = String(preview.stats.conflictCount);
-    byId("knowledge-import-error-count").textContent = String(preview.stats.errorCount);
-    byId("knowledge-import-errors-title").textContent = helpers.knowledgeImportCountLabel ?
-      helpers.knowledgeImportCountLabel("校验错误", preview.stats.errorCount, preview.errors.length) : "校验错误";
-    byId("knowledge-import-conflicts-title").textContent = helpers.knowledgeImportCountLabel ?
-      helpers.knowledgeImportCountLabel("冲突处理", preview.stats.conflictCount, preview.conflicts.length) : "冲突处理";
+    byId("writing-policy-import-preview-panel").hidden = false;
+    byId("writing-policy-import-new-count").textContent = String(preview.stats.newCount);
+    byId("writing-policy-import-update-count").textContent = String(preview.stats.updateCount);
+    byId("writing-policy-import-conflict-count").textContent = String(preview.stats.conflictCount);
+    byId("writing-policy-import-error-count").textContent = String(preview.stats.errorCount);
+    byId("writing-policy-import-errors-title").textContent = helpers.writingPolicyImportCountLabel ?
+      helpers.writingPolicyImportCountLabel("校验错误", preview.stats.errorCount, preview.errors.length) : "校验错误";
+    byId("writing-policy-import-conflicts-title").textContent = helpers.writingPolicyImportCountLabel ?
+      helpers.writingPolicyImportCountLabel("冲突处理", preview.stats.conflictCount, preview.conflicts.length) : "冲突处理";
     preview.errors.forEach(function (item) {
       var row = document.createElement("li");
       row.textContent = item.message;
@@ -2902,58 +2904,58 @@
       var select = document.createElement("select");
       var keep = document.createElement("option");
       var skip = document.createElement("option");
-      row.className = "knowledge-import-conflict-row";
+      row.className = "writing-policy-import-conflict-row";
       message.textContent = item.message;
-      select.setAttribute("data-knowledge-conflict-row", String(item.rowNumber));
+      select.setAttribute("data-writing-policy-conflict-row", String(item.rowNumber));
       keep.value = "keep_existing";
       keep.textContent = "保留库内标准";
       skip.value = "skip";
       skip.textContent = "跳过该行";
       select.appendChild(keep);
       select.appendChild(skip);
-      select.value = helpers.normalizeKnowledgeConflictDecision ?
-        helpers.normalizeKnowledgeConflictDecision(item.decision) : "keep_existing";
+      select.value = helpers.normalizeWritingPolicyConflictDecision ?
+        helpers.normalizeWritingPolicyConflictDecision(item.decision) : "keep_existing";
       row.appendChild(message);
       row.appendChild(select);
       conflictList.appendChild(row);
     });
     conflictsSection.hidden = preview.conflicts.length === 0;
-    applyButton.disabled = state.knowledgeImportBusy || !preview.previewToken;
+    applyButton.disabled = state.writingPolicyImportBusy || !preview.previewToken;
     applyButton.textContent = preview.conflicts.length ? "按当前选择应用" : "应用无冲突项";
   }
 
-  function previewKnowledgeImport() {
-    var input = byId("knowledge-import-file");
+  function previewWritingPolicyImport() {
+    var input = byId("writing-policy-import-file");
     var file = input.files && input.files[0];
-    var validation = helpers.validateKnowledgeImportFile ?
-      helpers.validateKnowledgeImportFile(file) : { ok: Boolean(file), message: "请选择导入文件。" };
+    var validation = helpers.validateWritingPolicyImportFile ?
+      helpers.validateWritingPolicyImportFile(file) : { ok: Boolean(file), message: "请选择导入文件。" };
     var reader;
     var requestId;
-    if (state.knowledgeImportBusy) {
+    if (state.writingPolicyImportBusy) {
       return;
     }
     if (!validation.ok) {
-      byId("knowledge-import-status").textContent = validation.message;
+      byId("writing-policy-import-status").textContent = validation.message;
       return;
     }
     reader = new FileReader();
-    requestId = state.knowledgeImportSequence + 1;
-    state.knowledgeImportSequence = requestId;
-    state.knowledgeImportReader = reader;
-    setKnowledgeImportBusy(true);
-    state.knowledgeImportStep = "validate";
-    renderKnowledgeImportStep();
-    byId("knowledge-import-status").textContent = "正在读取并校验文件...";
+    requestId = state.writingPolicyImportSequence + 1;
+    state.writingPolicyImportSequence = requestId;
+    state.writingPolicyImportReader = reader;
+    setWritingPolicyImportBusy(true);
+    state.writingPolicyImportStep = "validate";
+    renderWritingPolicyImportStep();
+    byId("writing-policy-import-status").textContent = "正在读取并校验文件...";
     reader.onerror = function () {
-      if (state.knowledgeImportSequence !== requestId) {
+      if (state.writingPolicyImportSequence !== requestId) {
         return;
       }
-      releaseKnowledgeImportReader(false, reader);
+      releaseWritingPolicyImportReader(false, reader);
       input.value = "";
-      setKnowledgeImportBusy(false);
-      state.knowledgeImportStep = "select";
-      renderKnowledgeImportStep();
-      byId("knowledge-import-status").textContent = "无法读取所选文件，请重新选择。";
+      setWritingPolicyImportBusy(false);
+      state.writingPolicyImportStep = "select";
+      renderWritingPolicyImportStep();
+      byId("writing-policy-import-status").textContent = "无法读取所选文件，请重新选择。";
     };
     reader.onload = function (event) {
       var arrayBuffer = event && event.target ? event.target.result : reader.result;
@@ -2961,7 +2963,7 @@
       var payload = null;
       var previewRequest;
       function releaseLargeReferences() {
-        var isCurrentRequest = state.knowledgeImportSequence === requestId;
+        var isCurrentRequest = state.writingPolicyImportSequence === requestId;
         arrayBuffer = null;
         contentBase64 = "";
         payload = null;
@@ -2969,49 +2971,49 @@
         if (isCurrentRequest) {
           input.value = "";
         }
-        releaseKnowledgeImportReader(false, reader);
+        releaseWritingPolicyImportReader(false, reader);
         reader = null;
         if (isCurrentRequest) {
-          setKnowledgeImportBusy(false);
-          renderKnowledgeImportPreview();
+          setWritingPolicyImportBusy(false);
+          renderWritingPolicyImportPreview();
         }
       }
       try {
-        contentBase64 = arrayBufferToKnowledgeBase64(arrayBuffer);
-        payload = helpers.buildKnowledgeImportRequest ?
-          helpers.buildKnowledgeImportRequest(file, contentBase64) : null;
-        previewRequest = request("/enterprise-knowledge/imports/preview", payload);
+        contentBase64 = arrayBufferToWritingPolicyBase64(arrayBuffer);
+        payload = helpers.buildWritingPolicyImportRequest ?
+          helpers.buildWritingPolicyImportRequest(file, contentBase64) : null;
+        previewRequest = request("/writing-policies/imports/preview", payload);
       } catch (error) {
-        if (state.knowledgeImportSequence === requestId) {
-          state.knowledgeImportStep = "select";
-          byId("knowledge-import-status").textContent = "文件编码失败，请重新选择。";
-          renderKnowledgeImportStep();
+        if (state.writingPolicyImportSequence === requestId) {
+          state.writingPolicyImportStep = "select";
+          byId("writing-policy-import-status").textContent = "文件编码失败，请重新选择。";
+          renderWritingPolicyImportStep();
         }
         releaseLargeReferences();
         return;
       }
       previewRequest.then(function (body) {
-        if (state.knowledgeImportSequence !== requestId) {
+        if (state.writingPolicyImportSequence !== requestId) {
           return;
         }
-        state.knowledgeImportPreview = helpers.normalizeKnowledgeImportPreview ?
-          helpers.normalizeKnowledgeImportPreview(body.data || {}) : body.data;
-        if (!state.knowledgeImportPreview || !state.knowledgeImportPreview.previewToken) {
+        state.writingPolicyImportPreview = helpers.normalizeWritingPolicyImportPreview ?
+          helpers.normalizeWritingPolicyImportPreview(body.data || {}) : body.data;
+        if (!state.writingPolicyImportPreview || !state.writingPolicyImportPreview.previewToken) {
           throw new Error("校验结果缺少导入预览编号。");
         }
-        state.knowledgeImportStep = state.knowledgeImportPreview.conflicts.length ? "conflicts" : "apply";
-        byId("knowledge-import-status").textContent = state.knowledgeImportPreview.conflicts.length ?
+        state.writingPolicyImportStep = state.writingPolicyImportPreview.conflicts.length ? "conflicts" : "apply";
+        byId("writing-policy-import-status").textContent = state.writingPolicyImportPreview.conflicts.length ?
           "校验完成，请处理冲突后应用。" : "校验完成，可应用导入。";
-        renderKnowledgeImportPreview();
+        renderWritingPolicyImportPreview();
       }).catch(function (error) {
-        if (state.knowledgeImportSequence !== requestId) {
+        if (state.writingPolicyImportSequence !== requestId) {
           return;
         }
-        state.knowledgeImportPreview = null;
-        state.knowledgeImportStep = "select";
-        byId("knowledge-import-status").textContent = "校验失败：" + describeFetchError(error);
-        renderKnowledgeImportPreview();
-        renderKnowledgeImportStep();
+        state.writingPolicyImportPreview = null;
+        state.writingPolicyImportStep = "select";
+        byId("writing-policy-import-status").textContent = "校验失败：" + describeFetchError(error);
+        renderWritingPolicyImportPreview();
+        renderWritingPolicyImportStep();
       }).then(function () {
         releaseLargeReferences();
       });
@@ -3019,56 +3021,56 @@
     reader.readAsArrayBuffer(file);
   }
 
-  function handleKnowledgeConflictDecision(event) {
-    var rowNumber = Number(event.target.getAttribute("data-knowledge-conflict-row"));
-    var preview = state.knowledgeImportPreview;
+  function handleWritingPolicyConflictDecision(event) {
+    var rowNumber = Number(event.target.getAttribute("data-writing-policy-conflict-row"));
+    var preview = state.writingPolicyImportPreview;
     if (!rowNumber || !preview) {
       return;
     }
     preview.conflicts.forEach(function (item) {
       if (item.rowNumber === rowNumber) {
-        item.decision = helpers.normalizeKnowledgeConflictDecision ?
-          helpers.normalizeKnowledgeConflictDecision(event.target.value) : "keep_existing";
+        item.decision = helpers.normalizeWritingPolicyConflictDecision ?
+          helpers.normalizeWritingPolicyConflictDecision(event.target.value) : "keep_existing";
         event.target.value = item.decision;
       }
     });
   }
 
-  function applyKnowledgeImport() {
-    var preview = state.knowledgeImportPreview;
+  function applyWritingPolicyImport() {
+    var preview = state.writingPolicyImportPreview;
     var acceptedConflictRows;
-    if (!preview || !preview.previewToken || state.knowledgeImportBusy) {
+    if (!preview || !preview.previewToken || state.writingPolicyImportBusy) {
       return;
     }
-    acceptedConflictRows = helpers.buildKnowledgeImportApplyRequest ?
-      helpers.buildKnowledgeImportApplyRequest(preview).acceptedConflictRows : [];
-    setKnowledgeImportBusy(true);
-    state.knowledgeImportStep = "apply";
-    renderKnowledgeImportStep();
-    byId("knowledge-import-status").textContent = "正在应用导入结果...";
-    request("/enterprise-knowledge/imports/apply", {
+    acceptedConflictRows = helpers.buildWritingPolicyImportApplyRequest ?
+      helpers.buildWritingPolicyImportApplyRequest(preview).acceptedConflictRows : [];
+    setWritingPolicyImportBusy(true);
+    state.writingPolicyImportStep = "apply";
+    renderWritingPolicyImportStep();
+    byId("writing-policy-import-status").textContent = "正在应用导入结果...";
+    request("/writing-policies/imports/apply", {
       previewToken: preview.previewToken,
       acceptedConflictRows: acceptedConflictRows
     }).then(function (body) {
       var result = body.data || {};
-      state.knowledgeImportPreview = null;
-      byId("knowledge-import-preview-panel").hidden = true;
-      byId("knowledge-import-status").textContent = "导入完成：新增 " +
+      state.writingPolicyImportPreview = null;
+      byId("writing-policy-import-preview-panel").hidden = true;
+      byId("writing-policy-import-status").textContent = "导入完成：新增 " +
         String(result.createdCount || 0) + " 条，更新 " + String(result.updatedCount || 0) + " 条。";
-      setKnowledgeImportBusy(false);
-      loadKnowledgeSummary();
+      setWritingPolicyImportBusy(false);
+      loadWritingPolicySummary();
     }).catch(function (error) {
-      setKnowledgeImportBusy(false);
-      if (helpers.isKnowledgePreviewExpired && helpers.isKnowledgePreviewExpired(error)) {
-        resetKnowledgeImport("导入预览已过期，请重新选择文件。");
+      setWritingPolicyImportBusy(false);
+      if (helpers.isWritingPolicyPreviewExpired && helpers.isWritingPolicyPreviewExpired(error)) {
+        resetWritingPolicyImport("导入预览已过期，请重新选择文件。");
         return;
       }
-      byId("knowledge-import-status").textContent = "应用失败：" + describeFetchError(error);
-      renderKnowledgeImportPreview();
+      byId("writing-policy-import-status").textContent = "应用失败：" + describeFetchError(error);
+      renderWritingPolicyImportPreview();
     });
   }
 
-  function downloadKnowledgeFile(path, fileName) {
+  function downloadWritingPolicyFile(path, fileName) {
     var objectUrl = "";
     var anchor = null;
     function cleanup() {
@@ -3105,14 +3107,14 @@
     });
   }
 
-  function runKnowledgeDownload(path, fileName, successMessage) {
-    var statusNode = state.knowledgeView === "import" ? byId("knowledge-import-status") : null;
+  function runWritingPolicyDownload(path, fileName, successMessage) {
+    var statusNode = state.writingPolicyView === "import" ? byId("writing-policy-import-status") : null;
     if (statusNode) {
       statusNode.textContent = "正在准备下载...";
     } else {
       setStatus("正在准备下载...");
     }
-    downloadKnowledgeFile(path, fileName).then(function () {
+    downloadWritingPolicyFile(path, fileName).then(function () {
       if (statusNode) {
         statusNode.textContent = successMessage;
       } else {
@@ -3127,30 +3129,30 @@
     });
   }
 
-  function handleKnowledgeMenuAction(event) {
+  function handleWritingPolicyMenuAction(event) {
     var target = event.target;
     var action;
-    while (target && target !== byId("knowledge-overflow-menu") && !target.getAttribute("data-knowledge-menu-action")) {
+    while (target && target !== byId("writing-policy-overflow-menu") && !target.getAttribute("data-writing-policy-menu-action")) {
       target = target.parentNode;
     }
-    action = target && target.getAttribute("data-knowledge-menu-action");
+    action = target && target.getAttribute("data-writing-policy-menu-action");
     if (!action) {
       return;
     }
-    byId("knowledge-overflow-menu").open = false;
+    byId("writing-policy-overflow-menu").open = false;
     if (action === "import") {
-      openKnowledgeImport();
+      openWritingPolicyImport();
     } else if (action === "export") {
-      runKnowledgeDownload(
-        "/enterprise-knowledge/export.csv?scope=" + encodeURIComponent(state.knowledgeScope),
-        "enterprise-knowledge-export.csv",
+      runWritingPolicyDownload(
+        "/writing-policies/export.csv?scope=" + encodeURIComponent(state.writingPolicyScope),
+        "writing-policies-export.csv",
         "当前范围已导出。"
       );
     } else if (action === "backup") {
-      runKnowledgeDownload(
-        "/enterprise-knowledge/backup",
-        "enterprise-knowledge-backup.db",
-        "企业知识库备份已下载。"
+      runWritingPolicyDownload(
+        "/writing-policies/backup",
+        "writing-policies-backup.db",
+        "写作规范库备份已下载。"
       );
     }
   }
@@ -3520,7 +3522,8 @@
   function renderDocumentReviewResult(data) {
     var markdown = renderGroupedDocumentReview(data || {});
     state.documentReviewRecordPreviewVisible = false;
-    renderKnowledgeUsage(data && data.knowledgeUsage, "word.document_review");
+    state.writingPolicyAudit = data && data.writingPolicyAudit ? data.writingPolicyAudit : null;
+    renderWritingPolicyUsage(data && data.writingPolicyUsage, "word.document_review");
     try {
       renderDocumentReviewInteractive(data || {});
       return true;
@@ -4152,6 +4155,7 @@
       var startedAt;
       try {
         state.latestDocumentPayload = extractDocument(scope.selectionMode, null, DOCUMENT_REVIEW_EXTRACTION_OPTIONS);
+        state.latestDocumentPayload.writingPolicyScene = "auto";
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
         setStatus(error.message);
@@ -4301,6 +4305,7 @@
           state.writeAction || "rewrite",
           SMART_WRITE_EXTRACTION_OPTIONS
         );
+        state.latestDocumentPayload.writingPolicyScene = "auto";
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
         setStatus(error.message);
@@ -4355,6 +4360,7 @@
       documentId: "smart-imitation",
       scene: "word",
       selectionMode: "selection",
+      writingPolicyScene: "auto",
       content: {
         plainText: templateText,
         paragraphs: paragraphs,
@@ -4505,74 +4511,74 @@
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
     byId("workflow-profile-manager").addEventListener("change", markWorkflowProfileEditorDirty);
-    byId("btn-open-knowledge-manager").addEventListener("click", openKnowledgeScopeView);
-    byId("btn-retry-knowledge-summary").addEventListener("click", loadKnowledgeSummary);
-    byId("btn-knowledge-scope-back").addEventListener("click", function () {
-      setKnowledgeView("home");
+    byId("btn-open-writing-policy-manager").addEventListener("click", openWritingPolicyScopeView);
+    byId("btn-retry-writing-policy-summary").addEventListener("click", loadWritingPolicySummary);
+    byId("btn-writing-policy-scope-back").addEventListener("click", function () {
+      setWritingPolicyView("home");
     });
-    byId("knowledge-scope-list").addEventListener("click", handleKnowledgeScopeClick);
-    byId("btn-knowledge-list-back").addEventListener("click", function () {
-      setKnowledgeView("scope");
+    byId("writing-policy-scope-list").addEventListener("click", handleWritingPolicyScopeClick);
+    byId("btn-writing-policy-list-back").addEventListener("click", function () {
+      setWritingPolicyView("scope");
     });
-    byId("knowledge-type-switch").addEventListener("click", handleKnowledgeTypeClick);
-    byId("knowledge-type-switch").addEventListener("keydown", handleKnowledgeTypeKeydown);
-    byId("knowledge-search-input").addEventListener("input", function (event) {
-      scheduleKnowledgeSearch(event.target.value);
+    byId("writing-policy-type-switch").addEventListener("click", handleWritingPolicyTypeClick);
+    byId("writing-policy-type-switch").addEventListener("keydown", handleWritingPolicyTypeKeydown);
+    byId("writing-policy-search-input").addEventListener("input", function (event) {
+      scheduleWritingPolicySearch(event.target.value);
     });
-    byId("btn-knowledge-add").addEventListener("click", function () {
-      if (!state.knowledgeListError && !state.knowledgeMutationBusy) {
-        openKnowledgeEditor(null);
+    byId("btn-writing-policy-add").addEventListener("click", function () {
+      if (!state.writingPolicyListError && !state.writingPolicyMutationBusy) {
+        openWritingPolicyEditor(null);
       }
     });
-    byId("knowledge-item-list").addEventListener("click", handleKnowledgeListClick);
-    byId("btn-retry-knowledge-list").addEventListener("click", loadKnowledgeItems);
-    byId("btn-knowledge-editor-back").addEventListener("click", closeKnowledgeEditor);
-    byId("btn-cancel-knowledge-editor").addEventListener("click", closeKnowledgeEditor);
-    byId("btn-save-knowledge-item").addEventListener("click", saveKnowledgeItem);
-    byId("btn-knowledge-delete").addEventListener("click", deleteKnowledgeItem);
-    byId("knowledge-editor-view").addEventListener("input", function () {
-      if (state.knowledgeEditor) {
-        state.knowledgeEditorDirty = true;
+    byId("writing-policy-item-list").addEventListener("click", handleWritingPolicyListClick);
+    byId("btn-retry-writing-policy-list").addEventListener("click", loadWritingPolicyItems);
+    byId("btn-writing-policy-editor-back").addEventListener("click", closeWritingPolicyEditor);
+    byId("btn-cancel-writing-policy-editor").addEventListener("click", closeWritingPolicyEditor);
+    byId("btn-save-writing-policy-item").addEventListener("click", saveWritingPolicyItem);
+    byId("btn-writing-policy-delete").addEventListener("click", deleteWritingPolicyItem);
+    byId("writing-policy-editor-view").addEventListener("input", function () {
+      if (state.writingPolicyEditor) {
+        state.writingPolicyEditorDirty = true;
       }
     });
-    byId("knowledge-editor-view").addEventListener("change", function () {
-      if (state.knowledgeEditor) {
-        state.knowledgeEditorDirty = true;
+    byId("writing-policy-editor-view").addEventListener("change", function () {
+      if (state.writingPolicyEditor) {
+        state.writingPolicyEditorDirty = true;
       }
     });
-    byId("btn-knowledge-import-entry").addEventListener("click", openKnowledgeImport);
-    byId("knowledge-overflow-menu").addEventListener("click", handleKnowledgeMenuAction);
-    byId("btn-knowledge-import-back").addEventListener("click", closeKnowledgeImport);
-    byId("knowledge-import-file").addEventListener("change", handleKnowledgeImportFileChange);
-    byId("btn-preview-knowledge-import").addEventListener("click", previewKnowledgeImport);
-    byId("knowledge-import-conflict-list").addEventListener("change", handleKnowledgeConflictDecision);
-    byId("btn-apply-knowledge-import").addEventListener("click", applyKnowledgeImport);
-    byId("btn-knowledge-download-csv-template").addEventListener("click", function () {
-      runKnowledgeDownload(
-        "/enterprise-knowledge/import-template.csv",
-        "enterprise-knowledge-import-template.csv",
+    byId("btn-writing-policy-import-entry").addEventListener("click", openWritingPolicyImport);
+    byId("writing-policy-overflow-menu").addEventListener("click", handleWritingPolicyMenuAction);
+    byId("btn-writing-policy-import-back").addEventListener("click", closeWritingPolicyImport);
+    byId("writing-policy-import-file").addEventListener("change", handleWritingPolicyImportFileChange);
+    byId("btn-preview-writing-policy-import").addEventListener("click", previewWritingPolicyImport);
+    byId("writing-policy-import-conflict-list").addEventListener("change", handleWritingPolicyConflictDecision);
+    byId("btn-apply-writing-policy-import").addEventListener("click", applyWritingPolicyImport);
+    byId("btn-writing-policy-download-csv-template").addEventListener("click", function () {
+      runWritingPolicyDownload(
+        "/writing-policies/import-template.csv",
+        "writing-policies-import-template.csv",
         "CSV 导入模板已下载。"
       );
     });
-    byId("btn-knowledge-download-xlsx-template").addEventListener("click", function () {
-      runKnowledgeDownload(
-        "/enterprise-knowledge/import-template.xlsx",
-        "enterprise-knowledge-import-template.xlsx",
+    byId("btn-writing-policy-download-xlsx-template").addEventListener("click", function () {
+      runWritingPolicyDownload(
+        "/writing-policies/import-template.xlsx",
+        "writing-policies-import-template.xlsx",
         "XLSX 导入模板已下载。"
       );
     });
-    byId("btn-knowledge-export-scope").addEventListener("click", function () {
-      runKnowledgeDownload(
-        "/enterprise-knowledge/export.csv?scope=" + encodeURIComponent(state.knowledgeScope),
-        "enterprise-knowledge-export.csv",
+    byId("btn-writing-policy-export-scope").addEventListener("click", function () {
+      runWritingPolicyDownload(
+        "/writing-policies/export.csv?scope=" + encodeURIComponent(state.writingPolicyScope),
+        "writing-policies-export.csv",
         "当前范围已导出。"
       );
     });
-    byId("btn-knowledge-download-backup").addEventListener("click", function () {
-      runKnowledgeDownload(
-        "/enterprise-knowledge/backup",
-        "enterprise-knowledge-backup.db",
-        "企业知识库备份已下载。"
+    byId("btn-writing-policy-download-backup").addEventListener("click", function () {
+      runWritingPolicyDownload(
+        "/writing-policies/backup",
+        "writing-policies-backup.db",
+        "写作规范库备份已下载。"
       );
     });
     byId("btn-apply").addEventListener("click", applyPreview);
@@ -4603,8 +4609,8 @@
   byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION;
   byId("technical-review-prompt").value = state.technicalReviewPrompt;
   renderFallbackTemplateOptions();
-  renderKnowledgeManagerView();
-  renderKnowledgeSummary();
+  renderWritingPolicyManagerView();
+  renderWritingPolicySummary();
   state.settingsRefreshController = helpers.createSettingsRefreshController({
     intervalMs: 30000,
     refresh: function () {

@@ -110,7 +110,7 @@ Rules:
 | Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
 | Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through top-level `query` and automatically supports legacy `inputs.query` workflows |
 | Smart imitation | Adds an independent `word.smart_imitation` model workflow for template-based imitation writing with selected-text or pasted templates, required imitation requirements, optional reference material, and preview/plain-text/copy-only results without comparison or writeback |
-| Word enterprise knowledge | Stores global terminology and task-scoped writing rules locally for Smart Write, Smart Imitation, and Document Review; provides drill-down CRUD, CSV/XLSX import preview, conflict handling, scoped CSV export, full backup, and explicit degraded-result feedback without changing writeback |
+| Word writing policy library | Stores global terminology and task-scoped writing rules locally for Smart Write, Smart Imitation, and Document Review; provides drill-down CRUD, CSV/XLSX import preview, conflict handling, scoped CSV export, full backup, and explicit degraded-result feedback without changing writeback |
 | Excel “智能分析” | Provides a read-only `excel.analysis` model workflow for selected range or active used range analysis; long tasks use background jobs with recoverable polling, with structured report and plain paragraph views and no cell writeback |
 | PPT “智能总结” | Uses one `ppt.slide_assistant` workflow profile for two modes. Current-slide summary reads the title, optional subtitle, body text, and adjacent titles. Document summary accepts one UTF-8 `.md` or valid `.docx` file up to 10 MB and produces a complete 5/8/10/12/15-slide recommendation, defaulting to 10 slides. Both modes are preview/copy only and never write to the presentation |
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
@@ -128,7 +128,7 @@ Rules:
 | Version | Update |
 | --- | --- |
 | `v0.19.1-alpha` | Refines the shared Word, Excel, and PPT task-pane experience without changing business workflows: compact host-colored task and settings views, live model-interface readiness derived from each host's URL and workflow profiles, scalable task tabs, optional workflow notes, contextual help, and collapsed advanced diagnostics. Settings probes now use an isolated 8-second budget, single-flight refresh, stale-response protection, and edit-aware pausing so they cannot overwrite task status, results, long-running job state, or unsaved settings |
-| `v0.19.0-alpha` | Adds Word enterprise terminology and writing-rule knowledge for Smart Write, Smart Imitation, and Document Review. The local SQLite-backed manager supports scoped CRUD, CSV/XLSX import preview with conflict skipping, CSV export, database backup, result usage summaries, and fail-open degraded feedback. Excel/PPT behavior and all existing writeback paths remain unchanged; overwrite installation preserves the knowledge database and up to three existing backups |
+| `v0.19.0-alpha` | Adds Word enterprise terminology and writing-rule knowledge for Smart Write, Smart Imitation, and Document Review. The local SQLite-backed manager supports scoped CRUD, CSV/XLSX import preview with conflict skipping, CSV export, database backup, result usage summaries, and fail-open degraded feedback. Excel/PPT behavior and all existing writeback paths remain unchanged; overwrite installation preserves the writing policy database and up to three existing backups |
 | `v0.18.1-alpha` | Streamlines workflow settings across Word, Excel, and PPT: removes unified-key controls from the task pane, keeps a compact host-isolated workflow list with full-width create/edit views, activates task-page selections immediately, protects active profiles from deletion, preserves existing keys when edits leave the key blank, and keeps adapter fallback and overwrite-install compatibility unchanged |
 | `v0.18.0-alpha` | Renames the current Excel entry to “智能分析” and upgrades PPT to the dual-mode “智能总结”; adds secure single-file UTF-8 Markdown/DOCX upload, complete-deck 5/8/10/12/15-slide recommendations, 1800-second recoverable polling, a unified three-host visual system, Excel/PPT Markdown prompt templates, and one combined overwrite-install package that preserves the API URL and API keys |
 | `v0.17.0-alpha` | Adds the read-only PPT Slide Assistant with current-slide title, optional subtitle, body text, and adjacent-title extraction; generate/optimize modes, recoverable long-task polling, preview/plain-text and categorized copy actions; strict Word/Excel/PPT Ribbon isolation; and one combined upgrade package that preserves the target machine's API URL and API keys |
@@ -320,7 +320,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 
 Workflow-profile API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps only display metadata and key references. Smart Write, Smart Imitation, Document Review, Format Review, “智能分析”, and “智能总结” can each keep multiple Dify app keys; activation affects the next new task and missing task keys fall back to the unified provider key. PPT current-slide and document modes use the same resolved `ppt.slide_assistant` key for Dify `/files/upload` and `/chat-messages`. See the [workflow profile operations guide](./docs/operations/workflow-profile-management.md).
 
-The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). Word terminology/rule maintenance, imports, exports, backup, degraded behavior, and recovery are documented in the [enterprise knowledge operations guide](./docs/operations/enterprise-knowledge-management.md). “智能分析” setup is documented in the [Excel analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md), and the two PPT “智能总结” modes are documented in the [PPT smart summary Dify workflow guide](./docs/operations/dify-ppt-slide-assistant-workflow.md). Deployable prompt templates are available under [`docs/prompt-templates/`](./docs/prompt-templates/).
+The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). Word terminology/rule maintenance, imports, exports, backup, degraded behavior, and recovery are documented in the [writing policy library operations guide](./docs/operations/writing-policy-library.md). “智能分析” setup is documented in the [Excel analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md), and the two PPT “智能总结” modes are documented in the [PPT smart summary Dify workflow guide](./docs/operations/dify-ppt-slide-assistant-workflow.md). Deployable prompt templates are available under [`docs/prompt-templates/`](./docs/prompt-templates/).
 
 ## API Surface
 
@@ -341,16 +341,16 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
 | `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
-| `GET` | `/enterprise-knowledge/summary` | Knowledge counts and availability for the Word manager |
-| `GET` / `POST` | `/enterprise-knowledge/items` | List or create terminology and writing-rule items |
-| `PATCH` / `DELETE` | `/enterprise-knowledge/items/{itemId}` | Update or delete one knowledge item |
-| `GET` | `/enterprise-knowledge/import-template.csv` | Download the CSV import template |
-| `GET` | `/enterprise-knowledge/import-template.xlsx` | Download the XLSX import template |
-| `POST` | `/enterprise-knowledge/imports/preview` | Validate an import and issue a short-lived preview token |
-| `POST` | `/enterprise-knowledge/imports/apply` | Apply one unused import preview with conflict skipping |
-| `GET` | `/enterprise-knowledge/export.csv` | Export filtered knowledge items as CSV |
-| `GET` | `/enterprise-knowledge/backup` | Download a consistent SQLite database backup |
-| `GET` | `/enterprise-knowledge/diagnostics` | Sanitized knowledge-store health diagnostics |
+| `GET` | `/writing-policies/summary` | Knowledge counts and availability for the Word manager |
+| `GET` / `POST` | `/writing-policies/items` | List or create terminology and writing-rule items |
+| `PATCH` / `DELETE` | `/writing-policies/items/{itemId}` | Update or delete one knowledge item |
+| `GET` | `/writing-policies/import-template.csv` | Download the CSV import template |
+| `GET` | `/writing-policies/import-template.xlsx` | Download the XLSX import template |
+| `POST` | `/writing-policies/imports/preview` | Validate an import and issue a short-lived preview token |
+| `POST` | `/writing-policies/imports/apply` | Apply one unused import preview with conflict skipping |
+| `GET` | `/writing-policies/export.csv` | Export filtered knowledge items as CSV |
+| `GET` | `/writing-policies/backup` | Download a consistent SQLite database backup |
+| `GET` | `/writing-policies/diagnostics` | Sanitized knowledge-store health diagnostics |
 | `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
 | `POST` | `/word/smart-imitation` | Preview/copy-only imitation writing from a template, requirements, and optional reference material |
 | `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
@@ -379,7 +379,7 @@ Unified response envelope:
 
 ## Offline Delivery
 
-The formal Phase 1 release is a single combined Word/Excel/PPT package with one installer. An overwrite installation keeps the target machine's existing `config/adapter.json`, unified API key, `run/provider_api_keys/`, Word enterprise knowledge database, and up to three existing knowledge backups; the package also carries the Excel/PPT Markdown prompt templates and generated enterprise-knowledge CSV/XLSX import templates.
+The formal Phase 1 release is a single combined Word/Excel/PPT package with one installer. An overwrite installation keeps the target machine's existing `config/adapter.json`, unified API key, `run/provider_api_keys/`, Word enterprise writing policy database, and up to three existing writing policy backups; the package also carries the Excel/PPT Markdown prompt templates and generated writing-policies CSV/XLSX import templates.
 
 Build the full offline bundle:
 

@@ -124,7 +124,7 @@ assert.ok(invalidateBeforeUrlRefresh < saveProviderUrlSource.indexOf("refreshCon
 const settingsRefreshSource = functionSource("syncSettingsRefreshController");
 assert.ok(settingsRefreshSource.includes('byId("settings-view").classList.contains("active")'));
 assert.ok(settingsRefreshSource.includes('document.visibilityState !== "hidden"'));
-assert.ok(settingsRefreshSource.includes('state.knowledgeView === "home"'));
+assert.ok(settingsRefreshSource.includes('state.writingPolicyView === "home"'));
 assert.ok(settingsRefreshSource.includes("!state.workflowProfileEditor"));
 assert.ok(settingsRefreshSource.includes("!state.providerUrlEditorOpen"));
 assert.ok(settingsRefreshSource.includes("!state.workflowProfileMutationBusy"));
@@ -143,7 +143,7 @@ const refreshLifecycleState = {
   configRefreshRequestId: 0,
   configRefreshQueued: false,
   configRefreshQueuedSilent: true,
-  knowledgeView: "home",
+  writingPolicyView: "home",
   workflowProfileEditor: null,
   providerUrlEditorOpen: false,
   workflowProfileMutationBusy: false,
@@ -171,9 +171,9 @@ syncSettingsRefresh();
 assert.strictEqual(refreshLifecycleState.settingsRefreshController.stopCount, 1);
 refreshLifecycleDocument.visibilityState = "visible";
 syncSettingsRefresh();
-refreshLifecycleState.knowledgeView = "scope";
+refreshLifecycleState.writingPolicyView = "scope";
 syncSettingsRefresh();
-refreshLifecycleState.knowledgeView = "home";
+refreshLifecycleState.writingPolicyView = "home";
 syncSettingsRefresh();
 refreshLifecycleState.workflowProfileEditor = { mode: "edit" };
 syncSettingsRefresh();
@@ -263,10 +263,10 @@ assert.ok(toggleSource.includes('switchView("home")'));
 const diagnosticsToggleSource = functionSource("handleDiagnosticsDisclosureToggle");
 assert.ok(diagnosticsToggleSource.includes("event.currentTarget.open"));
 assert.ok(diagnosticsToggleSource.includes("refreshDiagnostics()"));
-const knowledgeViewSource = functionSource("setKnowledgeView");
-assert.ok(knowledgeViewSource.includes('view === "home"'));
-assert.ok(knowledgeViewSource.includes("diagnosticsDisclosure.open = false"));
-assert.ok(knowledgeViewSource.includes("syncSettingsRefreshController()"));
+const writingPolicyViewSource = functionSource("setWritingPolicyView");
+assert.ok(writingPolicyViewSource.includes('view === "home"'));
+assert.ok(writingPolicyViewSource.includes("diagnosticsDisclosure.open = false"));
+assert.ok(writingPolicyViewSource.includes("syncSettingsRefreshController()"));
 
 const reviewFailures = [];
 

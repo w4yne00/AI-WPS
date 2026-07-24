@@ -1034,11 +1034,11 @@ function testNormalizeWorkflowProfileDataHandlesMalformedInput() {
   assert.strictEqual(helpers.workflowProfileStatusText({ id: "p", keyConfigured: false }, ""), "密钥未配置");
 }
 
-function testNormalizeKnowledgeUsageHandlesMissingAndMalformedMetadata() {
-  assert.deepStrictEqual(helpers.normalizeKnowledgeUsage(null), null);
-  assert.deepStrictEqual(helpers.normalizeKnowledgeUsage([]), null);
+function testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata() {
+  assert.deepStrictEqual(helpers.normalizeWritingPolicyUsage(null), null);
+  assert.deepStrictEqual(helpers.normalizeWritingPolicyUsage([]), null);
 
-  const normalized = helpers.normalizeKnowledgeUsage({
+  const normalized = helpers.normalizeWritingPolicyUsage({
     applied: true,
     degraded: false,
     degradedReason: 123,
@@ -1067,29 +1067,29 @@ function testNormalizeKnowledgeUsageHandlesMissingAndMalformedMetadata() {
   });
 }
 
-function testKnowledgeUsageSummaryUsesTaskSpecificChineseVerb() {
+function testWritingPolicyUsageSummaryUsesTaskSpecificChineseVerb() {
   const usage = { applied: true, termMatchCount: 2, styleRuleCount: 1 };
 
   assert.strictEqual(
-    helpers.knowledgeUsageSummary(usage, "word.smart_write"),
-    "企业知识：已应用 2 条术语、1 条风格规则"
+    helpers.writingPolicyUsageSummary(usage, "word.smart_write"),
+    "写作规范：已应用 2 条术语、1 条文体规则"
   );
   assert.strictEqual(
-    helpers.knowledgeUsageSummary(usage, "word.smart_imitation"),
-    "企业知识：已应用 2 条术语、1 条风格规则"
+    helpers.writingPolicyUsageSummary(usage, "word.smart_imitation"),
+    "写作规范：已应用 2 条术语、1 条文体规则"
   );
   assert.strictEqual(
-    helpers.knowledgeUsageSummary(usage, "word.document_review"),
-    "企业知识：已检查 2 条术语、1 条风格规则"
+    helpers.writingPolicyUsageSummary(usage, "word.document_review"),
+    "写作规范：已检查 2 条术语、1 条文体规则"
   );
   assert.strictEqual(
-    helpers.knowledgeUsageSummary({ applied: false, degraded: true }, "word.document_review"),
-    "企业知识未应用，本次结果仅使用模型工作流生成"
+    helpers.writingPolicyUsageSummary({ applied: false, degraded: true }, "word.document_review"),
+    "写作规范未应用，本次结果仅使用模型工作流生成"
   );
-  assert.strictEqual(helpers.knowledgeUsageSummary(null, "word.smart_write"), "");
+  assert.strictEqual(helpers.writingPolicyUsageSummary(null, "word.smart_write"), "");
 }
 
-function testKnowledgeUsageDetailsFiltersLabelsAndCapsItems() {
+function testWritingPolicyUsageDetailsFiltersLabelsAndCapsItems() {
   const matchedItems = [];
   for (let index = 0; index < 24; index += 1) {
     matchedItems.push({
@@ -1100,11 +1100,11 @@ function testKnowledgeUsageDetailsFiltersLabelsAndCapsItems() {
   }
   matchedItems.splice(3, 0, { id: "ignored", type: "other", name: "不应显示" });
 
-  const details = helpers.knowledgeUsageDetails({ matchedItems });
+  const details = helpers.writingPolicyUsageDetails({ matchedItems });
 
   assert.strictEqual(details.length, 20);
   assert.strictEqual(details[0], "术语：规则 0");
-  assert.strictEqual(details[1], "风格规则：规则 1");
+  assert.strictEqual(details[1], "文体规则：规则 1");
   assert.ok(!details.some((item) => item.includes("不应显示")));
 }
 
@@ -1147,9 +1147,9 @@ testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();
 testNormalizeWorkflowProfileDataFiltersByTask();
 testNormalizeWorkflowProfileDataHandlesMalformedInput();
-testNormalizeKnowledgeUsageHandlesMissingAndMalformedMetadata();
-testKnowledgeUsageSummaryUsesTaskSpecificChineseVerb();
-testKnowledgeUsageDetailsFiltersLabelsAndCapsItems();
+testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata();
+testWritingPolicyUsageSummaryUsesTaskSpecificChineseVerb();
+testWritingPolicyUsageDetailsFiltersLabelsAndCapsItems();
 assertWorkflowUiContract(helpers);
 assertWorkflowUiContract(excelHelpers);
 assertSettingsStateContract(helpers);

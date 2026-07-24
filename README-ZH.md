@@ -110,7 +110,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 格式审查 | 按《技术文件格式及书写要求》模板检查选中文本或全文格式合规；可保留 AI 段落角色识别，但只输出检查意见，不再写回排版；预览结果按概览、优先处理清单、分组详情和诊断信息展示，便于排查 |
 | Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 通过顶层 `query` 发送完整提示词，并自动兼容旧工作流的 `inputs.query` |
 | 智能仿写 | 新增独立 `word.smart_imitation` 模型工作流，支持选中文本或手动粘贴仿写模板、必填仿写需求、选填参考素材，结果只提供预览、纯文本和复制，不提供对照和写回 |
-| Word 企业知识 | 本地保存全局术语和智能编写、智能仿写、文档审查任务范围的风格规则；提供下钻式新增、修改、删除、CSV/XLSX 导入预览、冲突跳过、CSV 导出、数据库备份和结果命中摘要，知识库不可用时任务降级继续，不改变既有写回路径 |
+| Word 写作规范 | 本地保存全局术语和智能编写、智能仿写、文档审查任务范围的文体规则；提供下钻式新增、修改、删除、CSV/XLSX 导入预览、冲突跳过、CSV 导出、数据库备份和结果命中摘要，规范库不可用时任务降级继续，不改变既有写回路径 |
 | 智能分析 | 只读 `excel.analysis` 模型工作流，优先分析选中区域，无有效选区时分析当前工作表已用范围；长任务使用后台任务和可恢复轮询，结果提供结构化分析报告和汇报段落，不写回单元格 |
 | 智能总结 | 同一个 `ppt.slide_assistant` 工作流档案支持“当前页总结 / 文档总结”双模式。当前页模式读取主标题、可选副标题、正文和相邻页标题；文档模式接受单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，并生成整套 5/8/10/12/15 页建议，默认 10 页。两种模式都只预览和复制，绝不写回 PPT |
 | 结果预览 | 智能编写会先对选中多段文本的模型输出恢复段落换行，再按内容结构选择朴素或结构化回显：普通段落不额外套排版，标题、列表、序号、表格、加粗等结构尽量正常展示；文档审查、格式审查和诊断信息继续使用安全 Markdown 渲染 |
@@ -121,14 +121,14 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 设置与联调状态 | 设置页仅显示单一全局 API URL 和各工作流名称、备注、API Key；旧统一 Key 回退仍由 adapter 兼容并在覆盖安装时保留，但不再在任务窗格中展示 |
 | Adapter 运维诊断 | 启动包脚本统一管理 uvicorn adapter，健康检查同步显示 provider 配置、路由摘要和最后一次转发诊断；麒麟 V10 目标机可通过 systemd 脚本安装开机自启动 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
-| 一期交付总包 | 一个压缩包和一个安装脚本同时部署 Word、Excel、PPT 三个宿主插件；覆盖安装保留原 API URL、统一 API Key、工作流档案密钥、Word 企业知识数据库和最多三份已有备份，并包含 Excel/PPT Markdown 提示词模板及企业知识 CSV/XLSX 导入模板 |
+| 一期交付总包 | 一个压缩包和一个安装脚本同时部署 Word、Excel、PPT 三个宿主插件；覆盖安装保留原 API URL、统一 API Key、工作流档案密钥、Word 写作规范数据库和最多三份已有备份，并包含 Excel/PPT Markdown 提示词模板及写作规范 CSV/XLSX 导入模板 |
 
 ## 最近更新
 
 | 版本 | 更新点 |
 | --- | --- |
 | `v0.19.1-alpha` | 在不改变业务工作流的前提下统一优化 Word、Excel、PPT 任务窗格体验：宿主配色的紧凑任务页与设置页、按各宿主 API URL 和工作流档案实时计算的模型接口就绪状态、可扩展任务选项卡、选填备注、悬浮帮助和默认折叠的高级诊断。设置探测采用独立 8 秒预算、单飞刷新、迟到响应废弃和编辑期间暂停，不能覆盖任务状态、结果、长任务编号或未保存设置 |
-| `v0.19.0-alpha` | 新增 Word 企业术语与风格规则知识库，作用于智能编写、智能仿写和文档审查；支持按任务范围新增、修改、删除，CSV/XLSX 导入预览和冲突跳过，CSV 导出、数据库备份及结果命中摘要。知识库故障时任务降级继续，不影响 Excel/PPT，也不改变任何既有写回链路；覆盖安装保留知识数据库和最多三份已有备份 |
+| `v0.19.0-alpha` | 新增 Word 写作规范库，作用于智能编写、智能仿写和文档审查；支持按任务范围新增、修改、删除，CSV/XLSX 导入预览和冲突跳过，CSV 导出、数据库备份及结果命中摘要。规范库故障时任务降级继续，不影响 Excel/PPT，也不改变任何既有写回链路；覆盖安装保留写作规范数据库和最多三份已有备份 |
 | `v0.18.1-alpha` | 统一优化 Word、Excel、PPT 工作流设置交互：任务窗格移除统一 Key 控件，改为宿主隔离的紧凑工作流列表和全宽新建/编辑页；功能页下拉选择后立即激活，当前工作流不可删除，编辑时 Key 留空保持原密钥；adapter 统一 Key 回退及覆盖安装配置保护保持不变 |
 | `v0.18.0-alpha` | Excel 当前入口更名为“智能分析”，PPT 升级为“智能总结”当前页/文档双模式；新增单个 UTF-8 Markdown 或有效 DOCX 安全上传、整套 5/8/10/12/15 页建议、1800 秒可恢复轮询、三宿主统一视觉、Excel/PPT Markdown 提示词模板，以及覆盖安装时保留 API URL 和全部 API Key 的单一正式交付包 |
 | `v0.17.0-alpha` | 新增只读 PPT 单页助手：识别当前页主标题、可选副标题、正文文本和相邻页标题，支持生成/优化、长任务恢复轮询、预览/纯文本及分类复制；Word、Excel、PPT Ribbon 严格隔离，并由同一个正式交付包覆盖安装，继续保护目标机已有 API URL 和全部 API Key |
@@ -320,7 +320,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 
 工作流档案的 API Key 保存到 `run/provider_api_keys/<ref>`，配置文件只记录自定义名称和密钥引用。智能编写、智能仿写、文档审查、格式审查、智能分析和智能总结都可以保存多个 Dify App Key；切换对下一次新任务生效。PPT 当前页和文档模式使用同一次解析得到的 `ppt.slide_assistant` 密钥调用 Dify `/files/upload` 与 `/chat-messages`。未配置任务密钥时自动回退统一 provider API Key。详细操作见 [工作流配置档案管理手册](./docs/operations/workflow-profile-management.md)。
 
-智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Word 企业术语和风格规则的维护、导入、导出、备份、降级和恢复见 [企业知识管理手册](./docs/operations/enterprise-knowledge-management.md)。智能分析对应配置见 [Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)，智能总结双模式配置见 [PPT 智能总结 Dify 工作流配置手册](./docs/operations/dify-ppt-slide-assistant-workflow.md)。可部署的 Excel/PPT 提示词模板位于 [`docs/prompt-templates/`](./docs/prompt-templates/)。
+智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Word 企业术语和文体规则的维护、导入、导出、备份、降级和恢复见 [写作规范管理手册](./docs/operations/writing-policy-library.md)。智能分析对应配置见 [Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)，智能总结双模式配置见 [PPT 智能总结 Dify 工作流配置手册](./docs/operations/dify-ppt-slide-assistant-workflow.md)。可部署的 Excel/PPT 提示词模板位于 [`docs/prompt-templates/`](./docs/prompt-templates/)。
 
 ## API 一览
 
@@ -341,16 +341,16 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |
 | `POST` | `/provider/task-api-key` | 保存某个任务的独立 Dify API Key |
 | `DELETE` | `/provider/task-api-key/{taskType}` | 清除某个任务的独立 Dify API Key |
-| `GET` | `/enterprise-knowledge/summary` | 查看 Word 企业知识数量和可用状态 |
-| `GET` / `POST` | `/enterprise-knowledge/items` | 查询或新增术语和风格规则 |
-| `PATCH` / `DELETE` | `/enterprise-knowledge/items/{itemId}` | 修改或删除一条企业知识 |
-| `GET` | `/enterprise-knowledge/import-template.csv` | 下载 CSV 导入模板 |
-| `GET` | `/enterprise-knowledge/import-template.xlsx` | 下载 XLSX 导入模板 |
-| `POST` | `/enterprise-knowledge/imports/preview` | 校验导入文件并生成短期预览令牌 |
-| `POST` | `/enterprise-knowledge/imports/apply` | 应用一次未使用的导入预览并跳过冲突项 |
-| `GET` | `/enterprise-knowledge/export.csv` | 按筛选条件导出 CSV |
-| `GET` | `/enterprise-knowledge/backup` | 下载一致性的 SQLite 数据库备份 |
-| `GET` | `/enterprise-knowledge/diagnostics` | 查看脱敏的知识库健康诊断 |
+| `GET` | `/writing-policies/summary` | 查看 Word 写作规范数量和可用状态 |
+| `GET` / `POST` | `/writing-policies/items` | 查询或新增术语和文体规则 |
+| `PATCH` / `DELETE` | `/writing-policies/items/{itemId}` | 修改或删除一条写作规范 |
+| `GET` | `/writing-policies/import-template.csv` | 下载 CSV 导入模板 |
+| `GET` | `/writing-policies/import-template.xlsx` | 下载 XLSX 导入模板 |
+| `POST` | `/writing-policies/imports/preview` | 校验导入文件并生成短期预览令牌 |
+| `POST` | `/writing-policies/imports/apply` | 应用一次未使用的导入预览并跳过冲突项 |
+| `GET` | `/writing-policies/export.csv` | 按筛选条件导出 CSV |
+| `GET` | `/writing-policies/backup` | 下载一致性的 SQLite 数据库备份 |
+| `GET` | `/writing-policies/diagnostics` | 查看脱敏的规范库健康诊断 |
 | `POST` | `/word/smart-write` | 对当前选中文本进行智能编写，支持改写、续写、总结和自定义 |
 | `POST` | `/word/smart-imitation` | 根据模板、仿写要求和可选参考素材生成只读仿写结果 |
 | `POST` | `/word/document-review` | 文档审查，检查错别字、语言表达、逻辑、通畅性和文档类型专业性 |
@@ -379,7 +379,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 
 ## 离线交付
 
-一期正式版本只提供一个 Word/Excel/PPT 统一交付包和一个安装脚本。覆盖安装继续保留目标机已有 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、Word 企业知识数据库和最多三份已有知识库备份；包内同时提供 Excel/PPT Markdown 提示词模板及自动生成的企业知识 CSV/XLSX 导入模板。
+一期正式版本只提供一个 Word/Excel/PPT 统一交付包和一个安装脚本。覆盖安装继续保留目标机已有 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、Word 写作规范数据库和最多三份已有规范库备份；包内同时提供 Excel/PPT Markdown 提示词模板及自动生成的写作规范 CSV/XLSX 导入模板。
 
 生成完整离线包：
 
@@ -458,4 +458,4 @@ npm run test
 - 更丰富的 Excel 报告生成与多表流程
 - Excel 多表/多文件比对
 - 在当前只预览/复制边界之外受控扩展 PPT 生成流程
-- 更完整的企业模板、审计、权限和知识库治理能力
+- 更完整的企业模板、审计、权限和规范库治理能力

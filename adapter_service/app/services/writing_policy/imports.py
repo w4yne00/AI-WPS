@@ -14,13 +14,13 @@ from urllib.parse import urlsplit
 from xml.etree import ElementTree
 from xml.sax.saxutils import escape
 
-from app.services.enterprise_knowledge.models import (
+from app.services.writing_policy.models import (
     MAX_CELL_CHARS,
     MAX_IMPORT_BYTES,
     MAX_IMPORT_ROWS,
     MAX_XLSX_EXPANDED_BYTES,
     PREVIEW_TTL_SECONDS,
-    KnowledgeError,
+    WritingPolicyError,
     normalize_key,
 )
 
@@ -42,7 +42,7 @@ IMPORT_COLUMNS = (
 LIST_SEPARATOR = "|"
 CSV_MIME = "text/csv"
 XLSX_MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-CSV_EXPORT_MARKER = "#AI-WPS-ENTERPRISE-KNOWLEDGE-EXPORT:1"
+CSV_EXPORT_MARKER = "#AI-WPS-WRITING-POLICY-EXPORT:1"
 
 _GENERIC_IMPORT_MIMES = {"", "application/octet-stream"}
 _CSV_MIMES = _GENERIC_IMPORT_MIMES.union({CSV_MIME, "text/plain"})
@@ -197,12 +197,12 @@ class ImportPreviewStore:
         with self._lock:
             entry = self._entries.get(clean_token)
             if entry is None:
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "import_preview_not_found", "未找到导入预览，请重新选择文件。"
                 )
             if now >= float(entry["expiresAt"]):
                 del self._entries[clean_token]
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "import_preview_expired", "导入预览已过期，请重新选择文件。"
                 )
             if consume:
@@ -231,7 +231,7 @@ class ImportPreviewStore:
     @classmethod
     def _safe_copy(cls, value):
         if isinstance(value, bytes):
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "invalid_import_preview", "导入预览不能缓存原始文件内容。"
             )
         if isinstance(value, dict):
@@ -355,7 +355,7 @@ def parse_import_file(
     if suffix == ".xlsx":
         _validate_import_mime(mime_type, _XLSX_MIMES)
         return parse_xlsx(content, str(file_name or ""))
-    raise KnowledgeError(
+    raise WritingPolicyError(
         "unsupported_import_type", "仅支持 UTF-8 CSV 或标准 XLSX 模板。"
     )
 
@@ -366,9 +366,9 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
     try:
         text = content.decode("utf-8-sig")
     except UnicodeDecodeError:
-        raise KnowledgeError("invalid_import_encoding", "CSV 文件必须使用 UTF-8 编码。")
+        raise WritingPolicyError("invalid_import_encoding", "CSV 文件必须使用 UTF-8 编码。")
     if "\x00" in text:
-        raise KnowledgeError("invalid_import_encoding", "CSV 文件包含无效字符。")
+        raise WritingPolicyError("invalid_import_encoding", "CSV 文件包含无效字符。")
     try:
         reader = csv.reader(io.StringIO(text, newline=""), strict=True)
         headers = next(reader, None)
@@ -376,7 +376,7 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
         if restore_export_cells:
             headers = next(reader, None)
         if headers is None or tuple(headers) != IMPORT_COLUMNS:
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "invalid_import_headers", "导入文件表头与标准模板不一致。"
             )
         rows = []
@@ -385,7 +385,7 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
             if not values or not any(str(value).strip() for value in values):
                 continue
             if len(values) != len(IMPORT_COLUMNS):
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "invalid_import_row",
                     "第 %d 行的列数与标准模板不一致。" % row_number,
                 )
@@ -399,7 +399,7 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
             _validate_row_count(rows)
         return rows
     except csv.Error as exc:
-        raise KnowledgeError("invalid_import_file", "CSV 文件格式无效：%s" % exc)
+        raise WritingPolicyError("invalid_import_file", "CSV 文件格式无效：%s" % exc)
 
 
 def parse_xlsx(content: bytes, file_name: str) -> List[Dict[str, str]]:
@@ -413,7 +413,7 @@ def parse_xlsx(content: bytes, file_name: str) -> List[Dict[str, str]]:
             names = {entry.filename for entry in entries}
             required = {"[Content_Types].xml", "_rels/.rels"}
             if not required.issubset(names):
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "invalid_xlsx", "XLSX 文件缺少必要的工作簿结构。"
                 )
             _validate_xlsx_package(archive, entries)
@@ -421,7 +421,7 @@ def parse_xlsx(content: bytes, file_name: str) -> List[Dict[str, str]]:
             workbook_path = _office_document_path(root_relationships, names)
             workbook_relationships_path = _relationship_part_path(workbook_path)
             if workbook_relationships_path not in names:
-                raise KnowledgeError(
+                raise WritingPolicyError(
                     "invalid_xlsx", "XLSX 文件缺少工作簿关系结构。"
                 )
             workbook = _read_xml(archive, workbook_path)
@@ -443,13 +443,13 @@ def parse_xlsx(content: bytes, file_name: str) -> List[Dict[str, str]]:
                 else:
                     del worksheet_content
             if first_worksheet_content is None:
-                raise KnowledgeError("invalid_xlsx", "XLSX 首个工作表不存在。")
+                raise WritingPolicyError("invalid_xlsx", "XLSX 首个工作表不存在。")
             worksheet = _parse_xml_bytes(first_worksheet_content)
             return _parse_worksheet(worksheet, shared_strings)
-    except KnowledgeError:
+    except WritingPolicyError:
         raise
     except (KeyError, OSError, RuntimeError, zipfile.BadZipFile, ElementTree.ParseError):
-        raise KnowledgeError("invalid_xlsx", "XLSX 文件格式无效或已损坏。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 文件格式无效或已损坏。")
 
 
 def validate_import_rows(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
@@ -480,7 +480,7 @@ def validate_import_rows(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
                 style_key = (item["scope"], normalize_key(item["name"]))
                 if style_key in style_names:
                     raise _RowValidationError(
-                        "duplicate_import_row", "当前范围内存在重复的风格规则名称。"
+                        "duplicate_import_row", "当前范围内存在重复的文体规则名称。"
                     )
                 style_names.add(style_key)
             valid_items.append(item)
@@ -598,8 +598,8 @@ def build_import_preview(
                 )
                 update_count += 1
         else:
-            raise KnowledgeError(
-                "invalid_knowledge_type", "知识条目类型必须为 term 或 style。"
+            raise WritingPolicyError(
+                "invalid_writing_policy_type", "规范条目类型必须为 term 或 style。"
             )
 
     stats = {
@@ -640,7 +640,7 @@ def apply_import_preview(
         row_number = int(conflict["rowNumber"])
         decision = decisions.get(row_number, "keep_existing")
         if decision not in tuple(conflict.get("allowedDecisions") or ()):
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "invalid_import_decision",
                 "第 %d 行的冲突处理方式无效。" % row_number,
             )
@@ -718,16 +718,16 @@ def _normalize_conflict_decisions(
         try:
             row_number = int(entry.get("rowNumber"))
         except (AttributeError, TypeError, ValueError):
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "invalid_import_decision", "导入冲突处理行号无效。"
             )
         decision = str(entry.get("decision") or "")
         if row_number not in conflict_rows or row_number in normalized:
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "invalid_import_decision", "导入冲突处理行号无效或重复。"
             )
         if decision not in ("keep_existing", "skip"):
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "invalid_import_decision",
                 "第 %d 行只允许保留库内标准或跳过。" % row_number,
             )
@@ -785,15 +785,15 @@ def _join_escaped_list(values: Sequence[str]) -> str:
 
 def _validate_file_size(content: bytes) -> None:
     if not isinstance(content, bytes) or not content:
-        raise KnowledgeError("invalid_import_file", "导入文件为空或内容无效。")
+        raise WritingPolicyError("invalid_import_file", "导入文件为空或内容无效。")
     if len(content) > MAX_IMPORT_BYTES:
-        raise KnowledgeError("import_file_too_large", "导入文件不能超过 5 MB。")
+        raise WritingPolicyError("import_file_too_large", "导入文件不能超过 5 MB。")
 
 
 def _validate_import_mime(mime_type: str, allowed_mimes: Sequence[str]) -> None:
     normalized = str(mime_type or "").split(";", 1)[0].strip().casefold()
     if normalized not in allowed_mimes:
-        raise KnowledgeError(
+        raise WritingPolicyError(
             "import_mime_mismatch", "文件扩展名与内容类型不匹配，请重新选择文件。"
         )
 
@@ -801,7 +801,7 @@ def _validate_import_mime(mime_type: str, allowed_mimes: Sequence[str]) -> None:
 def _validate_cell_lengths(values: Sequence[str], row_number: int) -> None:
     for value in values:
         if len(value) > MAX_CELL_CHARS:
-            raise KnowledgeError(
+            raise WritingPolicyError(
                 "import_cell_too_long",
                 "第 %d 行包含超过 2000 个字符的单元格。" % row_number,
             )
@@ -809,14 +809,14 @@ def _validate_cell_lengths(values: Sequence[str], row_number: int) -> None:
 
 def _validate_row_count(rows: Sequence[Dict[str, str]]) -> None:
     if len(rows) > MAX_IMPORT_ROWS:
-        raise KnowledgeError(
+        raise WritingPolicyError(
             "import_row_limit_exceeded", "导入文件最多包含 5000 条数据行。"
         )
 
 
 def _validate_zip_entries(entries: Sequence[zipfile.ZipInfo]) -> None:
     if len(entries) > _MAX_XLSX_ENTRIES:
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含过多内部文件。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含过多内部文件。")
     seen_names = set()
     seen_normalized_names = set()
     expanded_bytes = 0
@@ -838,17 +838,17 @@ def _validate_zip_entries(entries: Sequence[zipfile.ZipInfo]) -> None:
             or normalized_key in seen_normalized_names
             or entry.flag_bits & 0x1
         ):
-            raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的内部路径。")
+            raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的内部路径。")
         seen_names.add(name)
         seen_normalized_names.add(normalized_key)
         expanded_bytes += entry.file_size
         if expanded_bytes > MAX_XLSX_EXPANDED_BYTES:
-            raise KnowledgeError("unsafe_xlsx", "XLSX 文件解压后内容超过 20 MB。")
+            raise WritingPolicyError("unsafe_xlsx", "XLSX 文件解压后内容超过 20 MB。")
         if entry.file_size >= _COMPRESSION_RATIO_MIN_BYTES:
             if entry.compress_size == 0:
-                raise KnowledgeError("unsafe_xlsx", "XLSX 文件压缩结构异常。")
+                raise WritingPolicyError("unsafe_xlsx", "XLSX 文件压缩结构异常。")
             if entry.file_size / float(entry.compress_size) > _MAX_COMPRESSION_RATIO:
-                raise KnowledgeError("unsafe_xlsx", "XLSX 文件压缩比例异常。")
+                raise WritingPolicyError("unsafe_xlsx", "XLSX 文件压缩比例异常。")
 
 
 def _validate_zip_contents(
@@ -865,11 +865,11 @@ def _validate_zip_contents(
                 member_bytes += len(chunk)
                 expanded_bytes += len(chunk)
                 if expanded_bytes > MAX_XLSX_EXPANDED_BYTES:
-                    raise KnowledgeError(
+                    raise WritingPolicyError(
                         "unsafe_xlsx", "XLSX 文件实际解压内容超过 20 MB。"
                     )
         if member_bytes != entry.file_size:
-            raise KnowledgeError("unsafe_xlsx", "XLSX 文件成员大小校验失败。")
+            raise WritingPolicyError("unsafe_xlsx", "XLSX 文件成员大小校验失败。")
 
 
 def _validate_xlsx_package(
@@ -883,12 +883,12 @@ def _validate_xlsx_package(
         or name.startswith("xl/externallinks/")
         for name in lower_names
     ):
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件不得包含宏或外部链接。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件不得包含宏或外部链接。")
 
     content_types = archive.read("[Content_Types].xml")
     lower_content_types = content_types.lower()
     if b"macroenabled" in lower_content_types or b"vbaproject" in lower_content_types:
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件不得包含宏。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件不得包含宏。")
     _parse_xml_bytes(content_types)
 
     for entry in entries:
@@ -905,24 +905,24 @@ def _read_xml(archive: zipfile.ZipFile, name: str) -> ElementTree.Element:
     try:
         content = archive.read(name)
     except KeyError:
-        raise KnowledgeError("invalid_xlsx", "XLSX 文件缺少必要的 XML 结构。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 文件缺少必要的 XML 结构。")
     return _parse_xml_bytes(content)
 
 
 def _parse_xml_bytes(content: bytes) -> ElementTree.Element:
     lowered = content.lower()
     if b"<!doctype" in lowered or b"<!entity" in lowered:
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的 XML 声明。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的 XML 声明。")
     try:
         return ElementTree.fromstring(content)
     except ElementTree.ParseError:
-        raise KnowledgeError("invalid_xlsx", "XLSX 文件包含无效的 XML。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 文件包含无效的 XML。")
 
 
 def _scan_worksheet_xml(content: bytes) -> None:
     lowered = content.lower()
     if b"<!doctype" in lowered or b"<!entity" in lowered:
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的 XML 声明。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的 XML 声明。")
     element_count = 0
     depth = 0
     try:
@@ -936,18 +936,18 @@ def _scan_worksheet_xml(content: bytes) -> None:
                     element_count > MAX_XLSX_WORKSHEET_ELEMENTS
                     or depth > MAX_XLSX_WORKSHEET_DEPTH
                 ):
-                    raise KnowledgeError(
+                    raise WritingPolicyError(
                         "unsafe_xlsx", "XLSX 工作表 XML 结构超过安全预算。"
                     )
                 if _local_name(element.tag) in ("f", "mergeCells", "mergeCell"):
-                    raise KnowledgeError(
+                    raise WritingPolicyError(
                         "unsafe_xlsx", "XLSX 模板不得包含公式或合并单元格。"
                     )
             else:
                 depth -= 1
                 element.clear()
     except ElementTree.ParseError:
-        raise KnowledgeError("invalid_xlsx", "XLSX 文件包含无效的工作表 XML。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 文件包含无效的工作表 XML。")
 
 
 def _workbook_part_paths(
@@ -972,7 +972,7 @@ def _workbook_part_paths(
             shared_strings_path = part_path
         if relationship_type.endswith("/worksheet"):
             if part_path not in archive_names:
-                raise KnowledgeError("invalid_xlsx", "XLSX 工作表关系指向不存在的文件。")
+                raise WritingPolicyError("invalid_xlsx", "XLSX 工作表关系指向不存在的文件。")
             if part_path not in worksheet_paths:
                 worksheet_paths.append(part_path)
 
@@ -981,16 +981,16 @@ def _workbook_part_paths(
         None,
     )
     if sheet is None:
-        raise KnowledgeError("invalid_xlsx", "XLSX 文件没有可读取的工作表。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 文件没有可读取的工作表。")
     relationship_id = sheet.attrib.get("{%s}id" % _REL_NS, "")
     relationship = relationship_map.get(relationship_id)
     if relationship is None or not relationship[0].endswith("/worksheet"):
-        raise KnowledgeError("invalid_xlsx", "XLSX 首个工作表关系无效。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 首个工作表关系无效。")
     sheet_path = relationship[1]
     if sheet_path not in archive_names:
-        raise KnowledgeError("invalid_xlsx", "XLSX 首个工作表不存在。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 首个工作表不存在。")
     if shared_strings_path and shared_strings_path not in archive_names:
-        raise KnowledgeError("invalid_xlsx", "XLSX 共享字符串表不存在。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 共享字符串表不存在。")
     return sheet_path, shared_strings_path, tuple(worksheet_paths)
 
 
@@ -1007,7 +1007,7 @@ def _office_document_path(
                 _resolve_part_path("", relationship.attrib.get("Target", ""))
             )
     if len(matches) != 1 or matches[0] not in archive_names:
-        raise KnowledgeError("invalid_xlsx", "XLSX 主工作簿关系无效。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 主工作簿关系无效。")
     return matches[0]
 
 
@@ -1027,23 +1027,23 @@ def _resolve_part_path(base_part: str, target: str) -> str:
         or parsed_target.scheme
         or parsed_target.netloc
     ):
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的内部关系。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的内部关系。")
     if ".." in PurePosixPath(clean_target).parts:
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的内部关系。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的内部关系。")
     if clean_target.startswith("/"):
         candidate = clean_target.lstrip("/")
     else:
         candidate = posixpath.join(posixpath.dirname(base_part), clean_target)
     normalized = posixpath.normpath(candidate)
     if normalized == ".." or normalized.startswith("../") or normalized.startswith("/"):
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的内部关系。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的内部关系。")
     return normalized
 
 
 def _parse_shared_strings(content: bytes) -> List[str]:
     lowered = content.lower()
     if b"<!doctype" in lowered or b"<!entity" in lowered:
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件包含不安全的 XML 声明。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件包含不安全的 XML 声明。")
     values = []
     path = []
     element_count = 0
@@ -1061,24 +1061,24 @@ def _parse_shared_strings(content: bytes) -> List[str]:
                 if root_element is None:
                     root_element = element
                     if element_name != "sst":
-                        raise KnowledgeError(
+                        raise WritingPolicyError(
                             "invalid_xlsx", "XLSX 共享字符串表根节点无效。"
                         )
                 if (
                     element_count > MAX_XLSX_SHARED_STRING_ELEMENTS
                     or len(path) > MAX_XLSX_SHARED_STRING_DEPTH
                 ):
-                    raise KnowledgeError(
+                    raise WritingPolicyError(
                         "unsafe_xlsx", "XLSX 共享字符串 XML 结构超过安全预算。"
                     )
                 if element_name == "si":
                     if len(path) != 2 or current_parts is not None:
-                        raise KnowledgeError(
+                        raise WritingPolicyError(
                             "invalid_xlsx", "XLSX 共享字符串条目结构无效。"
                         )
                     item_count += 1
                     if item_count > MAX_XLSX_SHARED_STRING_ITEMS:
-                        raise KnowledgeError(
+                        raise WritingPolicyError(
                             "unsafe_xlsx", "XLSX 共享字符串条目超过模板预算。"
                         )
                     current_parts = []
@@ -1103,7 +1103,7 @@ def _parse_shared_strings(content: bytes) -> List[str]:
                 root_element.clear()
             path.pop()
     except ElementTree.ParseError:
-        raise KnowledgeError("invalid_xlsx", "XLSX 共享字符串 XML 无效。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 共享字符串 XML 无效。")
     return values
 
 
@@ -1116,7 +1116,7 @@ def _parse_worksheet(
         None,
     )
     if sheet_data is None:
-        raise KnowledgeError("invalid_xlsx", "XLSX 工作表缺少数据区域。")
+        raise WritingPolicyError("invalid_xlsx", "XLSX 工作表缺少数据区域。")
 
     parsed_rows = []
     for fallback_row_number, row in enumerate(sheet_data, start=1):
@@ -1127,36 +1127,36 @@ def _parse_worksheet(
             len(raw_row_number) > MAX_XLSX_ROW_DIGITS
             or not _NON_NEGATIVE_INTEGER_RE.fullmatch(raw_row_number)
         ):
-            raise KnowledgeError("unsafe_xlsx", "XLSX 工作表行号超过安全预算。")
+            raise WritingPolicyError("unsafe_xlsx", "XLSX 工作表行号超过安全预算。")
         row_number = int(raw_row_number)
         if row_number < 1 or row_number > MAX_XLSX_ROW_NUMBER:
-            raise KnowledgeError("unsafe_xlsx", "XLSX 工作表行号超过安全预算。")
+            raise WritingPolicyError("unsafe_xlsx", "XLSX 工作表行号超过安全预算。")
         values_by_column = {}
         for cell in row:
             if _local_name(cell.tag) != "c":
                 continue
             reference = cell.attrib.get("r", "")
             if not reference or len(reference) > MAX_XLSX_CELL_REFERENCE_CHARS:
-                raise KnowledgeError("unsafe_xlsx", "XLSX 单元格引用超过安全预算。")
+                raise WritingPolicyError("unsafe_xlsx", "XLSX 单元格引用超过安全预算。")
             match = _CELL_REFERENCE_RE.match(reference)
             if match is None:
-                raise KnowledgeError("invalid_xlsx", "XLSX 单元格引用无效。")
+                raise WritingPolicyError("invalid_xlsx", "XLSX 单元格引用无效。")
             column_name = match.group(1)
             row_digits = match.group(2)
             if (
                 len(column_name) > MAX_XLSX_COLUMN_LETTERS
                 or len(row_digits) > MAX_XLSX_ROW_DIGITS
             ):
-                raise KnowledgeError("unsafe_xlsx", "XLSX 单元格引用超过安全预算。")
+                raise WritingPolicyError("unsafe_xlsx", "XLSX 单元格引用超过安全预算。")
             column_index = _excel_column_index(column_name)
             reference_row = int(row_digits)
             if (
                 column_index > len(IMPORT_COLUMNS)
                 or reference_row > MAX_XLSX_ROW_NUMBER
             ):
-                raise KnowledgeError("unsafe_xlsx", "XLSX 单元格引用超过模板范围。")
+                raise WritingPolicyError("unsafe_xlsx", "XLSX 单元格引用超过模板范围。")
             if column_index in values_by_column:
-                raise KnowledgeError("invalid_xlsx", "XLSX 工作表包含重复单元格。")
+                raise WritingPolicyError("invalid_xlsx", "XLSX 工作表包含重复单元格。")
             values_by_column[column_index] = _xlsx_cell_text(cell, shared_strings)
         if not values_by_column or not any(value.strip() for value in values_by_column.values()):
             continue
@@ -1165,7 +1165,7 @@ def _parse_worksheet(
         parsed_rows.append((row_number, values))
 
     if not parsed_rows or tuple(parsed_rows[0][1]) != IMPORT_COLUMNS:
-        raise KnowledgeError("invalid_import_headers", "导入文件表头与标准模板不一致。")
+        raise WritingPolicyError("invalid_import_headers", "导入文件表头与标准模板不一致。")
     result = [
         _ImportRow(dict(zip(IMPORT_COLUMNS, values)), row_number)
         for row_number, values in parsed_rows[1:]
@@ -1192,10 +1192,10 @@ def _xlsx_cell_text(cell: ElementTree.Element, shared_strings: Sequence[str]) ->
             or len(value) > MAX_XLSX_SHARED_STRING_INDEX_DIGITS
             or not _NON_NEGATIVE_INTEGER_RE.fullmatch(value)
         ):
-            raise KnowledgeError("unsafe_xlsx", "XLSX 共享字符串索引超过安全预算。")
+            raise WritingPolicyError("unsafe_xlsx", "XLSX 共享字符串索引超过安全预算。")
         index = int(value)
         if index >= len(shared_strings):
-            raise KnowledgeError("invalid_xlsx", "XLSX 共享字符串引用无效。")
+            raise WritingPolicyError("invalid_xlsx", "XLSX 共享字符串引用无效。")
         return shared_strings[index]
     return value
 
@@ -1230,7 +1230,7 @@ def _map_row(raw_row: Dict[str, str]) -> Dict[str, object]:
 
     if item_type == "term":
         if scope != "global":
-            raise _RowValidationError("invalid_knowledge_scope", "术语仅允许使用“全局”范围。")
+            raise _RowValidationError("invalid_writing_policy_scope", "术语仅允许使用“全局”范围。")
         always_apply = _boolean_value(
             row["始终应用"], "始终应用必须填写“是”或“否”。"
         )
@@ -1380,7 +1380,7 @@ def _validate_relationship(relationship: ElementTree.Element) -> None:
         or parsed_target.scheme
         or parsed_target.netloc
     ):
-        raise KnowledgeError("unsafe_xlsx", "XLSX 文件不得包含外部或不安全的关系。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 文件不得包含外部或不安全的关系。")
 
 
 def _validate_worksheet_safety(root: ElementTree.Element) -> None:
@@ -1388,7 +1388,7 @@ def _validate_worksheet_safety(root: ElementTree.Element) -> None:
         _local_name(element.tag) in ("f", "mergeCells", "mergeCell")
         for element in root.iter()
     ):
-        raise KnowledgeError("unsafe_xlsx", "XLSX 模板不得包含公式或合并单元格。")
+        raise WritingPolicyError("unsafe_xlsx", "XLSX 模板不得包含公式或合并单元格。")
 
 
 def _deduplicate(values: Sequence[str]) -> List[str]:

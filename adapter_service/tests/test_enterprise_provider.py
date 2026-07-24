@@ -559,10 +559,10 @@ class EnterpriseProviderTests(unittest.TestCase):
         merge_provider_debug(
             "trace-a",
             {
-                "knowledgeApplied": True,
-                "knowledgeTermCount": 2,
+                "writingPolicyApplied": True,
+                "writingPolicyTermCount": 2,
                 "sourceText": "公司绝密原文",
-                "stage": "knowledge",
+                "stage": "writing_policy",
                 "provider": "overwritten",
             },
         )
@@ -571,8 +571,8 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(debug["traceId"], "trace-a")
         self.assertEqual(debug["stage"], "request")
         self.assertEqual(debug["provider"], "mock")
-        self.assertTrue(debug["knowledgeApplied"])
-        self.assertEqual(debug["knowledgeTermCount"], 2)
+        self.assertTrue(debug["writingPolicyApplied"])
+        self.assertEqual(debug["writingPolicyTermCount"], 2)
         self.assertNotIn("sourceText", debug)
 
     def test_provider_debug_merge_with_mismatched_trace_is_noop(self) -> None:
@@ -588,7 +588,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         merge_provider_debug(
             "trace-stale",
-            {"knowledgeApplied": True, "knowledgeItemIds": ["term-1"]},
+            {"writingPolicyApplied": True, "writingPolicyItemIds": ["term-1"]},
         )
 
         self.assertEqual(get_last_provider_debug(), before)
@@ -617,7 +617,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         def merge_old_trace():
             merge_provider_debug(
                 "trace-old",
-                {"knowledgeApplied": True, "knowledgeTermCount": 1},
+                {"writingPolicyApplied": True, "writingPolicyTermCount": 1},
             )
 
         def record_new_trace():
@@ -647,8 +647,8 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertFalse(recorder.is_alive())
         self.assertEqual(final_debug["traceId"], "trace-new")
         self.assertEqual(final_debug["stage"], "request")
-        self.assertNotIn("knowledgeApplied", final_debug)
-        self.assertNotIn("knowledgeTermCount", final_debug)
+        self.assertNotIn("writingPolicyApplied", final_debug)
+        self.assertNotIn("writingPolicyTermCount", final_debug)
 
     def test_provider_debug_record_only_accepts_short_safe_stage(self) -> None:
         reset_provider_debug()
@@ -685,20 +685,20 @@ class EnterpriseProviderTests(unittest.TestCase):
         merge_provider_debug(
             "trace-safe",
             {
-                "knowledgeApplied": "yes",
-                "knowledgeDegraded": False,
-                "knowledgeErrorCode": "../../secret/path",
-                "knowledgeTermCount": 3,
-                "knowledgeStyleCount": object(),
-                "knowledgeTruncatedCount": -1,
-                "knowledgeElapsedMs": 12,
+                "writingPolicyApplied": "yes",
+                "writingPolicyDegraded": False,
+                "writingPolicyErrorCode": "../../secret/path",
+                "writingPolicyTermCount": 3,
+                "writingPolicyStyleCount": object(),
+                "writingPolicyTruncatedCount": -1,
+                "writingPolicyElapsedMs": 12,
                 "sourceText": "secret source",
                 "fileContent": "secret file",
                 "ruleText": "full rule",
                 "path": "/secret/database.db",
                 "apiKey": "secret-key",
                 "traceId": "trace-overwrite",
-                "stage": "knowledge",
+                "stage": "writing_policy",
                 "error": {"message": "overwritten"},
             },
         )
@@ -707,14 +707,14 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(debug["traceId"], "trace-safe")
         self.assertEqual(debug["stage"], "error")
         self.assertEqual(debug["error"], existing_error)
-        self.assertFalse(debug["knowledgeDegraded"])
-        self.assertEqual(debug["knowledgeTermCount"], 3)
-        self.assertEqual(debug["knowledgeElapsedMs"], 12)
+        self.assertFalse(debug["writingPolicyDegraded"])
+        self.assertEqual(debug["writingPolicyTermCount"], 3)
+        self.assertEqual(debug["writingPolicyElapsedMs"], 12)
         for field in (
-            "knowledgeApplied",
-            "knowledgeErrorCode",
-            "knowledgeStyleCount",
-            "knowledgeTruncatedCount",
+            "writingPolicyApplied",
+            "writingPolicyErrorCode",
+            "writingPolicyStyleCount",
+            "writingPolicyTruncatedCount",
             "sourceText",
             "fileContent",
             "ruleText",
@@ -734,20 +734,20 @@ class EnterpriseProviderTests(unittest.TestCase):
             {"id": "not-serializable-as-id"},
         ] + ["valid-%02d" % index for index in range(1, 25)]
 
-        merge_provider_debug("trace-ids", {"knowledgeItemIds": item_ids})
+        merge_provider_debug("trace-ids", {"writingPolicyItemIds": item_ids})
         item_ids[0] = "mutated-input"
         item_ids.append("late-input")
 
         first = get_last_provider_debug()
-        self.assertEqual(len(first["knowledgeItemIds"]), 20)
-        self.assertEqual(first["knowledgeItemIds"][0], "valid-00")
-        self.assertNotIn("/secret/path", first["knowledgeItemIds"])
-        self.assertNotIn("含敏感文本", first["knowledgeItemIds"])
-        first["knowledgeItemIds"].append("mutated-output")
+        self.assertEqual(len(first["writingPolicyItemIds"]), 20)
+        self.assertEqual(first["writingPolicyItemIds"][0], "valid-00")
+        self.assertNotIn("/secret/path", first["writingPolicyItemIds"])
+        self.assertNotIn("含敏感文本", first["writingPolicyItemIds"])
+        first["writingPolicyItemIds"].append("mutated-output")
 
         second = get_last_provider_debug()
-        self.assertEqual(len(second["knowledgeItemIds"]), 20)
-        self.assertNotIn("mutated-output", second["knowledgeItemIds"])
+        self.assertEqual(len(second["writingPolicyItemIds"]), 20)
+        self.assertNotIn("mutated-output", second["writingPolicyItemIds"])
         json.dumps(second, ensure_ascii=False)
 
     def test_read_http_error_body_limits_source_read_to_4096_bytes(self) -> None:
@@ -1529,11 +1529,11 @@ class EnterpriseProviderTests(unittest.TestCase):
             template_text="本项目坚持问题导向，持续完善闭环机制。",
             requirement="仿写成网络安全整改说明。",
             reference_material="整改范围：终端账号、日志审计、漏洞修复。",
-            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
+            writing_policy_block="写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertIn("企业办公文档智能仿写助手", prompt)
-        self.assertLess(prompt.index("企业术语与写作规范"), prompt.index("仿写模板："))
+        self.assertLess(prompt.index("写作规范"), prompt.index("仿写模板："))
         self.assertIn("本项目坚持问题导向", prompt)
         self.assertIn("仿写成网络安全整改说明", prompt)
         self.assertIn("终端账号、日志审计、漏洞修复", prompt)
@@ -1568,13 +1568,13 @@ class EnterpriseProviderTests(unittest.TestCase):
             requirement="仿写成技术风险提示。",
             reference_material="风险：接口超时。",
             trace_id="trace-smart-imitation",
-            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
+            writing_policy_block="写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertEqual(result["rewrittenText"], "仿写后的正文。")
         self.assertEqual(provider.calls[0]["taskType"], "word.smart_imitation")
         self.assertLess(
-            provider.calls[0]["query"].index("企业术语与写作规范"),
+            provider.calls[0]["query"].index("写作规范"),
             provider.calls[0]["query"].index("仿写模板："),
         )
         self.assertIn("仿写成技术风险提示", provider.calls[0]["query"])
@@ -1649,12 +1649,12 @@ class EnterpriseProviderTests(unittest.TestCase):
             "trace-doc-timeout",
             "technical_solution",
             "检查表达。",
-            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
+            writing_policy_block="写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertEqual(client.captured_timeout, 1800)
         self.assertLess(
-            client.captured_query.index("企业术语与写作规范"),
+            client.captured_query.index("写作规范"),
             client.captured_query.index("待审查内容："),
         )
         self.assertIn("category 只能使用", client.captured_query)
@@ -2036,13 +2036,13 @@ class EnterpriseProviderTests(unittest.TestCase):
             focus="risk",
             length="same",
             selection_mode="selection",
-            enterprise_knowledge_block="企业术语与写作规范（必须遵守）：\n- 使用标准术语。",
+            writing_policy_block="写作规范（必须遵守）：\n- 使用标准术语。",
         )
 
         self.assertEqual(result["rewrittenText"], "智能编写后的文本。")
         self.assertEqual(client.captured_input_data, {})
         self.assertLess(
-            client.captured_query.index("企业术语与写作规范"),
+            client.captured_query.index("写作规范"),
             client.captured_query.index("待处理原文："),
         )
         self.assertIn("待处理原文：\n原文内容", client.captured_query)
@@ -2486,7 +2486,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertIn("不要额外新增原文没有、用户也未要求的 Markdown 标题、项目符号、编号列表或表格", prompt)
         self.assertIn("待处理原文：\n项目进展总体正常。", prompt)
 
-    def test_empty_enterprise_knowledge_keeps_all_word_prompts_byte_identical(self) -> None:
+    def test_empty_writing_policy_keeps_all_word_prompts_byte_identical(self) -> None:
         expected_smart_write = "\n".join(
             [
                 "你是企业办公文档智能编写助手。",
@@ -2556,14 +2556,14 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
 
         self.assertEqual(
-            build_smart_write_prompt("原文内容。", "rewrite", enterprise_knowledge_block=""),
+            build_smart_write_prompt("原文内容。", "rewrite", writing_policy_block=""),
             expected_smart_write,
         )
         self.assertEqual(
             build_smart_imitation_prompt(
                 "模板正文。",
                 "生成风险提示。",
-                enterprise_knowledge_block="",
+                writing_policy_block="",
             ),
             expected_imitation,
         )
@@ -2572,7 +2572,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                 "待审查正文。",
                 "technical_solution",
                 "检查表达。",
-                enterprise_knowledge_block="",
+                writing_policy_block="",
             ),
             expected_review,
         )

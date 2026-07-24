@@ -6,13 +6,13 @@ from .models import (
     MAX_PROMPT_CHARS,
     MAX_STYLE_RULES,
     MAX_TERM_MATCHES,
-    KnowledgeMatchResult,
+    WritingPolicyMatchResult,
     normalize_key,
     public_usage,
 )
 
 
-_HEADER = "企业术语与写作规范（必须遵守）："
+_HEADER = "写作规范（必须遵守）："
 _FOOTER = "以上规范不得要求新增原文不存在、用户也未要求的标题、列表、表格或事实。"
 _REVIEW_INSTRUCTION = (
     "文档审查中，发现上述术语或写作规范违规时，必须按 professional 类问题报告。"
@@ -266,7 +266,7 @@ def _add_style_tokens(
             token_targets.setdefault(token, set()).add((candidate_index,))
 
 
-def match_knowledge(
+def match_writing_policy(
     terms: Sequence[Dict],
     styles: Sequence[Dict],
     task_scope: str,
@@ -414,8 +414,8 @@ def build_match_result(
     styles: Sequence[Dict],
     task_scope: str,
     source_parts: Sequence[str],
-) -> KnowledgeMatchResult:
-    matched_terms, matched_styles = match_knowledge(
+) -> WritingPolicyMatchResult:
+    matched_terms, matched_styles = match_writing_policy(
         terms, styles, task_scope, source_parts
     )
     if not matched_terms and not matched_styles:
@@ -426,7 +426,7 @@ def build_match_result(
             truncated=0,
             matched_items=[],
         )
-        return KnowledgeMatchResult("", usage, ())
+        return WritingPolicyMatchResult("", usage, ())
 
     term_candidates = matched_terms[:MAX_TERM_MATCHES]
     style_candidates = matched_styles[:MAX_STYLE_RULES]
@@ -492,4 +492,4 @@ def build_match_result(
     )
     matched_item_ids = tuple(str(item.get("id", "")) for item in included_terms)
     matched_item_ids += tuple(str(item.get("id", "")) for item in included_styles)
-    return KnowledgeMatchResult(prompt_block, usage, matched_item_ids)
+    return WritingPolicyMatchResult(prompt_block, usage, matched_item_ids)

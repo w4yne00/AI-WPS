@@ -1,7 +1,7 @@
 from typing import Dict, List, Optional
 
 from app.core.models import WordDocumentRequest
-from app.services.enterprise_knowledge import EnterpriseKnowledgeService, get_enterprise_knowledge_service
+from app.services.writing_policy import WritingPolicyService, get_writing_policy_service
 from app.services.provider_client import ProviderClient, merge_provider_debug
 
 
@@ -9,10 +9,10 @@ class WordRewriter:
     def __init__(
         self,
         provider_client: Optional[ProviderClient] = None,
-        knowledge_service: Optional[EnterpriseKnowledgeService] = None,
+        writing_policy_service: Optional[WritingPolicyService] = None,
     ) -> None:
         self.provider_client = provider_client or ProviderClient()
-        self.knowledge_service = knowledge_service
+        self.writing_policy_service = writing_policy_service
 
     def rewrite(self, request: WordDocumentRequest, trace_id: str, mode: str = "rewrite") -> Dict:
         source_text = self._extract_source_text(request)
@@ -38,7 +38,7 @@ class WordRewriter:
     def smart_write(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         source_text = self._extract_source_text(request)
         action = request.options.rewrite_action or "rewrite"
-        knowledge = self._get_knowledge_service().prepare(
+        writing_policy = self._get_writing_policy_service().prepare(
             "word.smart_write",
             [source_text, request.options.user_instruction],
         )
@@ -52,10 +52,10 @@ class WordRewriter:
                 focus=request.options.focus_point,
                 length=request.options.length_mode,
                 selection_mode=request.selection_mode,
-                enterprise_knowledge_block=knowledge.prompt_block,
+                writing_policy_block=writing_policy.prompt_block,
             )
         finally:
-            merge_provider_debug(trace_id, knowledge.diagnostic_patch())
+            merge_provider_debug(trace_id, writing_policy.diagnostic_patch())
         rewritten_text = provider_result["rewrittenText"]
         return {
             "originalText": source_text,
@@ -63,13 +63,17 @@ class WordRewriter:
             "rewriteMode": action,
             "diffHints": self._build_diff_hints(source_text, rewritten_text),
             "provider": provider_result.get("provider", "mock"),
-            "knowledgeUsage": knowledge.usage,
+            "writingPolicyUsage": writing_policy.usage,
+            "writingPolicyAudit": {
+                "needsReview": [],
+                "expressionSuggestions": [],
+            },
         }
 
-    def _get_knowledge_service(self) -> EnterpriseKnowledgeService:
-        if self.knowledge_service is not None:
-            return self.knowledge_service
-        return get_enterprise_knowledge_service()
+    def _get_writing_policy_service(self) -> WritingPolicyService:
+        if self.writing_policy_service is not None:
+            return self.writing_policy_service
+        return get_writing_policy_service()
 
     def _extract_source_text(self, request: WordDocumentRequest) -> str:
         source_text = request.content.plain_text.strip()

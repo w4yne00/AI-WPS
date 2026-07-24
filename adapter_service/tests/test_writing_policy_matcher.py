@@ -3,10 +3,10 @@ import unittest
 from unittest import mock
 
 from app.core.models import DocumentReviewResponseData, RewriteResponseData
-from app.services.enterprise_knowledge import matcher as matcher_module
-from app.services.enterprise_knowledge.matcher import build_match_result
-from app.services.enterprise_knowledge.models import (
-    KNOWLEDGE_SCOPES,
+from app.services.writing_policy import matcher as matcher_module
+from app.services.writing_policy.matcher import build_match_result
+from app.services.writing_policy.models import (
+    WRITING_POLICY_SCOPES,
     MAX_CELL_CHARS,
     MAX_DATABASE_BACKUPS,
     MAX_IMPORT_BYTES,
@@ -19,8 +19,8 @@ from app.services.enterprise_knowledge.models import (
     PREVIEW_TTL_SECONDS,
     PRIORITIES,
     TASK_SCOPES,
-    KnowledgeError,
-    KnowledgeMatchResult,
+    WritingPolicyError,
+    WritingPolicyMatchResult,
     normalize_key,
     public_usage,
 )
@@ -95,7 +95,7 @@ def dump_by_alias(value):
     return value.dict(by_alias=True)
 
 
-class EnterpriseKnowledgeContractTests(unittest.TestCase):
+class WritingPolicyContractTests(unittest.TestCase):
     def test_normalize_key_collapses_case_width_and_whitespace(self):
         self.assertEqual(normalize_key(" ＡI  平台 "), "ai 平台")
 
@@ -109,7 +109,7 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
             )
         )
 
-        self.assertIsNone(value.get("knowledgeUsage"))
+        self.assertIsNone(value.get("writingPolicyUsage"))
 
     def test_public_usage_never_exposes_rule_text(self):
         usage = public_usage(
@@ -143,19 +143,19 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
                 for index in range(25)
             ],
             degraded=True,
-            degraded_reason="知识库暂时不可用",
+            degraded_reason="规范库暂时不可用",
         )
 
         self.assertEqual(usage["termMatchCount"], 25)
         self.assertEqual(usage["styleRuleCount"], 9)
         self.assertEqual(usage["truncatedCount"], 4)
         self.assertTrue(usage["degraded"])
-        self.assertEqual(usage["degradedReason"], "知识库暂时不可用")
+        self.assertEqual(usage["degradedReason"], "规范库暂时不可用")
         self.assertEqual(len(usage["matchedItems"]), MAX_PUBLIC_MATCHED_ITEMS)
 
     def test_domain_constants_and_error_contract_are_stable(self):
         self.assertEqual(
-            KNOWLEDGE_SCOPES,
+            WRITING_POLICY_SCOPES,
             (
                 "global",
                 "word.smart_write",
@@ -163,7 +163,7 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
                 "word.document_review",
             ),
         )
-        self.assertEqual(TASK_SCOPES, KNOWLEDGE_SCOPES[1:])
+        self.assertEqual(TASK_SCOPES, WRITING_POLICY_SCOPES[1:])
         self.assertEqual(PRIORITIES, ("high", "medium", "low"))
         self.assertEqual(MAX_IMPORT_BYTES, 5 * 1024 * 1024)
         self.assertEqual(MAX_IMPORT_ROWS, 5000)
@@ -175,18 +175,18 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
         self.assertEqual(PREVIEW_TTL_SECONDS, 600)
         self.assertEqual(MAX_DATABASE_BACKUPS, 3)
 
-        error = KnowledgeError("invalid_scope", "知识范围无效")
+        error = WritingPolicyError("invalid_scope", "写作规范范围无效")
         self.assertEqual(error.code, "invalid_scope")
-        self.assertEqual(error.message, "知识范围无效")
-        self.assertEqual(str(error), "知识范围无效")
+        self.assertEqual(error.message, "写作规范范围无效")
+        self.assertEqual(str(error), "写作规范范围无效")
 
     def test_match_result_detaches_from_mutable_constructor_values(self):
         usage = {
             "applied": True,
             "matchedItems": [{"id": "t1", "type": "term", "name": "标准名"}],
         }
-        diagnostic = {"knowledgeItemIds": ["t1"]}
-        result = KnowledgeMatchResult(
+        diagnostic = {"writingPolicyItemIds": ["t1"]}
+        result = WritingPolicyMatchResult(
             prompt_block="企业规范",
             usage=usage,
             matched_item_ids=("t1",),
@@ -195,32 +195,32 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
 
         usage["matchedItems"][0]["name"] = "被篡改"
         usage["matchedItems"].append({"id": "t2", "type": "term", "name": "新增"})
-        diagnostic["knowledgeItemIds"].append("t2")
+        diagnostic["writingPolicyItemIds"].append("t2")
 
         self.assertEqual(result.usage["matchedItems"][0]["name"], "标准名")
         self.assertEqual(len(result.usage["matchedItems"]), 1)
-        self.assertEqual(result.diagnostic["knowledgeItemIds"], ["t1"])
+        self.assertEqual(result.diagnostic["writingPolicyItemIds"], ["t1"])
 
     def test_match_result_returns_defensive_deep_copies(self):
-        result = KnowledgeMatchResult(
+        result = WritingPolicyMatchResult(
             prompt_block="企业规范",
             usage={
                 "applied": True,
                 "matchedItems": [{"id": "t1", "type": "term", "name": "标准名"}],
             },
             matched_item_ids=("t1",),
-            diagnostic={"knowledgeItemIds": ["t1"]},
+            diagnostic={"writingPolicyItemIds": ["t1"]},
         )
 
         usage_view = result.usage
         usage_view["matchedItems"][0]["name"] = "被篡改"
         usage_view["matchedItems"].append({"id": "t2", "type": "term", "name": "新增"})
         diagnostic_patch = result.diagnostic_patch()
-        diagnostic_patch["knowledgeItemIds"].append("t2")
+        diagnostic_patch["writingPolicyItemIds"].append("t2")
 
         self.assertEqual(result.usage["matchedItems"][0]["name"], "标准名")
         self.assertEqual(len(result.usage["matchedItems"]), 1)
-        self.assertEqual(result.diagnostic_patch()["knowledgeItemIds"], ["t1"])
+        self.assertEqual(result.diagnostic_patch()["writingPolicyItemIds"], ["t1"])
 
     def test_document_review_accepts_aliased_usage_metadata(self):
         value = dump_by_alias(
@@ -228,7 +228,7 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
                 documentType="technical_solution",
                 reviewPrompt="检查专业性",
                 summary="未发现问题",
-                knowledgeUsage={
+                writingPolicyUsage={
                     "applied": True,
                     "termMatchCount": 1,
                     "styleRuleCount": 0,
@@ -240,14 +240,14 @@ class EnterpriseKnowledgeContractTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(value["knowledgeUsage"]["termMatchCount"], 1)
+        self.assertEqual(value["writingPolicyUsage"]["termMatchCount"], 1)
         self.assertEqual(
-            value["knowledgeUsage"]["matchedItems"],
+            value["writingPolicyUsage"]["matchedItems"],
             [{"id": "t1", "type": "term", "name": "标准名"}],
         )
 
 
-class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
+class WritingPolicyMatcherTests(unittest.TestCase):
     def test_near_import_limit_matching_scans_large_source_within_budget(self):
         near_match_prefix = "甲" * 24
         terms = []
@@ -349,7 +349,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
 
         started = time.perf_counter()
         with mock.patch.object(matcher_module, "_LiteralIndex", RecordingIndex):
-            matched_terms, _matched_styles = matcher_module.match_knowledge(
+            matched_terms, _matched_styles = matcher_module.match_writing_policy(
                 terms, [], "word.smart_write", [source]
             )
         elapsed = time.perf_counter() - started
@@ -397,7 +397,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
 
         started = time.perf_counter()
         with mock.patch.object(matcher_module, "_LiteralIndex", RecordingIndex):
-            matched_terms, matched_styles = matcher_module.match_knowledge(
+            matched_terms, matched_styles = matcher_module.match_writing_policy(
                 [], styles, "word.smart_write", [source]
             )
         elapsed = time.perf_counter() - started
@@ -433,7 +433,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
             ),
         ]
 
-        matched_terms, matched_styles = matcher_module.match_knowledge(
+        matched_terms, matched_styles = matcher_module.match_writing_policy(
             terms,
             styles,
             "word.smart_write",
@@ -465,7 +465,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
                 super().__init__(token_targets)
 
         with mock.patch.object(matcher_module, "_LiteralIndex", RecordingIndex):
-            matched_terms, _matched_styles = matcher_module.match_knowledge(
+            matched_terms, _matched_styles = matcher_module.match_writing_policy(
                 terms, [], "word.smart_write", ["甲"]
             )
 
@@ -482,7 +482,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
             "_LiteralIndex",
             side_effect=AssertionError("empty source must not build an index"),
         ):
-            empty_terms, empty_styles = matcher_module.match_knowledge(
+            empty_terms, empty_styles = matcher_module.match_writing_policy(
                 terms, styles, "word.smart_write", ["", ""]
             )
 
@@ -511,7 +511,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
                 state_counts.append(self.state_count)
 
         with mock.patch.object(matcher_module, "_LiteralIndex", RecordingIndex):
-            matched_terms, _matched_styles = matcher_module.match_knowledge(
+            matched_terms, _matched_styles = matcher_module.match_writing_policy(
                 terms, [], "word.smart_write", [source]
             )
 
@@ -604,7 +604,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
             for index in range(50)
         )
 
-        matched_terms, _matched_styles = matcher_module.match_knowledge(
+        matched_terms, _matched_styles = matcher_module.match_writing_policy(
             terms,
             [],
             "word.smart_write",
@@ -901,7 +901,7 @@ class EnterpriseKnowledgeMatcherTests(unittest.TestCase):
 
         self.assertEqual(
             result.prompt_block.splitlines()[0],
-            "企业术语与写作规范（必须遵守）：",
+            "写作规范（必须遵守）：",
         )
         self.assertIn("professional", result.prompt_block)
         self.assertIn("违规", result.prompt_block)

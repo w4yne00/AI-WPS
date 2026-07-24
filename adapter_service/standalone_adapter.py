@@ -35,7 +35,7 @@ from app.services.provider_client import (
 )
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
-from app.services.enterprise_knowledge.imports import (
+from app.services.writing_policy.imports import (
     DEFAULT_IMPORT_PREVIEW_STORE,
     XLSX_MIME,
     apply_import_preview,
@@ -45,8 +45,8 @@ from app.services.enterprise_knowledge.imports import (
     parse_import_file,
     validate_import_rows,
 )
-from app.services.enterprise_knowledge.models import KnowledgeError, MAX_IMPORT_BYTES
-from app.services.enterprise_knowledge.service import get_enterprise_knowledge_service
+from app.services.writing_policy.models import WritingPolicyError, MAX_IMPORT_BYTES
+from app.services.writing_policy.service import get_writing_policy_service
 from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
@@ -62,38 +62,38 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
 VERSION = "0.19.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
-ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
+WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.
-ENTERPRISE_KNOWLEDGE_JSON_REQUEST_MAX_BYTES = 1 * 1024 * 1024
-ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS = 5.0
-ENTERPRISE_KNOWLEDGE_MAX_CHUNK_COUNT = 1024
-ENTERPRISE_KNOWLEDGE_MAX_CHUNK_LINE_BYTES = 128
-ENTERPRISE_KNOWLEDGE_MAX_TRAILER_COUNT = 64
-ENTERPRISE_KNOWLEDGE_MAX_TRAILER_BYTES = 16 * 1024
-ENTERPRISE_KNOWLEDGE_MAX_TRAILER_LINE_BYTES = 2048
-ENTERPRISE_KNOWLEDGE_TASK_TYPE = "enterprise.knowledge"
-_SAFE_KNOWLEDGE_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
+WRITING_POLICY_JSON_REQUEST_MAX_BYTES = 1 * 1024 * 1024
+WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS = 5.0
+WRITING_POLICY_MAX_CHUNK_COUNT = 1024
+WRITING_POLICY_MAX_CHUNK_LINE_BYTES = 128
+WRITING_POLICY_MAX_TRAILER_COUNT = 64
+WRITING_POLICY_MAX_TRAILER_BYTES = 16 * 1024
+WRITING_POLICY_MAX_TRAILER_LINE_BYTES = 2048
+WRITING_POLICY_TASK_TYPE = "writing_policy"
+_SAFE_WRITING_POLICY_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _HTTP_TOKEN_BYTES_RE = re.compile(br"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _SAFE_TRAILER_VALUE_BYTES_RE = re.compile(br"^[\x09\x20-\x7e\x80-\xff]*$")
 _HTTP_TCHAR_BYTES = frozenset(
     b"!#$%&'*+-.^_`|~0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 )
-_KNOWLEDGE_NOT_FOUND_CODES = {
-    "knowledge_item_not_found",
+_WRITING_POLICY_NOT_FOUND_CODES = {
+    "writing_policy_item_not_found",
     "import_preview_not_found",
     "import_preview_expired",
 }
-_KNOWLEDGE_CONFLICT_CODES = {"term_text_conflict", "style_name_conflict"}
-_KNOWLEDGE_TOO_LARGE_CODES = {"import_file_too_large"}
-_KNOWLEDGE_UNAVAILABLE_CODES = {
-    "knowledge_data_corrupt",
-    "knowledge_store_unavailable",
-    "knowledge_storage_unavailable",
-    "knowledge_io_error",
-    "knowledge_internal_error",
-    "knowledge_initializing",
+_WRITING_POLICY_CONFLICT_CODES = {"term_text_conflict", "style_name_conflict"}
+_WRITING_POLICY_TOO_LARGE_CODES = {"import_file_too_large"}
+_WRITING_POLICY_UNAVAILABLE_CODES = {
+    "writing_policy_data_corrupt",
+    "writing_policy_store_unavailable",
+    "writing_policy_storage_unavailable",
+    "writing_policy_io_error",
+    "writing_policy_internal_error",
+    "writing_policy_initializing",
 }
-_KNOWLEDGE_ITEM_FIELDS = {
+_WRITING_POLICY_ITEM_FIELDS = {
     "type",
     "scope",
     "category",
@@ -111,16 +111,16 @@ _KNOWLEDGE_ITEM_FIELDS = {
     "negativeExample",
     "alwaysApply",
 }
-_KNOWLEDGE_STATIC_ROUTE_METHODS = {
-    "/enterprise-knowledge/summary": ("GET",),
-    "/enterprise-knowledge/items": ("GET", "POST"),
-    "/enterprise-knowledge/import-template.csv": ("GET",),
-    "/enterprise-knowledge/import-template.xlsx": ("GET",),
-    "/enterprise-knowledge/imports/preview": ("POST",),
-    "/enterprise-knowledge/imports/apply": ("POST",),
-    "/enterprise-knowledge/export.csv": ("GET",),
-    "/enterprise-knowledge/backup": ("GET",),
-    "/enterprise-knowledge/diagnostics": ("GET",),
+_WRITING_POLICY_STATIC_ROUTE_METHODS = {
+    "/writing-policies/summary": ("GET",),
+    "/writing-policies/items": ("GET", "POST"),
+    "/writing-policies/import-template.csv": ("GET",),
+    "/writing-policies/import-template.xlsx": ("GET",),
+    "/writing-policies/imports/preview": ("POST",),
+    "/writing-policies/imports/apply": ("POST",),
+    "/writing-policies/export.csv": ("GET",),
+    "/writing-policies/backup": ("GET",),
+    "/writing-policies/diagnostics": ("GET",),
 }
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
@@ -257,22 +257,22 @@ def envelope(trace_id, task_type, data=None, success=True, message="completed", 
     }
 
 
-def _knowledge_json(data=None, message="completed", status=200):
-    trace_id = new_trace_id("enterprise-knowledge")
+def _writing_policy_json(data=None, message="completed", status=200):
+    trace_id = new_trace_id("writing-policies")
     return {
         "status": status,
         "headers": {"X-Trace-Id": trace_id},
         "body": envelope(
             trace_id,
-            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            WRITING_POLICY_TASK_TYPE,
             data or {},
             message=message,
         ),
     }
 
 
-def _knowledge_bytes(content, content_type, file_name):
-    trace_id = new_trace_id("enterprise-knowledge")
+def _writing_policy_bytes(content, content_type, file_name):
+    trace_id = new_trace_id("writing-policies")
     return {
         "status": 200,
         "content": content,
@@ -285,22 +285,22 @@ def _knowledge_bytes(content, content_type, file_name):
     }
 
 
-def _knowledge_error(error):
+def _writing_policy_error(error):
     if isinstance(error, AdapterError):
         code = error.code
         message = error.message
         status = error.status_code
-    elif isinstance(error, KnowledgeError):
+    elif isinstance(error, WritingPolicyError):
         raw_code = str(error.code or "")
-        safe_code = raw_code if _SAFE_KNOWLEDGE_CODE_RE.fullmatch(raw_code) else "knowledge_error"
+        safe_code = raw_code if _SAFE_WRITING_POLICY_CODE_RE.fullmatch(raw_code) else "writing_policy_error"
         code = safe_code.upper()
-        if raw_code in _KNOWLEDGE_NOT_FOUND_CODES:
-            status, message = 404, "未找到指定知识条目或导入预览。"
-        elif raw_code in _KNOWLEDGE_CONFLICT_CODES:
+        if raw_code in _WRITING_POLICY_NOT_FOUND_CODES:
+            status, message = 404, "未找到指定规范条目或导入预览。"
+        elif raw_code in _WRITING_POLICY_CONFLICT_CODES:
             status, message = 409, error.message
-        elif raw_code in _KNOWLEDGE_TOO_LARGE_CODES:
+        elif raw_code in _WRITING_POLICY_TOO_LARGE_CODES:
             status, message = 413, "导入文件超过 5 MB 限制。"
-        elif raw_code in _KNOWLEDGE_UNAVAILABLE_CODES or any(
+        elif raw_code in _WRITING_POLICY_UNAVAILABLE_CODES or any(
             marker in raw_code
             for marker in (
                 "corrupt",
@@ -312,25 +312,25 @@ def _knowledge_error(error):
                 "internal",
             )
         ):
-            status, message = 503, "企业知识库暂时不可用，请稍后重试。"
+            status, message = 503, "写作规范库暂时不可用，请稍后重试。"
         elif raw_code.startswith(("invalid_", "unsupported_", "import_", "duplicate_")):
             status, message = 400, error.message
         else:
-            status, message = 400, "企业知识请求无法处理。"
+            status, message = 400, "写作规范请求无法处理。"
     elif isinstance(error, (OSError, sqlite3.DatabaseError)):
-        code = "KNOWLEDGE_STORAGE_UNAVAILABLE"
-        status, message = 503, "企业知识库暂时不可用，请稍后重试。"
+        code = "WRITING_POLICY_STORAGE_UNAVAILABLE"
+        status, message = 503, "写作规范库暂时不可用，请稍后重试。"
     else:
-        code = "KNOWLEDGE_SERVICE_UNAVAILABLE"
-        status, message = 503, "企业知识库暂时不可用，请稍后重试。"
+        code = "WRITING_POLICY_SERVICE_UNAVAILABLE"
+        status, message = 503, "写作规范库暂时不可用，请稍后重试。"
 
-    trace_id = new_trace_id("enterprise-knowledge")
+    trace_id = new_trace_id("writing-policies")
     return {
         "status": status,
         "headers": {"X-Trace-Id": trace_id},
         "body": envelope(
             trace_id,
-            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            WRITING_POLICY_TASK_TYPE,
             success=False,
             message=message,
             errors=[{"code": code, "message": message}],
@@ -338,17 +338,17 @@ def _knowledge_error(error):
     }
 
 
-def _knowledge_validation(
+def _writing_policy_validation(
     message="请求参数无效，请检查后重试。",
     code="REQUEST_VALIDATION_FAILED",
 ):
-    trace_id = new_trace_id("enterprise-knowledge")
+    trace_id = new_trace_id("writing-policies")
     return {
         "status": 400,
         "headers": {"X-Trace-Id": trace_id},
         "body": envelope(
             trace_id,
-            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            WRITING_POLICY_TASK_TYPE,
             success=False,
             message=message,
             errors=[{"code": code, "message": message}],
@@ -356,15 +356,15 @@ def _knowledge_validation(
     }
 
 
-def _knowledge_body_too_large():
-    message = "企业知识导入预览请求超过 7 MB 限制。"
-    trace_id = new_trace_id("enterprise-knowledge")
+def _writing_policy_body_too_large():
+    message = "写作规范导入预览请求超过 7 MB 限制。"
+    trace_id = new_trace_id("writing-policies")
     return {
         "status": 413,
         "headers": {"X-Trace-Id": trace_id},
         "body": envelope(
             trace_id,
-            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            WRITING_POLICY_TASK_TYPE,
             success=False,
             message=message,
             errors=[{"code": "IMPORT_REQUEST_TOO_LARGE", "message": message}],
@@ -372,14 +372,14 @@ def _knowledge_body_too_large():
     }
 
 
-def _knowledge_request_error(status, code, message):
-    trace_id = new_trace_id("enterprise-knowledge")
+def _writing_policy_request_error(status, code, message):
+    trace_id = new_trace_id("writing-policies")
     return {
         "status": status,
         "headers": {"X-Trace-Id": trace_id},
         "body": envelope(
             trace_id,
-            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            WRITING_POLICY_TASK_TYPE,
             success=False,
             message=message,
             errors=[{"code": code, "message": message}],
@@ -387,21 +387,21 @@ def _knowledge_request_error(status, code, message):
     }
 
 
-def _knowledge_store():
-    return get_enterprise_knowledge_service().store
+def _writing_policy_store():
+    return get_writing_policy_service().store
 
 
-def _is_enterprise_knowledge_path(path):
-    return path == "/enterprise-knowledge" or path.startswith(
-        "/enterprise-knowledge/"
+def _is_writing_policy_path(path):
+    return path == "/writing-policies" or path.startswith(
+        "/writing-policies/"
     )
 
 
-def enterprise_knowledge_allowed_methods(path):
-    methods = _KNOWLEDGE_STATIC_ROUTE_METHODS.get(path)
+def writing_policy_allowed_methods(path):
+    methods = _WRITING_POLICY_STATIC_ROUTE_METHODS.get(path)
     if methods is not None:
         return methods
-    item_prefix = "/enterprise-knowledge/items/"
+    item_prefix = "/writing-policies/items/"
     if path.startswith(item_prefix):
         raw_item_id = path[len(item_prefix):]
         if raw_item_id and "/" not in raw_item_id and "/" not in unquote(raw_item_id):
@@ -409,8 +409,8 @@ def enterprise_knowledge_allowed_methods(path):
     return None
 
 
-def _knowledge_route_error(status, code, message, allowed_methods=()):
-    trace_id = new_trace_id("enterprise-knowledge")
+def _writing_policy_route_error(status, code, message, allowed_methods=()):
+    trace_id = new_trace_id("writing-policies")
     headers = {"X-Trace-Id": trace_id}
     if allowed_methods:
         headers["Allow"] = ", ".join(allowed_methods)
@@ -419,7 +419,7 @@ def _knowledge_route_error(status, code, message, allowed_methods=()):
         "headers": headers,
         "body": envelope(
             trace_id,
-            ENTERPRISE_KNOWLEDGE_TASK_TYPE,
+            WRITING_POLICY_TASK_TYPE,
             success=False,
             message=message,
             errors=[{"code": code, "message": message}],
@@ -430,46 +430,46 @@ def _knowledge_route_error(status, code, message, allowed_methods=()):
 def _required_text(payload, field):
     value = payload.get(field)
     if not isinstance(value, str) or not value.strip():
-        raise KnowledgeError("invalid_request", "%s 不能为空。" % field)
+        raise WritingPolicyError("invalid_request", "%s 不能为空。" % field)
     return value
 
 
-def _decode_knowledge_import(payload):
+def _decode_writing_policy_import(payload):
     allowed = {"fileName", "mimeType", "sizeBytes", "contentBase64"}
     if not isinstance(payload, dict) or set(payload) != allowed:
-        raise KnowledgeError("invalid_import_request", "导入预览参数不完整。")
+        raise WritingPolicyError("invalid_import_request", "导入预览参数不完整。")
     file_name = _required_text(payload, "fileName")
     mime_type = _required_text(payload, "mimeType")
     size_bytes = payload.get("sizeBytes")
     content_base64 = payload.get("contentBase64")
     if isinstance(size_bytes, bool) or not isinstance(size_bytes, int):
-        raise KnowledgeError("invalid_import_size", "导入文件大小无效。")
+        raise WritingPolicyError("invalid_import_size", "导入文件大小无效。")
     if not isinstance(content_base64, str):
-        raise KnowledgeError("invalid_import_base64", "导入文件 Base64 内容无效。")
+        raise WritingPolicyError("invalid_import_base64", "导入文件 Base64 内容无效。")
     try:
         content = base64.b64decode(content_base64.encode("ascii"), validate=True)
     except (UnicodeEncodeError, ValueError, binascii.Error):
-        raise KnowledgeError("invalid_import_base64", "导入文件 Base64 内容无效。")
+        raise WritingPolicyError("invalid_import_base64", "导入文件 Base64 内容无效。")
     if size_bytes < 0 or size_bytes != len(content):
-        raise KnowledgeError(
+        raise WritingPolicyError(
             "import_size_mismatch", "声明的文件大小与实际内容不一致。"
         )
     if len(content) > MAX_IMPORT_BYTES:
-        raise KnowledgeError("import_file_too_large", "导入文件超过 5 MB 限制。")
+        raise WritingPolicyError("import_file_too_large", "导入文件超过 5 MB 限制。")
     return file_name, mime_type, content
 
 
 def _parse_import_decisions(payload):
     if not isinstance(payload, dict) or set(payload) - {"previewToken", "acceptedConflictRows"}:
-        raise KnowledgeError("invalid_import_request", "导入应用参数无效。")
+        raise WritingPolicyError("invalid_import_request", "导入应用参数无效。")
     token = _required_text(payload, "previewToken")
     decisions = payload.get("acceptedConflictRows", [])
     if not isinstance(decisions, list):
-        raise KnowledgeError("invalid_import_request", "冲突处理决定格式无效。")
+        raise WritingPolicyError("invalid_import_request", "冲突处理决定格式无效。")
     normalized = []
     for decision in decisions:
         if not isinstance(decision, dict) or set(decision) != {"rowNumber", "decision"}:
-            raise KnowledgeError("invalid_import_request", "冲突处理决定格式无效。")
+            raise WritingPolicyError("invalid_import_request", "冲突处理决定格式无效。")
         row_number = decision.get("rowNumber")
         action = decision.get("decision")
         if (
@@ -477,50 +477,50 @@ def _parse_import_decisions(payload):
             or not isinstance(row_number, int)
             or not isinstance(action, str)
         ):
-            raise KnowledgeError("invalid_import_request", "冲突处理决定格式无效。")
+            raise WritingPolicyError("invalid_import_request", "冲突处理决定格式无效。")
         normalized.append({"rowNumber": row_number, "decision": action})
     return token, normalized
 
 
-def dispatch_enterprise_knowledge(method, path, query="", payload=None, body_size=None):
-    if not _is_enterprise_knowledge_path(path):
+def dispatch_writing_policy(method, path, query="", payload=None, body_size=None):
+    if not _is_writing_policy_path(path):
         return None
     method = str(method or "").upper()
-    allowed_methods = enterprise_knowledge_allowed_methods(path)
+    allowed_methods = writing_policy_allowed_methods(path)
     if allowed_methods is None:
-        return _knowledge_route_error(
+        return _writing_policy_route_error(
             404,
             "NOT_FOUND",
-            "企业知识接口不存在。",
+            "写作规范接口不存在。",
         )
     if method not in allowed_methods:
-        return _knowledge_route_error(
+        return _writing_policy_route_error(
             405,
             "METHOD_NOT_ALLOWED",
-            "企业知识接口不支持当前请求方法。",
+            "写作规范接口不支持当前请求方法。",
             allowed_methods,
         )
     payload = payload if payload is not None else {}
     if (
         method == "POST"
-        and path == "/enterprise-knowledge/imports/preview"
+        and path == "/writing-policies/imports/preview"
         and body_size is not None
-        and body_size > ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES
+        and body_size > WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES
     ):
-        return _knowledge_body_too_large()
+        return _writing_policy_body_too_large()
 
     try:
         params = parse_qs(query or "", keep_blank_values=True)
-        if method == "GET" and path == "/enterprise-knowledge/summary":
-            return _knowledge_json(_knowledge_store().summary())
-        if method == "GET" and path == "/enterprise-knowledge/items":
+        if method == "GET" and path == "/writing-policies/summary":
+            return _writing_policy_json(_writing_policy_store().summary())
+        if method == "GET" and path == "/writing-policies/items":
             scope = str(params.get("scope", [""])[0]).strip()
             item_type = str(params.get("type", [""])[0]).strip()
             search = str(params.get("query", [""])[0])
             if not scope or not item_type:
-                return _knowledge_validation()
-            items = _knowledge_store().list_items(scope, item_type, search)
-            return _knowledge_json(
+                return _writing_policy_validation()
+            items = _writing_policy_store().list_items(scope, item_type, search)
+            return _writing_policy_json(
                 {
                     "scope": scope,
                     "type": item_type,
@@ -529,46 +529,46 @@ def dispatch_enterprise_knowledge(method, path, query="", payload=None, body_siz
                     "items": items,
                 }
             )
-        if method == "POST" and path == "/enterprise-knowledge/items":
-            if not isinstance(payload, dict) or set(payload) - _KNOWLEDGE_ITEM_FIELDS:
-                return _knowledge_validation()
-            return _knowledge_json(
-                {"item": _knowledge_store().create_item(dict(payload))}, "created"
+        if method == "POST" and path == "/writing-policies/items":
+            if not isinstance(payload, dict) or set(payload) - _WRITING_POLICY_ITEM_FIELDS:
+                return _writing_policy_validation()
+            return _writing_policy_json(
+                {"item": _writing_policy_store().create_item(dict(payload))}, "created"
             )
 
-        item_prefix = "/enterprise-knowledge/items/"
+        item_prefix = "/writing-policies/items/"
         if path.startswith(item_prefix) and path != item_prefix:
             item_id = unquote(path[len(item_prefix):]).strip("/")
             if "/" in item_id or not item_id:
-                return _knowledge_validation()
+                return _writing_policy_validation()
             if method == "PATCH":
-                if not isinstance(payload, dict) or set(payload) - _KNOWLEDGE_ITEM_FIELDS:
-                    return _knowledge_validation()
-                item = _knowledge_store().update_item(item_id, dict(payload))
-                return _knowledge_json({"item": item}, "updated")
+                if not isinstance(payload, dict) or set(payload) - _WRITING_POLICY_ITEM_FIELDS:
+                    return _writing_policy_validation()
+                item = _writing_policy_store().update_item(item_id, dict(payload))
+                return _writing_policy_json({"item": item}, "updated")
             if method == "DELETE":
-                item = _knowledge_store().delete_item(item_id)
-                return _knowledge_json({"deleted": True, "item": item}, "deleted")
+                item = _writing_policy_store().delete_item(item_id)
+                return _writing_policy_json({"deleted": True, "item": item}, "deleted")
 
-        if method == "GET" and path == "/enterprise-knowledge/import-template.csv":
-            return _knowledge_bytes(
+        if method == "GET" and path == "/writing-policies/import-template.csv":
+            return _writing_policy_bytes(
                 generate_csv_template(),
                 "text/csv",
-                "enterprise-knowledge-import-template.csv",
+                "writing-policies-import-template.csv",
             )
-        if method == "GET" and path == "/enterprise-knowledge/import-template.xlsx":
-            return _knowledge_bytes(
+        if method == "GET" and path == "/writing-policies/import-template.xlsx":
+            return _writing_policy_bytes(
                 generate_xlsx_template(),
                 XLSX_MIME,
-                "enterprise-knowledge-import-template.xlsx",
+                "writing-policies-import-template.xlsx",
             )
-        if method == "POST" and path == "/enterprise-knowledge/imports/preview":
-            file_name, mime_type, content = _decode_knowledge_import(payload)
+        if method == "POST" and path == "/writing-policies/imports/preview":
+            file_name, mime_type, content = _decode_writing_policy_import(payload)
             rows = parse_import_file(file_name, mime_type, content)
             validated = validate_import_rows(rows)
             suffix = Path(file_name).suffix.lower().lstrip(".")
             preview = build_import_preview(
-                _knowledge_store(),
+                _writing_policy_store(),
                 validated,
                 {
                     "fileName": file_name,
@@ -579,36 +579,36 @@ def dispatch_enterprise_knowledge(method, path, query="", payload=None, body_siz
                 },
                 preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
             )
-            return _knowledge_json(preview, "previewed")
-        if method == "POST" and path == "/enterprise-knowledge/imports/apply":
+            return _writing_policy_json(preview, "previewed")
+        if method == "POST" and path == "/writing-policies/imports/apply":
             token, decisions = _parse_import_decisions(payload)
             result = apply_import_preview(
-                _knowledge_store(),
+                _writing_policy_store(),
                 token,
                 decisions,
                 preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
             )
-            return _knowledge_json(result, "applied")
-        if method == "GET" and path == "/enterprise-knowledge/export.csv":
+            return _writing_policy_json(result, "applied")
+        if method == "GET" and path == "/writing-policies/export.csv":
             scope = str(params.get("scope", [""])[0]).strip()
             if not scope:
-                return _knowledge_validation()
-            return _knowledge_bytes(
-                _knowledge_store().export_csv(scope),
+                return _writing_policy_validation()
+            return _writing_policy_bytes(
+                _writing_policy_store().export_csv(scope),
                 "text/csv",
-                "enterprise-knowledge-export.csv",
+                "writing-policies-export.csv",
             )
-        if method == "GET" and path == "/enterprise-knowledge/backup":
-            return _knowledge_bytes(
-                _knowledge_store().database_snapshot_bytes(),
+        if method == "GET" and path == "/writing-policies/backup":
+            return _writing_policy_bytes(
+                _writing_policy_store().database_snapshot_bytes(),
                 "application/vnd.sqlite3",
-                "enterprise-knowledge-backup.db",
+                "writing-policies-backup.db",
             )
-        if method == "GET" and path == "/enterprise-knowledge/diagnostics":
-            return _knowledge_json(get_enterprise_knowledge_service().diagnostics())
-        return _knowledge_route_error(404, "NOT_FOUND", "企业知识接口不存在。")
+        if method == "GET" and path == "/writing-policies/diagnostics":
+            return _writing_policy_json(get_writing_policy_service().diagnostics())
+        return _writing_policy_route_error(404, "NOT_FOUND", "写作规范接口不存在。")
     except Exception as error:
-        return _knowledge_error(error)
+        return _writing_policy_error(error)
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -634,7 +634,7 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(content)
 
-    def _write_knowledge_response(self, response):
+    def _write_writing_policy_response(self, response):
         if "body" in response:
             payload = json.dumps(
                 response["body"], ensure_ascii=False
@@ -648,15 +648,15 @@ class Handler(BaseHTTPRequestHandler):
             return
         self._write_bytes(response["status"], response["content"], response["headers"])
 
-    def _reject_enterprise_knowledge_route_or_method(self, method, path):
-        if not _is_enterprise_knowledge_path(path):
+    def _reject_writing_policy_route_or_method(self, method, path):
+        if not _is_writing_policy_path(path):
             return False
-        allowed_methods = enterprise_knowledge_allowed_methods(path)
+        allowed_methods = writing_policy_allowed_methods(path)
         if allowed_methods is not None and method in allowed_methods:
             return False
         self.close_connection = True
-        self._write_knowledge_response(
-            dispatch_enterprise_knowledge(method, path)
+        self._write_writing_policy_response(
+            dispatch_writing_policy(method, path)
         )
         return True
 
@@ -667,10 +667,10 @@ class Handler(BaseHTTPRequestHandler):
         value = self.headers.get(name)
         return [] if value is None else [str(value)]
 
-    def _enterprise_body_framing(self, preview):
+    def _writing_policy_body_framing(self, preview):
         content_lengths = self._header_values("Content-Length")
         transfer_encodings = self._header_values("Transfer-Encoding")
-        framing_error = _knowledge_request_error(
+        framing_error = _writing_policy_request_error(
             400,
             "INVALID_REQUEST_FRAMING",
             "请求体传输格式无效，请检查后重试。",
@@ -693,22 +693,22 @@ class Handler(BaseHTTPRequestHandler):
             return None, None, framing_error
         length = int(raw_length)
         limit = (
-            ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES
+            WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES
             if preview
-            else ENTERPRISE_KNOWLEDGE_JSON_REQUEST_MAX_BYTES
+            else WRITING_POLICY_JSON_REQUEST_MAX_BYTES
         )
         if length > limit:
             if preview:
-                return None, None, _knowledge_body_too_large()
-            return None, None, _knowledge_request_error(
+                return None, None, _writing_policy_body_too_large()
+            return None, None, _writing_policy_request_error(
                 413,
-                "ENTERPRISE_JSON_REQUEST_TOO_LARGE",
-                "企业知识 JSON 请求超过 1 MB 限制。",
+                "WRITING_POLICY_JSON_REQUEST_TOO_LARGE",
+                "写作规范 JSON 请求超过 1 MB 限制。",
             )
         return "content-length", length, None
 
-    def _read_enterprise_body(self, preview):
-        mode, length, rejection = self._enterprise_body_framing(preview)
+    def _read_writing_policy_body(self, preview):
+        mode, length, rejection = self._writing_policy_body_framing(preview)
         if rejection is not None:
             return None, rejection
 
@@ -717,32 +717,32 @@ class Handler(BaseHTTPRequestHandler):
         timeout_changed = False
         deadline = (
             time.monotonic()
-            + ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS
+            + WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS
         )
         try:
             if connection is not None:
                 previous_timeout = connection.gettimeout()
                 timeout_changed = True
             if mode == "chunked":
-                return self._read_enterprise_chunked_body(deadline)
+                return self._read_writing_policy_chunked_body(deadline)
             if not length:
                 return b"{}", None
-            body = self._read_enterprise_exact(length, deadline)
+            body = self._read_writing_policy_exact(length, deadline)
             if len(body) != length:
-                return None, _knowledge_request_error(
+                return None, _writing_policy_request_error(
                     400,
                     "INCOMPLETE_REQUEST_BODY",
                     "请求体不完整，请重新提交。",
                 )
             return body, None
         except (socket.timeout, TimeoutError):
-            return None, _knowledge_request_error(
+            return None, _writing_policy_request_error(
                 400,
                 "REQUEST_BODY_TIMEOUT",
                 "读取请求体超时，请重新提交。",
             )
         except OSError:
-            return None, _knowledge_request_error(
+            return None, _writing_policy_request_error(
                 400,
                 "INCOMPLETE_REQUEST_BODY",
                 "请求体不完整，请重新提交。",
@@ -754,34 +754,34 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
 
-    def _set_enterprise_read_timeout(self, deadline):
+    def _set_writing_policy_read_timeout(self, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
-            raise socket.timeout("enterprise request-body deadline exceeded")
+            raise socket.timeout("writing-policy request-body deadline exceeded")
         connection = getattr(self, "connection", None)
         if connection is not None:
             connection.settimeout(remaining)
 
-    def _read_enterprise_once(self, size, deadline):
-        self._set_enterprise_read_timeout(deadline)
+    def _read_writing_policy_once(self, size, deadline):
+        self._set_writing_policy_read_timeout(deadline)
         read_once = getattr(self.rfile, "read1", None)
         if callable(read_once):
             return read_once(size)
         return self.rfile.read(size)
 
-    def _read_enterprise_exact(self, size, deadline):
+    def _read_writing_policy_exact(self, size, deadline):
         content = bytearray()
         while len(content) < size:
-            part = self._read_enterprise_once(size - len(content), deadline)
+            part = self._read_writing_policy_once(size - len(content), deadline)
             if not part:
                 break
             content.extend(part)
         return bytes(content)
 
-    def _read_enterprise_line(self, limit, deadline):
+    def _read_writing_policy_line(self, limit, deadline):
         line = bytearray()
         while len(line) <= limit:
-            part = self._read_enterprise_once(1, deadline)
+            part = self._read_writing_policy_once(1, deadline)
             if not part:
                 break
             line.extend(part)
@@ -860,7 +860,7 @@ class Handler(BaseHTTPRequestHandler):
                 index = value_end
         return True
 
-    def _parse_enterprise_chunk_size(self, value):
+    def _parse_writing_policy_chunk_size(self, value):
         size_end = 0
         while size_end < len(value) and value[size_end] in b"0123456789abcdefABCDEF":
             size_end += 1
@@ -868,62 +868,62 @@ class Handler(BaseHTTPRequestHandler):
             return None
         return int(value[:size_end], 16)
 
-    def _read_enterprise_chunked_body(self, deadline):
+    def _read_writing_policy_chunked_body(self, deadline):
         body = bytearray()
         chunk_count = 0
         while True:
-            size_line = self._read_enterprise_line(
-                ENTERPRISE_KNOWLEDGE_MAX_CHUNK_LINE_BYTES,
+            size_line = self._read_writing_policy_line(
+                WRITING_POLICY_MAX_CHUNK_LINE_BYTES,
                 deadline,
             )
             if (
                 not size_line
-                or len(size_line) > ENTERPRISE_KNOWLEDGE_MAX_CHUNK_LINE_BYTES
+                or len(size_line) > WRITING_POLICY_MAX_CHUNK_LINE_BYTES
                 or not size_line.endswith(b"\r\n")
             ):
                 return None, self._invalid_chunked_body()
-            chunk_size = self._parse_enterprise_chunk_size(size_line[:-2])
+            chunk_size = self._parse_writing_policy_chunk_size(size_line[:-2])
             if chunk_size is None:
                 return None, self._invalid_chunked_body()
             if chunk_size == 0:
-                return self._read_enterprise_trailers(body, deadline)
+                return self._read_writing_policy_trailers(body, deadline)
 
             chunk_count += 1
-            if chunk_count > ENTERPRISE_KNOWLEDGE_MAX_CHUNK_COUNT:
+            if chunk_count > WRITING_POLICY_MAX_CHUNK_COUNT:
                 return None, self._invalid_chunked_body()
             if (
                 len(body) + chunk_size
-                > ENTERPRISE_KNOWLEDGE_IMPORT_PREVIEW_REQUEST_MAX_BYTES
+                > WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES
             ):
                 del body
-                return None, _knowledge_body_too_large()
-            chunk = self._read_enterprise_exact(chunk_size, deadline)
-            terminator = self._read_enterprise_exact(2, deadline)
+                return None, _writing_policy_body_too_large()
+            chunk = self._read_writing_policy_exact(chunk_size, deadline)
+            terminator = self._read_writing_policy_exact(2, deadline)
             if len(chunk) != chunk_size or terminator != b"\r\n":
                 return None, self._invalid_chunked_body()
             body.extend(chunk)
 
-    def _read_enterprise_trailers(self, body, deadline):
+    def _read_writing_policy_trailers(self, body, deadline):
         trailer_count = 0
         trailer_bytes = 0
         while True:
-            trailer = self._read_enterprise_line(
-                ENTERPRISE_KNOWLEDGE_MAX_TRAILER_LINE_BYTES,
+            trailer = self._read_writing_policy_line(
+                WRITING_POLICY_MAX_TRAILER_LINE_BYTES,
                 deadline,
             )
             if not trailer:
                 return None, self._invalid_chunked_body()
             trailer_bytes += len(trailer)
             if (
-                len(trailer) > ENTERPRISE_KNOWLEDGE_MAX_TRAILER_LINE_BYTES
-                or trailer_bytes > ENTERPRISE_KNOWLEDGE_MAX_TRAILER_BYTES
+                len(trailer) > WRITING_POLICY_MAX_TRAILER_LINE_BYTES
+                or trailer_bytes > WRITING_POLICY_MAX_TRAILER_BYTES
                 or not trailer.endswith(b"\r\n")
             ):
                 return None, self._invalid_chunked_body()
             if trailer == b"\r\n":
                 return bytes(body), None
             trailer_count += 1
-            if trailer_count > ENTERPRISE_KNOWLEDGE_MAX_TRAILER_COUNT:
+            if trailer_count > WRITING_POLICY_MAX_TRAILER_COUNT:
                 return None, self._invalid_chunked_body()
             name, separator, value = trailer[:-2].partition(b":")
             if (
@@ -935,17 +935,17 @@ class Handler(BaseHTTPRequestHandler):
 
     @staticmethod
     def _invalid_chunked_body():
-        return _knowledge_request_error(
+        return _writing_policy_request_error(
             400,
             "INVALID_CHUNKED_BODY",
             "分块请求格式无效，请检查后重试。",
         )
 
-    def _read_enterprise_preview_body(self):
-        return self._read_enterprise_body(preview=True)
+    def _read_writing_policy_preview_body(self):
+        return self._read_writing_policy_body(preview=True)
 
-    def _read_enterprise_json_body(self):
-        return self._read_enterprise_body(preview=False)
+    def _read_writing_policy_json_body(self):
+        return self._read_writing_policy_body(preview=False)
 
     def log_message(self, fmt, *args):
         sys.stdout.write(fmt % args + "\n")
@@ -959,11 +959,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        knowledge_response = dispatch_enterprise_knowledge(
+        writing_policy_response = dispatch_writing_policy(
             "GET", path, query=parsed.query
         )
-        if knowledge_response is not None:
-            self._write_knowledge_response(knowledge_response)
+        if writing_policy_response is not None:
+            self._write_writing_policy_response(writing_policy_response)
             return
         if path == "/health":
             settings = load_settings()
@@ -1139,17 +1139,17 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if self._reject_enterprise_knowledge_route_or_method("POST", path):
+        if self._reject_writing_policy_route_or_method("POST", path):
             return
-        is_knowledge = _is_enterprise_knowledge_path(path)
-        if is_knowledge:
-            if path == "/enterprise-knowledge/imports/preview":
-                raw_bytes, rejection = self._read_enterprise_preview_body()
+        is_writing_policy = _is_writing_policy_path(path)
+        if is_writing_policy:
+            if path == "/writing-policies/imports/preview":
+                raw_bytes, rejection = self._read_writing_policy_preview_body()
             else:
-                raw_bytes, rejection = self._read_enterprise_json_body()
+                raw_bytes, rejection = self._read_writing_policy_json_body()
             if rejection is not None:
                 self.close_connection = True
-                self._write_knowledge_response(rejection)
+                self._write_writing_policy_response(rejection)
                 return
         else:
             try:
@@ -1189,8 +1189,8 @@ class Handler(BaseHTTPRequestHandler):
             raw_body = raw_bytes.decode("utf-8")
             payload = json.loads(raw_body or "{}")
         except (UnicodeDecodeError, ValueError):
-            if _is_enterprise_knowledge_path(path):
-                self._write_knowledge_response(_knowledge_validation())
+            if _is_writing_policy_path(path):
+                self._write_writing_policy_response(_writing_policy_validation())
                 return
             message = "请求内容格式无效，请检查后重试。"
             self._write(
@@ -1205,15 +1205,15 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
-        knowledge_response = dispatch_enterprise_knowledge(
+        writing_policy_response = dispatch_writing_policy(
             "POST",
             path,
             query=parsed.query,
             payload=payload,
             body_size=len(raw_bytes),
         )
-        if knowledge_response is not None:
-            self._write_knowledge_response(knowledge_response)
+        if writing_policy_response is not None:
+            self._write_writing_policy_response(writing_policy_response)
             return
 
         if path == "/ppt/document-files":
@@ -1422,14 +1422,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        if self._reject_enterprise_knowledge_route_or_method("PATCH", path):
+        if self._reject_writing_policy_route_or_method("PATCH", path):
             return
         try:
-            if _is_enterprise_knowledge_path(path):
-                raw_bytes, rejection = self._read_enterprise_json_body()
+            if _is_writing_policy_path(path):
+                raw_bytes, rejection = self._read_writing_policy_json_body()
                 if rejection is not None:
                     self.close_connection = True
-                    self._write_knowledge_response(rejection)
+                    self._write_writing_policy_response(rejection)
                     return
                 raw_body = raw_bytes.decode("utf-8")
             else:
@@ -1437,20 +1437,20 @@ class Handler(BaseHTTPRequestHandler):
                 raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
             payload = json.loads(raw_body or "{}")
         except (TypeError, ValueError, UnicodeDecodeError):
-            if _is_enterprise_knowledge_path(path):
-                self._write_knowledge_response(_knowledge_validation())
+            if _is_writing_policy_path(path):
+                self._write_writing_policy_response(_writing_policy_validation())
                 return
             self._write(400, envelope("standalone-validation", "adapter.validation", success=False, message="请求内容格式无效，请检查后重试。"))
             return
-        knowledge_response = dispatch_enterprise_knowledge(
+        writing_policy_response = dispatch_writing_policy(
             "PATCH",
             path,
             query=parsed.query,
             payload=payload,
-            body_size=len(raw_bytes) if _is_enterprise_knowledge_path(path) else length,
+            body_size=len(raw_bytes) if _is_writing_policy_path(path) else length,
         )
-        if knowledge_response is not None:
-            self._write_knowledge_response(knowledge_response)
+        if writing_policy_response is not None:
+            self._write_writing_policy_response(writing_policy_response)
             return
         prefix = "/provider/workflow-profiles/"
         if path.startswith(prefix):
@@ -1473,10 +1473,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         path = urlparse(self.path).path
-        if _is_enterprise_knowledge_path(path):
+        if _is_writing_policy_path(path):
             self.close_connection = True
-            self._write_knowledge_response(
-                dispatch_enterprise_knowledge("PUT", path)
+            self._write_writing_policy_response(
+                dispatch_writing_policy("PUT", path)
             )
             return
         self.send_error(501, "Unsupported method (%r)" % self.command)
@@ -1484,11 +1484,11 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path
-        knowledge_response = dispatch_enterprise_knowledge(
+        writing_policy_response = dispatch_writing_policy(
             "DELETE", path, query=parsed.query
         )
-        if knowledge_response is not None:
-            self._write_knowledge_response(knowledge_response)
+        if writing_policy_response is not None:
+            self._write_writing_policy_response(writing_policy_response)
             return
         if path == "/provider/api-key":
             clear_local_api_key()

@@ -16,7 +16,7 @@ if HAS_PYDANTIC:
 
 class FakeProviderClient:
     def __init__(self):
-        self.enterprise_knowledge_block = None
+        self.writing_policy_block = None
 
     def rewrite(self, text, mode, trace_id, user_instruction="", style="default", focus="default", length="default"):
         return {
@@ -34,16 +34,16 @@ class FakeProviderClient:
         focus="default",
         length="default",
         selection_mode="selection",
-        enterprise_knowledge_block="",
+        writing_policy_block="",
     ):
-        self.enterprise_knowledge_block = enterprise_knowledge_block
+        self.writing_policy_block = writing_policy_block
         return {
             "rewrittenText": "[smart:{0}:{1}] {2}".format(action, selection_mode, text),
             "provider": "fake-provider",
         }
 
 
-class EmptyKnowledgeResult:
+class EmptyWritingPolicyResult:
     prompt_block = ""
     usage = {
         "applied": True,
@@ -59,9 +59,9 @@ class EmptyKnowledgeResult:
         return {}
 
 
-class FakeKnowledgeService:
+class FakeWritingPolicyService:
     def prepare(self, task_scope, source_parts):
-        return EmptyKnowledgeResult()
+        return EmptyWritingPolicyResult()
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for WordDocumentRequest parsing")
@@ -84,7 +84,7 @@ class RewriterModeTests(unittest.TestCase):
         )
         rewriter = WordRewriter(
             provider_client=FakeProviderClient(),
-            knowledge_service=FakeKnowledgeService(),
+            writing_policy_service=FakeWritingPolicyService(),
         )
 
         result = rewriter.rewrite(request, trace_id="trace-1", mode=request.options.rewrite_action)
@@ -111,7 +111,7 @@ class RewriterModeTests(unittest.TestCase):
         )
         rewriter = WordRewriter(
             provider_client=FakeProviderClient(),
-            knowledge_service=FakeKnowledgeService(),
+            writing_policy_service=FakeWritingPolicyService(),
         )
 
         result = rewriter.rewrite(request, trace_id="trace-2", mode=request.options.rewrite_action)
@@ -140,7 +140,7 @@ class RewriterModeTests(unittest.TestCase):
         provider = FakeProviderClient()
         rewriter = WordRewriter(
             provider_client=provider,
-            knowledge_service=FakeKnowledgeService(),
+            writing_policy_service=FakeWritingPolicyService(),
         )
 
         result = rewriter.smart_write(request, trace_id="trace-smart")
@@ -148,7 +148,7 @@ class RewriterModeTests(unittest.TestCase):
         self.assertEqual(result["rewriteMode"], "summarize")
         self.assertEqual(result["provider"], "fake-provider")
         self.assertTrue(result["rewrittenText"].startswith("[smart:summarize:selection]"))
-        self.assertEqual(provider.enterprise_knowledge_block, "")
+        self.assertEqual(provider.writing_policy_block, "")
 
 
 if __name__ == "__main__":

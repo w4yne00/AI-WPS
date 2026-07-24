@@ -21,15 +21,15 @@ import unittest
 from unittest.mock import patch
 import weakref
 
-from app.services.enterprise_knowledge.imports import (
+from app.services.writing_policy.imports import (
     CSV_MIME,
     IMPORT_COLUMNS,
     ImportPreviewStore,
     generate_csv_template,
 )
-from app.services.enterprise_knowledge.models import KnowledgeError, MAX_IMPORT_BYTES
-from app.services.enterprise_knowledge.service import EnterpriseKnowledgeService
-from app.services.enterprise_knowledge.store import EnterpriseKnowledgeStore
+from app.services.writing_policy.models import WritingPolicyError, MAX_IMPORT_BYTES
+from app.services.writing_policy.service import WritingPolicyService
+from app.services.writing_policy.store import WritingPolicyStore
 
 
 HAS_API_DEPS = (
@@ -41,17 +41,17 @@ if HAS_API_DEPS:
     from fastapi.testclient import TestClient
 
     from app import main as app_main
-    from app.api.enterprise_knowledge import (
+    from app.api.writing_policies import (
         ImportApplyRequest,
         ImportPreviewRequest,
-        KnowledgeItemRequest,
+        WritingPolicyItemRequest,
         apply_import,
-        backup_knowledge,
+        backup_writing_policy,
         create_item,
         delete_item,
         download_csv_template,
         download_xlsx_template,
-        export_knowledge_csv,
+        export_writing_policy_csv,
         get_diagnostics,
         get_summary,
         list_items,
@@ -107,19 +107,19 @@ def import_csv_bytes(rows):
 
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
-class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
+class WritingPolicyDirectRouteTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / "enterprise-knowledge.db"
-        self.store = EnterpriseKnowledgeStore(self.db_path)
-        self.service = EnterpriseKnowledgeService(self.store)
+        self.db_path = Path(self.temp_dir.name) / "writing-policies.db"
+        self.store = WritingPolicyStore(self.db_path)
+        self.service = WritingPolicyService(self.store)
         self.preview_store = ImportPreviewStore()
         self.service_patch = patch(
-            "app.api.enterprise_knowledge.get_enterprise_knowledge_service",
+            "app.api.writing_policies.get_writing_policy_service",
             return_value=self.service,
         )
         self.preview_patch = patch(
-            "app.api.enterprise_knowledge.DEFAULT_IMPORT_PREVIEW_STORE",
+            "app.api.writing_policies.DEFAULT_IMPORT_PREVIEW_STORE",
             self.preview_store,
         )
         self.service_patch.start()
@@ -131,9 +131,9 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_crud_list_query_summary_and_stable_item_fields(self):
-        created = create_item(KnowledgeItemRequest(**term_payload()))
+        created = create_item(WritingPolicyItemRequest(**term_payload()))
         item = created["data"]["item"]
-        self.assertEqual(created["taskType"], "enterprise.knowledge")
+        self.assertEqual(created["taskType"], "writing_policy")
         self.assertTrue(created["traceId"])
         self.assertEqual(
             set(item),
@@ -158,7 +158,7 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         listed = list_items(scope="global", item_type="term", query="网管")
         missing = list_items(scope="global", item_type="term", query="不存在")
         updated = update_item(
-            item["id"], KnowledgeItemRequest(note="更新备注", enabled=False)
+            item["id"], WritingPolicyItemRequest(note="更新备注", enabled=False)
         )
         summary = get_summary()
         deleted = delete_item(item["id"])
@@ -185,7 +185,7 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
             size_bytes=3,
             content_base64="YWJj",
         )
-        item = KnowledgeItemRequest(preferred_text="标准名称")
+        item = WritingPolicyItemRequest(preferred_text="标准名称")
         apply_request = ImportApplyRequest(
             preview_token="token",
             accepted_conflict_rows=[{"rowNumber": 2, "decision": "skip"}],
@@ -208,11 +208,11 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         )
         self.assertEqual(
             csv_response.headers["content-disposition"],
-            'attachment; filename="enterprise-knowledge-import-template.csv"',
+            'attachment; filename="writing-policies-import-template.csv"',
         )
         self.assertEqual(
             xlsx_response.headers["content-disposition"],
-            'attachment; filename="enterprise-knowledge-import-template.xlsx"',
+            'attachment; filename="writing-policies-import-template.xlsx"',
         )
         self.assertEqual(int(csv_response.headers["content-length"]), len(csv_response.body))
         self.assertEqual(int(xlsx_response.headers["content-length"]), len(xlsx_response.body))
@@ -227,7 +227,7 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         )
         call_order = []
 
-        from app.services.enterprise_knowledge.imports import (
+        from app.services.writing_policy.imports import (
             build_import_preview as real_build,
             parse_import_file as real_parse,
             validate_import_rows as real_validate,
@@ -245,9 +245,9 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
             call_order.append("build")
             return real_build(*args, **kwargs)
 
-        with patch("app.api.enterprise_knowledge.parse_import_file", tracked_parse), patch(
-            "app.api.enterprise_knowledge.validate_import_rows", tracked_validate
-        ), patch("app.api.enterprise_knowledge.build_import_preview", tracked_build):
+        with patch("app.api.writing_policies.parse_import_file", tracked_parse), patch(
+            "app.api.writing_policies.validate_import_rows", tracked_validate
+        ), patch("app.api.writing_policies.build_import_preview", tracked_build):
             preview = preview_import(request)
 
         token = preview["data"]["previewToken"]
@@ -311,9 +311,9 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         self.store.create_item(style_payload())
         self.service.prepare("word.smart_write", ["卫星网管平台汇报"])
 
-        exported = export_knowledge_csv(scope="global")
-        scoped_export = export_knowledge_csv(scope="word.smart_write")
-        backup = backup_knowledge()
+        exported = export_writing_policy_csv(scope="global")
+        scoped_export = export_writing_policy_csv(scope="word.smart_write")
+        backup = backup_writing_policy()
         diagnostics = get_diagnostics()
 
         self.assertIn("卫星互联网运营管理平台".encode("utf-8"), exported.body)
@@ -324,22 +324,22 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         )
         self.assertEqual(
             exported.headers["content-disposition"],
-            'attachment; filename="enterprise-knowledge-export.csv"',
+            'attachment; filename="writing-policies-export.csv"',
         )
         self.assertEqual(backup.body[:16], b"SQLite format 3\x00")
         self.assertEqual(
             backup.headers["content-disposition"],
-            'attachment; filename="enterprise-knowledge-backup.db"',
+            'attachment; filename="writing-policies-backup.db"',
         )
         self.assertEqual(backup.headers["content-type"], "application/vnd.sqlite3")
         self.assertEqual(int(backup.headers["content-length"]), len(backup.body))
-        self.assertTrue(diagnostics["data"]["knowledgeApplied"])
+        self.assertTrue(diagnostics["data"]["writingPolicyApplied"])
         self.assertNotIn("卫星网管平台汇报", str(diagnostics))
         snapshot_path = Path(self.temp_dir.name) / "downloaded-backup.db"
         snapshot_path.write_bytes(backup.body)
         with sqlite3.connect(str(snapshot_path)) as connection:
             self.assertEqual(
-                connection.execute("SELECT COUNT(*) FROM knowledge_terms").fetchone()[0],
+                connection.execute("SELECT COUNT(*) FROM writing_policy_terms").fetchone()[0],
                 1,
             )
 
@@ -400,7 +400,7 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         expiring_store = ImportPreviewStore(clock=lambda: now[0], ttl_seconds=600)
         content = generate_csv_template()
         with patch(
-            "app.api.enterprise_knowledge.DEFAULT_IMPORT_PREVIEW_STORE", expiring_store
+            "app.api.writing_policies.DEFAULT_IMPORT_PREVIEW_STORE", expiring_store
         ):
             preview = preview_import(
                 ImportPreviewRequest(
@@ -422,20 +422,20 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
         self.assertEqual(raised.exception.status_code, 404)
         self.assertEqual(raised.exception.code, "IMPORT_PREVIEW_EXPIRED")
 
-    def test_knowledge_and_storage_errors_map_without_leaking_sensitive_details(self):
+    def test_writing_policy_and_storage_errors_map_without_leaking_sensitive_details(self):
         cases = (
-            (KnowledgeError("knowledge_item_not_found", "missing"), 404),
-            (KnowledgeError("term_text_conflict", "duplicate"), 409),
-            (KnowledgeError("knowledge_data_corrupt", "/secret/db corrupt"), 503),
-            (KnowledgeError("knowledge_store_unavailable", "/secret/db denied"), 503),
-            (KnowledgeError("unexpected_rule_failure", "/secret/raw source"), 400),
+            (WritingPolicyError("writing_policy_item_not_found", "missing"), 404),
+            (WritingPolicyError("term_text_conflict", "duplicate"), 409),
+            (WritingPolicyError("writing_policy_data_corrupt", "/secret/db corrupt"), 503),
+            (WritingPolicyError("writing_policy_store_unavailable", "/secret/db denied"), 503),
+            (WritingPolicyError("unexpected_rule_failure", "/secret/raw source"), 400),
             (OSError("/secret/db I/O failure"), 503),
         )
         for error, status_code in cases:
             failing_store = SimpleNamespace(summary=lambda error=error: (_ for _ in ()).throw(error))
             failing_service = SimpleNamespace(store=failing_store)
             with self.subTest(error=type(error).__name__, status=status_code), patch(
-                "app.api.enterprise_knowledge.get_enterprise_knowledge_service",
+                "app.api.writing_policies.get_writing_policy_service",
                 return_value=failing_service,
             ):
                 with self.assertRaises(AdapterError) as raised:
@@ -446,18 +446,18 @@ class EnterpriseKnowledgeDirectRouteTests(unittest.TestCase):
 
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
-class EnterpriseKnowledgeHttpTests(unittest.TestCase):
+class WritingPolicyHttpTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / "http-knowledge.db"
-        self.service = EnterpriseKnowledgeService(EnterpriseKnowledgeStore(self.db_path))
+        self.db_path = Path(self.temp_dir.name) / "http-writing_policies.db"
+        self.service = WritingPolicyService(WritingPolicyStore(self.db_path))
         self.preview_store = ImportPreviewStore()
         self.service_patch = patch(
-            "app.api.enterprise_knowledge.get_enterprise_knowledge_service",
+            "app.api.writing_policies.get_writing_policy_service",
             return_value=self.service,
         )
         self.preview_patch = patch(
-            "app.api.enterprise_knowledge.DEFAULT_IMPORT_PREVIEW_STORE",
+            "app.api.writing_policies.DEFAULT_IMPORT_PREVIEW_STORE",
             self.preview_store,
         )
         self.service_patch.start()
@@ -471,10 +471,10 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
 
     def test_openapi_uses_camel_case_item_id_path_parameter(self):
         schema = app.openapi()
-        item_path = schema["paths"]["/enterprise-knowledge/items/{itemId}"]
+        item_path = schema["paths"]["/writing-policies/items/{itemId}"]
 
         self.assertNotIn(
-            "/enterprise-knowledge/items/{item_id}", schema["paths"]
+            "/writing-policies/items/{item_id}", schema["paths"]
         )
         for method in ("patch", "delete"):
             path_parameters = [
@@ -487,24 +487,24 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
             )
 
     def test_testclient_crud_query_binary_and_error_envelopes(self):
-        created = self.client.post("/enterprise-knowledge/items", json=term_payload())
+        created = self.client.post("/writing-policies/items", json=term_payload())
         self.assertEqual(created.status_code, 200)
         item_id = created.json()["data"]["item"]["id"]
 
         listed = self.client.get(
-            "/enterprise-knowledge/items",
+            "/writing-policies/items",
             params={"scope": "global", "type": "term", "query": "网管"},
         )
         updated = self.client.patch(
-            "/enterprise-knowledge/items/%s" % item_id,
+            "/writing-policies/items/%s" % item_id,
             json={"note": "HTTP 更新"},
         )
         exported = self.client.get(
-            "/enterprise-knowledge/export.csv", params={"scope": "global"}
+            "/writing-policies/export.csv", params={"scope": "global"}
         )
-        backup = self.client.get("/enterprise-knowledge/backup")
-        deleted = self.client.delete("/enterprise-knowledge/items/%s" % item_id)
-        missing = self.client.delete("/enterprise-knowledge/items/%s" % item_id)
+        backup = self.client.get("/writing-policies/backup")
+        deleted = self.client.delete("/writing-policies/items/%s" % item_id)
+        missing = self.client.delete("/writing-policies/items/%s" % item_id)
 
         self.assertEqual(listed.json()["data"]["count"], 1)
         self.assertEqual(updated.json()["data"]["item"]["note"], "HTTP 更新")
@@ -512,13 +512,13 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         self.assertEqual(backup.content[:16], b"SQLite format 3\x00")
         self.assertTrue(deleted.json()["data"]["deleted"])
         self.assertEqual(missing.status_code, 404)
-        self.assertEqual(missing.json()["errors"][0]["code"], "KNOWLEDGE_ITEM_NOT_FOUND")
-        self.assertEqual(missing.json()["taskType"], "enterprise.knowledge")
+        self.assertEqual(missing.json()["errors"][0]["code"], "WRITING_POLICY_ITEM_NOT_FOUND")
+        self.assertEqual(missing.json()["taskType"], "writing_policy")
 
     def test_testclient_preview_apply_templates_diagnostics_and_conflict(self):
         content = generate_csv_template()
         preview = self.client.post(
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             json={
                 "fileName": "terms.csv",
                 "mimeType": CSV_MIME,
@@ -527,7 +527,7 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
             },
         )
         applied = self.client.post(
-            "/enterprise-knowledge/imports/apply",
+            "/writing-policies/imports/apply",
             json={
                 "previewToken": preview.json()["data"]["previewToken"],
                 "acceptedConflictRows": [],
@@ -536,51 +536,51 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
 
         self.assertEqual(preview.status_code, 200)
         self.assertEqual(applied.status_code, 200)
-        self.assertEqual(self.client.get("/enterprise-knowledge/summary").status_code, 200)
-        self.assertEqual(self.client.get("/enterprise-knowledge/diagnostics").status_code, 200)
+        self.assertEqual(self.client.get("/writing-policies/summary").status_code, 200)
+        self.assertEqual(self.client.get("/writing-policies/diagnostics").status_code, 200)
         for path, suffix in (
-            ("/enterprise-knowledge/import-template.csv", ".csv"),
-            ("/enterprise-knowledge/import-template.xlsx", ".xlsx"),
+            ("/writing-policies/import-template.csv", ".csv"),
+            ("/writing-policies/import-template.xlsx", ".xlsx"),
         ):
             response = self.client.get(path)
             self.assertEqual(response.status_code, 200)
-            self.assertIn("filename=\"enterprise-knowledge-import-template%s\"" % suffix, response.headers["content-disposition"])
+            self.assertIn("filename=\"writing-policies-import-template%s\"" % suffix, response.headers["content-disposition"])
 
     def test_testclient_maps_unique_conflict_and_storage_failure(self):
-        first = self.client.post("/enterprise-knowledge/items", json=term_payload())
+        first = self.client.post("/writing-policies/items", json=term_payload())
         duplicate = self.client.post(
-            "/enterprise-knowledge/items",
+            "/writing-policies/items",
             json=term_payload("另一标准", ["卫星网管平台"]),
         )
         failing_store = SimpleNamespace(
             summary=lambda: (_ for _ in ()).throw(
-                KnowledgeError("knowledge_data_corrupt", "/field/secret.db")
+                WritingPolicyError("writing_policy_data_corrupt", "/field/secret.db")
             )
         )
         with patch(
-            "app.api.enterprise_knowledge.get_enterprise_knowledge_service",
+            "app.api.writing_policies.get_writing_policy_service",
             return_value=SimpleNamespace(store=failing_store),
         ):
-            unavailable = self.client.get("/enterprise-knowledge/summary")
+            unavailable = self.client.get("/writing-policies/summary")
 
         self.assertEqual(first.status_code, 200)
         self.assertEqual(duplicate.status_code, 409)
         self.assertEqual(duplicate.json()["errors"][0]["code"], "TERM_TEXT_CONFLICT")
         self.assertEqual(unavailable.status_code, 503)
         self.assertEqual(
-            unavailable.json()["errors"][0]["code"], "KNOWLEDGE_DATA_CORRUPT"
+            unavailable.json()["errors"][0]["code"], "WRITING_POLICY_DATA_CORRUPT"
         )
         self.assertNotIn("/field", json.dumps(unavailable.json(), ensure_ascii=False))
 
     def test_validation_is_400_and_preview_body_limit_is_path_specific(self):
-        invalid = self.client.post("/enterprise-knowledge/imports/preview", json={})
+        invalid = self.client.post("/writing-policies/imports/preview", json={})
         oversized = self.client.post(
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             content=b"{}",
             headers={"Content-Type": "application/json", "Content-Length": str(7 * 1024 * 1024 + 1)},
         )
         other_path = self.client.post(
-            "/enterprise-knowledge/items",
+            "/writing-policies/items",
             content=b"{}",
             headers={"Content-Type": "application/json", "Content-Length": str(7 * 1024 * 1024 + 1)},
         )
@@ -600,7 +600,7 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
 
     def test_preview_body_limit_checks_actual_body_when_length_is_forged(self):
         response = self.client.post(
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             content=b"x" * (7 * 1024 * 1024 + 1),
             headers={"Content-Type": "application/json", "Content-Length": "2"},
         )
@@ -610,7 +610,7 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         self.assertEqual(
             payload["errors"][0]["code"], "IMPORT_REQUEST_TOO_LARGE"
         )
-        self.assertEqual(payload["taskType"], "enterprise.knowledge")
+        self.assertEqual(payload["taskType"], "writing_policy")
         self.assertEqual(payload["traceId"], response.headers["X-Trace-Id"])
 
     def test_asgi_body_limiter_preflights_overflow_before_downstream_response(self):
@@ -647,13 +647,13 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         scope = {
             "type": "http",
             "method": "POST",
-            "path": "/enterprise-knowledge/imports/preview",
+            "path": "/writing-policies/imports/preview",
             "headers": [
                 (b"content-length", b"2"),
                 (b"x-trace-id", b"trace-chunked-limit"),
             ],
         }
-        middleware = app_main.EnterpriseKnowledgeImportBodyLimitMiddleware(
+        middleware = app_main.WritingPolicyImportBodyLimitMiddleware(
             downstream,
             max_bytes=7 * 1024 * 1024,
         )
@@ -675,7 +675,7 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         self.assertEqual(start["status"], 413)
         self.assertEqual(headers[b"x-trace-id"], b"trace-chunked-limit")
         self.assertEqual(payload["traceId"], "trace-chunked-limit")
-        self.assertEqual(payload["taskType"], "enterprise.knowledge")
+        self.assertEqual(payload["taskType"], "writing_policy")
         self.assertEqual(payload["errors"][0]["code"], "IMPORT_REQUEST_TOO_LARGE")
 
     def test_asgi_body_limiter_replays_early_disconnect_without_rejecting(self):
@@ -704,10 +704,10 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         scope = {
             "type": "http",
             "method": "POST",
-            "path": "/enterprise-knowledge/imports/preview",
+            "path": "/writing-policies/imports/preview",
             "headers": [(b"content-length", str(8 * 1024 * 1024).encode("ascii"))],
         }
-        middleware = app_main.EnterpriseKnowledgeImportBodyLimitMiddleware(
+        middleware = app_main.WritingPolicyImportBodyLimitMiddleware(
             downstream,
             max_bytes=7 * 1024 * 1024,
         )
@@ -752,10 +752,10 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
                 scope = {
                     "type": "http",
                     "method": "POST",
-                    "path": "/enterprise-knowledge/imports/preview",
+                    "path": "/writing-policies/imports/preview",
                     "headers": content_length_headers,
                 }
-                middleware = app_main.EnterpriseKnowledgeImportBodyLimitMiddleware(
+                middleware = app_main.WritingPolicyImportBodyLimitMiddleware(
                     downstream,
                     max_bytes=7 * 1024 * 1024,
                 )
@@ -817,10 +817,10 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         scope = {
             "type": "http",
             "method": "POST",
-            "path": "/enterprise-knowledge/imports/preview",
+            "path": "/writing-policies/imports/preview",
             "headers": [],
         }
-        middleware = app_main.EnterpriseKnowledgeImportBodyLimitMiddleware(
+        middleware = app_main.WritingPolicyImportBodyLimitMiddleware(
             downstream,
             max_bytes=7 * 1024 * 1024,
         )
@@ -837,7 +837,7 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
     def test_invalid_content_length_does_not_create_a_new_411_regression(self):
         content = generate_csv_template()
         response = self.client.post(
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             json={
                 "fileName": "terms.csv",
                 "mimeType": CSV_MIME,
@@ -850,7 +850,7 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
 
     def test_preview_body_limit_413_includes_cors_headers(self):
         response = self.client.post(
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             content=b"x" * (7 * 1024 * 1024 + 1),
             headers={
                 "Content-Type": "application/json",
@@ -863,9 +863,9 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         self.assertEqual(response.headers["access-control-allow-origin"], "*")
 
     def test_importing_app_does_not_initialize_default_or_field_database(self):
-        field_db = Path(self.temp_dir.name) / "field" / "enterprise-knowledge.db"
+        field_db = Path(self.temp_dir.name) / "field" / "writing-policies.db"
         environment = os.environ.copy()
-        environment["AI_WPS_ENTERPRISE_KNOWLEDGE_DB"] = str(field_db)
+        environment["AI_WPS_WRITING_POLICY_DB"] = str(field_db)
         result = subprocess.run(
             [
                 sys.executable,
@@ -885,18 +885,18 @@ class EnterpriseKnowledgeHttpTests(unittest.TestCase):
         self.assertFalse(field_db.exists())
 
 
-class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
+class WritingPolicyStandaloneTests(unittest.TestCase):
     def setUp(self):
         import standalone_adapter
 
         self.standalone = standalone_adapter
         self.temp_dir = TemporaryDirectory()
-        self.db_path = Path(self.temp_dir.name) / "standalone-knowledge.db"
-        self.service = EnterpriseKnowledgeService(EnterpriseKnowledgeStore(self.db_path))
+        self.db_path = Path(self.temp_dir.name) / "standalone-writing_policies.db"
+        self.service = WritingPolicyService(WritingPolicyStore(self.db_path))
         self.preview_store = ImportPreviewStore()
         self.service_patch = patch.object(
             self.standalone,
-            "get_enterprise_knowledge_service",
+            "get_writing_policy_service",
             return_value=self.service,
             create=True,
         )
@@ -915,7 +915,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def dispatch(self, method, path, payload=None, query="", body_size=None):
-        return self.standalone.dispatch_enterprise_knowledge(
+        return self.standalone.dispatch_writing_policy(
             method,
             path,
             query=query,
@@ -960,29 +960,29 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         return status, headers, json.loads(body.decode("utf-8"))
 
     def test_standalone_crud_summary_list_and_error_status_parity(self):
-        created = self.dispatch("POST", "/enterprise-knowledge/items", term_payload())
+        created = self.dispatch("POST", "/writing-policies/items", term_payload())
         item_id = created["body"]["data"]["item"]["id"]
         listed = self.dispatch(
             "GET",
-            "/enterprise-knowledge/items",
+            "/writing-policies/items",
             query="scope=global&type=term&query=%E7%BD%91%E7%AE%A1",
         )
         updated = self.dispatch(
             "PATCH",
-            "/enterprise-knowledge/items/%s" % item_id,
+            "/writing-policies/items/%s" % item_id,
             {"note": "独立适配器更新"},
         )
-        summary = self.dispatch("GET", "/enterprise-knowledge/summary")
+        summary = self.dispatch("GET", "/writing-policies/summary")
         duplicate = self.dispatch(
             "POST",
-            "/enterprise-knowledge/items",
+            "/writing-policies/items",
             term_payload("另一标准", ["卫星网管平台"]),
         )
-        deleted = self.dispatch("DELETE", "/enterprise-knowledge/items/%s" % item_id)
-        missing = self.dispatch("DELETE", "/enterprise-knowledge/items/%s" % item_id)
+        deleted = self.dispatch("DELETE", "/writing-policies/items/%s" % item_id)
+        missing = self.dispatch("DELETE", "/writing-policies/items/%s" % item_id)
 
         self.assertEqual(created["status"], 200)
-        self.assertEqual(created["body"]["taskType"], "enterprise.knowledge")
+        self.assertEqual(created["body"]["taskType"], "writing_policy")
         self.assertTrue(created["body"]["traceId"])
         self.assertEqual(
             created["headers"]["X-Trace-Id"], created["body"]["traceId"]
@@ -1005,34 +1005,34 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         }
         preview = self.dispatch(
             "POST",
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             preview_payload,
             body_size=len(json.dumps(preview_payload).encode("utf-8")),
         )
         token = preview["body"]["data"]["previewToken"]
         applied = self.dispatch(
             "POST",
-            "/enterprise-knowledge/imports/apply",
+            "/writing-policies/imports/apply",
             {"previewToken": token, "acceptedConflictRows": []},
         )
         reused = self.dispatch(
             "POST",
-            "/enterprise-knowledge/imports/apply",
+            "/writing-policies/imports/apply",
             {"previewToken": token, "acceptedConflictRows": []},
         )
         invalid_base64 = self.dispatch(
             "POST",
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             dict(preview_payload, contentBase64="not base64"),
         )
         size_mismatch = self.dispatch(
             "POST",
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             dict(preview_payload, sizeBytes=len(content) + 1),
         )
         oversized_body = self.dispatch(
             "POST",
-            "/enterprise-knowledge/imports/preview",
+            "/writing-policies/imports/preview",
             preview_payload,
             body_size=7 * 1024 * 1024 + 1,
         )
@@ -1049,18 +1049,18 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         )
 
     def test_standalone_templates_export_backup_and_diagnostics_are_binary_safe(self):
-        self.dispatch("POST", "/enterprise-knowledge/items", term_payload())
+        self.dispatch("POST", "/writing-policies/items", term_payload())
         csv_template = self.dispatch(
-            "GET", "/enterprise-knowledge/import-template.csv"
+            "GET", "/writing-policies/import-template.csv"
         )
         xlsx_template = self.dispatch(
-            "GET", "/enterprise-knowledge/import-template.xlsx"
+            "GET", "/writing-policies/import-template.xlsx"
         )
         exported = self.dispatch(
-            "GET", "/enterprise-knowledge/export.csv", query="scope=global"
+            "GET", "/writing-policies/export.csv", query="scope=global"
         )
-        backup = self.dispatch("GET", "/enterprise-knowledge/backup")
-        diagnostics = self.dispatch("GET", "/enterprise-knowledge/diagnostics")
+        backup = self.dispatch("GET", "/writing-policies/backup")
+        diagnostics = self.dispatch("GET", "/writing-policies/diagnostics")
 
         for response in (csv_template, xlsx_template, exported, backup):
             self.assertEqual(response["status"], 200)
@@ -1073,22 +1073,22 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         self.assertTrue(xlsx_template["content"].startswith(b"PK"))
         self.assertTrue(backup["content"].startswith(b"SQLite format 3\x00"))
         self.assertEqual(diagnostics["status"], 200)
-        self.assertEqual(diagnostics["body"]["taskType"], "enterprise.knowledge")
+        self.assertEqual(diagnostics["body"]["taskType"], "writing_policy")
 
     def test_standalone_dispatch_ignores_unrelated_routes_and_hides_storage_paths(self):
         self.assertIsNone(self.dispatch("GET", "/health"))
-        self.assertIsNone(self.dispatch("GET", "/enterprise-knowledge-legacy"))
+        self.assertIsNone(self.dispatch("GET", "/writing-policies-legacy"))
         failing_store = SimpleNamespace(
             summary=lambda: (_ for _ in ()).throw(
-                KnowledgeError("knowledge_data_corrupt", "/secret/field.db")
+                WritingPolicyError("writing_policy_data_corrupt", "/secret/field.db")
             )
         )
         with patch.object(
             self.standalone,
-            "get_enterprise_knowledge_service",
+            "get_writing_policy_service",
             return_value=SimpleNamespace(store=failing_store),
         ):
-            response = self.dispatch("GET", "/enterprise-knowledge/summary")
+            response = self.dispatch("GET", "/writing-policies/summary")
 
         self.assertEqual(response["status"], 503)
         self.assertEqual(
@@ -1098,9 +1098,9 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
 
     def test_standalone_known_wrong_method_is_405_and_unknown_path_is_404(self):
         wrong_method = self.dispatch(
-            "GET", "/enterprise-knowledge/imports/apply"
+            "GET", "/writing-policies/imports/apply"
         )
-        unknown = self.dispatch("GET", "/enterprise-knowledge/unknown")
+        unknown = self.dispatch("GET", "/writing-policies/unknown")
 
         self.assertEqual(wrong_method["status"], 405)
         self.assertEqual(wrong_method["headers"]["Allow"], "POST")
@@ -1134,7 +1134,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         handler.headers = {"Transfer-Encoding": "chunked"}
         handler.rfile = stream
 
-        body, rejection = handler._read_enterprise_preview_body()
+        body, rejection = handler._read_writing_policy_preview_body()
 
         self.assertIsNone(body)
         self.assertEqual(rejection["status"], 413)
@@ -1156,7 +1156,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         host, port = server.server_address
         try:
             connection = http.client.HTTPConnection(host, port, timeout=5)
-            connection.request("GET", "/enterprise-knowledge/import-template.csv")
+            connection.request("GET", "/writing-policies/import-template.csv")
             template = connection.getresponse()
             template_body = template.read()
             self.assertEqual(template.status, 200)
@@ -1164,7 +1164,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             self.assertEqual(template.getheader("Content-Length"), str(len(template_body)))
             self.assertEqual(
                 template.getheader("Content-Disposition"),
-                'attachment; filename="enterprise-knowledge-import-template.csv"',
+                'attachment; filename="writing-policies-import-template.csv"',
             )
             connection.close()
 
@@ -1172,14 +1172,14 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "POST",
-                "/enterprise-knowledge/items",
+                "/writing-policies/items",
                 body=item_body,
                 headers={"Content-Type": "application/json"},
             )
             created = connection.getresponse()
             created_payload = json.loads(created.read().decode("utf-8"))
             self.assertEqual(created.status, 200)
-            self.assertEqual(created_payload["taskType"], "enterprise.knowledge")
+            self.assertEqual(created_payload["taskType"], "writing_policy")
             self.assertEqual(
                 created.getheader("X-Trace-Id"), created_payload["traceId"]
             )
@@ -1189,7 +1189,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "PATCH",
-                "/enterprise-knowledge/items/%s" % item_id,
+                "/writing-policies/items/%s" % item_id,
                 body=b"{",
                 headers={"Content-Type": "application/json"},
             )
@@ -1199,7 +1199,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             )
             self.assertEqual(malformed_patch.status, 400)
             self.assertEqual(
-                malformed_patch_payload["taskType"], "enterprise.knowledge"
+                malformed_patch_payload["taskType"], "writing_policy"
             )
             self.assertEqual(
                 malformed_patch.getheader("X-Trace-Id"),
@@ -1214,7 +1214,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "PATCH",
-                "/enterprise-knowledge/items/%s" % item_id,
+                "/writing-policies/items/%s" % item_id,
                 body=update_body,
                 headers={"Content-Type": "application/json"},
             )
@@ -1231,7 +1231,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "GET",
-                "/enterprise-knowledge/items?scope=global&type=term",
+                "/writing-policies/items?scope=global&type=term",
             )
             listed = connection.getresponse()
             listed_payload = json.loads(listed.read().decode("utf-8"))
@@ -1246,7 +1246,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "POST",
-                "/enterprise-knowledge/items",
+                "/writing-policies/items",
                 body=b"{",
                 headers={"Content-Type": "application/json"},
             )
@@ -1254,7 +1254,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             malformed_payload = json.loads(malformed.read().decode("utf-8"))
             self.assertEqual(malformed.status, 400)
             self.assertEqual(
-                malformed_payload["taskType"], "enterprise.knowledge"
+                malformed_payload["taskType"], "writing_policy"
             )
             self.assertEqual(
                 malformed_payload["errors"][0]["code"],
@@ -1269,7 +1269,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "POST",
-                "/enterprise-knowledge/summary",
+                "/writing-policies/summary",
                 body=b"{",
                 headers={"Content-Type": "application/json"},
             )
@@ -1280,7 +1280,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             self.assertEqual(post_summary.status, 405)
             self.assertEqual(post_summary.getheader("Allow"), "GET")
             self.assertEqual(
-                post_summary_payload["taskType"], "enterprise.knowledge"
+                post_summary_payload["taskType"], "writing_policy"
             )
             self.assertEqual(
                 post_summary.getheader("X-Trace-Id"),
@@ -1294,7 +1294,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "POST",
-                "/enterprise-knowledge/items/%s" % item_id,
+                "/writing-policies/items/%s" % item_id,
                 body=b"{",
                 headers={"Content-Type": "application/json"},
             )
@@ -1302,7 +1302,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             post_item_payload = json.loads(post_item.read().decode("utf-8"))
             self.assertEqual(post_item.status, 405)
             self.assertEqual(post_item.getheader("Allow"), "PATCH, DELETE")
-            self.assertEqual(post_item_payload["taskType"], "enterprise.knowledge")
+            self.assertEqual(post_item_payload["taskType"], "writing_policy")
             self.assertEqual(
                 post_item.getheader("X-Trace-Id"), post_item_payload["traceId"]
             )
@@ -1311,7 +1311,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "PUT",
-                "/enterprise-knowledge/summary",
+                "/writing-policies/summary",
                 body=b"{",
                 headers={"Content-Type": "application/json"},
             )
@@ -1322,7 +1322,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             self.assertEqual(put_summary.status, 405)
             self.assertEqual(put_summary.getheader("Allow"), "GET")
             self.assertEqual(
-                put_summary_payload["taskType"], "enterprise.knowledge"
+                put_summary_payload["taskType"], "writing_policy"
             )
             self.assertEqual(
                 put_summary.getheader("X-Trace-Id"),
@@ -1335,17 +1335,17 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
 
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request("PUT", "/health", body=b"{}")
-            non_knowledge_put = connection.getresponse()
-            non_knowledge_put.read()
-            self.assertEqual(non_knowledge_put.status, 501)
-            self.assertIsNone(non_knowledge_put.getheader("X-Trace-Id"))
+            non_writing_policy_put = connection.getresponse()
+            non_writing_policy_put.read()
+            self.assertEqual(non_writing_policy_put.status, 501)
+            self.assertIsNone(non_writing_policy_put.getheader("X-Trace-Id"))
             self.assertIsNone(
-                non_knowledge_put.getheader("Access-Control-Allow-Origin")
+                non_writing_policy_put.getheader("Access-Control-Allow-Origin")
             )
             connection.close()
 
             connection = http.client.HTTPConnection(host, port, timeout=5)
-            connection.request("GET", "/enterprise-knowledge/imports/apply")
+            connection.request("GET", "/writing-policies/imports/apply")
             wrong_method = connection.getresponse()
             wrong_method_payload = json.loads(
                 wrong_method.read().decode("utf-8")
@@ -1359,7 +1359,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection.close()
 
             connection = http.client.HTTPConnection(host, port, timeout=5)
-            connection.request("GET", "/enterprise-knowledge/unknown")
+            connection.request("GET", "/writing-policies/unknown")
             unknown = connection.getresponse()
             unknown_payload = json.loads(unknown.read().decode("utf-8"))
             self.assertEqual(unknown.status, 404)
@@ -1372,7 +1372,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             connection = http.client.HTTPConnection(host, port, timeout=5)
             connection.request(
                 "POST",
-                "/enterprise-knowledge/imports/preview",
+                "/writing-policies/imports/preview",
                 body=b"{}",
                 headers={
                     "Content-Type": "application/json",
@@ -1411,8 +1411,8 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
         thread = threading.Thread(target=server.serve_forever, daemon=True)
         thread.start()
         host, port = server.server_address
-        preview_path = "/enterprise-knowledge/imports/preview"
-        items_path = "/enterprise-knowledge/items"
+        preview_path = "/writing-policies/imports/preview"
+        items_path = "/writing-policies/items"
 
         def request(method, path, headers=b"", body=b"", **kwargs):
             raw = (
@@ -1489,7 +1489,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
             self.assertEqual(status, 413)
             self.assertEqual(
                 payload["errors"][0]["code"],
-                "ENTERPRISE_JSON_REQUEST_TOO_LARGE",
+                "WRITING_POLICY_JSON_REQUEST_TOO_LARGE",
             )
 
             many_chunks = b"1\r\na\r\n" * 1025 + b"0\r\n\r\n"
@@ -1609,7 +1609,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
 
             with patch.object(
                 self.standalone,
-                "ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS",
+                "WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS",
                 0.1,
                 create=True,
             ):
@@ -1627,7 +1627,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
 
             with patch.object(
                 self.standalone,
-                "ENTERPRISE_KNOWLEDGE_BODY_READ_TIMEOUT_SECONDS",
+                "WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS",
                 0.12,
                 create=True,
             ):
@@ -1635,7 +1635,7 @@ class EnterpriseKnowledgeStandaloneTests(unittest.TestCase):
                 connection.settimeout(3)
                 try:
                     connection.sendall(
-                        b"POST /enterprise-knowledge/items HTTP/1.1\r\n"
+                        b"POST /writing-policies/items HTTP/1.1\r\n"
                         b"Host: 127.0.0.1\r\n"
                         b"Content-Length: 4\r\n\r\n"
                         b"{"

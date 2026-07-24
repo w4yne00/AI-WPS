@@ -180,18 +180,18 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("run/provider_api_keys", script)
         self.assertNotIn('copy_dir "$ADAPTER_SOURCE" "$ADAPTER_TARGET"', script)
 
-    def test_phase1_installer_preserves_enterprise_knowledge_database(self) -> None:
+    def test_phase1_installer_preserves_writing_policy_database(self) -> None:
         script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn("run/enterprise_knowledge.db", script)
-        self.assertIn("enterprise_knowledge.db.backup-*", script)
+        self.assertIn("run/writing_policies.db", script)
+        self.assertIn("writing_policies.db.backup-*", script)
         self.assertIn("preserve_adapter_runtime_config", script)
         self.assertIn("restore_adapter_runtime_config", script)
-        self.assertIn('[ -e "$knowledge_backup" ] || continue', script)
+        self.assertIn('[ -e "$writing_policy_backup" ] || continue', script)
 
-    def test_phase1_installer_restores_live_knowledge_files_after_replacement(self) -> None:
+    def test_phase1_installer_restores_live_writing_policy_files_after_replacement(self) -> None:
         installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
         )
@@ -201,9 +201,9 @@ class PackagingScriptTests(unittest.TestCase):
             adapter_target = Path(temp_dir) / "adapter-start-kit"
             run_dir = adapter_target / "run"
             run_dir.mkdir(parents=True)
-            (run_dir / "enterprise_knowledge.db").write_text("live-db", encoding="utf-8")
+            (run_dir / "writing_policies.db").write_text("live-db", encoding="utf-8")
             for index in range(1, 6):
-                (run_dir / f"enterprise_knowledge.db.backup-{index}").write_text(
+                (run_dir / f"writing_policies.db.backup-{index}").write_text(
                     f"backup-{index}", encoding="utf-8"
                 )
 
@@ -227,32 +227,32 @@ class PackagingScriptTests(unittest.TestCase):
 
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(
-                (run_dir / "enterprise_knowledge.db").read_text(encoding="utf-8"),
+                (run_dir / "writing_policies.db").read_text(encoding="utf-8"),
                 "live-db",
             )
-            restored_backups = sorted(run_dir.glob("enterprise_knowledge.db.backup-*"))
+            restored_backups = sorted(run_dir.glob("writing_policies.db.backup-*"))
             self.assertEqual(
                 [path.name for path in restored_backups],
                 [
-                    "enterprise_knowledge.db.backup-3",
-                    "enterprise_knowledge.db.backup-4",
-                    "enterprise_knowledge.db.backup-5",
+                    "writing_policies.db.backup-3",
+                    "writing_policies.db.backup-4",
+                    "writing_policies.db.backup-5",
                 ],
             )
 
-    def test_phase1_delivery_generates_knowledge_templates_and_includes_guide(self) -> None:
+    def test_phase1_delivery_generates_writing_policy_templates_and_includes_guide(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
-        guide = ROOT / "docs/operations/enterprise-knowledge-management.md"
+        guide = ROOT / "docs/operations/writing-policy-library.md"
 
         self.assertIn("docs/import-templates", script)
         self.assertIn("generate_csv_template", script)
         self.assertIn("generate_xlsx_template", script)
-        self.assertIn("enterprise-knowledge-import-template.csv", script)
-        self.assertIn("enterprise-knowledge-import-template.xlsx", script)
-        self.assertIn("enterprise-knowledge-management.md", script)
-        self.assertTrue(guide.is_file(), "missing enterprise knowledge operations guide")
+        self.assertIn("writing-policies-import-template.csv", script)
+        self.assertIn("writing-policies-import-template.xlsx", script)
+        self.assertIn("writing-policy-library.md", script)
+        self.assertTrue(guide.is_file(), "missing writing policy operations guide")
 
         text = guide.read_text(encoding="utf-8")
         for required_text in [

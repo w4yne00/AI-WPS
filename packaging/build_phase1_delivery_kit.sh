@@ -34,7 +34,7 @@ cp "$ROOT_DIR/docs/operations/dify-format-review-workflow.md" "$TMP_DIR/docs/ope
 cp "$ROOT_DIR/docs/operations/dify-excel-analysis-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-ppt-slide-assistant-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/workflow-profile-management.md" "$TMP_DIR/docs/operations/"
-cp "$ROOT_DIR/docs/operations/enterprise-knowledge-management.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/writing-policy-library.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/prompt-templates/excel-smart-analysis-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/ppt-smart-summary-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 
@@ -42,16 +42,16 @@ PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" - "$TMP_DIR/docs/import-tem
 from pathlib import Path
 import sys
 
-from app.services.enterprise_knowledge.imports import (
+from app.services.writing_policy.imports import (
     generate_csv_template,
     generate_xlsx_template,
 )
 
 output_dir = Path(sys.argv[1])
-(output_dir / "enterprise-knowledge-import-template.csv").write_bytes(
+(output_dir / "writing-policies-import-template.csv").write_bytes(
     generate_csv_template()
 )
-(output_dir / "enterprise-knowledge-import-template.xlsx").write_bytes(
+(output_dir / "writing-policies-import-template.xlsx").write_bytes(
     generate_xlsx_template()
 )
 PY

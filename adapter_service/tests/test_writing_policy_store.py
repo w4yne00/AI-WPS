@@ -8,8 +8,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app.services.enterprise_knowledge.models import KnowledgeError
-from app.services.enterprise_knowledge.store import EnterpriseKnowledgeStore
+from app.services.writing_policy.models import WritingPolicyError
+from app.services.writing_policy.store import WritingPolicyStore
 
 
 def term_payload(preferred_text, aliases=None, forbidden=None, **overrides):
@@ -48,14 +48,14 @@ def style_payload(scope, name, **overrides):
     return payload
 
 
-class EnterpriseKnowledgeStoreTests(unittest.TestCase):
+class WritingPolicyStoreTests(unittest.TestCase):
     def make_store(self, root):
-        return EnterpriseKnowledgeStore(Path(root) / "enterprise_knowledge.db")
+        return WritingPolicyStore(Path(root) / "writing_policies.db")
 
     def test_initializes_three_tables_and_json_list_columns(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
             store.create_item(
                 term_payload(
                     "卫星互联网运营管理平台",
@@ -73,11 +73,11 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                 }
                 row = connection.execute(
                     "SELECT aliases, forbidden_variants, context_keywords "
-                    "FROM knowledge_terms"
+                    "FROM writing_policy_terms"
                 ).fetchone()
 
             self.assertTrue(
-                {"knowledge_terms", "style_rules", "knowledge_imports"}.issubset(
+                {"writing_policy_terms", "style_rules", "writing_policy_imports"}.issubset(
                     table_names
                 )
             )
@@ -88,8 +88,8 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
     def test_store_enforces_private_permissions_for_new_and_existing_paths(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            new_db_path = root / "new-runtime" / "enterprise_knowledge.db"
-            EnterpriseKnowledgeStore(new_db_path)
+            new_db_path = root / "new-runtime" / "writing_policies.db"
+            WritingPolicyStore(new_db_path)
 
             self.assertEqual(
                 stat.S_IMODE(new_db_path.parent.stat().st_mode), 0o700
@@ -98,12 +98,12 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
             existing_parent = root / "existing-runtime"
             existing_parent.mkdir(mode=0o755)
-            existing_db_path = existing_parent / "enterprise_knowledge.db"
+            existing_db_path = existing_parent / "writing_policies.db"
             sqlite3.connect(str(existing_db_path)).close()
             existing_parent.chmod(0o755)
             existing_db_path.chmod(0o644)
 
-            EnterpriseKnowledgeStore(existing_db_path)
+            WritingPolicyStore(existing_db_path)
 
             self.assertEqual(
                 stat.S_IMODE(existing_parent.stat().st_mode), 0o700
@@ -112,8 +112,8 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
     def test_corrupt_json_list_columns_raise_identifiable_error(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
             created = store.create_item(term_payload("标准名称", ["旧名称"]))
 
             corrupt_values = ("{not-json", '{"value":"not-a-list"}', '["有效",1]')
@@ -121,13 +121,13 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                 with self.subTest(corrupt_value=corrupt_value):
                     with sqlite3.connect(str(db_path)) as connection:
                         connection.execute(
-                            "UPDATE knowledge_terms SET aliases = ? WHERE id = ?",
+                            "UPDATE writing_policy_terms SET aliases = ? WHERE id = ?",
                             (corrupt_value, created["id"]),
                         )
-                    with self.assertRaises(KnowledgeError) as raised:
+                    with self.assertRaises(WritingPolicyError) as raised:
                         store.get_item(created["id"])
                     self.assertEqual(
-                        raised.exception.code, "knowledge_data_corrupt"
+                        raised.exception.code, "writing_policy_data_corrupt"
                     )
 
     def test_term_crud_preserves_id_and_uses_utc_z_timestamps(self):
@@ -159,9 +159,9 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
             deleted = store.delete_item(created["id"])
             self.assertEqual(deleted["id"], created["id"])
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.get_item(created["id"])
-            self.assertEqual(raised.exception.code, "knowledge_item_not_found")
+            self.assertEqual(raised.exception.code, "writing_policy_item_not_found")
 
     def test_term_tokens_conflict_across_preferred_aliases_and_forbidden_variants(self):
         with TemporaryDirectory() as tmp:
@@ -183,7 +183,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             )
             for payload in conflicting_payloads:
                 with self.subTest(payload=payload):
-                    with self.assertRaises(KnowledgeError) as raised:
+                    with self.assertRaises(WritingPolicyError) as raised:
                         store.create_item(payload)
                     self.assertEqual(raised.exception.code, "term_text_conflict")
 
@@ -198,7 +198,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             with self.subTest(payload=payload):
                 with TemporaryDirectory() as tmp:
                     store = self.make_store(tmp)
-                    with self.assertRaises(KnowledgeError) as raised:
+                    with self.assertRaises(WritingPolicyError) as raised:
                         store.create_item(payload)
                     self.assertEqual(raised.exception.code, "term_text_conflict")
 
@@ -207,7 +207,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             store = self.make_store(tmp)
             created = store.create_item(term_payload("标准名称", ["旧名称"]))
 
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.update_item(
                     created["id"],
                     {"forbiddenVariants": [" 旧名称 "]},
@@ -217,10 +217,10 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
     def test_atomic_apply_rejects_internal_overlap_and_rolls_back_import(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
 
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.apply_items_atomically(
                     [
                         term_payload("可写入名称"),
@@ -232,7 +232,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(store.summary()["totalCount"], 0)
             with sqlite3.connect(str(db_path)) as connection:
                 import_count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_imports"
+                    "SELECT COUNT(*) FROM writing_policy_imports"
                 ).fetchone()[0]
             self.assertEqual(import_count, 0)
 
@@ -244,22 +244,22 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
             unchanged = store.update_item(first["id"], {"note": "更新备注"})
             self.assertEqual(unchanged["preferredText"], "标准名称")
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.update_item(second["id"], {"aliases": [" 旧名称 "]})
             self.assertEqual(raised.exception.code, "term_text_conflict")
 
     def test_terms_are_global_only_and_unknown_scopes_are_rejected(self):
         with TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
-            with self.assertRaises(KnowledgeError) as term_error:
+            with self.assertRaises(WritingPolicyError) as term_error:
                 store.create_item(
                     term_payload("任务术语", scope="word.smart_write")
                 )
-            self.assertEqual(term_error.exception.code, "invalid_knowledge_scope")
+            self.assertEqual(term_error.exception.code, "invalid_writing_policy_scope")
 
-            with self.assertRaises(KnowledgeError) as style_error:
+            with self.assertRaises(WritingPolicyError) as style_error:
                 store.create_item(style_payload("word.unknown", "未知范围规则"))
-            self.assertEqual(style_error.exception.code, "invalid_knowledge_scope")
+            self.assertEqual(style_error.exception.code, "invalid_writing_policy_scope")
 
     def test_style_name_is_unique_within_scope_but_task_can_override_global(self):
         with TemporaryDirectory() as tmp:
@@ -270,7 +270,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             )
 
             self.assertNotEqual(global_style["id"], task_style["id"])
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.create_item(style_payload("word.smart_write", "  结论先行  "))
             self.assertEqual(raised.exception.code, "style_name_conflict")
 
@@ -324,12 +324,12 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
     def test_apply_items_rolls_back_every_row_and_import_record_on_failure(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
             valid = term_payload("标准名称", ["旧名称"])
             conflict = term_payload("旧名称")
 
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.apply_items_atomically(
                     [valid, conflict],
                     {"fileName": "terms.csv", "format": "csv", "rowCount": 2},
@@ -338,7 +338,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(store.summary()["totalCount"], 0)
             with sqlite3.connect(str(db_path)) as connection:
                 import_count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_imports"
+                    "SELECT COUNT(*) FROM writing_policy_imports"
                 ).fetchone()[0]
             self.assertEqual(import_count, 0)
 
@@ -376,8 +376,8 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
 
     def test_atomic_apply_uses_loaded_owners_for_batch_conflict_and_rolls_back(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
             store.create_item(term_payload("已有标准名称", ["已有别名"]))
             original_loader = store._load_term_token_owners
 
@@ -386,7 +386,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                 "_load_term_token_owners",
                 wraps=original_loader,
             ) as load_owners:
-                with self.assertRaises(KnowledgeError) as raised:
+                with self.assertRaises(WritingPolicyError) as raised:
                     store.apply_items_atomically(
                         [
                             term_payload("批次名称一", ["批次共享别名"]),
@@ -404,20 +404,20 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(store.summary()["termCount"], 1)
             with sqlite3.connect(str(db_path)) as connection:
                 import_count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_imports"
+                    "SELECT COUNT(*) FROM writing_policy_imports"
                 ).fetchone()[0]
             self.assertEqual(import_count, 0)
 
     def test_apply_items_and_record_import_share_stable_transaction_contracts(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
             result = store.apply_items_atomically(
                 [
                     term_payload("标准名称"),
                     style_payload("global", "结论先行"),
                 ],
-                {"fileName": "knowledge.csv", "format": "csv", "rowCount": 2},
+                {"fileName": "writing_policy.csv", "format": "csv", "rowCount": 2},
             )
             manual_import = store.record_import(
                 {"fileName": "manual.csv", "format": "csv", "rowCount": 4},
@@ -431,7 +431,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertTrue(manual_import["importedAt"].endswith("Z"))
             with sqlite3.connect(str(db_path)) as connection:
                 import_count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_imports"
+                    "SELECT COUNT(*) FROM writing_policy_imports"
                 ).fetchone()[0]
             self.assertEqual(import_count, 2)
 
@@ -478,13 +478,13 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                 )
                 self.assertEqual(result["createdCount"], 1)
 
-            backups = list(root.glob("enterprise_knowledge.db.backup-*"))
+            backups = list(root.glob("writing_policies.db.backup-*"))
             self.assertEqual(len(backups), 3)
             self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in backups))
             for backup in backups:
                 with sqlite3.connect(str(backup)) as connection:
                     count = connection.execute(
-                        "SELECT COUNT(*) FROM knowledge_terms"
+                        "SELECT COUNT(*) FROM writing_policy_terms"
                     ).fetchone()[0]
                 self.assertLess(count, 5)
 
@@ -503,7 +503,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             root = Path(tmp)
             store = self.make_store(tmp)
             with patch(
-                "app.services.enterprise_knowledge.store.datetime",
+                "app.services.writing_policy.store.datetime",
                 FrozenDatetime,
             ):
                 store.apply_preview(
@@ -515,11 +515,11 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                     {"fileName": "two.csv", "format": "csv", "rowCount": 1},
                 )
 
-            backups = sorted(root.glob("enterprise_knowledge.db.backup-*"))
+            backups = sorted(root.glob("writing_policies.db.backup-*"))
             self.assertEqual(len(backups), 2)
             with sqlite3.connect(str(backups[-1])) as connection:
                 count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_terms"
+                    "SELECT COUNT(*) FROM writing_policy_terms"
                 ).fetchone()[0]
             self.assertEqual(count, 1)
 
@@ -536,17 +536,17 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(result["createdCount"], 0)
             self.assertEqual(result["updatedCount"], 0)
             self.assertEqual(
-                list(Path(tmp).glob("enterprise_knowledge.db.backup-*")), []
+                list(Path(tmp).glob("writing_policies.db.backup-*")), []
             )
 
     def test_failed_preview_apply_rolls_back_updates_import_record_and_new_backup(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
             first = store.create_item(term_payload("标准名称", ["第一别名"]))
             store.create_item(term_payload("另一个名称", ["第二别名"]))
 
-            with self.assertRaises(KnowledgeError) as raised:
+            with self.assertRaises(WritingPolicyError) as raised:
                 store.apply_preview(
                     [
                         {
@@ -568,11 +568,11 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(store.get_item(first["id"])["note"], "测试备注")
             self.assertEqual(store.summary()["termCount"], 2)
             self.assertEqual(
-                list(Path(tmp).glob("enterprise_knowledge.db.backup-*")), []
+                list(Path(tmp).glob("writing_policies.db.backup-*")), []
             )
             with sqlite3.connect(str(db_path)) as connection:
                 import_count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_imports"
+                    "SELECT COUNT(*) FROM writing_policy_imports"
                 ).fetchone()[0]
             self.assertEqual(import_count, 0)
 
@@ -605,7 +605,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertEqual(failures, [])
             self.assertEqual(store.summary()["termCount"], 4)
             self.assertEqual(
-                len(list(Path(tmp).glob("enterprise_knowledge.db.backup-*"))), 3
+                len(list(Path(tmp).glob("writing_policies.db.backup-*"))), 3
             )
 
     def test_database_snapshot_bytes_is_consistent_private_and_removes_temp_file(self):
@@ -621,12 +621,12 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             snapshot_path.chmod(0o600)
             with sqlite3.connect(str(snapshot_path)) as connection:
                 count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_terms"
+                    "SELECT COUNT(*) FROM writing_policy_terms"
                 ).fetchone()[0]
                 integrity = connection.execute("PRAGMA integrity_check").fetchone()[0]
             self.assertEqual(count, 1)
             self.assertEqual(integrity, "ok")
-            self.assertEqual(list(root.glob(".enterprise-knowledge-snapshot-*")), [])
+            self.assertEqual(list(root.glob(".writing-policies-snapshot-*")), [])
 
     def test_database_snapshot_removes_temp_file_when_sqlite_backup_fails(self):
         with TemporaryDirectory() as tmp:
@@ -640,12 +640,12 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                 with self.assertRaises(sqlite3.OperationalError):
                     store.database_snapshot_bytes()
 
-            self.assertEqual(list(root.glob(".enterprise-knowledge-snapshot-*")), [])
+            self.assertEqual(list(root.glob(".writing-policies-snapshot-*")), [])
 
     def test_post_commit_backup_rotation_error_keeps_successful_import_semantics(self):
         with TemporaryDirectory() as tmp:
-            db_path = Path(tmp) / "enterprise_knowledge.db"
-            store = EnterpriseKnowledgeStore(db_path)
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
 
             with patch.object(
                 store,
@@ -653,7 +653,7 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
                 side_effect=OSError("temporary rotation failure"),
             ):
                 with self.assertLogs(
-                    "app.services.enterprise_knowledge.store", level="WARNING"
+                    "app.services.writing_policy.store", level="WARNING"
                 ) as captured:
                     result = store.apply_preview(
                         [term_payload("轮换失败仍写入")],
@@ -669,11 +669,11 @@ class EnterpriseKnowledgeStoreTests(unittest.TestCase):
             self.assertIn("备份轮换失败", " ".join(captured.output))
             with sqlite3.connect(str(db_path)) as connection:
                 import_count = connection.execute(
-                    "SELECT COUNT(*) FROM knowledge_imports"
+                    "SELECT COUNT(*) FROM writing_policy_imports"
                 ).fetchone()[0]
             self.assertEqual(import_count, 1)
             self.assertEqual(
-                len(list(Path(tmp).glob("enterprise_knowledge.db.backup-*"))), 1
+                len(list(Path(tmp).glob("writing_policies.db.backup-*"))), 1
             )
 
 
