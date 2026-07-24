@@ -197,10 +197,13 @@
     configRefreshRequestId: 0,
     configRefreshPromise: null,
     configRefreshActiveRequestId: 0,
+    configRefreshActiveSilent: false,
     configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
     modelInterfaceDetectable: false,
     settingsRefreshController: null,
     workflowHelpPinned: false,
+    providerUrlEditorOpen: false,
     knowledgeView: "home",
     knowledgeScope: "global",
     knowledgeType: "term",
@@ -231,21 +234,51 @@
     return document.getElementById(id);
   }
 
+  function setNodeTextIfChanged(node, value) {
+    var nextValue = value || "";
+    if (node && node.textContent !== nextValue) {
+      node.textContent = nextValue;
+      return true;
+    }
+    return false;
+  }
+
+  function setNodeClassNameIfChanged(node, value) {
+    var nextValue = value || "";
+    if (node && node.className !== nextValue) {
+      node.className = nextValue;
+      return true;
+    }
+    return false;
+  }
+
+  function setNodeAttributeIfChanged(node, name, value) {
+    var nextValue = value || "";
+    if (node && node.getAttribute && node.getAttribute(name) === nextValue) {
+      return false;
+    }
+    if (node && node.setAttribute) {
+      node.setAttribute(name, nextValue);
+      return true;
+    }
+    return false;
+  }
+
   function setStatus(message) {
     var statusLine = byId("status-line");
     var settingsStatusLine = byId("settings-status-line");
     if (statusLine) {
-      statusLine.textContent = message;
+      setNodeTextIfChanged(statusLine, message);
     }
     if (settingsStatusLine) {
-      settingsStatusLine.textContent = message;
+      setNodeTextIfChanged(settingsStatusLine, message);
     }
   }
 
   function setSettingsStatus(message) {
     var settingsStatusLine = byId("settings-status-line");
     if (settingsStatusLine) {
-      settingsStatusLine.textContent = message;
+      setNodeTextIfChanged(settingsStatusLine, message);
     }
   }
 
@@ -344,9 +377,9 @@
     };
     var detail = providerText[providerName] || providerName || "未检测";
     state.providerName = detail;
-    byId("provider-line").textContent = "接口：" + detail;
-    byId("settings-provider-line").textContent = "接口：" + detail;
-    byId("provider-summary-type").textContent = detail;
+    setNodeTextIfChanged(byId("provider-line"), "接口：" + detail);
+    setNodeTextIfChanged(byId("settings-provider-line"), "接口：" + detail);
+    setNodeTextIfChanged(byId("provider-summary-type"), detail);
   }
 
   function setProviderName(name) {
@@ -356,9 +389,11 @@
   function setProviderBaseUrl(baseUrl) {
     var summary = byId("provider-summary-url");
     state.providerBaseUrl = baseUrl || "";
-    summary.textContent = state.providerBaseUrl || "未配置接口地址";
-    summary.setAttribute("title", state.providerBaseUrl || "未配置接口地址");
-    byId("provider-base-url").value = state.providerBaseUrl;
+    setNodeTextIfChanged(summary, state.providerBaseUrl || "未配置接口地址");
+    setNodeAttributeIfChanged(summary, "title", state.providerBaseUrl || "未配置接口地址");
+    if (!state.providerUrlEditorOpen && byId("provider-base-url").value !== state.providerBaseUrl) {
+      byId("provider-base-url").value = state.providerBaseUrl;
+    }
   }
 
   function setProviderAuthLine(authSource) {
@@ -391,11 +426,11 @@
       taskTypes: taskTypes,
       profilesByTask: profilesByTask
     });
-    badge.className = "readiness-badge is-" + modelState.code;
-    badge.textContent = modelState.label;
-    summary.textContent = state.providerBaseUrl || "未配置接口地址";
-    summary.setAttribute("title", state.providerBaseUrl || "未配置接口地址");
-    byId("diagnostics-summary").textContent = modelState.label;
+    setNodeClassNameIfChanged(badge, "readiness-badge is-" + modelState.code);
+    setNodeTextIfChanged(badge, modelState.label);
+    setNodeTextIfChanged(summary, state.providerBaseUrl || "未配置接口地址");
+    setNodeAttributeIfChanged(summary, "title", state.providerBaseUrl || "未配置接口地址");
+    setNodeTextIfChanged(byId("diagnostics-summary"), modelState.label);
   }
 
   function setAdapterUnavailableState(error) {
@@ -422,8 +457,8 @@
 
   function setHealthBadge(mode, text) {
     var node = byId("health-indicator");
-    node.className = "badge " + mode;
-    node.textContent = text;
+    setNodeClassNameIfChanged(node, "badge " + mode);
+    setNodeTextIfChanged(node, text);
   }
 
   function setResult(text, copyText) {
@@ -725,7 +760,9 @@
       byId("settings-view").classList.contains("active") &&
       document.visibilityState !== "hidden" &&
       state.knowledgeView === "home" &&
-      !state.workflowProfileEditor
+      !state.workflowProfileEditor &&
+      !state.providerUrlEditorOpen &&
+      !state.workflowProfileMutationBusy
     );
     if (shouldRun) {
       state.settingsRefreshController.start();
@@ -742,13 +779,16 @@
       settingsView.classList.contains("active") &&
       document.visibilityState !== "hidden" &&
       state.knowledgeView === "home" &&
-      !state.workflowProfileEditor
+      !state.workflowProfileEditor &&
+      !state.providerUrlEditorOpen &&
+      !state.workflowProfileMutationBusy
     );
   }
 
   function invalidateConfigRefresh() {
     state.configRefreshRequestId += 1;
     state.configRefreshQueued = false;
+    state.configRefreshQueuedSilent = true;
   }
 
   function toggleSettingsShortcut() {
@@ -1324,29 +1364,42 @@
     return merged;
   }
 
-  function refreshConfig() {
+  function refreshConfig(options) {
     var requestId;
     var refreshOperation;
     var refreshPromise;
     var healthConnected = false;
+    var silent = Boolean(options && options.silent);
 
     function releaseRefresh(result) {
       var shouldRestart = false;
+      var restartSilent = true;
       if (state.configRefreshPromise === refreshPromise) {
         state.configRefreshPromise = null;
         state.configRefreshActiveRequestId = 0;
+        state.configRefreshActiveSilent = false;
         shouldRestart = state.configRefreshQueued;
+        restartSilent = state.configRefreshQueuedSilent;
         state.configRefreshQueued = false;
+        state.configRefreshQueuedSilent = true;
       }
       if (shouldRestart && isSettingsRefreshEligible()) {
-        return refreshConfig();
+        return refreshConfig({ silent: restartSilent });
       }
       return result;
     }
 
     if (state.configRefreshPromise) {
       if (state.configRefreshActiveRequestId !== state.configRefreshRequestId) {
+        if (!state.configRefreshQueued) {
+          state.configRefreshQueuedSilent = silent;
+        } else {
+          state.configRefreshQueuedSilent = state.configRefreshQueuedSilent && silent;
+        }
         state.configRefreshQueued = true;
+      } else if (!silent && state.configRefreshActiveSilent) {
+        state.configRefreshActiveSilent = false;
+        setSettingsStatus("正在刷新配置...");
       }
       return state.configRefreshPromise;
     }
@@ -1354,7 +1407,10 @@
     requestId = state.configRefreshRequestId + 1;
     state.configRefreshRequestId = requestId;
     state.configRefreshActiveRequestId = requestId;
-    setSettingsStatus("正在刷新配置...");
+    state.configRefreshActiveSilent = silent;
+    if (!silent) {
+      setSettingsStatus("正在刷新配置...");
+    }
     refreshOperation = request("/health", null, {
       timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
     }).then(function (health) {
@@ -1365,7 +1421,6 @@
       healthData = health.data || {};
       healthConnected = true;
       setHealthBadge("badge-ok", "已连接");
-      setTrace(health.traceId || "");
       setProviderLine(healthData.providerType || "未检测");
       return Promise.all([
         Promise.resolve(health),
@@ -1408,7 +1463,9 @@
         }
         state.modelInterfaceDetectable = true;
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        setSettingsStatus("就绪");
+        if (!state.configRefreshActiveSilent) {
+          setSettingsStatus("就绪");
+        }
         return results;
       });
     }).catch(function (error) {
@@ -1444,32 +1501,39 @@
     renderTemplateOptions();
   }
 
-  function closeProviderUrlEditor() {
+  function closeProviderUrlEditor(suppressRefreshSync) {
     var details = byId("provider-url-details");
     var input = byId("provider-base-url");
+    state.providerUrlEditorOpen = false;
     if (details) {
       details.removeAttribute("open");
     }
     if (input) {
       input.value = state.providerBaseUrl || "";
     }
+    if (suppressRefreshSync !== true) {
+      syncSettingsRefreshController();
+    }
   }
 
   function saveProviderBaseUrl() {
     var input = byId("provider-base-url");
     var baseUrl = (input.value || "").trim();
-    setStatus("正在保存大模型 API URL...");
+    var refreshPromise;
+    setSettingsStatus("正在保存大模型 API URL...");
     request("/provider/base-url", { baseUrl: baseUrl })
       .then(function (body) {
         var savedUrl = typeof body.data.providerBaseUrl === "string" ? body.data.providerBaseUrl : baseUrl;
         setProviderBaseUrl(savedUrl);
-        closeProviderUrlEditor();
-        setStatus("大模型 API URL 已保存。");
+        closeProviderUrlEditor(true);
+        setSettingsStatus("大模型 API URL 已保存。");
         invalidateConfigRefresh();
-        return refreshConfig();
+        refreshPromise = refreshConfig({ silent: false });
+        syncSettingsRefreshController();
+        return refreshPromise;
       })
       .catch(function (error) {
-        setStatus("保存大模型 API URL 失败：" + describeFetchError(error));
+        setSettingsStatus("保存大模型 API URL 失败：" + describeFetchError(error));
       });
   }
 
@@ -1800,6 +1864,7 @@
     renderWorkflowProfileStrip();
     renderWorkflowTaskTabs();
     syncWorkflowProfileManagerBusyState();
+    syncSettingsRefreshController();
   }
 
   function markWorkflowProfileEditorDirty() {
@@ -3728,7 +3793,7 @@
     ]).then(function (results) {
       var markdown = renderProviderDiagnostics(results[0], results[1], results[2], results[3]);
       setDiagnosticsResult(markdown);
-      setStatus("诊断信息已刷新。");
+      setSettingsStatus("诊断信息已刷新。");
     });
   }
 
@@ -3741,18 +3806,17 @@
   function copyDiagnostics() {
     var text = state.diagnosticsCopyText || byId("last-task-diagnostics-output").textContent || "";
     if (!text.trim()) {
-      setStatus("暂无可复制的诊断信息。");
+      setSettingsStatus("暂无可复制的诊断信息。");
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(function () {
-        setStatus("诊断信息已复制。");
+      return navigator.clipboard.writeText(text).then(function () {
+        setSettingsStatus("诊断信息已复制。");
       }).catch(function () {
-        fallbackCopy(text);
+        fallbackCopy(text, setSettingsStatus);
       });
-      return;
     }
-    fallbackCopy(text);
+    fallbackCopy(text, setSettingsStatus);
   }
 
   function applyDocumentReviewPrompt(documentType) {
@@ -3762,8 +3826,9 @@
     byId("technical-review-prompt").value = state.technicalReviewPrompt;
   }
 
-  function fallbackCopy(text) {
+  function fallbackCopy(text, feedback) {
     var textarea = document.createElement("textarea");
+    var report = typeof feedback === "function" ? feedback : setStatus;
     textarea.value = text;
     textarea.setAttribute("readonly", "readonly");
     textarea.style.position = "fixed";
@@ -3772,9 +3837,9 @@
     textarea.select();
     try {
       document.execCommand("copy");
-      setStatus("结果已复制。");
+      report("结果已复制。");
     } catch (error) {
-      setStatus("复制失败，请手动选择结果文本。");
+      report("复制失败，请手动选择结果文本。");
     }
     document.body.removeChild(textarea);
   }
@@ -4394,8 +4459,10 @@
     byId("btn-save-provider-url").addEventListener("click", saveProviderBaseUrl);
     byId("btn-cancel-provider-url").addEventListener("click", closeProviderUrlEditor);
     byId("btn-edit-provider-url").addEventListener("click", function () {
+      state.providerUrlEditorOpen = true;
       byId("provider-url-details").open = true;
       byId("provider-base-url").focus();
+      syncSettingsRefreshController();
     });
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
@@ -4540,11 +4607,13 @@
   renderKnowledgeSummary();
   state.settingsRefreshController = helpers.createSettingsRefreshController({
     intervalMs: 30000,
-    refresh: refreshConfig
+    refresh: function () {
+      return refreshConfig({ silent: true });
+    }
   });
   switchMode(getInitialMode());
   if (!state.settingsRefreshController.isRunning()) {
-    refreshConfig();
+    refreshConfig({ silent: false });
   }
   startScopeWatcher();
 })();

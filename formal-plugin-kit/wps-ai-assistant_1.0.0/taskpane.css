@@ -1027,17 +1027,19 @@ body[data-task-mode="smartWrite"] #result-output {
 }
 
 .provider-url-details {
+  margin: 0;
+  border-top: 0;
+  padding-top: 0;
+}
+
+.provider-url-details[open] {
   margin-top: 10px;
   border-top: 1px solid var(--hairline);
   padding-top: 8px;
 }
 
 .provider-url-details summary {
-  width: fit-content;
-  color: var(--color-primary);
-  cursor: pointer;
-  font-size: 12px;
-  font-weight: 700;
+  display: none;
 }
 
 .provider-url-actions {

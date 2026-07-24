@@ -217,9 +217,22 @@ function testProfileLoadFailureAndRequestOrderingContract() {
 
 function testEscapedFallbackContract() {
   const escaped = loadPureFunction("escaped", { helpers: {} });
+  const describeSettingsError = loadPureFunction("describeSettingsError", {
+    safeText(value) {
+      return String(value === null || typeof value === "undefined" ? "" : value).trim();
+    }
+  });
   assert.strictEqual(
     escaped('<img src=x onerror="alert(1)">&\''),
     "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;&amp;&#39;"
+  );
+  assert.strictEqual(
+    describeSettingsError(new Error("Failed to fetch")),
+    "无法连接本地 adapter，请确认服务已启动。"
+  );
+  assert.strictEqual(
+    describeSettingsError({ name: "AbortError", message: "aborted" }),
+    "请求超时，请确认本地 adapter 正常运行。"
   );
   assert.ok(
     functionSource("renderProfileManager").includes("escaped("),

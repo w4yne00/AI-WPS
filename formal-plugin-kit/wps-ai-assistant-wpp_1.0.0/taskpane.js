@@ -94,6 +94,17 @@
       .trim();
   }
 
+  function describeSettingsError(error) {
+    var message = safeText(error && error.message);
+    if (error && error.name === "AbortError") {
+      return "请求超时，请确认本地 adapter 正常运行。";
+    }
+    if (/failed to fetch|networkerror|load failed/i.test(message)) {
+      return "无法连接本地 adapter，请确认服务已启动。";
+    }
+    return message || "请求失败，请稍后重试。";
+  }
+
   function setStatus(message) {
     var homeStatus = byId("status-line");
     var settingsStatus = byId("settings-status-line");
@@ -1116,7 +1127,7 @@
         Object.keys(previousProfiles).forEach(function (key) {
           preservedProfiles[key] = previousProfiles[key];
         });
-        preservedProfiles.loadError = error && error.message ? error.message : "本地 adapter 暂时不可用";
+        preservedProfiles.loadError = describeSettingsError(error);
         state.profiles = preservedProfiles;
         state.selectedProfileId = previousSelection;
       } else {
@@ -1125,7 +1136,7 @@
           activeProfileId: "",
           profileCount: 0,
           profiles: [],
-          loadError: error && error.message ? error.message : "本地 adapter 暂时不可用"
+          loadError: describeSettingsError(error)
         };
         state.selectedProfileId = "";
       }
@@ -1403,8 +1414,8 @@
       byId("diagnostics-output").textContent = state.diagnosticsText;
       setSettingsStatus("诊断信息已刷新。");
     }).catch(function (error) {
-      byId("diagnostics-output").textContent = "诊断读取失败：" + error.message;
-      setSettingsStatus("诊断读取失败：" + error.message);
+      byId("diagnostics-output").textContent = "诊断读取失败：" + describeSettingsError(error);
+      setSettingsStatus("诊断读取失败：" + describeSettingsError(error));
     });
   }
 
@@ -1520,7 +1531,7 @@
       }
       state.modelInterfaceDetectable = false;
       renderModelInterfaceState(state.modelInterfaceDetectable);
-      setSettingsStatus("配置刷新失败：" + (error && error.message ? error.message : "无法读取"));
+      setSettingsStatus("配置刷新失败：" + describeSettingsError(error));
       return null;
     });
 
@@ -1528,7 +1539,7 @@
       if (state.configRefreshRequestId === requestId) {
         state.modelInterfaceDetectable = false;
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        setSettingsStatus("配置刷新失败：" + (error && error.message ? error.message : "无法读取"));
+        setSettingsStatus("配置刷新失败：" + describeSettingsError(error));
       }
       return releaseRefresh(null);
     });
@@ -1761,7 +1772,7 @@
         refreshSettings({ silent: false });
         syncSettingsRefreshController();
       }).catch(function (error) {
-        setSettingsStatus("API URL 保存失败：" + error.message);
+        setSettingsStatus("API URL 保存失败：" + describeSettingsError(error));
       });
     });
   }

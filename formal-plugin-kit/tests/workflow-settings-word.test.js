@@ -66,10 +66,13 @@ assert.ok(managerSource.includes("if (data.profiles.length)"));
   "configRefreshRequestId: 0",
   "configRefreshPromise: null",
   "configRefreshActiveRequestId: 0",
+  "configRefreshActiveSilent: false",
   "configRefreshQueued: false",
+  "configRefreshQueuedSilent: true",
   "modelInterfaceDetectable: false",
   "settingsRefreshController: null",
-  "workflowHelpPinned: false"
+  "workflowHelpPinned: false",
+  "providerUrlEditorOpen: false"
 ].forEach((token) => assert.ok(js.includes(token), token));
 
 const modelInterfaceSource = functionSource("renderModelInterfaceState");
@@ -79,7 +82,7 @@ assert.ok(modelInterfaceSource.includes("helpers.deriveModelInterfaceState"));
 assert.ok(modelInterfaceSource.includes('"readiness-badge is-" + modelState.code'));
 assert.ok(modelInterfaceSource.includes("modelState.label"));
 assert.ok(modelInterfaceSource.includes('byId("provider-summary-url")'));
-assert.ok(modelInterfaceSource.includes('setAttribute("title"'));
+assert.ok(modelInterfaceSource.includes('setNodeAttributeIfChanged(summary, "title"'));
 assert.ok(modelInterfaceSource.includes('byId("diagnostics-summary")'));
 
 const refreshConfigSource = functionSource("refreshConfig");
@@ -87,6 +90,9 @@ assert.ok(refreshConfigSource.includes("state.configRefreshRequestId + 1"));
 assert.ok(refreshConfigSource.includes("state.configRefreshRequestId = requestId"));
 assert.ok(refreshConfigSource.includes("state.configRefreshRequestId !== requestId"));
 assert.ok(refreshConfigSource.includes("state.configRefreshPromise"));
+assert.ok(refreshConfigSource.includes("state.configRefreshActiveSilent"));
+assert.ok(refreshConfigSource.includes("state.configRefreshQueuedSilent"));
+assert.ok(refreshConfigSource.includes("Boolean(options && options.silent)"));
 assert.ok(refreshConfigSource.includes("refreshAllWorkflowProfiles"));
 assert.ok(refreshConfigSource.includes("state.modelInterfaceDetectable = true"));
 assert.ok(refreshConfigSource.includes("state.modelInterfaceDetectable = false"));
@@ -94,7 +100,7 @@ assert.ok(refreshConfigSource.includes("renderModelInterfaceState"));
 assert.ok(!refreshConfigSource.includes("providerConfigured"));
 assert.ok(!refreshConfigSource.includes("refreshDiagnostics"));
 assert.ok(!refreshConfigSource.includes("setStatus("));
-assert.ok(refreshConfigSource.includes("setTrace("));
+assert.ok(!refreshConfigSource.includes("setTrace("));
 assert.ok(!refreshConfigSource.includes("setResult("));
 assert.ok(!refreshConfigSource.includes("setAdapterUnavailableState("));
 assert.ok(!refreshConfigSource.includes(".finally("));
@@ -113,13 +119,15 @@ assert.ok(loadProfilesSource.includes("previousProfileData"));
 const saveProviderUrlSource = functionSource("saveProviderBaseUrl");
 const invalidateBeforeUrlRefresh = saveProviderUrlSource.indexOf("invalidateConfigRefresh()");
 assert.ok(invalidateBeforeUrlRefresh >= 0);
-assert.ok(invalidateBeforeUrlRefresh < saveProviderUrlSource.indexOf("refreshConfig()"));
+assert.ok(invalidateBeforeUrlRefresh < saveProviderUrlSource.indexOf("refreshConfig({ silent: false })"));
 
 const settingsRefreshSource = functionSource("syncSettingsRefreshController");
 assert.ok(settingsRefreshSource.includes('byId("settings-view").classList.contains("active")'));
 assert.ok(settingsRefreshSource.includes('document.visibilityState !== "hidden"'));
 assert.ok(settingsRefreshSource.includes('state.knowledgeView === "home"'));
 assert.ok(settingsRefreshSource.includes("!state.workflowProfileEditor"));
+assert.ok(settingsRefreshSource.includes("!state.providerUrlEditorOpen"));
+assert.ok(settingsRefreshSource.includes("!state.workflowProfileMutationBusy"));
 assert.ok(settingsRefreshSource.includes("state.settingsRefreshController.start()"));
 assert.ok(settingsRefreshSource.includes("state.settingsRefreshController.stop()"));
 assert.ok(settingsRefreshSource.includes("invalidateConfigRefresh()"));
@@ -128,13 +136,17 @@ const initControllerIndex = js.lastIndexOf("helpers.createSettingsRefreshControl
 const firstSwitchModeIndex = js.lastIndexOf("switchMode(getInitialMode())");
 assert.ok(initControllerIndex >= 0 && initControllerIndex < firstSwitchModeIndex);
 assert.ok(js.includes("intervalMs: 30000"));
+assert.ok(js.includes("refreshConfig({ silent: true })"));
 assert.ok(js.includes('document.addEventListener("visibilitychange", syncSettingsRefreshController)'));
 
 const refreshLifecycleState = {
   configRefreshRequestId: 0,
   configRefreshQueued: false,
+  configRefreshQueuedSilent: true,
   knowledgeView: "home",
   workflowProfileEditor: null,
+  providerUrlEditorOpen: false,
+  workflowProfileMutationBusy: false,
   settingsRefreshController: {
     startCount: 0,
     stopCount: 0,
@@ -167,10 +179,18 @@ refreshLifecycleState.workflowProfileEditor = { mode: "edit" };
 syncSettingsRefresh();
 refreshLifecycleState.workflowProfileEditor = null;
 syncSettingsRefresh();
+refreshLifecycleState.providerUrlEditorOpen = true;
+syncSettingsRefresh();
+refreshLifecycleState.providerUrlEditorOpen = false;
+syncSettingsRefresh();
+refreshLifecycleState.workflowProfileMutationBusy = true;
+syncSettingsRefresh();
+refreshLifecycleState.workflowProfileMutationBusy = false;
+syncSettingsRefresh();
 settingsViewActive = false;
 syncSettingsRefresh();
-assert.strictEqual(refreshLifecycleState.settingsRefreshController.stopCount, 4);
-assert.strictEqual(refreshLifecycleState.configRefreshRequestId, 4);
+assert.strictEqual(refreshLifecycleState.settingsRefreshController.stopCount, 6);
+assert.strictEqual(refreshLifecycleState.configRefreshRequestId, 6);
 
 // The host must delegate decisions to the shared helper API when it is available.
 [
@@ -334,6 +354,25 @@ reviewCheck("provider URL editor supports summary edit and cancel folding", () =
   assert.ok(html.includes("<summary"));
   assert.ok(html.includes('id="btn-cancel-provider-url"'));
   assert.ok(css.includes(".provider-url-details"));
+  assert.ok(js.includes("state.providerUrlEditorOpen = true"));
+  assert.ok(functionSource("closeProviderUrlEditor").includes("state.providerUrlEditorOpen = false"));
+  assert.ok(functionSource("closeProviderUrlEditor").includes("suppressRefreshSync !== true"));
+  assert.ok(functionSource("bindEvents").includes("syncSettingsRefreshController()"));
+});
+
+reviewCheck("diagnostics feedback stays inside settings", () => {
+  const refreshDiagnosticsSource = functionSource("refreshDiagnostics");
+  const copyDiagnosticsSource = functionSource("copyDiagnostics");
+  assert.ok(refreshDiagnosticsSource.includes("setSettingsStatus"));
+  assert.ok(!refreshDiagnosticsSource.includes("setStatus("));
+  assert.ok(copyDiagnosticsSource.includes("setSettingsStatus"));
+  assert.ok(copyDiagnosticsSource.includes("fallbackCopy(text, setSettingsStatus)"));
+  assert.ok(!copyDiagnosticsSource.includes("setStatus("));
+  assert.ok(functionSource("fallbackCopy").includes("feedback"));
+});
+
+reviewCheck("workflow mutations pause settings refresh", () => {
+  assert.ok(functionSource("setWorkflowProfileMutationBusy").includes("syncSettingsRefreshController()"));
 });
 
 if (reviewFailures.length) {
@@ -378,7 +417,9 @@ function createRefreshHarness(options = {}) {
     configRefreshRequestId: 0,
     configRefreshPromise: null,
     configRefreshActiveRequestId: 0,
+    configRefreshActiveSilent: false,
     configRefreshQueued: false,
+    configRefreshQueuedSilent: true,
     modelInterfaceDetectable: true,
     providerBaseUrl: "https://cached.example.test/v1",
     rewriteResult: { text: "既有任务结果" },
@@ -445,7 +486,7 @@ async function runSettingsRefreshBehaviorTests() {
   assert.deepStrictEqual(configFailure.state.rewriteResult, { text: "既有任务结果" });
   assert.deepStrictEqual(configFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
   assert.deepStrictEqual(configFailure.calls.providerLines, ["enterprise-dify-chat"]);
-  assert.deepStrictEqual(configFailure.calls.traces, ["health-config-failure"]);
+  assert.deepStrictEqual(configFailure.calls.traces, []);
   assert.strictEqual(configFailure.calls.setStatus, 0);
   assert.strictEqual(configFailure.calls.setResult, 0);
   assert.strictEqual(configFailure.calls.setAdapterUnavailableState, 0);
