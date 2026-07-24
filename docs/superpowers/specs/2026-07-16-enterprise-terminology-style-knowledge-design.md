@@ -2,7 +2,11 @@
 
 日期：2026-07-16
 
-状态：设计与书面规格已确认，等待按实施计划开发
+状态：**已被取代，仅保留为历史记录**
+
+替代文档：[`2026-07-24-writing-policy-library-design.md`](./2026-07-24-writing-policy-library-design.md)
+
+说明：后续开发统一使用“写作规范库”领域名称、`writing_policy` 模块、`/writing-policies/*` API 与 `run/writing_policies.db` 数据库。本文件中的 `enterprise_knowledge`、`knowledgeUsage`、旧库迁移和兼容接口设计不再作为实施依据。
 
 ## 1. 背景与目标
 

@@ -1,5 +1,11 @@
 # Word Enterprise Terminology and Style Knowledge Implementation Plan
 
+> **Status:** Superseded. Keep this file for historical traceability only.
+>
+> **Replacement:** [`2026-07-24-writing-policy-library-implementation-plan.md`](./2026-07-24-writing-policy-library-implementation-plan.md)
+>
+> The replacement plan uses the confirmed first-install baseline: `writing_policy`, `/writing-policies/*`, `run/writing_policies.db`, preset packs plus organization overrides, and no legacy enterprise-knowledge compatibility layer.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add a persistent, locally managed enterprise terminology and writing-style knowledge base that is selectively applied to Word Smart Write, Smart Imitation, and Document Review without changing their existing request, preview, copy, long-job, or writeback behavior.
