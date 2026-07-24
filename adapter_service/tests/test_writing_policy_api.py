@@ -486,6 +486,40 @@ class WritingPolicyHttpTests(unittest.TestCase):
                 [parameter["name"] for parameter in path_parameters], ["itemId"]
             )
 
+    def test_read_only_preset_routes_expose_source_version_and_approved_items(self):
+        packs = self.client.get("/writing-policies/packs")
+        items = self.client.get(
+            "/writing-policies/items",
+            params={
+                "layer": "preset",
+                "packId": "yangqi-tech-writing-base",
+            },
+        )
+
+        self.assertEqual(packs.status_code, 200)
+        self.assertEqual(packs.json()["data"]["count"], 1)
+        self.assertEqual(
+            packs.json()["data"]["packs"][0]["source"]["version"],
+            "v1.1.0",
+        )
+        self.assertEqual(items.status_code, 200)
+        self.assertEqual(items.json()["data"]["count"], 17)
+        self.assertEqual(items.json()["data"]["items"][0]["layer"], "preset")
+
+        missing = self.client.get(
+            "/writing-policies/items",
+            params={"layer": "preset", "packId": "missing-pack"},
+        )
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(
+            missing.json()["errors"][0]["code"],
+            "WRITING_POLICY_PACK_NOT_FOUND",
+        )
+        self.assertEqual(
+            missing.json()["errors"][0]["message"],
+            "未找到指定预置规范包。",
+        )
+
     def test_testclient_crud_query_binary_and_error_envelopes(self):
         created = self.client.post("/writing-policies/items", json=term_payload())
         self.assertEqual(created.status_code, 200)
@@ -994,6 +1028,38 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
         self.assertEqual(duplicate["body"]["errors"][0]["code"], "TERM_TEXT_CONFLICT")
         self.assertTrue(deleted["body"]["data"]["deleted"])
         self.assertEqual(missing["status"], 404)
+
+    def test_standalone_read_only_preset_routes_match_fastapi_contract(self):
+        packs = self.dispatch("GET", "/writing-policies/packs")
+        items = self.dispatch(
+            "GET",
+            "/writing-policies/items",
+            query="layer=preset&packId=yangqi-tech-writing-base",
+        )
+
+        self.assertEqual(packs["status"], 200)
+        self.assertEqual(packs["body"]["data"]["count"], 1)
+        self.assertEqual(
+            packs["body"]["data"]["packs"][0]["source"]["license"],
+            "MIT",
+        )
+        self.assertEqual(items["status"], 200)
+        self.assertEqual(items["body"]["data"]["count"], 17)
+        self.assertEqual(items["body"]["data"]["items"][0]["packVersion"], "1.0.0")
+        missing = self.dispatch(
+            "GET",
+            "/writing-policies/items",
+            query="layer=preset&packId=missing-pack",
+        )
+        self.assertEqual(missing["status"], 404)
+        self.assertEqual(
+            missing["body"]["errors"][0]["code"],
+            "WRITING_POLICY_PACK_NOT_FOUND",
+        )
+        self.assertEqual(
+            missing["body"]["errors"][0]["message"],
+            "未找到指定预置规范包。",
+        )
 
     def test_standalone_preview_apply_is_single_use_and_validates_upload(self):
         content = generate_csv_template()

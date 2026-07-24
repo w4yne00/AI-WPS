@@ -80,6 +80,7 @@ _HTTP_TCHAR_BYTES = frozenset(
 )
 _WRITING_POLICY_NOT_FOUND_CODES = {
     "writing_policy_item_not_found",
+    "writing_policy_pack_not_found",
     "import_preview_not_found",
     "import_preview_expired",
 }
@@ -113,6 +114,7 @@ _WRITING_POLICY_ITEM_FIELDS = {
 }
 _WRITING_POLICY_STATIC_ROUTE_METHODS = {
     "/writing-policies/summary": ("GET",),
+    "/writing-policies/packs": ("GET",),
     "/writing-policies/items": ("GET", "POST"),
     "/writing-policies/import-template.csv": ("GET",),
     "/writing-policies/import-template.xlsx": ("GET",),
@@ -295,7 +297,12 @@ def _writing_policy_error(error):
         safe_code = raw_code if _SAFE_WRITING_POLICY_CODE_RE.fullmatch(raw_code) else "writing_policy_error"
         code = safe_code.upper()
         if raw_code in _WRITING_POLICY_NOT_FOUND_CODES:
-            status, message = 404, "未找到指定规范条目或导入预览。"
+            status = 404
+            message = (
+                "未找到指定预置规范包。"
+                if raw_code == "writing_policy_pack_not_found"
+                else "未找到指定规范条目或导入预览。"
+            )
         elif raw_code in _WRITING_POLICY_CONFLICT_CODES:
             status, message = 409, error.message
         elif raw_code in _WRITING_POLICY_TOO_LARGE_CODES:
@@ -513,10 +520,43 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
         params = parse_qs(query or "", keep_blank_values=True)
         if method == "GET" and path == "/writing-policies/summary":
             return _writing_policy_json(_writing_policy_store().summary())
+        if method == "GET" and path == "/writing-policies/packs":
+            packs = get_writing_policy_service().list_packs()
+            return _writing_policy_json({"count": len(packs), "packs": packs})
         if method == "GET" and path == "/writing-policies/items":
+            layer = str(params.get("layer", ["organization"])[0]).strip()
+            pack_id = str(params.get("packId", [""])[0]).strip()
             scope = str(params.get("scope", [""])[0]).strip()
             item_type = str(params.get("type", [""])[0]).strip()
             search = str(params.get("query", [""])[0])
+            if layer == "preset":
+                if not pack_id:
+                    return _writing_policy_validation()
+                items = get_writing_policy_service().list_preset_items(pack_id)
+                if item_type:
+                    items = [item for item in items if item.get("type") == item_type]
+                if search:
+                    normalized = search.casefold()
+                    items = [
+                        item
+                        for item in items
+                        if normalized
+                        in str(
+                            item.get("name")
+                            or item.get("preferredText")
+                            or ""
+                        ).casefold()
+                    ]
+                return _writing_policy_json(
+                    {
+                        "layer": "preset",
+                        "packId": pack_id,
+                        "type": item_type,
+                        "query": search,
+                        "count": len(items),
+                        "items": items,
+                    }
+                )
             if not scope or not item_type:
                 return _writing_policy_validation()
             items = _writing_policy_store().list_items(scope, item_type, search)

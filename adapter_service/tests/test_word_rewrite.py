@@ -289,7 +289,7 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
         self.assertTrue(result["writingPolicyUsage"]["degraded"])
 
-    def test_smart_write_defaults_to_empty_writing_policy_service(self):
+    def test_smart_write_defaults_to_human_approved_base_pack_in_one_provider_call(self):
         provider = RecordingSmartWriteProvider()
         with isolated_default_writing_policy_database(self) as db_path:
             rewriter = WordRewriter(provider)
@@ -298,11 +298,14 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
             result = rewriter.smart_write(self._request(), "trace-smart-write-default")
 
             self.assertTrue(db_path.exists())
-        self.assertEqual(provider.calls[0]["writingPolicyBlock"], "")
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn("H1 保护项完整", provider.calls[0]["writingPolicyBlock"])
         self.assertTrue(result["writingPolicyUsage"]["applied"])
         self.assertFalse(result["writingPolicyUsage"]["degraded"])
         self.assertEqual(result["writingPolicyUsage"]["termMatchCount"], 0)
-        self.assertEqual(result["writingPolicyUsage"]["matchedItems"], [])
+        self.assertEqual(result["writingPolicyUsage"]["styleRuleCount"], 8)
+        self.assertEqual(result["writingPolicyUsage"]["packName"], "G企技术写作基础")
+        self.assertEqual(result["writingPolicyUsage"]["presetVersion"], "1.0.0")
 
     def test_default_smart_write_injects_enabled_term_from_temporary_sqlite(self):
         provider = RecordingSmartWriteProvider()
@@ -334,7 +337,11 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         self.assertTrue(result["writingPolicyUsage"]["applied"])
         self.assertFalse(result["writingPolicyUsage"]["degraded"])
         self.assertEqual(result["writingPolicyUsage"]["termMatchCount"], 1)
-        self.assertEqual(len(result["writingPolicyUsage"]["matchedItems"]), 1)
+        self.assertEqual(result["writingPolicyUsage"]["styleRuleCount"], 8)
+        self.assertIn(
+            "企业大模型接口",
+            [item["name"] for item in result["writingPolicyUsage"]["matchedItems"]],
+        )
 
     def test_smart_write_provider_error_still_merges_writing_policy_debug(self):
         reset_provider_debug()

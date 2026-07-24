@@ -1,0 +1,397 @@
+{
+  "schemaVersion": 1,
+  "packId": "yangqi-tech-writing-base",
+  "version": "1.0.0",
+  "name": "G企技术写作基础",
+  "sceneIds": [
+    "yangqi",
+    "cybersecurity"
+  ],
+  "source": {
+    "name": "yangqi-tech-writing",
+    "version": "v1.1.0",
+    "commit": "d3640165569071251248a5fafb2def6ef2fe2cf4",
+    "license": "MIT"
+  },
+  "review": {
+    "reviewedAt": "2026-07-25",
+    "reviewedBy": "Wayne",
+    "manifest": "yangqi-tech-writing-base.review.json"
+  },
+  "entries": [
+    {
+      "id": "rule.yangqi.base.001",
+      "type": "style",
+      "category": "保护项",
+      "name": "保持保护项优先级",
+      "ruleText": "用户指定原文 > 正式结论、招标原文与责任条款 > 法规标准、参数数据 > 技术术语、命令配置 > 普通正文。保护片段命中风格模式时，保留原文并说明原因。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 100,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L57"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.002",
+      "type": "style",
+      "category": "执行边界",
+      "name": "保护项",
+      "ruleText": "锁定法规标准、正式引文、数字日期、参数术语、责任主体、规范性词和正式结论。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 98,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L19"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.003",
+      "type": "style",
+      "category": "执行边界",
+      "name": "证据",
+      "ruleText": "为影响决策、招标、承诺、验收或责任的客观 Claim 标记来源状态和风险。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 96,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L20"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.004",
+      "type": "style",
+      "category": "执行边界",
+      "name": "Tier",
+      "ruleText": "按 T1/T2/T3 识别明确模板词、密集句式和全文密度问题；命中只代表审阅线索。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 60,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L21"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.005",
+      "type": "style",
+      "category": "执行边界",
+      "name": "scope",
+      "ruleText": "选择 `in-place`、`bounded` 或 `structural`，不得超出用户授权。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 94,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L23"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.006",
+      "type": "style",
+      "category": "执行边界",
+      "name": "质量闸门",
+      "ruleText": "依次判定 H1—H6；任一失败，不得声称可定稿、可签批、完全响应或通过验收。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 92,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L26"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.007",
+      "type": "style",
+      "category": "成文质量",
+      "name": "每段承担明确作用",
+      "ruleText": "每段承担明确作用：依据、现状、问题、方案、约束、责任、结论或待决事项。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 72,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L97"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.008",
+      "type": "style",
+      "category": "成文质量",
+      "name": "具体化时优先写对象、动作、条件、边界和验证方式",
+      "ruleText": "具体化时优先写对象、动作、条件、边界和验证方式，不追求口号或金句。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 76,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L98"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.009",
+      "type": "style",
+      "category": "成文质量",
+      "name": "方案比选必须给出维度、来源和取舍；信息不足时只提供比选框架",
+      "ruleText": "方案比选必须给出维度、来源和取舍；信息不足时只提供比选框架。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 84,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L99"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.010",
+      "type": "style",
+      "category": "成文质量",
+      "name": "正式文件可保留必要重复、并列结构和规范用语；不要为了句式变化牺牲",
+      "ruleText": "正式文件可保留必要重复、并列结构和规范用语；不要为了句式变化牺牲可执行性。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 86,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L100"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.011",
+      "type": "style",
+      "category": "成文质量",
+      "name": "组织口吻来自文种、术语和审批口径",
+      "ruleText": "组织口吻来自文种、术语和审批口径，不等于模仿个人。",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 68,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L101"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.012",
+      "type": "style",
+      "category": "质量闸门",
+      "name": "H1 保护项完整",
+      "ruleText": "保护项完整",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 97,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L126"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.013",
+      "type": "style",
+      "category": "质量闸门",
+      "name": "H2 证据状态合规",
+      "ruleText": "证据状态合规",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 95,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L126"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.014",
+      "type": "style",
+      "category": "质量闸门",
+      "name": "H3 规范强度一致",
+      "ruleText": "规范强度一致",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 96,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L126"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.015",
+      "type": "style",
+      "category": "质量闸门",
+      "name": "H4 场景合同符合",
+      "ruleText": "场景合同符合",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 82,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L127"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.016",
+      "type": "style",
+      "category": "质量闸门",
+      "name": "H5 用户授权不越界",
+      "ruleText": "用户授权不越界",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 93,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L127"
+      ]
+    },
+    {
+      "id": "rule.yangqi.base.017",
+      "type": "style",
+      "category": "质量闸门",
+      "name": "H6 结论可追溯",
+      "ruleText": "结论可追溯",
+      "positiveExample": "",
+      "negativeExample": "",
+      "taskTypes": [
+        "smart_write"
+      ],
+      "sceneIds": [
+        "yangqi",
+        "cybersecurity"
+      ],
+      "contextKeywords": [],
+      "priority": 94,
+      "defaultEnabled": true,
+      "sourceRefs": [
+        "yangqi-tech-writing:v1.1.0:SKILL.md#L127"
+      ]
+    }
+  ]
+}

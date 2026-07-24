@@ -342,7 +342,8 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/provider/task-api-key` | 保存某个任务的独立 Dify API Key |
 | `DELETE` | `/provider/task-api-key/{taskType}` | 清除某个任务的独立 Dify API Key |
 | `GET` | `/writing-policies/summary` | 查看 Word 写作规范数量和可用状态 |
-| `GET` / `POST` | `/writing-policies/items` | 查询或新增术语和文体规则 |
+| `GET` | `/writing-policies/packs` | 只读查看预置规范包的来源、版本、提交和许可证 |
+| `GET` / `POST` | `/writing-policies/items` | 浏览预置条目或查询、新增组织术语与写作规则 |
 | `PATCH` / `DELETE` | `/writing-policies/items/{itemId}` | 修改或删除一条写作规范 |
 | `GET` | `/writing-policies/import-template.csv` | 下载 CSV 导入模板 |
 | `GET` | `/writing-policies/import-template.xlsx` | 下载 XLSX 导入模板 |

@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.services.writing_policy.models import WritingPolicyError
+from app.services.writing_policy.packs import WritingPolicyPackSnapshot
 from app.services.writing_policy import service as service_module
 from app.services.writing_policy.service import (
     WritingPolicyService,
@@ -93,8 +94,15 @@ class MutableClock:
 class WritingPolicyServiceTests(unittest.TestCase):
     def setUp(self):
         service_module._reset_writing_policy_services()
+        self.pack_loader_patch = patch.object(
+            service_module,
+            "load_pack_snapshot",
+            return_value=WritingPolicyPackSnapshot(()),
+        )
+        self.pack_loader_patch.start()
 
     def tearDown(self):
+        self.pack_loader_patch.stop()
         service_module._reset_writing_policy_services()
 
     def test_default_database_path_prefers_trimmed_environment_value(self):

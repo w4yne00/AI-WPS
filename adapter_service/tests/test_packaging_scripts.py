@@ -252,7 +252,15 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("writing-policies-import-template.csv", script)
         self.assertIn("writing-policies-import-template.xlsx", script)
         self.assertIn("writing-policy-library.md", script)
+        self.assertIn("writing-policy-sources.md", script)
+        self.assertIn('cp -R "$ROOT_DIR/adapter_service"', script)
         self.assertTrue(guide.is_file(), "missing writing policy operations guide")
+        self.assertTrue(
+            (ROOT / "adapter_service/writing_policy_packs/yangqi-tech-writing-base.json").is_file()
+        )
+        self.assertTrue(
+            (ROOT / "adapter_service/writing_policy_packs/THIRD_PARTY_NOTICES.md").is_file()
+        )
 
         text = guide.read_text(encoding="utf-8")
         for required_text in [

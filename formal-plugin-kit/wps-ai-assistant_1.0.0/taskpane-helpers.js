@@ -2020,6 +2020,8 @@
       applied: Boolean(source.applied),
       degraded: Boolean(source.degraded),
       degradedReason: String(source.degradedReason || ""),
+      packName: String(source.packName || "").trim(),
+      presetVersion: String(source.presetVersion || "").trim(),
       termMatchCount: normalizeWritingPolicyUsageCount(source.termMatchCount),
       styleRuleCount: normalizeWritingPolicyUsageCount(source.styleRuleCount),
       truncatedCount: normalizeWritingPolicyUsageCount(source.truncatedCount),
@@ -2047,6 +2049,11 @@
       return "写作规范未应用，本次结果仅使用模型工作流生成";
     }
     action = taskType === "word.document_review" ? "已检查" : "已应用";
+    if (usage.packName && usage.presetVersion) {
+      return "写作规范：" + action + " " + usage.packName + " v" +
+        usage.presetVersion + "（" +
+        (usage.termMatchCount + usage.styleRuleCount) + " 条规则）";
+    }
     return "写作规范：" + action + " " + usage.termMatchCount +
       " 条术语、" + usage.styleRuleCount + " 条文体规则";
   }

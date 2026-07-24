@@ -1042,6 +1042,8 @@ function testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata() {
     applied: true,
     degraded: false,
     degradedReason: 123,
+    packName: "G企技术写作基础",
+    presetVersion: "1.0.0",
     termMatchCount: -2,
     styleRuleCount: 3.8,
     truncatedCount: "4",
@@ -1057,6 +1059,8 @@ function testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata() {
     applied: true,
     degraded: false,
     degradedReason: "123",
+    packName: "G企技术写作基础",
+    presetVersion: "1.0.0",
     termMatchCount: 0,
     styleRuleCount: 3,
     truncatedCount: 4,
@@ -1081,6 +1085,16 @@ function testWritingPolicyUsageSummaryUsesTaskSpecificChineseVerb() {
   assert.strictEqual(
     helpers.writingPolicyUsageSummary(usage, "word.document_review"),
     "写作规范：已检查 2 条术语、1 条文体规则"
+  );
+  assert.strictEqual(
+    helpers.writingPolicyUsageSummary({
+      applied: true,
+      packName: "G企技术写作基础",
+      presetVersion: "1.0.0",
+      termMatchCount: 0,
+      styleRuleCount: 8
+    }, "word.smart_write"),
+    "写作规范：已应用 G企技术写作基础 v1.0.0（8 条规则）"
   );
   assert.strictEqual(
     helpers.writingPolicyUsageSummary({ applied: false, degraded: true }, "word.document_review"),

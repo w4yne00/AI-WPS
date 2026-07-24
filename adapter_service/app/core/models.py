@@ -431,6 +431,9 @@ class WritingPolicyUsage(BaseModel):
     applied: bool
     degraded: bool = False
     degraded_reason: str = Field(default="", alias="degradedReason")
+    scene: Optional[str] = None
+    preset_version: Optional[str] = Field(default=None, alias="presetVersion")
+    pack_name: Optional[str] = Field(default=None, alias="packName")
     term_match_count: int = Field(default=0, alias="termMatchCount")
     style_rule_count: int = Field(default=0, alias="styleRuleCount")
     truncated_count: int = Field(default=0, alias="truncatedCount")

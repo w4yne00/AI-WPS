@@ -119,6 +119,7 @@ POST   /provider/workflow-profiles/{profileId}/api-key
 POST   /provider/workflow-profiles/{profileId}/activate
 DELETE /provider/workflow-profiles/{profileId}
 GET    /writing-policies/summary
+GET    /writing-policies/packs
 GET    /writing-policies/items
 POST   /writing-policies/items
 PATCH  /writing-policies/items/{itemId}

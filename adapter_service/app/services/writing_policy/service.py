@@ -9,6 +9,7 @@ from typing import Callable, Dict, Optional, Sequence
 
 from .matcher import build_match_result
 from .models import WritingPolicyError, WritingPolicyMatchResult, public_usage
+from .packs import WritingPolicyPackSnapshot, load_pack_snapshot
 from .store import WritingPolicyStore
 
 
@@ -106,8 +107,12 @@ class WritingPolicyService:
         self,
         store: object,
         clock: Optional[Callable[[], float]] = None,
+        pack_snapshot: Optional[WritingPolicyPackSnapshot] = None,
     ):
         self.store = store
+        self.pack_snapshot = (
+            pack_snapshot if pack_snapshot is not None else load_pack_snapshot()
+        )
         self._clock = clock or time.monotonic
         self._diagnostic_lock = threading.Lock()
         self._last_diagnostic = dict(
@@ -128,16 +133,39 @@ class WritingPolicyService:
         self,
         task_scope: str,
         source_parts: Sequence[str],
+        scene: str = "auto",
     ) -> WritingPolicyMatchResult:
         started_at = _safe_clock_value(self._clock)
         try:
-            terms, styles = self.store.enabled_items(task_scope)
+            if scene == "disabled":
+                terms, styles = [], []
+            else:
+                terms, styles = self.store.enabled_items(task_scope)
+            preset = None
+            if task_scope == "word.smart_write" and scene in ("auto", "yangqi"):
+                preset = self._base_pack()
+                if preset is not None:
+                    preset_terms, preset_styles = self.pack_snapshot.matcher_items(
+                        preset["packId"],
+                        "smart_write",
+                        "yangqi",
+                    )
+                    terms = preset_terms + list(terms)
+                    styles = preset_styles + list(styles)
             matched = build_match_result(terms, styles, task_scope, source_parts)
         except Exception as error:
             return self._degraded_result(error, started_at)
 
         elapsed_ms = _elapsed_ms(started_at, _safe_clock_value(self._clock))
         usage = matched.usage
+        if preset is not None:
+            usage.update(
+                {
+                    "scene": "yangqi",
+                    "presetVersion": preset["version"],
+                    "packName": preset["name"],
+                }
+            )
         patch = _diagnostic_patch(
             applied=bool(usage.get("applied", False)),
             degraded=bool(usage.get("degraded", False)),
@@ -155,6 +183,18 @@ class WritingPolicyService:
             matched.matched_item_ids,
             patch,
         )
+
+    def list_packs(self):
+        return self.pack_snapshot.public_packs()
+
+    def list_preset_items(self, pack_id: str):
+        return self.pack_snapshot.public_items(pack_id)
+
+    def _base_pack(self):
+        for pack in self.pack_snapshot.public_packs():
+            if pack["packId"] == "yangqi-tech-writing-base":
+                return pack
+        return None
 
     def diagnostics(self) -> Dict[str, object]:
         with self._diagnostic_lock:
@@ -208,7 +248,8 @@ class _UnavailableStore:
 
 def _degraded_service(error: Exception) -> WritingPolicyService:
     return WritingPolicyService(
-        store=_UnavailableStore(_safe_error_code(error))
+        store=_UnavailableStore(_safe_error_code(error)),
+        pack_snapshot=WritingPolicyPackSnapshot(()),
     )
 
 

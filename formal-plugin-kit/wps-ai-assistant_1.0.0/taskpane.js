@@ -208,6 +208,9 @@
     writingPolicyScope: "global",
     writingPolicyType: "term",
     writingPolicyItems: [],
+    writingPolicyPresetPack: null,
+    writingPolicyPresetItems: [],
+    writingPolicyPresetError: "",
     writingPolicySummary: null,
     writingPolicyLoadSequence: 0,
     writingPolicyMutationBusy: false,
@@ -2234,6 +2237,7 @@
       diagnosticsDisclosure.open = false;
       diagnosticsDisclosure.hidden = true;
     }
+    byId("writing-policy-preset-view").hidden = view !== "preset";
     byId("writing-policy-scope-view").hidden = view !== "scope";
     byId("writing-policy-list-view").hidden = view !== "list";
     byId("writing-policy-editor-view").hidden = view !== "editor";
@@ -2243,6 +2247,7 @@
   function focusWritingPolicyView(view) {
     var targetIds = {
       home: "btn-open-writing-policy-manager",
+      preset: "writing-policy-preset-title",
       scope: "writing-policy-scope-title",
       list: "writing-policy-list-title",
       editor: "writing-policy-editor-title",
@@ -2349,10 +2354,97 @@
     });
   }
 
-  function openWritingPolicyScopeView() {
+  function renderWritingPolicyPresetItems() {
+    var pack = state.writingPolicyPresetPack || {};
+    var source = pack.source || {};
+    var meta = byId("writing-policy-preset-pack-meta");
+    var list = byId("writing-policy-preset-item-list");
+    var index;
+    list.textContent = "";
+    if (state.writingPolicyPresetError) {
+      meta.textContent = "预置规范暂时无法读取，请稍后重试。";
+      return;
+    }
+    if (!pack.packId) {
+      meta.textContent = "正在读取规范包...";
+      return;
+    }
+    meta.textContent = pack.name + " v" + pack.version + " ｜ 来源：" +
+      source.name + " " + source.version + " ｜ 提交：" + source.commit +
+      " ｜ 许可证：" + source.license;
+    for (index = 0; index < state.writingPolicyPresetItems.length; index += 1) {
+      var item = state.writingPolicyPresetItems[index];
+      var row = document.createElement("div");
+      var title = document.createElement("strong");
+      var rule = document.createElement("p");
+      var trace = document.createElement("small");
+      row.className = "writing-policy-item-row writing-policy-preset-item";
+      title.textContent = item.name || item.preferredText || "未命名规范";
+      rule.textContent = item.ruleText || item.definition || "";
+      trace.textContent = "ID：" + String(item.id || "") + " ｜ 来源版本：" +
+        String((item.source || {}).version || source.version || "") +
+        " ｜ 提交：" + String((item.source || {}).commit || source.commit || "") +
+        " ｜ 许可证：" + String((item.source || {}).license || source.license || "");
+      row.appendChild(title);
+      row.appendChild(rule);
+      row.appendChild(trace);
+      list.appendChild(row);
+    }
+    if (!state.writingPolicyPresetItems.length) {
+      list.textContent = "当前规范包暂无可显示条目。";
+    }
+  }
+
+  function loadWritingPolicyPresetItems(packId) {
+    return request("/writing-policies/items?layer=preset&packId=" +
+      encodeURIComponent(packId)).then(function (body) {
+      state.writingPolicyPresetItems = body.data && Array.isArray(body.data.items)
+        ? body.data.items
+        : [];
+      state.writingPolicyPresetError = "";
+      renderWritingPolicyPresetItems();
+      return state.writingPolicyPresetItems;
+    }).catch(function () {
+      state.writingPolicyPresetItems = [];
+      state.writingPolicyPresetError = "items_unavailable";
+      renderWritingPolicyPresetItems();
+      return [];
+    });
+  }
+
+  function loadWritingPolicyPresetPacks() {
+    state.writingPolicyPresetPack = null;
+    state.writingPolicyPresetItems = [];
+    state.writingPolicyPresetError = "";
+    renderWritingPolicyPresetItems();
+    return request("/writing-policies/packs").then(function (body) {
+      var packs = body.data && Array.isArray(body.data.packs) ? body.data.packs : [];
+      var index;
+      for (index = 0; index < packs.length; index += 1) {
+        if (packs[index].packId === "yangqi-tech-writing-base") {
+          state.writingPolicyPresetPack = packs[index];
+          return loadWritingPolicyPresetItems(packs[index].packId);
+        }
+      }
+      state.writingPolicyPresetError = "base_pack_missing";
+      renderWritingPolicyPresetItems();
+      return [];
+    }).catch(function () {
+      state.writingPolicyPresetError = "packs_unavailable";
+      renderWritingPolicyPresetItems();
+      return [];
+    });
+  }
+
+  function openWritingPolicyPresetView() {
     if (state.writingPolicySummaryState !== "ready") {
       return;
     }
+    setWritingPolicyView("preset");
+    loadWritingPolicyPresetPacks();
+  }
+
+  function openWritingPolicyScopeView() {
     setWritingPolicyView("scope");
   }
 
@@ -4511,7 +4603,11 @@
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
     byId("workflow-profile-manager").addEventListener("change", markWorkflowProfileEditorDirty);
-    byId("btn-open-writing-policy-manager").addEventListener("click", openWritingPolicyScopeView);
+    byId("btn-open-writing-policy-manager").addEventListener("click", openWritingPolicyPresetView);
+    byId("btn-writing-policy-preset-back").addEventListener("click", function () {
+      setWritingPolicyView("home");
+    });
+    byId("btn-writing-policy-open-organization").addEventListener("click", openWritingPolicyScopeView);
     byId("btn-retry-writing-policy-summary").addEventListener("click", loadWritingPolicySummary);
     byId("btn-writing-policy-scope-back").addEventListener("click", function () {
       setWritingPolicyView("home");

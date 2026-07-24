@@ -1386,6 +1386,31 @@ body[data-task-mode="smartWrite"] #result-output {
   line-height: 1.4;
 }
 
+.writing-policy-preset-pack-meta {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  color: var(--muted);
+  background: var(--surface-soft);
+  overflow-wrap: anywhere;
+}
+
+.writing-policy-preset-item {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 5px;
+}
+
+.writing-policy-preset-item p {
+  margin: 0;
+  color: var(--text);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.writing-policy-preset-item small {
+  overflow-wrap: anywhere;
+}
+
 .writing-policy-import-entry {
   justify-self: start;
 }

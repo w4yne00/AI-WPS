@@ -66,6 +66,12 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
 [
   "writing-policies-summary-card",
   "writing-policy-scope-view",
+  "writing-policy-preset-view",
+  "writing-policy-preset-title",
+  "writing-policy-preset-pack-meta",
+  "writing-policy-preset-item-list",
+  "btn-writing-policy-preset-back",
+  "btn-writing-policy-open-organization",
   "writing-policy-list-view",
   "writing-policy-editor-view",
   "btn-writing-policy-scope-back",
@@ -221,6 +227,20 @@ const summarySource = functionSource("loadWritingPolicySummary");
 assert.ok(summarySource.includes('request("/writing-policies/summary")'));
 assert.ok(summarySource.includes("writingPolicyLoadSequence"));
 assert.ok(summarySource.includes("httpStatus === 404"));
+
+const presetLoadSource = functionSource("loadWritingPolicyPresetPacks");
+assert.ok(presetLoadSource.includes('request("/writing-policies/packs")'));
+assert.ok(presetLoadSource.includes("yangqi-tech-writing-base"));
+
+const presetItemsSource = functionSource("loadWritingPolicyPresetItems");
+assert.ok(presetItemsSource.includes("/writing-policies/items?layer=preset&packId="));
+
+const presetRenderSource = functionSource("renderWritingPolicyPresetItems");
+assert.ok(presetRenderSource.includes("textContent"));
+assert.ok(presetRenderSource.includes("source.version"));
+assert.ok(presetRenderSource.includes("source.commit"));
+assert.ok(presetRenderSource.includes("source.license"));
+assert.ok(!presetRenderSource.includes("innerHTML"));
 
 const listSource = functionSource("loadWritingPolicyItems");
 assert.ok(listSource.includes('request("/writing-policies/items?scope="'));

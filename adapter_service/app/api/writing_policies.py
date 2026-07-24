@@ -31,6 +31,7 @@ _SAFE_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 _NOT_FOUND_CODES = {
     "writing_policy_item_not_found",
+    "writing_policy_pack_not_found",
     "import_preview_not_found",
     "import_preview_expired",
 }
@@ -150,7 +151,12 @@ def _adapter_error(error: Exception) -> AdapterError:
         code = str(error.code or "")
         public_code = _safe_writing_policy_code(code)
         if code in _NOT_FOUND_CODES:
-            return AdapterError(public_code, "未找到指定规范条目或导入预览。", 404)
+            message = (
+                "未找到指定预置规范包。"
+                if code == "writing_policy_pack_not_found"
+                else "未找到指定规范条目或导入预览。"
+            )
+            return AdapterError(public_code, message, 404)
         if code in _CONFLICT_CODES:
             return AdapterError(public_code, error.message, 409)
         if code in _TOO_LARGE_CODES:
@@ -199,13 +205,62 @@ def get_summary() -> dict:
         _raise_mapped(error)
 
 
+@router.get("/writing-policies/packs")
+def get_packs() -> dict:
+    try:
+        packs = get_writing_policy_service().list_packs()
+        return _envelope({"count": len(packs), "packs": packs})
+    except Exception as error:
+        _raise_mapped(error)
+
+
 @router.get("/writing-policies/items")
 def list_items(
-    scope: str,
-    item_type: str = Query(alias="type"),
+    scope: Optional[str] = None,
+    item_type: Optional[str] = Query(default=None, alias="type"),
     query: str = "",
+    layer: str = "organization",
+    pack_id: str = Query(default="", alias="packId"),
 ) -> dict:
     try:
+        item_type = item_type if isinstance(item_type, str) else None
+        pack_id = pack_id if isinstance(pack_id, str) else ""
+        if layer == "preset":
+            if not pack_id:
+                raise WritingPolicyError(
+                    "invalid_writing_policy_pack",
+                    "浏览预置规范时必须指定规范包。",
+                )
+            items = get_writing_policy_service().list_preset_items(pack_id)
+            if item_type:
+                items = [item for item in items if item.get("type") == item_type]
+            if query:
+                normalized = query.casefold()
+                items = [
+                    item
+                    for item in items
+                    if normalized
+                    in str(
+                        item.get("name")
+                        or item.get("preferredText")
+                        or ""
+                    ).casefold()
+                ]
+            return _envelope(
+                {
+                    "layer": "preset",
+                    "packId": pack_id,
+                    "type": item_type or "",
+                    "query": query,
+                    "count": len(items),
+                    "items": items,
+                }
+            )
+        if not scope or not item_type:
+            raise WritingPolicyError(
+                "invalid_writing_policy_query",
+                "浏览组织规范时必须指定范围和类型。",
+            )
         items = _store().list_items(scope, item_type, query)
         return _envelope(
             {

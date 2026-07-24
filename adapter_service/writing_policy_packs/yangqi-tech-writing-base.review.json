@@ -1,0 +1,110 @@
+{
+  "packId": "yangqi-tech-writing-base",
+  "packVersion": "1.0.0",
+  "reviewedAt": "2026-07-25",
+  "reviewedBy": "Wayne",
+  "decisions": [
+    {
+      "id": "rule.yangqi.base.001",
+      "decision": "approved",
+      "note": "用户明确确认 17 条全部通过。",
+      "contentSha256": "c93dbf6a184733e334ee180dd0e9467a9d20d25b7d04aba2dbd9180e5003f5e0"
+    },
+    {
+      "id": "rule.yangqi.base.002",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "39ca5a72349f143dc564f66c4cb96aaa4c3c1b9ce9b9c827baf5c652c4f003ff"
+    },
+    {
+      "id": "rule.yangqi.base.003",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "260cb940dc5d449620e12a3685c85f1b72a081d7e09df236c4dd7a2297c2a85f"
+    },
+    {
+      "id": "rule.yangqi.base.004",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "6fadc2964e73bb706838866422c15d8b0999d6fa7fb74f58fbfe44a4373980ad"
+    },
+    {
+      "id": "rule.yangqi.base.005",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "be1d0de734ed1bda9677e1e3ff23e83ab4c1e9666c8441f449c651b0f826e84c"
+    },
+    {
+      "id": "rule.yangqi.base.006",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "a5b015f68ad653855f166e25798279e2ea8eddbeb8496be2601afa6832a7b967"
+    },
+    {
+      "id": "rule.yangqi.base.007",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "79ab98f41d79ff8d3feaaf2be675e736072d9c12a2714c80f92779133f09a910"
+    },
+    {
+      "id": "rule.yangqi.base.008",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "74bf00173fdca1c1bbd66c92880627d0ad3747cdbe89c66a14091c872da46681"
+    },
+    {
+      "id": "rule.yangqi.base.009",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "c481b9742a78e25cadcaeb4cb8d1ce7b5192c0c0c1e2b6ebacf4527b52f87e9b"
+    },
+    {
+      "id": "rule.yangqi.base.010",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "4e13559d8ce6bed9f1e360c8921684227e705ca843e4b7d5b19d79e0bd5c30c6"
+    },
+    {
+      "id": "rule.yangqi.base.011",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "5f03f41303c7f662df66c2f56c7286641aad9085337f675db04891eeac8a111d"
+    },
+    {
+      "id": "rule.yangqi.base.012",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "37d6d4ca13419474346308b828833c4f01ff608ae9a53e37e25df8ccc12753b6"
+    },
+    {
+      "id": "rule.yangqi.base.013",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "e1c424d9c68b433c76f11620a20c1e8085fcbac68587280fdc5696fe810b14a5"
+    },
+    {
+      "id": "rule.yangqi.base.014",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "3739289bd71672bbd41ff24ff7ca113e3dfa706080943889cc226402d557b33e"
+    },
+    {
+      "id": "rule.yangqi.base.015",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "2cd354a35d046ed0575c10b0b66e31bef298a4acca7a70a98e1a1c939aa52b49"
+    },
+    {
+      "id": "rule.yangqi.base.016",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "b3b14684b18e9f4b436efddfe31a830a38f403476d3b482d74f34f7fd56fb6d7"
+    },
+    {
+      "id": "rule.yangqi.base.017",
+      "decision": "approved",
+      "note": "",
+      "contentSha256": "891cdd0387ae174162ab7156e0c3307cdd7429cb9b4520b35f4f13ebc6fdd56c"
+    }
+  ]
+}

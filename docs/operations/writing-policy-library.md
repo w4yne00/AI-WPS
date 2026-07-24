@@ -11,6 +11,19 @@
 
 任务窗口只显示本次匹配的数量和最多 20 条名称，不改变智能编写回写、对照、复制或文档审查状态逻辑。切换 Dify 工作流不会切换规范库，规范条目由本机 adapter 独立保存。
 
+## 预置规范只读浏览
+
+Word 的“设置 → 写作规范库”首先展示随版本发布的预置规范。当前 G企技术写作基础包只读显示包版本、来源标签、完整提交、许可证、稳定条目 ID 和规则内容；“管理组织规范”继续进入本机组织数据管理。
+
+adapter 与 standalone adapter 提供相同的只读接口：
+
+```text
+GET /writing-policies/packs
+GET /writing-policies/items?layer=preset&packId=yangqi-tech-writing-base
+```
+
+预置包候选、人工门禁和来源处理规则见 [`../writing-policy-sources.md`](../writing-policy-sources.md)。
+
 ## 单条维护
 
 在 Word 的“设置 → 写作规范库”中进入范围，再选择“术语规范”或“文体规则”。列表支持搜索、新增、修改和删除；高级字段默认折叠。删除前必须确认，保存冲突时应先检查库内是否已有相同标准写法、别名或规则名称。

@@ -342,7 +342,8 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
 | `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
 | `GET` | `/writing-policies/summary` | Knowledge counts and availability for the Word manager |
-| `GET` / `POST` | `/writing-policies/items` | List or create terminology and writing-rule items |
+| `GET` | `/writing-policies/packs` | List read-only preset packs with source, version, commit, and license |
+| `GET` / `POST` | `/writing-policies/items` | Browse preset items or list/create organization terminology and writing rules |
 | `PATCH` / `DELETE` | `/writing-policies/items/{itemId}` | Update or delete one knowledge item |
 | `GET` | `/writing-policies/import-template.csv` | Download the CSV import template |
 | `GET` | `/writing-policies/import-template.xlsx` | Download the XLSX import template |
