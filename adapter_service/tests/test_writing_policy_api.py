@@ -1069,6 +1069,16 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
             body_size=body_size,
         )
 
+    def test_standalone_cors_allows_preset_override_put_requests(self):
+        handler = object.__new__(self.standalone.Handler)
+        headers = []
+        handler.send_header = lambda name, value: headers.append((name, value))
+
+        handler._set_cors_headers()
+
+        methods = dict(headers)["Access-Control-Allow-Methods"]
+        self.assertIn("PUT", {method.strip() for method in methods.split(",")})
+
     def raw_http_request(
         self,
         host,

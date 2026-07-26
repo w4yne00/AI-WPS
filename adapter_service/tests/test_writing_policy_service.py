@@ -2,6 +2,7 @@ import json
 import os
 import threading
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -325,6 +326,75 @@ class WritingPolicyServiceTests(unittest.TestCase):
                     self.assertNotIn(
                         "term.cyber.001", result.matched_item_ids
                     )
+
+    def test_override_activates_a_default_disabled_preset_term_for_three_word_tasks(self):
+        snapshot = load_pack_snapshot()
+        packs = []
+        for pack in snapshot.packs:
+            if pack.pack_id != "cybersecurity-terminology":
+                packs.append(pack)
+                continue
+            entries = []
+            for entry in pack.entry_dicts():
+                if entry["id"] == "term.cyber.001":
+                    entry["defaultEnabled"] = False
+                entries.append(json.dumps(entry, ensure_ascii=False))
+            packs.append(replace(pack, entries=tuple(entries)))
+
+        with TemporaryDirectory() as tmp:
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
+            service = WritingPolicyService(
+                store=store,
+                pack_snapshot=WritingPolicyPackSnapshot(tuple(packs)),
+            )
+            service.put_preset_term_operation(
+                "term.cyber.001",
+                "override",
+                {
+                    "preferredText": "组织网络安全",
+                    "aliases": ["网络空间安全"],
+                },
+            )
+
+            for task_scope in (
+                "word.smart_write",
+                "word.smart_imitation",
+                "word.document_review",
+            ):
+                with self.subTest(task_scope=task_scope):
+                    result = service.prepare(
+                        task_scope,
+                        ["网络空间安全"],
+                        scene="cybersecurity",
+                    )
+                    self.assertIn(
+                        "term.cyber.001", result.matched_item_ids
+                    )
+                    self.assertIn("组织网络安全", result.prompt_block)
+
+    def test_restore_removes_an_operation_after_the_preset_entry_is_removed(self):
+        with TemporaryDirectory() as tmp:
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
+            store.upsert_preset_operation(
+                "term.removed.001",
+                "retired-pack",
+                "term",
+                "disabled",
+            )
+            service = WritingPolicyService(
+                store=store,
+                pack_snapshot=WritingPolicyPackSnapshot(()),
+            )
+
+            restored = service.restore_preset_term("term.removed.001")
+
+            self.assertEqual(restored["presetEntryId"], "term.removed.001")
+            with self.assertRaises(WritingPolicyError) as raised:
+                store.get_preset_operation("term.removed.001")
+            self.assertEqual(
+                raised.exception.code,
+                "writing_policy_preset_operation_not_found",
+            )
 
     def test_audit_failure_is_nonblocking_and_returns_chinese_degradation(self):
         service = WritingPolicyService(store=StaticStore([term_item()], []))

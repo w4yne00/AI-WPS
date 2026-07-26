@@ -698,7 +698,10 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
 class Handler(BaseHTTPRequestHandler):
     def _set_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+        self.send_header(
+            "Access-Control-Allow-Methods",
+            "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        )
         self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Trace-Id")
 
     def _write(self, status_code, body):

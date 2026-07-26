@@ -180,6 +180,7 @@ class WritingPolicyService:
                     preset_terms = self._effective_preset_terms(
                         preset_terms,
                         preset_operations,
+                        self.pack_snapshot.public_items(preset["packId"]),
                     )
                     terms = preset_terms + list(terms)
                     styles = preset_styles + list(styles)
@@ -358,12 +359,6 @@ class WritingPolicyService:
     def restore_preset_term(
         self, preset_entry_id: str
     ) -> Dict[str, object]:
-        baseline = self._find_preset_item(preset_entry_id)
-        if baseline.get("type") != "term":
-            raise WritingPolicyError(
-                "invalid_writing_policy_type",
-                "当前版本仅支持恢复预置术语。",
-            )
         return self.store.restore_preset_operation(preset_entry_id)
 
     def _find_preset_item(self, preset_entry_id: str) -> Dict[str, object]:
@@ -417,30 +412,57 @@ class WritingPolicyService:
     def _effective_preset_terms(
         terms,
         operations: Dict[str, Dict[str, object]],
+        pack_items=(),
     ):
         effective = []
+        included_ids = set()
         for baseline in terms:
-            operation = operations.get(str(baseline.get("id") or ""))
+            baseline_id = str(baseline.get("id") or "")
+            included_ids.add(baseline_id)
+            operation = operations.get(baseline_id)
             if operation is not None and operation["operation"] == "disabled":
                 continue
             if operation is not None and operation["operation"] == "override":
-                item = deepcopy(operation["payload"])
-                item.update(
-                    {
-                        "id": baseline["id"],
-                        "type": "term",
-                        "scope": "global",
-                        "enabled": True,
-                        "layer": "organization",
-                        "packId": baseline.get("packId"),
-                        "packVersion": baseline.get("packVersion"),
-                        "presetOperation": "override",
-                    }
+                effective.append(
+                    WritingPolicyService._preset_override_matcher_item(
+                        baseline, operation
+                    )
                 )
-                effective.append(item)
             else:
                 effective.append(baseline)
+        for baseline in pack_items:
+            baseline_id = str(baseline.get("id") or "")
+            operation = operations.get(baseline_id)
+            if (
+                baseline_id in included_ids
+                or baseline.get("type") != "term"
+                or operation is None
+                or operation["operation"] != "override"
+            ):
+                continue
+            effective.append(
+                WritingPolicyService._preset_override_matcher_item(
+                    baseline, operation
+                )
+            )
         return effective
+
+    @staticmethod
+    def _preset_override_matcher_item(baseline, operation):
+        item = deepcopy(operation["payload"])
+        item.update(
+            {
+                "id": baseline["id"],
+                "type": "term",
+                "scope": "global",
+                "enabled": True,
+                "layer": "organization",
+                "packId": baseline.get("packId"),
+                "packVersion": baseline.get("packVersion"),
+                "presetOperation": "override",
+            }
+        )
+        return item
 
     def _selected_packs(self, task_scope: str, resolution):
         if task_scope not in _PRESET_TASK_TYPES:
