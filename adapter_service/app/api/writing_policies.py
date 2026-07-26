@@ -1,5 +1,6 @@
 import base64
 import binascii
+import hashlib
 import re
 import sqlite3
 from pathlib import Path
@@ -22,6 +23,11 @@ from app.services.writing_policy.imports import (
     validate_import_rows,
 )
 from app.services.writing_policy.models import WritingPolicyError, MAX_IMPORT_BYTES
+from app.services.writing_policy.roundtrip import (
+    XLSX_MIME as ROUNDTRIP_XLSX_MIME,
+    export_roundtrip_csv,
+    export_roundtrip_xlsx,
+)
 from app.services.writing_policy.service import get_writing_policy_service
 
 
@@ -106,6 +112,7 @@ class ImportConflictDecision(_AliasModel):
 
 class ImportApplyRequest(_AliasModel):
     preview_token: str = Field(alias="previewToken")
+    file_digest: str = Field(default="", alias="fileDigest")
     accepted_conflict_rows: List[ImportConflictDecision] = Field(
         default_factory=list, alias="acceptedConflictRows"
     )
@@ -414,8 +421,14 @@ def preview_import(request: ImportPreviewRequest) -> dict:
                 "rowCount": validated.get("rowCount", len(rows)),
                 "mimeType": request.mime_type,
                 "sizeBytes": len(content),
+                **(
+                    {"sha256": hashlib.sha256(content).hexdigest()}
+                    if validated.get("schema") == "roundtrip"
+                    else {}
+                ),
             },
             preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
+            service=get_writing_policy_service(),
         )
         return _envelope(preview, "previewed")
     except Exception as error:
@@ -433,6 +446,7 @@ def apply_import(request: ImportApplyRequest) -> dict:
             request.preview_token,
             decisions,
             preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
+            file_digest=request.file_digest,
         )
         return _envelope(result, "applied")
     except Exception as error:
@@ -442,10 +456,26 @@ def apply_import(request: ImportApplyRequest) -> dict:
 @router.get("/writing-policies/export.csv")
 def export_writing_policy_csv(scope: str) -> Response:
     try:
+        if scope in ("effective", "organization"):
+            content = export_roundtrip_csv(get_writing_policy_service(), scope)
+        else:
+            content = _store().export_csv(scope)
         return _download(
-            _store().export_csv(scope),
+            content,
             "text/csv",
             "writing-policies-export.csv",
+        )
+    except Exception as error:
+        _raise_mapped(error)
+
+
+@router.get("/writing-policies/export.xlsx")
+def export_writing_policy_xlsx(scope: str) -> Response:
+    try:
+        return _download(
+            export_roundtrip_xlsx(get_writing_policy_service(), scope),
+            ROUNDTRIP_XLSX_MIME,
+            "writing-policies-export.xlsx",
         )
     except Exception as error:
         _raise_mapped(error)

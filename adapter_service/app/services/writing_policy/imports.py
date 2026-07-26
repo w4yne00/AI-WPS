@@ -23,6 +23,10 @@ from app.services.writing_policy.models import (
     WritingPolicyError,
     normalize_key,
 )
+from app.services.writing_policy.roundtrip import (
+    ROUNDTRIP_COLUMNS,
+    ROUNDTRIP_EXPORT_MARKER,
+)
 
 
 IMPORT_COLUMNS = (
@@ -54,13 +58,14 @@ _MAX_COMPRESSION_RATIO = 100
 _COMPRESSION_RATIO_MIN_BYTES = 4096
 MAX_XLSX_WORKSHEET_ELEMENTS = 200000
 MAX_XLSX_WORKSHEET_DEPTH = 32
-MAX_XLSX_SHARED_STRING_ITEMS = (MAX_IMPORT_ROWS + 1) * len(IMPORT_COLUMNS)
+MAX_IMPORT_COLUMNS = max(len(IMPORT_COLUMNS), len(ROUNDTRIP_COLUMNS))
+MAX_XLSX_SHARED_STRING_ITEMS = (MAX_IMPORT_ROWS + 2) * MAX_IMPORT_COLUMNS
 MAX_XLSX_SHARED_STRING_ELEMENTS = MAX_XLSX_SHARED_STRING_ITEMS * 8 + 1
 MAX_XLSX_SHARED_STRING_DEPTH = 16
 MAX_XLSX_CELL_REFERENCE_CHARS = 7
 MAX_XLSX_COLUMN_LETTERS = 3
 MAX_XLSX_ROW_DIGITS = 4
-MAX_XLSX_ROW_NUMBER = MAX_IMPORT_ROWS + 1
+MAX_XLSX_ROW_NUMBER = MAX_IMPORT_ROWS + 2
 MAX_XLSX_SHARED_STRING_INDEX_DIGITS = 7
 _ZIP_READ_CHUNK_BYTES = 64 * 1024
 _REL_NS = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
@@ -115,6 +120,12 @@ class _ImportRow(dict):
         super().__init__(values)
         self.row_number = row_number
         self._sourceRow = row_number
+
+
+class _ImportRows(list):
+    def __init__(self, values, columns):
+        super().__init__(values)
+        self.columns = tuple(columns)
 
 
 class _RowValidationError(Exception):
@@ -223,7 +234,7 @@ class ImportPreviewStore:
         file_name: str, file_meta: Dict[str, object]
     ) -> Dict[str, object]:
         safe = {"fileName": str(file_name or file_meta.get("fileName") or "")}
-        for key in ("format", "rowCount", "mimeType", "sizeBytes"):
+        for key in ("format", "rowCount", "mimeType", "sizeBytes", "sha256"):
             if key in file_meta:
                 safe[key] = copy.deepcopy(file_meta[key])
         return safe
@@ -372,10 +383,14 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
     try:
         reader = csv.reader(io.StringIO(text, newline=""), strict=True)
         headers = next(reader, None)
-        restore_export_cells = headers == [CSV_EXPORT_MARKER]
+        restore_export_cells = headers in (
+            [CSV_EXPORT_MARKER],
+            [ROUNDTRIP_EXPORT_MARKER],
+        )
         if restore_export_cells:
             headers = next(reader, None)
-        if headers is None or tuple(headers) != IMPORT_COLUMNS:
+        active_columns = tuple(headers or ())
+        if active_columns not in (IMPORT_COLUMNS, ROUNDTRIP_COLUMNS):
             raise WritingPolicyError(
                 "invalid_import_headers", "导入文件表头与标准模板不一致。"
             )
@@ -384,7 +399,7 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
             row_number = reader.line_num
             if not values or not any(str(value).strip() for value in values):
                 continue
-            if len(values) != len(IMPORT_COLUMNS):
+            if len(values) != len(active_columns):
                 raise WritingPolicyError(
                     "invalid_import_row",
                     "第 %d 行的列数与标准模板不一致。" % row_number,
@@ -394,10 +409,10 @@ def parse_csv(content: bytes, file_name: str) -> List[Dict[str, str]]:
                 clean_values = [csv_restore_cell(value) for value in clean_values]
             _validate_cell_lengths(clean_values, row_number)
             rows.append(
-                _ImportRow(dict(zip(IMPORT_COLUMNS, clean_values)), row_number)
+                _ImportRow(dict(zip(active_columns, clean_values)), row_number)
             )
             _validate_row_count(rows)
-        return rows
+        return _ImportRows(rows, active_columns)
     except csv.Error as exc:
         raise WritingPolicyError("invalid_import_file", "CSV 文件格式无效：%s" % exc)
 
@@ -453,6 +468,28 @@ def parse_xlsx(content: bytes, file_name: str) -> List[Dict[str, str]]:
 
 
 def validate_import_rows(rows: Sequence[Dict[str, str]]) -> Dict[str, object]:
+    columns = tuple(
+        getattr(rows, "columns", tuple(rows[0].keys()) if rows else ())
+    )
+    if columns == ROUNDTRIP_COLUMNS:
+        return {
+            "schema": "roundtrip",
+            "rows": [
+                {
+                    "rowNumber": int(
+                        getattr(
+                            row,
+                            "_sourceRow",
+                            getattr(row, "row_number", index),
+                        )
+                    ),
+                    "row": dict(row),
+                }
+                for index, row in enumerate(rows, start=3)
+            ],
+            "rowCount": len(rows),
+            "errors": [],
+        }
     valid_items = []
     item_rows = []
     errors = []
@@ -507,7 +544,25 @@ def build_import_preview(
     validated_result: Dict[str, object],
     file_meta: Dict[str, object],
     preview_store: Optional[ImportPreviewStore] = None,
+    service=None,
 ) -> Dict[str, object]:
+    if validated_result.get("schema") == "roundtrip":
+        if service is None:
+            raise WritingPolicyError(
+                "writing_policy_service_unavailable",
+                "规范往返导入需要写作规范服务。",
+            )
+        from app.services.writing_policy.roundtrip import build_roundtrip_preview
+
+        return build_roundtrip_preview(
+            service,
+            [
+                _ImportRow(entry["row"], int(entry["rowNumber"]))
+                for entry in validated_result.get("rows") or ()
+            ],
+            file_meta,
+            preview_store or DEFAULT_IMPORT_PREVIEW_STORE,
+        )
     previews = preview_store or DEFAULT_IMPORT_PREVIEW_STORE
     errors = list(validated_result.get("errors") or [])
     item_rows = _validated_item_rows(validated_result)
@@ -631,8 +686,22 @@ def apply_import_preview(
     preview_token: str,
     conflict_decisions: Optional[Sequence[Dict[str, object]]] = None,
     preview_store: Optional[ImportPreviewStore] = None,
+    file_digest: str = "",
 ) -> Dict[str, object]:
     previews = preview_store or DEFAULT_IMPORT_PREVIEW_STORE
+    cached = previews.get(preview_token)
+    expected_digest = str(
+        dict(cached.get("fileMeta") or {}).get("sha256") or ""
+    )
+    if expected_digest:
+        from app.services.writing_policy.roundtrip import apply_roundtrip_preview
+
+        return apply_roundtrip_preview(
+            store,
+            preview_token,
+            file_digest,
+            previews,
+        )
     preview = previews.consume(preview_token)
     conflicts = list(preview.get("conflicts") or [])
     decisions = _normalize_conflict_decisions(conflict_decisions or [], conflicts)
@@ -1151,7 +1220,7 @@ def _parse_worksheet(
             column_index = _excel_column_index(column_name)
             reference_row = int(row_digits)
             if (
-                column_index > len(IMPORT_COLUMNS)
+                column_index > MAX_IMPORT_COLUMNS
                 or reference_row > MAX_XLSX_ROW_NUMBER
             ):
                 raise WritingPolicyError("unsafe_xlsx", "XLSX 单元格引用超过模板范围。")
@@ -1160,18 +1229,57 @@ def _parse_worksheet(
             values_by_column[column_index] = _xlsx_cell_text(cell, shared_strings)
         if not values_by_column or not any(value.strip() for value in values_by_column.values()):
             continue
-        values = [values_by_column.get(index, "").strip() for index in range(1, len(IMPORT_COLUMNS) + 1)]
-        _validate_cell_lengths(values, row_number)
-        parsed_rows.append((row_number, values))
+        parsed_rows.append((row_number, values_by_column))
 
-    if not parsed_rows or tuple(parsed_rows[0][1]) != IMPORT_COLUMNS:
+    if not parsed_rows:
+        raise WritingPolicyError("invalid_import_headers", "导入文件表头与标准模板不一致。")
+    restore_export_cells = False
+    first_values = parsed_rows[0][1]
+    first_width = max(first_values)
+    first_row = [
+        first_values.get(index, "").strip()
+        for index in range(1, first_width + 1)
+    ]
+    if first_row in ([CSV_EXPORT_MARKER], [ROUNDTRIP_EXPORT_MARKER]):
+        restore_export_cells = True
+        parsed_rows = parsed_rows[1:]
+    if not parsed_rows:
+        raise WritingPolicyError("invalid_import_headers", "导入文件表头与标准模板不一致。")
+    header_values = parsed_rows[0][1]
+    header_width = max(header_values)
+    headers = tuple(
+        header_values.get(index, "").strip()
+        for index in range(1, header_width + 1)
+    )
+    if headers not in (IMPORT_COLUMNS, ROUNDTRIP_COLUMNS):
         raise WritingPolicyError("invalid_import_headers", "导入文件表头与标准模板不一致。")
     result = [
-        _ImportRow(dict(zip(IMPORT_COLUMNS, values)), row_number)
-        for row_number, values in parsed_rows[1:]
+        _ImportRow(
+            dict(
+                zip(
+                    headers,
+                    [
+                        csv_restore_cell(values_by_column.get(index, "").strip())
+                        if restore_export_cells
+                        else values_by_column.get(index, "").strip()
+                        for index in range(1, len(headers) + 1)
+                    ],
+                )
+            ),
+            row_number,
+        )
+        for row_number, values_by_column in parsed_rows[1:]
     ]
+    for row_number, values_by_column in parsed_rows[1:]:
+        if any(index > len(headers) for index in values_by_column):
+            raise WritingPolicyError(
+                "invalid_import_row",
+                "第 %d 行的列数与标准模板不一致。" % row_number,
+            )
+    for row in result:
+        _validate_cell_lengths(list(row.values()), row.row_number)
     _validate_row_count(result)
-    return result
+    return _ImportRows(result, headers)
 
 
 def _xlsx_cell_text(cell: ElementTree.Element, shared_strings: Sequence[str]) -> str:

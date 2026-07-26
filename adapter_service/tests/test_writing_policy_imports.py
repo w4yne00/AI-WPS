@@ -32,6 +32,7 @@ from app.services.writing_policy.models import (
     WritingPolicyError,
 )
 from app.services.writing_policy.store import WritingPolicyStore
+from app.services.writing_policy.roundtrip import ROUNDTRIP_COLUMNS
 
 
 class FakeClock:
@@ -549,7 +550,10 @@ class WritingPolicyImportParsingTests(unittest.TestCase):
         )
 
     def test_shared_strings_rejects_more_than_template_cell_budget(self):
-        item_limit = (MAX_IMPORT_ROWS + 1) * len(IMPORT_COLUMNS)
+        item_limit = (MAX_IMPORT_ROWS + 2) * max(
+            len(IMPORT_COLUMNS),
+            len(ROUNDTRIP_COLUMNS),
+        )
         self.assertEqual(
             getattr(writing_policy_imports, "MAX_XLSX_SHARED_STRING_ITEMS", 0),
             item_limit,
@@ -609,8 +613,8 @@ class WritingPolicyImportParsingTests(unittest.TestCase):
             sheet = archive.read("xl/worksheets/sheet1.xml")
         invalid_references = (
             sheet.replace(b'r="A2"', b'r="AAAAAAAA2"', 1),
-            sheet.replace(b'r="A2"', b'r="M2"', 1),
-            sheet.replace(b'r="A2"', b'r="A5002"', 1),
+            sheet.replace(b'r="A2"', b'r="Z2"', 1),
+            sheet.replace(b'r="A2"', b'r="A5003"', 1),
             sheet.replace(b'<row r="2">', b'<row r="999999999999">', 1),
         )
         for invalid_sheet in invalid_references:
@@ -1026,6 +1030,29 @@ class WritingPolicyImportValidationTests(unittest.TestCase):
         with self.assertRaises(WritingPolicyError) as raised:
             parse_csv(output.getvalue().encode("utf-8-sig"), "extra.csv")
         self.assertEqual(raised.exception.code, "invalid_import_headers")
+
+    def test_xlsx_rejects_data_beyond_the_selected_template_contract(self):
+        base = generate_xlsx_template()
+        with zipfile.ZipFile(io.BytesIO(base)) as archive:
+            sheet = archive.read("xl/worksheets/sheet1.xml")
+        extra_cell = (
+            b'<c r="M2" t="inlineStr"><is><t>unexpected</t></is></c>'
+        )
+        modified_sheet = sheet.replace(
+            b"</row></sheetData>",
+            extra_cell + b"</row></sheetData>",
+            1,
+        )
+        self.assertNotEqual(modified_sheet, sheet)
+        payload = rebuild_zip(
+            base,
+            replacements={"xl/worksheets/sheet1.xml": modified_sheet},
+        )
+
+        with self.assertRaises(WritingPolicyError) as raised:
+            parse_xlsx(payload, "extra-column.xlsx")
+
+        self.assertEqual(raised.exception.code, "invalid_import_row")
 
 
 def import_term(preferred_text, aliases=None, forbidden=None, **overrides):

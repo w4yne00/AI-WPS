@@ -131,6 +131,7 @@ GET    /writing-policies/import-template.xlsx
 POST   /writing-policies/imports/preview
 POST   /writing-policies/imports/apply
 GET    /writing-policies/export.csv
+GET    /writing-policies/export.xlsx
 GET    /writing-policies/backup
 GET    /writing-policies/diagnostics
 POST   /word/smart-write
@@ -165,6 +166,9 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - Word 写作规范管理页可切换四个预置规范包，组织自定义、组织覆盖、预置停用及最终生效状态分别展示；三个 Word 任务的解析、提示词注入和本地结果检查使用同一份生效术语。
 - issue #8 已将预置规范与组织规范分层管理；组织层独立维护术语、文体规则和去模板化规则，文体/去模板化规则支持三个 Word 任务与三个规范场景多选，新建默认全选。
 - 预置文体与去模板化规则现与预置术语一样支持组织覆盖、停用和恢复基线；同层同名规则使用稳定优先级顺序在本地裁决，结果返回冲突摘要，不增加模型调用。
+- issue #9 已补齐 CSV/XLSX 规范往返：两种格式使用同一列契约，可分别导出当前生效规范或仅组织规范，并保留稳定 ID、规范包、来源、版本、层级、覆盖状态、任务范围和场景范围。
+- 往返导入按明确操作解释新增、修改、停用、恢复和删除；文件缺行不触发删除。预览分别统计五类变更、冲突和错误，令牌绑定文件 SHA-256 摘要并保持 10 分钟单次使用。
+- 往返应用前创建规范库备份，全部组织条目与预置操作在单个 SQLite 事务中完成，任一错误完整回滚。Word 设置页把导入、CSV/XLSX 导出、完整备份和规范库诊断集中到次级“更多”页面。
 - `v0.19.1-alpha` 是三宿主任务窗格体验补丁版，只调整界面、设置状态探测和交互保护，不新增或改动智能编写、智能仿写、文档审查、格式审查、智能分析、智能总结及任何回写链路。
 - Word、Excel、PPT 的任务页与设置页完成同构体验更新：继续保持 Word 蓝、Excel 绿、PPT 橙宿主配色，统一使用系统字体、8px 以内圆角、克制的按压/披露动效和清晰键盘焦点；任务主按钮继续使用高对比度纯文字，不增加图标。
 - 三宿主设置首页统一为“模型接口 / 工作流设置 / 高级诊断”渐进披露结构。模型接口状态不再读取 adapter 的统一 Key 配置标记，而是按当前宿主的统一 API URL、真实任务类型和工作流档案计算“无法检测 / 未配置 / 部分就绪 / 已就绪”。

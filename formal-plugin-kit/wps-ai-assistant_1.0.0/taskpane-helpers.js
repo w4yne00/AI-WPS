@@ -2326,18 +2326,30 @@
     var source = value && typeof value === "object" ? value : {};
     var errors = Array.isArray(source.errors) ? source.errors : [];
     var conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
+    var changes = Array.isArray(source.changes) ? source.changes : [];
     function totalCount(value, fallback) {
       var number = Number(value);
       return isFinite(number) && number >= 0 ? Math.floor(number) : fallback;
     }
     return {
       previewToken: String(source.previewToken || ""),
+      fileDigest: String(source.fileDigest || ""),
       stats: {
         newCount: totalCount(source.newCount, 0),
-        updateCount: totalCount(source.updateCount, 0),
+        modifyCount: totalCount(source.modifyCount, totalCount(source.updateCount, 0)),
+        disableCount: totalCount(source.disableCount, 0),
+        restoreCount: totalCount(source.restoreCount, 0),
+        deleteCount: totalCount(source.deleteCount, 0),
         conflictCount: totalCount(source.conflictCount, conflicts.length),
         errorCount: totalCount(source.errorCount, errors.length)
       },
+      changes: changes.slice(0, 100).map(function (item) {
+        return {
+          rowNumber: normalizeWritingPolicyUsageCount(item && (item.rowNumber || item.row)),
+          action: String(item && item.action || ""),
+          name: String(item && item.name || "")
+        };
+      }),
       errors: errors.slice(0, 100).map(function (item) {
         return {
           row: normalizeWritingPolicyUsageCount(item && (item.row || item.rowNumber)),
@@ -2370,6 +2382,7 @@
     var conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
     return {
       previewToken: String(source.previewToken || ""),
+      fileDigest: String(source.fileDigest || ""),
       acceptedConflictRows: conflicts.map(function (item) {
         return {
           rowNumber: Math.max(0, Math.floor(Number(item && item.rowNumber) || 0)),

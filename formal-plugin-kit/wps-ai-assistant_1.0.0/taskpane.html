@@ -339,7 +339,10 @@
             </label>
             <div id="writing-policy-preset-pack-meta" class="writing-policy-preset-pack-meta" aria-live="polite">正在读取规范包...</div>
             <div id="writing-policy-preset-item-list" class="writing-policy-item-list"></div>
-            <button id="btn-writing-policy-open-organization" class="ghost-action" type="button">管理组织规范</button>
+            <div class="writing-policy-preset-actions">
+              <button id="btn-writing-policy-open-organization" class="ghost-action" type="button">管理组织规范</button>
+              <button id="btn-writing-policy-more" class="ghost-action" type="button">更多</button>
+            </div>
           </section>
 
           <section id="writing-policy-scope-view" class="writing-policy-subview" hidden>
@@ -384,14 +387,6 @@
               </div>
               <div class="writing-policy-list-actions">
                 <button id="btn-writing-policy-add" class="writing-policy-icon-button" type="button" title="新增规范条目" aria-label="新增规范条目">+</button>
-                <details id="writing-policy-overflow-menu" class="writing-policy-overflow-menu">
-                  <summary title="更多操作" aria-label="更多操作">⋯</summary>
-                  <div>
-                    <button type="button" data-writing-policy-menu-action="import">批量导入</button>
-                    <button type="button" data-writing-policy-menu-action="export">导出当前范围</button>
-                    <button type="button" data-writing-policy-menu-action="backup">下载完整备份</button>
-                  </div>
-                </details>
               </div>
             </div>
             <label class="field writing-policy-search-field">
@@ -401,6 +396,46 @@
             <div id="writing-policy-list-status" class="writing-policy-list-status" aria-live="polite">正在读取...</div>
             <div id="writing-policy-item-list" class="writing-policy-item-list"></div>
             <button id="btn-retry-writing-policy-list" class="ghost-action" type="button" hidden>重新读取</button>
+          </section>
+
+          <section id="writing-policy-more-view" class="writing-policy-subview" hidden>
+            <div class="writing-policy-subview-head">
+              <button id="btn-writing-policy-more-back" class="ghost-action mini-button" type="button">返回规范库</button>
+              <div>
+                <h3 id="writing-policy-more-title" tabindex="-1">更多</h3>
+                <p>集中处理规范往返、完整备份和规范库诊断。</p>
+              </div>
+            </div>
+            <div class="writing-policy-more-actions">
+              <section>
+                <h4>往返维护</h4>
+                <p>导出后可在 CSV 或 XLSX 中维护，再通过预览确认回导。</p>
+                <button id="btn-writing-policy-more-import" type="button">导入并预览</button>
+              </section>
+              <section>
+                <h4>导出规范</h4>
+                <label class="field">
+                  <span>导出范围</span>
+                  <select id="writing-policy-export-scope">
+                    <option value="effective">当前生效规范</option>
+                    <option value="organization">仅组织规范</option>
+                  </select>
+                </label>
+                <div class="writing-policy-download-actions">
+                  <button id="btn-writing-policy-export-csv" class="ghost-action" type="button">导出 CSV</button>
+                  <button id="btn-writing-policy-export-xlsx" class="ghost-action" type="button">导出 XLSX</button>
+                </div>
+              </section>
+              <section>
+                <h4>备份与诊断</h4>
+                <div class="writing-policy-download-actions">
+                  <button id="btn-writing-policy-download-backup" class="ghost-action" type="button">下载完整备份</button>
+                  <button id="btn-writing-policy-refresh-diagnostics" class="ghost-action" type="button">刷新诊断</button>
+                </div>
+                <p id="writing-policy-more-status" class="writing-policy-list-status" aria-live="polite">按需执行操作。</p>
+                <pre id="writing-policy-diagnostics-output" class="diagnostics-output" hidden></pre>
+              </section>
+            </div>
           </section>
 
           <section id="writing-policy-editor-view" class="writing-policy-subview" hidden>
@@ -456,7 +491,7 @@
 
           <section id="writing-policy-import-view" class="writing-policy-subview" hidden>
             <div class="writing-policy-subview-head">
-              <button id="btn-writing-policy-import-back" class="ghost-action mini-button" type="button">返回范围</button>
+              <button id="btn-writing-policy-import-back" class="ghost-action mini-button" type="button">返回更多</button>
               <div>
                 <h3 id="writing-policy-import-title" tabindex="-1">批量导入写作规范</h3>
                 <p>选择标准 CSV 或 XLSX 模板，先校验再写入。</p>
@@ -471,8 +506,6 @@
             <div class="writing-policy-download-actions">
               <button id="btn-writing-policy-download-csv-template" class="ghost-action" type="button">CSV 模板</button>
               <button id="btn-writing-policy-download-xlsx-template" class="ghost-action" type="button">XLSX 模板</button>
-              <button id="btn-writing-policy-export-scope" class="ghost-action" type="button">导出当前范围</button>
-              <button id="btn-writing-policy-download-backup" class="ghost-action" type="button">完整备份</button>
             </div>
             <section id="writing-policy-import-select-panel" class="writing-policy-import-panel">
               <label class="field">
@@ -486,10 +519,17 @@
             <section id="writing-policy-import-preview-panel" class="writing-policy-import-panel" hidden>
               <div class="writing-policy-import-stats">
                 <span>新增 <strong id="writing-policy-import-new-count">0</strong></span>
-                <span>更新 <strong id="writing-policy-import-update-count">0</strong></span>
+                <span>修改 <strong id="writing-policy-import-modify-count">0</strong></span>
+                <span>停用 <strong id="writing-policy-import-disable-count">0</strong></span>
+                <span>恢复 <strong id="writing-policy-import-restore-count">0</strong></span>
+                <span>删除 <strong id="writing-policy-import-delete-count">0</strong></span>
                 <span>冲突 <strong id="writing-policy-import-conflict-count">0</strong></span>
                 <span>错误 <strong id="writing-policy-import-error-count">0</strong></span>
               </div>
+              <section id="writing-policy-import-changes-section" hidden>
+                <h4 id="writing-policy-import-changes-title">变更预览</h4>
+                <ul id="writing-policy-import-change-list" class="writing-policy-import-result-list"></ul>
+              </section>
               <section id="writing-policy-import-errors-section" hidden>
                 <h4 id="writing-policy-import-errors-title">校验错误</h4>
                 <ul id="writing-policy-import-error-list" class="writing-policy-import-result-list"></ul>

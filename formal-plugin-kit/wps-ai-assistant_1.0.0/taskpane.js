@@ -237,7 +237,6 @@
     writingPolicyImportBusy: false,
     writingPolicyImportSequence: 0,
     writingPolicyImportReader: null,
-    writingPolicyImportReturnView: "scope",
     writingPolicyScene: "auto",
     writingPolicyAudit: null,
     currentMode: "smartWrite",
@@ -2336,6 +2335,7 @@
     byId("writing-policy-preset-view").hidden = view !== "preset";
     byId("writing-policy-scope-view").hidden = view !== "scope";
     byId("writing-policy-list-view").hidden = view !== "list";
+    byId("writing-policy-more-view").hidden = view !== "more";
     byId("writing-policy-editor-view").hidden = view !== "editor";
     byId("writing-policy-import-view").hidden = view !== "import";
   }
@@ -2346,6 +2346,7 @@
       preset: "writing-policy-preset-title",
       scope: "writing-policy-scope-title",
       list: "writing-policy-list-title",
+      more: "writing-policy-more-title",
       editor: "writing-policy-editor-title",
       import: "writing-policy-import-title"
     };
@@ -3310,6 +3311,8 @@
     byId("writing-policy-import-preview-panel").hidden = true;
     byId("writing-policy-import-error-list").textContent = "";
     byId("writing-policy-import-conflict-list").textContent = "";
+    byId("writing-policy-import-change-list").textContent = "";
+    byId("writing-policy-import-changes-section").hidden = true;
     byId("writing-policy-import-errors-section").hidden = true;
     byId("writing-policy-import-conflicts-section").hidden = true;
     byId("writing-policy-import-errors-title").textContent = "校验错误";
@@ -3329,7 +3332,6 @@
     if (state.writingPolicyImportBusy) {
       return;
     }
-    state.writingPolicyImportReturnView = state.writingPolicyView === "list" ? "list" : "scope";
     resetWritingPolicyImport("");
     setWritingPolicyView("import");
   }
@@ -3339,7 +3341,19 @@
       return;
     }
     resetWritingPolicyImport("");
-    setWritingPolicyView(state.writingPolicyImportReturnView === "list" ? "list" : "scope");
+    setWritingPolicyView("more");
+  }
+
+  function openWritingPolicyMore() {
+    if (state.writingPolicyMutationBusy || state.writingPolicyImportBusy) {
+      return;
+    }
+    byId("writing-policy-more-status").textContent = "按需执行操作。";
+    setWritingPolicyView("more");
+  }
+
+  function closeWritingPolicyMore() {
+    setWritingPolicyView("preset");
   }
 
   function handleWritingPolicyImportFileChange(event) {
@@ -3376,22 +3390,43 @@
     var conflictsSection = byId("writing-policy-import-conflicts-section");
     var errorList = byId("writing-policy-import-error-list");
     var conflictList = byId("writing-policy-import-conflict-list");
+    var changeList = byId("writing-policy-import-change-list");
     var applyButton = byId("btn-apply-writing-policy-import");
     errorList.textContent = "";
     conflictList.textContent = "";
+    changeList.textContent = "";
     if (!preview) {
       byId("writing-policy-import-preview-panel").hidden = true;
       return;
     }
     byId("writing-policy-import-preview-panel").hidden = false;
     byId("writing-policy-import-new-count").textContent = String(preview.stats.newCount);
-    byId("writing-policy-import-update-count").textContent = String(preview.stats.updateCount);
+    byId("writing-policy-import-modify-count").textContent = String(preview.stats.modifyCount);
+    byId("writing-policy-import-disable-count").textContent = String(preview.stats.disableCount);
+    byId("writing-policy-import-restore-count").textContent = String(preview.stats.restoreCount);
+    byId("writing-policy-import-delete-count").textContent = String(preview.stats.deleteCount);
     byId("writing-policy-import-conflict-count").textContent = String(preview.stats.conflictCount);
     byId("writing-policy-import-error-count").textContent = String(preview.stats.errorCount);
     byId("writing-policy-import-errors-title").textContent = helpers.writingPolicyImportCountLabel ?
       helpers.writingPolicyImportCountLabel("校验错误", preview.stats.errorCount, preview.errors.length) : "校验错误";
     byId("writing-policy-import-conflicts-title").textContent = helpers.writingPolicyImportCountLabel ?
       helpers.writingPolicyImportCountLabel("冲突处理", preview.stats.conflictCount, preview.conflicts.length) : "冲突处理";
+    preview.changes.forEach(function (item) {
+      var row = document.createElement("li");
+      var labels = {
+        "new": "新增",
+        "modify": "修改",
+        "disable": "停用",
+        "restore": "恢复",
+        "delete": "删除"
+      };
+      row.textContent = "第 " + String(item.rowNumber) + " 行 · " +
+        (labels[item.action] || item.action || "变更") + " · " + item.name;
+      changeList.appendChild(row);
+    });
+    byId("writing-policy-import-changes-title").textContent = helpers.writingPolicyImportCountLabel ?
+      helpers.writingPolicyImportCountLabel("变更预览", preview.changes.length, preview.changes.length) : "变更预览";
+    byId("writing-policy-import-changes-section").hidden = preview.changes.length === 0;
     preview.errors.forEach(function (item) {
       var row = document.createElement("li");
       row.textContent = item.message;
@@ -3420,7 +3455,8 @@
       conflictList.appendChild(row);
     });
     conflictsSection.hidden = preview.conflicts.length === 0;
-    applyButton.disabled = state.writingPolicyImportBusy || !preview.previewToken;
+    applyButton.disabled = state.writingPolicyImportBusy || !preview.previewToken ||
+      preview.stats.errorCount > 0;
     applyButton.textContent = preview.conflicts.length ? "按当前选择应用" : "应用无冲突项";
   }
 
@@ -3502,8 +3538,13 @@
           throw new Error("校验结果缺少导入预览编号。");
         }
         state.writingPolicyImportStep = state.writingPolicyImportPreview.conflicts.length ? "conflicts" : "apply";
-        byId("writing-policy-import-status").textContent = state.writingPolicyImportPreview.conflicts.length ?
-          "校验完成，请处理冲突后应用。" : "校验完成，可应用导入。";
+        if (state.writingPolicyImportPreview.stats.errorCount > 0) {
+          state.writingPolicyImportStep = "validate";
+          byId("writing-policy-import-status").textContent = "校验发现错误，请修正文件后重新预览。";
+        } else {
+          byId("writing-policy-import-status").textContent = state.writingPolicyImportPreview.conflicts.length ?
+            "校验完成，请处理冲突后应用。" : "校验完成，可应用导入。";
+        }
         renderWritingPolicyImportPreview();
       }).catch(function (error) {
         if (state.writingPolicyImportSequence !== requestId) {
@@ -3538,25 +3579,32 @@
 
   function applyWritingPolicyImport() {
     var preview = state.writingPolicyImportPreview;
-    var acceptedConflictRows;
+    var applyPayload;
     if (!preview || !preview.previewToken || state.writingPolicyImportBusy) {
       return;
     }
-    acceptedConflictRows = helpers.buildWritingPolicyImportApplyRequest ?
-      helpers.buildWritingPolicyImportApplyRequest(preview).acceptedConflictRows : [];
+    if (preview.stats.errorCount > 0) {
+      byId("writing-policy-import-status").textContent = "预览仍有错误，不能应用。";
+      return;
+    }
+    applyPayload = helpers.buildWritingPolicyImportApplyRequest ?
+      helpers.buildWritingPolicyImportApplyRequest(preview) : {
+        previewToken: preview.previewToken,
+        fileDigest: preview.fileDigest,
+        acceptedConflictRows: []
+      };
     setWritingPolicyImportBusy(true);
     state.writingPolicyImportStep = "apply";
     renderWritingPolicyImportStep();
     byId("writing-policy-import-status").textContent = "正在应用导入结果...";
-    request("/writing-policies/imports/apply", {
-      previewToken: preview.previewToken,
-      acceptedConflictRows: acceptedConflictRows
-    }).then(function (body) {
+    request("/writing-policies/imports/apply", applyPayload).then(function (body) {
       var result = body.data || {};
       state.writingPolicyImportPreview = null;
       byId("writing-policy-import-preview-panel").hidden = true;
       byId("writing-policy-import-status").textContent = "导入完成：新增 " +
-        String(result.createdCount || 0) + " 条，更新 " + String(result.updatedCount || 0) + " 条。";
+        String(result.createdCount || 0) + "，修改 " + String(result.modifiedCount || result.updatedCount || 0) +
+        "，停用 " + String(result.disabledCount || 0) + "，恢复 " +
+        String(result.restoredCount || 0) + "，删除 " + String(result.deletedCount || 0) + "。";
       setWritingPolicyImportBusy(false);
       loadWritingPolicySummary();
     }).catch(function (error) {
@@ -3608,7 +3656,9 @@
   }
 
   function runWritingPolicyDownload(path, fileName, successMessage) {
-    var statusNode = state.writingPolicyView === "import" ? byId("writing-policy-import-status") : null;
+    var statusNode = state.writingPolicyView === "import" ?
+      byId("writing-policy-import-status") :
+      state.writingPolicyView === "more" ? byId("writing-policy-more-status") : null;
     if (statusNode) {
       statusNode.textContent = "正在准备下载...";
     } else {
@@ -3629,32 +3679,34 @@
     });
   }
 
-  function handleWritingPolicyMenuAction(event) {
-    var target = event.target;
-    var action;
-    while (target && target !== byId("writing-policy-overflow-menu") && !target.getAttribute("data-writing-policy-menu-action")) {
-      target = target.parentNode;
-    }
-    action = target && target.getAttribute("data-writing-policy-menu-action");
-    if (!action) {
-      return;
-    }
-    byId("writing-policy-overflow-menu").open = false;
-    if (action === "import") {
-      openWritingPolicyImport();
-    } else if (action === "export") {
-      runWritingPolicyDownload(
-        "/writing-policies/export.csv?scope=" + encodeURIComponent(state.writingPolicyScope),
-        "writing-policies-export.csv",
-        "当前范围已导出。"
-      );
-    } else if (action === "backup") {
-      runWritingPolicyDownload(
-        "/writing-policies/backup",
-        "writing-policies-backup.db",
-        "写作规范库备份已下载。"
-      );
-    }
+  function exportWritingPolicies(format) {
+    var scope = byId("writing-policy-export-scope").value === "organization" ?
+      "organization" : "effective";
+    var suffix = format === "xlsx" ? "xlsx" : "csv";
+    runWritingPolicyDownload(
+      "/writing-policies/export." + suffix + "?scope=" + encodeURIComponent(scope),
+      "writing-policies-" + scope + "." + suffix,
+      (scope === "organization" ? "组织规范" : "当前生效规范") +
+        "已导出为 " + suffix.toUpperCase() + "。"
+    );
+  }
+
+  function refreshWritingPolicyDiagnostics() {
+    var status = byId("writing-policy-more-status");
+    var output = byId("writing-policy-diagnostics-output");
+    status.textContent = "正在读取写作规范库诊断...";
+    request("/writing-policies/diagnostics", null, {
+      method: "GET",
+      timeoutMs: WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      output.textContent = JSON.stringify(body.data || {}, null, 2);
+      output.hidden = false;
+      status.textContent = "写作规范库诊断已刷新。";
+    }).catch(function (error) {
+      output.hidden = true;
+      output.textContent = "";
+      status.textContent = "诊断读取失败：" + describeFetchError(error);
+    });
   }
 
   function renderTemplateOptions() {
@@ -5111,7 +5163,9 @@
       }
     });
     byId("btn-writing-policy-import-entry").addEventListener("click", openWritingPolicyImport);
-    byId("writing-policy-overflow-menu").addEventListener("click", handleWritingPolicyMenuAction);
+    byId("btn-writing-policy-more").addEventListener("click", openWritingPolicyMore);
+    byId("btn-writing-policy-more-back").addEventListener("click", closeWritingPolicyMore);
+    byId("btn-writing-policy-more-import").addEventListener("click", openWritingPolicyImport);
     byId("btn-writing-policy-import-back").addEventListener("click", closeWritingPolicyImport);
     byId("writing-policy-import-file").addEventListener("change", handleWritingPolicyImportFileChange);
     byId("btn-preview-writing-policy-import").addEventListener("click", previewWritingPolicyImport);
@@ -5131,12 +5185,11 @@
         "XLSX 导入模板已下载。"
       );
     });
-    byId("btn-writing-policy-export-scope").addEventListener("click", function () {
-      runWritingPolicyDownload(
-        "/writing-policies/export.csv?scope=" + encodeURIComponent(state.writingPolicyScope),
-        "writing-policies-export.csv",
-        "当前范围已导出。"
-      );
+    byId("btn-writing-policy-export-csv").addEventListener("click", function () {
+      exportWritingPolicies("csv");
+    });
+    byId("btn-writing-policy-export-xlsx").addEventListener("click", function () {
+      exportWritingPolicies("xlsx");
     });
     byId("btn-writing-policy-download-backup").addEventListener("click", function () {
       runWritingPolicyDownload(
@@ -5145,6 +5198,7 @@
         "写作规范库备份已下载。"
       );
     });
+    byId("btn-writing-policy-refresh-diagnostics").addEventListener("click", refreshWritingPolicyDiagnostics);
     byId("btn-apply").addEventListener("click", applyPreview);
     byId("btn-copy-result").addEventListener("click", copyResult);
     byId("btn-run-primary").addEventListener("click", runPrimaryAction);

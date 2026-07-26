@@ -127,14 +127,17 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
   "writing-policy-type-switch",
   "writing-policy-search-input",
   "btn-writing-policy-add",
-  "writing-policy-overflow-menu",
+  "btn-writing-policy-more",
+  "writing-policy-more-view",
+  "writing-policy-export-scope",
   "writing-policy-editor-advanced",
   "btn-writing-policy-delete",
   "writing-policy-import-view",
   "writing-policy-import-file",
   "btn-writing-policy-download-csv-template",
   "btn-writing-policy-download-xlsx-template",
-  "btn-writing-policy-export-scope",
+  "btn-writing-policy-export-csv",
+  "btn-writing-policy-export-xlsx",
   "btn-writing-policy-download-backup"
 ].forEach((id) => assert.ok(wordHtml.includes(`id="${id}"`), id));
 
@@ -311,15 +314,28 @@ assert.strictEqual(helpers.formatWritingPolicyUpdatedAt("not-a-date"), "最近�
 
 const previewModel = helpers.normalizeWritingPolicyImportPreview({
   previewToken: "token",
+  fileDigest: "digest",
   newCount: 2,
-  updateCount: 1,
+  modifyCount: 1,
+  disableCount: 2,
+  restoreCount: 3,
+  deleteCount: 4,
   conflictCount: 1,
   errorCount: 1,
   errors: [{ row: 6, message: "第 6 行：字段无效。" }],
   conflicts: [{ rowNumber: 4, message: "第 4 行：冲突。", defaultDecision: "keep_existing" }]
 });
 assert.strictEqual(previewModel.previewToken, "token");
-assert.deepStrictEqual(previewModel.stats, { newCount: 2, updateCount: 1, conflictCount: 1, errorCount: 1 });
+assert.strictEqual(previewModel.fileDigest, "digest");
+assert.deepStrictEqual(previewModel.stats, {
+  newCount: 2,
+  modifyCount: 1,
+  disableCount: 2,
+  restoreCount: 3,
+  deleteCount: 4,
+  conflictCount: 1,
+  errorCount: 1
+});
 assert.strictEqual(previewModel.conflicts[0].decision, "keep_existing");
 
 const manyErrors = Array.from({ length: 105 }, (_, index) => ({
@@ -352,6 +368,7 @@ assert.deepStrictEqual(
   helpers.buildWritingPolicyImportApplyRequest(limitedPreview),
   {
     previewToken: "large-token",
+    fileDigest: "",
     acceptedConflictRows: limitedPreview.conflicts.map((item) => ({
       rowNumber: item.rowNumber,
       decision: item.decision
@@ -488,15 +505,19 @@ assert.ok(renderImportStepSource.includes('aria-current'));
 const bindSource = functionSource("bindEvents");
 [
   "btn-writing-policy-import-entry",
-  "writing-policy-overflow-menu",
+  "btn-writing-policy-more",
+  "btn-writing-policy-more-back",
+  "btn-writing-policy-more-import",
   "btn-writing-policy-import-back",
   "btn-preview-writing-policy-import",
   "writing-policy-import-conflict-list",
   "btn-apply-writing-policy-import",
   "btn-writing-policy-download-csv-template",
   "btn-writing-policy-download-xlsx-template",
-  "btn-writing-policy-export-scope",
-  "btn-writing-policy-download-backup"
+  "btn-writing-policy-export-csv",
+  "btn-writing-policy-export-xlsx",
+  "btn-writing-policy-download-backup",
+  "btn-writing-policy-refresh-diagnostics"
 ].forEach((id) => assert.ok(bindSource.includes(`byId(\"${id}\")`), `missing event binding for ${id}`));
 assert.ok(bindSource.includes('byId("writing-policy-preset-pack-select").addEventListener("change"'));
 assert.ok(bindSource.includes('byId("writing-policy-preset-item-list").addEventListener("click"'));
@@ -505,6 +526,7 @@ assert.ok(bindSource.includes('byId("writing-policy-type-switch").addEventListen
 [
   "writing-policy-scope-title",
   "writing-policy-list-title",
+  "writing-policy-more-title",
   "writing-policy-editor-title",
   "writing-policy-import-title"
 ].forEach((id) => {
@@ -526,7 +548,8 @@ assert.ok(bindSource.includes('byId("writing-policy-type-switch").addEventListen
 [
   "/writing-policies/import-template.csv",
   "/writing-policies/import-template.xlsx",
-  "/writing-policies/export.csv?scope=",
+  "/writing-policies/export.",
+  "?scope=",
   "/writing-policies/backup"
 ].forEach((path) => assert.ok(wordJs.includes(path), `missing writingPolicy download path ${path}`));
 

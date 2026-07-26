@@ -768,7 +768,7 @@ class WritingPolicyStoreTests(unittest.TestCase):
                 ).fetchone()[0]
             self.assertEqual(count, 1)
 
-    def test_apply_preview_without_item_writes_does_not_create_backup(self):
+    def test_apply_preview_without_item_writes_still_creates_backup(self):
         with TemporaryDirectory() as tmp:
             store = self.make_store(tmp)
 
@@ -781,7 +781,7 @@ class WritingPolicyStoreTests(unittest.TestCase):
             self.assertEqual(result["createdCount"], 0)
             self.assertEqual(result["updatedCount"], 0)
             self.assertEqual(
-                list(Path(tmp).glob("writing_policies.db.backup-*")), []
+                len(list(Path(tmp).glob("writing_policies.db.backup-*"))), 1
             )
 
     def test_failed_preview_apply_rolls_back_updates_import_record_and_new_backup(self):

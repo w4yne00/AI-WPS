@@ -1471,6 +1471,34 @@ body[data-task-mode="smartWrite"] #result-output {
   justify-self: start;
 }
 
+.writing-policy-more-actions {
+  display: grid;
+  gap: 12px;
+}
+
+.writing-policy-more-actions > section {
+  border-top: 1px solid var(--hairline);
+  padding-top: 12px;
+}
+
+.writing-policy-more-actions > section:first-child {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.writing-policy-more-actions h4,
+.writing-policy-more-actions p {
+  margin: 0 0 8px;
+}
+
+.writing-policy-more-actions pre {
+  margin: 8px 0 0;
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .writing-policy-layer-switch,
 .writing-policy-list-toolbar,
 .writing-policy-list-actions,

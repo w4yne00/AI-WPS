@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import base64
 import binascii
+import hashlib
 import json
 import re
 import socket
@@ -46,6 +47,11 @@ from app.services.writing_policy.imports import (
     validate_import_rows,
 )
 from app.services.writing_policy.models import WritingPolicyError, MAX_IMPORT_BYTES
+from app.services.writing_policy.roundtrip import (
+    XLSX_MIME as ROUNDTRIP_XLSX_MIME,
+    export_roundtrip_csv,
+    export_roundtrip_xlsx,
+)
 from app.services.writing_policy.service import get_writing_policy_service
 from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.ppt.slide_assistant import PptSlideAssistant
@@ -128,6 +134,7 @@ _WRITING_POLICY_STATIC_ROUTE_METHODS = {
     "/writing-policies/imports/preview": ("POST",),
     "/writing-policies/imports/apply": ("POST",),
     "/writing-policies/export.csv": ("GET",),
+    "/writing-policies/export.xlsx": ("GET",),
     "/writing-policies/backup": ("GET",),
     "/writing-policies/diagnostics": ("GET",),
 }
@@ -483,9 +490,14 @@ def _decode_writing_policy_import(payload):
 
 
 def _parse_import_decisions(payload):
-    if not isinstance(payload, dict) or set(payload) - {"previewToken", "acceptedConflictRows"}:
+    if not isinstance(payload, dict) or set(payload) - {
+        "previewToken",
+        "fileDigest",
+        "acceptedConflictRows",
+    }:
         raise WritingPolicyError("invalid_import_request", "导入应用参数无效。")
     token = _required_text(payload, "previewToken")
+    file_digest = str(payload.get("fileDigest") or "")
     decisions = payload.get("acceptedConflictRows", [])
     if not isinstance(decisions, list):
         raise WritingPolicyError("invalid_import_request", "冲突处理决定格式无效。")
@@ -502,7 +514,7 @@ def _parse_import_decisions(payload):
         ):
             raise WritingPolicyError("invalid_import_request", "冲突处理决定格式无效。")
         normalized.append({"rowNumber": row_number, "decision": action})
-    return token, normalized
+    return token, normalized, file_digest
 
 
 def dispatch_writing_policy(method, path, query="", payload=None, body_size=None):
@@ -662,27 +674,48 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
                     "rowCount": validated.get("rowCount", len(rows)),
                     "mimeType": mime_type,
                     "sizeBytes": len(content),
+                    **(
+                        {"sha256": hashlib.sha256(content).hexdigest()}
+                        if validated.get("schema") == "roundtrip"
+                        else {}
+                    ),
                 },
                 preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
+                service=get_writing_policy_service(),
             )
             return _writing_policy_json(preview, "previewed")
         if method == "POST" and path == "/writing-policies/imports/apply":
-            token, decisions = _parse_import_decisions(payload)
+            token, decisions, file_digest = _parse_import_decisions(payload)
             result = apply_import_preview(
                 _writing_policy_store(),
                 token,
                 decisions,
                 preview_store=DEFAULT_IMPORT_PREVIEW_STORE,
+                file_digest=file_digest,
             )
             return _writing_policy_json(result, "applied")
         if method == "GET" and path == "/writing-policies/export.csv":
             scope = str(params.get("scope", [""])[0]).strip()
             if not scope:
                 return _writing_policy_validation()
+            content = (
+                export_roundtrip_csv(get_writing_policy_service(), scope)
+                if scope in ("effective", "organization")
+                else _writing_policy_store().export_csv(scope)
+            )
             return _writing_policy_bytes(
-                _writing_policy_store().export_csv(scope),
+                content,
                 "text/csv",
                 "writing-policies-export.csv",
+            )
+        if method == "GET" and path == "/writing-policies/export.xlsx":
+            scope = str(params.get("scope", [""])[0]).strip()
+            if not scope:
+                return _writing_policy_validation()
+            return _writing_policy_bytes(
+                export_roundtrip_xlsx(get_writing_policy_service(), scope),
+                ROUNDTRIP_XLSX_MIME,
+                "writing-policies-export.xlsx",
             )
         if method == "GET" and path == "/writing-policies/backup":
             return _writing_policy_bytes(

@@ -2,6 +2,7 @@ import base64
 import csv
 import asyncio
 import gc
+import hashlib
 import http.client
 import importlib.util
 import io
@@ -53,6 +54,7 @@ if HAS_API_DEPS:
         download_csv_template,
         download_xlsx_template,
         export_writing_policy_csv,
+        export_writing_policy_xlsx,
         get_diagnostics,
         get_summary,
         list_items,
@@ -347,6 +349,58 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         )
         self.assertEqual(int(csv_response.headers["content-length"]), len(csv_response.body))
         self.assertEqual(int(xlsx_response.headers["content-length"]), len(xlsx_response.body))
+
+    def test_roundtrip_export_preview_and_apply_share_digest_bound_contract(self):
+        csv_response = export_writing_policy_csv("effective")
+        xlsx_response = export_writing_policy_xlsx("organization")
+        csv_rows = list(
+            csv.reader(io.StringIO(csv_response.body.decode("utf-8-sig")))
+        )
+        headers = csv_rows[1]
+        preset_index = headers.index("关联预置ID")
+        content_index = headers.index("标准写法/规则")
+        target = next(
+            row for row in csv_rows[2:]
+            if row[preset_index] == "term.cyber.001"
+        )
+        target[content_index] = "API 往返覆盖"
+        output = io.StringIO(newline="")
+        writer = csv.writer(output, lineterminator="\n")
+        writer.writerows(csv_rows)
+        content = b"\xef\xbb\xbf" + output.getvalue().encode("utf-8")
+
+        preview = preview_import(
+            ImportPreviewRequest(
+                fileName="roundtrip.csv",
+                mimeType=CSV_MIME,
+                sizeBytes=len(content),
+                contentBase64=base64.b64encode(content).decode("ascii"),
+            )
+        )
+        applied = apply_import(
+            ImportApplyRequest(
+                previewToken=preview["data"]["previewToken"],
+                fileDigest=preview["data"]["fileDigest"],
+                acceptedConflictRows=[],
+            )
+        )
+
+        self.assertEqual(
+            preview["data"]["fileDigest"],
+            hashlib.sha256(content).hexdigest(),
+        )
+        self.assertEqual(preview["data"]["modifyCount"], 1)
+        self.assertEqual(applied["data"]["modifiedCount"], 1)
+        self.assertEqual(
+            self.store.get_preset_operation("term.cyber.001")["payload"][
+                "preferredText"
+            ],
+            "API 往返覆盖",
+        )
+        self.assertEqual(
+            xlsx_response.headers["content-type"],
+            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
     def test_preview_calls_parse_validate_build_in_order_then_apply_is_single_use(self):
         content = generate_csv_template()
@@ -1437,10 +1491,23 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
         exported = self.dispatch(
             "GET", "/writing-policies/export.csv", query="scope=global"
         )
+        effective_export = self.dispatch(
+            "GET", "/writing-policies/export.csv", query="scope=effective"
+        )
+        organization_xlsx = self.dispatch(
+            "GET", "/writing-policies/export.xlsx", query="scope=organization"
+        )
         backup = self.dispatch("GET", "/writing-policies/backup")
         diagnostics = self.dispatch("GET", "/writing-policies/diagnostics")
 
-        for response in (csv_template, xlsx_template, exported, backup):
+        for response in (
+            csv_template,
+            xlsx_template,
+            exported,
+            effective_export,
+            organization_xlsx,
+            backup,
+        ):
             self.assertEqual(response["status"], 200)
             self.assertTrue(response["headers"]["X-Trace-Id"])
             self.assertEqual(response["headers"]["Content-Length"], str(len(response["content"])))
@@ -1449,6 +1516,11 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
                 r'^attachment; filename="[\x20-\x7e]+"$',
             )
         self.assertTrue(xlsx_template["content"].startswith(b"PK"))
+        self.assertTrue(organization_xlsx["content"].startswith(b"PK"))
+        self.assertIn(
+            "关联预置ID",
+            effective_export["content"].decode("utf-8-sig"),
+        )
         self.assertTrue(backup["content"].startswith(b"SQLite format 3\x00"))
         self.assertEqual(diagnostics["status"], 200)
         self.assertEqual(diagnostics["body"]["taskType"], "writing_policy")

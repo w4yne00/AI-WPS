@@ -571,14 +571,15 @@ class WritingPolicyStore:
         normalized_operations = self._normalize_import_operations(operations)
         backup_path = None
         with self._write_lock:
-            if normalized_operations:
-                backup_path = self._create_preimport_backup()
+            backup_path = self._create_preimport_backup()
             try:
                 with self._connect() as connection:
                     connection.execute("BEGIN IMMEDIATE")
                     has_terms = any(
-                        operation["item"].get("type") == "term"
+                        operation.get("item", {}).get("type") == "term"
                         for operation in normalized_operations
+                        if operation["action"]
+                        in ("create", "update", "preset_override")
                     )
                     term_token_owners = (
                         self._load_term_token_owners(connection)
@@ -588,14 +589,27 @@ class WritingPolicyStore:
                     changed_items = []
                     created_count = 0
                     updated_count = 0
+                    modified_count = 0
+                    disabled_count = 0
+                    restored_count = 0
+                    deleted_count = 0
                     for operation in normalized_operations:
-                        item = operation["item"]
+                        action = operation["action"]
+                        item = operation.get("item")
+                        if action in ("update", "delete"):
+                            self._assert_import_item_current(connection, operation)
+                        elif action in (
+                            "preset_override",
+                            "preset_disable",
+                            "preset_restore",
+                        ):
+                            self._assert_preset_import_current(connection, operation)
                         item_owners = (
                             term_token_owners
-                            if item.get("type") == "term"
+                            if item is not None and item.get("type") == "term"
                             else None
                         )
-                        if operation["action"] == "create":
+                        if action == "create":
                             changed_items.append(
                                 self._create_item(
                                     connection,
@@ -604,7 +618,7 @@ class WritingPolicyStore:
                                 )
                             )
                             created_count += 1
-                        else:
+                        elif action == "update":
                             changed_items.append(
                                 self._update_item(
                                     connection,
@@ -614,14 +628,70 @@ class WritingPolicyStore:
                                 )
                             )
                             updated_count += 1
+                            modified_count += 1
+                        elif action == "delete":
+                            existing = self._get_item(
+                                connection, operation["existingItemId"]
+                            )
+                            if term_token_owners is not None and existing["type"] == "term":
+                                for token in self._normalized_term_tokens(existing):
+                                    if (
+                                        term_token_owners.get(token)
+                                        == operation["existingItemId"]
+                                    ):
+                                        del term_token_owners[token]
+                            table = (
+                                "writing_policy_terms"
+                                if existing["type"] == "term"
+                                else "style_rules"
+                            )
+                            connection.execute(
+                                "DELETE FROM %s WHERE id = ?" % table,
+                                (operation["existingItemId"],),
+                            )
+                            changed_items.append(existing)
+                            deleted_count += 1
+                        elif action in ("preset_override", "preset_disable"):
+                            changed_items.append(
+                                self._apply_preset_import_operation(
+                                    connection,
+                                    operation,
+                                )
+                            )
+                            if action == "preset_override":
+                                modified_count += 1
+                            else:
+                                disabled_count += 1
+                        elif action == "preset_restore":
+                            changed_items.append(
+                                self._restore_preset_import_operation(
+                                    connection,
+                                    operation,
+                                )
+                            )
+                            restored_count += 1
                     counts = {
                         "createdCount": created_count,
                         "updatedCount": updated_count,
+                        "modifiedCount": modified_count,
+                        "disabledCount": disabled_count,
+                        "restoredCount": restored_count,
+                        "deletedCount": deleted_count,
                         "conflictCount": int((stats or {}).get("conflictCount", 0)),
                         "errorCount": int((stats or {}).get("errorCount", 0)),
                     }
                     import_record = self._record_import(
-                        connection, import_meta, counts
+                        connection,
+                        import_meta,
+                        dict(
+                            counts,
+                            updatedCount=(
+                                modified_count
+                                + disabled_count
+                                + restored_count
+                                + deleted_count
+                            ),
+                        ),
                     )
             except Exception:
                 if backup_path is not None:
@@ -653,6 +723,17 @@ class WritingPolicyStore:
         from .imports import export_csv
 
         return export_csv(self, scope)
+
+    def validate_item(self, payload: Dict[str, object]) -> Dict[str, object]:
+        item_type = payload.get("type")
+        if item_type == "term":
+            return dict(self._validate_term(payload), type="term")
+        if item_type in RULE_TYPES:
+            return dict(self._validate_style(payload), type=item_type)
+        raise WritingPolicyError(
+            "invalid_writing_policy_type",
+            "规范条目类型必须为 term、style 或 anti_template。",
+        )
 
     def database_snapshot_bytes(self) -> bytes:
         with self._write_lock:
@@ -755,20 +836,227 @@ class WritingPolicyStore:
                 continue
             action = entry.get("action")
             item = entry.get("item")
-            if action not in ("create", "update") or not isinstance(item, dict):
-                raise WritingPolicyError(
-                    "invalid_import_operation", "导入写入操作无效。"
-                )
-            operation = {"action": action, "item": dict(item)}
-            if action == "update":
+            if action in ("create", "update"):
+                if not isinstance(item, dict):
+                    raise WritingPolicyError(
+                        "invalid_import_operation", "导入写入操作无效。"
+                    )
+                operation = {"action": action, "item": dict(item)}
+                if action == "update":
+                    existing_item_id = str(entry.get("existingItemId") or "")
+                    if not existing_item_id:
+                        raise WritingPolicyError(
+                            "invalid_import_operation", "导入更新项缺少目标条目。"
+                        )
+                    operation["existingItemId"] = existing_item_id
+                    if "expectedItem" in entry:
+                        operation["expectedItem"] = dict(entry["expectedItem"])
+                normalized.append(operation)
+                continue
+            if action == "delete":
                 existing_item_id = str(entry.get("existingItemId") or "")
                 if not existing_item_id:
                     raise WritingPolicyError(
-                        "invalid_import_operation", "导入更新项缺少目标条目。"
+                        "invalid_import_operation", "导入删除项缺少目标条目。"
                     )
-                operation["existingItemId"] = existing_item_id
-            normalized.append(operation)
+                normalized.append(
+                    {
+                        "action": "delete",
+                        "existingItemId": existing_item_id,
+                        "itemType": str(entry.get("itemType") or ""),
+                        **(
+                            {"expectedItem": dict(entry["expectedItem"])}
+                            if "expectedItem" in entry
+                            else {}
+                        ),
+                    }
+                )
+                continue
+            if action in (
+                "preset_override",
+                "preset_disable",
+                "preset_restore",
+            ):
+                preset_entry_id = str(entry.get("presetEntryId") or "")
+                item_type = str(entry.get("itemType") or "")
+                if not preset_entry_id or item_type not in ("term",) + RULE_TYPES:
+                    raise WritingPolicyError(
+                        "invalid_import_operation", "预置导入操作缺少目标信息。"
+                    )
+                operation = {
+                    "action": action,
+                    "presetEntryId": preset_entry_id,
+                    "itemType": item_type,
+                }
+                if "expectedPresetOperation" in entry:
+                    expected = entry["expectedPresetOperation"]
+                    operation["expectedPresetOperation"] = (
+                        None if expected is None else dict(expected)
+                    )
+                if action in ("preset_override", "preset_disable"):
+                    pack_id = str(entry.get("packId") or "")
+                    if not pack_id:
+                        raise WritingPolicyError(
+                            "invalid_import_operation", "预置导入操作缺少规范包。"
+                        )
+                    operation["packId"] = pack_id
+                if action == "preset_override":
+                    if not isinstance(item, dict):
+                        raise WritingPolicyError(
+                            "invalid_import_operation", "预置覆盖缺少规范内容。"
+                        )
+                    operation["item"] = dict(item)
+                normalized.append(operation)
+                continue
+            if action not in ("create", "update"):
+                raise WritingPolicyError(
+                    "invalid_import_operation", "导入写入操作无效。"
+                )
         return normalized
+
+    def _assert_import_item_current(
+        self,
+        connection: sqlite3.Connection,
+        operation: Dict[str, object],
+    ) -> None:
+        if "expectedItem" not in operation:
+            return
+        try:
+            current = self._get_item(connection, operation["existingItemId"])
+        except WritingPolicyError:
+            raise WritingPolicyError(
+                "import_preview_stale",
+                "规范库已在预览后发生变化，请重新预览。",
+            )
+        if current != operation["expectedItem"]:
+            raise WritingPolicyError(
+                "import_preview_stale",
+                "规范库已在预览后发生变化，请重新预览。",
+            )
+
+    def _assert_preset_import_current(
+        self,
+        connection: sqlite3.Connection,
+        operation: Dict[str, object],
+    ) -> None:
+        if "expectedPresetOperation" not in operation:
+            return
+        table = self._preset_operation_table(str(operation["itemType"]))
+        row = connection.execute(
+            "SELECT * FROM %s WHERE preset_entry_id = ?" % table,
+            (operation["presetEntryId"],),
+        ).fetchone()
+        current = None if row is None else self._preset_operation_from_row(row)
+        if current != operation["expectedPresetOperation"]:
+            raise WritingPolicyError(
+                "import_preview_stale",
+                "规范库已在预览后发生变化，请重新预览。",
+            )
+
+    def _apply_preset_import_operation(
+        self,
+        connection: sqlite3.Connection,
+        operation: Dict[str, object],
+    ) -> Dict[str, object]:
+        item_type = str(operation["itemType"])
+        preset_entry_id = self._validate_preset_entry_id(
+            operation["presetEntryId"],
+            item_type,
+        )
+        pack_id = str(operation["packId"])
+        if not _PACK_ID_RE.fullmatch(pack_id):
+            raise WritingPolicyError(
+                "invalid_writing_policy_pack",
+                "预置规范包标识无效。",
+            )
+        if operation["action"] == "preset_override":
+            item = dict(operation["item"])
+            if item_type == "term":
+                payload = dict(self._validate_term(item), type="term")
+            else:
+                payload = dict(
+                    self._validate_style(dict(item, type=item_type)),
+                    type=item_type,
+                )
+            stored_operation = "override"
+        else:
+            payload = {}
+            stored_operation = "disabled"
+        table = self._preset_operation_table(item_type)
+        existing = connection.execute(
+            "SELECT created_at FROM %s WHERE preset_entry_id = ?" % table,
+            (preset_entry_id,),
+        ).fetchone()
+        now = _utc_now()
+        if existing is None:
+            connection.execute(
+                """
+                INSERT INTO %s (
+                    preset_entry_id, pack_id, item_type, operation,
+                    payload, created_at, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """
+                % table,
+                (
+                    preset_entry_id,
+                    pack_id,
+                    item_type,
+                    stored_operation,
+                    _json_object(payload),
+                    now,
+                    now,
+                ),
+            )
+        else:
+            connection.execute(
+                """
+                UPDATE %s SET
+                    pack_id = ?, item_type = ?, operation = ?,
+                    payload = ?, updated_at = ?
+                WHERE preset_entry_id = ?
+                """
+                % table,
+                (
+                    pack_id,
+                    item_type,
+                    stored_operation,
+                    _json_object(payload),
+                    now,
+                    preset_entry_id,
+                ),
+            )
+        row = connection.execute(
+            "SELECT * FROM %s WHERE preset_entry_id = ?" % table,
+            (preset_entry_id,),
+        ).fetchone()
+        return self._preset_operation_from_row(row)
+
+    def _restore_preset_import_operation(
+        self,
+        connection: sqlite3.Connection,
+        operation: Dict[str, object],
+    ) -> Dict[str, object]:
+        item_type = str(operation["itemType"])
+        preset_entry_id = self._validate_preset_entry_id(
+            operation["presetEntryId"],
+            item_type,
+        )
+        table = self._preset_operation_table(item_type)
+        row = connection.execute(
+            "SELECT * FROM %s WHERE preset_entry_id = ?" % table,
+            (preset_entry_id,),
+        ).fetchone()
+        if row is None:
+            raise WritingPolicyError(
+                "writing_policy_preset_operation_not_found",
+                "未找到指定预置规范操作。",
+            )
+        existing = self._preset_operation_from_row(row)
+        connection.execute(
+            "DELETE FROM %s WHERE preset_entry_id = ?" % table,
+            (preset_entry_id,),
+        )
+        return existing
 
     def _create_item(
         self,
