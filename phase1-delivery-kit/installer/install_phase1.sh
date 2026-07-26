@@ -39,8 +39,6 @@ copy_dir() {
 
 preserve_adapter_runtime_config() {
   local writing_policy_backup
-  local writing_policy_backup_index
-  local writing_policy_backup_start
   local -a writing_policy_backups=()
 
   [ -d "$ADAPTER_TARGET" ] || return 0
@@ -67,12 +65,7 @@ preserve_adapter_runtime_config() {
     [ -e "$writing_policy_backup" ] || continue
     writing_policy_backups+=("$writing_policy_backup")
   done
-  writing_policy_backup_start=0
-  if [ "${#writing_policy_backups[@]}" -gt 3 ]; then
-    writing_policy_backup_start=$((${#writing_policy_backups[@]} - 3))
-  fi
-  for ((writing_policy_backup_index=writing_policy_backup_start; writing_policy_backup_index<${#writing_policy_backups[@]}; writing_policy_backup_index+=1)); do
-    writing_policy_backup="${writing_policy_backups[$writing_policy_backup_index]}"
+  for writing_policy_backup in "${writing_policy_backups[@]}"; do
     cp "$writing_policy_backup" "$ADAPTER_CONFIG_BACKUP/run/$(basename "$writing_policy_backup")"
     log "preserve_adapter_runtime_config=run/$(basename "$writing_policy_backup")"
   done
@@ -114,6 +107,28 @@ restore_adapter_runtime_config() {
 
   rm -rf "$ADAPTER_CONFIG_BACKUP"
   ADAPTER_CONFIG_BACKUP=""
+}
+
+initialize_writing_policy_database() {
+  local database_path="$ADAPTER_TARGET/run/writing_policies.db"
+
+  if [ -e "$database_path" ]; then
+    log "writing_policy_database=reused path=$database_path"
+    return 0
+  fi
+
+  mkdir -p "$ADAPTER_TARGET/run"
+  chmod 700 "$ADAPTER_TARGET/run"
+  if AI_WPS_WRITING_POLICY_DB="$database_path" \
+    PYTHONPATH="$ADAPTER_TARGET/adapter_service" \
+    "$PYTHON_BIN" -c \
+      "from app.services.writing_policy.service import get_writing_policy_service; get_writing_policy_service().store.summary()"; then
+    chmod 600 "$database_path"
+    log "writing_policy_database=initialized path=$database_path"
+    return 0
+  fi
+
+  fail "writing_policy_database_initialization_failed"
 }
 
 enable_exec_permissions() {
@@ -215,6 +230,7 @@ install_adapter() {
   preserve_adapter_runtime_config
   copy_dir "$ADAPTER_SOURCE" "${ADAPTER_TARGET}"
   restore_adapter_runtime_config
+  initialize_writing_policy_database
   enable_exec_permissions
   log "adapter_installed=$ADAPTER_TARGET"
 }

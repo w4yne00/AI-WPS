@@ -6,11 +6,11 @@
 
 当前分支：`main`
 
-当前版本：`v0.19.1-alpha`
+当前版本：`v0.20.0-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.19.1-20260724`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-20260726`
 
-当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz`，SHA256：`7ee6276cf10ed95c2db7a73940ebaaef6f559eae399dd8b3b413d3686561063e`
+当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260726-v0200.tar.gz`，SHA256：`0d39dee1cd1e0226dfa7bf56b9e6f3b334121c6c06b882b7dd2c489b27ae4f33`
 
 ## 1. 当前项目状态
 
@@ -150,7 +150,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 
 ## 3. 本版本关键变化
 
-以下 issue #4 至 issue #8 条目是当前工作树中的未发布开发变更，不属于已经打包的 `v0.19.1-alpha`：
+`v0.20.0-alpha` 正式打包 issue #4 至 issue #11 的写作规范库完整基线：
 
 - issue #4 已补齐四个经门禁加载的预置规范包：G企技术写作基础、技术文件文体、网络安全术语和党政公文文体；每个包保留稳定 ID、来源、许可证及逐条审阅摘要。
 - 智能编写新增“自动匹配 / G企技术材料 / 网络安全技术材料 / 党政公文 / 不使用写作规范”选择；自动匹配无法可靠判断时只使用 G企基础包。
@@ -172,6 +172,9 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - issue #10 已将预置包加载改为逐包隔离：单包缺失、校验失败或版本不兼容时只跳过该包，组织规范和其他可用预置包继续生效；三个 Word 任务在规范完全未应用时统一显示“写作规范暂未应用，已继续处理”，部分应用时显示“写作规范暂未完整应用，已继续处理”，不会误报为模型后台连接失败。
 - 既有组织数据库在迁移前创建原始恢复备份；数据库不可读时保留主文件和原始备份，迁移失败时主文件恢复为迁移前字节，不自动清空、重建或覆盖异常数据。规范解析和结果检查分别记录阶段、耗时、受控错误码、规则 ID 和预置版本，不记录 API Key、用户全文或完整规则正文。
 - 写作规范列表接口新增 `limit`、`offset`、`pageCount` 和 `hasMore`，Word 前端每页最多请求并渲染 50 条，通过键盘可操作的上一页、下一页访问完整列表，并继续使用 250 ms 防抖搜索。开发机默认性能目标为本地解析加检查不超过 100 ms；麒麟 V10 以 `AI_WPS_WRITING_POLICY_PERFORMANCE_TARGET_MS=200` 执行目标机验收。
+- issue #11 已把写作规范库纳入统一三宿主交付基线：首次安装显式初始化权限为 `0600` 的空组织规范数据库；覆盖安装对已有数据库（包括异常文件）只复用不覆盖，并继续恢复全部已有备份和模型配置。
+- `release-manifest.json` 固定记录 `0.20.0-alpha`、三宿主 Ribbon 类型、四个规范包、来源许可资产、CSV/XLSX 模板和运行态排除策略；构建阶段核对规范包/审阅清单完整性，并拒绝数据库、备份、`adapter.json`、API Key、日志、用户导入内容和未确认草稿进入交付包。
+- Word、Excel、PPT 与 adapter 版本统一为 `0.20.0-alpha`；格式审查、Excel 智能分析、PPT 智能总结、工作流档案、写回、超时和轮询逻辑未作功能改动。
 - `v0.19.1-alpha` 是三宿主任务窗格体验补丁版，只调整界面、设置状态探测和交互保护，不新增或改动智能编写、智能仿写、文档审查、格式审查、智能分析、智能总结及任何回写链路。
 - Word、Excel、PPT 的任务页与设置页完成同构体验更新：继续保持 Word 蓝、Excel 绿、PPT 橙宿主配色，统一使用系统字体、8px 以内圆角、克制的按压/披露动效和清晰键盘焦点；任务主按钮继续使用高对比度纯文字，不增加图标。
 - 三宿主设置首页统一为“模型接口 / 工作流设置 / 高级诊断”渐进披露结构。模型接口状态不再读取 adapter 的统一 Key 配置标记，而是按当前宿主的统一 API URL、真实任务类型和工作流档案计算“无法检测 / 未配置 / 部分就绪 / 已就绪”。
@@ -187,7 +190,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 导入预览令牌有效期 10 分钟且只能应用一次；冲突策略固定为保留已有项并跳过冲突，不提供覆盖导入，避免批量误改现场规范。
 - 智能编写、智能仿写和文档审查结果区显示本次使用的术语/规则数量；规范库不可读、损坏或暂时不可用时采用 fail-open，任务继续调用模型并明确显示降级提示。
 - 规范匹配和管理诊断不记录 API Key、原文全文、规则正文或术语说明；`/writing-policies/diagnostics` 只提供脱敏健康信息。
-- 覆盖安装除继续保护 API URL 与各类 API Key 外，还会恢复 `run/writing_policies.db` 和最多三份已有 `backup-*` 规范库备份；交付包自带 CSV/XLSX 导入模板和写作规范运维手册。
+- 覆盖安装除继续保护 API URL 与各类 API Key 外，还会恢复 `run/writing_policies.db` 和全部已有 `backup-*` 规范库备份；交付包自带 CSV/XLSX 导入模板和写作规范运维手册。
 - 本版本不改变智能编写既有回写、智能仿写只读、文档审查闭环、格式审查规则、Excel 智能分析和 PPT 智能总结链路。
 - `v0.18.1-alpha` 统一收敛三宿主设置交互：设置首页只保留统一 API URL 和当前宿主工作流列表，去掉统一 Key 与模型提供商名称输入；adapter 的统一 Key 回退接口和覆盖安装保护继续保留。
 - Word 按智能编写、智能仿写、文档审查、格式审查四个页签分别管理档案；Excel 固定管理 `excel.analysis`，PPT 固定管理 `ppt.slide_assistant`，三个宿主的数据和界面互不交叉。
@@ -273,7 +276,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 写作规范只允许注入 Word 智能编写、智能仿写和文档审查；不得扩散到格式审查、Excel 智能分析或 PPT 智能总结。
 - 写作规范诊断和任务日志不得包含 API Key、原文全文、规范术语说明或文体规则正文；前端结果只展示命中数量、名称摘要和降级状态。
 - CSV/XLSX 导入必须先预览后应用，预览令牌保持 10 分钟有效且单次使用；冲突项只能跳过并保留现场已有知识，不得静默覆盖。
-- 覆盖安装必须继续保护 `run/writing_policies.db` 和最多三份已有 `backup-*` 规范库备份，不能把包内空库覆盖到目标机。
+- 覆盖安装必须继续保护 `run/writing_policies.db` 和全部已有 `backup-*` 规范库备份，不能把包内空库覆盖到目标机。
 - 智能编写 Dify 调用、任务级 API Key 选路和“不允许原样返回”的提示词约束。
 - 智能编写新菜单值和旧值兼容映射：前端只展示新选项，adapter 仍识别旧 payload 值。
 - `/chat-messages` 顶层 `query` 必须始终携带完整提示词；旧模式同时携带 `inputs.query`，新版“用户输入”节点模式保持 `inputs: {}`，两种模式不得修改提示词正文。
@@ -345,55 +348,54 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 
 ## 6. 验证状态
 
-`v0.19.1-alpha` 已执行本地自动化、静态契约、真实浏览器布局和交付包验证。除继续覆盖写作规范、工作流档案、三宿主任务链路和覆盖安装外，本轮重点验证设置状态刷新隔离、异步顺序保护、编辑保护、紧凑布局、可扩展选项卡及诊断渐进披露。
+`v0.20.0-alpha` 已执行本地自动化、静态契约、真实浏览器布局、首次安装/覆盖保护和交付包审计。麒麟 V10/WPS 真机验收仍需在目标终端执行，不能由当前 Mac 开发机替代。
 
 ```bash
-PYTHONPATH=adapter_service /Users/wayne/.cache/codex-runtimes/codex-primary-runtime/dependencies/python/bin/python3 -m unittest discover -s adapter_service/tests -v
+PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
 for test_file in formal-plugin-kit/tests/*.test.js; do node "$test_file"; done
 node --check <Word/Excel/PPT taskpane.js、taskpane-helpers.js、ribbon.js>
+npm exec --prefix wps-addon tsc -- --noEmit -p wps-addon/tsconfig.json
 bash -n packaging/build_phase1_delivery_kit.sh phase1-delivery-kit/installer/install_phase1.sh phase1-delivery-kit/scripts/phase1_smoke_test.sh
 git diff --check
-DATE_TAG=20260724 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260726 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
-- issue #4 至 issue #8 当前工作树验证：Python 全量单测 `467 tests OK (skipped=45)`；全部 9 个前端测试文件和三宿主脚本语法检查通过。跳过项来自当前 bundled Python 缺 FastAPI 及既有环境条件；未重新生成 `v0.19.1-alpha` 交付包，也未替代下述历史真机验收。
-- 以下为已经发布的 `v0.19.1-alpha` 历史验证记录：
-- Python 全量单测：`384 tests OK (skipped=39)`；跳过项来自当前 bundled Python 缺 FastAPI 和沙箱禁用本地 socket。standalone 写作规范 HTTP 分发、数据层、导入安全、匹配、Word 注入与降级、provider、后台任务、PPT 文件和覆盖安装行为均已执行。
+- Python 全量单测：`494 tests OK (skipped=47)`；跳过项来自当前 Python 环境缺 FastAPI/Pydantic 兼容依赖及既有 socket 条件。未跳过的 standalone 分发、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
 - 全部 9 个前端测试文件通过，覆盖三宿主 layout smoke、设置刷新与编辑保护、任务状态隔离、Word 写作规范管理和结果契约。
-- Word/Excel/PPT 的 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，构建/安装/联调脚本 `bash -n` 及 `git diff --check`：通过。
-- 真实 Chromium 已在 420×900 和 320×700 下完成三宿主任务页、设置页、帮助提示及折叠诊断验收；页面无横向溢出，Word 四任务选项卡在窄屏下按设计横向滚动。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz`，大小约 8.1 MB，SHA256：`7ee6276cf10ed95c2db7a73940ebaaef6f559eae399dd8b3b413d3686561063e`。
-- 包内已核对 Word、Excel、PPT 三个插件均为 `0.19.1-alpha`；只包含一个安装脚本和一个含 `wps/et/wpp` 的 `publish.xml`，包含写作规范手册、CSV/XLSX 导入模板、Excel/PPT 提示词模板，且不携带现场 `writing_policies.db`、密钥目录、日志或备份文件。
-- 安装行为测试已使用临时目录验证：覆盖安装后恢复写作规范主库和按时间保留的最新三份已有备份，同时继续保护 API URL、统一 API Key 与全部工作流 API Key。
-- 受当前浏览器自动化账户额度限制，本版本未完成新规范管理页面截图检查；Mac 开发机也无法替代麒麟 V10/WPS 真机交互验收。
+- Word/Excel/PPT 的 9 个 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，TypeScript 类型检查和构建/安装/联调脚本 `bash -n`：通过。
+- 真实 Chromium 已在 420×900 和 320×700 下完成三宿主任务页与设置页验收；6 个页面在两个尺寸下的 document/body 横向溢出均为 0。验收时未启动 adapter，因此控制台仅有预期的本地连接失败和 favicon 404。
+- 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
+- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260726-v0200.tar.gz`，大小约 8.2 MB、共 242 个归档条目，SHA256：`0d39dee1cd1e0226dfa7bf56b9e6f3b334121c6c06b882b7dd2c489b27ae4f33`。
+- 构建审计已核对三宿主和 adapter 均为 `0.20.0-alpha`，四个规范包及四份已批准审阅清单、schema、来源/许可证、CSV/XLSX 空白模板、使用说明、验收清单与记录齐全；包内无数据库、备份、API Key、`adapter.json`、日志、用户导入内容或未确认草稿。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
 
 ## 7. 目标机验证建议
 
-1. 使用 `20260724-v0191` 单一正式交付包覆盖安装，关闭并重新打开 WPS，确认设置页“前端版本”为 `0.19.1-alpha`，且原 API URL、统一 API Key、`run/provider_api_keys/`、`run/writing_policies.db` 和最新三份已有规范库备份未丢失。
-2. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
-3. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“智能总结”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用同一个 `ppt.slide_assistant` 档案。
-4. 在 Word 设置页进入写作规范管理，验证术语和文体规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造规范库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。
-5. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，模型后台命中智能编写应用；结果显示本次命中的术语/规则摘要，既有对照和写回行为不变。
-6. 执行“智能仿写”，可先框选模板段落再打开任务；填写仿写需求和参考素材后确认 `/provider/debug-last.taskType=word.smart_imitation`，结果区显示知识命中摘要，且只有预览/纯文本/复制，不显示对照和应用预览。
-7. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示知识命中摘要、审查摘要和问题列表。
-8. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，且不使用写作规范。
-9. 打开 WPS Excel，确认 Ribbon 下只有“智能分析”和“设置”；选择一块表格区域后执行分析，确认 `/provider/debug-last.taskType=excel.analysis`，结果区显示数据概览、关键发现、风险异常、建议动作和汇报段落。使用慢模型验证 180 秒以上任务仍持续轮询，不提前提示连接失败。
-10. 打开 WPS 演示，确认 Ribbon 下只有“智能总结”和“设置”；在当前页模式分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。
-11. 在文档模式分别测试 UTF-8 `.md`、有效 `.docx`、损坏 DOCX、不支持类型和超过 10 MB 文件；确认页数只允许 5、8、10、12、15 且默认 10，结果给出整套逐页建议和复制动作，任何场景都不修改 PPT。
-12. 使用慢模型验证 180 秒以上任务仍持续轮询；状态查询短暂中断或重开任务窗格后恢复同一任务，不重复调用 `/files/upload` 或 `/chat-messages`。
-13. 分别连接旧版 `inputs.query` 工作流和新版“用户输入”节点工作流；新版首次 HTTP 400 后应自动以 `inputs: {}` 重试成功，`/provider/debug-last.inputMode=user-input-node`，文档任务的两个模式都保留相同 `files` 引用。
-14. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
-15. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
-16. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
+1. 先在无历史安装目录的麒麟 V10 终端安装 `20260726-v0200`，确认自动生成权限为 `0600` 的 `run/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
+2. 记录 API URL、统一 API Key、`run/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一安装包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.20.0-alpha` 且所有运行态数据未丢失。
+3. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
+4. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“智能总结”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用同一个 `ppt.slide_assistant` 档案。
+5. 在 Word 设置页进入写作规范管理，验证术语和文体规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造规范库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。
+6. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，模型后台命中智能编写应用；结果显示本次命中的术语/规则摘要，既有对照和写回行为不变。
+7. 执行“智能仿写”，可先框选模板段落再打开任务；填写仿写需求和参考素材后确认 `/provider/debug-last.taskType=word.smart_imitation`，结果区显示知识命中摘要，且只有预览/纯文本/复制，不显示对照和应用预览。
+8. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示知识命中摘要、审查摘要和问题列表。
+9. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，且不使用写作规范。
+10. 打开 WPS Excel，确认 Ribbon 下只有“智能分析”和“设置”；选择一块表格区域后执行分析，确认 `/provider/debug-last.taskType=excel.analysis`，结果区显示数据概览、关键发现、风险异常、建议动作和汇报段落。使用慢模型验证 180 秒以上任务仍持续轮询，不提前提示连接失败。
+11. 打开 WPS 演示，确认 Ribbon 下只有“智能总结”和“设置”；在当前页模式分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。
+12. 在文档模式分别测试 UTF-8 `.md`、有效 `.docx`、损坏 DOCX、不支持类型和超过 10 MB 文件；确认页数只允许 5、8、10、12、15 且默认 10，结果给出整套逐页建议和复制动作，任何场景都不修改 PPT。
+13. 使用慢模型验证 180 秒以上任务仍持续轮询；状态查询短暂中断或重开任务窗格后恢复同一任务，不重复调用 `/files/upload` 或 `/chat-messages`。
+14. 分别连接旧版 `inputs.query` 工作流和新版“用户输入”节点工作流；新版首次 HTTP 400 后应自动以 `inputs: {}` 重试成功，`/provider/debug-last.inputMode=user-input-node`，文档任务的两个模式都保留相同 `files` 引用。
+15. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
+16. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
+17. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
 
 ## 8. 遗留项
 
 - 智能排版暂缓：目标机已确认任务级 API Key 选路可命中独立 Dify 工作流，但长文档角色识别受 Dify 输出最大值和模型上下文窗口限制影响。当前版本不再尝试自动写回排版，改为“格式审查”。
 - 文档审查要求 Dify 输出 Markdown 中的 JSON 代码块。若现场 Dify 只能输出普通 Markdown，也应至少保留一个合法 `json` 代码块；adapter 会从代码块中提取问题列表。
 - Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `Selection`、`UsedRange`、`Cells.Item(row, column)` 的可用性；前端已做多路径读取和已用范围兜底。
-- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、写作规范管理和覆盖安装仍需用 `v0.19.1-alpha` 正式包完成目标机验收。
+- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、写作规范管理和覆盖安装仍需用 `v0.20.0-alpha` 正式包完成目标机验收。
 - 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README 及 `docs/operations/` 下当前手册为准。

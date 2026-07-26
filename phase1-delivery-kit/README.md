@@ -1,14 +1,14 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.19.1-alpha`
+版本：`v0.20.0-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260724-v0191.tar.gz
-cd ai-wps-phase1-delivery-20260724-v0191
+tar -xzf ai-wps-phase1-delivery-20260726-v0200.tar.gz
+cd ai-wps-phase1-delivery-20260726-v0200
 bash installer/install_phase1.sh
 ```
 
@@ -48,6 +48,7 @@ bash scripts/phase1_smoke_test.sh
 - `wps-jsaddons/publish.xml`：WPS `jsaddons` 发布文件。
 - `installer/install_phase1.sh`：一键安装脚本。
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
+- `release-manifest.json`：版本、三宿主、四个规范包、来源许可资产及运行态排除策略清单。
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify SYSTEM 提示词、Markdown 输出和现场验证手册。
@@ -77,6 +78,13 @@ bash scripts/phase1_smoke_test.sh
 10. 旧版 Dify 工作流应继续读取 `inputs.query`；新版“用户输入”节点工作流应在首次 HTTP 400 后自动切换到顶层 `query/files` 并成功返回。
 11. 智能总结的文档模式应接受单个 UTF-8 `.md` 或有效 `.docx`（最大 10 MB），并可选择整套 5、8、10、12、15 页建议，默认 10 页。
 12. 智能总结只提供预览和复制，绝不自动创建或修改 PPT；同一个 `ppt.slide_assistant` 工作流档案和 API Key 必须用于 `/files/upload` 与 `/chat-messages`，Dify 文件分支必须连接 `userinput.files` 和文档提取节点。
-13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、`run/writing_policies.db` 和最多三份已有规范库备份，确认现场配置和写作规范均被保留。
+13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、`run/writing_policies.db` 和全部已有规范库备份，确认现场配置和写作规范均被保留。
 14. 设置页只显示统一 API URL 和当前宿主的工作流档案；功能页下拉选择工作流后应立即激活，不再显示统一 Key 或额外“切换”按钮。
 15. 在 Word 设置页维护企业术语和文体规则，分别验证新增、修改、删除、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；规范库不可用时任务仍应继续并明确显示降级提示。
+16. 首次安装后应存在权限为 `0600` 的空组织规范数据库；再次覆盖安装必须保留原数据库字节、组织覆盖/自定义/停用状态、全部已有备份和模型配置。
+
+## 交付边界
+
+- 包内包含四个经审阅的预置规范包、对应审阅清单、schema、来源和许可证说明，以及 CSV/XLSX 空白导入模板。
+- 包内不包含现场 `writing_policies.db`、备份、`adapter.json`、API Key、日志、用户导入内容或未确认审阅草稿。
+- 预置规范包可以随版本更新；组织规范数据保存在独立数据库中，并在覆盖升级后继续优先于预置基线。

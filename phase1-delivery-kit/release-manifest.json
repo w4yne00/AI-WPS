@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "product": "AI-WPS",
+  "version": "0.20.0-alpha",
+  "releaseDate": "20260726",
+  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-20260726",
+  "hosts": [
+    {
+      "name": "Word",
+      "plugin": "wps-ai-assistant_1.0.0",
+      "ribbonType": "wps"
+    },
+    {
+      "name": "Excel",
+      "plugin": "wps-ai-assistant-et_1.0.0",
+      "ribbonType": "et"
+    },
+    {
+      "name": "PPT",
+      "plugin": "wps-ai-assistant-wpp_1.0.0",
+      "ribbonType": "wpp"
+    }
+  ],
+  "adapter": {
+    "name": "wps-ai-adapter",
+    "version": "0.20.0-alpha"
+  },
+  "writingPolicyPacks": [
+    "yangqi-tech-writing-base",
+    "technical-document-style",
+    "official-document-style",
+    "cybersecurity-terminology"
+  ],
+  "writingPolicyAssets": {
+    "schema": "packages/adapter-start-kit/adapter_service/writing_policy_packs/schema-v1.json",
+    "sources": "docs/writing-policy-sources.md",
+    "notices": "packages/adapter-start-kit/adapter_service/writing_policy_packs/THIRD_PARTY_NOTICES.md",
+    "csvTemplate": "docs/import-templates/writing-policies-import-template.csv",
+    "xlsxTemplate": "docs/import-templates/writing-policies-import-template.xlsx"
+  },
+  "runtimeStatePolicy": {
+    "firstInstall": "initialize-empty-organization-database",
+    "upgrade": "preserve-existing-organization-database-backups-and-model-configuration",
+    "excluded": [
+      "writing_policies.db",
+      "writing_policies.db.backup-*",
+      "provider_api_key",
+      "provider_api_keys/",
+      "adapter.json",
+      "logs/",
+      "imported-user-content",
+      "unapproved-review-drafts"
+    ]
+  }
+}

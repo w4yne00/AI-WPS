@@ -9,12 +9,15 @@
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-et_1.0.0` 存在。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-wpp_1.0.0` 存在。
 - [ ] `publish.xml` 同时包含 Word 的 `type="wps"`、Excel 的 `type="et"` 和 PPT 的 `type="wpp"`。
+- [ ] 首次安装自动创建非空的 `adapter-start-kit/run/writing_policies.db`，文件权限为 `0600`。
+- [ ] `release-manifest.json` 的版本、三宿主、四个规范包和版本规则号与本包一致。
 
 ## 2. Adapter 检查
 
 - [ ] `bash scripts/phase1_smoke_test.sh` 执行成功。
 - [ ] `/health` 返回 `status=ok`。
 - [ ] `/health` 返回 `mode=uvicorn`。
+- [ ] `/health` 返回 `version=0.20.0-alpha`。
 - [ ] `/templates` 返回 `general-office`。
 - [ ] `/templates` 返回 `technical-file-format-requirements`。
 - [ ] 旧版 Dify 工作流可继续读取 `inputs.query`。
@@ -52,6 +55,8 @@
 - [ ] 组织数据库不可读或迁移失败时主文件未被清空、重建或覆盖，并保留 `writing_policies.db.backup-*` 恢复备份。
 - [ ] 规范解析或结果检查异常时结果区显示“写作规范暂未应用，已继续处理”，不显示模型后台连接失败。
 - [ ] `/writing-policies/diagnostics` 只包含阶段、受控错误码、规则 ID、预置版本、计数和耗时，不包含 API Key、用户全文或完整规则正文。
+- [ ] 四个预置规范包及对应 `*.review.json` 均可加载，来源、版本、许可证和审阅摘要可追溯。
+- [ ] 预置包版本更新后，已有组织覆盖、组织自定义规范和预置停用状态仍优先生效。
 - [ ] 执行 `AI_WPS_WRITING_POLICY_PERFORMANCE_TARGET_MS=200 PYTHONPATH=adapter_service python3 -m unittest adapter_service.tests.test_writing_policy_performance -v` 通过。
 - [ ] 320 px 窄任务窗无横向页面溢出、遮挡或不可达操作；规范列表单页最多渲染 50 条，键盘可通过上一页、下一页访问第 51 条及后续条目。
 - [ ] 键盘可操作规范选择、结果披露和设置控件；reduced-motion 开启后无非必要位移动画。
@@ -92,9 +97,30 @@
 - [ ] 覆盖安装前记录当前 API URL、统一 API Key 和各任务工作流档案。
 - [ ] 执行新版本 `installer/install_phase1.sh` 覆盖安装后，`config/adapter.json` 保持原 API URL。
 - [ ] 覆盖安装后，`run/provider_api_key` 和 `run/provider_api_keys/` 中的统一及任务级密钥均被保留。
+- [ ] 覆盖安装后，`run/writing_policies.db` 的 SHA-256 与安装前一致。
+- [ ] 覆盖安装后，全部已有 `writing_policies.db.backup-*` 均被保留。
+- [ ] 覆盖安装后，组织覆盖、组织自定义规范和预置停用状态仍可读取并优先于预置基线。
 - [ ] 覆盖安装后，智能编写、智能仿写、文档审查、格式审查、智能分析、智能总结仍命中原工作流档案。
 
-## 8. 结论
+## 8. 交付包完整性与排除检查
+
+- [ ] 包内包含四个规范包、四份已批准审阅清单、`schema-v1.json`、来源文档和 `THIRD_PARTY_NOTICES.md`。
+- [ ] 包内包含 CSV/XLSX 空白导入模板、写作规范使用说明、验收清单和验收记录。
+- [ ] 包内不包含 `writing_policies.db`、任何数据库备份、`adapter.json`、API Key、日志目录或 `.log` 文件。
+- [ ] 包内除 `docs/import-templates/` 空白模板外，不包含其他 CSV/XLSX 用户导入内容。
+- [ ] 包内不包含名称含 `.draft.` 的未确认审阅草稿。
+- [ ] Python 全量测试、全部 Node 测试、三宿主脚本语法、Shell 语法、浏览器布局和交付包构建审计均通过。
+
+## 9. 麒麟 V10 发布验收
+
+- [ ] 在无历史安装目录的终端完成首次安装，并验证规范库初始化。
+- [ ] 新增一条组织自定义规范、建立一条预置覆盖并停用一条预置项，重启 WPS 和 adapter 后状态保持。
+- [ ] 使用启用 `<think>` 的慢模型分别验证文档审查、智能分析和智能总结，180 秒以上仍保留任务编号并持续轮询。
+- [ ] 分别注入单个预置包损坏、组织数据库不可读、规范解析异常和结果检查异常，三个 Word 任务均降级继续且不泄露敏感信息。
+- [ ] 记录安装前数据库、全部已有备份、API URL、统一 Key 和工作流档案密钥摘要，再次覆盖安装后逐项一致。
+- [ ] 格式审查、Excel 智能分析、PPT 智能总结、工作流档案、智能编写写回、文档审查/智能分析/智能总结超时与轮询回归无变化。
+
+## 10. 结论
 
 - 验收人员：
 - 终端编号：

@@ -4,12 +4,14 @@ set -euo pipefail
 DELIVERY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 PORT="${PORT:-18100}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-0.20.0-alpha}"
 WPS_JSADDONS_DIR="${WPS_JSADDONS_DIR:-/home/cloud/.local/share/Kingsoft/wps/jsaddons}"
 INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$HOME/ai-wps-phase1}"
 PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant_1.0.0"
 EXCEL_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-et_1.0.0"
 PPT_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0"
 ADAPTER_DIR="$INSTALL_ROOT/adapter-start-kit"
+WRITING_POLICY_DB="$ADAPTER_DIR/run/writing_policies.db"
 
 http_get() {
   local url="$1"
@@ -63,12 +65,30 @@ fi
 
 "$PYTHON_BIN" -c "import fastapi, uvicorn, pydantic, requests; print('runtime_deps_ok')"
 
+if [ -s "$WRITING_POLICY_DB" ]; then
+  echo "writing_policy_database=ok path=$WRITING_POLICY_DB"
+else
+  echo "writing_policy_database=missing_or_empty path=$WRITING_POLICY_DB"
+  exit 1
+fi
+
 if [ -x "$ADAPTER_DIR/scripts/check_health.sh" ]; then
   bash "$ADAPTER_DIR/scripts/check_health.sh" "$PORT"
 else
   echo "adapter_check_script=missing path=$ADAPTER_DIR/scripts/check_health.sh"
   exit 1
 fi
+
+HEALTH_RESPONSE="$(http_get "http://127.0.0.1:${PORT}/health")"
+case "$HEALTH_RESPONSE" in
+  *'"version":"'"$EXPECTED_VERSION"'"'*|*'"version": "'"$EXPECTED_VERSION"'"'*)
+    echo "adapter_version=ok value=$EXPECTED_VERSION"
+    ;;
+  *)
+    echo "adapter_version=unexpected expected=$EXPECTED_VERSION response=$HEALTH_RESPONSE"
+    exit 1
+    ;;
+esac
 
 echo "templates_response_begin"
 http_get "http://127.0.0.1:${PORT}/templates"

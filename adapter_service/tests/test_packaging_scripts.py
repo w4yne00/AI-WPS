@@ -1,4 +1,9 @@
+import json
+import os
+import shutil
 import subprocess
+import sys
+import tarfile
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,7 +17,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.19.1-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.20.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -234,6 +239,8 @@ class PackagingScriptTests(unittest.TestCase):
             self.assertEqual(
                 [path.name for path in restored_backups],
                 [
+                    "writing_policies.db.backup-1",
+                    "writing_policies.db.backup-2",
                     "writing_policies.db.backup-3",
                     "writing_policies.db.backup-4",
                     "writing_policies.db.backup-5",
@@ -279,12 +286,163 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(required_text, text)
 
-    def test_phase1_delivery_uses_v0191_release_name(self) -> None:
+    def test_phase1_delivery_uses_v0200_release_name(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0191"', script)
+        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0200"', script)
+
+    def test_delivery_build_revalidates_approved_pack_reviews(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn(
+            "load_pack_snapshot(pack_root)",
+            script,
+        )
+
+    def test_phase1_installer_initializes_database_only_on_first_install(self) -> None:
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+        function_prefix = installer.split("enable_exec_permissions() {", 1)[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            adapter_target = Path(temp_dir) / "adapter-start-kit"
+            shutil.copytree(
+                ROOT / "adapter_service",
+                adapter_target / "adapter_service",
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "logs", "run"),
+            )
+            harness = Path(temp_dir) / "initialize-test.sh"
+            harness.write_text(
+                function_prefix
+                + "\nADAPTER_TARGET=\"$1\"\n"
+                + "PYTHON_BIN=\"$2\"\n"
+                + "initialize_writing_policy_database\n",
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment.pop("AI_WPS_WRITING_POLICY_DB", None)
+            result = subprocess.run(
+                ["bash", str(harness), str(adapter_target), sys.executable],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            database = adapter_target / "run/writing_policies.db"
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(database.is_file())
+            self.assertGreater(database.stat().st_size, 0)
+            self.assertEqual(database.stat().st_mode & 0o777, 0o600)
+
+            original = database.read_bytes()
+            second_result = subprocess.run(
+                ["bash", str(harness), str(adapter_target), sys.executable],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(second_result.returncode, 0, second_result.stderr)
+            self.assertEqual(database.read_bytes(), original)
+            self.assertIn("writing_policy_database=reused", second_result.stdout)
+
+    def test_built_v0200_delivery_has_complete_safe_release_inventory(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            environment = dict(os.environ)
+            environment["DATE_TAG"] = "20260726"
+            environment["PYTHON_BIN"] = sys.executable
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(ROOT / "packaging/build_phase1_delivery_kit.sh"),
+                    temp_dir,
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+
+            archive = (
+                Path(temp_dir)
+                / "ai-wps-phase1-delivery-20260726-v0200.tar.gz"
+            )
+            self.assertTrue(archive.is_file())
+            with tarfile.open(archive, "r:gz") as package:
+                names = package.getnames()
+                root = "ai-wps-phase1-delivery-20260726-v0200"
+                manifest_member = package.extractfile(
+                    root + "/release-manifest.json"
+                )
+                self.assertIsNotNone(manifest_member)
+                release_manifest = json.load(manifest_member)
+
+                self.assertEqual(release_manifest["version"], "0.20.0-alpha")
+                self.assertEqual(
+                    release_manifest["versionRule"],
+                    "AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-20260726",
+                )
+                self.assertEqual(
+                    set(release_manifest["writingPolicyPacks"]),
+                    {
+                        "yangqi-tech-writing-base",
+                        "technical-document-style",
+                        "official-document-style",
+                        "cybersecurity-terminology",
+                    },
+                )
+                for pack_id in release_manifest["writingPolicyPacks"]:
+                    self.assertIn(
+                        root
+                        + "/packages/adapter-start-kit/adapter_service/"
+                        + "writing_policy_packs/"
+                        + pack_id
+                        + ".json",
+                        names,
+                    )
+                    self.assertIn(
+                        root
+                        + "/packages/adapter-start-kit/adapter_service/"
+                        + "writing_policy_packs/"
+                        + pack_id
+                        + ".review.json",
+                        names,
+                    )
+
+                required_files = [
+                    "/docs/writing-policy-sources.md",
+                    "/docs/import-templates/writing-policies-import-template.csv",
+                    "/docs/import-templates/writing-policies-import-template.xlsx",
+                    "/packages/adapter-start-kit/adapter_service/"
+                    "writing_policy_packs/THIRD_PARTY_NOTICES.md",
+                    "/docs/phase1-acceptance-checklist.md",
+                    "/docs/phase1-acceptance-record.md",
+                ]
+                for suffix in required_files:
+                    self.assertIn(root + suffix, names)
+
+                forbidden_fragments = [
+                    "/run/writing_policies.db",
+                    "writing_policies.db.backup-",
+                    "/provider_api_key",
+                    "/provider_api_keys/",
+                    "/logs/",
+                ]
+                for name in names:
+                    self.assertFalse(name.endswith(".log"), name)
+                    self.assertFalse(
+                        any(fragment in name for fragment in forbidden_fragments),
+                        name,
+                    )
+                    if name.endswith((".csv", ".xlsx")):
+                        self.assertIn("/docs/import-templates/", name)
 
     def test_taskpane_document_review_has_three_document_types_and_prompt_map(self) -> None:
         html = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html").read_text(

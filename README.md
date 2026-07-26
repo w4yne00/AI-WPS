@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.19.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.19.1-20260724` |
+| Version | `v0.20.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-20260726` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260724-v0191.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260726-v0200.tar.gz` |
 
 Version rule format:
 
@@ -121,12 +121,13 @@ Rules:
 | Provider settings | Settings exposes one global API URL plus per-workflow names, notes, and API keys. The legacy unified-key fallback remains adapter-compatible and is preserved during overwrite installation, but is no longer shown in the task pane |
 | Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
-| Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together; overwrite installation preserves the existing API URL, unified API key, and workflow-profile keys, and the package includes Excel/PPT Markdown prompt templates |
+| Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together; first install initializes an empty organization writing-policy database, while overwrite installation preserves that database, every existing backup, the API URL, unified API key, and workflow-profile keys. A release manifest audits the four reviewed preset packs, source/license notices, import templates, acceptance documents, and runtime-state exclusions |
 
 ## Latest Updates
 
 | Version | Update |
 | --- | --- |
+| `v0.20.0-alpha` | Formally packages the reviewed writing-policy baseline in the unified three-host delivery kit. First install initializes the organization database; overwrite upgrades preserve organization overrides, custom rules, preset-disable state, backups, and model configuration. The build now emits and verifies a release manifest and rejects databases, keys, logs, imported content, or unapproved drafts, without changing Format Review, Excel Analysis, PPT Summary, workflow profiles, writeback, timeout, or polling behavior |
 | `v0.19.1-alpha` | Refines the shared Word, Excel, and PPT task-pane experience without changing business workflows: compact host-colored task and settings views, live model-interface readiness derived from each host's URL and workflow profiles, scalable task tabs, optional workflow notes, contextual help, and collapsed advanced diagnostics. Settings probes now use an isolated 8-second budget, single-flight refresh, stale-response protection, and edit-aware pausing so they cannot overwrite task status, results, long-running job state, or unsaved settings |
 | `v0.19.0-alpha` | Adds Word enterprise terminology and writing-rule knowledge for Smart Write, Smart Imitation, and Document Review. The local SQLite-backed manager supports scoped CRUD, CSV/XLSX import preview with conflict skipping, CSV export, database backup, result usage summaries, and fail-open degraded feedback. Excel/PPT behavior and all existing writeback paths remain unchanged; overwrite installation preserves the writing policy database and up to three existing backups |
 | `v0.18.1-alpha` | Streamlines workflow settings across Word, Excel, and PPT: removes unified-key controls from the task pane, keeps a compact host-isolated workflow list with full-width create/edit views, activates task-page selections immediately, protects active profiles from deletion, preserves existing keys when edits leave the key blank, and keeps adapter fallback and overwrite-install compatibility unchanged |
@@ -380,7 +381,7 @@ Unified response envelope:
 
 ## Offline Delivery
 
-The formal Phase 1 release is a single combined Word/Excel/PPT package with one installer. An overwrite installation keeps the target machine's existing `config/adapter.json`, unified API key, `run/provider_api_keys/`, Word enterprise writing policy database, and up to three existing writing policy backups; the package also carries the Excel/PPT Markdown prompt templates and generated writing-policies CSV/XLSX import templates.
+The formal Phase 1 release is a single combined Word/Excel/PPT package with one installer. An overwrite installation keeps the target machine's existing `config/adapter.json`, unified API key, `run/provider_api_keys/`, Word enterprise writing policy database, and every existing writing policy backup; the package also carries the Excel/PPT Markdown prompt templates and generated writing-policies CSV/XLSX import templates.
 
 Build the full offline bundle:
 

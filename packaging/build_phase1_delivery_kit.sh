@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
-KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0191"
+KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0200"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
 
 WORD_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant_1.0.0"
@@ -57,14 +57,98 @@ output_dir = Path(sys.argv[1])
 )
 PY
 
+"$PYTHON_BIN" - "$TMP_DIR/release-manifest.json" "$DATE_TAG" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+manifest_path = Path(sys.argv[1])
+date_tag = sys.argv[2]
+manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+manifest["releaseDate"] = date_tag
+manifest["versionRule"] = (
+    "AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-" + date_tag
+)
+manifest_path.write_text(
+    json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
+    encoding="utf-8",
+)
+PY
+
 tar -xzf "$PIP_TAR" -C "$TMP_DIR/packages"
 mv "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap-20260506" "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap"
 
 tar -xzf "$RUNTIME_TAR" -C "$TMP_DIR/packages"
 
+rm -rf \
+  "$TMP_DIR/packages/adapter-start-kit/run" \
+  "$TMP_DIR/packages/adapter-start-kit/logs" \
+  "$TMP_DIR/packages/adapter-start-kit/adapter_service/run" \
+  "$TMP_DIR/packages/adapter-start-kit/adapter_service/logs" \
+  "$TMP_DIR/packages/adapter-start-kit/config/adapter.json"
+find "$TMP_DIR" -type d -name 'provider_api_keys' -prune -exec rm -rf {} +
+find "$TMP_DIR" -type f \( \
+  -name 'provider_api_key' \
+  -o -name 'writing_policies.db' \
+  -o -name 'writing_policies.db.backup-*' \
+  -o -name '*.log' \
+  -o -name '*.draft.csv' \
+  -o -name '*.draft.xlsx' \
+\) -delete
 find "$TMP_DIR" \( -name '.DS_Store' -o -name '._*' -o -name '__pycache__' \) -exec rm -rf {} +
 find "$TMP_DIR" -type f -name '*.sh' -exec chmod 755 {} \;
 find "$TMP_DIR/packages/adapter-start-kit/adapter_service" -type f -name '*.py' -exec chmod 755 {} \;
+
+"$PYTHON_BIN" - "$TMP_DIR" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+manifest = json.loads((root / "release-manifest.json").read_text(encoding="utf-8"))
+adapter_service_root = (
+    root
+    / "packages"
+    / "adapter-start-kit"
+    / "adapter_service"
+)
+sys.path.insert(0, str(adapter_service_root))
+from app.services.writing_policy.packs import load_pack_snapshot
+
+pack_root = adapter_service_root / "writing_policy_packs"
+expected_packs = set(manifest["writingPolicyPacks"])
+snapshot = load_pack_snapshot(pack_root)
+actual_packs = {pack["packId"] for pack in snapshot.public_packs()}
+if actual_packs != expected_packs:
+    raise SystemExit(
+        "writing policy pack inventory mismatch: expected=%s actual=%s"
+        % (sorted(expected_packs), sorted(actual_packs))
+    )
+for required in (
+    pack_root / "THIRD_PARTY_NOTICES.md",
+    root / "docs" / "writing-policy-sources.md",
+    root / "docs" / "import-templates" / "writing-policies-import-template.csv",
+    root / "docs" / "import-templates" / "writing-policies-import-template.xlsx",
+):
+    if not required.is_file():
+        raise SystemExit("missing delivery file: " + str(required.relative_to(root)))
+
+for path in root.rglob("*"):
+    relative = path.relative_to(root).as_posix()
+    if path.is_dir() and path.name in {"logs", "provider_api_keys"}:
+        raise SystemExit("runtime directory leaked into delivery: " + relative)
+    if not path.is_file():
+        continue
+    if (
+        path.name in {"adapter.json", "provider_api_key", "writing_policies.db"}
+        or path.name.startswith("writing_policies.db.backup-")
+        or path.suffix == ".log"
+        or ".draft." in path.name
+    ):
+        raise SystemExit("runtime or draft file leaked into delivery: " + relative)
+    if path.suffix in {".csv", ".xlsx"} and "docs/import-templates/" not in relative:
+        raise SystemExit("non-template import content leaked into delivery: " + relative)
+PY
 
 COPYFILE_DISABLE=1 tar -czf "$OUT_DIR/$KIT_NAME.tar.gz" -C "$OUT_DIR" "$KIT_NAME"
 
