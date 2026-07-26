@@ -2,6 +2,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -27,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 _PRESET_ENTRY_ID_RE = re.compile(r"^(term|rule)\.[a-z0-9][a-z0-9.-]{2,95}$")
 _PACK_ID_RE = re.compile(r"^[a-z][a-z0-9.-]{2,63}$")
+_SCHEMA_VERSION = 1
 
 
 def _utc_now() -> str:
@@ -86,8 +88,63 @@ class WritingPolicyStore:
         self.db_path.parent.chmod(0o700)
         if self.db_path.exists():
             self.db_path.chmod(0o600)
-        self._initialize_schema()
+        recovery_backup = None
+        existing_database = (
+            self.db_path.exists() and self.db_path.stat().st_size > 0
+        )
+        if existing_database:
+            try:
+                migration_required = self._database_needs_migration()
+            except Exception:
+                self._create_recovery_backup()
+                self._rotate_recovery_backups_best_effort()
+                raise
+            if not migration_required:
+                self.db_path.chmod(0o600)
+                return
+            recovery_backup = self._create_recovery_backup()
+        try:
+            self._initialize_schema()
+        except Exception:
+            if recovery_backup is not None:
+                self._restore_database_file(recovery_backup)
+                self._rotate_recovery_backups_best_effort()
+            raise
+        if recovery_backup is not None:
+            self._rotate_backups()
         self.db_path.chmod(0o600)
+
+    def _database_needs_migration(self) -> bool:
+        with sqlite3.connect(str(self.db_path), timeout=30.0) as connection:
+            check = connection.execute("PRAGMA quick_check").fetchone()
+            if check is None or check[0] != "ok":
+                raise sqlite3.DatabaseError(
+                    "writing policy database integrity check failed"
+                )
+            metadata_exists = connection.execute(
+                "SELECT 1 FROM sqlite_master "
+                "WHERE type = 'table' AND name = 'schema_metadata'"
+            ).fetchone()
+            if metadata_exists is None:
+                return True
+            row = connection.execute(
+                "SELECT value FROM schema_metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            if row is None:
+                return True
+            try:
+                version = int(row[0])
+            except (TypeError, ValueError):
+                raise WritingPolicyError(
+                    "writing_policy_data_corrupt",
+                    "写作规范库版本信息已损坏。",
+                )
+            if version > _SCHEMA_VERSION:
+                raise WritingPolicyError(
+                    "writing_policy_database_version_incompatible",
+                    "写作规范库版本高于当前 adapter 支持版本。",
+                )
+            return version < _SCHEMA_VERSION
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -181,6 +238,11 @@ class WritingPolicyStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS schema_metadata (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_scope
                     ON writing_policy_terms(scope);
                 CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_enabled
@@ -200,6 +262,11 @@ class WritingPolicyStore:
                 """
             )
             self._migrate_rule_scope_columns(connection)
+            connection.execute(
+                "INSERT OR REPLACE INTO schema_metadata (key, value) "
+                "VALUES ('schema_version', ?)",
+                (str(_SCHEMA_VERSION),),
+            )
 
     @staticmethod
     def _migrate_rule_scope_columns(connection: sqlite3.Connection) -> None:
@@ -790,6 +857,61 @@ class WritingPolicyStore:
                 pass
             raise
 
+    def _create_recovery_backup(self) -> Path:
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
+        backup_path = None
+        descriptor = None
+        for collision_index in range(1000):
+            suffix = "" if collision_index == 0 else "-%d" % collision_index
+            candidate = self.db_path.with_name(
+                self.db_path.name + ".backup-" + timestamp + suffix
+            )
+            try:
+                descriptor = os.open(
+                    str(candidate),
+                    os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                    0o600,
+                )
+                backup_path = candidate
+                break
+            except FileExistsError:
+                continue
+        if backup_path is None or descriptor is None:
+            raise WritingPolicyError(
+                "writing_policy_backup_unavailable",
+                "无法创建规范库恢复备份。",
+            )
+        os.close(descriptor)
+        try:
+            shutil.copyfile(str(self.db_path), str(backup_path))
+            backup_path.chmod(0o600)
+            return backup_path
+        except Exception:
+            try:
+                backup_path.unlink()
+            except FileNotFoundError:
+                pass
+            raise
+
+    def _restore_database_file(self, backup_path: Path) -> None:
+        descriptor, raw_path = tempfile.mkstemp(
+            prefix=".writing-policies-restore-",
+            suffix=".db",
+            dir=str(self.db_path.parent),
+        )
+        os.close(descriptor)
+        restore_path = Path(raw_path)
+        try:
+            shutil.copyfile(str(backup_path), str(restore_path))
+            restore_path.chmod(0o600)
+            os.replace(str(restore_path), str(self.db_path))
+            self.db_path.chmod(0o600)
+        finally:
+            try:
+                restore_path.unlink()
+            except FileNotFoundError:
+                pass
+
     def _backup_database_to(self, target_path: Path) -> None:
         with self._connect() as source:
             with sqlite3.connect(str(target_path), timeout=30.0) as target:
@@ -803,6 +925,12 @@ class WritingPolicyStore:
         backup_paths.sort(key=self._backup_sort_key, reverse=True)
         for stale_path in backup_paths[MAX_DATABASE_BACKUPS:]:
             stale_path.unlink()
+
+    def _rotate_recovery_backups_best_effort(self) -> None:
+        try:
+            self._rotate_backups()
+        except OSError:
+            pass
 
     @staticmethod
     def _backup_sort_key(path: Path) -> Tuple[int, float, int, str]:

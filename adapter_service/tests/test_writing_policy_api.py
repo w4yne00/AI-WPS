@@ -177,6 +177,32 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         self.assertEqual(deleted["data"]["item"]["id"], item["id"])
         self.assertTrue(deleted["data"]["deleted"])
 
+    def test_item_list_is_bounded_and_reports_pagination_metadata(self):
+        for index in range(55):
+            create_item(
+                WritingPolicyItemRequest(
+                    **term_payload(
+                        "分页规范%02d" % index,
+                        aliases=["分页别名%02d" % index],
+                        forbiddenVariants=["分页禁用写法%02d" % index],
+                    )
+                )
+            )
+
+        page = list_items(
+            scope="global",
+            item_type="term",
+            limit=20,
+            offset=20,
+        )["data"]
+
+        self.assertEqual(page["count"], 55)
+        self.assertEqual(page["pageCount"], 20)
+        self.assertEqual(page["limit"], 20)
+        self.assertEqual(page["offset"], 20)
+        self.assertTrue(page["hasMore"])
+        self.assertEqual(len(page["items"]), 20)
+
     def test_models_accept_alias_and_field_name_on_pydantic_v1_and_v2(self):
         aliased = ImportPreviewRequest(
             fileName="terms.csv",
@@ -1198,6 +1224,31 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
 
         methods = dict(headers)["Access-Control-Allow-Methods"]
         self.assertIn("PUT", {method.strip() for method in methods.split(",")})
+
+    def test_standalone_item_list_matches_bounded_pagination_contract(self):
+        for index in range(55):
+            self.service.store.create_item(
+                term_payload(
+                    "独立分页规范%02d" % index,
+                    aliases=["独立分页别名%02d" % index],
+                    forbiddenVariants=["独立分页禁用写法%02d" % index],
+                )
+            )
+
+        response = self.dispatch(
+            "GET",
+            "/writing-policies/items",
+            query="scope=global&type=term&limit=20&offset=20",
+        )
+        page = response["body"]["data"]
+
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(page["count"], 55)
+        self.assertEqual(page["pageCount"], 20)
+        self.assertEqual(page["limit"], 20)
+        self.assertEqual(page["offset"], 20)
+        self.assertTrue(page["hasMore"])
+        self.assertEqual(len(page["items"]), 20)
 
     def raw_http_request(
         self,

@@ -1624,6 +1624,33 @@ body[data-task-mode="smartWrite"] #result-output {
   font-size: 12px;
 }
 
+.writing-policy-pagination {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.writing-policy-pagination[hidden] {
+  display: none;
+}
+
+.writing-policy-pagination button:first-child {
+  justify-self: start;
+}
+
+.writing-policy-pagination button:last-child {
+  justify-self: end;
+}
+
+.writing-policy-pagination span {
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  white-space: nowrap;
+}
+
 .writing-policy-editor-error {
   padding: 9px 10px;
   border-left: 3px solid #b42318;

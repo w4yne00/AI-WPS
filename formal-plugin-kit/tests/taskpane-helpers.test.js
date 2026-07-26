@@ -1117,7 +1117,11 @@ function testWritingPolicyUsageSummaryUsesTaskSpecificChineseVerb() {
   );
   assert.strictEqual(
     helpers.writingPolicyUsageSummary({ applied: false, degraded: true }, "word.document_review"),
-    "写作规范未应用，本次结果仅使用模型工作流生成"
+    "写作规范暂未应用，已继续处理"
+  );
+  assert.strictEqual(
+    helpers.writingPolicyUsageSummary({ applied: true, degraded: true }, "word.smart_write"),
+    "写作规范暂未完整应用，已继续处理"
   );
   assert.strictEqual(helpers.writingPolicyUsageSummary(null, "word.smart_write"), "");
 }
@@ -1191,6 +1195,37 @@ function testWritingPolicySceneAndAuditNormalization() {
   );
 }
 
+function testWritingPolicyPageStateKeepsLaterItemsReachable() {
+  assert.deepStrictEqual(
+    helpers.writingPolicyPageState(0, 55, 50, 50),
+    {
+      offset: 0,
+      start: 1,
+      end: 50,
+      total: 55,
+      hasPrevious: false,
+      hasNext: true,
+      label: "1–50 / 55"
+    }
+  );
+  assert.deepStrictEqual(
+    helpers.writingPolicyPageState(50, 55, 5, 50),
+    {
+      offset: 50,
+      start: 51,
+      end: 55,
+      total: 55,
+      hasPrevious: true,
+      hasNext: false,
+      label: "51–55 / 55"
+    }
+  );
+  assert.strictEqual(
+    helpers.writingPolicyPageState(100, 55, 0, 50).offset,
+    50
+  );
+}
+
 testGetEffectiveSelectionText();
 testResolveRewriteScope();
 testSelectionWritebackGuard();
@@ -1234,6 +1269,7 @@ testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata();
 testWritingPolicyUsageSummaryUsesTaskSpecificChineseVerb();
 testWritingPolicyUsageDetailsFiltersLabelsAndCapsItems();
 testWritingPolicySceneAndAuditNormalization();
+testWritingPolicyPageStateKeepsLaterItemsReachable();
 assertWorkflowUiContract(helpers);
 assertWorkflowUiContract(excelHelpers);
 assertSettingsStateContract(helpers);

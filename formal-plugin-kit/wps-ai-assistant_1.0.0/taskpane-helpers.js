@@ -2126,6 +2126,36 @@
     return text;
   }
 
+  function writingPolicyPageState(offset, total, pageCount, pageSize) {
+    var safePageSize = Number(pageSize);
+    var safeTotal = Math.max(0, Number(total) || 0);
+    var safeOffset = Math.max(0, Number(offset) || 0);
+    var safePageCount = Math.max(0, Number(pageCount) || 0);
+    if (!isFinite(safePageSize) || safePageSize < 1) {
+      safePageSize = 50;
+    }
+    safePageSize = Math.floor(safePageSize);
+    safeOffset = safeTotal
+      ? Math.min(
+        safeOffset,
+        Math.floor((safeTotal - 1) / safePageSize) * safePageSize
+      )
+      : 0;
+    safePageCount = Math.min(safePageCount, safePageSize, Math.max(0, safeTotal - safeOffset));
+    return {
+      offset: safeOffset,
+      start: safeTotal ? safeOffset + 1 : 0,
+      end: safeOffset + safePageCount,
+      total: safeTotal,
+      hasPrevious: safeOffset > 0,
+      hasNext: safeOffset + safePageCount < safeTotal,
+      label: safeTotal
+        ? String(safeOffset + 1) + "–" + String(safeOffset + safePageCount) +
+          " / " + String(safeTotal)
+        : "0 / 0"
+    };
+  }
+
   function writingPolicyUsageSummary(value, taskType) {
     var usage = normalizeWritingPolicyUsage(value);
     var action;
@@ -2133,8 +2163,11 @@
     if (!usage) {
       return "";
     }
-    if (!usage.applied || usage.degraded) {
-      return "写作规范未应用，本次结果仅使用模型工作流生成";
+    if (!usage.applied) {
+      return "写作规范暂未应用，已继续处理";
+    }
+    if (usage.degraded) {
+      return "写作规范暂未完整应用，已继续处理";
     }
     action = taskType === "word.document_review" ? "已检查" : "已应用";
     if (usage.sceneLabel) {
@@ -2439,6 +2472,7 @@
     writingPolicySceneStorageKey: writingPolicySceneStorageKey,
     normalizeWritingPolicyAudit: normalizeWritingPolicyAudit,
     writingPolicyAuditFindingText: writingPolicyAuditFindingText,
+    writingPolicyPageState: writingPolicyPageState,
     writingPolicyUsageSummary: writingPolicyUsageSummary,
     writingPolicyUsageDetails: writingPolicyUsageDetails,
     validateWritingPolicyDraft: validateWritingPolicyDraft,

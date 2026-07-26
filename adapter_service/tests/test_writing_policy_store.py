@@ -193,6 +193,70 @@ class WritingPolicyStoreTests(unittest.TestCase):
                 WritingPolicyStore(db_path)
 
             self.assertEqual(db_path.read_bytes(), corrupt_bytes)
+            backups = list(
+                db_path.parent.glob(db_path.name + ".backup-*")
+            )
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), corrupt_bytes)
+
+    def test_repeated_corrupt_startup_rotates_recovery_backups_to_three(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "writing_policies.db"
+            corrupt_bytes = b"not-a-sqlite-database"
+            db_path.write_bytes(corrupt_bytes)
+
+            for _ in range(5):
+                with self.assertRaises(sqlite3.DatabaseError):
+                    WritingPolicyStore(db_path)
+
+            backups = list(
+                db_path.parent.glob(db_path.name + ".backup-*")
+            )
+            self.assertEqual(len(backups), 3)
+            self.assertTrue(
+                all(path.read_bytes() == corrupt_bytes for path in backups)
+            )
+
+    def test_failed_migration_restores_original_and_keeps_recovery_backup(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "writing_policies.db"
+            with sqlite3.connect(str(db_path)) as connection:
+                connection.execute(
+                    """
+                    CREATE TABLE style_rules (
+                        id TEXT PRIMARY KEY,
+                        scope TEXT NOT NULL,
+                        name TEXT NOT NULL,
+                        name_normalized TEXT NOT NULL,
+                        rule_text TEXT NOT NULL,
+                        positive_example TEXT NOT NULL,
+                        negative_example TEXT NOT NULL,
+                        context_keywords TEXT NOT NULL,
+                        always_apply INTEGER NOT NULL,
+                        priority TEXT NOT NULL,
+                        enabled INTEGER NOT NULL,
+                        note TEXT NOT NULL,
+                        created_at TEXT NOT NULL,
+                        updated_at TEXT NOT NULL
+                    )
+                    """
+                )
+            original_bytes = db_path.read_bytes()
+
+            with patch.object(
+                WritingPolicyStore,
+                "_migrate_rule_scope_columns",
+                side_effect=RuntimeError("migration failed /secret/rule"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    WritingPolicyStore(db_path)
+
+            self.assertEqual(db_path.read_bytes(), original_bytes)
+            backups = list(
+                db_path.parent.glob(db_path.name + ".backup-*")
+            )
+            self.assertEqual(len(backups), 1)
+            self.assertEqual(backups[0].read_bytes(), original_bytes)
 
     def test_store_enforces_private_permissions_for_new_and_existing_paths(self):
         with TemporaryDirectory() as tmp:

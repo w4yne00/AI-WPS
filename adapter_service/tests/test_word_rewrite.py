@@ -344,6 +344,33 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
         self.assertTrue(result["writingPolicyUsage"]["degraded"])
 
+    def test_smart_write_audit_boundary_failure_keeps_model_result(self):
+        class FailingAuditWritingPolicyService(FakeWritingPolicyService):
+            def audit(self, match_result, source_text, result_text):
+                raise RuntimeError(
+                    "用户全文和 /secret/rule-body 不得进入诊断"
+                )
+
+        provider = RecordingSmartWriteProvider()
+        writing_policy = FailingAuditWritingPolicyService()
+
+        result = WordRewriter(
+            provider,
+            writing_policy_service=writing_policy,
+        ).smart_write(
+            self._request(),
+            "trace-smart-write-audit-degraded",
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(result["rewrittenText"], "智能编写后的正文。")
+        self.assertTrue(result["writingPolicyAudit"]["degraded"])
+        self.assertEqual(
+            result["writingPolicyAudit"]["summary"],
+            "写作规范检查暂时不可用，结果仍可正常预览、复制或写回。",
+        )
+        self.assertNotIn("模型后台连接失败", result["writingPolicyAudit"]["summary"])
+
     def test_smart_write_defaults_to_human_approved_base_pack_in_one_provider_call(self):
         provider = RecordingSmartWriteProvider()
         with isolated_default_writing_policy_database(self) as db_path:

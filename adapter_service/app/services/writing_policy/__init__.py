@@ -30,6 +30,7 @@ from .audit import (
 )
 from .packs import (
     WritingPolicyPack,
+    WritingPolicyPackIssue,
     WritingPolicyPackSnapshot,
     default_pack_directory,
     entry_content_sha256,
@@ -66,6 +67,7 @@ __all__ = [
     "default_database_path",
     "get_writing_policy_service",
     "WritingPolicyPack",
+    "WritingPolicyPackIssue",
     "WritingPolicyPackSnapshot",
     "default_pack_directory",
     "entry_content_sha256",

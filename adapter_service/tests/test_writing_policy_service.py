@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from app.services.writing_policy.models import WritingPolicyError
 from app.services.writing_policy.packs import (
+    WritingPolicyPackIssue,
     WritingPolicyPackSnapshot,
     load_pack_snapshot,
 )
@@ -164,6 +165,90 @@ class WritingPolicyServiceTests(unittest.TestCase):
         self.assertEqual(diagnostics["stage"], "prepared")
         self.assertEqual(diagnostics["writingPolicyElapsedMs"], 125)
         self.assertNotIn("旧平台", json.dumps(diagnostics, ensure_ascii=False))
+
+    def test_prepare_keeps_available_enhancements_when_required_pack_is_unavailable(self):
+        baseline = load_pack_snapshot()
+        base_pack = next(
+            pack
+            for pack in baseline.packs
+            if pack.pack_id == "yangqi-tech-writing-base"
+        )
+        snapshot = WritingPolicyPackSnapshot(
+            (base_pack,),
+            (
+                WritingPolicyPackIssue(
+                    "cybersecurity-terminology",
+                    "pack_validation",
+                    "invalid_writing_policy_pack",
+                ),
+            ),
+        )
+        service = WritingPolicyService(
+            store=StaticStore(),
+            pack_snapshot=snapshot,
+        )
+
+        result = service.prepare(
+            "word.smart_write",
+            ["网络安全技术方案"],
+            scene="cybersecurity",
+        )
+
+        self.assertTrue(result.usage["applied"])
+        self.assertTrue(result.usage["degraded"])
+        self.assertEqual(
+            result.usage["degradedReason"],
+            "写作规范暂未完整应用，已继续处理。",
+        )
+        self.assertIn("G企技术写作基础", result.usage["packNames"])
+        self.assertNotIn("网络安全术语", result.usage["packNames"])
+        diagnostics = service.diagnostics()
+        self.assertEqual(diagnostics["stage"], "prepared_degraded")
+        self.assertEqual(
+            diagnostics["writingPolicyErrorCode"],
+            "invalid_writing_policy_pack",
+        )
+        self.assertEqual(
+            diagnostics["writingPolicyPresetVersions"],
+            [
+                {
+                    "packId": "yangqi-tech-writing-base",
+                    "version": "1.0.0",
+                }
+            ],
+        )
+
+    def test_pack_load_issue_is_visible_in_diagnostics_before_first_task(self):
+        baseline = load_pack_snapshot()
+        base_pack = next(
+            pack
+            for pack in baseline.packs
+            if pack.pack_id == "yangqi-tech-writing-base"
+        )
+        service = WritingPolicyService(
+            store=StaticStore(),
+            pack_snapshot=WritingPolicyPackSnapshot(
+                (base_pack,),
+                (
+                    WritingPolicyPackIssue(
+                        "official-document-style",
+                        "pack_validation",
+                        "invalid_writing_policy_pack",
+                    ),
+                ),
+            ),
+        )
+
+        diagnostics = service.diagnostics()
+
+        self.assertEqual(diagnostics["stage"], "pack_load_degraded")
+        self.assertTrue(diagnostics["writingPolicyDegraded"])
+        self.assertEqual(
+            diagnostics["writingPolicyErrorCode"],
+            "invalid_writing_policy_pack",
+        )
+        self.assertNotIn("ruleText", diagnostics)
+        self.assertNotIn("sourceText", diagnostics)
 
     def test_preset_term_management_exposes_baseline_override_disabled_and_restore_states(self):
         with TemporaryDirectory() as tmp:
@@ -486,7 +571,10 @@ class WritingPolicyServiceTests(unittest.TestCase):
             )
 
     def test_audit_failure_is_nonblocking_and_returns_chinese_degradation(self):
-        service = WritingPolicyService(store=StaticStore([term_item()], []))
+        service = WritingPolicyService(
+            store=StaticStore([term_item()], []),
+            clock=SequenceClock(10.0, 10.01, 20.0, 20.025),
+        )
         prepared = service.prepare("word.smart_write", ["旧平台"])
 
         with patch.object(
@@ -507,6 +595,39 @@ class WritingPolicyServiceTests(unittest.TestCase):
         self.assertEqual(audit["needsReview"], [])
         self.assertEqual(audit["expressionSuggestions"], [])
         self.assertNotIn("secret", json.dumps(audit, ensure_ascii=False))
+        diagnostics = service.diagnostics()
+        self.assertEqual(diagnostics["stage"], "audit_degraded")
+        self.assertEqual(diagnostics["writingPolicyElapsedMs"], 10)
+        self.assertEqual(diagnostics["writingPolicyAuditElapsedMs"], 25)
+        self.assertEqual(diagnostics["writingPolicyTotalElapsedMs"], 35)
+        self.assertEqual(
+            diagnostics["writingPolicyErrorCode"],
+            "writing_policy_internal_error",
+        )
+        self.assertNotIn(
+            "secret",
+            json.dumps(diagnostics, ensure_ascii=False),
+        )
+
+    def test_diagnostics_report_configured_end_to_end_performance_boundary(self):
+        service = WritingPolicyService(
+            store=StaticStore([term_item()], []),
+            clock=SequenceClock(0.0, 0.04, 1.0, 1.05),
+            performance_target_ms=100,
+        )
+        prepared = service.prepare("word.smart_write", ["旧平台"])
+
+        service.audit(prepared, "旧平台", "标准平台")
+
+        diagnostics = service.diagnostics()
+        self.assertEqual(diagnostics["writingPolicyElapsedMs"], 40)
+        self.assertEqual(diagnostics["writingPolicyAuditElapsedMs"], 50)
+        self.assertEqual(diagnostics["writingPolicyTotalElapsedMs"], 90)
+        self.assertEqual(
+            diagnostics["writingPolicyPerformanceTargetMs"],
+            100,
+        )
+        self.assertTrue(diagnostics["writingPolicyWithinTarget"])
 
     def test_prepare_degrades_stably_for_writing_policy_os_and_unknown_errors(self):
         sensitive_source = "公司绝密原文"

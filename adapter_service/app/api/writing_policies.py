@@ -212,6 +212,32 @@ def _store():
     return get_writing_policy_service().store
 
 
+def _bounded_page(items, limit: int, offset: int) -> Dict[str, object]:
+    if (
+        isinstance(limit, bool)
+        or not isinstance(limit, int)
+        or limit < 1
+        or limit > 100
+        or isinstance(offset, bool)
+        or not isinstance(offset, int)
+        or offset < 0
+    ):
+        raise WritingPolicyError(
+            "invalid_writing_policy_pagination",
+            "规范列表分页参数无效。",
+        )
+    total = len(items)
+    page_items = items[offset:offset + limit]
+    return {
+        "count": total,
+        "pageCount": len(page_items),
+        "limit": limit,
+        "offset": offset,
+        "hasMore": offset + len(page_items) < total,
+        "items": page_items,
+    }
+
+
 @router.get("/writing-policies/summary")
 def get_summary() -> dict:
     try:
@@ -236,6 +262,8 @@ def list_items(
     query: str = "",
     layer: str = "organization",
     pack_id: str = Query(default="", alias="packId"),
+    limit: int = 50,
+    offset: int = 0,
 ) -> dict:
     try:
         item_type = item_type if isinstance(item_type, str) else None
@@ -263,12 +291,11 @@ def list_items(
                 ]
             return _envelope(
                 {
+                    **_bounded_page(items, limit, offset),
                     "layer": "preset",
                     "packId": pack_id,
                     "type": item_type or "",
                     "query": query,
-                    "count": len(items),
-                    "items": items,
                 }
             )
         if not scope or not item_type:
@@ -279,11 +306,10 @@ def list_items(
         items = _store().list_items(scope, item_type, query)
         return _envelope(
             {
+                **_bounded_page(items, limit, offset),
                 "scope": scope,
                 "type": item_type,
                 "query": query,
-                "count": len(items),
-                "items": items,
             }
         )
     except Exception as error:

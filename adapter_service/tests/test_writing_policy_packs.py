@@ -131,6 +131,59 @@ class WritingPolicyPackTests(unittest.TestCase):
         self.assertEqual(item["source"]["license"], "MIT")
         self.assertNotIn("review", item)
 
+    def test_resilient_loader_skips_invalid_pack_and_records_safe_issue(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "schema-v1.json").write_text("{}", encoding="utf-8")
+            (root / "yangqi-tech-writing-base.json").write_text(
+                json.dumps(_pack(), ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (root / "yangqi-tech-writing-base.review.json").write_text(
+                json.dumps(
+                    _review(
+                        "yangqi-tech-writing-base",
+                        "rule.yangqi.responsibility",
+                    ),
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            incompatible = _pack(
+                "cybersecurity-terminology",
+                "rule.cyber.incompatible",
+            )
+            incompatible["schemaVersion"] = 999
+            incompatible["secret"] = "完整规则正文"
+            (root / "cybersecurity-terminology.json").write_text(
+                json.dumps(incompatible, ensure_ascii=False),
+                encoding="utf-8",
+            )
+
+            snapshot = load_pack_snapshot(root, strict=False)
+
+        self.assertEqual(
+            [pack.pack_id for pack in snapshot.packs],
+            ["yangqi-tech-writing-base"],
+        )
+        invalid_issue = next(
+            issue
+            for issue in snapshot.issues
+            if issue.pack_id == "cybersecurity-terminology"
+        )
+        self.assertEqual(invalid_issue.stage, "pack_validation")
+        self.assertEqual(
+            invalid_issue.error_code,
+            "invalid_writing_policy_pack",
+        )
+        self.assertNotIn(
+            "完整规则正文",
+            json.dumps(
+                [issue.public_dict() for issue in snapshot.issues],
+                ensure_ascii=False,
+            ),
+        )
+
     def test_loader_rejects_duplicate_ids_and_conflicting_rule_names_across_packs(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -517,6 +517,32 @@ def _parse_import_decisions(payload):
     return token, normalized, file_digest
 
 
+def _writing_policy_bounded_page(items, params):
+    try:
+        limit = int(str(params.get("limit", ["50"])[0]))
+        offset = int(str(params.get("offset", ["0"])[0]))
+    except (TypeError, ValueError):
+        raise WritingPolicyError(
+            "invalid_writing_policy_pagination",
+            "规范列表分页参数无效。",
+        )
+    if limit < 1 or limit > 100 or offset < 0:
+        raise WritingPolicyError(
+            "invalid_writing_policy_pagination",
+            "规范列表分页参数无效。",
+        )
+    total = len(items)
+    page_items = items[offset:offset + limit]
+    return {
+        "count": total,
+        "pageCount": len(page_items),
+        "limit": limit,
+        "offset": offset,
+        "hasMore": offset + len(page_items) < total,
+        "items": page_items,
+    }
+
+
 def dispatch_writing_policy(method, path, query="", payload=None, body_size=None):
     if not _is_writing_policy_path(path):
         return None
@@ -577,12 +603,11 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
                     ]
                 return _writing_policy_json(
                     {
+                        **_writing_policy_bounded_page(items, params),
                         "layer": "preset",
                         "packId": pack_id,
                         "type": item_type,
                         "query": search,
-                        "count": len(items),
-                        "items": items,
                     }
                 )
             if not scope or not item_type:
@@ -590,11 +615,10 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
             items = _writing_policy_store().list_items(scope, item_type, search)
             return _writing_policy_json(
                 {
+                    **_writing_policy_bounded_page(items, params),
                     "scope": scope,
                     "type": item_type,
                     "query": search,
-                    "count": len(items),
-                    "items": items,
                 }
             )
         if method == "POST" and path == "/writing-policies/items":

@@ -59,11 +59,22 @@ class WordRewriter:
         finally:
             merge_provider_debug(trace_id, writing_policy.diagnostic_patch())
         rewritten_text = provider_result["rewrittenText"]
-        writing_policy_audit = writing_policy_service.audit(
-            writing_policy,
-            source_text,
-            rewritten_text,
-        )
+        try:
+            writing_policy_audit = writing_policy_service.audit(
+                writing_policy,
+                source_text,
+                rewritten_text,
+            )
+        except Exception:
+            writing_policy_audit = {
+                "enabled": bool(writing_policy.usage.get("applied", False)),
+                "passed": False,
+                "degraded": True,
+                "degradedReason": "写作规范检查暂时不可用。",
+                "summary": "写作规范检查暂时不可用，结果仍可正常预览、复制或写回。",
+                "needsReview": [],
+                "expressionSuggestions": [],
+            }
         return {
             "originalText": source_text,
             "rewrittenText": rewritten_text,

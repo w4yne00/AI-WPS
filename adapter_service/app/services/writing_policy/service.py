@@ -30,6 +30,8 @@ _ORGANIZATION_TASK_TYPES = {
     value: key for key, value in _PRESET_TASK_TYPES.items()
 }
 _INITIALIZATION_BACKOFF_SECONDS = 5.0
+_DEFAULT_PERFORMANCE_TARGET_MS = 100
+_MAX_PERFORMANCE_TARGET_MS = 10000
 _INITIALIZATION_CLOCK = time.monotonic
 _SERVICE_LOCK = threading.Lock()
 _SERVICES_BY_PATH = {}  # type: Dict[Path, WritingPolicyService]
@@ -92,6 +94,28 @@ def _nonnegative_int(value: object) -> int:
     return max(0, value)
 
 
+def _performance_target_ms(configured: Optional[int]) -> int:
+    value = configured
+    if value is None:
+        try:
+            value = int(
+                os.getenv(
+                    "AI_WPS_WRITING_POLICY_PERFORMANCE_TARGET_MS",
+                    str(_DEFAULT_PERFORMANCE_TARGET_MS),
+                )
+            )
+        except (TypeError, ValueError):
+            value = _DEFAULT_PERFORMANCE_TARGET_MS
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int)
+        or value < 1
+        or value > _MAX_PERFORMANCE_TARGET_MS
+    ):
+        return _DEFAULT_PERFORMANCE_TARGET_MS
+    return value
+
+
 def _diagnostic_patch(
     *,
     applied: bool,
@@ -102,8 +126,9 @@ def _diagnostic_patch(
     truncated_count: int,
     elapsed_ms: int,
     item_ids: Sequence[str],
+    preset_versions: Sequence[Dict[str, str]] = (),
 ) -> Dict[str, object]:
-    return {
+    patch = {
         "writingPolicyApplied": bool(applied),
         "writingPolicyDegraded": bool(degraded),
         "writingPolicyErrorCode": error_code,
@@ -113,6 +138,19 @@ def _diagnostic_patch(
         "writingPolicyElapsedMs": _nonnegative_int(elapsed_ms),
         "writingPolicyItemIds": _safe_item_ids(item_ids),
     }
+    safe_versions = []
+    for value in preset_versions:
+        pack_id = str(value.get("packId") or "")
+        version = str(value.get("version") or "")
+        if (
+            len(safe_versions) < 4
+            and re.fullmatch(r"[a-z][a-z0-9.-]{2,63}", pack_id)
+            and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", version)
+        ):
+            safe_versions.append({"packId": pack_id, "version": version})
+    if safe_versions:
+        patch["writingPolicyPresetVersions"] = safe_versions
+    return patch
 
 
 class WritingPolicyService:
@@ -121,25 +159,54 @@ class WritingPolicyService:
         store: object,
         clock: Optional[Callable[[], float]] = None,
         pack_snapshot: Optional[WritingPolicyPackSnapshot] = None,
+        performance_target_ms: Optional[int] = None,
     ):
         self.store = store
         self.pack_snapshot = (
-            pack_snapshot if pack_snapshot is not None else load_pack_snapshot()
+            pack_snapshot
+            if pack_snapshot is not None
+            else load_pack_snapshot(strict=False)
         )
         self._clock = clock or time.monotonic
+        self._performance_target_ms = _performance_target_ms(
+            performance_target_ms
+        )
         self._diagnostic_lock = threading.Lock()
+        initial_pack_issue = (
+            self.pack_snapshot.issues[0]
+            if self.pack_snapshot.issues
+            else None
+        )
         self._last_diagnostic = dict(
-            _diagnostic_patch(
-                applied=False,
-                degraded=False,
-                error_code="",
-                term_count=0,
-                style_count=0,
-                truncated_count=0,
-                elapsed_ms=0,
-                item_ids=(),
+            self._with_performance(
+                _diagnostic_patch(
+                    applied=False,
+                    degraded=initial_pack_issue is not None,
+                    error_code=(
+                        initial_pack_issue.error_code
+                        if initial_pack_issue is not None
+                        else ""
+                    ),
+                    term_count=0,
+                    style_count=0,
+                    truncated_count=0,
+                    elapsed_ms=0,
+                    item_ids=(),
+                    preset_versions=tuple(
+                        {
+                            "packId": pack.pack_id,
+                            "version": pack.version,
+                        }
+                        for pack in self.pack_snapshot.packs
+                    ),
+                ),
+                0,
             ),
-            stage="idle",
+            stage=(
+                "pack_load_degraded"
+                if initial_pack_issue is not None
+                else "idle"
+            ),
         )
 
     def prepare(
@@ -212,17 +279,25 @@ class WritingPolicyService:
         elapsed_ms = _elapsed_ms(started_at, _safe_clock_value(self._clock))
         usage = matched.usage
         usage.update(self._scene_usage(resolution, selected_packs))
+        pack_issues = self._selected_pack_issues(task_scope, resolution)
+        if pack_issues:
+            usage["degraded"] = True
+            usage["degradedReason"] = "写作规范暂未完整应用，已继续处理。"
         patch = _diagnostic_patch(
             applied=bool(usage.get("applied", False)),
             degraded=bool(usage.get("degraded", False)),
-            error_code="",
+            error_code=pack_issues[0].error_code if pack_issues else "",
             term_count=_nonnegative_int(usage.get("termMatchCount", 0)),
             style_count=_nonnegative_int(usage.get("styleRuleCount", 0)),
             truncated_count=_nonnegative_int(usage.get("truncatedCount", 0)),
             elapsed_ms=elapsed_ms,
             item_ids=matched.matched_item_ids,
+            preset_versions=usage.get("presetVersions", ()),
         )
-        self._record_diagnostic("prepared", patch)
+        self._record_diagnostic(
+            "prepared_degraded" if pack_issues else "prepared",
+            self._with_performance(patch, elapsed_ms),
+        )
         return WritingPolicyMatchResult(
             matched.prompt_block,
             usage,
@@ -237,9 +312,10 @@ class WritingPolicyService:
         source_text: str,
         result_text: str,
     ) -> Dict[str, object]:
+        started_at = _safe_clock_value(self._clock)
         usage = match_result.usage
         if not bool(usage.get("applied", False)):
-            return {
+            audit = {
                 "enabled": False,
                 "passed": True,
                 "degraded": False,
@@ -248,14 +324,20 @@ class WritingPolicyService:
                 "needsReview": [],
                 "expressionSuggestions": [],
             }
+            self._record_audit_diagnostic(
+                match_result,
+                started_at,
+                stage="audit_skipped",
+            )
+            return audit
         try:
             audit = audit_writing_policy_result(
                 source_text,
                 result_text,
                 match_result.audit_terms,
             )
-        except Exception:
-            return {
+        except Exception as error:
+            audit = {
                 "enabled": True,
                 "passed": False,
                 "degraded": True,
@@ -264,7 +346,19 @@ class WritingPolicyService:
                 "needsReview": [],
                 "expressionSuggestions": [],
             }
+            self._record_audit_diagnostic(
+                match_result,
+                started_at,
+                stage="audit_degraded",
+                error=error,
+            )
+            return audit
         audit["enabled"] = True
+        self._record_audit_diagnostic(
+            match_result,
+            started_at,
+            stage="audited",
+        )
         return audit
 
     def audit_document_review(
@@ -272,9 +366,10 @@ class WritingPolicyService:
         match_result: WritingPolicyMatchResult,
         source_text: str,
     ) -> Dict[str, object]:
+        started_at = _safe_clock_value(self._clock)
         usage = match_result.usage
         if not bool(usage.get("applied", False)):
-            return {
+            audit = {
                 "enabled": False,
                 "passed": True,
                 "degraded": False,
@@ -283,13 +378,19 @@ class WritingPolicyService:
                 "needsReview": [],
                 "expressionSuggestions": [],
             }
+            self._record_audit_diagnostic(
+                match_result,
+                started_at,
+                stage="audit_skipped",
+            )
+            return audit
         try:
             audit = audit_document_review_writing_policy(
                 source_text,
                 match_result.audit_terms,
             )
-        except Exception:
-            return {
+        except Exception as error:
+            audit = {
                 "enabled": True,
                 "passed": False,
                 "degraded": True,
@@ -298,7 +399,19 @@ class WritingPolicyService:
                 "needsReview": [],
                 "expressionSuggestions": [],
             }
+            self._record_audit_diagnostic(
+                match_result,
+                started_at,
+                stage="audit_degraded",
+                error=error,
+            )
+            return audit
         audit["enabled"] = True
+        self._record_audit_diagnostic(
+            match_result,
+            started_at,
+            stage="audited",
+        )
         return audit
 
     def list_packs(self):
@@ -602,6 +715,21 @@ class WritingPolicyService:
             if pack_id in packs_by_id
         )
 
+    def _selected_pack_issues(self, task_scope: str, resolution):
+        if (
+            task_scope not in _PRESET_TASK_TYPES
+            or resolution.resolved_scene == "disabled"
+        ):
+            return ()
+        pack_ids = SCENE_PACK_IDS.get(resolution.resolved_scene, ())
+        if resolution.auto_fallback:
+            pack_ids = ("yangqi-tech-writing-base",)
+        return tuple(
+            issue
+            for issue in self.pack_snapshot.issues
+            if issue.pack_id in pack_ids or issue.pack_id == "preset-packs"
+        )
+
     def _scene_usage(self, resolution, selected_packs):
         result = {
             "requestedScene": resolution.requested_scene,
@@ -629,6 +757,52 @@ class WritingPolicyService:
         with self._diagnostic_lock:
             return deepcopy(self._last_diagnostic)
 
+    def _record_audit_diagnostic(
+        self,
+        match_result: WritingPolicyMatchResult,
+        started_at: Optional[float],
+        *,
+        stage: str,
+        error: Optional[Exception] = None,
+    ) -> None:
+        audit_elapsed_ms = _elapsed_ms(
+            started_at,
+            _safe_clock_value(self._clock),
+        )
+        patch = match_result.diagnostic_patch()
+        prepare_elapsed_ms = _nonnegative_int(
+            patch.get("writingPolicyElapsedMs", 0)
+        )
+        patch["writingPolicyAuditElapsedMs"] = audit_elapsed_ms
+        patch["writingPolicyTotalElapsedMs"] = (
+            prepare_elapsed_ms + audit_elapsed_ms
+        )
+        if error is not None:
+            patch["writingPolicyDegraded"] = True
+            patch["writingPolicyErrorCode"] = _safe_error_code(error)
+        self._record_diagnostic(
+            stage,
+            self._with_performance(
+                patch,
+                prepare_elapsed_ms + audit_elapsed_ms,
+            ),
+        )
+
+    def _with_performance(
+        self,
+        patch: Dict[str, object],
+        total_elapsed_ms: int,
+    ) -> Dict[str, object]:
+        diagnostic = deepcopy(patch)
+        elapsed_ms = _nonnegative_int(total_elapsed_ms)
+        diagnostic["writingPolicyPerformanceTargetMs"] = (
+            self._performance_target_ms
+        )
+        diagnostic["writingPolicyWithinTarget"] = (
+            elapsed_ms <= self._performance_target_ms
+        )
+        return diagnostic
+
     def _degraded_result(
         self,
         error: Exception,
@@ -643,7 +817,7 @@ class WritingPolicyService:
             truncated=0,
             matched_items=[],
             degraded=True,
-            degraded_reason="写作规范服务暂时不可用，已跳过写作规范增强。",
+            degraded_reason="写作规范暂未应用，已继续处理。",
         )
         patch = _diagnostic_patch(
             applied=False,
@@ -655,7 +829,10 @@ class WritingPolicyService:
             elapsed_ms=elapsed_ms,
             item_ids=(),
         )
-        self._record_diagnostic("degraded", patch)
+        self._record_diagnostic(
+            "degraded",
+            self._with_performance(patch, elapsed_ms),
+        )
         return WritingPolicyMatchResult("", usage, (), patch)
 
     def _record_diagnostic(self, stage: str, patch: Dict[str, object]) -> None:

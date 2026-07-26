@@ -25,6 +25,12 @@ TASK_SCOPES = {
 SCENE_IDS = ("yangqi", "cybersecurity", "official")
 ENTRY_TYPES = ("term", "style", "anti_template")
 MAX_PACK_ENTRIES = 1000
+EXPECTED_PACK_IDS = (
+    "yangqi-tech-writing-base",
+    "cybersecurity-terminology",
+    "technical-document-style",
+    "official-document-style",
+)
 
 _PACK_FIELDS = {
     "schemaVersion",
@@ -156,8 +162,23 @@ class WritingPolicyPack:
 
 
 @dataclass(frozen=True)
+class WritingPolicyPackIssue:
+    pack_id: str
+    stage: str
+    error_code: str
+
+    def public_dict(self) -> Dict[str, str]:
+        return {
+            "packId": self.pack_id,
+            "stage": self.stage,
+            "errorCode": self.error_code,
+        }
+
+
+@dataclass(frozen=True)
 class WritingPolicyPackSnapshot:
     packs: Tuple[WritingPolicyPack, ...]
+    issues: Tuple[WritingPolicyPackIssue, ...] = ()
 
     def public_packs(self) -> List[Dict[str, object]]:
         return [
@@ -435,7 +456,21 @@ def _load_review_manifest(
     return result
 
 
-def load_pack_snapshot(root: Path = None) -> WritingPolicyPackSnapshot:
+def _safe_pack_error_code(error: Exception) -> str:
+    if isinstance(error, WritingPolicyError):
+        code = str(error.code or "")
+        if re.fullmatch(r"[a-z][a-z0-9_]{0,63}", code):
+            return code
+    if isinstance(error, OSError):
+        return "writing_policy_pack_unavailable"
+    return "invalid_writing_policy_pack"
+
+
+def load_pack_snapshot(
+    root: Path = None,
+    *,
+    strict: bool = True,
+) -> WritingPolicyPackSnapshot:
     pack_root = Path(root or default_pack_directory())
     try:
         paths = sorted(
@@ -446,69 +481,119 @@ def load_pack_snapshot(root: Path = None) -> WritingPolicyPackSnapshot:
             and path.name != "manifest.json"
         )
     except OSError as error:
+        if not strict:
+            return WritingPolicyPackSnapshot(
+                (),
+                (
+                    WritingPolicyPackIssue(
+                        "preset-packs",
+                        "pack_discovery",
+                        "writing_policy_pack_unavailable",
+                    ),
+                ),
+            )
         raise WritingPolicyError(
             "writing_policy_pack_unavailable",
             "无法读取预置规范包目录。",
         ) from error
     packs = []
+    issues = []
     seen_pack_ids = set()
     seen_ids = {}
     seen_names = {}
     seen_content = {}
     for path in paths:
+        candidate_pack_ids = set(seen_pack_ids)
+        candidate_ids = dict(seen_ids)
+        candidate_names = dict(seen_names)
+        candidate_content = dict(seen_content)
         try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError) as error:
-            raise WritingPolicyError(
-                "invalid_writing_policy_pack",
-                "预置规范包无法读取或不是有效 JSON。",
-            ) from error
-        pack = validate_pack_data(data, path.name)
-        if pack.pack_id in seen_pack_ids:
-            raise WritingPolicyError(
-                "duplicate_writing_policy_pack_id",
-                "预置规范包包含重复稳定 ID。",
-            )
-        seen_pack_ids.add(pack.pack_id)
-        decisions = _load_review_manifest(
-            pack_root,
-            str(data["review"]["manifest"]),
-            pack,
-        )
-        for entry in pack.entry_dicts():
-            item_id = entry["id"]
-            if item_id in seen_ids:
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError) as error:
                 raise WritingPolicyError(
-                    "duplicate_writing_policy_id",
+                    "invalid_writing_policy_pack",
+                    "预置规范包无法读取或不是有效 JSON。",
+                ) from error
+            pack = validate_pack_data(data, path.name)
+            if pack.pack_id in candidate_pack_ids:
+                raise WritingPolicyError(
+                    "duplicate_writing_policy_pack_id",
                     "预置规范包包含重复稳定 ID。",
                 )
-            seen_ids[item_id] = pack.pack_id
-            decision, approved_digest = decisions[item_id]
-            if approved_digest != entry_content_sha256(entry):
-                raise WritingPolicyError(
-                    "unreviewed_writing_policy_pack",
-                    "规范条目内容与人工审阅摘要不一致。",
+            candidate_pack_ids.add(pack.pack_id)
+            decisions = _load_review_manifest(
+                pack_root,
+                str(data["review"]["manifest"]),
+                pack,
+            )
+            for entry in pack.entry_dicts():
+                item_id = entry["id"]
+                if item_id in candidate_ids:
+                    raise WritingPolicyError(
+                        "duplicate_writing_policy_id",
+                        "预置规范包包含重复稳定 ID。",
+                    )
+                candidate_ids[item_id] = pack.pack_id
+                decision, approved_digest = decisions[item_id]
+                if approved_digest != entry_content_sha256(entry):
+                    raise WritingPolicyError(
+                        "unreviewed_writing_policy_pack",
+                        "规范条目内容与人工审阅摘要不一致。",
+                    )
+                if entry["defaultEnabled"] and decision != "approved":
+                    raise WritingPolicyError(
+                        "unreviewed_writing_policy_pack",
+                        "默认启用条目缺少人工通过决定。",
+                    )
+                label = entry.get("preferredText") or entry.get("name")
+                content = entry.get("definition") or entry.get("ruleText")
+                normalized_content = normalize_key(str(content))
+                name_key = (entry["type"], normalize_key(str(label)))
+                content_key = (entry["type"], normalized_content)
+                if (
+                    name_key in candidate_names
+                    and candidate_names[name_key] != normalized_content
+                ):
+                    raise WritingPolicyError(
+                        "conflicting_writing_policy_rule",
+                        "预置规范包包含同名冲突条目。",
+                    )
+                if content_key in candidate_content:
+                    raise WritingPolicyError(
+                        "duplicate_writing_policy_content",
+                        "预置规范包包含重复内容。",
+                    )
+                candidate_names[name_key] = normalized_content
+                candidate_content[content_key] = item_id
+        except Exception as error:
+            if strict:
+                raise
+            pack_id = path.stem
+            if not PACK_ID_RE.fullmatch(pack_id):
+                pack_id = "unknown-pack"
+            issues.append(
+                WritingPolicyPackIssue(
+                    pack_id,
+                    "pack_validation",
+                    _safe_pack_error_code(error),
                 )
-            if entry["defaultEnabled"] and decision != "approved":
-                raise WritingPolicyError(
-                    "unreviewed_writing_policy_pack",
-                    "默认启用条目缺少人工通过决定。",
-                )
-            label = entry.get("preferredText") or entry.get("name")
-            content = entry.get("definition") or entry.get("ruleText")
-            name_key = (entry["type"], normalize_key(str(label)))
-            content_key = (entry["type"], normalize_key(str(content)))
-            if name_key in seen_names and seen_names[name_key] != normalize_key(str(content)):
-                raise WritingPolicyError(
-                    "conflicting_writing_policy_rule",
-                    "预置规范包包含同名冲突条目。",
-                )
-            if content_key in seen_content:
-                raise WritingPolicyError(
-                    "duplicate_writing_policy_content",
-                    "预置规范包包含重复内容。",
-                )
-            seen_names[name_key] = normalize_key(str(content))
-            seen_content[content_key] = item_id
+            )
+            continue
+        seen_pack_ids = candidate_pack_ids
+        seen_ids = candidate_ids
+        seen_names = candidate_names
+        seen_content = candidate_content
         packs.append(pack)
-    return WritingPolicyPackSnapshot(tuple(packs))
+    if not strict:
+        issue_pack_ids = {issue.pack_id for issue in issues}
+        for pack_id in EXPECTED_PACK_IDS:
+            if pack_id not in seen_pack_ids and pack_id not in issue_pack_ids:
+                issues.append(
+                    WritingPolicyPackIssue(
+                        pack_id,
+                        "pack_discovery",
+                        "writing_policy_pack_missing",
+                    )
+                )
+    return WritingPolicyPackSnapshot(tuple(packs), tuple(issues))

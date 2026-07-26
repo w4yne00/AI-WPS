@@ -34,17 +34,19 @@ adapter 与 standalone adapter 提供相同的查询和预置操作接口：
 
 ```text
 GET /writing-policies/packs
-GET /writing-policies/items?layer=preset&packId=yangqi-tech-writing-base
-GET /writing-policies/items?layer=preset&packId=technical-document-style
-GET /writing-policies/items?layer=preset&packId=cybersecurity-terminology
-GET /writing-policies/items?layer=preset&packId=official-document-style
-GET /writing-policies/items?scope=organization&type=style
-GET /writing-policies/items?scope=organization&type=anti_template
+GET /writing-policies/items?layer=preset&packId=yangqi-tech-writing-base&limit=50&offset=0
+GET /writing-policies/items?layer=preset&packId=technical-document-style&limit=50&offset=0
+GET /writing-policies/items?layer=preset&packId=cybersecurity-terminology&limit=50&offset=0
+GET /writing-policies/items?layer=preset&packId=official-document-style&limit=50&offset=0
+GET /writing-policies/items?scope=organization&type=style&limit=50&offset=0
+GET /writing-policies/items?scope=organization&type=anti_template&limit=50&offset=0
 PUT /writing-policies/preset-overrides/{presetEntryId}
 DELETE /writing-policies/preset-overrides/{presetEntryId}
 ```
 
 `PUT` 请求使用 `operation=override` 并携带对应类型字段时创建组织覆盖，使用 `operation=disabled` 时创建预置停用记录。`DELETE` 删除该预置项当前的组织操作并恢复基线。操作以稳定的预置条目 ID 为键，并在单个 SQLite 写事务中完成。
+
+列表接口的 `limit` 取值为 1–100，默认 50；`offset` 必须为非负整数。响应中的 `count` 是筛选后的总数，`pageCount` 是本页数量，并同时返回 `limit`、`offset` 和 `hasMore`。Word 任务窗每页最多请求并渲染 50 条，预置和组织规范均可通过键盘可操作的上一页、下一页访问后续条目；组织规范搜索继续使用 250 ms 防抖，避免同步遍历或一次渲染完整规则库。
 
 预置包候选、人工门禁和来源处理规则见 [`../writing-policy-sources.md`](../writing-policy-sources.md)。
 
@@ -157,17 +159,35 @@ adapter-start-kit/run/writing_policies.db
 
 ## 降级与诊断
 
-规范库不可用时，智能编写、智能仿写和文档审查仍继续调用模型工作流，结果区明确提示写作规范未应用。规范库故障不应阻断已有 Word 任务。
+单个预置包缺失、校验失败或版本不兼容时，adapter 跳过该包，继续使用组织规范和其余可用预置包；结果区提示“写作规范暂未完整应用，已继续处理”。组织数据库不可读、迁移失败、规范解析或结果检查异常时，智能编写、智能仿写和文档审查仍继续调用既有模型工作流；规范完全未应用时结果区统一提示“写作规范暂未应用，已继续处理”，不得反馈为模型后台连接失败。
 
-`GET /writing-policies/diagnostics` 只返回状态、计数和最近使用统计，不返回原文、规则正文、API URL 或 API Key。现场排查时可以结合 adapter 日志和该 diagnostics 接口确认数据库是否可读。
+`GET /writing-policies/diagnostics` 只返回阶段、受控错误码、命中规则 ID、预置包 ID/版本、计数、解析耗时、结果检查耗时、总耗时和性能阈值状态，不返回原文、完整规则正文、文件路径、API URL 或 API Key。默认开发机性能阈值为 100 ms；麒麟 V10 验收时设置 `AI_WPS_WRITING_POLICY_PERFORMANCE_TARGET_MS=200`，阈值仅影响诊断和性能回归，不改变任务结果或模型超时。
+
+开发机运行：
+
+```bash
+PYTHONPATH=adapter_service python3 -m unittest \
+  adapter_service.tests.test_writing_policy_performance -v
+```
+
+麒麟 V10 运行：
+
+```bash
+AI_WPS_WRITING_POLICY_PERFORMANCE_TARGET_MS=200 \
+PYTHONPATH=adapter_service python3 -m unittest \
+  adapter_service.tests.test_writing_policy_performance -v
+```
+
+现场排查时可以结合该 diagnostics 接口确认失败阶段和是否超过本机阈值。性能诊断不得用于推断模型后台状态。
 
 ## 数据库损坏恢复
 
 1. 停止 adapter，避免恢复期间继续写入。
-2. 将损坏的 `writing_policies.db` 改名保留，不要直接删除证据。
-3. 优先使用任务窗口下载的完整备份替换主数据库；没有手工备份时，选择最近的 `writing_policies.db.backup-*`。
-4. 确认文件属主和权限与 `adapter-start-kit/run/` 下其他文件一致。
-5. 启动 adapter，检查 `/writing-policies/summary` 和 `/writing-policies/diagnostics`。
-6. 若没有可用数据库，移走损坏文件后重启 adapter 以创建空库，再通过标准模板重新导入。
+2. adapter 在读取既有数据库失败或迁移前会保留 `writing_policies.db.backup-*` 原始副本；迁移失败时主文件恢复为迁移前字节，不会自动清空或重建。
+3. 将损坏的 `writing_policies.db` 改名保留，不要直接删除证据。
+4. 优先使用任务窗口下载的完整备份替换主数据库；没有手工备份时，选择最近的 `writing_policies.db.backup-*`。
+5. 确认文件属主和权限与 `adapter-start-kit/run/` 下其他文件一致。
+6. 启动 adapter，检查 `/writing-policies/summary` 和 `/writing-policies/diagnostics`。
+7. 若没有可用数据库，只有在管理员明确移走损坏文件后，才允许重启 adapter 创建新库，再通过标准模板重新导入。
 
 恢复操作不要修改 `config/adapter.json`、`run/provider_api_key` 或 `run/provider_api_keys/`。

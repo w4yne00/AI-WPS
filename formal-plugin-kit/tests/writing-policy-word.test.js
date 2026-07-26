@@ -100,6 +100,70 @@ const smartResetSource = functionSource("resetSmartWritePreviewState");
 const reviewResetSource = functionSource("resetDocumentReviewState");
 assert.ok(smartResetSource.includes("clearWritingPolicyUsage()"));
 assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
+assert.ok(wordJs.includes("WRITING_POLICY_LIST_PAGE_SIZE = 50"));
+const loadPresetItemsSource = functionSource("loadWritingPolicyPresetItems");
+const loadOrganizationItemsSource = functionSource("loadWritingPolicyItems");
+assert.ok(loadPresetItemsSource.includes("limit=\" + WRITING_POLICY_LIST_PAGE_SIZE"));
+assert.ok(loadPresetItemsSource.includes("state.writingPolicyPresetItemOffset"));
+assert.ok(loadPresetItemsSource.includes(".slice(0, WRITING_POLICY_LIST_PAGE_SIZE)"));
+assert.ok(loadOrganizationItemsSource.includes("limit=\" + WRITING_POLICY_LIST_PAGE_SIZE"));
+assert.ok(loadOrganizationItemsSource.includes("state.writingPolicyItemOffset"));
+assert.ok(loadOrganizationItemsSource.includes(".slice(0, WRITING_POLICY_LIST_PAGE_SIZE)"));
+const presetPageSource = functionSource("changeWritingPolicyPresetPage");
+const organizationPageSource = functionSource("changeWritingPolicyPage");
+assert.ok(loadPresetItemsSource.includes("writingPolicyPresetLoadSequence"));
+assert.ok(presetPageSource.includes("WRITING_POLICY_LIST_PAGE_SIZE"));
+assert.ok(presetPageSource.includes("loadWritingPolicyPresetItems"));
+assert.ok(organizationPageSource.includes("WRITING_POLICY_LIST_PAGE_SIZE"));
+assert.ok(organizationPageSource.includes("loadWritingPolicyItems"));
+const scheduleSearchSource = functionSource("scheduleWritingPolicySearch");
+let scheduledSearchCallback = null;
+let scheduledSearchLoads = 0;
+let scheduledSearchRenders = 0;
+const scheduledSearchStatus = { textContent: "" };
+const scheduledSearchState = {
+  writingPolicySearch: "",
+  writingPolicyItemOffset: 50,
+  writingPolicyLoadSequence: 7,
+  writingPolicyItems: [{ id: "stale-item" }],
+  writingPolicyItemTotal: 55,
+  writingPolicyListError: ""
+};
+const executableScheduleSearch = new Function(
+  "state",
+  "setTimeout",
+  "clearTimeout",
+  "loadWritingPolicyItems",
+  "renderWritingPolicyList",
+  "byId",
+  `return (${scheduleSearchSource});`
+)(
+  scheduledSearchState,
+  function (callback) {
+    scheduledSearchCallback = callback;
+    return 99;
+  },
+  function () {},
+  function () {
+    scheduledSearchLoads += 1;
+  },
+  function () {
+    scheduledSearchRenders += 1;
+  },
+  function () {
+    return scheduledSearchStatus;
+  }
+);
+executableScheduleSearch("新查询");
+assert.strictEqual(scheduledSearchState.writingPolicyLoadSequence, 8);
+assert.deepStrictEqual(scheduledSearchState.writingPolicyItems, []);
+assert.strictEqual(scheduledSearchState.writingPolicyItemTotal, 0);
+assert.strictEqual(scheduledSearchState.writingPolicyItemOffset, 0);
+assert.strictEqual(scheduledSearchRenders, 1);
+assert.strictEqual(scheduledSearchLoads, 0);
+assert.strictEqual(scheduledSearchStatus.textContent, "正在筛选...");
+scheduledSearchCallback();
+assert.strictEqual(scheduledSearchLoads, 1);
 
 [
   "state.rewriteResult = setSmartWriteResult",
@@ -117,6 +181,9 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
   "writing-policy-preset-pack-select",
   "writing-policy-preset-pack-meta",
   "writing-policy-preset-item-list",
+  "btn-writing-policy-preset-previous",
+  "writing-policy-preset-page-status",
+  "btn-writing-policy-preset-next",
   "btn-writing-policy-preset-back",
   "btn-writing-policy-open-organization",
   "writing-policy-list-view",
@@ -126,6 +193,9 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
   "btn-writing-policy-editor-back",
   "writing-policy-type-switch",
   "writing-policy-search-input",
+  "btn-writing-policy-previous",
+  "writing-policy-page-status",
+  "btn-writing-policy-next",
   "btn-writing-policy-add",
   "btn-writing-policy-more",
   "writing-policy-more-view",
@@ -505,6 +575,10 @@ assert.ok(renderImportStepSource.includes('aria-current'));
 const bindSource = functionSource("bindEvents");
 [
   "btn-writing-policy-import-entry",
+  "btn-writing-policy-preset-previous",
+  "btn-writing-policy-preset-next",
+  "btn-writing-policy-previous",
+  "btn-writing-policy-next",
   "btn-writing-policy-more",
   "btn-writing-policy-more-back",
   "btn-writing-policy-more-import",
