@@ -983,6 +983,14 @@ function testBuildDocumentReviewRecordUsesIssueStatuses() {
         problem: "逻辑不完整",
         suggestion: "补充条件",
         suggestedRewrite: "补充条件后的表述"
+      },
+      {
+        category: "professional",
+        severity: "medium",
+        location: "写作规范检查",
+        originalText: "秘钥",
+        problem: "术语写法与生效规范不一致",
+        suggestion: "统一使用“密钥”"
       }
     ]
   }, {
@@ -991,11 +999,14 @@ function testBuildDocumentReviewRecordUsesIssueStatuses() {
   });
 
   assert.ok(record.includes("文档审查处理记录"));
-  assert.ok(record.includes("问题总数：2"));
+  assert.ok(record.includes("问题总数：3"));
+  assert.ok(record.includes("待处理：1"));
   assert.ok(record.includes("已处理：1"));
   assert.ok(record.includes("已忽略：1"));
   assert.ok(record.includes("错别字"));
   assert.ok(record.includes("逻辑表达"));
+  assert.ok(record.includes("专业性"));
+  assert.ok(record.includes("统一使用“密钥”"));
   assert.ok(record.includes("建议改写：补充条件后的表述"));
 }
 
@@ -1138,6 +1149,10 @@ function testWritingPolicySceneAndAuditNormalization() {
   assert.strictEqual(
     helpers.writingPolicySceneStorageKey("word.smart_imitation"),
     "ai-wps:writing-policy-scene:word.smart_imitation"
+  );
+  assert.strictEqual(
+    helpers.writingPolicySceneStorageKey("word.document_review"),
+    "ai-wps:writing-policy-scene:word.document_review"
   );
 
   const audit = helpers.normalizeWritingPolicyAudit({

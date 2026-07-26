@@ -13,7 +13,7 @@
     "license": "官方制度与国家标准引用；条目为原创归纳"
   },
   "review": {
-    "reviewedAt": "2026-07-25",
+    "reviewedAt": "2026-07-26",
     "reviewedBy": "Wayne",
     "manifest": "official-document-style.review.json"
   },
@@ -28,7 +28,8 @@
       "negativeExample": "把普通情况说明自动改写成正式请示。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -50,7 +51,8 @@
       "negativeExample": "补写“经上级充分肯定”以增强材料权威性。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -73,7 +75,8 @@
       "negativeExample": "关于全面开创网络安全工作崭新局面的重要通知",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -101,7 +104,8 @@
       "negativeExample": "各有关方面认真抓好贯彻落实。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -128,7 +132,8 @@
       "negativeExample": "在经费请示中同时夹带人员编制和办公用房申请。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -154,7 +159,8 @@
       "negativeExample": "在情况报告结尾加入“以上方案妥否，请批示”。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -180,7 +186,8 @@
       "negativeExample": "各单位务必于本月底前完成全部工作。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -208,7 +215,8 @@
       "negativeExample": "把未给出的发文字号补写为推测编号。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -236,7 +244,8 @@
       "negativeExample": "根据内容自行判断为秘密级并补写内部人员名单。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"
@@ -264,7 +273,8 @@
       "negativeExample": "站在新的历史起点上，各单位要以更高站位开创崭新局面。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "official"

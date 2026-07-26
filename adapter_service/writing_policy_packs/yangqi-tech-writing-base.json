@@ -14,7 +14,7 @@
     "license": "MIT"
   },
   "review": {
-    "reviewedAt": "2026-07-25",
+    "reviewedAt": "2026-07-26",
     "reviewedBy": "Wayne",
     "manifest": "yangqi-tech-writing-base.review.json"
   },
@@ -29,7 +29,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -52,7 +53,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -75,7 +77,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -98,7 +101,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -121,7 +125,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -144,7 +149,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -167,7 +173,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -190,7 +197,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -213,7 +221,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -236,7 +245,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -259,7 +269,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -282,7 +293,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -305,7 +317,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -328,7 +341,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -351,7 +365,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -374,7 +389,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -397,7 +413,8 @@
       "negativeExample": "",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",

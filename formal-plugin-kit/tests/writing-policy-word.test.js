@@ -68,9 +68,13 @@ const smartImitationActionSource = functionSource("runSmartImitationAction");
 assert.ok(smartImitationActionSource.includes("getWritingPolicyScene()"));
 assert.ok(!smartImitationActionSource.includes('writingPolicyScene: "auto"'));
 
+const documentReviewActionSource = functionSource("runDocumentReview");
+assert.ok(documentReviewActionSource.includes("getWritingPolicyScene()"));
+assert.ok(!documentReviewActionSource.includes('writingPolicyScene = "auto"'));
+
 const modeVisibilitySource = functionSource("switchMode");
 assert.ok(modeVisibilitySource.includes('"writing-policy-scene-block"'));
-assert.ok(modeVisibilitySource.includes('"smartWrite", "smartImitation"'));
+assert.ok(modeVisibilitySource.includes('"smartWrite", "smartImitation", "documentReview"'));
 assert.ok(modeVisibilitySource.includes("restoreWritingPolicyScene()"));
 
 const saveSceneSource = functionSource("saveWritingPolicyScene");

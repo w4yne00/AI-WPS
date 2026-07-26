@@ -146,7 +146,7 @@ class WritingPolicyBaselineTests(unittest.TestCase):
             {"rule.yangqi.base.%03d" % index for index in range(1, 18)},
         )
         self.assertEqual(review["reviewedBy"], "Wayne")
-        self.assertEqual(review["reviewedAt"], "2026-07-25")
+        self.assertEqual(review["reviewedAt"], "2026-07-26")
         self.assertEqual(len(review["decisions"]), 17)
         self.assertTrue(
             all(item["decision"] == "approved" for item in review["decisions"])

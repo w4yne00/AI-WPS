@@ -107,7 +107,13 @@ adapter 请求体只依赖 Dify 官方字段：
 
 如果当前 Dify 版本不能强制 JSON 输出，也可以保持普通 Markdown 输出，但必须让大模型把 JSON 放入 `json` 代码块。adapter 会从 Markdown 代码块中提取 JSON。文档审查可以输出 Markdown，但必须包含一个合法 `json` 代码块，adapter 从该代码块中提取 `summary` 和 `issues`。
 
-## 5. 回复节点
+## 5. 写作规范接入
+
+任务窗口提供自动匹配、G企技术材料、网络安全技术材料、党政公文和不使用写作规范五个场景，并按 `word.document_review` 独立记忆。adapter 会把本次场景解析出的生效术语、文体和去模板化规则加入现有 query；Dify 仍只收到并执行一次文档审查模型请求，不需要增加第二个 LLM 节点。
+
+模型应把语义型文体偏差按 `professional` 问题返回。adapter 会在最终模型输出已移除 `<think>` 内容并完成解析后，对文档原文追加确定性的术语和模板化表达检查；附加问题沿用同一 `issues` 结构并进入审查记录，重复问题会去重。规范解析或本地检查异常只降级规范增强，不应显示为模型后台连接失败，也不会修改 Word 原文。
+
+## 6. 回复节点
 
 回复节点绑定 LLM 节点输出正文即可。不要把开始节点原始 `query` 直接绑定到回复节点，否则 WPS 任务窗口会看到原文返回。
 
@@ -117,7 +123,7 @@ adapter 请求体只依赖 Dify 官方字段：
 开始节点(sys.query) -> 大模型节点 -> 回复节点(大模型 text)
 ```
 
-## 6. 联调检查
+## 7. 联调检查
 
 执行一次“文档审查”后访问：
 
@@ -150,7 +156,7 @@ http://127.0.0.1:18100/provider/debug-last
 - 框选文本时优先从选中文本直接拆段，不同步扫描全文；
 - 请求等待超过 8 秒和 30 秒时，任务窗格会继续刷新等待 Dify 的状态提示。
 
-## 7. 现场诊断
+## 8. 现场诊断
 
 设置页“最近一次任务诊断”对应 adapter 的 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics`、`/provider/task-api-keys`。诊断信息只显示脱敏摘要，不显示完整原文和 API Key。
 

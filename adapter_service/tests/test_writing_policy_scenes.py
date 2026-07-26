@@ -99,6 +99,30 @@ class WritingPolicySceneTests(unittest.TestCase):
         self.assertGreater(official.usage["antiTemplateRuleCount"], 0)
         self.assertIn("仿写模板的结构与句式意图", official.prompt_block)
 
+    def test_document_review_uses_scene_packs_and_review_scoped_rules(self):
+        result = self.service.prepare(
+            "word.document_review",
+            [
+                "等保测评发现秘钥配置不符合访问控制要求。",
+                "technical_solution",
+                "重点检查术语、文体和模板化表达。",
+            ],
+            scene="cybersecurity",
+        )
+
+        self.assertEqual(result.usage["requestedScene"], "cybersecurity")
+        self.assertEqual(result.usage["scene"], "cybersecurity")
+        self.assertEqual(
+            result.usage["packNames"],
+            ["G企技术写作基础", "技术文件文体", "网络安全术语"],
+        )
+        self.assertTrue(result.usage["applied"])
+        self.assertGreater(result.usage["styleRuleCount"], 0)
+        self.assertIn("网络安全等级保护", result.prompt_block)
+        self.assertIn("访问控制", result.prompt_block)
+        self.assertIn("必须按 professional 类问题报告", result.prompt_block)
+        self.assertLessEqual(len(result.prompt_block), MAX_PROMPT_CHARS)
+
     def test_auto_matching_is_conservative_and_explainable(self):
         cases = (
             (

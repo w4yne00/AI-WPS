@@ -7,7 +7,10 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
-from .audit import audit_writing_policy_result
+from .audit import (
+    audit_document_review_writing_policy,
+    audit_writing_policy_result,
+)
 from .matcher import build_match_result
 from .models import WritingPolicyError, WritingPolicyMatchResult, public_usage
 from .packs import WritingPolicyPackSnapshot, load_pack_snapshot
@@ -21,6 +24,7 @@ _MAX_DIAGNOSTIC_ITEM_IDS = 20
 _PRESET_TASK_TYPES = {
     "word.smart_write": "smart_write",
     "word.smart_imitation": "smart_imitate",
+    "word.document_review": "document_review",
 }
 _INITIALIZATION_BACKOFF_SECONDS = 5.0
 _INITIALIZATION_CLOCK = time.monotonic
@@ -235,6 +239,40 @@ class WritingPolicyService:
                 "degraded": True,
                 "degradedReason": "写作规范检查暂时不可用。",
                 "summary": "写作规范检查暂时不可用，结果仍可正常预览、复制或写回。",
+                "needsReview": [],
+                "expressionSuggestions": [],
+            }
+        audit["enabled"] = True
+        return audit
+
+    def audit_document_review(
+        self,
+        match_result: WritingPolicyMatchResult,
+        source_text: str,
+    ) -> Dict[str, object]:
+        usage = match_result.usage
+        if not bool(usage.get("applied", False)):
+            return {
+                "enabled": False,
+                "passed": True,
+                "degraded": False,
+                "degradedReason": "",
+                "summary": "本次未使用文档审查规范检查",
+                "needsReview": [],
+                "expressionSuggestions": [],
+            }
+        try:
+            audit = audit_document_review_writing_policy(
+                source_text,
+                match_result.audit_terms,
+            )
+        except Exception:
+            return {
+                "enabled": True,
+                "passed": False,
+                "degraded": True,
+                "degradedReason": "文档审查规范检查暂时不可用。",
+                "summary": "文档审查规范检查暂时不可用，模型审查结果仍可正常查看。",
                 "needsReview": [],
                 "expressionSuggestions": [],
             }

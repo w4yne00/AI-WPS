@@ -24,6 +24,7 @@ from .service import (
 )
 from .scenes import SCENE_LABELS, SCENE_PACK_IDS, SceneResolution, resolve_scene
 from .audit import (
+    audit_document_review_writing_policy,
     audit_writing_policy_result,
     explicitly_preserved_source_fragments,
 )
@@ -59,6 +60,7 @@ __all__ = [
     "SCENE_PACK_IDS",
     "SceneResolution",
     "resolve_scene",
+    "audit_document_review_writing_policy",
     "audit_writing_policy_result",
     "explicitly_preserved_source_fragments",
     "default_database_path",

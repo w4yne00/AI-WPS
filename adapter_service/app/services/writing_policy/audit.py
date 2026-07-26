@@ -426,3 +426,84 @@ def audit_writing_policy_result(
         "needsReview": needs_review,
         "expressionSuggestions": suggestions,
     }
+
+
+def audit_document_review_writing_policy(
+    source_text: str,
+    matched_terms: Sequence[Mapping[str, object]],
+) -> Dict[str, object]:
+    source = str(source_text or "")
+    normalized_source = normalize_key(source)
+    needs_review = []  # type: List[Dict[str, object]]
+    suggestions = []  # type: List[Dict[str, object]]
+    seen = set()
+
+    for term in matched_terms:
+        preferred = str(term.get("preferredText", "")).strip()
+        if not preferred:
+            continue
+        source_without_preferred = normalized_source.replace(
+            normalize_key(preferred),
+            "",
+        )
+        variants = [
+            ("forbidden", str(value).strip())
+            for value in term.get("forbiddenVariants", []) or []
+            if str(value).strip()
+        ] + [
+            ("alias", str(value).strip())
+            for value in term.get("aliases", []) or []
+            if str(value).strip()
+        ]
+        for variant_type, value in variants:
+            if normalize_key(value) not in source_without_preferred:
+                continue
+            finding_count = len(needs_review)
+            _append_unique(
+                needs_review,
+                seen,
+                code=(
+                    "nonstandard_term"
+                    if variant_type == "forbidden"
+                    else "term_alias_should_be_normalized"
+                ),
+                label="术语写法与生效规范不一致",
+                message=(
+                    "文档中使用“%s”，生效规范要求统一使用标准写法“%s”。"
+                    % (value, preferred)
+                ),
+                evidence=value,
+            )
+            if len(needs_review) == finding_count:
+                continue
+            needs_review[-1]["severity"] = (
+                "medium" if variant_type == "forbidden" else "low"
+            )
+            needs_review[-1]["suggestion"] = (
+                "将“%s”统一为“%s”，并核对上下文中的定义和指代。"
+                % (value, preferred)
+            )
+
+    _audit_expression_patterns(source, suggestions, set())
+    for finding in suggestions:
+        finding["severity"] = "low"
+        finding["suggestion"] = (
+            "删除空泛铺垫并直接陈述具体事实、任务或结论。"
+            if finding.get("tier") == "T1"
+            else "按真实信息关系合并或改写，避免同义重复和机械化路标。"
+        )
+
+    if needs_review:
+        summary = "文档审查规范检查发现需要处理的术语问题。"
+    elif suggestions:
+        summary = "文档审查规范检查发现可优化的模板化表达。"
+    else:
+        summary = "已完成文档审查规范检查"
+    return {
+        "passed": not needs_review and not suggestions,
+        "degraded": False,
+        "degradedReason": "",
+        "summary": summary,
+        "needsReview": needs_review,
+        "expressionSuggestions": suggestions,
+    }

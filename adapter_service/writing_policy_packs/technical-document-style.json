@@ -14,7 +14,7 @@
     "license": "MIT"
   },
   "review": {
-    "reviewedAt": "2026-07-25",
+    "reviewedAt": "2026-07-26",
     "reviewedBy": "Wayne",
     "manifest": "technical-document-style.review.json"
   },
@@ -29,7 +29,8 @@
       "negativeExample": "在当前形势下，相关工作具有重要意义，现将有关情况说明如下。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -52,7 +53,8 @@
       "negativeExample": "接口存在问题，因此需要全面优化并提升整体能力。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -80,7 +82,8 @@
       "negativeExample": "持续强化管理，全面提升系统保障水平。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -103,7 +106,8 @@
       "negativeExample": "由相关部门共同推进并做好后续工作。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -131,7 +135,8 @@
       "negativeExample": "系统性能将提升至行业领先水平。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -159,7 +164,8 @@
       "negativeExample": "综合来看，方案二无疑是最佳选择。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -187,7 +193,8 @@
       "negativeExample": "系统存在较大风险，必须高度重视。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -214,7 +221,8 @@
       "negativeExample": "系统运行稳定、体验良好即可验收。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -241,7 +249,8 @@
       "negativeExample": "经分析，超时均由网络抖动造成。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -264,7 +273,8 @@
       "negativeExample": "管理平台、业务系统和该平台在后文交替指代同一对象。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -287,7 +297,8 @@
       "negativeExample": "把一个完整短段强行拆成背景、意义、路径、保障四个标题。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -310,7 +321,8 @@
       "negativeExample": "把“必须完成”弱化为“建议完成”。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -339,7 +351,8 @@
       "negativeExample": "本方案将彻底解决所有痛点，实现跨越式提升。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -362,7 +375,8 @@
       "negativeExample": "为避免重复而省略第二项措施中的审批前提。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",
@@ -385,7 +399,8 @@
       "negativeExample": "其他事项后续结合实际统筹考虑。",
       "taskTypes": [
         "smart_write",
-        "smart_imitate"
+        "smart_imitate",
+        "document_review"
       ],
       "sceneIds": [
         "yangqi",

@@ -13,7 +13,11 @@ HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 if HAS_PYDANTIC:
     from app.core.errors import ProviderTimeoutError
     from app.core.models import WordDocumentRequest
-    from app.services.writing_policy import WritingPolicyMatchResult
+    from app.services.writing_policy import (
+        WritingPolicyMatchResult,
+        WritingPolicyService,
+        audit_document_review_writing_policy,
+    )
     from app.services.writing_policy import service as writing_policy_service_module
     from app.services.provider_client import get_last_provider_debug, record_provider_debug, reset_provider_debug
     from app.services.word import document_reviewer as document_reviewer_module
@@ -99,6 +103,37 @@ class RecordingDocumentReviewProvider:
         }
 
 
+class PolicyAwareDocumentReviewProvider(RecordingDocumentReviewProvider):
+    def document_review(
+        self,
+        text: str,
+        trace_id: str,
+        document_type: str,
+        review_prompt: str,
+        writing_policy_block: str,
+    ) -> dict:
+        result = super().document_review(
+            text,
+            trace_id,
+            document_type,
+            review_prompt,
+            writing_policy_block,
+        )
+        result["summary"] = "发现 1 项术语问题。"
+        result["issues"] = [
+            {
+                "category": "professional",
+                "severity": "medium",
+                "location": "第 1 段",
+                "originalText": "秘钥",
+                "problem": "术语写法不符合当前生效规范。",
+                "suggestion": "统一使用“密钥”。",
+                "suggestedRewrite": "密钥",
+            }
+        ]
+        return result
+
+
 class TimeoutDocumentReviewProvider:
     def document_review(
         self,
@@ -147,6 +182,7 @@ class BlockingDocumentReviewProvider:
 class FakeWritingPolicyService:
     def __init__(self, degraded=False):
         self.calls = []
+        self.review_audit_calls = []
         self.usage = {
             "applied": not degraded,
             "degraded": degraded,
@@ -172,19 +208,46 @@ class FakeWritingPolicyService:
             },
         )
 
-    def prepare(self, task_scope, source_parts):
-        self.calls.append((task_scope, list(source_parts)))
+    def prepare(self, task_scope, source_parts, scene="auto"):
+        self.calls.append((task_scope, list(source_parts), scene))
         return self.result
+
+    def audit_document_review(self, _match_result, source_text):
+        self.review_audit_calls.append(source_text)
+        return {
+            "enabled": True,
+            "passed": True,
+            "degraded": False,
+            "degradedReason": "",
+            "summary": "已完成文档审查规范检查",
+            "needsReview": [],
+            "expressionSuggestions": [],
+        }
+
+
+class EmptyWritingPolicyStore:
+    def enabled_items(self, _task_scope):
+        return [], []
+
+
+class FailingDocumentReviewAuditWritingPolicyService(FakeWritingPolicyService):
+    def audit_document_review(self, _match_result, _source_text):
+        raise RuntimeError("review audit unavailable")
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for document review tests")
 class WordDocumentReviewerTests(unittest.TestCase):
-    def _request(self, plain_text: str = "选中的段落内容。"):
+    def _request(
+        self,
+        plain_text: str = "选中的段落内容。",
+        writing_policy_scene: str = "auto",
+    ):
         return parse_word_request(
             {
                 "documentId": "doc-review.docx",
                 "scene": "word",
                 "selectionMode": "selection",
+                "writingPolicyScene": writing_policy_scene,
                 "content": {
                     "plainText": plain_text,
                     "paragraphs": [],
@@ -316,6 +379,7 @@ class WordDocumentReviewerTests(unittest.TestCase):
                 "documentId": "doc-review.docx",
                 "scene": "word",
                 "selectionMode": "selection",
+                "writingPolicyScene": "cybersecurity",
                 "content": {
                     "plainText": "选中的段落内容。",
                     "paragraphs": [],
@@ -341,6 +405,7 @@ class WordDocumentReviewerTests(unittest.TestCase):
                 (
                     "word.document_review",
                     ["选中的段落内容。", "contract_acceptance", "重点检查验收标准。"],
+                    "cybersecurity",
                 )
             ],
         )
@@ -353,6 +418,133 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(result["provider"], "enterprise-dify-chat/task-file")
         self.assertEqual(result["issues"][0]["category"], "logic")
         self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
+
+    def test_document_review_merges_policy_findings_into_existing_issue_shape(self) -> None:
+        provider = RecordingDocumentReviewProvider()
+        writing_policy = WritingPolicyService(store=EmptyWritingPolicyStore())
+
+        result = WordDocumentReviewer(
+            provider_client=provider,
+            writing_policy_service=writing_policy,
+        ).review(
+            self._request(
+                "值得注意的是，等保测评发现秘钥配置不符合访问控制要求。",
+                writing_policy_scene="cybersecurity",
+            ),
+            trace_id="trace-review-policy-findings",
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn("[文体]", provider.calls[0]["writingPolicyBlock"])
+        self.assertIn("通用去模板化规则", provider.calls[0]["writingPolicyBlock"])
+        self.assertEqual(
+            result["writingPolicyUsage"]["packNames"],
+            ["G企技术写作基础", "技术文件文体", "网络安全术语"],
+        )
+        self.assertEqual(len(result["issues"]), 4)
+        terminology_issue = next(
+            issue
+            for issue in result["issues"]
+            if issue["category"] == "professional"
+            and issue["originalText"] == "秘钥"
+        )
+        self.assertEqual(terminology_issue["location"], "写作规范检查")
+        self.assertIn("标准写法", terminology_issue["problem"])
+        self.assertIn("密钥", terminology_issue["suggestion"])
+        template_issue = next(
+            issue
+            for issue in result["issues"]
+            if issue["category"] == "expression"
+            and issue["originalText"] == "值得注意的是"
+        )
+        self.assertEqual(template_issue["severity"], "low")
+        self.assertTrue(template_issue["problem"])
+        self.assertTrue(template_issue["suggestion"])
+        self.assertIn("另发现 3 项写作规范问题", result["summary"])
+        self.assertEqual(len(result["writingPolicyAudit"]["needsReview"]), 2)
+        self.assertEqual(
+            len(result["writingPolicyAudit"]["expressionSuggestions"]),
+            1,
+        )
+
+    def test_document_review_policy_check_failure_preserves_model_result(self) -> None:
+        provider = RecordingDocumentReviewProvider()
+        writing_policy = FailingDocumentReviewAuditWritingPolicyService()
+
+        result = WordDocumentReviewer(
+            provider_client=provider,
+            writing_policy_service=writing_policy,
+        ).review(
+            self._request(),
+            trace_id="trace-review-policy-check-failure",
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(len(result["issues"]), 1)
+        self.assertEqual(result["issues"][0]["category"], "logic")
+        self.assertEqual(result["summary"], "发现 1 项问题。")
+        self.assertTrue(result["writingPolicyAudit"]["degraded"])
+        self.assertIn("规范检查暂时不可用", result["writingPolicyAudit"]["summary"])
+        self.assertNotIn("模型后台连接失败", result["writingPolicyAudit"]["summary"])
+
+    def test_document_review_does_not_flag_alias_inside_standard_term(self) -> None:
+        provider = RecordingDocumentReviewProvider()
+        writing_policy = WritingPolicyService(store=EmptyWritingPolicyStore())
+
+        result = WordDocumentReviewer(
+            provider_client=provider,
+            writing_policy_service=writing_policy,
+        ).review(
+            self._request(
+                "网络安全等级保护应核对访问控制配置。",
+                writing_policy_scene="cybersecurity",
+            ),
+            trace_id="trace-review-standard-term",
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(result["writingPolicyAudit"]["needsReview"], [])
+        self.assertEqual(len(result["issues"]), 1)
+
+    def test_document_review_duplicate_alias_keeps_first_finding_details(self) -> None:
+        audit = audit_document_review_writing_policy(
+            "等保要求需要核对。",
+            [
+                {
+                    "preferredText": "网络安全等级保护",
+                    "aliases": ["等保"],
+                },
+                {
+                    "preferredText": "信息系统等级保护",
+                    "aliases": ["等保"],
+                },
+            ],
+        )
+
+        self.assertEqual(len(audit["needsReview"]), 1)
+        self.assertIn("网络安全等级保护", audit["needsReview"][0]["suggestion"])
+        self.assertNotIn("信息系统等级保护", audit["needsReview"][0]["suggestion"])
+
+    def test_document_review_deduplicates_model_and_local_policy_findings(self) -> None:
+        provider = PolicyAwareDocumentReviewProvider()
+        writing_policy = WritingPolicyService(store=EmptyWritingPolicyStore())
+
+        result = WordDocumentReviewer(
+            provider_client=provider,
+            writing_policy_service=writing_policy,
+        ).review(
+            self._request(
+                "访问控制使用秘钥。",
+                writing_policy_scene="cybersecurity",
+            ),
+            trace_id="trace-review-policy-deduplication",
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertEqual(len(result["writingPolicyAudit"]["needsReview"]), 1)
+        self.assertEqual(len(result["issues"]), 1)
+        self.assertEqual(result["issues"][0]["location"], "第 1 段")
+        self.assertEqual(result["summary"], "发现 1 项术语问题。")
 
     def test_document_review_falls_back_to_paragraph_text(self) -> None:
         request = parse_word_request(
@@ -441,7 +633,7 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(result["writingPolicyUsage"], writing_policy.result.usage)
         self.assertTrue(result["writingPolicyUsage"]["degraded"])
 
-    def test_document_review_defaults_to_empty_writing_policy_service(self) -> None:
+    def test_document_review_defaults_to_bundled_base_writing_policy(self) -> None:
         provider = RecordingDocumentReviewProvider()
         with isolated_default_writing_policy_database(self) as db_path:
             reviewer = WordDocumentReviewer(provider)
@@ -453,8 +645,12 @@ class WordDocumentReviewerTests(unittest.TestCase):
             )
 
             self.assertTrue(db_path.exists())
-        self.assertEqual(provider.calls[0]["writingPolicyBlock"], "")
+        self.assertIn("[文体]", provider.calls[0]["writingPolicyBlock"])
         self.assertTrue(result["writingPolicyUsage"]["applied"])
         self.assertFalse(result["writingPolicyUsage"]["degraded"])
         self.assertEqual(result["writingPolicyUsage"]["termMatchCount"], 0)
-        self.assertEqual(result["writingPolicyUsage"]["matchedItems"], [])
+        self.assertGreater(result["writingPolicyUsage"]["styleRuleCount"], 0)
+        self.assertEqual(
+            result["writingPolicyUsage"]["packNames"],
+            ["G企技术写作基础", "技术文件文体"],
+        )

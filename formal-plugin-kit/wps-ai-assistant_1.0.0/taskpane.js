@@ -962,7 +962,7 @@
     byId("document-review-options").hidden = !config.showDocumentReviewOptions;
     byId("fixed-template-options").hidden = !config.showFixedTemplate;
     byId("smart-imitation-options").hidden = !config.showSmartImitationOptions;
-    writingPolicyMode = ["smartWrite", "smartImitation"].indexOf(state.currentMode) >= 0;
+    writingPolicyMode = ["smartWrite", "smartImitation", "documentReview"].indexOf(state.currentMode) >= 0;
     byId("writing-policy-scene-block").hidden = !writingPolicyMode;
     if (writingPolicyMode) {
       restoreWritingPolicyScene();
@@ -4331,7 +4331,7 @@
       var startedAt;
       try {
         state.latestDocumentPayload = extractDocument(scope.selectionMode, null, DOCUMENT_REVIEW_EXTRACTION_OPTIONS);
-        state.latestDocumentPayload.writingPolicyScene = "auto";
+        state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
         setStatus(error.message);
