@@ -124,6 +124,8 @@ GET    /writing-policies/items
 POST   /writing-policies/items
 PATCH  /writing-policies/items/{itemId}
 DELETE /writing-policies/items/{itemId}
+PUT    /writing-policies/preset-overrides/{presetEntryId}
+DELETE /writing-policies/preset-overrides/{presetEntryId}
 GET    /writing-policies/import-template.csv
 GET    /writing-policies/import-template.xlsx
 POST   /writing-policies/imports/preview
@@ -159,6 +161,8 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - issue #6 已让文档审查复用相同的紧凑规范场景选择，并按 `word.document_review` 独立记忆；对应场景的预置术语、文体和去模板化规则进入既有文档审查提示词，仍只执行一次模型调用。
 - 文档审查把同一次模型调用识别的语义型文体问题与本地可确定的非标准术语、术语别名和模板化表达合并为既有审查问题；重复的模型/本地问题按类别和原文片段去重，初始结果与审查记录预览复用同一问题列表，仍只读且不修改 Word 原文。
 - 文档审查规范解析或本地检查异常采用 fail-open，只降级规范检查并保留模型审查结果，不反馈为模型后台连接失败；`think` 过滤、`clientJobId` 幂等任务、1800 秒 provider 预算、60 分钟轮询恢复和既有超时策略保持不变。
+- issue #7 已为预置术语增加组织覆盖、预置停用和恢复基线操作；操作以稳定预置条目 ID 保存到 `writing_policies.db`，不修改预置 JSON，并在 adapter/WPS 重启后保持。
+- Word 写作规范管理页可切换四个预置规范包，组织自定义、组织覆盖、预置停用及最终生效状态分别展示；三个 Word 任务的解析、提示词注入和本地结果检查使用同一份生效术语。
 - `v0.19.1-alpha` 是三宿主任务窗格体验补丁版，只调整界面、设置状态探测和交互保护，不新增或改动智能编写、智能仿写、文档审查、格式审查、智能分析、智能总结及任何回写链路。
 - Word、Excel、PPT 的任务页与设置页完成同构体验更新：继续保持 Word 蓝、Excel 绿、PPT 橙宿主配色，统一使用系统字体、8px 以内圆角、克制的按压/披露动效和清晰键盘焦点；任务主按钮继续使用高对比度纯文字，不增加图标。
 - 三宿主设置首页统一为“模型接口 / 工作流设置 / 高级诊断”渐进披露结构。模型接口状态不再读取 adapter 的统一 Key 配置标记，而是按当前宿主的统一 API URL、真实任务类型和工作流档案计算“无法检测 / 未配置 / 部分就绪 / 已就绪”。

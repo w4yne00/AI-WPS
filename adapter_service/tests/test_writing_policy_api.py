@@ -44,6 +44,7 @@ if HAS_API_DEPS:
     from app.api.writing_policies import (
         ImportApplyRequest,
         ImportPreviewRequest,
+        PresetTermOperationRequest,
         WritingPolicyItemRequest,
         apply_import,
         backup_writing_policy,
@@ -56,6 +57,8 @@ if HAS_API_DEPS:
         get_summary,
         list_items,
         preview_import,
+        put_preset_term_operation,
+        restore_preset_term,
         update_item,
     )
     from app.core.errors import AdapterError
@@ -194,6 +197,68 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         self.assertEqual(aliased.file_name, named.file_name)
         self.assertEqual(item.preferred_text, "标准名称")
         self.assertEqual(apply_request.preview_token, "token")
+
+    def test_preset_term_api_override_disable_restore_and_effective_state(self):
+        override = put_preset_term_operation(
+            "term.cyber.001",
+            PresetTermOperationRequest(
+                operation="override",
+                preferredText="组织网络安全",
+                aliases=["网络安全"],
+                forbiddenVariants=["组织网安"],
+                definition="组织采用的标准写法。",
+            ),
+        )
+        self.assertEqual(
+            override["data"]["operation"]["presetEntryId"],
+            "term.cyber.001",
+        )
+
+        overridden_items = list_items(
+            item_type="term",
+            layer="preset",
+            pack_id="cybersecurity-terminology",
+        )["data"]["items"]
+        overridden = next(
+            item
+            for item in overridden_items
+            if item["id"] == "term.cyber.001"
+        )
+        self.assertEqual(overridden["organizationState"], "overridden")
+        self.assertEqual(overridden["preferredText"], "组织网络安全")
+        self.assertTrue(overridden["effective"])
+
+        put_preset_term_operation(
+            "term.cyber.001",
+            PresetTermOperationRequest(operation="disabled"),
+        )
+        disabled_items = list_items(
+            item_type="term",
+            layer="preset",
+            pack_id="cybersecurity-terminology",
+        )["data"]["items"]
+        disabled = next(
+            item
+            for item in disabled_items
+            if item["id"] == "term.cyber.001"
+        )
+        self.assertEqual(disabled["organizationState"], "disabled")
+        self.assertFalse(disabled["effective"])
+
+        restored = restore_preset_term("term.cyber.001")
+        self.assertTrue(restored["data"]["restored"])
+        current_items = list_items(
+            item_type="term",
+            layer="preset",
+            pack_id="cybersecurity-terminology",
+        )["data"]["items"]
+        current = next(
+            item
+            for item in current_items
+            if item["id"] == "term.cyber.001"
+        )
+        self.assertEqual(current["organizationState"], "preset")
+        self.assertTrue(current["effective"])
 
     def test_template_downloads_have_deterministic_binary_headers(self):
         csv_response = download_csv_template()
@@ -524,6 +589,47 @@ class WritingPolicyHttpTests(unittest.TestCase):
         self.assertEqual(
             missing.json()["errors"][0]["message"],
             "未找到指定预置规范包。",
+        )
+
+    def test_http_preset_term_lifecycle_uses_put_and_delete_contract(self):
+        override = self.client.put(
+            "/writing-policies/preset-overrides/term.cyber.001",
+            json={
+                "operation": "override",
+                "preferredText": "组织网络安全",
+                "aliases": ["网络安全"],
+                "forbiddenVariants": ["组织网安"],
+            },
+        )
+        listed = self.client.get(
+            "/writing-policies/items",
+            params={
+                "layer": "preset",
+                "packId": "cybersecurity-terminology",
+                "type": "term",
+            },
+        )
+        restored = self.client.delete(
+            "/writing-policies/preset-overrides/term.cyber.001"
+        )
+        missing = self.client.delete(
+            "/writing-policies/preset-overrides/term.cyber.001"
+        )
+
+        self.assertEqual(override.status_code, 200)
+        effective = next(
+            item
+            for item in listed.json()["data"]["items"]
+            if item["id"] == "term.cyber.001"
+        )
+        self.assertEqual(effective["organizationState"], "overridden")
+        self.assertEqual(effective["preferredText"], "组织网络安全")
+        self.assertEqual(restored.status_code, 200)
+        self.assertTrue(restored.json()["data"]["restored"])
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(
+            missing.json()["errors"][0]["code"],
+            "WRITING_POLICY_PRESET_OPERATION_NOT_FOUND",
         )
 
     def test_testclient_crud_query_binary_and_error_envelopes(self):
@@ -1072,6 +1178,60 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
             missing["body"]["errors"][0]["message"],
             "未找到指定预置规范包。",
         )
+
+    def test_standalone_preset_term_lifecycle_matches_fastapi_contract(self):
+        override = self.dispatch(
+            "PUT",
+            "/writing-policies/preset-overrides/term.cyber.001",
+            {
+                "operation": "override",
+                "preferredText": "组织网络安全",
+                "aliases": ["网络安全"],
+                "forbiddenVariants": ["组织网安"],
+            },
+        )
+        listed = self.dispatch(
+            "GET",
+            "/writing-policies/items",
+            query=(
+                "layer=preset&packId=cybersecurity-terminology&type=term"
+            ),
+        )
+        disabled = self.dispatch(
+            "PUT",
+            "/writing-policies/preset-overrides/term.cyber.001",
+            {"operation": "disabled"},
+        )
+        disabled_list = self.dispatch(
+            "GET",
+            "/writing-policies/items",
+            query=(
+                "layer=preset&packId=cybersecurity-terminology&type=term"
+            ),
+        )
+        restored = self.dispatch(
+            "DELETE",
+            "/writing-policies/preset-overrides/term.cyber.001",
+        )
+
+        self.assertEqual(override["status"], 200)
+        effective = next(
+            item
+            for item in listed["body"]["data"]["items"]
+            if item["id"] == "term.cyber.001"
+        )
+        self.assertEqual(effective["organizationState"], "overridden")
+        self.assertEqual(effective["preferredText"], "组织网络安全")
+        self.assertEqual(disabled["status"], 200)
+        inactive = next(
+            item
+            for item in disabled_list["body"]["data"]["items"]
+            if item["id"] == "term.cyber.001"
+        )
+        self.assertEqual(inactive["organizationState"], "disabled")
+        self.assertFalse(inactive["effective"])
+        self.assertEqual(restored["status"], 200)
+        self.assertTrue(restored["body"]["data"]["restored"])
 
     def test_standalone_preview_apply_is_single_use_and_validates_upload(self):
         content = generate_csv_template()

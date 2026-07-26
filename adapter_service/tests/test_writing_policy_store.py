@@ -52,7 +52,7 @@ class WritingPolicyStoreTests(unittest.TestCase):
     def make_store(self, root):
         return WritingPolicyStore(Path(root) / "writing_policies.db")
 
-    def test_initializes_three_tables_and_json_list_columns(self):
+    def test_initializes_organization_and_preset_operation_tables(self):
         with TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "writing_policies.db"
             store = WritingPolicyStore(db_path)
@@ -77,13 +77,105 @@ class WritingPolicyStoreTests(unittest.TestCase):
                 ).fetchone()
 
             self.assertTrue(
-                {"writing_policy_terms", "style_rules", "writing_policy_imports"}.issubset(
-                    table_names
-                )
+                {
+                    "writing_policy_terms",
+                    "style_rules",
+                    "writing_policy_imports",
+                    "preset_overrides",
+                }.issubset(table_names)
             )
             self.assertEqual(json.loads(row[0]), ["卫星网管平台"])
             self.assertEqual(json.loads(row[1]), ["卫星网管系统"])
             self.assertEqual(json.loads(row[2]), ["平台", "运营"])
+
+    def test_preset_term_override_disable_and_restore_persist_across_reopen(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
+            override = store.upsert_preset_operation(
+                "term.network-security",
+                "cybersecurity-terminology",
+                "term",
+                "override",
+                term_payload(
+                    "网络安全",
+                    ["信息安全"],
+                    ["网络信息安全"],
+                    note="组织覆盖",
+                ),
+            )
+
+            self.assertEqual(override["id"], "term.network-security")
+            self.assertEqual(override["presetEntryId"], "term.network-security")
+            self.assertEqual(override["operation"], "override")
+            self.assertEqual(override["payload"]["preferredText"], "网络安全")
+            self.assertTrue(override["createdAt"].endswith("Z"))
+
+            reopened = WritingPolicyStore(db_path)
+            self.assertEqual(
+                reopened.get_preset_operation("term.network-security"),
+                override,
+            )
+
+            disabled = reopened.upsert_preset_operation(
+                "term.network-security",
+                "cybersecurity-terminology",
+                "term",
+                "disabled",
+            )
+            self.assertEqual(disabled["id"], override["id"])
+            self.assertEqual(disabled["createdAt"], override["createdAt"])
+            self.assertEqual(disabled["operation"], "disabled")
+            self.assertEqual(disabled["payload"], {})
+
+            restored = reopened.restore_preset_operation(
+                "term.network-security"
+            )
+            self.assertEqual(restored["operation"], "disabled")
+            self.assertEqual(reopened.list_preset_operations("term"), [])
+            with self.assertRaises(WritingPolicyError) as raised:
+                reopened.get_preset_operation("term.network-security")
+            self.assertEqual(
+                raised.exception.code,
+                "writing_policy_preset_operation_not_found",
+            )
+
+    def test_invalid_preset_operation_rolls_back_without_replacing_existing_state(self):
+        with TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            original = store.upsert_preset_operation(
+                "term.network-security",
+                "cybersecurity-terminology",
+                "term",
+                "override",
+                term_payload("网络安全", ["信息安全"]),
+            )
+
+            with self.assertRaises(WritingPolicyError) as raised:
+                store.upsert_preset_operation(
+                    "term.network-security",
+                    "cybersecurity-terminology",
+                    "term",
+                    "override",
+                    term_payload("网络安全", ["网络安全"]),
+                )
+
+            self.assertEqual(raised.exception.code, "term_text_conflict")
+            self.assertEqual(
+                store.get_preset_operation("term.network-security"),
+                original,
+            )
+
+    def test_corrupt_existing_database_is_not_recreated_or_truncated(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "writing_policies.db"
+            corrupt_bytes = b"not-a-sqlite-database"
+            db_path.write_bytes(corrupt_bytes)
+
+            with self.assertRaises(sqlite3.DatabaseError):
+                WritingPolicyStore(db_path)
+
+            self.assertEqual(db_path.read_bytes(), corrupt_bytes)
 
     def test_store_enforces_private_permissions_for_new_and_existing_paths(self):
         with TemporaryDirectory() as tmp:
@@ -129,6 +221,38 @@ class WritingPolicyStoreTests(unittest.TestCase):
                     self.assertEqual(
                         raised.exception.code, "writing_policy_data_corrupt"
                     )
+
+    def test_invalid_typed_preset_payload_is_reported_as_database_corruption(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
+            store.upsert_preset_operation(
+                "term.network-security",
+                "cybersecurity-terminology",
+                "term",
+                "override",
+                term_payload("网络安全"),
+            )
+            with sqlite3.connect(str(db_path)) as connection:
+                connection.execute(
+                    "UPDATE preset_overrides SET payload = ? "
+                    "WHERE preset_entry_id = ?",
+                    (
+                        json.dumps(
+                            {"type": "term", "preferredText": ""},
+                            ensure_ascii=False,
+                        ),
+                        "term.network-security",
+                    ),
+                )
+
+            with self.assertRaises(WritingPolicyError) as raised:
+                store.list_preset_operations("term")
+
+            self.assertEqual(
+                raised.exception.code,
+                "writing_policy_data_corrupt",
+            )
 
     def test_term_crud_preserves_id_and_uses_utc_z_timestamps(self):
         with TemporaryDirectory() as tmp:

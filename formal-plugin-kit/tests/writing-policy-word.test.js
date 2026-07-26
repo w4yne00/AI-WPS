@@ -114,6 +114,7 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
   "writing-policy-scope-view",
   "writing-policy-preset-view",
   "writing-policy-preset-title",
+  "writing-policy-preset-pack-select",
   "writing-policy-preset-pack-meta",
   "writing-policy-preset-item-list",
   "btn-writing-policy-preset-back",
@@ -193,6 +194,26 @@ assert.strictEqual(helpers.writingPolicyConflictField({ adapterCode: "TERM_TEXT_
 assert.strictEqual(helpers.writingPolicyConflictField({ adapterCode: "STYLE_NAME_CONFLICT" }), "name");
 assert.strictEqual(helpers.writingPolicyConflictField({ adapterCode: "STORAGE_UNAVAILABLE" }), "");
 assert.strictEqual(helpers.writingPolicyConflictField({ httpStatus: 503 }), "");
+assert.strictEqual(
+  helpers.writingPolicyItemStateLabel({ enabled: true }, "organization"),
+  "组织自定义 · 已生效"
+);
+assert.strictEqual(
+  helpers.writingPolicyItemStateLabel({ organizationState: "overridden", effective: true }, "preset"),
+  "组织覆盖 · 已生效"
+);
+assert.strictEqual(
+  helpers.writingPolicyItemStateLabel({ organizationState: "disabled", effective: false }, "preset"),
+  "预置停用 · 未生效"
+);
+assert.strictEqual(
+  helpers.writingPolicyItemStateLabel({ organizationState: "preset", effective: true }, "preset"),
+  "预置基线 · 已生效"
+);
+assert.strictEqual(helpers.normalizeWritingPolicyPriority(88), "high");
+assert.strictEqual(helpers.normalizeWritingPolicyPriority(50), "medium");
+assert.strictEqual(helpers.normalizeWritingPolicyPriority(20), "low");
+assert.strictEqual(helpers.normalizeWritingPolicyPriority("high"), "high");
 assert.strictEqual(helpers.nextWritingPolicyTabIndex(0, "ArrowRight", 2), 1);
 assert.strictEqual(helpers.nextWritingPolicyTabIndex(0, "ArrowLeft", 2), 1);
 assert.strictEqual(helpers.nextWritingPolicyTabIndex(1, "Home", 2), 0);
@@ -286,7 +307,23 @@ assert.ok(presetRenderSource.includes("textContent"));
 assert.ok(presetRenderSource.includes("source.version"));
 assert.ok(presetRenderSource.includes("source.commit"));
 assert.ok(presetRenderSource.includes("source.license"));
+assert.ok(presetRenderSource.includes("helpers.writingPolicyItemStateLabel"));
+assert.ok(presetRenderSource.includes("data-writing-policy-preset-action"));
+assert.ok(presetRenderSource.includes('"edit"'));
+assert.ok(presetRenderSource.includes('"disable"'));
+assert.ok(presetRenderSource.includes('"restore"'));
 assert.ok(!presetRenderSource.includes("innerHTML"));
+
+const presetDisableSource = functionSource("disableWritingPolicyPresetTerm");
+assert.ok(presetDisableSource.includes("/writing-policies/preset-overrides/"));
+assert.ok(presetDisableSource.includes('method: "PUT"'));
+assert.ok(presetDisableSource.includes('operation: "disabled"'));
+assert.ok(presetDisableSource.includes("loadWritingPolicyPresetItems"));
+
+const presetRestoreSource = functionSource("restoreWritingPolicyPresetTerm");
+assert.ok(presetRestoreSource.includes("/writing-policies/preset-overrides/"));
+assert.ok(presetRestoreSource.includes('method: "DELETE"'));
+assert.ok(presetRestoreSource.includes("loadWritingPolicyPresetItems"));
 
 const listSource = functionSource("loadWritingPolicyItems");
 assert.ok(listSource.includes('request("/writing-policies/items?scope="'));
@@ -299,6 +336,8 @@ assert.ok(!listRenderSource.includes("innerHTML"));
 const editorSource = functionSource("renderWritingPolicyEditor");
 assert.ok(editorSource.includes("textContent"));
 assert.ok(editorSource.includes("writing-policy-editor-advanced"));
+assert.ok(editorSource.includes("helpers.normalizeWritingPolicyPriority"));
+assert.ok(editorSource.includes("writing-policy-enabled-field"));
 
 const discardSource = functionSource("confirmWritingPolicyEditorDiscard");
 assert.ok(discardSource.includes("writingPolicyEditorDirty"));
@@ -307,6 +346,10 @@ assert.ok(discardSource.includes("window.confirm"));
 const saveSource = functionSource("saveWritingPolicyItem");
 assert.ok(saveSource.includes("writingPolicyMutationBusy"));
 assert.ok(saveSource.includes('options.method = "PATCH"'));
+assert.ok(saveSource.includes('editor.mode === "preset-override"'));
+assert.ok(saveSource.includes("/writing-policies/preset-overrides/"));
+assert.ok(saveSource.includes('options.method = "PUT"'));
+assert.ok(saveSource.includes('draft.operation = "override"'));
 assert.ok(saveSource.includes("WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS"));
 assert.ok(saveSource.includes("helpers.writingPolicyConflictField"));
 assert.ok(saveSource.includes("setWritingPolicyMutationBusy(false)"));
@@ -377,6 +420,8 @@ const bindSource = functionSource("bindEvents");
   "btn-writing-policy-export-scope",
   "btn-writing-policy-download-backup"
 ].forEach((id) => assert.ok(bindSource.includes(`byId(\"${id}\")`), `missing event binding for ${id}`));
+assert.ok(bindSource.includes('byId("writing-policy-preset-pack-select").addEventListener("change"'));
+assert.ok(bindSource.includes('byId("writing-policy-preset-item-list").addEventListener("click"'));
 assert.ok(bindSource.includes('byId("writing-policy-type-switch").addEventListener("keydown", handleWritingPolicyTypeKeydown)'));
 
 [

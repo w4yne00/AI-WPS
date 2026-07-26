@@ -2227,6 +2227,34 @@
     return "最近更新：" + formatted;
   }
 
+  function writingPolicyItemStateLabel(item, layer) {
+    var source = item && typeof item === "object" ? item : {};
+    var state = String(source.organizationState || "");
+    if (layer === "preset") {
+      if (state === "overridden") {
+        return "组织覆盖 · " + (source.effective === false ? "未生效" : "已生效");
+      }
+      if (state === "disabled") {
+        return "预置停用 · 未生效";
+      }
+      return "预置基线 · " + (source.effective === false ? "未生效" : "已生效");
+    }
+    return "组织自定义 · " + (source.enabled === false ? "未生效" : "已生效");
+  }
+
+  function normalizeWritingPolicyPriority(value) {
+    var text = String(value == null ? "" : value).trim().toLowerCase();
+    var numeric;
+    if (text === "high" || text === "medium" || text === "low") {
+      return text;
+    }
+    numeric = Number(value);
+    if (!isFinite(numeric)) {
+      return "medium";
+    }
+    return numeric >= 67 ? "high" : numeric >= 34 ? "medium" : "low";
+  }
+
   function validateWritingPolicyImportFile(file) {
     var name = String(file && file.name || "").toLowerCase();
     var size = Number(file && file.size);
@@ -2371,6 +2399,8 @@
     writingPolicyConflictField: writingPolicyConflictField,
     nextWritingPolicyTabIndex: nextWritingPolicyTabIndex,
     formatWritingPolicyUpdatedAt: formatWritingPolicyUpdatedAt,
+    writingPolicyItemStateLabel: writingPolicyItemStateLabel,
+    normalizeWritingPolicyPriority: normalizeWritingPolicyPriority,
     validateWritingPolicyImportFile: validateWritingPolicyImportFile,
     buildWritingPolicyImportRequest: buildWritingPolicyImportRequest,
     normalizeWritingPolicyConflictDecision: normalizeWritingPolicyConflictDecision,

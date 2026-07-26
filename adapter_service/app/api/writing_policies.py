@@ -32,6 +32,8 @@ _SAFE_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _NOT_FOUND_CODES = {
     "writing_policy_item_not_found",
     "writing_policy_pack_not_found",
+    "writing_policy_preset_item_not_found",
+    "writing_policy_preset_operation_not_found",
     "import_preview_not_found",
     "import_preview_expired",
 }
@@ -82,6 +84,10 @@ class WritingPolicyItemRequest(_AliasModel):
     positive_example: Optional[str] = Field(default=None, alias="positiveExample")
     negative_example: Optional[str] = Field(default=None, alias="negativeExample")
     always_apply: Optional[bool] = Field(default=None, alias="alwaysApply")
+
+
+class PresetTermOperationRequest(WritingPolicyItemRequest):
+    operation: str
 
 
 class ImportPreviewRequest(_AliasModel):
@@ -231,9 +237,9 @@ def list_items(
                     "invalid_writing_policy_pack",
                     "浏览预置规范时必须指定规范包。",
                 )
-            items = get_writing_policy_service().list_preset_items(pack_id)
-            if item_type:
-                items = [item for item in items if item.get("type") == item_type]
+            items = get_writing_policy_service().list_preset_items(
+                pack_id, item_type
+            )
             if query:
                 normalized = query.casefold()
                 items = [
@@ -303,6 +309,40 @@ def delete_item(item_id: str = PathParameter(alias="itemId")) -> dict:
     try:
         item = _store().delete_item(item_id)
         return _envelope({"deleted": True, "item": item}, "deleted")
+    except Exception as error:
+        _raise_mapped(error)
+
+
+@router.put("/writing-policies/preset-overrides/{presetEntryId}")
+def put_preset_term_operation(
+    preset_entry_id: str = PathParameter(alias="presetEntryId"),
+    request: PresetTermOperationRequest = Body(),
+) -> dict:
+    try:
+        payload = _model_payload(request, exclude_none=True)
+        operation = str(payload.pop("operation", ""))
+        result = get_writing_policy_service().put_preset_term_operation(
+            preset_entry_id,
+            operation,
+            payload,
+        )
+        return _envelope({"operation": result}, "updated")
+    except Exception as error:
+        _raise_mapped(error)
+
+
+@router.delete("/writing-policies/preset-overrides/{presetEntryId}")
+def restore_preset_term(
+    preset_entry_id: str = PathParameter(alias="presetEntryId"),
+) -> dict:
+    try:
+        operation = get_writing_policy_service().restore_preset_term(
+            preset_entry_id
+        )
+        return _envelope(
+            {"restored": True, "operation": operation},
+            "restored",
+        )
     except Exception as error:
         _raise_mapped(error)
 

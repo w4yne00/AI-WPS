@@ -326,9 +326,13 @@
               <button id="btn-writing-policy-preset-back" class="ghost-action mini-button" type="button">返回设置</button>
               <div>
                 <h3 id="writing-policy-preset-title" tabindex="-1">G企技术写作基础</h3>
-                <p>预置规范只读展示，内容随正式版本发布。</p>
+                <p>预置基线随版本发布；编辑、停用和恢复仅写入组织数据。</p>
               </div>
             </div>
+            <label class="field writing-policy-preset-pack-field">
+              <span>规范包</span>
+              <select id="writing-policy-preset-pack-select" aria-label="选择预置规范包"></select>
+            </label>
             <div id="writing-policy-preset-pack-meta" class="writing-policy-preset-pack-meta" aria-live="polite">正在读取规范包...</div>
             <div id="writing-policy-preset-item-list" class="writing-policy-item-list"></div>
             <button id="btn-writing-policy-open-organization" class="ghost-action" type="button">管理组织规范</button>
@@ -422,7 +426,7 @@
                 <label class="field"><span>上下文关键词</span><textarea id="writing-policy-context-keywords" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
                 <label class="field"><span>优先级</span><select id="writing-policy-priority"><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
                 <label id="writing-policy-always-apply-field" class="writing-policy-check"><input id="writing-policy-always-apply" type="checkbox" /> 始终应用此文体规则</label>
-                <label class="writing-policy-check"><input id="writing-policy-enabled" type="checkbox" checked /> 启用此条目</label>
+                <label id="writing-policy-enabled-field" class="writing-policy-check"><input id="writing-policy-enabled" type="checkbox" checked /> 启用此条目</label>
               </div>
             </details>
             <div class="button-row writing-policy-editor-actions">

@@ -22,6 +22,9 @@ from .models import (
 
 logger = logging.getLogger(__name__)
 
+_PRESET_ENTRY_ID_RE = re.compile(r"^(term|rule)\.[a-z0-9][a-z0-9.-]{2,95}$")
+_PACK_ID_RE = re.compile(r"^[a-z][a-z0-9.-]{2,63}$")
+
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace(
@@ -47,6 +50,29 @@ def _read_json_list(value: str) -> List[str]:
             "writing_policy_data_corrupt", "写作规范库中的列表数据已损坏。"
         )
     return list(loaded)
+
+
+def _json_object(value: Dict[str, object]) -> str:
+    return json.dumps(
+        dict(value),
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def _read_json_object(value: str) -> Dict[str, object]:
+    try:
+        loaded = json.loads(value)
+    except (TypeError, ValueError):
+        raise WritingPolicyError(
+            "writing_policy_data_corrupt", "写作规范库中的对象数据已损坏。"
+        )
+    if not isinstance(loaded, dict):
+        raise WritingPolicyError(
+            "writing_policy_data_corrupt", "写作规范库中的对象数据已损坏。"
+        )
+    return dict(loaded)
 
 
 class WritingPolicyStore:
@@ -126,6 +152,17 @@ class WritingPolicyStore:
                     result TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS preset_overrides (
+                    preset_entry_id TEXT PRIMARY KEY,
+                    pack_id TEXT NOT NULL,
+                    item_type TEXT NOT NULL CHECK (item_type = 'term'),
+                    operation TEXT NOT NULL
+                        CHECK (operation IN ('override', 'disabled')),
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_scope
                     ON writing_policy_terms(scope);
                 CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_enabled
@@ -138,6 +175,8 @@ class WritingPolicyStore:
                     ON style_rules(enabled);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_style_rules_scope_name_normalized
                     ON style_rules(scope, name_normalized);
+                CREATE INDEX IF NOT EXISTS idx_preset_overrides_item_type
+                    ON preset_overrides(item_type);
                 """
             )
 
@@ -232,6 +271,133 @@ class WritingPolicyStore:
                     else "style_rules"
                 )
                 connection.execute("DELETE FROM %s WHERE id = ?" % table, (item_id,))
+                return existing
+
+    def list_preset_operations(
+        self, item_type: Optional[str] = None
+    ) -> List[Dict[str, object]]:
+        if item_type is not None and item_type != "term":
+            raise WritingPolicyError(
+                "invalid_writing_policy_type",
+                "当前版本的预置操作仅支持 term。",
+            )
+        with self._connect() as connection:
+            if item_type is None:
+                rows = connection.execute(
+                    "SELECT * FROM preset_overrides "
+                    "ORDER BY preset_entry_id"
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT * FROM preset_overrides WHERE item_type = ? "
+                    "ORDER BY preset_entry_id",
+                    (item_type,),
+                ).fetchall()
+        return [self._preset_operation_from_row(row) for row in rows]
+
+    def get_preset_operation(self, preset_entry_id: str) -> Dict[str, object]:
+        with self._connect() as connection:
+            return self._get_preset_operation(connection, preset_entry_id)
+
+    def upsert_preset_operation(
+        self,
+        preset_entry_id: str,
+        pack_id: str,
+        item_type: str,
+        operation: str,
+        payload: Optional[Dict[str, object]] = None,
+    ) -> Dict[str, object]:
+        clean_id = self._validate_preset_entry_id(preset_entry_id, item_type)
+        clean_pack_id = str(pack_id or "").strip()
+        if not _PACK_ID_RE.fullmatch(clean_pack_id):
+            raise WritingPolicyError(
+                "invalid_writing_policy_pack",
+                "预置规范包标识无效。",
+            )
+        if operation not in ("override", "disabled"):
+            raise WritingPolicyError(
+                "invalid_preset_operation",
+                "预置操作必须为 override 或 disabled。",
+            )
+        if operation == "override":
+            if item_type != "term":
+                raise WritingPolicyError(
+                    "invalid_writing_policy_type",
+                    "当前版本的预置覆盖仅支持 term。",
+                )
+            if not isinstance(payload, dict):
+                raise WritingPolicyError(
+                    "invalid_writing_policy_item",
+                    "预置术语覆盖必须包含术语内容。",
+                )
+            clean_payload = dict(self._validate_term(payload), type="term")
+        else:
+            if item_type != "term":
+                raise WritingPolicyError(
+                    "invalid_writing_policy_type",
+                    "当前版本的预置停用仅支持 term。",
+                )
+            clean_payload = {}
+
+        with self._write_lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    "SELECT created_at FROM preset_overrides "
+                    "WHERE preset_entry_id = ?",
+                    (clean_id,),
+                ).fetchone()
+                now = _utc_now()
+                if existing is None:
+                    connection.execute(
+                        """
+                        INSERT INTO preset_overrides (
+                            preset_entry_id, pack_id, item_type, operation,
+                            payload, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            clean_id,
+                            clean_pack_id,
+                            item_type,
+                            operation,
+                            _json_object(clean_payload),
+                            now,
+                            now,
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE preset_overrides SET
+                            pack_id = ?, item_type = ?, operation = ?,
+                            payload = ?, updated_at = ?
+                        WHERE preset_entry_id = ?
+                        """,
+                        (
+                            clean_pack_id,
+                            item_type,
+                            operation,
+                            _json_object(clean_payload),
+                            now,
+                            clean_id,
+                        ),
+                    )
+                return self._get_preset_operation(connection, clean_id)
+
+    def restore_preset_operation(
+        self, preset_entry_id: str
+    ) -> Dict[str, object]:
+        with self._write_lock:
+            with self._connect() as connection:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = self._get_preset_operation(
+                    connection, preset_entry_id
+                )
+                connection.execute(
+                    "DELETE FROM preset_overrides WHERE preset_entry_id = ?",
+                    (preset_entry_id,),
+                )
                 return existing
 
     def enabled_items(
@@ -636,6 +802,39 @@ class WritingPolicyStore:
             return self._style_from_row(row)
         raise WritingPolicyError("writing_policy_item_not_found", "未找到指定规范条目。")
 
+    def _get_preset_operation(
+        self,
+        connection: sqlite3.Connection,
+        preset_entry_id: str,
+    ) -> Dict[str, object]:
+        row = connection.execute(
+            "SELECT * FROM preset_overrides WHERE preset_entry_id = ?",
+            (preset_entry_id,),
+        ).fetchone()
+        if row is None:
+            raise WritingPolicyError(
+                "writing_policy_preset_operation_not_found",
+                "未找到指定预置规范操作。",
+            )
+        return self._preset_operation_from_row(row)
+
+    @staticmethod
+    def _validate_preset_entry_id(
+        preset_entry_id: object, item_type: str
+    ) -> str:
+        clean = str(preset_entry_id or "").strip()
+        if item_type != "term" or not _PRESET_ENTRY_ID_RE.fullmatch(clean):
+            raise WritingPolicyError(
+                "invalid_preset_entry_id",
+                "预置规范条目标识无效。",
+            )
+        if not clean.startswith("term."):
+            raise WritingPolicyError(
+                "invalid_writing_policy_type",
+                "当前版本的预置操作仅支持 term。",
+            )
+        return clean
+
     def _ensure_term_tokens_available(
         self,
         connection: sqlite3.Connection,
@@ -910,6 +1109,54 @@ class WritingPolicyStore:
             "priority": row["priority"],
             "enabled": bool(row["enabled"]),
             "note": row["note"],
+            "createdAt": row["created_at"],
+            "updatedAt": row["updated_at"],
+        }
+
+    def _preset_operation_from_row(
+        self, row: sqlite3.Row
+    ) -> Dict[str, object]:
+        try:
+            payload = _read_json_object(row["payload"])
+            if row["operation"] == "override":
+                expected_fields = {
+                    "type",
+                    "scope",
+                    "category",
+                    "preferredText",
+                    "aliases",
+                    "forbiddenVariants",
+                    "definition",
+                    "contextKeywords",
+                    "priority",
+                    "enabled",
+                    "note",
+                }
+                if set(payload) != expected_fields or payload.get("type") != "term":
+                    raise WritingPolicyError(
+                        "writing_policy_data_corrupt",
+                        "预置术语覆盖数据字段无效。",
+                    )
+                payload = dict(self._validate_term(payload), type="term")
+            elif payload:
+                raise WritingPolicyError(
+                    "writing_policy_data_corrupt",
+                    "预置停用记录不应包含覆盖内容。",
+                )
+        except WritingPolicyError as error:
+            if error.code == "writing_policy_data_corrupt":
+                raise
+            raise WritingPolicyError(
+                "writing_policy_data_corrupt",
+                "预置术语操作数据已损坏。",
+            )
+        return {
+            "id": row["preset_entry_id"],
+            "presetEntryId": row["preset_entry_id"],
+            "packId": row["pack_id"],
+            "itemType": row["item_type"],
+            "operation": row["operation"],
+            "payload": payload,
             "createdAt": row["created_at"],
             "updatedAt": row["updated_at"],
         }

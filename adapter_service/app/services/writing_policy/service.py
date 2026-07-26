@@ -161,6 +161,7 @@ class WritingPolicyService:
                 selected_packs = ()
             else:
                 terms, styles = self.store.enabled_items(task_scope)
+                preset_operations = self._preset_term_operations()
                 selected_packs = self._selected_packs(
                     task_scope,
                     resolution,
@@ -175,6 +176,10 @@ class WritingPolicyService:
                         preset["packId"],
                         _PRESET_TASK_TYPES[task_scope],
                         pack_scene,
+                    )
+                    preset_terms = self._effective_preset_terms(
+                        preset_terms,
+                        preset_operations,
                     )
                     terms = preset_terms + list(terms)
                     styles = preset_styles + list(styles)
@@ -282,8 +287,160 @@ class WritingPolicyService:
     def list_packs(self):
         return self.pack_snapshot.public_packs()
 
-    def list_preset_items(self, pack_id: str):
-        return self.pack_snapshot.public_items(pack_id)
+    def list_preset_items(
+        self, pack_id: str, item_type: Optional[str] = None
+    ):
+        items = self.pack_snapshot.public_items(pack_id)
+        if item_type is not None:
+            items = [
+                item for item in items if item.get("type") == item_type
+            ]
+        operations = self._preset_term_operations()
+        result = []
+        for baseline_item in items:
+            item = deepcopy(baseline_item)
+            item["baseline"] = deepcopy(baseline_item)
+            operation = operations.get(str(item.get("id") or ""))
+            item["organizationState"] = "preset"
+            item["effective"] = bool(item.get("defaultEnabled", False))
+            item["presetOperation"] = None
+            if operation is not None:
+                item["presetOperation"] = deepcopy(operation)
+                if operation["operation"] == "disabled":
+                    item["organizationState"] = "disabled"
+                    item["effective"] = False
+                elif operation["operation"] == "override":
+                    item.update(deepcopy(operation["payload"]))
+                    item["id"] = baseline_item["id"]
+                    item["type"] = baseline_item["type"]
+                    item["packId"] = baseline_item["packId"]
+                    item["packName"] = baseline_item["packName"]
+                    item["packVersion"] = baseline_item["packVersion"]
+                    item["source"] = deepcopy(baseline_item["source"])
+                    item["organizationState"] = "overridden"
+                    item["effective"] = True
+            result.append(item)
+        return result
+
+    def put_preset_term_operation(
+        self,
+        preset_entry_id: str,
+        operation: str,
+        payload: Dict[str, object],
+    ) -> Dict[str, object]:
+        baseline = self._find_preset_item(preset_entry_id)
+        if baseline.get("type") != "term":
+            raise WritingPolicyError(
+                "invalid_writing_policy_type",
+                "当前版本仅支持管理预置术语。",
+            )
+        if operation == "disabled":
+            term_payload = None
+        elif operation == "override":
+            term_payload = self._preset_term_payload(baseline)
+            term_payload.update(dict(payload or {}))
+            term_payload["type"] = "term"
+            term_payload["scope"] = "global"
+            term_payload["enabled"] = True
+        else:
+            raise WritingPolicyError(
+                "invalid_preset_operation",
+                "预置操作必须为 override 或 disabled。",
+            )
+        return self.store.upsert_preset_operation(
+            preset_entry_id,
+            str(baseline["packId"]),
+            "term",
+            operation,
+            term_payload,
+        )
+
+    def restore_preset_term(
+        self, preset_entry_id: str
+    ) -> Dict[str, object]:
+        baseline = self._find_preset_item(preset_entry_id)
+        if baseline.get("type") != "term":
+            raise WritingPolicyError(
+                "invalid_writing_policy_type",
+                "当前版本仅支持恢复预置术语。",
+            )
+        return self.store.restore_preset_operation(preset_entry_id)
+
+    def _find_preset_item(self, preset_entry_id: str) -> Dict[str, object]:
+        for pack in self.pack_snapshot.public_packs():
+            for item in self.pack_snapshot.public_items(pack["packId"]):
+                if item.get("id") == preset_entry_id:
+                    return item
+        raise WritingPolicyError(
+            "writing_policy_preset_item_not_found",
+            "未找到指定预置规范条目。",
+        )
+
+    def _preset_term_operations(self) -> Dict[str, Dict[str, object]]:
+        list_operations = getattr(
+            self.store, "list_preset_operations", None
+        )
+        if not callable(list_operations):
+            return {}
+        return {
+            operation["presetEntryId"]: operation
+            for operation in list_operations("term")
+        }
+
+    @staticmethod
+    def _preset_term_payload(item: Dict[str, object]) -> Dict[str, object]:
+        numeric_priority = int(item.get("priority", 0))
+        priority = (
+            "high"
+            if numeric_priority >= 67
+            else "medium"
+            if numeric_priority >= 34
+            else "low"
+        )
+        return {
+            "type": "term",
+            "scope": "global",
+            "category": str(item.get("category") or ""),
+            "preferredText": str(item.get("preferredText") or ""),
+            "aliases": list(item.get("aliases") or []),
+            "forbiddenVariants": list(
+                item.get("forbiddenVariants") or []
+            ),
+            "definition": str(item.get("definition") or ""),
+            "contextKeywords": list(item.get("contextKeywords") or []),
+            "priority": priority,
+            "enabled": True,
+            "note": "",
+        }
+
+    @staticmethod
+    def _effective_preset_terms(
+        terms,
+        operations: Dict[str, Dict[str, object]],
+    ):
+        effective = []
+        for baseline in terms:
+            operation = operations.get(str(baseline.get("id") or ""))
+            if operation is not None and operation["operation"] == "disabled":
+                continue
+            if operation is not None and operation["operation"] == "override":
+                item = deepcopy(operation["payload"])
+                item.update(
+                    {
+                        "id": baseline["id"],
+                        "type": "term",
+                        "scope": "global",
+                        "enabled": True,
+                        "layer": "organization",
+                        "packId": baseline.get("packId"),
+                        "packVersion": baseline.get("packVersion"),
+                        "presetOperation": "override",
+                    }
+                )
+                effective.append(item)
+            else:
+                effective.append(baseline)
+        return effective
 
     def _selected_packs(self, task_scope: str, resolution):
         if task_scope not in _PRESET_TASK_TYPES:

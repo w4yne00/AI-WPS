@@ -7,13 +7,17 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.services.writing_policy.models import WritingPolicyError
-from app.services.writing_policy.packs import WritingPolicyPackSnapshot
+from app.services.writing_policy.packs import (
+    WritingPolicyPackSnapshot,
+    load_pack_snapshot,
+)
 from app.services.writing_policy import service as service_module
 from app.services.writing_policy.service import (
     WritingPolicyService,
     default_database_path,
     get_writing_policy_service,
 )
+from app.services.writing_policy.store import WritingPolicyStore
 
 
 def term_item(item_id="term-1"):
@@ -59,6 +63,9 @@ class StaticStore:
     def enabled_items(self, task_scope):
         self.task_scopes.append(task_scope)
         return list(self.terms), list(self.styles)
+
+    def list_preset_operations(self, item_type=None):
+        return []
 
 
 class BrokenStore:
@@ -156,6 +163,168 @@ class WritingPolicyServiceTests(unittest.TestCase):
         self.assertEqual(diagnostics["stage"], "prepared")
         self.assertEqual(diagnostics["writingPolicyElapsedMs"], 125)
         self.assertNotIn("旧平台", json.dumps(diagnostics, ensure_ascii=False))
+
+    def test_preset_term_management_exposes_baseline_override_disabled_and_restore_states(self):
+        with TemporaryDirectory() as tmp:
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
+            service = WritingPolicyService(
+                store=store,
+                pack_snapshot=load_pack_snapshot(),
+            )
+
+            baseline = service.list_preset_items(
+                "cybersecurity-terminology", "term"
+            )[0]
+            self.assertEqual(baseline["id"], "term.cyber.001")
+            self.assertEqual(baseline["organizationState"], "preset")
+            self.assertTrue(baseline["effective"])
+            self.assertEqual(
+                baseline["baseline"]["preferredText"], "网络安全"
+            )
+
+            override = service.put_preset_term_operation(
+                "term.cyber.001",
+                "override",
+                {
+                    "preferredText": "组织网络安全",
+                    "aliases": ["网络安全"],
+                    "forbiddenVariants": ["组织网安"],
+                    "definition": "组织采用的网络安全标准写法。",
+                    "note": "组织覆盖",
+                },
+            )
+            self.assertEqual(override["operation"], "override")
+
+            overridden = service.list_preset_items(
+                "cybersecurity-terminology", "term"
+            )[0]
+            self.assertEqual(overridden["organizationState"], "overridden")
+            self.assertTrue(overridden["effective"])
+            self.assertEqual(overridden["preferredText"], "组织网络安全")
+            self.assertEqual(
+                overridden["baseline"]["preferredText"], "网络安全"
+            )
+
+            service.put_preset_term_operation(
+                "term.cyber.001", "disabled", {}
+            )
+            disabled = service.list_preset_items(
+                "cybersecurity-terminology", "term"
+            )[0]
+            self.assertEqual(disabled["organizationState"], "disabled")
+            self.assertFalse(disabled["effective"])
+            self.assertEqual(disabled["preferredText"], "网络安全")
+
+            restored = service.restore_preset_term("term.cyber.001")
+            self.assertEqual(restored["operation"], "disabled")
+            current = service.list_preset_items(
+                "cybersecurity-terminology", "term"
+            )[0]
+            self.assertEqual(current["organizationState"], "preset")
+            self.assertTrue(current["effective"])
+
+    def test_organization_terms_and_preset_operations_resolve_consistently_for_three_word_tasks(self):
+        with TemporaryDirectory() as tmp:
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
+            custom = store.create_item(
+                {
+                    "type": "term",
+                    "scope": "global",
+                    "category": "组织",
+                    "preferredText": "组织标准安全",
+                    "aliases": ["网络安全"],
+                    "forbiddenVariants": [],
+                    "definition": "组织自定义术语。",
+                    "contextKeywords": [],
+                    "priority": "high",
+                    "enabled": True,
+                    "note": "",
+                }
+            )
+            service = WritingPolicyService(
+                store=store,
+                pack_snapshot=load_pack_snapshot(),
+            )
+
+            for task_scope in (
+                "word.smart_write",
+                "word.smart_imitation",
+                "word.document_review",
+            ):
+                with self.subTest(task_scope=task_scope, state="custom"):
+                    result = service.prepare(
+                        task_scope,
+                        ["网络安全"],
+                        scene="cybersecurity",
+                    )
+                    self.assertIn(custom["id"], result.matched_item_ids)
+                    self.assertNotIn(
+                        "term.cyber.001", result.matched_item_ids
+                    )
+
+            service.put_preset_term_operation(
+                "term.cyber.001",
+                "override",
+                {
+                    "preferredText": "组织网络安全",
+                    "aliases": [],
+                    "forbiddenVariants": ["组织网安"],
+                    "definition": "组织覆盖术语。",
+                    "contextKeywords": [],
+                    "priority": "high",
+                    "enabled": True,
+                    "note": "",
+                },
+            )
+            for task_scope in (
+                "word.smart_write",
+                "word.smart_imitation",
+                "word.document_review",
+            ):
+                with self.subTest(task_scope=task_scope, state="override"):
+                    result = service.prepare(
+                        task_scope,
+                        ["组织网安"],
+                        scene="cybersecurity",
+                    )
+                    self.assertIn(
+                        "term.cyber.001", result.matched_item_ids
+                    )
+                    self.assertIn("组织网络安全", result.prompt_block)
+                    audit = (
+                        service.audit_document_review(
+                            result, "组织网安"
+                        )
+                        if task_scope == "word.document_review"
+                        else service.audit(
+                            result,
+                            "组织网安",
+                            "组织网安",
+                        )
+                    )
+                    self.assertTrue(audit["needsReview"])
+                    self.assertIn(
+                        "组织网络安全",
+                        json.dumps(audit, ensure_ascii=False),
+                    )
+
+            service.put_preset_term_operation(
+                "term.cyber.001", "disabled", {}
+            )
+            for task_scope in (
+                "word.smart_write",
+                "word.smart_imitation",
+                "word.document_review",
+            ):
+                with self.subTest(task_scope=task_scope, state="disabled"):
+                    result = service.prepare(
+                        task_scope,
+                        ["网安安全"],
+                        scene="cybersecurity",
+                    )
+                    self.assertNotIn(
+                        "term.cyber.001", result.matched_item_ids
+                    )
 
     def test_audit_failure_is_nonblocking_and_returns_chinese_degradation(self):
         service = WritingPolicyService(store=StaticStore([term_item()], []))

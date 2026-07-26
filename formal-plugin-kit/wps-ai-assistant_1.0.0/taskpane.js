@@ -208,6 +208,7 @@
     writingPolicyScope: "global",
     writingPolicyType: "term",
     writingPolicyItems: [],
+    writingPolicyPresetPacks: [],
     writingPolicyPresetPack: null,
     writingPolicyPresetItems: [],
     writingPolicyPresetError: "",
@@ -2453,6 +2454,7 @@
       meta.textContent = "正在读取规范包...";
       return;
     }
+    byId("writing-policy-preset-title").textContent = String(pack.name || "预置规范");
     meta.textContent = pack.name + " v" + pack.version + " ｜ 来源：" +
       source.name + " " + source.version + " ｜ 提交：" + source.commit +
       " ｜ 许可证：" + source.license;
@@ -2462,6 +2464,8 @@
       var title = document.createElement("strong");
       var rule = document.createElement("p");
       var trace = document.createElement("small");
+      var status = document.createElement("span");
+      var actions = document.createElement("div");
       row.className = "writing-policy-item-row writing-policy-preset-item";
       title.textContent = item.name || item.preferredText || "未命名规范";
       rule.textContent = item.ruleText || item.definition || "";
@@ -2469,14 +2473,63 @@
         String((item.source || {}).version || source.version || "") +
         " ｜ 提交：" + String((item.source || {}).commit || source.commit || "") +
         " ｜ 许可证：" + String((item.source || {}).license || source.license || "");
+      status.className = "provider-badge";
+      status.textContent = helpers.writingPolicyItemStateLabel
+        ? helpers.writingPolicyItemStateLabel(item, "preset")
+        : (item.effective === false ? "预置停用 · 未生效" : "预置基线 · 已生效");
+      actions.className = "writing-policy-preset-actions";
+      if (item.type === "term" && item.organizationState !== "disabled") {
+        var editButton = document.createElement("button");
+        var disableButton = document.createElement("button");
+        editButton.type = "button";
+        editButton.className = "ghost-action mini-button";
+        editButton.textContent = "编辑覆盖";
+        editButton.setAttribute("data-writing-policy-preset-action", "edit");
+        editButton.setAttribute("data-writing-policy-preset-id", String(item.id || ""));
+        editButton.disabled = state.writingPolicyMutationBusy;
+        disableButton.type = "button";
+        disableButton.className = "ghost-action mini-button danger-action";
+        disableButton.textContent = "停用预置";
+        disableButton.setAttribute("data-writing-policy-preset-action", "disable");
+        disableButton.setAttribute("data-writing-policy-preset-id", String(item.id || ""));
+        disableButton.disabled = state.writingPolicyMutationBusy;
+        actions.appendChild(editButton);
+        actions.appendChild(disableButton);
+      }
+      if (item.type === "term" && (item.organizationState === "overridden" || item.organizationState === "disabled")) {
+        var restoreButton = document.createElement("button");
+        restoreButton.type = "button";
+        restoreButton.className = "ghost-action mini-button";
+        restoreButton.textContent = "恢复预置";
+        restoreButton.setAttribute("data-writing-policy-preset-action", "restore");
+        restoreButton.setAttribute("data-writing-policy-preset-id", String(item.id || ""));
+        restoreButton.disabled = state.writingPolicyMutationBusy;
+        actions.appendChild(restoreButton);
+      }
       row.appendChild(title);
       row.appendChild(rule);
       row.appendChild(trace);
+      row.appendChild(status);
+      row.appendChild(actions);
       list.appendChild(row);
     }
     if (!state.writingPolicyPresetItems.length) {
       list.textContent = "当前规范包暂无可显示条目。";
     }
+  }
+
+  function renderWritingPolicyPresetPackSelect() {
+    var select = byId("writing-policy-preset-pack-select");
+    var selectedId = String(state.writingPolicyPresetPack && state.writingPolicyPresetPack.packId || "");
+    select.textContent = "";
+    state.writingPolicyPresetPacks.forEach(function (pack) {
+      var option = document.createElement("option");
+      option.value = String(pack.packId || "");
+      option.textContent = String(pack.name || pack.packId || "未命名规范包");
+      option.selected = option.value === selectedId;
+      select.appendChild(option);
+    });
+    select.disabled = state.writingPolicyMutationBusy || !state.writingPolicyPresetPacks.length;
   }
 
   function loadWritingPolicyPresetItems(packId) {
@@ -2497,6 +2550,7 @@
   }
 
   function loadWritingPolicyPresetPacks() {
+    state.writingPolicyPresetPacks = [];
     state.writingPolicyPresetPack = null;
     state.writingPolicyPresetItems = [];
     state.writingPolicyPresetError = "";
@@ -2504,17 +2558,21 @@
     return request("/writing-policies/packs").then(function (body) {
       var packs = body.data && Array.isArray(body.data.packs) ? body.data.packs : [];
       var index;
+      state.writingPolicyPresetPacks = packs;
       for (index = 0; index < packs.length; index += 1) {
         if (packs[index].packId === "yangqi-tech-writing-base") {
           state.writingPolicyPresetPack = packs[index];
+          renderWritingPolicyPresetPackSelect();
           return loadWritingPolicyPresetItems(packs[index].packId);
         }
       }
       state.writingPolicyPresetError = "base_pack_missing";
+      renderWritingPolicyPresetPackSelect();
       renderWritingPolicyPresetItems();
       return [];
     }).catch(function () {
       state.writingPolicyPresetError = "packs_unavailable";
+      renderWritingPolicyPresetPackSelect();
       renderWritingPolicyPresetItems();
       return [];
     });
@@ -2526,6 +2584,24 @@
     }
     setWritingPolicyView("preset");
     loadWritingPolicyPresetPacks();
+  }
+
+  function selectWritingPolicyPresetPack(packId) {
+    var selected = null;
+    state.writingPolicyPresetPacks.forEach(function (pack) {
+      if (String(pack.packId || "") === String(packId || "")) {
+        selected = pack;
+      }
+    });
+    if (!selected || state.writingPolicyMutationBusy) {
+      return;
+    }
+    state.writingPolicyPresetPack = selected;
+    state.writingPolicyPresetItems = [];
+    state.writingPolicyPresetError = "";
+    renderWritingPolicyPresetPackSelect();
+    renderWritingPolicyPresetItems();
+    loadWritingPolicyPresetItems(selected.packId);
   }
 
   function openWritingPolicyScopeView() {
@@ -2579,7 +2655,9 @@
       title.textContent = String(item.type === "term" ? item.preferredText || "未命名术语" : item.name || "未命名规则");
       note.textContent = String(item.note || (item.type === "term" ? item.definition || "暂无说明" : item.ruleText || "暂无说明"));
       status.className = "provider-badge";
-      status.textContent = item.enabled === false ? "已停用" : "已启用";
+      status.textContent = helpers.writingPolicyItemStateLabel
+        ? helpers.writingPolicyItemStateLabel(item, "organization")
+        : (item.enabled === false ? "组织自定义 · 未生效" : "组织自定义 · 已生效");
       text.appendChild(title);
       text.appendChild(note);
       row.appendChild(text);
@@ -2697,12 +2775,19 @@
     var item = editor.item || {};
     var type = editor.type || state.writingPolicyType;
     var scopeDefinition = getWritingPolicyScopeDefinition(editor.scope || state.writingPolicyScope);
-    byId("writing-policy-editor-title").textContent = editor.mode === "edit" ? "编辑规范条目" : "新增规范条目";
-    byId("writing-policy-editor-caption").textContent = scopeDefinition.label + " · " + (type === "term" ? "术语" : "文体规则");
+    byId("writing-policy-editor-title").textContent = editor.mode === "preset-override"
+      ? "编辑预置术语覆盖"
+      : editor.mode === "edit"
+        ? "编辑规范条目"
+        : "新增规范条目";
+    byId("writing-policy-editor-caption").textContent = editor.mode === "preset-override"
+      ? "组织覆盖 · 保存后优先于预置基线"
+      : scopeDefinition.label + " · " + (type === "term" ? "术语" : "文体规则");
     byId("writing-policy-term-fields").hidden = type !== "term";
     byId("writing-policy-style-fields").hidden = type !== "style";
     byId("writing-policy-category-field").hidden = type !== "term";
     byId("writing-policy-always-apply-field").hidden = type !== "style";
+    byId("writing-policy-enabled-field").hidden = editor.mode === "preset-override";
     byId("writing-policy-preferred-text").value = String(item.preferredText || "");
     byId("writing-policy-aliases").value = joinWritingPolicyList(item.aliases);
     byId("writing-policy-forbidden-variants").value = joinWritingPolicyList(item.forbiddenVariants);
@@ -2714,7 +2799,9 @@
     byId("writing-policy-note").value = String(item.note || "");
     byId("writing-policy-category").value = String(item.category || "");
     byId("writing-policy-context-keywords").value = joinWritingPolicyList(item.contextKeywords);
-    byId("writing-policy-priority").value = String(item.priority || "medium");
+    byId("writing-policy-priority").value = helpers.normalizeWritingPolicyPriority
+      ? helpers.normalizeWritingPolicyPriority(item.priority)
+      : String(item.priority || "medium");
     byId("writing-policy-always-apply").checked = Boolean(item.alwaysApply);
     byId("writing-policy-enabled").checked = item.enabled !== false;
     byId("writing-policy-editor-advanced").open = false;
@@ -2729,6 +2816,22 @@
       item: item || {},
       type: item && item.type ? item.type : state.writingPolicyType,
       scope: item && item.scope ? item.scope : state.writingPolicyScope
+    };
+    state.writingPolicyEditorDirty = false;
+    setWritingPolicyView("editor");
+    renderWritingPolicyEditor();
+  }
+
+  function openWritingPolicyPresetEditor(item) {
+    if (!item || item.type !== "term" || state.writingPolicyMutationBusy) {
+      return;
+    }
+    state.writingPolicyEditor = {
+      mode: "preset-override",
+      item: item,
+      type: "term",
+      scope: "global",
+      returnView: "preset"
     };
     state.writingPolicyEditorDirty = false;
     setWritingPolicyView("editor");
@@ -2784,7 +2887,12 @@
     }
     path = "/writing-policies/items";
     options = { timeoutMs: WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS };
-    if (editor.mode === "edit") {
+    if (editor.mode === "preset-override") {
+      path = "/writing-policies/preset-overrides/" +
+        encodeURIComponent(String(editor.item.id || ""));
+      options.method = "PUT";
+      draft.operation = "override";
+    } else if (editor.mode === "edit") {
       path += "/" + encodeURIComponent(String(editor.item.id || ""));
       options.method = "PATCH";
     }
@@ -2794,6 +2902,13 @@
       setWritingPolicyMutationBusy(false);
       state.writingPolicyEditorDirty = false;
       clearWritingPolicyEditorState();
+      if (editor.mode === "preset-override") {
+        setWritingPolicyView("preset");
+        return loadWritingPolicyPresetItems(state.writingPolicyPresetPack.packId).then(function () {
+          loadWritingPolicySummary();
+          setStatus("预置术语的组织覆盖已保存。");
+        });
+      }
       setWritingPolicyView("list");
       return loadWritingPolicyItems().then(function () {
         loadWritingPolicySummary();
@@ -2839,12 +2954,109 @@
   }
 
   function closeWritingPolicyEditor() {
+    var returnView = state.writingPolicyEditor && state.writingPolicyEditor.returnView;
     if (!confirmWritingPolicyEditorDiscard()) {
       return;
     }
     clearWritingPolicyEditorState();
-    setWritingPolicyView("list");
-    renderWritingPolicyList();
+    if (returnView === "preset") {
+      setWritingPolicyView("preset");
+      renderWritingPolicyPresetItems();
+    } else {
+      setWritingPolicyView("list");
+      renderWritingPolicyList();
+    }
+  }
+
+  function findWritingPolicyPresetItem(itemId) {
+    var found = null;
+    state.writingPolicyPresetItems.forEach(function (item) {
+      if (String(item.id || "") === String(itemId || "")) {
+        found = item;
+      }
+    });
+    return found;
+  }
+
+  function disableWritingPolicyPresetTerm(itemId) {
+    var item = findWritingPolicyPresetItem(itemId);
+    if (!item || item.type !== "term" || state.writingPolicyMutationBusy) {
+      return;
+    }
+    if (window.confirm && !window.confirm("确认停用预置术语“" + String(item.preferredText || "") + "”？")) {
+      return;
+    }
+    state.writingPolicyMutationBusy = true;
+    renderWritingPolicyPresetPackSelect();
+    renderWritingPolicyPresetItems();
+    request("/writing-policies/preset-overrides/" + encodeURIComponent(String(item.id || "")), {
+      operation: "disabled"
+    }, {
+      method: "PUT",
+      timeoutMs: WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS
+    }).then(function () {
+      state.writingPolicyMutationBusy = false;
+      renderWritingPolicyPresetPackSelect();
+      return loadWritingPolicyPresetItems(state.writingPolicyPresetPack.packId).then(function () {
+        loadWritingPolicySummary();
+        setStatus("预置术语已停用。");
+      });
+    }).catch(function (error) {
+      state.writingPolicyMutationBusy = false;
+      renderWritingPolicyPresetPackSelect();
+      renderWritingPolicyPresetItems();
+      setStatus("停用失败：" + describeFetchError(error));
+    });
+  }
+
+  function restoreWritingPolicyPresetTerm(itemId) {
+    var item = findWritingPolicyPresetItem(itemId);
+    if (!item || item.type !== "term" || state.writingPolicyMutationBusy) {
+      return;
+    }
+    if (window.confirm && !window.confirm("确认恢复预置术语“" + String((item.baseline || {}).preferredText || item.preferredText || "") + "”？")) {
+      return;
+    }
+    state.writingPolicyMutationBusy = true;
+    renderWritingPolicyPresetPackSelect();
+    renderWritingPolicyPresetItems();
+    request("/writing-policies/preset-overrides/" + encodeURIComponent(String(item.id || "")), null, {
+      method: "DELETE",
+      timeoutMs: WRITING_POLICY_MANAGEMENT_REQUEST_TIMEOUT_MS
+    }).then(function () {
+      state.writingPolicyMutationBusy = false;
+      renderWritingPolicyPresetPackSelect();
+      return loadWritingPolicyPresetItems(state.writingPolicyPresetPack.packId).then(function () {
+        loadWritingPolicySummary();
+        setStatus("预置术语已恢复。");
+      });
+    }).catch(function (error) {
+      state.writingPolicyMutationBusy = false;
+      renderWritingPolicyPresetPackSelect();
+      renderWritingPolicyPresetItems();
+      setStatus("恢复失败：" + describeFetchError(error));
+    });
+  }
+
+  function handleWritingPolicyPresetAction(event) {
+    var target = event.target;
+    var action;
+    var itemId;
+    while (target && target !== byId("writing-policy-preset-item-list") && !target.getAttribute("data-writing-policy-preset-action")) {
+      target = target.parentNode;
+    }
+    if (!target || target === byId("writing-policy-preset-item-list")) {
+      return;
+    }
+    action = target.getAttribute("data-writing-policy-preset-action");
+    itemId = target.getAttribute("data-writing-policy-preset-id");
+    if (action === "edit") {
+      openWritingPolicyPresetEditor(findWritingPolicyPresetItem(itemId));
+    } else if (action === "disable") {
+      disableWritingPolicyPresetTerm(itemId);
+    } else if (action === "restore") {
+      restoreWritingPolicyPresetTerm(itemId);
+    }
   }
 
   function handleWritingPolicyScopeClick(event) {
@@ -4742,6 +4954,10 @@
     byId("btn-writing-policy-preset-back").addEventListener("click", function () {
       setWritingPolicyView("home");
     });
+    byId("writing-policy-preset-pack-select").addEventListener("change", function (event) {
+      selectWritingPolicyPresetPack(event.target.value);
+    });
+    byId("writing-policy-preset-item-list").addEventListener("click", handleWritingPolicyPresetAction);
     byId("btn-writing-policy-open-organization").addEventListener("click", openWritingPolicyScopeView);
     byId("btn-retry-writing-policy-summary").addEventListener("click", loadWritingPolicySummary);
     byId("btn-writing-policy-scope-back").addEventListener("click", function () {

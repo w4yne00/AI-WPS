@@ -1440,6 +1440,10 @@ body[data-task-mode="smartWrite"] #result-output {
   overflow-wrap: anywhere;
 }
 
+.writing-policy-preset-pack-field {
+  margin: 0;
+}
+
 .writing-policy-preset-item {
   grid-template-columns: minmax(0, 1fr);
   gap: 5px;
@@ -1454,6 +1458,13 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .writing-policy-preset-item small {
   overflow-wrap: anywhere;
+}
+
+.writing-policy-preset-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 3px;
 }
 
 .writing-policy-import-entry {

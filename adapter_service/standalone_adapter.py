@@ -81,6 +81,8 @@ _HTTP_TCHAR_BYTES = frozenset(
 _WRITING_POLICY_NOT_FOUND_CODES = {
     "writing_policy_item_not_found",
     "writing_policy_pack_not_found",
+    "writing_policy_preset_item_not_found",
+    "writing_policy_preset_operation_not_found",
     "import_preview_not_found",
     "import_preview_expired",
 }
@@ -111,6 +113,9 @@ _WRITING_POLICY_ITEM_FIELDS = {
     "positiveExample",
     "negativeExample",
     "alwaysApply",
+}
+_WRITING_POLICY_PRESET_OPERATION_FIELDS = _WRITING_POLICY_ITEM_FIELDS | {
+    "operation"
 }
 _WRITING_POLICY_STATIC_ROUTE_METHODS = {
     "/writing-policies/summary": ("GET",),
@@ -413,6 +418,15 @@ def writing_policy_allowed_methods(path):
         raw_item_id = path[len(item_prefix):]
         if raw_item_id and "/" not in raw_item_id and "/" not in unquote(raw_item_id):
             return ("PATCH", "DELETE")
+    preset_prefix = "/writing-policies/preset-overrides/"
+    if path.startswith(preset_prefix):
+        raw_preset_id = path[len(preset_prefix):]
+        if (
+            raw_preset_id
+            and "/" not in raw_preset_id
+            and "/" not in unquote(raw_preset_id)
+        ):
+            return ("PUT", "DELETE")
     return None
 
 
@@ -532,9 +546,9 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
             if layer == "preset":
                 if not pack_id:
                     return _writing_policy_validation()
-                items = get_writing_policy_service().list_preset_items(pack_id)
-                if item_type:
-                    items = [item for item in items if item.get("type") == item_type]
+                items = get_writing_policy_service().list_preset_items(
+                    pack_id, item_type or None
+                )
                 if search:
                     normalized = search.casefold()
                     items = [
@@ -575,6 +589,36 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
             return _writing_policy_json(
                 {"item": _writing_policy_store().create_item(dict(payload))}, "created"
             )
+
+        preset_prefix = "/writing-policies/preset-overrides/"
+        if path.startswith(preset_prefix) and path != preset_prefix:
+            preset_entry_id = unquote(path[len(preset_prefix):]).strip("/")
+            if "/" in preset_entry_id or not preset_entry_id:
+                return _writing_policy_validation()
+            if method == "PUT":
+                if (
+                    not isinstance(payload, dict)
+                    or set(payload) - _WRITING_POLICY_PRESET_OPERATION_FIELDS
+                ):
+                    return _writing_policy_validation()
+                operation_payload = dict(payload)
+                operation = str(operation_payload.pop("operation", ""))
+                result = get_writing_policy_service().put_preset_term_operation(
+                    preset_entry_id,
+                    operation,
+                    operation_payload,
+                )
+                return _writing_policy_json(
+                    {"operation": result}, "updated"
+                )
+            if method == "DELETE":
+                operation = get_writing_policy_service().restore_preset_term(
+                    preset_entry_id
+                )
+                return _writing_policy_json(
+                    {"restored": True, "operation": operation},
+                    "restored",
+                )
 
         item_prefix = "/writing-policies/items/"
         if path.startswith(item_prefix) and path != item_prefix:
@@ -1512,12 +1556,31 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def do_PUT(self):
-        path = urlparse(self.path).path
+        parsed = urlparse(self.path)
+        path = parsed.path
         if _is_writing_policy_path(path):
-            self.close_connection = True
-            self._write_writing_policy_response(
-                dispatch_writing_policy("PUT", path)
+            if self._reject_writing_policy_route_or_method("PUT", path):
+                return
+            raw_bytes, rejection = self._read_writing_policy_json_body()
+            if rejection is not None:
+                self.close_connection = True
+                self._write_writing_policy_response(rejection)
+                return
+            try:
+                payload = json.loads(raw_bytes.decode("utf-8") or "{}")
+            except (UnicodeDecodeError, ValueError):
+                self._write_writing_policy_response(
+                    _writing_policy_validation()
+                )
+                return
+            response = dispatch_writing_policy(
+                "PUT",
+                path,
+                query=parsed.query,
+                payload=payload,
+                body_size=len(raw_bytes),
             )
+            self._write_writing_policy_response(response)
             return
         self.send_error(501, "Unsupported method (%r)" % self.command)
 
