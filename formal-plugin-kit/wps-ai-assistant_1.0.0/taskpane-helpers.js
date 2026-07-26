@@ -2011,11 +2011,13 @@
   function normalizeWritingPolicyUsage(value) {
     var source;
     var matchedItems;
+    var conflicts;
     if (!value || typeof value !== "object" || Array.isArray(value)) {
       return null;
     }
     source = value;
     matchedItems = Array.isArray(source.matchedItems) ? source.matchedItems : [];
+    conflicts = Array.isArray(source.conflicts) ? source.conflicts : [];
     return {
       applied: Boolean(source.applied),
       degraded: Boolean(source.degraded),
@@ -2036,6 +2038,21 @@
       styleRuleCount: normalizeWritingPolicyUsageCount(source.styleRuleCount),
       antiTemplateRuleCount: normalizeWritingPolicyUsageCount(source.antiTemplateRuleCount),
       truncatedCount: normalizeWritingPolicyUsageCount(source.truncatedCount),
+      conflictCount: normalizeWritingPolicyUsageCount(source.conflictCount),
+      conflicts: conflicts.filter(function (item) {
+        return item && String(item.name || "").trim();
+      }).slice(0, 20).map(function (item) {
+        return {
+          name: String(item.name || "").trim().slice(0, 120),
+          winnerId: String(item.winnerId || "").slice(0, 128),
+          itemIds: (Array.isArray(item.itemIds) ? item.itemIds : [])
+            .map(function (itemId) {
+              return String(itemId || "").slice(0, 128);
+            })
+            .filter(Boolean)
+            .slice(0, 20)
+        };
+      }),
       matchedItems: matchedItems.filter(function (item) {
         return item &&
           (item.type === "term" || item.type === "style" || item.type === "anti_template") &&
@@ -2112,6 +2129,7 @@
   function writingPolicyUsageSummary(value, taskType) {
     var usage = normalizeWritingPolicyUsage(value);
     var action;
+    var summary;
     if (!usage) {
       return "";
     }
@@ -2120,37 +2138,46 @@
     }
     action = taskType === "word.document_review" ? "已检查" : "已应用";
     if (usage.sceneLabel) {
-      return "写作规范：" + action + " " + usage.sceneLabel + "（" +
+      summary = "写作规范：" + action + " " + usage.sceneLabel + "（" +
         usage.termMatchCount + " 条术语、" + usage.styleRuleCount +
         " 条文体规则、" + usage.antiTemplateRuleCount + " 条去模板化规则）";
-    }
-    if (usage.packName && usage.presetVersion) {
-      return "写作规范：" + action + " " + usage.packName + " v" +
+    } else if (usage.packName && usage.presetVersion) {
+      summary = "写作规范：" + action + " " + usage.packName + " v" +
         usage.presetVersion + "（" +
         (usage.termMatchCount + usage.styleRuleCount) + " 条规则）";
+    } else {
+      summary = "写作规范：" + action + " " + usage.termMatchCount +
+        " 条术语、" + usage.styleRuleCount + " 条文体规则";
     }
-    return "写作规范：" + action + " " + usage.termMatchCount +
-      " 条术语、" + usage.styleRuleCount + " 条文体规则";
+    if (usage.conflictCount) {
+      summary += "；检测到 " + usage.conflictCount + " 组同层冲突，已按优先级裁决";
+    }
+    return summary;
   }
 
   function writingPolicyUsageDetails(value) {
     var usage = normalizeWritingPolicyUsage(value);
+    var details;
     if (!usage) {
       return [];
     }
-    return usage.matchedItems.map(function (item) {
+    details = usage.matchedItems.map(function (item) {
       var label = item.type === "term"
         ? "术语"
         : (item.type === "anti_template" ? "去模板化规则" : "文体规则");
       return label + "：" + item.name;
     });
+    usage.conflicts.forEach(function (item) {
+      details.push("冲突提示：" + item.name + "（已采用 " + item.winnerId + "）");
+    });
+    return details;
   }
 
   function validateWritingPolicyDraft(value) {
     var draft = value && typeof value === "object" ? value : {};
     var type = String(draft.type || "");
     var scope = String(draft.scope || "");
-    if (type !== "term" && type !== "style") {
+    if (type !== "term" && type !== "style" && type !== "anti_template") {
       return { ok: false, field: "type", message: "请选择规范类型。" };
     }
     if (type === "term" && scope !== "global") {
@@ -2159,11 +2186,17 @@
     if (type === "term" && !String(draft.preferredText || "").trim()) {
       return { ok: false, field: "preferredText", message: "请输入标准写法。" };
     }
-    if (type === "style" && !String(draft.name || "").trim()) {
+    if (type !== "term" && !String(draft.name || "").trim()) {
       return { ok: false, field: "name", message: "请输入规则名称。" };
     }
-    if (type === "style" && !String(draft.ruleText || "").trim()) {
+    if (type !== "term" && !String(draft.ruleText || "").trim()) {
       return { ok: false, field: "ruleText", message: "请输入写作规则。" };
+    }
+    if (type !== "term" && (!Array.isArray(draft.taskTypes) || !draft.taskTypes.length)) {
+      return { ok: false, field: "taskTypes", message: "请至少选择一个 Word 任务。" };
+    }
+    if (type !== "term" && (!Array.isArray(draft.sceneIds) || !draft.sceneIds.length)) {
+      return { ok: false, field: "sceneIds", message: "请至少选择一个规范场景。" };
     }
     return { ok: true, field: "", message: "" };
   }

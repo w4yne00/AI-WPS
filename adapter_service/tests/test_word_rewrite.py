@@ -365,7 +365,8 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
     def test_default_smart_write_injects_enabled_term_from_temporary_sqlite(self):
         provider = RecordingSmartWriteProvider()
         with isolated_default_writing_policy_database(self) as db_path:
-            WritingPolicyStore(db_path).create_item(
+            store = WritingPolicyStore(db_path)
+            store.create_item(
                 {
                     "type": "term",
                     "scope": "global",
@@ -396,6 +397,77 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         self.assertIn(
             "企业大模型接口",
             [item["name"] for item in result["writingPolicyUsage"]["matchedItems"]],
+        )
+
+    def test_smart_write_applies_scoped_organization_anti_template_rule_once(self):
+        provider = RecordingSmartWriteProvider()
+        with isolated_default_writing_policy_database(self) as db_path:
+            store = WritingPolicyStore(db_path)
+            store.create_item(
+                {
+                    "type": "anti_template",
+                    "name": "智能编写删除空泛开场",
+                    "ruleText": "智能编写应直接陈述最终结论。",
+                    "positiveExample": "结论：方案已具备实施条件。",
+                    "negativeExample": "在时代发展背景下，经过不懈努力。",
+                    "contextKeywords": [],
+                    "alwaysApply": True,
+                    "priority": "high",
+                    "taskTypes": ["word.smart_write"],
+                    "sceneIds": ["official"],
+                    "enabled": True,
+                    "note": "组织规则端到端测试",
+                }
+            )
+            for name, rule_text, task_types, scene_ids in (
+                (
+                    "仿写专用排除规则",
+                    "此规则只允许进入智能仿写。",
+                    ["word.smart_imitation"],
+                    ["official"],
+                ),
+                (
+                    "网络安全场景排除规则",
+                    "此规则只允许进入网络安全场景。",
+                    ["word.smart_write"],
+                    ["cybersecurity"],
+                ),
+            ):
+                store.create_item(
+                    {
+                        "type": "style",
+                        "name": name,
+                        "ruleText": rule_text,
+                        "contextKeywords": [],
+                        "alwaysApply": True,
+                        "priority": "high",
+                        "taskTypes": task_types,
+                        "sceneIds": scene_ids,
+                        "enabled": True,
+                    }
+                )
+
+            result = WordRewriter(provider).smart_write(
+                self._request(writing_policy_scene="official"),
+                "trace-smart-write-scoped-rule",
+            )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn(
+            "智能编写应直接陈述最终结论",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertNotIn(
+            "此规则只允许进入智能仿写",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertNotIn(
+            "此规则只允许进入网络安全场景",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertGreaterEqual(
+            result["writingPolicyUsage"]["antiTemplateRuleCount"],
+            1,
         )
 
     def test_smart_write_provider_error_still_merges_writing_policy_debug(self):

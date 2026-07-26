@@ -1471,11 +1471,34 @@ body[data-task-mode="smartWrite"] #result-output {
   justify-self: start;
 }
 
+.writing-policy-layer-switch,
 .writing-policy-list-toolbar,
 .writing-policy-list-actions,
 .writing-policy-type-switch {
   display: flex;
   align-items: center;
+}
+
+.writing-policy-layer-switch {
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--color-surface-muted);
+}
+
+.writing-policy-layer-switch button {
+  flex: 1;
+  min-height: 34px;
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+}
+
+.writing-policy-layer-switch button.active {
+  background: var(--color-surface);
+  color: var(--color-primary);
+  box-shadow: 0 1px 4px rgba(23, 45, 88, 0.12);
 }
 
 .writing-policy-list-toolbar {
@@ -1600,6 +1623,27 @@ body[data-task-mode="smartWrite"] #result-output {
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+.writing-policy-scope-options {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+}
+
+.writing-policy-scope-options legend {
+  padding: 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.writing-policy-scope-options label {
+  display: flex;
+  gap: 8px;
+  align-items: center;
 }
 
 .writing-policy-editor-advanced {

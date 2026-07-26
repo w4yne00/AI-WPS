@@ -84,9 +84,11 @@ class WritingPolicyItemRequest(_AliasModel):
     positive_example: Optional[str] = Field(default=None, alias="positiveExample")
     negative_example: Optional[str] = Field(default=None, alias="negativeExample")
     always_apply: Optional[bool] = Field(default=None, alias="alwaysApply")
+    task_types: Optional[List[str]] = Field(default=None, alias="taskTypes")
+    scene_ids: Optional[List[str]] = Field(default=None, alias="sceneIds")
 
 
-class PresetTermOperationRequest(WritingPolicyItemRequest):
+class PresetOperationRequest(WritingPolicyItemRequest):
     operation: str
 
 
@@ -314,14 +316,14 @@ def delete_item(item_id: str = PathParameter(alias="itemId")) -> dict:
 
 
 @router.put("/writing-policies/preset-overrides/{presetEntryId}")
-def put_preset_term_operation(
+def put_preset_operation(
     preset_entry_id: str = PathParameter(alias="presetEntryId"),
-    request: PresetTermOperationRequest = Body(),
+    request: PresetOperationRequest = Body(),
 ) -> dict:
     try:
         payload = _model_payload(request, exclude_none=True)
         operation = str(payload.pop("operation", ""))
-        result = get_writing_policy_service().put_preset_term_operation(
+        result = get_writing_policy_service().put_preset_operation(
             preset_entry_id,
             operation,
             payload,
@@ -332,11 +334,11 @@ def put_preset_term_operation(
 
 
 @router.delete("/writing-policies/preset-overrides/{presetEntryId}")
-def restore_preset_term(
+def restore_preset_operation(
     preset_entry_id: str = PathParameter(alias="presetEntryId"),
 ) -> dict:
     try:
-        operation = get_writing_policy_service().restore_preset_term(
+        operation = get_writing_policy_service().restore_preset_operation(
             preset_entry_id
         )
         return _envelope(

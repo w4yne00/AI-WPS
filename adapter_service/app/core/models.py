@@ -427,6 +427,12 @@ class WritingPolicyUsageItem(BaseModel):
     name: str
 
 
+class WritingPolicyConflict(BaseModel):
+    name: str
+    winner_id: str = Field(alias="winnerId")
+    item_ids: List[str] = Field(default_factory=list, alias="itemIds")
+
+
 class WritingPolicyUsage(BaseModel):
     applied: bool
     degraded: bool = False
@@ -450,6 +456,8 @@ class WritingPolicyUsage(BaseModel):
     )
     truncated_count: int = Field(default=0, alias="truncatedCount")
     matched_items: List[WritingPolicyUsageItem] = Field(default_factory=list, alias="matchedItems")
+    conflict_count: int = Field(default=0, alias="conflictCount")
+    conflicts: List[WritingPolicyConflict] = Field(default_factory=list)
 
 
 class WritingPolicyAudit(BaseModel):

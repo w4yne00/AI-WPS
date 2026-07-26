@@ -17,7 +17,7 @@ HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 
 
 class _EmptyStore:
-    def enabled_items(self, _task_scope):
+    def enabled_items(self, _task_scope, _scene_id=None):
         return [], []
 
 

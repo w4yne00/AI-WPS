@@ -48,6 +48,23 @@ def style_payload(scope, name, **overrides):
     return payload
 
 
+def scoped_rule_payload(rule_type, name, **overrides):
+    payload = {
+        "type": rule_type,
+        "name": name,
+        "ruleText": "先给出结论，再说明依据。",
+        "positiveExample": "总体方案已完成。",
+        "negativeExample": "经过大量工作，终于完成总体方案。",
+        "contextKeywords": ["汇报", "进展"],
+        "alwaysApply": False,
+        "priority": "medium",
+        "enabled": True,
+        "note": "测试备注",
+    }
+    payload.update(overrides)
+    return payload
+
+
 class WritingPolicyStoreTests(unittest.TestCase):
     def make_store(self, root):
         return WritingPolicyStore(Path(root) / "writing_policies.db")
@@ -397,6 +414,110 @@ class WritingPolicyStoreTests(unittest.TestCase):
             with self.assertRaises(WritingPolicyError) as raised:
                 store.create_item(style_payload("word.smart_write", "  结论先行  "))
             self.assertEqual(raised.exception.code, "style_name_conflict")
+
+    def test_organization_rules_default_to_all_word_tasks_and_scenes(self):
+        with TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+
+            style = store.create_item(scoped_rule_payload("style", "结论先行"))
+            anti_template = store.create_item(
+                scoped_rule_payload("anti_template", "删除空泛铺垫")
+            )
+
+            expected_tasks = [
+                "word.smart_write",
+                "word.smart_imitation",
+                "word.document_review",
+            ]
+            expected_scenes = ["yangqi", "cybersecurity", "official"]
+            for item in (style, anti_template):
+                self.assertEqual(item["taskTypes"], expected_tasks)
+                self.assertEqual(item["sceneIds"], expected_scenes)
+                self.assertEqual(store.get_item(item["id"]), item)
+
+    def test_organization_rule_task_and_scene_scopes_filter_enabled_items(self):
+        with TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            scoped = store.create_item(
+                scoped_rule_payload(
+                    "anti_template",
+                    "删除表演性表达",
+                    taskTypes=[
+                        "word.smart_write",
+                        "word.document_review",
+                    ],
+                    sceneIds=["cybersecurity"],
+                )
+            )
+
+            _, smart_write = store.enabled_items(
+                "word.smart_write", "cybersecurity"
+            )
+            _, imitation = store.enabled_items(
+                "word.smart_imitation", "cybersecurity"
+            )
+            _, wrong_scene = store.enabled_items("word.smart_write", "yangqi")
+
+            self.assertEqual([item["id"] for item in smart_write], [scoped["id"]])
+            self.assertEqual(imitation, [])
+            self.assertEqual(wrong_scene, [])
+
+    def test_organization_rule_list_includes_legacy_task_scopes(self):
+        with TemporaryDirectory() as tmp:
+            store = self.make_store(tmp)
+            legacy = store.create_item(
+                style_payload("word.smart_write", "旧版智能编写规则")
+            )
+            current = store.create_item(
+                scoped_rule_payload(
+                    "style",
+                    "新版多范围规则",
+                    taskTypes=["word.smart_write", "word.document_review"],
+                    sceneIds=["yangqi"],
+                )
+            )
+
+            listed = store.list_items("organization", "style")
+
+            self.assertEqual(
+                {item["id"] for item in listed},
+                {legacy["id"], current["id"]},
+            )
+
+    def test_preset_style_override_disable_and_restore_persist_across_reopen(self):
+        with TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "writing_policies.db"
+            store = WritingPolicyStore(db_path)
+            override = store.upsert_preset_operation(
+                "rule.yangqi.base.001",
+                "yangqi-tech-writing-base",
+                "style",
+                "override",
+                scoped_rule_payload(
+                    "style",
+                    "保持保护项优先级",
+                    taskTypes=["word.smart_write"],
+                    sceneIds=["yangqi"],
+                ),
+            )
+
+            reopened = WritingPolicyStore(db_path)
+            self.assertEqual(
+                reopened.get_preset_operation("rule.yangqi.base.001"),
+                override,
+            )
+            disabled = reopened.upsert_preset_operation(
+                "rule.yangqi.base.001",
+                "yangqi-tech-writing-base",
+                "style",
+                "disabled",
+            )
+            self.assertEqual(disabled["operation"], "disabled")
+            restored = reopened.restore_preset_operation(
+                "rule.yangqi.base.001"
+            )
+            self.assertEqual(restored["operation"], "disabled")
+            self.assertEqual(reopened.list_preset_operations("style"), [])
 
     def test_search_matches_term_and_style_business_fields(self):
         with TemporaryDirectory() as tmp:

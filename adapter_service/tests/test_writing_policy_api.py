@@ -44,7 +44,7 @@ if HAS_API_DEPS:
     from app.api.writing_policies import (
         ImportApplyRequest,
         ImportPreviewRequest,
-        PresetTermOperationRequest,
+        PresetOperationRequest,
         WritingPolicyItemRequest,
         apply_import,
         backup_writing_policy,
@@ -57,8 +57,8 @@ if HAS_API_DEPS:
         get_summary,
         list_items,
         preview_import,
-        put_preset_term_operation,
-        restore_preset_term,
+        put_preset_operation,
+        restore_preset_operation,
         update_item,
     )
     from app.core.errors import AdapterError
@@ -199,9 +199,9 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         self.assertEqual(apply_request.preview_token, "token")
 
     def test_preset_term_api_override_disable_restore_and_effective_state(self):
-        override = put_preset_term_operation(
+        override = put_preset_operation(
             "term.cyber.001",
-            PresetTermOperationRequest(
+            PresetOperationRequest(
                 operation="override",
                 preferredText="组织网络安全",
                 aliases=["网络安全"],
@@ -228,9 +228,9 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         self.assertEqual(overridden["preferredText"], "组织网络安全")
         self.assertTrue(overridden["effective"])
 
-        put_preset_term_operation(
+        put_preset_operation(
             "term.cyber.001",
-            PresetTermOperationRequest(operation="disabled"),
+            PresetOperationRequest(operation="disabled"),
         )
         disabled_items = list_items(
             item_type="term",
@@ -245,7 +245,7 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         self.assertEqual(disabled["organizationState"], "disabled")
         self.assertFalse(disabled["effective"])
 
-        restored = restore_preset_term("term.cyber.001")
+        restored = restore_preset_operation("term.cyber.001")
         self.assertTrue(restored["data"]["restored"])
         current_items = list_items(
             item_type="term",
@@ -259,6 +259,72 @@ class WritingPolicyDirectRouteTests(unittest.TestCase):
         )
         self.assertEqual(current["organizationState"], "preset")
         self.assertTrue(current["effective"])
+
+    def test_rule_api_supports_multi_scope_anti_template_and_preset_lifecycle(self):
+        created = create_item(
+            WritingPolicyItemRequest(
+                type="anti_template",
+                name="删除空泛铺垫",
+                ruleText="直接陈述事实和结论。",
+                positiveExample="系统已完成部署。",
+                negativeExample="经过大量努力，系统终于完成部署。",
+                taskTypes=[
+                    "word.smart_write",
+                    "word.document_review",
+                ],
+                sceneIds=["yangqi", "cybersecurity"],
+                contextKeywords=["部署"],
+                priority="high",
+                enabled=True,
+            )
+        )["data"]["item"]
+        self.assertEqual(created["type"], "anti_template")
+        self.assertEqual(
+            created["taskTypes"],
+            ["word.smart_write", "word.document_review"],
+        )
+        self.assertEqual(created["sceneIds"], ["yangqi", "cybersecurity"])
+        organization_items = list_items(
+            scope="organization",
+            item_type="anti_template",
+        )["data"]["items"]
+        self.assertIn(
+            created["id"],
+            [item["id"] for item in organization_items],
+        )
+
+        baseline = list_items(
+            item_type="anti_template",
+            layer="preset",
+            pack_id="official-document-style",
+        )["data"]["items"][0]
+        override = put_preset_operation(
+            baseline["id"],
+            PresetOperationRequest(
+                operation="override",
+                ruleText="删除空泛口号，保留正式责任边界。",
+                taskTypes=["word.document_review"],
+                sceneIds=["official"],
+            ),
+        )
+        self.assertEqual(
+            override["data"]["operation"]["itemType"],
+            "anti_template",
+        )
+
+        put_preset_operation(
+            baseline["id"],
+            PresetOperationRequest(operation="disabled"),
+        )
+        disabled = list_items(
+            item_type="anti_template",
+            layer="preset",
+            pack_id="official-document-style",
+        )["data"]["items"][0]
+        self.assertEqual(disabled["organizationState"], "disabled")
+
+        restored = restore_preset_operation(baseline["id"])
+        self.assertTrue(restored["data"]["restored"])
 
     def test_template_downloads_have_deterministic_binary_headers(self):
         csv_response = download_csv_template()
@@ -1242,6 +1308,70 @@ class WritingPolicyStandaloneTests(unittest.TestCase):
         self.assertFalse(inactive["effective"])
         self.assertEqual(restored["status"], 200)
         self.assertTrue(restored["body"]["data"]["restored"])
+
+    def test_standalone_rule_multi_scope_and_preset_lifecycle_match_contract(self):
+        created = self.dispatch(
+            "POST",
+            "/writing-policies/items",
+            {
+                "type": "anti_template",
+                "name": "删除空泛铺垫",
+                "ruleText": "直接陈述事实和结论。",
+                "taskTypes": [
+                    "word.smart_write",
+                    "word.document_review",
+                ],
+                "sceneIds": ["yangqi", "cybersecurity"],
+                "contextKeywords": [],
+                "alwaysApply": True,
+                "priority": "high",
+                "enabled": True,
+            },
+        )
+        item = created["body"]["data"]["item"]
+        self.assertEqual(created["status"], 200)
+        self.assertEqual(item["type"], "anti_template")
+        self.assertEqual(
+            item["taskTypes"],
+            ["word.smart_write", "word.document_review"],
+        )
+
+        baseline_list = self.dispatch(
+            "GET",
+            "/writing-policies/items",
+            query=(
+                "layer=preset&packId=official-document-style"
+                "&type=anti_template"
+            ),
+        )
+        baseline = baseline_list["body"]["data"]["items"][0]
+        override = self.dispatch(
+            "PUT",
+            "/writing-policies/preset-overrides/%s" % baseline["id"],
+            {
+                "operation": "override",
+                "ruleText": "删除空泛口号，保留责任边界。",
+                "taskTypes": ["word.document_review"],
+                "sceneIds": ["official"],
+            },
+        )
+        disabled = self.dispatch(
+            "PUT",
+            "/writing-policies/preset-overrides/%s" % baseline["id"],
+            {"operation": "disabled"},
+        )
+        restored = self.dispatch(
+            "DELETE",
+            "/writing-policies/preset-overrides/%s" % baseline["id"],
+        )
+
+        self.assertEqual(override["status"], 200)
+        self.assertEqual(
+            override["body"]["data"]["operation"]["itemType"],
+            "anti_template",
+        )
+        self.assertEqual(disabled["status"], 200)
+        self.assertEqual(restored["status"], 200)
 
     def test_standalone_preview_apply_is_single_use_and_validates_upload(self):
         content = generate_csv_template()

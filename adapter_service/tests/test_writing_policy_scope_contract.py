@@ -64,6 +64,14 @@ class WritingPolicyScopeContractTests(unittest.TestCase):
                 "writingPolicyUsage": {
                     "applied": True,
                     "termMatchCount": 1,
+                    "conflictCount": 1,
+                    "conflicts": [
+                        {
+                            "name": "结论先行",
+                            "winnerId": "rule-high",
+                            "itemIds": ["rule-high", "rule-low"],
+                        }
+                    ],
                 },
                 "writingPolicyAudit": {
                     "needsReview": [],
@@ -73,6 +81,11 @@ class WritingPolicyScopeContractTests(unittest.TestCase):
         ).model_dump(by_alias=True)
 
         self.assertIsInstance(result["writingPolicyUsage"], dict)
+        self.assertEqual(result["writingPolicyUsage"]["conflictCount"], 1)
+        self.assertEqual(
+            result["writingPolicyUsage"]["conflicts"][0]["winnerId"],
+            "rule-high",
+        )
         self.assertEqual(result["writingPolicyAudit"]["needsReview"], [])
         self.assertNotIn("knowledgeUsage", result)
         self.assertEqual(

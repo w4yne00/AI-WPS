@@ -5,9 +5,11 @@
 ## 范围与生效方式
 
 - **全局术语规范**：适用于智能编写、智能仿写和文档审查。首版术语规范只能选择全局范围。
-- **智能编写文体规则**：仅在 `word.smart_write` 中参与提示词组装。
-- **智能仿写文体规则**：仅在 `word.smart_imitation` 中参与提示词组装。
-- **文档审查文体规则**：仅在 `word.document_review` 中参与提示词组装。
+- **组织文体规则**：可同时选择智能编写、智能仿写和文档审查中的一个或多个任务。
+- **组织去模板化规则**：与文体规则独立维护，也可同时选择一个或多个 Word 任务。
+- **场景范围**：文体和去模板化规则可同时选择 G企技术材料、网络安全技术材料和党政公文中的一个或多个场景。
+
+新建文体或去模板化规则默认勾选三个 Word 任务和三个规范场景；取消勾选后只在剩余任务与场景的交集内生效。旧数据库中按单任务保存的文体规则会在首次打开时迁移为等价的单任务、全场景规则。
 
 智能编写、智能仿写和文档审查任务窗口均提供“自动匹配 / G企技术材料 / 网络安全技术材料 / 党政公文 / 不使用写作规范”五项选择，并在本机按任务分别记忆。自动匹配采用保守策略：不能可靠判断时只加载 G企技术写作基础规范，不擅自推断为网络安全材料或党政公文。
 
@@ -17,18 +19,18 @@
 
 文档审查把生效术语、文体和去模板化规则注入既有审查提示词，由同一次模型调用识别需要语义判断的文体偏差；adapter 再对原文执行非阻断的确定性术语和模板化表达检查。新增发现按既有 `professional / expression` 问题结构附加原因和建议，并进入初始问题卡片和审查记录预览；与模型返回的同类别、同原文片段问题会去重。整个链路只读，不自动修改 Word 原文，也不增加第二次模型调用。
 
-## 预置规范与组织术语状态
+## 预置规范与组织规范状态
 
 Word 的“设置 → 写作规范库”首先展示随版本发布的四个预置规范包：G企技术写作基础、技术文件文体、网络安全术语和党政公文文体。每个包显示版本、来源、许可证、稳定条目 ID 和规则内容；Git 来源同时显示完整提交，政府制度和国家标准来源显示制度编号或标准号。“管理组织规范”继续进入本机组织数据管理。
 
-预置术语支持“编辑覆盖、停用预置、恢复预置”：
+预置术语、文体规则和去模板化规则均支持“编辑覆盖、停用预置、恢复预置”：
 
-- 编辑预置术语只会在 `writing_policies.db` 中创建或更新组织覆盖，不修改随版本发布的 JSON。
-- 停用预置术语会保存预置停用记录，使该术语不进入三个 Word 任务的生效规范。
-- 恢复预置术语会删除当前覆盖或停用记录，重新使用当前安装版本的预置基线。
+- 编辑预置项只会在 `writing_policies.db` 中创建或更新组织覆盖，不修改随版本发布的 JSON。
+- 停用预置项会保存预置停用记录，使该项不进入匹配结果。
+- 恢复预置项会删除当前覆盖或停用记录，重新使用当前安装版本的预置基线。
 - 列表明确显示“预置基线、组织覆盖、预置停用”和“已生效、未生效”状态。组织术语列表显示“组织自定义”状态。
 
-adapter 与 standalone adapter 提供相同的查询和预置术语操作接口：
+adapter 与 standalone adapter 提供相同的查询和预置操作接口：
 
 ```text
 GET /writing-policies/packs
@@ -36,19 +38,41 @@ GET /writing-policies/items?layer=preset&packId=yangqi-tech-writing-base
 GET /writing-policies/items?layer=preset&packId=technical-document-style
 GET /writing-policies/items?layer=preset&packId=cybersecurity-terminology
 GET /writing-policies/items?layer=preset&packId=official-document-style
+GET /writing-policies/items?scope=organization&type=style
+GET /writing-policies/items?scope=organization&type=anti_template
 PUT /writing-policies/preset-overrides/{presetEntryId}
 DELETE /writing-policies/preset-overrides/{presetEntryId}
 ```
 
-`PUT` 请求使用 `operation=override` 并携带术语字段时创建组织覆盖，使用 `operation=disabled` 时创建预置停用记录。`DELETE` 删除该预置项当前的组织操作并恢复基线。操作以稳定的预置条目 ID 为键，并在单个 SQLite 写事务中完成。
+`PUT` 请求使用 `operation=override` 并携带对应类型字段时创建组织覆盖，使用 `operation=disabled` 时创建预置停用记录。`DELETE` 删除该预置项当前的组织操作并恢复基线。操作以稳定的预置条目 ID 为键，并在单个 SQLite 写事务中完成。
 
 预置包候选、人工门禁和来源处理规则见 [`../writing-policy-sources.md`](../writing-policy-sources.md)。
 
 ## 单条维护
 
-在 Word 的“设置 → 写作规范库”中进入范围，再选择“术语规范”或“文体规则”。列表支持搜索、新增、修改和删除；高级字段默认折叠。删除前必须确认，保存冲突时应先检查库内是否已有相同标准写法、别名或规则名称。
+Word 的“设置 → 写作规范库”使用“预置规范 / 组织规范”分层切换。组织规范下可继续进入“术语规范 / 文体规则 / 去模板化规则”三级分类；列表支持搜索、新增、修改和删除，导入、导出和完整备份位于列表高级操作内，不占用首屏。规则编辑器包含名称、规则正文、推荐/不推荐示例、优先级、任务多选、场景多选和上下文关键词，高级字段默认折叠。删除前必须确认，保存冲突时应先检查库内是否已有相同标准写法、别名或规则名称。
 
-组织自定义术语和预置术语操作均保存在本机 `writing_policies.db`，关闭并重新打开 adapter 或 WPS 后继续生效。组织自定义术语优先于冲突的预置基线；组织覆盖后的术语在智能编写、智能仿写和文档审查的解析、提示词注入及本地结果检查中使用相同内容。
+组织规则接口示例：
+
+```json
+{
+  "type": "anti_template",
+  "name": "删除空泛铺垫",
+  "ruleText": "直接陈述事实、结论和依据。",
+  "positiveExample": "经测试，接口平均响应时间为 120 ms。",
+  "negativeExample": "在时代发展背景下，经过不懈努力取得成效。",
+  "priority": "high",
+  "taskTypes": ["word.smart_write", "word.document_review"],
+  "sceneIds": ["yangqi", "cybersecurity"],
+  "contextKeywords": ["汇报", "验收"],
+  "alwaysApply": false,
+  "enabled": true
+}
+```
+
+组织自定义条目和全部预置操作均保存在本机 `writing_policies.db`，关闭并重新打开 adapter 或 WPS 后继续生效。组织自定义术语优先于冲突的预置基线；组织覆盖后的条目在智能编写、智能仿写和文档审查的解析、提示词注入及本地结果检查中使用相同内容。
+
+同一层内出现同名规则时，adapter 使用固定排序裁决：先比较规则层级和优先级，再比较任务精确度、始终应用、名称、稳定 ID 和规范化内容。结果区显示冲突组数、胜出条目 ID 和冲突名称，便于管理员回查；裁决完全在本地完成，不增加第二次模型调用。
 
 ## 导入模板
 

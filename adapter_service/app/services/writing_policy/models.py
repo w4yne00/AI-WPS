@@ -12,6 +12,8 @@ WRITING_POLICY_SCOPES = (
     "word.document_review",
 )
 TASK_SCOPES = WRITING_POLICY_SCOPES[1:]
+RULE_TYPES = ("style", "anti_template")
+WRITING_POLICY_SCENES = ("yangqi", "cybersecurity", "official")
 PRIORITIES = ("high", "medium", "low")
 
 MAX_IMPORT_BYTES = 5 * 1024 * 1024

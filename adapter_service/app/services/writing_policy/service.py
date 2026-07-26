@@ -26,6 +26,9 @@ _PRESET_TASK_TYPES = {
     "word.smart_imitation": "smart_imitate",
     "word.document_review": "document_review",
 }
+_ORGANIZATION_TASK_TYPES = {
+    value: key for key, value in _PRESET_TASK_TYPES.items()
+}
 _INITIALIZATION_BACKOFF_SECONDS = 5.0
 _INITIALIZATION_CLOCK = time.monotonic
 _SERVICE_LOCK = threading.Lock()
@@ -160,8 +163,11 @@ class WritingPolicyService:
                 matched = WritingPolicyMatchResult("", usage, ())
                 selected_packs = ()
             else:
-                terms, styles = self.store.enabled_items(task_scope)
-                preset_operations = self._preset_term_operations()
+                terms, styles = self.store.enabled_items(
+                    task_scope,
+                    resolution.resolved_scene,
+                )
+                preset_operations = self._preset_operations()
                 selected_packs = self._selected_packs(
                     task_scope,
                     resolution,
@@ -177,10 +183,20 @@ class WritingPolicyService:
                         _PRESET_TASK_TYPES[task_scope],
                         pack_scene,
                     )
+                    pack_items = self.pack_snapshot.public_items(
+                        preset["packId"]
+                    )
                     preset_terms = self._effective_preset_terms(
                         preset_terms,
                         preset_operations,
-                        self.pack_snapshot.public_items(preset["packId"]),
+                        pack_items,
+                    )
+                    preset_styles = self._effective_preset_rules(
+                        preset_styles,
+                        preset_operations,
+                        pack_items,
+                        task_scope,
+                        pack_scene,
                     )
                     terms = preset_terms + list(terms)
                     styles = preset_styles + list(styles)
@@ -296,7 +312,7 @@ class WritingPolicyService:
             items = [
                 item for item in items if item.get("type") == item_type
             ]
-        operations = self._preset_term_operations()
+        operations = self._preset_operations()
         result = []
         for baseline_item in items:
             item = deepcopy(baseline_item)
@@ -323,26 +339,29 @@ class WritingPolicyService:
             result.append(item)
         return result
 
-    def put_preset_term_operation(
+    def put_preset_operation(
         self,
         preset_entry_id: str,
         operation: str,
         payload: Dict[str, object],
     ) -> Dict[str, object]:
         baseline = self._find_preset_item(preset_entry_id)
-        if baseline.get("type") != "term":
-            raise WritingPolicyError(
-                "invalid_writing_policy_type",
-                "当前版本仅支持管理预置术语。",
-            )
+        item_type = str(baseline.get("type") or "")
         if operation == "disabled":
-            term_payload = None
+            operation_payload = None
         elif operation == "override":
-            term_payload = self._preset_term_payload(baseline)
-            term_payload.update(dict(payload or {}))
-            term_payload["type"] = "term"
-            term_payload["scope"] = "global"
-            term_payload["enabled"] = True
+            if item_type == "term":
+                operation_payload = self._preset_term_payload(baseline)
+            elif item_type in ("style", "anti_template"):
+                operation_payload = self._preset_rule_payload(baseline)
+            else:
+                raise WritingPolicyError(
+                    "invalid_writing_policy_type",
+                    "预置规范类型无效。",
+                )
+            operation_payload.update(dict(payload or {}))
+            operation_payload["type"] = item_type
+            operation_payload["enabled"] = True
         else:
             raise WritingPolicyError(
                 "invalid_preset_operation",
@@ -351,12 +370,12 @@ class WritingPolicyService:
         return self.store.upsert_preset_operation(
             preset_entry_id,
             str(baseline["packId"]),
-            "term",
+            item_type,
             operation,
-            term_payload,
+            operation_payload,
         )
 
-    def restore_preset_term(
+    def restore_preset_operation(
         self, preset_entry_id: str
     ) -> Dict[str, object]:
         return self.store.restore_preset_operation(preset_entry_id)
@@ -371,7 +390,7 @@ class WritingPolicyService:
             "未找到指定预置规范条目。",
         )
 
-    def _preset_term_operations(self) -> Dict[str, Dict[str, object]]:
+    def _preset_operations(self) -> Dict[str, Dict[str, object]]:
         list_operations = getattr(
             self.store, "list_preset_operations", None
         )
@@ -379,19 +398,22 @@ class WritingPolicyService:
             return {}
         return {
             operation["presetEntryId"]: operation
-            for operation in list_operations("term")
+            for operation in list_operations()
         }
 
     @staticmethod
-    def _preset_term_payload(item: Dict[str, object]) -> Dict[str, object]:
+    def _priority_label(item: Dict[str, object]) -> str:
         numeric_priority = int(item.get("priority", 0))
-        priority = (
+        return (
             "high"
             if numeric_priority >= 67
             else "medium"
             if numeric_priority >= 34
             else "low"
         )
+
+    @staticmethod
+    def _preset_term_payload(item: Dict[str, object]) -> Dict[str, object]:
         return {
             "type": "term",
             "scope": "global",
@@ -403,7 +425,30 @@ class WritingPolicyService:
             ),
             "definition": str(item.get("definition") or ""),
             "contextKeywords": list(item.get("contextKeywords") or []),
-            "priority": priority,
+            "priority": WritingPolicyService._priority_label(item),
+            "enabled": True,
+            "note": "",
+        }
+
+    @staticmethod
+    def _preset_rule_payload(item: Dict[str, object]) -> Dict[str, object]:
+        task_types = [
+            _ORGANIZATION_TASK_TYPES[value]
+            for value in item.get("taskTypes", ())
+            if value in _ORGANIZATION_TASK_TYPES
+        ]
+        return {
+            "type": str(item.get("type") or "style"),
+            "scope": "global",
+            "taskTypes": task_types or list(_PRESET_TASK_TYPES),
+            "sceneIds": list(item.get("sceneIds") or ()),
+            "name": str(item.get("name") or ""),
+            "ruleText": str(item.get("ruleText") or ""),
+            "positiveExample": str(item.get("positiveExample") or ""),
+            "negativeExample": str(item.get("negativeExample") or ""),
+            "contextKeywords": list(item.get("contextKeywords") or []),
+            "alwaysApply": True,
+            "priority": WritingPolicyService._priority_label(item),
             "enabled": True,
             "note": "",
         }
@@ -448,6 +493,62 @@ class WritingPolicyService:
         return effective
 
     @staticmethod
+    def _effective_preset_rules(
+        rules,
+        operations: Dict[str, Dict[str, object]],
+        pack_items,
+        task_scope: str,
+        scene_id: str,
+    ):
+        effective = []
+        included_ids = set()
+        for baseline in rules:
+            baseline_id = str(baseline.get("id") or "")
+            included_ids.add(baseline_id)
+            operation = operations.get(baseline_id)
+            if operation is None:
+                effective.append(baseline)
+                continue
+            if operation["operation"] == "disabled":
+                continue
+            payload = operation["payload"]
+            if (
+                task_scope in payload.get("taskTypes", ())
+                and scene_id in payload.get("sceneIds", ())
+            ):
+                effective.append(
+                    WritingPolicyService._preset_rule_override_matcher_item(
+                        baseline,
+                        operation,
+                        task_scope,
+                    )
+                )
+        for baseline in pack_items:
+            baseline_id = str(baseline.get("id") or "")
+            operation = operations.get(baseline_id)
+            if (
+                baseline_id in included_ids
+                or baseline.get("type") not in ("style", "anti_template")
+                or operation is None
+                or operation["operation"] != "override"
+            ):
+                continue
+            payload = operation["payload"]
+            if (
+                task_scope not in payload.get("taskTypes", ())
+                or scene_id not in payload.get("sceneIds", ())
+            ):
+                continue
+            effective.append(
+                WritingPolicyService._preset_rule_override_matcher_item(
+                    baseline,
+                    operation,
+                    task_scope,
+                )
+            )
+        return effective
+
+    @staticmethod
     def _preset_override_matcher_item(baseline, operation):
         item = deepcopy(operation["payload"])
         item.update(
@@ -455,6 +556,27 @@ class WritingPolicyService:
                 "id": baseline["id"],
                 "type": "term",
                 "scope": "global",
+                "enabled": True,
+                "layer": "organization",
+                "packId": baseline.get("packId"),
+                "packVersion": baseline.get("packVersion"),
+                "presetOperation": "override",
+            }
+        )
+        return item
+
+    @staticmethod
+    def _preset_rule_override_matcher_item(
+        baseline,
+        operation,
+        task_scope: str,
+    ):
+        item = deepcopy(operation["payload"])
+        item.update(
+            {
+                "id": baseline["id"],
+                "type": baseline["type"],
+                "scope": task_scope,
                 "enabled": True,
                 "layer": "organization",
                 "packId": baseline.get("packId"),
@@ -546,7 +668,8 @@ class _UnavailableStore:
     def __init__(self, error_code: str):
         self.error_code = error_code
 
-    def enabled_items(self, task_scope: str):
+    def enabled_items(self, task_scope: str, scene_id: Optional[str] = None):
+        del scene_id
         raise WritingPolicyError(
             self.error_code,
             "写作规范库暂时不可用。",

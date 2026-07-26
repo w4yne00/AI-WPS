@@ -325,9 +325,13 @@
             <div class="writing-policy-subview-head">
               <button id="btn-writing-policy-preset-back" class="ghost-action mini-button" type="button">返回设置</button>
               <div>
-                <h3 id="writing-policy-preset-title" tabindex="-1">G企技术写作基础</h3>
+                <h3 id="writing-policy-preset-title" tabindex="-1">预置规范</h3>
                 <p>预置基线随版本发布；编辑、停用和恢复仅写入组织数据。</p>
               </div>
+            </div>
+            <div class="writing-policy-layer-switch" role="tablist" aria-label="规范层级">
+              <button class="active" type="button" role="tab" aria-selected="true" data-writing-policy-layer="preset">预置规范</button>
+              <button type="button" role="tab" aria-selected="false" data-writing-policy-layer="organization">组织规范</button>
             </div>
             <label class="field writing-policy-preset-pack-field">
               <span>规范包</span>
@@ -342,25 +346,26 @@
             <div class="writing-policy-subview-head">
               <button id="btn-writing-policy-scope-back" class="ghost-action mini-button" type="button">返回设置</button>
               <div>
-                <h3 id="writing-policy-scope-title" tabindex="-1">写作规范</h3>
-                <p>按使用范围管理，不影响工作流切换。</p>
+                <h3 id="writing-policy-scope-title" tabindex="-1">组织规范</h3>
+                <p>按规范类型逐层进入管理；规则可同时适用于多个任务和场景。</p>
               </div>
             </div>
+            <div class="writing-policy-layer-switch" role="tablist" aria-label="规范层级">
+              <button type="button" role="tab" aria-selected="false" data-writing-policy-layer="preset">预置规范</button>
+              <button class="active" type="button" role="tab" aria-selected="true" data-writing-policy-layer="organization">组织规范</button>
+            </div>
             <div id="writing-policy-scope-list" class="writing-policy-scope-list">
-              <button type="button" data-writing-policy-scope="global">
-                <span><strong>全局组织规范</strong><small>术语规范与通用文体规则</small></span><span aria-hidden="true">›</span>
+              <button type="button" data-writing-policy-scope="global" data-writing-policy-entry-type="term">
+                <span><strong>术语规范</strong><small>组织统一名称、别名与禁用写法</small></span><span aria-hidden="true">›</span>
               </button>
-              <button type="button" data-writing-policy-scope="word.smart_write">
-                <span><strong>智能编写补充</strong><small>仅在智能编写中使用的文体规则</small></span><span aria-hidden="true">›</span>
+              <button type="button" data-writing-policy-scope="global" data-writing-policy-entry-type="style">
+                <span><strong>文体规则</strong><small>结构、语气、责任表达和信息组织</small></span><span aria-hidden="true">›</span>
               </button>
-              <button type="button" data-writing-policy-scope="word.smart_imitation">
-                <span><strong>智能仿写补充</strong><small>仅在智能仿写中使用的文体规则</small></span><span aria-hidden="true">›</span>
-              </button>
-              <button type="button" data-writing-policy-scope="word.document_review">
-                <span><strong>文档审查补充</strong><small>仅在文档审查中检查的文体规则</small></span><span aria-hidden="true">›</span>
+              <button type="button" data-writing-policy-scope="global" data-writing-policy-entry-type="anti_template">
+                <span><strong>去模板化规则</strong><small>减少模板感、表演性语言和信息空转</small></span><span aria-hidden="true">›</span>
               </button>
             </div>
-            <button id="btn-writing-policy-import-entry" class="writing-policy-import-entry ghost-action" type="button">批量导入</button>
+            <button id="btn-writing-policy-import-entry" class="writing-policy-import-entry ghost-action" type="button" hidden>批量导入</button>
           </section>
 
           <section id="writing-policy-list-view" class="writing-policy-subview" hidden>
@@ -375,6 +380,7 @@
               <div id="writing-policy-type-switch" class="writing-policy-type-switch" role="tablist" aria-label="规范类型">
                 <button type="button" role="tab" data-writing-policy-type="term">术语规范</button>
                 <button type="button" role="tab" data-writing-policy-type="style">文体规则</button>
+                <button type="button" role="tab" data-writing-policy-type="anti_template">去模板化</button>
               </div>
               <div class="writing-policy-list-actions">
                 <button id="btn-writing-policy-add" class="writing-policy-icon-button" type="button" title="新增规范条目" aria-label="新增规范条目">+</button>
@@ -417,6 +423,18 @@
               <label class="field"><span>写作规则</span><textarea id="writing-policy-rule-text" rows="4" maxlength="2000"></textarea><small id="writing-policy-rule-error" class="writing-policy-field-error" hidden></small></label>
               <label class="field"><span>正面示例</span><textarea id="writing-policy-positive-example" rows="3" maxlength="2000"></textarea></label>
               <label class="field"><span>反面示例</span><textarea id="writing-policy-negative-example" rows="3" maxlength="2000"></textarea></label>
+              <fieldset id="writing-policy-task-types" class="writing-policy-scope-options" tabindex="-1">
+                <legend>任务范围（可多选）</legend>
+                <label><input id="writing-policy-task-smart-write" type="checkbox" value="word.smart_write" /> 智能编写</label>
+                <label><input id="writing-policy-task-smart-imitation" type="checkbox" value="word.smart_imitation" /> 智能仿写</label>
+                <label><input id="writing-policy-task-document-review" type="checkbox" value="word.document_review" /> 文档审查</label>
+              </fieldset>
+              <fieldset id="writing-policy-scene-ids" class="writing-policy-scope-options" tabindex="-1">
+                <legend>场景范围（可多选）</legend>
+                <label><input id="writing-policy-scene-yangqi" type="checkbox" value="yangqi" /> G企技术材料</label>
+                <label><input id="writing-policy-scene-cybersecurity" type="checkbox" value="cybersecurity" /> 网络安全技术材料</label>
+                <label><input id="writing-policy-scene-official" type="checkbox" value="official" /> 党政公文</label>
+              </fieldset>
             </div>
             <label class="field"><span>备注</span><textarea id="writing-policy-note" rows="3" maxlength="2000" placeholder="选填"></textarea></label>
             <details id="writing-policy-editor-advanced" class="writing-policy-editor-advanced">
@@ -425,7 +443,7 @@
                 <label id="writing-policy-category-field" class="field"><span>分类</span><input id="writing-policy-category" type="text" maxlength="2000" /></label>
                 <label class="field"><span>上下文关键词</span><textarea id="writing-policy-context-keywords" rows="3" maxlength="2000" placeholder="多个内容用 | 分隔"></textarea></label>
                 <label class="field"><span>优先级</span><select id="writing-policy-priority"><option value="high">高</option><option value="medium">中</option><option value="low">低</option></select></label>
-                <label id="writing-policy-always-apply-field" class="writing-policy-check"><input id="writing-policy-always-apply" type="checkbox" /> 始终应用此文体规则</label>
+                <label id="writing-policy-always-apply-field" class="writing-policy-check"><input id="writing-policy-always-apply" type="checkbox" /> 始终应用此规则</label>
                 <label id="writing-policy-enabled-field" class="writing-policy-check"><input id="writing-policy-enabled" type="checkbox" checked /> 启用此条目</label>
               </div>
             </details>

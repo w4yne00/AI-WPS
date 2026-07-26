@@ -138,6 +138,82 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
   "btn-writing-policy-download-backup"
 ].forEach((id) => assert.ok(wordHtml.includes(`id="${id}"`), id));
 
+assert.ok(wordHtml.includes('data-writing-policy-layer="preset"'));
+assert.ok(wordHtml.includes('data-writing-policy-layer="organization"'));
+assert.ok(wordHtml.includes('data-writing-policy-type="anti_template"'));
+[
+  "writing-policy-task-smart-write",
+  "writing-policy-task-smart-imitation",
+  "writing-policy-task-document-review",
+  "writing-policy-scene-yangqi",
+  "writing-policy-scene-cybersecurity",
+  "writing-policy-scene-official"
+].forEach((id) => assert.ok(wordHtml.includes(`id="${id}"`), id));
+assert.ok(/id="btn-writing-policy-import-entry"[^>]*hidden/.test(wordHtml));
+
+const editorRenderSource = functionSource("renderWritingPolicyEditor");
+assert.ok(editorRenderSource.includes("normalizeWritingPolicyRuleTasks"));
+assert.ok(editorRenderSource.includes("normalizeWritingPolicyRuleScenes"));
+assert.ok(editorRenderSource.includes("setWritingPolicyCheckedValues"));
+assert.ok(editorRenderSource.includes('editor.mode === "preset-override"'));
+assert.ok(editorRenderSource.includes("item.alwaysApply !== false"));
+const draftSource = functionSource("readWritingPolicyDraft");
+assert.ok(draftSource.includes("taskTypes"));
+assert.ok(draftSource.includes("sceneIds"));
+assert.ok(draftSource.includes("anti_template"));
+
+const validAntiTemplate = helpers.validateWritingPolicyDraft({
+  type: "anti_template",
+  name: "删除空泛铺垫",
+  ruleText: "直接陈述事实和结论。",
+  taskTypes: ["word.smart_write", "word.document_review"],
+  sceneIds: ["yangqi", "cybersecurity"]
+});
+assert.strictEqual(validAntiTemplate.ok, true);
+assert.strictEqual(
+  helpers.validateWritingPolicyDraft({
+    type: "style",
+    name: "结论先行",
+    ruleText: "先写结论。",
+    taskTypes: [],
+    sceneIds: ["yangqi"]
+  }).field,
+  "taskTypes"
+);
+assert.strictEqual(
+  helpers.validateWritingPolicyDraft({
+    type: "style",
+    name: "结论先行",
+    ruleText: "先写结论。",
+    taskTypes: ["word.smart_write"],
+    sceneIds: []
+  }).field,
+  "sceneIds"
+);
+
+const conflictUsage = helpers.normalizeWritingPolicyUsage({
+  applied: true,
+  sceneLabel: "G企技术材料",
+  conflictCount: 1,
+  conflicts: [
+    {
+      name: "结论先行",
+      winnerId: "rule-high",
+      itemIds: ["rule-high", "rule-low"]
+    }
+  ]
+});
+assert.strictEqual(conflictUsage.conflictCount, 1);
+assert.strictEqual(conflictUsage.conflicts[0].winnerId, "rule-high");
+assert.ok(
+  helpers.writingPolicyUsageSummary(conflictUsage, "word.smart_write")
+    .includes("1 组同层冲突")
+);
+assert.ok(
+  helpers.writingPolicyUsageDetails(conflictUsage)
+    .some((item) => item.includes("结论先行"))
+);
+
 [
   "writing-policies-summary-card",
   "writing-policy-scope-view",
@@ -148,9 +224,10 @@ assert.ok(reviewResetSource.includes("clearWritingPolicyUsage()"));
   assert.ok(!pptHtml.includes(`id="${id}"`), `PPT must not include ${id}`);
 });
 
-assert.strictEqual((wordHtml.match(/data-writing-policy-scope=/g) || []).length, 4);
+assert.strictEqual((wordHtml.match(/data-writing-policy-scope=/g) || []).length, 3);
 assert.ok(wordHtml.includes('data-writing-policy-type="term"'));
 assert.ok(wordHtml.includes('data-writing-policy-type="style"'));
+assert.ok(wordHtml.includes('data-writing-policy-type="anti_template"'));
 assert.ok(wordHtml.includes('title="新增规范条目"'));
 assert.ok(wordHtml.includes("<details id=\"writing-policy-editor-advanced\""));
 
@@ -314,19 +391,20 @@ assert.ok(presetRenderSource.includes('"disable"'));
 assert.ok(presetRenderSource.includes('"restore"'));
 assert.ok(!presetRenderSource.includes("innerHTML"));
 
-const presetDisableSource = functionSource("disableWritingPolicyPresetTerm");
+const presetDisableSource = functionSource("disableWritingPolicyPresetItem");
 assert.ok(presetDisableSource.includes("/writing-policies/preset-overrides/"));
 assert.ok(presetDisableSource.includes('method: "PUT"'));
 assert.ok(presetDisableSource.includes('operation: "disabled"'));
 assert.ok(presetDisableSource.includes("loadWritingPolicyPresetItems"));
 
-const presetRestoreSource = functionSource("restoreWritingPolicyPresetTerm");
+const presetRestoreSource = functionSource("restoreWritingPolicyPresetItem");
 assert.ok(presetRestoreSource.includes("/writing-policies/preset-overrides/"));
 assert.ok(presetRestoreSource.includes('method: "DELETE"'));
 assert.ok(presetRestoreSource.includes("loadWritingPolicyPresetItems"));
 
 const listSource = functionSource("loadWritingPolicyItems");
 assert.ok(listSource.includes('request("/writing-policies/items?scope="'));
+assert.ok(listSource.includes('"organization"'));
 assert.ok(listSource.includes("writingPolicyLoadSequence"));
 
 const listRenderSource = functionSource("renderWritingPolicyList");

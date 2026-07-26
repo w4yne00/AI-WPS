@@ -256,9 +256,9 @@ def _term_precedence_rank(item: Dict) -> int:
 def _style_sort_key(item: Dict, task_scope: str) -> Tuple[object, ...]:
     return (
         _style_precedence_rank(item),
+        _priority_rank(item),
         0 if item.get("scope") == task_scope else 1,
         0 if bool(item.get("alwaysApply", False)) else 1,
-        _priority_rank(item),
         normalize_key(str(item.get("name", ""))),
         str(item.get("id", "")),
         _payload_sort_key(item),
@@ -369,7 +369,8 @@ def match_writing_policy(
     styles: Sequence[Dict],
     task_scope: str,
     source_parts: Sequence[str],
-) -> Tuple[List[Dict], List[Dict]]:
+    include_conflicts: bool = False,
+):
     source_text = _source_text(source_parts)
     source_windows = _source_prefix_windows(source_text)
 
@@ -423,6 +424,7 @@ def match_writing_policy(
         if bool(style.get("enabled", True))
         and style.get("scope") in ("global", task_scope)
     ]
+    conflicts = _rule_conflict_summary(relevant_styles, task_scope)
     styles_by_name = {}
     for style in relevant_styles:
         name_key = normalize_key(str(style.get("name", "")))
@@ -465,7 +467,46 @@ def match_writing_policy(
         seen_style_ids.add(item_id)
         seen_style_names.add(normalized_name)
 
+    if include_conflicts:
+        return matched_terms, matched_styles, conflicts
     return matched_terms, matched_styles
+
+
+def _rule_conflict_summary(
+    candidates: Sequence[Dict],
+    task_scope: str,
+) -> List[Dict[str, object]]:
+    groups = {}
+    for item in candidates:
+        key = (
+            _style_precedence_rank(item),
+            normalize_key(str(item.get("name", ""))),
+        )
+        groups.setdefault(key, []).append(item)
+
+    conflicts = []
+    for key in sorted(groups):
+        group = sorted(
+            groups[key],
+            key=lambda item: _style_sort_key(item, task_scope),
+        )
+        item_ids = []
+        for item in group:
+            item_id = str(item.get("id", ""))
+            if item_id and item_id not in item_ids:
+                item_ids.append(item_id)
+        if len(item_ids) < 2:
+            continue
+        conflicts.append(
+            {
+                "name": str(group[0].get("name", "")),
+                "winnerId": item_ids[0],
+                "itemIds": item_ids,
+            }
+        )
+        if len(conflicts) >= 20:
+            break
+    return conflicts
 
 
 def _quoted_values(values: Sequence[str]) -> str:
@@ -533,8 +574,12 @@ def build_match_result(
     task_scope: str,
     source_parts: Sequence[str],
 ) -> WritingPolicyMatchResult:
-    matched_terms, matched_styles = match_writing_policy(
-        terms, styles, task_scope, source_parts
+    matched_terms, matched_styles, conflicts = match_writing_policy(
+        terms,
+        styles,
+        task_scope,
+        source_parts,
+        include_conflicts=True,
     )
     if not matched_terms and not matched_styles:
         usage = public_usage(
@@ -545,6 +590,8 @@ def build_match_result(
             truncated=0,
             matched_items=[],
         )
+        usage["conflictCount"] = len(conflicts)
+        usage["conflicts"] = conflicts
         return WritingPolicyMatchResult("", usage, (), audit_terms=())
 
     term_candidates = matched_terms[:MAX_TERM_MATCHES]
@@ -633,6 +680,8 @@ def build_match_result(
         truncated=truncated,
         matched_items=public_items,
     )
+    usage["conflictCount"] = len(conflicts)
+    usage["conflicts"] = conflicts
     matched_item_ids = tuple(str(item.get("id", "")) for item in included_terms)
     matched_item_ids += tuple(str(item.get("id", "")) for item in included_styles)
     matched_item_ids += tuple(

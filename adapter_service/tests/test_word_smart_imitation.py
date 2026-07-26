@@ -13,6 +13,7 @@ if HAS_PYDANTIC:
     from app.core.models import WordDocumentRequest
     from app.services.writing_policy import WritingPolicyMatchResult, WritingPolicyService
     from app.services.writing_policy import service as writing_policy_service_module
+    from app.services.writing_policy.store import WritingPolicyStore
     from app.services.provider_client import get_last_provider_debug, record_provider_debug, reset_provider_debug
     from app.services.word import smart_imitator as smart_imitator_module
     from app.services.word.smart_imitator import WordSmartImitator
@@ -141,7 +142,7 @@ class FakeWritingPolicyService:
 
 
 class EmptyWritingPolicyStore:
-    def enabled_items(self, _task_scope):
+    def enabled_items(self, _task_scope, _scene_id=None):
         return [], []
 
 
@@ -600,6 +601,74 @@ class WordSmartImitationTests(unittest.TestCase):
             result["writingPolicyUsage"]["packNames"],
             ["G企技术写作基础"],
         )
+
+    def test_smart_imitation_applies_scoped_organization_style_rule_once(self):
+        provider = RecordingSmartImitationProvider()
+        with isolated_default_writing_policy_database(self) as db_path:
+            store = WritingPolicyStore(db_path)
+            store.create_item(
+                {
+                    "type": "style",
+                    "name": "仿写保留动作链",
+                    "ruleText": "仿写结果应明确责任主体、动作和完成条件。",
+                    "positiveExample": "运维部门完成核验后提交记录。",
+                    "negativeExample": "相关工作后续持续推进。",
+                    "contextKeywords": [],
+                    "alwaysApply": True,
+                    "priority": "high",
+                    "taskTypes": ["word.smart_imitation"],
+                    "sceneIds": ["cybersecurity"],
+                    "enabled": True,
+                    "note": "组织规则端到端测试",
+                }
+            )
+            for name, rule_text, task_types, scene_ids in (
+                (
+                    "审查专用排除规则",
+                    "此规则只允许进入文档审查。",
+                    ["word.document_review"],
+                    ["cybersecurity"],
+                ),
+                (
+                    "党政公文场景排除规则",
+                    "此规则只允许进入党政公文场景。",
+                    ["word.smart_imitation"],
+                    ["official"],
+                ),
+            ):
+                store.create_item(
+                    {
+                        "type": "anti_template",
+                        "name": name,
+                        "ruleText": rule_text,
+                        "contextKeywords": [],
+                        "alwaysApply": True,
+                        "priority": "high",
+                        "taskTypes": task_types,
+                        "sceneIds": scene_ids,
+                        "enabled": True,
+                    }
+                )
+
+            result = WordSmartImitator(provider).imitate(
+                self._request(writing_policy_scene="cybersecurity"),
+                trace_id="trace-smart-imitation-scoped-rule",
+            )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn(
+            "仿写结果应明确责任主体、动作和完成条件",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertNotIn(
+            "此规则只允许进入文档审查",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertNotIn(
+            "此规则只允许进入党政公文场景",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertGreaterEqual(result["writingPolicyUsage"]["styleRuleCount"], 1)
 
 
 if __name__ == "__main__":

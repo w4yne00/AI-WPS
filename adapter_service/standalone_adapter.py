@@ -113,6 +113,8 @@ _WRITING_POLICY_ITEM_FIELDS = {
     "positiveExample",
     "negativeExample",
     "alwaysApply",
+    "taskTypes",
+    "sceneIds",
 }
 _WRITING_POLICY_PRESET_OPERATION_FIELDS = _WRITING_POLICY_ITEM_FIELDS | {
     "operation"
@@ -603,7 +605,7 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
                     return _writing_policy_validation()
                 operation_payload = dict(payload)
                 operation = str(operation_payload.pop("operation", ""))
-                result = get_writing_policy_service().put_preset_term_operation(
+                result = get_writing_policy_service().put_preset_operation(
                     preset_entry_id,
                     operation,
                     operation_payload,
@@ -612,7 +614,7 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
                     {"operation": result}, "updated"
                 )
             if method == "DELETE":
-                operation = get_writing_policy_service().restore_preset_term(
+                operation = get_writing_policy_service().restore_preset_operation(
                     preset_entry_id
                 )
                 return _writing_policy_json(

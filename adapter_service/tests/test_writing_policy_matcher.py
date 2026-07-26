@@ -664,6 +664,79 @@ class WritingPolicyMatcherTests(unittest.TestCase):
         self.assertIn("rule-a", first.prompt_block)
         self.assertNotIn("rule-b", first.prompt_block)
 
+    def test_same_layer_rule_conflict_uses_priority_and_reports_safe_summary(self):
+        rules = [
+            style_item(
+                "rule-low",
+                "global",
+                "结论先行",
+                "低优先级规则",
+                always_apply=True,
+                priority="low",
+                layer="organization",
+            ),
+            style_item(
+                "rule-high",
+                "global",
+                "结论先行",
+                "高优先级规则",
+                always_apply=True,
+                priority="high",
+                layer="organization",
+            ),
+        ]
+
+        result = build_match_result(
+            [], rules, "word.smart_write", ["普通正文"]
+        )
+
+        self.assertEqual(result.matched_item_ids, ("rule-high",))
+        self.assertIn("高优先级规则", result.prompt_block)
+        self.assertNotIn("低优先级规则", result.prompt_block)
+        self.assertEqual(result.usage["conflictCount"], 1)
+        self.assertEqual(
+            result.usage["conflicts"],
+            [
+                {
+                    "name": "结论先行",
+                    "winnerId": "rule-high",
+                    "itemIds": ["rule-high", "rule-low"],
+                }
+            ],
+        )
+
+    def test_same_organization_layer_priority_precedes_task_specificity(self):
+        rules = [
+            style_item(
+                "task-low",
+                "word.smart_write",
+                "结论先行",
+                "低优先级任务规则",
+                always_apply=True,
+                priority="low",
+                layer="organization",
+            ),
+            style_item(
+                "global-high",
+                "global",
+                "结论先行",
+                "高优先级多任务规则",
+                always_apply=True,
+                priority="high",
+                layer="organization",
+            ),
+        ]
+
+        result = build_match_result(
+            [], rules, "word.smart_write", ["普通正文"]
+        )
+
+        self.assertEqual(result.matched_item_ids, ("global-high",))
+        self.assertEqual(
+            result.usage["conflicts"][0]["winnerId"],
+            "global-high",
+        )
+
     def test_alias_and_forbidden_variant_match_once(self):
         terms = [
             term_item(
@@ -789,7 +862,7 @@ class WritingPolicyMatcherTests(unittest.TestCase):
         self.assertEqual(result.usage["styleRuleCount"], 0)
         self.assertNotIn("全局规则", result.prompt_block)
 
-    def test_task_styles_rank_before_global_styles(self):
+    def test_priority_ranks_before_task_specificity_within_one_layer(self):
         styles = [
             style_item(
                 "global-high",
@@ -811,7 +884,7 @@ class WritingPolicyMatcherTests(unittest.TestCase):
 
         result = build_match_result([], styles, "word.smart_write", ["正文"])
 
-        self.assertEqual(result.matched_item_ids, ("task-low", "global-high"))
+        self.assertEqual(result.matched_item_ids, ("global-high", "task-low"))
 
     def test_always_apply_and_keyword_qualification_are_both_supported(self):
         styles = [

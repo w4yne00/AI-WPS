@@ -15,6 +15,9 @@ from .models import (
     WRITING_POLICY_SCOPES,
     MAX_DATABASE_BACKUPS,
     PRIORITIES,
+    RULE_TYPES,
+    TASK_SCOPES,
+    WRITING_POLICY_SCENES,
     WritingPolicyError,
     normalize_key,
 )
@@ -124,7 +127,10 @@ class WritingPolicyStore:
 
                 CREATE TABLE IF NOT EXISTS style_rules (
                     id TEXT PRIMARY KEY,
+                    item_type TEXT NOT NULL DEFAULT 'style',
                     scope TEXT NOT NULL,
+                    task_types TEXT NOT NULL DEFAULT '[]',
+                    scene_ids TEXT NOT NULL DEFAULT '[]',
                     name TEXT NOT NULL,
                     name_normalized TEXT NOT NULL,
                     rule_text TEXT NOT NULL,
@@ -163,6 +169,18 @@ class WritingPolicyStore:
                     updated_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS preset_rule_overrides (
+                    preset_entry_id TEXT PRIMARY KEY,
+                    pack_id TEXT NOT NULL,
+                    item_type TEXT NOT NULL
+                        CHECK (item_type IN ('style', 'anti_template')),
+                    operation TEXT NOT NULL
+                        CHECK (operation IN ('override', 'disabled')),
+                    payload TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_scope
                     ON writing_policy_terms(scope);
                 CREATE INDEX IF NOT EXISTS idx_writing_policy_terms_enabled
@@ -177,8 +195,46 @@ class WritingPolicyStore:
                     ON style_rules(scope, name_normalized);
                 CREATE INDEX IF NOT EXISTS idx_preset_overrides_item_type
                     ON preset_overrides(item_type);
+                CREATE INDEX IF NOT EXISTS idx_preset_rule_overrides_item_type
+                    ON preset_rule_overrides(item_type);
                 """
             )
+            self._migrate_rule_scope_columns(connection)
+
+    @staticmethod
+    def _migrate_rule_scope_columns(connection: sqlite3.Connection) -> None:
+        columns = {
+            row["name"]
+            for row in connection.execute("PRAGMA table_info(style_rules)")
+        }
+        additions = (
+            ("item_type", "TEXT NOT NULL DEFAULT 'style'"),
+            ("task_types", "TEXT NOT NULL DEFAULT '[]'"),
+            ("scene_ids", "TEXT NOT NULL DEFAULT '[]'"),
+        )
+        for name, definition in additions:
+            if name not in columns:
+                connection.execute(
+                    "ALTER TABLE style_rules ADD COLUMN %s %s"
+                    % (name, definition)
+                )
+        rows = connection.execute(
+            "SELECT id, scope FROM style_rules WHERE task_types = '[]'"
+        ).fetchall()
+        for row in rows:
+            task_types = (
+                TASK_SCOPES
+                if row["scope"] == "global"
+                else (row["scope"],)
+            )
+            connection.execute(
+                "UPDATE style_rules SET task_types = ? WHERE id = ?",
+                (_json_list(task_types), row["id"]),
+            )
+        connection.execute(
+            "UPDATE style_rules SET scene_ids = ? WHERE scene_ids = '[]'",
+            (_json_list(WRITING_POLICY_SCENES),),
+        )
 
     def summary(self) -> Dict[str, object]:
         with self._connect() as connection:
@@ -212,7 +268,9 @@ class WritingPolicyStore:
     def list_items(
         self, scope: str, item_type: str, query: str = ""
     ) -> List[Dict[str, object]]:
-        self._validate_scope(scope)
+        organization_rules = scope == "organization" and item_type in RULE_TYPES
+        if not organization_rules:
+            self._validate_scope(scope)
         normalized_query = normalize_key(str(query or ""))
         with self._connect() as connection:
             if item_type == "term":
@@ -222,16 +280,25 @@ class WritingPolicyStore:
                     (scope,),
                 ).fetchall()
                 items = [self._term_from_row(row) for row in rows]
-            elif item_type == "style":
-                rows = connection.execute(
-                    "SELECT * FROM style_rules WHERE scope = ? "
-                    "ORDER BY name_normalized, id",
-                    (scope,),
-                ).fetchall()
+            elif item_type in RULE_TYPES:
+                if organization_rules:
+                    rows = connection.execute(
+                        "SELECT * FROM style_rules WHERE item_type = ? "
+                        "ORDER BY name_normalized, id",
+                        (item_type,),
+                    ).fetchall()
+                else:
+                    rows = connection.execute(
+                        "SELECT * FROM style_rules "
+                        "WHERE scope = ? AND item_type = ? "
+                        "ORDER BY name_normalized, id",
+                        (scope, item_type),
+                    ).fetchall()
                 items = [self._style_from_row(row) for row in rows]
             else:
                 raise WritingPolicyError(
-                    "invalid_writing_policy_type", "规范条目类型必须为 term 或 style。"
+                    "invalid_writing_policy_type",
+                    "规范条目类型必须为 term、style 或 anti_template。",
                 )
 
         if not normalized_query:
@@ -276,28 +343,60 @@ class WritingPolicyStore:
     def list_preset_operations(
         self, item_type: Optional[str] = None
     ) -> List[Dict[str, object]]:
-        if item_type is not None and item_type != "term":
+        if item_type is not None and item_type not in ("term",) + RULE_TYPES:
             raise WritingPolicyError(
                 "invalid_writing_policy_type",
-                "当前版本的预置操作仅支持 term。",
+                "预置规范操作类型无效。",
             )
         with self._connect() as connection:
-            if item_type is None:
-                rows = connection.execute(
+            term_rows = []
+            rule_rows = []
+            if item_type in (None, "term"):
+                term_rows = connection.execute(
                     "SELECT * FROM preset_overrides "
-                    "ORDER BY preset_entry_id"
+                    + (
+                        "ORDER BY preset_entry_id"
+                        if item_type is None
+                        else "WHERE item_type = ? ORDER BY preset_entry_id"
+                    ),
+                    (() if item_type is None else (item_type,)),
                 ).fetchall()
-            else:
-                rows = connection.execute(
-                    "SELECT * FROM preset_overrides WHERE item_type = ? "
-                    "ORDER BY preset_entry_id",
-                    (item_type,),
+            if item_type in (None,) + RULE_TYPES:
+                rule_rows = connection.execute(
+                    "SELECT * FROM preset_rule_overrides "
+                    + (
+                        "ORDER BY preset_entry_id"
+                        if item_type is None
+                        else "WHERE item_type = ? ORDER BY preset_entry_id"
+                    ),
+                    (() if item_type is None else (item_type,)),
                 ).fetchall()
-        return [self._preset_operation_from_row(row) for row in rows]
+        operations = [
+            self._preset_operation_from_row(row) for row in term_rows + rule_rows
+        ]
+        return sorted(operations, key=lambda item: item["presetEntryId"])
 
     def get_preset_operation(self, preset_entry_id: str) -> Dict[str, object]:
         with self._connect() as connection:
-            return self._get_preset_operation(connection, preset_entry_id)
+            for table in ("preset_overrides", "preset_rule_overrides"):
+                row = connection.execute(
+                    "SELECT * FROM %s WHERE preset_entry_id = ?" % table,
+                    (preset_entry_id,),
+                ).fetchone()
+                if row is not None:
+                    return self._preset_operation_from_row(row)
+        raise WritingPolicyError(
+            "writing_policy_preset_operation_not_found",
+            "未找到指定预置规范操作。",
+        )
+
+    @staticmethod
+    def _preset_operation_table(item_type: str) -> str:
+        return (
+            "preset_overrides"
+            if item_type == "term"
+            else "preset_rule_overrides"
+        )
 
     def upsert_preset_operation(
         self,
@@ -320,42 +419,49 @@ class WritingPolicyStore:
                 "预置操作必须为 override 或 disabled。",
             )
         if operation == "override":
-            if item_type != "term":
-                raise WritingPolicyError(
-                    "invalid_writing_policy_type",
-                    "当前版本的预置覆盖仅支持 term。",
-                )
             if not isinstance(payload, dict):
                 raise WritingPolicyError(
                     "invalid_writing_policy_item",
-                    "预置术语覆盖必须包含术语内容。",
+                    "预置规范覆盖必须包含规范内容。",
                 )
-            clean_payload = dict(self._validate_term(payload), type="term")
-        else:
-            if item_type != "term":
+            if item_type == "term":
+                clean_payload = dict(self._validate_term(payload), type="term")
+            elif item_type in RULE_TYPES:
+                clean_payload = dict(
+                    self._validate_style(dict(payload, type=item_type)),
+                    type=item_type,
+                )
+            else:
                 raise WritingPolicyError(
                     "invalid_writing_policy_type",
-                    "当前版本的预置停用仅支持 term。",
+                    "预置规范操作类型无效。",
+                )
+        else:
+            if item_type not in ("term",) + RULE_TYPES:
+                raise WritingPolicyError(
+                    "invalid_writing_policy_type",
+                    "预置规范操作类型无效。",
                 )
             clean_payload = {}
 
+        table = self._preset_operation_table(item_type)
         with self._write_lock:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
                 existing = connection.execute(
-                    "SELECT created_at FROM preset_overrides "
-                    "WHERE preset_entry_id = ?",
+                    "SELECT created_at FROM %s "
+                    "WHERE preset_entry_id = ?" % table,
                     (clean_id,),
                 ).fetchone()
                 now = _utc_now()
                 if existing is None:
                     connection.execute(
                         """
-                        INSERT INTO preset_overrides (
+                        INSERT INTO %s (
                             preset_entry_id, pack_id, item_type, operation,
                             payload, created_at, updated_at
                         ) VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """,
+                        """ % table,
                         (
                             clean_id,
                             clean_pack_id,
@@ -369,11 +475,11 @@ class WritingPolicyStore:
                 else:
                     connection.execute(
                         """
-                        UPDATE preset_overrides SET
+                        UPDATE %s SET
                             pack_id = ?, item_type = ?, operation = ?,
                             payload = ?, updated_at = ?
                         WHERE preset_entry_id = ?
-                        """,
+                        """ % table,
                         (
                             clean_pack_id,
                             item_type,
@@ -383,7 +489,11 @@ class WritingPolicyStore:
                             clean_id,
                         ),
                     )
-                return self._get_preset_operation(connection, clean_id)
+                row = connection.execute(
+                    "SELECT * FROM %s WHERE preset_entry_id = ?" % table,
+                    (clean_id,),
+                ).fetchone()
+                return self._preset_operation_from_row(row)
 
     def restore_preset_operation(
         self, preset_entry_id: str
@@ -391,19 +501,38 @@ class WritingPolicyStore:
         with self._write_lock:
             with self._connect() as connection:
                 connection.execute("BEGIN IMMEDIATE")
-                existing = self._get_preset_operation(
-                    connection, preset_entry_id
-                )
-                connection.execute(
-                    "DELETE FROM preset_overrides WHERE preset_entry_id = ?",
-                    (preset_entry_id,),
-                )
-                return existing
+                for table in ("preset_overrides", "preset_rule_overrides"):
+                    row = connection.execute(
+                        "SELECT * FROM %s WHERE preset_entry_id = ?" % table,
+                        (preset_entry_id,),
+                    ).fetchone()
+                    if row is None:
+                        continue
+                    existing = self._preset_operation_from_row(row)
+                    connection.execute(
+                        "DELETE FROM %s WHERE preset_entry_id = ?" % table,
+                        (preset_entry_id,),
+                    )
+                    return existing
+        raise WritingPolicyError(
+            "writing_policy_preset_operation_not_found",
+            "未找到指定预置规范操作。",
+        )
 
     def enabled_items(
-        self, task_scope: str
+        self, task_scope: str, scene_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, object]], List[Dict[str, object]]]:
         self._validate_scope(task_scope)
+        if task_scope == "global":
+            raise WritingPolicyError(
+                "invalid_writing_policy_scope",
+                "任务匹配必须使用具体 Word 任务。",
+            )
+        if scene_id is not None and scene_id not in WRITING_POLICY_SCENES:
+            raise WritingPolicyError(
+                "invalid_writing_policy_scene",
+                "规范场景无效。",
+            )
         with self._connect() as connection:
             term_rows = connection.execute(
                 "SELECT * FROM writing_policy_terms "
@@ -411,15 +540,19 @@ class WritingPolicyStore:
                 "ORDER BY preferred_normalized, id"
             ).fetchall()
             style_rows = connection.execute(
-                "SELECT * FROM style_rules "
-                "WHERE enabled = 1 AND scope IN ('global', ?) "
-                "ORDER BY CASE WHEN scope = ? THEN 0 ELSE 1 END, "
-                "name_normalized, id",
-                (task_scope, task_scope),
+                "SELECT * FROM style_rules WHERE enabled = 1 "
+                "ORDER BY name_normalized, id"
             ).fetchall()
+        styles = [self._style_from_row(row) for row in style_rows]
+        styles = [
+            item
+            for item in styles
+            if task_scope in item["taskTypes"]
+            and (scene_id is None or scene_id in item["sceneIds"])
+        ]
         return (
             [self._term_from_row(row) for row in term_rows],
-            [self._style_from_row(row) for row in style_rows],
+            styles,
         )
 
     def apply_items_atomically(
@@ -668,22 +801,24 @@ class WritingPolicyStore:
             if term_token_owners is not None:
                 for token in self._normalized_term_tokens(clean):
                     term_token_owners[token] = item_id
-        elif item_type == "style":
+        elif item_type in RULE_TYPES:
             clean = self._validate_style(payload)
             self._ensure_style_name_available(connection, clean)
             connection.execute(
                 """
                 INSERT INTO style_rules (
-                    id, scope, name, name_normalized, rule_text,
+                    id, item_type, scope, task_types, scene_ids,
+                    name, name_normalized, rule_text,
                     positive_example, negative_example, context_keywords,
                     always_apply, priority, enabled, note, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (item_id,) + self._style_values(clean, now, include_created=True),
             )
         else:
             raise WritingPolicyError(
-                "invalid_writing_policy_type", "规范条目类型必须为 term 或 style。"
+                "invalid_writing_policy_type",
+                "规范条目类型必须为 term、style 或 anti_template。",
             )
         return self._get_item(connection, item_id)
 
@@ -703,6 +838,8 @@ class WritingPolicyStore:
         merged = dict(existing)
         merged.update(payload)
         merged["type"] = existing["type"]
+        if "scope" in payload and "taskTypes" not in payload:
+            merged.pop("taskTypes", None)
         if existing["type"] == "term":
             clean = self._validate_term(merged)
             if term_token_owners is None:
@@ -737,7 +874,8 @@ class WritingPolicyStore:
             connection.execute(
                 """
                 UPDATE style_rules SET
-                    scope = ?, name = ?, name_normalized = ?, rule_text = ?,
+                    item_type = ?, scope = ?, task_types = ?, scene_ids = ?,
+                    name = ?, name_normalized = ?, rule_text = ?,
                     positive_example = ?, negative_example = ?,
                     context_keywords = ?, always_apply = ?, priority = ?,
                     enabled = ?, note = ?, updated_at = ?
@@ -823,15 +961,16 @@ class WritingPolicyStore:
         preset_entry_id: object, item_type: str
     ) -> str:
         clean = str(preset_entry_id or "").strip()
-        if item_type != "term" or not _PRESET_ENTRY_ID_RE.fullmatch(clean):
+        if item_type not in ("term",) + RULE_TYPES or not _PRESET_ENTRY_ID_RE.fullmatch(clean):
             raise WritingPolicyError(
                 "invalid_preset_entry_id",
                 "预置规范条目标识无效。",
             )
-        if not clean.startswith("term."):
+        expected_prefix = "term." if item_type == "term" else "rule."
+        if not clean.startswith(expected_prefix):
             raise WritingPolicyError(
                 "invalid_writing_policy_type",
-                "当前版本的预置操作仅支持 term。",
+                "预置条目标识与规范类型不一致。",
             )
         return clean
 
@@ -953,10 +1092,41 @@ class WritingPolicyStore:
             )
 
     def _validate_style(self, payload: Dict[str, object]) -> Dict[str, object]:
-        scope = self._clean_text(payload.get("scope", ""))
+        item_type = str(payload.get("type") or "style")
+        if item_type not in RULE_TYPES:
+            raise WritingPolicyError(
+                "invalid_writing_policy_type",
+                "规则类型必须为 style 或 anti_template。",
+            )
+        scope = self._clean_text(payload.get("scope", "global")) or "global"
         self._validate_scope(scope)
+        raw_task_types = payload.get("taskTypes")
+        if raw_task_types is None:
+            task_types = list(TASK_SCOPES if scope == "global" else (scope,))
+        else:
+            task_types = self._clean_list(raw_task_types, "taskTypes")
+            if not task_types or any(value not in TASK_SCOPES for value in task_types):
+                raise WritingPolicyError(
+                    "invalid_writing_policy_scope",
+                    "规则任务范围必须从三个 Word 任务中选择。",
+                )
+        scene_ids = self._clean_list(
+            payload.get("sceneIds", WRITING_POLICY_SCENES),
+            "sceneIds",
+        )
+        if not scene_ids or any(value not in WRITING_POLICY_SCENES for value in scene_ids):
+            raise WritingPolicyError(
+                "invalid_writing_policy_scene",
+                "规则场景范围无效。",
+            )
+        compatibility_scope = (
+            task_types[0] if len(task_types) == 1 else "global"
+        )
         return {
-            "scope": scope,
+            "type": item_type,
+            "scope": compatibility_scope,
+            "taskTypes": task_types,
+            "sceneIds": scene_ids,
             "name": self._required_text(payload.get("name"), "规则名称不能为空。"),
             "ruleText": self._required_text(
                 payload.get("ruleText"), "规则正文不能为空。"
@@ -1061,7 +1231,10 @@ class WritingPolicyStore:
         item: Dict[str, object], timestamp: str, include_created: bool = False
     ) -> Tuple[object, ...]:
         values = (
+            item["type"],
             item["scope"],
+            _json_list(item["taskTypes"]),
+            _json_list(item["sceneIds"]),
             item["name"],
             normalize_key(item["name"]),
             item["ruleText"],
@@ -1098,8 +1271,10 @@ class WritingPolicyStore:
     def _style_from_row(row: sqlite3.Row) -> Dict[str, object]:
         return {
             "id": row["id"],
-            "type": "style",
+            "type": row["item_type"],
             "scope": row["scope"],
+            "taskTypes": _read_json_list(row["task_types"]),
+            "sceneIds": _read_json_list(row["scene_ids"]),
             "name": row["name"],
             "ruleText": row["rule_text"],
             "positiveExample": row["positive_example"],
@@ -1119,25 +1294,36 @@ class WritingPolicyStore:
         try:
             payload = _read_json_object(row["payload"])
             if row["operation"] == "override":
-                expected_fields = {
-                    "type",
-                    "scope",
-                    "category",
-                    "preferredText",
-                    "aliases",
-                    "forbiddenVariants",
-                    "definition",
-                    "contextKeywords",
-                    "priority",
-                    "enabled",
-                    "note",
-                }
-                if set(payload) != expected_fields or payload.get("type") != "term":
+                if row["item_type"] == "term":
+                    expected_fields = {
+                        "type",
+                        "scope",
+                        "category",
+                        "preferredText",
+                        "aliases",
+                        "forbiddenVariants",
+                        "definition",
+                        "contextKeywords",
+                        "priority",
+                        "enabled",
+                        "note",
+                    }
+                    if set(payload) != expected_fields or payload.get("type") != "term":
+                        raise WritingPolicyError(
+                            "writing_policy_data_corrupt",
+                            "预置术语覆盖数据字段无效。",
+                        )
+                    payload = dict(self._validate_term(payload), type="term")
+                elif row["item_type"] in RULE_TYPES:
+                    payload = dict(
+                        self._validate_style(payload),
+                        type=row["item_type"],
+                    )
+                else:
                     raise WritingPolicyError(
                         "writing_policy_data_corrupt",
-                        "预置术语覆盖数据字段无效。",
+                        "预置规则覆盖类型无效。",
                     )
-                payload = dict(self._validate_term(payload), type="term")
             elif payload:
                 raise WritingPolicyError(
                     "writing_policy_data_corrupt",
@@ -1148,7 +1334,7 @@ class WritingPolicyStore:
                 raise
             raise WritingPolicyError(
                 "writing_policy_data_corrupt",
-                "预置术语操作数据已损坏。",
+                "预置规范操作数据已损坏。",
             )
         return {
             "id": row["preset_entry_id"],

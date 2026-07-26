@@ -61,7 +61,7 @@ class StaticStore:
         self.styles = list(styles or [])
         self.task_scopes = []
 
-    def enabled_items(self, task_scope):
+    def enabled_items(self, task_scope, _scene_id=None):
         self.task_scopes.append(task_scope)
         return list(self.terms), list(self.styles)
 
@@ -73,7 +73,7 @@ class BrokenStore:
     def __init__(self, error):
         self.error = error
 
-    def enabled_items(self, task_scope):
+    def enabled_items(self, task_scope, _scene_id=None):
         raise self.error
 
 
@@ -183,7 +183,7 @@ class WritingPolicyServiceTests(unittest.TestCase):
                 baseline["baseline"]["preferredText"], "网络安全"
             )
 
-            override = service.put_preset_term_operation(
+            override = service.put_preset_operation(
                 "term.cyber.001",
                 "override",
                 {
@@ -206,7 +206,7 @@ class WritingPolicyServiceTests(unittest.TestCase):
                 overridden["baseline"]["preferredText"], "网络安全"
             )
 
-            service.put_preset_term_operation(
+            service.put_preset_operation(
                 "term.cyber.001", "disabled", {}
             )
             disabled = service.list_preset_items(
@@ -216,13 +216,102 @@ class WritingPolicyServiceTests(unittest.TestCase):
             self.assertFalse(disabled["effective"])
             self.assertEqual(disabled["preferredText"], "网络安全")
 
-            restored = service.restore_preset_term("term.cyber.001")
+            restored = service.restore_preset_operation("term.cyber.001")
             self.assertEqual(restored["operation"], "disabled")
             current = service.list_preset_items(
                 "cybersecurity-terminology", "term"
             )[0]
             self.assertEqual(current["organizationState"], "preset")
             self.assertTrue(current["effective"])
+
+    def test_organization_rules_apply_only_to_selected_tasks_and_scenes(self):
+        with TemporaryDirectory() as tmp:
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
+            scoped = store.create_item(
+                {
+                    "type": "anti_template",
+                    "name": "删除表演性铺垫",
+                    "ruleText": "删除“经过大量工作”等表演性铺垫。",
+                    "positiveExample": "系统已完成部署。",
+                    "negativeExample": "经过大量艰苦工作，系统终于完成部署。",
+                    "taskTypes": [
+                        "word.smart_write",
+                        "word.document_review",
+                    ],
+                    "sceneIds": ["cybersecurity"],
+                    "contextKeywords": [],
+                    "alwaysApply": True,
+                    "priority": "high",
+                    "enabled": True,
+                    "note": "",
+                }
+            )
+            service = WritingPolicyService(
+                store=store,
+                pack_snapshot=WritingPolicyPackSnapshot(()),
+            )
+
+            smart_write = service.prepare(
+                "word.smart_write", ["网络安全方案"], scene="cybersecurity"
+            )
+            document_review = service.prepare(
+                "word.document_review", ["网络安全方案"], scene="cybersecurity"
+            )
+            imitation = service.prepare(
+                "word.smart_imitation", ["网络安全方案"], scene="cybersecurity"
+            )
+            wrong_scene = service.prepare(
+                "word.smart_write", ["技术方案"], scene="yangqi"
+            )
+
+            self.assertIn(scoped["id"], smart_write.matched_item_ids)
+            self.assertIn(scoped["id"], document_review.matched_item_ids)
+            self.assertEqual(smart_write.usage["antiTemplateRuleCount"], 1)
+            self.assertNotIn(scoped["id"], imitation.matched_item_ids)
+            self.assertNotIn(scoped["id"], wrong_scene.matched_item_ids)
+
+    def test_preset_style_and_anti_template_support_override_disable_and_restore(self):
+        with TemporaryDirectory() as tmp:
+            store = WritingPolicyStore(Path(tmp) / "writing_policies.db")
+            service = WritingPolicyService(
+                store=store,
+                pack_snapshot=load_pack_snapshot(),
+            )
+            baseline = service.list_preset_items(
+                "official-document-style", "anti_template"
+            )[0]
+
+            override = service.put_preset_operation(
+                baseline["id"],
+                "override",
+                {
+                    "ruleText": "删除空泛口号，保留正式责任和规范性强度。",
+                    "taskTypes": ["word.document_review"],
+                    "sceneIds": ["official"],
+                },
+            )
+            self.assertEqual(override["itemType"], "anti_template")
+            current = service.list_preset_items(
+                "official-document-style", "anti_template"
+            )[0]
+            self.assertEqual(current["organizationState"], "overridden")
+            self.assertEqual(
+                current["taskTypes"], ["word.document_review"]
+            )
+
+            service.put_preset_operation(baseline["id"], "disabled", {})
+            disabled = service.list_preset_items(
+                "official-document-style", "anti_template"
+            )[0]
+            self.assertEqual(disabled["organizationState"], "disabled")
+            self.assertFalse(disabled["effective"])
+
+            restored = service.restore_preset_operation(baseline["id"])
+            self.assertEqual(restored["operation"], "disabled")
+            restored_item = service.list_preset_items(
+                "official-document-style", "anti_template"
+            )[0]
+            self.assertEqual(restored_item["organizationState"], "preset")
 
     def test_organization_terms_and_preset_operations_resolve_consistently_for_three_word_tasks(self):
         with TemporaryDirectory() as tmp:
@@ -263,7 +352,7 @@ class WritingPolicyServiceTests(unittest.TestCase):
                         "term.cyber.001", result.matched_item_ids
                     )
 
-            service.put_preset_term_operation(
+            service.put_preset_operation(
                 "term.cyber.001",
                 "override",
                 {
@@ -309,7 +398,7 @@ class WritingPolicyServiceTests(unittest.TestCase):
                         json.dumps(audit, ensure_ascii=False),
                     )
 
-            service.put_preset_term_operation(
+            service.put_preset_operation(
                 "term.cyber.001", "disabled", {}
             )
             for task_scope in (
@@ -347,7 +436,7 @@ class WritingPolicyServiceTests(unittest.TestCase):
                 store=store,
                 pack_snapshot=WritingPolicyPackSnapshot(tuple(packs)),
             )
-            service.put_preset_term_operation(
+            service.put_preset_operation(
                 "term.cyber.001",
                 "override",
                 {
@@ -386,7 +475,7 @@ class WritingPolicyServiceTests(unittest.TestCase):
                 pack_snapshot=WritingPolicyPackSnapshot(()),
             )
 
-            restored = service.restore_preset_term("term.removed.001")
+            restored = service.restore_preset_operation("term.removed.001")
 
             self.assertEqual(restored["presetEntryId"], "term.removed.001")
             with self.assertRaises(WritingPolicyError) as raised:

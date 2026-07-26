@@ -19,6 +19,7 @@ if HAS_PYDANTIC:
         audit_document_review_writing_policy,
     )
     from app.services.writing_policy import service as writing_policy_service_module
+    from app.services.writing_policy.store import WritingPolicyStore
     from app.services.provider_client import get_last_provider_debug, record_provider_debug, reset_provider_debug
     from app.services.word import document_reviewer as document_reviewer_module
     from app.services.word.document_review_jobs import DocumentReviewJobStore
@@ -226,7 +227,7 @@ class FakeWritingPolicyService:
 
 
 class EmptyWritingPolicyStore:
-    def enabled_items(self, _task_scope):
+    def enabled_items(self, _task_scope, _scene_id=None):
         return [], []
 
 
@@ -654,3 +655,71 @@ class WordDocumentReviewerTests(unittest.TestCase):
             result["writingPolicyUsage"]["packNames"],
             ["G企技术写作基础", "技术文件文体"],
         )
+
+    def test_document_review_applies_scoped_organization_rule_once(self) -> None:
+        provider = RecordingDocumentReviewProvider()
+        with isolated_default_writing_policy_database(self) as db_path:
+            store = WritingPolicyStore(db_path)
+            store.create_item(
+                {
+                    "type": "style",
+                    "name": "审查验收证据",
+                    "ruleText": "文档审查应核对验收结论是否给出证据依据。",
+                    "positiveExample": "经测试记录核验，指标满足要求。",
+                    "negativeExample": "项目整体情况良好。",
+                    "contextKeywords": [],
+                    "alwaysApply": True,
+                    "priority": "high",
+                    "taskTypes": ["word.document_review"],
+                    "sceneIds": ["yangqi"],
+                    "enabled": True,
+                    "note": "组织规则端到端测试",
+                }
+            )
+            for name, rule_text, task_types, scene_ids in (
+                (
+                    "编写专用排除规则",
+                    "此规则只允许进入智能编写。",
+                    ["word.smart_write"],
+                    ["yangqi"],
+                ),
+                (
+                    "党政审查场景排除规则",
+                    "此规则只允许进入党政公文审查。",
+                    ["word.document_review"],
+                    ["official"],
+                ),
+            ):
+                store.create_item(
+                    {
+                        "type": "anti_template",
+                        "name": name,
+                        "ruleText": rule_text,
+                        "contextKeywords": [],
+                        "alwaysApply": True,
+                        "priority": "high",
+                        "taskTypes": task_types,
+                        "sceneIds": scene_ids,
+                        "enabled": True,
+                    }
+                )
+
+            result = WordDocumentReviewer(provider).review(
+                self._request(writing_policy_scene="yangqi"),
+                trace_id="trace-review-scoped-rule",
+            )
+
+        self.assertEqual(len(provider.calls), 1)
+        self.assertIn(
+            "文档审查应核对验收结论是否给出证据依据",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertNotIn(
+            "此规则只允许进入智能编写",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertNotIn(
+            "此规则只允许进入党政公文审查",
+            provider.calls[0]["writingPolicyBlock"],
+        )
+        self.assertGreaterEqual(result["writingPolicyUsage"]["styleRuleCount"], 1)

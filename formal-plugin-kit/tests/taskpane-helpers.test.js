@@ -1081,6 +1081,8 @@ function testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata() {
     styleRuleCount: 3,
     antiTemplateRuleCount: 0,
     truncatedCount: 4,
+    conflictCount: 0,
+    conflicts: [],
     matchedItems: [
       { id: "t1", type: "term", name: "卫星互联网运营管理平台" },
       { id: "s1", type: "style", name: "先结论后说明" }
