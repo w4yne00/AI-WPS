@@ -6,10 +6,18 @@ const source = fs.readFileSync(
   "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js",
   "utf8"
 );
+const taskpaneSource = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/taskpane.js",
+  "utf8"
+);
 const context = { window: {} };
 vm.createContext(context);
 vm.runInContext(source, context);
 const helpers = context.window.WpsAiPptHelpers;
+
+assert.ok(taskpaneSource.includes('error.adapterCode === "LONG_TASK_QUEUE_FULL"'));
+assert.ok(taskpaneSource.includes('job.status === "cancelled"'));
+assert.ok(taskpaneSource.includes('"智能总结已取消"'));
 
 function assertSettingsContracts(targetHelpers) {
   function plain(value) {
@@ -464,6 +472,24 @@ assert.strictEqual(
   helpers.buildPptDocumentPlainText({ resultType: "document", rawAnswer: "模型原始回复" }),
   "模型原始回复"
 );
+
+{
+  const cases = [
+    [{ status: "queued", phase: "queued", queuePosition: 2, elapsedSeconds: 7 }, "document", "排队", "队列位置：第 2 位"],
+    [{ status: "running", phase: "preparing", elapsedSeconds: 8 }, "slide", "准备", "正在准备任务资源"],
+    [{ status: "running", phase: "uploading", elapsedSeconds: 9 }, "document", "上传", "正在上传文档到模型后台"],
+    [{ status: "running", phase: "provider_processing", elapsedSeconds: 10 }, "slide", "当前页", "模型后台正在处理"],
+    [{ status: "running", phase: "parsing", elapsedSeconds: 11 }, "document", "整理", "正在解析并整理返回结果"]
+  ];
+  cases.forEach(function (entry) {
+    const progress = helpers.describePptJobProgress(entry[0], entry[1], "client-ppt-progress");
+    assert.ok(progress.status.includes(entry[2]));
+    assert.ok(progress.detail.includes(entry[3]));
+    assert.ok(progress.detail.includes("任务编号：client-ppt-progress"));
+    assert.ok(!progress.status.includes("%"));
+    assert.ok(!progress.detail.includes("%"));
+  });
+}
 
 {
   const fallback = helpers.normalizePptDocumentResult({

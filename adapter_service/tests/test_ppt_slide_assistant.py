@@ -15,13 +15,17 @@ HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 if HAS_PYDANTIC:
     from app.core.errors import AdapterError
     from app.core.models import PptSlideAssistantRequest
-    from app.services.ppt.document_files import PptDocumentFileStore
+    from app.services.ppt.document_files import (
+        PPT_DOCUMENT_EXPIRES_SECONDS,
+        PptDocumentFileStore,
+    )
     from app.services.ppt.slide_assistant import (
         PptSlideAssistant,
         determine_ppt_slide_mode,
         normalize_ppt_slide_request,
     )
     from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
+    from app.services.long_task_coordinator import LongTaskCoordinator
 
 if HAS_PYDANTIC and HAS_FASTAPI:
     from app.api import ppt as ppt_api
@@ -40,7 +44,15 @@ class RecordingPptProvider:
     def __init__(self):
         self.calls = []
 
-    def ppt_slide_assistant(self, context, user_instruction, mode, trace_id):
+    def ppt_slide_assistant(
+        self,
+        context,
+        user_instruction,
+        mode,
+        trace_id,
+        task_auth=None,
+        progress_callback=None,
+    ):
         self.calls.append(
             {
                 "context": context,
@@ -49,6 +61,8 @@ class RecordingPptProvider:
                 "traceId": trace_id,
             }
         )
+        if progress_callback:
+            progress_callback("parsing")
         return {
             "modeUsed": mode,
             "suggestedTitle": "项目总体进展",
@@ -90,6 +104,18 @@ class RecordingPptDocumentProvider:
         self.started = threading.Event()
         self.release = threading.Event()
         self.block = False
+        self.task_auth = {
+            "providerBaseUrl": "https://model.example.test/v1",
+            "providerChatPath": "/chat-messages",
+            "providerMode": "blocking",
+            "providerInputMode": "legacy_inputs_query",
+            "apiKey": "ppt-key-v1",
+            "authSource": "workflow-profile:ppt-v1",
+        }
+
+    def resolve_task_auth(self, task_type):
+        self.calls.append({"snapshotTaskType": task_type})
+        return dict(self.task_auth)
 
     def ppt_document_summary(
         self,
@@ -98,6 +124,7 @@ class RecordingPptDocumentProvider:
         user_instruction,
         trace_id,
         progress_callback=None,
+        task_auth=None,
     ):
         self.calls.append(
             {
@@ -105,6 +132,7 @@ class RecordingPptDocumentProvider:
                 "requestedSlideCount": requested_slide_count,
                 "userInstruction": user_instruction,
                 "traceId": trace_id,
+                "taskAuth": task_auth,
             }
         )
         self.started.set()
@@ -113,7 +141,8 @@ class RecordingPptDocumentProvider:
         if self.fail_message:
             raise RuntimeError(self.fail_message)
         if progress_callback:
-            progress_callback("模型后台正在解析文档并生成 PPT 建议。")
+            progress_callback("provider_processing")
+            progress_callback("parsing")
         return {
             "resultType": "document",
             "deckTitle": "项目汇报建议",
@@ -297,8 +326,9 @@ class PptSlideAssistantTests(unittest.TestCase):
             self.assertEqual(result["resultType"], "document")
             self.assertEqual(provider.calls[0]["requestedSlideCount"], 15)
             self.assertFalse(provider_path.exists())
-            self.assertIn("正在上传文档到模型后台。", messages)
-            self.assertIn("模型后台正在解析文档并生成 PPT 建议。", messages)
+            self.assertIn("uploading", messages)
+            self.assertIn("provider_processing", messages)
+            self.assertIn("parsing", messages)
 
     def test_document_mode_deletes_staged_file_after_provider_failure(self):
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -350,13 +380,14 @@ class PptSlideAssistantTests(unittest.TestCase):
             duplicate = jobs.start(request, trace_id="trace-ppt-document-second")
 
             self.assertTrue(provider.started.wait(timeout=1))
-            self.assertEqual(len(provider.calls), 1)
+            provider_calls = [call for call in provider.calls if "path" in call]
+            self.assertEqual(len(provider_calls), 1)
             self.assertEqual(duplicate["traceId"], started["traceId"])
             self.assertIn("模型后台", duplicate["runningMessage"])
             provider.release.set()
             completed = self._wait_for_job(jobs, "client-ppt-document-duplicate")
             self.assertEqual(completed["status"], "completed")
-            self.assertFalse(Path(provider.calls[0]["path"]).exists())
+            self.assertFalse(Path(provider_calls[0]["path"]).exists())
 
     def test_document_job_failure_does_not_expose_file_details(self):
         original_name = "内部绝密方案.md"
@@ -383,14 +414,124 @@ class PptSlideAssistantTests(unittest.TestCase):
             self.assertNotIn(original_name, error_text)
             self.assertNotIn(encoded_content, error_text)
             self.assertNotIn(str(store.root_dir), error_text)
-            self.assertFalse(Path(provider.calls[0]["path"]).exists())
+            provider_call = next(call for call in provider.calls if "path" in call)
+            self.assertFalse(Path(provider_call["path"]).exists())
+
+    def test_document_job_claims_file_while_queued_and_uses_submission_auth_snapshot(self):
+        blocker_started = threading.Event()
+        blocker_release = threading.Event()
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        coordinator.submit(
+            job_id="client-word-blocker",
+            trace_id="trace-word-blocker",
+            task_type="word.document_review",
+            runner=lambda _snapshot, _progress: (
+                blocker_started.set(),
+                blocker_release.wait(timeout=2),
+                {"ok": True},
+            )[-1],
+            snapshot={},
+            failure_code="BLOCKER_FAILED",
+            failure_message="blocker failed",
+        )
+        self.assertTrue(blocker_started.wait(timeout=1))
+
+        clock = [100.0]
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_store = PptDocumentFileStore(Path(temp_dir), now=lambda: clock[0])
+            staged = self._stage_markdown(file_store)
+            staged_path = Path(temp_dir) / "{0}.md".format(staged["fileToken"])
+            provider = RecordingPptDocumentProvider()
+            jobs = PptSlideAssistantJobStore(
+                assistant=PptSlideAssistant(provider_client=provider, document_file_store=file_store),
+                coordinator=coordinator,
+            )
+            request = self._document_request(
+                staged["fileToken"],
+                client_job_id="client-ppt-document-queued",
+            )
+
+            queued = jobs.start(request, trace_id="trace-ppt-document-queued")
+            duplicate = jobs.start(request, trace_id="trace-ppt-document-duplicate")
+            provider.task_auth["apiKey"] = "ppt-key-v2"
+            clock[0] += PPT_DOCUMENT_EXPIRES_SECONDS + 1
+            file_store.cleanup_expired()
+
+            self.assertEqual(queued["status"], "queued")
+            self.assertEqual(queued["queuePosition"], 1)
+            self.assertEqual(duplicate["traceId"], queued["traceId"])
+            self.assertTrue(staged_path.is_file())
+            self.assertEqual([call for call in provider.calls if "path" in call], [])
+            with self.assertRaises(AdapterError):
+                file_store.consume(staged["fileToken"])
+
+            blocker_release.set()
+            completed = self._wait_for_job(jobs, "client-ppt-document-queued")
+            provider_call = next(call for call in provider.calls if "path" in call)
+
+            self.assertEqual(completed["status"], "completed")
+            self.assertEqual(provider_call["taskAuth"]["apiKey"], "ppt-key-v1")
+            self.assertFalse(staged_path.exists())
+            self.assertEqual(
+                set(completed["phaseDurations"]),
+                {"queued", "preparing", "uploading", "provider_processing", "parsing"},
+            )
+
+    def test_queued_document_cancel_and_store_close_remove_owned_files(self):
+        blocker_release = threading.Event()
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        coordinator.submit(
+            job_id="client-excel-blocker",
+            trace_id="trace-excel-blocker",
+            task_type="excel.analysis",
+            runner=lambda _snapshot, _progress: (
+                blocker_release.wait(timeout=2),
+                {"ok": True},
+            )[-1],
+            snapshot={},
+            failure_code="BLOCKER_FAILED",
+            failure_message="blocker failed",
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            file_store = PptDocumentFileStore(Path(temp_dir))
+            provider = RecordingPptDocumentProvider()
+            jobs = PptSlideAssistantJobStore(
+                assistant=PptSlideAssistant(provider_client=provider, document_file_store=file_store),
+                coordinator=coordinator,
+            )
+            first = self._stage_markdown(file_store, file_name="cancel.md")
+            first_path = Path(temp_dir) / "{0}.md".format(first["fileToken"])
+            jobs.start(
+                self._document_request(
+                    first["fileToken"], client_job_id="client-ppt-document-cancel"
+                ),
+                trace_id="trace-ppt-document-cancel",
+            )
+
+            cancelled = jobs.cancel("client-ppt-document-cancel")
+
+            self.assertEqual(cancelled["status"], "cancelled")
+            self.assertFalse(first_path.exists())
+            self.assertEqual([call for call in provider.calls if "path" in call], [])
+
+            second = self._stage_markdown(file_store, file_name="shutdown.md")
+            second_path = Path(temp_dir) / "{0}.md".format(second["fileToken"])
+            jobs.start(
+                self._document_request(
+                    second["fileToken"], client_job_id="client-ppt-document-shutdown"
+                ),
+                trace_id="trace-ppt-document-shutdown",
+            )
+            jobs.close()
+            self.assertFalse(second_path.exists())
+        blocker_release.set()
 
     @staticmethod
     def _wait_for_job(store, job_id):
         job = None
         for _ in range(100):
             job = store.get(job_id)
-            if job and job["status"] != "running":
+            if job and job["status"] in {"completed", "failed", "cancelled"}:
                 return job
             time.sleep(0.02)
         return job
@@ -423,24 +564,32 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["suggestedTitle"], "后台任务完成")
 
-    def test_job_store_rejects_new_job_without_evicting_running_job_at_capacity(self):
+    def test_job_store_rejects_new_job_when_shared_queue_is_full(self):
         assistant = BlockingPptAssistant()
-        store = PptSlideAssistantJobStore(assistant=assistant, max_jobs=1)
+        store = PptSlideAssistantJobStore(
+            assistant=assistant,
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
 
         store.start(
             self._request(client_job_id="client-ppt-running-first"),
             trace_id="trace-ppt-running-first",
         )
         self.assertTrue(assistant.started.wait(timeout=1))
+        queued = store.start(
+            self._request(client_job_id="client-ppt-running-second"),
+            trace_id="trace-ppt-running-second",
+        )
         with self.assertRaises(AdapterError) as error:
             store.start(
-                self._request(client_job_id="client-ppt-running-second"),
-                trace_id="trace-ppt-running-second",
+                self._request(client_job_id="client-ppt-running-third"),
+                trace_id="trace-ppt-running-third",
             )
 
         self.assertIsNotNone(store.get("client-ppt-running-first"))
-        self.assertIsNone(store.get("client-ppt-running-second"))
-        self.assertEqual(error.exception.code, "PPT_SLIDE_JOB_CAPACITY")
+        self.assertEqual(queued["status"], "queued")
+        self.assertIsNone(store.get("client-ppt-running-third"))
+        self.assertEqual(error.exception.code, "LONG_TASK_QUEUE_FULL")
         self.assertEqual(error.exception.status_code, 429)
         self.assertEqual(assistant.call_count, 1)
         assistant.release.set()
@@ -482,6 +631,35 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(missing.status_code, 404)
         self.assertIn(b"PPT_SLIDE_JOB_NOT_FOUND", missing.body)
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
+    def test_fastapi_cancel_queued_job_contract(self):
+        assistant = BlockingPptAssistant()
+        store = PptSlideAssistantJobStore(
+            assistant=assistant,
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        original_store = ppt_api.ppt_slide_jobs
+        ppt_api.ppt_slide_jobs = store
+        try:
+            ppt_api.start_ppt_slide_assistant_job(
+                self._request(client_job_id="client-ppt-fastapi-running")
+            )
+            self.assertTrue(assistant.started.wait(timeout=1))
+            ppt_api.start_ppt_slide_assistant_job(
+                self._request(client_job_id="client-ppt-fastapi-queued")
+            )
+
+            response = ppt_api.cancel_ppt_slide_assistant_job(
+                "client-ppt-fastapi-queued"
+            )
+        finally:
+            assistant.release.set()
+            ppt_api.ppt_slide_jobs = original_store
+
+        self.assertEqual(response["message"], "任务已取消。")
+        self.assertEqual(response["data"]["status"], "cancelled")
+        self.assertFalse(response["data"]["canCancel"])
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
     def test_fastapi_upload_and_document_result_serialization(self):
@@ -688,6 +866,36 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["body"]["data"]["status"], "running")
         self.assertEqual(missing["status"], 404)
         self.assertEqual(missing["body"]["errors"][0]["code"], "PPT_SLIDE_JOB_NOT_FOUND")
+
+    def test_standalone_delete_queued_job_contract(self):
+        import standalone_adapter
+
+        assistant = BlockingPptAssistant()
+        store = PptSlideAssistantJobStore(
+            assistant=assistant,
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        original_store = standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE
+        standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = store
+        try:
+            running = self._request(client_job_id="client-ppt-standalone-running")
+            queued = self._request(client_job_id="client-ppt-standalone-queued")
+            store.start(running, trace_id="trace-ppt-standalone-running")
+            self.assertTrue(assistant.started.wait(timeout=1))
+            store.start(queued, trace_id="trace-ppt-standalone-queued")
+
+            response = self._invoke_standalone(
+                standalone_adapter,
+                "do_DELETE",
+                "/ppt/slide-assistant/jobs/client-ppt-standalone-queued",
+            )
+        finally:
+            assistant.release.set()
+            standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = original_store
+
+        self.assertEqual(response["status"], 200)
+        self.assertEqual(response["body"]["message"], "任务已取消。")
+        self.assertEqual(response["body"]["data"]["status"], "cancelled")
 
     def test_standalone_upload_and_document_result_routes(self):
         import standalone_adapter

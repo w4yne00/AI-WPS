@@ -1310,7 +1310,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             urlopen.call_args_list[2].args[0].get_header("Authorization"),
             "Bearer app-ppt-profile-secret",
         )
-        self.assertEqual(progress_messages, ["模型后台正在解析文档并生成 PPT 建议。"])
+        self.assertEqual(progress_messages, ["provider_processing", "parsing"])
         self.assertEqual(result["resultType"], "document")
         self.assertEqual(result["provider"], "enterprise-dify-chat/task-file")
         self.assertEqual(result["conversationId"], "conversation-ppt-document")

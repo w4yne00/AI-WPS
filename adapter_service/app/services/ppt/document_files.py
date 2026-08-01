@@ -51,6 +51,7 @@ class PptDocumentFileStore:
         os.chmod(str(self.root_dir), 0o700)
         self._now = now
         self._items: Dict[str, StagedPptDocument] = {}
+        self._owned: Dict[str, StagedPptDocument] = {}
         self._lock = threading.Lock()
         self._cleanup_stop = threading.Event()
         self._cleanup_thread = None
@@ -68,6 +69,12 @@ class PptDocumentFileStore:
         self._cleanup_stop.set()
         if self._cleanup_thread and self._cleanup_thread.is_alive():
             self._cleanup_thread.join(timeout=1)
+        with self._lock:
+            staged_files = list(self._items.values()) + list(self._owned.values())
+            self._items.clear()
+            self._owned.clear()
+        for staged in staged_files:
+            self.delete(staged)
 
     def _cleanup_loop(self, interval_seconds: float) -> None:
         while not self._cleanup_stop.wait(interval_seconds):
@@ -166,6 +173,38 @@ class PptDocumentFileStore:
             )
         return staged
 
+    def claim(self, token: str, owner_id: str) -> StagedPptDocument:
+        owner = str(owner_id or "").strip()
+        if not owner:
+            raise ValueError("owner_id is required")
+        self.cleanup_expired()
+        staged = None
+        with self._lock:
+            existing = self._owned.get(owner)
+            if existing is not None:
+                return existing
+            staged = self._items.pop(str(token or ""), None)
+            if (
+                staged is not None
+                and staged.expires_at > self._now()
+                and staged.path.is_file()
+            ):
+                self._owned[owner] = staged
+                return staged
+        if staged is not None:
+            self.delete(staged)
+        raise AdapterError(
+            "PPT_DOCUMENT_FILE_EXPIRED",
+            "文档上传凭证已过期，请重新选择文件。",
+            status_code=400,
+        )
+
+    def release(self, owner_id: str) -> None:
+        with self._lock:
+            staged = self._owned.pop(str(owner_id or "").strip(), None)
+        if staged is not None:
+            self.delete(staged)
+
     def delete(self, staged: StagedPptDocument) -> None:
         try:
             staged.path.unlink()
@@ -178,10 +217,13 @@ class PptDocumentFileStore:
             expired = [item for item in self._items.values() if item.expires_at <= now]
             for item in expired:
                 self._items.pop(item.token, None)
+            owned_paths = {item.path for item in self._owned.values()}
         for item in expired:
             self.delete(item)
         for path in self.root_dir.glob("pptdoc_*.*"):
             if path.suffix.lower().lstrip(".") not in ALLOWED_EXTENSIONS:
+                continue
+            if path in owned_paths:
                 continue
             try:
                 is_orphan_expired = now - path.stat().st_mtime >= PPT_DOCUMENT_EXPIRES_SECONDS

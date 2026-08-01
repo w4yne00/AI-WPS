@@ -502,6 +502,7 @@
     return error && (
       error.adapterCode === "PPT_SLIDE_JOB_NOT_FOUND" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED" ||
+      error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
       error.adapterCode === "PPT_SLIDE_JOB_CAPACITY" ||
       error.adapterCode === "PPT_DOCUMENT_FILE_REQUIRED" ||
       error.adapterCode === "PPT_DOCUMENT_FILE_EXPIRED"
@@ -564,14 +565,17 @@
         failJob(jobId, job.error && job.error.message, "总结失败");
         return;
       }
-      setStatus((state.jobSourceMode || state.sourceMode) === "document"
-        ? "模型后台正在生成文档总结方案..."
-        : "模型后台正在生成当前页总结...");
-      showProgressText([
-        job.runningMessage || "模型后台正在处理。",
-        "已等待：" + (job.elapsedSeconds || 0) + " 秒",
-        "任务编号：" + jobId
-      ].join("\n"));
+      if (job.status === "cancelled") {
+        failJob(jobId, "任务已取消。", "智能总结已取消");
+        return;
+      }
+      var progress = helpers.describePptJobProgress(
+        job,
+        state.jobSourceMode || state.sourceMode,
+        jobId
+      );
+      setStatus(progress.status);
+      showProgressText(progress.detail);
       schedulePoll(jobId, PPT_SLIDE_POLL_INTERVAL_MS);
     }).catch(function (error) {
       var elapsed = Date.now() - (state.startedAt || Date.now());
@@ -637,7 +641,9 @@
         finishJob(jobId, job.result || {});
         return;
       }
-      setStatus("任务已提交，模型后台处理中...");
+      var progress = helpers.describePptJobProgress(job, state.jobSourceMode, jobId);
+      setStatus(progress.status);
+      showProgressText(progress.detail);
       pollPptSlideJob(jobId);
     }).catch(function (error) {
       if (isFatalPollError(error)) {

@@ -1982,14 +1982,71 @@ class ProviderClient:
             "messageId": body.get("message_id", ""),
         }
 
-    def ppt_slide_assistant(self, context: Dict, user_instruction: str, mode: str, trace_id: str) -> Dict:
+    def ppt_slide_assistant(
+        self,
+        context: Dict,
+        user_instruction: str,
+        mode: str,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
+    ) -> Dict:
         prompt = build_ppt_slide_prompt(context, user_instruction, mode)
         task_type = "ppt.slide_assistant"
-        if not self.is_task_configured(task_type):
+        has_auth_snapshot = task_auth is not None
+        resolved_task_auth = task_auth or {}
+        configured = (
+            bool(
+                str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+                and str(resolved_task_auth.get("apiKey", "")).strip()
+            )
+            if has_auth_snapshot
+            else self.is_task_configured(task_type)
+        )
+        if not configured:
             logger.info("traceId=%s provider=mock task=ppt.slide_assistant", trace_id)
-            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if has_auth_snapshot:
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": "",
+                        **self.build_debug_metadata(
+                            task_type,
+                            provider="mock",
+                            task_auth=resolved_task_auth,
+                        ),
+                        "skipReason": "provider_not_configured",
+                        "request": {
+                            "body": build_provider_request_payload(
+                                self.settings,
+                                {},
+                                prompt,
+                                input_mode=str(
+                                    resolved_task_auth.get("providerInputMode")
+                                    or DIFY_INPUT_MODE_LEGACY
+                                ),
+                                response_mode=str(
+                                    resolved_task_auth.get("providerMode", "")
+                                ),
+                            )
+                        },
+                    }
+                )
+            else:
+                self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if progress_callback:
+                progress_callback("parsing")
             return build_ppt_unconfigured_result(context, mode, prompt)
 
+        post_kwargs = {
+            "timeout_seconds": max(
+                self.settings.timeout_seconds,
+                PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS,
+            )
+        }
+        if has_auth_snapshot:
+            post_kwargs["task_auth"] = resolved_task_auth
         body = self.post_task(
             task_type,
             trace_id,
@@ -2000,14 +2057,20 @@ class ProviderClient:
                 "truncated": context["truncated"],
             },
             prompt,
-            timeout_seconds=max(self.settings.timeout_seconds, PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS),
+            **post_kwargs,
         )
+        if progress_callback:
+            progress_callback("parsing")
         parsed = parse_ppt_slide_answer(extract_answer(body))
         logger.info("traceId=%s provider=enterprise-dify-chat task=ppt.slide_assistant", trace_id)
         return {
             **parsed,
             "modeUsed": mode,
-            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "provider": "enterprise-dify-chat/{0}".format(
+                str(resolved_task_auth.get("authSource", "none"))
+                if has_auth_snapshot
+                else self.get_auth_source_for_task(task_type)
+            ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -2020,13 +2083,16 @@ class ProviderClient:
         user_instruction: str,
         trace_id: str,
         progress_callback=None,
+        task_auth: Optional[Dict] = None,
     ) -> Dict:
         task_type = "ppt.slide_assistant"
         slide_count = _normalize_ppt_document_slide_count(requested_slide_count)
         prompt = build_ppt_document_prompt(slide_count, user_instruction)
-        task_auth = self.resolve_task_auth(task_type)
-        if not str(task_auth.get("providerBaseUrl", "")).strip() or not str(
-            task_auth.get("apiKey", "")
+        resolved_task_auth = (
+            task_auth if task_auth is not None else self.resolve_task_auth(task_type)
+        )
+        if not str(resolved_task_auth.get("providerBaseUrl", "")).strip() or not str(
+            resolved_task_auth.get("apiKey", "")
         ).strip():
             logger.info("traceId=%s provider=mock task=ppt.slide_assistant sourceMode=document", trace_id)
             record_provider_debug(
@@ -2034,7 +2100,11 @@ class ProviderClient:
                     "traceId": trace_id,
                     "taskType": task_type,
                     "url": "",
-                    **self.build_debug_metadata(task_type, provider="mock", task_auth=task_auth),
+                    **self.build_debug_metadata(
+                        task_type,
+                        provider="mock",
+                        task_auth=resolved_task_auth,
+                    ),
                     "skipReason": "provider_not_configured",
                     "request": {
                         "body": build_provider_request_payload(self.settings, {}, prompt)
@@ -2060,11 +2130,11 @@ class ProviderClient:
             task_type,
             trace_id,
             staged_document,
-            task_auth=task_auth,
+            task_auth=resolved_task_auth,
             timeout_seconds=timeout,
         )
         if progress_callback:
-            progress_callback("模型后台正在解析文档并生成 PPT 建议。")
+            progress_callback("provider_processing")
         files = [
             {
                 "type": "document",
@@ -2083,8 +2153,10 @@ class ProviderClient:
             prompt,
             timeout_seconds=timeout,
             files=files,
-            task_auth=task_auth,
+            task_auth=resolved_task_auth,
         )
+        if progress_callback:
+            progress_callback("parsing")
         parsed = parse_ppt_document_answer(extract_answer(body), slide_count)
         logger.info(
             "traceId=%s provider=enterprise-dify-chat task=ppt.slide_assistant sourceMode=document",
@@ -2093,7 +2165,7 @@ class ProviderClient:
         return {
             **parsed,
             "provider": "enterprise-dify-chat/{0}".format(
-                str(task_auth.get("authSource", "none"))
+                str(resolved_task_auth.get("authSource", "none"))
             ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),

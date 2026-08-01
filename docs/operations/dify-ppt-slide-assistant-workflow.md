@@ -8,6 +8,7 @@
 - 本地文件入口：`POST /ppt/document-files`
 - 后台任务：`POST /ppt/slide-assistant/jobs`
 - 状态查询：`GET /ppt/slide-assistant/jobs/{jobId}`
+- 排队取消：`DELETE /ppt/slide-assistant/jobs/{jobId}`
 - provider 等待预算：1800 秒
 - 提示词模板：`docs/prompt-templates/ppt-smart-summary-prompt-template.md`
 
@@ -43,9 +44,9 @@ POST /ppt/document-files
 }
 ```
 
-`requestedSlideCount` 只允许 5、8、10、12、15，默认 10。`clientJobId` 用于幂等恢复，同一任务不得重复上传文件或重复调用模型。
+`requestedSlideCount` 只允许 5、8、10、12、15，默认 10。`clientJobId` 用于幂等恢复，同一任务不得重复消费令牌、上传文件或调用模型。任务提交时即验证并消费一次性令牌，本地文件随即转为该任务的独占资源；排队期间不上传 Dify，也不再因令牌超过 30 分钟而失效。
 
-adapter 使用当前工作流档案的同一 API Key 调用 Dify `/files/upload`，取得 `upload_file_id` 后向 `/chat-messages` 传入：
+任务获得共享协调器执行槽位后，adapter 使用提交时冻结的同一工作流认证快照调用 Dify `/files/upload`，取得 `upload_file_id` 后向 `/chat-messages` 传入：
 
 ```json
 {
@@ -59,7 +60,7 @@ adapter 使用当前工作流档案的同一 API Key 调用 Dify `/files/upload`
 }
 ```
 
-本地文件采用一次性令牌，上传模型后台成功、任务失败或令牌过期后删除。adapter 重启后未完成的文件令牌失效，用户需要重新选择文件。
+本地文件采用一次性令牌；排队取消、任务完成、任务失败或 Adapter 退出时删除。adapter 重启后未完成的任务文件已清理，用户需要重新选择文件。
 
 ## Dify 节点配置
 
@@ -101,7 +102,9 @@ adapter 使用当前工作流档案的同一 API Key 调用 Dify `/files/upload`
 ## 长任务与恢复
 
 - 前端提交后台任务后短轮询状态，不保持单次长连接等待模型完成。
-- 运行阶段依次显示：本地文件已接收、正在上传模型后台、模型后台正在解析文档、正在生成 PPT 建议。
+- PPT 与 Word 文档审查、Excel 智能分析共用默认 2 个执行槽位和最多 8 个 FIFO 排队位置。
+- 状态使用 `queued / running / completed / failed / cancelled`，运行阶段依次显示 `preparing / uploading / provider_processing / parsing`；前端显示真实阶段、队列位置和实际耗时，不显示估算百分比。
+- 只有仍在排队的任务可以取消；运行中的阻塞式模型请求不伪装为可取消。
 - provider 最长等待 1800 秒；180 秒以上的模型任务仍应继续查询。
 - 状态查询短暂超时或连接中断时必须保留 `jobId` 和 `clientJobId`，不得重新提交。
 - 任务窗格关闭再打开后，应使用本地保存的任务号恢复查询。

@@ -828,6 +828,44 @@
     return sections.join("\n\n");
   }
 
+  function describePptJobProgress(job, sourceMode, jobId) {
+    var data = job || {};
+    var phase = safeText(data.phase) || (data.status === "queued" ? "queued" : "provider_processing");
+    var isDocument = sourceMode === "document" || data.sourceMode === "document";
+    var status;
+    var detail;
+    if (phase === "queued") {
+      status = "智能总结任务正在排队...";
+      detail = data.queuePosition
+        ? "队列位置：第 " + data.queuePosition + " 位"
+        : "任务正在等待执行槽位。";
+    } else if (phase === "preparing") {
+      status = "正在准备智能总结任务...";
+      detail = "正在准备任务资源。";
+    } else if (phase === "uploading") {
+      status = "正在上传文档到模型后台...";
+      detail = "正在上传文档到模型后台。";
+    } else if (phase === "parsing") {
+      status = "正在整理智能总结结果...";
+      detail = "正在解析并整理返回结果。";
+    } else {
+      status = isDocument
+        ? "模型后台正在生成文档总结方案..."
+        : "模型后台正在生成当前页总结...";
+      detail = isDocument
+        ? "模型后台正在处理文档总结。"
+        : "模型后台正在处理当前页总结。";
+    }
+    return {
+      status: status,
+      detail: [
+        detail,
+        "已等待：" + (Number(data.elapsedSeconds) || 0) + " 秒",
+        "任务编号：" + safeText(jobId || data.jobId)
+      ].join("\n")
+    };
+  }
+
   global.WpsAiPptHelpers = {
     extractPresentationSlide: extractPresentationSlide,
     truncateText: truncateText,
@@ -845,6 +883,7 @@
     normalizePptDocumentResult: normalizePptDocumentResult,
     buildPptDocumentPlainText: buildPptDocumentPlainText,
     buildPptDocumentOutline: buildPptDocumentOutline,
-    buildPptDocumentSlidePlainText: buildPptDocumentSlidePlainText
+    buildPptDocumentSlidePlainText: buildPptDocumentSlidePlainText,
+    describePptJobProgress: describePptJobProgress
   };
 }(window));

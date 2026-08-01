@@ -295,6 +295,38 @@ class PptDocumentFileStoreTests(unittest.TestCase):
             self.store.consume(token)
         self.assertEqual(error.exception.code, "PPT_DOCUMENT_FILE_EXPIRED")
 
+    def test_claimed_file_survives_token_expiry_until_owner_releases_it(self):
+        staged_payload = self._store("source.md", b"owned by queued job")
+
+        claimed = self.store.claim(
+            staged_payload["fileToken"],
+            "client-ppt-document-owned",
+        )
+        self.clock[0] += PPT_DOCUMENT_EXPIRES_SECONDS + 1
+        self.store.cleanup_expired()
+
+        self.assertTrue(claimed.path.is_file())
+        with self.assertRaises(AdapterError) as error:
+            self.store.consume(staged_payload["fileToken"])
+        self.assertEqual(error.exception.code, "PPT_DOCUMENT_FILE_EXPIRED")
+
+        self.store.release("client-ppt-document-owned")
+        self.assertFalse(claimed.path.exists())
+
+    def test_close_removes_unconsumed_and_task_owned_files(self):
+        unconsumed = self._store("unconsumed.md", b"unconsumed")
+        owned_payload = self._store("owned.md", b"owned")
+        owned = self.store.claim(
+            owned_payload["fileToken"],
+            "client-ppt-document-shutdown",
+        )
+        unconsumed_path = self.root / "{0}.md".format(unconsumed["fileToken"])
+
+        self.store.close()
+
+        self.assertFalse(unconsumed_path.exists())
+        self.assertFalse(owned.path.exists())
+
     def test_cleanup_worker_removes_expired_unconsumed_file(self):
         clock = [100.0]
         store = PptDocumentFileStore(

@@ -3,7 +3,7 @@ import threading
 import time
 from collections import deque
 from copy import deepcopy
-from typing import Callable, Deque, Dict, Optional, Tuple
+from typing import Callable, Deque, Dict, Optional, Set, Tuple
 
 from app.core.errors import AdapterError
 
@@ -67,6 +67,7 @@ class LongTaskCoordinator:
         failure_code: str,
         failure_message: str,
         public_metadata: Optional[Dict] = None,
+        safe_failure_codes: Optional[Set[str]] = None,
     ) -> Dict:
         worker_job_key: Optional[JobKey] = None
         now_mono = self._monotonic()
@@ -103,6 +104,7 @@ class LongTaskCoordinator:
                 "_snapshot": deepcopy(snapshot),
                 "_failureCode": failure_code,
                 "_failureMessage": failure_message,
+                "_safeFailureCodes": set(safe_failure_codes or set()),
                 "_publicMetadata": deepcopy(public_metadata or {}),
                 "result": None,
                 "error": None,
@@ -206,11 +208,17 @@ class LongTaskCoordinator:
         error = None
         try:
             result = runner(snapshot, progress)
-        except Exception:
-            error = {
-                "code": str(job.get("_failureCode") or "LONG_TASK_FAILED"),
-                "message": str(job.get("_failureMessage") or "后台任务执行失败。"),
-            }
+        except Exception as exc:
+            if (
+                isinstance(exc, AdapterError)
+                and exc.code in job.get("_safeFailureCodes", set())
+            ):
+                error = {"code": exc.code, "message": exc.message}
+            else:
+                error = {
+                    "code": str(job.get("_failureCode") or "LONG_TASK_FAILED"),
+                    "message": str(job.get("_failureMessage") or "后台任务执行失败。"),
+                }
         finally:
             snapshot = None
             runner = None

@@ -148,6 +148,7 @@ DELETE /excel/analysis/jobs/{jobId}
 POST   /ppt/document-files
 POST   /ppt/slide-assistant/jobs
 GET    /ppt/slide-assistant/jobs/{jobId}
+DELETE /ppt/slide-assistant/jobs/{jobId}
 ```
 
 ## 3. 本版本关键变化
@@ -161,6 +162,10 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - issue #13 已让 Excel 智能分析复用同一共享长任务协调器：与文档审查共同受默认并发 2、FIFO 排队容量 8 的全局限制，重复 `clientJobId` 继续只调用一次模型后台；提交时冻结表格请求与工作流认证快照，排队期间切换档案只影响后续任务。
 - 智能分析任务状态现包含 `queued / running / completed / failed / cancelled`、排队位置、真实阶段、总耗时和阶段耗时；FastAPI 与 standalone 均支持提交、查询、排队取消和中文队列满错误。
 - Excel 任务窗格继续保留选区优先、UsedRange 兜底、报告预览、汇报段落、复制、短暂断连恢复和重开续查，并新增共享队列位置、当前阶段与耗时显示；仍不写回任何单元格。
+- issue #14 已让 PPT 当前页总结和文档总结复用同一共享长任务协调器：与 Word 文档审查、Excel 智能分析共同受默认并发 2、FIFO 排队容量 8 的全局限制，重复 `clientJobId` 不会重复消费文件令牌、上传文件或调用模型后台。
+- PPT 文档任务在提交队列时即验证并消费一次性文件令牌，本地暂存文件转为任务独占资源；排队期间不上传模型后台且不再受令牌 30 分钟有效期影响，只有取得执行槽位后才依次上传文件和发送消息，两步使用提交时冻结的同一认证快照。
+- PPT 智能总结状态现包含 `queued / running / completed / failed / cancelled`、排队位置、`preparing / uploading / provider_processing / parsing` 真实阶段及耗时；FastAPI 与 standalone 均支持提交、查询和排队取消。任务文件在排队取消、完成、失败及 Adapter 退出时清理。
+- PPT 任务窗格按真实阶段显示排队、准备、上传、模型处理和解析，不显示估算百分比；当前页标题/副标题、文档页数选项、长任务恢复、结果预览、分类复制和只读边界保持不变。
 
 `v0.20.0-alpha` 正式打包 issue #4 至 issue #11 的写作规范库完整基线：
 
@@ -310,6 +315,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 智能分析长任务必须使用 `clientJobId` + `/excel/analysis/jobs/{jobId}` 的可恢复轮询链路；短暂状态查询失败不得清空任务号，同一 `clientJobId` 不得重复发起模型任务。
 - PPT 智能总结必须保持 read-only：不得调用幻灯片、形状、文本、版式、主题、图表、动画或备注写接口；只允许读取当前页或用户主动选择的文档、预览、纯文本与复制。
 - PPT 智能总结长任务必须使用 `clientJobId` + `/ppt/slide-assistant/jobs/{jobId}` 的可恢复轮询链路；短暂状态查询失败不得清空任务号，同一 `clientJobId` 不得重复上传文件或发起模型任务。
+- PPT 文档任务必须在提交 `clientJobId` 时取得暂存文件所有权；排队期间不得提前上传模型后台，所有终态、排队取消和 Adapter 退出路径必须清理任务文件。
 - 文档总结文件必须限制为单个 UTF-8 `.md` 或有效 `.docx`、1 字节至 10 MB；一次性令牌在上传成功、任务失败或过期时清理，日志和诊断不得记录正文、Base64、完整文件名或 API Key。
 - PPT 文档任务必须使用同一个 `ppt.slide_assistant` 档案认证快照调用 `/files/upload` 和 `/chat-messages`；旧版与新版 Dify 输入模式回退时必须保留同一个 `files` 引用。
 - PPT 主标题和副标题必须分开识别；副标题是可选字段，不得混入 `textBlocks`，也不得覆盖主标题。

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import atexit
 import base64
 import binascii
 import hashlib
@@ -145,6 +146,13 @@ PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
 )
+
+
+def close_ppt_resources():
+    PPT_SLIDE_ASSISTANT_JOB_STORE.close()
+
+
+atexit.register(close_ppt_resources)
 
 
 def parse_word_request(payload):
@@ -1874,6 +1882,50 @@ class Handler(BaseHTTPRequestHandler):
                     "excel.analysis",
                     excel_analysis_job_payload(job),
                     message="cancelled",
+                ),
+            )
+            return
+
+        ppt_slide_assistant_prefix = "/ppt/slide-assistant/jobs/"
+        if path.startswith(ppt_slide_assistant_prefix):
+            job_id = unquote(path[len(ppt_slide_assistant_prefix):]).strip("/")
+            try:
+                job = PPT_SLIDE_ASSISTANT_JOB_STORE.cancel(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "ppt.slide_assistant",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            if not job:
+                message = "智能总结后台任务不存在或已过期。"
+                self._write(
+                    404,
+                    envelope(
+                        job_id,
+                        "ppt.slide_assistant",
+                        {"jobId": job_id, "status": "not_found"},
+                        success=False,
+                        message=message,
+                        errors=[
+                            {"code": "PPT_SLIDE_JOB_NOT_FOUND", "message": message}
+                        ],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "ppt.slide_assistant",
+                    ppt_slide_assistant_job_payload(job),
+                    message="任务已取消。",
                 ),
             )
             return

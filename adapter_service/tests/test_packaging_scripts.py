@@ -58,6 +58,9 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("def ppt_slide_assistant_job_payload", script)
         self.assertIn('path == "/ppt/slide-assistant/jobs"', script)
         self.assertIn('path.startswith("/ppt/slide-assistant/jobs/")', script)
+        self.assertIn('ppt_slide_assistant_prefix = "/ppt/slide-assistant/jobs/"', script)
+        self.assertIn("PPT_SLIDE_ASSISTANT_JOB_STORE.cancel", script)
+        self.assertIn("close_ppt_resources", script)
         self.assertIn("PPT_SLIDE_JOB_NOT_FOUND", script)
 
     def test_adapter_autostart_scripts_install_systemd_service(self) -> None:
