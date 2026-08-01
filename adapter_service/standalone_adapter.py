@@ -246,11 +246,14 @@ def document_review_missing_envelope(job_id, interrupted=False):
     )
 
 
-def request_validation_envelope(trace_id, task_type, validation_errors):
+def request_validation_envelope(
+    trace_id, task_type, validation_errors, error_count=None
+):
+    total_errors = len(validation_errors) if error_count is None else error_count
     return envelope(
         trace_id,
         task_type,
-        {"validation": {"errorCount": len(validation_errors), "errors": validation_errors}},
+        {"validation": {"errorCount": total_errors, "errors": validation_errors}},
         success=False,
         message="Request payload validation failed.",
         errors=[
@@ -1548,6 +1551,7 @@ class Handler(BaseHTTPRequestHandler):
                         trace_id,
                         "word.document_review",
                         validation_errors,
+                        error_count=len(raw_errors),
                     ),
                 )
                 return

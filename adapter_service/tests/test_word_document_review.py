@@ -940,6 +940,10 @@ class WordDocumentReviewerTests(unittest.TestCase):
             content=b"{bad-json",
             headers={"Content-Type": "application/json"},
         )
+        many_errors_response = TestClient(app).post(
+            "/word/document-review/jobs",
+            json={"content": {"paragraphs": ["invalid"] * 10}},
+        )
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(queued["data"]["status"], "queued")
         self.assertEqual(queued["data"]["queuePosition"], 1)
@@ -973,6 +977,14 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(
             malformed_response.json()["errors"][0]["code"],
             "REQUEST_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            many_errors_response.json()["data"]["validation"]["errorCount"],
+            10,
+        )
+        self.assertEqual(
+            len(many_errors_response.json()["data"]["validation"]["errors"]),
+            8,
         )
 
     def test_standalone_job_routes_match_fastapi_cancel_and_error_contract(self) -> None:
@@ -1047,6 +1059,11 @@ class WordDocumentReviewerTests(unittest.TestCase):
                 "/word/document-review/jobs",
                 b"{bad-json",
             )
+            many_errors = invoke(
+                "do_POST",
+                "/word/document-review/jobs",
+                {"content": {"paragraphs": ["invalid"] * 10}},
+            )
         finally:
             provider.release.set()
             standalone_adapter.DOCUMENT_REVIEW_JOB_STORE = original_store
@@ -1084,4 +1101,12 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(
             malformed["body"]["errors"][0]["code"],
             "REQUEST_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            many_errors["body"]["data"]["validation"]["errorCount"],
+            10,
+        )
+        self.assertEqual(
+            len(many_errors["body"]["data"]["validation"]["errors"]),
+            8,
         )
