@@ -1878,12 +1878,59 @@ class ProviderClient:
             provider="mock",
         )
 
-    def excel_analysis(self, request: ExcelAnalysisRequest, trace_id: str) -> Dict:
+    def excel_analysis(
+        self,
+        request: ExcelAnalysisRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
+    ) -> Dict:
         prompt = build_excel_analysis_prompt(request)
         task_type = "excel.analysis"
-        if not self.is_task_configured(task_type):
+        has_auth_snapshot = task_auth is not None
+        resolved_task_auth = task_auth or {}
+        configured = (
+            bool(
+                str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+                and str(resolved_task_auth.get("apiKey", "")).strip()
+            )
+            if has_auth_snapshot
+            else self.is_task_configured(task_type)
+        )
+        if not configured:
             logger.info("traceId=%s provider=mock task=excel.analysis", trace_id)
-            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if has_auth_snapshot:
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": "",
+                        **self.build_debug_metadata(
+                            task_type,
+                            provider="mock",
+                            task_auth=resolved_task_auth,
+                        ),
+                        "skipReason": "provider_not_configured",
+                        "request": {
+                            "body": build_provider_request_payload(
+                                self.settings,
+                                {},
+                                prompt,
+                                input_mode=str(
+                                    resolved_task_auth.get("providerInputMode")
+                                    or DIFY_INPUT_MODE_LEGACY
+                                ),
+                                response_mode=str(
+                                    resolved_task_auth.get("providerMode", "")
+                                ),
+                            )
+                        },
+                    }
+                )
+            else:
+                self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if progress_callback:
+                progress_callback("parsing")
             return {
                 "structuredReport": {
                     "overview": "已读取 {0} 行、{1} 列表格数据。".format(
@@ -1899,6 +1946,14 @@ class ProviderClient:
                 "prompt": prompt,
             }
 
+        post_kwargs = {
+            "timeout_seconds": max(
+                self.settings.timeout_seconds,
+                EXCEL_ANALYSIS_TIMEOUT_SECONDS,
+            )
+        }
+        if has_auth_snapshot:
+            post_kwargs["task_auth"] = resolved_task_auth
         body = self.post_task(
             task_type,
             trace_id,
@@ -1909,13 +1964,19 @@ class ProviderClient:
                 "truncated": request.table.truncated,
             },
             prompt,
-            timeout_seconds=max(self.settings.timeout_seconds, EXCEL_ANALYSIS_TIMEOUT_SECONDS),
+            **post_kwargs
         )
+        if progress_callback:
+            progress_callback("parsing")
         parsed = parse_excel_analysis_answer(extract_answer(body))
         logger.info("traceId=%s provider=enterprise-dify-chat task=excel.analysis", trace_id)
         return {
             **parsed,
-            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "provider": "enterprise-dify-chat/{0}".format(
+                str(resolved_task_auth.get("authSource", "none"))
+                if has_auth_snapshot
+                else self.get_auth_source_for_task(task_type)
+            ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),

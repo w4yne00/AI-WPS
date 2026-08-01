@@ -32,15 +32,17 @@ class ExcelAnalysisJobStore:
 
     def start(self, request: ExcelAnalysisRequest, trace_id: str) -> Dict:
         job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
-        existing = self.coordinator.get(job_id)
+        existing = self.coordinator.get(job_id, task_type="excel.analysis")
         if existing is not None:
             return existing
+        snapshot_task_auth = getattr(self.analyzer, "snapshot_task_auth", None)
+        task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
         return self.coordinator.submit(
             job_id=job_id,
             trace_id=trace_id,
             task_type="excel.analysis",
             runner=self._run,
-            snapshot={"request": request},
+            snapshot={"request": request, "taskAuth": task_auth},
             failure_code="EXCEL_ANALYSIS_JOB_FAILED",
             failure_message="智能分析后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
             public_metadata={
@@ -50,16 +52,17 @@ class ExcelAnalysisJobStore:
         )
 
     def get(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.get(job_id)
+        return self.coordinator.get(job_id, task_type="excel.analysis")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.cancel(job_id)
+        return self.coordinator.cancel(job_id, task_type="excel.analysis")
 
     def _run(self, snapshot: Dict, progress) -> Dict:
-        progress("provider_processing")
-        result = self.analyzer.analyze(
+        analyzer_kwargs = {"progress_callback": progress}
+        if snapshot.get("taskAuth") is not None:
+            analyzer_kwargs["task_auth"] = snapshot["taskAuth"]
+        return self.analyzer.analyze(
             snapshot["request"],
             trace_id=snapshot.get("traceId", "") or "",
+            **analyzer_kwargs
         )
-        progress("parsing")
-        return result

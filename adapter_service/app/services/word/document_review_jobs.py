@@ -41,7 +41,7 @@ class DocumentReviewJobStore:
 
     def start(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
-        existing = self.coordinator.get(job_id)
+        existing = self.coordinator.get(job_id, task_type="word.document_review")
         if existing is not None:
             return existing
         snapshot = {
@@ -63,10 +63,10 @@ class DocumentReviewJobStore:
         )
 
     def get(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.get(job_id)
+        return self.coordinator.get(job_id, task_type="word.document_review")
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.cancel(job_id)
+        return self.coordinator.cancel(job_id, task_type="word.document_review")
 
     def _run(self, snapshot: Dict, progress) -> Dict:
         return self.reviewer.review(

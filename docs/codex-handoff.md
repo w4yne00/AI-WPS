@@ -158,7 +158,7 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - 运行中和排队任务不因容量被淘汰；终态从完成时起保留 2 小时且最多 50 条。任务窗格重开后按原 `clientJobId` 和 `resume=1` 查询；只有此前已持久化为活动任务的查询缺失才解释为 adapter 重启中断，普通未知或过期任务仍返回 `DOCUMENT_REVIEW_JOB_NOT_FOUND`。
 - `/provider/route-diagnostics` 包含共享协调器容量、当前计数和最多 10 条脱敏终态摘要；摘要不包含请求、结果、异常正文或认证信息。
 - FastAPI 与 standalone 均支持相同的文档审查提交、查询、排队取消、队列满和重启中断响应契约；现有同步路由、结果结构、think 过滤、审查记录和只读行为保持不变。
-- issue #13 已让 Excel 智能分析复用同一共享长任务协调器：与文档审查共同受默认并发 2、FIFO 排队容量 8 的全局限制，重复 `clientJobId` 继续只调用一次模型后台。
+- issue #13 已让 Excel 智能分析复用同一共享长任务协调器：与文档审查共同受默认并发 2、FIFO 排队容量 8 的全局限制，重复 `clientJobId` 继续只调用一次模型后台；提交时冻结表格请求与工作流认证快照，排队期间切换档案只影响后续任务。
 - 智能分析任务状态现包含 `queued / running / completed / failed / cancelled`、排队位置、真实阶段、总耗时和阶段耗时；FastAPI 与 standalone 均支持提交、查询、排队取消和中文队列满错误。
 - Excel 任务窗格继续保留选区优先、UsedRange 兜底、报告预览、汇报段落、复制、短暂断连恢复和重开续查，并新增共享队列位置、当前阶段与耗时显示；仍不写回任何单元格。
 

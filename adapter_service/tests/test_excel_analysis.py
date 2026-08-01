@@ -3,6 +3,7 @@ import json
 import threading
 import time
 import unittest
+from copy import deepcopy
 from io import BytesIO
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
@@ -33,9 +34,31 @@ def dump_excel_request(request):
 class RecordingExcelProvider:
     def __init__(self):
         self.calls = []
+        self.current_auth = {
+            "workflowProfileId": "profile-excel-a",
+            "apiKey": "secret-excel-a",
+        }
 
-    def excel_analysis(self, request, trace_id):
-        self.calls.append({"request": request, "traceId": trace_id})
+    def resolve_task_auth(self, task_type):
+        self.resolved_task_type = task_type
+        return deepcopy(self.current_auth)
+
+    def excel_analysis(
+        self,
+        request,
+        trace_id,
+        task_auth=None,
+        progress_callback=None,
+    ):
+        self.calls.append(
+            {
+                "request": request,
+                "traceId": trace_id,
+                "taskAuth": task_auth,
+            }
+        )
+        if progress_callback:
+            progress_callback("parsing")
         return {
             "structuredReport": {
                 "overview": "共 2 行、3 列。",
@@ -52,8 +75,12 @@ class RecordingExcelAnalyzer:
     def __init__(self):
         self.calls = []
 
-    def analyze(self, request, trace_id):
+    def analyze(self, request, trace_id, task_auth=None, progress_callback=None):
+        if progress_callback:
+            progress_callback("provider_processing")
         self.calls.append({"request": request, "traceId": trace_id})
+        if progress_callback:
+            progress_callback("parsing")
         return {
             "structuredReport": {
                 "overview": "路由概览",
@@ -72,10 +99,14 @@ class BlockingExcelAnalyzer:
         self.release = threading.Event()
         self.call_count = 0
 
-    def analyze(self, request, trace_id):
+    def analyze(self, request, trace_id, task_auth=None, progress_callback=None):
+        if progress_callback:
+            progress_callback("provider_processing")
         self.call_count += 1
         self.started.set()
         self.release.wait(timeout=2)
+        if progress_callback:
+            progress_callback("parsing")
         return {
             "structuredReport": {
                 "overview": "后台分析完成。",
@@ -85,6 +116,43 @@ class BlockingExcelAnalyzer:
             },
             "plainText": "后台分析完成。",
             "provider": "job-test",
+        }
+
+
+class SnapshotExcelAnalyzer:
+    def __init__(self):
+        self.current_auth = {
+            "workflowProfileId": "profile-excel-a",
+            "apiKey": "secret-excel-a",
+        }
+        self.snapshot_count = 0
+        self.calls = []
+
+    def snapshot_task_auth(self):
+        self.snapshot_count += 1
+        return deepcopy(self.current_auth)
+
+    def analyze(self, request, trace_id, task_auth=None, progress_callback=None):
+        if progress_callback:
+            progress_callback("provider_processing")
+        self.calls.append(
+            {
+                "request": request,
+                "traceId": trace_id,
+                "taskAuth": task_auth,
+            }
+        )
+        if progress_callback:
+            progress_callback("parsing")
+        return {
+            "structuredReport": {
+                "overview": "快照分析完成。",
+                "findings": [],
+                "risks": [],
+                "actions": [],
+            },
+            "plainText": "快照分析完成。",
+            "provider": "snapshot-test",
         }
 
 
@@ -132,6 +200,34 @@ class ExcelAnalysisTests(unittest.TestCase):
         self.assertEqual(result["structuredReport"]["overview"], "共 2 行、3 列。")
         self.assertEqual(result["plainText"], "本表显示项目B金额较高且状态异常，建议优先核查。")
         self.assertEqual(result["provider"], "enterprise-dify-chat/task-file")
+
+    def test_excel_analysis_freezes_task_auth_and_reports_real_phases(self):
+        provider = RecordingExcelProvider()
+        analyzer = ExcelAnalyzer(provider_client=provider)
+        task_auth = analyzer.snapshot_task_auth()
+        provider.current_auth.update(
+            workflowProfileId="profile-excel-b",
+            apiKey="secret-excel-b",
+        )
+        phases = []
+
+        analyzer.analyze(
+            self._request(),
+            trace_id="trace-excel-phases",
+            task_auth=task_auth,
+            progress_callback=phases.append,
+        )
+
+        self.assertEqual(provider.resolved_task_type, "excel.analysis")
+        self.assertEqual(
+            provider.calls[0]["taskAuth"]["workflowProfileId"],
+            "profile-excel-a",
+        )
+        self.assertEqual(provider.calls[0]["taskAuth"]["apiKey"], "secret-excel-a")
+        self.assertEqual(
+            phases,
+            ["preparing", "provider_processing", "parsing"],
+        )
 
     def test_excel_analysis_requires_usable_table(self):
         analyzer = ExcelAnalyzer(provider_client=RecordingExcelProvider())
@@ -192,7 +288,7 @@ class ExcelAnalysisTests(unittest.TestCase):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
         blocker_started = threading.Event()
         release_blocker = threading.Event()
-        analyzer = RecordingExcelAnalyzer()
+        analyzer = SnapshotExcelAnalyzer()
 
         def blocking_word_runner(snapshot, progress):
             blocker_started.set()
@@ -214,6 +310,10 @@ class ExcelAnalysisTests(unittest.TestCase):
         request = self._request(client_job_id="client-excel-shared-queue")
         queued = store.start(request, trace_id="trace-excel-shared-first")
         request.table.rows[0][0] = "提交后修改"
+        analyzer.current_auth.update(
+            workflowProfileId="profile-excel-b",
+            apiKey="secret-excel-b",
+        )
         duplicate = store.start(request, trace_id="trace-excel-shared-second")
 
         self.assertEqual(queued["status"], "queued")
@@ -222,6 +322,8 @@ class ExcelAnalysisTests(unittest.TestCase):
         self.assertTrue(queued["canCancel"])
         self.assertEqual(duplicate["traceId"], "trace-excel-shared-first")
         self.assertEqual(analyzer.calls, [])
+        self.assertEqual(analyzer.snapshot_count, 1)
+        self.assertNotIn("secret-excel-a", json.dumps(queued, ensure_ascii=False))
 
         release_blocker.set()
         completed = wait_for_excel_job(store, "client-excel-shared-queue")
@@ -234,6 +336,62 @@ class ExcelAnalysisTests(unittest.TestCase):
             analyzer.calls[0]["request"].table.rows[0][0],
             "项目A",
         )
+        self.assertEqual(
+            analyzer.calls[0]["taskAuth"]["workflowProfileId"],
+            "profile-excel-a",
+        )
+        self.assertEqual(
+            analyzer.calls[0]["taskAuth"]["apiKey"],
+            "secret-excel-a",
+        )
+        self.assertNotIn(
+            "secret-excel-a",
+            json.dumps(completed, ensure_ascii=False),
+        )
+
+    def test_excel_job_identity_is_namespaced_from_other_task_types(self):
+        from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        word_started = threading.Event()
+        release_word = threading.Event()
+
+        def blocking_word_runner(snapshot, progress):
+            word_started.set()
+            release_word.wait(timeout=2)
+            return {"summary": "word completed"}
+
+        coordinator.submit(
+            job_id="client-shared-visible-id",
+            trace_id="trace-word-same-id",
+            task_type="word.document_review",
+            runner=blocking_word_runner,
+            snapshot={},
+            failure_code="DOCUMENT_REVIEW_JOB_FAILED",
+            failure_message="文档审查后台任务执行失败。",
+        )
+        self.assertTrue(word_started.wait(timeout=1))
+        store = ExcelAnalysisJobStore(
+            analyzer=SnapshotExcelAnalyzer(),
+            coordinator=coordinator,
+        )
+
+        excel_job = store.start(
+            self._request(client_job_id="client-shared-visible-id"),
+            trace_id="trace-excel-same-id",
+        )
+        cancelled = store.cancel("client-shared-visible-id")
+        word_job = coordinator.get(
+            "client-shared-visible-id",
+            task_type="word.document_review",
+        )
+
+        self.assertEqual(excel_job["traceId"], "trace-excel-same-id")
+        self.assertEqual(excel_job["status"], "queued")
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(word_job["traceId"], "trace-word-same-id")
+        self.assertEqual(word_job["status"], "running")
+        release_word.set()
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for route contract tests")
     def test_fastapi_excel_jobs_report_shared_queue_and_chinese_capacity_error(self):

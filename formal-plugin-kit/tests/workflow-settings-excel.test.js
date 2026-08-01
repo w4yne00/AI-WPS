@@ -271,7 +271,8 @@ function assertExcelAnalysisPreservationContract() {
     "job.queuePosition",
     "job.phaseElapsedSeconds",
     'job.status === "cancelled"',
-    "LONG_TASK_QUEUE_FULL"
+    "LONG_TASK_QUEUE_FULL",
+    "EXCEL_ANALYSIS_AUTH_SNAPSHOT_FAILED"
   ]);
   const progress = functionSource("renderExcelAnalysisJobProgress");
   assertIncludesAll(progress, [

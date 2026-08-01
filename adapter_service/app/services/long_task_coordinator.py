@@ -3,7 +3,7 @@ import threading
 import time
 from collections import deque
 from copy import deepcopy
-from typing import Callable, Deque, Dict, Optional
+from typing import Callable, Deque, Dict, Optional, Tuple
 
 from app.core.errors import AdapterError
 
@@ -23,6 +23,7 @@ PUBLIC_PHASES = {
     "cancelled",
 }
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+JobKey = Tuple[str, str]
 
 
 def _positive_int_from_env(name: str, default: int) -> int:
@@ -51,8 +52,8 @@ class LongTaskCoordinator:
         self.max_terminal_jobs = max(int(max_terminal_jobs), 1)
         self._monotonic = monotonic_clock
         self._wall_clock = wall_clock
-        self._jobs: Dict[str, Dict] = {}
-        self._queue: Deque[str] = deque()
+        self._jobs: Dict[JobKey, Dict] = {}
+        self._queue: Deque[JobKey] = deque()
         self._running_count = 0
         self._lock = threading.Lock()
 
@@ -67,12 +68,13 @@ class LongTaskCoordinator:
         failure_message: str,
         public_metadata: Optional[Dict] = None,
     ) -> Dict:
-        worker_job_id = ""
+        worker_job_key: Optional[JobKey] = None
         now_mono = self._monotonic()
         now_wall = self._wall_clock()
+        job_key = (task_type, job_id)
         with self._lock:
             self._cleanup_locked(now_mono)
-            existing = self._jobs.get(job_id)
+            existing = self._jobs.get(job_key)
             if existing is not None:
                 return self._public_job_locked(existing, now_mono)
             if self._running_count >= self.max_running and len(self._queue) >= self.max_queued:
@@ -106,30 +108,32 @@ class LongTaskCoordinator:
                 "error": None,
             }
             job["_snapshot"].setdefault("traceId", trace_id)
-            self._jobs[job_id] = job
+            self._jobs[job_key] = job
             if status == "running":
                 self._running_count += 1
-                worker_job_id = job_id
+                worker_job_key = job_key
             else:
-                self._queue.append(job_id)
+                self._queue.append(job_key)
             public_job = self._public_job_locked(job, now_mono)
 
-        if worker_job_id:
-            self._start_worker(worker_job_id)
+        if worker_job_key is not None:
+            self._start_worker(worker_job_key)
         return public_job
 
-    def get(self, job_id: str) -> Optional[Dict]:
+    def get(self, job_id: str, task_type: Optional[str] = None) -> Optional[Dict]:
         now_mono = self._monotonic()
         with self._lock:
             self._cleanup_locked(now_mono)
-            job = self._jobs.get(job_id)
+            job_key = self._find_job_key_locked(job_id, task_type)
+            job = self._jobs.get(job_key) if job_key is not None else None
             return self._public_job_locked(job, now_mono) if job else None
 
-    def cancel(self, job_id: str) -> Optional[Dict]:
+    def cancel(self, job_id: str, task_type: Optional[str] = None) -> Optional[Dict]:
         now_mono = self._monotonic()
         with self._lock:
             self._cleanup_locked(now_mono)
-            job = self._jobs.get(job_id)
+            job_key = self._find_job_key_locked(job_id, task_type)
+            job = self._jobs.get(job_key) if job_key is not None else None
             if job is None:
                 return None
             if job["status"] != "queued":
@@ -139,7 +143,7 @@ class LongTaskCoordinator:
                     status_code=409,
                 )
             try:
-                self._queue.remove(job_id)
+                self._queue.remove(job_key)
             except ValueError:
                 raise AdapterError(
                     "LONG_TASK_NOT_CANCELLABLE",
@@ -176,14 +180,14 @@ class LongTaskCoordinator:
                 ],
             }
 
-    def _start_worker(self, job_id: str) -> None:
-        worker = threading.Thread(target=self._run, args=(job_id,), daemon=True)
+    def _start_worker(self, job_key: JobKey) -> None:
+        worker = threading.Thread(target=self._run, args=(job_key,), daemon=True)
         worker.start()
 
-    def _run(self, job_id: str) -> None:
-        next_job_id = ""
+    def _run(self, job_key: JobKey) -> None:
+        next_job_key: Optional[JobKey] = None
         with self._lock:
-            job = self._jobs.get(job_id)
+            job = self._jobs.get(job_key)
             if job is None or job["status"] != "running":
                 return
             runner = job["_runner"]
@@ -194,7 +198,7 @@ class LongTaskCoordinator:
                 return
             now = self._monotonic()
             with self._lock:
-                current = self._jobs.get(job_id)
+                current = self._jobs.get(job_key)
                 if current is not None and current["status"] == "running":
                     self._transition_phase_locked(current, phase, now)
 
@@ -213,7 +217,7 @@ class LongTaskCoordinator:
 
         now_mono = self._monotonic()
         with self._lock:
-            job = self._jobs.get(job_id)
+            job = self._jobs.get(job_key)
             if job is None or job["status"] != "running":
                 return
             if error is None:
@@ -223,23 +227,23 @@ class LongTaskCoordinator:
                 job["error"] = error
                 self._finish_locked(job, "failed", now_mono)
             self._running_count = max(self._running_count - 1, 0)
-            next_job_id = self._promote_next_locked(now_mono)
+            next_job_key = self._promote_next_locked(now_mono)
             self._trim_terminal_locked()
 
-        if next_job_id:
-            self._start_worker(next_job_id)
+        if next_job_key is not None:
+            self._start_worker(next_job_key)
 
-    def _promote_next_locked(self, now_mono: float) -> str:
+    def _promote_next_locked(self, now_mono: float) -> Optional[JobKey]:
         while self._queue and self._running_count < self.max_running:
-            job_id = self._queue.popleft()
-            job = self._jobs.get(job_id)
+            job_key = self._queue.popleft()
+            job = self._jobs.get(job_key)
             if job is None or job["status"] != "queued":
                 continue
             job["status"] = "running"
             self._transition_phase_locked(job, "preparing", now_mono)
             self._running_count += 1
-            return job_id
-        return ""
+            return job_key
+        return None
 
     def _transition_phase_locked(self, job: Dict, phase: str, now_mono: float) -> None:
         current_phase = job.get("phase", "")
@@ -266,14 +270,14 @@ class LongTaskCoordinator:
 
     def _cleanup_locked(self, now_mono: float) -> None:
         expired = [
-            job_id
-            for job_id, job in self._jobs.items()
+            job_key
+            for job_key, job in self._jobs.items()
             if job["status"] in TERMINAL_STATUSES
             and job.get("_terminalAtMonotonic") is not None
             and now_mono - job["_terminalAtMonotonic"] > self.terminal_ttl_seconds
         ]
-        for job_id in expired:
-            self._jobs.pop(job_id, None)
+        for job_key in expired:
+            self._jobs.pop(job_key, None)
         self._trim_terminal_locked()
 
     def _trim_terminal_locked(self) -> None:
@@ -286,7 +290,18 @@ class LongTaskCoordinator:
             key=lambda item: item.get("_terminalAtMonotonic") or 0,
         )
         while len(terminal) > self.max_terminal_jobs:
-            self._jobs.pop(terminal.pop(0)["jobId"], None)
+            job = terminal.pop(0)
+            self._jobs.pop((job["taskType"], job["jobId"]), None)
+
+    def _find_job_key_locked(
+        self, job_id: str, task_type: Optional[str]
+    ) -> Optional[JobKey]:
+        if task_type is not None:
+            return (task_type, job_id)
+        matches = [
+            job_key for job_key in self._jobs if job_key[1] == job_id
+        ]
+        return matches[0] if len(matches) == 1 else None
 
     def _public_job_locked(self, job: Dict, now_mono: float) -> Dict:
         terminal_at = job.get("_terminalAtMonotonic")
@@ -301,7 +316,8 @@ class LongTaskCoordinator:
         queue_position = None
         if job["status"] == "queued":
             try:
-                queue_position = list(self._queue).index(job["jobId"]) + 1
+                job_key = (job["taskType"], job["jobId"])
+                queue_position = list(self._queue).index(job_key) + 1
             except ValueError:
                 queue_position = None
         public_job = {

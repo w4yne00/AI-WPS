@@ -711,6 +711,7 @@
     return error && (
       error.adapterCode === "EXCEL_ANALYSIS_JOB_NOT_FOUND" ||
       error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
+      error.adapterCode === "EXCEL_ANALYSIS_AUTH_SNAPSHOT_FAILED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED"
     );
   }
