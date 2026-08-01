@@ -1952,6 +1952,119 @@
     };
   }
 
+  function createWordSelectionWatcher(options) {
+    var settings = options || {};
+    var refresh = typeof settings.refresh === "function" ? settings.refresh : function () {};
+    var getEventSource = typeof settings.getEventSource === "function"
+      ? settings.getEventSource
+      : function () { return null; };
+    var setTimeoutFn = typeof settings.setTimeoutFn === "function"
+      ? settings.setTimeoutFn
+      : (typeof setTimeout === "function" ? setTimeout : function () { return 0; });
+    var clearTimeoutFn = typeof settings.clearTimeoutFn === "function"
+      ? settings.clearTimeoutFn
+      : (typeof clearTimeout === "function" ? clearTimeout : function () {});
+    var intervalMs = typeof settings.intervalMs === "number" ? settings.intervalMs : 2000;
+    var eventName = settings.eventName || "WindowSelectionChange";
+    var timerId = null;
+    var running = false;
+    var eventSource = null;
+    var eventRegistered = false;
+
+    function safeRefresh() {
+      try {
+        refresh();
+      } catch (error) {
+        // Transient COM access failures are retried by the next host event or fallback poll.
+      }
+    }
+
+    function handleSelectionChange() {
+      if (!running) {
+        return;
+      }
+      safeRefresh();
+      scheduleFallback();
+    }
+
+    function registerEvent() {
+      var result;
+      try {
+        eventSource = getEventSource();
+      } catch (error) {
+        eventSource = null;
+      }
+      if (!eventSource || typeof eventSource.AddApiEventListener !== "function") {
+        eventSource = null;
+        return false;
+      }
+      try {
+        result = eventSource.AddApiEventListener(eventName, handleSelectionChange);
+        eventRegistered = result !== false;
+      } catch (error) {
+        eventSource = null;
+        eventRegistered = false;
+      }
+      return eventRegistered;
+    }
+
+    function clearFallback() {
+      if (timerId !== null) {
+        clearTimeoutFn(timerId);
+        timerId = null;
+      }
+    }
+
+    function scheduleFallback() {
+      clearFallback();
+      if (!running) {
+        return;
+      }
+      timerId = setTimeoutFn(function () {
+        timerId = null;
+        if (!running) {
+          return;
+        }
+        safeRefresh();
+        scheduleFallback();
+      }, intervalMs);
+    }
+
+    return {
+      start: function () {
+        if (running) {
+          return;
+        }
+        running = true;
+        safeRefresh();
+        registerEvent();
+        scheduleFallback();
+      },
+      stop: function () {
+        if (!running) {
+          return;
+        }
+        running = false;
+        clearFallback();
+        if (eventRegistered && eventSource && typeof eventSource.RemoveApiEventListener === "function") {
+          try {
+            eventSource.RemoveApiEventListener(eventName);
+          } catch (error) {
+            // Event cleanup varies across WPS WebView builds; stopping polling still prevents reads.
+          }
+        }
+        eventSource = null;
+        eventRegistered = false;
+      },
+      isRunning: function () {
+        return running;
+      },
+      isEventRegistered: function () {
+        return eventRegistered;
+      }
+    };
+  }
+
   function canDeleteWorkflowProfile(profile, activeProfileId) {
     return Boolean(profile && profile.id && profile.id !== activeProfileId);
   }
@@ -2462,6 +2575,7 @@
     getActiveWorkflowProfileName: getActiveWorkflowProfileName,
     deriveModelInterfaceState: deriveModelInterfaceState,
     createSettingsRefreshController: createSettingsRefreshController,
+    createWordSelectionWatcher: createWordSelectionWatcher,
     canDeleteWorkflowProfile: canDeleteWorkflowProfile,
     workflowProfileStatusText: workflowProfileStatusText,
     workflowProfileOptionState: workflowProfileOptionState,

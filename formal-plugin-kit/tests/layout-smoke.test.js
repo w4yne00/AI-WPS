@@ -317,8 +317,10 @@ const js = fs.readFileSync(
   "utf8"
 );
 
-assert.ok(js.includes("startScopeWatcher"));
-assert.ok(js.includes("setInterval(updateScopeIndicator"));
+assert.ok(js.includes("helpers.createWordSelectionWatcher"));
+assert.ok(helperJs.includes('eventName = settings.eventName || "WindowSelectionChange"'));
+assert.ok(js.includes("intervalMs: 2000"));
+assert.ok(!js.includes("setInterval(updateScopeIndicator, 800)"));
 assert.ok(js.includes("switchMode"));
 assert.ok(js.includes("getInitialMode"));
 assert.ok(js.includes('lastTaskMode: "smartWrite"'));

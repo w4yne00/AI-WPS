@@ -116,6 +116,117 @@ function assertSettingsRefreshControllerContract(targetHelpers) {
   assert.strictEqual(clearCount, 1);
 }
 
+function testWordSelectionWatcherUsesHostEventsWithStalePollingFallback() {
+  let refreshCount = 0;
+  let timeoutCallback = null;
+  const scheduledTimeouts = [];
+  let registeredEventName = "";
+  let registeredHandler = null;
+  let removedEventName = "";
+  const clearedTimerIds = [];
+  let nextTimerId = 17;
+  const apiEvent = {
+    AddApiEventListener(eventName, handler) {
+      registeredEventName = eventName;
+      registeredHandler = handler;
+    },
+    RemoveApiEventListener(eventName) {
+      removedEventName = eventName;
+    }
+  };
+  const controller = helpers.createWordSelectionWatcher({
+    refresh() { refreshCount += 1; },
+    getEventSource() { return apiEvent; },
+    setTimeoutFn(callback, intervalMs) {
+      timeoutCallback = callback;
+      scheduledTimeouts.push(intervalMs);
+      nextTimerId += 1;
+      return nextTimerId;
+    },
+    clearTimeoutFn(timerId) { clearedTimerIds.push(timerId); }
+  });
+
+  controller.start();
+  assert.strictEqual(refreshCount, 1);
+  assert.strictEqual(registeredEventName, "WindowSelectionChange");
+  assert.strictEqual(typeof registeredHandler, "function");
+  assert.deepStrictEqual(scheduledTimeouts, [2000]);
+  assert.strictEqual(controller.isEventRegistered(), true);
+
+  timeoutCallback();
+  assert.strictEqual(refreshCount, 2, "a quiet event stream should fall back after one timeout");
+
+  registeredHandler({ Text: "事件选区" });
+  assert.strictEqual(refreshCount, 3, "host selection events should refresh immediately");
+
+  timeoutCallback();
+  assert.strictEqual(refreshCount, 4, "event silence should refresh on the next single two-second timeout");
+  assert.ok(scheduledTimeouts.every((value) => value === 2000));
+
+  controller.stop();
+  assert.ok(clearedTimerIds.length >= 2);
+  assert.strictEqual(removedEventName, "WindowSelectionChange");
+  assert.strictEqual(controller.isRunning(), false);
+}
+
+function testWordSelectionWatcherFallsBackWhenEventsAreUnavailable() {
+  let refreshCount = 0;
+  let timeoutCallback = null;
+  const unavailableController = helpers.createWordSelectionWatcher({
+    refresh() { refreshCount += 1; },
+    getEventSource() { return null; },
+    setTimeoutFn(callback) {
+      timeoutCallback = callback;
+      return 23;
+    },
+    clearTimeoutFn() {}
+  });
+
+  unavailableController.start();
+  assert.strictEqual(unavailableController.isEventRegistered(), false);
+  timeoutCallback();
+  assert.strictEqual(refreshCount, 2);
+  unavailableController.stop();
+
+  const failedController = helpers.createWordSelectionWatcher({
+    refresh() { refreshCount += 1; },
+    getEventSource() {
+      return {
+        AddApiEventListener() { throw new Error("事件不可用"); }
+      };
+    },
+    setTimeoutFn(callback) {
+      timeoutCallback = callback;
+      return 29;
+    },
+    clearTimeoutFn() {}
+  });
+  failedController.start();
+  assert.strictEqual(failedController.isEventRegistered(), false);
+  timeoutCallback();
+  assert.strictEqual(refreshCount, 4);
+  failedController.stop();
+
+  let recoveringRefreshCount = 0;
+  const sourceFailureController = helpers.createWordSelectionWatcher({
+    refresh() {
+      recoveringRefreshCount += 1;
+      if (recoveringRefreshCount === 1) throw new Error("WPS 选区暂不可读");
+    },
+    getEventSource() { throw new Error("WPS 事件对象暂不可读"); },
+    setTimeoutFn(callback) {
+      timeoutCallback = callback;
+      return 31;
+    },
+    clearTimeoutFn() {}
+  });
+  assert.doesNotThrow(() => sourceFailureController.start());
+  assert.strictEqual(sourceFailureController.isEventRegistered(), false);
+  timeoutCallback();
+  assert.strictEqual(recoveringRefreshCount, 2, "fallback polling should retry after a transient WPS read failure");
+  sourceFailureController.stop();
+}
+
 function assertWorkflowUiContract(targetHelpers) {
   assert.deepStrictEqual(
     targetHelpers.workflowProfileOptionState(
@@ -1276,5 +1387,7 @@ assertSettingsStateContract(helpers);
 assertSettingsStateContract(excelHelpers);
 assertSettingsRefreshControllerContract(helpers);
 assertSettingsRefreshControllerContract(excelHelpers);
+testWordSelectionWatcherUsesHostEventsWithStalePollingFallback();
+testWordSelectionWatcherFallsBackWhenEventsAreUnavailable();
 
 console.log("taskpane-helpers tests passed");

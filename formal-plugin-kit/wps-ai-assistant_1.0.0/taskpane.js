@@ -257,6 +257,7 @@
     writingPolicyAudit: null,
     currentMode: "smartWrite",
     lastTaskMode: "smartWrite",
+    modelTaskBusy: false,
     copyText: "",
     diagnosticsCopyText: "",
     scopeWatcher: null
@@ -483,8 +484,8 @@
   function setScopeLine(label) {
     var text = label || "识别范围：未检测";
     text = text.replace(/^当前范围：/, "").replace(/^识别范围：/, "");
-    byId("scope-line").textContent = text;
-    byId("settings-scope-line").textContent = text;
+    setNodeTextIfChanged(byId("scope-line"), text);
+    setNodeTextIfChanged(byId("settings-scope-line"), text);
   }
 
   function setHealthBadge(mode, text) {
@@ -702,6 +703,7 @@
 
   function setDocumentReviewJobId(jobId) {
     state.documentReviewJobId = jobId || "";
+    setModelTaskBusy(Boolean(state.documentReviewJobId));
     if (!state.documentReviewJobId) {
       setDocumentReviewCancelVisible(false);
     }
@@ -885,6 +887,7 @@
     byId("home-view").classList.toggle("active", viewName === "home");
     byId("settings-view").classList.toggle("active", viewName === "settings");
     syncSettingsRefreshController();
+    syncScopeWatcher();
   }
 
   function syncSettingsRefreshController() {
@@ -1284,12 +1287,49 @@
     resolveSelectionScope(false);
   }
 
-  function startScopeWatcher() {
-    if (state.scopeWatcher) {
+  function getWordSelectionEventSource() {
+    var sources = [
+      window.wps && window.wps.ApiEvent,
+      window.Application && window.Application.ApiEvent
+    ];
+    var index;
+    for (index = 0; index < sources.length; index += 1) {
+      if (sources[index] && typeof sources[index].AddApiEventListener === "function") {
+        return sources[index];
+      }
+    }
+    return null;
+  }
+
+  function isScopeWatcherEligible() {
+    var homeView = byId("home-view");
+    return Boolean(
+      homeView &&
+      homeView.classList.contains("active") &&
+      document.visibilityState !== "hidden" &&
+      !state.modelTaskBusy
+    );
+  }
+
+  function syncScopeWatcher() {
+    if (!state.scopeWatcher) {
       return;
     }
-    updateScopeIndicator();
-    state.scopeWatcher = setInterval(updateScopeIndicator, 800);
+    if (isScopeWatcherEligible()) {
+      state.scopeWatcher.start();
+    } else if (state.scopeWatcher.isRunning()) {
+      state.scopeWatcher.stop();
+    }
+  }
+
+  function setModelTaskBusy(busy) {
+    var button = byId("btn-run-primary");
+    state.modelTaskBusy = Boolean(busy);
+    if (button) {
+      button.disabled = state.modelTaskBusy;
+      button.setAttribute("aria-busy", state.modelTaskBusy ? "true" : "false");
+    }
+    syncScopeWatcher();
   }
 
   function request(path, payload, requestOptions) {
@@ -4979,6 +5019,7 @@
       return;
     }
 
+    setModelTaskBusy(true);
     setStatus("正在读取文档审查范围...");
     setPlainResult("正在读取文档审查范围，请稍候。");
     setApplyEnabled(false);
@@ -4992,6 +5033,7 @@
         state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
+        setModelTaskBusy(false);
         setStatus(error.message);
         setResult(error.message);
         return;
@@ -5086,6 +5128,7 @@
       return;
     }
 
+    setModelTaskBusy(true);
     setStatus("正在读取格式审查范围...");
     setResult("正在读取格式审查范围，请稍候。");
     setApplyEnabled(false);
@@ -5096,6 +5139,7 @@
         state.latestDocumentPayload.options.templateId = "technical-file-format-requirements";
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
+        setModelTaskBusy(false);
         setStatus(error.message);
         setResult(error.message);
         return;
@@ -5104,6 +5148,7 @@
       setStatus("正在执行格式审查...");
       request("/word/format-review", state.latestDocumentPayload)
         .then(function (body) {
+          setModelTaskBusy(false);
           state.pendingApplyAction = "";
           setApplyEnabled(false);
           setTrace(body.traceId);
@@ -5112,6 +5157,7 @@
         })
         .catch(function (error) {
           var message = describeFetchError(error);
+          setModelTaskBusy(false);
           setStatus("格式审查失败：" + message);
           setResult(message);
         });
@@ -5128,6 +5174,7 @@
     }
 
     var config = modeConfig[state.currentMode] || modeConfig.smartWrite;
+    setModelTaskBusy(true);
     setStatus("正在读取选中文本...");
     setPlainResult("正在读取选中文本，请稍候。");
     setApplyEnabled(false);
@@ -5142,6 +5189,7 @@
         state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
       } catch (error) {
+        setModelTaskBusy(false);
         setStatus(error.message);
         setResult(error.message);
         return;
@@ -5150,6 +5198,7 @@
       setStatus(config.runningText);
       request("/word/smart-write", state.latestDocumentPayload)
         .then(function (body) {
+          setModelTaskBusy(false);
           state.pendingApplyAction = "rewrite";
           state.rewriteResult = setSmartWriteResult(body.data, "word.smart_write");
           setApplyEnabled(true);
@@ -5158,6 +5207,7 @@
         })
         .catch(function (error) {
           var message = describeFetchError(error);
+          setModelTaskBusy(false);
           setStatus("生成失败：" + message);
           setResult(message);
         });
@@ -5207,10 +5257,12 @@
     };
     state.latestSelectionMode = "selection";
 
+    setModelTaskBusy(true);
     setStatus(config.runningText);
     setPlainResult("正在生成仿写内容，请稍候。");
     request("/word/smart-imitation", state.latestDocumentPayload)
       .then(function (body) {
+        setModelTaskBusy(false);
         state.pendingApplyAction = "";
         state.rewriteResult = setSmartWriteResult(body.data, "word.smart_imitation");
         setApplyEnabled(false);
@@ -5220,6 +5272,7 @@
       })
       .catch(function (error) {
         var message = describeFetchError(error);
+        setModelTaskBusy(false);
         setStatus("生成失败：" + message);
         setResult(message);
       });
@@ -5398,6 +5451,7 @@
       }
     });
     document.addEventListener("visibilitychange", syncSettingsRefreshController);
+    document.addEventListener("visibilitychange", syncScopeWatcher);
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
     byId("workflow-profile-manager").addEventListener("change", markWorkflowProfileEditorDirty);
@@ -5533,9 +5587,14 @@
       return refreshConfig({ silent: true });
     }
   });
+  state.scopeWatcher = helpers.createWordSelectionWatcher({
+    intervalMs: 2000,
+    getEventSource: getWordSelectionEventSource,
+    refresh: updateScopeIndicator
+  });
   switchMode(getInitialMode());
   if (!state.settingsRefreshController.isRunning()) {
     refreshConfig({ silent: false });
   }
-  startScopeWatcher();
+  syncScopeWatcher();
 })();
