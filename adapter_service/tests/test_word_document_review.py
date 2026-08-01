@@ -1033,6 +1033,14 @@ class WordDocumentReviewerTests(unittest.TestCase):
                     "content": {"plainText": "排队中。"},
                 },
             )
+            sync_full = invoke(
+                "do_POST",
+                "/word/document-review",
+                {
+                    "clientJobId": "client-standalone-sync-full",
+                    "content": {"plainText": "同步兼容入口也必须受共享容量限制。"},
+                },
+            )
             cancelled = invoke(
                 "do_DELETE",
                 "/word/document-review/jobs/client-standalone-queued",
@@ -1071,6 +1079,11 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(running["status"], 200)
         self.assertEqual(running["body"]["data"]["status"], "running")
         self.assertEqual(queued["body"]["data"]["status"], "queued")
+        self.assertEqual(sync_full["status"], 429)
+        self.assertEqual(
+            sync_full["body"]["errors"][0]["code"],
+            "LONG_TASK_QUEUE_FULL",
+        )
         self.assertEqual(cancelled["status"], 200)
         self.assertEqual(cancelled["body"]["message"], "cancelled")
         self.assertEqual(cancelled["body"]["data"]["status"], "cancelled")

@@ -622,6 +622,9 @@ class PptSlideAssistantTests(unittest.TestCase):
             )
             running = ppt_api.get_ppt_slide_assistant_job("client-ppt-route-recovery")
             missing = ppt_api.get_ppt_slide_assistant_job("missing-ppt-job")
+            interrupted = ppt_api.get_ppt_slide_assistant_job(
+                "missing-ppt-recovery", resume=True
+            )
         finally:
             assistant.release.set()
             ppt_api.ppt_slide_jobs = original_store
@@ -631,6 +634,9 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(missing.status_code, 404)
         self.assertIn(b"PPT_SLIDE_JOB_NOT_FOUND", missing.body)
+        self.assertEqual(interrupted.status_code, 404)
+        self.assertIn(b"PPT_SLIDE_JOB_INTERRUPTED", interrupted.body)
+        self.assertIn("adapter 重启".encode("utf-8"), interrupted.body)
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for PPT route tests")
     def test_fastapi_cancel_queued_job_contract(self):
@@ -857,6 +863,10 @@ class PptSlideAssistantTests(unittest.TestCase):
             submitted = invoke("do_POST", "/ppt/slide-assistant/jobs", request_payload)
             running = invoke("do_GET", "/ppt/slide-assistant/jobs/client-ppt-route-standalone")
             missing = invoke("do_GET", "/ppt/slide-assistant/jobs/missing-ppt-job")
+            interrupted = invoke(
+                "do_GET",
+                "/ppt/slide-assistant/jobs/missing-ppt-recovery?resume=1",
+            )
         finally:
             assistant.release.set()
             standalone_adapter.PPT_SLIDE_ASSISTANT_JOB_STORE = original_store
@@ -866,6 +876,12 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(running["body"]["data"]["status"], "running")
         self.assertEqual(missing["status"], 404)
         self.assertEqual(missing["body"]["errors"][0]["code"], "PPT_SLIDE_JOB_NOT_FOUND")
+        self.assertEqual(interrupted["status"], 404)
+        self.assertEqual(
+            interrupted["body"]["errors"][0]["code"],
+            "PPT_SLIDE_JOB_INTERRUPTED",
+        )
+        self.assertIn("adapter 重启", interrupted["body"]["message"])
 
     def test_standalone_delete_queued_job_contract(self):
         import standalone_adapter

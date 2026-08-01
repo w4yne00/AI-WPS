@@ -34,6 +34,7 @@
     busy: false,
     startedAt: 0,
     pollErrors: 0,
+    resumeExpected: false,
     currentView: "home",
     profiles: { activeProfileId: "", profiles: [] },
     selectedProfileId: "",
@@ -225,6 +226,21 @@
     });
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
     renderProfileStrip();
+  }
+
+  function setPptJobActionVisibility(job) {
+    var cancelButton = byId("btn-cancel-ppt-slide-job");
+    if (cancelButton) {
+      cancelButton.hidden = !(job && job.status === "queued" && job.canCancel);
+      cancelButton.disabled = false;
+    }
+  }
+
+  function setInterruptedRetryVisible(visible) {
+    var button = byId("btn-resubmit-interrupted-job");
+    if (button) {
+      button.hidden = !visible;
+    }
   }
 
   function showProgressText(text) {
@@ -501,6 +517,7 @@
   function isFatalPollError(error) {
     return error && (
       error.adapterCode === "PPT_SLIDE_JOB_NOT_FOUND" ||
+      error.adapterCode === "PPT_SLIDE_JOB_INTERRUPTED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED" ||
       error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
       error.adapterCode === "PPT_SLIDE_JOB_CAPACITY" ||
@@ -519,6 +536,8 @@
     clearActiveJob(jobId);
     state.jobId = "";
     state.jobSourceMode = "";
+    state.resumeExpected = false;
+    setPptJobActionVisibility(null);
     setRunDisabled(false);
     renderResult(result || {});
     setStatus(result && result.resultType === "document" ? "文档总结已完成。" : "当前页总结已完成。");
@@ -529,6 +548,8 @@
     clearActiveJob(jobId);
     state.jobId = "";
     state.jobSourceMode = "";
+    state.resumeExpected = false;
+    setPptJobActionVisibility(null);
     setRunDisabled(false);
     setStatus((statusMessage || "总结失败") + "：" + failureMessage);
     if (!state.result) {
@@ -541,7 +562,8 @@
       return;
     }
     request(
-      "/ppt/slide-assistant/jobs/" + encodeURIComponent(jobId),
+      "/ppt/slide-assistant/jobs/" + encodeURIComponent(jobId) +
+        (state.resumeExpected ? "?resume=1" : ""),
       null,
       { timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS }
     ).then(function (body) {
@@ -575,6 +597,7 @@
         jobId
       );
       setStatus(progress.status);
+      setPptJobActionVisibility(job);
       showProgressText(progress.detail);
       schedulePoll(jobId, PPT_SLIDE_POLL_INTERVAL_MS);
     }).catch(function (error) {
@@ -584,6 +607,18 @@
         return;
       }
       state.pollErrors += 1;
+      if (error && error.adapterCode === "PPT_SLIDE_JOB_INTERRUPTED") {
+        clearActiveJob(jobId);
+        state.jobId = "";
+        state.jobSourceMode = "";
+        state.resumeExpected = false;
+        setRunDisabled(false);
+        setPptJobActionVisibility(null);
+        setInterruptedRetryVisible(true);
+        setStatus("adapter 已重启，原智能总结任务已中断，请重新提交。");
+        setPlainResult("adapter 已重启，原智能总结任务无法恢复，请使用“重新提交总结”。\n任务编号：" + jobId);
+        return;
+      }
       if (isFatalPollError(error)) {
         failJob(jobId, error.message, "状态查询失败");
         return;
@@ -612,6 +647,9 @@
     state.jobId = clientJobId;
     state.startedAt = Date.now();
     state.pollErrors = 0;
+    state.resumeExpected = true;
+    setInterruptedRetryVisible(false);
+    setPptJobActionVisibility(null);
     saveActiveJob({
       jobId: clientJobId,
       startedAt: state.startedAt,
@@ -643,6 +681,7 @@
       }
       var progress = helpers.describePptJobProgress(job, state.jobSourceMode, jobId);
       setStatus(progress.status);
+      setPptJobActionVisibility(job);
       showProgressText(progress.detail);
       pollPptSlideJob(jobId);
     }).catch(function (error) {
@@ -768,6 +807,7 @@
       setStatus("工作流配置正在更新，请稍后再运行智能总结。");
       return;
     }
+    setInterruptedRetryVisible(false);
     if (state.jobId) {
       setStatus("已有智能总结任务正在运行，请等待当前任务完成。");
       return;
@@ -1402,6 +1442,64 @@
     }
   }
 
+  function renderProviderDiagnostics(items) {
+    var debug = (items[0] && items[0].data) || {};
+    var status = (items[1] && items[1].data) || {};
+    var routes = (items[2] && items[2].data) || {};
+    var taskKeys = (items[3] && items[3].data) || {};
+    var longTasks = routes.longTaskCoordinator || {};
+    var lines = ["最近一次任务诊断", ""];
+
+    lines.push("- 前端版本：" + FRONTEND_BUILD_VERSION);
+    lines.push("- 任务类型：" + (debug.taskType || "未记录"));
+    lines.push("- traceId：" + (debug.traceId || "未记录"));
+    lines.push("- provider 已配置：" + (status.configured ? "是" : "否"));
+    lines.push("- 统一 API URL 已配置：" + (routes.providerBaseUrlConfigured ? "是" : "否"));
+    lines.push("- 请求路径：" + (debug.url || routes.url || "未进入模型后台请求"));
+
+    if (typeof longTasks.maxRunning === "number") {
+      lines.push("");
+      lines.push("## 共享长任务协调器");
+      lines.push("- 运行中：" + (longTasks.runningCount || 0) + "/" + longTasks.maxRunning);
+      lines.push("- 排队中：" + (longTasks.queuedCount || 0) + "/" + longTasks.maxQueued);
+      lines.push("- 终态保留：" + (longTasks.terminalCount || 0) + "/" + longTasks.maxTerminalJobs);
+      lines.push("- 终态保留时长：" + (longTasks.terminalTtlSeconds || 0) + " 秒");
+      lines.push("- 取消数：" + (longTasks.cancelledCount || 0));
+      lines.push("- 拒绝数：" + (longTasks.rejectedCount || 0));
+      lines.push("- 超时数：" + (longTasks.timedOutCount || 0));
+      (longTasks.recentTerminalJobs || []).forEach(function (job) {
+        lines.push(
+          "- 最近任务 " + (job.taskType || "未记录") +
+          "：" + (job.status || "未记录") +
+          "，耗时 " + (job.elapsedSeconds || 0) + " 秒" +
+          (job.errorCode ? "，错误码 " + job.errorCode : "")
+        );
+      });
+    }
+
+    if (debug.request) {
+      lines.push("");
+      lines.push("## 请求摘要");
+      lines.push("- body 字段：" + (debug.request.bodyKeys || []).join(", "));
+      lines.push("- inputs 字段：" + (debug.request.inputsKeys || []).join(", "));
+      lines.push("- query 长度：" + (debug.request.queryLength || 0));
+    }
+    if (debug.error) {
+      lines.push("");
+      lines.push("## 错误摘要");
+      lines.push("- 类型：" + (debug.error.type || "未记录"));
+      lines.push("- 状态：" + (debug.error.status || "未记录"));
+    }
+
+    lines.push("");
+    lines.push("## 任务密钥状态");
+    Object.keys(taskKeys).forEach(function (taskType) {
+      var item = taskKeys[taskType] || {};
+      lines.push("- " + taskType + "：已配置 " + (item.configured ? "是" : "否"));
+    });
+    return lines.join("\n");
+  }
+
   function refreshDiagnostics() {
     return Promise.all([
       request("/provider/debug-last", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
@@ -1409,14 +1507,7 @@
       request("/provider/route-diagnostics", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
       request("/provider/task-api-keys", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
     ]).then(function (items) {
-      state.diagnosticsText = JSON.stringify({
-        frontendBuild: FRONTEND_BUILD_VERSION,
-        taskDefinitions: TASK_API_KEY_DEFS,
-        lastTask: items[0].data || {},
-        provider: items[1].data || {},
-        routes: items[2].data || {},
-        taskApiKeys: items[3].data || {}
-      }, null, 2);
+      state.diagnosticsText = renderProviderDiagnostics(items);
       byId("diagnostics-output").textContent = state.diagnosticsText;
       setSettingsStatus("诊断信息已刷新。");
     }).catch(function (error) {
@@ -1614,10 +1705,34 @@
     state.jobId = active.jobId;
     state.startedAt = active.startedAt || Date.now();
     state.pollErrors = 0;
+    state.resumeExpected = true;
+    setInterruptedRetryVisible(false);
     setRunDisabled(true);
     setStatus("正在恢复未完成的智能总结任务...");
     showProgressText("任务编号已恢复，正在继续查询模型后台状态。");
     pollPptSlideJob(active.jobId);
+  }
+
+  function cancelQueuedPptSlideJob() {
+    var jobId = state.jobId;
+    var button = byId("btn-cancel-ppt-slide-job");
+    if (!jobId) {
+      return;
+    }
+    button.disabled = true;
+    request("/ppt/slide-assistant/jobs/" + encodeURIComponent(jobId), null, {
+      method: "DELETE",
+      timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      if (state.jobId === jobId && (body.data || {}).status === "cancelled") {
+        failJob(jobId, "排队中的智能总结任务已取消，未调用模型后台。", "智能总结已取消");
+      }
+    }).catch(function (error) {
+      if (state.jobId === jobId) {
+        button.removeAttribute("disabled");
+        setStatus("取消排队任务失败：" + error.message);
+      }
+    });
   }
 
   function switchView(viewName) {
@@ -1660,6 +1775,8 @@
     });
     byId("ppt-document-file").addEventListener("change", handleDocumentFileChange);
     byId("btn-run-primary").addEventListener("click", runPptSlideAssistant);
+    byId("btn-cancel-ppt-slide-job").addEventListener("click", cancelQueuedPptSlideJob);
+    byId("btn-resubmit-interrupted-job").addEventListener("click", runPptSlideAssistant);
     byId("btn-result-preview").addEventListener("click", function () {
       setResultMode("preview");
     });

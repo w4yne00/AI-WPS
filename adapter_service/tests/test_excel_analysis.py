@@ -427,11 +427,20 @@ class ExcelAnalysisTests(unittest.TestCase):
                     self._request(client_job_id="client-fastapi-excel-full")
                 ),
             )
+            sync_full = client.post(
+                "/excel/analysis",
+                json=dump_excel_request(
+                    self._request(client_job_id="client-fastapi-excel-sync-full")
+                ),
+            )
             cancelled = client.delete(
                 "/excel/analysis/jobs/client-fastapi-excel-queued"
             )
             running_cancel = client.delete(
                 "/excel/analysis/jobs/client-fastapi-excel-running"
+            )
+            interrupted = client.get(
+                "/excel/analysis/jobs/client-fastapi-excel-missing?resume=1"
             )
         finally:
             analyzer.release.set()
@@ -444,6 +453,10 @@ class ExcelAnalysisTests(unittest.TestCase):
         self.assertEqual(full.status_code, 429)
         self.assertEqual(full.json()["errors"][0]["code"], "LONG_TASK_QUEUE_FULL")
         self.assertIn("排队已满", full.json()["message"])
+        self.assertEqual(sync_full.status_code, 429)
+        self.assertEqual(
+            sync_full.json()["errors"][0]["code"], "LONG_TASK_QUEUE_FULL"
+        )
         self.assertEqual(cancelled.status_code, 200)
         self.assertEqual(cancelled.json()["message"], "cancelled")
         self.assertEqual(cancelled.json()["data"]["status"], "cancelled")
@@ -453,6 +466,13 @@ class ExcelAnalysisTests(unittest.TestCase):
             running_cancel.json()["errors"][0]["code"],
             "LONG_TASK_NOT_CANCELLABLE",
         )
+        self.assertEqual(interrupted.status_code, 404)
+        self.assertEqual(
+            interrupted.json()["errors"][0]["code"],
+            "EXCEL_ANALYSIS_JOB_INTERRUPTED",
+        )
+        self.assertIn("adapter 重启", interrupted.json()["message"])
+        self.assertEqual(interrupted.json()["data"]["status"], "failed")
 
     def test_standalone_excel_job_routes_match_queue_capacity_and_cancel_contract(self):
         import standalone_adapter
@@ -502,6 +522,13 @@ class ExcelAnalysisTests(unittest.TestCase):
                     self._request(client_job_id="client-standalone-excel-full")
                 ),
             )
+            sync_full = invoke(
+                "do_POST",
+                "/excel/analysis",
+                dump_excel_request(
+                    self._request(client_job_id="client-standalone-excel-sync-full")
+                ),
+            )
             cancelled = invoke(
                 "do_DELETE",
                 "/excel/analysis/jobs/client-standalone-excel-queued",
@@ -510,6 +537,10 @@ class ExcelAnalysisTests(unittest.TestCase):
                 "do_POST",
                 "/excel/analysis/jobs",
                 {"table": "invalid-table-shape"},
+            )
+            interrupted = invoke(
+                "do_GET",
+                "/excel/analysis/jobs/client-standalone-excel-missing?resume=1",
             )
         finally:
             analyzer.release.set()
@@ -523,6 +554,11 @@ class ExcelAnalysisTests(unittest.TestCase):
             "LONG_TASK_QUEUE_FULL",
         )
         self.assertIn("排队已满", full["body"]["message"])
+        self.assertEqual(sync_full["status"], 429)
+        self.assertEqual(
+            sync_full["body"]["errors"][0]["code"],
+            "LONG_TASK_QUEUE_FULL",
+        )
         self.assertEqual(cancelled["status"], 200)
         self.assertEqual(cancelled["body"]["message"], "cancelled")
         self.assertEqual(cancelled["body"]["data"]["status"], "cancelled")
@@ -532,16 +568,27 @@ class ExcelAnalysisTests(unittest.TestCase):
             invalid["body"]["errors"][0]["code"],
             "REQUEST_VALIDATION_FAILED",
         )
+        self.assertEqual(interrupted["status"], 404)
+        self.assertEqual(
+            interrupted["body"]["errors"][0]["code"],
+            "EXCEL_ANALYSIS_JOB_INTERRUPTED",
+        )
+        self.assertIn("adapter 重启", interrupted["body"]["message"])
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for excel route tests")
     def test_fastapi_route_returns_excel_analysis_envelope(self):
+        from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+
         analyzer = RecordingExcelAnalyzer()
-        original_analyzer = excel_api.excel_analyzer
-        excel_api.excel_analyzer = analyzer
+        original_store = excel_api.excel_analysis_jobs
+        excel_api.excel_analysis_jobs = ExcelAnalysisJobStore(
+            analyzer=analyzer,
+            coordinator=LongTaskCoordinator(),
+        )
         try:
             response = excel_api.excel_analysis(self._request())
         finally:
-            excel_api.excel_analyzer = original_analyzer
+            excel_api.excel_analysis_jobs = original_store
 
         self.assertTrue(response["success"])
         self.assertEqual(response["taskType"], "excel.analysis")
@@ -549,6 +596,55 @@ class ExcelAnalysisTests(unittest.TestCase):
         self.assertEqual(response["data"]["structuredReport"]["overview"], "路由概览")
         self.assertEqual(response["data"]["plainText"], "路由纯文本")
         self.assertEqual(response["errors"], [])
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for excel route tests")
+    def test_sync_routes_preserve_safe_business_validation_error(self):
+        import standalone_adapter
+        from app.main import app
+        from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+        from fastapi.testclient import TestClient
+
+        payload = dump_excel_request(
+            self._request(client_job_id="client-sync-empty-table-fastapi")
+        )
+        payload["table"]["headers"] = []
+        payload["table"]["rows"] = []
+        payload["table"]["rowCount"] = 0
+        store = ExcelAnalysisJobStore(
+            analyzer=ExcelAnalyzer(),
+            coordinator=LongTaskCoordinator(),
+        )
+        original_fastapi_store = excel_api.excel_analysis_jobs
+        original_standalone_store = standalone_adapter.EXCEL_ANALYSIS_JOB_STORE
+        excel_api.excel_analysis_jobs = store
+        standalone_adapter.EXCEL_ANALYSIS_JOB_STORE = store
+
+        raw = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        captured = {}
+        handler = object.__new__(standalone_adapter.Handler)
+        handler.path = "/excel/analysis"
+        handler.headers = {"Content-Length": str(len(raw))}
+        handler.rfile = BytesIO(raw)
+        handler._write = lambda status, body: captured.update(
+            status=status, body=body
+        )
+        try:
+            fastapi_response = TestClient(app).post("/excel/analysis", json=payload)
+            handler.do_POST()
+        finally:
+            excel_api.excel_analysis_jobs = original_fastapi_store
+            standalone_adapter.EXCEL_ANALYSIS_JOB_STORE = original_standalone_store
+
+        self.assertEqual(fastapi_response.status_code, 400)
+        self.assertEqual(captured["status"], 400)
+        self.assertEqual(
+            fastapi_response.json()["errors"][0]["code"],
+            "EXCEL_ANALYSIS_TABLE_REQUIRED",
+        )
+        self.assertEqual(
+            captured["body"]["errors"][0]["code"],
+            "EXCEL_ANALYSIS_TABLE_REQUIRED",
+        )
 
     def test_standalone_excel_analysis_returns_response_data(self):
         import standalone_adapter

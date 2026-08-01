@@ -37,9 +37,10 @@ adapter 始终把完整提示词放入 Dify `/chat-messages` 顶层 `query`。�
 ## 长任务等待
 
 - adapter 对 `excel.analysis` 的模型等待预算为 1800 秒，与文档审查一致。
-- WPS 任务窗格通过 `POST /excel/analysis/jobs` 提交后台任务，再轮询 `GET /excel/analysis/jobs/{jobId}`，不使用单次长连接等待结果。
+- WPS 任务窗格通过 `POST /excel/analysis/jobs` 提交后台任务，再轮询 `GET /excel/analysis/jobs/{jobId}`，不使用单次长连接等待结果；排队状态会显示全局队列位置，并提供 `DELETE /excel/analysis/jobs/{jobId}` 取消入口。
+- 兼容保留的同步入口 `POST /excel/analysis` 会通过同一个共享协调器提交并等待终态，因此同样受 2 个运行槽位、8 个排队位置和满队列中文拒绝约束。
 - 每次提交和状态查询的前台请求上限为 10 秒；短暂超时或连接中断不会清空任务编号，任务窗格会继续自动刷新。
-- 未完成任务号保存在任务窗格本地存储中，重新打开“智能分析”任务窗格后会尝试恢复查询。
+- 未完成任务号写入任务窗格本地存储后，当前会话和重新打开“智能分析”任务窗格后的查询都使用 `GET /excel/analysis/jobs/{jobId}?resume=1`。若 adapter 已重启且任务不存在，返回 `EXCEL_ANALYSIS_JOB_INTERRUPTED`，前端明确提示中断并提供“重新提交分析”；普通未知或过期任务仍返回 `EXCEL_ANALYSIS_JOB_NOT_FOUND`。
 
 ## 建议模型参数
 
@@ -47,4 +48,4 @@ adapter 始终把完整提示词放入 Dify `/chat-messages` 顶层 `query`。�
 
 ## 排查
 
-在 WPS 设置页查看“最近一次任务诊断”，确认 `taskType=excel.analysis`，并确认任务级 API Key 命中 `excel_analysis`。
+在 WPS 设置页展开“高级诊断”，确认 `taskType=excel.analysis`、任务级 API Key 命中 `excel_analysis`，并核对共享协调器有效容量、运行/排队数、近期终态耗时及取消/拒绝/超时计数。诊断只展示脱敏摘要，不展示表格正文、公式正文或 API Key。

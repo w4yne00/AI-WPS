@@ -27,8 +27,30 @@ def close_ppt_resources() -> None:
 atexit.register(close_ppt_resources)
 
 
-def _missing_ppt_slide_job_response(job_id: str) -> JSONResponse:
-    message = "智能总结后台任务不存在或已过期。"
+def _missing_ppt_slide_job_response(
+    job_id: str, interrupted: bool = False
+) -> JSONResponse:
+    message = (
+        "智能总结任务不存在，可能因 adapter 重启而中断，请重新提交总结。"
+        if interrupted
+        else "智能总结后台任务不存在或已过期。"
+    )
+    code = (
+        "PPT_SLIDE_JOB_INTERRUPTED"
+        if interrupted
+        else "PPT_SLIDE_JOB_NOT_FOUND"
+    )
+    data = (
+        {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        if interrupted
+        else {"jobId": job_id, "status": "not_found"}
+    )
     return JSONResponse(
         status_code=404,
         content={
@@ -36,8 +58,8 @@ def _missing_ppt_slide_job_response(job_id: str) -> JSONResponse:
             "traceId": job_id,
             "taskType": "ppt.slide_assistant",
             "message": message,
-            "data": {"jobId": job_id, "status": "not_found"},
-            "errors": [{"code": "PPT_SLIDE_JOB_NOT_FOUND", "message": message}],
+            "data": data,
+            "errors": [{"code": code, "message": message}],
         },
     )
 
@@ -76,10 +98,10 @@ def start_ppt_slide_assistant_job(request: PptSlideAssistantRequest) -> dict:
 
 
 @router.get("/ppt/slide-assistant/jobs/{job_id}")
-def get_ppt_slide_assistant_job(job_id: str):
+def get_ppt_slide_assistant_job(job_id: str, resume: bool = False):
     job = ppt_slide_jobs.get(job_id)
     if not job:
-        return _missing_ppt_slide_job_response(job_id)
+        return _missing_ppt_slide_job_response(job_id, interrupted=resume)
     if job.get("result"):
         if hasattr(PptSlideAssistantResponseData, "model_validate"):
             result = PptSlideAssistantResponseData.model_validate(job["result"]).model_dump(
@@ -102,10 +124,10 @@ def get_ppt_slide_assistant_job(job_id: str):
 
 
 @router.delete("/ppt/slide-assistant/jobs/{job_id}")
-def cancel_ppt_slide_assistant_job(job_id: str):
+def cancel_ppt_slide_assistant_job(job_id: str, resume: bool = False):
     job = ppt_slide_jobs.cancel(job_id)
     if not job:
-        return _missing_ppt_slide_job_response(job_id)
+        return _missing_ppt_slide_job_response(job_id, interrupted=resume)
     return {
         "success": True,
         "traceId": job.get("traceId", job_id),

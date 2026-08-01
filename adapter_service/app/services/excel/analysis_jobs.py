@@ -12,6 +12,15 @@ from app.services.provider_client import EXCEL_ANALYSIS_TIMEOUT_SECONDS
 
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
 RUNNING_MESSAGE = "模型后台正在处理智能分析，adapter 会继续等待结果。"
+SAFE_ERROR_STATUSES = {
+    "EXCEL_ANALYSIS_TABLE_REQUIRED": 400,
+    "PROVIDER_AUTH_FAILED": 401,
+    "PROVIDER_UNREACHABLE": 502,
+    "PROVIDER_TIMEOUT": 504,
+    "DIFY_AUTH_FAILED": 401,
+    "DIFY_UNREACHABLE": 502,
+    "DIFY_TIMEOUT": 504,
+}
 
 
 def normalize_client_job_id(value: str) -> str:
@@ -49,6 +58,7 @@ class ExcelAnalysisJobStore:
                 "runningMessage": RUNNING_MESSAGE,
                 "providerTimeoutSeconds": EXCEL_ANALYSIS_TIMEOUT_SECONDS,
             },
+            safe_failure_codes=set(SAFE_ERROR_STATUSES),
         )
 
     def get(self, job_id: str) -> Optional[Dict]:
@@ -56,6 +66,19 @@ class ExcelAnalysisJobStore:
 
     def cancel(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.cancel(job_id, task_type="excel.analysis")
+
+    def run_sync(self, request: ExcelAnalysisRequest, trace_id: str) -> Dict:
+        job = self.start(request, trace_id)
+        return self.coordinator.wait_result(
+            job["jobId"],
+            task_type="excel.analysis",
+            not_found_code="EXCEL_ANALYSIS_JOB_NOT_FOUND",
+            not_found_message="智能分析后台任务不存在或已过期。",
+            cancelled_message="排队中的智能分析任务已取消。",
+            failure_code="EXCEL_ANALYSIS_JOB_FAILED",
+            failure_message="智能分析后台任务执行失败。",
+            safe_error_statuses=SAFE_ERROR_STATUSES,
+        )
 
     def _run(self, snapshot: Dict, progress) -> Dict:
         analyzer_kwargs = {"progress_callback": progress}

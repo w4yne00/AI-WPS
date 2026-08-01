@@ -104,10 +104,10 @@ POST /ppt/document-files
 - 前端提交后台任务后短轮询状态，不保持单次长连接等待模型完成。
 - PPT 与 Word 文档审查、Excel 智能分析共用默认 2 个执行槽位和最多 8 个 FIFO 排队位置。
 - 状态使用 `queued / running / completed / failed / cancelled`，运行阶段依次显示 `preparing / uploading / provider_processing / parsing`；前端显示真实阶段、队列位置和实际耗时，不显示估算百分比。
-- 只有仍在排队的任务可以取消；运行中的阻塞式模型请求不伪装为可取消。
+- 只有仍在排队的任务可以通过任务页按钮调用 `DELETE /ppt/slide-assistant/jobs/{jobId}` 取消；运行中的阻塞式模型请求不伪装为可取消。
 - provider 最长等待 1800 秒；180 秒以上的模型任务仍应继续查询。
 - 状态查询短暂超时或连接中断时必须保留 `jobId` 和 `clientJobId`，不得重新提交。
-- 任务窗格关闭再打开后，应使用本地保存的任务号恢复查询。
+- 任务窗格关闭再打开后，应使用本地保存的任务号和 `GET /ppt/slide-assistant/jobs/{jobId}?resume=1` 恢复查询。若 adapter 已重启且任务不存在，返回 `PPT_SLIDE_JOB_INTERRUPTED`，前端明确提示中断并提供“重新提交总结”；普通未知或过期任务仍返回 `PPT_SLIDE_JOB_NOT_FOUND`。
 
 ## 只读边界
 
@@ -122,3 +122,4 @@ POST /ppt/document-files
 - 模型收到文件但无正文：检查 `userinput.files`、条件分支和文档提取节点连线。
 - 返回无法结构化：查看前端原始回复和 `parseFallbackReason`，确认回答节点只返回最终输出。
 - 长任务前端失联：重新打开任务窗格恢复任务号，不要重复点击提交。
+- 共享队列排查：在设置页展开“高级诊断”，核对有效容量、运行/排队数、近期终态耗时及取消/拒绝/超时计数；诊断不包含 API Key、正文或完整上传文件名。

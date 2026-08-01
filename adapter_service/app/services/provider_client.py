@@ -546,7 +546,6 @@ def _sanitize_provider_body(body: Dict) -> Dict:
         "bodyKeys": sorted(body.keys()),
         "inputsKeys": sorted(inputs.keys()),
         "queryLength": len(query),
-        "queryPreview": _preview_text(query),
         "responseMode": body.get("response_mode", body.get("mode", "")),
         "conversationIdSet": bool(body.get("conversation_id")),
         "filesCount": len(body.get("files") or []),

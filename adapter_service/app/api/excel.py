@@ -13,8 +13,30 @@ excel_analysis_jobs = ExcelAnalysisJobStore(excel_analyzer)
 logger = get_logger(__name__)
 
 
-def _missing_excel_analysis_response(job_id: str) -> JSONResponse:
-    message = "智能分析后台任务不存在或已过期。"
+def _missing_excel_analysis_response(
+    job_id: str, interrupted: bool = False
+) -> JSONResponse:
+    message = (
+        "智能分析任务不存在，可能因 adapter 重启而中断，请重新提交分析。"
+        if interrupted
+        else "智能分析后台任务不存在或已过期。"
+    )
+    code = (
+        "EXCEL_ANALYSIS_JOB_INTERRUPTED"
+        if interrupted
+        else "EXCEL_ANALYSIS_JOB_NOT_FOUND"
+    )
+    data = (
+        {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        if interrupted
+        else {"jobId": job_id, "status": "not_found"}
+    )
     return JSONResponse(
         status_code=404,
         content={
@@ -22,10 +44,8 @@ def _missing_excel_analysis_response(job_id: str) -> JSONResponse:
             "traceId": job_id,
             "taskType": "excel.analysis",
             "message": message,
-            "data": {"jobId": job_id, "status": "not_found"},
-            "errors": [
-                {"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": message}
-            ],
+            "data": data,
+            "errors": [{"code": code, "message": message}],
         },
     )
 
@@ -33,7 +53,7 @@ def _missing_excel_analysis_response(job_id: str) -> JSONResponse:
 @router.post("/excel/analysis")
 def excel_analysis(request: ExcelAnalysisRequest) -> dict:
     trace_id = new_trace_id("excel-analysis")
-    analysis = excel_analyzer.analyze(request, trace_id=trace_id)
+    analysis = excel_analysis_jobs.run_sync(request, trace_id=trace_id)
     payload = ExcelAnalysisResponseData(**analysis)
     logger.info(
         "traceId=%s task=excel.analysis sheet=%s rows=%s columns=%s",
@@ -68,10 +88,10 @@ def start_excel_analysis_job(request: ExcelAnalysisRequest) -> dict:
 
 
 @router.get("/excel/analysis/jobs/{job_id}")
-def get_excel_analysis_job(job_id: str):
+def get_excel_analysis_job(job_id: str, resume: bool = False):
     job = excel_analysis_jobs.get(job_id)
     if not job:
-        return _missing_excel_analysis_response(job_id)
+        return _missing_excel_analysis_response(job_id, interrupted=resume)
     if job.get("result"):
         job = {**job, "result": ExcelAnalysisResponseData(**job["result"]).dict(by_alias=True)}
     return {
@@ -85,10 +105,10 @@ def get_excel_analysis_job(job_id: str):
 
 
 @router.delete("/excel/analysis/jobs/{job_id}")
-def cancel_excel_analysis_job(job_id: str):
+def cancel_excel_analysis_job(job_id: str, resume: bool = False):
     job = excel_analysis_jobs.cancel(job_id)
     if not job:
-        return _missing_excel_analysis_response(job_id)
+        return _missing_excel_analysis_response(job_id, interrupted=resume)
     return {
         "success": True,
         "traceId": job.get("traceId", job_id),

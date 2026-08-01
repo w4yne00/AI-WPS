@@ -2203,7 +2203,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(debug["request"]["bodyKeys"], ["conversation_id", "files", "inputs", "query", "response_mode", "user"])
         self.assertEqual(debug["request"]["inputsKeys"], ["query"])
         self.assertEqual(debug["request"]["queryLength"], len(full_prompt))
-        self.assertIn("queryPreview", debug["request"])
+        self.assertNotIn("queryPreview", debug["request"])
         self.assertEqual(debug["response"]["status"], 200)
         self.assertEqual(debug["response"]["bodyKeys"], ["answer", "conversation_id"])
         self.assertEqual(debug["response"]["answerLength"], len("# 标题\n\n1. 第一项\n2. 第二项\n\n**重点内容**"))

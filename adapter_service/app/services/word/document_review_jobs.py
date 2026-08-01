@@ -68,6 +68,18 @@ class DocumentReviewJobStore:
     def cancel(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.cancel(job_id, task_type="word.document_review")
 
+    def run_sync(self, request: WordDocumentRequest, trace_id: str) -> Dict:
+        job = self.start(request, trace_id)
+        return self.coordinator.wait_result(
+            job["jobId"],
+            task_type="word.document_review",
+            not_found_code="DOCUMENT_REVIEW_JOB_NOT_FOUND",
+            not_found_message="文档审查后台任务不存在或已过期。",
+            cancelled_message="排队中的文档审查任务已取消。",
+            failure_code="DOCUMENT_REVIEW_JOB_FAILED",
+            failure_message="文档审查后台任务执行失败。",
+        )
+
     def _run(self, snapshot: Dict, progress) -> Dict:
         return self.reviewer.review(
             snapshot["request"],

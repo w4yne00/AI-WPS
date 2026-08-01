@@ -254,6 +254,56 @@ def document_review_missing_envelope(job_id, interrupted=False):
     )
 
 
+def excel_analysis_missing_envelope(job_id, interrupted=False):
+    if interrupted:
+        message = "智能分析任务不存在，可能因 adapter 重启而中断，请重新提交分析。"
+        data = {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        code = "EXCEL_ANALYSIS_JOB_INTERRUPTED"
+    else:
+        message = "智能分析后台任务不存在或已过期。"
+        data = {"jobId": job_id, "status": "not_found"}
+        code = "EXCEL_ANALYSIS_JOB_NOT_FOUND"
+    return envelope(
+        job_id,
+        "excel.analysis",
+        data,
+        success=False,
+        message=message,
+        errors=[{"code": code, "message": message}],
+    )
+
+
+def ppt_slide_job_missing_envelope(job_id, interrupted=False):
+    if interrupted:
+        message = "智能总结任务不存在，可能因 adapter 重启而中断，请重新提交总结。"
+        data = {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        code = "PPT_SLIDE_JOB_INTERRUPTED"
+    else:
+        message = "智能总结后台任务不存在或已过期。"
+        data = {"jobId": job_id, "status": "not_found"}
+        code = "PPT_SLIDE_JOB_NOT_FOUND"
+    return envelope(
+        job_id,
+        "ppt.slide_assistant",
+        data,
+        success=False,
+        message=message,
+        errors=[{"code": code, "message": message}],
+    )
+
+
 def request_validation_envelope(
     trace_id, task_type, validation_errors, error_count=None
 ):
@@ -324,6 +374,45 @@ def envelope(trace_id, task_type, data=None, success=True, message="completed", 
         "data": data or {},
         "errors": errors or [],
     }
+
+
+def sync_long_task_response(
+    payload,
+    trace_id,
+    task_type,
+    parse_request,
+    job_store,
+    serialize_job,
+):
+    try:
+        request = parse_request(payload)
+        data = job_store.run_sync(request, trace_id=trace_id)
+    except AdapterError as error:
+        return error.status_code, envelope(
+            trace_id,
+            task_type,
+            success=False,
+            message=error.message,
+            errors=[{"code": error.code, "message": error.message}],
+        )
+    except (TypeError, ValueError) as error:
+        raw_errors = error.errors() if hasattr(error, "errors") else []
+        validation_errors = [
+            {
+                "loc": ".".join(str(part) for part in item.get("loc", [])),
+                "type": str(item.get("type", "")),
+                "message": str(item.get("msg", ""))[:160],
+            }
+            for item in raw_errors[:8]
+        ]
+        return 422, request_validation_envelope(
+            trace_id,
+            task_type,
+            validation_errors,
+            error_count=len(raw_errors),
+        )
+    serialized = serialize_job({"result": data})["result"]
+    return 200, envelope(trace_id, task_type, serialized)
 
 
 def _writing_policy_json(data=None, message="completed", status=200):
@@ -1290,13 +1379,12 @@ class Handler(BaseHTTPRequestHandler):
             if not job:
                 self._write(
                     404,
-                    envelope(
+                    excel_analysis_missing_envelope(
                         job_id,
-                        "excel.analysis",
-                        {"jobId": job_id, "status": "not_found"},
-                        success=False,
-                        message="智能分析后台任务不存在或已过期。",
-                        errors=[{"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": "智能分析后台任务不存在或已过期。"}],
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
                     ),
                 )
                 return
@@ -1307,16 +1395,14 @@ class Handler(BaseHTTPRequestHandler):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = PPT_SLIDE_ASSISTANT_JOB_STORE.get(job_id)
             if not job:
-                message = "智能总结后台任务不存在或已过期。"
                 self._write(
                     404,
-                    envelope(
+                    ppt_slide_job_missing_envelope(
                         job_id,
-                        "ppt.slide_assistant",
-                        {"jobId": job_id, "status": "not_found"},
-                        success=False,
-                        message=message,
-                        errors=[{"code": "PPT_SLIDE_JOB_NOT_FOUND", "message": message}],
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
                     ),
                 )
                 return
@@ -1523,7 +1609,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/word/document-review":
-            self._write(200, envelope("standalone-word-document-review", "word.document_review", document_review(payload)))
+            trace_id = new_trace_id("standalone-word-document-review")
+            status, body = sync_long_task_response(
+                payload,
+                trace_id,
+                "word.document_review",
+                parse_word_request,
+                DOCUMENT_REVIEW_JOB_STORE,
+                document_review_job_payload,
+            )
+            self._write(status, body)
             return
 
         if path == "/word/document-review/jobs":
@@ -1571,7 +1666,16 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/excel/analysis":
-            self._write(200, envelope("standalone-excel-analysis", "excel.analysis", excel_analysis(payload)))
+            trace_id = new_trace_id("standalone-excel-analysis")
+            status, body = sync_long_task_response(
+                payload,
+                trace_id,
+                "excel.analysis",
+                parse_excel_request,
+                EXCEL_ANALYSIS_JOB_STORE,
+                excel_analysis_job_payload,
+            )
+            self._write(status, body)
             return
 
         if path == "/excel/analysis/jobs":
@@ -1857,21 +1961,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             if not job:
-                message = "智能分析后台任务不存在或已过期。"
                 self._write(
                     404,
-                    envelope(
+                    excel_analysis_missing_envelope(
                         job_id,
-                        "excel.analysis",
-                        {"jobId": job_id, "status": "not_found"},
-                        success=False,
-                        message=message,
-                        errors=[
-                            {
-                                "code": "EXCEL_ANALYSIS_JOB_NOT_FOUND",
-                                "message": message,
-                            }
-                        ],
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
                     ),
                 )
                 return
@@ -1904,18 +2001,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             if not job:
-                message = "智能总结后台任务不存在或已过期。"
                 self._write(
                     404,
-                    envelope(
+                    ppt_slide_job_missing_envelope(
                         job_id,
-                        "ppt.slide_assistant",
-                        {"jobId": job_id, "status": "not_found"},
-                        success=False,
-                        message=message,
-                        errors=[
-                            {"code": "PPT_SLIDE_JOB_NOT_FOUND", "message": message}
-                        ],
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
                     ),
                 )
                 return

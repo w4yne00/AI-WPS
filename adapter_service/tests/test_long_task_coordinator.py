@@ -3,7 +3,7 @@ import threading
 import time
 import unittest
 
-from app.core.errors import AdapterError
+from app.core.errors import AdapterError, ProviderTimeoutError
 from app.services.long_task_coordinator import LongTaskCoordinator
 
 
@@ -50,6 +50,73 @@ def wait_for_status(coordinator, job_id, expected, timeout=2):
 
 
 class LongTaskCoordinatorTests(unittest.TestCase):
+    def test_mixed_hosts_share_capacity_fifo_cancellation_and_rejection_metrics(self):
+        coordinator = LongTaskCoordinator()
+        task_types = [
+            "word.document_review",
+            "excel.analysis",
+            "ppt.slide_assistant",
+        ]
+        runners = [BlockingRunner() for _ in range(11)]
+
+        for index in range(10):
+            coordinator.submit(
+                job_id="client-cross-host-{0:02d}".format(index),
+                trace_id="trace-cross-host-{0:02d}".format(index),
+                task_type=task_types[index % len(task_types)],
+                runner=runners[index],
+                snapshot={"value": index},
+                failure_code="LONG_TASK_FAILED",
+                failure_message="后台任务执行失败。",
+            )
+
+        self.assertTrue(runners[0].started.wait(timeout=1))
+        self.assertTrue(runners[1].started.wait(timeout=1))
+        self.assertFalse(runners[2].started.is_set())
+        self.assertEqual(
+            coordinator.get(
+                "client-cross-host-02", task_type="ppt.slide_assistant"
+            )["queuePosition"],
+            1,
+        )
+
+        with self.assertRaises(AdapterError) as raised:
+            coordinator.submit(
+                job_id="client-cross-host-full",
+                trace_id="trace-cross-host-full",
+                task_type="excel.analysis",
+                runner=runners[10],
+                snapshot={"value": 10},
+                failure_code="LONG_TASK_FAILED",
+                failure_message="后台任务执行失败。",
+            )
+        self.assertEqual(raised.exception.code, "LONG_TASK_QUEUE_FULL")
+
+        cancelled = coordinator.cancel(
+            "client-cross-host-03", task_type="word.document_review"
+        )
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertEqual(
+            coordinator.get(
+                "client-cross-host-04", task_type="excel.analysis"
+            )["queuePosition"],
+            2,
+        )
+
+        runners[0].release.set()
+        self.assertTrue(runners[2].started.wait(timeout=1))
+        self.assertFalse(runners[4].started.is_set())
+
+        diagnostics = coordinator.diagnostics()
+        self.assertEqual(diagnostics["runningCount"], 2)
+        self.assertEqual(diagnostics["queuedCount"], 6)
+        self.assertEqual(diagnostics["cancelledCount"], 1)
+        self.assertEqual(diagnostics["rejectedCount"], 1)
+        self.assertEqual(diagnostics["timedOutCount"], 0)
+
+        for runner in runners:
+            runner.release.set()
+
     def test_defaults_run_two_and_queue_eight_in_fifo_order(self):
         coordinator = LongTaskCoordinator()
         runners = [BlockingRunner() for _ in range(10)]
@@ -287,6 +354,60 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertIsNone(coordinator.get(second))
         self.assertIsNone(coordinator.get(third))
 
+    def test_terminal_cleanup_never_evicts_running_or_queued_jobs(self):
+        clock = FakeClock()
+        coordinator = LongTaskCoordinator(
+            max_running=1,
+            max_queued=2,
+            terminal_ttl_seconds=1,
+            max_terminal_jobs=1,
+            monotonic_clock=clock,
+            wall_clock=clock,
+        )
+        running = BlockingRunner()
+        queued = BlockingRunner()
+
+        coordinator.submit(
+            "client-active-running",
+            "trace-active-running",
+            "word.document_review",
+            running,
+            {"value": "running"},
+            "DOCUMENT_REVIEW_JOB_FAILED",
+            "文档审查后台任务执行失败。",
+        )
+        self.assertTrue(running.started.wait(timeout=1))
+        coordinator.submit(
+            "client-active-queued",
+            "trace-active-queued",
+            "excel.analysis",
+            queued,
+            {"value": "queued"},
+            "EXCEL_ANALYSIS_JOB_FAILED",
+            "智能分析后台任务执行失败。",
+        )
+
+        clock.advance(7201)
+        diagnostics = coordinator.diagnostics()
+
+        self.assertEqual(diagnostics["runningCount"], 1)
+        self.assertEqual(diagnostics["queuedCount"], 1)
+        self.assertEqual(
+            coordinator.get(
+                "client-active-running", task_type="word.document_review"
+            )["status"],
+            "running",
+        )
+        self.assertEqual(
+            coordinator.get(
+                "client-active-queued", task_type="excel.analysis"
+            )["status"],
+            "queued",
+        )
+
+        running.release.set()
+        queued.release.set()
+
     def test_runner_failure_does_not_expose_exception_or_snapshot_secret(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
 
@@ -320,6 +441,45 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         )
         self.assertNotIn("result", diagnostics["recentTerminalJobs"][0])
         self.assertNotIn("error", diagnostics["recentTerminalJobs"][0])
+
+    def test_timeout_diagnostics_count_sanitized_provider_error_code(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+
+        def fail(snapshot, progress):
+            raise ProviderTimeoutError(
+                "处理 {0} 和文件 {1} 时超时".format(
+                    snapshot["plainText"], snapshot["fileName"]
+                )
+            )
+
+        coordinator.submit(
+            "client-timeout",
+            "trace-timeout",
+            "ppt.slide_assistant",
+            fail,
+            {
+                "apiKey": "never-expose-timeout-key",
+                "plainText": "不应出现在诊断中的文档正文",
+                "formula": "=SUM(A1:A99)",
+                "fileName": "完整上传文件名-机密项目.docx",
+            },
+            "PPT_SLIDE_JOB_FAILED",
+            "智能总结后台任务执行失败。",
+        )
+        failed = wait_for_status(coordinator, "client-timeout", "failed")
+        diagnostics = coordinator.diagnostics()
+        diagnostic_text = json.dumps(diagnostics, ensure_ascii=False)
+
+        self.assertEqual(failed["error"]["code"], "PPT_SLIDE_JOB_FAILED")
+        self.assertEqual(diagnostics["timedOutCount"], 1)
+        self.assertEqual(
+            diagnostics["recentTerminalJobs"][0]["errorCode"],
+            "PROVIDER_TIMEOUT",
+        )
+        self.assertNotIn("never-expose-timeout-key", diagnostic_text)
+        self.assertNotIn("不应出现在诊断中的文档正文", diagnostic_text)
+        self.assertNotIn("=SUM(A1:A99)", diagnostic_text)
+        self.assertNotIn("完整上传文件名-机密项目.docx", diagnostic_text)
 
 
 if __name__ == "__main__":

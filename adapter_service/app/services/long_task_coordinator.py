@@ -55,7 +55,11 @@ class LongTaskCoordinator:
         self._jobs: Dict[JobKey, Dict] = {}
         self._queue: Deque[JobKey] = deque()
         self._running_count = 0
+        self._cancelled_count = 0
+        self._rejected_count = 0
+        self._timed_out_count = 0
         self._lock = threading.Lock()
+        self._condition = threading.Condition(self._lock)
 
     def submit(
         self,
@@ -79,6 +83,7 @@ class LongTaskCoordinator:
             if existing is not None:
                 return self._public_job_locked(existing, now_mono)
             if self._running_count >= self.max_running and len(self._queue) >= self.max_queued:
+                self._rejected_count += 1
                 raise AdapterError(
                     "LONG_TASK_QUEUE_FULL",
                     "当前后台任务较多，排队已满，请等待已有任务完成后重试。",
@@ -130,6 +135,47 @@ class LongTaskCoordinator:
             job = self._jobs.get(job_key) if job_key is not None else None
             return self._public_job_locked(job, now_mono) if job else None
 
+    def wait(self, job_id: str, task_type: Optional[str] = None) -> Optional[Dict]:
+        """Wait for one accepted job without bypassing the shared capacity boundary."""
+        with self._condition:
+            while True:
+                now_mono = self._monotonic()
+                self._cleanup_locked(now_mono)
+                job_key = self._find_job_key_locked(job_id, task_type)
+                job = self._jobs.get(job_key) if job_key is not None else None
+                if job is None:
+                    return None
+                if job["status"] in TERMINAL_STATUSES:
+                    return self._public_job_locked(job, now_mono)
+                self._condition.wait()
+
+    def wait_result(
+        self,
+        job_id: str,
+        task_type: str,
+        not_found_code: str,
+        not_found_message: str,
+        cancelled_message: str,
+        failure_code: str,
+        failure_message: str,
+        safe_error_statuses: Optional[Dict[str, int]] = None,
+    ) -> Dict:
+        """Wait for a terminal job and translate its public terminal state once."""
+        terminal = self.wait(job_id, task_type=task_type)
+        if terminal is None:
+            raise AdapterError(not_found_code, not_found_message, status_code=404)
+        if terminal["status"] == "completed":
+            return terminal.get("result") or {}
+        if terminal["status"] == "cancelled":
+            raise AdapterError(
+                "LONG_TASK_CANCELLED", cancelled_message, status_code=409
+            )
+        error = terminal.get("error") or {}
+        code = str(error.get("code") or failure_code)
+        message = str(error.get("message") or failure_message)
+        status_code = (safe_error_statuses or {}).get(code, 502)
+        raise AdapterError(code, message, status_code=status_code)
+
     def cancel(self, job_id: str, task_type: Optional[str] = None) -> Optional[Dict]:
         now_mono = self._monotonic()
         with self._lock:
@@ -153,7 +199,9 @@ class LongTaskCoordinator:
                     status_code=409,
                 )
             self._finish_locked(job, "cancelled", now_mono)
+            self._cancelled_count += 1
             self._trim_terminal_locked()
+            self._condition.notify_all()
             return self._public_job_locked(job, now_mono)
 
     def diagnostics(self) -> Dict:
@@ -177,6 +225,9 @@ class LongTaskCoordinator:
                 "terminalCount": len(terminal_jobs),
                 "terminalTtlSeconds": self.terminal_ttl_seconds,
                 "maxTerminalJobs": self.max_terminal_jobs,
+                "cancelledCount": self._cancelled_count,
+                "rejectedCount": self._rejected_count,
+                "timedOutCount": self._timed_out_count,
                 "recentTerminalJobs": [
                     self._terminal_diagnostic(job) for job in terminal_jobs[:10]
                 ],
@@ -209,6 +260,9 @@ class LongTaskCoordinator:
         try:
             result = runner(snapshot, progress)
         except Exception as exc:
+            diagnostic_error_code = (
+                exc.code if isinstance(exc, AdapterError) else ""
+            )
             if (
                 isinstance(exc, AdapterError)
                 and exc.code in job.get("_safeFailureCodes", set())
@@ -219,6 +273,8 @@ class LongTaskCoordinator:
                     "code": str(job.get("_failureCode") or "LONG_TASK_FAILED"),
                     "message": str(job.get("_failureMessage") or "后台任务执行失败。"),
                 }
+            if diagnostic_error_code:
+                error["_diagnosticCode"] = diagnostic_error_code
         finally:
             snapshot = None
             runner = None
@@ -232,11 +288,16 @@ class LongTaskCoordinator:
                 job["result"] = result
                 self._finish_locked(job, "completed", now_mono)
             else:
+                diagnostic_error_code = str(error.pop("_diagnosticCode", ""))
                 job["error"] = error
+                job["_diagnosticErrorCode"] = diagnostic_error_code
+                if "TIMEOUT" in diagnostic_error_code.upper():
+                    self._timed_out_count += 1
                 self._finish_locked(job, "failed", now_mono)
             self._running_count = max(self._running_count - 1, 0)
             next_job_key = self._promote_next_locked(now_mono)
             self._trim_terminal_locked()
+            self._condition.notify_all()
 
         if next_job_key is not None:
             self._start_worker(next_job_key)
@@ -377,7 +438,9 @@ class LongTaskCoordinator:
                 phase: int(max(duration, 0.0))
                 for phase, duration in job.get("_phaseDurations", {}).items()
             },
-            "errorCode": str(error.get("code", "")),
+            "errorCode": str(
+                job.get("_diagnosticErrorCode") or error.get("code", "")
+            ),
         }
 
 

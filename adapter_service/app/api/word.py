@@ -112,7 +112,7 @@ def smart_imitation_word(request: WordDocumentRequest) -> dict:
 @router.post("/word/document-review")
 def document_review_word(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-document-review")
-    review = document_reviewer.review(request, trace_id=trace_id)
+    review = document_review_jobs.run_sync(request, trace_id=trace_id)
     payload = DocumentReviewResponseData(**review)
     logger.info(
         "traceId=%s task=word.document_review documentType=%s issueCount=%s",

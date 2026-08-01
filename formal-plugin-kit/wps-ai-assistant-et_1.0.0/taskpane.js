@@ -63,7 +63,8 @@
     scopeWatcher: null,
     excelAnalysisJobId: "",
     excelAnalysisPollStartedAt: 0,
-    excelAnalysisPollErrorCount: 0
+    excelAnalysisPollErrorCount: 0,
+    excelAnalysisResumeExpected: false
   };
 
   function byId(id) {
@@ -203,6 +204,21 @@
     state.busy = Boolean(isBusy);
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
     renderWorkflowProfileStrip();
+  }
+
+  function setExcelAnalysisCancelVisible(visible, disabled) {
+    var button = byId("btn-cancel-excel-analysis-job");
+    if (button) {
+      button.hidden = !visible;
+      button.disabled = Boolean(disabled);
+    }
+  }
+
+  function setInterruptedRetryVisible(visible) {
+    var button = byId("btn-resubmit-interrupted-job");
+    if (button) {
+      button.hidden = !visible;
+    }
   }
 
   function setTrace(traceId) {
@@ -710,6 +726,7 @@
   function isFatalExcelAnalysisPollError(error) {
     return error && (
       error.adapterCode === "EXCEL_ANALYSIS_JOB_NOT_FOUND" ||
+      error.adapterCode === "EXCEL_ANALYSIS_JOB_INTERRUPTED" ||
       error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
       error.adapterCode === "EXCEL_ANALYSIS_AUTH_SNAPSHOT_FAILED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED"
@@ -734,16 +751,60 @@
       "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
       "任务编号：" + jobId
     );
+    setExcelAnalysisCancelVisible(job.status === "queued" && job.canCancel, false);
     setPlainResult(lines.join("\n"));
+  }
+
+  function finishCancelledExcelAnalysis(jobId, stopWaiting) {
+    clearExcelAnalysisActiveJob(jobId);
+    state.excelAnalysisJobId = "";
+    state.excelAnalysisPollStartedAt = 0;
+    state.excelAnalysisPollErrorCount = 0;
+    state.excelAnalysisResumeExpected = false;
+    setExcelAnalysisCancelVisible(false);
+    stopWaiting();
+    setStatus("智能分析任务已取消。");
+    setPlainResult("排队中的智能分析任务已取消，未调用模型后台。\n任务编号：" + jobId);
+  }
+
+  function cancelQueuedExcelAnalysisJob() {
+    var jobId = state.excelAnalysisJobId;
+    if (!jobId) {
+      return;
+    }
+    setExcelAnalysisCancelVisible(true, true);
+    request("/excel/analysis/jobs/" + encodeURIComponent(jobId), null, {
+      method: "DELETE",
+      timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      if (state.excelAnalysisJobId !== jobId) {
+        return;
+      }
+      if ((body.data || {}).status === "cancelled") {
+        finishCancelledExcelAnalysis(jobId, function () {
+          setAnalysisBusy(false);
+        });
+      }
+    }).catch(function (error) {
+      if (state.excelAnalysisJobId === jobId) {
+        setExcelAnalysisCancelVisible(true, false);
+        setStatus("取消排队任务失败：" + describeExcelAnalysisPollError(error));
+      }
+    });
   }
 
   function pollExcelAnalysisJob(jobId, stopWaiting) {
     if (!jobId || state.excelAnalysisJobId !== jobId) {
       return;
     }
-    request("/excel/analysis/jobs/" + encodeURIComponent(jobId), null, {
+    request(
+      "/excel/analysis/jobs/" + encodeURIComponent(jobId) +
+        (state.excelAnalysisResumeExpected ? "?resume=1" : ""),
+      null,
+      {
       timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
-    })
+      }
+    )
       .then(function (body) {
         var job = body.data || {};
         if (state.excelAnalysisJobId !== jobId) {
@@ -760,6 +821,8 @@
           clearExcelAnalysisActiveJob(jobId);
           state.excelAnalysisJobId = "";
           state.excelAnalysisPollStartedAt = 0;
+          state.excelAnalysisResumeExpected = false;
+          setExcelAnalysisCancelVisible(false);
           stopWaiting();
           renderExcelAnalysisResult(job.result || {});
           setStatus("智能分析报告已生成。");
@@ -769,19 +832,15 @@
           return;
         }
         if (job.status === "cancelled") {
-          clearExcelAnalysisActiveJob(jobId);
-          state.excelAnalysisJobId = "";
-          state.excelAnalysisPollStartedAt = 0;
-          state.excelAnalysisPollErrorCount = 0;
-          stopWaiting();
-          setStatus("智能分析任务已取消。");
-          setPlainResult("排队中的智能分析任务已取消，未调用模型后台。\n任务编号：" + jobId);
+          finishCancelledExcelAnalysis(jobId, stopWaiting);
           return;
         }
         if (job.status === "failed") {
           clearExcelAnalysisActiveJob(jobId);
           state.excelAnalysisJobId = "";
           state.excelAnalysisPollStartedAt = 0;
+          state.excelAnalysisResumeExpected = false;
+          setExcelAnalysisCancelVisible(false);
           stopWaiting();
           setStatus("智能分析失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
           setResult((job.error && job.error.message) || "后台任务执行失败。");
@@ -801,6 +860,19 @@
         message = describeExcelAnalysisPollError(error);
         state.excelAnalysisPollErrorCount = (state.excelAnalysisPollErrorCount || 0) + 1;
         elapsed = Date.now() - (state.excelAnalysisPollStartedAt || Date.now());
+        if (error && error.adapterCode === "EXCEL_ANALYSIS_JOB_INTERRUPTED") {
+          clearExcelAnalysisActiveJob(jobId);
+          state.excelAnalysisJobId = "";
+          state.excelAnalysisPollStartedAt = 0;
+          state.excelAnalysisPollErrorCount = 0;
+          state.excelAnalysisResumeExpected = false;
+          setExcelAnalysisCancelVisible(false);
+          setInterruptedRetryVisible(true);
+          stopWaiting();
+          setStatus("adapter 已重启，原智能分析任务已中断，请重新提交。");
+          setPlainResult("adapter 已重启，原智能分析任务无法恢复，请使用“重新提交分析”。\n任务编号：" + jobId);
+          return;
+        }
         if (!isFatalExcelAnalysisPollError(error)) {
           withinRetryBudget = (
             state.excelAnalysisPollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
@@ -847,6 +919,8 @@
     state.excelAnalysisJobId = active.jobId;
     state.excelAnalysisPollStartedAt = active.startedAt || Date.now();
     state.excelAnalysisPollErrorCount = 0;
+    state.excelAnalysisResumeExpected = true;
+    setInterruptedRetryVisible(false);
     setAnalysisBusy(true);
     setTrace(active.traceId || active.jobId);
     setStatus("已恢复未完成的智能分析任务，正在查询模型后台结果...");
@@ -882,6 +956,8 @@
     if (state.busy || state.workflowProfileMutationBusy) {
       return;
     }
+    setInterruptedRetryVisible(false);
+    setExcelAnalysisCancelVisible(false);
     setAnalysisBusy(true);
     state.analysisRequirement = safeText(byId("excel-analysis-requirement").value);
     state.analysisResult = null;
@@ -889,6 +965,7 @@
     state.excelAnalysisJobId = "";
     state.excelAnalysisPollStartedAt = 0;
     state.excelAnalysisPollErrorCount = 0;
+    state.excelAnalysisResumeExpected = false;
     byId("result-view-switch").hidden = true;
     setStatus("正在读取 Excel 表格范围...");
     setPlainResult("正在读取 Excel 表格范围，请稍候。");
@@ -920,6 +997,7 @@
       state.excelAnalysisJobId = clientJobId;
       state.excelAnalysisPollStartedAt = startedAt;
       state.excelAnalysisPollErrorCount = 0;
+      state.excelAnalysisResumeExpected = true;
       saveExcelAnalysisActiveJob({
         jobId: clientJobId,
         traceId: "",
@@ -1811,6 +1889,7 @@
     var debug = (debugResult && debugResult.data) || {};
     var status = (statusResult && statusResult.data) || {};
     var routes = (routesResult && routesResult.data) || {};
+    var longTasks = routes.longTaskCoordinator || {};
     var taskKeys = (taskKeysResult && taskKeysResult.data) || {};
     var lines = ["最近一次任务诊断", ""];
 
@@ -1837,13 +1916,32 @@
     lines.push("- 请求路径：" + (debug.url || routes.url || "未进入模型后台请求"));
     lines.push("- fallback 原因：" + (debug.skipReason || "无"));
 
+    if (typeof longTasks.maxRunning === "number") {
+      lines.push("");
+      lines.push("## 共享长任务协调器");
+      lines.push("- 运行中：" + (longTasks.runningCount || 0) + "/" + longTasks.maxRunning);
+      lines.push("- 排队中：" + (longTasks.queuedCount || 0) + "/" + longTasks.maxQueued);
+      lines.push("- 终态保留：" + (longTasks.terminalCount || 0) + "/" + longTasks.maxTerminalJobs);
+      lines.push("- 终态保留时长：" + (longTasks.terminalTtlSeconds || 0) + " 秒");
+      lines.push("- 取消数：" + (longTasks.cancelledCount || 0));
+      lines.push("- 拒绝数：" + (longTasks.rejectedCount || 0));
+      lines.push("- 超时数：" + (longTasks.timedOutCount || 0));
+      (longTasks.recentTerminalJobs || []).forEach(function (job) {
+        lines.push(
+          "- 最近任务 " + (job.taskType || "未记录") +
+          "：" + (job.status || "未记录") +
+          "，耗时 " + (job.elapsedSeconds || 0) + " 秒" +
+          (job.errorCode ? "，错误码 " + job.errorCode : "")
+        );
+      });
+    }
+
     if (debug.request) {
       lines.push("");
       lines.push("## 请求摘要");
       lines.push("- body 字段：" + (debug.request.bodyKeys || []).join(", "));
       lines.push("- inputs 字段：" + (debug.request.inputsKeys || []).join(", "));
       lines.push("- query 长度：" + (debug.request.queryLength || 0));
-      lines.push("- query 预览：" + (debug.request.queryPreview || "空"));
       lines.push("- response_mode：" + (debug.request.responseMode || "未记录"));
     }
 
@@ -1860,7 +1958,6 @@
       lines.push("## 错误摘要");
       lines.push("- 类型：" + (debug.error.type || "未记录"));
       lines.push("- 状态：" + (debug.error.status || "未记录"));
-      lines.push("- 信息：" + (debug.error.message || "未记录"));
     }
 
     lines.push("");
@@ -2021,6 +2118,8 @@
     byId("btn-back-provider-summary").addEventListener("click", hideProviderEditor);
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
+    byId("btn-cancel-excel-analysis-job").addEventListener("click", cancelQueuedExcelAnalysisJob);
+    byId("btn-resubmit-interrupted-job").addEventListener("click", runExcelAnalysisAction);
     byId("diagnostics-disclosure").addEventListener("toggle", handleDiagnosticsDisclosureToggle);
     byId("workflow-task-tabs").addEventListener("click", handleWorkflowTaskTabClick);
     byId("workflow-task-tabs").addEventListener("keydown", handleWorkflowTaskTabKeydown);

@@ -361,6 +361,7 @@ assert.ok(js.includes("状态查询暂时未连上本地 adapter"));
 assert.ok(js.includes("这不代表模型后台任务失败"));
 assert.ok(js.includes("文档审查任务连接中断，正在尝试恢复状态查询"));
 assert.ok(html.includes('id="btn-cancel-document-review-job"'));
+assert.ok(html.includes('id="btn-resubmit-interrupted-job"'));
 assert.ok(js.includes('function renderDocumentReviewJobProgress'));
 assert.ok(js.includes('job.queuePosition'));
 assert.ok(js.includes('job.phaseElapsedSeconds'));
@@ -374,6 +375,12 @@ assert.ok(js.includes('adapter 已重启，原文档审查任务已中断'));
 assert.ok(js.includes('已有文档审查任务尚未结束'));
 assert.ok(js.includes('?resume=1'));
 assert.ok(js.includes('function finishCancelledDocumentReview'));
+assert.ok(js.includes('function setInterruptedRetryVisible'));
+assert.ok(js.includes('btn-resubmit-interrupted-job'));
+assert.ok(js.includes('取消数：'));
+assert.ok(js.includes('拒绝数：'));
+assert.ok(js.includes('超时数：'));
+assert.ok(!js.includes('debug.request.queryPreview'));
 assert.ok(js.includes('longTaskCoordinator'));
 assert.ok(js.includes('共享长任务协调器'));
 assert.ok(js.includes("DOCUMENT_REVIEW_EXTRACTION_OPTIONS"));
@@ -541,9 +548,28 @@ assert.ok(excelJs.includes("智能分析状态查询暂时失败"));
 assert.ok(excelJs.includes("这不代表模型后台任务失败"));
 assert.ok(excelJs.includes("EXCEL_ANALYSIS_PHASE_TEXT"));
 assert.ok(excelJs.includes("renderExcelAnalysisJobProgress"));
+assert.ok(excelHtml.includes('id="btn-cancel-excel-analysis-job"'));
+assert.ok(excelHtml.includes('id="btn-resubmit-interrupted-job"'));
 assert.ok(excelJs.includes("job.queuePosition"));
 assert.ok(excelJs.includes("job.phaseElapsedSeconds"));
+assert.ok(excelJs.includes("job.canCancel"));
 assert.ok(excelJs.includes('job.status === "cancelled"'));
+assert.ok(excelJs.includes('method: "DELETE"'));
+assert.ok(excelJs.includes("EXCEL_ANALYSIS_JOB_INTERRUPTED"));
+assert.ok(excelJs.includes("adapter 已重启，原智能分析任务已中断"));
+assert.ok(excelJs.includes('"?resume=1"'));
+const excelSubmitStart = excelJs.indexOf("function runExcelAnalysisAction()");
+const excelSubmitEnd = excelJs.indexOf("\n  function ", excelSubmitStart + 1);
+const excelSubmitSource = excelJs.slice(excelSubmitStart, excelSubmitEnd);
+assert.ok(excelSubmitSource.includes("state.excelAnalysisResumeExpected = true"));
+assert.ok(
+  excelSubmitSource.indexOf("state.excelAnalysisResumeExpected = true") <
+    excelSubmitSource.indexOf('request("/excel/analysis/jobs"')
+);
+assert.ok(excelJs.includes("longTaskCoordinator"));
+assert.ok(excelJs.includes("cancelledCount"));
+assert.ok(excelJs.includes("rejectedCount"));
+assert.ok(excelJs.includes("timedOutCount"));
 assert.ok(excelJs.includes("LONG_TASK_QUEUE_FULL"));
 assert.ok(excelJs.includes("runExcelAnalysisAction"));
 assert.ok(excelJs.includes("extractExcelRange"));
@@ -555,6 +581,26 @@ assert.ok(!excelJs.includes("Excel 智能分析"));
 assert.ok(!excelJs.includes("applyRewrite"));
 assert.ok(!excelJs.includes("tryApplyFormattedRewrite"));
 assert.ok(!excelJs.includes("/word/document-review"));
+
+assert.ok(pptHtml.includes('id="btn-cancel-ppt-slide-job"'));
+assert.ok(pptHtml.includes('id="btn-resubmit-interrupted-job"'));
+assert.ok(pptJs.includes("job.canCancel"));
+assert.ok(pptJs.includes('method: "DELETE"'));
+assert.ok(pptJs.includes("PPT_SLIDE_JOB_INTERRUPTED"));
+assert.ok(pptJs.includes("adapter 已重启，原智能总结任务已中断"));
+assert.ok(pptJs.includes('"?resume=1"'));
+const pptSubmitStart = pptJs.indexOf("function submitPptSlideJob(payload)");
+const pptSubmitEnd = pptJs.indexOf("\n  function ", pptSubmitStart + 1);
+const pptSubmitSource = pptJs.slice(pptSubmitStart, pptSubmitEnd);
+assert.ok(pptSubmitSource.includes("state.resumeExpected = true"));
+assert.ok(
+  pptSubmitSource.indexOf("state.resumeExpected = true") <
+    pptSubmitSource.indexOf('request(\n      "/ppt/slide-assistant/jobs"')
+);
+assert.ok(pptJs.includes("longTaskCoordinator"));
+assert.ok(pptJs.includes("cancelledCount"));
+assert.ok(pptJs.includes("rejectedCount"));
+assert.ok(pptJs.includes("timedOutCount"));
 
 assert.ok(excelCss.includes("excel-range-summary"));
 assert.ok(!js.includes("/word/rewrite"));

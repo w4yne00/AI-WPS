@@ -143,22 +143,26 @@ DELETE /word/document-review/jobs/{jobId}[?resume=1]
 POST   /word/format-review
 POST   /excel/analysis
 POST   /excel/analysis/jobs
-GET    /excel/analysis/jobs/{jobId}
-DELETE /excel/analysis/jobs/{jobId}
+GET    /excel/analysis/jobs/{jobId}[?resume=1]
+DELETE /excel/analysis/jobs/{jobId}[?resume=1]
 POST   /ppt/document-files
 POST   /ppt/slide-assistant/jobs
-GET    /ppt/slide-assistant/jobs/{jobId}
-DELETE /ppt/slide-assistant/jobs/{jobId}
+GET    /ppt/slide-assistant/jobs/{jobId}[?resume=1]
+DELETE /ppt/slide-assistant/jobs/{jobId}[?resume=1]
 ```
 
 ## 3. 本版本关键变化
+
+- issue #15 已闭合三宿主共享容量契约：Word 文档审查、Excel 智能分析和 PPT 智能总结共同受默认 2 个运行槽位与 8 个 FIFO 排队位置限制；跨宿主排队、中文满队列拒绝和排队取消使用同一个协调器，活动任务不参与终态 TTL 或数量清理。兼容保留的 `POST /word/document-review` 与 `POST /excel/analysis` 也通过同一协调器提交并等待终态，不能绕过全局容量。
+- `/provider/route-diagnostics` 在有效容量、运行数、排队数和最近脱敏终态基础上新增进程内取消、拒绝、超时计数；超时只记录受控错误码，不记录异常正文。Provider 请求诊断不再保存或展示 `queryPreview`，三宿主高级诊断均不显示 API Key、用户正文、公式正文或完整上传文件名。
+- 三个任务页只显示当前任务的队列位置、阶段、总耗时、阶段耗时和可取消状态；Excel/PPT 补齐排队取消按钮。三个宿主从任务 ID 写入本地活动记录起，后续查询均使用 `resume=1`；无论任务窗格是否重开，服务端任务缺失都会显示明确的 adapter 重启中断提示和重新提交按钮，普通未知或过期任务仍使用各自 `*_JOB_NOT_FOUND` 错误码。
 
 - issue #12 已让 Word 文档审查成为共享长任务协调器的首条链路：默认同时运行 2 个任务，FIFO 排队最多 8 个；`clientJobId` 继续幂等，重复提交不会再次调用模型后台。
 - 文档审查任务状态现在包含 `queued / running / completed / failed / cancelled`、排队位置、真实阶段、总耗时、阶段耗时和 `canCancel`；只有排队任务可通过 `DELETE /word/document-review/jobs/{jobId}` 取消，运行中的阻塞式模型请求不伪装为可取消。
 - 提交任务时冻结请求、工作流档案、API URL/path、Dify 输入模式和仅存在内存中的认证快照；配置切换只影响后续任务。认证正文不进入任务响应、日志或诊断，并在完成、失败或排队取消后释放。
 - 运行中和排队任务不因容量被淘汰；终态从完成时起保留 2 小时且最多 50 条。任务窗格重开后按原 `clientJobId` 和 `resume=1` 查询；只有此前已持久化为活动任务的查询缺失才解释为 adapter 重启中断，普通未知或过期任务仍返回 `DOCUMENT_REVIEW_JOB_NOT_FOUND`。
 - `/provider/route-diagnostics` 包含共享协调器容量、当前计数和最多 10 条脱敏终态摘要；摘要不包含请求、结果、异常正文或认证信息。
-- FastAPI 与 standalone 均支持相同的文档审查提交、查询、排队取消、队列满和重启中断响应契约；现有同步路由、结果结构、think 过滤、审查记录和只读行为保持不变。
+- FastAPI 与 standalone 均支持相同的文档审查提交、查询、排队取消、队列满和重启中断响应契约；兼容同步路由的结果 envelope、think 过滤、审查记录和只读行为保持不变，但执行也纳入共享协调器。
 - issue #13 已让 Excel 智能分析复用同一共享长任务协调器：与文档审查共同受默认并发 2、FIFO 排队容量 8 的全局限制，重复 `clientJobId` 继续只调用一次模型后台；提交时冻结表格请求与工作流认证快照，排队期间切换档案只影响后续任务。
 - 智能分析任务状态现包含 `queued / running / completed / failed / cancelled`、排队位置、真实阶段、总耗时和阶段耗时；FastAPI 与 standalone 均支持提交、查询、排队取消和中文队列满错误。
 - Excel 任务窗格继续保留选区优先、UsedRange 兜底、报告预览、汇报段落、复制、短暂断连恢复和重开续查，并新增共享队列位置、当前阶段与耗时显示；仍不写回任何单元格。

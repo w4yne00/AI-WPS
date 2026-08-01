@@ -717,6 +717,13 @@
     button.disabled = Boolean(disabled);
   }
 
+  function setInterruptedRetryVisible(visible) {
+    var button = byId("btn-resubmit-interrupted-job");
+    if (button) {
+      button.hidden = !visible;
+    }
+  }
+
   function resetDocumentReviewState() {
     stopDocumentReviewWaitFeedback();
     state.documentReviewData = null;
@@ -980,6 +987,7 @@
     var writingPolicyMode;
     var returnTitle;
 
+    setInterruptedRetryVisible(false);
     state.currentMode = requestedMode;
     if (!settingsMode) {
       state.lastTaskMode = requestedMode;
@@ -1453,6 +1461,9 @@
       lines.push("- 排队中：" + (longTasks.queuedCount || 0) + "/" + longTasks.maxQueued);
       lines.push("- 终态保留：" + (longTasks.terminalCount || 0) + "/" + longTasks.maxTerminalJobs);
       lines.push("- 终态保留时长：" + (longTasks.terminalTtlSeconds || 0) + " 秒");
+      lines.push("- 取消数：" + (longTasks.cancelledCount || 0));
+      lines.push("- 拒绝数：" + (longTasks.rejectedCount || 0));
+      lines.push("- 超时数：" + (longTasks.timedOutCount || 0));
       (longTasks.recentTerminalJobs || []).forEach(function (job) {
         lines.push(
           "- 最近任务 " + (job.jobId || "未记录") +
@@ -1469,7 +1480,6 @@
       lines.push("- body 字段：" + (debug.request.bodyKeys || []).join(", "));
       lines.push("- inputs 字段：" + (debug.request.inputsKeys || []).join(", "));
       lines.push("- query 长度：" + (debug.request.queryLength || 0));
-      lines.push("- query 预览：" + (debug.request.queryPreview || "空"));
       lines.push("- response_mode：" + (debug.request.responseMode || "未记录"));
     }
 
@@ -1489,7 +1499,6 @@
       lines.push("## 错误摘要");
       lines.push("- 类型：" + (debug.error.type || "未记录"));
       lines.push("- 状态：" + (debug.error.status || "未记录"));
-      lines.push("- 信息：" + (debug.error.message || "未记录"));
     }
 
     lines.push("");
@@ -4402,6 +4411,7 @@
           state.documentReviewPollErrorCount = 0;
           setStatus("adapter 已重启，原文档审查任务已中断，请重新提交。");
           setResult("adapter 已重启，原文档审查任务无法恢复。阻塞式模型请求不会伪装为可恢复，请重新提交文档审查。\n任务编号：" + jobId);
+          setInterruptedRetryVisible(true);
           stopDocumentReviewWaitFeedback(stopWaiting);
           return;
         }
@@ -5274,6 +5284,7 @@
       setStatus("工作流配置正在更新，请稍后再提交任务。");
       return;
     }
+    setInterruptedRetryVisible(false);
     if (state.currentMode === "smartImitation") {
       runSmartImitationAction();
       return;
@@ -5301,6 +5312,7 @@
       toggleSettingsShortcut();
     });
     byId("btn-cancel-document-review-job").addEventListener("click", cancelQueuedDocumentReviewJob);
+    byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
     });

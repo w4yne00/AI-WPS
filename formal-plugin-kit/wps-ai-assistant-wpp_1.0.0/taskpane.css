@@ -368,6 +368,12 @@ textarea {
   border-top: 1px solid var(--hairline);
 }
 
+.task-job-actions {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+}
+
 button {
   padding: 9px 12px;
   border: 0;
