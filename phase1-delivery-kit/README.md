@@ -1,14 +1,14 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.20.0-alpha`
+版本：`v0.20.1-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260726-v0200.tar.gz
-cd ai-wps-phase1-delivery-20260726-v0200
+tar -xzf ai-wps-phase1-delivery-20260801-v0201.tar.gz
+cd ai-wps-phase1-delivery-20260801-v0201
 bash installer/install_phase1.sh
 ```
 

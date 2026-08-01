@@ -1,57 +1,16 @@
 import type { FormatPreviewChange, Paragraph, RewriteResult } from "../api/types";
+import type { WpsDocumentLike, WpsParagraphLike } from "./document";
 
-interface MutableParagraphLike {
-  Text?: string;
-  text?: string;
-  StyleNameLocal?: string;
-  styleName?: string;
-  Font?: {
-    NameFarEast?: string;
-    Name?: string;
-    Size?: number;
-  };
-  ParagraphFormat?: {
-    Alignment?: string | number;
-    OutlineLevel?: number;
-  };
-}
-
-interface MutableSelectionLike {
-  Text?: string;
-  Range?: {
-    Text?: string;
-  };
-}
-
-interface MutableDocumentLike {
-  Name?: string;
-  Content?: {
-    Text?: string;
-  };
-  Paragraphs?: MutableParagraphLike[];
-  paragraphs?: MutableParagraphLike[];
-  Selection?: MutableSelectionLike;
-}
-
-declare global {
-  interface Window {
-    wps?: {
-      ActiveDocument?: MutableDocumentLike;
-    };
-    __WPS_MOCK_DOCUMENT__?: MutableDocumentLike;
-  }
-}
-
-function getMutableActiveDocument(): MutableDocumentLike {
+function getMutableActiveDocument(): WpsDocumentLike {
   return window.wps?.ActiveDocument ?? window.__WPS_MOCK_DOCUMENT__ ?? {};
 }
 
-function getParagraphs(document: MutableDocumentLike): MutableParagraphLike[] {
+function getParagraphs(document: WpsDocumentLike): WpsParagraphLike[] {
   return document.Paragraphs ?? document.paragraphs ?? [];
 }
 
 function applyParagraphStyle(
-  paragraph: MutableParagraphLike,
+  paragraph: WpsParagraphLike,
   targetStyle: string,
   sourceParagraph?: Paragraph
 ): void {

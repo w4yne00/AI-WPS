@@ -2,7 +2,8 @@ import { AdapterClient } from "../api/client";
 import {
   isWordFormatPreviewResponse,
   isWordProofreadResponse,
-  isWordRewriteResponse
+  isWordRewriteResponse,
+  type WordDocumentRequest
 } from "../api/types";
 import { extractActiveDocument, extractCurrentSelection } from "../wps/document";
 import { collectRuntimeProbe } from "../wps/probe";
@@ -12,7 +13,7 @@ import { renderApp } from "./render";
 
 const client = new AdapterClient();
 const state: AppState = { ...initialState };
-let latestDocumentPayload = {
+let latestDocumentPayload: WordDocumentRequest = {
   documentId: "placeholder-doc",
   scene: "word" as const,
   selectionMode: "document" as const,

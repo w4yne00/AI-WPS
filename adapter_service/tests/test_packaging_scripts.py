@@ -17,7 +17,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.20.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.20.1-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -289,12 +289,12 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(required_text, text)
 
-    def test_phase1_delivery_uses_v0200_release_name(self) -> None:
+    def test_phase1_delivery_uses_v0201_release_name(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0200"', script)
+        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0201"', script)
 
     def test_delivery_build_revalidates_approved_pack_reviews(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
@@ -355,10 +355,10 @@ class PackagingScriptTests(unittest.TestCase):
             self.assertEqual(database.read_bytes(), original)
             self.assertIn("writing_policy_database=reused", second_result.stdout)
 
-    def test_built_v0200_delivery_has_complete_safe_release_inventory(self) -> None:
+    def test_built_v0201_delivery_has_complete_safe_release_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             environment = dict(os.environ)
-            environment["DATE_TAG"] = "20260726"
+            environment["DATE_TAG"] = "20260801"
             environment["PYTHON_BIN"] = sys.executable
             result = subprocess.run(
                 [
@@ -375,22 +375,22 @@ class PackagingScriptTests(unittest.TestCase):
 
             archive = (
                 Path(temp_dir)
-                / "ai-wps-phase1-delivery-20260726-v0200.tar.gz"
+                / "ai-wps-phase1-delivery-20260801-v0201.tar.gz"
             )
             self.assertTrue(archive.is_file())
             with tarfile.open(archive, "r:gz") as package:
                 names = package.getnames()
-                root = "ai-wps-phase1-delivery-20260726-v0200"
+                root = "ai-wps-phase1-delivery-20260801-v0201"
                 manifest_member = package.extractfile(
                     root + "/release-manifest.json"
                 )
                 self.assertIsNotNone(manifest_member)
                 release_manifest = json.load(manifest_member)
 
-                self.assertEqual(release_manifest["version"], "0.20.0-alpha")
+                self.assertEqual(release_manifest["version"], "0.20.1-alpha")
                 self.assertEqual(
                     release_manifest["versionRule"],
-                    "AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-20260726",
+                    "AI-WPS-P1-WORD-EXCEL-PPT-0.20.1-20260801",
                 )
                 self.assertEqual(
                     set(release_manifest["writingPolicyPacks"]),

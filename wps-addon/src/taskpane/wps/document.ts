@@ -1,6 +1,6 @@
 import type { Heading, Paragraph, WordDocumentRequest } from "../api/types";
 
-interface WpsParagraphLike {
+export interface WpsParagraphLike {
   Text?: string;
   text?: string;
   StyleNameLocal?: string;
@@ -16,14 +16,14 @@ interface WpsParagraphLike {
   };
 }
 
-interface WpsSelectionLike {
+export interface WpsSelectionLike {
   Text?: string;
   Range?: {
     Text?: string;
   };
 }
 
-interface WpsDocumentLike {
+export interface WpsDocumentLike {
   Name?: string;
   Content?: {
     Text?: string;

@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "product": "AI-WPS",
-  "version": "0.20.0-alpha",
-  "releaseDate": "20260726",
-  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.20.0-20260726",
+  "version": "0.20.1-alpha",
+  "releaseDate": "20260801",
+  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.20.1-20260801",
   "hosts": [
     {
       "name": "Word",
@@ -23,7 +23,7 @@
   ],
   "adapter": {
     "name": "wps-ai-adapter",
-    "version": "0.20.0-alpha"
+    "version": "0.20.1-alpha"
   },
   "writingPolicyPacks": [
     "yangqi-tech-writing-base",

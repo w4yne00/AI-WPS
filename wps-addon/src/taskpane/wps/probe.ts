@@ -1,24 +1,12 @@
 import { AdapterClient, getDefaultBaseUrl } from "../api/client";
 import type { RuntimeProbeResult } from "../api/types";
-import { collectHeadings, collectParagraphs } from "./document";
+import {
+  collectHeadings,
+  collectParagraphs,
+  type WpsDocumentLike
+} from "./document";
 
-interface ProbeDocumentLike {
-  Name?: string;
-  Paragraphs?: unknown[];
-  paragraphs?: unknown[];
-  Selection?: unknown;
-}
-
-declare global {
-  interface Window {
-    wps?: {
-      ActiveDocument?: ProbeDocumentLike;
-    };
-    __WPS_MOCK_DOCUMENT__?: ProbeDocumentLike;
-  }
-}
-
-function getRuntimeDocument(): ProbeDocumentLike | undefined {
+function getRuntimeDocument(): WpsDocumentLike | undefined {
   return window.wps?.ActiveDocument ?? window.__WPS_MOCK_DOCUMENT__;
 }
 

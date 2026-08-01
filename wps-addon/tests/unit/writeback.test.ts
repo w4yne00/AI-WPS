@@ -28,6 +28,9 @@ describe("Word writeback", () => {
 
     const doc = (globalThis as typeof globalThis & { window?: Record<string, any> }).window
       ?.__WPS_MOCK_DOCUMENT__;
+    if (!doc?.Selection?.Range) {
+      throw new Error("selection fixture is missing");
+    }
     expect(doc.Selection.Text).toBe("Rewritten selection");
     expect(doc.Selection.Range.Text).toBe("Rewritten selection");
   });
@@ -74,8 +77,12 @@ describe("Word writeback", () => {
 
     const doc = (globalThis as typeof globalThis & { window?: Record<string, any> }).window
       ?.__WPS_MOCK_DOCUMENT__;
-    expect(doc.Paragraphs[0].StyleNameLocal).toBe("Heading 1");
-    expect(doc.Paragraphs[0].Font.NameFarEast).toBe("SimHei");
-    expect(doc.Paragraphs[0].ParagraphFormat.OutlineLevel).toBe(1);
+    const paragraph = doc?.Paragraphs?.[0];
+    if (!paragraph?.Font || !paragraph.ParagraphFormat) {
+      throw new Error("paragraph fixture is missing");
+    }
+    expect(paragraph.StyleNameLocal).toBe("Heading 1");
+    expect(paragraph.Font.NameFarEast).toBe("SimHei");
+    expect(paragraph.ParagraphFormat.OutlineLevel).toBe(1);
   });
 });
