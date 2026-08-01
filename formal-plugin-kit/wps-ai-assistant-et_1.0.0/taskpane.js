@@ -603,19 +603,12 @@
     }
   }
 
-  function getExcelSelectionEventSource() {
-    var sources = [
+  function getExcelSelectionEventSources() {
+    return [
       window.wps && window.wps.ApiEvent,
       window.et && window.et.ApiEvent,
       window.Application && window.Application.ApiEvent
     ];
-    var index;
-    for (index = 0; index < sources.length; index += 1) {
-      if (sources[index] && typeof sources[index].AddApiEventListener === "function") {
-        return sources[index];
-      }
-    }
-    return null;
   }
 
   function isScopeWatcherEligible() {
@@ -2227,7 +2220,7 @@
   });
   state.scopeWatcher = helpers.createExcelSelectionWatcher({
     intervalMs: 2000,
-    getEventSource: getExcelSelectionEventSource,
+    getEventSources: getExcelSelectionEventSources,
     refresh: updateScopeIndicator
   });
   switchMode(getInitialMode());

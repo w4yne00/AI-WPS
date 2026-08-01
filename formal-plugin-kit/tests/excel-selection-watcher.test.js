@@ -91,13 +91,50 @@ function testUnavailableEventsAndTransientReadsRecover() {
   controller.stop();
 }
 
+function testRegistrationFallsThroughCompatibleEventSources() {
+  let timeoutCallback = null;
+  let registeredHandler = null;
+  let removedBySuccessfulSource = false;
+  const controller = helpers.createExcelSelectionWatcher({
+    refresh() {},
+    getEventSources() {
+      return [
+        { AddApiEventListener() { return false; } },
+        { AddApiEventListener() { throw new Error("当前入口拒绝注册"); } },
+        {
+          AddApiEventListener(eventName, handler) {
+            assert.strictEqual(eventName, "SheetSelectionChange");
+            registeredHandler = handler;
+          },
+          RemoveApiEventListener(eventName) {
+            assert.strictEqual(eventName, "SheetSelectionChange");
+            removedBySuccessfulSource = true;
+          }
+        }
+      ];
+    },
+    setTimeoutFn(callback) {
+      timeoutCallback = callback;
+      return 61;
+    },
+    clearTimeoutFn() {}
+  });
+
+  controller.start();
+  assert.strictEqual(typeof registeredHandler, "function", "registration must continue to later compatible sources");
+  assert.strictEqual(controller.isEventRegistered(), true);
+  assert.strictEqual(typeof timeoutCallback, "function");
+  controller.stop();
+  assert.strictEqual(removedBySuccessfulSource, true, "cleanup must target the source that accepted registration");
+}
+
 function testTaskpaneLifecycleAndChangedOnlyRendering() {
   assert.ok(html.includes('id="scope-strip" class="scope-strip" role="status" aria-live="polite" aria-atomic="true"'));
   assert.ok(js.includes("helpers.createExcelSelectionWatcher"));
   assert.ok(js.includes("intervalMs: 2000"));
   assert.ok(js.includes('document.addEventListener("visibilitychange", syncScopeWatcher)'));
-  assert.ok(functionSource("getExcelSelectionEventSource").includes("window.wps && window.wps.ApiEvent"));
-  assert.ok(functionSource("getExcelSelectionEventSource").includes("window.et && window.et.ApiEvent"));
+  assert.ok(functionSource("getExcelSelectionEventSources").includes("window.wps && window.wps.ApiEvent"));
+  assert.ok(functionSource("getExcelSelectionEventSources").includes("window.et && window.et.ApiEvent"));
   assert.ok(functionSource("switchView").includes("syncScopeWatcher()"));
   assert.ok(functionSource("setAnalysisBusy").includes("syncScopeWatcher()"));
 
@@ -177,6 +214,7 @@ function testSubmissionStillReadsTheLiveWorkbook() {
 
 testEventFirstWatcherWithFallbackRecovery();
 testUnavailableEventsAndTransientReadsRecover();
+testRegistrationFallsThroughCompatibleEventSources();
 testTaskpaneLifecycleAndChangedOnlyRendering();
 testSubmissionStillReadsTheLiveWorkbook();
 
