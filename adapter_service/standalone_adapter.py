@@ -36,6 +36,7 @@ from app.services.provider_client import (
 )
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.writing_policy.imports import (
     DEFAULT_IMPORT_PREVIEW_STORE,
     XLSX_MIME,
@@ -218,6 +219,31 @@ def document_review_job_payload(job):
             result = DocumentReviewResponseData(**data["result"]).dict(by_alias=True)
         data["result"] = result
     return data
+
+
+def document_review_missing_envelope(job_id, interrupted=False):
+    if interrupted:
+        message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
+        data = {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        code = "DOCUMENT_REVIEW_JOB_INTERRUPTED"
+    else:
+        message = "文档审查后台任务不存在或已过期。"
+        data = {"jobId": job_id, "status": "not_found"}
+        code = "DOCUMENT_REVIEW_JOB_NOT_FOUND"
+    return envelope(
+        job_id,
+        "word.document_review",
+        data,
+        success=False,
+        message=message,
+        errors=[{"code": code, "message": message}],
+    )
 
 
 def format_review(payload):
@@ -1189,7 +1215,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/provider/route-diagnostics":
             provider = ProviderClient(load_settings())
-            self._write(200, envelope("standalone-route-diagnostics", "provider.route_diagnostics", provider.build_route_diagnostics()))
+            data = provider.build_route_diagnostics()
+            data["longTaskCoordinator"] = get_long_task_coordinator().diagnostics()
+            self._write(200, envelope("standalone-route-diagnostics", "provider.route_diagnostics", data))
             return
 
         if path == "/provider/task-api-keys":
@@ -1215,27 +1243,14 @@ class Handler(BaseHTTPRequestHandler):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = DOCUMENT_REVIEW_JOB_STORE.get(job_id)
             if not job:
-                message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
                 self._write(
                     404,
-                    envelope(
+                    document_review_missing_envelope(
                         job_id,
-                        "word.document_review",
-                        {
-                            "jobId": job_id,
-                            "status": "failed",
-                            "phase": "failed",
-                            "queuePosition": None,
-                            "canCancel": False,
-                        },
-                        success=False,
-                        message=message,
-                        errors=[
-                            {
-                                "code": "DOCUMENT_REVIEW_JOB_INTERRUPTED",
-                                "message": message,
-                            }
-                        ],
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
                     ),
                 )
                 return
@@ -1469,9 +1484,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/word/document-review/jobs":
-            request = parse_word_request(payload)
             trace_id = new_trace_id("standalone-word-document-review")
             try:
+                request = parse_word_request(payload)
                 job = DOCUMENT_REVIEW_JOB_STORE.start(request, trace_id=trace_id)
             except AdapterError as error:
                 self._write(
@@ -1482,6 +1497,33 @@ class Handler(BaseHTTPRequestHandler):
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                raw_errors = error.errors() if hasattr(error, "errors") else []
+                validation_errors = [
+                    {
+                        "loc": ".".join(str(part) for part in item.get("loc", [])),
+                        "type": str(item.get("type", "")),
+                        "message": str(item.get("msg", ""))[:160],
+                    }
+                    for item in raw_errors[:8]
+                ]
+                self._write(
+                    422,
+                    envelope(
+                        trace_id,
+                        "word.document_review",
+                        {"validation": {"errorCount": len(raw_errors), "errors": validation_errors}},
+                        success=False,
+                        message="Request payload validation failed.",
+                        errors=[
+                            {
+                                "code": "REQUEST_VALIDATION_FAILED",
+                                "message": "请求数据格式不符合 adapter 入参要求。",
+                            }
+                        ],
                     ),
                 )
                 return
@@ -1704,27 +1746,14 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             if not job:
-                message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
                 self._write(
                     404,
-                    envelope(
+                    document_review_missing_envelope(
                         job_id,
-                        "word.document_review",
-                        {
-                            "jobId": job_id,
-                            "status": "failed",
-                            "phase": "failed",
-                            "queuePosition": None,
-                            "canCancel": False,
-                        },
-                        success=False,
-                        message=message,
-                        errors=[
-                            {
-                                "code": "DOCUMENT_REVIEW_JOB_INTERRUPTED",
-                                "message": message,
-                            }
-                        ],
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
                     ),
                 )
                 return

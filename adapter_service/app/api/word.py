@@ -25,8 +25,30 @@ document_review_jobs = DocumentReviewJobStore(document_reviewer)
 logger = get_logger(__name__)
 
 
-def _interrupted_document_review_response(job_id: str) -> JSONResponse:
-    message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
+def _missing_document_review_response(
+    job_id: str, interrupted: bool = False
+) -> JSONResponse:
+    message = (
+        "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
+        if interrupted
+        else "文档审查后台任务不存在或已过期。"
+    )
+    code = (
+        "DOCUMENT_REVIEW_JOB_INTERRUPTED"
+        if interrupted
+        else "DOCUMENT_REVIEW_JOB_NOT_FOUND"
+    )
+    data = (
+        {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        if interrupted
+        else {"jobId": job_id, "status": "not_found"}
+    )
     return JSONResponse(
         status_code=404,
         content={
@@ -34,16 +56,10 @@ def _interrupted_document_review_response(job_id: str) -> JSONResponse:
             "traceId": job_id,
             "taskType": "word.document_review",
             "message": message,
-            "data": {
-                "jobId": job_id,
-                "status": "failed",
-                "phase": "failed",
-                "queuePosition": None,
-                "canCancel": False,
-            },
+            "data": data,
             "errors": [
                 {
-                    "code": "DOCUMENT_REVIEW_JOB_INTERRUPTED",
+                    "code": code,
                     "message": message,
                 }
             ],
@@ -130,10 +146,10 @@ def start_document_review_job(request: WordDocumentRequest) -> dict:
 
 
 @router.get("/word/document-review/jobs/{job_id}")
-def get_document_review_job(job_id: str):
+def get_document_review_job(job_id: str, resume: bool = False):
     job = document_review_jobs.get(job_id)
     if not job:
-        return _interrupted_document_review_response(job_id)
+        return _missing_document_review_response(job_id, interrupted=resume)
     if job.get("result"):
         job = {**job, "result": DocumentReviewResponseData(**job["result"]).dict(by_alias=True)}
     return {
@@ -147,10 +163,10 @@ def get_document_review_job(job_id: str):
 
 
 @router.delete("/word/document-review/jobs/{job_id}")
-def cancel_document_review_job(job_id: str):
+def cancel_document_review_job(job_id: str, resume: bool = False):
     job = document_review_jobs.cancel(job_id)
     if not job:
-        return _interrupted_document_review_response(job_id)
+        return _missing_document_review_response(job_id, interrupted=resume)
     return {
         "success": True,
         "traceId": job.get("traceId", job_id),

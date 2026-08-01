@@ -11,6 +11,7 @@ from app.services.provider_client import (
     normalize_task_api_key_ref,
     save_local_api_key,
 )
+from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
 
 router = APIRouter()
@@ -105,9 +106,11 @@ def get_provider_status() -> dict:
 @router.get("/provider/route-diagnostics")
 def get_provider_route_diagnostics() -> dict:
     client = ProviderClient()
+    data = client.build_route_diagnostics()
+    data["longTaskCoordinator"] = get_long_task_coordinator().diagnostics()
     return {
         "success": True,
-        "data": client.build_route_diagnostics(),
+        "data": data,
     }
 
 

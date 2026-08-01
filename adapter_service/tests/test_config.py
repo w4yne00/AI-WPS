@@ -73,3 +73,17 @@ class ConfigApiTests(unittest.TestCase):
         self.assertEqual(data["taskRouteConfiguredCount"], 0)
         self.assertIn("taskRoutes", data)
         self.assertEqual(data["taskRoutes"], {})
+
+    def test_route_diagnostics_exposes_sanitized_long_task_capacity(self) -> None:
+        client = TestClient(app)
+
+        response = client.get("/provider/route-diagnostics")
+
+        self.assertEqual(response.status_code, 200)
+        coordinator = response.json()["data"]["longTaskCoordinator"]
+        self.assertEqual(coordinator["maxRunning"], 2)
+        self.assertEqual(coordinator["maxQueued"], 8)
+        self.assertEqual(coordinator["terminalTtlSeconds"], 7200)
+        self.assertEqual(coordinator["maxTerminalJobs"], 50)
+        self.assertIn("recentTerminalJobs", coordinator)
+        self.assertNotIn("apiKey", str(coordinator))

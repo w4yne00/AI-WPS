@@ -891,6 +891,8 @@ class WordDocumentReviewerTests(unittest.TestCase):
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for route contract tests")
     def test_fastapi_job_routes_cancel_queued_and_report_restart_interruption(self) -> None:
         from app.api import word as word_api
+        from app.main import app
+        from fastapi.testclient import TestClient
 
         provider = BlockingDocumentReviewProvider()
         store = DocumentReviewJobStore(
@@ -920,13 +922,19 @@ class WordDocumentReviewerTests(unittest.TestCase):
             queued = word_api.start_document_review_job(queued_request)
             cancelled = word_api.cancel_document_review_job("client-fastapi-queued")
             interrupted_response = word_api.get_document_review_job(
-                "client-from-before-adapter-restart"
+                "client-from-before-adapter-restart", resume=True
             )
+            missing_response = word_api.get_document_review_job("client-never-existed")
         finally:
             provider.release.set()
             word_api.document_review_jobs = original_store
 
         interrupted = json.loads(interrupted_response.body.decode("utf-8"))
+        missing = json.loads(missing_response.body.decode("utf-8"))
+        invalid_response = TestClient(app).post(
+            "/word/document-review/jobs",
+            json={"content": "invalid-content-shape"},
+        )
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(queued["data"]["status"], "queued")
         self.assertEqual(queued["data"]["queuePosition"], 1)
@@ -940,6 +948,19 @@ class WordDocumentReviewerTests(unittest.TestCase):
         )
         self.assertEqual(interrupted["data"]["status"], "failed")
         self.assertIn("adapter 重启", interrupted["message"])
+        self.assertEqual(missing_response.status_code, 404)
+        self.assertEqual(
+            missing["errors"][0]["code"], "DOCUMENT_REVIEW_JOB_NOT_FOUND"
+        )
+        self.assertEqual(missing["data"]["status"], "not_found")
+        self.assertEqual(invalid_response.status_code, 422)
+        self.assertEqual(
+            invalid_response.json()["errors"][0]["code"],
+            "REQUEST_VALIDATION_FAILED",
+        )
+        self.assertEqual(
+            invalid_response.json()["taskType"], "word.document_review"
+        )
 
     def test_standalone_job_routes_match_fastapi_cancel_and_error_contract(self) -> None:
         import standalone_adapter
@@ -994,7 +1015,16 @@ class WordDocumentReviewerTests(unittest.TestCase):
             )
             interrupted = invoke(
                 "do_GET",
-                "/word/document-review/jobs/client-from-before-adapter-restart",
+                "/word/document-review/jobs/client-from-before-adapter-restart?resume=1",
+            )
+            missing = invoke(
+                "do_GET",
+                "/word/document-review/jobs/client-never-existed",
+            )
+            invalid = invoke(
+                "do_POST",
+                "/word/document-review/jobs",
+                {"content": "invalid-content-shape"},
             )
         finally:
             provider.release.set()
@@ -1017,3 +1047,14 @@ class WordDocumentReviewerTests(unittest.TestCase):
             "DOCUMENT_REVIEW_JOB_INTERRUPTED",
         )
         self.assertEqual(interrupted["body"]["data"]["status"], "failed")
+        self.assertEqual(missing["status"], 404)
+        self.assertEqual(
+            missing["body"]["errors"][0]["code"],
+            "DOCUMENT_REVIEW_JOB_NOT_FOUND",
+        )
+        self.assertEqual(invalid["status"], 422)
+        self.assertEqual(invalid["body"]["taskType"], "word.document_review")
+        self.assertEqual(
+            invalid["body"]["errors"][0]["code"],
+            "REQUEST_VALIDATION_FAILED",
+        )

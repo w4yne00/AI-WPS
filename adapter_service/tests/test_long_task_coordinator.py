@@ -96,6 +96,36 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         for runner in runners:
             runner.release.set()
 
+    def test_each_completed_runner_promotes_the_next_fifo_job(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        runners = [BlockingRunner() for _ in range(3)]
+
+        for index, runner in enumerate(runners):
+            coordinator.submit(
+                job_id="client-fifo-{0}".format(index),
+                trace_id="trace-fifo-{0}".format(index),
+                task_type="word.document_review",
+                runner=runner,
+                snapshot={"value": index},
+                failure_code="DOCUMENT_REVIEW_JOB_FAILED",
+                failure_message="文档审查后台任务执行失败。",
+            )
+
+        self.assertTrue(runners[0].started.wait(timeout=1))
+        runners[0].release.set()
+        self.assertTrue(runners[1].started.wait(timeout=1))
+        wait_for_status(coordinator, "client-fifo-0", "completed")
+
+        runners[1].release.set()
+        self.assertTrue(runners[2].started.wait(timeout=1))
+        wait_for_status(coordinator, "client-fifo-1", "completed")
+
+        runners[2].release.set()
+        wait_for_status(coordinator, "client-fifo-2", "completed")
+        diagnostics = coordinator.diagnostics()
+        self.assertEqual(diagnostics["runningCount"], 0)
+        self.assertEqual(diagnostics["queuedCount"], 0)
+
     def test_duplicate_submission_returns_existing_job_without_second_run(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
         runner = BlockingRunner()
@@ -194,12 +224,14 @@ class LongTaskCoordinatorTests(unittest.TestCase):
             original,
             "DOCUMENT_REVIEW_JOB_FAILED",
             "文档审查后台任务执行失败。",
+            {"runningMessage": "正在处理。"},
         )
         original["profileId"] = "profile-changed"
         original["apiKey"] = "changed-secret"
         original["input"]["plainText"] = "修改后的内容"
 
         running = wait_for_status(coordinator, started["jobId"], "running")
+        self.assertEqual(running["runningMessage"], "正在处理。")
         self.assertNotIn("super-secret-key", json.dumps(running, ensure_ascii=False))
         release.set()
         completed = wait_for_status(coordinator, started["jobId"], "completed")
@@ -213,6 +245,7 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertEqual(completed["phaseDurations"]["preparing"], 3)
         self.assertEqual(completed["phaseDurations"]["provider_processing"], 5)
         self.assertEqual(completed["phaseDurations"]["parsing"], 2)
+        self.assertNotIn("runningMessage", completed)
         self.assertNotIn("super-secret-key", json.dumps(completed, ensure_ascii=False))
         self.assertNotIn("changed-secret", json.dumps(completed, ensure_ascii=False))
 
@@ -278,6 +311,15 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertEqual(failed["error"]["code"], "DOCUMENT_REVIEW_JOB_FAILED")
         self.assertNotIn("never-expose-this-key", public_text)
         self.assertNotIn("never-expose-this-key", diagnostics_text)
+        diagnostics = coordinator.diagnostics()
+        self.assertEqual(diagnostics["maxRunning"], 1)
+        self.assertEqual(diagnostics["maxQueued"], 1)
+        self.assertEqual(
+            diagnostics["recentTerminalJobs"][0]["errorCode"],
+            "DOCUMENT_REVIEW_JOB_FAILED",
+        )
+        self.assertNotIn("result", diagnostics["recentTerminalJobs"][0])
+        self.assertNotIn("error", diagnostics["recentTerminalJobs"][0])
 
 
 if __name__ == "__main__":

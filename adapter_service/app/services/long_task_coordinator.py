@@ -154,17 +154,26 @@ class LongTaskCoordinator:
         now_mono = self._monotonic()
         with self._lock:
             self._cleanup_locked(now_mono)
-            terminal_count = sum(
-                1 for job in self._jobs.values() if job["status"] in TERMINAL_STATUSES
+            terminal_jobs = sorted(
+                (
+                    job
+                    for job in self._jobs.values()
+                    if job["status"] in TERMINAL_STATUSES
+                ),
+                key=lambda item: item.get("_terminalAtMonotonic") or 0,
+                reverse=True,
             )
             return {
                 "maxRunning": self.max_running,
                 "maxQueued": self.max_queued,
                 "runningCount": self._running_count,
                 "queuedCount": len(self._queue),
-                "terminalCount": terminal_count,
+                "terminalCount": len(terminal_jobs),
                 "terminalTtlSeconds": self.terminal_ttl_seconds,
                 "maxTerminalJobs": self.max_terminal_jobs,
+                "recentTerminalJobs": [
+                    self._terminal_diagnostic(job) for job in terminal_jobs[:10]
+                ],
             }
 
     def _start_worker(self, job_id: str) -> None:
@@ -315,11 +324,37 @@ class LongTaskCoordinator:
             "canCancel": job["status"] == "queued",
         }
         public_job.update(job.get("_publicMetadata", {}))
+        if job["status"] in TERMINAL_STATUSES:
+            public_job.pop("runningMessage", None)
         if job.get("result") is not None:
             public_job["result"] = job["result"]
         if job.get("error") is not None:
             public_job["error"] = job["error"]
         return public_job
+
+    def _terminal_diagnostic(self, job: Dict) -> Dict:
+        terminal_at = job.get("_terminalAtMonotonic")
+        elapsed_until = (
+            terminal_at
+            if terminal_at is not None
+            else job.get("_updatedMonotonic", job["_createdMonotonic"])
+        )
+        error = job.get("error") if isinstance(job.get("error"), dict) else {}
+        return {
+            "jobId": job["jobId"],
+            "traceId": job["traceId"],
+            "taskType": job["taskType"],
+            "status": job["status"],
+            "phase": job["phase"],
+            "elapsedSeconds": int(
+                max(elapsed_until - job["_createdMonotonic"], 0.0)
+            ),
+            "phaseDurations": {
+                phase: int(max(duration, 0.0))
+                for phase, duration in job.get("_phaseDurations", {}).items()
+            },
+            "errorCode": str(error.get("code", "")),
+        }
 
 
 _SHARED_COORDINATOR = LongTaskCoordinator(

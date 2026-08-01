@@ -138,8 +138,8 @@ POST   /word/smart-write
 POST   /word/smart-imitation
 POST   /word/document-review
 POST   /word/document-review/jobs
-GET    /word/document-review/jobs/{jobId}
-DELETE /word/document-review/jobs/{jobId}
+GET    /word/document-review/jobs/{jobId}[?resume=1]
+DELETE /word/document-review/jobs/{jobId}[?resume=1]
 POST   /word/format-review
 POST   /excel/analysis
 POST   /excel/analysis/jobs
@@ -154,7 +154,8 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - issue #12 已让 Word 文档审查成为共享长任务协调器的首条链路：默认同时运行 2 个任务，FIFO 排队最多 8 个；`clientJobId` 继续幂等，重复提交不会再次调用模型后台。
 - 文档审查任务状态现在包含 `queued / running / completed / failed / cancelled`、排队位置、真实阶段、总耗时、阶段耗时和 `canCancel`；只有排队任务可通过 `DELETE /word/document-review/jobs/{jobId}` 取消，运行中的阻塞式模型请求不伪装为可取消。
 - 提交任务时冻结请求、工作流档案、API URL/path、Dify 输入模式和仅存在内存中的认证快照；配置切换只影响后续任务。认证正文不进入任务响应、日志或诊断，并在完成、失败或排队取消后释放。
-- 运行中和排队任务不因容量被淘汰；终态从完成时起保留 2 小时且最多 50 条。任务窗格重开后继续按原 `clientJobId` 查询；adapter 重启导致内存任务消失时明确提示任务已中断并要求重新提交。
+- 运行中和排队任务不因容量被淘汰；终态从完成时起保留 2 小时且最多 50 条。任务窗格重开后按原 `clientJobId` 和 `resume=1` 查询；只有此前已持久化为活动任务的查询缺失才解释为 adapter 重启中断，普通未知或过期任务仍返回 `DOCUMENT_REVIEW_JOB_NOT_FOUND`。
+- `/provider/route-diagnostics` 包含共享协调器容量、当前计数和最多 10 条脱敏终态摘要；摘要不包含请求、结果、异常正文或认证信息。
 - FastAPI 与 standalone 均支持相同的文档审查提交、查询、排队取消、队列满和重启中断响应契约；现有同步路由、结果结构、think 过滤、审查记录和只读行为保持不变。
 
 `v0.20.0-alpha` 正式打包 issue #4 至 issue #11 的写作规范库完整基线：
