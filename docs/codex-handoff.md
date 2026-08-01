@@ -153,6 +153,9 @@ DELETE /ppt/slide-assistant/jobs/{jobId}[?resume=1]
 
 ## 3. 本版本关键变化
 
+- issue #17 已将 Excel 范围摘要改为 `SheetSelectionChange` 事件优先：支持 `wps.ApiEvent`、`et.ApiEvent` 和 `Application.ApiEvent` 兼容入口，事件后立即更新，并以约 2 秒低频读取修正事件不可用或漏报状态。
+- Excel 范围监听在页面隐藏、进入设置和智能分析任务运行期间暂停；页面重新可见、返回任务页或任务终止后立即读取当前范围。范围类型、工作表、地址和行列摘要未变化时不改写可访问状态文本。
+- 智能分析点击提交后仍重新读取当前 Excel 对象，继续保持选区优先、UsedRange 兜底、`120 × 30` 单元格及 20000 字符数据预算，不使用范围摘要或旧 payload 代替真实选区。
 - issue #15 已闭合三宿主共享容量契约：Word 文档审查、Excel 智能分析和 PPT 智能总结共同受默认 2 个运行槽位与 8 个 FIFO 排队位置限制；跨宿主排队、中文满队列拒绝和排队取消使用同一个协调器，活动任务不参与终态 TTL 或数量清理。兼容保留的 `POST /word/document-review` 与 `POST /excel/analysis` 也通过同一协调器提交并等待终态，不能绕过全局容量。
 - `/provider/route-diagnostics` 在有效容量、运行数、排队数和最近脱敏终态基础上新增进程内取消、拒绝、超时计数；超时只记录受控错误码，不记录异常正文。Provider 请求诊断不再保存或展示 `queryPreview`，三宿主高级诊断均不显示 API Key、用户正文、公式正文或完整上传文件名。
 - 三个任务页只显示当前任务的队列位置、阶段、总耗时、阶段耗时和可取消状态；Excel/PPT 补齐排队取消按钮。三个宿主从任务 ID 写入本地活动记录起，后续查询均使用 `resume=1`；无论任务窗格是否重开，服务端任务缺失都会显示明确的 adapter 重启中断提示和重新提交按钮，普通未知或过期任务仍使用各自 `*_JOB_NOT_FOUND` 错误码。
@@ -386,8 +389,9 @@ DATE_TAG=20260726 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 
 当前结果：
 
-- Python 全量单测：`494 tests OK (skipped=47)`；跳过项来自当前 Python 环境缺 FastAPI/Pydantic 兼容依赖及既有 socket 条件。未跳过的 standalone 分发、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
-- 全部 9 个前端测试文件通过，覆盖三宿主 layout smoke、设置刷新与编辑保护、任务状态隔离、Word 写作规范管理和结果契约。
+- Python 全量单测：`523 tests OK (skipped=53)`；跳过项来自当前 Python 环境缺 FastAPI/Pydantic 兼容依赖及既有 socket 条件。未跳过的 standalone 分发、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
+- 全部 12 个前端测试文件通过，覆盖三宿主 layout smoke、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
+- Excel 任务窗格已在真实 Chromium 的 420×900 和 320×700 视口复核：两个视口的 document/body 宽度均与视口一致，范围摘要和主按钮保持在视口内，无页面级横向溢出。
 - Word/Excel/PPT 的 9 个 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，TypeScript 类型检查和构建/安装/联调脚本 `bash -n`：通过。
 - 真实 Chromium 已在 420×900 和 320×700 下完成三宿主任务页与设置页验收；6 个页面在两个尺寸下的 document/body 横向溢出均为 0。验收时未启动 adapter，因此控制台仅有预期的本地连接失败和 favicon 404。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
@@ -420,6 +424,6 @@ DATE_TAG=20260726 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 
 - 智能排版暂缓：目标机已确认任务级 API Key 选路可命中独立 Dify 工作流，但长文档角色识别受 Dify 输出最大值和模型上下文窗口限制影响。当前版本不再尝试自动写回排版，改为“格式审查”。
 - 文档审查要求 Dify 输出 Markdown 中的 JSON 代码块。若现场 Dify 只能输出普通 Markdown，也应至少保留一个合法 `json` 代码块；adapter 会从代码块中提取问题列表。
-- Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `Selection`、`UsedRange`、`Cells.Item(row, column)` 的可用性；前端已做多路径读取和已用范围兜底。
+- Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `SheetSelectionChange`、`Selection`、`UsedRange`、`Cells.Item(row, column)` 的可用性；前端已做事件兼容入口、约 2 秒漏报兜底、多路径读取和已用范围兜底。
 - PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、写作规范管理和覆盖安装仍需用 `v0.20.0-alpha` 正式包完成目标机验收。
 - 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README 及 `docs/operations/` 下当前手册为准。

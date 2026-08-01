@@ -204,6 +204,7 @@
     state.busy = Boolean(isBusy);
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
     renderWorkflowProfileStrip();
+    syncScopeWatcher();
   }
 
   function setExcelAnalysisCancelVisible(visible, disabled) {
@@ -288,8 +289,8 @@
 
   function setScopeLine(label) {
     var text = label || "未检测";
-    byId("scope-line").textContent = text;
-    byId("settings-scope-line").textContent = text;
+    setNodeTextIfChanged(byId("scope-line"), text);
+    setNodeTextIfChanged(byId("settings-scope-line"), text);
   }
 
   function setResult(markdown, copyText) {
@@ -602,12 +603,40 @@
     }
   }
 
-  function startScopeWatcher() {
-    if (state.scopeWatcher) {
+  function getExcelSelectionEventSource() {
+    var sources = [
+      window.wps && window.wps.ApiEvent,
+      window.et && window.et.ApiEvent,
+      window.Application && window.Application.ApiEvent
+    ];
+    var index;
+    for (index = 0; index < sources.length; index += 1) {
+      if (sources[index] && typeof sources[index].AddApiEventListener === "function") {
+        return sources[index];
+      }
+    }
+    return null;
+  }
+
+  function isScopeWatcherEligible() {
+    var homeView = byId("home-view");
+    return Boolean(
+      homeView &&
+      homeView.classList.contains("active") &&
+      document.visibilityState !== "hidden" &&
+      !state.busy
+    );
+  }
+
+  function syncScopeWatcher() {
+    if (!state.scopeWatcher) {
       return;
     }
-    updateScopeIndicator();
-    state.scopeWatcher = setInterval(updateScopeIndicator, 1200);
+    if (isScopeWatcherEligible()) {
+      state.scopeWatcher.start();
+    } else if (state.scopeWatcher.isRunning()) {
+      state.scopeWatcher.stop();
+    }
   }
 
   function extractExcelRange() {
@@ -2019,6 +2048,7 @@
     byId("home-view").classList.toggle("active", viewName === "home");
     byId("settings-view").classList.toggle("active", viewName === "settings");
     syncSettingsRefreshController();
+    syncScopeWatcher();
   }
 
   function syncSettingsRefreshController() {
@@ -2086,7 +2116,6 @@
     renderWorkflowProfileManager();
     renderWorkflowTaskTabs();
     if (!settingsMode) {
-      updateScopeIndicator();
       resumeExcelAnalysisActiveJob();
       loadWorkflowProfiles();
     }
@@ -2155,6 +2184,7 @@
       }
     });
     document.addEventListener("visibilitychange", syncSettingsRefreshController);
+    document.addEventListener("visibilitychange", syncScopeWatcher);
     byId("workflow-profile-select").addEventListener("change", function (event) {
       activateWorkflowProfile(event.target.value, getWorkflowProfileData().activeProfileId);
     });
@@ -2195,9 +2225,14 @@
       return refreshConfig({ silent: true });
     }
   });
+  state.scopeWatcher = helpers.createExcelSelectionWatcher({
+    intervalMs: 2000,
+    getEventSource: getExcelSelectionEventSource,
+    refresh: updateScopeIndicator
+  });
   switchMode(getInitialMode());
   if (!state.settingsRefreshController.isRunning()) {
     refreshConfig({ silent: true });
   }
-  startScopeWatcher();
+  syncScopeWatcher();
 })();
