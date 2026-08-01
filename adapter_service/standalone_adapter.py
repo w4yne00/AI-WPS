@@ -246,6 +246,22 @@ def document_review_missing_envelope(job_id, interrupted=False):
     )
 
 
+def request_validation_envelope(trace_id, task_type, validation_errors):
+    return envelope(
+        trace_id,
+        task_type,
+        {"validation": {"errorCount": len(validation_errors), "errors": validation_errors}},
+        success=False,
+        message="Request payload validation failed.",
+        errors=[
+            {
+                "code": "REQUEST_VALIDATION_FAILED",
+                "message": "请求数据格式不符合 adapter 入参要求。",
+            }
+        ],
+    )
+
+
 def format_review(payload):
     request = parse_word_request(payload)
     data = WordFormatReviewer().review(request, trace_id="standalone-word-format-review")
@@ -1365,6 +1381,22 @@ class Handler(BaseHTTPRequestHandler):
             if _is_writing_policy_path(path):
                 self._write_writing_policy_response(_writing_policy_validation())
                 return
+            if path == "/word/document-review/jobs":
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        new_trace_id("standalone-word-document-review"),
+                        "word.document_review",
+                        [
+                            {
+                                "loc": "body",
+                                "type": "json_invalid",
+                                "message": "JSON decode error",
+                            }
+                        ],
+                    ),
+                )
+                return
             message = "请求内容格式无效，请检查后重试。"
             self._write(
                 400,
@@ -1512,18 +1544,10 @@ class Handler(BaseHTTPRequestHandler):
                 ]
                 self._write(
                     422,
-                    envelope(
+                    request_validation_envelope(
                         trace_id,
                         "word.document_review",
-                        {"validation": {"errorCount": len(raw_errors), "errors": validation_errors}},
-                        success=False,
-                        message="Request payload validation failed.",
-                        errors=[
-                            {
-                                "code": "REQUEST_VALIDATION_FAILED",
-                                "message": "请求数据格式不符合 adapter 入参要求。",
-                            }
-                        ],
+                        validation_errors,
                     ),
                 )
                 return

@@ -935,6 +935,11 @@ class WordDocumentReviewerTests(unittest.TestCase):
             "/word/document-review/jobs",
             json={"content": "invalid-content-shape"},
         )
+        malformed_response = TestClient(app).post(
+            "/word/document-review/jobs",
+            content=b"{bad-json",
+            headers={"Content-Type": "application/json"},
+        )
         self.assertEqual(running["data"]["status"], "running")
         self.assertEqual(queued["data"]["status"], "queued")
         self.assertEqual(queued["data"]["queuePosition"], 1)
@@ -961,6 +966,14 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(
             invalid_response.json()["taskType"], "word.document_review"
         )
+        self.assertEqual(malformed_response.status_code, 422)
+        self.assertEqual(
+            malformed_response.json()["taskType"], "word.document_review"
+        )
+        self.assertEqual(
+            malformed_response.json()["errors"][0]["code"],
+            "REQUEST_VALIDATION_FAILED",
+        )
 
     def test_standalone_job_routes_match_fastapi_cancel_and_error_contract(self) -> None:
         import standalone_adapter
@@ -976,16 +989,19 @@ class WordDocumentReviewerTests(unittest.TestCase):
         original_store = standalone_adapter.DOCUMENT_REVIEW_JOB_STORE
         standalone_adapter.DOCUMENT_REVIEW_JOB_STORE = store
 
-        def invoke(method, path, payload=None):
+        def invoke_raw(method, path, raw):
             captured = {}
             handler = object.__new__(standalone_adapter.Handler)
             handler.path = path
-            raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
             handler.headers = {"Content-Length": str(len(raw))}
             handler.rfile = BytesIO(raw)
             handler._write = lambda status, body: captured.update(status=status, body=body)
             getattr(handler, method)()
             return captured
+
+        def invoke(method, path, payload=None):
+            raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+            return invoke_raw(method, path, raw)
 
         try:
             running = invoke(
@@ -1026,6 +1042,11 @@ class WordDocumentReviewerTests(unittest.TestCase):
                 "/word/document-review/jobs",
                 {"content": "invalid-content-shape"},
             )
+            malformed = invoke_raw(
+                "do_POST",
+                "/word/document-review/jobs",
+                b"{bad-json",
+            )
         finally:
             provider.release.set()
             standalone_adapter.DOCUMENT_REVIEW_JOB_STORE = original_store
@@ -1056,5 +1077,11 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(invalid["body"]["taskType"], "word.document_review")
         self.assertEqual(
             invalid["body"]["errors"][0]["code"],
+            "REQUEST_VALIDATION_FAILED",
+        )
+        self.assertEqual(malformed["status"], 422)
+        self.assertEqual(malformed["body"]["taskType"], "word.document_review")
+        self.assertEqual(
+            malformed["body"]["errors"][0]["code"],
             "REQUEST_VALIDATION_FAILED",
         )
