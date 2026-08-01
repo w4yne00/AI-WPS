@@ -1567,9 +1567,44 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/excel/analysis/jobs":
-            request = parse_excel_request(payload)
             trace_id = new_trace_id("standalone-excel-analysis")
-            job = EXCEL_ANALYSIS_JOB_STORE.start(request, trace_id=trace_id)
+            try:
+                request = parse_excel_request(payload)
+                job = EXCEL_ANALYSIS_JOB_STORE.start(request, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "excel.analysis",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                raw_errors = error.errors() if hasattr(error, "errors") else []
+                validation_errors = [
+                    {
+                        "loc": ".".join(
+                            str(part) for part in item.get("loc", [])
+                        ),
+                        "type": str(item.get("type", "")),
+                        "message": str(item.get("msg", ""))[:160],
+                    }
+                    for item in raw_errors[:8]
+                ]
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        trace_id,
+                        "excel.analysis",
+                        validation_errors,
+                        error_count=len(raw_errors),
+                    ),
+                )
+                return
             self._write(200, envelope(trace_id, "excel.analysis", excel_analysis_job_payload(job), message="accepted"))
             return
 
@@ -1791,6 +1826,53 @@ class Handler(BaseHTTPRequestHandler):
                     job.get("traceId", job_id),
                     "word.document_review",
                     document_review_job_payload(job),
+                    message="cancelled",
+                ),
+            )
+            return
+
+        excel_analysis_prefix = "/excel/analysis/jobs/"
+        if path.startswith(excel_analysis_prefix):
+            job_id = unquote(path[len(excel_analysis_prefix):]).strip("/")
+            try:
+                job = EXCEL_ANALYSIS_JOB_STORE.cancel(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "excel.analysis",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            if not job:
+                message = "智能分析后台任务不存在或已过期。"
+                self._write(
+                    404,
+                    envelope(
+                        job_id,
+                        "excel.analysis",
+                        {"jobId": job_id, "status": "not_found"},
+                        success=False,
+                        message=message,
+                        errors=[
+                            {
+                                "code": "EXCEL_ANALYSIS_JOB_NOT_FOUND",
+                                "message": message,
+                            }
+                        ],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "excel.analysis",
+                    excel_analysis_job_payload(job),
                     message="cancelled",
                 ),
             )

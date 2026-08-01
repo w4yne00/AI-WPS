@@ -363,6 +363,7 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
 | `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |
 | `GET` | `/excel/analysis/jobs/{jobId}` | Poll a background “智能分析” job |
+| `DELETE` | `/excel/analysis/jobs/{jobId}` | Cancel a queued “智能分析” job; running blocking provider requests are not cancellable |
 | `POST` | `/ppt/document-files` | Validate and stage one UTF-8 `.md` or valid `.docx` source file up to 10 MB behind a one-time token |
 | `POST` | `/ppt/slide-assistant/jobs` | Start a current-slide or document “智能总结” background job |
 | `GET` | `/ppt/slide-assistant/jobs/{jobId}` | Poll or resume a background “智能总结” job |

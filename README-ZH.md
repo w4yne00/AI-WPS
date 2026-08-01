@@ -362,6 +362,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/excel/analysis` | 智能分析，只读分析选区或当前工作表已用范围 |
 | `POST` | `/excel/analysis/jobs` | 提交可恢复的智能分析后台任务 |
 | `GET` | `/excel/analysis/jobs/{jobId}` | 查询智能分析后台任务状态 |
+| `DELETE` | `/excel/analysis/jobs/{jobId}` | 取消排队中的智能分析任务；运行中的阻塞式模型请求不可取消 |
 | `POST` | `/ppt/document-files` | 校验并暂存单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，返回一次性令牌 |
 | `POST` | `/ppt/slide-assistant/jobs` | 提交当前页或文档智能总结后台任务 |
 | `GET` | `/ppt/slide-assistant/jobs/{jobId}` | 查询或恢复智能总结后台任务 |

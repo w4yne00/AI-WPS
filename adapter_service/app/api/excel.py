@@ -13,6 +13,23 @@ excel_analysis_jobs = ExcelAnalysisJobStore(excel_analyzer)
 logger = get_logger(__name__)
 
 
+def _missing_excel_analysis_response(job_id: str) -> JSONResponse:
+    message = "智能分析后台任务不存在或已过期。"
+    return JSONResponse(
+        status_code=404,
+        content={
+            "success": False,
+            "traceId": job_id,
+            "taskType": "excel.analysis",
+            "message": message,
+            "data": {"jobId": job_id, "status": "not_found"},
+            "errors": [
+                {"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": message}
+            ],
+        },
+    )
+
+
 @router.post("/excel/analysis")
 def excel_analysis(request: ExcelAnalysisRequest) -> dict:
     trace_id = new_trace_id("excel-analysis")
@@ -54,17 +71,7 @@ def start_excel_analysis_job(request: ExcelAnalysisRequest) -> dict:
 def get_excel_analysis_job(job_id: str):
     job = excel_analysis_jobs.get(job_id)
     if not job:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "success": False,
-                "traceId": job_id,
-                "taskType": "excel.analysis",
-                "message": "智能分析后台任务不存在或已过期。",
-                "data": {"jobId": job_id, "status": "not_found"},
-                "errors": [{"code": "EXCEL_ANALYSIS_JOB_NOT_FOUND", "message": "智能分析后台任务不存在或已过期。"}],
-            },
-        )
+        return _missing_excel_analysis_response(job_id)
     if job.get("result"):
         job = {**job, "result": ExcelAnalysisResponseData(**job["result"]).dict(by_alias=True)}
     return {
@@ -72,6 +79,21 @@ def get_excel_analysis_job(job_id: str):
         "traceId": job.get("traceId", job_id),
         "taskType": "excel.analysis",
         "message": job["status"],
+        "data": job,
+        "errors": [],
+    }
+
+
+@router.delete("/excel/analysis/jobs/{job_id}")
+def cancel_excel_analysis_job(job_id: str):
+    job = excel_analysis_jobs.cancel(job_id)
+    if not job:
+        return _missing_excel_analysis_response(job_id)
+    return {
+        "success": True,
+        "traceId": job.get("traceId", job_id),
+        "taskType": "excel.analysis",
+        "message": "cancelled",
         "data": job,
         "errors": [],
     }

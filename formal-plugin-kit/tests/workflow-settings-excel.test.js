@@ -265,6 +265,25 @@ function assertExcelAnalysisPreservationContract() {
     "plainText",
     "clientJobId"
   ]);
+  assertIncludesAll(js, [
+    "EXCEL_ANALYSIS_PHASE_TEXT",
+    "function renderExcelAnalysisJobProgress(job, jobId)",
+    "job.queuePosition",
+    "job.phaseElapsedSeconds",
+    'job.status === "cancelled"',
+    "LONG_TASK_QUEUE_FULL"
+  ]);
+  const progress = functionSource("renderExcelAnalysisJobProgress");
+  assertIncludesAll(progress, [
+    'job.status === "queued"',
+    "共享任务队列",
+    "当前阶段",
+    "总耗时",
+    "本阶段耗时"
+  ]);
+  const poll = functionSource("pollExcelAnalysisJob");
+  assert.ok(poll.includes("renderExcelAnalysisJobProgress(job, jobId)"));
+  assert.ok(poll.includes('job.status === "cancelled"'));
   const switchMode = functionSource("switchMode");
   assert.ok(switchMode.includes('state.currentMode = settingsMode ? "settings" : "excelAnalysis"'));
   assert.ok(switchMode.includes("resumeExcelAnalysisActiveJob()"));

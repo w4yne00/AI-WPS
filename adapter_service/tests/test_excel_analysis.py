@@ -1,7 +1,9 @@
 import importlib.util
+import json
 import threading
 import time
 import unittest
+from io import BytesIO
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
@@ -10,6 +12,7 @@ if HAS_PYDANTIC:
     from app.core.errors import AdapterError
     from app.core.models import ExcelAnalysisRequest
     from app.services.excel.analyzer import ExcelAnalyzer
+    from app.services.long_task_coordinator import LongTaskCoordinator
 
 if HAS_PYDANTIC and HAS_FASTAPI:
     from app.api import excel as excel_api
@@ -83,6 +86,21 @@ class BlockingExcelAnalyzer:
             "plainText": "后台分析完成。",
             "provider": "job-test",
         }
+
+
+def wait_for_excel_job(store, job_id, expected="completed", timeout=2):
+    deadline = time.time() + timeout
+    latest = None
+    while time.time() < deadline:
+        latest = store.get(job_id)
+        if latest and latest["status"] == expected:
+            return latest
+        time.sleep(0.01)
+    raise AssertionError(
+        "excel job {0} did not reach {1}; latest={2}".format(
+            job_id, expected, latest
+        )
+    )
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for excel analysis tests")
@@ -167,6 +185,195 @@ class ExcelAnalysisTests(unittest.TestCase):
         self.assertIsNotNone(completed)
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["plainText"], "后台分析完成。")
+
+    def test_excel_jobs_share_global_fifo_capacity_and_freeze_queued_input(self):
+        from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        blocker_started = threading.Event()
+        release_blocker = threading.Event()
+        analyzer = RecordingExcelAnalyzer()
+
+        def blocking_word_runner(snapshot, progress):
+            blocker_started.set()
+            release_blocker.wait(timeout=2)
+            return {"summary": "word completed"}
+
+        coordinator.submit(
+            job_id="client-word-running",
+            trace_id="trace-word-running",
+            task_type="word.document_review",
+            runner=blocking_word_runner,
+            snapshot={},
+            failure_code="DOCUMENT_REVIEW_JOB_FAILED",
+            failure_message="文档审查后台任务执行失败。",
+        )
+        self.assertTrue(blocker_started.wait(timeout=1))
+
+        store = ExcelAnalysisJobStore(analyzer=analyzer, coordinator=coordinator)
+        request = self._request(client_job_id="client-excel-shared-queue")
+        queued = store.start(request, trace_id="trace-excel-shared-first")
+        request.table.rows[0][0] = "提交后修改"
+        duplicate = store.start(request, trace_id="trace-excel-shared-second")
+
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["phase"], "queued")
+        self.assertEqual(queued["queuePosition"], 1)
+        self.assertTrue(queued["canCancel"])
+        self.assertEqual(duplicate["traceId"], "trace-excel-shared-first")
+        self.assertEqual(analyzer.calls, [])
+
+        release_blocker.set()
+        completed = wait_for_excel_job(store, "client-excel-shared-queue")
+
+        self.assertEqual(completed["phase"], "completed")
+        self.assertIn("provider_processing", completed["phaseDurations"])
+        self.assertIn("parsing", completed["phaseDurations"])
+        self.assertEqual(len(analyzer.calls), 1)
+        self.assertEqual(
+            analyzer.calls[0]["request"].table.rows[0][0],
+            "项目A",
+        )
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for route contract tests")
+    def test_fastapi_excel_jobs_report_shared_queue_and_chinese_capacity_error(self):
+        from app.main import app
+        from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+        from fastapi.testclient import TestClient
+
+        analyzer = BlockingExcelAnalyzer()
+        store = ExcelAnalysisJobStore(
+            analyzer=analyzer,
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        original_store = excel_api.excel_analysis_jobs
+        excel_api.excel_analysis_jobs = store
+        client = TestClient(app)
+        try:
+            running = client.post(
+                "/excel/analysis/jobs",
+                json=dump_excel_request(
+                    self._request(client_job_id="client-fastapi-excel-running")
+                ),
+            )
+            self.assertTrue(analyzer.started.wait(timeout=1))
+            queued = client.post(
+                "/excel/analysis/jobs",
+                json=dump_excel_request(
+                    self._request(client_job_id="client-fastapi-excel-queued")
+                ),
+            )
+            full = client.post(
+                "/excel/analysis/jobs",
+                json=dump_excel_request(
+                    self._request(client_job_id="client-fastapi-excel-full")
+                ),
+            )
+            cancelled = client.delete(
+                "/excel/analysis/jobs/client-fastapi-excel-queued"
+            )
+            running_cancel = client.delete(
+                "/excel/analysis/jobs/client-fastapi-excel-running"
+            )
+        finally:
+            analyzer.release.set()
+            excel_api.excel_analysis_jobs = original_store
+
+        self.assertEqual(running.status_code, 200)
+        self.assertEqual(running.json()["data"]["status"], "running")
+        self.assertEqual(queued.json()["data"]["status"], "queued")
+        self.assertEqual(queued.json()["data"]["queuePosition"], 1)
+        self.assertEqual(full.status_code, 429)
+        self.assertEqual(full.json()["errors"][0]["code"], "LONG_TASK_QUEUE_FULL")
+        self.assertIn("排队已满", full.json()["message"])
+        self.assertEqual(cancelled.status_code, 200)
+        self.assertEqual(cancelled.json()["message"], "cancelled")
+        self.assertEqual(cancelled.json()["data"]["status"], "cancelled")
+        self.assertEqual(running_cancel.status_code, 409)
+        self.assertEqual(running_cancel.json()["taskType"], "excel.analysis")
+        self.assertEqual(
+            running_cancel.json()["errors"][0]["code"],
+            "LONG_TASK_NOT_CANCELLABLE",
+        )
+
+    def test_standalone_excel_job_routes_match_queue_capacity_and_cancel_contract(self):
+        import standalone_adapter
+        from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+
+        analyzer = BlockingExcelAnalyzer()
+        store = ExcelAnalysisJobStore(
+            analyzer=analyzer,
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        original_store = standalone_adapter.EXCEL_ANALYSIS_JOB_STORE
+        standalone_adapter.EXCEL_ANALYSIS_JOB_STORE = store
+
+        def invoke(method, path, payload=None):
+            raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+            captured = {}
+            handler = object.__new__(standalone_adapter.Handler)
+            handler.path = path
+            handler.headers = {"Content-Length": str(len(raw))}
+            handler.rfile = BytesIO(raw)
+            handler._write = lambda status, body: captured.update(
+                status=status, body=body
+            )
+            getattr(handler, method)()
+            return captured
+
+        try:
+            running = invoke(
+                "do_POST",
+                "/excel/analysis/jobs",
+                dump_excel_request(
+                    self._request(client_job_id="client-standalone-excel-running")
+                ),
+            )
+            self.assertTrue(analyzer.started.wait(timeout=1))
+            queued = invoke(
+                "do_POST",
+                "/excel/analysis/jobs",
+                dump_excel_request(
+                    self._request(client_job_id="client-standalone-excel-queued")
+                ),
+            )
+            full = invoke(
+                "do_POST",
+                "/excel/analysis/jobs",
+                dump_excel_request(
+                    self._request(client_job_id="client-standalone-excel-full")
+                ),
+            )
+            cancelled = invoke(
+                "do_DELETE",
+                "/excel/analysis/jobs/client-standalone-excel-queued",
+            )
+            invalid = invoke(
+                "do_POST",
+                "/excel/analysis/jobs",
+                {"table": "invalid-table-shape"},
+            )
+        finally:
+            analyzer.release.set()
+            standalone_adapter.EXCEL_ANALYSIS_JOB_STORE = original_store
+
+        self.assertEqual(running["body"]["data"]["status"], "running")
+        self.assertEqual(queued["body"]["data"]["status"], "queued")
+        self.assertEqual(full["status"], 429)
+        self.assertEqual(
+            full["body"]["errors"][0]["code"],
+            "LONG_TASK_QUEUE_FULL",
+        )
+        self.assertIn("排队已满", full["body"]["message"])
+        self.assertEqual(cancelled["status"], 200)
+        self.assertEqual(cancelled["body"]["message"], "cancelled")
+        self.assertEqual(cancelled["body"]["data"]["status"], "cancelled")
+        self.assertEqual(invalid["status"], 422)
+        self.assertEqual(invalid["body"]["taskType"], "excel.analysis")
+        self.assertEqual(
+            invalid["body"]["errors"][0]["code"],
+            "REQUEST_VALIDATION_FAILED",
+        )
 
     @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for excel route tests")
     def test_fastapi_route_returns_excel_analysis_envelope(self):

@@ -11,6 +11,15 @@
   var EXCEL_ANALYSIS_POLL_MAX_ERRORS = 240;
   var EXCEL_ANALYSIS_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var EXCEL_ANALYSIS_ACTIVE_JOB_STORAGE_KEY = "ai-wps-excel-analysis-active-job-v1";
+  var EXCEL_ANALYSIS_PHASE_TEXT = {
+    queued: "排队等待",
+    preparing: "准备表格数据",
+    provider_processing: "模型后台处理",
+    parsing: "解析并整理分析结果",
+    completed: "已完成",
+    failed: "已失败",
+    cancelled: "已取消"
+  };
   var EXCEL_EXTRACTION_OPTIONS = {
     maxRows: 120,
     maxColumns: 30,
@@ -701,8 +710,30 @@
   function isFatalExcelAnalysisPollError(error) {
     return error && (
       error.adapterCode === "EXCEL_ANALYSIS_JOB_NOT_FOUND" ||
+      error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED"
     );
+  }
+
+  function renderExcelAnalysisJobProgress(job, jobId) {
+    var phaseText = EXCEL_ANALYSIS_PHASE_TEXT[job.phase] || job.phase || "等待状态更新";
+    var elapsedSeconds = Number(job.elapsedSeconds || 0);
+    var phaseElapsedSeconds = Number(job.phaseElapsedSeconds || 0);
+    var lines = [];
+    if (job.status === "queued") {
+      setStatus("智能分析正在排队，当前位置：" + (job.queuePosition || 1) + "。");
+      lines.push("智能分析已进入共享任务队列。", "排队位置：" + (job.queuePosition || 1));
+    } else {
+      setStatus("智能分析正在处理，当前阶段：" + phaseText + "。");
+      lines.push(job.runningMessage || "adapter 正在执行智能分析。", "当前阶段：" + phaseText);
+    }
+    lines.push(
+      "总耗时：" + elapsedSeconds + " 秒",
+      "本阶段耗时：" + phaseElapsedSeconds + " 秒",
+      "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
+      "任务编号：" + jobId
+    );
+    setPlainResult(lines.join("\n"));
   }
 
   function pollExcelAnalysisJob(jobId, stopWaiting) {
@@ -736,6 +767,16 @@
           });
           return;
         }
+        if (job.status === "cancelled") {
+          clearExcelAnalysisActiveJob(jobId);
+          state.excelAnalysisJobId = "";
+          state.excelAnalysisPollStartedAt = 0;
+          state.excelAnalysisPollErrorCount = 0;
+          stopWaiting();
+          setStatus("智能分析任务已取消。");
+          setPlainResult("排队中的智能分析任务已取消，未调用模型后台。\n任务编号：" + jobId);
+          return;
+        }
         if (job.status === "failed") {
           clearExcelAnalysisActiveJob(jobId);
           state.excelAnalysisJobId = "";
@@ -745,13 +786,7 @@
           setResult((job.error && job.error.message) || "后台任务执行失败。");
           return;
         }
-        setStatus("智能分析仍在模型后台处理中...");
-        setPlainResult([
-          job.runningMessage || "模型后台正在处理智能分析。",
-          "已等待：" + (job.elapsedSeconds || 0) + " 秒",
-          "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
-          "任务编号：" + jobId
-        ].join("\n"));
+        renderExcelAnalysisJobProgress(job, jobId);
         scheduleExcelAnalysisPoll(jobId, stopWaiting, EXCEL_ANALYSIS_POLL_INTERVAL_MS);
       })
       .catch(function (error) {
@@ -921,8 +956,7 @@
             setStatus("智能分析报告已生成。");
             return;
           }
-          setStatus("智能分析任务已提交，模型后台处理中...");
-          setPlainResult("智能分析任务已提交。adapter 会在后台等待模型后台返回，此处将自动刷新结果。");
+          renderExcelAnalysisJobProgress(job, jobId);
           pollExcelAnalysisJob(jobId, stopWaiting);
         })
         .catch(function (error) {

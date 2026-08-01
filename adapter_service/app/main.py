@@ -287,6 +287,8 @@ def _task_type_from_path(path: str) -> str:
         return "writing_policy"
     if path.startswith("/word/document-review/jobs/"):
         return "word.document_review"
+    if path.startswith("/excel/analysis/jobs/"):
+        return "excel.analysis"
     return {
         "/word/smart-write": "word.smart_write",
         "/word/smart-imitation": "word.smart_imitation",
