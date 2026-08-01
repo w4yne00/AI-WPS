@@ -1955,15 +1955,9 @@
   function createExcelSelectionWatcher(options) {
     var settings = options || {};
     var refresh = typeof settings.refresh === "function" ? settings.refresh : function () {};
-    var getEventSource = typeof settings.getEventSource === "function"
-      ? settings.getEventSource
-      : function () { return null; };
     var getEventSources = typeof settings.getEventSources === "function"
       ? settings.getEventSources
-      : function () {
-        var source = getEventSource();
-        return source ? [source] : [];
-      };
+      : function () { return []; };
     var setTimeoutFn = typeof settings.setTimeoutFn === "function"
       ? settings.setTimeoutFn
       : (typeof setTimeout === "function" ? setTimeout : function () { return 0; });

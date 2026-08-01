@@ -38,7 +38,7 @@ function testEventFirstWatcherWithFallbackRecovery() {
   };
   const controller = helpers.createExcelSelectionWatcher({
     refresh() { refreshCount += 1; },
-    getEventSource() { return apiEvent; },
+    getEventSources() { return [apiEvent]; },
     setTimeoutFn(callback, intervalMs) {
       timeoutCallback = callback;
       scheduledTimeouts.push(intervalMs);
@@ -76,7 +76,7 @@ function testUnavailableEventsAndTransientReadsRecover() {
       refreshCount += 1;
       if (refreshCount === 1) throw new Error("ET 选区暂不可读");
     },
-    getEventSource() { throw new Error("ET 事件对象不可用"); },
+    getEventSources() { throw new Error("ET 事件对象不可用"); },
     setTimeoutFn(callback) {
       timeoutCallback = callback;
       return 51;
