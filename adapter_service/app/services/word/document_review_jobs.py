@@ -1,9 +1,12 @@
 import re
-import threading
-import time
+from copy import deepcopy
 from typing import Dict, Optional
 
 from app.core.models import WordDocumentRequest
+from app.services.long_task_coordinator import (
+    LongTaskCoordinator,
+    get_long_task_coordinator,
+)
 from app.services.provider_client import DOCUMENT_REVIEW_TIMEOUT_SECONDS
 from app.services.word.document_reviewer import WordDocumentReviewer
 
@@ -19,89 +22,56 @@ def normalize_client_job_id(value: str) -> str:
     return ""
 
 
+def _copy_request(request: WordDocumentRequest) -> WordDocumentRequest:
+    if hasattr(request, "model_copy"):
+        return request.model_copy(deep=True)
+    if hasattr(request, "copy"):
+        return request.copy(deep=True)
+    return deepcopy(request)
+
+
 class DocumentReviewJobStore:
-    def __init__(self, reviewer: Optional[WordDocumentReviewer] = None, max_jobs: int = 30) -> None:
+    def __init__(
+        self,
+        reviewer: Optional[WordDocumentReviewer] = None,
+        coordinator: Optional[LongTaskCoordinator] = None,
+    ) -> None:
         self.reviewer = reviewer or WordDocumentReviewer()
-        self.max_jobs = max_jobs
-        self._jobs: Dict[str, Dict] = {}
-        self._lock = threading.Lock()
+        self.coordinator = coordinator or get_long_task_coordinator()
 
     def start(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
-        job = {
-            "jobId": job_id,
-            "traceId": trace_id,
-            "status": "running",
-            "createdAt": time.time(),
-            "updatedAt": time.time(),
-            "runningMessage": RUNNING_MESSAGE,
-            "providerTimeoutSeconds": DOCUMENT_REVIEW_TIMEOUT_SECONDS,
-            "result": None,
-            "error": None,
+        existing = self.coordinator.get(job_id)
+        if existing is not None:
+            return existing
+        snapshot = {
+            "request": _copy_request(request),
+            "taskAuth": self.reviewer.snapshot_task_auth(),
         }
-        with self._lock:
-            existing = self._jobs.get(job_id)
-            if existing:
-                return self._public_job(existing)
-            self._jobs[job_id] = job
-            self._trim_locked()
-        worker = threading.Thread(target=self._run, args=(job_id, request, trace_id), daemon=True)
-        worker.start()
-        return self.get(job_id) or job
+        return self.coordinator.submit(
+            job_id=job_id,
+            trace_id=trace_id,
+            task_type="word.document_review",
+            runner=self._run,
+            snapshot=snapshot,
+            failure_code="DOCUMENT_REVIEW_JOB_FAILED",
+            failure_message="文档审查后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
+            public_metadata={
+                "runningMessage": RUNNING_MESSAGE,
+                "providerTimeoutSeconds": DOCUMENT_REVIEW_TIMEOUT_SECONDS,
+            },
+        )
 
     def get(self, job_id: str) -> Optional[Dict]:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if not job:
-                return None
-            return self._public_job(job)
+        return self.coordinator.get(job_id)
 
-    def _run(self, job_id: str, request: WordDocumentRequest, trace_id: str) -> None:
-        try:
-            result = self.reviewer.review(request, trace_id=trace_id)
-            self._update(job_id, status="completed", result=result, runningMessage="")
-        except Exception as exc:
-            self._update(
-                job_id,
-                status="failed",
-                runningMessage="",
-                error={
-                    "code": "DOCUMENT_REVIEW_JOB_FAILED",
-                    "message": str(exc) or "文档审查后台任务执行失败。",
-                },
-            )
+    def cancel(self, job_id: str) -> Optional[Dict]:
+        return self.coordinator.cancel(job_id)
 
-    def _update(self, job_id: str, **fields) -> None:
-        with self._lock:
-            job = self._jobs.get(job_id)
-            if not job:
-                return
-            job.update(fields)
-            job["updatedAt"] = time.time()
-
-    def _trim_locked(self) -> None:
-        if len(self._jobs) <= self.max_jobs:
-            return
-        ordered = sorted(self._jobs.values(), key=lambda item: item.get("createdAt", 0))
-        for job in ordered[: max(len(self._jobs) - self.max_jobs, 0)]:
-            self._jobs.pop(job["jobId"], None)
-
-    def _public_job(self, job: Dict) -> Dict:
-        now = time.time()
-        data = {
-            "jobId": job["jobId"],
-            "traceId": job["traceId"],
-            "status": job["status"],
-            "createdAt": job["createdAt"],
-            "updatedAt": job["updatedAt"],
-            "elapsedSeconds": int(max(now - job.get("createdAt", now), 0)),
-            "heartbeatAgeSeconds": int(max(now - job.get("updatedAt", now), 0)),
-            "providerTimeoutSeconds": job.get("providerTimeoutSeconds", DOCUMENT_REVIEW_TIMEOUT_SECONDS),
-        }
-        if job.get("runningMessage"):
-            data["runningMessage"] = job["runningMessage"]
-        if job.get("result") is not None:
-            data["result"] = job["result"]
-        if job.get("error") is not None:
-            data["error"] = job["error"]
-        return data
+    def _run(self, snapshot: Dict, progress) -> Dict:
+        return self.reviewer.review(
+            snapshot["request"],
+            trace_id=snapshot.get("traceId", "") or "",
+            task_auth=snapshot.get("taskAuth"),
+            progress_callback=progress,
+        )

@@ -13,6 +13,15 @@
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-document-review-active-job-v1";
+  var DOCUMENT_REVIEW_PHASE_TEXT = {
+    queued: "排队等待",
+    preparing: "准备审查内容",
+    provider_processing: "模型后台处理",
+    parsing: "解析并整理审查结果",
+    completed: "已完成",
+    failed: "已失败",
+    cancelled: "已取消"
+  };
   var FORMAT_REVIEW_EXTRACTION_OPTIONS = {
     maxParagraphs: 80,
     maxParagraphTextLength: 800,
@@ -692,7 +701,19 @@
 
   function setDocumentReviewJobId(jobId) {
     state.documentReviewJobId = jobId || "";
+    if (!state.documentReviewJobId) {
+      setDocumentReviewCancelVisible(false);
+    }
     renderWorkflowProfileStrip();
+  }
+
+  function setDocumentReviewCancelVisible(visible, disabled) {
+    var button = byId("btn-cancel-document-review-job");
+    if (!button) {
+      return;
+    }
+    button.hidden = !visible;
+    button.disabled = Boolean(disabled);
   }
 
   function resetDocumentReviewState() {
@@ -4253,8 +4274,31 @@
   function isFatalDocumentReviewPollError(error) {
     return error && (
       error.adapterCode === "DOCUMENT_REVIEW_JOB_NOT_FOUND" ||
+      error.adapterCode === "DOCUMENT_REVIEW_JOB_INTERRUPTED" ||
+      error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED"
     );
+  }
+
+  function renderDocumentReviewJobProgress(job, jobId) {
+    var phaseText = DOCUMENT_REVIEW_PHASE_TEXT[job.phase] || job.phase || "等待状态更新";
+    var elapsedSeconds = Number(job.elapsedSeconds || 0);
+    var phaseElapsedSeconds = Number(job.phaseElapsedSeconds || 0);
+    var lines = [];
+    if (job.status === "queued") {
+      setStatus("文档审查正在排队，当前位置：" + (job.queuePosition || 1) + "。");
+      lines.push("文档审查已进入共享任务队列。", "排队位置：" + (job.queuePosition || 1));
+    } else {
+      setStatus("文档审查正在处理，当前阶段：" + phaseText + "。");
+      lines.push(job.runningMessage || "adapter 正在执行文档审查。", "当前阶段：" + phaseText);
+    }
+    lines.push(
+      "总耗时：" + elapsedSeconds + " 秒",
+      "本阶段耗时：" + phaseElapsedSeconds + " 秒",
+      "任务编号：" + jobId
+    );
+    setDocumentReviewCancelVisible(job.status === "queued" && job.canCancel, false);
+    setPlainResult(lines.join("\n"));
   }
 
   function pollDocumentReviewJob(jobId, stopWaiting) {
@@ -4284,6 +4328,15 @@
           completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId);
           return;
         }
+        if (job.status === "cancelled") {
+          clearDocumentReviewActiveJob(jobId);
+          setDocumentReviewJobId("");
+          state.documentReviewPollStartedAt = 0;
+          stopWaiting();
+          setStatus("排队中的文档审查任务已取消。");
+          setPlainResult("排队中的文档审查任务已取消，未调用模型后台。\n任务编号：" + jobId);
+          return;
+        }
         if (job.status === "failed") {
           clearDocumentReviewActiveJob(jobId);
           setDocumentReviewJobId("");
@@ -4293,15 +4346,7 @@
           setResult((job.error && job.error.message) || "后台任务执行失败。");
           return;
         }
-        setStatus("文档审查仍在模型后台处理中...");
-        if (job.elapsedSeconds || job.runningMessage) {
-          setPlainResult([
-            job.runningMessage || "模型后台正在处理文档审查。",
-            "已等待：" + (job.elapsedSeconds || 0) + " 秒",
-            "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
-            "任务编号：" + jobId
-          ].join("\n"));
-        }
+        renderDocumentReviewJobProgress(job, jobId);
         scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_INTERVAL_MS);
       })
       .catch(function (error) {
@@ -4315,6 +4360,16 @@
         message = describeDocumentReviewPollError(error);
         state.documentReviewPollErrorCount = (state.documentReviewPollErrorCount || 0) + 1;
         elapsed = Date.now() - (state.documentReviewPollStartedAt || Date.now());
+        if (error && error.adapterCode === "DOCUMENT_REVIEW_JOB_INTERRUPTED") {
+          clearDocumentReviewActiveJob(jobId);
+          setDocumentReviewJobId("");
+          state.documentReviewPollStartedAt = 0;
+          state.documentReviewPollErrorCount = 0;
+          setStatus("adapter 已重启，原文档审查任务已中断，请重新提交。");
+          setResult("adapter 已重启，原文档审查任务无法恢复。阻塞式模型请求不会伪装为可恢复，请重新提交文档审查。\n任务编号：" + jobId);
+          stopWaiting();
+          return;
+        }
         if (!isFatalDocumentReviewPollError(error)) {
           withinRetryBudget = (
             state.documentReviewPollErrorCount <= DOCUMENT_REVIEW_POLL_MAX_ERRORS &&
@@ -4376,6 +4431,46 @@
       "任务编号：" + active.jobId
     ].join("\n"));
     pollDocumentReviewJob(active.jobId, function () {});
+  }
+
+  function cancelQueuedDocumentReviewJob() {
+    var jobId = state.documentReviewJobId;
+    if (!jobId) {
+      return;
+    }
+    setDocumentReviewCancelVisible(true, true);
+    setStatus("正在取消排队中的文档审查任务...");
+    request("/word/document-review/jobs/" + encodeURIComponent(jobId), null, {
+      method: "DELETE",
+      timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var job = body.data || {};
+      if (state.documentReviewJobId !== jobId) {
+        return;
+      }
+      if (job.status === "cancelled") {
+        clearDocumentReviewActiveJob(jobId);
+        setDocumentReviewJobId("");
+        state.documentReviewPollStartedAt = 0;
+        state.documentReviewPollErrorCount = 0;
+        setStatus("排队中的文档审查任务已取消。");
+        setPlainResult("排队中的文档审查任务已取消，未调用模型后台。\n任务编号：" + jobId);
+        return;
+      }
+      renderDocumentReviewJobProgress(job, jobId);
+    }).catch(function (error) {
+      if (state.documentReviewJobId !== jobId) {
+        return;
+      }
+      if (error && error.adapterCode === "LONG_TASK_NOT_CANCELLABLE") {
+        setDocumentReviewCancelVisible(false);
+        setStatus("文档审查已经开始运行，模型后台无法可靠取消。");
+        pollDocumentReviewJob(jobId, function () {});
+        return;
+      }
+      setDocumentReviewCancelVisible(true, false);
+      setStatus("取消排队任务失败：" + describeDocumentReviewPollError(error));
+    });
   }
 
   function writeClipboardText(text, successMessage) {
@@ -4830,7 +4925,12 @@
   }
 
   function runDocumentReview() {
-    var scope = resolveSelectionScope(false);
+    var scope;
+    if (state.documentReviewJobId) {
+      setStatus("已有文档审查任务尚未结束，请等待当前任务完成。排队任务可使用“取消排队任务”。");
+      return;
+    }
+    scope = resolveSelectionScope(false);
     resetSmartWritePreviewState();
     resetDocumentReviewState();
     clearDocumentReviewActiveJob();
@@ -4906,8 +5006,7 @@
             completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId);
             return;
           }
-          setStatus("文档审查任务已提交，模型后台处理中...");
-          setPlainResult("文档审查任务已提交。adapter 会在后台等待模型后台返回，此处将自动刷新结果。");
+          renderDocumentReviewJobProgress(job, jobId);
           pollDocumentReviewJob(state.documentReviewJobId, stopWaiting);
         })
         .catch(function (error) {
@@ -5171,6 +5270,7 @@
     byId("btn-open-settings").addEventListener("click", function () {
       toggleSettingsShortcut();
     });
+    byId("btn-cancel-document-review-job").addEventListener("click", cancelQueuedDocumentReviewJob);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
     });

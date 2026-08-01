@@ -358,6 +358,7 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
 | `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
 | `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails |
+| `DELETE` | `/word/document-review/jobs/{jobId}` | Cancel a queued Document Review job; running blocking provider requests are not cancellable |
 | `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
 | `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
 | `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |

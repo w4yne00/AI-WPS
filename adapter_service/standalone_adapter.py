@@ -1215,15 +1215,27 @@ class Handler(BaseHTTPRequestHandler):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = DOCUMENT_REVIEW_JOB_STORE.get(job_id)
             if not job:
+                message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
                 self._write(
                     404,
                     envelope(
                         job_id,
                         "word.document_review",
-                        {"jobId": job_id, "status": "not_found"},
+                        {
+                            "jobId": job_id,
+                            "status": "failed",
+                            "phase": "failed",
+                            "queuePosition": None,
+                            "canCancel": False,
+                        },
                         success=False,
-                        message="文档审查后台任务不存在或已过期。",
-                        errors=[{"code": "DOCUMENT_REVIEW_JOB_NOT_FOUND", "message": "文档审查后台任务不存在或已过期。"}],
+                        message=message,
+                        errors=[
+                            {
+                                "code": "DOCUMENT_REVIEW_JOB_INTERRUPTED",
+                                "message": message,
+                            }
+                        ],
                     ),
                 )
                 return
@@ -1459,7 +1471,20 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/word/document-review/jobs":
             request = parse_word_request(payload)
             trace_id = new_trace_id("standalone-word-document-review")
-            job = DOCUMENT_REVIEW_JOB_STORE.start(request, trace_id=trace_id)
+            try:
+                job = DOCUMENT_REVIEW_JOB_STORE.start(request, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.document_review",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
             self._write(200, envelope(trace_id, "word.document_review", document_review_job_payload(job), message="accepted"))
             return
 
@@ -1659,6 +1684,59 @@ class Handler(BaseHTTPRequestHandler):
             clear_local_api_key()
             client = ProviderClient()
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="cleared"))
+            return
+
+        document_review_prefix = "/word/document-review/jobs/"
+        if path.startswith(document_review_prefix):
+            job_id = unquote(path[len(document_review_prefix):]).strip("/")
+            try:
+                job = DOCUMENT_REVIEW_JOB_STORE.cancel(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.document_review",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            if not job:
+                message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
+                self._write(
+                    404,
+                    envelope(
+                        job_id,
+                        "word.document_review",
+                        {
+                            "jobId": job_id,
+                            "status": "failed",
+                            "phase": "failed",
+                            "queuePosition": None,
+                            "canCancel": False,
+                        },
+                        success=False,
+                        message=message,
+                        errors=[
+                            {
+                                "code": "DOCUMENT_REVIEW_JOB_INTERRUPTED",
+                                "message": message,
+                            }
+                        ],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "word.document_review",
+                    document_review_job_payload(job),
+                    message="cancelled",
+                ),
+            )
             return
 
         prefix = "/provider/task-api-key/"

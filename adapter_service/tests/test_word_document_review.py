@@ -1,17 +1,20 @@
 import importlib.util
+import json
 import os
 import threading
 import time
 import unittest
 from contextlib import contextmanager
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
+HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 
 if HAS_PYDANTIC:
-    from app.core.errors import ProviderTimeoutError
+    from app.core.errors import AdapterError, ProviderTimeoutError
     from app.core.models import WordDocumentRequest
     from app.services.writing_policy import (
         WritingPolicyMatchResult,
@@ -21,6 +24,7 @@ if HAS_PYDANTIC:
     from app.services.writing_policy import service as writing_policy_service_module
     from app.services.writing_policy.store import WritingPolicyStore
     from app.services.provider_client import get_last_provider_debug, record_provider_debug, reset_provider_debug
+    from app.services.long_task_coordinator import LongTaskCoordinator
     from app.services.word import document_reviewer as document_reviewer_module
     from app.services.word.document_review_jobs import DocumentReviewJobStore
     from app.services.word.document_reviewer import WordDocumentReviewer
@@ -178,6 +182,57 @@ class BlockingDocumentReviewProvider:
             "issues": [],
             "provider": "enterprise-dify-chat/task-file",
         }
+
+
+class SnapshotDocumentReviewProvider:
+    def __init__(self) -> None:
+        self.current_auth = {
+            "providerBaseUrl": "https://provider.invalid/v1",
+            "providerChatPath": "/chat-messages",
+            "workflowProfileId": "profile-a",
+            "workflowProfileName": "档案 A",
+            "apiKeyRef": "profile-a-key",
+            "apiKey": "secret-a",
+            "authSource": "task-file",
+        }
+        self.resolve_count = 0
+        self.started = threading.Event()
+        self.release = threading.Event()
+        self.calls = []
+
+    def resolve_task_auth(self, task_type):
+        self.resolve_count += 1
+        return {**self.current_auth, "taskType": task_type}
+
+    def document_review(
+        self,
+        text: str,
+        trace_id: str,
+        document_type: str,
+        review_prompt: str,
+        writing_policy_block: str,
+        task_auth=None,
+    ) -> dict:
+        self.calls.append(
+            {
+                "text": text,
+                "traceId": trace_id,
+                "taskAuth": dict(task_auth or {}),
+            }
+        )
+        if len(self.calls) == 1:
+            self.started.set()
+            self.release.wait(timeout=2)
+        return {
+            "summary": "后台任务完成。",
+            "issues": [],
+            "provider": "enterprise-dify-chat/task-file",
+        }
+
+
+class FailingAuthSnapshotDocumentReviewProvider(RecordingDocumentReviewProvider):
+    def resolve_task_auth(self, task_type):
+        raise OSError("cannot read /secret/provider_api_keys/key-file")
 
 
 class FakeWritingPolicyService:
@@ -373,6 +428,115 @@ class WordDocumentReviewerTests(unittest.TestCase):
         self.assertEqual(provider.call_count, 1)
 
         provider.release.set()
+
+    def test_document_review_job_freezes_input_and_auth_while_queued(self) -> None:
+        provider = SnapshotDocumentReviewProvider()
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+        store = DocumentReviewJobStore(
+            reviewer=WordDocumentReviewer(
+                provider_client=provider,
+                writing_policy_service=FakeWritingPolicyService(),
+            ),
+            coordinator=coordinator,
+        )
+        first_request = self._request("先运行的内容。")
+        second_request = parse_word_request(
+            {
+                "documentId": "doc-review.docx",
+                "scene": "word",
+                "selectionMode": "selection",
+                "clientJobId": "client-review-snapshot",
+                "content": {
+                    "plainText": "排队时的原始内容。",
+                    "paragraphs": [],
+                    "headings": [],
+                },
+                "options": {
+                    "technicalDocumentType": "technical_solution",
+                    "technicalReviewPrompt": "",
+                },
+            }
+        )
+
+        store.start(first_request, trace_id="trace-running-snapshot")
+        self.assertTrue(provider.started.wait(timeout=1))
+        provider.current_auth.update(
+            workflowProfileId="profile-b",
+            workflowProfileName="档案 B",
+            apiKeyRef="profile-b-key",
+            apiKey="secret-b",
+        )
+        queued = store.start(second_request, trace_id="trace-queued-snapshot")
+        second_request.content.plain_text = "提交后修改的内容。"
+        provider.current_auth.update(
+            workflowProfileId="profile-c",
+            workflowProfileName="档案 C",
+            apiKeyRef="profile-c-key",
+            apiKey="secret-c",
+        )
+        duplicate = store.start(second_request, trace_id="trace-duplicate-snapshot")
+
+        self.assertEqual(queued["status"], "queued")
+        self.assertEqual(queued["phase"], "queued")
+        self.assertEqual(queued["queuePosition"], 1)
+        self.assertTrue(queued["canCancel"])
+        self.assertEqual(duplicate["traceId"], "trace-queued-snapshot")
+        self.assertEqual(provider.resolve_count, 2)
+        self.assertNotIn("secret-b", str(queued))
+
+        provider.release.set()
+        completed = None
+        for _ in range(100):
+            completed = store.get("client-review-snapshot")
+            if completed and completed["status"] == "completed":
+                break
+            time.sleep(0.02)
+
+        self.assertIsNotNone(completed)
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(provider.calls[1]["text"], "排队时的原始内容。")
+        self.assertEqual(provider.calls[1]["taskAuth"]["workflowProfileId"], "profile-b")
+        self.assertEqual(provider.calls[1]["taskAuth"]["apiKey"], "secret-b")
+        self.assertNotIn("secret-b", str(completed))
+
+    def test_document_review_job_store_cancels_only_queued_jobs(self) -> None:
+        provider = BlockingDocumentReviewProvider()
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        store = DocumentReviewJobStore(
+            reviewer=WordDocumentReviewer(
+                provider_client=provider,
+                writing_policy_service=FakeWritingPolicyService(),
+            ),
+            coordinator=coordinator,
+        )
+        running = store.start(self._request("运行中。"), trace_id="trace-review-running")
+        self.assertTrue(provider.started.wait(timeout=1))
+        queued = store.start(self._request("排队中。"), trace_id="trace-review-queued")
+
+        cancelled = store.cancel(queued["jobId"])
+        self.assertEqual(cancelled["status"], "cancelled")
+        self.assertFalse(cancelled["canCancel"])
+        with self.assertRaises(AdapterError) as raised:
+            store.cancel(running["jobId"])
+        self.assertEqual(raised.exception.code, "LONG_TASK_NOT_CANCELLABLE")
+        provider.release.set()
+
+    def test_document_review_auth_snapshot_failure_returns_sanitized_error(self) -> None:
+        store = DocumentReviewJobStore(
+            reviewer=WordDocumentReviewer(
+                provider_client=FailingAuthSnapshotDocumentReviewProvider(),
+                writing_policy_service=FakeWritingPolicyService(),
+            ),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+
+        with self.assertRaises(AdapterError) as raised:
+            store.start(self._request(), trace_id="trace-auth-snapshot-failure")
+
+        self.assertEqual(
+            raised.exception.code, "DOCUMENT_REVIEW_AUTH_SNAPSHOT_FAILED"
+        )
+        self.assertNotIn("/secret", raised.exception.message)
 
     def test_document_review_sends_selected_text_and_returns_scope(self) -> None:
         request = parse_word_request(
@@ -723,3 +887,133 @@ class WordDocumentReviewerTests(unittest.TestCase):
             provider.calls[0]["writingPolicyBlock"],
         )
         self.assertGreaterEqual(result["writingPolicyUsage"]["styleRuleCount"], 1)
+
+    @unittest.skipUnless(HAS_FASTAPI, "fastapi is required for route contract tests")
+    def test_fastapi_job_routes_cancel_queued_and_report_restart_interruption(self) -> None:
+        from app.api import word as word_api
+
+        provider = BlockingDocumentReviewProvider()
+        store = DocumentReviewJobStore(
+            reviewer=WordDocumentReviewer(
+                provider_client=provider,
+                writing_policy_service=FakeWritingPolicyService(),
+            ),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        original_store = word_api.document_review_jobs
+        word_api.document_review_jobs = store
+        running_request = parse_word_request(
+            {
+                "clientJobId": "client-fastapi-running",
+                "content": {"plainText": "运行中。"},
+            }
+        )
+        queued_request = parse_word_request(
+            {
+                "clientJobId": "client-fastapi-queued",
+                "content": {"plainText": "排队中。"},
+            }
+        )
+        try:
+            running = word_api.start_document_review_job(running_request)
+            self.assertTrue(provider.started.wait(timeout=1))
+            queued = word_api.start_document_review_job(queued_request)
+            cancelled = word_api.cancel_document_review_job("client-fastapi-queued")
+            interrupted_response = word_api.get_document_review_job(
+                "client-from-before-adapter-restart"
+            )
+        finally:
+            provider.release.set()
+            word_api.document_review_jobs = original_store
+
+        interrupted = json.loads(interrupted_response.body.decode("utf-8"))
+        self.assertEqual(running["data"]["status"], "running")
+        self.assertEqual(queued["data"]["status"], "queued")
+        self.assertEqual(queued["data"]["queuePosition"], 1)
+        self.assertTrue(queued["data"]["canCancel"])
+        self.assertEqual(cancelled["message"], "cancelled")
+        self.assertEqual(cancelled["data"]["status"], "cancelled")
+        self.assertEqual(interrupted_response.status_code, 404)
+        self.assertEqual(
+            interrupted["errors"][0]["code"],
+            "DOCUMENT_REVIEW_JOB_INTERRUPTED",
+        )
+        self.assertEqual(interrupted["data"]["status"], "failed")
+        self.assertIn("adapter 重启", interrupted["message"])
+
+    def test_standalone_job_routes_match_fastapi_cancel_and_error_contract(self) -> None:
+        import standalone_adapter
+
+        provider = BlockingDocumentReviewProvider()
+        store = DocumentReviewJobStore(
+            reviewer=WordDocumentReviewer(
+                provider_client=provider,
+                writing_policy_service=FakeWritingPolicyService(),
+            ),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+        )
+        original_store = standalone_adapter.DOCUMENT_REVIEW_JOB_STORE
+        standalone_adapter.DOCUMENT_REVIEW_JOB_STORE = store
+
+        def invoke(method, path, payload=None):
+            captured = {}
+            handler = object.__new__(standalone_adapter.Handler)
+            handler.path = path
+            raw = json.dumps(payload or {}, ensure_ascii=False).encode("utf-8")
+            handler.headers = {"Content-Length": str(len(raw))}
+            handler.rfile = BytesIO(raw)
+            handler._write = lambda status, body: captured.update(status=status, body=body)
+            getattr(handler, method)()
+            return captured
+
+        try:
+            running = invoke(
+                "do_POST",
+                "/word/document-review/jobs",
+                {
+                    "clientJobId": "client-standalone-running",
+                    "content": {"plainText": "运行中。"},
+                },
+            )
+            self.assertTrue(provider.started.wait(timeout=1))
+            queued = invoke(
+                "do_POST",
+                "/word/document-review/jobs",
+                {
+                    "clientJobId": "client-standalone-queued",
+                    "content": {"plainText": "排队中。"},
+                },
+            )
+            cancelled = invoke(
+                "do_DELETE",
+                "/word/document-review/jobs/client-standalone-queued",
+            )
+            running_cancel = invoke(
+                "do_DELETE",
+                "/word/document-review/jobs/client-standalone-running",
+            )
+            interrupted = invoke(
+                "do_GET",
+                "/word/document-review/jobs/client-from-before-adapter-restart",
+            )
+        finally:
+            provider.release.set()
+            standalone_adapter.DOCUMENT_REVIEW_JOB_STORE = original_store
+
+        self.assertEqual(running["status"], 200)
+        self.assertEqual(running["body"]["data"]["status"], "running")
+        self.assertEqual(queued["body"]["data"]["status"], "queued")
+        self.assertEqual(cancelled["status"], 200)
+        self.assertEqual(cancelled["body"]["message"], "cancelled")
+        self.assertEqual(cancelled["body"]["data"]["status"], "cancelled")
+        self.assertEqual(running_cancel["status"], 409)
+        self.assertEqual(
+            running_cancel["body"]["errors"][0]["code"],
+            "LONG_TASK_NOT_CANCELLABLE",
+        )
+        self.assertEqual(interrupted["status"], 404)
+        self.assertEqual(
+            interrupted["body"]["errors"][0]["code"],
+            "DOCUMENT_REVIEW_JOB_INTERRUPTED",
+        )
+        self.assertEqual(interrupted["body"]["data"]["status"], "failed")

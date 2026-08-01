@@ -408,13 +408,14 @@ def build_provider_request_payload(
     query: str,
     input_mode: str = DIFY_INPUT_MODE_LEGACY,
     files: Optional[List[Dict]] = None,
+    response_mode: Optional[str] = None,
 ) -> Dict:
     inputs = {"query": query} if input_mode == DIFY_INPUT_MODE_LEGACY else {}
     return {
         "inputs": inputs,
         "query": query,
         "conversation_id": "",
-        "response_mode": settings.provider_mode,
+        "response_mode": response_mode or settings.provider_mode,
         "user": "wps-ai-assistant",
         "files": list(files or []),
     }
@@ -1238,9 +1239,24 @@ class ProviderClient:
         auth_source = "task-file" if task_api_key else self.get_auth_source()
         if not task_api_key:
             task_api_key = self.get_api_key("default")
+        provider_base_url = self.settings.provider_base_url.rstrip("/")
+        provider_chat_path = self.settings.provider_chat_path or "/chat-messages"
+        input_mode_cache_key = _provider_input_mode_cache_key(
+            self.settings,
+            task_type,
+            api_key_ref,
+            provider_base_url=provider_base_url,
+            provider_chat_path=provider_chat_path,
+        )
         return {
-            "providerBaseUrl": self.settings.provider_base_url.rstrip("/"),
-            "providerChatPath": self.settings.provider_chat_path or "/chat-messages",
+            "providerBaseUrl": provider_base_url,
+            "providerChatPath": provider_chat_path,
+            "providerMode": self.settings.provider_mode,
+            "providerName": self.settings.provider_name,
+            "providerType": self.settings.provider_type,
+            "providerInputMode": _PROVIDER_INPUT_MODE_CACHE.get(
+                input_mode_cache_key, DIFY_INPUT_MODE_LEGACY
+            ),
             "workflowProfile": workflow_profile,
             "workflowProfileId": str((workflow_profile or {}).get("id", "")),
             "workflowProfileName": str((workflow_profile or {}).get("name", "")),
@@ -1426,8 +1442,12 @@ class ProviderClient:
             provider_base_url_configured = bool(self.settings.provider_base_url.strip())
         metadata = {
             "provider": provider,
-            "providerName": self.settings.provider_name,
-            "providerType": self.settings.provider_type,
+            "providerName": str(
+                (task_auth or {}).get("providerName") or self.settings.provider_name
+            ),
+            "providerType": str(
+                (task_auth or {}).get("providerType") or self.settings.provider_type
+            ),
             "providerBaseUrlConfigured": provider_base_url_configured,
             "authSource": auth_source,
             "taskAuthSource": auth_source,
@@ -1633,9 +1653,9 @@ class ProviderClient:
             provider_base_url=provider_base_url,
             provider_chat_path=provider_chat_path,
         )
-        preferred_mode = _PROVIDER_INPUT_MODE_CACHE.get(
-            cache_key,
-            DIFY_INPUT_MODE_LEGACY,
+        preferred_mode = str(
+            resolved_task_auth.get("providerInputMode")
+            or _PROVIDER_INPUT_MODE_CACHE.get(cache_key, DIFY_INPUT_MODE_LEGACY)
         )
         alternate_mode = (
             DIFY_INPUT_MODE_USER_INPUT
@@ -1665,6 +1685,7 @@ class ProviderClient:
                 query,
                 input_mode=input_mode,
                 files=files,
+                response_mode=str(resolved_task_auth.get("providerMode", "")),
             )
             payload = json.dumps(route_payload).encode("utf-8")
             record_provider_debug(
@@ -1729,6 +1750,7 @@ class ProviderClient:
                             "Enterprise AI returned a non-JSON response."
                         ) from exc
                     _PROVIDER_INPUT_MODE_CACHE[cache_key] = input_mode
+                    resolved_task_auth["providerInputMode"] = input_mode
                     record_provider_debug(
                         {
                             "traceId": trace_id,
@@ -2152,6 +2174,7 @@ class ProviderClient:
         document_type: str = "technical_solution",
         review_prompt: str = "",
         writing_policy_block: str = "",
+        task_auth: Optional[Dict] = None,
     ) -> Dict:
         source_text = text.strip()
         prompt = build_document_review_prompt(
@@ -2169,20 +2192,58 @@ class ProviderClient:
             }
 
         task_type = "word.document_review"
-        if not self.is_task_configured(task_type):
+        has_auth_snapshot = task_auth is not None
+        resolved_task_auth = task_auth or {}
+        configured = (
+            bool(
+                str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+                and str(resolved_task_auth.get("apiKey", "")).strip()
+            )
+            if has_auth_snapshot
+            else self.is_task_configured(task_type)
+        )
+        if not configured:
             logger.info("traceId=%s provider=mock task=word.document_review", trace_id)
-            self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if has_auth_snapshot:
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": "",
+                        **self.build_debug_metadata(
+                            task_type, provider="mock", task_auth=resolved_task_auth
+                        ),
+                        "skipReason": "provider_not_configured",
+                        "request": {
+                            "body": build_provider_request_payload(
+                                self.settings,
+                                {},
+                                prompt,
+                                input_mode=str(
+                                    resolved_task_auth.get("providerInputMode")
+                                    or DIFY_INPUT_MODE_LEGACY
+                                ),
+                                response_mode=str(
+                                    resolved_task_auth.get("providerMode", "")
+                                ),
+                            )
+                        },
+                    }
+                )
+            else:
+                self.record_unconfigured_debug(task_type, trace_id, prompt)
             result = self._mock_document_review(source_text, document_type)
             result["prompt"] = prompt
             return result
 
-        body = self.post_task(
-            task_type,
-            trace_id,
-            {},
-            prompt,
-            timeout_seconds=max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
-        )
+        post_kwargs = {
+            "timeout_seconds": max(
+                self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS
+            )
+        }
+        if has_auth_snapshot:
+            post_kwargs["task_auth"] = resolved_task_auth
+        body = self.post_task(task_type, trace_id, {}, prompt, **post_kwargs)
 
         parsed = parse_document_review_answer(extract_answer(body))
         logger.info("traceId=%s provider=enterprise-dify-chat task=word.document_review", trace_id)
@@ -2191,7 +2252,11 @@ class ProviderClient:
             "issues": parsed["issues"],
             "rawAnswer": parsed.get("rawAnswer", ""),
             "parseFallbackReason": parsed.get("parseFallbackReason", ""),
-            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "provider": "enterprise-dify-chat/{0}".format(
+                str(resolved_task_auth.get("authSource", "none"))
+                if has_auth_snapshot
+                else self.get_auth_source_for_task(task_type)
+            ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),

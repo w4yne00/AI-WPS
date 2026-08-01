@@ -285,6 +285,8 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
 def _task_type_from_path(path: str) -> str:
     if path.startswith("/writing-policies/"):
         return "writing_policy"
+    if path.startswith("/word/document-review/jobs/"):
+        return "word.document_review"
     return {
         "/word/smart-write": "word.smart_write",
         "/word/smart-imitation": "word.smart_imitation",

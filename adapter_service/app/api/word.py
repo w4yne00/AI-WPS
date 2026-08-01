@@ -25,6 +25,32 @@ document_review_jobs = DocumentReviewJobStore(document_reviewer)
 logger = get_logger(__name__)
 
 
+def _interrupted_document_review_response(job_id: str) -> JSONResponse:
+    message = "文档审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
+    return JSONResponse(
+        status_code=404,
+        content={
+            "success": False,
+            "traceId": job_id,
+            "taskType": "word.document_review",
+            "message": message,
+            "data": {
+                "jobId": job_id,
+                "status": "failed",
+                "phase": "failed",
+                "queuePosition": None,
+                "canCancel": False,
+            },
+            "errors": [
+                {
+                    "code": "DOCUMENT_REVIEW_JOB_INTERRUPTED",
+                    "message": message,
+                }
+            ],
+        },
+    )
+
+
 @router.post("/word/smart-write")
 def smart_write_word(request: WordDocumentRequest) -> dict:
     trace_id = new_trace_id("word-smart-write")
@@ -107,17 +133,7 @@ def start_document_review_job(request: WordDocumentRequest) -> dict:
 def get_document_review_job(job_id: str):
     job = document_review_jobs.get(job_id)
     if not job:
-        return JSONResponse(
-            status_code=404,
-            content={
-                "success": False,
-                "traceId": job_id,
-                "taskType": "word.document_review",
-                "message": "文档审查后台任务不存在或已过期。",
-                "data": {"jobId": job_id, "status": "not_found"},
-                "errors": [{"code": "DOCUMENT_REVIEW_JOB_NOT_FOUND", "message": "文档审查后台任务不存在或已过期。"}],
-            },
-        )
+        return _interrupted_document_review_response(job_id)
     if job.get("result"):
         job = {**job, "result": DocumentReviewResponseData(**job["result"]).dict(by_alias=True)}
     return {
@@ -125,6 +141,21 @@ def get_document_review_job(job_id: str):
         "traceId": job.get("traceId", job_id),
         "taskType": "word.document_review",
         "message": job["status"],
+        "data": job,
+        "errors": [],
+    }
+
+
+@router.delete("/word/document-review/jobs/{job_id}")
+def cancel_document_review_job(job_id: str):
+    job = document_review_jobs.cancel(job_id)
+    if not job:
+        return _interrupted_document_review_response(job_id)
+    return {
+        "success": True,
+        "traceId": job.get("traceId", job_id),
+        "taskType": "word.document_review",
+        "message": "cancelled",
         "data": job,
         "errors": [],
     }

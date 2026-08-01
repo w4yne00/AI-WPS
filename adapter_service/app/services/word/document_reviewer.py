@@ -1,4 +1,5 @@
-from typing import Dict, Optional, Tuple
+from copy import deepcopy
+from typing import Callable, Dict, Optional, Tuple
 
 from app.core.errors import AdapterError, ProviderTimeoutError
 from app.core.models import WordDocumentRequest
@@ -93,7 +94,28 @@ class WordDocumentReviewer:
         self.provider_client = provider_client or ProviderClient()
         self.writing_policy_service = writing_policy_service
 
-    def review(self, request: WordDocumentRequest, trace_id: str) -> Dict:
+    def snapshot_task_auth(self) -> Optional[Dict]:
+        resolver = getattr(self.provider_client, "resolve_task_auth", None)
+        if not callable(resolver):
+            return None
+        try:
+            return deepcopy(resolver("word.document_review"))
+        except Exception as exc:
+            raise AdapterError(
+                "DOCUMENT_REVIEW_AUTH_SNAPSHOT_FAILED",
+                "文档审查工作流配置暂时无法读取，请检查设置后重试。",
+                status_code=503,
+            ) from exc
+
+    def review(
+        self,
+        request: WordDocumentRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Dict:
+        if progress_callback:
+            progress_callback("preparing")
         source_text = request.content.plain_text.strip()
         if not source_text:
             source_text = "\n".join(
@@ -111,12 +133,17 @@ class WordDocumentReviewer:
             scene=request.writing_policy_scene,
         )
         try:
+            if progress_callback:
+                progress_callback("provider_processing")
+            provider_kwargs = {
+                "document_type": request.options.technical_document_type,
+                "review_prompt": review_prompt,
+                "writing_policy_block": writing_policy.prompt_block,
+            }
+            if task_auth is not None:
+                provider_kwargs["task_auth"] = task_auth
             provider_result = self.provider_client.document_review(
-                source_text,
-                trace_id,
-                document_type=request.options.technical_document_type,
-                review_prompt=review_prompt,
-                writing_policy_block=writing_policy.prompt_block,
+                source_text, trace_id, **provider_kwargs
             )
         except ProviderTimeoutError:
             provider_result = self._provider_fallback(
@@ -134,6 +161,8 @@ class WordDocumentReviewer:
             )
         finally:
             merge_provider_debug(trace_id, writing_policy.diagnostic_patch())
+        if progress_callback:
+            progress_callback("parsing")
         try:
             writing_policy_audit = writing_policy_service.audit_document_review(
                 writing_policy,

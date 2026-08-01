@@ -139,6 +139,7 @@ POST   /word/smart-imitation
 POST   /word/document-review
 POST   /word/document-review/jobs
 GET    /word/document-review/jobs/{jobId}
+DELETE /word/document-review/jobs/{jobId}
 POST   /word/format-review
 POST   /excel/analysis
 POST   /excel/analysis/jobs
@@ -149,6 +150,12 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 ```
 
 ## 3. 本版本关键变化
+
+- issue #12 已让 Word 文档审查成为共享长任务协调器的首条链路：默认同时运行 2 个任务，FIFO 排队最多 8 个；`clientJobId` 继续幂等，重复提交不会再次调用模型后台。
+- 文档审查任务状态现在包含 `queued / running / completed / failed / cancelled`、排队位置、真实阶段、总耗时、阶段耗时和 `canCancel`；只有排队任务可通过 `DELETE /word/document-review/jobs/{jobId}` 取消，运行中的阻塞式模型请求不伪装为可取消。
+- 提交任务时冻结请求、工作流档案、API URL/path、Dify 输入模式和仅存在内存中的认证快照；配置切换只影响后续任务。认证正文不进入任务响应、日志或诊断，并在完成、失败或排队取消后释放。
+- 运行中和排队任务不因容量被淘汰；终态从完成时起保留 2 小时且最多 50 条。任务窗格重开后继续按原 `clientJobId` 查询；adapter 重启导致内存任务消失时明确提示任务已中断并要求重新提交。
+- FastAPI 与 standalone 均支持相同的文档审查提交、查询、排队取消、队列满和重启中断响应契约；现有同步路由、结果结构、think 过滤、审查记录和只读行为保持不变。
 
 `v0.20.0-alpha` 正式打包 issue #4 至 issue #11 的写作规范库完整基线：
 
@@ -286,6 +293,8 @@ GET    /ppt/slide-assistant/jobs/{jobId}
 - WPS COM 对象容错：段落集合、选区文本、全文 Range 和宿主对象清洗逻辑不能被审查功能改动破坏。
 - 文档审查不能回退为同步全文扫描；`DOCUMENT_REVIEW_EXTRACTION_OPTIONS` 必须保留 `preferSelectionTextParagraphs`、`avoidFullTextRead`、`avoidFallbackTextRead`。
 - 文档审查长任务必须继续走 `clientJobId` + `/word/document-review/jobs/{jobId}` 的可恢复轮询链路；前端不要在短暂连接失败后清空 jobId，adapter job store 不要对同一 `clientJobId` 重复发起模型后台任务。
+- 文档审查的“可恢复”只覆盖同一 adapter 进程内的任务窗格关闭、重开和短暂断连；adapter 重启是明确中断边界，不得把不存在的阻塞式 provider 任务伪装为仍可恢复。
+- 共享长任务协调器默认并发 2、排队容量 8；只有 queued 状态允许取消，running 状态不得返回虚假取消成功。运行中和排队任务不得因终态容量或 TTL 被淘汰。
 - 文档审查 Dify 非标准返回也要在前台可见：`rawAnswer` 和 `parseFallbackReason` 是现场判断 Dify 输出格式问题的重要兜底。
 - 智能编写选区轻量抽取不能回退为同步全文段落扫描；`SMART_WRITE_EXTRACTION_OPTIONS` 必须保留 `preferSelectionTextParagraphs`、`avoidFullTextRead`、`avoidFallbackTextRead`。
 - 智能编写结果预览必须保持结构感知：简单段落不要额外套 Markdown 排版；标题、列表、序号、表格、加粗等结构存在时要尽量结构化回显和写回。
