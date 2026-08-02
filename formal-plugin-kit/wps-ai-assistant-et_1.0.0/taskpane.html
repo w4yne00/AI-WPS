@@ -45,10 +45,21 @@
             </label>
           </div>
 
+          <div id="excel-formula-options" class="mode-block" hidden>
+            <div id="excel-formula-range-summary" class="excel-range-summary">请先框选相关表格范围。</div>
+            <p class="field-note">公式助手只读取明确选区，最多 30 行 × 20 列，不读取工作表已用范围。</p>
+            <label class="field" for="excel-formula-requirement">
+              <span>计算需求</span>
+              <textarea id="excel-formula-requirement" rows="4" placeholder="例如：汇总金额列，并忽略空白单元格。"></textarea>
+            </label>
+          </div>
+
           <div class="button-cluster action-bar">
             <button id="btn-run-primary" type="button">生成分析报告</button>
             <button id="btn-cancel-excel-analysis-job" class="secondary-action" type="button" hidden>取消排队任务</button>
+            <button id="btn-cancel-excel-formula-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-resubmit-interrupted-job" class="secondary-action" type="button" hidden>重新提交分析</button>
+            <button id="btn-resubmit-interrupted-formula-job" class="secondary-action" type="button" hidden>重新提交公式需求</button>
           </div>
           <div id="status-line" class="sr-only">等待操作。</div>
         </section>
@@ -56,6 +67,7 @@
         <section class="panel result-panel glass-card">
           <div class="panel-head">
             <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
+            <button id="btn-copy-formula" class="ghost-action copy-button" type="button" title="复制主公式" aria-label="复制主公式" hidden>复制公式</button>
             <div>
               <h2>结果预览</h2>
               <div id="result-view-switch" class="result-view-switch excel-result-switch" hidden>
@@ -102,6 +114,7 @@
               <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个工作流，可在任务页选择当前使用的工作流。</div>
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务">
                 <button type="button" role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>
+                <button type="button" role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>
               </div>
               <section id="workflow-settings-home">
                 <div class="workflow-manager-head">

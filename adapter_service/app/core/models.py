@@ -288,6 +288,108 @@ class ExcelAnalysisResponseData(ExcelAnalysisResult):
     pass
 
 
+class ExcelFormulaCell(BaseModel):
+    address: str = ""
+    text: str = ""
+    value_type: Literal[
+        "blank", "text", "number", "boolean", "formula", "error", "unknown"
+    ] = Field(default="unknown", alias="valueType")
+    formula: str = ""
+
+    @validator("address", "text", "formula", pre=True, always=True)
+    def coerce_formula_cell_text(cls, value):
+        return _safe_str(value)
+
+    @validator("value_type", pre=True, always=True)
+    def coerce_formula_cell_type(cls, value):
+        supported = {
+            "blank",
+            "text",
+            "number",
+            "boolean",
+            "formula",
+            "error",
+            "unknown",
+        }
+        return value if value in supported else "unknown"
+
+
+class ExcelFormulaSelection(BaseModel):
+    sheet_name: str = Field(default="", alias="sheetName")
+    address: str = ""
+    headers: List[str] = Field(default_factory=list)
+    cells: List[List[ExcelFormulaCell]] = Field(default_factory=list)
+    row_count: int = Field(default=0, alias="rowCount")
+    column_count: int = Field(default=0, alias="columnCount")
+    truncated: bool = False
+
+    @validator("sheet_name", "address", pre=True, always=True)
+    def coerce_formula_selection_text(cls, value):
+        return _safe_str(value)
+
+    @validator("headers", pre=True, always=True)
+    def coerce_formula_headers(cls, value):
+        if not isinstance(value, list):
+            return []
+        return [_safe_str(item) for item in value]
+
+    @validator("cells", pre=True, always=True)
+    def coerce_formula_cells(cls, value):
+        if not isinstance(value, list):
+            return []
+        return [row for row in value if isinstance(row, list)]
+
+    @validator("row_count", "column_count", pre=True, always=True)
+    def coerce_formula_counts(cls, value):
+        return _safe_int(value) or 0
+
+    @validator("truncated", pre=True, always=True)
+    def coerce_formula_truncated(cls, value):
+        return bool(_safe_bool(value))
+
+
+class ExcelFormulaOptions(BaseModel):
+    requirement: str = ""
+
+    @validator("requirement", pre=True, always=True)
+    def coerce_formula_requirement(cls, value):
+        return _safe_str(value)
+
+
+class ExcelFormulaAssistantRequest(BaseModel):
+    workbook_id: str = Field(default="active-workbook", alias="workbookId")
+    scene: Literal["excel"] = "excel"
+    client_job_id: str = Field(default="", alias="clientJobId")
+    selection: ExcelFormulaSelection = Field(default_factory=ExcelFormulaSelection)
+    options: ExcelFormulaOptions = Field(default_factory=ExcelFormulaOptions)
+
+    @validator("workbook_id", pre=True, always=True)
+    def coerce_formula_workbook_id(cls, value):
+        return _safe_str(value, "active-workbook") or "active-workbook"
+
+    @validator("scene", pre=True, always=True)
+    def coerce_formula_scene(cls, value):
+        return "excel"
+
+    @validator("client_job_id", pre=True, always=True)
+    def coerce_formula_client_job_id(cls, value):
+        return _safe_str(value)
+
+
+class ExcelFormulaAssistantResult(BaseModel):
+    primary_formula: str = Field(default="", alias="primaryFormula")
+    suggested_target: str = Field(default="", alias="suggestedTarget")
+    explanation: str = ""
+    assumptions: List[str] = Field(default_factory=list)
+    compatibility_notes: List[str] = Field(default_factory=list, alias="compatibilityNotes")
+    copy_text: str = Field(default="", alias="copyText")
+    provider: str = "mock"
+
+
+class ExcelFormulaAssistantResponseData(ExcelFormulaAssistantResult):
+    pass
+
+
 class PptSlideInput(BaseModel):
     index: int = 1
     title: str = ""

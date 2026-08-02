@@ -2,8 +2,9 @@
   <ribbon startFromScratch="false">
     <tabs>
       <tab id="wpsAiAssistantExcelTab" label="WPS AI 助理">
-        <group id="wpsAiAssistantExcelGroup" label="表格分析">
+        <group id="wpsAiAssistantExcelGroup" label="表格助手">
           <button id="btnAiExcelAnalysis" label="智能分析" size="large" getImage="GetImage" onAction="OnAction" />
+          <button id="btnAiExcelFormulaAssistant" label="公式助手" size="large" getImage="GetImage" onAction="OnAction" />
           <button id="btnAiSettings" label="设置" size="large" getImage="GetImage" onAction="OnAction" />
         </group>
       </tab>

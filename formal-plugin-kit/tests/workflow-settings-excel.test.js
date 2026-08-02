@@ -60,7 +60,8 @@ function assertCompactMarkupContract() {
 
   assert.ok(html.includes('id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务"'));
   assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>'));
-  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 1, "Excel must expose one task tab");
+  assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>'));
+  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 2, "Excel must expose two task tabs");
   ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review", "ppt.slide_assistant"]
     .forEach((task) => assert.ok(!html.includes(`data-workflow-task-tab="${task}"`), `Excel exposes ${task}`));
 
@@ -87,6 +88,7 @@ function assertCompactCssContract() {
 
 function assertFixedExcelWorkflowContract() {
   assert.ok(js.includes('var EXCEL_WORKFLOW_TASK_TYPE = "excel.analysis";'));
+  assert.ok(js.includes('var EXCEL_FORMULA_WORKFLOW_TASK_TYPE = "excel.formula_assistant";'));
   assert.ok(js.includes("function renderWorkflowTaskTabs()"));
   assertIncludesAll(js, [
     "helpers.workflowProfileOptionState",
@@ -118,11 +120,12 @@ function assertImmediateActivationContract() {
     "select.disabled = state.busy || state.workflowProfileMutationBusy"
   ]);
   assert.ok(bind.includes('byId("workflow-profile-select").addEventListener("change"'));
-  assert.ok(bind.includes("activateWorkflowProfile(event.target.value"));
+  assert.ok(bind.includes("activateWorkflowProfile("));
+  assert.ok(bind.includes("event.target.value"));
   assert.ok(!bind.includes("workflowProfileSelection = event.target.value"));
   assertIncludesAll(activate, [
     "previousProfileId",
-    "state.workflowProfileSelection = previousProfileId",
+    "state.workflowProfileSelections[targetTask] = previousProfileId",
     "切换工作流失败"
   ]);
 }
@@ -134,7 +137,7 @@ function assertEditorSaveContract() {
   assert.ok(functionSource("showWorkflowDeleteDialog").includes("workflow-delete-name"));
   assert.ok(openEditor.includes("shouldActivateNewWorkflowProfile"));
   assert.ok(saveEditor.includes("helpers.validateWorkflowProfileDraft"));
-  assert.ok(saveEditor.includes("EXCEL_WORKFLOW_TASK_TYPE"));
+  assert.ok(saveEditor.includes("state.workflowTaskType"));
 
   const patchIndex = saveEditor.indexOf('method: "PATCH"');
   const keyPathIndex = saveEditor.indexOf('encodeURIComponent(profileId) + "/api-key"');
@@ -164,7 +167,7 @@ function assertDeleteAndBusyContracts() {
 
 function assertExcelHostReviewFixContracts() {
   const setStatus = functionSource("setStatus");
-  const loadProfiles = functionSource("loadWorkflowProfiles");
+  const loadProfiles = functionSource("loadWorkflowProfileForTask");
   const activate = functionSource("activateWorkflowProfile");
   const setMutationBusy = functionSource("setWorkflowMutationBusy");
   const finishMutation = functionSource("finishWorkflowMutation");
@@ -182,14 +185,14 @@ function assertExcelHostReviewFixContracts() {
     'setNodeTextIfChanged(byId("settings-status-line")'
   ]);
 
-  assert.ok(js.includes("workflowProfileLoadSequence: 0"), "workflow GETs need a request sequence");
+  assert.ok(js.includes("workflowProfileLoadSequences: {}"), "workflow GETs need per-task request sequences");
   assertIncludesAll(loadProfiles, [
     "requestSequence",
-    "++state.workflowProfileLoadSequence",
-    "requestSequence !== state.workflowProfileLoadSequence"
+    "state.workflowProfileLoadSequences[taskType]",
+    "requestSequence !== state.workflowProfileLoadSequences[taskType]"
   ]);
   assertAppearsInOrder(activate, [
-    "state.workflowProfileLoadSequence += 1",
+    "state.workflowProfileLoadSequences[targetTask]",
     'request("/provider/workflow-profiles/"'
   ], "activation must invalidate older profile GETs before mutation");
 
@@ -286,8 +289,9 @@ function assertExcelAnalysisPreservationContract() {
   assert.ok(poll.includes("renderExcelAnalysisJobProgress(job, jobId)"));
   assert.ok(poll.includes('job.status === "cancelled"'));
   const switchMode = functionSource("switchMode");
-  assert.ok(switchMode.includes('state.currentMode = settingsMode ? "settings" : "excelAnalysis"'));
+  assert.ok(switchMode.includes('state.currentMode = settingsMode ? "settings" : (formulaMode ? "excelFormulaAssistant" : "excelAnalysis")'));
   assert.ok(switchMode.includes("resumeExcelAnalysisActiveJob()"));
+  assert.ok(switchMode.includes("resumeExcelFormulaActiveJob()"));
   [
     "state.analysisRequirement =",
     "state.analysisResult = null",
@@ -318,7 +322,7 @@ function assertLiveSettingsExperienceContract() {
 
   const modelInterface = functionSource("renderModelInterfaceState");
   assertIncludesAll(modelInterface, [
-    "EXCEL_WORKFLOW_TASK_TYPE",
+    "TASK_API_KEY_DEFS",
     "getWorkflowProfileData",
     "helpers.deriveModelInterfaceState",
     '"readiness-badge is-" + modelState.code',
@@ -351,7 +355,7 @@ function assertLiveSettingsExperienceContract() {
     (token) => assert.ok(!refresh.includes(token), token)
   );
 
-  const loadProfiles = functionSource("loadWorkflowProfiles");
+  const loadProfiles = functionSource("loadWorkflowProfileForTask");
   assertIncludesAll(loadProfiles, [
     "previousProfileData",
     "configRefreshRequestId",
@@ -361,6 +365,10 @@ function assertLiveSettingsExperienceContract() {
   assert.ok(loadProfiles.includes("superseded: true"));
   assert.ok(loadProfiles.includes("failed: true"));
   assert.ok(!loadProfiles.includes("state.workflowProfileSelection = \"\""));
+  assert.ok(!loadProfiles.includes("state.modelInterfaceDetectable = state.modelInterfaceConfigDetectable"));
+  const loadAllProfiles = functionSource("loadWorkflowProfiles");
+  assert.ok(loadAllProfiles.includes("state.modelInterfaceDetectable = false"));
+  assert.ok(loadAllProfiles.includes("state.modelInterfaceDetectable = state.modelInterfaceConfigDetectable"));
 
   const saveUrl = functionSource("saveProviderBaseUrl");
   const saveUrlRefreshIndex = saveUrl.indexOf("refreshConfig({ silent: false })");
@@ -1036,12 +1044,18 @@ async function runSettingsBehaviorTests() {
   providerSummary.setAttribute = function (name, value) { this[name] = value; };
   const readinessState = {
     providerBaseUrl: "https://ready.example.test/v1",
-    workflowProfiles: { activeProfileId: "active", profiles: [{ id: "active", keyConfigured: true }] }
+    workflowProfilesByTask: {
+      "excel.analysis": { activeProfileId: "analysis-active", profiles: [{ id: "analysis-active", keyConfigured: true }] },
+      "excel.formula_assistant": { activeProfileId: "formula-active", profiles: [{ id: "formula-active", keyConfigured: true }] }
+    }
   };
   const renderReadiness = loadFunction("renderModelInterfaceState", {
     state: readinessState,
-    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
-    getWorkflowProfileData() { return readinessState.workflowProfiles; },
+    TASK_API_KEY_DEFS: [
+      { taskType: "excel.analysis" },
+      { taskType: "excel.formula_assistant" }
+    ],
+    getWorkflowProfileData(taskType) { return readinessState.workflowProfilesByTask[taskType]; },
     helpers: {
       deriveModelInterfaceState(input) {
         return input.detectable
@@ -1140,15 +1154,14 @@ async function runSettingsBehaviorTests() {
     configRefreshRequestId: 0,
     modelInterfaceDetectable: true,
     modelInterfaceConfigDetectable: true,
-    workflowProfiles: cachedProfiles,
-    workflowProfileSelection: "stable-active",
-    workflowProfileLoadSequence: 0
+    workflowProfilesByTask: { "excel.analysis": cachedProfiles },
+    workflowProfileSelections: { "excel.analysis": "stable-active" },
+    workflowProfileLoadSequences: {}
   };
   let profileRequestCount = 0;
   let supersededRenderCount = 0;
-  const supersededLoad = loadFunction("loadWorkflowProfiles", {
+  const supersededLoad = loadFunction("loadWorkflowProfileForTask", {
     state: supersededLoadState,
-    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
     request() {
       profileRequestCount += 1;
       return profileRequestCount === 1 ? firstProfileRequest.promise : secondProfileRequest.promise;
@@ -1160,8 +1173,8 @@ async function runSettingsBehaviorTests() {
     renderWorkflowProfileManager() { supersededRenderCount += 1; },
     renderModelInterfaceState() { supersededRenderCount += 1; }
   });
-  const oldLoadPromise = supersededLoad();
-  const currentLoadPromise = supersededLoad();
+  const oldLoadPromise = supersededLoad("excel.analysis");
+  const currentLoadPromise = supersededLoad("excel.analysis");
   firstProfileRequest.reject(new Error("旧请求被新请求取代"));
   const oldLoadResult = await oldLoadPromise;
   assert.strictEqual(oldLoadResult.superseded, true);
@@ -1175,13 +1188,12 @@ async function runSettingsBehaviorTests() {
     configRefreshRequestId: 0,
     modelInterfaceDetectable: false,
     modelInterfaceConfigDetectable: true,
-    workflowProfiles: cachedProfiles,
-    workflowProfileSelection: "stable-backup",
-    workflowProfileLoadSequence: 0
+    workflowProfilesByTask: { "excel.analysis": cachedProfiles },
+    workflowProfileSelections: { "excel.analysis": "stable-backup" },
+    workflowProfileLoadSequences: {}
   };
-  const failedLoad = loadFunction("loadWorkflowProfiles", {
+  const failedLoad = loadFunction("loadWorkflowProfileForTask", {
     state: loadState,
-    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
     request() { return Promise.reject(new Error("临时读取失败")); },
     describeFetchError(error) { return error.message; },
     emptyWorkflowProfileData() { return { taskType: "excel.analysis", activeProfileId: "", profileCount: 0, profiles: [] }; },
@@ -1190,24 +1202,23 @@ async function runSettingsBehaviorTests() {
     renderWorkflowProfileManager() {},
     renderModelInterfaceState() {}
   });
-  const failedLoadResult = await failedLoad();
+  const failedLoadResult = await failedLoad("excel.analysis");
   assert.strictEqual(failedLoadResult.failed, true);
-  assert.strictEqual(loadState.workflowProfiles.activeProfileId, "stable-active");
-  assert.deepStrictEqual(loadState.workflowProfiles.profiles, cachedProfiles.profiles);
-  assert.strictEqual(loadState.workflowProfileSelection, "stable-backup");
-  assert.strictEqual(loadState.workflowProfiles.loadError, "临时读取失败");
+  assert.strictEqual(loadState.workflowProfilesByTask["excel.analysis"].activeProfileId, "stable-active");
+  assert.deepStrictEqual(loadState.workflowProfilesByTask["excel.analysis"].profiles, cachedProfiles.profiles);
+  assert.strictEqual(loadState.workflowProfileSelections["excel.analysis"], "stable-backup");
+  assert.strictEqual(loadState.workflowProfilesByTask["excel.analysis"].loadError, "临时读取失败");
 
   const restoredState = {
     configRefreshRequestId: 0,
     modelInterfaceDetectable: false,
     modelInterfaceConfigDetectable: true,
-    workflowProfiles: cachedProfiles,
-    workflowProfileSelection: "stable-backup",
-    workflowProfileLoadSequence: 0
+    workflowProfilesByTask: { "excel.analysis": cachedProfiles },
+    workflowProfileSelections: { "excel.analysis": "stable-backup" },
+    workflowProfileLoadSequences: {}
   };
-  const restoredLoad = loadFunction("loadWorkflowProfiles", {
+  const restoredLoad = loadFunction("loadWorkflowProfileForTask", {
     state: restoredState,
-    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
     request() { return Promise.resolve({ data: cachedProfiles }); },
     describeFetchError(error) { return error.message; },
     emptyWorkflowProfileData() { return { taskType: "excel.analysis", activeProfileId: "", profileCount: 0, profiles: [] }; },
@@ -1216,8 +1227,35 @@ async function runSettingsBehaviorTests() {
     renderWorkflowProfileManager() {},
     renderModelInterfaceState() {}
   });
-  await restoredLoad();
-  assert.strictEqual(restoredState.modelInterfaceDetectable, true);
+  await restoredLoad("excel.analysis");
+  assert.strictEqual(restoredState.modelInterfaceDetectable, false);
+
+  const formulaProfileFailure = deferred();
+  const analysisProfileSuccess = deferred();
+  const aggregateState = {
+    modelInterfaceDetectable: true,
+    modelInterfaceConfigDetectable: true
+  };
+  const aggregateLoad = loadFunction("loadWorkflowProfiles", {
+    state: aggregateState,
+    TASK_API_KEY_DEFS: [
+      { taskType: "excel.analysis" },
+      { taskType: "excel.formula_assistant" }
+    ],
+    loadWorkflowProfileForTask(taskType) {
+      return taskType === "excel.analysis"
+        ? analysisProfileSuccess.promise
+        : formulaProfileFailure.promise;
+    },
+    renderModelInterfaceState() {}
+  });
+  const aggregatePromise = aggregateLoad();
+  formulaProfileFailure.resolve({ failed: true });
+  await Promise.resolve();
+  analysisProfileSuccess.resolve({ taskType: "excel.analysis" });
+  const aggregateResult = await aggregatePromise;
+  assert.strictEqual(aggregateResult.failed, true);
+  assert.strictEqual(aggregateState.modelInterfaceDetectable, false);
 
   const reducedCalls = [];
   loadFunction("scrollWorkflowTaskTabIntoView", {

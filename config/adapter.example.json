@@ -15,6 +15,7 @@
     "word.document_review": "word_document_review",
     "word.format_review": "word_format_review",
     "excel.analysis": "excel_analysis",
+    "excel.formula_assistant": "excel_formula_assistant",
     "ppt.slide_assistant": "ppt_slide_assistant"
   },
   "workflowProfiles": {},

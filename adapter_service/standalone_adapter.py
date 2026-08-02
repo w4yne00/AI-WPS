@@ -19,6 +19,8 @@ from app.core.models import (
     DocumentReviewResponseData,
     ExcelAnalysisRequest,
     ExcelAnalysisResponseData,
+    ExcelFormulaAssistantRequest,
+    ExcelFormulaAssistantResponseData,
     FormatReviewResponseData,
     FormatReviewSummary,
     PptDocumentFileUploadRequest,
@@ -37,6 +39,7 @@ from app.services.provider_client import (
 )
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
 from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.writing_policy.imports import (
     DEFAULT_IMPORT_PREVIEW_STORE,
@@ -142,6 +145,7 @@ _WRITING_POLICY_STATIC_ROUTE_METHODS = {
 }
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
+EXCEL_FORMULA_ASSISTANT_JOB_STORE = ExcelFormulaAssistantJobStore()
 PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
@@ -165,6 +169,12 @@ def parse_excel_request(payload):
     if hasattr(ExcelAnalysisRequest, "model_validate"):
         return ExcelAnalysisRequest.model_validate(payload)
     return ExcelAnalysisRequest.parse_obj(payload)
+
+
+def parse_excel_formula_request(payload):
+    if hasattr(ExcelFormulaAssistantRequest, "model_validate"):
+        return ExcelFormulaAssistantRequest.model_validate(payload)
+    return ExcelFormulaAssistantRequest.parse_obj(payload)
 
 
 def parse_ppt_request(payload):
@@ -279,6 +289,31 @@ def excel_analysis_missing_envelope(job_id, interrupted=False):
     )
 
 
+def excel_formula_missing_envelope(job_id, interrupted=False):
+    if interrupted:
+        message = "公式助手任务不存在，可能因 adapter 重启而中断，请重新提交。"
+        data = {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        code = "EXCEL_FORMULA_JOB_INTERRUPTED"
+    else:
+        message = "公式助手后台任务不存在或已过期。"
+        data = {"jobId": job_id, "status": "not_found"}
+        code = "EXCEL_FORMULA_JOB_NOT_FOUND"
+    return envelope(
+        job_id,
+        "excel.formula_assistant",
+        data,
+        success=False,
+        message=message,
+        errors=[{"code": code, "message": message}],
+    )
+
+
 def ppt_slide_job_missing_envelope(job_id, interrupted=False):
     if interrupted:
         message = "智能总结任务不存在，可能因 adapter 重启而中断，请重新提交总结。"
@@ -350,6 +385,21 @@ def excel_analysis_job_payload(job):
             result = ExcelAnalysisResponseData.model_validate(data["result"]).model_dump(by_alias=True)
         else:
             result = ExcelAnalysisResponseData(**data["result"]).dict(by_alias=True)
+        data["result"] = result
+    return data
+
+
+def excel_formula_job_payload(job):
+    data = dict(job)
+    if data.get("result"):
+        if hasattr(ExcelFormulaAssistantResponseData, "model_validate"):
+            result = ExcelFormulaAssistantResponseData.model_validate(
+                data["result"]
+            ).model_dump(by_alias=True)
+        else:
+            result = ExcelFormulaAssistantResponseData(
+                **data["result"]
+            ).dict(by_alias=True)
         data["result"] = result
     return data
 
@@ -1391,6 +1441,32 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope(job.get("traceId", job_id), "excel.analysis", excel_analysis_job_payload(job), message=job["status"]))
             return
 
+        if path.startswith("/excel/formula-assistant/jobs/"):
+            job_id = unquote(path.rsplit("/", 1)[-1])
+            job = EXCEL_FORMULA_ASSISTANT_JOB_STORE.get(job_id)
+            if not job:
+                self._write(
+                    404,
+                    excel_formula_missing_envelope(
+                        job_id,
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "excel.formula_assistant",
+                    excel_formula_job_payload(job),
+                    message=job["status"],
+                ),
+            )
+            return
+
         if path.startswith("/ppt/slide-assistant/jobs/"):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = PPT_SLIDE_ASSISTANT_JOB_STORE.get(job_id)
@@ -1720,6 +1796,58 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope(trace_id, "excel.analysis", excel_analysis_job_payload(job), message="accepted"))
             return
 
+        if path == "/excel/formula-assistant/jobs":
+            trace_id = new_trace_id("standalone-excel-formula")
+            try:
+                request = parse_excel_formula_request(payload)
+                job = EXCEL_FORMULA_ASSISTANT_JOB_STORE.start(
+                    request, trace_id=trace_id
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "excel.formula_assistant",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                raw_errors = error.errors() if hasattr(error, "errors") else []
+                validation_errors = [
+                    {
+                        "loc": ".".join(
+                            str(part) for part in item.get("loc", [])
+                        ),
+                        "type": str(item.get("type", "")),
+                        "message": str(item.get("msg", ""))[:160],
+                    }
+                    for item in raw_errors[:8]
+                ]
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        trace_id,
+                        "excel.formula_assistant",
+                        validation_errors,
+                        error_count=len(raw_errors),
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "excel.formula_assistant",
+                    excel_formula_job_payload(job),
+                    message="accepted",
+                ),
+            )
+            return
+
         if path == "/ppt/slide-assistant/jobs":
             trace_id = new_trace_id("standalone-ppt-slide-assistant")
             try:
@@ -1978,6 +2106,46 @@ class Handler(BaseHTTPRequestHandler):
                     job.get("traceId", job_id),
                     "excel.analysis",
                     excel_analysis_job_payload(job),
+                    message="cancelled",
+                ),
+            )
+            return
+
+        excel_formula_prefix = "/excel/formula-assistant/jobs/"
+        if path.startswith(excel_formula_prefix):
+            job_id = unquote(path[len(excel_formula_prefix):]).strip("/")
+            try:
+                job = EXCEL_FORMULA_ASSISTANT_JOB_STORE.cancel(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "excel.formula_assistant",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            if not job:
+                self._write(
+                    404,
+                    excel_formula_missing_envelope(
+                        job_id,
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "excel.formula_assistant",
+                    excel_formula_job_payload(job),
                     message="cancelled",
                 ),
             )

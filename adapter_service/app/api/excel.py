@@ -2,14 +2,23 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.core.logging import get_logger
-from app.core.models import ExcelAnalysisRequest, ExcelAnalysisResponseData
+from app.core.models import (
+    ExcelAnalysisRequest,
+    ExcelAnalysisResponseData,
+    ExcelFormulaAssistantRequest,
+    ExcelFormulaAssistantResponseData,
+)
 from app.core.tracing import new_trace_id
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
+from app.services.excel.formula_assistant import ExcelFormulaAssistant
+from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
 
 router = APIRouter()
 excel_analyzer = ExcelAnalyzer()
 excel_analysis_jobs = ExcelAnalysisJobStore(excel_analyzer)
+excel_formula_assistant = ExcelFormulaAssistant()
+excel_formula_assistant_jobs = ExcelFormulaAssistantJobStore(excel_formula_assistant)
 logger = get_logger(__name__)
 
 
@@ -43,6 +52,43 @@ def _missing_excel_analysis_response(
             "success": False,
             "traceId": job_id,
             "taskType": "excel.analysis",
+            "message": message,
+            "data": data,
+            "errors": [{"code": code, "message": message}],
+        },
+    )
+
+
+def _missing_excel_formula_response(
+    job_id: str, interrupted: bool = False
+) -> JSONResponse:
+    message = (
+        "公式助手任务不存在，可能因 adapter 重启而中断，请重新提交。"
+        if interrupted
+        else "公式助手后台任务不存在或已过期。"
+    )
+    code = (
+        "EXCEL_FORMULA_JOB_INTERRUPTED"
+        if interrupted
+        else "EXCEL_FORMULA_JOB_NOT_FOUND"
+    )
+    data = (
+        {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        if interrupted
+        else {"jobId": job_id, "status": "not_found"}
+    )
+    return JSONResponse(
+        status_code=404,
+        content={
+            "success": False,
+            "traceId": job_id,
+            "taskType": "excel.formula_assistant",
             "message": message,
             "data": data,
             "errors": [{"code": code, "message": message}],
@@ -113,6 +159,62 @@ def cancel_excel_analysis_job(job_id: str, resume: bool = False):
         "success": True,
         "traceId": job.get("traceId", job_id),
         "taskType": "excel.analysis",
+        "message": "cancelled",
+        "data": job,
+        "errors": [],
+    }
+
+
+@router.post("/excel/formula-assistant/jobs")
+def start_excel_formula_job(request: ExcelFormulaAssistantRequest) -> dict:
+    trace_id = new_trace_id("excel-formula")
+    job = excel_formula_assistant_jobs.start(request, trace_id=trace_id)
+    logger.info(
+        "traceId=%s task=excel.formula_assistant jobStatus=%s",
+        trace_id,
+        job["status"],
+    )
+    return {
+        "success": True,
+        "traceId": trace_id,
+        "taskType": "excel.formula_assistant",
+        "message": "accepted",
+        "data": job,
+        "errors": [],
+    }
+
+
+@router.get("/excel/formula-assistant/jobs/{job_id}")
+def get_excel_formula_job(job_id: str, resume: bool = False):
+    job = excel_formula_assistant_jobs.get(job_id)
+    if not job:
+        return _missing_excel_formula_response(job_id, interrupted=resume)
+    if job.get("result"):
+        job = {
+            **job,
+            "result": ExcelFormulaAssistantResponseData(
+                **job["result"]
+            ).dict(by_alias=True),
+        }
+    return {
+        "success": True,
+        "traceId": job.get("traceId", job_id),
+        "taskType": "excel.formula_assistant",
+        "message": job["status"],
+        "data": job,
+        "errors": [],
+    }
+
+
+@router.delete("/excel/formula-assistant/jobs/{job_id}")
+def cancel_excel_formula_job(job_id: str, resume: bool = False):
+    job = excel_formula_assistant_jobs.cancel(job_id)
+    if not job:
+        return _missing_excel_formula_response(job_id, interrupted=resume)
+    return {
+        "success": True,
+        "traceId": job.get("traceId", job_id),
+        "taskType": "excel.formula_assistant",
         "message": "cancelled",
         "data": job,
         "errors": [],

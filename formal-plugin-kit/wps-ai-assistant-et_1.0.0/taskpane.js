@@ -11,6 +11,7 @@
   var EXCEL_ANALYSIS_POLL_MAX_ERRORS = 240;
   var EXCEL_ANALYSIS_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var EXCEL_ANALYSIS_ACTIVE_JOB_STORAGE_KEY = "ai-wps-excel-analysis-active-job-v1";
+  var EXCEL_FORMULA_ACTIVE_JOB_STORAGE_KEY = "ai-wps-excel-formula-active-job-v1";
   var EXCEL_ANALYSIS_PHASE_TEXT = {
     queued: "排队等待",
     preparing: "准备表格数据",
@@ -26,17 +27,29 @@
     maxCellTextLength: 120,
     maxTotalTextLength: 20000
   };
+  var EXCEL_FORMULA_EXTRACTION_OPTIONS = {
+    maxRows: 30,
+    maxColumns: 20,
+    maxCellTextLength: 120,
+    maxFormulaLength: 1000,
+    maxTotalTextLength: 20000
+  };
   var TASK_API_KEY_DEFS = [
-    { taskType: "excel.analysis", label: "智能分析" }
+    { taskType: "excel.analysis", label: "智能分析" },
+    { taskType: "excel.formula_assistant", label: "公式助手" }
   ];
   var EXCEL_WORKFLOW_TASK_TYPE = "excel.analysis";
+  var EXCEL_FORMULA_WORKFLOW_TASK_TYPE = "excel.formula_assistant";
   var state = {
     currentMode: "excelAnalysis",
+    lastTaskMode: "excelAnalysis",
     traceId: "",
     copyText: "",
     diagnosticsCopyText: "",
     analysisRequirement: "",
     analysisResult: null,
+    formulaRequirement: "",
+    formulaResult: null,
     resultViewMode: "preview",
     latestExcelPayload: null,
     providerBaseUrl: "",
@@ -53,9 +66,10 @@
     workflowHelpPinned: false,
     providerUrlEditorOpen: false,
     settingsProbeTraceId: "",
-    workflowProfiles: null,
-    workflowProfileSelection: "",
-    workflowProfileLoadSequence: 0,
+    workflowProfilesByTask: {},
+    workflowProfileSelections: {},
+    workflowProfileLoadSequences: {},
+    workflowTaskType: EXCEL_WORKFLOW_TASK_TYPE,
     workflowProfileMutationBusy: false,
     workflowEditor: { open: false, mode: "create", profileId: "", dirty: false },
     workflowDeleteCandidate: null,
@@ -64,7 +78,11 @@
     excelAnalysisJobId: "",
     excelAnalysisPollStartedAt: 0,
     excelAnalysisPollErrorCount: 0,
-    excelAnalysisResumeExpected: false
+    excelAnalysisResumeExpected: false,
+    excelFormulaJobId: "",
+    excelFormulaPollStartedAt: 0,
+    excelFormulaPollErrorCount: 0,
+    excelFormulaResumeExpected: false
   };
 
   function byId(id) {
@@ -215,8 +233,23 @@
     }
   }
 
+  function setExcelFormulaCancelVisible(visible, disabled) {
+    var button = byId("btn-cancel-excel-formula-job");
+    if (button) {
+      button.hidden = !visible;
+      button.disabled = Boolean(disabled);
+    }
+  }
+
   function setInterruptedRetryVisible(visible) {
     var button = byId("btn-resubmit-interrupted-job");
+    if (button) {
+      button.hidden = !visible;
+    }
+  }
+
+  function setFormulaInterruptedRetryVisible(visible) {
+    var button = byId("btn-resubmit-interrupted-formula-job");
     if (button) {
       button.hidden = !visible;
     }
@@ -230,6 +263,14 @@
   function buildExcelAnalysisClientJobId() {
     return [
       "client-excel-analysis",
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 10)
+    ].join("-");
+  }
+
+  function buildExcelFormulaClientJobId() {
+    return [
+      "client-excel-formula",
       Date.now().toString(36),
       Math.random().toString(36).slice(2, 10)
     ].join("-");
@@ -276,6 +317,52 @@
         }
       }
       window.localStorage.removeItem(EXCEL_ANALYSIS_ACTIVE_JOB_STORAGE_KEY);
+    } catch (error) {
+      // Storage cleanup must not block result rendering.
+    }
+  }
+
+  function loadExcelFormulaActiveJob() {
+    var raw;
+    try {
+      raw = window.localStorage && window.localStorage.getItem(EXCEL_FORMULA_ACTIVE_JOB_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveExcelFormulaActiveJob(job) {
+    if (!job || !job.jobId) {
+      return;
+    }
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(EXCEL_FORMULA_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+          jobId: job.jobId,
+          traceId: job.traceId || "",
+          startedAt: job.startedAt || Date.now(),
+          frontendVersion: FRONTEND_BUILD_VERSION
+        }));
+      }
+    } catch (error) {
+      // Some WPS WebView modes disable localStorage; in-memory polling remains available.
+    }
+  }
+
+  function clearExcelFormulaActiveJob(jobId) {
+    var active;
+    try {
+      if (!window.localStorage) {
+        return;
+      }
+      if (jobId) {
+        active = loadExcelFormulaActiveJob();
+        if (active && active.jobId && active.jobId !== jobId) {
+          return;
+        }
+      }
+      window.localStorage.removeItem(EXCEL_FORMULA_ACTIVE_JOB_STORAGE_KEY);
     } catch (error) {
       // Storage cleanup must not block result rendering.
     }
@@ -379,6 +466,20 @@
     }
     if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
       return "模型后台智能分析仍未按时返回，adapter 可能仍在等待或已返回超时诊断。";
+    }
+    if (message.indexOf("插件无法访问 http://127.0.0.1:18100") === 0) {
+      return "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败，将继续自动刷新。";
+    }
+    return message;
+  }
+
+  function describeExcelFormulaPollError(error) {
+    var message = describeFetchError(error);
+    if (error && error.name === "AbortError") {
+      return "状态查询请求超过 10 秒未返回，将继续自动刷新。";
+    }
+    if (error && error.adapterCode === "PROVIDER_TIMEOUT") {
+      return "模型后台公式生成仍未按时返回，adapter 可能仍在等待或已返回超时诊断。";
     }
     if (message.indexOf("插件无法访问 http://127.0.0.1:18100") === 0) {
       return "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败，将继续自动刷新。";
@@ -578,13 +679,17 @@
     var app = getEtApplication();
     var sheet = getActiveSheet(app);
     var selection = getSelectionRange(app);
-    var range = selection || getUsedRange(sheet);
+    var range = state.currentMode === "excelFormulaAssistant"
+      ? selection
+      : (selection || getUsedRange(sheet));
     var rows = range && (resolveValue(safeRead(range, "Rows"), range) || resolveValue(safeRead(range, "rows"), range));
     var columns = range && (resolveValue(safeRead(range, "Columns"), range) || resolveValue(safeRead(range, "columns"), range));
     var rowCount = getCollectionCount(rows);
     var columnCount = getCollectionCount(columns);
     if (!range || !rowCount || !columnCount) {
-      return "未检测到可分析范围";
+      return state.currentMode === "excelFormulaAssistant"
+        ? "未检测到明确选区"
+        : "未检测到可分析范围";
     }
     return [
       selection ? "选区" : "已用范围",
@@ -599,7 +704,7 @@
     try {
       setScopeLine(summarizeExcelRange());
     } catch (error) {
-      setScopeLine("未检测到可分析范围");
+      setScopeLine(state.currentMode === "excelFormulaAssistant" ? "未检测到明确选区" : "未检测到可分析范围");
     }
   }
 
@@ -667,6 +772,49 @@
     };
   }
 
+  function extractExcelFormulaRange() {
+    var app = getEtApplication();
+    var workbook = getActiveWorkbook(app);
+    var sheet = getActiveSheet(app);
+    var range = getSelectionRange(app);
+    var selection;
+
+    if (!helpers.extractExcelFormulaSelection) {
+      throw new Error("公式助手选区读取组件不可用，请重新打开任务窗格。");
+    }
+    selection = helpers.extractExcelFormulaSelection(range, {
+      sheetName: safeText(safeRead(sheet, "Name") || safeRead(sheet, "name"), "Sheet1") || "Sheet1",
+      maxRows: EXCEL_FORMULA_EXTRACTION_OPTIONS.maxRows,
+      maxColumns: EXCEL_FORMULA_EXTRACTION_OPTIONS.maxColumns,
+      maxCellTextLength: EXCEL_FORMULA_EXTRACTION_OPTIONS.maxCellTextLength,
+      maxFormulaLength: EXCEL_FORMULA_EXTRACTION_OPTIONS.maxFormulaLength,
+      maxTotalTextLength: EXCEL_FORMULA_EXTRACTION_OPTIONS.maxTotalTextLength
+    });
+    return {
+      workbookId: safeText(safeRead(workbook, "Name") || safeRead(workbook, "name"), "active-workbook") || "active-workbook",
+      scene: "excel",
+      selection: selection,
+      options: {
+        requirement: state.formulaRequirement
+      }
+    };
+  }
+
+  function summarizeExcelFormulaPayload(payload) {
+    var selection = (payload && payload.selection) || {};
+    var parts = [
+      "明确选区",
+      selection.sheetName || "当前工作表",
+      selection.address || "未识别地址",
+      (selection.rowCount || 0) + " 行",
+      (selection.columnCount || 0) + " 列"
+    ];
+    if (selection.truncated) {
+      parts.push("已截断为 30 行 × 20 列以内上下文");
+    }
+    return parts.join(" / ");
+  }
+
   function normalizeReportList(value) {
     if (Array.isArray(value)) {
       return value.map(function (item) {
@@ -720,6 +868,53 @@
     byId("result-view-switch").hidden = false;
     updateResultViewButtons();
     setResult(markdown, markdown);
+  }
+
+  function buildExcelFormulaMarkdown(data) {
+    var assumptions = normalizeReportList(data && data.assumptions);
+    var compatibilityNotes = normalizeReportList(data && data.compatibilityNotes);
+    return [
+      "## 主推荐公式",
+      (data && data.primaryFormula) ? "```\n" + data.primaryFormula + "\n```" : "未返回可复制的主公式。",
+      "",
+      "## 建议位置",
+      (data && data.suggestedTarget) || "请根据当前工作表结构人工确认。",
+      "",
+      "## 逻辑解释",
+      (data && data.explanation) || "未返回公式逻辑解释。",
+      "",
+      "## 引用假设",
+      assumptions.length ? assumptions.map(function (item) { return "- " + item; }).join("\n") : "- 未声明额外假设。",
+      "",
+      "## 兼容提示",
+      compatibilityNotes.length ? compatibilityNotes.map(function (item) { return "- " + item; }).join("\n") : "- 未返回额外兼容提示。",
+      "",
+      "> 公式助手只提供预览和复制，不会修改工作簿。"
+    ].join("\n");
+  }
+
+  function renderExcelFormulaResult(data) {
+    var result = data || {};
+    var markdown = buildExcelFormulaMarkdown(result);
+    state.formulaResult = result;
+    byId("result-view-switch").hidden = true;
+    byId("btn-copy-formula").hidden = !String(result.primaryFormula || "").trim();
+    setResult(markdown, markdown);
+  }
+
+  function startExcelFormulaWaitFeedback() {
+    var timers = [];
+    timers.push(setTimeout(function () {
+      setStatus("模型后台正在生成推荐公式，请继续等待...");
+      setPlainResult("公式助手请求已提交，模型后台正在处理。请保持 WPS 和 adapter 打开。");
+    }, 8000));
+    timers.push(setTimeout(function () {
+      setStatus("公式助手仍在等待模型后台返回...");
+      setPlainResult("公式助手仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复提交。");
+    }, 30000));
+    return function () {
+      timers.forEach(clearTimeout);
+    };
   }
 
   function startExcelAnalysisWaitFeedback() {
@@ -1086,6 +1281,310 @@
     }, 0);
   }
 
+  function scheduleExcelFormulaPoll(jobId, stopWaiting, delayMs) {
+    setTimeout(function () {
+      pollExcelFormulaJob(jobId, stopWaiting);
+    }, delayMs);
+  }
+
+  function isFatalExcelFormulaPollError(error) {
+    return error && (
+      error.adapterCode === "EXCEL_FORMULA_JOB_NOT_FOUND" ||
+      error.adapterCode === "EXCEL_FORMULA_JOB_INTERRUPTED" ||
+      error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
+      error.adapterCode === "EXCEL_FORMULA_AUTH_SNAPSHOT_FAILED" ||
+      error.adapterCode === "EXCEL_FORMULA_REQUIREMENT_REQUIRED" ||
+      error.adapterCode === "EXCEL_FORMULA_SELECTION_REQUIRED" ||
+      error.adapterCode === "REQUEST_VALIDATION_FAILED"
+    );
+  }
+
+  function renderExcelFormulaJobProgress(job, jobId) {
+    var phaseText = EXCEL_ANALYSIS_PHASE_TEXT[job.phase] || job.phase || "等待状态更新";
+    var lines = [];
+    if (job.status === "queued") {
+      setStatus("公式助手正在排队，当前位置：" + (job.queuePosition || 1) + "。");
+      lines.push("公式助手已进入共享任务队列。", "排队位置：" + (job.queuePosition || 1));
+    } else {
+      setStatus("公式助手正在处理，当前阶段：" + phaseText + "。");
+      lines.push(job.runningMessage || "adapter 正在生成推荐公式。", "当前阶段：" + phaseText);
+    }
+    lines.push(
+      "总耗时：" + Number(job.elapsedSeconds || 0) + " 秒",
+      "本阶段耗时：" + Number(job.phaseElapsedSeconds || 0) + " 秒",
+      "adapter 等待预算：" + (job.providerTimeoutSeconds || 1800) + " 秒",
+      "任务编号：" + jobId
+    );
+    setExcelFormulaCancelVisible(job.status === "queued" && job.canCancel, false);
+    setPlainResult(lines.join("\n"));
+  }
+
+  function finishCancelledExcelFormula(jobId, stopWaiting) {
+    clearExcelFormulaActiveJob(jobId);
+    state.excelFormulaJobId = "";
+    state.excelFormulaPollStartedAt = 0;
+    state.excelFormulaPollErrorCount = 0;
+    state.excelFormulaResumeExpected = false;
+    setExcelFormulaCancelVisible(false);
+    stopWaiting();
+    setStatus("公式助手任务已取消。");
+    setPlainResult("排队中的公式助手任务已取消，未调用模型后台。\n任务编号：" + jobId);
+  }
+
+  function cancelQueuedExcelFormulaJob() {
+    var jobId = state.excelFormulaJobId;
+    if (!jobId) {
+      return;
+    }
+    setExcelFormulaCancelVisible(true, true);
+    request("/excel/formula-assistant/jobs/" + encodeURIComponent(jobId), null, {
+      method: "DELETE",
+      timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      if (state.excelFormulaJobId === jobId && (body.data || {}).status === "cancelled") {
+        finishCancelledExcelFormula(jobId, function () {
+          setAnalysisBusy(false);
+        });
+      }
+    }).catch(function (error) {
+      if (state.excelFormulaJobId === jobId) {
+        setExcelFormulaCancelVisible(true, false);
+        setStatus("取消排队任务失败：" + describeExcelFormulaPollError(error));
+      }
+    });
+  }
+
+  function pollExcelFormulaJob(jobId, stopWaiting) {
+    if (!jobId || state.excelFormulaJobId !== jobId) {
+      return;
+    }
+    request(
+      "/excel/formula-assistant/jobs/" + encodeURIComponent(jobId) +
+        (state.excelFormulaResumeExpected ? "?resume=1" : ""),
+      null,
+      { timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS }
+    ).then(function (body) {
+      var job = body.data || {};
+      if (state.excelFormulaJobId !== jobId) {
+        return;
+      }
+      state.excelFormulaPollErrorCount = 0;
+      setTrace(body.traceId || job.traceId || jobId);
+      saveExcelFormulaActiveJob({
+        jobId: jobId,
+        traceId: body.traceId || job.traceId || "",
+        startedAt: state.excelFormulaPollStartedAt || Date.now()
+      });
+      if (job.status === "completed") {
+        clearExcelFormulaActiveJob(jobId);
+        state.excelFormulaJobId = "";
+        state.excelFormulaPollStartedAt = 0;
+        state.excelFormulaResumeExpected = false;
+        setExcelFormulaCancelVisible(false);
+        stopWaiting();
+        renderExcelFormulaResult(job.result || {});
+        setStatus("推荐公式已生成。");
+        refreshDiagnostics().then(function () {
+          setStatus("推荐公式已生成。");
+        });
+        return;
+      }
+      if (job.status === "cancelled") {
+        finishCancelledExcelFormula(jobId, stopWaiting);
+        return;
+      }
+      if (job.status === "failed") {
+        clearExcelFormulaActiveJob(jobId);
+        state.excelFormulaJobId = "";
+        state.excelFormulaPollStartedAt = 0;
+        state.excelFormulaResumeExpected = false;
+        setExcelFormulaCancelVisible(false);
+        stopWaiting();
+        setStatus("公式助手失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
+        setResult((job.error && job.error.message) || "后台任务执行失败。");
+        return;
+      }
+      renderExcelFormulaJobProgress(job, jobId);
+      scheduleExcelFormulaPoll(jobId, stopWaiting, EXCEL_ANALYSIS_POLL_INTERVAL_MS);
+    }).catch(function (error) {
+      var elapsed;
+      var withinRetryBudget;
+      var retryDelay;
+      var message;
+      if (state.excelFormulaJobId !== jobId) {
+        return;
+      }
+      message = describeExcelFormulaPollError(error);
+      state.excelFormulaPollErrorCount += 1;
+      elapsed = Date.now() - (state.excelFormulaPollStartedAt || Date.now());
+      if (error && error.adapterCode === "EXCEL_FORMULA_JOB_INTERRUPTED") {
+        clearExcelFormulaActiveJob(jobId);
+        state.excelFormulaJobId = "";
+        state.excelFormulaPollStartedAt = 0;
+        state.excelFormulaPollErrorCount = 0;
+        state.excelFormulaResumeExpected = false;
+        setExcelFormulaCancelVisible(false);
+        setFormulaInterruptedRetryVisible(true);
+        stopWaiting();
+        setStatus("adapter 已重启，原公式助手任务已中断，请重新提交。");
+        setPlainResult("adapter 已重启，原公式助手任务无法恢复，请重新提交计算需求。\n任务编号：" + jobId);
+        return;
+      }
+      if (!isFatalExcelFormulaPollError(error)) {
+        withinRetryBudget = (
+          state.excelFormulaPollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
+          elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
+        );
+        retryDelay = withinRetryBudget
+          ? EXCEL_ANALYSIS_POLL_ERROR_RETRY_DELAY_MS
+          : EXCEL_ANALYSIS_POLL_SLOW_RETRY_DELAY_MS;
+        saveExcelFormulaActiveJob({
+          jobId: jobId,
+          traceId: state.traceId || "",
+          startedAt: state.excelFormulaPollStartedAt || Date.now()
+        });
+        setStatus("公式助手状态查询暂时失败，正在继续恢复...");
+        setPlainResult([
+          "公式助手任务编号仍已保留，将继续自动刷新。",
+          "这不代表模型后台任务失败；请保持 WPS 和 adapter 打开。",
+          "任务编号：" + jobId,
+          "最近错误：" + message
+        ].join("\n"));
+        scheduleExcelFormulaPoll(jobId, stopWaiting, retryDelay);
+        return;
+      }
+      clearExcelFormulaActiveJob(jobId);
+      state.excelFormulaJobId = "";
+      state.excelFormulaPollStartedAt = 0;
+      state.excelFormulaPollErrorCount = 0;
+      stopWaiting();
+      setStatus("公式助手状态查询持续失败，请查看最近一次任务诊断。");
+      setResult(message);
+    });
+  }
+
+  function resumeExcelFormulaActiveJob() {
+    var active = loadExcelFormulaActiveJob();
+    if (!active || !active.jobId || state.currentMode !== "excelFormulaAssistant") {
+      return;
+    }
+    state.excelFormulaJobId = active.jobId;
+    state.excelFormulaPollStartedAt = active.startedAt || Date.now();
+    state.excelFormulaPollErrorCount = 0;
+    state.excelFormulaResumeExpected = true;
+    setFormulaInterruptedRetryVisible(false);
+    setAnalysisBusy(true);
+    setTrace(active.traceId || active.jobId);
+    setStatus("已恢复未完成的公式助手任务，正在查询模型后台结果...");
+    setPlainResult("检测到未完成的公式助手任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
+    pollExcelFormulaJob(active.jobId, function () {
+      setAnalysisBusy(false);
+    });
+  }
+
+  function runExcelFormulaAction() {
+    var stopWaiting;
+    var clientJobId;
+    var startedAt;
+    if (state.busy || state.workflowProfileMutationBusy) {
+      return;
+    }
+    state.formulaRequirement = safeText(byId("excel-formula-requirement").value);
+    if (!state.formulaRequirement) {
+      setStatus("请填写计算需求。");
+      setPlainResult("请说明需要计算的内容，再生成推荐公式。");
+      return;
+    }
+    setFormulaInterruptedRetryVisible(false);
+    setExcelFormulaCancelVisible(false);
+    setAnalysisBusy(true);
+    state.formulaResult = null;
+    byId("btn-copy-formula").hidden = true;
+    clearExcelFormulaActiveJob();
+    state.excelFormulaJobId = "";
+    state.excelFormulaPollStartedAt = 0;
+    state.excelFormulaPollErrorCount = 0;
+    state.excelFormulaResumeExpected = false;
+    byId("result-view-switch").hidden = true;
+    setStatus("正在读取明确选区...");
+    setPlainResult("公式助手正在读取明确选区，不会读取工作表已用范围。");
+
+    setTimeout(function () {
+      var payload;
+      try {
+        payload = extractExcelFormulaRange();
+        byId("excel-formula-range-summary").textContent = summarizeExcelFormulaPayload(payload);
+        setScopeLine(summarizeExcelFormulaPayload(payload));
+      } catch (error) {
+        setAnalysisBusy(false);
+        setStatus("读取公式上下文失败：" + error.message);
+        setPlainResult("读取公式上下文失败：" + error.message);
+        return;
+      }
+
+      setStatus("正在提交公式助手请求...");
+      setPlainResult("正在等待模型后台生成推荐公式。");
+      stopWaiting = startExcelFormulaWaitFeedback();
+      (function (stopFeedback) {
+        stopWaiting = function () {
+          stopFeedback();
+          setAnalysisBusy(false);
+        };
+      })(stopWaiting);
+      clientJobId = buildExcelFormulaClientJobId();
+      startedAt = Date.now();
+      payload.clientJobId = clientJobId;
+      state.excelFormulaJobId = clientJobId;
+      state.excelFormulaPollStartedAt = startedAt;
+      state.excelFormulaResumeExpected = true;
+      saveExcelFormulaActiveJob({ jobId: clientJobId, startedAt: startedAt });
+      request("/excel/formula-assistant/jobs", payload, {
+        timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
+      }).then(function (body) {
+        var job = body.data || {};
+        var jobId = job.jobId || clientJobId || body.traceId;
+        if (state.excelFormulaJobId !== clientJobId) {
+          return;
+        }
+        setTrace(body.traceId || job.traceId || jobId);
+        state.excelFormulaJobId = jobId;
+        saveExcelFormulaActiveJob({
+          jobId: jobId,
+          traceId: body.traceId || job.traceId || "",
+          startedAt: startedAt
+        });
+        if (job.status === "completed") {
+          clearExcelFormulaActiveJob(jobId);
+          state.excelFormulaJobId = "";
+          state.excelFormulaPollStartedAt = 0;
+          stopWaiting();
+          renderExcelFormulaResult(job.result || {});
+          setStatus("推荐公式已生成。");
+          return;
+        }
+        renderExcelFormulaJobProgress(job, jobId);
+        pollExcelFormulaJob(jobId, stopWaiting);
+      }).catch(function (error) {
+        var message = describeExcelFormulaPollError(error);
+        if (state.excelFormulaJobId !== clientJobId) {
+          return;
+        }
+        if (isFatalExcelFormulaPollError(error)) {
+          clearExcelFormulaActiveJob(clientJobId);
+          state.excelFormulaJobId = "";
+          state.excelFormulaPollStartedAt = 0;
+          stopWaiting();
+          setStatus("公式助手失败：" + message);
+          setResult(message);
+          return;
+        }
+        setStatus("公式助手提交响应未确认，正在按任务编号恢复状态查询...");
+        setPlainResult("任务可能已经提交，将按本地任务编号继续查询。\n任务编号：" + clientJobId + "\n最近错误：" + message);
+        pollExcelFormulaJob(clientJobId, stopWaiting);
+      });
+    }, 0);
+  }
+
   function fallbackCopy(text, feedback) {
     var textarea = document.createElement("textarea");
     var report = typeof feedback === "function" ? feedback : setStatus;
@@ -1119,6 +1618,27 @@
       return;
     }
     fallbackCopy(text);
+  }
+
+  function copyPrimaryFormula() {
+    var formula = String((state.formulaResult && state.formulaResult.primaryFormula) || "").trim();
+    if (!formula) {
+      setStatus("暂无可复制的主公式。");
+      return;
+    }
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(formula).then(function () {
+        setStatus("主公式已复制，工作簿未被修改。");
+      }).catch(function () {
+        fallbackCopy(formula, function () {
+          setStatus("主公式已复制，工作簿未被修改。");
+        });
+      });
+      return;
+    }
+    fallbackCopy(formula, function () {
+      setStatus("主公式已复制，工作簿未被修改。");
+    });
   }
 
   function setProviderLine(providerName) {
@@ -1156,11 +1676,13 @@
     var modelState;
     var badge = byId("provider-readiness-badge");
     var summary = byId("provider-summary-url");
-    profilesByTask[EXCEL_WORKFLOW_TASK_TYPE] = getWorkflowProfileData();
+    TASK_API_KEY_DEFS.forEach(function (definition) {
+      profilesByTask[definition.taskType] = getWorkflowProfileData(definition.taskType);
+    });
     modelState = helpers.deriveModelInterfaceState({
       detectable: detectable,
       providerBaseUrl: state.providerBaseUrl,
-      taskTypes: [EXCEL_WORKFLOW_TASK_TYPE],
+      taskTypes: TASK_API_KEY_DEFS.map(function (definition) { return definition.taskType; }),
       profilesByTask: profilesByTask
     });
     setNodeClassNameIfChanged(badge, "readiness-badge is-" + modelState.code);
@@ -1170,24 +1692,25 @@
     setNodeTextIfChanged(byId("diagnostics-summary"), modelState.label);
   }
 
-  function emptyWorkflowProfileData() {
+  function emptyWorkflowProfileData(taskType) {
     return {
-      taskType: EXCEL_WORKFLOW_TASK_TYPE,
+      taskType: taskType || state.workflowTaskType || EXCEL_WORKFLOW_TASK_TYPE,
       activeProfileId: "",
       profileCount: 0,
       profiles: []
     };
   }
 
-  function normalizeWorkflowProfileData(data) {
+  function normalizeWorkflowProfileData(data, taskType) {
     if (helpers.normalizeWorkflowProfileData) {
-      return helpers.normalizeWorkflowProfileData(data, EXCEL_WORKFLOW_TASK_TYPE);
+      return helpers.normalizeWorkflowProfileData(data, taskType);
     }
-    return data || emptyWorkflowProfileData();
+    return data || emptyWorkflowProfileData(taskType);
   }
 
-  function getWorkflowProfileData() {
-    return state.workflowProfiles || emptyWorkflowProfileData();
+  function getWorkflowProfileData(taskType) {
+    var targetTask = taskType || state.workflowTaskType || EXCEL_WORKFLOW_TASK_TYPE;
+    return state.workflowProfilesByTask[targetTask] || emptyWorkflowProfileData(targetTask);
   }
 
   function getActiveWorkflowProfileName(data) {
@@ -1197,32 +1720,30 @@
     return "尚未配置";
   }
 
-  function loadWorkflowProfiles(configRefreshRequestId, requestOptions) {
-    var requestSequence = ++state.workflowProfileLoadSequence;
-    var previousProfileData = state.workflowProfiles;
+  function loadWorkflowProfileForTask(taskType, configRefreshRequestId, requestOptions) {
+    var requestSequence = (state.workflowProfileLoadSequences[taskType] || 0) + 1;
+    var previousProfileData = state.workflowProfilesByTask[taskType];
+    state.workflowProfileLoadSequences[taskType] = requestSequence;
     return request(
-      "/provider/workflow-profiles?taskType=" + encodeURIComponent(EXCEL_WORKFLOW_TASK_TYPE),
+      "/provider/workflow-profiles?taskType=" + encodeURIComponent(taskType),
       null,
       requestOptions
     )
       .then(function (body) {
-        if (requestSequence !== state.workflowProfileLoadSequence ||
+        if (requestSequence !== state.workflowProfileLoadSequences[taskType] ||
             (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
           return { superseded: true };
         }
-        state.workflowProfiles = normalizeWorkflowProfileData(body.data || {});
-        state.workflowProfileSelection = state.workflowProfiles.activeProfileId || "";
-        if (!configRefreshRequestId) {
-          state.modelInterfaceDetectable = state.modelInterfaceConfigDetectable;
-        }
+        state.workflowProfilesByTask[taskType] = normalizeWorkflowProfileData(body.data || {}, taskType);
+        state.workflowProfileSelections[taskType] = state.workflowProfilesByTask[taskType].activeProfileId || "";
         renderWorkflowProfileStrip();
         renderWorkflowProfileManager();
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        return state.workflowProfiles;
+        return state.workflowProfilesByTask[taskType];
       })
       .catch(function (error) {
         var preservedProfileData;
-        if (requestSequence !== state.workflowProfileLoadSequence ||
+        if (requestSequence !== state.workflowProfileLoadSequences[taskType] ||
             (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId)) {
           return { superseded: true };
         }
@@ -1232,10 +1753,10 @@
             preservedProfileData[key] = previousProfileData[key];
           });
           preservedProfileData.loadError = describeFetchError(error);
-          state.workflowProfiles = preservedProfileData;
+          state.workflowProfilesByTask[taskType] = preservedProfileData;
         } else {
-          state.workflowProfiles = emptyWorkflowProfileData();
-          state.workflowProfiles.loadError = describeFetchError(error);
+          state.workflowProfilesByTask[taskType] = emptyWorkflowProfileData(taskType);
+          state.workflowProfilesByTask[taskType].loadError = describeFetchError(error);
         }
         state.modelInterfaceDetectable = false;
         renderWorkflowProfileStrip();
@@ -1245,16 +1766,46 @@
       });
   }
 
+  function loadWorkflowProfiles(configRefreshRequestId, requestOptions) {
+    return Promise.all(TASK_API_KEY_DEFS.map(function (definition) {
+      return loadWorkflowProfileForTask(
+        definition.taskType,
+        configRefreshRequestId,
+        requestOptions
+      );
+    })).then(function (results) {
+      if (results.some(function (item) { return item && item.superseded; })) {
+        return { superseded: true, results: results };
+      }
+      if (results.some(function (item) { return item && item.failed; })) {
+        state.modelInterfaceDetectable = false;
+        renderModelInterfaceState(state.modelInterfaceDetectable);
+        return { failed: true, results: results };
+      }
+      state.modelInterfaceDetectable = state.modelInterfaceConfigDetectable;
+      renderModelInterfaceState(state.modelInterfaceDetectable);
+      return { results: results };
+    });
+  }
+
+  function getTaskPageWorkflowType() {
+    return state.currentMode === "excelFormulaAssistant"
+      ? EXCEL_FORMULA_WORKFLOW_TASK_TYPE
+      : EXCEL_WORKFLOW_TASK_TYPE;
+  }
+
   function renderWorkflowProfileStrip() {
     var strip = byId("workflow-profile-strip");
     var select = byId("workflow-profile-select");
     var feedback = byId("workflow-switch-feedback");
-    var data = getWorkflowProfileData();
-    var selectedId = state.workflowProfileSelection || data.activeProfileId || "";
+    var taskType = getTaskPageWorkflowType();
+    var data = getWorkflowProfileData(taskType);
+    var selectedId = state.workflowProfileSelections[taskType] || data.activeProfileId || "";
     if (!strip || !select || !feedback) {
       return;
     }
-    strip.hidden = state.currentMode !== "excelAnalysis";
+    strip.hidden = state.currentMode === "settings";
+    select.setAttribute("aria-label", taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE ? "选择公式助手工作流" : "选择智能分析工作流");
     select.innerHTML = "";
     if (!data.profiles.length) {
       var emptyOption = document.createElement("option");
@@ -1297,7 +1848,7 @@
 
   function renderWorkflowProfileManager() {
     var manager = byId("workflow-profile-manager");
-    var data = getWorkflowProfileData();
+    var data = getWorkflowProfileData(state.workflowTaskType);
     var rows = [];
     var summary = byId("workflow-manager-summary");
     if (!manager) {
@@ -1351,7 +1902,7 @@
     }
     buttons = tabs.querySelectorAll("[data-workflow-task-tab]");
     for (index = 0; index < buttons.length; index += 1) {
-      var active = buttons[index].getAttribute("data-workflow-task-tab") === EXCEL_WORKFLOW_TASK_TYPE;
+      var active = buttons[index].getAttribute("data-workflow-task-tab") === state.workflowTaskType;
       buttons[index].classList.toggle("active", active);
       buttons[index].setAttribute("aria-selected", active ? "true" : "false");
       buttons[index].tabIndex = active ? 0 : -1;
@@ -1387,10 +1938,17 @@
   }
 
   function handleWorkflowTaskTabClick(event) {
-    if (event.target.getAttribute("data-workflow-task-tab") === EXCEL_WORKFLOW_TASK_TYPE) {
-      renderWorkflowTaskTabs();
-      scrollWorkflowTaskTabIntoView(event.target);
+    var taskType = event.target.getAttribute("data-workflow-task-tab");
+    if (taskType !== EXCEL_WORKFLOW_TASK_TYPE && taskType !== EXCEL_FORMULA_WORKFLOW_TASK_TYPE) {
+      return;
     }
+    state.workflowTaskType = taskType;
+    renderWorkflowTaskTabs();
+    renderWorkflowProfileManager();
+    if (!state.workflowProfilesByTask[taskType]) {
+      loadWorkflowProfileForTask(taskType);
+    }
+    scrollWorkflowTaskTabIntoView(event.target);
   }
 
   function handleWorkflowTaskTabKeydown(event) {
@@ -1456,8 +2014,8 @@
     setStatus(prefix + "：" + describeFetchError(error));
   }
 
-  function findWorkflowProfile(profileId) {
-    var profiles = getWorkflowProfileData().profiles;
+  function findWorkflowProfile(profileId, taskType) {
+    var profiles = getWorkflowProfileData(taskType || state.workflowTaskType).profiles;
     var index;
     for (index = 0; index < profiles.length; index += 1) {
       if (profiles[index].id === profileId) {
@@ -1481,8 +2039,8 @@
   }
 
   function openWorkflowEditor(mode, profileId) {
-    var data = getWorkflowProfileData();
-    var profile = mode === "edit" ? findWorkflowProfile(profileId) : null;
+    var data = getWorkflowProfileData(state.workflowTaskType);
+    var profile = mode === "edit" ? findWorkflowProfile(profileId, state.workflowTaskType) : null;
     var activateChecked;
     if (mode === "edit" && !profile) {
       setStatus("未找到要编辑的工作流，请刷新后重试。");
@@ -1553,7 +2111,7 @@
   }
 
   function saveWorkflowEditor() {
-    var data = getWorkflowProfileData();
+    var data = getWorkflowProfileData(state.workflowTaskType);
     var draft = {
       name: byId("workflow-editor-name").value,
       note: byId("workflow-editor-note").value,
@@ -1571,7 +2129,7 @@
     setWorkflowMutationBusy(true);
     if (state.workflowEditor.mode === "create") {
       request("/provider/workflow-profiles", {
-        taskType: EXCEL_WORKFLOW_TASK_TYPE,
+        taskType: state.workflowTaskType,
         name: checked.name,
         note: checked.note,
         apiKey: checked.apiKey,
@@ -1604,49 +2162,50 @@
     });
   }
 
-  function activateWorkflowProfile(profileId, previousProfileId) {
-    var profile = findWorkflowProfile(profileId);
-    previousProfileId = previousProfileId || getWorkflowProfileData().activeProfileId || "";
+  function activateWorkflowProfile(profileId, previousProfileId, taskType) {
+    var targetTask = taskType || getTaskPageWorkflowType();
+    var profile = findWorkflowProfile(profileId, targetTask);
+    previousProfileId = previousProfileId || getWorkflowProfileData(targetTask).activeProfileId || "";
     if (!profileId || profileId === previousProfileId) {
-      state.workflowProfileSelection = previousProfileId;
+      state.workflowProfileSelections[targetTask] = previousProfileId;
       renderWorkflowProfileStrip();
       return;
     }
     if (!profile || !profile.keyConfigured || state.busy || state.workflowProfileMutationBusy) {
-      state.workflowProfileSelection = previousProfileId;
+      state.workflowProfileSelections[targetTask] = previousProfileId;
       renderWorkflowProfileStrip();
       setStatus(!profile || !profile.keyConfigured ? "该工作流未配置 Key，不能切换。" : "当前正忙，请稍后切换工作流。");
       setNodeTextIfChanged(
         byId("workflow-switch-feedback"),
-        "当前：" + getActiveWorkflowProfileName(getWorkflowProfileData())
+        "当前：" + getActiveWorkflowProfileName(getWorkflowProfileData(targetTask))
       );
       return;
     }
-    state.workflowProfileSelection = profileId;
-    state.workflowProfileLoadSequence += 1;
+    state.workflowProfileSelections[targetTask] = profileId;
+    state.workflowProfileLoadSequences[targetTask] = (state.workflowProfileLoadSequences[targetTask] || 0) + 1;
     setWorkflowMutationBusy(true);
     request("/provider/workflow-profiles/" + encodeURIComponent(profileId) + "/activate", {})
       .then(function () {
-        return loadWorkflowProfiles();
+        return loadWorkflowProfileForTask(targetTask);
       }).then(function () {
-        state.workflowProfileSelection = getWorkflowProfileData().activeProfileId;
+        state.workflowProfileSelections[targetTask] = getWorkflowProfileData(targetTask).activeProfileId;
         setWorkflowMutationBusy(false);
         renderModelInterfaceState(state.modelInterfaceDetectable);
         setStatus("工作流已切换，从下一次任务开始生效。");
       }).catch(function (error) {
-        state.workflowProfileSelection = previousProfileId;
+        state.workflowProfileSelections[targetTask] = previousProfileId;
         setWorkflowMutationBusy(false);
         setStatus("切换工作流失败：" + describeFetchError(error));
         setNodeTextIfChanged(
           byId("workflow-switch-feedback"),
-          "切换失败，当前：" + getActiveWorkflowProfileName(getWorkflowProfileData())
+          "切换失败，当前：" + getActiveWorkflowProfileName(getWorkflowProfileData(targetTask))
         );
       });
   }
 
   function showWorkflowDeleteDialog(profileId) {
-    var data = getWorkflowProfileData();
-    var profile = findWorkflowProfile(profileId);
+    var data = getWorkflowProfileData(state.workflowTaskType);
+    var profile = findWorkflowProfile(profileId, state.workflowTaskType);
     if (!profile) {
       return;
     }
@@ -1666,7 +2225,7 @@
 
   function confirmWorkflowProfileDelete() {
     var candidate = state.workflowDeleteCandidate;
-    var activeProfileId = getWorkflowProfileData().activeProfileId;
+    var activeProfileId = getWorkflowProfileData(state.workflowTaskType).activeProfileId;
     if (!candidate || state.workflowProfileMutationBusy) {
       return;
     }
@@ -1695,7 +2254,11 @@
     if (action === "retry") {
       loadWorkflowProfiles();
     } else if (action === "activate") {
-      activateWorkflowProfile(profileId, getWorkflowProfileData().activeProfileId);
+      activateWorkflowProfile(
+        profileId,
+        getWorkflowProfileData(state.workflowTaskType).activeProfileId,
+        state.workflowTaskType
+      );
     } else if (action === "edit") {
       openWorkflowEditor("edit", profileId);
     } else if (action === "delete") {
@@ -2087,17 +2650,40 @@
   function getInitialMode() {
     var match = /[?&]mode=([^&]+)/.exec(window.location.search || "");
     var mode = match ? decodeURIComponent(match[1]) : "excelAnalysis";
+    if (mode === "excelFormulaAssistant") {
+      return "excelFormulaAssistant";
+    }
     return mode === "settings" ? "settings" : "excelAnalysis";
   }
 
   function switchMode(mode) {
     var settingsMode = mode === "settings";
-    state.currentMode = settingsMode ? "settings" : "excelAnalysis";
+    var formulaMode = mode === "excelFormulaAssistant";
+    var taskTitle = formulaMode ? "公式助手" : "智能分析";
+    if (settingsMode && state.currentMode !== "settings") {
+      state.lastTaskMode = state.currentMode;
+    }
+    state.currentMode = settingsMode ? "settings" : (formulaMode ? "excelFormulaAssistant" : "excelAnalysis");
+    if (!settingsMode) {
+      state.lastTaskMode = state.currentMode;
+      state.workflowTaskType = formulaMode
+        ? EXCEL_FORMULA_WORKFLOW_TASK_TYPE
+        : EXCEL_WORKFLOW_TASK_TYPE;
+    }
     document.body.setAttribute("data-task-mode", state.currentMode);
-    byId("task-title").textContent = settingsMode ? "设置" : "智能分析";
+    byId("task-title").textContent = settingsMode ? "设置" : taskTitle;
     byId("btn-open-settings").classList.toggle("is-back", settingsMode);
-    byId("btn-open-settings").setAttribute("title", settingsMode ? "返回智能分析" : "打开设置");
-    byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回智能分析" : "打开设置");
+    byId("btn-open-settings").setAttribute("title", settingsMode ? "返回" + (state.lastTaskMode === "excelFormulaAssistant" ? "公式助手" : "智能分析") : "打开设置");
+    byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回" + (state.lastTaskMode === "excelFormulaAssistant" ? "公式助手" : "智能分析") : "打开设置");
+    byId("excel-analysis-options").hidden = settingsMode || formulaMode;
+    byId("excel-formula-options").hidden = settingsMode || !formulaMode;
+    byId("btn-run-primary").textContent = formulaMode ? "生成推荐公式" : "生成分析报告";
+    byId("btn-copy-formula").hidden = !formulaMode || !String((state.formulaResult && state.formulaResult.primaryFormula) || "").trim();
+    if (formulaMode) {
+      byId("result-view-switch").hidden = true;
+    } else if (!settingsMode && state.analysisResult) {
+      byId("result-view-switch").hidden = false;
+    }
     if (settingsMode) {
       byId("diagnostics-disclosure").open = false;
     }
@@ -2109,7 +2695,11 @@
     renderWorkflowProfileManager();
     renderWorkflowTaskTabs();
     if (!settingsMode) {
-      resumeExcelAnalysisActiveJob();
+      if (formulaMode) {
+        resumeExcelFormulaActiveJob();
+      } else {
+        resumeExcelAnalysisActiveJob();
+      }
       loadWorkflowProfiles();
     }
   }
@@ -2122,13 +2712,23 @@
       if (state.currentMode === "settings" && state.workflowEditor.open && !closeWorkflowEditor(false)) {
         return;
       }
-      switchMode(state.currentMode === "settings" ? "excelAnalysis" : "settings");
+      switchMode(state.currentMode === "settings" ? state.lastTaskMode : "settings");
     });
     byId("excel-analysis-requirement").addEventListener("input", function (event) {
       state.analysisRequirement = event.target.value;
     });
-    byId("btn-run-primary").addEventListener("click", runExcelAnalysisAction);
+    byId("excel-formula-requirement").addEventListener("input", function (event) {
+      state.formulaRequirement = event.target.value;
+    });
+    byId("btn-run-primary").addEventListener("click", function () {
+      if (state.currentMode === "excelFormulaAssistant") {
+        runExcelFormulaAction();
+      } else {
+        runExcelAnalysisAction();
+      }
+    });
     byId("btn-copy-result").addEventListener("click", copyResult);
+    byId("btn-copy-formula").addEventListener("click", copyPrimaryFormula);
     byId("btn-result-preview").addEventListener("click", function () {
       setResultViewMode("preview");
     });
@@ -2141,7 +2741,9 @@
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
     byId("btn-cancel-excel-analysis-job").addEventListener("click", cancelQueuedExcelAnalysisJob);
+    byId("btn-cancel-excel-formula-job").addEventListener("click", cancelQueuedExcelFormulaJob);
     byId("btn-resubmit-interrupted-job").addEventListener("click", runExcelAnalysisAction);
+    byId("btn-resubmit-interrupted-formula-job").addEventListener("click", runExcelFormulaAction);
     byId("diagnostics-disclosure").addEventListener("toggle", handleDiagnosticsDisclosureToggle);
     byId("workflow-task-tabs").addEventListener("click", handleWorkflowTaskTabClick);
     byId("workflow-task-tabs").addEventListener("keydown", handleWorkflowTaskTabKeydown);
@@ -2179,7 +2781,12 @@
     document.addEventListener("visibilitychange", syncSettingsRefreshController);
     document.addEventListener("visibilitychange", syncScopeWatcher);
     byId("workflow-profile-select").addEventListener("change", function (event) {
-      activateWorkflowProfile(event.target.value, getWorkflowProfileData().activeProfileId);
+      var taskType = getTaskPageWorkflowType();
+      activateWorkflowProfile(
+        event.target.value,
+        getWorkflowProfileData(taskType).activeProfileId,
+        taskType
+      );
     });
     byId("btn-new-workflow-profile").addEventListener("click", function () {
       openWorkflowEditor("create", "");

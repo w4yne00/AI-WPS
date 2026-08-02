@@ -12,7 +12,7 @@ from urllib import error, request as urllib_request
 from app.core.config import AppSettings, TaskRoute, load_settings
 from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.logging import get_logger
-from app.core.models import ExcelAnalysisRequest
+from app.core.models import ExcelAnalysisRequest, ExcelFormulaAssistantRequest
 from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
 
 
@@ -24,6 +24,7 @@ _LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
 FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS = 60
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
+EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
@@ -281,6 +282,57 @@ def build_excel_analysis_prompt(request: ExcelAnalysisRequest) -> str:
             "5. plainText 为可直接复制到 Word 或 PPT 的中文汇报段落。",
             "6. 如果数据已截断，必须说明分析基于有限样本。",
             "7. 不要输出公式，不要声称已经修改单元格，不要要求前端自动写回 Excel。",
+        ]
+    )
+
+
+def build_excel_formula_prompt(request: ExcelFormulaAssistantRequest) -> str:
+    selection = request.selection
+    cell_lines = []
+    for row in selection.cells:
+        items = []
+        for cell in row:
+            item = "{0}: text={1}; type={2}".format(
+                cell.address or "未识别地址",
+                cell.text,
+                cell.value_type,
+            )
+            if cell.formula:
+                item += "; formula={0}".format(cell.formula)
+            items.append(item)
+        if items:
+            cell_lines.append(" | ".join(items))
+    return "\n".join(
+        [
+            "你是企业表格公式生成助手。",
+            "只根据用户明确框选的 WPS 表格上下文和计算需求推荐公式。",
+            "",
+            "工作簿：{0}".format(request.workbook_id),
+            "工作表：{0}".format(selection.sheet_name or "未命名工作表"),
+            "明确选区：{0}".format(selection.address),
+            "原始行列：{0} 行 × {1} 列".format(
+                selection.row_count,
+                selection.column_count,
+            ),
+            "上下文已截断：{0}".format("是" if selection.truncated else "否"),
+            "表头：{0}".format(", ".join(selection.headers) or "未识别到表头"),
+            "",
+            "用户计算需求：",
+            request.options.requirement,
+            "",
+            "单元格上下文：",
+            "\n".join(cell_lines) or "无可用单元格上下文。",
+            "",
+            "输出要求：",
+            "1. 只输出一个 JSON 对象，不输出深度思考过程。",
+            "2. 字段固定为 primaryFormula、suggestedTarget、explanation、assumptions、compatibilityNotes、copyText。",
+            "3. primaryFormula 必须是一个以 = 开头的主推荐公式；不要返回多个并列主方案。",
+            "4. suggestedTarget 说明建议放置的单元格或范围；无法可靠判断时明确说明需用户确认。",
+            "5. explanation 用通俗中文解释公式逻辑；assumptions 和 compatibilityNotes 均为字符串数组。",
+            "6. copyText 只包含可直接复制的主公式，与 primaryFormula 一致。",
+            "7. 如上下文已截断，必须在 assumptions 中说明只基于截断后的选区上下文。",
+            "8. 不声称已经写入单元格，不要求前端自动填充范围、创建工作表或修改计算模式。",
+            "9. 不编造未出现在选区中的列、地址、业务事实或计算规则。",
         ]
     )
 
@@ -932,6 +984,44 @@ def parse_excel_analysis_answer(answer: str) -> Dict:
     }
 
 
+def parse_excel_formula_answer(answer: str) -> Dict:
+    cleaned = strip_think_tag_content(answer or "").strip()
+    payload = _extract_json_payload(cleaned)
+    if isinstance(payload, dict):
+        primary_formula = _provider_safe_str(
+            payload.get("primaryFormula") or payload.get("primary_formula")
+        ).strip()
+        compatibility_notes = _excel_text_list(
+            payload.get("compatibilityNotes")
+            or payload.get("compatibility_notes")
+        )
+        if not re.fullmatch(r"=[^\r\n]+", primary_formula):
+            primary_formula = ""
+            compatibility_notes.append(
+                "模型后台未返回单个有效公式，请补充需求后重试并人工核对。"
+            )
+        return {
+            "primaryFormula": primary_formula,
+            "suggestedTarget": _provider_safe_str(
+                payload.get("suggestedTarget") or payload.get("suggested_target")
+            ).strip(),
+            "explanation": _provider_safe_str(payload.get("explanation")).strip(),
+            "assumptions": _excel_text_list(payload.get("assumptions")),
+            "compatibilityNotes": compatibility_notes,
+            "copyText": primary_formula,
+        }
+    formula_match = re.search(r"(?m)^\s*(=[^\r\n]+)", cleaned)
+    primary_formula = formula_match.group(1).strip() if formula_match else ""
+    return {
+        "primaryFormula": primary_formula,
+        "suggestedTarget": "",
+        "explanation": cleaned,
+        "assumptions": [],
+        "compatibilityNotes": ["模型后台未按结构化 JSON 输出，请人工核对。"],
+        "copyText": primary_formula,
+    }
+
+
 def _ppt_text_list(value) -> List[str]:
     if not isinstance(value, list):
         return []
@@ -1357,6 +1447,7 @@ class ProviderClient:
             ("word.document_review", "文档审查"),
             ("word.format_review", "格式审查"),
             ("excel.analysis", "智能分析"),
+            ("excel.formula_assistant", "公式助手"),
             ("ppt.slide_assistant", "智能总结"),
         ]
         status = {}
@@ -1969,6 +2060,118 @@ class ProviderClient:
             progress_callback("parsing")
         parsed = parse_excel_analysis_answer(extract_answer(body))
         logger.info("traceId=%s provider=enterprise-dify-chat task=excel.analysis", trace_id)
+        return {
+            **parsed,
+            "provider": "enterprise-dify-chat/{0}".format(
+                str(resolved_task_auth.get("authSource", "none"))
+                if has_auth_snapshot
+                else self.get_auth_source_for_task(task_type)
+            ),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
+
+    def excel_formula_assistant(
+        self,
+        request: ExcelFormulaAssistantRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
+    ) -> Dict:
+        prompt = build_excel_formula_prompt(request)
+        task_type = "excel.formula_assistant"
+        has_auth_snapshot = task_auth is not None
+        resolved_task_auth = task_auth or {}
+        configured = (
+            bool(
+                str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+                and str(resolved_task_auth.get("apiKey", "")).strip()
+            )
+            if has_auth_snapshot
+            else self.is_task_configured(task_type)
+        )
+        if not configured:
+            logger.info(
+                "traceId=%s provider=mock task=excel.formula_assistant",
+                trace_id,
+            )
+            if has_auth_snapshot:
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": "",
+                        **self.build_debug_metadata(
+                            task_type,
+                            provider="mock",
+                            task_auth=resolved_task_auth,
+                        ),
+                        "skipReason": "provider_not_configured",
+                        "request": {
+                            "body": build_provider_request_payload(
+                                self.settings,
+                                {},
+                                prompt,
+                                input_mode=str(
+                                    resolved_task_auth.get("providerInputMode")
+                                    or DIFY_INPUT_MODE_LEGACY
+                                ),
+                                response_mode=str(
+                                    resolved_task_auth.get("providerMode", "")
+                                ),
+                            )
+                        },
+                    }
+                )
+            else:
+                self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if progress_callback:
+                progress_callback("parsing")
+            return {
+                "primaryFormula": "",
+                "suggestedTarget": "",
+                "explanation": "已读取明确选区，请配置公式助手模型后台后生成推荐公式。",
+                "assumptions": (
+                    ["选区上下文已截断，只读取 30 行 × 20 列以内的数据。"]
+                    if request.selection.truncated
+                    else []
+                ),
+                "compatibilityNotes": [
+                    "请在设置页保存 excel.formula_assistant 的任务级 API Key。"
+                ],
+                "copyText": "",
+                "provider": "mock",
+                "prompt": prompt,
+            }
+
+        post_kwargs = {
+            "timeout_seconds": max(
+                self.settings.timeout_seconds,
+                EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS,
+            )
+        }
+        if has_auth_snapshot:
+            post_kwargs["task_auth"] = resolved_task_auth
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {
+                "scene": "excel",
+                "rowCount": request.selection.row_count,
+                "columnCount": request.selection.column_count,
+                "truncated": request.selection.truncated,
+            },
+            prompt,
+            **post_kwargs
+        )
+        if progress_callback:
+            progress_callback("parsing")
+        parsed = parse_excel_formula_answer(extract_answer(body))
+        logger.info(
+            "traceId=%s provider=enterprise-dify-chat task=excel.formula_assistant",
+            trace_id,
+        )
         return {
             **parsed,
             "provider": "enterprise-dify-chat/{0}".format(

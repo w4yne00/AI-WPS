@@ -66,6 +66,7 @@ class ConfigApiTests(unittest.TestCase):
                 "word.document_review",
                 "word.format_review",
                 "excel.analysis",
+                "excel.formula_assistant",
                 "ppt.slide_assistant",
             ],
         )

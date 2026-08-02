@@ -289,6 +289,8 @@ def _task_type_from_path(path: str) -> str:
         return "word.document_review"
     if path.startswith("/excel/analysis/jobs/"):
         return "excel.analysis"
+    if path.startswith("/excel/formula-assistant/jobs/"):
+        return "excel.formula_assistant"
     return {
         "/word/smart-write": "word.smart_write",
         "/word/smart-imitation": "word.smart_imitation",
@@ -297,6 +299,7 @@ def _task_type_from_path(path: str) -> str:
         "/word/format-review": "word.format_review",
         "/excel/analysis": "excel.analysis",
         "/excel/analysis/jobs": "excel.analysis",
+        "/excel/formula-assistant/jobs": "excel.formula_assistant",
         "/ppt/slide-assistant/jobs": "ppt.slide_assistant",
         "/ppt/document-files": "ppt.slide_assistant",
     }.get(path, "adapter.validation")

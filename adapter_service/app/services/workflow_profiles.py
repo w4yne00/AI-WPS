@@ -15,6 +15,7 @@ SUPPORTED_WORKFLOW_TASKS = (
     "word.document_review",
     "word.format_review",
     "excel.analysis",
+    "excel.formula_assistant",
     "ppt.slide_assistant",
 )
 MAX_PROFILES_PER_TASK = 20

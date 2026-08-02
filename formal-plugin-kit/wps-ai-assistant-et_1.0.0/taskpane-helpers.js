@@ -1952,6 +1952,154 @@
     };
   }
 
+  function extractExcelFormulaSelection(range, options) {
+    var settings = options || {};
+    var maxRows = Number(settings.maxRows || 30);
+    var maxColumns = Number(settings.maxColumns || 20);
+    var maxCellTextLength = Number(settings.maxCellTextLength || 120);
+    var maxFormulaLength = Number(settings.maxFormulaLength || 1000);
+    var maxTotalTextLength = Number(settings.maxTotalTextLength || 20000);
+    function readOwned(owner, keys) {
+      var index;
+      var value;
+      if (!owner) {
+        return undefined;
+      }
+      for (index = 0; index < keys.length; index += 1) {
+        value = safeRead(owner, keys[index]);
+        if (typeof value === "function") {
+          value = safeCall(value, owner);
+        }
+        if (typeof value !== "undefined" && value !== null) {
+          return value;
+        }
+      }
+      return undefined;
+    }
+
+    var rows = readOwned(range, ["Rows", "rows"]);
+    var columns = readOwned(range, ["Columns", "columns"]);
+    var rowCount = readCollectionCount(rows);
+    var columnCount = readCollectionCount(columns);
+    var cellsCollection = readOwned(range, ["Cells", "cells"]) || range;
+    var capturedRows = Math.min(rowCount, maxRows);
+    var capturedColumns = Math.min(columnCount, maxColumns);
+    var totalLength = 0;
+    var truncated = rowCount > maxRows || columnCount > maxColumns;
+    var matrix = [];
+    var headers = [];
+    var rowIndex;
+    var columnIndex;
+
+    function getCell(row, column) {
+      var item = safeRead(cellsCollection, "Item") || safeRead(cellsCollection, "item");
+      if (typeof item === "function") {
+        try {
+          return item.call(cellsCollection, row, column);
+        } catch (error) {
+          return null;
+        }
+      }
+      return safeRead(cellsCollection, row + "," + column) || null;
+    }
+
+    function bounded(value, limit) {
+      var text = toSafeString(value, "").replace(/\r/g, "").trim();
+      var remaining;
+      if (text.length > limit) {
+        text = text.slice(0, limit);
+        truncated = true;
+      }
+      remaining = Math.max(maxTotalTextLength - totalLength, 0);
+      if (text.length > remaining) {
+        text = text.slice(0, remaining);
+        truncated = true;
+      }
+      totalLength += text.length;
+      return text;
+    }
+
+    function readFormula(cell) {
+      var formula = firstDefined(
+        readOwned(cell, ["Formula", "formula", "FormulaLocal", "formulaLocal"]),
+        ""
+      );
+      formula = bounded(formula, maxFormulaLength);
+      return formula.charAt(0) === "=" ? formula : "";
+    }
+
+    function readRawValue(cell) {
+      return resolveScalarValue(readOwned(
+        cell,
+        ["Value2", "value2", "Value", "value"]
+      ));
+    }
+
+    function classifyCell(text, formula, rawValue) {
+      if (formula) {
+        return "formula";
+      }
+      if (!text && (typeof rawValue === "undefined" || rawValue === null || rawValue === "")) {
+        return "blank";
+      }
+      if (typeof rawValue === "boolean") {
+        return "boolean";
+      }
+      if (typeof rawValue === "number") {
+        return "number";
+      }
+      if (/^#(?:N\/A|VALUE!|REF!|DIV\/0!|NAME\?|NUM!|NULL!)/i.test(text)) {
+        return "error";
+      }
+      return text ? "text" : "unknown";
+    }
+
+    if (!range || !rowCount || !columnCount) {
+      throw new Error("未读取到明确选区，请先框选相关表格范围。");
+    }
+
+    for (rowIndex = 1; rowIndex <= capturedRows; rowIndex += 1) {
+      var row = [];
+      for (columnIndex = 1; columnIndex <= capturedColumns; columnIndex += 1) {
+        var cell = getCell(rowIndex, columnIndex) || {};
+        var rawValue = readRawValue(cell);
+        var text = bounded(firstDefined(
+          readOwned(cell, ["Text", "text"]),
+          rawValue,
+          ""
+        ), maxCellTextLength);
+        var formula = readFormula(cell);
+        var address = toSafeString(firstDefined(
+          readOwned(cell, ["Address", "address"]),
+          ""
+        ), "").trim();
+        row.push({
+          address: address,
+          text: text,
+          valueType: classifyCell(text, formula, rawValue),
+          formula: formula
+        });
+        if (rowIndex === 1) {
+          headers.push(text || "列" + columnIndex);
+        }
+      }
+      matrix.push(row);
+    }
+
+    return {
+      sheetName: String(settings.sheetName || "").trim(),
+      address: toSafeString(firstDefined(
+        readOwned(range, ["Address", "address"]),
+        ""
+      ), "").trim(),
+      headers: headers,
+      cells: matrix,
+      rowCount: rowCount,
+      columnCount: columnCount,
+      truncated: truncated
+    };
+  }
+
   function createExcelSelectionWatcher(options) {
     var settings = options || {};
     var refresh = typeof settings.refresh === "function" ? settings.refresh : function () {};
@@ -2156,6 +2304,7 @@
     getActiveWorkflowProfileName: getActiveWorkflowProfileName,
     deriveModelInterfaceState: deriveModelInterfaceState,
     createSettingsRefreshController: createSettingsRefreshController,
+    extractExcelFormulaSelection: extractExcelFormulaSelection,
     createExcelSelectionWatcher: createExcelSelectionWatcher,
     canDeleteWorkflowProfile: canDeleteWorkflowProfile,
     workflowProfileStatusText: workflowProfileStatusText,
