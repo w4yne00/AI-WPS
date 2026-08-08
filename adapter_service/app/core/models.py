@@ -544,7 +544,15 @@ class PptStructureReviewScope(BaseModel):
 
     @validator("total_slides", "start_slide", "end_slide", pre=True, always=True)
     def coerce_structure_scope_integer(cls, value):
-        return _safe_int(value) or 0
+        numeric = _safe_float(value)
+        if (
+            numeric is None
+            or numeric != numeric
+            or numeric in (float("inf"), float("-inf"))
+        ):
+            return 0
+        integer = int(numeric)
+        return integer if numeric == integer else 0
 
 
 class PptStructureReviewSlide(BaseModel):
@@ -552,6 +560,7 @@ class PptStructureReviewSlide(BaseModel):
     title: str = ""
     subtitle: str = ""
     body_fallback: str = Field(default="", alias="bodyFallback")
+    body_fallback_omitted: bool = Field(default=False, alias="bodyFallbackOmitted")
 
     @validator("index", pre=True, always=True)
     def coerce_structure_slide_index(cls, value):
@@ -560,6 +569,10 @@ class PptStructureReviewSlide(BaseModel):
     @validator("title", "subtitle", "body_fallback", pre=True, always=True)
     def coerce_structure_slide_text(cls, value):
         return _safe_str(value)
+
+    @validator("body_fallback_omitted", pre=True, always=True)
+    def coerce_structure_fallback_omitted(cls, value):
+        return bool(_safe_bool(value))
 
 
 class PptStructureReviewRequest(BaseModel):

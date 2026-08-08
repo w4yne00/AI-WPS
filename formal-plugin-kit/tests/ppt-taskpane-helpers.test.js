@@ -405,6 +405,15 @@ const limits = {
 }
 
 assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
+assert.strictEqual(
+  helpers.formatPptStructureRange({
+    startSlide: 21,
+    endSlide: 60,
+    totalSlides: 80,
+    isFullDeck: false
+  }),
+  "本次审查第 21–60 页（演示文稿共 80 页）｜指定页段"
+);
 
 {
   const slides = [
@@ -434,6 +443,33 @@ assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
   assert.strictEqual(result.slides[2].title, "");
   assert.strictEqual(result.slides[2].subtitle, "");
   assert.strictEqual(result.slides[2].bodyFallback.length, 120);
+}
+
+{
+  let bodyReadCount = 0;
+  const bodyShape = textFrameShape("");
+  Object.defineProperty(bodyShape.TextFrame.TextRange, "Text", {
+    configurable: true,
+    get: function () {
+      bodyReadCount += 1;
+      return "正常页面正文不得读取";
+    }
+  });
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slide(1, "1. 项目背景", [
+        textFrameShape("建设依据", { name: "Subtitle 1", placeholderType: 4 }),
+        bodyShape
+      ])
+    ], 1),
+    1,
+    1,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+
+  assert.strictEqual(result.slides[0].subtitle, "建设依据");
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+  assert.strictEqual(bodyReadCount, 0);
 }
 
 {
@@ -485,7 +521,17 @@ assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
 
   assert.throws(
     function () {
-      helpers.extractPresentationStructure(applicationFor(slides, 1), 2, 0, {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 2, "", {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error && error.code === "PPT_STRUCTURE_EXPLICIT_RANGE_REQUIRED";
+    }
+  );
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), "", 60, {
         maxSlides: 60
       });
     },
@@ -500,7 +546,45 @@ assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
       });
     },
     function (error) {
-      return error && error.code === "PPT_STRUCTURE_EXPLICIT_RANGE_REQUIRED";
+      return error &&
+        error.code === "PPT_STRUCTURE_PAGE_INVALID" &&
+        error.message === "起始页必须为正整数。";
+    }
+  );
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 1.5, 20, {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error &&
+        error.code === "PPT_STRUCTURE_PAGE_INVALID" &&
+        error.message === "起始页必须为正整数。";
+    }
+  );
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 20, 10, {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error &&
+        error.code === "PPT_STRUCTURE_RANGE_REVERSED" &&
+        error.message === "结束页不能小于起始页。";
+    }
+  );
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 1, 62, {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error &&
+        error.code === "PPT_STRUCTURE_PAGE_OUT_OF_RANGE" &&
+        error.message === "起止页必须在 1 至 61 页之间。";
     }
   );
 
@@ -513,6 +597,26 @@ assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
   assert.strictEqual(ranged.slides.length, 60);
   assert.strictEqual(ranged.slides[0].index, 2);
   assert.strictEqual(ranged.slides[59].index, 61);
+}
+
+{
+  const slides = Array.from({ length: 60 }, function (_, index) {
+    return slide(index + 1, "第 " + (index + 1) + " 页", [
+      textFrameShape("阶段说明", { name: "Subtitle " + (index + 1), placeholderType: 4 }),
+      textFrameShape("不进入结构审查的普通正文")
+    ]);
+  });
+  const startedAt = process.hrtime.bigint();
+  const result = helpers.extractPresentationStructure(
+    applicationFor(slides, 1),
+    1,
+    60,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+  const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1000000;
+
+  assert.strictEqual(result.slides.length, 60);
+  assert.ok(elapsedMs < 250, `60-page structure extraction took ${elapsedMs.toFixed(1)} ms`);
 }
 
 {
@@ -532,6 +636,51 @@ assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
   );
   assert.strictEqual(result.slides.filter(function (item) { return item.bodyFallback; }).length, 10);
   assert.strictEqual(result.slides[10].bodyFallback, "");
+}
+
+{
+  let omittedBodyReadCount = 0;
+  const omittedBody = textFrameShape("");
+  Object.defineProperty(omittedBody.TextFrame.TextRange, "Text", {
+    configurable: true,
+    get: function () {
+      omittedBodyReadCount += 1;
+      return "第十一页正文不得读取";
+    }
+  });
+  const slides = Array.from({ length: 10 }, function (_, index) {
+    return slide(index + 1, "", [], { noTitle: true });
+  }).concat([slide(11, "", [omittedBody], { noTitle: true })]);
+  const result = helpers.extractPresentationStructure(
+    applicationFor(slides, 1),
+    1,
+    11,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+
+  assert.strictEqual(omittedBodyReadCount, 0);
+  assert.strictEqual(result.slides[10].bodyFallback, "");
+  assert.strictEqual(result.slides[10].bodyFallbackOmitted, true);
+}
+
+{
+  const readableSlides = [slide(1, "第一页", []), null, slide(3, "第三页", [])];
+  const application = {
+    ActivePresentation: {
+      Name: "读取异常.pptx",
+      Slides: collection(readableSlides)
+    }
+  };
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(application, 1, 3, { maxSlides: 60 });
+    },
+    function (error) {
+      return error &&
+        error.code === "PPT_STRUCTURE_SLIDE_UNREADABLE" &&
+        error.message === "无法读取第 2 页幻灯片，请确认演示文稿状态后重试。";
+    }
+  );
 }
 
 {

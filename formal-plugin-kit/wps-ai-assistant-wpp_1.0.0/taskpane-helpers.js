@@ -297,20 +297,57 @@
     };
   }
 
+  function readExplicitSubtitleInfo(shapes, titleIndex, maxLength) {
+    var count = getCollectionCount(shapes);
+    var index;
+    var shape;
+    var info;
+    var name;
+    for (index = 1; index <= count; index += 1) {
+      if (index === titleIndex) {
+        continue;
+      }
+      shape = getCollectionItem(shapes, index);
+      if (getPlaceholderType(shape) === 4) {
+        info = buildSubtitleInfo(shape, index, maxLength);
+        if (info.text) {
+          return info;
+        }
+      }
+    }
+    for (index = 1; index <= count; index += 1) {
+      if (index === titleIndex) {
+        continue;
+      }
+      shape = getCollectionItem(shapes, index);
+      name = getShapeName(shape);
+      if (name && /(副标题|副標題|subtitle)/i.test(name)) {
+        info = buildSubtitleInfo(shape, index, maxLength);
+        if (info.text) {
+          return info;
+        }
+      }
+    }
+    return null;
+  }
+
   function readSlideSubtitleInfo(slide, titleInfo, maxLength) {
     var shapes = getSlideShapes(slide);
     var count = getCollectionCount(shapes);
     var candidates = [];
+    var explicitInfo = readExplicitSubtitleInfo(shapes, titleInfo.index, maxLength);
     var index;
     var shape;
     var text;
-    var name;
     var titleTop = getShapeMetric(titleInfo.shape, "Top");
     var titleHeight = getShapeMetric(titleInfo.shape, "Height");
     var titleBottom;
     var maxGap;
     var maxHeight;
     var geometryCandidates;
+    if (explicitInfo) {
+      return explicitInfo;
+    }
     for (index = 1; index <= count; index += 1) {
       if (index === titleInfo.index) {
         continue;
@@ -324,22 +361,9 @@
         shape: shape,
         index: index,
         text: text,
-        name: getShapeName(shape),
-        placeholderType: getPlaceholderType(shape),
         top: getShapeMetric(shape, "Top"),
         height: getShapeMetric(shape, "Height")
       });
-    }
-    for (index = 0; index < candidates.length; index += 1) {
-      if (candidates[index].placeholderType === 4) {
-        return buildSubtitleInfo(candidates[index].shape, candidates[index].index, maxLength);
-      }
-    }
-    for (index = 0; index < candidates.length; index += 1) {
-      name = candidates[index].name;
-      if (name && /(副标题|副標題|subtitle)/i.test(name)) {
-        return buildSubtitleInfo(candidates[index].shape, candidates[index].index, maxLength);
-      }
     }
     if (titleTop === null || titleHeight === null) {
       return { text: "", shape: null, index: 0, truncated: false };
@@ -367,6 +391,12 @@
       );
     }
     return { text: "", shape: null, index: 0, truncated: false };
+  }
+
+  function readStructureSubtitleInfo(slide, titleInfo, maxLength) {
+    var shapes = getSlideShapes(slide);
+    return readExplicitSubtitleInfo(shapes, titleInfo.index, maxLength) ||
+      { text: "", shape: null, index: 0, truncated: false };
   }
 
   function getSlideIndex(slide, slides) {
@@ -527,6 +557,22 @@
     return error;
   }
 
+  function readStructurePageNumber(value, label) {
+    var resolved = resolveScalarValue(value);
+    var numeric;
+    if (typeof resolved === "undefined" || resolved === null || resolved === "") {
+      return 0;
+    }
+    numeric = Number(resolved);
+    if (!isFinite(numeric) || Math.floor(numeric) !== numeric || numeric < 1) {
+      throw structureExtractionError(
+        "PPT_STRUCTURE_PAGE_INVALID",
+        label + "必须为正整数。"
+      );
+    }
+    return numeric;
+  }
+
   function extractPresentationStructure(app, startSlide, endSlide, options) {
     var limits = {
       maxSlides: readNumber(options && options.maxSlides) || 60,
@@ -538,8 +584,8 @@
     var presentation = getPresentation(app);
     var slides;
     var totalSlides;
-    var explicitStart = readNumber(startSlide);
-    var explicitEnd = readNumber(endSlide);
+    var explicitStart = readStructurePageNumber(startSlide, "起始页");
+    var explicitEnd = readStructurePageNumber(endSlide, "结束页");
     var start = explicitStart;
     var end = explicitEnd;
     var fallbackCount = 0;
@@ -550,6 +596,7 @@
     var subtitleInfo;
     var excludedIndexes;
     var body;
+    var bodyFallbackOmitted;
     if (!presentation) {
       throw structureExtractionError("PPT_STRUCTURE_PRESENTATION_REQUIRED", "请先打开演示文稿。");
     }
@@ -571,10 +618,16 @@
     if (!end) {
       end = totalSlides;
     }
-    if (start < 1 || end < start || end > totalSlides) {
+    if (end < start) {
       throw structureExtractionError(
-        "PPT_STRUCTURE_RANGE_INVALID",
-        "结构审查页码范围无效，请输入 1 至 " + totalSlides + " 之间的起止页。"
+        "PPT_STRUCTURE_RANGE_REVERSED",
+        "结束页不能小于起始页。"
+      );
+    }
+    if (start > totalSlides || end > totalSlides) {
+      throw structureExtractionError(
+        "PPT_STRUCTURE_PAGE_OUT_OF_RANGE",
+        "起止页必须在 1 至 " + totalSlides + " 页之间。"
       );
     }
     if (end - start + 1 > limits.maxSlides) {
@@ -586,34 +639,44 @@
 
     for (index = start; index <= end; index += 1) {
       currentSlide = getCollectionItem(slides, index);
+      if (!currentSlide) {
+        throw structureExtractionError(
+          "PPT_STRUCTURE_SLIDE_UNREADABLE",
+          "无法读取第 " + index + " 页幻灯片，请确认演示文稿状态后重试。"
+        );
+      }
       titleInfo = readStructureTitleInfo(currentSlide);
-      subtitleInfo = readSlideSubtitleInfo(
+      subtitleInfo = readStructureSubtitleInfo(
         currentSlide,
         titleInfo,
         limits.maxSubtitleLength
       );
       body = "";
-      if (!titleInfo.text && fallbackCount < limits.maxFallbackSlides) {
-        excludedIndexes = {};
-        if (titleInfo.index) {
-          excludedIndexes[titleInfo.index] = true;
-        }
-        if (subtitleInfo.index) {
-          excludedIndexes[subtitleInfo.index] = true;
-        }
-        body = collectBodyText(currentSlide, excludedIndexes, {
-          maxBlockLength: limits.maxFallbackLength,
-          maxBodyLength: limits.maxFallbackLength
-        }).blocks.join("\n").slice(0, limits.maxFallbackLength);
-        if (body) {
+      bodyFallbackOmitted = false;
+      if (!titleInfo.text) {
+        if (fallbackCount >= limits.maxFallbackSlides) {
+          bodyFallbackOmitted = true;
+        } else {
           fallbackCount += 1;
+          excludedIndexes = {};
+          if (titleInfo.index) {
+            excludedIndexes[titleInfo.index] = true;
+          }
+          if (subtitleInfo.index) {
+            excludedIndexes[subtitleInfo.index] = true;
+          }
+          body = collectBodyText(currentSlide, excludedIndexes, {
+            maxBlockLength: limits.maxFallbackLength,
+            maxBodyLength: limits.maxFallbackLength
+          }).blocks.join("\n").slice(0, limits.maxFallbackLength);
         }
       }
       extracted.push({
         index: index,
         title: truncateText(titleInfo.text, limits.maxTitleLength),
         subtitle: subtitleInfo.text,
-        bodyFallback: body
+        bodyFallback: body,
+        bodyFallbackOmitted: bodyFallbackOmitted
       });
     }
     return {
@@ -629,6 +692,14 @@
       },
       slides: extracted
     };
+  }
+
+  function formatPptStructureRange(value) {
+    var range = value || {};
+    return "本次审查第 " + readNumber(range.startSlide) + "–" +
+      readNumber(range.endSlide) + " 页（演示文稿共 " +
+      readNumber(range.totalSlides) + " 页）｜" +
+      (range.isFullDeck ? "整套审查" : "指定页段");
   }
 
   function escapeHtml(value) {
@@ -1016,6 +1087,7 @@
   global.WpsAiPptHelpers = {
     extractPresentationSlide: extractPresentationSlide,
     extractPresentationStructure: extractPresentationStructure,
+    formatPptStructureRange: formatPptStructureRange,
     truncateText: truncateText,
     renderMarkdown: renderMarkdown,
     escapeHtml: escapeHtml,

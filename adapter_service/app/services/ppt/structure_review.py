@@ -27,15 +27,25 @@ def normalize_structure_request(
 ) -> PptStructureReviewRequest:
     normalized = _copy_request(request)
     scope = normalized.scope
+    if scope.total_slides < 1 or scope.start_slide < 1 or scope.end_slide < 1:
+        raise AdapterError(
+            "PPT_STRUCTURE_PAGE_INVALID",
+            "起始页和结束页必须为正整数。",
+            status_code=400,
+        )
+    if scope.end_slide < scope.start_slide:
+        raise AdapterError(
+            "PPT_STRUCTURE_RANGE_REVERSED",
+            "结束页不能小于起始页。",
+            status_code=400,
+        )
     if (
-        scope.total_slides < 1
-        or scope.start_slide < 1
-        or scope.end_slide < scope.start_slide
+        scope.start_slide > scope.total_slides
         or scope.end_slide > scope.total_slides
     ):
         raise AdapterError(
-            "PPT_STRUCTURE_RANGE_INVALID",
-            "结构审查页码范围无效，请重新读取演示文稿后再试。",
+            "PPT_STRUCTURE_PAGE_OUT_OF_RANGE",
+            "起止页必须在 1 至 {0} 页之间。".format(scope.total_slides),
             status_code=400,
         )
     range_size = scope.end_slide - scope.start_slide + 1
@@ -59,10 +69,16 @@ def normalize_structure_request(
         slide.title = slide.title.strip()[:200]
         slide.subtitle = slide.subtitle.strip()[:300]
         fallback = slide.body_fallback.strip()
-        if slide.title or not fallback or fallback_count >= PPT_STRUCTURE_BODY_FALLBACK_MAX_SLIDES:
+        if slide.title:
             slide.body_fallback = ""
+            slide.body_fallback_omitted = False
             continue
         fallback_count += 1
+        if fallback_count > PPT_STRUCTURE_BODY_FALLBACK_MAX_SLIDES:
+            slide.body_fallback = ""
+            slide.body_fallback_omitted = True
+            continue
+        slide.body_fallback_omitted = False
         slide.body_fallback = fallback[:PPT_STRUCTURE_BODY_FALLBACK_MAX_CHARS]
     return normalized
 
@@ -75,6 +91,19 @@ def inspect_structure_titles(request: PptStructureReviewRequest) -> Dict[str, Li
     for slide in request.slides:
         title = slide.title.strip()
         if not title:
+            if slide.body_fallback_omitted:
+                high_priority.append(
+                    {
+                        "source": "local",
+                        "code": "missing_title_information_insufficient",
+                        "message": "第 {0} 页无主标题，且已达到 {1} 页正文兜底上限，信息不足。".format(
+                            slide.index,
+                            PPT_STRUCTURE_BODY_FALLBACK_MAX_SLIDES,
+                        ),
+                        "slideNumbers": [slide.index],
+                    }
+                )
+                continue
             high_priority.append(
                 {
                     "source": "local",
@@ -130,16 +159,26 @@ def inspect_structure_titles(request: PptStructureReviewRequest) -> Dict[str, Li
     return {"highPriorityIssues": high_priority, "generalSuggestions": general}
 
 
-def _normalize_page_list(value, start_slide: int, end_slide: int) -> List[int]:
+def _normalize_page_list(
+    value,
+    start_slide: int,
+    end_slide: int,
+    excluded_pages=None,
+) -> List[int]:
     if not isinstance(value, list):
         return []
+    excluded = excluded_pages or set()
     normalized = []
     for page in value:
         try:
             number = int(page)
         except (TypeError, ValueError):
             continue
-        if start_slide <= number <= end_slide and number not in normalized:
+        if (
+            start_slide <= number <= end_slide
+            and number not in excluded
+            and number not in normalized
+        ):
             normalized.append(number)
     return normalized
 
@@ -149,6 +188,7 @@ def _normalize_finding(
     default_source: str,
     start_slide: int,
     end_slide: int,
+    excluded_pages=None,
 ) -> Optional[Dict]:
     if not isinstance(value, dict):
         return None
@@ -156,7 +196,12 @@ def _normalize_finding(
     if not message:
         return None
     pages = value.get("slideNumbers")
-    normalized_pages = _normalize_page_list(pages, start_slide, end_slide)
+    normalized_pages = _normalize_page_list(
+        pages,
+        start_slide,
+        end_slide,
+        excluded_pages=excluded_pages,
+    )
     if isinstance(pages, list) and pages and not normalized_pages:
         return None
     return {
@@ -167,11 +212,53 @@ def _normalize_finding(
     }
 
 
+def _finding_semantic_key(item: Dict) -> str:
+    code = str(item.get("code", "") or "").casefold()
+    message = str(item.get("message", "") or "").casefold()
+    combined = "{0} {1}".format(code, message)
+    if (
+        re.search(r"(?:missing|absent|empty)[_-]?(?:title|heading)", code)
+        or re.search(r"(?:title|heading)[_-]?(?:missing|absent|empty)", code)
+        or re.search(r"(?:title|heading)[_-]?(?:needed|required)", code)
+        or re.search(r"(?:need|require)[s]?[_-]?(?:title|heading)", code)
+        or re.search(r"(?:缺少|没有|无|缺失)主?标题|主?标题(?:缺少|没有|缺失|为空)", message)
+        or re.search(r"(?:需要|建议|请).{0,8}(?:补充|添加|增加|设置).{0,6}(?:页面)?主?标题", message)
+    ):
+        return "missing_title"
+    if (
+        re.search(r"duplicate[d]?[_-]?(?:title|heading)", code)
+        or re.search(r"(?:title|heading)[_-]?duplicate[d]?", code)
+        or re.search(r"主?标题.{0,8}(?:完全)?重复|重复.{0,8}主?标题", message)
+    ):
+        return "duplicate_title"
+    if (
+        re.search(r"long[_-]?(?:title|heading)", code)
+        or re.search(r"(?:title|heading)[_-]?(?:long|length)", code)
+        or re.search(r"主?标题.{0,12}(?:过长|超过.{0,6}字符)", message)
+    ):
+        return "long_title"
+    if (
+        "numbering_gap" in code
+        or re.search(r"(?:编号|序号).{0,12}(?:跳号|跳到|不连续|缺失)", combined)
+    ):
+        return "numbering_gap"
+    without_pages = re.sub(r"第\s*\d+\s*页", "", message)
+    return re.sub(r"[\W_]+", "", without_pages, flags=re.UNICODE)
+
+
+def _finding_dedup_key(item: Dict) -> Tuple[Tuple[int, ...], str]:
+    return (
+        tuple(sorted(item.get("slideNumbers", []))),
+        _finding_semantic_key(item),
+    )
+
+
 def _merge_findings(
     local_values: List[Dict],
     model_values: List[Dict],
     start_slide: int,
     end_slide: int,
+    model_excluded_pages=None,
 ) -> List[Dict]:
     merged = []
     keys = set()
@@ -182,10 +269,13 @@ def _merge_findings(
                 source,
                 start_slide,
                 end_slide,
+                excluded_pages=(
+                    model_excluded_pages if source == "model" else None
+                ),
             )
             if item is None:
                 continue
-            key = (item["code"].casefold(), tuple(sorted(item["slideNumbers"])))
+            key = _finding_dedup_key(item)
             if key in keys:
                 continue
             keys.add(key)
@@ -193,7 +283,10 @@ def _merge_findings(
     return merged
 
 
-def _sanitize_chapters(values, start_slide: int, end_slide: int) -> List[Dict]:
+def _sanitize_chapters(
+    values, start_slide: int, end_slide: int, excluded_pages=None
+) -> List[Dict]:
+    excluded = excluded_pages or set()
     sanitized = []
     for value in values if isinstance(values, list) else []:
         if not isinstance(value, dict):
@@ -207,6 +300,9 @@ def _sanitize_chapters(values, start_slide: int, end_slide: int) -> List[Dict]:
         if (
             title
             and start_slide <= chapter_start <= chapter_end <= end_slide
+            and not any(
+                chapter_start <= page <= chapter_end for page in excluded
+            )
         ):
             sanitized.append(
                 {
@@ -220,8 +316,9 @@ def _sanitize_chapters(values, start_slide: int, end_slide: int) -> List[Dict]:
 
 
 def _sanitize_slide_recommendations(
-    values, start_slide: int, end_slide: int
+    values, start_slide: int, end_slide: int, excluded_pages=None
 ) -> List[Dict]:
+    excluded = excluded_pages or set()
     sanitized = []
     for value in values if isinstance(values, list) else []:
         if not isinstance(value, dict):
@@ -231,21 +328,32 @@ def _sanitize_slide_recommendations(
         except (TypeError, ValueError):
             continue
         suggestion = str(value.get("suggestion", "") or "").strip()
-        if suggestion and start_slide <= slide_number <= end_slide:
+        if (
+            suggestion
+            and start_slide <= slide_number <= end_slide
+            and slide_number not in excluded
+        ):
             sanitized.append(
                 {**value, "slideNumber": slide_number, "suggestion": suggestion}
             )
     return sanitized
 
 
-def _sanitize_outline(values, start_slide: int, end_slide: int) -> List[Dict]:
+def _sanitize_outline(
+    values, start_slide: int, end_slide: int, excluded_pages=None
+) -> List[Dict]:
     sanitized = []
     for value in values if isinstance(values, list) else []:
         if not isinstance(value, dict):
             continue
         title = str(value.get("title", "") or "").strip()
         raw_pages = value.get("slideNumbers")
-        pages = _normalize_page_list(raw_pages, start_slide, end_slide)
+        pages = _normalize_page_list(
+            raw_pages,
+            start_slide,
+            end_slide,
+            excluded_pages=excluded_pages,
+        )
         if not title or (isinstance(raw_pages, list) and raw_pages and not pages):
             continue
         sanitized.append({**value, "title": title, "slideNumbers": pages})
@@ -304,6 +412,11 @@ class PptStructureReviewer:
             **kwargs
         )
         scope = normalized.scope
+        omitted_pages = {
+            slide.index
+            for slide in normalized.slides
+            if slide.body_fallback_omitted
+        }
         reviewed_range = {
             "startSlide": scope.start_slide,
             "endSlide": scope.end_slide,
@@ -315,23 +428,38 @@ class PptStructureReviewer:
             model.get("highPriorityIssues", []),
             scope.start_slide,
             scope.end_slide,
+            model_excluded_pages=omitted_pages,
         )
         general = _merge_findings(
             local["generalSuggestions"],
             model.get("generalSuggestions", []),
             scope.start_slide,
             scope.end_slide,
+            model_excluded_pages=omitted_pages,
         )
+        high_keys = {_finding_dedup_key(item) for item in high}
+        general = [
+            item for item in general if _finding_dedup_key(item) not in high_keys
+        ]
         chapters = _sanitize_chapters(
-            model.get("inferredChapters", []), scope.start_slide, scope.end_slide
+            model.get("inferredChapters", []),
+            scope.start_slide,
+            scope.end_slide,
+            excluded_pages=omitted_pages,
         )
         recommendations = _sanitize_slide_recommendations(
-            model.get("slideRecommendations", []), scope.start_slide, scope.end_slide
+            model.get("slideRecommendations", []),
+            scope.start_slide,
+            scope.end_slide,
+            excluded_pages=omitted_pages,
         )
         outline = _sanitize_outline(
-            model.get("recommendedOutline", []), scope.start_slide, scope.end_slide
+            model.get("recommendedOutline", []),
+            scope.start_slide,
+            scope.end_slide,
+            excluded_pages=omitted_pages,
         )
-        review_conclusion = "已审查第 {0}-{1} 页（演示文稿共 {2} 页）。\n{3}".format(
+        review_conclusion = "本次审查第 {0}–{1} 页（演示文稿共 {2} 页）。\n{3}".format(
             scope.start_slide,
             scope.end_slide,
             scope.total_slides,

@@ -936,6 +936,10 @@ button.ghost-action:hover {
     grid-template-columns: 1fr;
   }
 
+  .structure-range-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .workflow-key-control {
     grid-template-columns: minmax(0, 1fr);
   }

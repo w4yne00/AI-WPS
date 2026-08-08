@@ -159,6 +159,46 @@ class PptStructureReviewTests(unittest.TestCase):
             [],
         )
 
+    def test_invalid_page_ranges_have_specific_chinese_feedback(self):
+        cases = [
+            (
+                {"totalSlides": 5, "startSlide": 1.5, "endSlide": 5},
+                "PPT_STRUCTURE_PAGE_INVALID",
+                "起始页和结束页必须为正整数。",
+            ),
+            (
+                {"totalSlides": 5, "startSlide": "nan", "endSlide": 5},
+                "PPT_STRUCTURE_PAGE_INVALID",
+                "起始页和结束页必须为正整数。",
+            ),
+            (
+                {"totalSlides": 5, "startSlide": 5, "endSlide": 4},
+                "PPT_STRUCTURE_RANGE_REVERSED",
+                "结束页不能小于起始页。",
+            ),
+            (
+                {"totalSlides": 5, "startSlide": 1, "endSlide": 6},
+                "PPT_STRUCTURE_PAGE_OUT_OF_RANGE",
+                "起止页必须在 1 至 5 页之间。",
+            ),
+        ]
+        for scope, code, message in cases:
+            with self.subTest(code=code):
+                provider = RecordingProvider()
+                reviewer = PptStructureReviewer(provider_client=provider)
+                payload = request_payload()
+                payload["scope"] = scope
+
+                with self.assertRaises(AdapterError) as error:
+                    reviewer.review(
+                        parse_request(payload),
+                        trace_id="trace-structure-invalid-range",
+                    )
+
+                self.assertEqual(error.exception.code, code)
+                self.assertEqual(error.exception.message, message)
+                self.assertFalse(any("request" in call for call in provider.calls))
+
     def test_explicit_range_within_sixty_slides_is_reviewed_and_disclosed(self):
         provider = RecordingProvider()
         reviewer = PptStructureReviewer(provider_client=provider)
@@ -189,6 +229,7 @@ class PptStructureReviewTests(unittest.TestCase):
             },
         )
         self.assertEqual(len([call for call in provider.calls if "request" in call]), 1)
+        self.assertIn("本次审查第 21–60 页", result["reviewConclusion"])
         self.assertNotIn("score", result)
         self.assertNotIn("numericScore", result)
 
@@ -207,8 +248,50 @@ class PptStructureReviewTests(unittest.TestCase):
         self.assertIn("duplicate_title", high_codes)
         self.assertIn("numbering_gap", general_codes)
         self.assertEqual(len([call for call in provider.calls if "request" in call]), 1)
-        self.assertIn("第 1-5 页", result["reviewConclusion"])
+        self.assertIn("本次审查第 1–5 页", result["reviewConclusion"])
         self.assertIn("推荐目录", result["outlineText"])
+
+    def test_findings_are_deduplicated_by_pages_and_problem_semantics(self):
+        provider = RecordingProvider()
+        original_review = provider.ppt_structure_review
+
+        def review_with_rephrased_missing_title(*args, **kwargs):
+            result = original_review(*args, **kwargs)
+            result["generalSuggestions"].append(
+                {
+                    "code": "model_heading_absent",
+                    "message": "第3页没有主标题，请补充页面标题。",
+                    "slideNumbers": [3],
+                }
+            )
+            result["generalSuggestions"].append(
+                {
+                    "code": "title_needed",
+                    "message": "第3页需要补充页面标题。",
+                    "slideNumbers": [3],
+                }
+            )
+            return result
+
+        provider.ppt_structure_review = review_with_rephrased_missing_title
+        result = PptStructureReviewer(provider_client=provider).review(
+            parse_request(request_payload()),
+            trace_id="trace-structure-semantic-dedupe",
+        )
+
+        missing_title_findings = [
+            item
+            for item in result["highPriorityIssues"]
+            if item["code"] in {"missing_title", "model_heading_absent"}
+        ]
+        self.assertEqual(len(missing_title_findings), 1)
+        self.assertEqual(missing_title_findings[0]["source"], "local")
+        self.assertFalse(
+            any(
+                item["code"] in {"model_heading_absent", "title_needed"}
+                for item in result["generalSuggestions"]
+            )
+        )
 
     def test_body_fallback_budget_is_enforced_by_adapter(self):
         provider = RecordingProvider()
@@ -222,7 +305,7 @@ class PptStructureReviewTests(unittest.TestCase):
             for index in range(1, 12)
         ]
 
-        reviewer.review(
+        result = reviewer.review(
             parse_request(
                 request_payload(
                     slides=slides,
@@ -237,6 +320,84 @@ class PptStructureReviewTests(unittest.TestCase):
         fallbacks = [slide.body_fallback for slide in sent.slides if slide.body_fallback]
         self.assertEqual(len(fallbacks), 10)
         self.assertTrue(all(len(value) <= 120 for value in fallbacks))
+        self.assertTrue(sent.slides[10].body_fallback_omitted)
+        omitted_finding = next(
+            item
+            for item in result["highPriorityIssues"]
+            if item["code"] == "missing_title_information_insufficient"
+        )
+        self.assertEqual(omitted_finding["slideNumbers"], [11])
+        self.assertEqual(
+            omitted_finding["message"],
+            "第 11 页无主标题，且已达到 10 页正文兜底上限，信息不足。",
+        )
+
+    def test_omitted_fallback_page_only_reports_information_insufficient(self):
+        provider = RecordingProvider()
+        original_review = provider.ppt_structure_review
+
+        def review_with_unsupported_page_inferences(*args, **kwargs):
+            result = original_review(*args, **kwargs)
+            result["highPriorityIssues"].append(
+                {
+                    "code": "model_content_gap",
+                    "message": "第 11 页应补充项目收益。",
+                    "slideNumbers": [11],
+                }
+            )
+            result["slideRecommendations"].append(
+                {"slideNumber": 11, "suggestion": "补充收益数据。"}
+            )
+            result["inferredChapters"].append(
+                {"title": "项目收益", "startSlide": 11, "endSlide": 11}
+            )
+            result["recommendedOutline"].append(
+                {"order": 9, "title": "项目收益", "slideNumbers": [11]}
+            )
+            return result
+
+        provider.ppt_structure_review = review_with_unsupported_page_inferences
+        slides = [
+            {"index": index, "title": "", "bodyFallback": "有限正文"}
+            for index in range(1, 12)
+        ]
+        result = PptStructureReviewer(provider_client=provider).review(
+            parse_request(
+                request_payload(
+                    slides=slides,
+                    total_slides=11,
+                    end_slide=11,
+                )
+            ),
+            trace_id="trace-structure-omitted-page",
+        )
+
+        page_eleven_findings = [
+            item
+            for item in result["highPriorityIssues"] + result["generalSuggestions"]
+            if item["slideNumbers"] == [11]
+        ]
+        self.assertEqual(
+            [item["code"] for item in page_eleven_findings],
+            ["missing_title_information_insufficient"],
+        )
+        self.assertFalse(
+            any(item["slideNumber"] == 11 for item in result["slideRecommendations"])
+        )
+        self.assertFalse(
+            any(
+                item["startSlide"] <= 11 <= item["endSlide"]
+                for item in result["inferredChapters"]
+            )
+        )
+        self.assertFalse(
+            any(11 in item["slideNumbers"] for item in result["recommendedOutline"])
+        )
+        sent = next(call["request"] for call in provider.calls if "request" in call)
+        self.assertIn(
+            "正文兜底：未读取（已达 10 页上限，仅报告信息不足）",
+            build_ppt_structure_review_prompt(sent),
+        )
 
     def test_job_uses_independent_task_auth_snapshot_and_is_idempotent(self):
         provider = RecordingProvider()

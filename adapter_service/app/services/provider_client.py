@@ -427,6 +427,8 @@ def build_ppt_structure_review_prompt(request: PptStructureReviewRequest) -> str
         )
         if slide.body_fallback:
             line += " | 无标题页正文兜底：{0}".format(slide.body_fallback)
+        elif slide.body_fallback_omitted:
+            line += " | 正文兜底：未读取（已达 10 页上限，仅报告信息不足）"
         slide_lines.append(line)
     return "\n".join(
         [
@@ -448,6 +450,7 @@ def build_ppt_structure_review_prompt(request: PptStructureReviewRequest) -> str
             "6. 评估整体主线、推断章节、页面顺序、内容重复和内容缺口；不要重复报告同一问题。",
             "7. 不返回数值总分，不声称已经创建、删除、重排或修改幻灯片。",
             "8. 不编造输入中没有的事实、数据、进度或结论。",
+            "9. 标记正文兜底未读取的页面只报告信息不足，不推断该页内容或提出内容建议。",
         ]
     )
 

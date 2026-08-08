@@ -915,16 +915,18 @@
     var range = data.reviewedRange || {};
     state.structureResult = data;
     output.innerHTML = "";
+    output.appendChild(createTextElement(
+      "p",
+      "document-summary-meta",
+      helpers.formatPptStructureRange(range)
+    ));
     if (data.rawAnswer) {
-      output.textContent = data.rawAnswer;
-    } else {
       output.appendChild(createTextElement(
-        "p",
-        "document-summary-meta",
-        "审查范围：第 " + (range.startSlide || 0) + "-" + (range.endSlide || 0) +
-          " 页（共 " + (range.totalSlides || 0) + " 页）" +
-          (range.isFullDeck ? " ｜ 整套审查" : " ｜ 指定页段")
+        "div",
+        "structure-review-raw",
+        data.rawAnswer
       ));
+    } else {
       if (data.overallStoryline) {
         appendStructureList(output, "整体主线", [data.overallStoryline], function (item) {
           return safeText(item);
@@ -1128,8 +1130,6 @@
     }
     startSlide = safeText(byId("ppt-structure-start-slide").value);
     endSlide = safeText(byId("ppt-structure-end-slide").value);
-    startSlide = startSlide ? Number(startSlide) : 0;
-    endSlide = endSlide ? Number(endSlide) : 0;
     setRunDisabled(true);
     setStatus("正在只读提取 PPT 页面结构...");
     byId("structure-result-output").textContent = "正在读取页码、主标题和可选副标题。";

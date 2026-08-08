@@ -23,7 +23,7 @@
 
 - `totalSlides`：演示文稿总页数；
 - `startSlide`、`endSlide`：本次审查范围；
-- `slides`：`index`、`title`、`subtitle`、`bodyFallback` 数组。
+- `slides`：`index`、`title`、`subtitle`、`bodyFallback`、`bodyFallbackOmitted` 数组；`bodyFallbackOmitted=true` 表示该无标题页因已达 10 页上限而未读取正文。
 
 ## 输出契约
 
@@ -39,6 +39,7 @@
 - JSON 不可解析：保留标签外最终文本并返回解析诊断，不把原始文本伪装为结构化结果。
 - `<think>` 未闭合或只有思考内容：按非结构化输出处理。
 - 页码超出范围：忽略无效定位并提示人工核对，不改写输入页码。
+- `bodyFallbackOmitted=true`：该页只报告“信息不足”，不得推断页面内容、逐页建议或目录归属。
 
 ## 禁止事项
 
@@ -46,4 +47,5 @@
 - 禁止编造页面内容、事实、数据、进度或结论。
 - 禁止要求前端自动创建、删除、移动、重排或修改幻灯片、形状、文本、版式、主题、图表、备注和动画。
 - 禁止把指定页段写成整套审查结论。
+- 禁止对正文兜底未读取的页面补造内容判断。
 - 禁止输出 API Key、接口地址、内部诊断或深度思考过程。

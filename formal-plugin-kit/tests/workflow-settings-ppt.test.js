@@ -266,9 +266,9 @@ function testPptWorkflowPreservationContract() {
     "state.result ="
   ], "settings round trip must preserve PPT task state");
   includesAll(functionSource("runPptStructureReview"), [
-    'byId("ppt-structure-start-slide").value',
-    "startSlide = startSlide ? Number(startSlide) : 0"
-  ], "large-deck range inputs must preserve an empty explicit start");
+    'startSlide = safeText(byId("ppt-structure-start-slide").value)',
+    'endSlide = safeText(byId("ppt-structure-end-slide").value)'
+  ], "large-deck range inputs must distinguish blank values from an entered zero");
 }
 
 function testNarrowLayoutContract() {
@@ -283,6 +283,11 @@ function testNarrowLayoutContract() {
     "max-width: 420px",
     "overflow-x: hidden"
   ], "compact 420px PPT layout");
+  assert.match(
+    css,
+    /@media \(max-width: 380px\)[\s\S]*?\.structure-range-grid\s*\{[\s\S]*?grid-template-columns:\s*minmax\(0, 1fr\)/,
+    "320px PPT pane must stack the structure review range inputs"
+  );
   assert.ok(!css.includes(".workflow-profile-list-row .settings-card"), "workflow rows must not nest cards");
 }
 
