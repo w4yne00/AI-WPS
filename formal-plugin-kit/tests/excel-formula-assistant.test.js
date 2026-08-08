@@ -4,6 +4,7 @@ const fs = require("fs");
 const root = "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
 const html = fs.readFileSync(`${root}/taskpane.html`, "utf8");
 const js = fs.readFileSync(`${root}/taskpane.js`, "utf8");
+const css = fs.readFileSync(`${root}/taskpane.css`, "utf8");
 const ribbon = fs.readFileSync(`${root}/ribbon.xml`, "utf8");
 const ribbonJs = fs.readFileSync(`${root}/ribbon.js`, "utf8");
 const helpers = require(`../wps-ai-assistant-et_1.0.0/taskpane-helpers.js`);
@@ -13,6 +14,54 @@ function functionSource(name) {
   assert.notStrictEqual(start, -1, `missing function ${name}`);
   const next = js.indexOf("\n  function ", start + 3);
   return js.slice(start, next === -1 ? js.length : next);
+}
+
+function buildFunction(names, dependencies, resultName) {
+  const source = names.map(functionSource).join("\n");
+  const dependencyNames = Object.keys(dependencies);
+  return Function(...dependencyNames, `${source}\nreturn ${resultName};`)(
+    ...dependencyNames.map((name) => dependencies[name])
+  );
+}
+
+function createFormulaModeHarness() {
+  const nodes = {
+    "excel-formula-requirement-label": { textContent: "" },
+    "excel-formula-requirement": {
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; }
+    },
+    "btn-run-primary": { textContent: "" }
+  };
+  const buttons = ["generate", "explain"].map((mode) => ({
+    mode,
+    attributes: { "data-formula-mode": mode },
+    classList: { toggle() {} },
+    focused: false,
+    getAttribute(name) { return this.attributes[name]; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+    focus() { this.focused = true; }
+  }));
+  const state = { formulaMode: "generate", currentMode: "excelFormulaAssistant" };
+  const document = { querySelectorAll() { return buttons; } };
+  const byId = (id) => nodes[id];
+  const setMode = buildFunction(
+    ["getFormulaModeUi", "setFormulaAssistantMode"],
+    { state, document, byId, FORMULA_MODE_UI: {
+      generate: {
+        requirementLabel: "计算需求",
+        placeholder: "生成占位",
+        actionLabel: "生成推荐公式"
+      },
+      explain: {
+        requirementLabel: "排错说明（选填）",
+        placeholder: "解释占位",
+        actionLabel: "解释并排错"
+      }
+    } },
+    "setFormulaAssistantMode"
+  );
+  return { nodes, buttons, state, document, byId, setMode };
 }
 
 function buildRange(rowCount, columnCount) {
@@ -116,7 +165,143 @@ function testFormulaAssistantTaskAndReadOnlyContracts() {
   assert.ok(!/Worksheets\.Add|Sheets\.Add/.test(js), "Formula Assistant must not create sheets");
 }
 
+function testFormulaAssistantModeResultAndAccessibilityContracts() {
+  assert.ok(html.includes('id="excel-formula-mode-segment"'));
+  assert.ok(html.includes('role="tablist" aria-label="公式助手模式"'));
+  assert.ok(html.includes('data-formula-mode="generate"'));
+  assert.ok(html.includes('data-formula-mode="explain"'));
+  assert.ok(html.includes('id="excel-formula-alternative"'));
+  assert.ok(html.includes('id="excel-formula-alternative-code"'));
+
+  const extract = functionSource("extractExcelFormulaRange");
+  assert.ok(extract.includes("mode: state.formulaMode"));
+
+  const selectMode = functionSource("setFormulaAssistantMode");
+  assert.ok(selectMode.includes('setAttribute("aria-selected"'));
+  assert.ok(selectMode.includes('setAttribute("tabindex"'));
+  assert.ok(selectMode.includes("modeUi.requirementLabel"));
+  assert.ok(js.includes('requirementLabel: "计算需求"'));
+  assert.ok(js.includes('requirementLabel: "排错说明（选填）"'));
+
+  const keyboard = functionSource("handleFormulaModeKeydown");
+  ["ArrowLeft", "ArrowRight", "Home", "End"].forEach((key) => {
+    assert.ok(keyboard.includes(key), `formula mode keyboard contract missing ${key}`);
+  });
+
+  const render = functionSource("buildExcelFormulaMarkdown");
+  [
+    "originalFormula",
+    "components",
+    "referenceRanges",
+    "issues",
+    "localCheck",
+    "parseDiagnostic",
+    "rawFinalResult"
+  ].forEach((field) => assert.ok(render.includes(field), `result contract missing ${field}`));
+
+  const copy = functionSource("copyPrimaryFormula");
+  assert.ok(copy.includes("formulaResult.copyText"));
+  assert.ok(copy.includes("原始结果已复制"));
+  assert.ok(css.includes(".formula-mode-segment"));
+  assert.ok(css.includes(".formula-alternative"));
+  assert.ok(css.includes("@media (max-width: 420px)"));
+}
+
+function testFormulaModeSwitchAndKeyboardBehavior() {
+  const harness = createFormulaModeHarness();
+  harness.setMode("explain", true);
+  assert.strictEqual(harness.state.formulaMode, "explain");
+  assert.strictEqual(harness.buttons[1].attributes["aria-selected"], "true");
+  assert.strictEqual(harness.buttons[1].attributes.tabindex, "0");
+  assert.strictEqual(harness.nodes["excel-formula-requirement-label"].textContent, "排错说明（选填）");
+  assert.strictEqual(harness.nodes["btn-run-primary"].textContent, "解释并排错");
+  assert.strictEqual(harness.buttons[1].focused, true);
+
+  const keydown = buildFunction(
+    ["handleFormulaModeKeydown"],
+    {
+      document: harness.document,
+      setFormulaAssistantMode: harness.setMode
+    },
+    "handleFormulaModeKeydown"
+  );
+  let prevented = false;
+  keydown({ key: "Home", target: harness.buttons[1], preventDefault() { prevented = true; } });
+  assert.strictEqual(prevented, true);
+  assert.strictEqual(harness.state.formulaMode, "generate");
+  assert.strictEqual(harness.buttons[0].focused, true);
+}
+
+function testFormulaCopyBehaviorAndNarrowLayoutContract() {
+  function executeCopy(result) {
+    const state = { formulaResult: result };
+    let copied = "";
+    let status = "";
+    const copy = buildFunction(
+      ["copyPrimaryFormula"],
+      {
+        state,
+        navigator: {},
+        setStatus(message) { status = message; },
+        fallbackCopy(text, feedback) { copied = text; feedback(); }
+      },
+      "copyPrimaryFormula"
+    );
+    copy();
+    return { copied, status };
+  }
+
+  assert.deepStrictEqual(
+    executeCopy({ primaryFormula: "=SUM(B2:B3)", copyText: "=SUM(B2:B3)" }),
+    { copied: "=SUM(B2:B3)", status: "主公式已复制，工作簿未被修改。" }
+  );
+  assert.deepStrictEqual(
+    executeCopy({ parseDiagnostic: "解析失败", copyText: "原始最终结果" }),
+    { copied: "原始最终结果", status: "原始结果已复制，请人工核对。" }
+  );
+  assert.match(css, /\.formula-mode-segment\s*\{[\s\S]*?grid-template-columns:\s*repeat\(2,\s*minmax\(0,\s*1fr\)\)/);
+  assert.match(css, /@media \(max-width: 420px\)[\s\S]*?\.formula-mode-segment\s*\{[\s\S]*?width:\s*100%/);
+}
+
+function testStructuredResultKeepsFullExplanationCopyContract() {
+  const nodes = {
+    "result-view-switch": { hidden: false },
+    "btn-copy-formula": {
+      hidden: true,
+      textContent: "",
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; }
+    },
+    "excel-formula-alternative": { hidden: true, open: false },
+    "excel-formula-alternative-code": { textContent: "" }
+  };
+  const state = { formulaResult: null };
+  let copiedText = "";
+  const render = buildFunction(
+    ["renderExcelFormulaResult"],
+    {
+      state,
+      byId(id) { return nodes[id]; },
+      buildExcelFormulaMarkdown() { return "完整公式解释"; },
+      setResult(markdown, copyText) { copiedText = copyText; }
+    },
+    "renderExcelFormulaResult"
+  );
+
+  render({ primaryFormula: "=SUM(B2:B3)", copyText: "=SUM(B2:B3)" });
+  assert.strictEqual(copiedText, "完整公式解释");
+  assert.strictEqual(nodes["btn-copy-formula"].hidden, false);
+
+  render({ parseDiagnostic: "解析失败", rawFinalResult: "原始结果", copyText: "原始结果" });
+  assert.strictEqual(copiedText, "原始结果");
+  assert.strictEqual(nodes["btn-copy-formula"].textContent, "复制原始结果");
+}
+
 testBoundedExplicitSelectionExtraction();
 testFormulaAssistantTaskAndReadOnlyContracts();
+testFormulaAssistantModeResultAndAccessibilityContracts();
+testFormulaModeSwitchAndKeyboardBehavior();
+testFormulaCopyBehaviorAndNarrowLayoutContract();
+testStructuredResultKeepsFullExplanationCopyContract();
 
 console.log("Excel formula assistant tests passed");

@@ -3,6 +3,7 @@ from typing import Callable, Dict, Optional
 
 from app.core.errors import AdapterError
 from app.core.models import ExcelFormulaAssistantRequest
+from app.services.excel.formula_checks import inspect_formula
 from app.services.provider_client import ProviderClient
 
 
@@ -32,7 +33,8 @@ class ExcelFormulaAssistant:
     ) -> Dict:
         if progress_callback:
             progress_callback("preparing")
-        if not request.options.requirement.strip():
+        mode = request.options.mode
+        if mode == "generate" and not request.options.requirement.strip():
             raise AdapterError(
                 "EXCEL_FORMULA_REQUIREMENT_REQUIRED",
                 "请填写需要计算的内容。",
@@ -50,6 +52,13 @@ class ExcelFormulaAssistant:
                 "选区上下文超过 30 行 × 20 列的读取上限，请重新框选后再试。",
                 status_code=400,
             )
+        original_formula = self._first_selected_formula(request)
+        if mode == "explain" and not original_formula:
+            raise AdapterError(
+                "EXCEL_FORMULA_TO_EXPLAIN_REQUIRED",
+                "解释排错模式需要选区中包含已有公式，请先选中公式单元格。",
+                status_code=400,
+            )
         self._derive_truncation_state(request)
         if progress_callback:
             progress_callback("provider_processing")
@@ -64,15 +73,49 @@ class ExcelFormulaAssistant:
             **provider_kwargs
         )
         primary_formula = result.get("primaryFormula", "")
+        alternative_formula = result.get("alternativeFormula", "")
+        if alternative_formula == primary_formula:
+            alternative_formula = ""
+        checked_formula = primary_formula
         return {
+            "mode": mode,
+            "originalFormula": original_formula if mode == "explain" else "",
             "primaryFormula": primary_formula,
+            "alternativeFormula": alternative_formula,
             "suggestedTarget": result.get("suggestedTarget", ""),
             "explanation": result.get("explanation", ""),
+            "components": result.get("components", []),
+            "referenceRanges": result.get("referenceRanges", []),
+            "issues": result.get("issues", []),
             "assumptions": result.get("assumptions", []),
             "compatibilityNotes": result.get("compatibilityNotes", []),
-            "copyText": primary_formula,
+            "localCheck": inspect_formula(
+                checked_formula,
+                selection_address=request.selection.address,
+            ) if checked_formula else {
+                "status": "risks",
+                "summary": "未找到可执行基础检查的公式",
+                "checkedFormula": "",
+                "risks": [],
+            },
+            "rawFinalResult": result.get("rawFinalResult", ""),
+            "parseDiagnostic": result.get("parseDiagnostic", ""),
+            "copyText": (
+                result.get("copyText", "")
+                if result.get("parseDiagnostic")
+                else primary_formula
+            ),
             "provider": result.get("provider", "mock"),
         }
+
+    @staticmethod
+    def _first_selected_formula(request: ExcelFormulaAssistantRequest) -> str:
+        for row in request.selection.cells:
+            for cell in row:
+                formula = cell.formula.strip()
+                if formula:
+                    return formula
+        return ""
 
     @staticmethod
     def _has_explicit_selection(request: ExcelFormulaAssistantRequest) -> bool:

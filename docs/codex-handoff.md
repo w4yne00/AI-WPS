@@ -27,12 +27,12 @@ AI-WPS 是面向公司内网办公终端的 WPS AI 助理插件。目标环境�
 Excel 侧 Ribbon 只显示：
 
 - 智能分析：`POST /excel/analysis/jobs` 提交后台任务并轮询状态，兼容保留 `POST /excel/analysis`，任务类型 `excel.analysis`。
-- 公式助手：`POST /excel/formula-assistant/jobs` 提交后台任务并轮询状态，任务类型 `excel.formula_assistant`；必须提供明确选区与计算要求，最多读取 30 行、20 列，只返回一个主公式和复制入口。
+- 公式助手：`POST /excel/formula-assistant/jobs` 提交后台任务并轮询状态，任务类型 `excel.formula_assistant`；用户明确选择“生成公式 / 解释排错”，最多读取 30 行、20 列，返回一个主公式和仅在确有差异时折叠显示的一个备选公式。
 - 设置：复用同一 adapter 配置，智能分析与公式助手分别使用独立工作流档案和 API Key。
 
 智能分析是只读分析能力：优先读取 Excel 当前选区，无有效选区时回退当前工作表已用范围；前端只提供分析报告预览、汇报段落和复制，不写回单元格，不新增工作表，不生成公式。
 
-公式助手同样只读，但不会回退 `UsedRange`。它采集选区地址、表头、显示文本、有限值类型、已有公式和截断状态，输出主公式、建议位置、解释、假设和兼容性说明；不设置 `Formula`、不填充范围、不新建工作表、不修改计算模式，也不提供伪造的写回撤销。
+公式助手同样只读，但不会回退 `UsedRange`。它采集选区地址、表头、显示文本、有限值类型、已有公式和截断状态；解释模式返回原公式、组件说明、引用范围、发现问题和有依据的修正公式。本地只做不执行的基础语法、引用与兼容风险检查，不设置 `Formula`、不试算、不填充范围、不新建工作表、不修改计算模式，也不提供伪造的写回撤销。
 
 PPT 侧 Ribbon 只显示：
 
@@ -159,6 +159,13 @@ DELETE /ppt/slide-assistant/jobs/{jobId}[?resume=1]
 ```
 
 ## 3. 本版本关键变化
+
+issue #20 已在源码中补齐公式解释排错与本地检查，等待后续版本发布任务统一打包定版：
+
+- 公式助手任务窗格新增可用方向键、Home 和 End 操作的“生成公式 / 解释排错”分段控件；生成模式要求计算需求，解释模式要求明确选区中存在已有公式。
+- 解释结果分区展示原公式、组件说明、引用范围、发现问题和有依据的修正或保留公式；主公式保持唯一，备选公式只有与主公式确有差异时才在折叠区显示。
+- adapter 新增完全不执行公式的本地检查，覆盖等号前缀、括号、引号、长度、外部工作簿、URL/网络函数、明显越界引用和版本敏感函数；结果只显示“基础检查通过”或具体风险，不证明公式或计算结果正确。
+- 模型非结构化输出会保留去除 think 后的原始最终结果、中文诊断和复制入口；仍不通过隐藏单元格、临时工作表或任何 Excel 写入路径试算。
 
 issue #19 已在源码中完成 Excel 公式生成最小闭环，等待后续版本发布任务统一打包定版：
 
@@ -360,6 +367,7 @@ issue #19 已在源码中完成 Excel 公式生成最小闭环，等待后续版
 - `adapter_service/app/api/ppt.py`：PPT 文档文件入口和智能总结后台任务路由。
 - `adapter_service/app/services/provider_client.py`：统一 Dify Chat payload、任务级 API Key、脱敏 provider 调试记录，以及 Word/Excel/PPT provider 调用。
 - `adapter_service/app/services/excel/analyzer.py`：Excel 表格可用性校验和 provider 调用封装。
+- `adapter_service/app/services/excel/formula_checks.py`：公式字符串的只读基础语法、引用和兼容风险检查。
 - `adapter_service/app/services/excel/analysis_jobs.py`：智能分析幂等后台任务、运行状态和耗时诊断。
 - `adapter_service/app/services/ppt/document_files.py`：PPT Markdown/DOCX 校验、一次性暂存、过期和安全清理。
 - `adapter_service/app/services/ppt/slide_assistant.py`：PPT 单页输入预算、生成/优化模式和 provider 调用封装。

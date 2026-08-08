@@ -288,6 +288,7 @@ def build_excel_analysis_prompt(request: ExcelAnalysisRequest) -> str:
 
 def build_excel_formula_prompt(request: ExcelFormulaAssistantRequest) -> str:
     selection = request.selection
+    mode = request.options.mode
     cell_lines = []
     for row in selection.cells:
         items = []
@@ -302,10 +303,24 @@ def build_excel_formula_prompt(request: ExcelFormulaAssistantRequest) -> str:
             items.append(item)
         if items:
             cell_lines.append(" | ".join(items))
+    mode_lines = (
+        [
+            "当前模式：解释排错。",
+            "解释选区中的已有公式，逐项说明组件和引用范围，并仅在有明确依据时给出修正公式。",
+            "originalFormula 必须引用选区中真实存在的原公式；primaryFormula 是建议保留或修正后的主公式。",
+        ]
+        if mode == "explain"
+        else [
+            "当前模式：生成公式。",
+            "只根据用户明确框选的 WPS 表格上下文和计算需求推荐公式。",
+        ]
+    )
     return "\n".join(
         [
-            "你是企业表格公式生成助手。",
-            "只根据用户明确框选的 WPS 表格上下文和计算需求推荐公式。",
+            "你是企业表格公式助手。",
+        ]
+        + mode_lines
+        + [
             "",
             "工作簿：{0}".format(request.workbook_id),
             "工作表：{0}".format(selection.sheet_name or "未命名工作表"),
@@ -317,22 +332,22 @@ def build_excel_formula_prompt(request: ExcelFormulaAssistantRequest) -> str:
             "上下文已截断：{0}".format("是" if selection.truncated else "否"),
             "表头：{0}".format(", ".join(selection.headers) or "未识别到表头"),
             "",
-            "用户计算需求：",
-            request.options.requirement,
+            "用户补充要求：",
+            request.options.requirement or "无补充要求",
             "",
             "单元格上下文：",
             "\n".join(cell_lines) or "无可用单元格上下文。",
             "",
             "输出要求：",
             "1. 只输出一个 JSON 对象，不输出深度思考过程。",
-            "2. 字段固定为 primaryFormula、suggestedTarget、explanation、assumptions、compatibilityNotes、copyText。",
+            "2. 字段固定为 mode、originalFormula、primaryFormula、alternativeFormula、suggestedTarget、explanation、components、referenceRanges、issues、assumptions、compatibilityNotes。",
             "3. primaryFormula 必须是一个以 = 开头的主推荐公式；不要返回多个并列主方案。",
-            "4. suggestedTarget 说明建议放置的单元格或范围；无法可靠判断时明确说明需用户确认。",
-            "5. explanation 用通俗中文解释公式逻辑；assumptions 和 compatibilityNotes 均为字符串数组。",
-            "6. copyText 只包含可直接复制的主公式，与 primaryFormula 一致。",
+            "4. alternativeFormula 最多一个，且仅在与 primaryFormula 确有差异并有明确依据时返回，否则返回空字符串。",
+            "5. suggestedTarget 说明建议放置的单元格或范围；无法可靠判断时明确说明需用户确认。",
+            "6. explanation 用通俗中文解释整体逻辑；components、referenceRanges、issues、assumptions 和 compatibilityNotes 均为字符串数组。",
             "7. 如上下文已截断，必须在 assumptions 中说明只基于截断后的选区上下文。",
             "8. 不声称已经写入单元格，不要求前端自动填充范围、创建工作表或修改计算模式。",
-            "9. 不编造未出现在选区中的列、地址、业务事实或计算规则。",
+            "9. 不编造未出现在选区中的列、地址、业务事实或计算规则；不声称静态检查能够证明公式或计算结果正确。",
         ]
     )
 
@@ -988,37 +1003,87 @@ def parse_excel_formula_answer(answer: str) -> Dict:
     cleaned = strip_think_tag_content(answer or "").strip()
     payload = _extract_json_payload(cleaned)
     if isinstance(payload, dict):
-        primary_formula = _provider_safe_str(
-            payload.get("primaryFormula") or payload.get("primary_formula")
-        ).strip()
+        mode = _provider_safe_str(payload.get("mode")).strip()
+        if mode not in {"generate", "explain"}:
+            mode = "generate"
+        has_primary_formula = (
+            "primaryFormula" in payload or "primary_formula" in payload
+        )
+        raw_primary_formula = (
+            payload.get("primaryFormula")
+            if "primaryFormula" in payload
+            else payload.get("primary_formula")
+        )
+        primary_formula = _provider_safe_str(raw_primary_formula).strip()
         compatibility_notes = _excel_text_list(
             payload.get("compatibilityNotes")
             or payload.get("compatibility_notes")
         )
-        if not re.fullmatch(r"=[^\r\n]+", primary_formula):
+        invalid_primary_formula = (
+            not isinstance(raw_primary_formula, str)
+            or not re.fullmatch(r"=[^\r\n]+", primary_formula)
+        )
+        parse_diagnostic = ""
+        if not has_primary_formula:
+            parse_diagnostic = (
+                "模型后台结构化结果缺少主公式字段，已保留原始最终结果供复制和人工核对。"
+            )
+        elif invalid_primary_formula:
+            parse_diagnostic = (
+                "模型后台结构化结果中的主公式为空或格式无效，已保留原始最终结果供复制和人工核对。"
+            )
+        if parse_diagnostic:
             primary_formula = ""
             compatibility_notes.append(
                 "模型后台未返回单个有效公式，请补充需求后重试并人工核对。"
             )
+        alternative_formula = _provider_safe_str(
+            payload.get("alternativeFormula") or payload.get("alternative_formula")
+        ).strip()
+        if (
+            not re.fullmatch(r"=[^\r\n]+", alternative_formula)
+            or alternative_formula == primary_formula
+        ):
+            alternative_formula = ""
         return {
+            "mode": mode,
+            "originalFormula": _provider_safe_str(
+                payload.get("originalFormula") or payload.get("original_formula")
+            ).strip(),
             "primaryFormula": primary_formula,
+            "alternativeFormula": alternative_formula,
             "suggestedTarget": _provider_safe_str(
                 payload.get("suggestedTarget") or payload.get("suggested_target")
             ).strip(),
             "explanation": _provider_safe_str(payload.get("explanation")).strip(),
+            "components": _excel_text_list(payload.get("components")),
+            "referenceRanges": _excel_text_list(
+                payload.get("referenceRanges") or payload.get("reference_ranges")
+            ),
+            "issues": _excel_text_list(payload.get("issues")),
             "assumptions": _excel_text_list(payload.get("assumptions")),
             "compatibilityNotes": compatibility_notes,
-            "copyText": primary_formula,
+            "rawFinalResult": cleaned if parse_diagnostic else "",
+            "parseDiagnostic": parse_diagnostic,
+            "copyText": cleaned if parse_diagnostic else primary_formula,
         }
     formula_match = re.search(r"(?m)^\s*(=[^\r\n]+)", cleaned)
     primary_formula = formula_match.group(1).strip() if formula_match else ""
     return {
+        "mode": "generate",
+        "originalFormula": "",
         "primaryFormula": primary_formula,
+        "alternativeFormula": "",
         "suggestedTarget": "",
         "explanation": cleaned,
+        "components": [],
+        "referenceRanges": [],
+        "issues": [],
         "assumptions": [],
         "compatibilityNotes": ["模型后台未按结构化 JSON 输出，请人工核对。"],
-        "copyText": primary_formula,
+        "rawFinalResult": cleaned,
+        "parseDiagnostic": "模型后台最终结果未按结构化 JSON 输出，已保留原始最终结果供复制和人工核对。",
+        "copyText": cleaned,
     }
 
 
@@ -2129,9 +2194,19 @@ class ProviderClient:
             if progress_callback:
                 progress_callback("parsing")
             return {
+                "mode": request.options.mode,
+                "originalFormula": "",
                 "primaryFormula": "",
+                "alternativeFormula": "",
                 "suggestedTarget": "",
-                "explanation": "已读取明确选区，请配置公式助手模型后台后生成推荐公式。",
+                "explanation": (
+                    "已读取选区已有公式，请配置公式助手模型后台后执行解释排错。"
+                    if request.options.mode == "explain"
+                    else "已读取明确选区，请配置公式助手模型后台后生成推荐公式。"
+                ),
+                "components": [],
+                "referenceRanges": [],
+                "issues": [],
                 "assumptions": (
                     ["选区上下文已截断，只读取 30 行 × 20 列以内的数据。"]
                     if request.selection.truncated
@@ -2140,6 +2215,8 @@ class ProviderClient:
                 "compatibilityNotes": [
                     "请在设置页保存 excel.formula_assistant 的任务级 API Key。"
                 ],
+                "rawFinalResult": "",
+                "parseDiagnostic": "",
                 "copyText": "",
                 "provider": "mock",
                 "prompt": prompt,
@@ -2158,6 +2235,7 @@ class ProviderClient:
             trace_id,
             {
                 "scene": "excel",
+                "mode": request.options.mode,
                 "rowCount": request.selection.row_count,
                 "columnCount": request.selection.column_count,
                 "truncated": request.selection.truncated,

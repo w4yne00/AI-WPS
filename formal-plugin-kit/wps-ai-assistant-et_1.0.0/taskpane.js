@@ -34,6 +34,28 @@
     maxFormulaLength: 1000,
     maxTotalTextLength: 20000
   };
+  var FORMULA_MODE_UI = {
+    generate: {
+      requirementLabel: "计算需求",
+      placeholder: "例如：汇总金额列，并忽略空白单元格。",
+      actionLabel: "生成推荐公式",
+      submitStatus: "正在提交公式助手请求...",
+      submitResult: "正在等待模型后台生成推荐公式。",
+      waitingStatus: "模型后台正在生成推荐公式，请继续等待...",
+      stillWaitingStatus: "公式助手仍在等待模型后台返回...",
+      completionStatus: "推荐公式已生成。"
+    },
+    explain: {
+      requirementLabel: "排错说明（选填）",
+      placeholder: "例如：说明这条公式为何出现 #VALUE!，并给出有依据的修正建议。",
+      actionLabel: "解释并排错",
+      submitStatus: "正在提交公式解释排错请求...",
+      submitResult: "正在等待模型后台解释并排查已有公式。",
+      waitingStatus: "模型后台正在解释并排查公式，请继续等待...",
+      stillWaitingStatus: "公式解释排错仍在等待模型后台返回...",
+      completionStatus: "公式解释排错已完成。"
+    }
+  };
   var TASK_API_KEY_DEFS = [
     { taskType: "excel.analysis", label: "智能分析" },
     { taskType: "excel.formula_assistant", label: "公式助手" }
@@ -48,6 +70,7 @@
     diagnosticsCopyText: "",
     analysisRequirement: "",
     analysisResult: null,
+    formulaMode: "generate",
     formulaRequirement: "",
     formulaResult: null,
     resultViewMode: "preview",
@@ -221,6 +244,12 @@
   function setAnalysisBusy(isBusy) {
     state.busy = Boolean(isBusy);
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-formula-mode]"),
+      function (button) {
+        button.disabled = state.busy || state.workflowProfileMutationBusy;
+      }
+    );
     renderWorkflowProfileStrip();
     syncScopeWatcher();
   }
@@ -795,6 +824,7 @@
       scene: "excel",
       selection: selection,
       options: {
+        mode: state.formulaMode,
         requirement: state.formulaRequirement
       }
     };
@@ -871,10 +901,49 @@
   }
 
   function buildExcelFormulaMarkdown(data) {
+    var mode = (data && data.mode) || state.formulaMode;
+    var components = normalizeReportList(data && data.components);
+    var referenceRanges = normalizeReportList(data && data.referenceRanges);
+    var issues = normalizeReportList(data && data.issues);
     var assumptions = normalizeReportList(data && data.assumptions);
     var compatibilityNotes = normalizeReportList(data && data.compatibilityNotes);
-    return [
-      "## 主推荐公式",
+    var localCheck = (data && data.localCheck) || {};
+    var localRisks = normalizeReportList((localCheck.risks || []).map(function (risk) {
+      var message = String((risk && risk.message) || "发现基础风险。");
+      var evidence = String((risk && risk.evidence) || "");
+      return evidence ? message + "（依据：" + evidence + "）" : message;
+    }));
+    var lines;
+    if (data && data.parseDiagnostic) {
+      return [
+        "## 原始最终结果",
+        data.rawFinalResult || "模型后台未返回可展示的最终结果。",
+        "",
+        "## 中文诊断",
+        data.parseDiagnostic,
+        "",
+        "> 原始最终结果仅供复制和人工核对，未通过结构化公式检查。公式助手不会修改工作簿。"
+      ].join("\n");
+    }
+    lines = [];
+    if (mode === "explain") {
+      lines.push(
+        "## 原公式",
+        (data && data.originalFormula) ? "```\n" + data.originalFormula + "\n```" : "未读取到原公式。",
+        "",
+        "## 组件说明",
+        components.length ? components.map(function (item) { return "- " + item; }).join("\n") : "- 未返回组件说明。",
+        "",
+        "## 引用范围",
+        referenceRanges.length ? referenceRanges.map(function (item) { return "- " + item; }).join("\n") : "- 未识别引用范围。",
+        "",
+        "## 发现问题",
+        issues.length ? issues.map(function (item) { return "- " + item; }).join("\n") : "- 模型未指出额外问题；仍需人工核对业务逻辑。",
+        ""
+      );
+    }
+    lines = lines.concat([
+      mode === "explain" ? "## 修正或保留的主公式" : "## 主推荐公式",
       (data && data.primaryFormula) ? "```\n" + data.primaryFormula + "\n```" : "未返回可复制的主公式。",
       "",
       "## 建议位置",
@@ -883,33 +952,98 @@
       "## 逻辑解释",
       (data && data.explanation) || "未返回公式逻辑解释。",
       "",
+      "## 本地基础检查",
+      localRisks.length
+        ? localRisks.map(function (item) { return "- " + item; }).join("\n")
+        : (localCheck.summary || "未执行基础检查。"),
+      "",
       "## 引用假设",
       assumptions.length ? assumptions.map(function (item) { return "- " + item; }).join("\n") : "- 未声明额外假设。",
       "",
       "## 兼容提示",
       compatibilityNotes.length ? compatibilityNotes.map(function (item) { return "- " + item; }).join("\n") : "- 未返回额外兼容提示。",
       "",
-      "> 公式助手只提供预览和复制，不会修改工作簿。"
-    ].join("\n");
+      "> 本地检查只覆盖基础语法、引用和兼容风险，不证明公式或计算结果正确；公式助手不会修改工作簿。"
+    ]);
+    return lines.join("\n");
   }
 
   function renderExcelFormulaResult(data) {
     var result = data || {};
     var markdown = buildExcelFormulaMarkdown(result);
+    var alternative = String(result.alternativeFormula || "").trim();
+    var alternativePanel = byId("excel-formula-alternative");
+    var hasCopyText = Boolean(String(result.copyText || result.primaryFormula || "").trim());
     state.formulaResult = result;
     byId("result-view-switch").hidden = true;
-    byId("btn-copy-formula").hidden = !String(result.primaryFormula || "").trim();
-    setResult(markdown, markdown);
+    byId("btn-copy-formula").hidden = !hasCopyText;
+    byId("btn-copy-formula").textContent = result.parseDiagnostic ? "复制原始结果" : "复制公式";
+    byId("btn-copy-formula").setAttribute("title", result.parseDiagnostic ? "复制原始最终结果" : "复制主公式");
+    byId("btn-copy-formula").setAttribute("aria-label", result.parseDiagnostic ? "复制原始最终结果" : "复制主公式");
+    alternativePanel.hidden = !alternative || alternative === String(result.primaryFormula || "").trim();
+    alternativePanel.open = false;
+    byId("excel-formula-alternative-code").textContent = alternativePanel.hidden ? "" : alternative;
+    setResult(markdown, result.parseDiagnostic ? (result.copyText || "") : markdown);
+  }
+
+  function getFormulaModeUi(mode) {
+    return FORMULA_MODE_UI[mode === "explain" ? "explain" : "generate"];
+  }
+
+  function setFormulaAssistantMode(mode, focusSelected) {
+    var nextMode = mode === "explain" ? "explain" : "generate";
+    var modeUi = getFormulaModeUi(nextMode);
+    state.formulaMode = nextMode;
+    Array.prototype.forEach.call(
+      document.querySelectorAll("[data-formula-mode]"),
+      function (button) {
+        var selected = button.getAttribute("data-formula-mode") === nextMode;
+        button.setAttribute("aria-selected", selected ? "true" : "false");
+        button.setAttribute("tabindex", selected ? "0" : "-1");
+        button.classList.toggle("active", selected);
+        if (selected && focusSelected) {
+          button.focus();
+        }
+      }
+    );
+    byId("excel-formula-requirement-label").textContent = modeUi.requirementLabel;
+    byId("excel-formula-requirement").setAttribute(
+      "placeholder",
+      modeUi.placeholder
+    );
+    if (state.currentMode === "excelFormulaAssistant") {
+      byId("btn-run-primary").textContent = modeUi.actionLabel;
+    }
+  }
+
+  function handleFormulaModeKeydown(event) {
+    var buttons = Array.prototype.slice.call(document.querySelectorAll("[data-formula-mode]"));
+    var currentIndex = buttons.indexOf(event.target);
+    var nextIndex = currentIndex;
+    if (event.key === "ArrowLeft" || event.key === "ArrowUp") {
+      nextIndex = (currentIndex - 1 + buttons.length) % buttons.length;
+    } else if (event.key === "ArrowRight" || event.key === "ArrowDown") {
+      nextIndex = (currentIndex + 1) % buttons.length;
+    } else if (event.key === "Home") {
+      nextIndex = 0;
+    } else if (event.key === "End") {
+      nextIndex = buttons.length - 1;
+    } else {
+      return;
+    }
+    event.preventDefault();
+    setFormulaAssistantMode(buttons[nextIndex].getAttribute("data-formula-mode"), true);
   }
 
   function startExcelFormulaWaitFeedback() {
     var timers = [];
+    var modeUi = getFormulaModeUi(state.formulaMode);
     timers.push(setTimeout(function () {
-      setStatus("模型后台正在生成推荐公式，请继续等待...");
+      setStatus(modeUi.waitingStatus);
       setPlainResult("公式助手请求已提交，模型后台正在处理。请保持 WPS 和 adapter 打开。");
     }, 8000));
     timers.push(setTimeout(function () {
-      setStatus("公式助手仍在等待模型后台返回...");
+      setStatus(modeUi.stillWaitingStatus);
       setPlainResult("公式助手仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复提交。");
     }, 30000));
     return function () {
@@ -1295,8 +1429,13 @@
       error.adapterCode === "EXCEL_FORMULA_AUTH_SNAPSHOT_FAILED" ||
       error.adapterCode === "EXCEL_FORMULA_REQUIREMENT_REQUIRED" ||
       error.adapterCode === "EXCEL_FORMULA_SELECTION_REQUIRED" ||
+      error.adapterCode === "EXCEL_FORMULA_TO_EXPLAIN_REQUIRED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED"
     );
+  }
+
+  function getExcelFormulaCompletionStatus(result) {
+    return getFormulaModeUi((result || {}).mode).completionStatus;
   }
 
   function renderExcelFormulaJobProgress(job, jobId) {
@@ -1307,7 +1446,7 @@
       lines.push("公式助手已进入共享任务队列。", "排队位置：" + (job.queuePosition || 1));
     } else {
       setStatus("公式助手正在处理，当前阶段：" + phaseText + "。");
-      lines.push(job.runningMessage || "adapter 正在生成推荐公式。", "当前阶段：" + phaseText);
+      lines.push(job.runningMessage || "adapter 正在处理公式任务。", "当前阶段：" + phaseText);
     }
     lines.push(
       "总耗时：" + Number(job.elapsedSeconds || 0) + " 秒",
@@ -1383,9 +1522,9 @@
         setExcelFormulaCancelVisible(false);
         stopWaiting();
         renderExcelFormulaResult(job.result || {});
-        setStatus("推荐公式已生成。");
+        setStatus(getExcelFormulaCompletionStatus(job.result));
         refreshDiagnostics().then(function () {
-          setStatus("推荐公式已生成。");
+          setStatus(getExcelFormulaCompletionStatus(job.result));
         });
         return;
       }
@@ -1490,7 +1629,7 @@
       return;
     }
     state.formulaRequirement = safeText(byId("excel-formula-requirement").value);
-    if (!state.formulaRequirement) {
+    if (state.formulaMode === "generate" && !state.formulaRequirement) {
       setStatus("请填写计算需求。");
       setPlainResult("请说明需要计算的内容，再生成推荐公式。");
       return;
@@ -1500,6 +1639,7 @@
     setAnalysisBusy(true);
     state.formulaResult = null;
     byId("btn-copy-formula").hidden = true;
+    byId("excel-formula-alternative").hidden = true;
     clearExcelFormulaActiveJob();
     state.excelFormulaJobId = "";
     state.excelFormulaPollStartedAt = 0;
@@ -1522,8 +1662,8 @@
         return;
       }
 
-      setStatus("正在提交公式助手请求...");
-      setPlainResult("正在等待模型后台生成推荐公式。");
+      setStatus(getFormulaModeUi(state.formulaMode).submitStatus);
+      setPlainResult(getFormulaModeUi(state.formulaMode).submitResult);
       stopWaiting = startExcelFormulaWaitFeedback();
       (function (stopFeedback) {
         stopWaiting = function () {
@@ -1559,7 +1699,7 @@
           state.excelFormulaPollStartedAt = 0;
           stopWaiting();
           renderExcelFormulaResult(job.result || {});
-          setStatus("推荐公式已生成。");
+          setStatus(getExcelFormulaCompletionStatus(job.result));
           return;
         }
         renderExcelFormulaJobProgress(job, jobId);
@@ -1621,23 +1761,25 @@
   }
 
   function copyPrimaryFormula() {
-    var formula = String((state.formulaResult && state.formulaResult.primaryFormula) || "").trim();
+    var rawFallback = Boolean(state.formulaResult && state.formulaResult.parseDiagnostic);
+    var formula = String((state.formulaResult && (state.formulaResult.copyText || state.formulaResult.primaryFormula)) || "").trim();
+    var successMessage = rawFallback ? "原始结果已复制，请人工核对。" : "主公式已复制，工作簿未被修改。";
     if (!formula) {
       setStatus("暂无可复制的主公式。");
       return;
     }
     if (navigator.clipboard && navigator.clipboard.writeText) {
       navigator.clipboard.writeText(formula).then(function () {
-        setStatus("主公式已复制，工作簿未被修改。");
+        setStatus(successMessage);
       }).catch(function () {
         fallbackCopy(formula, function () {
-          setStatus("主公式已复制，工作簿未被修改。");
+          setStatus(successMessage);
         });
       });
       return;
     }
     fallbackCopy(formula, function () {
-      setStatus("主公式已复制，工作簿未被修改。");
+      setStatus(successMessage);
     });
   }
 
@@ -2677,8 +2819,10 @@
     byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回" + (state.lastTaskMode === "excelFormulaAssistant" ? "公式助手" : "智能分析") : "打开设置");
     byId("excel-analysis-options").hidden = settingsMode || formulaMode;
     byId("excel-formula-options").hidden = settingsMode || !formulaMode;
-    byId("btn-run-primary").textContent = formulaMode ? "生成推荐公式" : "生成分析报告";
-    byId("btn-copy-formula").hidden = !formulaMode || !String((state.formulaResult && state.formulaResult.primaryFormula) || "").trim();
+    byId("btn-run-primary").textContent = formulaMode
+      ? getFormulaModeUi(state.formulaMode).actionLabel
+      : "生成分析报告";
+    byId("btn-copy-formula").hidden = !formulaMode || !String((state.formulaResult && (state.formulaResult.copyText || state.formulaResult.primaryFormula)) || "").trim();
     if (formulaMode) {
       byId("result-view-switch").hidden = true;
     } else if (!settingsMode && state.analysisResult) {
@@ -2696,6 +2840,7 @@
     renderWorkflowTaskTabs();
     if (!settingsMode) {
       if (formulaMode) {
+        setFormulaAssistantMode(state.formulaMode);
         resumeExcelFormulaActiveJob();
       } else {
         resumeExcelAnalysisActiveJob();
@@ -2720,6 +2865,13 @@
     byId("excel-formula-requirement").addEventListener("input", function (event) {
       state.formulaRequirement = event.target.value;
     });
+    byId("excel-formula-mode-segment").addEventListener("click", function (event) {
+      var mode = event.target && event.target.getAttribute("data-formula-mode");
+      if (mode) {
+        setFormulaAssistantMode(mode);
+      }
+    });
+    byId("excel-formula-mode-segment").addEventListener("keydown", handleFormulaModeKeydown);
     byId("btn-run-primary").addEventListener("click", function () {
       if (state.currentMode === "excelFormulaAssistant") {
         runExcelFormulaAction();

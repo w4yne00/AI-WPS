@@ -61,9 +61,15 @@ class RecordingFormulaProvider:
         if progress_callback:
             progress_callback("parsing")
         return {
+            "mode": request.options.mode,
+            "originalFormula": "模型不应覆盖选区原公式",
             "primaryFormula": "=SUM(B2:B3)",
+            "alternativeFormula": "=B2+B3",
             "suggestedTarget": "B4",
             "explanation": "汇总 B2 至 B3 的金额。",
+            "components": ["SUM：求和函数。"],
+            "referenceRanges": ["B2:B3"],
+            "issues": ["未发现模型侧问题。"],
             "assumptions": ["首行为表头。"],
             "compatibilityNotes": ["SUM 可用于当前 WPS 版本。"],
             "copyText": "=AVERAGE(B2:B3)",
@@ -119,7 +125,7 @@ def wait_for_job(store, job_id, expected="completed", timeout=2):
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for formula assistant tests")
 class ExcelFormulaAssistantTests(unittest.TestCase):
-    def _request(self, requirement="汇总金额。", client_job_id=""):
+    def _request(self, requirement="汇总金额。", client_job_id="", mode="generate"):
         return parse_formula_request(
             {
                 "workbookId": "formula.xlsx",
@@ -150,7 +156,7 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
                         ],
                     ],
                 },
-                "options": {"requirement": requirement},
+                "options": {"mode": mode, "requirement": requirement},
             }
         )
 
@@ -198,6 +204,40 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
             "EXCEL_FORMULA_SELECTION_REQUIRED",
         )
 
+    def test_formula_explanation_uses_selected_original_formula_and_local_checks(self):
+        provider = RecordingFormulaProvider()
+        assistant = ExcelFormulaAssistant(provider_client=provider)
+
+        result = assistant.generate(
+            self._request(requirement="", mode="explain"),
+            trace_id="trace-formula-explain",
+        )
+
+        self.assertEqual(provider.calls[0]["request"].options.mode, "explain")
+        self.assertEqual(result["mode"], "explain")
+        self.assertEqual(result["originalFormula"], "=100+200")
+        self.assertEqual(result["primaryFormula"], "=SUM(B2:B3)")
+        self.assertEqual(result["alternativeFormula"], "=B2+B3")
+        self.assertEqual(result["components"], ["SUM：求和函数。"])
+        self.assertEqual(result["referenceRanges"], ["B2:B3"])
+        self.assertEqual(result["localCheck"]["summary"], "基础检查通过")
+        self.assertEqual(result["localCheck"]["checkedFormula"], "=SUM(B2:B3)")
+
+    def test_formula_explanation_requires_an_existing_formula_in_selection(self):
+        assistant = ExcelFormulaAssistant(provider_client=RecordingFormulaProvider())
+        request = self._request(requirement="", mode="explain")
+        for row in request.selection.cells:
+            for cell in row:
+                cell.formula = ""
+
+        with self.assertRaises(AdapterError) as missing_formula:
+            assistant.generate(request, trace_id="trace-formula-explain-missing")
+
+        self.assertEqual(
+            missing_formula.exception.code,
+            "EXCEL_FORMULA_TO_EXPLAIN_REQUIRED",
+        )
+
     def test_formula_generation_rejects_context_larger_than_capture_budget(self):
         assistant = ExcelFormulaAssistant(provider_client=RecordingFormulaProvider())
         request = self._request()
@@ -234,9 +274,52 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
         self.assertEqual(valid["primaryFormula"], "=SUM(B2:B3)")
         self.assertEqual(valid["copyText"], "=SUM(B2:B3)")
         self.assertEqual(missing_equals["primaryFormula"], "")
-        self.assertEqual(missing_equals["copyText"], "")
+        self.assertEqual(
+            missing_equals["copyText"],
+            '{"primaryFormula":"SUM(B2:B3)","compatibilityNotes":[]}',
+        )
         self.assertEqual(multiple_lines["primaryFormula"], "")
         self.assertTrue(missing_equals["compatibilityNotes"])
+        self.assertTrue(missing_equals["parseDiagnostic"])
+
+    def test_formula_parser_keeps_distinct_alternative_and_raw_fallback_copy(self):
+        structured = parse_excel_formula_answer(
+            '{"mode":"explain","originalFormula":"=SUM(B2:B3)",'
+            '"primaryFormula":"=SUM(B2:B4)","alternativeFormula":"=B2+B3+B4",'
+            '"components":["SUM：求和"],"referenceRanges":["B2:B4"],'
+            '"issues":["原范围漏掉 B4"],"compatibilityNotes":[]}'
+        )
+        duplicate_alternative = parse_excel_formula_answer(
+            '{"primaryFormula":"=SUM(B2:B3)",'
+            '"alternativeFormula":"=SUM(B2:B3)","compatibilityNotes":[]}'
+        )
+        fallback = parse_excel_formula_answer(
+            "<think>内部分析</think>建议保留原公式并人工核对 B2:B3。"
+        )
+        missing_primary = parse_excel_formula_answer(
+            '{"explanation":"无法确定公式","compatibilityNotes":[]}'
+        )
+        empty_primary = parse_excel_formula_answer(
+            '{"primaryFormula":"","explanation":"信息不足"}'
+        )
+        null_primary = parse_excel_formula_answer(
+            '{"primaryFormula":null,"explanation":"信息不足"}'
+        )
+
+        self.assertEqual(structured["alternativeFormula"], "=B2+B3+B4")
+        self.assertEqual(duplicate_alternative["alternativeFormula"], "")
+        self.assertEqual(
+            fallback["copyText"],
+            "建议保留原公式并人工核对 B2:B3。",
+        )
+        self.assertEqual(fallback["rawFinalResult"], fallback["copyText"])
+        self.assertIn("未按结构化 JSON 输出", fallback["parseDiagnostic"])
+        self.assertNotIn("内部分析", str(fallback))
+        self.assertEqual(missing_primary["rawFinalResult"], missing_primary["copyText"])
+        self.assertIn("缺少主公式字段", missing_primary["parseDiagnostic"])
+        for invalid in (empty_primary, null_primary):
+            self.assertEqual(invalid["rawFinalResult"], invalid["copyText"])
+            self.assertIn("主公式为空或格式无效", invalid["parseDiagnostic"])
 
     def test_provider_uses_formula_task_timeout_and_filters_think_output(self):
         class CapturingProviderClient(ProviderClient):
@@ -290,6 +373,20 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
         self.assertIn("=100+200", provider.posted["query"])
         self.assertNotIn("internal chain", str(result))
         self.assertEqual(result["primaryFormula"], "=SUM(B2:B3)")
+
+    def test_provider_prompt_switches_to_explanation_contract(self):
+        class PromptCapturingProvider(RecordingFormulaProvider):
+            pass
+
+        provider = ProviderClient(AppSettings())
+        result = provider.excel_formula_assistant(
+            self._request(requirement="", mode="explain"),
+            trace_id="trace-formula-explain-prompt",
+        )
+
+        self.assertIn("解释排错", result["prompt"])
+        self.assertIn("=100+200", result["prompt"])
+        self.assertEqual(result["mode"], "explain")
 
     def test_formula_jobs_use_shared_queue_and_only_queued_jobs_cancel(self):
         blocker_started = threading.Event()

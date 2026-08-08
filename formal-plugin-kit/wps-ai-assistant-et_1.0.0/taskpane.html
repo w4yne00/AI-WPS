@@ -48,8 +48,12 @@
           <div id="excel-formula-options" class="mode-block" hidden>
             <div id="excel-formula-range-summary" class="excel-range-summary">请先框选相关表格范围。</div>
             <p class="field-note">公式助手只读取明确选区，最多 30 行 × 20 列，不读取工作表已用范围。</p>
+            <div id="excel-formula-mode-segment" class="formula-mode-segment" role="tablist" aria-label="公式助手模式">
+              <button type="button" role="tab" data-formula-mode="generate" aria-selected="true" tabindex="0">生成公式</button>
+              <button type="button" role="tab" data-formula-mode="explain" aria-selected="false" tabindex="-1">解释排错</button>
+            </div>
             <label class="field" for="excel-formula-requirement">
-              <span>计算需求</span>
+              <span id="excel-formula-requirement-label">计算需求</span>
               <textarea id="excel-formula-requirement" rows="4" placeholder="例如：汇总金额列，并忽略空白单元格。"></textarea>
             </label>
           </div>
@@ -77,6 +81,10 @@
             </div>
           </div>
           <div id="result-output" class="markdown-output">等待运行。</div>
+          <details id="excel-formula-alternative" class="formula-alternative" hidden>
+            <summary>备选公式（与主公式确有差异时显示）</summary>
+            <pre><code id="excel-formula-alternative-code"></code></pre>
+          </details>
         </section>
       </section>
 

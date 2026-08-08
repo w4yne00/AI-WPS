@@ -112,7 +112,7 @@ Rules:
 | Smart imitation | Adds an independent `word.smart_imitation` model workflow for template-based imitation writing with selected-text or pasted templates, required imitation requirements, optional reference material, and preview/plain-text/copy-only results without comparison or writeback |
 | Word writing policy library | Ships four traceable preset packs for G-enterprise technical writing, technical-document style, cybersecurity terminology, and official-document style; Smart Write supports explicit scenes or conservative auto matching plus nonblocking review/expression hints, while local organization policies retain drill-down CRUD, CSV/XLSX import preview, conflict handling, export, backup, and fail-open behavior without changing writeback |
 | Excel “智能分析” | Provides a read-only `excel.analysis` model workflow for selected range or active used range analysis; long tasks use background jobs with recoverable polling, with structured report and plain paragraph views and no cell writeback |
-| Excel “公式助手” | Uses an independent `excel.formula_assistant` workflow and only an explicit selection (up to 30 rows by 20 columns) plus a required calculation request; returns one primary formula, target suggestion, explanation, assumptions, and compatibility notes through the shared queue, with copy-only output and no workbook writes |
+| Excel “公式助手” | Uses an independent `excel.formula_assistant` workflow and only an explicit selection (up to 30 rows by 20 columns), with an explicit Generate or Explain/Debug mode; returns an original-formula explanation, one primary formula, one collapsed alternative only when materially different, and non-executing syntax/reference/compatibility checks, with copy-only output and no workbook writes |
 | PPT “智能总结” | Uses one `ppt.slide_assistant` workflow profile for two modes. Current-slide summary reads the title, optional subtitle, body text, and adjacent titles. Document summary accepts one UTF-8 `.md` or valid `.docx` file up to 10 MB and produces a complete 5/8/10/12/15-slide recommendation, defaulting to 10 slides. Both modes are preview/copy only and never write to the presentation |
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
 | Unified three-host UI | Word, Excel, and PPT share the same restrained light-gray, white, mist-blue, and status-color visual system while preserving host isolation and existing task behavior |
@@ -367,8 +367,8 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |
 | `GET` | `/excel/analysis/jobs/{jobId}` | Poll a background “智能分析” job |
 | `DELETE` | `/excel/analysis/jobs/{jobId}` | Cancel a queued “智能分析” job; running blocking provider requests are not cancellable |
-| `POST` | `/excel/formula-assistant/jobs` | Submit a read-only formula task with an explicit range and calculation request |
-| `GET` | `/excel/formula-assistant/jobs/{jobId}` | Poll or resume a formula generation job |
+| `POST` | `/excel/formula-assistant/jobs` | Submit a read-only Generate or Explain/Debug formula task with an explicit range |
+| `GET` | `/excel/formula-assistant/jobs/{jobId}` | Poll or resume a Formula Assistant job |
 | `DELETE` | `/excel/formula-assistant/jobs/{jobId}` | Cancel a queued formula job; running blocking provider requests are not cancellable |
 | `POST` | `/ppt/document-files` | Validate and stage one UTF-8 `.md` or valid `.docx` source file up to 10 MB behind a one-time token |
 | `POST` | `/ppt/slide-assistant/jobs` | Start a current-slide or document “智能总结” background job |

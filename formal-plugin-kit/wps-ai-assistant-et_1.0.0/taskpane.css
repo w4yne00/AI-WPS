@@ -1325,9 +1325,69 @@ button.danger-action:not(:disabled) {
   line-height: 1.5;
 }
 
+.formula-mode-segment {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  margin: 0 0 12px;
+  padding: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+
+.formula-mode-segment button {
+  min-width: 0;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.formula-mode-segment button.active,
+.formula-mode-segment button[aria-selected="true"] {
+  border-color: var(--hairline-strong);
+  background: var(--surface);
+  color: var(--accent);
+}
+
+.formula-alternative {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+
+.formula-alternative summary {
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.formula-alternative pre {
+  max-width: 100%;
+  margin: 10px 0 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 #excel-analysis-options textarea {
   min-height: 108px;
   resize: vertical;
+}
+
+@media (max-width: 420px) {
+  .formula-mode-segment {
+    width: 100%;
+  }
+
+  .formula-mode-segment button {
+    padding-inline: 6px;
+  }
 }
 
 .single-action {

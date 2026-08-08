@@ -349,7 +349,12 @@ class ExcelFormulaSelection(BaseModel):
 
 
 class ExcelFormulaOptions(BaseModel):
+    mode: Literal["generate", "explain"] = "generate"
     requirement: str = ""
+
+    @validator("mode", pre=True, always=True)
+    def coerce_formula_mode(cls, value):
+        return value if value in {"generate", "explain"} else "generate"
 
     @validator("requirement", pre=True, always=True)
     def coerce_formula_requirement(cls, value):
@@ -377,11 +382,20 @@ class ExcelFormulaAssistantRequest(BaseModel):
 
 
 class ExcelFormulaAssistantResult(BaseModel):
+    mode: Literal["generate", "explain"] = "generate"
+    original_formula: str = Field(default="", alias="originalFormula")
     primary_formula: str = Field(default="", alias="primaryFormula")
+    alternative_formula: str = Field(default="", alias="alternativeFormula")
     suggested_target: str = Field(default="", alias="suggestedTarget")
     explanation: str = ""
+    components: List[str] = Field(default_factory=list)
+    reference_ranges: List[str] = Field(default_factory=list, alias="referenceRanges")
+    issues: List[str] = Field(default_factory=list)
     assumptions: List[str] = Field(default_factory=list)
     compatibility_notes: List[str] = Field(default_factory=list, alias="compatibilityNotes")
+    local_check: Dict[str, Any] = Field(default_factory=dict, alias="localCheck")
+    raw_final_result: str = Field(default="", alias="rawFinalResult")
+    parse_diagnostic: str = Field(default="", alias="parseDiagnostic")
     copy_text: str = Field(default="", alias="copyText")
     provider: str = "mock"
 
