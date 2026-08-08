@@ -128,6 +128,32 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(token, guide + checklist + record)
 
+    def test_v0220_acceptance_record_tracks_release_issue_and_external_validation(self) -> None:
+        def assert_release_acceptance_state(record_text: str) -> None:
+            self.assertIn("Issue #24", record_text)
+            self.assertIn("麒麟 V10/WPS 演示真机验收待执行", record_text)
+            self.assertNotIn("全部通过后再关闭 Issue #22", record_text)
+
+        record = (ROOT / "phase1-delivery-kit/docs/phase1-acceptance-record.md").read_text(
+            encoding="utf-8"
+        )
+        assert_release_acceptance_state(record)
+
+        archive_path = (
+            ROOT
+            / "dist-phase1-delivery-kit"
+            / "ai-wps-phase1-delivery-20260808-v0220.tar.gz"
+        )
+        with tarfile.open(archive_path, "r:gz") as package:
+            member = package.extractfile(
+                "ai-wps-phase1-delivery-20260808-v0220/"
+                "docs/phase1-acceptance-record.md"
+            )
+            self.assertIsNotNone(member)
+            packaged_record = member.read().decode("utf-8")
+
+        assert_release_acceptance_state(packaged_record)
+
     def test_delivery_includes_excel_and_ppt_prompt_templates(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
 

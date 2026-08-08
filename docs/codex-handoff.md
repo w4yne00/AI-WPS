@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808`
 
-当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，SHA256：`21507534858041c5e265333c815b73f3f6653c6f5810ccffbf4cd3858efe1967`；同目录 `.sha256` 文件为包外校验记录。
+当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，SHA256：`3d13afeda4798e4587fced5a001c80c803ef2829684220862539ca09aae968e1`；同目录 `.sha256` 文件为包外校验记录。
 
 ## 1. 当前项目状态
 
@@ -452,13 +452,13 @@ DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 
 当前结果：
 
-- Python 全量单测：`555 tests OK (skipped=55)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、结构审查、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
+- Python 全量单测：`559 tests OK (skipped=55)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、结构审查、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
 - 全部 13 个正式前端测试文件通过，覆盖三宿主 layout smoke、PPT 结构提取与只读边界、公式属性读取降级、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
 - `wps-addon` 的 4 个 Vitest 文件、11 个用例和真实 `tsc --noEmit` 类型检查通过；旧脚手架复用统一 WPS 文档公共类型，第三方声明文件内部检查与项目类型门禁分离。
 - Word/Excel/PPT 的 10 个 JavaScript 文件语法检查、TypeScript 类型检查和 24 个构建/安装/联调脚本 `bash -n`：通过。
 - 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，大小 8,721,438 字节、共 257 个归档条目，SHA256：`21507534858041c5e265333c815b73f3f6653c6f5810ccffbf4cd3858efe1967`；构建脚本同步生成同名 `.sha256` 包外校验记录。
+- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，大小 8,724,393 字节、共 257 个归档条目，SHA256：`3d13afeda4798e4587fced5a001c80c803ef2829684220862539ca09aae968e1`；构建脚本同步生成同名 `.sha256` 包外校验记录。
 - 构建审计已核对三宿主和 adapter 均为 `0.22.0-alpha`，公式助手与结构审查操作手册/提示词模板、四个规范包及四份已批准审阅清单、schema、来源/许可证、CSV/XLSX 空白模板、验收清单与记录齐全；包内无数据库、备份、API Key、`adapter.json`、日志、用户导入内容或未确认草稿。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
