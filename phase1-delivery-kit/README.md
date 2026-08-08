@@ -49,6 +49,7 @@ bash scripts/phase1_smoke_test.sh
 - `installer/install_phase1.sh`：一键安装脚本。
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `release-manifest.json`：版本、三宿主、四个规范包、来源许可资产及运行态排除策略清单。
+- 包外同名 `.tar.gz.sha256`：构建脚本自动生成的正式包 SHA-256 校验记录。
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify SYSTEM 提示词、Markdown 输出和现场验证手册。

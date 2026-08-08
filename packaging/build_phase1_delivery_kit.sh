@@ -154,6 +154,22 @@ for path in root.rglob("*"):
         raise SystemExit("non-template import content leaked into delivery: " + relative)
 PY
 
-COPYFILE_DISABLE=1 tar -czf "$OUT_DIR/$KIT_NAME.tar.gz" -C "$OUT_DIR" "$KIT_NAME"
+ARCHIVE_PATH="$OUT_DIR/$KIT_NAME.tar.gz"
+COPYFILE_DISABLE=1 tar -czf "$ARCHIVE_PATH" -C "$OUT_DIR" "$KIT_NAME"
 
-echo "Phase1 delivery kit created at $OUT_DIR/$KIT_NAME.tar.gz"
+"$PYTHON_BIN" - "$ARCHIVE_PATH" <<'PY'
+import hashlib
+from pathlib import Path
+import sys
+
+archive_path = Path(sys.argv[1])
+digest = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+checksum_path = archive_path.with_name(archive_path.name + ".sha256")
+checksum_path.write_text(
+    "{0}  {1}\n".format(digest, archive_path.name),
+    encoding="utf-8",
+)
+PY
+
+echo "Phase1 delivery kit created at $ARCHIVE_PATH"
+echo "Phase1 delivery checksum created at $ARCHIVE_PATH.sha256"

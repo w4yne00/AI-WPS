@@ -50,6 +50,25 @@ class ExcelFormulaChecksTests(unittest.TestCase):
         self.assertIn("OUTSIDE_SELECTION_REFERENCE", codes)
         self.assertIn("D3", str(result))
 
+    def test_basic_check_requires_review_for_functions_outside_local_support_list(self):
+        unknown = inspect_formula("=FOOBAR(A1)")
+        known = inspect_formula("=IF(A1>0,SUM(B1:B3),0)")
+
+        unknown_risks = {
+            risk["code"]: risk
+            for risk in unknown["risks"]
+        }
+        self.assertIn("FUNCTION_SUPPORT_REVIEW_REQUIRED", unknown_risks)
+        self.assertEqual(
+            unknown_risks["FUNCTION_SUPPORT_REVIEW_REQUIRED"]["evidence"],
+            "FOOBAR",
+        )
+        self.assertIn("未列入本地支持清单", str(unknown_risks))
+        self.assertNotIn("FUNCTION_SUPPORT_REVIEW_REQUIRED", {
+            risk["code"] for risk in known["risks"]
+        })
+        self.assertNotIn("确定不支持", str(unknown))
+
 
 if __name__ == "__main__":
     unittest.main()

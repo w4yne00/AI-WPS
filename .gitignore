@@ -6,6 +6,7 @@ dist-formal-plugin-kit/
 dist-adapter-start-kit/
 dist-phase1-delivery-kit/*
 !dist-phase1-delivery-kit/*.tar.gz
+!dist-phase1-delivery-kit/*.tar.gz.sha256
 .DS_Store
 ._*
 logs/

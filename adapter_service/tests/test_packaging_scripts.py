@@ -1,4 +1,5 @@
 import json
+import hashlib
 import os
 import shutil
 import subprocess
@@ -402,6 +403,15 @@ class PackagingScriptTests(unittest.TestCase):
                 / "ai-wps-phase1-delivery-20260808-v0210.tar.gz"
             )
             self.assertTrue(archive.is_file())
+            checksum = archive.with_name(archive.name + ".sha256")
+            self.assertTrue(checksum.is_file())
+            self.assertEqual(
+                checksum.read_text(encoding="utf-8"),
+                "{0}  {1}\n".format(
+                    hashlib.sha256(archive.read_bytes()).hexdigest(),
+                    archive.name,
+                ),
+            )
             with tarfile.open(archive, "r:gz") as package:
                 names = package.getnames()
                 root = "ai-wps-phase1-delivery-20260808-v0210"

@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-20260808`
 
-当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz`，SHA256：`da976990ab13d498710168f832f6ef565a9c31df22e1eb70a97f24b5d0132c78`
+当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz`，SHA256：`9405ad15747d18b8ec80c92b16ffda741fa625bc62ba53363c83becdcf110768`；同目录 `.sha256` 文件为包外校验记录。
 
 ## 1. 当前项目状态
 
@@ -168,14 +168,14 @@ DELETE /ppt/slide-assistant/jobs/{jobId}[?resume=1]
 - 自动化继续禁止 `Formula`、`FormulaLocal`、`FormulaR1C1` 赋值、工作表新增和计算模式修改；麒麟 V10 实际属性可用性及工作簿前后摘要必须按包内验收记录执行，当前 Mac 结果不能代替真机结论。
 - 正式包包含 `dify-excel-formula-assistant-workflow.md` 和 `excel-formula-assistant-prompt-template.md`；模板补齐 max token、错误降级和禁止事项。
 
-issue #20 已在源码中补齐公式解释排错与本地检查，等待后续版本发布任务统一打包定版：
+issue #20 已补齐公式解释排错与本地检查，并随 `v0.21.0-alpha` 统一打包：
 
 - 公式助手任务窗格新增可用方向键、Home 和 End 操作的“生成公式 / 解释排错”分段控件；生成模式要求计算需求，解释模式要求明确选区中存在已有公式。
 - 解释结果分区展示原公式、组件说明、引用范围、发现问题和有依据的修正或保留公式；主公式保持唯一，备选公式只有与主公式确有差异时才在折叠区显示。
-- adapter 新增完全不执行公式的本地检查，覆盖等号前缀、括号、引号、长度、外部工作簿、URL/网络函数、明显越界引用和版本敏感函数；结果只显示“基础检查通过”或具体风险，不证明公式或计算结果正确。
+- adapter 新增完全不执行公式的本地检查，覆盖等号前缀、括号、引号、长度、外部工作簿、URL/网络函数、明显越界引用、版本敏感函数和未列入本地支持清单的函数；未知函数只提示目标 WPS 核对，不直接判为不支持。结果只显示“基础检查通过”或具体风险，不证明公式或计算结果正确。
 - 模型非结构化输出会保留去除 think 后的原始最终结果、中文诊断和复制入口；仍不通过隐藏单元格、临时工作表或任何 Excel 写入路径试算。
 
-issue #19 已在源码中完成 Excel 公式生成最小闭环，等待后续版本发布任务统一打包定版：
+issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统一打包：
 
 - Excel Ribbon 新增独立“公式助手”，设置页为 `excel.formula_assistant` 提供单独的工作流档案与 API Key。
 - 任务只接受用户明确选区和必填计算要求；前端提取最多 30 行、20 列的地址、表头、显示文本、有限值类型和已有公式，并标记截断，不读取 `UsedRange`。
@@ -422,13 +422,13 @@ DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 
 当前结果：
 
-- Python 全量单测：`542 tests OK (skipped=54)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
+- Python 全量单测：`543 tests OK (skipped=54)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
 - 全部 13 个正式前端测试文件通过，覆盖三宿主 layout smoke、公式属性读取降级与只读边界、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
 - `wps-addon` 的 4 个 Vitest 文件、11 个用例和真实 `tsc --noEmit` 类型检查通过；旧脚手架复用统一 WPS 文档公共类型，第三方声明文件内部检查与项目类型门禁分离。
 - Word/Excel/PPT 的 9 个 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，TypeScript 类型检查和构建/安装/联调脚本 `bash -n`：通过。
 - 当前版本未改任务窗格结构，静态 layout smoke 已通过；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz`，大小 8,700,835 字节、共 252 个归档条目，SHA256：`da976990ab13d498710168f832f6ef565a9c31df22e1eb70a97f24b5d0132c78`。
+- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz`，大小 8,702,357 字节、共 252 个归档条目，SHA256：`9405ad15747d18b8ec80c92b16ffda741fa625bc62ba53363c83becdcf110768`；构建脚本同步生成同名 `.sha256` 包外校验记录。
 - 构建审计已核对三宿主和 adapter 均为 `0.21.0-alpha`，公式助手操作手册/提示词模板、四个规范包及四份已批准审阅清单、schema、来源/许可证、CSV/XLSX 空白模板、验收清单与记录齐全；包内无数据库、备份、API Key、`adapter.json`、日志、用户导入内容或未确认草稿。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
@@ -445,7 +445,7 @@ DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 8. 执行“文档审查”，优先框选 3 到 10 个段落联调；确认 `/provider/debug-last.taskType=word.document_review`，结果区显示知识命中摘要、审查摘要和问题列表。
 9. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，且不使用写作规范。
 10. 打开 WPS Excel，确认 Ribbon 下只有“智能分析”“公式助手”和“设置”；选择一块表格区域后执行分析，确认 `/provider/debug-last.taskType=excel.analysis`，结果区显示数据概览、关键发现、风险异常、建议动作和汇报段落。使用慢模型验证 180 秒以上任务仍持续轮询，不提前提示连接失败。
-11. 按公式助手操作手册逐项记录 `HasFormula`、`Formula`、`FormulaLocal`、`FormulaR1C1` 可用性和降级结果；验证 30×20、空选区、混合值/公式、超长公式、外部引用、版本敏感函数、独立工作流、慢模型排队、重开续查和复制。每个场景前后核对单元格值/公式、工作表清单和计算模式完全一致。
+11. 按公式助手操作手册逐项记录 `HasFormula`、`Formula`、`FormulaLocal`、`FormulaR1C1` 可用性和降级结果；验证 30×20、空选区、混合值/公式、超长公式、外部引用、版本敏感函数、虚构函数 `FOOBAR` 的核对提示、独立工作流、慢模型排队、重开续查和复制。每个场景前后核对单元格值/公式、工作表清单和计算模式完全一致。
 12. 打开 WPS 演示，确认 Ribbon 下只有“智能总结”和“设置”；在当前页模式分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。
 13. 在文档模式分别测试 UTF-8 `.md`、有效 `.docx`、损坏 DOCX、不支持类型和超过 10 MB 文件；确认页数只允许 5、8、10、12、15 且默认 10，结果给出整套逐页建议和复制动作，任何场景都不修改 PPT。
 14. 使用慢模型验证 180 秒以上任务仍持续轮询；状态查询短暂中断或重开任务窗格后恢复同一任务，不重复调用 `/files/upload` 或 `/chat-messages`。
