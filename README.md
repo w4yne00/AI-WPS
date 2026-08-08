@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.20.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.20.1-20260801` |
+| Version | `v0.21.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-20260808` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260801-v0201.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz` |
 
 Version rule format:
 
@@ -128,6 +128,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.21.0-alpha` | Formally packages the independent Excel Formula Assistant with Generate and Explain/Debug modes, selection-only 30×20 extraction, `Formula`/`FormulaLocal`/`FormulaR1C1` read fallback guarded by `HasFormula`, shared long-task queuing and recovery, local non-executing checks, and copy-only results. The unified package includes its Dify operations guide and prompt template; Word and PPT business behavior remains unchanged |
 | `v0.20.1-alpha` | Stabilizes the existing three-host long-task queue and Word/Excel selection watchers without adding business entries. Document Review, Excel Analysis, and PPT Summary share two running slots plus eight FIFO queue positions, preserve submission-time configuration, expose truthful queue/phase/timing and queued cancellation, and report Adapter-restart interruption explicitly. Word and Excel prefer host selection events with a visible-page low-frequency fallback and pause host reads while hidden, in settings, or busy. Existing workflows, results, writeback boundaries, and overwrite-install protection remain unchanged |
 | `v0.20.0-alpha` | Formally packages the reviewed writing-policy baseline in the unified three-host delivery kit. First install initializes the organization database; overwrite upgrades preserve organization overrides, custom rules, preset-disable state, backups, and model configuration. The build now emits and verifies a release manifest and rejects databases, keys, logs, imported content, or unapproved drafts, without changing Format Review, Excel Analysis, PPT Summary, workflow profiles, writeback, timeout, or polling behavior |
 | `v0.19.1-alpha` | Refines the shared Word, Excel, and PPT task-pane experience without changing business workflows: compact host-colored task and settings views, live model-interface readiness derived from each host's URL and workflow profiles, scalable task tabs, optional workflow notes, contextual help, and collapsed advanced diagnostics. Settings probes now use an isolated 8-second budget, single-flight refresh, stale-response protection, and edit-aware pausing so they cannot overwrite task status, results, long-running job state, or unsaved settings |

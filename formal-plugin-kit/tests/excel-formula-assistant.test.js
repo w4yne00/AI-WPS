@@ -7,6 +7,7 @@ const js = fs.readFileSync(`${root}/taskpane.js`, "utf8");
 const css = fs.readFileSync(`${root}/taskpane.css`, "utf8");
 const ribbon = fs.readFileSync(`${root}/ribbon.xml`, "utf8");
 const ribbonJs = fs.readFileSync(`${root}/ribbon.js`, "utf8");
+const helperJs = fs.readFileSync(`${root}/taskpane-helpers.js`, "utf8");
 const helpers = require(`../wps-ai-assistant-et_1.0.0/taskpane-helpers.js`);
 
 function functionSource(name) {
@@ -138,6 +139,54 @@ function testBoundedExplicitSelectionExtraction() {
     valueType: "formula",
     formula: "=B1*2"
   });
+
+  const formulaFallbackRange = {
+    Address: "$A$1:$C$1",
+    Rows: { Count: 1 },
+    Columns: { Count: 3 },
+    Cells: {
+      Item(_row, column) {
+        if (column === 1) {
+          return {
+            Address: "$A$1",
+            Text: "3",
+            Value2: 3,
+            HasFormula: true,
+            Formula: "",
+            FormulaLocal: "=SUMME(A2:A3)"
+          };
+        }
+        if (column === 2) {
+          return {
+            Address: "$B$1",
+            Text: "6",
+            Value2: 6,
+            HasFormula() { return -1; },
+            Formula: "",
+            FormulaLocal: "",
+            FormulaR1C1: "=RC[-1]*2"
+          };
+        }
+        return {
+          Address: "$C$1",
+          Text: "=A1",
+          Value2: "=A1",
+          HasFormula: false,
+          Formula: "=A1"
+        };
+      }
+    }
+  };
+  const fallbackSelection = helpers.extractExcelFormulaSelection(
+    formulaFallbackRange,
+    { sheetName: "降级路径" }
+  );
+  assert.strictEqual(fallbackSelection.cells[0][0].formula, "=SUMME(A2:A3)");
+  assert.strictEqual(fallbackSelection.cells[0][0].valueType, "formula");
+  assert.strictEqual(fallbackSelection.cells[0][1].formula, "=RC[-1]*2");
+  assert.strictEqual(fallbackSelection.cells[0][1].valueType, "formula");
+  assert.strictEqual(fallbackSelection.cells[0][2].formula, "");
+  assert.strictEqual(fallbackSelection.cells[0][2].valueType, "text");
 }
 
 function testFormulaAssistantTaskAndReadOnlyContracts() {
@@ -160,9 +209,12 @@ function testFormulaAssistantTaskAndReadOnlyContracts() {
 
   assert.ok(js.includes('var EXCEL_FORMULA_WORKFLOW_TASK_TYPE = "excel.formula_assistant";'));
   assert.ok(js.includes('request("/excel/formula-assistant/jobs/"'));
-  assert.ok(!/\.Formula\s*=/.test(js), "Formula Assistant must not write Formula");
-  assert.ok(!/\.FormulaLocal\s*=/.test(js), "Formula Assistant must not write FormulaLocal");
-  assert.ok(!/Worksheets\.Add|Sheets\.Add/.test(js), "Formula Assistant must not create sheets");
+  const excelRuntime = `${js}\n${helperJs}`;
+  assert.ok(!/\.Formula\s*=/.test(excelRuntime), "Formula Assistant must not write Formula");
+  assert.ok(!/\.FormulaLocal\s*=/.test(excelRuntime), "Formula Assistant must not write FormulaLocal");
+  assert.ok(!/\.FormulaR1C1\s*=/.test(excelRuntime), "Formula Assistant must not write FormulaR1C1");
+  assert.ok(!/\.Calculation(?:Mode)?\s*=/.test(excelRuntime), "Formula Assistant must not change calculation state");
+  assert.ok(!/Worksheets\.Add|Sheets\.Add/.test(excelRuntime), "Formula Assistant must not create sheets");
 }
 
 function testFormulaAssistantModeResultAndAccessibilityContracts() {

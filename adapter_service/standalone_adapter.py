@@ -71,7 +71,7 @@ from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfile
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.20.1-alpha"
+VERSION = "0.21.0-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.

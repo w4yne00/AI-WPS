@@ -2020,12 +2020,44 @@
     }
 
     function readFormula(cell) {
-      var formula = firstDefined(
-        readOwned(cell, ["Formula", "formula", "FormulaLocal", "formulaLocal"]),
-        ""
-      );
-      formula = bounded(formula, maxFormulaLength);
-      return formula.charAt(0) === "=" ? formula : "";
+      var hasFormulaValue = resolveScalarValue(readOwned(
+        cell,
+        ["HasFormula", "hasFormula"]
+      ));
+      var hasFormulaText;
+      var formulaKeys = [
+        "Formula",
+        "formula",
+        "FormulaLocal",
+        "formulaLocal",
+        "FormulaR1C1",
+        "formulaR1C1"
+      ];
+      var index;
+      var formula;
+
+      if (typeof hasFormulaValue === "boolean" && !hasFormulaValue) {
+        return "";
+      }
+      if (typeof hasFormulaValue === "number" && hasFormulaValue === 0) {
+        return "";
+      }
+      if (typeof hasFormulaValue === "string") {
+        hasFormulaText = hasFormulaValue.trim().toLowerCase();
+        if (hasFormulaText === "false" || hasFormulaText === "0" || hasFormulaText === "no") {
+          return "";
+        }
+      }
+
+      for (index = 0; index < formulaKeys.length; index += 1) {
+        formula = toSafeString(readOwned(cell, [formulaKeys[index]]), "")
+          .replace(/\r/g, "")
+          .trim();
+        if (formula.charAt(0) === "=") {
+          return bounded(formula, maxFormulaLength);
+        }
+      }
+      return "";
     }
 
     function readRawValue(cell) {

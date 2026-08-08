@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "product": "AI-WPS",
-  "version": "0.20.1-alpha",
-  "releaseDate": "20260801",
-  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.20.1-20260801",
+  "version": "0.21.0-alpha",
+  "releaseDate": "20260808",
+  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-20260808",
   "hosts": [
     {
       "name": "Word",
@@ -23,7 +23,11 @@
   ],
   "adapter": {
     "name": "wps-ai-adapter",
-    "version": "0.20.1-alpha"
+    "version": "0.21.0-alpha"
+  },
+  "excelFormulaAssistantAssets": {
+    "operationsGuide": "docs/operations/dify-excel-formula-assistant-workflow.md",
+    "promptTemplate": "docs/prompt-templates/excel-formula-assistant-prompt-template.md"
   },
   "writingPolicyPacks": [
     "yangqi-tech-writing-base",

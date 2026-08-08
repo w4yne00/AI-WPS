@@ -1,6 +1,6 @@
 {
   "name": "wps-ai-assistant-et",
-  "version": "0.20.1-alpha",
+  "version": "0.21.0-alpha",
   "description": "AI-WPS Excel analysis assistant",
   "icons": {
     "32": "assets/ai-assistant-32.png"
