@@ -17,6 +17,7 @@ SUPPORTED_WORKFLOW_TASKS = (
     "excel.analysis",
     "excel.formula_assistant",
     "ppt.slide_assistant",
+    "ppt.structure_review",
 )
 MAX_PROFILES_PER_TASK = 20
 MAX_PROFILE_NAME_LENGTH = 40

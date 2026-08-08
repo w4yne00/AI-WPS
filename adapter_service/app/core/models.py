@@ -537,6 +537,71 @@ class PptSlideAssistantResponseData(BaseModel):
     provider: str = "mock"
 
 
+class PptStructureReviewScope(BaseModel):
+    total_slides: int = Field(default=0, alias="totalSlides")
+    start_slide: int = Field(default=1, alias="startSlide")
+    end_slide: int = Field(default=0, alias="endSlide")
+
+    @validator("total_slides", "start_slide", "end_slide", pre=True, always=True)
+    def coerce_structure_scope_integer(cls, value):
+        return _safe_int(value) or 0
+
+
+class PptStructureReviewSlide(BaseModel):
+    index: int = 1
+    title: str = ""
+    subtitle: str = ""
+    body_fallback: str = Field(default="", alias="bodyFallback")
+
+    @validator("index", pre=True, always=True)
+    def coerce_structure_slide_index(cls, value):
+        return _safe_int(value) or 1
+
+    @validator("title", "subtitle", "body_fallback", pre=True, always=True)
+    def coerce_structure_slide_text(cls, value):
+        return _safe_str(value)
+
+
+class PptStructureReviewRequest(BaseModel):
+    presentation_id: str = Field(default="active-presentation", alias="presentationId")
+    scene: Literal["ppt"] = "ppt"
+    client_job_id: str = Field(default="", alias="clientJobId")
+    scope: PptStructureReviewScope = Field(default_factory=PptStructureReviewScope)
+    slides: List[PptStructureReviewSlide] = Field(default_factory=list)
+
+    @validator("presentation_id", pre=True, always=True)
+    def coerce_structure_presentation_id(cls, value):
+        return _safe_str(value, "active-presentation") or "active-presentation"
+
+    @validator("scene", pre=True, always=True)
+    def coerce_structure_scene(cls, value):
+        return "ppt"
+
+    @validator("client_job_id", pre=True, always=True)
+    def coerce_structure_client_job_id(cls, value):
+        return _safe_str(value)
+
+    @validator("slides", pre=True, always=True)
+    def coerce_structure_slides(cls, value):
+        return value if isinstance(value, list) else []
+
+
+class PptStructureReviewResponseData(BaseModel):
+    reviewed_range: Dict[str, Any] = Field(default_factory=dict, alias="reviewedRange")
+    overall_storyline: str = Field(default="", alias="overallStoryline")
+    inferred_chapters: List[Dict[str, Any]] = Field(default_factory=list, alias="inferredChapters")
+    high_priority_issues: List[Dict[str, Any]] = Field(default_factory=list, alias="highPriorityIssues")
+    general_suggestions: List[Dict[str, Any]] = Field(default_factory=list, alias="generalSuggestions")
+    slide_recommendations: List[Dict[str, Any]] = Field(default_factory=list, alias="slideRecommendations")
+    recommended_outline: List[Dict[str, Any]] = Field(default_factory=list, alias="recommendedOutline")
+    review_conclusion: str = Field(default="", alias="reviewConclusion")
+    outline_text: str = Field(default="", alias="outlineText")
+    plain_text: str = Field(default="", alias="plainText")
+    raw_answer: Optional[str] = Field(default=None, alias="rawAnswer")
+    parse_fallback_reason: Optional[str] = Field(default=None, alias="parseFallbackReason")
+    provider: str = "mock"
+
+
 class WritingPolicyUsageItem(BaseModel):
     id: str
     type: Literal["term", "style", "anti_template"]

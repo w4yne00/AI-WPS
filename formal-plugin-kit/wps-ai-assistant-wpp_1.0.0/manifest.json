@@ -1,7 +1,7 @@
 {
   "name": "wps-ai-assistant-wpp",
-  "version": "0.21.0-alpha",
-  "description": "AI-WPS PPT smart summary",
+  "version": "0.22.0-alpha",
+  "description": "AI-WPS PPT smart summary and structure review",
   "icons": {
     "32": "assets/ai-assistant-32.png"
   },

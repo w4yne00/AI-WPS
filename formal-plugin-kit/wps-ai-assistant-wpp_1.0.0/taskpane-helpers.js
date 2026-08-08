@@ -250,6 +250,43 @@
     return { text: "", shape: null, index: 0 };
   }
 
+  function readStructureTitleInfo(slide) {
+    var shapes = getSlideShapes(slide);
+    var explicitTitle = getExplicitTitleShape(shapes);
+    var explicitTitleText;
+    var count;
+    var index;
+    var candidate;
+    var name;
+    var placeholderType;
+    if (explicitTitle) {
+      explicitTitleText = readShapeText(explicitTitle);
+      count = getCollectionCount(shapes);
+      for (index = 1; index <= count; index += 1) {
+        candidate = getCollectionItem(shapes, index);
+        if (shapesMatch(candidate, explicitTitle)) {
+          return { text: explicitTitleText, shape: candidate, index: index };
+        }
+      }
+      return { text: explicitTitleText, shape: explicitTitle, index: 0 };
+    }
+    count = getCollectionCount(shapes);
+    for (index = 1; index <= count; index += 1) {
+      candidate = getCollectionItem(shapes, index);
+      placeholderType = getPlaceholderType(candidate);
+      name = getShapeName(candidate);
+      if (placeholderType === 1 || placeholderType === 3 ||
+          (name && /(主标题|主標題|title)/i.test(name) && !/(副标题|副標題|subtitle)/i.test(name))) {
+        return {
+          text: readShapeText(candidate),
+          shape: candidate,
+          index: index
+        };
+      }
+    }
+    return { text: "", shape: null, index: 0 };
+  }
+
   function buildSubtitleInfo(shape, index, maxLength) {
     var rawText = readShapeText(shape);
     return {
@@ -481,6 +518,116 @@
         contentCharacterCount: subtitle.length + body.bodyCharacterCount,
         truncated: truncated
       }
+    };
+  }
+
+  function structureExtractionError(code, message) {
+    var error = new Error(message);
+    error.code = code;
+    return error;
+  }
+
+  function extractPresentationStructure(app, startSlide, endSlide, options) {
+    var limits = {
+      maxSlides: readNumber(options && options.maxSlides) || 60,
+      maxTitleLength: readNumber(options && options.maxTitleLength) || 200,
+      maxSubtitleLength: readNumber(options && options.maxSubtitleLength) || 300,
+      maxFallbackLength: readNumber(options && options.maxFallbackLength) || 120,
+      maxFallbackSlides: readNumber(options && options.maxFallbackSlides) || 10
+    };
+    var presentation = getPresentation(app);
+    var slides;
+    var totalSlides;
+    var explicitStart = readNumber(startSlide);
+    var explicitEnd = readNumber(endSlide);
+    var start = explicitStart;
+    var end = explicitEnd;
+    var fallbackCount = 0;
+    var extracted = [];
+    var index;
+    var currentSlide;
+    var titleInfo;
+    var subtitleInfo;
+    var excludedIndexes;
+    var body;
+    if (!presentation) {
+      throw structureExtractionError("PPT_STRUCTURE_PRESENTATION_REQUIRED", "请先打开演示文稿。");
+    }
+    slides = resolveValue(safeRead(presentation, "Slides"), presentation) ||
+      resolveValue(safeRead(presentation, "slides"), presentation) || null;
+    totalSlides = getCollectionCount(slides);
+    if (!totalSlides) {
+      throw structureExtractionError("PPT_STRUCTURE_SLIDES_REQUIRED", "当前演示文稿没有可审查的幻灯片。");
+    }
+    if (totalSlides > limits.maxSlides && (!explicitStart || !explicitEnd)) {
+      throw structureExtractionError(
+        "PPT_STRUCTURE_EXPLICIT_RANGE_REQUIRED",
+        "演示文稿超过 60 页，请明确填写起始页和结束页后再审查。"
+      );
+    }
+    if (!start) {
+      start = 1;
+    }
+    if (!end) {
+      end = totalSlides;
+    }
+    if (start < 1 || end < start || end > totalSlides) {
+      throw structureExtractionError(
+        "PPT_STRUCTURE_RANGE_INVALID",
+        "结构审查页码范围无效，请输入 1 至 " + totalSlides + " 之间的起止页。"
+      );
+    }
+    if (end - start + 1 > limits.maxSlides) {
+      throw structureExtractionError(
+        "PPT_STRUCTURE_RANGE_TOO_LARGE",
+        "单次结构审查最多支持 60 页，请明确选择不超过 60 页的起止范围。"
+      );
+    }
+
+    for (index = start; index <= end; index += 1) {
+      currentSlide = getCollectionItem(slides, index);
+      titleInfo = readStructureTitleInfo(currentSlide);
+      subtitleInfo = readSlideSubtitleInfo(
+        currentSlide,
+        titleInfo,
+        limits.maxSubtitleLength
+      );
+      body = "";
+      if (!titleInfo.text && fallbackCount < limits.maxFallbackSlides) {
+        excludedIndexes = {};
+        if (titleInfo.index) {
+          excludedIndexes[titleInfo.index] = true;
+        }
+        if (subtitleInfo.index) {
+          excludedIndexes[subtitleInfo.index] = true;
+        }
+        body = collectBodyText(currentSlide, excludedIndexes, {
+          maxBlockLength: limits.maxFallbackLength,
+          maxBodyLength: limits.maxFallbackLength
+        }).blocks.join("\n").slice(0, limits.maxFallbackLength);
+        if (body) {
+          fallbackCount += 1;
+        }
+      }
+      extracted.push({
+        index: index,
+        title: truncateText(titleInfo.text, limits.maxTitleLength),
+        subtitle: subtitleInfo.text,
+        bodyFallback: body
+      });
+    }
+    return {
+      presentationId: safeText(
+        safeRead(presentation, "Name") || safeRead(presentation, "name"),
+        "active-presentation"
+      ) || "active-presentation",
+      scene: "ppt",
+      scope: {
+        totalSlides: totalSlides,
+        startSlide: start,
+        endSlide: end
+      },
+      slides: extracted
     };
   }
 
@@ -868,6 +1015,7 @@
 
   global.WpsAiPptHelpers = {
     extractPresentationSlide: extractPresentationSlide,
+    extractPresentationStructure: extractPresentationStructure,
     truncateText: truncateText,
     renderMarkdown: renderMarkdown,
     escapeHtml: escapeHtml,

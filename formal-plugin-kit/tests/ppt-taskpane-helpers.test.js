@@ -72,6 +72,18 @@ function assertSettingsContracts(targetHelpers) {
     }))),
     { code: "unconfigured", label: "未配置", readyCount: 1, totalCount: 1 }
   );
+  assert.deepStrictEqual(
+    plain(targetHelpers.deriveModelInterfaceState({
+      detectable: true,
+      providerBaseUrl: "https://model.example.test/v1",
+      taskTypes: ["ppt.slide_assistant", "ppt.structure_review"],
+      profilesByTask: {
+        "ppt.slide_assistant": readyInput.profilesByTask["ppt.slide_assistant"],
+        "ppt.structure_review": { activeProfileId: "", profiles: [] }
+      }
+    })),
+    { code: "partial", label: "部分就绪 · 1/2", readyCount: 1, totalCount: 2 }
+  );
 
   let refreshCount = 0;
   let intervalCount = 0;
@@ -393,6 +405,134 @@ const limits = {
 }
 
 assert.strictEqual(helpers.truncateText("abcdef", 3), "abc");
+
+{
+  const slides = [
+    slide(1, "1. 项目背景", [
+      textFrameShape("建设依据", { name: "Subtitle 1", placeholderType: 4 }),
+      textFrameShape("该正文不应进入结构审查请求")
+    ]),
+    slide(2, "2. 建设目标", [textFrameShape("总体目标")]),
+    slide(3, "", [textFrameShape("无标题页面正文".repeat(20))], { noTitle: true })
+  ];
+  const result = helpers.extractPresentationStructure(applicationFor(slides, 1), 1, 3, {
+    maxSlides: 60,
+    maxTitleLength: 200,
+    maxSubtitleLength: 300,
+    maxFallbackLength: 120,
+    maxFallbackSlides: 10
+  });
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.scope)), {
+    totalSlides: 3,
+    startSlide: 1,
+    endSlide: 3
+  });
+  assert.strictEqual(result.slides[0].title, "1. 项目背景");
+  assert.strictEqual(result.slides[0].subtitle, "建设依据");
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+  assert.strictEqual(result.slides[2].title, "");
+  assert.strictEqual(result.slides[2].subtitle, "");
+  assert.strictEqual(result.slides[2].bodyFallback.length, 120);
+}
+
+{
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slide(1, "", [
+        textFrameShape("副标题内容", { name: "Subtitle 2", placeholderType: 4 }),
+        textFrameShape("正文内容")
+      ])
+    ], 1),
+    1,
+    1,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+
+  assert.strictEqual(result.slides[0].title, "");
+  assert.strictEqual(result.slides[0].subtitle, "副标题内容");
+  assert.strictEqual(result.slides[0].bodyFallback, "正文内容");
+}
+
+{
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slide(1, "", [textFrameShape("只有正文，不得误判为标题")])
+    ], 1),
+    1,
+    1,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+
+  assert.strictEqual(result.slides[0].title, "");
+  assert.strictEqual(result.slides[0].bodyFallback, "只有正文，不得误判为标题");
+}
+
+{
+  const slides = Array.from({ length: 61 }, function (_, index) {
+    return slide(index + 1, "第 " + (index + 1) + " 页", []);
+  });
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 1, 61, {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error && error.code === "PPT_STRUCTURE_RANGE_TOO_LARGE" && /60 页/.test(error.message);
+    }
+  );
+
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 2, 0, {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error && error.code === "PPT_STRUCTURE_EXPLICIT_RANGE_REQUIRED";
+    }
+  );
+  assert.throws(
+    function () {
+      helpers.extractPresentationStructure(applicationFor(slides, 1), 0, 60, {
+        maxSlides: 60
+      });
+    },
+    function (error) {
+      return error && error.code === "PPT_STRUCTURE_EXPLICIT_RANGE_REQUIRED";
+    }
+  );
+
+  const ranged = helpers.extractPresentationStructure(
+    applicationFor(slides, 1),
+    2,
+    61,
+    { maxSlides: 60 }
+  );
+  assert.strictEqual(ranged.slides.length, 60);
+  assert.strictEqual(ranged.slides[0].index, 2);
+  assert.strictEqual(ranged.slides[59].index, 61);
+}
+
+{
+  const slides = Array.from({ length: 11 }, function (_, index) {
+    return slide(
+      index + 1,
+      "",
+      [textFrameShape("第 " + (index + 1) + " 页无标题正文")],
+      { noTitle: true }
+    );
+  });
+  const result = helpers.extractPresentationStructure(
+    applicationFor(slides, 1),
+    1,
+    11,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+  assert.strictEqual(result.slides.filter(function (item) { return item.bodyFallback; }).length, 10);
+  assert.strictEqual(result.slides[10].bodyFallback, "");
+}
 
 {
   const markdown = helpers.buildPptSlideMarkdown({

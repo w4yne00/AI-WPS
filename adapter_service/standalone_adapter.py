@@ -26,6 +26,8 @@ from app.core.models import (
     PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
     PptSlideAssistantResponseData,
+    PptStructureReviewRequest,
+    PptStructureReviewResponseData,
     RewriteResponseData,
     WordDocumentRequest,
 )
@@ -61,6 +63,8 @@ from app.services.writing_policy.service import get_writing_policy_service
 from app.services.ppt.document_files import PptDocumentFileStore
 from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
+from app.services.ppt.structure_review import PptStructureReviewer
+from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
@@ -71,7 +75,7 @@ from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfile
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.21.0-alpha"
+VERSION = "0.22.0-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.
@@ -150,6 +154,7 @@ PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
 )
+PPT_STRUCTURE_REVIEW_JOB_STORE = PptStructureReviewJobStore(PptStructureReviewer())
 
 
 def close_ppt_resources():
@@ -181,6 +186,12 @@ def parse_ppt_request(payload):
     if hasattr(PptSlideAssistantRequest, "model_validate"):
         return PptSlideAssistantRequest.model_validate(payload)
     return PptSlideAssistantRequest.parse_obj(payload)
+
+
+def parse_ppt_structure_request(payload):
+    if hasattr(PptStructureReviewRequest, "model_validate"):
+        return PptStructureReviewRequest.model_validate(payload)
+    return PptStructureReviewRequest.parse_obj(payload)
 
 
 def parse_ppt_document_file_request(payload):
@@ -339,6 +350,31 @@ def ppt_slide_job_missing_envelope(job_id, interrupted=False):
     )
 
 
+def ppt_structure_job_missing_envelope(job_id, interrupted=False):
+    if interrupted:
+        message = "结构审查任务不存在，可能因 adapter 重启而中断，请重新提交审查。"
+        data = {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        code = "PPT_STRUCTURE_JOB_INTERRUPTED"
+    else:
+        message = "结构审查后台任务不存在或已过期。"
+        data = {"jobId": job_id, "status": "not_found"}
+        code = "PPT_STRUCTURE_JOB_NOT_FOUND"
+    return envelope(
+        job_id,
+        "ppt.structure_review",
+        data,
+        success=False,
+        message=message,
+        errors=[{"code": code, "message": message}],
+    )
+
+
 def request_validation_envelope(
     trace_id, task_type, validation_errors, error_count=None
 ):
@@ -411,6 +447,21 @@ def ppt_slide_assistant_job_payload(job):
             result = PptSlideAssistantResponseData.model_validate(data["result"]).model_dump(by_alias=True)
         else:
             result = PptSlideAssistantResponseData(**data["result"]).dict(by_alias=True)
+        data["result"] = result
+    return data
+
+
+def ppt_structure_review_job_payload(job):
+    data = dict(job)
+    if data.get("result"):
+        if hasattr(PptStructureReviewResponseData, "model_validate"):
+            result = PptStructureReviewResponseData.model_validate(
+                data["result"]
+            ).model_dump(by_alias=True)
+        else:
+            result = PptStructureReviewResponseData(
+                **data["result"]
+            ).dict(by_alias=True)
         data["result"] = result
     return data
 
@@ -1493,6 +1544,32 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/ppt/structure-review/jobs/"):
+            job_id = unquote(path.rsplit("/", 1)[-1])
+            job = PPT_STRUCTURE_REVIEW_JOB_STORE.get(job_id)
+            if not job:
+                self._write(
+                    404,
+                    ppt_structure_job_missing_envelope(
+                        job_id,
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "ppt.structure_review",
+                    ppt_structure_review_job_payload(job),
+                    message=job["status"],
+                ),
+            )
+            return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -1570,12 +1647,33 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                 )
                 return
+            if path == "/ppt/structure-review/jobs":
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        new_trace_id("standalone-ppt-structure-review"),
+                        "ppt.structure_review",
+                        [
+                            {
+                                "loc": "body",
+                                "type": "json_invalid",
+                                "message": "JSON decode error",
+                            }
+                        ],
+                    ),
+                )
+                return
             message = "请求内容格式无效，请检查后重试。"
+            task_type = (
+                "ppt.structure_review" if path.startswith("/ppt/structure-review")
+                else "ppt.slide_assistant" if path.startswith("/ppt/")
+                else "adapter.validation"
+            )
             self._write(
                 400,
                 envelope(
                     "standalone-validation",
-                    "ppt.slide_assistant" if path.startswith("/ppt/") else "adapter.validation",
+                    task_type,
                     success=False,
                     message=message,
                     errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
@@ -1890,6 +1988,54 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/ppt/structure-review/jobs":
+            trace_id = new_trace_id("standalone-ppt-structure-review")
+            try:
+                request = parse_ppt_structure_request(payload)
+                job = PPT_STRUCTURE_REVIEW_JOB_STORE.start(request, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "ppt.structure_review",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                raw_errors = error.errors() if hasattr(error, "errors") else []
+                validation_errors = [
+                    {
+                        "loc": ".".join(str(part) for part in item.get("loc", [])),
+                        "type": str(item.get("type", "")),
+                        "message": str(item.get("msg", ""))[:160],
+                    }
+                    for item in raw_errors[:8]
+                ]
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        trace_id,
+                        "ppt.structure_review",
+                        validation_errors,
+                        error_count=len(raw_errors),
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "ppt.structure_review",
+                    ppt_structure_review_job_payload(job),
+                    message="accepted",
+                ),
+            )
+            return
+
         if path == "/provider/base-url":
             try:
                 save_provider_base_url(payload.get("baseUrl", ""), provider_name=payload.get("providerName"))
@@ -2186,6 +2332,46 @@ class Handler(BaseHTTPRequestHandler):
                     job.get("traceId", job_id),
                     "ppt.slide_assistant",
                     ppt_slide_assistant_job_payload(job),
+                    message="任务已取消。",
+                ),
+            )
+            return
+
+        ppt_structure_review_prefix = "/ppt/structure-review/jobs/"
+        if path.startswith(ppt_structure_review_prefix):
+            job_id = unquote(path[len(ppt_structure_review_prefix):]).strip("/")
+            try:
+                job = PPT_STRUCTURE_REVIEW_JOB_STORE.cancel(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "ppt.structure_review",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            if not job:
+                self._write(
+                    404,
+                    ppt_structure_job_missing_envelope(
+                        job_id,
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "ppt.structure_review",
+                    ppt_structure_review_job_payload(job),
                     message="任务已取消。",
                 ),
             )

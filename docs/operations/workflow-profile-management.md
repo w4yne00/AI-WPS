@@ -6,7 +6,7 @@
 
 - Word：智能编写、智能仿写、文档审查、格式审查。
 - Excel：智能分析，内部任务键 `excel.analysis`；公式助手，内部任务键 `excel.formula_assistant`。
-- PPT：智能总结，内部任务键 `ppt.slide_assistant`；当前页总结和文档总结共用同一档案。
+- PPT：智能总结，内部任务键 `ppt.slide_assistant`，当前页总结和文档总结共用同一档案；结构审查使用独立任务键 `ppt.structure_review` 和独立档案。
 
 Word、Excel 和 PPT 共用本地 adapter 配置，但前台只显示当前宿主对应的工作流，不交叉显示。
 

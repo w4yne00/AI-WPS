@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
-KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0210"
+KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0220"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
 
 WORD_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant_1.0.0"
@@ -34,12 +34,14 @@ cp "$ROOT_DIR/docs/operations/dify-format-review-workflow.md" "$TMP_DIR/docs/ope
 cp "$ROOT_DIR/docs/operations/dify-excel-analysis-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-excel-formula-assistant-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/dify-ppt-slide-assistant-workflow.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/dify-ppt-structure-review-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/workflow-profile-management.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/writing-policy-library.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/writing-policy-sources.md" "$TMP_DIR/docs/"
 cp "$ROOT_DIR/docs/prompt-templates/excel-smart-analysis-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/excel-formula-assistant-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/ppt-smart-summary-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
+cp "$ROOT_DIR/docs/prompt-templates/ppt-structure-review-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 
 PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" - "$TMP_DIR/docs/import-templates" <<'PY'
 from pathlib import Path
@@ -69,7 +71,7 @@ date_tag = sys.argv[2]
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 manifest["releaseDate"] = date_tag
 manifest["versionRule"] = (
-    "AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-" + date_tag
+    "AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-" + date_tag
 )
 manifest_path.write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -131,6 +133,8 @@ for required in (
     root / "docs" / "writing-policy-sources.md",
     root / manifest["excelFormulaAssistantAssets"]["operationsGuide"],
     root / manifest["excelFormulaAssistantAssets"]["promptTemplate"],
+    root / manifest["pptStructureReviewAssets"]["operationsGuide"],
+    root / manifest["pptStructureReviewAssets"]["promptTemplate"],
     root / "docs" / "import-templates" / "writing-policies-import-template.csv",
     root / "docs" / "import-templates" / "writing-policies-import-template.xlsx",
 ):

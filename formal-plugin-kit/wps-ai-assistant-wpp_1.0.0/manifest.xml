@@ -5,6 +5,6 @@
   <wps:AppId>wps-ai-assistant-wpp</wps:AppId>
   <wps:Name>WPS AI Assistant PPT</wps:Name>
   <wps:Version>1.0.0</wps:Version>
-  <wps:Description>AI-WPS PPT single-slide assistant plugin.</wps:Description>
+  <wps:Description>AI-WPS PPT smart summary and read-only structure review plugin.</wps:Description>
   <wps:Ribbon>ribbon.xml</wps:Ribbon>
 </wps:ApplicationManifest>

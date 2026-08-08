@@ -77,12 +77,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.21.0-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-20260808` |
+| 当前版本 | `v0.22.0-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | Word/Excel/PPT 单一正式交付包；目标产物为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz` |
+| 一期交付包 | Word/Excel/PPT 单一正式交付包；目标产物为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz` |
 
 版本规则格式：
 
@@ -104,7 +104,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 能力 | 说明 |
 | --- | --- |
 | WPS 原生任务窗格 | 支持麒麟/WPS 目标终端已验证的 `jsaddons` 手工导入结构 |
-| 宿主区分入口 | Word 只显示智能编写、智能仿写、文档审查、格式审查和设置；Excel 只显示“智能分析”“公式助手”和设置；PPT 只显示“智能总结”和设置 |
+| 宿主区分入口 | Word 只显示智能编写、智能仿写、文档审查、格式审查和设置；Excel 只显示“智能分析”“公式助手”和设置；PPT 只显示“智能总结”“结构审查”和设置 |
 | 独立任务窗格模式 | Word、Excel 和 PPT 使用独立宿主插件，避免按钮互相交叉显示 |
 | 文档审查 | 面向选中文本或限量全文抽取，独立 `word.document_review` Dify 工作流检查错别字、语言表达、逻辑、通畅性和对应文档类型专业性；模型后台返回较慢时任务窗格会持续显示等待反馈 |
 | 格式审查 | 按《技术文件格式及书写要求》模板检查选中文本或全文格式合规；可保留 AI 段落角色识别，但只输出检查意见，不再写回排版；预览结果按概览、优先处理清单、分组详情和诊断信息展示，便于排查 |
@@ -114,11 +114,12 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 智能分析 | 只读 `excel.analysis` 模型工作流，优先分析选中区域，无有效选区时分析当前工作表已用范围；长任务使用后台任务和可恢复轮询，结果提供结构化分析报告和汇报段落，不写回单元格 |
 | 公式助手 | 独立 `excel.formula_assistant` 工作流仅读取用户明确选区（最多 30 行、20 列），由用户选择“生成公式 / 解释排错”；返回原公式说明、一个主公式和有差异时折叠显示的一个备选公式，并执行不试算的基础语法、引用和兼容风险检查；支持共享队列、恢复轮询和复制，不写回工作簿 |
 | 智能总结 | 同一个 `ppt.slide_assistant` 工作流档案支持“当前页总结 / 文档总结”双模式。当前页模式读取主标题、可选副标题、正文和相邻页标题；文档模式接受单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，并生成整套 5/8/10/12/15 页建议，默认 10 页。两种模式都只预览和复制，绝不写回 PPT |
+| 结构审查 | 独立 `ppt.structure_review` 工作流审查用户指定的最多 60 页：通常只读取页码、主标题和可选副标题，无标题页正文兜底限制为每页 120 字符且最多 10 页；合并本地标题检查和一次模型语义审查，返回分级问题、逐页建议和推荐目录，不显示数值总分，不修改幻灯片 |
 | 结果预览 | 智能编写会先对选中多段文本的模型输出恢复段落换行，再按内容结构选择朴素或结构化回显：普通段落不额外套排版，标题、列表、序号、表格、加粗等结构尽量正常展示；文档审查、格式审查和诊断信息继续使用安全 Markdown 渲染 |
 | 三宿主统一视觉 | Word、Excel、PPT 统一采用浅灰、白色、雾蓝和状态色视觉系统，同时保持宿主隔离和既有业务行为 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
 | 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
-| 工作流配置档案 | 智能编写、智能仿写、文档审查、格式审查、智能分析、公式助手和智能总结均采用宿主隔离的紧凑档案列表，支持名称、备注、API Key、新建、修改和删除；功能页下拉选择后立即激活，PPT 两种总结模式共用 `ppt.slide_assistant` |
+| 工作流配置档案 | 智能编写、智能仿写、文档审查、格式审查、智能分析、公式助手、智能总结和结构审查均采用宿主隔离的紧凑档案列表；PPT 两种总结模式共用 `ppt.slide_assistant`，结构审查单独使用 `ppt.structure_review` |
 | 设置与联调状态 | 设置页仅显示单一全局 API URL 和各工作流名称、备注、API Key；旧统一 Key 回退仍由 adapter 兼容并在覆盖安装时保留，但不再在任务窗格中展示 |
 | Adapter 运维诊断 | 启动包脚本统一管理 uvicorn adapter，健康检查同步显示 provider 配置、路由摘要和最后一次转发诊断；麒麟 V10 目标机可通过 systemd 脚本安装开机自启动 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
@@ -128,6 +129,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |
 | `v0.21.0-alpha` | 将独立 Excel“公式助手”正式收敛进统一三宿主交付包：支持生成公式和解释排错、严格明确选区与 30×20 上限、由 `HasFormula` 保护的 `Formula`/`FormulaLocal`/`FormulaR1C1` 只读降级、共享长任务排队与恢复、不执行公式的本地检查和纯复制结果；包内同时提供 Dify 操作手册和提示词模板，Word/PPT 业务行为不变 |
 | `v0.20.1-alpha` | 在不增加业务入口的前提下稳定交付三宿主共享长任务队列和 Word/Excel 选区监听优化：文档审查、智能分析、智能总结共用 2 个运行槽位与 8 个 FIFO 排队位置，冻结提交时配置，展示真实队列/阶段/耗时，仅允许取消排队任务，并明确提示 Adapter 重启中断；Word/Excel 优先使用宿主选区事件，以可见页面低频读取兜底，在页面隐藏、设置页或任务运行时暂停宿主读取。既有工作流、结果、写回边界和覆盖安装保护保持不变 |
 | `v0.20.0-alpha` | 将经审阅的写作规范基线正式纳入三宿主统一交付包：首次安装初始化组织规范数据库，覆盖升级持续保留组织覆盖、组织自定义规范、预置停用状态、备份和模型配置；构建过程生成并校验发布清单，拒绝携带现场数据库、密钥、日志、导入内容或未确认草稿。格式审查、智能分析、智能总结、工作流档案、写回、超时和轮询行为不变 |
@@ -312,7 +314,8 @@ cp config/adapter.example.json config/adapter.json
     "word.format_review": "word_format_review",
     "excel.analysis": "excel_analysis",
     "excel.formula_assistant": "excel_formula_assistant",
-    "ppt.slide_assistant": "ppt_slide_assistant"
+    "ppt.slide_assistant": "ppt_slide_assistant",
+    "ppt.structure_review": "ppt_structure_review"
   }
 }
 ```
@@ -323,9 +326,9 @@ cp config/adapter.example.json config/adapter.json
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-工作流档案的 API Key 保存到 `run/provider_api_keys/<ref>`，配置文件只记录自定义名称和密钥引用。智能编写、智能仿写、文档审查、格式审查、智能分析、公式助手和智能总结都可以保存多个 Dify App Key；切换对下一次新任务生效。PPT 当前页和文档模式使用同一次解析得到的 `ppt.slide_assistant` 密钥调用 Dify `/files/upload` 与 `/chat-messages`。未配置任务密钥时自动回退统一 provider API Key。详细操作见 [工作流配置档案管理手册](./docs/operations/workflow-profile-management.md)。
+工作流档案的 API Key 保存到 `run/provider_api_keys/<ref>`，配置文件只记录自定义名称和密钥引用。各任务均可保存多个 Dify App Key，切换对下一次新任务生效。PPT 当前页和文档模式使用 `ppt.slide_assistant` 密钥调用 Dify `/files/upload` 与 `/chat-messages`；结构审查独立使用 `ppt.structure_review` 密钥。未配置任务密钥时自动回退统一 provider API Key。详细操作见 [工作流配置档案管理手册](./docs/operations/workflow-profile-management.md)。
 
-智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Word 企业术语和文体规则的维护、导入、导出、备份、降级和恢复见 [写作规范管理手册](./docs/operations/writing-policy-library.md)。智能分析对应配置见 [Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)，公式助手对应配置见 [Excel 公式助手 Dify 工作流配置手册](./docs/operations/dify-excel-formula-assistant-workflow.md)，智能总结双模式配置见 [PPT 智能总结 Dify 工作流配置手册](./docs/operations/dify-ppt-slide-assistant-workflow.md)。可部署的 Excel/PPT 提示词模板位于 [`docs/prompt-templates/`](./docs/prompt-templates/)。
+智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Word 企业术语和文体规则的维护、导入、导出、备份、降级和恢复见 [写作规范管理手册](./docs/operations/writing-policy-library.md)。智能分析对应配置见 [Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)，公式助手对应配置见 [Excel 公式助手 Dify 工作流配置手册](./docs/operations/dify-excel-formula-assistant-workflow.md)，智能总结双模式配置见 [PPT 智能总结 Dify 工作流配置手册](./docs/operations/dify-ppt-slide-assistant-workflow.md)，结构审查配置和只读验收见 [PPT 结构审查 Dify 工作流配置手册](./docs/operations/dify-ppt-structure-review-workflow.md)。可部署的 Excel/PPT 提示词模板位于 [`docs/prompt-templates/`](./docs/prompt-templates/)。
 
 ## API 一览
 
@@ -373,6 +376,10 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/ppt/document-files` | 校验并暂存单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，返回一次性令牌 |
 | `POST` | `/ppt/slide-assistant/jobs` | 提交当前页或文档智能总结后台任务 |
 | `GET` | `/ppt/slide-assistant/jobs/{jobId}` | 查询或恢复智能总结后台任务 |
+| `DELETE` | `/ppt/slide-assistant/jobs/{jobId}` | 取消排队中的智能总结任务；运行中的阻塞式模型请求不可取消 |
+| `POST` | `/ppt/structure-review/jobs` | 提交最多 60 页的只读结构审查后台任务 |
+| `GET` | `/ppt/structure-review/jobs/{jobId}` | 查询或恢复结构审查后台任务 |
+| `DELETE` | `/ppt/structure-review/jobs/{jobId}` | 取消排队中的结构审查任务；运行中的阻塞式模型请求不可取消 |
 
 统一响应结构：
 
@@ -459,7 +466,7 @@ npm run test
 - 文档/选区结构化读取
 - 本地适配服务健康检查、配置、模板、provider 状态
 - 智能编写、文档审查、格式审查接口
-- 只读智能分析和当前页/文档双模式智能总结
+- 只读智能分析、当前页/文档双模式智能总结和 PPT 结构审查
 - 预览后写回 Word 的基础能力
 - 运行时探测与离线交付脚本
 

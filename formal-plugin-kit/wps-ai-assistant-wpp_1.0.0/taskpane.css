@@ -255,6 +255,38 @@ select:focus-visible {
   background: var(--surface-soft);
 }
 
+.task-guidance {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.structure-range-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.structure-review-section + .structure-review-section {
+  margin-top: 18px;
+}
+
+.structure-review-section h3 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.structure-review-section ul,
+.structure-review-section ol {
+  margin: 0;
+  padding-left: 22px;
+}
+
+.structure-review-section li + li {
+  margin-top: 7px;
+}
+
 .source-segment {
   border: 0;
   border-radius: var(--radius-control);

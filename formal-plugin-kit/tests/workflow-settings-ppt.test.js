@@ -87,17 +87,23 @@ function testStatusAndMutationBusyContract() {
   ], "run action must guard workflow mutations");
 }
 
-function testFixedTaskAndHelperContract() {
+function testTaskScopedProfileAndHelperContract() {
   includesAll(js, [
     'var PPT_WORKFLOW_TASK_TYPE = "ppt.slide_assistant";',
+    'var PPT_STRUCTURE_WORKFLOW_TASK_TYPE = "ppt.structure_review";',
+    "state.workflowTaskType",
     "helpers.workflowProfileOptionState(",
     "helpers.validateWorkflowProfileDraft(",
     "helpers.shouldActivateNewWorkflowProfile("
-  ], "fixed PPT task and shared helpers");
+  ], "task-scoped PPT profiles and shared helpers");
   assert.ok(
-    js.includes('taskType: PPT_WORKFLOW_TASK_TYPE'),
-    "new profiles must use the fixed PPT task type"
+    js.includes('taskType: state.workflowTaskType'),
+    "new profiles must use the selected PPT task type"
   );
+  includesAll(html, [
+    'data-workflow-task-tab="ppt.slide_assistant"',
+    'data-workflow-task-tab="ppt.structure_review"'
+  ], "independent PPT workflow tabs");
   excludesAll(js, [
     'request("/provider/api-key"',
     'request("/provider/task-api-key"'
@@ -259,6 +265,10 @@ function testPptWorkflowPreservationContract() {
     "state.selectedDocument =",
     "state.result ="
   ], "settings round trip must preserve PPT task state");
+  includesAll(functionSource("runPptStructureReview"), [
+    'byId("ppt-structure-start-slide").value',
+    "startSlide = startSlide ? Number(startSlide) : 0"
+  ], "large-deck range inputs must preserve an empty explicit start");
 }
 
 function testNarrowLayoutContract() {
@@ -296,11 +306,18 @@ function testLiveSettingsExperienceContract() {
     "deriveModelInterfaceState"
   ], "PPT live settings state");
   includesAll(functionSource("renderModelInterfaceState"), [
-    "profilesByTask[PPT_WORKFLOW_TASK_TYPE]",
-    "taskTypes: [PPT_WORKFLOW_TASK_TYPE]",
+    "TASK_API_KEY_DEFS.forEach",
+    "state.profilesByTask[definition.taskType]",
+    "TASK_API_KEY_DEFS.map",
     'byId("provider-readiness-badge")',
     'byId("diagnostics-summary")'
   ], "PPT model interface readiness");
+  includesAll(functionSource("renderProfileStrip"), [
+    "select.setAttribute(",
+    '"aria-label"',
+    '"选择结构审查工作流"',
+    '"选择智能总结工作流"'
+  ], "task-specific workflow selector label");
   includesAll(refresh, [
     "configRefreshRequestId",
     "configRefreshPromise",
@@ -315,11 +332,17 @@ function testLiveSettingsExperienceContract() {
     "setResult("
   ], "PPT settings refresh isolation");
   includesAll(loadProfiles, [
+    "Promise.all(TASK_API_KEY_DEFS.map",
+    "state.profilesByTask",
     "previousProfiles",
     "superseded: true",
     "failed: true",
     "loadError"
   ], "PPT profile refresh preservation");
+  assert.ok(
+    functionSource("isFatalStructurePollError").includes("PPT_STRUCTURE_AUTH_SNAPSHOT_FAILED"),
+    "auth snapshot failures must not be polled as interrupted jobs"
+  );
   assert.ok(!manager.includes('profile.note || "无备注"'), "empty PPT notes must not render a placeholder");
   includesAll(refreshEligibility, [
     'state.currentView === "settings"',
@@ -349,7 +372,7 @@ function testLiveSettingsExperienceContract() {
 
 testStaticMarkupContract();
 testStatusAndMutationBusyContract();
-testFixedTaskAndHelperContract();
+testTaskScopedProfileAndHelperContract();
 testImmediateActivationContract();
 testManagerAndEditorContract();
 testProfileLoadFailureAndRequestOrderingContract();

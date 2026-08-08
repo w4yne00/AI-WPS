@@ -25,6 +25,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "excel.analysis",
                 "excel.formula_assistant",
                 "ppt.slide_assistant",
+                "ppt.structure_review",
             ],
         )
         self.assertEqual(status["word.smart_write"]["apiKeyRef"], "word_smart_write")
@@ -37,6 +38,10 @@ class ReviewModeContractTests(unittest.TestCase):
             "excel_formula_assistant",
         )
         self.assertEqual(status["ppt.slide_assistant"]["apiKeyRef"], "ppt_slide_assistant")
+        self.assertEqual(
+            status["ppt.structure_review"]["apiKeyRef"],
+            "ppt_structure_review",
+        )
 
     def test_fastapi_task_mapping_covers_formula_collection_and_job_paths(self) -> None:
         source = Path("adapter_service/app/main.py").read_text(encoding="utf-8")
@@ -49,13 +54,21 @@ class ReviewModeContractTests(unittest.TestCase):
             '"/excel/formula-assistant/jobs": "excel.formula_assistant"',
             source,
         )
+        self.assertIn(
+            'if path.startswith("/ppt/structure-review/jobs/"):',
+            source,
+        )
+        self.assertIn(
+            '"/ppt/structure-review/jobs": "ppt.structure_review"',
+            source,
+        )
 
     def test_route_diagnostics_reports_new_version_and_current_tasks(self) -> None:
         client = ProviderClient(load_settings())
 
         diagnostics = client.build_route_diagnostics()
 
-        self.assertEqual(diagnostics["version"], "0.21.0-alpha")
+        self.assertEqual(diagnostics["version"], "0.22.0-alpha")
         self.assertEqual(
             list(diagnostics["taskApiKeys"].keys()),
             [
@@ -66,6 +79,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "excel.analysis",
                 "excel.formula_assistant",
                 "ppt.slide_assistant",
+                "ppt.structure_review",
             ],
         )
 

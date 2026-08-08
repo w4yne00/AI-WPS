@@ -151,6 +151,42 @@ class WorkflowProfileStoreTests(unittest.TestCase):
             self.assertTrue((key_dir / candidate["apiKeyRef"]).exists())
             self.assertNotIn("app-ppt", json.dumps(listed, ensure_ascii=False))
 
+    def test_ppt_structure_review_profiles_are_independent_from_summary(self) -> None:
+        with TemporaryDirectory() as tmp:
+            config_path, key_dir = self._paths(Path(tmp))
+            store = WorkflowProfileStore(config_path, key_dir)
+            summary = store.create_profile(
+                "ppt.slide_assistant",
+                "智能总结生产版",
+                "app-ppt-summary",
+                activate=True,
+            )
+            structure = store.create_profile(
+                "ppt.structure_review",
+                "结构审查生产版",
+                "app-ppt-structure",
+                activate=True,
+            )
+
+            summary_list = store.list_for_task("ppt.slide_assistant")
+            structure_list = store.list_for_task("ppt.structure_review")
+            payload = json.loads(config_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                [item["id"] for item in summary_list["profiles"]],
+                [summary["id"]],
+            )
+            self.assertEqual(
+                [item["id"] for item in structure_list["profiles"]],
+                [structure["id"]],
+            )
+            self.assertNotEqual(summary["apiKeyRef"], structure["apiKeyRef"])
+            self.assertEqual(
+                payload["activeWorkflowProfiles"]["ppt.structure_review"],
+                structure["id"],
+            )
+            self.assertNotIn("app-ppt-structure", json.dumps(structure_list))
+
     def test_deleting_inactive_profile_removes_only_its_key_file(self) -> None:
         with TemporaryDirectory() as tmp:
             config_path, key_dir = self._paths(Path(tmp))

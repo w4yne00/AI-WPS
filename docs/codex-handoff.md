@@ -6,11 +6,11 @@
 
 当前分支：`main`
 
-当前版本：`v0.21.0-alpha`
+当前版本：`v0.22.0-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-20260808`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808`
 
-当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz`，SHA256：`9405ad15747d18b8ec80c92b16ffda741fa625bc62ba53363c83becdcf110768`；同目录 `.sha256` 文件为包外校验记录。
+当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，SHA256：`21507534858041c5e265333c815b73f3f6653c6f5810ccffbf4cd3858efe1967`；同目录 `.sha256` 文件为包外校验记录。
 
 ## 1. 当前项目状态
 
@@ -37,9 +37,12 @@ Excel 侧 Ribbon 只显示：
 PPT 侧 Ribbon 只显示：
 
 - 智能总结：通过“当前页总结 / 文档总结”切换模式，`POST /ppt/slide-assistant/jobs` 提交后台任务并轮询状态，任务类型 `ppt.slide_assistant`。
-- 设置：复用同一 adapter 配置，只显示统一 API URL 和智能总结工作流配置档案。
+- 结构审查：`POST /ppt/structure-review/jobs` 提交最多 60 页的只读结构审查任务，任务类型 `ppt.structure_review`。
+- 设置：复用同一 adapter 配置，智能总结与结构审查分别使用独立工作流档案和 API Key。
 
 当前页总结读取当前页主标题、可选副标题、普通文本形状以及前后页标题；正文充分时自动优化，正文不足时按用户要求生成。文档总结接受单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，用户可选择整套 5、8、10、12、15 页建议，默认 10 页。两种模式共用同一个 `ppt.slide_assistant` 工作流档案，结果只提供预览、纯文本和分类复制，绝不创建、修改或写回幻灯片。
+
+结构审查按用户明确页段读取页码、主标题和可选副标题；无标题页才允许读取最多 120 字符正文，单次最多 10 页。整套超过 60 页时前端和 adapter 均先拒绝，不截断也不拆分模型调用。adapter 先执行空标题、完全重复标题、长标题和明显编号跳号检查，再与一次模型语义审查合并去重；结果显示整体主线、推断章节、分级问题、逐页建议和推荐目录，不显示数值总分，只允许复制结论和目录，绝不创建、删除、重排或修改幻灯片。
 
 ## 2. 当前接口与 Dify 入参
 
@@ -95,7 +98,8 @@ adapter 继续使用 Dify 官方 `/chat-messages`。旧工作流默认使用：
     "word.format_review": "word_format_review",
     "excel.analysis": "excel_analysis",
     "excel.formula_assistant": "excel_formula_assistant",
-    "ppt.slide_assistant": "ppt_slide_assistant"
+    "ppt.slide_assistant": "ppt_slide_assistant",
+    "ppt.structure_review": "ppt_structure_review"
   },
   "taskRoutes": {}
 }
@@ -156,9 +160,24 @@ POST   /ppt/document-files
 POST   /ppt/slide-assistant/jobs
 GET    /ppt/slide-assistant/jobs/{jobId}[?resume=1]
 DELETE /ppt/slide-assistant/jobs/{jobId}[?resume=1]
+POST   /ppt/structure-review/jobs
+GET    /ppt/structure-review/jobs/{jobId}[?resume=1]
+DELETE /ppt/structure-review/jobs/{jobId}[?resume=1]
 ```
 
 ## 3. 本版本关键变化
+
+`v0.22.0-alpha` 已完成 issue #22 的 PPT“结构审查”最小闭环：
+
+- PPT Ribbon 新增独立“结构审查”，设置页为 `ppt.structure_review` 提供与 `ppt.slide_assistant` 隔离的工作流档案和 API Key。
+- 前端按 Slides 集合只读提取显式页段；主标题与副标题分离，有标题页不读取正文，无标题页正文兜底限制为每页 120 字符、单次 10 页。空标题占位符不会把普通正文误判为标题。
+- 整套演示文稿或显式页段超过 60 页时，在模型调用前明确拒绝；不静默截断、不自动拆段，也不发起多次模型调用。
+- adapter 本地检查空标题、完全重复标题、超过 30 字符标题和明显编号跳号；一次模型调用审查整体主线、推断章节、顺序、重复和内容缺口，本地与模型问题按代码和页码合并去重。
+- 模型返回的章节、问题、逐页建议和目录页码统一限制在本次审查范围内；纯越界定位被忽略，混合定位只保留有效页码。未闭合 `<think>` 不进入原始降级文本。
+- FastAPI 与 standalone 均提供提交、恢复查询和排队取消接口；任务复用共享长任务协调器，`clientJobId` 幂等，提交时冻结独立认证快照，保留重开续查和 adapter 重启中断语义。
+- PPT 设置页同时读取智能总结和结构审查档案后计算宿主整体就绪度；认证快照读取失败直接显示原错误，不误报为 adapter 重启中断。
+- 结果按整体主线、高优先级问题、一般建议、逐页调整意见和推荐目录分区，不显示数值总分；非结构化模型回复会剥离 `<think>` 后保留原文和解析诊断。
+- 正式包包含 `dify-ppt-structure-review-workflow.md` 和 `ppt-structure-review-prompt-template.md`，并新增结构审查真机只读前后摘要验收项。
 
 `v0.21.0-alpha` 已将 issue #19、#20 的 Excel 公式助手收敛为独立正式功能版本：
 
@@ -372,7 +391,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - `adapter_service/app/services/writing_policy/`：SQLite 存储、匹配、导入解析、预览令牌、备份和 fail-open 服务边界。
 - `adapter_service/app/api/word.py`：当前 Word 四任务路由。
 - `adapter_service/app/api/excel.py`：智能分析路由。
-- `adapter_service/app/api/ppt.py`：PPT 文档文件入口和智能总结后台任务路由。
+- `adapter_service/app/api/ppt.py`：PPT 文档文件、智能总结和结构审查后台任务路由。
 - `adapter_service/app/services/provider_client.py`：统一 Dify Chat payload、任务级 API Key、脱敏 provider 调试记录，以及 Word/Excel/PPT provider 调用。
 - `adapter_service/app/services/excel/analyzer.py`：Excel 表格可用性校验和 provider 调用封装。
 - `adapter_service/app/services/excel/formula_checks.py`：公式字符串的只读基础语法、引用和兼容风险检查。
@@ -380,6 +399,8 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - `adapter_service/app/services/ppt/document_files.py`：PPT Markdown/DOCX 校验、一次性暂存、过期和安全清理。
 - `adapter_service/app/services/ppt/slide_assistant.py`：PPT 单页输入预算、生成/优化模式和 provider 调用封装。
 - `adapter_service/app/services/ppt/slide_assistant_jobs.py`：PPT 当前页/文档智能总结幂等后台任务、阶段状态和耗时诊断。
+- `adapter_service/app/services/ppt/structure_review.py`：PPT 结构审查输入预算、本地标题检查、模型结果合并与复制文本。
+- `adapter_service/app/services/ppt/structure_review_jobs.py`：结构审查幂等后台任务、独立认证快照、共享队列和恢复语义。
 - `adapter_service/app/services/word/smart_imitator.py`：智能仿写服务，负责模板抽取、必填校验、provider 调用和 rewrite 形态结果输出。
 - `adapter_service/app/services/word/document_reviewer.py`：文档审查服务，负责选区/全文、默认提示词、模型结果解析和问题列表输出。
 - `adapter_service/app/services/word/format_reviewer.py`：格式审查服务，负责模板规则检查、可选 AI 段落角色识别和本地兜底。
@@ -388,7 +409,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html`、`taskpane.js`、`taskpane.css`、`taskpane-helpers.js`：当前任务窗格、设置页、Markdown 渲染和 WPS 读取逻辑。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml`、`ribbon.js`：当前 Ribbon 入口和图标映射。
 - `formal-plugin-kit/wps-ai-assistant-et_1.0.0/`：Excel 专用插件包，包含“智能分析”Ribbon、任务窗格、图标和 manifest。
-- `formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/`：PPT 专用只读插件包，包含“智能总结”双模式 Ribbon、任务窗格、图标和 manifest。
+- `formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/`：PPT 专用只读插件包，包含“智能总结”“结构审查”Ribbon、任务窗格、图标和 manifest。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png`：智能仿写 Ribbon 图标。
 - `adapter-start-kit/scripts/install_autostart.sh`、`adapter-start-kit/scripts/uninstall_autostart.sh`、`adapter-start-kit/docs/autostart-guide.md`：麒麟 V10 目标机 systemd 开机自启动安装、卸载和运维说明。
 - `config/adapter.example.json`：默认 `enterprise-dify-chat`、`/chat-messages`、四个 Word 任务、一个 Excel 任务和一个 PPT 任务的 `taskApiKeyRefs`。
@@ -398,17 +419,19 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - `docs/operations/dify-format-review-workflow.md`：格式审查 Dify 配置手册。
 - `docs/operations/dify-excel-analysis-workflow.md`：Excel“智能分析”Dify 配置手册。
 - `docs/operations/dify-ppt-slide-assistant-workflow.md`：PPT“智能总结”双模式 Dify 配置手册。
+- `docs/operations/dify-ppt-structure-review-workflow.md`：PPT“结构审查”Dify 配置、页段边界与只读验收手册。
 - `docs/operations/workflow-profile-management.md`：Word/Excel/PPT 工作流档案、切换和密钥保护手册。
 - `docs/operations/writing-policy-library.md`：Word 写作规范维护、导入、导出、备份、降级与恢复手册。
 - `docs/prompt-templates/excel-smart-analysis-prompt-template.md`：Excel“智能分析”Markdown 提示词模板。
 - `docs/prompt-templates/ppt-smart-summary-prompt-template.md`：PPT“智能总结”当前页/文档双模式 Markdown 提示词模板。
+- `docs/prompt-templates/ppt-structure-review-prompt-template.md`：PPT“结构审查”固定 JSON 输出、错误降级和禁止事项模板。
 - `docs/superpowers/plans/2026-05-29-review-mode-consolidation-plan.md`：审查入口收敛执行计划。
 - `docs/superpowers/plans/2026-05-31-stability-enhancement-plan.md`：本轮稳定增强执行计划。
 - `docs/superpowers/plans/2026-07-16-enterprise-terminology-style-knowledge-implementation-plan.md`：Word 写作规范库实现及发布计划。
 
 ## 6. 验证状态
 
-`v0.21.0-alpha` 已执行本地自动化、静态契约、首次安装/覆盖保护和交付包审计。麒麟 V10/WPS 真机验收仍需在目标终端执行，不能由当前 Mac 开发机替代。
+`v0.22.0-alpha` 已执行本地自动化、静态契约、首次安装/覆盖保护和交付包审计。麒麟 V10/WPS 真机验收仍需在目标终端执行，不能由当前 Mac 开发机替代。
 
 ```bash
 PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
@@ -422,23 +445,23 @@ DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 
 当前结果：
 
-- Python 全量单测：`543 tests OK (skipped=54)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
-- 全部 13 个正式前端测试文件通过，覆盖三宿主 layout smoke、公式属性读取降级与只读边界、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
+- Python 全量单测：`555 tests OK (skipped=55)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、结构审查、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
+- 全部 13 个正式前端测试文件通过，覆盖三宿主 layout smoke、PPT 结构提取与只读边界、公式属性读取降级、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
 - `wps-addon` 的 4 个 Vitest 文件、11 个用例和真实 `tsc --noEmit` 类型检查通过；旧脚手架复用统一 WPS 文档公共类型，第三方声明文件内部检查与项目类型门禁分离。
-- Word/Excel/PPT 的 9 个 `taskpane.js`、`taskpane-helpers.js`、`ribbon.js` 语法检查，TypeScript 类型检查和构建/安装/联调脚本 `bash -n`：通过。
-- 当前版本未改任务窗格结构，静态 layout smoke 已通过；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
+- Word/Excel/PPT 的 10 个 JavaScript 文件语法检查、TypeScript 类型检查和 24 个构建/安装/联调脚本 `bash -n`：通过。
+- 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0210.tar.gz`，大小 8,702,357 字节、共 252 个归档条目，SHA256：`9405ad15747d18b8ec80c92b16ffda741fa625bc62ba53363c83becdcf110768`；构建脚本同步生成同名 `.sha256` 包外校验记录。
-- 构建审计已核对三宿主和 adapter 均为 `0.21.0-alpha`，公式助手操作手册/提示词模板、四个规范包及四份已批准审阅清单、schema、来源/许可证、CSV/XLSX 空白模板、验收清单与记录齐全；包内无数据库、备份、API Key、`adapter.json`、日志、用户导入内容或未确认草稿。
+- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，大小 8,721,438 字节、共 257 个归档条目，SHA256：`21507534858041c5e265333c815b73f3f6653c6f5810ccffbf4cd3858efe1967`；构建脚本同步生成同名 `.sha256` 包外校验记录。
+- 构建审计已核对三宿主和 adapter 均为 `0.22.0-alpha`，公式助手与结构审查操作手册/提示词模板、四个规范包及四份已批准审阅清单、schema、来源/许可证、CSV/XLSX 空白模板、验收清单与记录齐全；包内无数据库、备份、API Key、`adapter.json`、日志、用户导入内容或未确认草稿。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
 
 ## 7. 目标机验证建议
 
-1. 先在无历史安装目录的麒麟 V10 终端安装 `20260808-v0210`，确认自动生成权限为 `0600` 的 `run/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
-2. 记录 API URL、统一 API Key、`run/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一安装包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.21.0-alpha` 且所有运行态数据未丢失。
+1. 先在无历史安装目录的麒麟 V10 终端安装 `20260808-v0220`，确认自动生成权限为 `0600` 的 `run/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
+2. 记录 API URL、统一 API Key、`run/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一安装包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.22.0-alpha` 且所有运行态数据未丢失。
 3. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
-4. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“公式助手”“智能总结”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用同一个 `ppt.slide_assistant` 档案。
+4. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“公式助手”“智能总结”“结构审查”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用 `ppt.slide_assistant`，结构审查必须独立使用 `ppt.structure_review`。
 5. 在 Word 设置页进入写作规范管理，验证术语和文体规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造规范库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。
 6. 执行“智能编写”，确认 `/provider/debug-last.taskType=word.smart_write`，模型后台命中智能编写应用；结果显示本次命中的术语/规则摘要，既有对照和写回行为不变。
 7. 执行“智能仿写”，可先框选模板段落再打开任务；填写仿写需求和参考素材后确认 `/provider/debug-last.taskType=word.smart_imitation`，结果区显示知识命中摘要，且只有预览/纯文本/复制，不显示对照和应用预览。
@@ -446,18 +469,20 @@ DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 9. 执行“格式审查”，可框选局部段落；确认结果区显示“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”，字体标准为“宋体”、字号标准为“小四（12pt）”，且不使用写作规范。
 10. 打开 WPS Excel，确认 Ribbon 下只有“智能分析”“公式助手”和“设置”；选择一块表格区域后执行分析，确认 `/provider/debug-last.taskType=excel.analysis`，结果区显示数据概览、关键发现、风险异常、建议动作和汇报段落。使用慢模型验证 180 秒以上任务仍持续轮询，不提前提示连接失败。
 11. 按公式助手操作手册逐项记录 `HasFormula`、`Formula`、`FormulaLocal`、`FormulaR1C1` 可用性和降级结果；验证 30×20、空选区、混合值/公式、超长公式、外部引用、版本敏感函数、虚构函数 `FOOBAR` 的核对提示、独立工作流、慢模型排队、重开续查和复制。每个场景前后核对单元格值/公式、工作表清单和计算模式完全一致。
-12. 打开 WPS 演示，确认 Ribbon 下只有“智能总结”和“设置”；在当前页模式分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。
+12. 打开 WPS 演示，确认 Ribbon 下只有“智能总结”“结构审查”和“设置”；在当前页模式分别测试“主标题 + 副标题 + 正文”和“仅主标题 + 正文”，确认副标题可选且不混入正文。
 13. 在文档模式分别测试 UTF-8 `.md`、有效 `.docx`、损坏 DOCX、不支持类型和超过 10 MB 文件；确认页数只允许 5、8、10、12、15 且默认 10，结果给出整套逐页建议和复制动作，任何场景都不修改 PPT。
 14. 使用慢模型验证 180 秒以上任务仍持续轮询；状态查询短暂中断或重开任务窗格后恢复同一任务，不重复调用 `/files/upload` 或 `/chat-messages`。
 15. 分别连接旧版 `inputs.query` 工作流和新版“用户输入”节点工作流；新版首次 HTTP 400 后应自动以 `inputs: {}` 重试成功，`/provider/debug-last.inputMode=user-input-node`，文档任务的两个模式都保留相同 `files` 引用。
-16. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
-17. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
-18. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
+16. 使用结构审查验证 60 页整套、超过 60 页整套拒绝和不超过 60 页显式页段；记录主副标题分离、无标题页有限兜底、本地与模型问题去重、单次模型调用、慢任务恢复和结论/目录复制结果。
+17. 结构审查前后分别记录幻灯片数量、顺序、主标题和副标题摘要，确认完全一致；不得创建、删除、重排或修改幻灯片。
+18. 在麒麟 V10 目标机上安装 adapter 开机自启动：进入 adapter 启动包目录后执行 `bash scripts/install_autostart.sh 18100`，重启系统后执行 `bash scripts/status_adapter.sh 18100` 验证 `adapter_health=reachable`。
+19. 如果模型后台有调用但 WPS 结果为空，检查回复节点是否绑定 LLM 输出正文，而不是开始节点原始 query。
+20. 如果 `provider=mock` 或 `skipReason=provider_not_configured`，检查任务级 API Key 文件是否已保存，以及统一 API URL 是否带 `/v1`。
 
 ## 8. 遗留项
 
 - 智能排版暂缓：目标机已确认任务级 API Key 选路可命中独立 Dify 工作流，但长文档角色识别受 Dify 输出最大值和模型上下文窗口限制影响。当前版本不再尝试自动写回排版，改为“格式审查”。
 - 文档审查要求 Dify 输出 Markdown 中的 JSON 代码块。若现场 Dify 只能输出普通 Markdown，也应至少保留一个合法 `json` 代码块；adapter 会从代码块中提取问题列表。
 - Excel/WPS ET 对象模型仍需在目标机真机验证，尤其是 `SheetSelectionChange`、`Selection`、`UsedRange`、`Cells.Item(row, column)`、`HasFormula`、`Formula`、`FormulaLocal` 和 `FormulaR1C1` 的可用性；智能分析保留已用范围兜底，公式助手严格不使用 `UsedRange` 并按三条公式属性只读降级。
-- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；可选副标题、Markdown/DOCX 上传、文档提取、整套建议、长任务恢复、三宿主工作流设置、写作规范管理和覆盖安装仍需用 `v0.21.0-alpha` 正式包完成目标机验收。
+- PPT/WPS WPP 的主标题和普通正文读取已有上一版本目标机基础；结构审查 Slides 集合遍历、主副标题分离、60 页边界、无标题页有限兜底、慢任务恢复及幻灯片只读前后摘要，连同 Markdown/DOCX 上传、三宿主工作流设置、写作规范管理和覆盖安装，仍需用 `v0.22.0-alpha` 正式包完成目标机验收。
 - 历史操作文档中仍可能保留旧版本部署背景；当前交付和配置以本 handoff、README 及 `docs/operations/` 下当前手册为准。

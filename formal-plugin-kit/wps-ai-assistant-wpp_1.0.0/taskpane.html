@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WPS AI 助理 - 智能总结</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.21.0-alpha" />
+    <link rel="stylesheet" href="./taskpane.css?v=0.22.0-alpha" />
   </head>
   <body data-task-mode="pptSlideAssistant">
     <div class="app">
@@ -28,20 +28,20 @@
           <strong id="status-line">等待操作</strong>
         </section>
 
-        <div class="source-segments" role="tablist" aria-label="总结来源">
+        <div id="summary-source-segments" class="source-segments" role="tablist" aria-label="总结来源">
           <button id="ppt-source-slide" class="source-segment active" type="button" role="tab" aria-selected="true" aria-controls="slide-summary-controls">当前页总结</button>
           <button id="ppt-source-document" class="source-segment" type="button" role="tab" aria-selected="false" aria-controls="document-summary-controls">文档总结</button>
         </div>
 
         <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前工作流">
           <label for="workflow-profile-select">当前工作流</label>
-          <select id="workflow-profile-select" aria-label="选择智能总结工作流">
+          <select id="workflow-profile-select" aria-label="选择当前任务工作流">
             <option value="">正在读取...</option>
           </select>
           <span id="workflow-switch-feedback" class="inline-status" aria-live="polite">未检测</span>
         </section>
 
-        <section class="controls">
+        <section id="summary-controls" class="controls">
           <section id="slide-summary-controls" class="source-panel" role="tabpanel" aria-labelledby="ppt-source-slide">
             <div id="ppt-slide-summary" class="slide-summary">点击总结后读取当前幻灯片。</div>
           </section>
@@ -76,7 +76,7 @@
           </div>
         </section>
 
-        <section id="result-section" class="result-panel">
+        <section id="summary-result-section" class="result-panel">
           <div class="panel-head">
             <h2>结果预览</h2>
             <div id="result-view-switch" class="result-view-switch" hidden>
@@ -94,6 +94,35 @@
           <div id="document-copy-toolbar" class="copy-toolbar document-copy-toolbar" aria-label="复制文档总结" hidden>
             <button id="btn-copy-outline" class="ghost-action" type="button" title="复制大纲" aria-label="复制大纲" disabled>复制大纲</button>
             <button id="btn-copy-document-result" class="ghost-action" type="button" title="复制完整方案" aria-label="复制完整方案" disabled>复制完整方案</button>
+          </div>
+        </section>
+
+        <section id="structure-review-controls" class="controls" hidden>
+          <p class="task-guidance">结构审查只读取页码、主标题和可选副标题；无标题页最多补充 120 个正文字符。单次最多审查 60 页，不会修改幻灯片。</p>
+          <div class="structure-range-grid">
+            <label class="field" for="ppt-structure-start-slide">
+              <span>起始页</span>
+              <input id="ppt-structure-start-slide" type="number" min="1" step="1" value="1" inputmode="numeric" />
+            </label>
+            <label class="field" for="ppt-structure-end-slide">
+              <span>结束页</span>
+              <input id="ppt-structure-end-slide" type="number" min="1" step="1" placeholder="默认整套" inputmode="numeric" />
+            </label>
+          </div>
+          <div id="ppt-structure-summary" class="slide-summary" aria-live="polite">点击审查后读取指定页段；超过 60 页时请明确填写起止页。</div>
+          <div class="action-bar task-job-actions">
+            <button id="btn-run-structure-review" type="button">开始结构审查</button>
+            <button id="btn-cancel-structure-review-job" class="ghost-action" type="button" hidden>取消排队任务</button>
+            <button id="btn-resubmit-structure-review" class="ghost-action" type="button" hidden>重新提交审查</button>
+          </div>
+        </section>
+
+        <section id="structure-result-section" class="result-panel" hidden>
+          <div class="panel-head"><h2>结构审查结果</h2></div>
+          <div id="structure-result-output" class="result-output">等待审查。</div>
+          <div class="copy-toolbar" aria-label="复制结构审查结果">
+            <button id="btn-copy-review-conclusion" class="ghost-action" type="button" disabled>复制审查结论</button>
+            <button id="btn-copy-recommended-outline" class="ghost-action" type="button" disabled>复制推荐目录</button>
           </div>
         </section>
       </section>
@@ -134,6 +163,7 @@
               <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个工作流，可在任务页选择当前使用的工作流。</div>
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="PPT 任务">
                 <button type="button" role="tab" data-workflow-task-tab="ppt.slide_assistant" aria-selected="true">智能总结</button>
+                <button type="button" role="tab" data-workflow-task-tab="ppt.structure_review" aria-selected="false">结构审查</button>
               </div>
               <div class="settings-card-head">
                 <p id="workflow-profile-count" class="inline-status">正在读取...</p>
@@ -193,7 +223,7 @@
         </section>
       </section>
     </div>
-    <script src="./taskpane-helpers.js?v=0.21.0-alpha"></script>
-    <script src="./taskpane.js?v=0.21.0-alpha"></script>
+    <script src="./taskpane-helpers.js?v=0.22.0-alpha"></script>
+    <script src="./taskpane.js?v=0.22.0-alpha"></script>
   </body>
 </html>

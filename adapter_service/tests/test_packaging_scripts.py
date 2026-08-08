@@ -18,7 +18,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.21.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.22.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -63,6 +63,17 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("PPT_SLIDE_ASSISTANT_JOB_STORE.cancel", script)
         self.assertIn("close_ppt_resources", script)
         self.assertIn("PPT_SLIDE_JOB_NOT_FOUND", script)
+        self.assertIn("def parse_ppt_structure_request", script)
+        self.assertIn("def ppt_structure_review_job_payload", script)
+        self.assertIn('path == "/ppt/structure-review/jobs"', script)
+        self.assertIn('path.startswith("/ppt/structure-review/jobs/")', script)
+        self.assertIn('ppt_structure_review_prefix = "/ppt/structure-review/jobs/"', script)
+        self.assertIn("PPT_STRUCTURE_REVIEW_JOB_STORE.cancel", script)
+        self.assertIn("PPT_STRUCTURE_JOB_NOT_FOUND", script)
+        self.assertIn(
+            '"ppt.structure_review" if path.startswith("/ppt/structure-review")',
+            script,
+        )
 
     def test_adapter_autostart_scripts_install_systemd_service(self) -> None:
         install_script = (ROOT / "adapter-start-kit/scripts/install_autostart.sh").read_text(
@@ -93,6 +104,7 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("dify-format-review-workflow.md", script)
         self.assertIn("dify-excel-analysis-workflow.md", script)
         self.assertIn("dify-excel-formula-assistant-workflow.md", script)
+        self.assertIn("dify-ppt-structure-review-workflow.md", script)
 
     def test_formula_assistant_release_guide_defines_kylin_fallback_and_read_only_evidence(self) -> None:
         guide = (ROOT / "docs/operations/dify-excel-formula-assistant-workflow.md").read_text(
@@ -124,6 +136,7 @@ class PackagingScriptTests(unittest.TestCase):
             "excel-smart-analysis-prompt-template.md",
             "excel-formula-assistant-prompt-template.md",
             "ppt-smart-summary-prompt-template.md",
+            "ppt-structure-review-prompt-template.md",
         ]
         for name in template_names:
             self.assertIn(name, script)
@@ -314,12 +327,12 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(required_text, text)
 
-    def test_phase1_delivery_uses_v0210_release_name(self) -> None:
+    def test_phase1_delivery_uses_v0220_release_name(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0210"', script)
+        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0220"', script)
 
     def test_delivery_build_revalidates_approved_pack_reviews(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
@@ -380,7 +393,7 @@ class PackagingScriptTests(unittest.TestCase):
             self.assertEqual(database.read_bytes(), original)
             self.assertIn("writing_policy_database=reused", second_result.stdout)
 
-    def test_built_v0210_delivery_has_complete_safe_release_inventory(self) -> None:
+    def test_built_v0220_delivery_has_complete_safe_release_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             environment = dict(os.environ)
             environment["DATE_TAG"] = "20260808"
@@ -400,7 +413,7 @@ class PackagingScriptTests(unittest.TestCase):
 
             archive = (
                 Path(temp_dir)
-                / "ai-wps-phase1-delivery-20260808-v0210.tar.gz"
+                / "ai-wps-phase1-delivery-20260808-v0220.tar.gz"
             )
             self.assertTrue(archive.is_file())
             checksum = archive.with_name(archive.name + ".sha256")
@@ -414,17 +427,17 @@ class PackagingScriptTests(unittest.TestCase):
             )
             with tarfile.open(archive, "r:gz") as package:
                 names = package.getnames()
-                root = "ai-wps-phase1-delivery-20260808-v0210"
+                root = "ai-wps-phase1-delivery-20260808-v0220"
                 manifest_member = package.extractfile(
                     root + "/release-manifest.json"
                 )
                 self.assertIsNotNone(manifest_member)
                 release_manifest = json.load(manifest_member)
 
-                self.assertEqual(release_manifest["version"], "0.21.0-alpha")
+                self.assertEqual(release_manifest["version"], "0.22.0-alpha")
                 self.assertEqual(
                     release_manifest["versionRule"],
-                    "AI-WPS-P1-WORD-EXCEL-PPT-0.21.0-20260808",
+                    "AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808",
                 )
                 self.assertEqual(
                     release_manifest["excelFormulaAssistantAssets"],
@@ -432,6 +445,21 @@ class PackagingScriptTests(unittest.TestCase):
                         "operationsGuide": "docs/operations/dify-excel-formula-assistant-workflow.md",
                         "promptTemplate": "docs/prompt-templates/excel-formula-assistant-prompt-template.md",
                     },
+                )
+                self.assertEqual(
+                    release_manifest["pptStructureReviewAssets"],
+                    {
+                        "operationsGuide": "docs/operations/dify-ppt-structure-review-workflow.md",
+                        "promptTemplate": "docs/prompt-templates/ppt-structure-review-prompt-template.md",
+                    },
+                )
+                self.assertIn(
+                    root + "/docs/operations/dify-ppt-structure-review-workflow.md",
+                    names,
+                )
+                self.assertIn(
+                    root + "/docs/prompt-templates/ppt-structure-review-prompt-template.md",
+                    names,
                 )
                 self.assertEqual(
                     set(release_manifest["writingPolicyPacks"]),

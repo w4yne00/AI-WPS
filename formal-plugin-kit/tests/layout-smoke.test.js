@@ -78,9 +78,9 @@ for (const hostHtml of [html, excelHtml, pptHtml]) {
   assert.ok(!hostHtml.includes('id="btn-refresh"'));
 }
 
-assert.ok(manifest.includes('"version": "0.21.0-alpha"'));
+assert.ok(manifest.includes('"version": "0.22.0-alpha"'));
 assert.ok(excelManifest.includes('"name": "wps-ai-assistant-et"'));
-assert.ok(excelManifest.includes('"version": "0.21.0-alpha"'));
+assert.ok(excelManifest.includes('"version": "0.22.0-alpha"'));
 assert.ok(excelManifestXml.includes("<wps:AppId>wps-ai-assistant-et</wps:AppId>"));
 assert.ok(excelManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
 assert.ok(excelRibbon.includes('label="WPS AI 助理"'));
@@ -100,15 +100,17 @@ assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "excelAnalysis"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelFormulaAssistant: "excelFormulaAssistant"'));
 assert.ok(excelRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysis.png"'));
-assert.ok(excelRibbonJs.includes('build=0.21.0-alpha'));
+assert.ok(excelRibbonJs.includes('build=0.22.0-alpha'));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
 assert.ok(pptManifest.includes('"name": "wps-ai-assistant-wpp"'));
-assert.ok(pptManifest.includes('"version": "0.21.0-alpha"'));
+assert.ok(pptManifest.includes('"version": "0.22.0-alpha"'));
 assert.ok(pptManifestXml.includes("<wps:AppId>wps-ai-assistant-wpp</wps:AppId>"));
 assert.ok(pptManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
 assert.ok(pptRibbon.includes('label="WPS AI 助理"'));
 assert.ok(pptRibbon.includes('label="演示内容"'));
 assert.ok(pptRibbon.includes('label="智能总结"'));
+assert.ok(pptRibbon.includes('id="btnAiPptStructureReview"'));
+assert.ok(pptRibbon.includes('label="结构审查"'));
 assert.ok(!pptRibbon.includes('label="PPT 单页助手"'));
 assert.ok(pptRibbon.includes('label="设置"'));
 assert.ok(!pptRibbon.includes("智能编写"));
@@ -117,9 +119,10 @@ assert.ok(!pptRibbon.includes("文档审查"));
 assert.ok(!pptRibbon.includes("格式审查"));
 assert.ok(!pptRibbon.includes("Excel 智能分析"));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "pptSlideAssistant"'));
+assert.ok(pptRibbonJs.includes('btnAiPptStructureReview: "pptStructureReview"'));
 assert.ok(pptRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png"'));
-assert.ok(pptRibbonJs.includes("build=0.21.0-alpha"));
+assert.ok(pptRibbonJs.includes("build=0.22.0-alpha"));
 assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
 [
   'id="task-title">智能总结',
@@ -147,6 +150,15 @@ assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
   'id="workflow-editor-view"',
   'id="workflow-profile-manager"'
 ].forEach(token => assert.ok(pptHtml.includes(token), token));
+[
+  'id="structure-review-controls"',
+  'id="ppt-structure-start-slide"',
+  'id="ppt-structure-end-slide"',
+  'id="btn-run-structure-review"',
+  'id="btn-copy-review-conclusion"',
+  'id="btn-copy-recommended-outline"',
+  'data-workflow-task-tab="ppt.structure_review"'
+].forEach(token => assert.ok(pptHtml.includes(token), token));
 assert.ok(!pptHtml.includes('id="btn-activate-workflow-profile"'));
 assert.ok(!pptHtml.includes('id="provider-name"'));
 assert.ok(!pptHtml.includes('id="provider-api-key"'));
@@ -166,6 +178,13 @@ assert.ok(pptHtml.includes('aria-label="复制完整方案"'));
 assert.ok(pptJs.includes("/ppt/document-files"));
 assert.ok(pptJs.includes("/ppt/slide-assistant/jobs"));
 assert.ok(pptJs.includes("ppt.slide_assistant"));
+assert.ok(pptJs.includes("ppt.structure_review"));
+assert.ok(pptJs.includes("/ppt/structure-review/jobs"));
+assert.ok(pptJs.includes("extractPresentationStructure"));
+assert.ok(pptJs.includes("PPT_STRUCTURE_MAX_SLIDES = 60"));
+assert.ok(pptJs.includes("PPT_STRUCTURE_MAX_FALLBACK_CHARS = 120"));
+assert.ok(pptJs.includes("PPT_STRUCTURE_MAX_FALLBACK_SLIDES = 10"));
+assert.ok(!pptJs.includes("numericScore"));
 assert.ok(pptJs.includes('{ taskType: "ppt.slide_assistant", label: "智能总结" }'));
 assert.ok(!pptJs.includes("PPT 单页助手"));
 assert.ok(pptJs.includes("FileReader"));
@@ -230,9 +249,9 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.21.0-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.21.0-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.21.0-alpha'));
+assert.ok(html.includes('./taskpane.css?v=0.22.0-alpha'));
+assert.ok(html.includes('./taskpane-helpers.js?v=0.22.0-alpha'));
+assert.ok(html.includes('./taskpane.js?v=0.22.0-alpha'));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="result-view-switch"'));
 assert.ok(html.includes('id="btn-result-preview"'));
@@ -447,7 +466,7 @@ assert.ok(js.includes("closeProviderUrlEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.21.0-alpha"'));
+assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.22.0-alpha"'));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
@@ -749,7 +768,7 @@ assert.ok(ribbonJs.includes('btnAiSmartImitation: "assets/icon-smart-imitation.p
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-smart-imitation.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.21.0-alpha'));
+assert.ok(ribbonJs.includes('build=0.22.0-alpha'));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png"));
 assert.ok(js.includes('{ taskType: "word.smart_imitation", label: "智能仿写" }'));

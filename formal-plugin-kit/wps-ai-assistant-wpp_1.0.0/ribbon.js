@@ -13,6 +13,7 @@ function OnAddinLoad(ribbonUI) {
 function resolveMode(controlId) {
   var modeMap = {
     btnAiPptSlideAssistant: "pptSlideAssistant",
+    btnAiPptStructureReview: "pptStructureReview",
     btnAiSettings: "settings"
   };
   return modeMap[controlId] || "pptSlideAssistant";
@@ -20,6 +21,7 @@ function resolveMode(controlId) {
 
 var ribbonIconMap = {
   btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png",
+  btnAiPptStructureReview: "assets/icon-ppt-slide-assistant.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 
@@ -47,7 +49,7 @@ function OnAction(control) {
     var url = location.href.replace(/[^/]*$/, "");
     closeCurrentTaskPane();
     var taskPane = window.Application.CreateTaskPane(
-      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.21.0-alpha"
+      url + "taskpane.html?mode=" + encodeURIComponent(mode) + "&build=0.22.0-alpha"
     );
     window.Application.WpsAiAssistantPptTaskPane = taskPane;
     taskPane.Visible = true;

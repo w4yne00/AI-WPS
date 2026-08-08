@@ -12,7 +12,11 @@ from urllib import error, request as urllib_request
 from app.core.config import AppSettings, TaskRoute, load_settings
 from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.logging import get_logger
-from app.core.models import ExcelAnalysisRequest, ExcelFormulaAssistantRequest
+from app.core.models import (
+    ExcelAnalysisRequest,
+    ExcelFormulaAssistantRequest,
+    PptStructureReviewRequest,
+)
 from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
 
 
@@ -26,6 +30,7 @@ DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
 EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
+PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
@@ -407,6 +412,42 @@ def build_ppt_document_prompt(requested_slide_count: int, user_instruction: str 
             "只返回 JSON 对象，字段固定为 deckTitle、documentSummary、recommendedSlideCount、slides、globalStyleAdvice、plainText。",
             "slides 每项固定包含 index、role、title、subtitle、bullets、conclusion、layoutSuggestion、visualSuggestion。",
             "subtitle 和 conclusion 可为空；bullets 每页 2 至 5 条；不得编造附件中不存在的事实和数据；不得输出深度思考过程。",
+        ]
+    )
+
+
+def build_ppt_structure_review_prompt(request: PptStructureReviewRequest) -> str:
+    scope = request.scope
+    slide_lines = []
+    for slide in request.slides:
+        line = "第 {0} 页 | 主标题：{1} | 副标题：{2}".format(
+            slide.index,
+            slide.title or "未识别",
+            slide.subtitle or "无",
+        )
+        if slide.body_fallback:
+            line += " | 无标题页正文兜底：{0}".format(slide.body_fallback)
+        slide_lines.append(line)
+    return "\n".join(
+        [
+            "你是企业汇报材料 PPT 结构审查助手。",
+            "请只基于给定页码、主标题、可选副标题和少量无标题页正文，审查叙事结构。",
+            "审查范围：第 {0}-{1} 页；演示文稿共 {2} 页。".format(
+                scope.start_slide, scope.end_slide, scope.total_slides
+            ),
+            "",
+            "页面结构：",
+            "\n".join(slide_lines),
+            "",
+            "输出要求：",
+            "1. 只输出一个 JSON 对象，不输出深度思考过程。",
+            "2. 字段固定为 overallStoryline、inferredChapters、highPriorityIssues、generalSuggestions、slideRecommendations、recommendedOutline。",
+            "3. inferredChapters 每项包含 title、startSlide、endSlide。",
+            "4. highPriorityIssues 和 generalSuggestions 每项包含 code、message、slideNumbers；slideNumbers 必须可追溯到本次范围。",
+            "5. slideRecommendations 每项包含 slideNumber、suggestion；recommendedOutline 每项包含 order、title、slideNumbers。",
+            "6. 评估整体主线、推断章节、页面顺序、内容重复和内容缺口；不要重复报告同一问题。",
+            "7. 不返回数值总分，不声称已经创建、删除、重排或修改幻灯片。",
+            "8. 不编造输入中没有的事实、数据、进度或结论。",
         ]
     )
 
@@ -1283,6 +1324,60 @@ def parse_ppt_document_answer(answer: str, requested_slide_count: int = 10) -> D
     }
 
 
+def _ppt_structure_dict_list(value) -> List[Dict]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
+
+
+def parse_ppt_structure_review_answer(answer: str) -> Dict:
+    cleaned = strip_think_tag_content(answer or "").strip()
+    unclosed_think = re.search(r"<think\b[^>]*>", cleaned, flags=re.IGNORECASE)
+    if unclosed_think:
+        cleaned = cleaned[: unclosed_think.start()].strip()
+    payload = _extract_json_payload(cleaned)
+    if isinstance(payload, dict):
+        storyline = _ppt_document_text(
+            payload.get("overallStoryline") or payload.get("overall_storyline")
+        )
+        chapters = _ppt_structure_dict_list(
+            payload.get("inferredChapters") or payload.get("inferred_chapters")
+        )
+        high = _ppt_structure_dict_list(
+            payload.get("highPriorityIssues") or payload.get("high_priority_issues")
+        )
+        general = _ppt_structure_dict_list(
+            payload.get("generalSuggestions") or payload.get("general_suggestions")
+        )
+        recommendations = _ppt_structure_dict_list(
+            payload.get("slideRecommendations") or payload.get("slide_recommendations")
+        )
+        outline = _ppt_structure_dict_list(
+            payload.get("recommendedOutline") or payload.get("recommended_outline")
+        )
+        if storyline or chapters or high or general or recommendations or outline:
+            return {
+                "overallStoryline": storyline,
+                "inferredChapters": chapters,
+                "highPriorityIssues": high,
+                "generalSuggestions": general,
+                "slideRecommendations": recommendations,
+                "recommendedOutline": outline,
+                "rawAnswer": None,
+                "parseFallbackReason": None,
+            }
+    return {
+        "overallStoryline": "模型后台已返回内容，但未解析为结构化审查结果。",
+        "inferredChapters": [],
+        "highPriorityIssues": [],
+        "generalSuggestions": [],
+        "slideRecommendations": [],
+        "recommendedOutline": [],
+        "rawAnswer": cleaned,
+        "parseFallbackReason": "ppt_structure_output_not_structured",
+    }
+
+
 def build_ppt_unconfigured_result(context: Dict, mode: str, prompt: str) -> Dict:
     return {
         "modeUsed": mode,
@@ -1514,6 +1609,7 @@ class ProviderClient:
             ("excel.analysis", "智能分析"),
             ("excel.formula_assistant", "公式助手"),
             ("ppt.slide_assistant", "智能总结"),
+            ("ppt.structure_review", "结构审查"),
         ]
         status = {}
         for task_type, label in tasks:
@@ -1556,7 +1652,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.21.0-alpha",
+            "version": "0.22.0-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -2346,6 +2442,117 @@ class ProviderClient:
         return {
             **parsed,
             "modeUsed": mode,
+            "provider": "enterprise-dify-chat/{0}".format(
+                str(resolved_task_auth.get("authSource", "none"))
+                if has_auth_snapshot
+                else self.get_auth_source_for_task(task_type)
+            ),
+            "prompt": prompt,
+            "conversationId": body.get("conversation_id", ""),
+            "messageId": body.get("message_id", ""),
+        }
+
+    def ppt_structure_review(
+        self,
+        request: PptStructureReviewRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
+    ) -> Dict:
+        prompt = build_ppt_structure_review_prompt(request)
+        task_type = "ppt.structure_review"
+        has_auth_snapshot = task_auth is not None
+        resolved_task_auth = task_auth or {}
+        configured = (
+            bool(
+                str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+                and str(resolved_task_auth.get("apiKey", "")).strip()
+            )
+            if has_auth_snapshot
+            else self.is_task_configured(task_type)
+        )
+        if not configured:
+            logger.info("traceId=%s provider=mock task=ppt.structure_review", trace_id)
+            if has_auth_snapshot:
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": "",
+                        **self.build_debug_metadata(
+                            task_type,
+                            provider="mock",
+                            task_auth=resolved_task_auth,
+                        ),
+                        "skipReason": "provider_not_configured",
+                        "request": {
+                            "body": build_provider_request_payload(
+                                self.settings,
+                                {},
+                                prompt,
+                                input_mode=str(
+                                    resolved_task_auth.get("providerInputMode")
+                                    or DIFY_INPUT_MODE_LEGACY
+                                ),
+                                response_mode=str(
+                                    resolved_task_auth.get("providerMode", "")
+                                ),
+                            )
+                        },
+                    }
+                )
+            else:
+                self.record_unconfigured_debug(task_type, trace_id, prompt)
+            if progress_callback:
+                progress_callback("parsing")
+            return {
+                "overallStoryline": "已读取指定页段，请配置结构审查模型后台后获取语义审查。",
+                "inferredChapters": [],
+                "highPriorityIssues": [],
+                "generalSuggestions": [
+                    {
+                        "code": "workflow_unconfigured",
+                        "message": "请在设置页保存 ppt.structure_review 的工作流配置。",
+                        "slideNumbers": [],
+                    }
+                ],
+                "slideRecommendations": [],
+                "recommendedOutline": [],
+                "rawAnswer": None,
+                "parseFallbackReason": None,
+                "provider": "mock",
+                "prompt": prompt,
+            }
+
+        post_kwargs = {
+            "timeout_seconds": max(
+                self.settings.timeout_seconds,
+                PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS,
+            )
+        }
+        if has_auth_snapshot:
+            post_kwargs["task_auth"] = resolved_task_auth
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {
+                "scene": "ppt",
+                "startSlide": request.scope.start_slide,
+                "endSlide": request.scope.end_slide,
+                "totalSlides": request.scope.total_slides,
+            },
+            prompt,
+            **post_kwargs,
+        )
+        if progress_callback:
+            progress_callback("parsing")
+        parsed = parse_ppt_structure_review_answer(extract_answer(body))
+        logger.info(
+            "traceId=%s provider=enterprise-dify-chat task=ppt.structure_review",
+            trace_id,
+        )
+        return {
+            **parsed,
             "provider": "enterprise-dify-chat/{0}".format(
                 str(resolved_task_auth.get("authSource", "none"))
                 if has_auth_snapshot
