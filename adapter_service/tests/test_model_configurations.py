@@ -1,0 +1,189 @@
+import json
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
+    ACCESS_WORKFLOW_PLATFORM,
+    ModelConfigurationError,
+    ModelConfigurationStore,
+    WorkflowProfileCompatibilityStore,
+    normalize_service_base_url,
+)
+
+
+class ModelConfigurationStoreTests(unittest.TestCase):
+    def _store(self, root: Path) -> ModelConfigurationStore:
+        config_path = root / "adapter.json"
+        if not config_path.exists():
+            config_path.write_text("{}\n", encoding="utf-8")
+        return ModelConfigurationStore(config_path, root / "provider_api_keys")
+
+    def test_migrates_workflow_profile_in_place_and_preserves_key(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            key_dir = root / "provider_api_keys"
+            key_dir.mkdir()
+            key_path = key_dir / "workflow_existing"
+            key_path.write_text("secret\n", encoding="utf-8")
+            config_path = root / "adapter.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "providerBaseUrl": "http://1.1.1.1:1111/one-api/v1",
+                        "workflowProfiles": {
+                            "profile_existing": {
+                                "id": "profile_existing",
+                                "taskType": "word.smart_write",
+                                "name": "生产版",
+                                "note": "原备注",
+                                "apiKeyRef": "workflow_existing",
+                            }
+                        },
+                        "activeWorkflowProfiles": {
+                            "word.smart_write": "profile_existing"
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            store = ModelConfigurationStore(config_path, key_dir)
+
+            first = store.list_for_task("word.smart_write")
+            second = store.list_for_task("word.smart_write")
+
+            self.assertEqual(first, second)
+            self.assertEqual(first["activeConfigurationId"], "profile_existing")
+            item = first["configurations"][0]
+            self.assertEqual(item["accessMethod"], ACCESS_WORKFLOW_PLATFORM)
+            self.assertEqual(item["serviceBaseUrl"], "http://1.1.1.1:1111/one-api/v1")
+            self.assertTrue(item["keyConfigured"])
+            self.assertEqual(key_path.read_text(encoding="utf-8").strip(), "secret")
+
+    def test_direct_configuration_requires_model_and_key_before_activation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            configuration = store.create_configuration(
+                "excel.analysis", "直连", ACCESS_DIRECT_MODEL
+            )
+            self.assertFalse(configuration["complete"])
+            with self.assertRaises(ModelConfigurationError):
+                store.activate_configuration(configuration["id"])
+
+            configuration = store.update_configuration(
+                configuration["id"],
+                name="直连",
+                access_method=ACCESS_DIRECT_MODEL,
+                service_base_url="http://1.1.1.1:1111/one-api/v1/chat/completions",
+                model_name="deepseek-v4-flash",
+            )
+            store.replace_api_key(configuration["id"], "direct-secret")
+            active = store.activate_configuration(configuration["id"])
+
+            self.assertEqual(active["activeConfigurationId"], configuration["id"])
+            resolved = store.get_active_configuration("excel.analysis", include_secret=True)
+            self.assertEqual(resolved["serviceBaseUrl"], "http://1.1.1.1:1111/one-api/v1")
+            self.assertEqual(resolved["apiKey"], "direct-secret")
+
+    def test_method_switch_drops_old_key_and_direct_fields(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            direct = store.create_configuration(
+                "word.smart_write",
+                "切换测试",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://model.example/v1",
+                model_name="glm-5.2",
+                temperature=0.2,
+            )
+            direct = store.replace_api_key(direct["id"], "old-secret")
+            old_ref = direct["apiKeyRef"]
+
+            platform = store.update_configuration(
+                direct["id"],
+                name="切换测试",
+                access_method=ACCESS_WORKFLOW_PLATFORM,
+                service_base_url="https://workflow.example/v1",
+            )
+
+            self.assertFalse(platform["keyConfigured"])
+            self.assertEqual(platform["modelName"], "")
+            self.assertIsNone(platform["temperature"])
+            self.assertFalse((store.key_dir / old_ref).exists())
+
+    def test_copy_is_limited_to_same_host_and_copies_secret_independently(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            source = store.create_configuration(
+                "word.smart_write",
+                "生产版",
+                ACCESS_WORKFLOW_PLATFORM,
+                service_base_url="https://workflow.example/v1",
+            )
+            source = store.replace_api_key(source["id"], "secret")
+            copied = store.copy_configuration(source["id"], "word.document_review")
+            self.assertNotEqual(source["apiKeyRef"], copied["apiKeyRef"])
+            self.assertTrue(copied["keyConfigured"])
+            with self.assertRaises(ModelConfigurationError):
+                store.copy_configuration(source["id"], "excel.analysis")
+
+    def test_normalize_service_url_rejects_query_and_strips_known_path(self) -> None:
+        self.assertEqual(
+            normalize_service_base_url(" http://host:1111/one-api/v1/chat/completions/ "),
+            "http://host:1111/one-api/v1",
+        )
+        with self.assertRaises(ModelConfigurationError):
+            normalize_service_base_url("https://host/v1?key=secret")
+
+    def test_legacy_workflow_facade_writes_the_new_configuration_store(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text(
+                json.dumps({"providerBaseUrl": "https://workflow.example/v1"}),
+                encoding="utf-8",
+            )
+            key_dir = root / "provider_api_keys"
+            facade = WorkflowProfileCompatibilityStore(config_path, key_dir)
+
+            profile = facade.create_profile(
+                "word.smart_write", "兼容配置", "legacy-secret", activate=True
+            )
+
+            model_data = ModelConfigurationStore(config_path, key_dir).list_for_task(
+                "word.smart_write"
+            )
+            self.assertEqual(model_data["activeConfigurationId"], profile["id"])
+            self.assertEqual(model_data["configurations"][0]["accessMethod"], ACCESS_WORKFLOW_PLATFORM)
+            self.assertEqual(
+                model_data["configurations"][0]["serviceBaseUrl"],
+                "https://workflow.example/v1",
+            )
+
+    def test_legacy_workflow_facade_cannot_expose_direct_model_configuration(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self._store(root)
+            direct = store.create_configuration(
+                "word.smart_write",
+                "直连配置",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://model.example/v1",
+                model_name="glm-5.2",
+            )
+            store.replace_api_key(direct["id"], "direct-secret")
+            store.activate_configuration(direct["id"])
+
+            facade = WorkflowProfileCompatibilityStore(
+                store.config_path, store.key_dir
+            )
+            data = facade.list_for_task("word.smart_write")
+
+            self.assertEqual(data["profileCount"], 0)
+            self.assertEqual(data["activeProfileId"], "")
+
+
+if __name__ == "__main__":
+    unittest.main()

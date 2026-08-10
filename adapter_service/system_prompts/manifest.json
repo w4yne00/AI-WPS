@@ -1,0 +1,46 @@
+{
+  "schemaVersion": 1,
+  "release": "0.23.0-alpha",
+  "tasks": {
+    "word.smart_write": {
+      "version": "2026-08-10.1",
+      "file": "word-smart-write.md",
+      "sha256": "26c7868dd200c04bf0922862d692e4df55c3c3582a3c94b8ddad639f0a0f00eb"
+    },
+    "word.smart_imitation": {
+      "version": "2026-08-10.1",
+      "file": "word-smart-imitation.md",
+      "sha256": "e26eb2cc9c22d417dc8c57ca1ef7f92b8806714211708546fe450287994781ef"
+    },
+    "word.document_review": {
+      "version": "2026-08-10.1",
+      "file": "word-document-review.md",
+      "sha256": "c31e2e17ad03d974f63208150d4adf951048c5be34059b311a589b0227efbdca"
+    },
+    "word.format_review": {
+      "version": "2026-08-10.1",
+      "file": "word-format-review.md",
+      "sha256": "d721c77044bb8517de7b8b4f884b3320e0df8da41d469e8aece155dd405ab77e"
+    },
+    "excel.analysis": {
+      "version": "2026-08-10.1",
+      "file": "excel-analysis.md",
+      "sha256": "c70ac818bc36e13f5b96107534f8d1ca7aa33b38f4b5ac4523c87d0c3cb8ef8b"
+    },
+    "excel.formula_assistant": {
+      "version": "2026-08-10.1",
+      "file": "excel-formula-assistant.md",
+      "sha256": "ba0baa2ec25b7b6490dbd26e89b462a6f660ba33c1691adec0de68dec8b8fdc5"
+    },
+    "ppt.slide_assistant": {
+      "version": "2026-08-10.1",
+      "file": "ppt-slide-assistant.md",
+      "sha256": "371e2377733b191ce95e300d2bd184fb33900cb9beaf115bf020fab9c44bf3c0"
+    },
+    "ppt.structure_review": {
+      "version": "2026-08-10.1",
+      "file": "ppt-structure-review.md",
+      "sha256": "bdeafe95523c36139f2359dfc6f028a57dd27fd05eb4f64210f9c833384a895b"
+    }
+  }
+}

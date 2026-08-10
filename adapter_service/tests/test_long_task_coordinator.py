@@ -4,7 +4,10 @@ import time
 import unittest
 
 from app.core.errors import AdapterError, ProviderTimeoutError
-from app.services.long_task_coordinator import LongTaskCoordinator
+from app.services.long_task_coordinator import (
+    PRIORITY_INTERACTIVE,
+    LongTaskCoordinator,
+)
 
 
 class FakeClock:
@@ -50,6 +53,57 @@ def wait_for_status(coordinator, job_id, expected, timeout=2):
 
 
 class LongTaskCoordinatorTests(unittest.TestCase):
+    def test_interactive_jobs_are_prioritized_without_starving_regular_jobs(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+        runners = [BlockingRunner() for _ in range(6)]
+        coordinator.submit(
+            "running-regular",
+            "trace-running",
+            "word.document_review",
+            runners[0],
+            {"value": 0},
+            "LONG_TASK_FAILED",
+            "后台任务执行失败。",
+        )
+        self.assertTrue(runners[0].started.wait(timeout=1))
+        coordinator.submit(
+            "queued-regular",
+            "trace-regular",
+            "word.document_review",
+            runners[1],
+            {"value": 1},
+            "LONG_TASK_FAILED",
+            "后台任务执行失败。",
+        )
+        for index in range(2, 6):
+            coordinator.submit(
+                "queued-interactive-{0}".format(index),
+                "trace-interactive-{0}".format(index),
+                "word.smart_write",
+                runners[index],
+                {"value": index},
+                "LONG_TASK_FAILED",
+                "后台任务执行失败。",
+                priority_class=PRIORITY_INTERACTIVE,
+            )
+
+        self.assertEqual(coordinator.get("queued-interactive-2")["queuePosition"], 1)
+        self.assertEqual(coordinator.get("queued-regular")["queuePosition"], 4)
+
+        runners[0].release.set()
+        self.assertTrue(runners[2].started.wait(timeout=1))
+        runners[2].release.set()
+        self.assertTrue(runners[3].started.wait(timeout=1))
+        runners[3].release.set()
+        self.assertTrue(runners[4].started.wait(timeout=1))
+        runners[4].release.set()
+
+        self.assertTrue(runners[1].started.wait(timeout=1))
+        self.assertFalse(runners[5].started.is_set())
+        runners[1].release.set()
+        self.assertTrue(runners[5].started.wait(timeout=1))
+        runners[5].release.set()
+
     def test_mixed_hosts_share_capacity_fifo_cancellation_and_rejection_metrics(self):
         coordinator = LongTaskCoordinator()
         task_types = [

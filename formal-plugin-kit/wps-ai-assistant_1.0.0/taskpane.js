@@ -1,6 +1,6 @@
 (function () {
   var ADAPTER_BASE_URL = "http://127.0.0.1:18100";
-  var FRONTEND_BUILD_VERSION = "0.22.0-alpha";
+  var FRONTEND_BUILD_VERSION = "0.23.0-alpha";
   var TASKPANE_ROOT_ID = "result-output";
   var helpers = window.WpsAiAssistantHelpers || {};
   var DOCUMENT_REVIEW_POLL_INTERVAL_MS = 3000;
@@ -13,6 +13,10 @@
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-document-review-active-job-v1";
+  var WRITING_ACTIVE_JOB_STORAGE_KEY = "ai-wps-writing-active-job-v1";
+  var WRITING_POLL_INTERVAL_MS = 3000;
+  var WRITING_POLL_RETRY_DELAY_MS = 15000;
+  var WRITING_POLL_REQUEST_TIMEOUT_MS = 10000;
   var DOCUMENT_REVIEW_PHASE_TEXT = {
     queued: "排队等待",
     preparing: "准备审查内容",
@@ -204,6 +208,11 @@
     documentReviewPollStartedAt: 0,
     documentReviewPollErrorCount: 0,
     documentReviewStopWaiting: null,
+    writingJobId: "",
+    writingJobTaskType: "",
+    writingJobMode: "",
+    writingJobStartedAt: 0,
+    writingJobPollErrorCount: 0,
     latestDocumentPayload: null,
     latestSelectionMode: "document",
     providerName: "未检测",
@@ -319,7 +328,7 @@
     if (!state.workflowProfileEditor || !state.workflowProfileEditor.dirty) {
       return true;
     }
-    return !window.confirm || window.confirm("当前工作流编辑内容尚未保存，确认放弃修改？");
+    return !window.confirm || window.confirm("当前模型配置尚未保存，确认放弃修改？");
   }
 
   function confirmWritingPolicyEditorDiscard() {
@@ -353,6 +362,60 @@
       Date.now().toString(36),
       Math.random().toString(36).slice(2, 10)
     ].join("-");
+  }
+
+  function buildWritingClientJobId(taskType) {
+    return [
+      taskType === "word.smart_imitation" ? "client-imitation" : "client-smart-write",
+      Date.now().toString(36),
+      Math.random().toString(36).slice(2, 10)
+    ].join("-");
+  }
+
+  function loadWritingActiveJob() {
+    var raw;
+    try {
+      raw = window.localStorage && window.localStorage.getItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveWritingActiveJob(job) {
+    if (!job || !job.jobId) {
+      return;
+    }
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(WRITING_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+          jobId: job.jobId,
+          taskType: job.taskType,
+          mode: job.mode,
+          traceId: job.traceId || "",
+          startedAt: job.startedAt || Date.now(),
+          frontendVersion: FRONTEND_BUILD_VERSION
+        }));
+      }
+    } catch (error) {
+      // Storage may be unavailable in some WPS WebView modes.
+    }
+  }
+
+  function clearWritingActiveJob(jobId) {
+    var active;
+    try {
+      if (!window.localStorage) {
+        return;
+      }
+      active = loadWritingActiveJob();
+      if (jobId && active && active.jobId && active.jobId !== jobId) {
+        return;
+      }
+      window.localStorage.removeItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
+    } catch (error) {
+      // Storage cleanup must not block result rendering.
+    }
   }
 
   function loadDocumentReviewActiveJob() {
@@ -405,7 +468,7 @@
     var providerText = {
       "enterprise-chat-api": "企业接口",
       "enterprise-dify-chat": "模型接口",
-      "enterprise-dify-workflow": "模型工作流",
+      "enterprise-dify-workflow": "工作流平台",
       mock: "模拟接口"
     };
     var detail = providerText[providerName] || providerName || "未检测";
@@ -991,6 +1054,9 @@
     var returnTitle;
 
     setInterruptedRetryVisible(false);
+    if (state.writingJobId && state.writingJobMode !== requestedMode) {
+      setWritingJob("", "", "");
+    }
     state.currentMode = requestedMode;
     if (!settingsMode) {
       state.lastTaskMode = requestedMode;
@@ -1039,6 +1105,8 @@
     }
     if (state.currentMode === "documentReview") {
       resumeDocumentReviewActiveJob();
+    } else if (state.currentMode === "smartWrite" || state.currentMode === "smartImitation") {
+      resumeWritingActiveJob();
     }
   }
 
@@ -1658,11 +1726,11 @@
           return null;
         }
         if (!profileResults || profileResults.length !== TASK_API_KEY_DEFS.length) {
-          throw new Error("工作流配置读取不完整");
+          throw new Error("模型配置读取不完整");
         }
         for (profileIndex = 0; profileIndex < profileResults.length; profileIndex += 1) {
           if (!profileResults[profileIndex]) {
-            throw new Error("工作流配置读取失败");
+            throw new Error("模型配置读取失败");
           }
         }
         state.modelInterfaceDetectable = true;
@@ -1799,10 +1867,10 @@
       };
     }
     if (!draft || !String(draft.name || "").trim()) {
-      return { valid: false, message: "请填写工作流名称。" };
+      return { valid: false, message: "请填写模型配置名称。" };
     }
     if (requireApiKey && !String(draft.apiKey || "").trim()) {
-      return { valid: false, message: "请填写工作流 API Key。" };
+      return { valid: false, message: "请填写模型配置 API Key。" };
     }
     return { valid: true, message: "" };
   }
@@ -1846,7 +1914,7 @@
     previousProfileData = state.workflowProfiles[taskType] || null;
     requestId = nextWorkflowProfileRequestId(taskType);
     return request(
-      "/provider/workflow-profiles?taskType=" + encodeURIComponent(taskType),
+      "/provider/model-configurations?taskType=" + encodeURIComponent(taskType),
       null,
       requestOptions
     )
@@ -1907,6 +1975,7 @@
     var taskType = getCurrentWorkflowTaskType();
     var data;
     var selectedId;
+    var availableProfiles;
     if (!strip || !select || !current) {
       return;
     }
@@ -1915,15 +1984,16 @@
       return;
     }
     data = getWorkflowProfileData(taskType);
+    availableProfiles = data.profiles.filter(function (profile) { return profile.complete; });
     selectedId = state.workflowProfileSelections[taskType] || data.activeProfileId || "";
     select.innerHTML = "";
-    if (!data.profiles.length) {
+    if (!availableProfiles.length) {
       var emptyOption = document.createElement("option");
       emptyOption.value = "";
-      emptyOption.textContent = data.loadError ? "档案读取失败" : "尚未配置工作流";
+      emptyOption.textContent = data.loadError ? "配置读取失败" : "未配置";
       select.appendChild(emptyOption);
     } else {
-      data.profiles.forEach(function (profile) {
+      availableProfiles.forEach(function (profile) {
         var option = document.createElement("option");
         var optionState = getWorkflowProfileOptionState(
           profile,
@@ -1931,14 +2001,15 @@
           isWorkflowInteractionBlocked()
         );
         option.value = profile.id;
-        option.textContent = profile.name + (profile.keyConfigured ? "" : "（密钥未配置）");
+        option.textContent = (profile.id === data.activeProfileId ? "✓ " : "") + profile.name + " · " +
+          (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + profile.modelName : "") : "工作流平台");
         option.selected = profile.id === selectedId;
         option.disabled = optionState.disabled;
         select.appendChild(option);
       });
     }
-    select.disabled = isWorkflowInteractionBlocked() || !data.profiles.length;
-    current.textContent = "当前：" + (
+    select.disabled = isWorkflowInteractionBlocked() || !availableProfiles.length;
+    current.textContent = "当前配置：" + (
       helpers.getActiveWorkflowProfileName ? helpers.getActiveWorkflowProfileName(data) : "尚未配置"
     );
   }
@@ -2057,7 +2128,7 @@
     if (!manager) {
       return;
     }
-    controls = manager.querySelectorAll("button, input, textarea");
+    controls = manager.querySelectorAll("button, input, textarea, select");
     for (index = 0; index < controls.length; index += 1) {
       controls[index].disabled = state.workflowProfileMutationBusy;
     }
@@ -2074,6 +2145,44 @@
   function markWorkflowProfileEditorDirty() {
     if (state.workflowProfileEditor) {
       state.workflowProfileEditor.dirty = true;
+      var validateButton = document.querySelector('[data-workflow-action="validate"]');
+      if (validateButton) {
+        validateButton.disabled = true;
+      }
+    }
+  }
+
+  function handleModelConfigurationEditorChange(event) {
+    var editor = state.workflowProfileEditor;
+    var methodInput;
+    var nextMethod;
+    var directFields;
+    var index;
+    markWorkflowProfileEditorDirty();
+    if (!editor || !event.target || !event.target.hasAttribute("data-workflow-editor-method")) {
+      return;
+    }
+    methodInput = event.target;
+    nextMethod = methodInput.value;
+    if (editor.currentAccessMethod && editor.currentAccessMethod !== nextMethod && window.confirm &&
+        !window.confirm("切换接入方式会清空原方式的专属参数和 API Key，是否继续？")) {
+      methodInput.value = editor.currentAccessMethod;
+      return;
+    }
+    editor.currentAccessMethod = nextMethod;
+    directFields = document.querySelectorAll(".model-direct-field");
+    for (index = 0; index < directFields.length; index += 1) {
+      directFields[index].hidden = nextMethod !== "direct_model";
+    }
+    if (editor.originalAccessMethod && editor.originalAccessMethod !== nextMethod) {
+      ["[data-workflow-editor-key]", "[data-workflow-editor-key-confirm]",
+        "[data-workflow-editor-model]", "[data-workflow-editor-temperature]",
+        "[data-workflow-editor-max-output]"].forEach(function (selector) {
+        var input = document.querySelector(selector);
+        if (input) {
+          input.value = "";
+        }
+      });
     }
   }
 
@@ -2101,19 +2210,41 @@
         renderWorkflowProfileManager();
         return;
       }
+      var accessMethod = profile ? profile.accessMethod : "workflow_platform";
+      var directHidden = accessMethod === "direct_model" ? "" : " hidden";
       rows.push('<section class="workflow-settings-subpage" aria-label="' +
-        (editor.mode === "create" ? "新建工作流" : "编辑工作流") + '">');
+        (editor.mode === "create" ? "新建模型配置" : "编辑模型配置") + '">');
       rows.push('<div class="workflow-subpage-head"><button type="button" class="ghost-action mini-button" data-workflow-action="editor-cancel"' + disabledAttribute + '>返回</button><div><h5>' +
-        (editor.mode === "create" ? "新建" + definition.label + "工作流" : "编辑" + escapeWorkflowText(profile.name)) +
+        (editor.mode === "create" ? "新建" + definition.label + "模型配置" : "编辑" + escapeWorkflowText(profile.name)) +
         '</h5><span>' + definition.label + '</span></div></div>');
       rows.push('<div class="workflow-editor-fields">');
-      rows.push('<label class="field"><span>工作流名称</span><input type="text" data-workflow-editor-name maxlength="40" value="' +
+      rows.push('<label class="field"><span>配置名称</span><input type="text" data-workflow-editor-name maxlength="40" value="' +
         escapeWorkflowText(profile ? profile.name : "") + '"' + disabledAttribute + ' /></label>');
+      rows.push('<label class="field"><span>接入方式</span><select data-workflow-editor-method' + disabledAttribute + '>' +
+        '<option value="workflow_platform"' + (accessMethod === "workflow_platform" ? " selected" : "") + '>工作流平台</option>' +
+        '<option value="direct_model"' + (accessMethod === "direct_model" ? " selected" : "") + '>模型直连</option></select></label>');
+      rows.push('<label class="field"><span>服务地址</span><input type="text" data-workflow-editor-url placeholder="例如：http://1.1.1.1:1111/one-api/v1" value="' +
+        escapeWorkflowText(profile ? profile.serviceBaseUrl : "") + '"' + disabledAttribute + ' /></label>');
+      rows.push('<label class="field model-direct-field"' + directHidden + '><span>模型标识</span><input type="text" data-workflow-editor-model placeholder="例如：glm-5.2" value="' +
+        escapeWorkflowText(profile ? profile.modelName : "") + '"' + disabledAttribute + ' /></label>');
       rows.push('<label class="field"><span>备注</span><textarea data-workflow-editor-note rows="3" maxlength="200" placeholder="选填"' + disabledAttribute + '>' +
         escapeWorkflowText(profile ? profile.note : "") + '</textarea></label>');
-      rows.push('<label class="field"><span>' + (editor.mode === "create" ? "API Key" : "新 API Key（选填）") +
-        '</span><input type="password" data-workflow-editor-key placeholder="' +
-        (editor.mode === "create" ? "请输入工作流 API Key" : "留空则保持现有密钥") + '"' + disabledAttribute + ' /></label>');
+      rows.push('<section class="model-key-editor"><div class="model-key-status">API Key：' +
+        (profile && profile.keyConfigured ? "已配置" : "未配置") + '</div>' +
+        '<label class="field"><span>' + (profile && profile.keyConfigured ? "新 API Key（选填）" : "API Key（可稍后配置）") +
+        '</span><input type="password" data-workflow-editor-key autocomplete="new-password"' + disabledAttribute + ' /></label>' +
+        '<label class="field"><span>再次输入 API Key</span><input type="password" data-workflow-editor-key-confirm autocomplete="new-password"' + disabledAttribute + ' /></label></section>');
+      rows.push('<details class="model-advanced-settings"><summary>高级配置</summary><div class="workflow-editor-fields">' +
+        '<label class="field model-direct-field"' + directHidden + '><span>温度（选填）</span><input type="number" min="0" max="2" step="0.1" data-workflow-editor-temperature value="' +
+        escapeWorkflowText(profile && profile.temperature !== null && typeof profile.temperature !== "undefined" ? profile.temperature : "") + '"' + disabledAttribute + ' /></label>' +
+        '<label class="field model-direct-field"' + directHidden + '><span>最大输出 Token（选填）</span><input type="number" min="1" data-workflow-editor-max-output value="' +
+        escapeWorkflowText(profile && profile.maxOutputTokens ? profile.maxOutputTokens : "") + '"' + disabledAttribute + ' /></label>' +
+        '<label class="field model-direct-field"' + directHidden + '><span>上下文容量</span><input type="number" min="1000" data-workflow-editor-context value="' +
+        escapeWorkflowText(profile ? profile.contextWindowTokens : 40000) + '"' + disabledAttribute + ' /></label>' +
+        (profile ? '<button type="button" class="ghost-action" data-workflow-action="validate" data-task-type="' + taskType + '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' +
+          (!profile.complete || editor.dirty ? " disabled" : "") + '>验证调用</button><p class="inline-status" data-model-validation-summary>' +
+          escapeWorkflowText(profile.lastValidation && profile.lastValidation.message || "尚未验证") + '</p>' : '') +
+        '</div></details>');
       if (editor.mode === "create") {
         var shouldCheckActivate = getShouldActivateNewWorkflowProfile(data, false);
         rows.push('<label class="workflow-activate-check"><input type="checkbox" data-workflow-editor-activate' +
@@ -2128,16 +2259,16 @@
       return;
     }
 
-    rows.push('<div class="workflow-settings-toolbar"><div><strong>' + definition.label + '</strong><span>当前：' +
+    rows.push('<div class="workflow-settings-toolbar"><div><strong>' + definition.label + '</strong><span>当前配置：' +
       escapeWorkflowText(helpers.getActiveWorkflowProfileName ? helpers.getActiveWorkflowProfileName(data) : "尚未配置") +
-      '</span></div><button type="button" data-workflow-action="create-open" data-task-type="' + taskType + '"' + createDisabledAttribute + '>新建</button></div>');
+      '</span></div><button type="button" data-workflow-action="create-open" data-task-type="' + taskType + '"' + createDisabledAttribute + '>新建模型配置</button></div>');
     if (data.loadError) {
       rows.push('<div class="workflow-profile-error-actions"><p class="workflow-profile-error">无法读取工作流配置：' +
         escapeWorkflowText(data.loadError) + '</p><button type="button" class="ghost-action mini-button" data-workflow-action="reload" data-task-type="' +
         taskType + '"' + disabledAttribute + '>重新读取</button></div>');
     }
     if (!data.profiles.length && !data.loadError) {
-      rows.push('<p class="workflow-profile-empty">尚未配置工作流。</p>');
+      rows.push('<p class="workflow-profile-empty">尚未建立模型配置。</p>');
     }
     if (data.profiles.length) {
       rows.push('<div class="workflow-profile-list">');
@@ -2146,21 +2277,25 @@
         var canDelete = canDeleteWorkflowProfile(profile, data.activeProfileId);
         var statusText = helpers.workflowProfileStatusText ?
           helpers.workflowProfileStatusText(profile, data.activeProfileId) :
-          (isActive ? "当前使用" : (profile.keyConfigured ? "可切换" : "密钥未配置"));
+          (isActive ? "当前使用" : (profile.complete ? "配置完整" : "配置不完整"));
         rows.push('<div class="workflow-profile-row" data-profile-id="' + escapeWorkflowText(profile.id) + '">');
         rows.push('<div class="workflow-profile-summary"><strong>' + escapeWorkflowText(profile.name) + '</strong>');
+        rows.push('<span class="workflow-profile-note">' +
+          (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + escapeWorkflowText(profile.modelName) : "") : "工作流平台") + '</span>');
         if (profile.note) {
           rows.push('<span class="workflow-profile-note">' + escapeWorkflowText(profile.note) + '</span>');
         }
         rows.push('</div>');
         rows.push('<span class="provider-badge">' + escapeWorkflowText(statusText) + '</span>');
         rows.push('<div class="workflow-profile-actions">');
-        if (!isActive && profile.keyConfigured) {
+        if (!isActive && profile.complete) {
           rows.push('<button type="button" class="ghost-action mini-button" data-workflow-action="activate" data-task-type="' + taskType +
             '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' + activationDisabledAttribute + '>设为当前</button>');
         }
         rows.push('<button type="button" class="ghost-action mini-button" data-workflow-action="edit-open" data-task-type="' + taskType +
           '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' + disabledAttribute + '>编辑</button>');
+        rows.push('<button type="button" class="ghost-action mini-button" data-workflow-action="copy" data-task-type="' + taskType +
+          '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' + disabledAttribute + '>复制</button>');
         if (canDelete) {
           rows.push('<button type="button" class="ghost-action mini-button danger-action" data-workflow-action="delete" data-task-type="' + taskType +
             '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' + disabledAttribute + '>删除</button>');
@@ -2182,6 +2317,63 @@
     });
   }
 
+  function readModelConfigurationDraft() {
+    function value(selector) {
+      var input = document.querySelector(selector);
+      return input ? String(input.value || "").trim() : "";
+    }
+    return {
+      name: value("[data-workflow-editor-name]"),
+      note: value("[data-workflow-editor-note]"),
+      accessMethod: value("[data-workflow-editor-method]") || "workflow_platform",
+      serviceBaseUrl: value("[data-workflow-editor-url]"),
+      modelName: value("[data-workflow-editor-model]"),
+      temperature: value("[data-workflow-editor-temperature]"),
+      maxOutputTokens: value("[data-workflow-editor-max-output]"),
+      contextWindowTokens: value("[data-workflow-editor-context]") || "40000",
+      apiKey: value("[data-workflow-editor-key]"),
+      apiKeyConfirm: value("[data-workflow-editor-key-confirm]")
+    };
+  }
+
+  function modelConfigurationPayload(taskType, draft) {
+    return {
+      taskType: taskType,
+      name: draft.name,
+      note: draft.note,
+      accessMethod: draft.accessMethod,
+      serviceBaseUrl: draft.serviceBaseUrl,
+      modelName: draft.accessMethod === "direct_model" ? draft.modelName : "",
+      temperature: draft.accessMethod === "direct_model" && draft.temperature !== "" ? Number(draft.temperature) : null,
+      maxOutputTokens: draft.accessMethod === "direct_model" && draft.maxOutputTokens !== "" ? Number(draft.maxOutputTokens) : null,
+      contextWindowTokens: draft.accessMethod === "direct_model" ? Number(draft.contextWindowTokens || 40000) : 40000
+    };
+  }
+
+  function validateModelConfigurationDraft(draft) {
+    var base = getWorkflowProfileDraftValidation(draft, false);
+    if (!base.valid) {
+      return base;
+    }
+    if (draft.apiKey !== draft.apiKeyConfirm) {
+      return { valid: false, message: "两次输入的 API Key 不一致。" };
+    }
+    if (draft.accessMethod === "direct_model" && draft.maxOutputTokens &&
+        Number(draft.maxOutputTokens) >= Number(draft.contextWindowTokens || 40000)) {
+      return { valid: false, message: "最大输出 Token 必须小于上下文容量。" };
+    }
+    return { valid: true, message: "" };
+  }
+
+  function saveModelConfigurationKey(configurationId, draft) {
+    if (!draft.apiKey) {
+      return Promise.resolve();
+    }
+    return request("/provider/model-configurations/" + encodeURIComponent(configurationId) + "/api-key", {
+      apiKey: draft.apiKey
+    });
+  }
+
   function failWorkflowMutation(taskType, prefix, error, preserveEditor) {
     setWorkflowProfileMutationBusy(false);
     state.workflowProfileSelections[taskType] = getWorkflowProfileData(taskType).activeProfileId || "";
@@ -2193,71 +2385,54 @@
   }
 
   function createWorkflowProfile(taskType) {
-    var nameInput = document.querySelector("[data-workflow-editor-name]");
-    var keyInput = document.querySelector("[data-workflow-editor-key]");
-    var noteInput = document.querySelector("[data-workflow-editor-note]");
     var activateInput = document.querySelector("[data-workflow-editor-activate]");
-    var draft = {
-      name: nameInput ? (nameInput.value || "").trim() : "",
-      apiKey: keyInput ? (keyInput.value || "").trim() : "",
-      note: noteInput ? (noteInput.value || "").trim() : ""
-    };
-    var validation = getWorkflowProfileDraftValidation(draft, true);
+    var draft = readModelConfigurationDraft();
+    var validation = validateModelConfigurationDraft(draft);
     var activate = getShouldActivateNewWorkflowProfile(
       getWorkflowProfileData(taskType),
       Boolean(activateInput && activateInput.checked)
     );
     if (!validation.valid) {
-      setStatus(validation.message || "请填写工作流名称和 API Key。");
+      setStatus(validation.message || "请检查模型配置。");
       return;
     }
     setWorkflowProfileMutationBusy(true);
-    request("/provider/workflow-profiles", {
-      taskType: taskType,
-      name: draft.name,
-      apiKey: draft.apiKey,
-      note: draft.note,
-      activate: activate
-    }).then(function () {
-      return completeWorkflowMutation(taskType, "工作流已保存。");
+    request("/provider/model-configurations", modelConfigurationPayload(taskType, draft))
+      .then(function (body) {
+        var configuration = body && body.data && body.data.configuration || {};
+        return saveModelConfigurationKey(configuration.id, draft).then(function () {
+          var complete = Boolean(draft.serviceBaseUrl && draft.apiKey &&
+            (draft.accessMethod !== "direct_model" || draft.modelName));
+          if (activate && complete) {
+            return request("/provider/model-configurations/" + encodeURIComponent(configuration.id) + "/activate", {});
+          }
+          return null;
+        });
+      }).then(function () {
+      return completeWorkflowMutation(taskType, "模型配置已保存。");
     }).catch(function (error) {
-      failWorkflowMutation(taskType, "保存工作流失败", error, true);
+      failWorkflowMutation(taskType, "保存模型配置失败", error, true);
     });
   }
 
   function saveWorkflowProfileEdit(profileId, taskType) {
-    var nameInput = document.querySelector("[data-workflow-editor-name]");
-    var noteInput = document.querySelector("[data-workflow-editor-note]");
-    var keyInput = document.querySelector("[data-workflow-editor-key]");
-    var draft = {
-      name: nameInput ? (nameInput.value || "").trim() : "",
-      note: noteInput ? (noteInput.value || "").trim() : "",
-      apiKey: keyInput ? (keyInput.value || "").trim() : ""
-    };
-    var validation = getWorkflowProfileDraftValidation(draft, false);
-    var apiKey = draft.apiKey;
+    var draft = readModelConfigurationDraft();
+    var validation = validateModelConfigurationDraft(draft);
     var metadataSaved = false;
     if (!validation.valid) {
-      setStatus(validation.message || "请填写工作流名称。");
+      setStatus(validation.message || "请检查模型配置。");
       return;
     }
     setWorkflowProfileMutationBusy(true);
-    request("/provider/workflow-profiles/" + encodeURIComponent(profileId), {
-      name: draft.name,
-      note: draft.note
-    }, { method: "PATCH" }).then(function () {
+    request("/provider/model-configurations/" + encodeURIComponent(profileId),
+      modelConfigurationPayload(taskType, draft), { method: "PATCH" }).then(function () {
       metadataSaved = true;
-      if (!apiKey) {
-        return completeWorkflowMutation(taskType, "工作流名称和备注已保存，密钥保持不变。");
-      }
-      return request("/provider/workflow-profiles/" + encodeURIComponent(profileId) + "/api-key", {
-        apiKey: apiKey
-      }).then(function () {
-        return completeWorkflowMutation(taskType, "工作流名称、备注和密钥已保存。");
+      return saveModelConfigurationKey(profileId, draft).then(function () {
+        return completeWorkflowMutation(taskType, "模型配置已保存。");
       });
     }).catch(function (error) {
       if (!metadataSaved) {
-        failWorkflowMutation(taskType, "保存工作流名称和备注失败", error, true);
+        failWorkflowMutation(taskType, "保存模型配置失败", error, true);
         return;
       }
       state.workflowProfileMutationBusy = false;
@@ -2265,7 +2440,7 @@
       renderWorkflowTaskTabs();
       return loadWorkflowProfiles(taskType).then(function () {
         syncSettingsRefreshController();
-        setStatus("名称和备注已保存，但密钥更换失败：" + describeFetchError(error));
+        setStatus("模型配置已保存，但 API Key 更换失败：" + describeFetchError(error));
       });
     });
   }
@@ -2278,25 +2453,25 @@
       state.workflowProfileSelections[taskType] = previousProfileId || data.activeProfileId || "";
       renderWorkflowProfileStrip();
       setStatus(state.documentReviewJobId ?
-        "文档审查正在运行，暂不能切换工作流。" :
-        "工作流配置正在更新，请稍后再切换。");
+        "文档审查正在运行，暂不能切换模型配置。" :
+        "模型配置正在更新，请稍后再切换。");
       return;
     }
     if (!profileId) {
-      setStatus("请选择要切换的工作流。");
+      setStatus("请选择要切换的模型配置。");
       return;
     }
     if (!profile || optionState.disabled) {
       state.workflowProfileSelections[taskType] = previousProfileId || data.activeProfileId || "";
       renderWorkflowProfileStrip();
-      setStatus("该工作流尚未配置 API Key，无法切换。");
+      setStatus("该模型配置不完整，无法切换。");
       return;
     }
     previousProfileId = typeof previousProfileId === "string" ? previousProfileId : (data.activeProfileId || "");
     state.workflowProfileSelections[taskType] = profileId;
     invalidateWorkflowProfileRequests(taskType);
     setWorkflowProfileMutationBusy(true);
-    request("/provider/workflow-profiles/" + encodeURIComponent(profileId) + "/activate", {})
+    request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {})
       .then(function (body) {
         var nextData = normalizeWorkflowProfileData(body.data || {}, taskType);
         invalidateWorkflowProfileRequests(taskType);
@@ -2307,7 +2482,7 @@
         renderWorkflowTaskTabs();
         renderWorkflowProfileManager();
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        setStatus("工作流已切换，从下一次任务开始生效。");
+        setStatus("模型配置已切换，从下一次任务开始生效。");
       })
       .catch(function (error) {
         state.workflowProfileMutationBusy = false;
@@ -2315,7 +2490,7 @@
         renderWorkflowProfileStrip();
         renderWorkflowTaskTabs();
         renderWorkflowProfileManager();
-        setStatus("切换工作流失败：" + describeFetchError(error));
+        setStatus("切换模型配置失败：" + describeFetchError(error));
       });
   }
 
@@ -2323,19 +2498,71 @@
     var data = getWorkflowProfileData(taskType);
     var profile = getWorkflowProfileById(taskType, profileId);
     if (!canDeleteWorkflowProfile(profile, data.activeProfileId)) {
-      setStatus("当前工作流不可删除，请先切换到其他工作流。");
+      setStatus("当前模型配置不可删除，请先切换到其他配置。");
       return;
     }
-    if (window.confirm && !window.confirm("确认删除工作流“" + profile.name + "”？删除后无法恢复其密钥。")) {
+    if (window.confirm && !window.confirm("确认删除模型配置“" + profile.name + "”？删除后无法恢复其 API Key。")) {
       return;
     }
     setWorkflowProfileMutationBusy(true);
-    request("/provider/workflow-profiles/" + encodeURIComponent(profileId), null, { method: "DELETE" })
+    request("/provider/model-configurations/" + encodeURIComponent(profileId), null, { method: "DELETE" })
       .then(function () {
-        return completeWorkflowMutation(taskType, "工作流“" + profile.name + "”已删除。");
+        return completeWorkflowMutation(taskType, "模型配置“" + profile.name + "”已删除。");
       })
       .catch(function (error) {
-        failWorkflowMutation(taskType, "删除工作流失败", error);
+        failWorkflowMutation(taskType, "删除模型配置失败", error);
+      });
+  }
+
+  function copyModelConfiguration(profileId, taskType) {
+    setWorkflowProfileMutationBusy(true);
+    request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/copy", {
+      targetTaskType: taskType
+    }).then(function () {
+      return completeWorkflowMutation(taskType, "模型配置副本已创建，请检查后再启用。");
+    }).catch(function (error) {
+      failWorkflowMutation(taskType, "复制模型配置失败", error);
+    });
+  }
+
+  function validateModelConfiguration(profileId, taskType) {
+    if (state.workflowProfileEditor && state.workflowProfileEditor.dirty) {
+      setStatus("请先保存模型配置，再执行验证调用。");
+      return;
+    }
+    if (window.confirm && !window.confirm("验证调用会向模型后台发送一条内置测试请求，是否继续？")) {
+      return;
+    }
+    setWorkflowProfileMutationBusy(true);
+    setStatus("正在验证模型配置，模型响应较慢时请耐心等待...");
+    request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/validate", {})
+      .then(function (body) {
+        var duration = body && body.data ? Number(body.data.durationMs || 0) : 0;
+        state.workflowProfileMutationBusy = false;
+        state.workflowProfileEditor.dirty = false;
+        return loadWorkflowProfiles(taskType).then(function () {
+          var refreshedProfile = getWorkflowProfileById(taskType, profileId);
+          if (!refreshedProfile) {
+            state.workflowProfileEditor = null;
+            renderWorkflowProfileManager();
+            setStatus("模型配置已验证，但刷新后未找到该配置，请重新进入设置。");
+            return;
+          }
+          state.workflowProfileEditor = {
+            mode: "edit",
+            taskType: taskType,
+            profileId: profileId,
+            dirty: false,
+            originalAccessMethod: refreshedProfile.accessMethod,
+            currentAccessMethod: refreshedProfile.accessMethod
+          };
+          renderWorkflowProfileManager();
+          setStatus("验证成功，用时 " + (duration / 1000).toFixed(1) + " 秒。");
+        });
+      }).catch(function (error) {
+        setWorkflowProfileMutationBusy(false);
+        setStatus("验证失败：" + describeFetchError(error));
+        renderWorkflowProfileManager();
       });
   }
 
@@ -2384,14 +2611,22 @@
     taskType = taskType || getSettingsWorkflowTaskType();
     if (action === "create-open") {
       if (getWorkflowProfileData(taskType).loadError) {
-        setStatus("工作流配置读取失败，请先重新读取。");
+        setStatus("模型配置读取失败，请先重新读取。");
         return;
       }
-      state.workflowProfileEditor = { mode: "create", taskType: taskType, profileId: "", dirty: false };
+      state.workflowProfileEditor = {
+        mode: "create", taskType: taskType, profileId: "", dirty: false,
+        originalAccessMethod: "workflow_platform", currentAccessMethod: "workflow_platform"
+      };
       syncSettingsRefreshController();
       renderWorkflowProfileManager();
     } else if (action === "edit-open") {
-      state.workflowProfileEditor = { mode: "edit", taskType: taskType, profileId: profileId, dirty: false };
+      var editingProfile = getWorkflowProfileById(taskType, profileId);
+      state.workflowProfileEditor = {
+        mode: "edit", taskType: taskType, profileId: profileId, dirty: false,
+        originalAccessMethod: editingProfile ? editingProfile.accessMethod : "workflow_platform",
+        currentAccessMethod: editingProfile ? editingProfile.accessMethod : "workflow_platform"
+      };
       syncSettingsRefreshController();
       renderWorkflowProfileManager();
     } else if (action === "editor-cancel") {
@@ -2402,7 +2637,7 @@
       renderWorkflowProfileManager();
       syncSettingsRefreshController();
     } else if (action === "reload") {
-      setStatus("正在重新读取工作流配置...");
+      setStatus("正在重新读取模型配置...");
       loadWorkflowProfiles(taskType);
     } else if (action === "create-save") {
       createWorkflowProfile(taskType);
@@ -2412,6 +2647,10 @@
       saveWorkflowProfileEdit(profileId, taskType);
     } else if (action === "delete") {
       deleteWorkflowProfile(profileId, taskType);
+    } else if (action === "copy") {
+      copyModelConfiguration(profileId, taskType);
+    } else if (action === "validate") {
+      validateModelConfiguration(profileId, taskType);
     }
   }
 
@@ -4986,6 +5225,233 @@
     }
   }
 
+  function writingTaskLabel(taskType) {
+    return taskType === "word.smart_imitation" ? "智能仿写" : "智能编写";
+  }
+
+  function writingJobPath(taskType) {
+    return taskType === "word.smart_imitation"
+      ? "/word/smart-imitation/jobs"
+      : "/word/smart-write/jobs";
+  }
+
+  function setWritingJob(jobId, taskType, mode) {
+    state.writingJobId = jobId || "";
+    state.writingJobTaskType = jobId ? taskType : "";
+    state.writingJobMode = jobId ? mode : "";
+    setModelTaskBusy(Boolean(jobId));
+    if (!jobId) {
+      setDocumentReviewCancelVisible(false);
+    }
+    renderWorkflowProfileStrip();
+  }
+
+  function renderWritingJobProgress(job, taskType, jobId) {
+    var label = writingTaskLabel(taskType);
+    var phaseText = DOCUMENT_REVIEW_PHASE_TEXT[job.phase] || job.phase || "等待状态更新";
+    var lines = [];
+    if (job.status === "queued") {
+      setStatus(label + "正在排队，当前位置：" + (job.queuePosition || 1) + "。");
+      lines.push(label + "已进入共享任务队列。", "排队位置：" + (job.queuePosition || 1));
+    } else {
+      setStatus(label + "正在处理，当前阶段：" + phaseText + "。");
+      lines.push(job.runningMessage || ("模型后台正在处理" + label + "。"), "当前阶段：" + phaseText);
+    }
+    lines.push("总耗时：" + Number(job.elapsedSeconds || 0) + " 秒", "任务编号：" + jobId);
+    setDocumentReviewCancelVisible(job.status === "queued" && job.canCancel, false);
+    setPlainResult(lines.join("\n"));
+  }
+
+  function completeWritingJob(result, traceId, taskType, resumed) {
+    var label = writingTaskLabel(taskType);
+    setWritingJob("", "", "");
+    state.writingJobStartedAt = 0;
+    state.writingJobPollErrorCount = 0;
+    state.pendingApplyAction = taskType === "word.smart_write" && !resumed && state.latestDocumentPayload
+      ? "rewrite"
+      : "";
+    state.rewriteResult = setSmartWriteResult(result || {}, taskType);
+    setApplyEnabled(state.pendingApplyAction === "rewrite");
+    setTrace(traceId || "");
+    if (taskType === "word.smart_imitation") {
+      hideCompareForSmartImitation();
+    }
+    setStatus(label + "结果已生成。" + (resumed && taskType === "word.smart_write" ? "为保护原选区，本次恢复结果仅供预览和复制。" : ""));
+  }
+
+  function isFatalWritingPollError(error) {
+    var code = error && error.adapterCode || "";
+    return code.indexOf("SMART_WRITE_JOB_") === 0 ||
+      code.indexOf("SMART_IMITATION_JOB_") === 0 ||
+      code === "LONG_TASK_QUEUE_FULL" ||
+      code === "REQUEST_VALIDATION_FAILED";
+  }
+
+  function scheduleWritingPoll(jobId, taskType, mode, resumed, delayMs) {
+    setTimeout(function () {
+      pollWritingJob(jobId, taskType, mode, resumed);
+    }, delayMs);
+  }
+
+  function pollWritingJob(jobId, taskType, mode, resumed) {
+    if (!jobId || state.writingJobId !== jobId) {
+      return;
+    }
+    request(writingJobPath(taskType) + "/" + encodeURIComponent(jobId) + "?resume=1", null, {
+      timeoutMs: WRITING_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var job = body.data || {};
+      if (state.writingJobId !== jobId) {
+        return;
+      }
+      state.writingJobPollErrorCount = 0;
+      saveWritingActiveJob({
+        jobId: jobId,
+        taskType: taskType,
+        mode: mode,
+        traceId: body.traceId || job.traceId || "",
+        startedAt: state.writingJobStartedAt || Date.now()
+      });
+      if (job.status === "completed") {
+        clearWritingActiveJob(jobId);
+        completeWritingJob(job.result || {}, body.traceId || job.traceId || jobId, taskType, resumed);
+        return;
+      }
+      if (job.status === "cancelled") {
+        clearWritingActiveJob(jobId);
+        setWritingJob("", "", "");
+        setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
+        setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+        return;
+      }
+      if (job.status === "failed") {
+        clearWritingActiveJob(jobId);
+        setWritingJob("", "", "");
+        setStatus(writingTaskLabel(taskType) + "失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
+        setResult((job.error && job.error.message) || "后台任务执行失败。");
+        return;
+      }
+      renderWritingJobProgress(job, taskType, jobId);
+      scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_INTERVAL_MS);
+    }).catch(function (error) {
+      if (state.writingJobId !== jobId) {
+        return;
+      }
+      state.writingJobPollErrorCount += 1;
+      if (isFatalWritingPollError(error)) {
+        clearWritingActiveJob(jobId);
+        setWritingJob("", "", "");
+        setStatus(writingTaskLabel(taskType) + "任务无法恢复：" + describeFetchError(error));
+        setResult(describeFetchError(error));
+        return;
+      }
+      setStatus(writingTaskLabel(taskType) + "状态查询暂时失败，将继续自动刷新。");
+      setPlainResult([
+        "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败。",
+        "已重试：" + state.writingJobPollErrorCount,
+        "任务编号：" + jobId,
+        "最近错误：" + describeFetchError(error)
+      ].join("\n"));
+      scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_RETRY_DELAY_MS);
+    });
+  }
+
+  function startWritingJob(payload, taskType, mode) {
+    var active = loadWritingActiveJob();
+    var jobId;
+    var startedAt;
+    if (state.writingJobId || (active && active.jobId)) {
+      setModelTaskBusy(false);
+      setStatus("已有写作任务尚未结束，请等待当前任务完成。");
+      return;
+    }
+    jobId = buildWritingClientJobId(taskType);
+    startedAt = Date.now();
+    payload.clientJobId = jobId;
+    setWritingJob(jobId, taskType, mode);
+    state.writingJobStartedAt = startedAt;
+    state.writingJobPollErrorCount = 0;
+    saveWritingActiveJob({ jobId: jobId, taskType: taskType, mode: mode, startedAt: startedAt });
+    request(writingJobPath(taskType), payload, { timeoutMs: WRITING_POLL_REQUEST_TIMEOUT_MS })
+      .then(function (body) {
+        var job = body.data || {};
+        var returnedJobId = job.jobId || jobId;
+        if (state.writingJobId !== jobId) {
+          return;
+        }
+        setWritingJob(returnedJobId, taskType, mode);
+        setTrace(body.traceId || job.traceId || returnedJobId);
+        saveWritingActiveJob({
+          jobId: returnedJobId,
+          taskType: taskType,
+          mode: mode,
+          traceId: body.traceId || job.traceId || "",
+          startedAt: startedAt
+        });
+        if (job.status === "completed") {
+          clearWritingActiveJob(returnedJobId);
+          completeWritingJob(job.result || {}, body.traceId || job.traceId || returnedJobId, taskType, false);
+          return;
+        }
+        renderWritingJobProgress(job, taskType, returnedJobId);
+        pollWritingJob(returnedJobId, taskType, mode, false);
+      }).catch(function (error) {
+        if (state.writingJobId !== jobId) {
+          return;
+        }
+        if (isFatalWritingPollError(error)) {
+          clearWritingActiveJob(jobId);
+          setWritingJob("", "", "");
+          setStatus(writingTaskLabel(taskType) + "提交失败：" + describeFetchError(error));
+          setResult(describeFetchError(error));
+          return;
+        }
+        setStatus(writingTaskLabel(taskType) + "提交响应未确认，正在按任务编号恢复查询...");
+        pollWritingJob(jobId, taskType, mode, false);
+      });
+  }
+
+  function resumeWritingActiveJob() {
+    var active = loadWritingActiveJob();
+    if (!active || !active.jobId || active.mode !== state.currentMode) {
+      return;
+    }
+    setWritingJob(active.jobId, active.taskType, active.mode);
+    state.writingJobStartedAt = active.startedAt || Date.now();
+    state.writingJobPollErrorCount = 0;
+    setTrace(active.traceId || active.jobId);
+    setApplyEnabled(false);
+    setStatus("已恢复未完成的" + writingTaskLabel(active.taskType) + "任务，正在查询结果...");
+    setPlainResult("检测到未完成的写作任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
+    pollWritingJob(active.jobId, active.taskType, active.mode, true);
+  }
+
+  function cancelQueuedWritingJob() {
+    var jobId = state.writingJobId;
+    var taskType = state.writingJobTaskType;
+    if (!jobId || !taskType) {
+      return;
+    }
+    setDocumentReviewCancelVisible(true, true);
+    request(writingJobPath(taskType) + "/" + encodeURIComponent(jobId) + "?resume=1", null, {
+      method: "DELETE",
+      timeoutMs: WRITING_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var job = body.data || {};
+      if (job.status === "cancelled") {
+        clearWritingActiveJob(jobId);
+        setWritingJob("", "", "");
+        setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
+        setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+        return;
+      }
+      renderWritingJobProgress(job, taskType, jobId);
+    }).catch(function (error) {
+      setDocumentReviewCancelVisible(true, false);
+      setStatus("取消排队任务失败：" + describeFetchError(error));
+    });
+  }
+
   function startDocumentReviewWaitFeedback() {
     var timers = [];
     timers.push(setTimeout(function () {
@@ -5196,21 +5662,7 @@
       }
 
       setStatus(config.runningText);
-      request("/word/smart-write", state.latestDocumentPayload)
-        .then(function (body) {
-          setModelTaskBusy(false);
-          state.pendingApplyAction = "rewrite";
-          state.rewriteResult = setSmartWriteResult(body.data, "word.smart_write");
-          setApplyEnabled(true);
-          setTrace(body.traceId);
-          setStatus(config.doneText);
-        })
-        .catch(function (error) {
-          var message = describeFetchError(error);
-          setModelTaskBusy(false);
-          setStatus("生成失败：" + message);
-          setResult(message);
-        });
+      startWritingJob(state.latestDocumentPayload, "word.smart_write", "smartWrite");
     }, 0);
   }
 
@@ -5260,22 +5712,7 @@
     setModelTaskBusy(true);
     setStatus(config.runningText);
     setPlainResult("正在生成仿写内容，请稍候。");
-    request("/word/smart-imitation", state.latestDocumentPayload)
-      .then(function (body) {
-        setModelTaskBusy(false);
-        state.pendingApplyAction = "";
-        state.rewriteResult = setSmartWriteResult(body.data, "word.smart_imitation");
-        setApplyEnabled(false);
-        setTrace(body.traceId);
-        hideCompareForSmartImitation();
-        setStatus(config.doneText);
-      })
-      .catch(function (error) {
-        var message = describeFetchError(error);
-        setModelTaskBusy(false);
-        setStatus("生成失败：" + message);
-        setResult(message);
-      });
+    startWritingJob(state.latestDocumentPayload, "word.smart_imitation", "smartImitation");
   }
 
   function getWritingPolicyScene() {
@@ -5334,7 +5771,7 @@
 
   function runPrimaryAction() {
     if (state.workflowProfileMutationBusy) {
-      setStatus("工作流配置正在更新，请稍后再提交任务。");
+      setStatus("模型配置正在更新，请稍后再提交任务。");
       return;
     }
     setInterruptedRetryVisible(false);
@@ -5364,7 +5801,13 @@
     byId("btn-open-settings").addEventListener("click", function () {
       toggleSettingsShortcut();
     });
-    byId("btn-cancel-document-review-job").addEventListener("click", cancelQueuedDocumentReviewJob);
+    byId("btn-cancel-document-review-job").addEventListener("click", function () {
+      if (state.writingJobId) {
+        cancelQueuedWritingJob();
+      } else {
+        cancelQueuedDocumentReviewJob();
+      }
+    });
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
@@ -5454,7 +5897,7 @@
     document.addEventListener("visibilitychange", syncScopeWatcher);
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
-    byId("workflow-profile-manager").addEventListener("change", markWorkflowProfileEditorDirty);
+    byId("workflow-profile-manager").addEventListener("change", handleModelConfigurationEditorChange);
     byId("btn-open-writing-policy-manager").addEventListener("click", openWritingPolicyPresetView);
     for (writingPolicyLayerIndex = 0; writingPolicyLayerIndex < writingPolicyLayerButtons.length; writingPolicyLayerIndex += 1) {
       writingPolicyLayerButtons[writingPolicyLayerIndex].addEventListener("click", handleWritingPolicyLayerClick);

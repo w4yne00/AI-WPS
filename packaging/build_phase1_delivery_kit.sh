@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
-KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0220"
+KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0230"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
 
 WORD_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant_1.0.0"
@@ -71,7 +71,7 @@ date_tag = sys.argv[2]
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 manifest["releaseDate"] = date_tag
 manifest["versionRule"] = (
-    "AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-" + date_tag
+    "AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-" + date_tag
 )
 manifest_path.write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -118,6 +118,7 @@ adapter_service_root = (
 )
 sys.path.insert(0, str(adapter_service_root))
 from app.services.writing_policy.packs import load_pack_snapshot
+from app.services.system_prompts import SystemPromptStore
 
 pack_root = adapter_service_root / "writing_policy_packs"
 expected_packs = set(manifest["writingPolicyPacks"])
@@ -128,6 +129,22 @@ if actual_packs != expected_packs:
         "writing policy pack inventory mismatch: expected=%s actual=%s"
         % (sorted(expected_packs), sorted(actual_packs))
     )
+
+prompt_store = SystemPromptStore(adapter_service_root / "system_prompts")
+prompt_assets = prompt_store.list_metadata()
+if len(prompt_assets) != manifest["adapter"]["systemPromptCount"]:
+    raise SystemExit("system prompt inventory mismatch")
+if {item["taskType"] for item in prompt_assets} != {
+    "word.smart_write",
+    "word.smart_imitation",
+    "word.document_review",
+    "word.format_review",
+    "excel.analysis",
+    "excel.formula_assistant",
+    "ppt.slide_assistant",
+    "ppt.structure_review",
+}:
+    raise SystemExit("system prompt task inventory mismatch")
 for required in (
     pack_root / "THIRD_PARTY_NOTICES.md",
     root / "docs" / "writing-policy-sources.md",
@@ -137,6 +154,7 @@ for required in (
     root / manifest["pptStructureReviewAssets"]["promptTemplate"],
     root / "docs" / "import-templates" / "writing-policies-import-template.csv",
     root / "docs" / "import-templates" / "writing-policies-import-template.xlsx",
+    root / manifest["adapter"]["systemPromptManifest"],
 ):
     if not required.is_file():
         raise SystemExit("missing delivery file: " + str(required.relative_to(root)))

@@ -240,15 +240,16 @@ assert.ok(activateSource.includes("state.workflowProfileSelections[taskType] = p
 const deleteSource = functionSource("deleteWorkflowProfile");
 assert.ok(deleteSource.includes("canDeleteWorkflowProfile"));
 assert.ok(deleteSource.includes("profile.name"));
-assert.ok(deleteSource.includes("确认删除工作流“"));
+assert.ok(deleteSource.includes("确认删除模型配置“"));
 
 const saveEditSource = functionSource("saveWorkflowProfileEdit");
 const patchIndex = saveEditSource.indexOf('{ method: "PATCH" }');
-const replaceKeyIndex = saveEditSource.indexOf('"/api-key"');
+const replaceKeyIndex = saveEditSource.indexOf("saveModelConfigurationKey");
 assert.ok(patchIndex >= 0, "edit must PATCH metadata");
 assert.ok(replaceKeyIndex > patchIndex, "key replacement must follow metadata PATCH");
-assert.ok(saveEditSource.includes("if (!apiKey)"), "blank edit key must skip replacement");
-assert.ok(saveEditSource.includes("名称和备注已保存，但密钥更换失败"));
+const saveKeySource = functionSource("saveModelConfigurationKey");
+assert.ok(saveKeySource.includes("if (!draft.apiKey)"), "blank edit key must skip replacement");
+assert.ok(saveEditSource.includes("模型配置已保存，但 API Key 更换失败"));
 
 const toggleSource = functionSource("toggleSettingsShortcut");
 [

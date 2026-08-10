@@ -1,5 +1,6 @@
 from fastapi import APIRouter
 from app.core.config import load_settings
+from app.services.model_configurations import ModelConfigurationStore
 from app.services.provider_client import ProviderClient
 
 router = APIRouter()
@@ -8,13 +9,15 @@ router = APIRouter()
 @router.get("/health")
 def health() -> dict:
     settings = load_settings()
-    provider = ProviderClient(settings)
+    provider = ProviderClient(
+        settings, model_configuration_store=ModelConfigurationStore()
+    )
     return {
         "success": True,
         "data": {
             "service": "wps-ai-adapter",
             "status": "ok",
-            "version": "0.22.0-alpha",
+            "version": "0.23.0-alpha",
             "mode": "uvicorn",
             "providerName": settings.provider_name,
             "providerType": settings.provider_type,

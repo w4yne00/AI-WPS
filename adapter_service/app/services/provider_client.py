@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
 from app.core.config import AppSettings, TaskRoute, load_settings
-from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
+from app.core.errors import AdapterError, ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.logging import get_logger
 from app.core.models import (
     ExcelAnalysisRequest,
@@ -18,6 +18,16 @@ from app.core.models import (
     PptStructureReviewRequest,
 )
 from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
+from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
+    ACCESS_WORKFLOW_PLATFORM,
+    DEFAULT_CONTEXT_WINDOW_TOKENS,
+    DEFAULT_RESERVED_OUTPUT_TOKENS,
+    ModelConfigurationError,
+    ModelConfigurationStore,
+)
+from app.services.system_prompts import SystemPromptError, SystemPromptStore
+from app.services.ppt.document_text_extractor import extract_staged_document_text
 
 
 logger = get_logger(__name__)
@@ -32,6 +42,7 @@ EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
+INTERACTIVE_WRITING_TIMEOUT_SECONDS = 600
 DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
@@ -50,6 +61,33 @@ _WRITING_POLICY_ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 _WRITING_POLICY_ITEM_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _PROVIDER_DEBUG_STAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 _MAX_WRITING_POLICY_DEBUG_ITEM_IDS = 20
+
+
+def _mock_provider_enabled() -> bool:
+    return os.environ.get("AI_WPS_ENABLE_MOCK_PROVIDER", "").strip() == "1"
+
+
+def _direct_content_text(content) -> str:
+    if isinstance(content, str):
+        cleaned = re.sub(r"(?is)<think\b[^>]*>.*?(?:</think\s*>|$)", "", content)
+        return strip_think_tag_content(cleaned).strip()
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            if isinstance(item, dict) and item.get("type") in {"text", "output_text"}:
+                text = item.get("text")
+                if isinstance(text, str):
+                    parts.append(text)
+        combined = "\n".join(parts)
+        cleaned = re.sub(r"(?is)<think\b[^>]*>.*?(?:</think\s*>|$)", "", combined)
+        return strip_think_tag_content(cleaned).strip()
+    return ""
+
+
+def _estimate_direct_tokens(system_prompt: str, user_prompt: str) -> int:
+    text = "{0}\n{1}".format(system_prompt or "", user_prompt or "")
+    # Chinese text is close to one token per character; UTF-8/4 is safer for mixed text.
+    return max(len(text), (len(text.encode("utf-8")) + 3) // 4) + 128
 
 
 STYLE_TEXT = {
@@ -1452,17 +1490,89 @@ def normalize_task_api_key_ref(task_type: str) -> str:
     return "".join(ch if ch.isalnum() else "_" for ch in (task_type or "default")).strip("_") or "default"
 
 
+_VALIDATION_PROBES = {
+    "word.smart_write": "请将以下文字正式化，只输出最终正文：系统已完成部署。",
+    "word.smart_imitation": "模板：项目已完成部署。要求：仿写为系统已完成联调。只输出最终正文。",
+    "word.document_review": (
+        '请审查“系统应尽快完成联调”。只返回 JSON：'
+        '{"summary":"一句话结论","issues":[]}'
+    ),
+    "word.format_review": (
+        '请判断段落角色，只返回 JSON 数组：'
+        '[{"paragraphIndex":1,"role":"body","confidence":0.9}]'
+    ),
+    "excel.analysis": (
+        '分析表格：表头为“状态”，数据为“已完成”。只返回 JSON：'
+        '{"overview":"概述","findings":[],"risks":[],"actions":[]}'
+    ),
+    "excel.formula_assistant": (
+        '生成 A1 与 B1 求和公式。只返回 JSON：'
+        '{"mode":"generate","primaryFormula":"=SUM(A1:B1)",'
+        '"alternativeFormula":"","suggestedTarget":"C1","explanation":"求和",'
+        '"components":[],"referenceRanges":["A1:B1"],"issues":[],"assumptions":[],"compatibilityNotes":[]}'
+    ),
+    "ppt.slide_assistant": (
+        'sourceMode=currentSlide。标题“项目进展”，正文“已完成部署”。只返回 JSON：'
+        '{"suggestedTitle":"项目进展","summary":"已完成部署","keyPoints":[],"layoutAdvice":[],"plainText":"已完成部署"}'
+    ),
+    "ppt.structure_review": (
+        '审查第1页，标题“项目概况”。只返回 JSON：'
+        '{"overallStoryline":"项目概况","inferredChapters":[],"highPriorityIssues":[],"generalSuggestions":[],"slideRecommendations":[],"recommendedOutline":[]}'
+    ),
+}
+
+
+def _validate_probe_answer(task_type: str, answer: str) -> None:
+    if not str(answer or "").strip():
+        raise AdapterError("MODEL_FINAL_CONTENT_MISSING", "模型未返回最终结果。", status_code=502)
+    if task_type in {"word.smart_write", "word.smart_imitation"}:
+        return
+    parsers = {
+        "word.document_review": parse_document_review_answer,
+        "excel.analysis": parse_excel_analysis_answer,
+        "excel.formula_assistant": parse_excel_formula_answer,
+        "ppt.slide_assistant": parse_ppt_slide_answer,
+        "ppt.structure_review": parse_ppt_structure_review_answer,
+    }
+    if task_type == "word.format_review":
+        cleaned = strip_think_tag_content(answer).strip()
+        fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
+        try:
+            payload = json.loads(fenced)
+        except (TypeError, ValueError) as exc:
+            raise AdapterError(
+                "MODEL_RESULT_INVALID", "模型返回结果不符合格式审查契约。", status_code=502
+            ) from exc
+        if not isinstance(payload, list):
+            raise AdapterError(
+                "MODEL_RESULT_INVALID", "模型返回结果不符合格式审查契约。", status_code=502
+            )
+        return
+    parser = parsers.get(task_type)
+    if parser is None:
+        raise AdapterError("MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400)
+    parsed = parser(answer)
+    if not isinstance(parsed, dict):
+        raise AdapterError("MODEL_RESULT_INVALID", "模型返回结果不符合任务契约。", status_code=502)
+
+
 class ProviderClient:
     def __init__(
         self,
         settings: Optional[AppSettings] = None,
         workflow_profile_store: Optional[WorkflowProfileStore] = None,
+        model_configuration_store: Optional[ModelConfigurationStore] = None,
+        system_prompt_store: Optional[SystemPromptStore] = None,
     ) -> None:
         self.settings = settings or load_settings()
         self.reload_settings = settings is None
         self.workflow_profile_store = workflow_profile_store or (
             WorkflowProfileStore() if settings is None else None
         )
+        self.model_configuration_store = model_configuration_store or (
+            ModelConfigurationStore() if settings is None else None
+        )
+        self.system_prompt_store = system_prompt_store or SystemPromptStore()
 
     def refresh_settings(self) -> None:
         if self.reload_settings:
@@ -1470,6 +1580,64 @@ class ProviderClient:
 
     def resolve_task_auth(self, task_type: str) -> Dict:
         self.refresh_settings()
+        model_configuration = self.get_active_model_configuration(task_type, include_secret=True)
+        if model_configuration:
+            access_method = str(model_configuration.get("accessMethod", ACCESS_WORKFLOW_PLATFORM))
+            base_url = str(model_configuration.get("serviceBaseUrl", "")).rstrip("/")
+            call_path = (
+                "/chat/completions"
+                if access_method == ACCESS_DIRECT_MODEL
+                else "/chat-messages"
+            )
+            api_key_ref = str(model_configuration.get("apiKeyRef", ""))
+            input_mode_cache_key = _provider_input_mode_cache_key(
+                self.settings,
+                task_type,
+                api_key_ref,
+                provider_base_url=base_url,
+                provider_chat_path=call_path,
+            )
+            return {
+                "providerBaseUrl": base_url,
+                "providerChatPath": call_path,
+                "providerMode": "blocking",
+                "providerName": "模型后台",
+                "providerType": access_method,
+                "providerInputMode": _PROVIDER_INPUT_MODE_CACHE.get(
+                    input_mode_cache_key, DIFY_INPUT_MODE_LEGACY
+                ),
+                "accessMethod": access_method,
+                "modelConfiguration": model_configuration,
+                "modelConfigurationId": str(model_configuration.get("id", "")),
+                "modelConfigurationName": str(model_configuration.get("name", "")),
+                "modelName": str(model_configuration.get("modelName", "")),
+                "temperature": model_configuration.get("temperature"),
+                "maxOutputTokens": model_configuration.get("maxOutputTokens"),
+                "contextWindowTokens": int(
+                    model_configuration.get("contextWindowTokens")
+                    or DEFAULT_CONTEXT_WINDOW_TOKENS
+                ),
+                "apiKeyRef": api_key_ref,
+                "apiKey": str(model_configuration.get("apiKey", "")),
+                "authSource": "task-file",
+            }
+        if self.model_configuration_store is not None:
+            return {
+                "providerBaseUrl": "",
+                "providerChatPath": "/chat-messages",
+                "providerMode": "blocking",
+                "providerName": "模型后台",
+                "providerType": ACCESS_WORKFLOW_PLATFORM,
+                "providerInputMode": DIFY_INPUT_MODE_LEGACY,
+                "accessMethod": ACCESS_WORKFLOW_PLATFORM,
+                "modelConfiguration": None,
+                "modelConfigurationId": "",
+                "modelConfigurationName": "",
+                "modelName": "",
+                "apiKeyRef": "",
+                "apiKey": "",
+                "authSource": "none",
+            }
         workflow_profile = self.get_active_workflow_profile(task_type)
         if workflow_profile and workflow_profile.get("apiKeyRef"):
             api_key_ref = str(workflow_profile.get("apiKeyRef", ""))
@@ -1515,6 +1683,64 @@ class ProviderClient:
             "apiKeyRef": api_key_ref,
             "apiKey": task_api_key,
             "authSource": auth_source,
+            "accessMethod": ACCESS_WORKFLOW_PLATFORM,
+            "modelConfiguration": None,
+            "modelConfigurationId": "",
+            "modelConfigurationName": "",
+            "modelName": "",
+        }
+
+    def resolve_configuration_auth(self, configuration_id: str) -> Dict:
+        if self.model_configuration_store is None:
+            raise AdapterError(
+                "MODEL_CONFIG_NOT_FOUND", "未找到指定的模型配置。", status_code=404
+            )
+        try:
+            configuration = self.model_configuration_store.get_configuration(
+                configuration_id, include_secret=True
+            )
+        except ModelConfigurationError as exc:
+            status = 404 if exc.code == "MODEL_CONFIG_NOT_FOUND" else 400
+            raise AdapterError(exc.code, exc.message, status_code=status) from exc
+        if not configuration.get("complete"):
+            raise AdapterError(
+                "MODEL_CONFIG_INCOMPLETE", "该模型配置尚不完整，不能执行验证。", status_code=400
+            )
+        access_method = str(configuration.get("accessMethod", ACCESS_WORKFLOW_PLATFORM))
+        call_path = (
+            "/chat/completions" if access_method == ACCESS_DIRECT_MODEL else "/chat-messages"
+        )
+        api_key_ref = str(configuration.get("apiKeyRef", ""))
+        base_url = str(configuration.get("serviceBaseUrl", "")).rstrip("/")
+        return {
+            "providerBaseUrl": base_url,
+            "providerChatPath": call_path,
+            "providerMode": "blocking",
+            "providerName": "模型后台",
+            "providerType": access_method,
+            "providerInputMode": _PROVIDER_INPUT_MODE_CACHE.get(
+                _provider_input_mode_cache_key(
+                    self.settings,
+                    str(configuration.get("taskType", "")),
+                    api_key_ref,
+                    provider_base_url=base_url,
+                    provider_chat_path=call_path,
+                ),
+                DIFY_INPUT_MODE_LEGACY,
+            ),
+            "accessMethod": access_method,
+            "modelConfiguration": configuration,
+            "modelConfigurationId": str(configuration.get("id", "")),
+            "modelConfigurationName": str(configuration.get("name", "")),
+            "modelName": str(configuration.get("modelName", "")),
+            "temperature": configuration.get("temperature"),
+            "maxOutputTokens": configuration.get("maxOutputTokens"),
+            "contextWindowTokens": int(
+                configuration.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS
+            ),
+            "apiKeyRef": api_key_ref,
+            "apiKey": str(configuration.get("apiKey", "")),
+            "authSource": "task-file",
         }
 
     def resolve_task_route(self, task_type: str) -> TaskRoute:
@@ -1544,10 +1770,20 @@ class ProviderClient:
 
     def is_configured(self, key_base_path: Optional[Path] = None) -> bool:
         self.refresh_settings()
+        if self.model_configuration_store is not None:
+            return any(
+                item.get("configured")
+                for item in self.build_task_api_key_status(key_base_path).values()
+            )
         return bool(self.settings.provider_base_url.strip() and self.get_api_key("default", key_base_path))
 
     def is_task_configured(self, task_type: str, key_base_path: Optional[Path] = None) -> bool:
         self.refresh_settings()
+        if self.model_configuration_store is not None:
+            try:
+                return self.model_configuration_store.get_active_configuration(task_type) is not None
+            except ModelConfigurationError:
+                return False
         return bool(self.settings.provider_base_url.strip() and self.get_api_key_for_task(task_type, key_base_path))
 
     def get_auth_source(self, key_base_path: Optional[Path] = None) -> str:
@@ -1577,6 +1813,18 @@ class ProviderClient:
         try:
             return self.workflow_profile_store.get_active_profile(task_type)
         except WorkflowProfileError:
+            return None
+
+    def get_active_model_configuration(
+        self, task_type: str, include_secret: bool = False
+    ) -> Optional[Dict]:
+        if self.model_configuration_store is None:
+            return None
+        try:
+            return self.model_configuration_store.get_active_configuration(
+                task_type, include_secret=include_secret
+            )
+        except ModelConfigurationError:
             return None
 
     def get_auth_source_for_task(self, task_type: str, key_base_path: Optional[Path] = None) -> str:
@@ -1616,6 +1864,39 @@ class ProviderClient:
         ]
         status = {}
         for task_type, label in tasks:
+            if self.model_configuration_store is not None:
+                try:
+                    model_data = self.model_configuration_store.list_for_task(task_type)
+                except ModelConfigurationError:
+                    model_data = None
+                if model_data is not None:
+                    active_id = str(model_data.get("activeConfigurationId", ""))
+                    active_configuration = next(
+                        (
+                            item
+                            for item in model_data.get("configurations", [])
+                            if item.get("id") == active_id
+                        ),
+                        {},
+                    )
+                    status[task_type] = {
+                        "label": label,
+                        "apiKeyRef": str(active_configuration.get("apiKeyRef", "")),
+                        "taskKeyConfigured": bool(active_configuration.get("keyConfigured")),
+                        "configured": bool(active_configuration.get("complete")),
+                        "authSource": "task-file"
+                        if active_configuration.get("keyConfigured")
+                        else "none",
+                        "activeProfileId": active_id,
+                        "activeProfileName": str(active_configuration.get("name", "")),
+                        "profileCount": int(model_data.get("configurationCount", 0)),
+                        "activeConfigurationId": active_id,
+                        "activeConfigurationName": str(active_configuration.get("name", "")),
+                        "configurationCount": int(model_data.get("configurationCount", 0)),
+                        "accessMethod": str(active_configuration.get("accessMethod", "")),
+                        "modelName": str(active_configuration.get("modelName", "")),
+                    }
+                    continue
             profile_data = None
             if self.workflow_profile_store is not None:
                 try:
@@ -1655,7 +1936,7 @@ class ProviderClient:
         path = self.settings.provider_chat_path or "/chat-messages"
         url = "{0}{1}".format(self.settings.provider_base_url.rstrip("/"), path) if self.settings.provider_base_url.strip() else ""
         return {
-            "version": "0.22.0-alpha",
+            "version": "0.23.0-alpha",
             "providerBaseUrlConfigured": bool(self.settings.provider_base_url.strip()),
             "providerChatPath": path,
             "url": url,
@@ -1687,6 +1968,10 @@ class ProviderClient:
             provider_base_url_configured = bool(
                 str(task_auth.get("providerBaseUrl", "")).strip()
             )
+            model_configuration_id = str(task_auth.get("modelConfigurationId", ""))
+            model_configuration_name = str(task_auth.get("modelConfigurationName", ""))
+            access_method = str(task_auth.get("accessMethod", ACCESS_WORKFLOW_PLATFORM))
+            model_name = str(task_auth.get("modelName", ""))
         else:
             profile = workflow_profile if workflow_profile is not None else self.get_active_workflow_profile(task_type)
             resolved_api_key_ref = api_key_ref or self.get_task_api_key_ref(task_type)
@@ -1694,6 +1979,10 @@ class ProviderClient:
             profile_id = str((profile or {}).get("id", ""))
             profile_name = str((profile or {}).get("name", ""))
             provider_base_url_configured = bool(self.settings.provider_base_url.strip())
+            model_configuration_id = ""
+            model_configuration_name = ""
+            access_method = ACCESS_WORKFLOW_PLATFORM
+            model_name = ""
         metadata = {
             "provider": provider,
             "providerName": str(
@@ -1706,11 +1995,31 @@ class ProviderClient:
             "authSource": auth_source,
             "taskAuthSource": auth_source,
             "taskApiKeyRef": resolved_api_key_ref,
+            "accessMethod": access_method,
         }
         if profile_id or profile:
             metadata["workflowProfileId"] = profile_id or str(profile.get("id", ""))
             metadata["workflowProfileName"] = profile_name or str(profile.get("name", ""))
+        if model_configuration_id:
+            metadata["modelConfigurationId"] = model_configuration_id
+            metadata["modelConfigurationName"] = model_configuration_name
+        if model_name:
+            metadata["modelName"] = model_name
         return metadata
+
+    def build_provider_source(
+        self, task_type: str, task_auth: Optional[Dict] = None
+    ) -> str:
+        resolved = task_auth or self.resolve_task_auth(task_type)
+        configuration_name = str(resolved.get("modelConfigurationName", "")).strip()
+        access_method = str(resolved.get("accessMethod", ACCESS_WORKFLOW_PLATFORM))
+        if access_method == ACCESS_DIRECT_MODEL:
+            model_name = str(resolved.get("modelName", "")).strip()
+            parts = [configuration_name, "模型直连", model_name]
+        else:
+            profile_name = str(resolved.get("workflowProfileName", "")).strip()
+            parts = [configuration_name or profile_name, "工作流平台"]
+        return " · ".join(part for part in parts if part)
 
     def upload_task_file(
         self,
@@ -1867,6 +2176,171 @@ class ProviderClient:
             )
             raise ProviderTimeoutError() from exc
 
+    def _post_direct_task(
+        self,
+        task_type: str,
+        trace_id: str,
+        query: str,
+        resolved_task_auth: Dict,
+        timeout: int,
+    ) -> Dict:
+        try:
+            prompt_asset = self.system_prompt_store.load(task_type)
+        except SystemPromptError as exc:
+            raise AdapterError(exc.code, exc.message, status_code=500) from exc
+        context_window = int(
+            resolved_task_auth.get("contextWindowTokens")
+            or DEFAULT_CONTEXT_WINDOW_TOKENS
+        )
+        max_output_tokens = resolved_task_auth.get("maxOutputTokens")
+        reserved_output = int(max_output_tokens or DEFAULT_RESERVED_OUTPUT_TOKENS)
+        safety_margin = max(int(context_window * 0.1), 1)
+        input_budget = context_window - reserved_output - safety_margin
+        estimated_input = _estimate_direct_tokens(prompt_asset["content"], query)
+        if input_budget <= 0 or estimated_input > input_budget:
+            raise AdapterError(
+                "MODEL_INPUT_OVER_BUDGET",
+                "输入内容超过当前模型配置的安全上下文容量，请缩小本次处理范围。",
+                status_code=413,
+            )
+        base_url = str(resolved_task_auth.get("providerBaseUrl", "")).rstrip("/")
+        url = "{0}/chat/completions".format(base_url)
+        payload_body = {
+            "model": str(resolved_task_auth.get("modelName", "")),
+            "messages": [
+                {"role": "system", "content": prompt_asset["content"]},
+                {"role": "user", "content": query},
+            ],
+            "stream": False,
+        }
+        temperature = resolved_task_auth.get("temperature")
+        if temperature is not None:
+            payload_body["temperature"] = temperature
+        if max_output_tokens is not None:
+            payload_body["max_tokens"] = int(max_output_tokens)
+        debug_metadata = self.build_debug_metadata(task_type, task_auth=resolved_task_auth)
+        safe_validation = {
+            "stage": "model-processing",
+            "promptVersion": prompt_asset["version"],
+            "promptHashPrefix": prompt_asset["hashPrefix"],
+            "contextWindowTokens": context_window,
+            "reservedOutputTokens": reserved_output,
+            "safetyMarginTokens": safety_margin,
+            "estimatedInputTokens": estimated_input,
+            "inputBudgetTokens": input_budget,
+        }
+        record_provider_debug(
+            {
+                "traceId": trace_id,
+                "taskType": task_type,
+                "url": url,
+                **debug_metadata,
+                "validation": safe_validation,
+                "request": {"body": payload_body},
+            }
+        )
+        req = urllib_request.Request(
+            url,
+            data=json.dumps(payload_body, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(
+                    str(resolved_task_auth.get("apiKey", ""))
+                ),
+                "Content-Type": "application/json",
+                "X-Trace-Id": trace_id,
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=timeout) as response:
+                raw_body = response.read().decode("utf-8")
+                try:
+                    body = json.loads(raw_body)
+                except json.JSONDecodeError as exc:
+                    raise AdapterError(
+                        "MODEL_RESULT_INVALID",
+                        "模型后台返回了无法解析的结果。",
+                        status_code=502,
+                    ) from exc
+                choices = body.get("choices") if isinstance(body, dict) else None
+                message = (
+                    choices[0].get("message", {})
+                    if isinstance(choices, list)
+                    and choices
+                    and isinstance(choices[0], dict)
+                    else {}
+                )
+                content = _direct_content_text(
+                    message.get("content") if isinstance(message, dict) else None
+                )
+                if not content:
+                    raise AdapterError(
+                        "MODEL_FINAL_CONTENT_MISSING",
+                        "模型未返回最终结果，请检查模型推理模式和输出配置。",
+                        status_code=502,
+                    )
+                normalized = {
+                    "answer": content,
+                    "id": str(body.get("id", "")),
+                    "model": str(body.get("model", resolved_task_auth.get("modelName", ""))),
+                    "promptVersion": prompt_asset["version"],
+                }
+                record_provider_debug(
+                    {
+                        "traceId": trace_id,
+                        "taskType": task_type,
+                        "url": url,
+                        **debug_metadata,
+                        "validation": safe_validation,
+                        "response": {
+                            "status": getattr(response, "status", 200),
+                            "body": normalized,
+                        },
+                    }
+                )
+                return normalized
+        except error.HTTPError as exc:
+            status = int(exc.code)
+            record_provider_debug(
+                {
+                    "traceId": trace_id,
+                    "taskType": task_type,
+                    "url": url,
+                    **debug_metadata,
+                    "validation": safe_validation,
+                    "error": {
+                        "type": "HTTPError",
+                        "status": status,
+                        "message": "direct model http error",
+                        "bodyPreview": _read_http_error_body(
+                            exc, query=query, api_key=str(resolved_task_auth.get("apiKey", ""))
+                        ),
+                    },
+                }
+            )
+            if status in (401, 403):
+                raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
+            if status == 404:
+                raise AdapterError(
+                    "MODEL_OR_PATH_UNAVAILABLE",
+                    "模型或标准调用路径不可用，请检查服务地址和模型标识。",
+                    status_code=502,
+                ) from exc
+            if status == 429:
+                raise AdapterError(
+                    "MODEL_RATE_LIMITED", "模型后台请求较多，请稍后重新提交。", status_code=429
+                ) from exc
+            raise ProviderUnavailableError(
+                "模型后台暂时不可用，HTTP 状态码 {0}。".format(status)
+            ) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+                raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
+            raise ProviderUnavailableError("无法访问模型后台，请检查服务地址和网络。") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
+
     def post_task(
         self,
         task_type: str,
@@ -1879,6 +2353,20 @@ class ProviderClient:
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
+        if str(resolved_task_auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
+            if files:
+                raise AdapterError(
+                    "MODEL_DIRECT_FILE_UNSUPPORTED",
+                    "模型直连不上传原始文件，请先完成本地文档抽取。",
+                    status_code=400,
+                )
+            return self._post_direct_task(
+                task_type,
+                trace_id,
+                query,
+                resolved_task_auth,
+                timeout,
+            )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
         ).rstrip("/")
@@ -2104,6 +2592,44 @@ class ProviderClient:
                 )
                 raise ProviderTimeoutError() from exc
 
+    def validate_model_configuration(
+        self, configuration_id: str, trace_id: str
+    ) -> Dict:
+        task_auth = self.resolve_configuration_auth(configuration_id)
+        configuration = task_auth["modelConfiguration"]
+        task_type = str(configuration.get("taskType", ""))
+        probe = _VALIDATION_PROBES.get(task_type)
+        if not probe:
+            raise AdapterError(
+                "MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400
+            )
+        timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {"validation": True},
+            probe,
+            timeout_seconds=timeout,
+            task_auth=task_auth,
+        )
+        answer = extract_answer(body)
+        _validate_probe_answer(task_type, answer)
+        prompt_version = str(body.get("promptVersion", ""))
+        if not prompt_version:
+            try:
+                prompt_version = str(self.system_prompt_store.metadata(task_type)["version"])
+            except SystemPromptError:
+                prompt_version = "platform-managed"
+        return {
+            "success": True,
+            "taskType": task_type,
+            "configurationId": str(configuration.get("id", "")),
+            "configurationName": str(configuration.get("name", "")),
+            "accessMethod": str(configuration.get("accessMethod", "")),
+            "modelName": str(configuration.get("modelName", "")),
+            "promptVersion": prompt_version,
+        }
+
     def record_skipped_debug(
         self,
         task_type: str,
@@ -2152,6 +2678,12 @@ class ProviderClient:
             else self.is_task_configured(task_type)
         )
         if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "智能分析尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=excel.analysis", trace_id)
             if has_auth_snapshot:
                 record_provider_debug(
@@ -2208,6 +2740,8 @@ class ProviderClient:
         }
         if has_auth_snapshot:
             post_kwargs["task_auth"] = resolved_task_auth
+        if progress_callback:
+            progress_callback("provider_processing")
         body = self.post_task(
             task_type,
             trace_id,
@@ -2226,10 +2760,8 @@ class ProviderClient:
         logger.info("traceId=%s provider=enterprise-dify-chat task=excel.analysis", trace_id)
         return {
             **parsed,
-            "provider": "enterprise-dify-chat/{0}".format(
-                str(resolved_task_auth.get("authSource", "none"))
-                if has_auth_snapshot
-                else self.get_auth_source_for_task(task_type)
+            "provider": self.build_provider_source(
+                task_type, resolved_task_auth if has_auth_snapshot else None
             ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
@@ -2256,6 +2788,12 @@ class ProviderClient:
             else self.is_task_configured(task_type)
         )
         if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "公式助手尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info(
                 "traceId=%s provider=mock task=excel.formula_assistant",
                 trace_id,
@@ -2351,10 +2889,8 @@ class ProviderClient:
         )
         return {
             **parsed,
-            "provider": "enterprise-dify-chat/{0}".format(
-                str(resolved_task_auth.get("authSource", "none"))
-                if has_auth_snapshot
-                else self.get_auth_source_for_task(task_type)
+            "provider": self.build_provider_source(
+                task_type, resolved_task_auth if has_auth_snapshot else None
             ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
@@ -2383,6 +2919,12 @@ class ProviderClient:
             else self.is_task_configured(task_type)
         )
         if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "智能总结尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=ppt.slide_assistant", trace_id)
             if has_auth_snapshot:
                 record_provider_debug(
@@ -2445,10 +2987,8 @@ class ProviderClient:
         return {
             **parsed,
             "modeUsed": mode,
-            "provider": "enterprise-dify-chat/{0}".format(
-                str(resolved_task_auth.get("authSource", "none"))
-                if has_auth_snapshot
-                else self.get_auth_source_for_task(task_type)
+            "provider": self.build_provider_source(
+                task_type, resolved_task_auth if has_auth_snapshot else None
             ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
@@ -2475,6 +3015,12 @@ class ProviderClient:
             else self.is_task_configured(task_type)
         )
         if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "结构审查尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=ppt.structure_review", trace_id)
             if has_auth_snapshot:
                 record_provider_debug(
@@ -2556,10 +3102,8 @@ class ProviderClient:
         )
         return {
             **parsed,
-            "provider": "enterprise-dify-chat/{0}".format(
-                str(resolved_task_auth.get("authSource", "none"))
-                if has_auth_snapshot
-                else self.get_auth_source_for_task(task_type)
+            "provider": self.build_provider_source(
+                task_type, resolved_task_auth if has_auth_snapshot else None
             ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
@@ -2584,6 +3128,12 @@ class ProviderClient:
         if not str(resolved_task_auth.get("providerBaseUrl", "")).strip() or not str(
             resolved_task_auth.get("apiKey", "")
         ).strip():
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "智能总结尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=ppt.slide_assistant sourceMode=document", trace_id)
             record_provider_debug(
                 {
@@ -2616,6 +3166,42 @@ class ProviderClient:
             }
 
         timeout = max(self.settings.timeout_seconds, PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS)
+        if str(resolved_task_auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
+            if progress_callback:
+                progress_callback("preparing")
+            extracted_text = extract_staged_document_text(staged_document)
+            direct_prompt = "\n\n".join(
+                [
+                    prompt,
+                    "sourceMode=document",
+                    "以下为 Adapter 在本地只读抽取的文档内容：",
+                    extracted_text,
+                ]
+            )
+            if progress_callback:
+                progress_callback("provider_processing")
+            body = self.post_task(
+                task_type,
+                trace_id,
+                {
+                    "scene": "ppt",
+                    "sourceMode": "document",
+                    "requestedSlideCount": slide_count,
+                },
+                direct_prompt,
+                timeout_seconds=timeout,
+                task_auth=resolved_task_auth,
+            )
+            if progress_callback:
+                progress_callback("parsing")
+            parsed = parse_ppt_document_answer(extract_answer(body), slide_count)
+            return {
+                **parsed,
+                "provider": self.build_provider_source(task_type, resolved_task_auth),
+                "prompt": prompt,
+                "conversationId": "",
+                "messageId": body.get("id", ""),
+            }
         upload_file_id = self.upload_task_file(
             task_type,
             trace_id,
@@ -2654,9 +3240,7 @@ class ProviderClient:
         )
         return {
             **parsed,
-            "provider": "enterprise-dify-chat/{0}".format(
-                str(resolved_task_auth.get("authSource", "none"))
-            ),
+            "provider": self.build_provider_source(task_type, resolved_task_auth),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -2673,6 +3257,8 @@ class ProviderClient:
         length: str = "default",
         selection_mode: str = "selection",
         writing_policy_block: str = "",
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
     ) -> Dict:
         prompt = build_smart_write_prompt(
             text=text,
@@ -2684,7 +3270,20 @@ class ProviderClient:
             writing_policy_block=writing_policy_block,
         )
         task_type = "word.smart_write"
-        if not self.is_task_configured(task_type):
+        resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
+        configured = bool(
+            str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+            and str(resolved_task_auth.get("apiKey", "")).strip()
+        )
+        if task_auth is None and not configured:
+            configured = self.is_task_configured(task_type)
+        if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "智能编写尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=word.smart_write", trace_id)
             self.record_unconfigured_debug(task_type, trace_id, prompt)
             return {
@@ -2693,18 +3292,27 @@ class ProviderClient:
                 "prompt": prompt,
             }
 
+        if progress_callback:
+            progress_callback("provider_processing")
         body = self.post_task(
             task_type,
             trace_id,
             {},
             prompt,
+            timeout_seconds=max(
+                self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS
+            ),
+            task_auth=resolved_task_auth,
         )
+
+        if progress_callback:
+            progress_callback("parsing")
 
         rewritten_text = extract_answer(body)
         logger.info("traceId=%s provider=enterprise-dify-chat task=word.smart_write", trace_id)
         return {
             "rewrittenText": rewritten_text,
-            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source()),
+            "provider": self.build_provider_source(task_type, resolved_task_auth),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -2717,6 +3325,8 @@ class ProviderClient:
         reference_material: str,
         trace_id: str,
         writing_policy_block: str = "",
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
     ) -> Dict:
         prompt = build_smart_imitation_prompt(
             template_text,
@@ -2725,7 +3335,20 @@ class ProviderClient:
             writing_policy_block=writing_policy_block,
         )
         task_type = "word.smart_imitation"
-        if not self.is_task_configured(task_type):
+        resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
+        configured = bool(
+            str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+            and str(resolved_task_auth.get("apiKey", "")).strip()
+        )
+        if task_auth is None and not configured:
+            configured = self.is_task_configured(task_type)
+        if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "智能仿写尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=word.smart_imitation", trace_id)
             self.record_unconfigured_debug(task_type, trace_id, prompt)
             return {
@@ -2734,12 +3357,25 @@ class ProviderClient:
                 "prompt": prompt,
             }
 
-        body = self.post_task(task_type, trace_id, {}, prompt)
+        if progress_callback:
+            progress_callback("provider_processing")
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {},
+            prompt,
+            timeout_seconds=max(
+                self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS
+            ),
+            task_auth=resolved_task_auth,
+        )
+        if progress_callback:
+            progress_callback("parsing")
         rewritten_text = extract_answer(body)
         logger.info("traceId=%s provider=enterprise-dify-chat task=word.smart_imitation", trace_id)
         return {
             "rewrittenText": rewritten_text,
-            "provider": "enterprise-dify-chat/{0}".format(self.get_auth_source_for_task(task_type)),
+            "provider": self.build_provider_source(task_type, resolved_task_auth),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
@@ -2826,6 +3462,12 @@ class ProviderClient:
             else self.is_task_configured(task_type)
         )
         if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "文档审查尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
             logger.info("traceId=%s provider=mock task=word.document_review", trace_id)
             if has_auth_snapshot:
                 record_provider_debug(
@@ -2875,10 +3517,8 @@ class ProviderClient:
             "issues": parsed["issues"],
             "rawAnswer": parsed.get("rawAnswer", ""),
             "parseFallbackReason": parsed.get("parseFallbackReason", ""),
-            "provider": "enterprise-dify-chat/{0}".format(
-                str(resolved_task_auth.get("authSource", "none"))
-                if has_auth_snapshot
-                else self.get_auth_source_for_task(task_type)
+            "provider": self.build_provider_source(
+                task_type, resolved_task_auth if has_auth_snapshot else None
             ),
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),

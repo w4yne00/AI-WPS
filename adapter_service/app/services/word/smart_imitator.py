@@ -1,5 +1,5 @@
 import re
-from typing import Dict, Optional, Tuple
+from typing import Callable, Dict, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import WordDocumentRequest
@@ -113,7 +113,19 @@ class WordSmartImitator:
         self.provider_client = provider_client or ProviderClient()
         self.writing_policy_service = writing_policy_service
 
-    def imitate(self, request: WordDocumentRequest, trace_id: str) -> Dict:
+    def snapshot_task_auth(self) -> Optional[Dict]:
+        resolver = getattr(self.provider_client, "resolve_task_auth", None)
+        return resolver("word.smart_imitation") if callable(resolver) else None
+
+    def imitate(
+        self,
+        request: WordDocumentRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback: Optional[Callable[[str], None]] = None,
+    ) -> Dict:
+        if progress_callback:
+            progress_callback("preparing")
         template_text = self._extract_template_text(request)
         requirement = request.options.imitation_requirement.strip()
         reference_material = request.options.imitation_reference_material.strip()
@@ -130,16 +142,23 @@ class WordSmartImitator:
             scene=request.writing_policy_scene,
         )
         try:
+            provider_kwargs = {"writing_policy_block": writing_policy.prompt_block}
+            if task_auth is not None:
+                provider_kwargs["task_auth"] = task_auth
+            if progress_callback is not None:
+                provider_kwargs["progress_callback"] = progress_callback
             provider_result = self.provider_client.smart_imitation(
                 template_text,
                 requirement,
                 reference_material,
                 trace_id,
-                writing_policy_block=writing_policy.prompt_block,
+                **provider_kwargs
             )
         finally:
             merge_provider_debug(trace_id, writing_policy.diagnostic_patch())
         rewritten_text = provider_result["rewrittenText"]
+        if progress_callback:
+            progress_callback("parsing")
         preservation_clauses = _affirmative_preservation_clauses(requirement)
         preserved_template_source = explicitly_preserved_source_fragments(
             template_text,

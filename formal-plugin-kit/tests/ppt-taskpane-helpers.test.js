@@ -32,8 +32,8 @@ function assertSettingsContracts(targetHelpers) {
       "ppt.slide_assistant": {
         activeProfileId: "ppt-active",
         profiles: [
-          { id: "ppt-active", keyConfigured: true },
-          { id: "ppt-backup", keyConfigured: true }
+          { id: "ppt-active", keyConfigured: true, complete: true },
+          { id: "ppt-backup", keyConfigured: true, complete: true }
         ]
       }
     }
@@ -52,8 +52,8 @@ function assertSettingsContracts(targetHelpers) {
         "ppt.slide_assistant": {
           activeProfileId: "ppt-active",
           profiles: [
-            { id: "ppt-active", keyConfigured: false },
-            { id: "ppt-backup", keyConfigured: true }
+            { id: "ppt-active", keyConfigured: false, complete: false },
+            { id: "ppt-backup", keyConfigured: true, complete: true }
           ]
         }
       }
@@ -70,7 +70,7 @@ function assertSettingsContracts(targetHelpers) {
     plain(targetHelpers.deriveModelInterfaceState(Object.assign({}, readyInput, {
       providerBaseUrl: "  "
     }))),
-    { code: "unconfigured", label: "未配置", readyCount: 1, totalCount: 1 }
+    { code: "ready", label: "已就绪", readyCount: 1, totalCount: 1 }
   );
   assert.deepStrictEqual(
     plain(targetHelpers.deriveModelInterfaceState({
@@ -137,10 +137,10 @@ function assertWorkflowUiContract(targetHelpers) {
 
   assert.deepStrictEqual(
     plain(targetHelpers.workflowProfileOptionState(
-      { id: "p1", name: "生产版", keyConfigured: true },
+      { id: "p1", name: "生产版", keyConfigured: true, complete: true, accessMethod: "workflow_platform" },
       "p1"
     )),
-    { id: "p1", label: "✓ 生产版", active: true, disabled: false }
+    { id: "p1", label: "✓ 生产版 · 工作流平台", active: true, disabled: false }
   );
   assert.strictEqual(
     targetHelpers.workflowProfileOptionState(
@@ -151,11 +151,11 @@ function assertWorkflowUiContract(targetHelpers) {
   );
   assert.deepStrictEqual(
     plain(targetHelpers.validateWorkflowProfileDraft({ name: "", note: "", apiKey: "" }, "create")),
-    { ok: false, field: "name", message: "请输入工作流名称。" }
+    { ok: false, field: "name", message: "请输入模型配置名称。" }
   );
-  assert.deepStrictEqual(
-    plain(targetHelpers.validateWorkflowProfileDraft({ name: "测试版", note: "", apiKey: "" }, "create")),
-    { ok: false, field: "apiKey", message: "请输入工作流 API Key。" }
+  assert.strictEqual(
+    targetHelpers.validateWorkflowProfileDraft({ name: "测试版", note: "", apiKey: "" }, "create").ok,
+    true
   );
   assert.strictEqual(
     targetHelpers.validateWorkflowProfileDraft({ name: "生产版", note: "稳定", apiKey: "" }, "edit").ok,

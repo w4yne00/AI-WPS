@@ -95,7 +95,7 @@ class WordFormatReviewerTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["scope"], "selection")
         self.assertEqual(result["summary"]["templateId"], "technical-file-format-requirements")
-        self.assertEqual(result["summary"]["provider"], "enterprise-dify-chat/task-file")
+        self.assertEqual(result["summary"]["provider"], "工作流平台")
         self.assertGreaterEqual(result["summary"]["issueCount"], 1)
         self.assertIn("issues", result)
         self.assertNotIn("changes", result)
@@ -143,7 +143,7 @@ class WordFormatReviewerTests(unittest.TestCase):
 
         self.assertEqual(result["summary"]["aiFallbackReason"], "")
         self.assertEqual(result["summary"]["aiClassifiedParagraphCount"], 1)
-        self.assertEqual(result["summary"]["provider"], "enterprise-dify-chat/task-file")
+        self.assertEqual(result["summary"]["provider"], "工作流平台")
 
     def test_format_review_normalizes_wps_font_size_and_alignment_values(self) -> None:
         request = parse_word_request(

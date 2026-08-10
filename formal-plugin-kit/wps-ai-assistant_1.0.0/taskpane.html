@@ -4,7 +4,7 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>WPS AI 助理</title>
-    <link rel="stylesheet" href="./taskpane.css?v=0.22.0-alpha" />
+    <link rel="stylesheet" href="./taskpane.css?v=0.23.0-alpha" />
   </head>
   <body>
     <div class="app">
@@ -28,9 +28,9 @@
           <strong id="scope-line">未检测</strong>
         </section>
 
-        <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前工作流">
-          <label for="workflow-profile-select">当前工作流</label>
-          <select id="workflow-profile-select" aria-label="选择当前功能使用的工作流">
+        <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前模型配置">
+          <label for="workflow-profile-select">模型配置</label>
+          <select id="workflow-profile-select" aria-label="选择当前功能使用的模型配置">
             <option value="">正在读取...</option>
           </select>
           <span id="workflow-profile-current" class="inline-status">未检测</span>
@@ -221,7 +221,7 @@
         <section class="settings-shell glass-card">
           <p id="settings-status-line" class="settings-status-line" aria-live="polite">等待操作。</p>
           <section id="connection-settings-section" class="settings-group">
-            <section id="provider-summary-card" class="settings-card model-interface-card">
+            <section id="provider-summary-card" class="settings-card model-interface-card" hidden>
               <div class="model-interface-heading">
                 <h4>模型接口</h4>
                 <span id="provider-readiness-badge" class="readiness-badge is-unavailable" aria-live="polite">无法检测</span>
@@ -248,10 +248,10 @@
 
             <section class="settings-card workflow-settings-card">
               <div class="workflow-settings-heading">
-                <h4>工作流设置</h4>
-                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看多工作流说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
+                <h4>模型配置</h4>
+                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">i</button>
               </div>
-              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个工作流，可在任务页选择当前使用的工作流。</div>
+              <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Word 任务">
                 <button type="button" role="tab" data-workflow-task-tab="word.smart_write" aria-selected="true">智能编写</button>
                 <button type="button" role="tab" data-workflow-task-tab="word.smart_imitation" aria-selected="false">智能仿写</button>
@@ -556,7 +556,7 @@
         </section>
       </section>
     </div>
-    <script src="./taskpane-helpers.js?v=0.22.0-alpha"></script>
-    <script src="./taskpane.js?v=0.22.0-alpha"></script>
+    <script src="./taskpane-helpers.js?v=0.23.0-alpha"></script>
+    <script src="./taskpane.js?v=0.23.0-alpha"></script>
   </body>
 </html>

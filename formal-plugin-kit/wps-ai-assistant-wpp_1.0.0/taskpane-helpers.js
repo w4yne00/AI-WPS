@@ -726,10 +726,11 @@
 
   function normalizeWorkflowProfiles(value) {
     var data = value && value.data ? value.data : value || {};
-    var profiles = Array.isArray(data.profiles) ? data.profiles : [];
+    var profiles = Array.isArray(data.configurations) ? data.configurations :
+      (Array.isArray(data.profiles) ? data.profiles : []);
     return {
       taskType: safeText(data.taskType),
-      activeProfileId: safeText(data.activeProfileId),
+      activeProfileId: safeText(data.activeConfigurationId || data.activeProfileId),
       profileCount: profiles.length,
       profiles: profiles.map(function (profile) {
         return {
@@ -738,7 +739,18 @@
           name: safeText(profile && profile.name),
           note: safeText(profile && profile.note),
           apiKeyRef: safeText(profile && profile.apiKeyRef),
-          keyConfigured: Boolean(profile && profile.keyConfigured)
+          keyConfigured: Boolean(profile && profile.keyConfigured),
+          complete: profile && typeof profile.complete === "boolean" ? profile.complete : Boolean(profile && profile.keyConfigured),
+          accessMethod: safeText(profile && profile.accessMethod) || "workflow_platform",
+          serviceBaseUrl: safeText(profile && profile.serviceBaseUrl),
+          callPath: safeText(profile && profile.callPath),
+          modelName: safeText(profile && profile.modelName),
+          temperature: profile && profile.temperature,
+          maxOutputTokens: profile && profile.maxOutputTokens,
+          contextWindowTokens: Number(profile && profile.contextWindowTokens || 40000),
+          missingFields: profile && Array.isArray(profile.missingFields) ? profile.missingFields : [],
+          configVersion: Number(profile && profile.configVersion || 1),
+          lastValidation: profile && profile.lastValidation || null
         };
       })
     };
@@ -747,11 +759,14 @@
   function workflowProfileOptionState(profile, activeProfileId) {
     var item = profile || {};
     var active = Boolean(item.id && item.id === activeProfileId);
-    var configured = Boolean(item.keyConfigured);
-    var name = String(item.name || "未命名工作流");
+    var configured = Boolean(item.complete);
+    var name = String(item.name || "未命名配置");
+    var method = item.accessMethod === "direct_model" ? "模型直连" : "工作流平台";
+    var model = item.accessMethod === "direct_model" && item.modelName ? " · " + item.modelName : "";
     return {
       id: String(item.id || ""),
-      label: (active ? "✓ " : "") + name + (configured ? "" : "（Key 未配置）"),
+      label: (active ? "✓ " : "") + name + " · " + method + model +
+        (configured ? "" : "（配置不完整）"),
       active: active,
       disabled: !configured
     };
@@ -778,14 +793,14 @@
       for (profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
         if (profiles[profileIndex]
           && profiles[profileIndex].id === data.activeProfileId
-          && profiles[profileIndex].keyConfigured) {
+          && profiles[profileIndex].complete) {
           readyCount += 1;
           break;
         }
       }
     }
 
-    if (!String(source.providerBaseUrl || "").trim() || totalCount === 0 || readyCount === 0) {
+    if (totalCount === 0 || readyCount === 0) {
       return { code: "unconfigured", label: "未配置", readyCount: readyCount, totalCount: totalCount };
     }
     if (readyCount === totalCount) {
@@ -838,16 +853,13 @@
     var note = String(value.note || "").trim();
     var apiKey = String(value.apiKey || "").trim();
     if (!name) {
-      return { ok: false, field: "name", message: "请输入工作流名称。" };
+      return { ok: false, field: "name", message: "请输入模型配置名称。" };
     }
     if (name.length > 40) {
-      return { ok: false, field: "name", message: "工作流名称不能超过 40 个字。" };
+      return { ok: false, field: "name", message: "模型配置名称不能超过 40 个字。" };
     }
     if (note.length > 200) {
-      return { ok: false, field: "note", message: "工作流备注不能超过 200 个字。" };
-    }
-    if (mode === "create" && !apiKey) {
-      return { ok: false, field: "apiKey", message: "请输入工作流 API Key。" };
+      return { ok: false, field: "note", message: "模型配置备注不能超过 200 个字。" };
     }
     return { ok: true, name: name, note: note, apiKey: apiKey };
   }

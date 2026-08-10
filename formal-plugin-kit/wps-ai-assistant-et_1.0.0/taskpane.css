@@ -1693,3 +1693,47 @@ select:focus-visible,
     animation-iteration-count: 1 !important;
   }
 }
+
+.workflow-editor-fields select,
+.workflow-editor-view select {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+.model-key-editor {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--color-surface-muted);
+}
+
+.model-key-status {
+  color: var(--color-text-muted);
+  font-size: 12px;
+}
+
+.model-advanced-settings {
+  margin-top: 2px;
+  border-top: 1px solid var(--border-color);
+}
+
+.model-advanced-settings > summary {
+  padding: 10px 0 6px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.model-advanced-settings[open] > div {
+  display: grid;
+  gap: 8px;
+  padding-top: 4px;
+}

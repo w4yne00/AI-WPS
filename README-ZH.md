@@ -77,12 +77,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.22.0-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808` |
+| 当前版本 | `v0.23.0-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | 内部测试版，尚非最终生产发布版 |
-| 一期交付包 | Word/Excel/PPT 单一正式交付包；目标产物为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz` |
+| 一期交付包 | Word/Excel/PPT 单一正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0230.tar.gz`；SHA256：`acee06ff18b17591079531fcae7bb9fe046648db8b221a67a2794211025ddb2f` |
 
 版本规则格式：
 
@@ -118,9 +118,10 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 | 结果预览 | 智能编写会先对选中多段文本的模型输出恢复段落换行，再按内容结构选择朴素或结构化回显：普通段落不额外套排版，标题、列表、序号、表格、加粗等结构尽量正常展示；文档审查、格式审查和诊断信息继续使用安全 Markdown 渲染 |
 | 三宿主统一视觉 | Word、Excel、PPT 统一采用浅灰、白色、雾蓝和状态色视觉系统，同时保持宿主隔离和既有业务行为 |
 | 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
-| 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone` |
-| 工作流配置档案 | 智能编写、智能仿写、文档审查、格式审查、智能分析、公式助手、智能总结和结构审查均采用宿主隔离的紧凑档案列表；PPT 两种总结模式共用 `ppt.slide_assistant`，结构审查单独使用 `ppt.structure_review` |
-| 设置与联调状态 | 设置页仅显示单一全局 API URL 和各工作流名称、备注、API Key；旧统一 Key 回退仍由 adapter 兼容并在覆盖安装时保留，但不再在任务窗格中展示 |
+| 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone`；生产环境默认禁止静默模拟结果，仅开发显式开关可启用 |
+| 模型配置 | 八类任务均使用按宿主、按任务隔离的模型配置；每个配置可选择“工作流平台”或“模型直连”，并独立保存服务地址、API Key 及适用的模型参数 |
+| 直连提示词 | 随 Adapter 提供八份版本化 System Prompt Markdown，并按 SHA-256 清单校验；直连请求分别发送 `system` 与 `user` 消息 |
+| 设置与联调状态 | 设置页使用同页下钻的紧凑模型配置编辑器；任务页只显示完整配置，运行时不再回退统一 URL 或统一 Key |
 | Adapter 运维诊断 | 启动包脚本统一管理 uvicorn adapter，健康检查同步显示 provider 配置、路由摘要和最后一次转发诊断；麒麟 V10 目标机可通过 systemd 脚本安装开机自启动 |
 | 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
 | 一期交付总包 | 一个压缩包和一个安装脚本同时部署 Word、Excel、PPT 三个宿主插件；首次安装初始化空的组织规范数据库，覆盖安装保留原数据库、全部已有备份、API URL、统一 API Key 和工作流档案密钥。发布清单核对四个经审阅规范包、来源许可、导入模板、验收文档和运行态排除项 |
@@ -129,6 +130,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
 | `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |
 | `v0.21.0-alpha` | 将独立 Excel“公式助手”正式收敛进统一三宿主交付包：支持生成公式和解释排错、严格明确选区与 30×20 上限、由 `HasFormula` 保护的 `Formula`/`FormulaLocal`/`FormulaR1C1` 只读降级、共享长任务排队与恢复、不执行公式的本地检查和纯复制结果；包内同时提供 Dify 操作手册和提示词模板，Word/PPT 业务行为不变 |
 | `v0.20.1-alpha` | 在不增加业务入口的前提下稳定交付三宿主共享长任务队列和 Word/Excel 选区监听优化：文档审查、智能分析、智能总结共用 2 个运行槽位与 8 个 FIFO 排队位置，冻结提交时配置，展示真实队列/阶段/耗时，仅允许取消排队任务，并明确提示 Adapter 重启中断；Word/Excel 优先使用宿主选区事件，以可见页面低频读取兜底，在页面隐藏、设置页或任务运行时暂停宿主读取。既有工作流、结果、写回边界和覆盖安装保护保持不变 |
@@ -326,7 +328,7 @@ cp config/adapter.example.json config/adapter.json
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-工作流档案的 API Key 保存到 `run/provider_api_keys/<ref>`，配置文件只记录自定义名称和密钥引用。各任务均可保存多个 Dify App Key，切换对下一次新任务生效。PPT 当前页和文档模式使用 `ppt.slide_assistant` 密钥调用 Dify `/files/upload` 与 `/chat-messages`；结构审查独立使用 `ppt.structure_review` 密钥。未配置任务密钥时自动回退统一 provider API Key。详细操作见 [工作流配置档案管理手册](./docs/operations/workflow-profile-management.md)。
+模型配置的 API Key 保存到 `run/provider_api_keys/<ref>`，`adapter.json` 只记录接入方式、服务地址、模型参数和密钥引用。每项任务可保存多个配置，切换仅影响下一次新任务，运行中任务继续使用提交时快照。工作流平台走 `/chat-messages`；模型直连走 OpenAI 兼容 `/chat/completions` 并加载 `adapter_service/system_prompts/` 中对应任务提示词。运行时不回退统一 URL 或统一 Key。详细操作见 [模型配置管理手册](./docs/operations/workflow-profile-management.md)。
 
 智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Word 企业术语和文体规则的维护、导入、导出、备份、降级和恢复见 [写作规范管理手册](./docs/operations/writing-policy-library.md)。智能分析对应配置见 [Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)，公式助手对应配置见 [Excel 公式助手 Dify 工作流配置手册](./docs/operations/dify-excel-formula-assistant-workflow.md)，智能总结双模式配置见 [PPT 智能总结 Dify 工作流配置手册](./docs/operations/dify-ppt-slide-assistant-workflow.md)，结构审查配置和只读验收见 [PPT 结构审查 Dify 工作流配置手册](./docs/operations/dify-ppt-structure-review-workflow.md)。可部署的 Excel/PPT 提示词模板位于 [`docs/prompt-templates/`](./docs/prompt-templates/)。
 
@@ -339,12 +341,13 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `GET` | `/templates` | 获取可用模板列表 |
 | `GET` | `/provider/status` | 查看企业 AI provider 认证状态 |
 | `GET` | `/provider/task-api-keys` | 查看任务级 API Key 配置摘要 |
-| `GET` | `/provider/workflow-profiles` | 按任务查看工作流档案和当前选择 |
-| `POST` | `/provider/workflow-profiles` | 新增具名工作流档案 |
-| `PATCH` | `/provider/workflow-profiles/{profileId}` | 修改档案名称和备注 |
-| `POST` | `/provider/workflow-profiles/{profileId}/api-key` | 单独更换档案 API Key |
-| `POST` | `/provider/workflow-profiles/{profileId}/activate` | 将档案设为当前工作流 |
-| `DELETE` | `/provider/workflow-profiles/{profileId}` | 删除非当前工作流档案 |
+| `GET` / `POST` | `/provider/model-configurations` | 按任务查看或新建模型配置 |
+| `PATCH` / `DELETE` | `/provider/model-configurations/{configurationId}` | 修改或删除非当前模型配置 |
+| `POST` | `/provider/model-configurations/{configurationId}/api-key` | 单独更换配置 API Key |
+| `POST` | `/provider/model-configurations/{configurationId}/activate` | 激活完整模型配置 |
+| `POST` | `/provider/model-configurations/{configurationId}/copy` | 创建不含密钥正文的配置副本 |
+| `POST` | `/provider/model-configurations/{configurationId}/validate` | 对完整配置执行真实验证调用 |
+| `GET` / `POST` | `/provider/workflow-profiles` | 旧版工作流档案兼容包装，保留一个版本 |
 | `POST` | `/provider/api-key` | 保存统一 Dify Chat API Key |
 | `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |
 | `POST` | `/provider/task-api-key` | 保存某个任务的独立 Dify API Key |
@@ -360,8 +363,11 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `GET` | `/writing-policies/export.csv` | 按筛选条件导出 CSV |
 | `GET` | `/writing-policies/backup` | 下载一致性的 SQLite 数据库备份 |
 | `GET` | `/writing-policies/diagnostics` | 查看脱敏的规范库健康诊断 |
-| `POST` | `/word/smart-write` | 对当前选中文本进行智能编写，支持改写、续写、总结和自定义 |
-| `POST` | `/word/smart-imitation` | 根据模板、仿写要求和可选参考素材生成只读仿写结果 |
+| `POST` | `/word/smart-write/jobs` | 提交可恢复的智能编写后台任务 |
+| `GET` / `DELETE` | `/word/smart-write/jobs/{jobId}` | 查询或取消排队中的智能编写任务 |
+| `POST` | `/word/smart-imitation/jobs` | 提交可恢复的智能仿写后台任务 |
+| `GET` / `DELETE` | `/word/smart-imitation/jobs/{jobId}` | 查询或取消排队中的智能仿写任务 |
+| `POST` | `/word/smart-write`、`/word/smart-imitation` | 由同一任务协调器承载的同步兼容接口 |
 | `POST` | `/word/document-review` | 文档审查，检查错别字、语言表达、逻辑、通畅性和文档类型专业性 |
 | `POST` | `/word/document-review/jobs` | 启动后台文档审查任务，适配模型后台慢响应 |
 | `GET` | `/word/document-review/jobs/{jobId}` | 轮询后台文档审查任务状态，直到完成或失败 |

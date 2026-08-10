@@ -1,14 +1,14 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.22.0-alpha`
+版本：`v0.23.0-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260808-v0220.tar.gz
-cd ai-wps-phase1-delivery-20260808-v0220
+tar -xzf ai-wps-phase1-delivery-20260811-v0230.tar.gz
+cd ai-wps-phase1-delivery-20260811-v0230
 bash installer/install_phase1.sh
 ```
 
@@ -49,6 +49,7 @@ bash scripts/phase1_smoke_test.sh
 - `installer/install_phase1.sh`：一键安装脚本。
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `release-manifest.json`：版本、三宿主、四个规范包、来源许可资产及运行态排除策略清单。
+- `packages/adapter-start-kit/adapter_service/system_prompts/`：八类任务的版本化 System Prompt Markdown 及哈希清单，供模型直连接入使用。
 - 包外同名 `.tar.gz.sha256`：构建脚本自动生成的正式包 SHA-256 校验记录。
 - `docs/phase1-acceptance-checklist.md`：验收清单。
 - `docs/phase1-acceptance-record.md`：验收记录模板。
@@ -77,14 +78,14 @@ bash scripts/phase1_smoke_test.sh
 4. 打开 WPS 演示，确认 `WPS AI 助理` 只显示 `智能总结`、`结构审查` 和 `设置`。
 5. 打开设置页刷新配置。
 6. 验证智能编写、智能仿写、文档审查、格式审查、智能分析、公式助手、智能总结和结构审查。
-7. 如果接入 Dify，确认每个任务命中对应的 Dify 应用或工作流。
+7. 工作流平台接入需确认每个任务命中对应应用；模型直连接入需确认服务兼容 OpenAI `/chat/completions`，并正确填写模型标识。
 8. 确认 Word、Excel、PPT 任务窗口分别使用蓝色、绿色、橙色宿主主题；若仍显示旧界面，请完全关闭并重新启动 WPS 后复查。
-9. 智能分析和智能总结的 provider 等待预算为 1800 秒；超过 180 秒或短暂连接失败后应保留任务编号，重新打开任务窗格也能自动恢复查询。
+9. 智能编写、智能仿写、智能分析和智能总结均通过后台任务提交和短轮询等待；超过 180 秒或短暂连接失败后应保留任务编号，重新打开对应任务窗格后自动恢复查询。
 10. 旧版 Dify 工作流应继续读取 `inputs.query`；新版“用户输入”节点工作流应在首次 HTTP 400 后自动切换到顶层 `query/files` 并成功返回。
 11. 智能总结的文档模式应接受单个 UTF-8 `.md` 或有效 `.docx`（最大 10 MB），并可选择整套 5、8、10、12、15 页建议，默认 10 页。
 12. 智能总结只提供预览和复制，绝不自动创建或修改 PPT；同一个 `ppt.slide_assistant` 工作流档案和 API Key 必须用于 `/files/upload` 与 `/chat-messages`，Dify 文件分支必须连接 `userinput.files` 和文档提取节点。
 13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、`run/writing_policies.db` 和全部已有规范库备份，确认现场配置和写作规范均被保留。
-14. 设置页只显示统一 API URL 和当前宿主的工作流档案；功能页下拉选择工作流后应立即激活，不再显示统一 Key 或额外“切换”按钮。
+14. 设置页按任务显示当前宿主的模型配置；每项配置独立保存接入方式、服务地址、API Key，以及模型直连所需模型标识。功能页下拉仅显示完整配置并在选择后立即激活。
 15. 在 Word 设置页维护企业术语和文体规则，分别验证新增、修改、删除、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；规范库不可用时任务仍应继续并明确显示降级提示。
 16. 首次安装后应存在权限为 `0600` 的空组织规范数据库；再次覆盖安装必须保留原数据库字节、组织覆盖/自定义/停用状态、全部已有备份和模型配置。
 17. 公式助手必须只读取明确选区，按 `Formula`、`FormulaLocal`、`FormulaR1C1` 顺序降级，并以 `HasFormula=false` 保护普通文本；任何场景都不得写公式、新增工作表或改变计算状态。

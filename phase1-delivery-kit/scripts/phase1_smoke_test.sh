@@ -4,7 +4,7 @@ set -euo pipefail
 DELIVERY_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 PORT="${PORT:-18100}"
-EXPECTED_VERSION="${EXPECTED_VERSION:-0.22.0-alpha}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-0.23.0-alpha}"
 WPS_JSADDONS_DIR="${WPS_JSADDONS_DIR:-/home/cloud/.local/share/Kingsoft/wps/jsaddons}"
 INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$HOME/ai-wps-phase1}"
 PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant_1.0.0"

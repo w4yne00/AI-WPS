@@ -16,7 +16,7 @@ from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
 
-app = FastAPI(title="wps-ai-adapter", version="0.22.0-alpha")
+app = FastAPI(title="wps-ai-adapter", version="0.23.0-alpha")
 app.include_router(health_router)
 app.include_router(config_router)
 app.include_router(provider_router)
@@ -287,6 +287,10 @@ def _task_type_from_path(path: str) -> str:
         return "writing_policy"
     if path.startswith("/word/document-review/jobs/"):
         return "word.document_review"
+    if path.startswith("/word/smart-write/jobs/"):
+        return "word.smart_write"
+    if path.startswith("/word/smart-imitation/jobs/"):
+        return "word.smart_imitation"
     if path.startswith("/excel/analysis/jobs/"):
         return "excel.analysis"
     if path.startswith("/excel/formula-assistant/jobs/"):
@@ -295,7 +299,9 @@ def _task_type_from_path(path: str) -> str:
         return "ppt.structure_review"
     return {
         "/word/smart-write": "word.smart_write",
+        "/word/smart-write/jobs": "word.smart_write",
         "/word/smart-imitation": "word.smart_imitation",
+        "/word/smart-imitation/jobs": "word.smart_imitation",
         "/word/document-review": "word.document_review",
         "/word/document-review/jobs": "word.document_review",
         "/word/format-review": "word.format_review",

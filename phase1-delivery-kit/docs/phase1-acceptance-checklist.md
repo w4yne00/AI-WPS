@@ -17,7 +17,7 @@
 - [ ] `bash scripts/phase1_smoke_test.sh` 执行成功。
 - [ ] `/health` 返回 `status=ok`。
 - [ ] `/health` 返回 `mode=uvicorn`。
-- [ ] `/health` 返回 `version=0.22.0-alpha`。
+- [ ] `/health` 返回 `version=0.23.0-alpha`。
 - [ ] `/templates` 返回 `general-office`。
 - [ ] `/templates` 返回 `technical-file-format-requirements`。
 - [ ] 旧版 Dify 工作流可继续读取 `inputs.query`。
@@ -128,7 +128,22 @@
 - [ ] 可分别复制审查结论和推荐目录；非结构化输出保留最终文本和解析诊断。
 - [ ] 审查前后幻灯片数量、顺序、主标题和副标题摘要一致，不创建、删除、重排或修改幻灯片。
 
-## 9. 覆盖安装与配置保护
+## 9. 双接入与模型配置
+
+- [ ] 八类任务均可分别新建“工作流平台”和“模型直连”配置，Word、Excel、PPT 选项卡互不交叉。
+- [ ] 任务页下拉只显示字段完整的配置；不完整配置保留在设置页并明确标注。
+- [ ] 工作流平台配置使用自身服务地址、API Key 和 `/chat-messages`，新旧 `query` 输入格式均可验证。
+- [ ] 模型直连配置使用自身服务地址、API Key、模型标识和 `/chat/completions`，GLM 5.2 与 DeepSeek V4 Flash 分别完成一次验证调用。
+- [ ] 直连请求包含对应任务的 `system` 与 `user` 消息，前台结果不显示 `<think>` 或 `reasoning_content`。
+- [ ] 输入超过配置上下文预算时在调用模型前明确拒绝；不得自动截断、跨配置回退或重复提交。
+- [ ] 切换接入方式出现确认提示，确认后清空原方式专属参数和 API Key；取消后保持原配置。
+- [ ] 复制配置不复制 API Key，不自动激活；当前配置不可删除。
+- [ ] 原工作流档案升级后原位迁移为工作流平台配置，名称、备注、激活关系和密钥引用保持。
+- [ ] 未配置任务在生产模式明确失败；只有显式设置 `AI_WPS_ENABLE_MOCK_PROVIDER=1` 才允许开发模拟结果。
+- [ ] 智能编写和智能仿写模型处理接近 600 秒时仍按任务编号短轮询；重开对应任务页后恢复结果，不维持单个前台长连接。
+- [ ] 恢复的智能编写结果仅允许预览和复制；当前会话正常完成时保留既有选区一致性检查与写回能力。
+
+## 10. 覆盖安装与配置保护
 
 - [ ] 覆盖安装前记录当前 API URL、统一 API Key 和各任务工作流档案。
 - [ ] 执行新版本 `installer/install_phase1.sh` 覆盖安装后，`config/adapter.json` 保持原 API URL。
@@ -136,21 +151,22 @@
 - [ ] 覆盖安装后，`run/writing_policies.db` 的 SHA-256 与安装前一致。
 - [ ] 覆盖安装后，全部已有 `writing_policies.db.backup-*` 均被保留。
 - [ ] 覆盖安装后，组织覆盖、组织自定义规范和预置停用状态仍可读取并优先于预置基线。
-- [ ] 覆盖安装后，智能编写、智能仿写、文档审查、格式审查、智能分析、公式助手、智能总结、结构审查仍命中原工作流档案。
+- [ ] 覆盖安装后，八类任务仍命中原模型配置，用户已有配置、API Key 和写作规范均未丢失。
 
-## 10. 交付包完整性与排除检查
+## 11. 交付包完整性与排除检查
 
 - [ ] 包内包含四个规范包、四份已批准审阅清单、`schema-v1.json`、来源文档和 `THIRD_PARTY_NOTICES.md`。
 - [ ] 包内包含 CSV/XLSX 空白导入模板、写作规范使用说明、验收清单和验收记录。
 - [ ] 包内包含 `dify-excel-formula-assistant-workflow.md` 和 `excel-formula-assistant-prompt-template.md`。
 - [ ] 包内包含 `dify-ppt-structure-review-workflow.md` 和 `ppt-structure-review-prompt-template.md`。
+- [ ] 包内包含八份 System Prompt Markdown 和 `manifest.json`，数量、任务类型及 SHA-256 校验全部通过。
 - [ ] 压缩包同目录包含同名 `.tar.gz.sha256` 文件，且重新计算结果一致。
 - [ ] 包内不包含 `writing_policies.db`、任何数据库备份、`adapter.json`、API Key、日志目录或 `.log` 文件。
 - [ ] 包内除 `docs/import-templates/` 空白模板外，不包含其他 CSV/XLSX 用户导入内容。
 - [ ] 包内不包含名称含 `.draft.` 的未确认审阅草稿。
 - [ ] Python 全量测试、全部 Node 测试、三宿主脚本语法、Shell 语法、浏览器布局和交付包构建审计均通过。
 
-## 11. 麒麟 V10 发布验收
+## 12. 麒麟 V10 发布验收
 
 - [ ] 在无历史安装目录的终端完成首次安装，并验证规范库初始化。
 - [ ] 新增一条组织自定义规范、建立一条预置覆盖并停用一条预置项，重启 WPS 和 adapter 后状态保持。
@@ -165,7 +181,7 @@
 - [ ] 公式助手每个真机场景执行前后的单元格值/公式、工作表清单和计算模式摘要一致。
 - [ ] PPT 结构审查完成 Slides 集合遍历、主副标题分离、60 页提取、无标题页有限兜底、独立工作流、慢模型排队、重开续查、分类复制和幻灯片只读前后摘要验收。
 
-## 12. 结论
+## 13. 结论
 
 - 验收人员：
 - 终端编号：

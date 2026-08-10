@@ -246,6 +246,10 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         )
         env = os.environ.copy()
         env["AI_WPS_WRITING_POLICY_DB"] = "discovery-sentinel.db"
+        adapter_root = str(Path(__file__).resolve().parents[1])
+        env["PYTHONPATH"] = os.pathsep.join(
+            part for part in (adapter_root, env.get("PYTHONPATH", "")) if part
+        )
         completed = subprocess.run(
             [sys.executable, "-c", script],
             cwd=str(Path(__file__).resolve().parents[2]),

@@ -29,8 +29,10 @@ assert.ok(functionSource("switchView").includes("syncScopeWatcher()"));
 ["runSmartWriteAction", "runSmartImitationAction", "runFormatReview"].forEach((name) => {
   const source = functionSource(name);
   assert.ok(source.includes("setModelTaskBusy(true)"), `${name} must pause scope reads while running`);
-  assert.ok(source.includes("setModelTaskBusy(false)"), `${name} must resume scope reads on terminal paths`);
 });
+assert.ok(functionSource("setWritingJob").includes("setModelTaskBusy(Boolean(jobId))"));
+assert.ok(functionSource("completeWritingJob").includes('setWritingJob("", "", "")'));
+assert.ok(functionSource("runFormatReview").includes("setModelTaskBusy(false)"));
 assert.ok(functionSource("runDocumentReview").includes("setModelTaskBusy(true)"));
 assert.ok(functionSource("setDocumentReviewJobId").includes("setModelTaskBusy(Boolean(state.documentReviewJobId))"));
 

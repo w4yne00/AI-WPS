@@ -294,8 +294,8 @@ hosts.forEach((host) => {
   assert.ok(helpPopover.includes('role="tooltip"'), `${host.name} help popover role mismatch`);
   assert.ok(/\shidden(?:\s|>)/.test(helpPopover), `${host.name} help popover must start hidden`);
   assert.ok(
-    html.includes("每项任务可保存多个工作流，可在任务页选择当前使用的工作流。"),
-    `${host.name} missing workflow help copy`
+    html.includes("每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。"),
+    `${host.name} missing model configuration help copy`
   );
 
   const taskTabs = getTag(html, "workflow-task-tabs");

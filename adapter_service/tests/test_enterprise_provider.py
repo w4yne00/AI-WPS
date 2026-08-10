@@ -969,7 +969,9 @@ class EnterpriseProviderTests(unittest.TestCase):
             def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
                 return True
 
-            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+            def post_task(
+                self, task_type, trace_id, input_data, query, timeout_seconds=None, **kwargs
+            ):
                 self.calls.append(
                     {
                         "taskType": task_type,
@@ -1312,7 +1314,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
         self.assertEqual(progress_messages, ["provider_processing", "parsing"])
         self.assertEqual(result["resultType"], "document")
-        self.assertEqual(result["provider"], "enterprise-dify-chat/task-file")
+        self.assertEqual(result["provider"], "PPT 生产版 · 工作流平台")
         self.assertEqual(result["conversationId"], "conversation-ppt-document")
         self.assertNotIn(original_name, json.dumps(get_last_provider_debug(), ensure_ascii=False))
         self.assertNotIn(original_name, str(provider_logger.info.call_args_list))
@@ -1464,7 +1466,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         )
         self.assertEqual(result["modeUsed"], "optimize")
         self.assertEqual(result["suggestedTitle"], "项目总体进展")
-        self.assertTrue(result["provider"].startswith("enterprise-dify-chat/"))
+        self.assertEqual(result["provider"], "工作流平台")
 
     def test_ppt_slide_assistant_returns_structured_unconfigured_result(self):
         class UnconfiguredProviderClient(ProviderClient):
@@ -1549,7 +1551,9 @@ class EnterpriseProviderTests(unittest.TestCase):
             def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
                 return True
 
-            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
+            def post_task(
+                self, task_type, trace_id, input_data, query, timeout_seconds=None, **kwargs
+            ):
                 self.calls.append(
                     {
                         "taskType": task_type,
@@ -1987,7 +1991,9 @@ class EnterpriseProviderTests(unittest.TestCase):
             def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
                 return True
 
-            def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
+            def post_task(
+                self, task_type: str, trace_id: str, input_data: dict, query: str, **kwargs
+            ) -> dict:
                 self.captured_input_data = input_data
                 self.captured_query = query
                 return {"answer": "这是改写后的文本。"}
@@ -2020,7 +2026,9 @@ class EnterpriseProviderTests(unittest.TestCase):
             def is_task_configured(self, task_type: str, key_base_path=None) -> bool:
                 return True
 
-            def post_task(self, task_type: str, trace_id: str, input_data: dict, query: str) -> dict:
+            def post_task(
+                self, task_type: str, trace_id: str, input_data: dict, query: str, **kwargs
+            ) -> dict:
                 self.captured_input_data = input_data
                 self.captured_query = query
                 return {"data": {"outputs": {"result": "智能编写后的文本。"}}}
@@ -2143,7 +2151,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             client = ProviderClient(settings)
 
             diagnostics = client.build_route_diagnostics(key_base_path=tmp_dir)
-            self.assertEqual(diagnostics["version"], "0.22.0-alpha")
+            self.assertEqual(diagnostics["version"], "0.23.0-alpha")
             self.assertEqual(diagnostics["url"], "https://aibot.example/v1/chat-messages")
             self.assertEqual(diagnostics["path"], "/chat-messages")
             self.assertEqual(diagnostics["payloadStyle"], "chat")
@@ -2419,7 +2427,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             else:
                 os.environ["ENTERPRISE_AI_API_KEY"] = previous
 
-    def test_default_provider_client_refreshes_settings_before_task_configuration(self) -> None:
+    def test_default_provider_client_does_not_fall_back_to_unified_configuration(self) -> None:
         previous = os.environ.get("ENTERPRISE_AI_API_KEY")
         os.environ["ENTERPRISE_AI_API_KEY"] = "secret"
         try:
@@ -2432,7 +2440,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             ):
                 client = ProviderClient()
 
-                self.assertTrue(client.is_task_configured("word.smart_write"))
+                self.assertFalse(client.is_task_configured("word.smart_write"))
                 self.assertEqual(client.settings.provider_base_url, "https://aibot.example/v1")
         finally:
             if previous is None:

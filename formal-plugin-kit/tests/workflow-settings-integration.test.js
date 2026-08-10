@@ -83,7 +83,7 @@ const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
   '? "create-save" : "edit-save"',
   'data-workflow-action="editor-cancel"'
 ].forEach((marker) => assert.ok(wordJs.includes(marker), `Word missing dynamic editor marker ${marker}`));
-assert.ok(wordJs.includes('window.confirm("确认删除工作流'), "Word must confirm profile deletion");
+assert.ok(wordJs.includes('window.confirm("确认删除模型配置'), "Word must confirm model configuration deletion");
 assert.ok(wordCss.includes(".workflow-settings-subpage"), "Word missing dynamic editor layout");
 assert.ok(wordCss.includes(".workflow-profile-empty"), "Word missing empty profile state");
 

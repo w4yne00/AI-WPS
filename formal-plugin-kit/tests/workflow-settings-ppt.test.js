@@ -83,7 +83,7 @@ function testStatusAndMutationBusyContract() {
   ], "workflow mutations must disable the primary run action");
   includesAll(run, [
     "state.workflowProfileMutationBusy",
-    "工作流配置正在更新"
+    "模型配置正在更新"
   ], "run action must guard workflow mutations");
 }
 
@@ -128,7 +128,7 @@ function testImmediateActivationContract() {
     "setWorkflowProfileMutationBusy(true)",
     "state.selectedProfileId = previousProfileId",
     "renderProfileStrip()",
-    "切换工作流失败"
+    "切换模型配置失败"
   ], "activation rollback and busy state");
   const disable = functionSource("setRunDisabled");
   assert.ok(disable.includes('"workflow-profile-select"'), "busy tasks must disable the dropdown");
@@ -146,7 +146,7 @@ function testManagerAndEditorContract() {
     "data-profile-action=",
     "编辑",
     "当前",
-    "Key 未配置"
+    "配置不完整"
   ], "compact workflow list");
   includesAll(openEditor, [
     "workflow-settings-home",
@@ -157,8 +157,8 @@ function testManagerAndEditorContract() {
     "validateWorkflowProfileDraft",
     '{ method: "PATCH" }',
     '"/api-key"',
-    "if (!draft.apiKey)",
-    "名称和备注已保存，但 Key 更换失败；原 Key 保持不变",
+    "if (!rawDraft.apiKey)",
+    "模型配置已保存，但 API Key 更换失败；原 Key 保持不变",
     'byId("workflow-editor-error")',
     "state.workflowEditor.dirty = true"
   ], "ordered metadata and optional Key save");
@@ -168,14 +168,14 @@ function testManagerAndEditorContract() {
   );
   appearsInOrder(saveEditor, [
     '{ method: "PATCH" }',
-    "if (!draft.apiKey)",
+    "if (!rawDraft.apiKey)",
     '"/api-key"'
   ], "metadata must save before optional Key replacement");
   includesAll(remove, [
     "activeProfileId",
     "profile.name",
     "window.confirm",
-    "请先切换到其他工作流"
+    "请先切换到其他模型配置"
   ], "named delete confirmation and current-profile guard");
   includesAll(functionSource("closeWorkflowEditor"), [
     'byId("workflow-editor-key").value = ""',
@@ -208,11 +208,11 @@ function testProfileLoadFailureAndRequestOrderingContract() {
   );
   includesAll(activate, [
     "state.profileLoadRequestId += 1",
-    'request("/provider/workflow-profiles/"'
+    'request("/provider/model-configurations/"'
   ], "activation must invalidate older profile GET requests");
   assert.ok(
     activate.indexOf("state.profileLoadRequestId += 1") <
-      activate.indexOf('request("/provider/workflow-profiles/"'),
+      activate.indexOf('request("/provider/model-configurations/"'),
     "profile GET invalidation must happen before activation starts"
   );
   assert.ok(
@@ -320,8 +320,8 @@ function testLiveSettingsExperienceContract() {
   includesAll(functionSource("renderProfileStrip"), [
     "select.setAttribute(",
     '"aria-label"',
-    '"选择结构审查工作流"',
-    '"选择智能总结工作流"'
+    '"选择结构审查模型配置"',
+    '"选择智能总结模型配置"'
   ], "task-specific workflow selector label");
   includesAll(refresh, [
     "configRefreshRequestId",

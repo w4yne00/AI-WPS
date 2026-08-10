@@ -18,7 +18,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.22.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.23.0-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -43,14 +43,37 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("provider=mock", scripts["show_logs.sh"])
         self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
 
-    def test_standalone_adapter_exposes_workflow_profile_management(self) -> None:
+    def test_standalone_adapter_exposes_model_configuration_management(self) -> None:
         script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
 
+        self.assertIn('path == "/provider/model-configurations"', script)
+        self.assertIn('action == "copy"', script)
+        self.assertIn('action == "validate"', script)
         self.assertIn('path == "/provider/workflow-profiles"', script)
         self.assertIn("def do_PATCH", script)
         self.assertIn('path.endswith("/activate")', script)
         self.assertIn('path.endswith("/api-key")', script)
-        self.assertIn("WorkflowProfileStore", script)
+        self.assertIn("ModelConfigurationStore", script)
+        self.assertIn("WorkflowProfileCompatibilityStore", script)
+
+    def test_delivery_audits_eight_versioned_system_prompts(self) -> None:
+        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
+        manifest = json.loads(
+            (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(encoding="utf-8")
+        )
+
+        self.assertIn("SystemPromptStore", script)
+        self.assertIn("system prompt task inventory mismatch", script)
+        self.assertEqual(manifest["adapter"]["systemPromptCount"], 8)
+        self.assertEqual(
+            manifest["adapter"]["accessMethods"],
+            ["workflow_platform", "direct_model"],
+        )
+        self.assertEqual(
+            manifest["adapter"]["systemPromptManifest"],
+            "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
+        )
+        self.assertTrue((ROOT / "adapter_service/system_prompts/manifest.json").is_file())
 
     def test_standalone_adapter_exposes_ppt_background_routes(self) -> None:
         script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
@@ -128,7 +151,7 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(token, guide + checklist + record)
 
-    def test_v0220_acceptance_record_tracks_release_issue_and_external_validation(self) -> None:
+    def test_v0230_acceptance_record_tracks_release_issue_and_external_validation(self) -> None:
         def assert_release_acceptance_state(record_text: str) -> None:
             self.assertIn("Issue #24", record_text)
             self.assertIn("麒麟 V10/WPS 演示真机验收待执行", record_text)
@@ -142,11 +165,11 @@ class PackagingScriptTests(unittest.TestCase):
         archive_path = (
             ROOT
             / "dist-phase1-delivery-kit"
-            / "ai-wps-phase1-delivery-20260808-v0220.tar.gz"
+            / "ai-wps-phase1-delivery-20260811-v0230.tar.gz"
         )
         with tarfile.open(archive_path, "r:gz") as package:
             member = package.extractfile(
-                "ai-wps-phase1-delivery-20260808-v0220/"
+                "ai-wps-phase1-delivery-20260811-v0230/"
                 "docs/phase1-acceptance-record.md"
             )
             self.assertIsNotNone(member)
@@ -353,12 +376,12 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(required_text, text)
 
-    def test_phase1_delivery_uses_v0220_release_name(self) -> None:
+    def test_phase1_delivery_uses_v0230_release_name(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0220"', script)
+        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0230"', script)
 
     def test_delivery_build_revalidates_approved_pack_reviews(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
@@ -419,10 +442,10 @@ class PackagingScriptTests(unittest.TestCase):
             self.assertEqual(database.read_bytes(), original)
             self.assertIn("writing_policy_database=reused", second_result.stdout)
 
-    def test_built_v0220_delivery_has_complete_safe_release_inventory(self) -> None:
+    def test_built_v0230_delivery_has_complete_safe_release_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             environment = dict(os.environ)
-            environment["DATE_TAG"] = "20260808"
+            environment["DATE_TAG"] = "20260811"
             environment["PYTHON_BIN"] = sys.executable
             result = subprocess.run(
                 [
@@ -439,7 +462,7 @@ class PackagingScriptTests(unittest.TestCase):
 
             archive = (
                 Path(temp_dir)
-                / "ai-wps-phase1-delivery-20260808-v0220.tar.gz"
+                / "ai-wps-phase1-delivery-20260811-v0230.tar.gz"
             )
             self.assertTrue(archive.is_file())
             checksum = archive.with_name(archive.name + ".sha256")
@@ -453,17 +476,17 @@ class PackagingScriptTests(unittest.TestCase):
             )
             with tarfile.open(archive, "r:gz") as package:
                 names = package.getnames()
-                root = "ai-wps-phase1-delivery-20260808-v0220"
+                root = "ai-wps-phase1-delivery-20260811-v0230"
                 manifest_member = package.extractfile(
                     root + "/release-manifest.json"
                 )
                 self.assertIsNotNone(manifest_member)
                 release_manifest = json.load(manifest_member)
 
-                self.assertEqual(release_manifest["version"], "0.22.0-alpha")
+                self.assertEqual(release_manifest["version"], "0.23.0-alpha")
                 self.assertEqual(
                     release_manifest["versionRule"],
-                    "AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808",
+                    "AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811",
                 )
                 self.assertEqual(
                     release_manifest["excelFormulaAssistantAssets"],
@@ -586,7 +609,7 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertNotIn("renderTaskRoutes", js)
         self.assertIn("workflow-profile-manager", html)
         self.assertIn("workflow-profile-select", html)
-        self.assertIn("/provider/workflow-profiles", js)
+        self.assertIn("/provider/model-configurations", js)
         self.assertIn("word.smart_write", js)
         self.assertIn("word.smart_imitation", js)
         self.assertIn("word.document_review", js)

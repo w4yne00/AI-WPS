@@ -90,8 +90,9 @@ assert.ok(clearSource.includes("textContent = \"\""));
 
 const smartResultSource = functionSource("setSmartWriteResult");
 assert.ok(smartResultSource.includes("renderWritingPolicyUsage"));
-assert.ok(wordJs.includes('setSmartWriteResult(body.data, "word.smart_write")'));
-assert.ok(wordJs.includes('setSmartWriteResult(body.data, "word.smart_imitation")'));
+assert.ok(wordJs.includes('startWritingJob(state.latestDocumentPayload, "word.smart_write", "smartWrite")'));
+assert.ok(wordJs.includes('startWritingJob(state.latestDocumentPayload, "word.smart_imitation", "smartImitation")'));
+assert.ok(wordJs.includes("state.rewriteResult = setSmartWriteResult(result || {}, taskType)"));
 
 const reviewResultSource = functionSource("renderDocumentReviewResult");
 assert.ok(reviewResultSource.includes('renderWritingPolicyUsage(data && data.writingPolicyUsage, "word.document_review")'));
@@ -167,7 +168,8 @@ assert.strictEqual(scheduledSearchLoads, 1);
 
 [
   "state.rewriteResult = setSmartWriteResult",
-  "state.pendingApplyAction = \"rewrite\"",
+  "state.pendingApplyAction = taskType === \"word.smart_write\"",
+  "setApplyEnabled(state.pendingApplyAction === \"rewrite\")",
   "applyRewrite()",
   "buildDocumentReviewRecord",
   "documentReviewIssueStatus"

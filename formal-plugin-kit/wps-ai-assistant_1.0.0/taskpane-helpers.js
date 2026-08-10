@@ -1839,21 +1839,33 @@
 
   function normalizeWorkflowProfileData(data, taskType) {
     var source = data && typeof data === "object" ? data : {};
-    var profiles = Array.isArray(source.profiles) ? source.profiles : [];
+    var profiles = Array.isArray(source.configurations) ? source.configurations :
+      (Array.isArray(source.profiles) ? source.profiles : []);
     var normalized = profiles.filter(function (profile) {
       return profile && profile.taskType === taskType && profile.id;
     }).map(function (profile) {
       return {
         id: String(profile.id),
         taskType: taskType,
-        name: String(profile.name || "未命名工作流"),
+        name: String(profile.name || "未命名配置"),
         note: String(profile.note || ""),
         keyConfigured: Boolean(profile.keyConfigured),
+        complete: typeof profile.complete === "boolean" ? profile.complete : Boolean(profile.keyConfigured),
+        accessMethod: String(profile.accessMethod || "workflow_platform"),
+        serviceBaseUrl: String(profile.serviceBaseUrl || ""),
+        callPath: String(profile.callPath || ""),
+        modelName: String(profile.modelName || ""),
+        temperature: profile.temperature,
+        maxOutputTokens: profile.maxOutputTokens,
+        contextWindowTokens: Number(profile.contextWindowTokens || 40000),
+        missingFields: Array.isArray(profile.missingFields) ? profile.missingFields : [],
+        configVersion: Number(profile.configVersion || 1),
+        lastValidation: profile.lastValidation || null,
         createdAt: String(profile.createdAt || ""),
         updatedAt: String(profile.updatedAt || "")
       };
     });
-    var activeId = String(source.activeProfileId || "");
+    var activeId = String(source.activeConfigurationId || source.activeProfileId || "");
     var activeExists = normalized.some(function (profile) {
       return profile.id === activeId;
     });
@@ -1898,14 +1910,14 @@
       for (profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
         if (profiles[profileIndex]
           && profiles[profileIndex].id === data.activeProfileId
-          && profiles[profileIndex].keyConfigured) {
+          && profiles[profileIndex].complete) {
           readyCount += 1;
           break;
         }
       }
     }
 
-    if (!String(source.providerBaseUrl || "").trim() || totalCount === 0 || readyCount === 0) {
+    if (totalCount === 0 || readyCount === 0) {
       return { code: "unconfigured", label: "未配置", readyCount: readyCount, totalCount: totalCount };
     }
     if (readyCount === totalCount) {
@@ -2070,8 +2082,8 @@
   }
 
   function workflowProfileStatusText(profile, activeProfileId) {
-    if (!profile || !profile.keyConfigured) {
-      return "密钥未配置";
+    if (!profile || !profile.complete) {
+      return "配置不完整";
     }
     return profile.id === activeProfileId ? "当前使用" : "可切换";
   }
@@ -2079,11 +2091,14 @@
   function workflowProfileOptionState(profile, activeProfileId) {
     var item = profile || {};
     var active = Boolean(item.id && item.id === activeProfileId);
-    var configured = Boolean(item.keyConfigured);
-    var name = String(item.name || "未命名工作流");
+    var configured = Boolean(item.complete);
+    var name = String(item.name || "未命名配置");
+    var method = item.accessMethod === "direct_model" ? "模型直连" : "工作流平台";
+    var model = item.accessMethod === "direct_model" && item.modelName ? " · " + item.modelName : "";
     return {
       id: String(item.id || ""),
-      label: (active ? "✓ " : "") + name + (configured ? "" : "（Key 未配置）"),
+      label: (active ? "✓ " : "") + name + " · " + method + model +
+        (configured ? "" : "（配置不完整）"),
       active: active,
       disabled: !configured
     };
@@ -2095,16 +2110,13 @@
     var note = String(value.note || "").trim();
     var apiKey = String(value.apiKey || "").trim();
     if (!name) {
-      return { ok: false, field: "name", message: "请输入工作流名称。" };
+      return { ok: false, field: "name", message: "请输入模型配置名称。" };
     }
     if (name.length > 40) {
-      return { ok: false, field: "name", message: "工作流名称不能超过 40 个字。" };
+      return { ok: false, field: "name", message: "模型配置名称不能超过 40 个字。" };
     }
     if (note.length > 200) {
-      return { ok: false, field: "note", message: "工作流备注不能超过 200 个字。" };
-    }
-    if (mode === "create" && !apiKey) {
-      return { ok: false, field: "apiKey", message: "请输入工作流 API Key。" };
+      return { ok: false, field: "note", message: "模型配置备注不能超过 200 个字。" };
     }
     return { ok: true, name: name, note: note, apiKey: apiKey };
   }

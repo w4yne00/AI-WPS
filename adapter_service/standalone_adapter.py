@@ -70,12 +70,19 @@ from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
-from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
+from app.services.workflow_profiles import WorkflowProfileError
+from app.services.model_configurations import (
+    ModelConfigurationError,
+    ModelConfigurationStore,
+    WorkflowProfileCompatibilityStore,
+)
+from app.services.system_prompts import SystemPromptError, SystemPromptStore
+from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.22.0-alpha"
+VERSION = "0.23.0-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.
@@ -148,6 +155,8 @@ _WRITING_POLICY_STATIC_ROUTE_METHODS = {
     "/writing-policies/diagnostics": ("GET",),
 }
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
+SMART_WRITE_JOB_STORE = SmartWriteJobStore()
+SMART_IMITATION_JOB_STORE = SmartImitationJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 EXCEL_FORMULA_ASSISTANT_JOB_STORE = ExcelFormulaAssistantJobStore()
 PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
@@ -248,6 +257,53 @@ def document_review_job_payload(job):
             result = DocumentReviewResponseData(**data["result"]).dict(by_alias=True)
         data["result"] = result
     return data
+
+
+def writing_job_payload(job):
+    data = dict(job)
+    if data.get("result"):
+        if hasattr(RewriteResponseData, "model_validate"):
+            result = RewriteResponseData.model_validate(data["result"]).model_dump(by_alias=True)
+        else:
+            result = RewriteResponseData(**data["result"]).dict(by_alias=True)
+        data["result"] = result
+    return data
+
+
+def writing_job_missing_envelope(job_id, task_type, interrupted=False):
+    label = "智能编写" if task_type == "word.smart_write" else "智能仿写"
+    code_prefix = "SMART_WRITE" if task_type == "word.smart_write" else "SMART_IMITATION"
+    message = (
+        "{0}任务不存在，可能因 Adapter 重启而中断，请重新提交。".format(label)
+        if interrupted
+        else "{0}后台任务不存在或已过期。".format(label)
+    )
+    data = (
+        {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        if interrupted
+        else {"jobId": job_id, "status": "not_found"}
+    )
+    return envelope(
+        job_id,
+        task_type,
+        data,
+        success=False,
+        message=message,
+        errors=[
+            {
+                "code": "{0}_JOB_{1}".format(
+                    code_prefix, "INTERRUPTED" if interrupted else "NOT_FOUND"
+                ),
+                "message": message,
+            }
+        ],
+    )
 
 
 def document_review_missing_envelope(job_id, interrupted=False):
@@ -1356,7 +1412,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if path == "/health":
             settings = load_settings()
-            provider = ProviderClient(settings)
+            provider = ProviderClient(
+                settings, model_configuration_store=ModelConfigurationStore()
+            )
             self._write(
                 200,
                 envelope(
@@ -1382,7 +1440,9 @@ class Handler(BaseHTTPRequestHandler):
 
         if path == "/config":
             settings = load_settings()
-            provider = ProviderClient(settings)
+            provider = ProviderClient(
+                settings, model_configuration_store=ModelConfigurationStore()
+            )
             self._write(
                 200,
                 envelope(
@@ -1414,7 +1474,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/provider/status":
-            provider = ProviderClient(load_settings())
+            provider = ProviderClient(
+                load_settings(), model_configuration_store=ModelConfigurationStore()
+            )
             self._write(
                 200,
                 envelope(
@@ -1431,30 +1493,119 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/provider/route-diagnostics":
-            provider = ProviderClient(load_settings())
+            provider = ProviderClient(
+                load_settings(), model_configuration_store=ModelConfigurationStore()
+            )
             data = provider.build_route_diagnostics()
             data["longTaskCoordinator"] = get_long_task_coordinator().diagnostics()
             self._write(200, envelope("standalone-route-diagnostics", "provider.route_diagnostics", data))
             return
 
         if path == "/provider/task-api-keys":
-            provider = ProviderClient(load_settings())
+            provider = ProviderClient(
+                load_settings(), model_configuration_store=ModelConfigurationStore()
+            )
             self._write(200, envelope("standalone-provider-task-api-keys", "provider.task_api_keys", provider.build_task_api_key_status()))
             return
 
         if path == "/provider/workflow-profiles":
             task_type = str(parse_qs(parsed.query).get("taskType", [""])[0]).strip()
             try:
-                data = WorkflowProfileStore().list_for_task(task_type)
+                data = WorkflowProfileCompatibilityStore().list_for_task(task_type)
             except WorkflowProfileError as error:
                 self._write_workflow_error(error)
                 return
             self._write(200, envelope("standalone-workflow-profiles", "provider.workflow_profiles", data))
             return
 
+        if path == "/provider/model-configurations":
+            task_type = str(parse_qs(parsed.query).get("taskType", [""])[0]).strip()
+            try:
+                data = ModelConfigurationStore().list_for_task(task_type)
+            except ModelConfigurationError as error:
+                self._write_model_configuration_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-model-configurations",
+                    "provider.model_configurations",
+                    data,
+                ),
+            )
+            return
+
+        model_configuration_prefix = "/provider/model-configurations/"
+        if path.startswith(model_configuration_prefix) and path.endswith("/system-prompt"):
+            configuration_id = unquote(
+                path[len(model_configuration_prefix) : -len("/system-prompt")]
+            ).strip("/")
+            try:
+                configuration = ModelConfigurationStore().get_configuration(configuration_id)
+                prompt = SystemPromptStore().load(configuration["taskType"])
+            except ModelConfigurationError as error:
+                self._write_model_configuration_error(error)
+                return
+            except SystemPromptError as error:
+                self._write(
+                    500,
+                    envelope(
+                        "standalone-system-prompt",
+                        "provider.system_prompt",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-system-prompt",
+                    "provider.system_prompt",
+                    {
+                        "taskType": configuration["taskType"],
+                        "version": prompt["version"],
+                        "sha256": prompt["sha256"],
+                        "content": prompt["content"],
+                    },
+                ),
+            )
+            return
+
         if path == "/provider/debug-last":
             self._write(200, envelope("standalone-provider-debug-last", "provider.debug_last", get_last_provider_debug()))
             return
+
+        writing_job_routes = (
+            ("/word/smart-write/jobs/", "word.smart_write", SMART_WRITE_JOB_STORE),
+            ("/word/smart-imitation/jobs/", "word.smart_imitation", SMART_IMITATION_JOB_STORE),
+        )
+        for prefix, task_type, store in writing_job_routes:
+            if path.startswith(prefix):
+                job_id = unquote(path[len(prefix) :]).strip("/")
+                job = store.get(job_id)
+                interrupted = str(
+                    parse_qs(parsed.query).get("resume", [""])[0]
+                ).lower() in {"1", "true", "yes"}
+                if not job:
+                    self._write(
+                        404,
+                        writing_job_missing_envelope(
+                            job_id, task_type, interrupted=interrupted
+                        ),
+                    )
+                    return
+                self._write(
+                    200,
+                    envelope(
+                        job.get("traceId", job_id),
+                        task_type,
+                        writing_job_payload(job),
+                        message=job["status"],
+                    ),
+                )
+                return
 
         if path.startswith("/word/document-review/jobs/"):
             job_id = unquote(path.rsplit("/", 1)[-1])
@@ -1738,9 +1889,133 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/provider/model-configurations":
+            try:
+                configuration = ModelConfigurationStore().create_configuration(
+                    payload.get("taskType", ""),
+                    payload.get("name", ""),
+                    payload.get("accessMethod", ""),
+                    note=payload.get("note", ""),
+                    service_base_url=payload.get("serviceBaseUrl", ""),
+                    model_name=payload.get("modelName", ""),
+                    temperature=payload.get("temperature"),
+                    max_output_tokens=payload.get("maxOutputTokens"),
+                    context_window_tokens=payload.get("contextWindowTokens", 40000),
+                )
+            except ModelConfigurationError as error:
+                self._write_model_configuration_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-model-configuration",
+                    "provider.model_configuration",
+                    {"configuration": configuration},
+                    message="saved",
+                ),
+            )
+            return
+
+        model_configuration_prefix = "/provider/model-configurations/"
+        if path.startswith(model_configuration_prefix):
+            relative = path[len(model_configuration_prefix) :].strip("/")
+            configuration_id, separator, action = relative.partition("/")
+            configuration_id = unquote(configuration_id)
+            store = ModelConfigurationStore()
+            try:
+                if action == "api-key":
+                    configuration = store.replace_api_key(
+                        configuration_id, payload.get("apiKey", "")
+                    )
+                    data = {"configuration": configuration}
+                    message = "saved"
+                elif action == "copy":
+                    configuration = store.copy_configuration(
+                        configuration_id,
+                        target_task_type=payload.get("targetTaskType"),
+                        name=payload.get("name", ""),
+                    )
+                    data = {"configuration": configuration}
+                    message = "copied"
+                elif action == "activate":
+                    data = store.activate_configuration(configuration_id)
+                    message = "activated"
+                elif action == "validate":
+                    trace_id = new_trace_id("standalone-model-config-validation")
+                    started = time.monotonic()
+                    try:
+                        result = ProviderClient(
+                            model_configuration_store=store
+                        ).validate_model_configuration(configuration_id, trace_id)
+                    except AdapterError as error:
+                        duration_ms = int((time.monotonic() - started) * 1000)
+                        try:
+                            store.record_validation(
+                                configuration_id,
+                                {
+                                    "success": False,
+                                    "durationMs": duration_ms,
+                                    "errorCode": error.code,
+                                    "message": error.message,
+                                },
+                            )
+                        except ModelConfigurationError:
+                            pass
+                        self._write(
+                            error.status_code,
+                            envelope(
+                                trace_id,
+                                "provider.model_configuration",
+                                success=False,
+                                message=error.message,
+                                errors=[{"code": error.code, "message": error.message}],
+                            ),
+                        )
+                        return
+                    duration_ms = int((time.monotonic() - started) * 1000)
+                    configuration = store.record_validation(
+                        configuration_id,
+                        {
+                            "success": True,
+                            "durationMs": duration_ms,
+                            "message": "验证调用成功。",
+                            "promptVersion": result.get("promptVersion", ""),
+                        },
+                    )
+                    data = {
+                        **result,
+                        "durationMs": duration_ms,
+                        "configuration": configuration,
+                    }
+                    message = "validated"
+                else:
+                    self._write(
+                        404,
+                        envelope(
+                            "standalone-not-found",
+                            "adapter.error",
+                            success=False,
+                            message="Not found",
+                        ),
+                    )
+                    return
+            except ModelConfigurationError as error:
+                self._write_model_configuration_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-model-configuration-action",
+                    "provider.model_configuration",
+                    data,
+                    message=message,
+                ),
+            )
+            return
+
         if path == "/provider/workflow-profiles":
             try:
-                profile = WorkflowProfileStore().create_profile(
+                profile = WorkflowProfileCompatibilityStore().create_profile(
                     payload.get("taskType", ""),
                     payload.get("name", ""),
                     payload.get("apiKey", ""),
@@ -1757,7 +2032,9 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(profile_prefix) and path.endswith("/api-key"):
             profile_id = unquote(path[len(profile_prefix):-len("/api-key")]).strip("/")
             try:
-                profile = WorkflowProfileStore().replace_api_key(profile_id, payload.get("apiKey", ""))
+                profile = WorkflowProfileCompatibilityStore().replace_api_key(
+                    profile_id, payload.get("apiKey", "")
+                )
             except WorkflowProfileError as error:
                 self._write_workflow_error(error)
                 return
@@ -1767,7 +2044,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(profile_prefix) and path.endswith("/activate"):
             profile_id = unquote(path[len(profile_prefix):-len("/activate")]).strip("/")
             try:
-                data = WorkflowProfileStore().activate_profile(profile_id)
+                data = WorkflowProfileCompatibilityStore().activate_profile(profile_id)
             except WorkflowProfileError as error:
                 self._write_workflow_error(error)
                 return
@@ -1775,11 +2052,86 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/word/smart-write":
-            self._write(200, envelope("standalone-word-smart-write", "word.smart_write", smart_write(payload)))
+            trace_id = new_trace_id("standalone-word-smart-write")
+            status, body = sync_long_task_response(
+                payload,
+                trace_id,
+                "word.smart_write",
+                parse_word_request,
+                SMART_WRITE_JOB_STORE,
+                writing_job_payload,
+            )
+            self._write(status, body)
             return
 
         if path == "/word/smart-imitation":
-            self._write(200, envelope("standalone-word-smart-imitation", "word.smart_imitation", smart_imitation(payload)))
+            trace_id = new_trace_id("standalone-word-smart-imitation")
+            status, body = sync_long_task_response(
+                payload,
+                trace_id,
+                "word.smart_imitation",
+                parse_word_request,
+                SMART_IMITATION_JOB_STORE,
+                writing_job_payload,
+            )
+            self._write(status, body)
+            return
+
+        if path in {"/word/smart-write/jobs", "/word/smart-imitation/jobs"}:
+            task_type = (
+                "word.smart_write"
+                if path == "/word/smart-write/jobs"
+                else "word.smart_imitation"
+            )
+            store = SMART_WRITE_JOB_STORE if task_type == "word.smart_write" else SMART_IMITATION_JOB_STORE
+            trace_id = new_trace_id(
+                "standalone-word-smart-write"
+                if task_type == "word.smart_write"
+                else "standalone-word-smart-imitation"
+            )
+            try:
+                request = parse_word_request(payload)
+                job = store.start(request, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        task_type,
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                raw_errors = error.errors() if hasattr(error, "errors") else []
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        trace_id,
+                        task_type,
+                        [
+                            {
+                                "loc": ".".join(str(part) for part in item.get("loc", [])),
+                                "type": str(item.get("type", "")),
+                                "message": str(item.get("msg", ""))[:160],
+                            }
+                            for item in raw_errors[:8]
+                        ],
+                        error_count=len(raw_errors),
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    task_type,
+                    writing_job_payload(job),
+                    message="accepted",
+                ),
+            )
             return
 
         if path == "/word/document-review":
@@ -2064,11 +2416,56 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="saved"))
             return
 
+        writing_job_routes = (
+            ("/word/smart-write/jobs/", "word.smart_write", SMART_WRITE_JOB_STORE),
+            ("/word/smart-imitation/jobs/", "word.smart_imitation", SMART_IMITATION_JOB_STORE),
+        )
+        for prefix, task_type, store in writing_job_routes:
+            if path.startswith(prefix):
+                job_id = unquote(path[len(prefix) :]).strip("/")
+                try:
+                    job = store.cancel(job_id)
+                except AdapterError as error:
+                    self._write(
+                        error.status_code,
+                        envelope(
+                            job_id,
+                            task_type,
+                            success=False,
+                            message=error.message,
+                            errors=[{"code": error.code, "message": error.message}],
+                        ),
+                    )
+                    return
+                interrupted = str(
+                    parse_qs(parsed.query).get("resume", [""])[0]
+                ).lower() in {"1", "true", "yes"}
+                if not job:
+                    self._write(
+                        404,
+                        writing_job_missing_envelope(
+                            job_id, task_type, interrupted=interrupted
+                        ),
+                    )
+                    return
+                self._write(
+                    200,
+                    envelope(
+                        job.get("traceId", job_id),
+                        task_type,
+                        writing_job_payload(job),
+                        message="cancelled",
+                    ),
+                )
+                return
+
         if path == "/provider/task-api-key":
             task_type = str(payload.get("taskType", "")).strip()
             api_key_ref = str(payload.get("apiKeyRef") or normalize_task_api_key_ref(task_type)).strip()
             try:
-                WorkflowProfileStore().save_legacy_task_api_key(task_type, api_key_ref, payload.get("apiKey", ""))
+                WorkflowProfileCompatibilityStore().save_legacy_task_api_key(
+                    task_type, api_key_ref, payload.get("apiKey", "")
+                )
             except WorkflowProfileError as error:
                 self._write_workflow_error(error)
                 return
@@ -2118,7 +2515,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(prefix):
             profile_id = unquote(path[len(prefix):]).strip("/")
             try:
-                profile = WorkflowProfileStore().update_profile(
+                profile = WorkflowProfileCompatibilityStore().update_profile(
                     profile_id,
                     payload.get("name", ""),
                     payload.get("note", ""),
@@ -2127,6 +2524,34 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_workflow_error(error)
                 return
             self._write(200, envelope("standalone-workflow-profile-update", "provider.workflow_profile", {"profile": profile}, message="saved"))
+            return
+        model_prefix = "/provider/model-configurations/"
+        if path.startswith(model_prefix):
+            configuration_id = unquote(path[len(model_prefix) :]).strip("/")
+            try:
+                configuration = ModelConfigurationStore().update_configuration(
+                    configuration_id,
+                    name=payload.get("name", ""),
+                    access_method=payload.get("accessMethod", ""),
+                    note=payload.get("note", ""),
+                    service_base_url=payload.get("serviceBaseUrl", ""),
+                    model_name=payload.get("modelName", ""),
+                    temperature=payload.get("temperature"),
+                    max_output_tokens=payload.get("maxOutputTokens"),
+                    context_window_tokens=payload.get("contextWindowTokens", 40000),
+                )
+            except ModelConfigurationError as error:
+                self._write_model_configuration_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-model-configuration-update",
+                    "provider.model_configuration",
+                    {"configuration": configuration},
+                    message="saved",
+                ),
+            )
             return
         self._write(
             404,
@@ -2381,7 +2806,7 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(prefix):
             task_type = unquote(path[len(prefix):])
             try:
-                WorkflowProfileStore().clear_active_api_key(task_type)
+                WorkflowProfileCompatibilityStore().clear_active_api_key(task_type)
             except WorkflowProfileError as error:
                 self._write_workflow_error(error)
                 return
@@ -2392,11 +2817,35 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(profile_prefix):
             profile_id = unquote(path[len(profile_prefix):]).strip("/")
             try:
-                data = WorkflowProfileStore().delete_profile(profile_id)
+                data = WorkflowProfileCompatibilityStore().delete_profile(profile_id)
             except WorkflowProfileError as error:
                 self._write_workflow_error(error)
                 return
             self._write(200, envelope("standalone-workflow-profile-delete", "provider.workflow_profile", data, message="deleted"))
+            return
+
+        model_prefix = "/provider/model-configurations/"
+        if path.startswith(model_prefix):
+            configuration_id = unquote(path[len(model_prefix) :]).strip("/")
+            deactivate = str(
+                parse_qs(parsed.query).get("deactivate", [""])[0]
+            ).lower() in {"1", "true", "yes"}
+            try:
+                data = ModelConfigurationStore().delete_configuration(
+                    configuration_id, deactivate=deactivate
+                )
+            except ModelConfigurationError as error:
+                self._write_model_configuration_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-model-configuration-delete",
+                    "provider.model_configuration",
+                    data,
+                    message="deleted",
+                ),
+            )
             return
 
         self._write(
@@ -2417,6 +2866,25 @@ class Handler(BaseHTTPRequestHandler):
             envelope(
                 "standalone-workflow-profile-error",
                 "provider.workflow_profile",
+                success=False,
+                message=error.message,
+                errors=[{"code": error.code, "message": error.message}],
+            ),
+        )
+
+    def _write_model_configuration_error(self, error):
+        status_code = 404 if error.code == "MODEL_CONFIG_NOT_FOUND" else 400
+        if error.code in {
+            "MODEL_CONFIG_ACTIVE",
+            "MODEL_CONFIG_LIMIT",
+            "MODEL_CONFIG_NAME_DUPLICATE",
+        }:
+            status_code = 409
+        self._write(
+            status_code,
+            envelope(
+                "standalone-model-configuration-error",
+                "provider.model_configuration",
                 success=False,
                 message=error.message,
                 errors=[{"code": error.code, "message": error.message}],

@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.22.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808` |
+| Version | `v0.23.0-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package; release artifact target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz` |
+| Phase 1 delivery kit | One combined Word/Excel/PPT package: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0230.tar.gz`; SHA256: `acee06ff18b17591079531fcae7bb9fe046648db8b221a67a2794211025ddb2f` |
 
 Version rule format:
 
@@ -118,9 +118,10 @@ Rules:
 | Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
 | Unified three-host UI | Word, Excel, and PPT share the same restrained light-gray, white, mist-blue, and status-color visual system while preserving host isolation and existing task behavior |
 | Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
-| Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode |
-| Workflow profiles | Smart Write, Smart Imitation, Document Review, Format Review, “智能分析”, “公式助手”, “智能总结”, and “结构审查” each use a compact host-isolated profile list; both summary modes share `ppt.slide_assistant`, while Structure Review uses `ppt.structure_review` |
-| Provider settings | Settings exposes one global API URL plus per-workflow names, notes, and API keys. The legacy unified-key fallback remains adapter-compatible and is preserved during overwrite installation, but is no longer shown in the task pane |
+| Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode; production mock output is disabled unless explicitly enabled for development |
+| Model configurations | All eight tasks use host-isolated, per-task model configurations. Each configuration selects either a workflow-platform Chat API or an OpenAI-compatible direct-model API and independently stores its service URL, key, and applicable model parameters |
+| Direct-model prompts | Eight versioned Markdown System Prompts are bundled and SHA-256 verified; direct-model requests send task instructions as `system` and document/user content as `user` |
+| Provider settings | Settings uses a same-page drill-down editor for model configurations. Task selectors expose only complete configurations; there is no runtime fallback to a global URL or key |
 | Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
 | Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
 | Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together; first install initializes an empty organization writing-policy database, while overwrite installation preserves that database, every existing backup, the API URL, unified API key, and workflow-profile keys. A release manifest audits the four reviewed preset packs, source/license notices, import templates, acceptance documents, and runtime-state exclusions |
@@ -129,6 +130,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |
 | `v0.22.0-alpha` | Adds the PPT Structure Review minimum loop with an independent Ribbon entry, workflow profile, and API key; explicit ranges up to 60 slides; separated title/subtitle extraction and bounded untitled-slide fallback; merged local and single-call semantic review findings; prioritized/page-specific results, recommended outline, and copy-only read-only behavior |
 | `v0.21.0-alpha` | Formally packages the independent Excel Formula Assistant with Generate and Explain/Debug modes, selection-only 30×20 extraction, `Formula`/`FormulaLocal`/`FormulaR1C1` read fallback guarded by `HasFormula`, shared long-task queuing and recovery, local non-executing checks, and copy-only results. The unified package includes its Dify operations guide and prompt template; Word and PPT business behavior remains unchanged |
 | `v0.20.1-alpha` | Stabilizes the existing three-host long-task queue and Word/Excel selection watchers without adding business entries. Document Review, Excel Analysis, and PPT Summary share two running slots plus eight FIFO queue positions, preserve submission-time configuration, expose truthful queue/phase/timing and queued cancellation, and report Adapter-restart interruption explicitly. Word and Excel prefer host selection events with a visible-page low-frequency fallback and pause host reads while hidden, in settings, or busy. Existing workflows, results, writeback boundaries, and overwrite-install protection remain unchanged |
@@ -326,7 +328,7 @@ Use an environment variable for the API key:
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-Workflow-profile API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps only display metadata and key references. Each task can keep multiple Dify app keys; activation affects the next new task and missing task keys fall back to the unified provider key. PPT current-slide and document modes use `ppt.slide_assistant` for Dify `/files/upload` and `/chat-messages`, while Structure Review uses the independent `ppt.structure_review` key. See the [workflow profile operations guide](./docs/operations/workflow-profile-management.md).
+Model-configuration API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps access method, service URL, model parameters, and key references. Each task can keep multiple configurations; activation affects only the next new task and running jobs retain their submission snapshot. Workflow-platform access uses `/chat-messages`; direct-model access uses OpenAI-compatible `/chat/completions` with the task prompt under `adapter_service/system_prompts/`. Runtime requests do not fall back to a unified URL or key. See the [model configuration operations guide](./docs/operations/workflow-profile-management.md).
 
 The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). Word terminology/rule maintenance, imports, exports, backup, degraded behavior, and recovery are documented in the [writing policy library operations guide](./docs/operations/writing-policy-library.md). “智能分析” setup is documented in the [Excel analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md), “公式助手” in the [Excel formula assistant Dify workflow guide](./docs/operations/dify-excel-formula-assistant-workflow.md), the two PPT “智能总结” modes in the [PPT smart summary Dify workflow guide](./docs/operations/dify-ppt-slide-assistant-workflow.md), and Structure Review setup plus read-only acceptance in the [PPT structure review Dify workflow guide](./docs/operations/dify-ppt-structure-review-workflow.md). Deployable prompt templates are available under [`docs/prompt-templates/`](./docs/prompt-templates/).
 
@@ -339,12 +341,13 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `GET` | `/templates` | Available template list |
 | `GET` | `/provider/status` | Enterprise AI provider authentication status |
 | `GET` | `/provider/task-api-keys` | Task-level API key status summary |
-| `GET` | `/provider/workflow-profiles` | Named profiles and active selection for one task |
-| `POST` | `/provider/workflow-profiles` | Create a named workflow profile |
-| `PATCH` | `/provider/workflow-profiles/{profileId}` | Rename a profile or update its note |
-| `POST` | `/provider/workflow-profiles/{profileId}/api-key` | Replace one profile API key |
-| `POST` | `/provider/workflow-profiles/{profileId}/activate` | Activate a profile for its task |
-| `DELETE` | `/provider/workflow-profiles/{profileId}` | Delete an inactive profile |
+| `GET` / `POST` | `/provider/model-configurations` | List or create per-task model configurations |
+| `PATCH` / `DELETE` | `/provider/model-configurations/{configurationId}` | Update or delete an inactive configuration |
+| `POST` | `/provider/model-configurations/{configurationId}/api-key` | Replace one configuration API key |
+| `POST` | `/provider/model-configurations/{configurationId}/activate` | Activate a complete configuration |
+| `POST` | `/provider/model-configurations/{configurationId}/copy` | Create a copy without copying key material |
+| `POST` | `/provider/model-configurations/{configurationId}/validate` | Perform a real validation request |
+| `GET` / `POST` | `/provider/workflow-profiles` | One-version compatibility wrapper for legacy clients |
 | `POST` | `/provider/api-key` | Save the unified Dify Chat API key |
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
 | `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
@@ -360,8 +363,11 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `GET` | `/writing-policies/export.csv` | Export filtered knowledge items as CSV |
 | `GET` | `/writing-policies/backup` | Download a consistent SQLite database backup |
 | `GET` | `/writing-policies/diagnostics` | Sanitized knowledge-store health diagnostics |
-| `POST` | `/word/smart-write` | Smart Write for rewrite, continue, summarize, or custom writing from the current selection |
-| `POST` | `/word/smart-imitation` | Preview/copy-only imitation writing from a template, requirements, and optional reference material |
+| `POST` | `/word/smart-write/jobs` | Start a recoverable Smart Write background job |
+| `GET` / `DELETE` | `/word/smart-write/jobs/{jobId}` | Poll or cancel a queued Smart Write job |
+| `POST` | `/word/smart-imitation/jobs` | Start a recoverable Smart Imitation background job |
+| `GET` / `DELETE` | `/word/smart-imitation/jobs/{jobId}` | Poll or cancel a queued Smart Imitation job |
+| `POST` | `/word/smart-write`, `/word/smart-imitation` | Synchronous compatibility endpoints backed by the same job coordinator |
 | `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
 | `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
 | `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails; add `?resume=1` only when recovering a previously persisted active job |

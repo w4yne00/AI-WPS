@@ -1,34 +1,47 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-09
+更新时间：2026-08-11
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
 当前分支：`main`
 
-当前版本：`v0.22.0-alpha`
+当前版本：`v0.23.0-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.22.0-20260808`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811`
 
-当前正式交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，SHA256：`3d13afeda4798e4587fced5a001c80c803ef2829684220862539ca09aae968e1`；同目录 `.sha256` 文件为包外校验记录。
+当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0230.tar.gz`，8,765,340 字节、283 个归档条目，SHA256：`acee06ff18b17591079531fcae7bb9fe046648db8b221a67a2794211025ddb2f`。
+
+## 0. v0.23.0-alpha 当前事实
+
+- 八类任务统一使用按任务隔离的“模型配置”，支持“工作流平台”与“模型直连”两种接入方式；运行时不再回退统一 URL 或统一 Key。
+- 工作流平台使用类 Dify `/chat-messages`，继续兼容旧 `inputs.query` 与新版顶层 `query/files`；模型直连使用 OpenAI 兼容 `/chat/completions`。
+- 原工作流档案原位迁移为 `workflow_platform` 配置并复用原密钥引用。新前端使用 `/provider/model-configurations`；旧 `/provider/workflow-profiles` 仅保留一个版本的兼容包装。
+- 每个配置独立保存服务地址、API Key 和接入参数。切换接入方式必须清空不兼容参数和 Key；配置完整性由地址、Key 及直连模型标识共同决定。
+- 模型直连使用 `adapter_service/system_prompts/` 中八份版本化 Markdown System Prompt；清单记录 SHA-256，交付构建验证文件和任务集合。
+- 智能编写和智能仿写已改为可恢复后台任务，前端通过 10 秒短请求提交/轮询，Provider 等待预算为 600 秒；文档审查、Excel 和 PPT 既有长任务机制保持不变。
+- 共享协调器仍为 2 个运行槽位、8 个排队位置；智能编写/仿写为交互优先级，连续 3 个交互任务后必须给普通长任务一次调度机会。
+- 生产环境默认禁止 mock 结果，仅设置 `AI_WPS_ENABLE_MOCK_PROVIDER=1` 时允许开发模拟。
+- 三宿主设置页使用紧凑下钻模型配置编辑器，任务页下拉只显示完整配置；Word 结果与回写、Excel/PPT 只读边界不变。
+- 本地验证结果：Python `526 passed / 55 skipped`，正式插件 Node 契约测试 `14/14`，三宿主 10 个 JavaScript 文件和交付 Shell 脚本语法通过；麒麟 V10/WPS 真机验收仍待执行。
 
 ## 1. 当前项目状态
 
-AI-WPS 是面向公司内网办公终端的 WPS AI 助理插件。目标环境是麒麟 V10 ARM、WPS 12.1.2、Python 3.8、离线内网部署。系统采用 WPS 原生 JS/HTML 插件、本地 Python adapter、企业 Dify/大模型 HTTP API 三层架构。
+AI-WPS 是面向公司内网办公终端的 WPS AI 助理插件。目标环境是麒麟 V10 ARM、WPS 12.1.2、Python 3.8、离线内网部署。系统采用 WPS 原生 JS/HTML 插件、本地 Python adapter、工作流平台或 OpenAI 兼容模型 HTTP API 三层架构。
 
 当前版本采用 Word/Excel/PPT 宿主分离的三个 WPS JS 插件入口。Word 侧 Ribbon 保留五个入口：
 
-- 智能编写：`POST /word/smart-write`，任务类型 `word.smart_write`。
-- 智能仿写：`POST /word/smart-imitation`，任务类型 `word.smart_imitation`。
+- 智能编写：`POST /word/smart-write/jobs`，任务类型 `word.smart_write`。
+- 智能仿写：`POST /word/smart-imitation/jobs`，任务类型 `word.smart_imitation`。
 - 文档审查：`POST /word/document-review`，任务类型 `word.document_review`。
 - 格式审查：`POST /word/format-review`，任务类型 `word.format_review`。
-- 设置：统一 API URL、四类 Word 工作流配置档案和诊断信息；任务窗格不再显示统一 API Key。
+- 设置：四类 Word 模型配置和诊断信息；任务窗格不显示统一 URL 或统一 API Key 编辑器。
 
 Excel 侧 Ribbon 只显示：
 
 - 智能分析：`POST /excel/analysis/jobs` 提交后台任务并轮询状态，兼容保留 `POST /excel/analysis`，任务类型 `excel.analysis`。
 - 公式助手：`POST /excel/formula-assistant/jobs` 提交后台任务并轮询状态，任务类型 `excel.formula_assistant`；用户明确选择“生成公式 / 解释排错”，最多读取 30 行、20 列，返回一个主公式和仅在确有差异时折叠显示的一个备选公式。
-- 设置：复用同一 adapter 配置，智能分析与公式助手分别使用独立工作流档案和 API Key。
+- 设置：智能分析与公式助手分别使用独立模型配置和 API Key。
 
 智能分析是只读分析能力：优先读取 Excel 当前选区，无有效选区时回退当前工作表已用范围；前端只提供分析报告预览、汇报段落和复制，不写回单元格，不新增工作表，不生成公式。
 
@@ -38,13 +51,17 @@ PPT 侧 Ribbon 只显示：
 
 - 智能总结：通过“当前页总结 / 文档总结”切换模式，`POST /ppt/slide-assistant/jobs` 提交后台任务并轮询状态，任务类型 `ppt.slide_assistant`。
 - 结构审查：`POST /ppt/structure-review/jobs` 提交最多 60 页的只读结构审查任务，任务类型 `ppt.structure_review`。
-- 设置：复用同一 adapter 配置，智能总结与结构审查分别使用独立工作流档案和 API Key。
+- 设置：智能总结与结构审查分别使用独立模型配置和 API Key。
 
 当前页总结读取当前页主标题、可选副标题、普通文本形状以及前后页标题；正文充分时自动优化，正文不足时按用户要求生成。文档总结接受单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，用户可选择整套 5、8、10、12、15 页建议，默认 10 页。两种模式共用同一个 `ppt.slide_assistant` 工作流档案，结果只提供预览、纯文本和分类复制，绝不创建、修改或写回幻灯片。
 
 结构审查按用户明确页段读取页码、主标题和可选副标题；无标题页才允许读取最多 120 字符正文，单次最多 10 页。整套超过 60 页时前端和 adapter 均先拒绝，不截断也不拆分模型调用。adapter 先执行空标题、完全重复标题、长标题和明显编号跳号检查，再与一次模型语义审查合并去重；结果显示整体主线、推断章节、分级问题、逐页建议和推荐目录，不显示数值总分，只允许复制结论和目录，绝不创建、删除、重排或修改幻灯片。
 
-## 2. 当前接口与 Dify 入参
+## 2. 当前模型接入
+
+模型直连接入使用配置服务地址拼接 `/chat/completions`，发送任务 System Prompt 与用户内容；默认上下文容量为 40000，提交前执行预算检查。PPT 文档总结在直连模式由 Adapter 本地解析 Markdown/DOCX，不上传文件。
+
+以下 Dify 入参仅适用于“工作流平台”接入方式：
 
 adapter 继续使用 Dify 官方 `/chat-messages`。旧工作流默认使用：
 
@@ -76,7 +93,7 @@ adapter 继续使用 Dify 官方 `/chat-messages`。旧工作流默认使用：
 
 成功输入模式按 API URL、path、任务类型和任务级 API Key 引用在当前 adapter 进程中缓存。认证失败、服务不可达、超时和 HTTP 5xx 不触发格式回退。
 
-所有消息任务都通过同一 `providerBaseUrl + providerChatPath` 发送。任务级 API Key 只决定认证密钥，不决定 path、payloadStyle 或 outputKey。未配置任务级 key 时回退统一 key。
+工作流平台配置按自身 `serviceBaseUrl + /chat-messages` 发送；模型直连配置按自身 `serviceBaseUrl + /chat/completions` 发送。每个任务只使用当前激活配置的参数和 API Key，不跨配置、不跨任务，也不回退统一 URL 或统一 Key。
 
 文档总结先由 adapter 使用当前 `ppt.slide_assistant` 档案解析出的同一 API Key 调用 `providerBaseUrl + /files/upload`，取得 `upload_file_id` 后再调用 `/chat-messages`。旧版 `inputs.query` 和新版 `inputs: {}` 两种消息格式都必须携带同一个顶层 `files` 引用；一次任务使用同一份认证快照，切换档案只影响下一次新任务。
 
@@ -115,17 +132,20 @@ GET    /provider/status
 GET    /provider/route-diagnostics
 GET    /provider/debug-last
 GET    /provider/task-api-keys
-GET    /provider/workflow-profiles?taskType={taskType}
+GET    /provider/model-configurations?taskType={taskType}
+POST   /provider/model-configurations
+PATCH  /provider/model-configurations/{configurationId}
+DELETE /provider/model-configurations/{configurationId}
+POST   /provider/model-configurations/{configurationId}/api-key
+POST   /provider/model-configurations/{configurationId}/activate
+POST   /provider/model-configurations/{configurationId}/copy
+POST   /provider/model-configurations/{configurationId}/validate
 POST   /provider/base-url
 POST   /provider/api-key
 DELETE /provider/api-key
 POST   /provider/task-api-key
 DELETE /provider/task-api-key/{taskType}
-POST   /provider/workflow-profiles
-PATCH  /provider/workflow-profiles/{profileId}
-POST   /provider/workflow-profiles/{profileId}/api-key
-POST   /provider/workflow-profiles/{profileId}/activate
-DELETE /provider/workflow-profiles/{profileId}
+GET    /provider/workflow-profiles?taskType={taskType}  # 一版本兼容包装
 GET    /writing-policies/summary
 GET    /writing-policies/packs
 GET    /writing-policies/items
@@ -144,6 +164,12 @@ GET    /writing-policies/backup
 GET    /writing-policies/diagnostics
 POST   /word/smart-write
 POST   /word/smart-imitation
+POST   /word/smart-write/jobs
+GET    /word/smart-write/jobs/{jobId}[?resume=1]
+DELETE /word/smart-write/jobs/{jobId}[?resume=1]
+POST   /word/smart-imitation/jobs
+GET    /word/smart-imitation/jobs/{jobId}[?resume=1]
+DELETE /word/smart-imitation/jobs/{jobId}[?resume=1]
 POST   /word/document-review
 POST   /word/document-review/jobs
 GET    /word/document-review/jobs/{jobId}[?resume=1]
@@ -166,6 +192,15 @@ DELETE /ppt/structure-review/jobs/{jobId}[?resume=1]
 ```
 
 ## 3. 本版本关键变化
+
+`v0.23.0-alpha` 实现双模型接入与写作长任务稳定化：
+
+- 新增 `ModelConfigurationStore`、模型配置 CRUD/复制/激活/验证 API、旧档案迁移和旧 API 兼容包装；密钥继续独立文件存储并保持 `0600`。
+- `ProviderClient` 根据当前任务配置选择工作流平台或模型直连传输，统一剥离 `<think>`，执行输入预算检查，并在生产环境拒绝未配置任务而不返回模拟结果。
+- 八类任务 System Prompt 以 Markdown 和哈希清单交付；PPT 文档总结在直连模式本地解析 Markdown/DOCX。
+- 智能编写与智能仿写新增后台任务接口、客户端任务号幂等、短轮询恢复、排队取消和 600 秒 Provider 预算；写回实现未改，恢复任务因缺少原选区快照只允许预览和复制。
+- 长任务协调器新增交互优先级及三次突发公平限制；总容量仍为 2 运行、8 排队。
+- Word、Excel、PPT 设置页统一为宿主色的紧凑模型配置编辑器，支持接入方式、独立地址、双录 Key、直连高级参数和验证调用；任务页只显示完整配置。
 
 Issue #23 已补齐 PPT 结构审查的超长与无标题页边界：
 

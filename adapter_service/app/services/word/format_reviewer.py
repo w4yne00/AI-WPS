@@ -55,7 +55,10 @@ class WordFormatReviewer:
             ai_roles, ai_batch_count = {}, 0
         provider = "local"
         if ai_roles:
-            provider = "enterprise-dify-chat/{0}".format(self.provider_client.get_auth_source_for_task("word.format_review"))
+            if hasattr(self.provider_client, "build_provider_source"):
+                provider = self.provider_client.build_provider_source("word.format_review")
+            else:
+                provider = "工作流平台"
         issues = self._build_issues(request, template, ai_roles)
         return {
             "issues": [self._dump_issue(issue) for issue in issues],

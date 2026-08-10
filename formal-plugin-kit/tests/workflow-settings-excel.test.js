@@ -126,7 +126,7 @@ function assertImmediateActivationContract() {
   assertIncludesAll(activate, [
     "previousProfileId",
     "state.workflowProfileSelections[targetTask] = previousProfileId",
-    "切换工作流失败"
+    "切换模型配置失败"
   ]);
 }
 
@@ -141,12 +141,12 @@ function assertEditorSaveContract() {
 
   const patchIndex = saveEditor.indexOf('method: "PATCH"');
   const keyPathIndex = saveEditor.indexOf('encodeURIComponent(profileId) + "/api-key"');
-  const emptyKeyGuardIndex = saveEditor.indexOf("if (!checked.apiKey)");
+  const emptyKeyGuardIndex = saveEditor.indexOf("if (!draft.apiKey)");
   assert.ok(patchIndex >= 0, "edit must PATCH name and note");
   assert.ok(emptyKeyGuardIndex > patchIndex, "empty Key guard must follow PATCH success");
   assert.ok(keyPathIndex > emptyKeyGuardIndex, "Key replacement must be optional and ordered after PATCH");
   assertIncludesAll(saveEditor, [
-    "名称和备注已保存",
+    "模型配置已保存",
     "Key 更换失败",
     "原 Key 仍然有效"
   ]);
@@ -158,7 +158,7 @@ function assertDeleteAndBusyContracts() {
   assert.ok(renderManager.includes("helpers.canDeleteWorkflowProfile"));
   assertIncludesAll(confirmDelete, [
     "activeProfileId",
-    "当前工作流不能删除",
+    "当前模型配置不能删除",
     'method: "DELETE"'
   ]);
   assert.ok(js.includes("state.busy = Boolean(isBusy)"));
@@ -193,7 +193,7 @@ function assertExcelHostReviewFixContracts() {
   ]);
   assertAppearsInOrder(activate, [
     "state.workflowProfileLoadSequences[targetTask]",
-    'request("/provider/workflow-profiles/"'
+    'request("/provider/model-configurations/"'
   ], "activation must invalidate older profile GETs before mutation");
 
   [

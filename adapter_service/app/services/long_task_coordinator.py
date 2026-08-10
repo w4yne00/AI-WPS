@@ -23,6 +23,9 @@ PUBLIC_PHASES = {
     "cancelled",
 }
 TERMINAL_STATUSES = {"completed", "failed", "cancelled"}
+PRIORITY_REGULAR = "regular"
+PRIORITY_INTERACTIVE = "interactive"
+INTERACTIVE_BURST_LIMIT = 3
 JobKey = Tuple[str, str]
 
 
@@ -58,6 +61,7 @@ class LongTaskCoordinator:
         self._cancelled_count = 0
         self._rejected_count = 0
         self._timed_out_count = 0
+        self._interactive_dispatch_streak = 0
         self._lock = threading.Lock()
         self._condition = threading.Condition(self._lock)
 
@@ -72,11 +76,17 @@ class LongTaskCoordinator:
         failure_message: str,
         public_metadata: Optional[Dict] = None,
         safe_failure_codes: Optional[Set[str]] = None,
+        priority_class: str = PRIORITY_REGULAR,
     ) -> Dict:
         worker_job_key: Optional[JobKey] = None
         now_mono = self._monotonic()
         now_wall = self._wall_clock()
         job_key = (task_type, job_id)
+        normalized_priority = (
+            PRIORITY_INTERACTIVE
+            if priority_class == PRIORITY_INTERACTIVE
+            else PRIORITY_REGULAR
+        )
         with self._lock:
             self._cleanup_locked(now_mono)
             existing = self._jobs.get(job_key)
@@ -111,6 +121,7 @@ class LongTaskCoordinator:
                 "_failureMessage": failure_message,
                 "_safeFailureCodes": set(safe_failure_codes or set()),
                 "_publicMetadata": deepcopy(public_metadata or {}),
+                "_priorityClass": normalized_priority,
                 "result": None,
                 "error": None,
             }
@@ -222,6 +233,18 @@ class LongTaskCoordinator:
                 "maxQueued": self.max_queued,
                 "runningCount": self._running_count,
                 "queuedCount": len(self._queue),
+                "interactiveQueuedCount": sum(
+                    1
+                    for job_key in self._queue
+                    if self._jobs.get(job_key, {}).get("_priorityClass")
+                    == PRIORITY_INTERACTIVE
+                ),
+                "regularQueuedCount": sum(
+                    1
+                    for job_key in self._queue
+                    if self._jobs.get(job_key, {}).get("_priorityClass")
+                    != PRIORITY_INTERACTIVE
+                ),
                 "terminalCount": len(terminal_jobs),
                 "terminalTtlSeconds": self.terminal_ttl_seconds,
                 "maxTerminalJobs": self.max_terminal_jobs,
@@ -304,15 +327,59 @@ class LongTaskCoordinator:
 
     def _promote_next_locked(self, now_mono: float) -> Optional[JobKey]:
         while self._queue and self._running_count < self.max_running:
-            job_key = self._queue.popleft()
+            ordered = self._ordered_queue_locked()
+            if not ordered:
+                return None
+            job_key = ordered[0]
+            try:
+                self._queue.remove(job_key)
+            except ValueError:
+                continue
             job = self._jobs.get(job_key)
             if job is None or job["status"] != "queued":
                 continue
+            if job.get("_priorityClass") == PRIORITY_INTERACTIVE:
+                self._interactive_dispatch_streak += 1
+            else:
+                self._interactive_dispatch_streak = 0
             job["status"] = "running"
             self._transition_phase_locked(job, "preparing", now_mono)
             self._running_count += 1
             return job_key
         return None
+
+    def _ordered_queue_locked(self):
+        pending = [
+            job_key
+            for job_key in self._queue
+            if self._jobs.get(job_key, {}).get("status") == "queued"
+        ]
+        ordered = []
+        streak = self._interactive_dispatch_streak
+        while pending:
+            interactive = [
+                key
+                for key in pending
+                if self._jobs.get(key, {}).get("_priorityClass")
+                == PRIORITY_INTERACTIVE
+            ]
+            regular = [key for key in pending if key not in interactive]
+            if interactive and regular:
+                if streak >= INTERACTIVE_BURST_LIMIT:
+                    selected = regular[0]
+                    streak = 0
+                else:
+                    selected = interactive[0]
+                    streak += 1
+            elif interactive:
+                selected = interactive[0]
+                streak += 1
+            else:
+                selected = regular[0]
+                streak = 0
+            ordered.append(selected)
+            pending.remove(selected)
+        return ordered
 
     def _transition_phase_locked(self, job: Dict, phase: str, now_mono: float) -> None:
         current_phase = job.get("phase", "")
@@ -386,7 +453,7 @@ class LongTaskCoordinator:
         if job["status"] == "queued":
             try:
                 job_key = (job["taskType"], job["jobId"])
-                queue_position = list(self._queue).index(job_key) + 1
+                queue_position = self._ordered_queue_locked().index(job_key) + 1
             except ValueError:
                 queue_position = None
         public_job = {

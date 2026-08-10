@@ -11,13 +11,13 @@ function assertSettingsStateContract(targetHelpers) {
       "task.one": {
         activeProfileId: "one-active",
         profiles: [
-          { id: "one-active", keyConfigured: false },
-          { id: "one-backup", keyConfigured: true }
+          { id: "one-active", keyConfigured: false, complete: false },
+          { id: "one-backup", keyConfigured: true, complete: true }
         ]
       },
       "task.two": {
         activeProfileId: "two-active",
-        profiles: [{ id: "two-active", keyConfigured: true }]
+        profiles: [{ id: "two-active", keyConfigured: true, complete: true }]
       }
     }
   };
@@ -30,7 +30,7 @@ function assertSettingsStateContract(targetHelpers) {
   });
   assert.deepStrictEqual(
     targetHelpers.deriveModelInterfaceState(Object.assign({}, baseInput, { providerBaseUrl: "  " })),
-    { code: "unconfigured", label: "未配置", readyCount: 1, totalCount: 2 }
+    { code: "partial", label: "部分就绪 · 1/2", readyCount: 1, totalCount: 2 }
   );
   assert.deepStrictEqual(
     targetHelpers.deriveModelInterfaceState(Object.assign({}, baseInput, { detectable: false })),
@@ -44,11 +44,11 @@ function assertSettingsStateContract(targetHelpers) {
       profilesByTask: {
         "task.one": {
           activeProfileId: "one-active",
-          profiles: [{ id: "one-active", keyConfigured: true }]
+          profiles: [{ id: "one-active", keyConfigured: true, complete: true }]
         },
         "task.two": {
           activeProfileId: "two-active",
-          profiles: [{ id: "two-active", keyConfigured: true }]
+          profiles: [{ id: "two-active", keyConfigured: true, complete: true }]
         }
       }
     }),
@@ -62,7 +62,7 @@ function assertSettingsStateContract(targetHelpers) {
       profilesByTask: {
         "task.one": {
           activeProfileId: "missing",
-          profiles: [{ id: "backup", keyConfigured: true }]
+          profiles: [{ id: "backup", keyConfigured: true, complete: true }]
         }
       }
     }),
@@ -230,10 +230,10 @@ function testWordSelectionWatcherFallsBackWhenEventsAreUnavailable() {
 function assertWorkflowUiContract(targetHelpers) {
   assert.deepStrictEqual(
     targetHelpers.workflowProfileOptionState(
-      { id: "p1", name: "生产版", keyConfigured: true },
+      { id: "p1", name: "生产版", keyConfigured: true, complete: true, accessMethod: "workflow_platform" },
       "p1"
     ),
-    { id: "p1", label: "✓ 生产版", active: true, disabled: false }
+    { id: "p1", label: "✓ 生产版 · 工作流平台", active: true, disabled: false }
   );
   assert.strictEqual(
     targetHelpers.workflowProfileOptionState(
@@ -244,11 +244,11 @@ function assertWorkflowUiContract(targetHelpers) {
   );
   assert.deepStrictEqual(
     targetHelpers.validateWorkflowProfileDraft({ name: "", note: "", apiKey: "" }, "create"),
-    { ok: false, field: "name", message: "请输入工作流名称。" }
+    { ok: false, field: "name", message: "请输入模型配置名称。" }
   );
-  assert.deepStrictEqual(
-    targetHelpers.validateWorkflowProfileDraft({ name: "测试版", note: "", apiKey: "" }, "create"),
-    { ok: false, field: "apiKey", message: "请输入工作流 API Key。" }
+  assert.strictEqual(
+    targetHelpers.validateWorkflowProfileDraft({ name: "测试版", note: "", apiKey: "" }, "create").ok,
+    true
   );
   assert.strictEqual(
     targetHelpers.validateWorkflowProfileDraft({ name: "生产版", note: "稳定", apiKey: "" }, "edit").ok,
@@ -1153,7 +1153,7 @@ function testNormalizeWorkflowProfileDataHandlesMalformedInput() {
   assert.deepStrictEqual(data.profiles, []);
   assert.strictEqual(data.activeProfileId, "");
   assert.strictEqual(helpers.getActiveWorkflowProfileName(data), "尚未配置");
-  assert.strictEqual(helpers.workflowProfileStatusText({ id: "p", keyConfigured: false }, ""), "密钥未配置");
+  assert.strictEqual(helpers.workflowProfileStatusText({ id: "p", complete: false }, ""), "配置不完整");
 }
 
 function testNormalizeWritingPolicyUsageHandlesMissingAndMalformedMetadata() {
