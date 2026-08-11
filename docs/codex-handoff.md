@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
 
-当前候选交付包构建目标：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；构建脚本生成同名 `.sha256` 校验文件，麒麟 V10/WPS 真机验收待执行。
+当前候选交付包已生成：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；同名 `.sha256` 校验通过，麒麟 V10/WPS 真机验收待执行。
 
 ## 0. v0.23.1-alpha 当前事实
 
@@ -502,7 +502,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.23.1-alpha` 已执行本地自动化、静态契约和白名单交付审计。当前 Mac 没有 Python 3.8，因此完整生命周期门禁、候选归档生成和麒麟 V10/WPS 真机验收仍需在对应环境执行，不能由 Python 3.9 或静态扫描替代。
+`v0.23.1-alpha` 已执行本地自动化、静态契约和白名单交付审计，并在 Linux ARM64 容器内使用 CPython 3.8.20 完成最终归档运行与完整生命周期门禁。该结果标记候选构建，不替代麒麟 V10/WPS 真机验收。
 
 ```bash
 AI_WPS_ENABLE_MOCK_PROVIDER=1 PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
@@ -517,14 +517,14 @@ DATE_TAG=20260811 PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 bash packagi
 当前结果：
 
 - Issue #33 定向测试通过；实际构建完成 205 个源白名单文件组装，生成模板/清单后共 209 个文件，Python 3.8 静态兼容扫描 66 个生产/交付脚本文件通过，白名单、引用闭包、版本、敏感值和文件哈希审计通过。
-- 当前 Mac 仅有 Python 3.9.6；构建在调用真实 Python 3.8 生命周期门禁时阻断并清理临时目录、归档与校验文件，尚未生成或标记候选构建。
+- Linux ARM64 / CPython 3.8.20 最终包门禁通过：真实导入、Uvicorn 启动、4 项关键接口和运行路径契约通过；全新安装、v0.22 升级、损坏 v0.23.0 共 3 个场景，以及核心状态、写作规范、导入、启动、版本、权限、WPS 未退出和安装中断共 8 个故障/补偿场景全部通过。
 - Python 全量单测：`664 tests OK (skipped=66)`；跳过项来自当前 FastAPI/条件门禁、受限本地套接字及未设置真实 Python 3.8 路径。
 - 全部 15 个正式前端测试文件通过，新增覆盖三宿主恢复卡片、只读备份、脱敏诊断和无 HTTP 恢复/重置入口契约。
 - 当前开发机未安装 `wps-addon` 开发依赖，本轮未执行该旧脚手架的 Vitest 与 `tsc --noEmit`；该子目录不是本次三宿主正式交付包构建源。
 - Word/Excel/PPT 正式插件 JavaScript 语法检查、Issue #33 构建/安装脚本 `bash -n` 与 67 个生产/交付 Python 文件的 3.8 静态兼容扫描：通过。
 - 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
-- `v0.23.1-alpha` 候选归档目标仍为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；只有真实 Python 3.8 生命周期门禁全部通过后才会原子发布归档与同名 `.sha256`。
+- `v0.23.1-alpha` 候选归档与同名 `.sha256` 已由构建脚本原子发布到 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；包外 SHA-256 校验通过。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
 

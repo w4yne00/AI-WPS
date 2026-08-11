@@ -6,7 +6,7 @@
 - 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
 - 交付包：`ai-wps-phase1-delivery-20260811-v0231.tar.gz`
 - 对应工单：Issue #26、#28、#30、#31、#32、#33
-- 构建状态：白名单组装与静态审计通过；真实 Python 3.8 生命周期门禁待执行，尚未标记候选构建
+- 构建状态：候选构建；白名单组装、静态审计及 Linux ARM64 / Python 3.8.20 最终包生命周期门禁通过，麒麟 V10/WPS 真机验收待执行
 - 发布清单：`release-manifest.json`
 - 项目：
 - 终端编号：
@@ -62,8 +62,20 @@
 ### Python 3.8 最终包生命周期门禁
 
 ```text
-待在真实 Python 3.8 / 麒麟 V10 ARM 环境执行：
-python3.8 scripts/python38_delivery_lifecycle_gate.py <最终tar包> --expected-version 0.23.1-alpha
+python38_version=3.8.20
+python38_delivery_runtime_gate=passed
+lifecycle_scenario=fresh_install passed
+lifecycle_scenario=upgrade_v022 passed
+lifecycle_scenario=damaged_v0230 passed
+lifecycle_fault=core_state_failure passed
+lifecycle_fault=writing_policy_failure passed
+lifecycle_fault=python_import_failure passed
+lifecycle_fault=candidate_start_failure passed
+lifecycle_fault=health_version_mismatch passed
+lifecycle_fault=permission_error passed
+lifecycle_fault=wps_not_exited passed
+lifecycle_fault=install_interruption passed
+python38_delivery_lifecycle_gate=passed status=candidate
 ```
 
 ## WPS 功能验证
@@ -129,7 +141,7 @@ python3.8 scripts/python38_delivery_lifecycle_gate.py <最终tar包> --expected-
 - 公式助手操作手册与提示词模板：本地审计通过
 - 结构审查操作手册与提示词模板：本地审计通过
 - 八类任务 System Prompt Markdown 与哈希清单：本地审计通过
-- Python 3.8 最终包生命周期门禁：当前 Mac 仅有 Python 3.9.6，未执行；不得以静态扫描或 Python 3.9 代替
+- Python 3.8 最终包生命周期门禁：Linux ARM64 容器内使用 CPython 3.8.20 执行通过；覆盖 3 个安装/升级场景及 8 个故障/补偿场景，终态为 `candidate`
 - 工作流平台/模型直连双接入配置与旧档案迁移：本地自动化通过，目标模型验证待执行
 - 智能编写/智能仿写后台任务、600 秒预算与恢复轮询：本地自动化通过，慢模型真机验收待执行
 - 四个规范包及四份审阅清单：本地审计通过
@@ -190,6 +202,6 @@ python3.8 scripts/python38_delivery_lifecycle_gate.py <最终tar包> --expected-
 
 ## 验收结论
 
-- 是否通过：Issue #33 本地白名单组装、静态兼容和交付审计通过；真实 Python 3.8 生命周期门禁与麒麟 V10/WPS 真机验收待执行。
+- 是否通过：Issue #33 候选构建通过；白名单组装、静态兼容、交付审计及 Linux ARM64 / Python 3.8.20 最终包生命周期门禁均通过，麒麟 V10/WPS 真机验收待执行。
 - 本票边界：自动化门禁通过后只标记候选构建；未完成真机验收前不得宣称目标机已经恢复。
 - 父票后续动作：Issue #25 的目标终端覆盖升级、配置/Key/规范库恢复与重启保持仍须单独执行和记录。
