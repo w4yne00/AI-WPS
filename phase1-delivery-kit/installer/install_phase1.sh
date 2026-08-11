@@ -717,6 +717,15 @@ create_candidate_state_snapshot() {
   esac
 }
 
+synchronize_candidate_state_with_snapshot() {
+  local verified_state="$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID/state"
+
+  [ -d "$verified_state" ] || fail "candidate_snapshot_state_missing"
+  copy_dir "$verified_state" "$CANDIDATE_STATE"
+  chmod 700 "$CANDIDATE_STATE"
+  log "candidate_state_source=verified_snapshot snapshot=$CANDIDATE_SNAPSHOT_ID"
+}
+
 enable_exec_permissions() {
   if [ -d "$ADAPTER_TARGET/scripts" ]; then
     find "$ADAPTER_TARGET/scripts" -type f -name '*.sh' -exec chmod +x {} \;
@@ -1198,6 +1207,7 @@ prepare_candidate_adapter
 prepare_runtime_state
 initialize_writing_policy_database "$CANDIDATE_TARGET" "$CANDIDATE_STATE"
 create_candidate_state_snapshot
+synchronize_candidate_state_with_snapshot
 run_candidate_preflight
 enforce_recovery_activation_gate
 stage_wps_plugins

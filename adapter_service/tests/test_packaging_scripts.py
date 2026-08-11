@@ -1120,11 +1120,54 @@ esac
             install_flow.index("create_candidate_state_snapshot"),
             install_flow.index("switch_release_generation"),
         )
+        self.assertLess(
+            install_flow.index("synchronize_candidate_state_with_snapshot"),
+            install_flow.index("run_candidate_preflight"),
+        )
         self.assertIn("prepare_release_transaction", install_flow)
         self.assertIn("finalize_release_generation", install_flow)
         self.assertNotIn('rm -rf "$ADAPTER_TARGET"', installer)
         self.assertNotIn("preserve_adapter_runtime_config", installer)
         self.assertNotIn("restore_adapter_runtime_config", installer)
+
+    def test_phase1_installer_switches_the_exact_verified_snapshot_state(self) -> None:
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+        function_prefix = installer.split("enable_exec_permissions() {", 1)[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            backup_dir = root / "backups"
+            snapshot_state = backup_dir / "snapshot-candidate" / "state"
+            snapshot_state.mkdir(parents=True)
+            (snapshot_state / "writing_policies.db").write_bytes(b"verified-snapshot")
+            candidate_state = root / "candidate-state"
+            candidate_state.mkdir()
+            (candidate_state / "writing_policies.db").write_bytes(b"sqlite-source-layout")
+            harness = root / "synchronize-state.sh"
+            harness.write_text(
+                function_prefix
+                + '\nBACKUP_DIR="$1"\n'
+                + 'CANDIDATE_SNAPSHOT_ID="snapshot-candidate"\n'
+                + 'CANDIDATE_STATE="$2"\n'
+                + "synchronize_candidate_state_with_snapshot\n",
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                ["bash", str(harness), str(backup_dir), str(candidate_state)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertEqual(
+                (candidate_state / "writing_policies.db").read_bytes(),
+                b"verified-snapshot",
+            )
+            self.assertIn("candidate_state_source=verified_snapshot", result.stdout)
 
     def test_phase1_delivery_generates_writing_policy_templates_and_includes_guide(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
