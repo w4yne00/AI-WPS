@@ -687,6 +687,8 @@ prepare_runtime_state() {
 
   mkdir -p "$CANDIDATE_STATE"
   chmod 700 "$CANDIDATE_STATE"
+  printf '%s\n' '{}' > "$CANDIDATE_STATE/adapter.json"
+  chmod 600 "$CANDIDATE_STATE/adapter.json"
   log "runtime_state_status=fresh"
 }
 

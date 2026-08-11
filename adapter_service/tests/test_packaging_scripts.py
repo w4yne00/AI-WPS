@@ -1186,6 +1186,51 @@ esac
             )
             self.assertIn("candidate_state_source=verified_snapshot", result.stdout)
 
+    def test_phase1_installer_initializes_fresh_state_without_example_key_refs(self) -> None:
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+        function_prefix = installer.split("enable_exec_permissions() {", 1)[0]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            candidate_target = root / "candidate-release"
+            state_tool = candidate_target / "adapter_service/tools/runtime_state.py"
+            state_tool.parent.mkdir(parents=True)
+            state_tool.touch()
+            candidate_state = root / "candidate-state"
+            harness = root / "fresh-state.sh"
+            harness.write_text(
+                function_prefix
+                + '\nCANDIDATE_TARGET="$1"\n'
+                + 'CANDIDATE_STATE="$2"\n'
+                + 'STATE_DIR="$3/state"\n'
+                + 'BACKUP_DIR="$3/backups"\n'
+                + 'VAR_DIR="$3/var"\n'
+                + 'ADAPTER_TARGET="$3/legacy-adapter"\n'
+                + 'prepare_runtime_state\n',
+                encoding="utf-8",
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(harness),
+                    str(candidate_target),
+                    str(candidate_state),
+                    str(root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            config_path = candidate_state / "adapter.json"
+            self.assertEqual(json.loads(config_path.read_text(encoding="utf-8")), {})
+            self.assertEqual(config_path.stat().st_mode & 0o777, 0o600)
+            self.assertIn("runtime_state_status=fresh", result.stdout)
+
     def test_phase1_delivery_generates_writing_policy_templates_and_includes_guide(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
