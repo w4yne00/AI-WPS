@@ -253,6 +253,9 @@ class PackagingScriptTests(unittest.TestCase):
             python_stub.write_text(
                 """#!/usr/bin/env bash
 printf 'PYTHONNOUSERSITE=%s PYTHONPATH=%s ARGS=%s\\n' "${PYTHONNOUSERSITE:-}" "${PYTHONPATH:-}" "$*" >> "$PYTHON_STUB_LOG"
+if [[ " $* " == *" -s - "* ]]; then
+  exec "$REAL_PYTHON" "$@"
+fi
 if [[ " $* " == *" --target "* ]]; then
   while [ "$#" -gt 0 ]; do
     if [ "$1" = "--target" ]; then
@@ -268,8 +271,17 @@ exit 0
                 encoding="utf-8",
             )
             python_stub.chmod(0o755)
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            awk_stub = bin_dir / "awk"
+            awk_stub.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            awk_stub.chmod(0o755)
             environment = dict(os.environ)
             environment["PYTHON_STUB_LOG"] = str(python_log)
+            environment["REAL_PYTHON"] = sys.executable
+            environment["PATH"] = "{0}:{1}".format(
+                bin_dir, environment.get("PATH", "")
+            )
 
             result = subprocess.run(
                 [

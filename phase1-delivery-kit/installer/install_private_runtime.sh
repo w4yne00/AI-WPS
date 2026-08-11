@@ -53,11 +53,23 @@ verify_hashes() {
 validate_lock_file() {
   local lock_file="$1"
   [ -s "$lock_file" ] || fail "runtime_lock_missing path=$lock_file"
-  if awk '
-    /^[[:space:]]*($|#)/ { next }
-    $0 !~ /^[A-Za-z0-9_.-]+==[^[:space:]]+[[:space:]]+--hash=sha256:[0-9a-f]{64}([[:space:]]+--hash=sha256:[0-9a-f]{64})*[[:space:]]*$/ { bad=1 }
-    END { exit bad ? 1 : 0 }
-  ' "$lock_file"; then
+  if PYTHONNOUSERSITE=1 PYTHONPATH="" "$PYTHON_BIN" -s - "$lock_file" <<'PY'
+import re
+import sys
+
+pattern = re.compile(
+    r"^[A-Za-z0-9_.-]+==\S+\s+--hash=sha256:[0-9a-f]{64}"
+    r"(?:\s+--hash=sha256:[0-9a-f]{64})*\s*$"
+)
+with open(sys.argv[1], encoding="utf-8") as handle:
+    for raw_line in handle:
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if pattern.fullmatch(line) is None:
+            raise SystemExit(1)
+PY
+  then
     return
   fi
   fail "runtime_lock_not_fully_pinned path=$lock_file"
