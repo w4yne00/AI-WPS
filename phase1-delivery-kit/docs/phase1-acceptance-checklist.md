@@ -6,16 +6,21 @@
 - [ ] 默认安装拒绝 `root`、隐式 `sudo`、目标 UID 不一致、主目录不存在或目标目录不可写，且失败前发布组件摘要不变。
 - [ ] 管理员代装显式提交 `--target-user`、`--target-uid`、`--target-home`、`--wps-jsaddons-dir`，四项均与系统账户和目录信息交叉验证。
 - [ ] WPS、ET 或 WPP 任一进程仍运行，或目标用户进程枚举失败时安装停止，且发布组件摘要不变。
-- [ ] `adapter-start-kit/python-runtime/requirements-lock.txt` 存在，离线 Wheel 与 `SHA256SUMS` 校验通过。
-- [ ] 候选隔离端口完成完整导入、Uvicorn 启动、版本 `0.23.1-alpha` 和 `/health/ready` 业务就绪检查。
-- [ ] 候选预检与正式启动日志指向同一 `adapter-start-kit/python-runtime`，并设置 `PYTHONNOUSERSITE=1`。
-- [ ] 安装后移除或重命名 `adapter-start-kit/python-runtime`，正式启动明确报告 `private_runtime_missing`，且不从环境 `PYTHONPATH` 回退。
+- [ ] `releases/0.23.1-alpha/python-runtime/requirements-lock.txt` 存在，离线 Wheel 与 `SHA256SUMS` 校验通过。
+- [ ] 候选使用匹配数据快照在隔离端口完成完整导入、Uvicorn 启动、版本 `0.23.1-alpha` 和 `/health/ready` 业务就绪检查。
+- [ ] 候选预检与正式启动日志指向同一 `releases/0.23.1-alpha/python-runtime`，并设置 `PYTHONNOUSERSITE=1`。
+- [ ] 安装后移除或重命名 `releases/0.23.1-alpha/python-runtime`，正式启动明确报告 `private_runtime_missing`，且不从环境 `PYTHONPATH` 回退。
 - [ ] 安装前后系统和用户 `site-packages` 文件摘要一致。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0` 存在。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-et_1.0.0` 存在。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-wpp_1.0.0` 存在。
 - [ ] `publish.xml` 同时包含 Word 的 `type="wps"`、Excel 的 `type="et"` 和 PPT 的 `type="wpp"`。
-- [ ] 首次安装自动创建非空的 `adapter-start-kit/run/writing_policies.db`，文件权限为 `0600`。
+- [ ] 首次安装自动创建非空的 `state/writing_policies.db`，文件权限为 `0600`。
+- [ ] `current` 指向 `releases/0.23.1-alpha`，且该目录包含 `release-manifest.json`、`release-generation.json`、Adapter 和发布私有依赖。
+- [ ] `var/transactions/*.json` 为 `committed`，记录 Adapter、三宿主插件、`publish.xml`、`current` 和候选数据快照，全部组件 `verified=true`。
+- [ ] 分别在七个组件备份后和切入后中断安装；再次执行安装器均恢复上一完整代际，不保留混合插件、Adapter、指针或数据。
+- [ ] 注入最终健康、版本或组件哈希失败后，事务为 `rolled_back`，上一 Adapter 重启成功，WPS 重开后仍为上一完整代际。
+- [ ] 已安装 systemd 服务时，事务先进入 `ready_to_commit`；分别注入 unit 渲染、`daemon-reload`、服务启动和外部提交复验失败，均恢复旧 unit 与上一完整代际。正常完成后 unit 的 `WorkingDirectory`、`ExecStart`、`ExecStop` 均通过 `current`。
 - [ ] `release-manifest.json` 的版本、三宿主、四个规范包和版本规则号与本包一致。
 - [ ] 使用真实 Python 3.8 执行 `python3.8 scripts/python38_delivery_runtime_gate.py <最终tar包> --expected-version 0.23.1-alpha` 通过。
 
@@ -155,9 +160,9 @@
 ## 10. 覆盖安装与配置保护
 
 - [ ] 覆盖安装前记录当前 API URL、统一 API Key 和各任务工作流档案。
-- [ ] 执行新版本 `installer/install_phase1.sh` 覆盖安装后，`config/adapter.json` 保持原 API URL。
-- [ ] 覆盖安装后，`run/provider_api_key` 和 `run/provider_api_keys/` 中的统一及任务级密钥均被保留。
-- [ ] 覆盖安装后，`run/writing_policies.db` 的 SHA-256 与安装前一致。
+- [ ] 执行新版本 `installer/install_phase1.sh` 覆盖安装后，`state/adapter.json` 保持原 API URL。
+- [ ] 覆盖安装后，`state/provider_api_key` 和 `state/provider_api_keys/` 中的统一及任务级密钥均被保留。
+- [ ] 覆盖安装后，`state/writing_policies.db` 的 SHA-256 与安装前一致。
 - [ ] 覆盖安装后，全部已有 `writing_policies.db.backup-*` 均被保留。
 - [ ] 覆盖安装后，组织覆盖、组织自定义规范和预置停用状态仍可读取并优先于预置基线。
 - [ ] 覆盖安装后，八类任务仍命中原模型配置，用户已有配置、API Key 和写作规范均未丢失。

@@ -518,7 +518,7 @@ class RuntimePathContractTests(unittest.TestCase):
                         ROOT / "adapter-start-kit/scripts/systemd_unit.sh"
                     ),
                     "UNIT_PATH": str(unit_path),
-                    "KIT_ROOT": str(root / "releases/current"),
+                    "KIT_ROOT": str(root / "current"),
                     "PYTHON_BIN": str(root / "python env/bin/python3"),
                     "PID_PATH": str(root / "var/run/adapter.pid"),
                     "AI_WPS_STATE_DIR": str(root / "state"),
@@ -549,11 +549,11 @@ class RuntimePathContractTests(unittest.TestCase):
                 unit,
             )
             self.assertIn(
-                'WorkingDirectory="{0}/releases/current"'.format(escaped_root),
+                'WorkingDirectory="{0}/current"'.format(escaped_root),
                 unit,
             )
             self.assertIn(
-                'ExecStart=/bin/bash "{0}/releases/current/scripts/start_adapter.sh" "18100"'.format(
+                'ExecStart=/bin/bash "{0}/current/scripts/start_adapter.sh" "18100"'.format(
                     escaped_root
                 ),
                 unit,

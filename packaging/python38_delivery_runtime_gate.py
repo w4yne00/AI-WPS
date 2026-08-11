@@ -99,6 +99,27 @@ def load_manifest(delivery_root: Path, expected_version: str) -> Dict:
                 expected_version, version, adapter_version
             )
         )
+    generation_policy = manifest.get("releaseGenerationPolicy", {})
+    expected_generation_components = [
+        "adapter_release",
+        "word_plugin",
+        "excel_plugin",
+        "ppt_plugin",
+        "publish_manifest",
+        "runtime_state_snapshot",
+        "current_pointer",
+    ]
+    if (
+        generation_policy.get("switchStrategy")
+        != "durable-compensating-rename"
+        or generation_policy.get("currentPointer") != "current"
+        or generation_policy.get("components")
+        != expected_generation_components
+    ):
+        raise GateFailure("RELEASE_GENERATION_POLICY_INVALID")
+    transaction_tool = delivery_root / "installer/release_transaction.py"
+    if not transaction_tool.is_file():
+        raise GateFailure("RELEASE_TRANSACTION_TOOL_MISSING")
     print("delivery_manifest=passed version={0}".format(expected_version))
     return manifest
 
@@ -113,6 +134,7 @@ def run_compatibility_scan(delivery_root: Path) -> None:
             sys.executable,
             str(scanner),
             str(adapter_root),
+            str(delivery_root / "installer/release_transaction.py"),
             str(delivery_root / "scripts/check_python38_compatibility.py"),
             str(delivery_root / "scripts/python38_delivery_runtime_gate.py"),
         ],

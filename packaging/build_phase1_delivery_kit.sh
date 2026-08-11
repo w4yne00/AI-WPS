@@ -57,6 +57,7 @@ cp "$ROOT_DIR/packaging/python38_delivery_runtime_gate.py" "$TMP_DIR/scripts/"
 
 "$PYTHON_BIN" "$ROOT_DIR/packaging/check_python38_compatibility.py" \
   "$TMP_DIR/packages/adapter-start-kit/adapter_service" \
+  "$TMP_DIR/installer/release_transaction.py" \
   "$TMP_DIR/scripts/check_python38_compatibility.py" \
   "$TMP_DIR/scripts/python38_delivery_runtime_gate.py"
 
@@ -185,9 +186,27 @@ for required in (
     root / manifest["adapter"]["privateRuntime"]["hashManifest"],
     root / "installer" / "install_private_runtime.sh",
     root / "installer" / "preflight_candidate.sh",
+    root / "installer" / "release_transaction.py",
 ):
     if not required.is_file():
         raise SystemExit("missing delivery file: " + str(required.relative_to(root)))
+
+generation_policy = manifest.get("releaseGenerationPolicy", {})
+expected_generation_components = [
+    "adapter_release",
+    "word_plugin",
+    "excel_plugin",
+    "ppt_plugin",
+    "publish_manifest",
+    "runtime_state_snapshot",
+    "current_pointer",
+]
+if generation_policy.get("switchStrategy") != "durable-compensating-rename":
+    raise SystemExit("release generation policy missing compensating switch")
+if generation_policy.get("currentPointer") != "current":
+    raise SystemExit("release generation current pointer mismatch")
+if generation_policy.get("components") != expected_generation_components:
+    raise SystemExit("release generation component inventory mismatch")
 
 runtime_root = root / "packages" / "kylin-v10-arm-py38"
 hash_manifest = runtime_root / "SHA256SUMS"

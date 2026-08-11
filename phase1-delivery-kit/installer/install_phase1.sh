@@ -19,11 +19,23 @@ ADAPTER_SOURCE="$DELIVERY_ROOT/packages/adapter-start-kit"
 PIP_BOOTSTRAP_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38-pip-bootstrap"
 RUNTIME_DEPS_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38"
 PUBLISH_SOURCE="$DELIVERY_ROOT/wps-jsaddons/publish.xml"
+RELEASE_MANIFEST_SOURCE="$DELIVERY_ROOT/release-manifest.json"
+TRANSACTION_TOOL="$DELIVERY_ROOT/installer/release_transaction.py"
 ADAPTER_TARGET=""
 STATE_DIR=""
 BACKUP_DIR=""
 VAR_DIR=""
 RELEASE_VERSION="0.23.1-alpha"
+PREVIOUS_RELEASE_VERSION="legacy"
+PREVIOUS_SNAPSHOT_ID=""
+CANDIDATE_SNAPSHOT_ID=""
+TRANSACTION_LOG=""
+SYSTEMD_SERVICE_PRESENT="0"
+SYSTEMD_WAS_ACTIVE="0"
+SYSTEMD_SERVICE_NAME="${SERVICE_NAME:-ai-wps-adapter.service}"
+SYSTEMD_SERVICE_FILE="${AI_WPS_SYSTEMD_SERVICE_FILE:-/etc/systemd/system/$SYSTEMD_SERVICE_NAME}"
+SYSTEMD_HANDOFF_FILE=""
+SYSTEMD_UNIT_BACKUP="${AI_WPS_SYSTEMD_UNIT_BACKUP:-${SYSTEMD_SERVICE_FILE}.ai-wps.previous}"
 
 log() {
   printf '%s\n' "$*"
@@ -216,11 +228,19 @@ adapter_port_is_listening() {
 }
 
 stop_adapter_for_state_transition() {
-  local service_name="${SERVICE_NAME:-ai-wps-adapter.service}"
-  if command -v systemctl >/dev/null 2>&1 \
-    && systemctl is-active --quiet "$service_name"; then
-    [ "$(id -u)" = "0" ] || fail "adapter_service_stop_requires_admin service=$service_name"
-    systemctl stop "$service_name" || fail "adapter_service_stop_failed service=$service_name"
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$SYSTEMD_SERVICE_FILE" ]; then
+    SYSTEMD_SERVICE_PRESENT="1"
+    if [ "$(id -u)" != "0" ] \
+      && [ "${AI_WPS_SYSTEMD_MANAGED_BY_PARENT:-0}" != "1" ]; then
+      fail "adapter_service_update_requires_admin service=$SYSTEMD_SERVICE_NAME"
+    fi
+  fi
+  if [ "$SYSTEMD_SERVICE_PRESENT" = "1" ] \
+    && systemctl is-active --quiet "$SYSTEMD_SERVICE_NAME"; then
+    [ "$(id -u)" = "0" ] || fail "adapter_service_stop_requires_admin service=$SYSTEMD_SERVICE_NAME"
+    SYSTEMD_WAS_ACTIVE="1"
+    systemctl stop "$SYSTEMD_SERVICE_NAME" \
+      || fail "adapter_service_stop_failed service=$SYSTEMD_SERVICE_NAME"
   fi
   if [ -f "$ADAPTER_TARGET/scripts/stop_adapter.sh" ]; then
     AI_WPS_STATE_DIR="$STATE_DIR" \
@@ -233,10 +253,200 @@ stop_adapter_for_state_transition() {
   log "adapter_state_transition_lock=stopped port=$PORT"
 }
 
+install_current_systemd_service() {
+  local temporary_unit
+  [ "$SYSTEMD_SERVICE_PRESENT" = "1" ] || return 0
+  [ "$(id -u)" = "0" ] || {
+    log "adapter_service_update_requires_admin service=$SYSTEMD_SERVICE_NAME"
+    return 1
+  }
+  [ -f "$CURRENT_LINK/scripts/systemd_unit.sh" ] \
+    || { log "adapter_systemd_renderer_missing"; return 1; }
+  source "$CURRENT_LINK/scripts/systemd_unit.sh"
+  temporary_unit="${SYSTEMD_SERVICE_FILE}.ai-wps-$$.tmp"
+  render_adapter_systemd_unit \
+    "$temporary_unit" \
+    "$TARGET_USER" \
+    "$CURRENT_LINK" \
+    "$PYTHON_BIN" \
+    "$PORT" \
+    "$VAR_DIR/run/adapter.pid" \
+    "$STATE_DIR" \
+    "$BACKUP_DIR" \
+    "$VAR_DIR" \
+    || { log "adapter_systemd_render_failed"; rm -f "$temporary_unit"; return 1; }
+  chmod 644 "$temporary_unit"
+  mv -f "$temporary_unit" "$SYSTEMD_SERVICE_FILE" \
+    || { log "adapter_systemd_replace_failed"; return 1; }
+  systemctl daemon-reload \
+    || { log "adapter_systemd_reload_failed"; return 1; }
+  AI_WPS_STATE_DIR="$STATE_DIR" \
+    AI_WPS_BACKUP_DIR="$BACKUP_DIR" \
+    AI_WPS_VAR_DIR="$VAR_DIR" \
+    bash "$CURRENT_LINK/scripts/stop_adapter.sh" "$PORT" \
+    || { log "adapter_direct_stop_before_systemd_failed"; return 1; }
+  systemctl start "$SYSTEMD_SERVICE_NAME" \
+    || { log "adapter_systemd_start_failed service=$SYSTEMD_SERVICE_NAME"; return 1; }
+  log "adapter_systemd_generation=current service=$SYSTEMD_SERVICE_NAME"
+}
+
+write_systemd_handoff() {
+  local previous_was_active="${AI_WPS_SYSTEMD_WAS_ACTIVE:-$SYSTEMD_WAS_ACTIVE}"
+  [ -n "$SYSTEMD_HANDOFF_FILE" ] \
+    || { log "adapter_systemd_handoff_path_missing"; return 1; }
+  case "$previous_was_active" in
+    0|1) ;;
+    *) log "adapter_systemd_previous_activity_invalid"; return 1 ;;
+  esac
+  "$PYTHON_BIN" - "$SYSTEMD_HANDOFF_FILE" "$TRANSACTION_LOG" "$SYSTEMD_UNIT_BACKUP" "$previous_was_active" <<'PY'
+import json
+import os
+from pathlib import Path
+import sys
+import uuid
+
+target = Path(sys.argv[1])
+target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+temporary = target.with_name(".{0}.{1}.tmp".format(target.name, uuid.uuid4().hex))
+descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+    json.dump(
+        {
+            "transactionLog": sys.argv[2],
+            "unitBackup": sys.argv[3],
+            "wasActive": sys.argv[4] == "1",
+        },
+        handle,
+        ensure_ascii=False,
+        sort_keys=True,
+    )
+    handle.write("\n")
+    handle.flush()
+    os.fsync(handle.fileno())
+os.replace(str(temporary), str(target))
+directory = os.open(str(target.parent), os.O_RDONLY)
+try:
+    os.fsync(directory)
+finally:
+    os.close(directory)
+PY
+}
+
+recover_systemd_handoff() {
+  local previous_was_active transaction_log transaction_status
+  [ "$(id -u)" = "0" ] || return 0
+  [ -n "$SYSTEMD_HANDOFF_FILE" ] && [ -f "$SYSTEMD_HANDOFF_FILE" ] || return 0
+  transaction_log="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("transactionLog", ""))' \
+      "$SYSTEMD_HANDOFF_FILE" 2>/dev/null || true
+  )"
+  transaction_status="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", ""))' \
+      "$transaction_log" 2>/dev/null || true
+  )"
+  if [ "$transaction_status" = "committed" ]; then
+    rm -f "$SYSTEMD_UNIT_BACKUP" "$SYSTEMD_HANDOFF_FILE"
+    return 0
+  fi
+  [ -n "$transaction_log" ] && [ -f "$transaction_log" ] \
+    || fail "adapter_systemd_recovery_transaction_missing"
+  previous_was_active="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; value=json.load(open(sys.argv[1], encoding="utf-8")).get("wasActive"); print("1" if value is True else "0" if value is False else "")' \
+      "$SYSTEMD_HANDOFF_FILE" 2>/dev/null || true
+  )"
+  case "$previous_was_active" in
+    0|1) ;;
+    *) fail "adapter_systemd_recovery_activity_missing" ;;
+  esac
+  stop_candidate_adapter_for_systemd_compensation \
+    || fail "adapter_systemd_recovery_candidate_stop_failed"
+  "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$transaction_log" \
+    || fail "adapter_systemd_recovery_transaction_rollback_failed"
+  if [ -f "$SYSTEMD_UNIT_BACKUP" ]; then
+    mv -f "$SYSTEMD_UNIT_BACKUP" "$SYSTEMD_SERVICE_FILE"
+    log "adapter_systemd_unit=recovered_previous"
+  fi
+  systemctl daemon-reload || fail "adapter_systemd_recovery_reload_failed"
+  if [ "$previous_was_active" = "1" ]; then
+    systemctl start "$SYSTEMD_SERVICE_NAME" \
+      || fail "adapter_systemd_recovery_restart_failed"
+  fi
+  SYSTEMD_WAS_ACTIVE="$previous_was_active"
+  rm -f "$SYSTEMD_HANDOFF_FILE"
+  log "adapter_systemd_generation=recovered_previous wasActive=$previous_was_active"
+}
+
+stop_candidate_adapter_for_systemd_compensation() {
+  systemctl stop "$SYSTEMD_SERVICE_NAME" >/dev/null 2>&1 || true
+  if [ -f "$CURRENT_LINK/scripts/stop_adapter.sh" ]; then
+    AI_WPS_STATE_DIR="$STATE_DIR" \
+      AI_WPS_BACKUP_DIR="$BACKUP_DIR" \
+      AI_WPS_VAR_DIR="$VAR_DIR" \
+      bash "$CURRENT_LINK/scripts/stop_adapter.sh" "$PORT" \
+      || return 1
+  fi
+}
+
+compensate_systemd_release() {
+  local transaction_log="$1"
+  if ! stop_candidate_adapter_for_systemd_compensation; then
+    log "candidate_adapter_stop_during_rollback_failed=$SYSTEMD_SERVICE_NAME"
+    log "adapter_systemd_compensation=pending_retry"
+    return 1
+  fi
+  if ! "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$transaction_log"; then
+    log "release_transaction_rollback_failed=$transaction_log"
+    log "adapter_systemd_compensation=pending_retry"
+    return 1
+  fi
+  if [ -f "$SYSTEMD_UNIT_BACKUP" ]; then
+    mv -f "$SYSTEMD_UNIT_BACKUP" "$SYSTEMD_SERVICE_FILE" \
+      || { log "previous_adapter_systemd_restore_failed=$SYSTEMD_SERVICE_NAME"; return 1; }
+  fi
+  systemctl daemon-reload \
+    || { log "previous_adapter_systemd_reload_failed=$SYSTEMD_SERVICE_NAME"; return 1; }
+  if [ "$SYSTEMD_WAS_ACTIVE" = "1" ]; then
+    systemctl start "$SYSTEMD_SERVICE_NAME" \
+      || { log "previous_adapter_service_restart_failed=$SYSTEMD_SERVICE_NAME"; return 1; }
+  fi
+  rm -f "$SYSTEMD_HANDOFF_FILE"
+  log "adapter_systemd_compensation=completed"
+}
+
+complete_systemd_release() {
+  local transaction_log
+  transaction_log="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("transactionLog", ""))' \
+      "$SYSTEMD_HANDOFF_FILE" 2>/dev/null || true
+  )"
+  [ -n "$transaction_log" ] && [ -f "$transaction_log" ] \
+    || { log "adapter_systemd_handoff_invalid"; return 1; }
+  [ ! -e "$SYSTEMD_UNIT_BACKUP" ] \
+    || { log "adapter_systemd_backup_exists"; return 1; }
+  cp -p "$SYSTEMD_SERVICE_FILE" "$SYSTEMD_UNIT_BACKUP" \
+    || { log "adapter_systemd_backup_failed"; return 1; }
+  if ! install_current_systemd_service; then
+    compensate_systemd_release "$transaction_log"
+    return 1
+  fi
+  if ! "$PYTHON_BIN" -s "$TRANSACTION_TOOL" commit "$transaction_log"; then
+    compensate_systemd_release "$transaction_log"
+    return 1
+  fi
+  rm -f "$SYSTEMD_UNIT_BACKUP" "$SYSTEMD_HANDOFF_FILE"
+  log "release_generation=committed_with_systemd"
+}
+
 reexec_as_target_if_needed() {
+  local child_status
   [ "$CURRENT_UID" = "0" ] || return 0
   if command -v runuser >/dev/null 2>&1; then
-    exec runuser -u "$TARGET_USER" -- env \
+    child_status="0"
+    runuser -u "$TARGET_USER" -- env \
       HOME="$TARGET_HOME" \
       AI_WPS_INSTALL_ROOT="$INSTALL_ROOT" \
       WPS_JSADDONS_DIR="$WPS_JSADDONS_DIR" \
@@ -246,11 +456,26 @@ reexec_as_target_if_needed() {
       PYTHON_BIN="$PYTHON_BIN" \
       PORT="$PORT" \
       AI_WPS_CANDIDATE_PORT="${AI_WPS_CANDIDATE_PORT:-}" \
+      AI_WPS_SYSTEMD_MANAGED_BY_PARENT="$SYSTEMD_SERVICE_PRESENT" \
+      AI_WPS_DEFER_RELEASE_COMMIT="$SYSTEMD_SERVICE_PRESENT" \
+      AI_WPS_SYSTEMD_HANDOFF_FILE="$SYSTEMD_HANDOFF_FILE" \
+      AI_WPS_SYSTEMD_UNIT_BACKUP="$SYSTEMD_UNIT_BACKUP" \
+      AI_WPS_SYSTEMD_WAS_ACTIVE="$SYSTEMD_WAS_ACTIVE" \
       bash "$DELIVERY_ROOT/installer/install_phase1.sh" \
         --target-user "$TARGET_USER" \
         --target-uid "$TARGET_UID" \
         --target-home "$TARGET_HOME" \
-        --wps-jsaddons-dir "$WPS_JSADDONS_DIR"
+        --wps-jsaddons-dir "$WPS_JSADDONS_DIR" \
+      || child_status="$?"
+    if [ "$child_status" = "0" ] && [ "$SYSTEMD_SERVICE_PRESENT" = "1" ]; then
+      if ! complete_systemd_release; then
+        child_status="1"
+      fi
+    elif [ "$SYSTEMD_WAS_ACTIVE" = "1" ]; then
+      systemctl start "$SYSTEMD_SERVICE_NAME" \
+        || log "previous_adapter_service_restart_failed=$SYSTEMD_SERVICE_NAME"
+    fi
+    exit "$child_status"
   fi
   fail "target_user_execution_tool_missing"
 }
@@ -263,13 +488,48 @@ copy_dir() {
   cp -R "$source_dir" "$target_dir"
 }
 
-initialize_writing_policy_database() {
-  local database_root="${STATE_DIR:-$ADAPTER_TARGET/run}"
-  local database_path="$database_root/writing_policies.db"
-  local adapter_pythonpath="$ADAPTER_TARGET/adapter_service"
+json_field() {
+  local field="$1"
+  "$PYTHON_BIN" -c \
+    'import json,sys; value=json.load(sys.stdin); print(value.get(sys.argv[1], ""))' \
+    "$field"
+}
 
-  if [ -d "$ADAPTER_TARGET/python-runtime" ]; then
-    adapter_pythonpath="$ADAPTER_TARGET/python-runtime:$adapter_pythonpath"
+resolve_active_adapter() {
+  if [ -e "$CURRENT_LINK" ] || [ -L "$CURRENT_LINK" ]; then
+    ADAPTER_TARGET="$CURRENT_LINK"
+  else
+    ADAPTER_TARGET="$LEGACY_ADAPTER_TARGET"
+  fi
+}
+
+recover_incomplete_transactions() {
+  local transaction_log status
+  mkdir -p "$VAR_DIR/transactions"
+  chmod 700 "$VAR_DIR" "$VAR_DIR/transactions"
+  for transaction_log in "$VAR_DIR"/transactions/*.json; do
+    [ -f "$transaction_log" ] || continue
+    status="$("$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", ""))' \
+      "$transaction_log" 2>/dev/null || true)"
+    case "$status" in
+      prepared|switching|awaiting_finalization|ready_to_commit|verification_failed|rolling_back)
+        "$PYTHON_BIN" -s "$TRANSACTION_TOOL" recover "$transaction_log" \
+          || fail "release_transaction_recovery_failed path=$transaction_log"
+        log "release_transaction_recovered=$transaction_log"
+        ;;
+    esac
+  done
+}
+
+initialize_writing_policy_database() {
+  local adapter_root="${1:-$ADAPTER_TARGET}"
+  local database_root="${2:-${STATE_DIR:-$ADAPTER_TARGET/run}}"
+  local database_path="$database_root/writing_policies.db"
+  local adapter_pythonpath="$adapter_root/adapter_service"
+
+  if [ -d "$adapter_root/python-runtime" ]; then
+    adapter_pythonpath="$adapter_root/python-runtime:$adapter_pythonpath"
   fi
 
   if [ -e "$database_path" ]; then
@@ -307,13 +567,13 @@ legacy_runtime_state_exists() {
 }
 
 prepare_runtime_state() {
-  local result
+  local result status
   local candidate_state_tool="$CANDIDATE_TARGET/adapter_service/tools/runtime_state.py"
   local candidate_pythonpath="$CANDIDATE_TARGET/python-runtime:$CANDIDATE_TARGET/adapter_service"
 
   [ -f "$candidate_state_tool" ] || fail "runtime_state_tool_missing"
-  mkdir -p "$STATE_DIR" "$BACKUP_DIR" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
-  chmod 700 "$STATE_DIR" "$BACKUP_DIR" "$VAR_DIR" \
+  mkdir -p "$(dirname "$STATE_DIR")" "$BACKUP_DIR" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
+  chmod 700 "$BACKUP_DIR" "$VAR_DIR" \
     "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
 
   if runtime_state_exists; then
@@ -322,15 +582,25 @@ prepare_runtime_state() {
         "$PYTHON_BIN" -s "$candidate_state_tool" snapshot \
         --state-dir "$STATE_DIR" \
         --backup-dir "$BACKUP_DIR" \
-        --release-version "$RELEASE_VERSION" \
+        --release-version "$PREVIOUS_RELEASE_VERSION" \
         --reason pre_install
     )" || fail "runtime_state_snapshot_failed"
+    PREVIOUS_SNAPSHOT_ID="$(printf '%s' "$result" | json_field snapshotId)"
+    [ -n "$PREVIOUS_SNAPSHOT_ID" ] || fail "runtime_state_snapshot_id_missing"
+    status="$(printf '%s' "$result" | json_field status)"
     log "runtime_state_snapshot_reason=pre_install"
-    case "$result" in
-      *'"status": "recovery"'*) fail "runtime_state_snapshot_status=recovery" ;;
-      *'"status": "degraded"'*) log "runtime_state_snapshot_status=degraded" ;;
-      *) log "runtime_state_snapshot_status=ready" ;;
+    case "$status" in
+      recovery) fail "runtime_state_snapshot_status=recovery" ;;
+      degraded)
+        log "runtime_state_snapshot_status=degraded"
+        ;;
+      ready)
+        log "runtime_state_snapshot_status=ready"
+        ;;
+      *) fail "runtime_state_snapshot_status=invalid value=$status" ;;
     esac
+    copy_dir "$BACKUP_DIR/$PREVIOUS_SNAPSHOT_ID/state" "$CANDIDATE_STATE"
+    chmod 700 "$CANDIDATE_STATE"
     return 0
   fi
 
@@ -338,19 +608,49 @@ prepare_runtime_state() {
     result="$(
       PYTHONNOUSERSITE=1 PYTHONPATH="$candidate_pythonpath" \
         "$PYTHON_BIN" -s "$candidate_state_tool" migrate \
-        --state-dir "$STATE_DIR" \
+        --state-dir "$CANDIDATE_STATE" \
         --backup-dir "$BACKUP_DIR" \
-        --release-version "$RELEASE_VERSION" \
+        --release-version "$PREVIOUS_RELEASE_VERSION" \
         --legacy-root "$ADAPTER_TARGET"
     )" || fail "runtime_state_migration_status=recovery"
-    case "$result" in
-      *'"status": "degraded"'*) log "runtime_state_migration_status=degraded" ;;
-      *) log "runtime_state_migration_status=ready" ;;
+    PREVIOUS_SNAPSHOT_ID="$(printf '%s' "$result" | json_field snapshotId)"
+    [ -n "$PREVIOUS_SNAPSHOT_ID" ] || fail "runtime_state_migration_snapshot_id_missing"
+    status="$(printf '%s' "$result" | json_field status)"
+    case "$status" in
+      degraded) log "runtime_state_migration_status=degraded" ;;
+      ready) log "runtime_state_migration_status=ready" ;;
+      *) fail "runtime_state_migration_status=invalid value=$status" ;;
     esac
     return 0
   fi
 
+  mkdir -p "$CANDIDATE_STATE"
+  chmod 700 "$CANDIDATE_STATE"
   log "runtime_state_status=fresh"
+}
+
+create_candidate_state_snapshot() {
+  local result status
+  local candidate_state_tool="$CANDIDATE_TARGET/adapter_service/tools/runtime_state.py"
+  local candidate_pythonpath="$CANDIDATE_TARGET/python-runtime:$CANDIDATE_TARGET/adapter_service"
+
+  result="$(
+    PYTHONNOUSERSITE=1 PYTHONPATH="$candidate_pythonpath" \
+      "$PYTHON_BIN" -s "$candidate_state_tool" snapshot \
+      --state-dir "$CANDIDATE_STATE" \
+      --backup-dir "$BACKUP_DIR" \
+      --release-version "$RELEASE_VERSION" \
+      --reason candidate_release
+  )" || fail "candidate_state_snapshot_failed"
+  CANDIDATE_SNAPSHOT_ID="$(printf '%s' "$result" | json_field snapshotId)"
+  [ -n "$CANDIDATE_SNAPSHOT_ID" ] || fail "candidate_state_snapshot_id_missing"
+  status="$(printf '%s' "$result" | json_field status)"
+  case "$status" in
+    recovery) fail "candidate_state_snapshot_status=recovery" ;;
+    degraded) log "candidate_state_snapshot_status=degraded" ;;
+    ready) log "candidate_state_snapshot_status=ready" ;;
+    *) fail "candidate_state_snapshot_status=invalid value=$status" ;;
+  esac
 }
 
 enable_exec_permissions() {
@@ -367,9 +667,36 @@ prepare_candidate_adapter() {
   [ -x "$PYTHON_BIN" ] || fail "python_not_executable path=$PYTHON_BIN"
   [ -f "$DELIVERY_ROOT/installer/install_private_runtime.sh" ] || fail "private_runtime_installer_missing"
   [ -f "$DELIVERY_ROOT/installer/preflight_candidate.sh" ] || fail "candidate_preflight_script_missing"
+  [ -f "$RELEASE_MANIFEST_SOURCE" ] || fail "release_manifest_missing"
+  [ -f "$TRANSACTION_TOOL" ] || fail "release_transaction_tool_missing"
 
-  mkdir -p "$INSTALL_ROOT"
+  mkdir -p "$RELEASES_DIR"
   copy_dir "$ADAPTER_SOURCE" "$CANDIDATE_TARGET"
+  cp "$RELEASE_MANIFEST_SOURCE" "$CANDIDATE_TARGET/release-manifest.json"
+  "$PYTHON_BIN" - "$CANDIDATE_TARGET/release-manifest.json" "$RELEASE_VERSION" <<'PY' \
+    || fail "candidate_release_manifest_invalid"
+import json
+from pathlib import Path
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected = sys.argv[2]
+policy = manifest.get("releaseGenerationPolicy", {})
+assert manifest.get("schemaVersion") == 1
+assert manifest.get("version") == expected
+assert manifest.get("adapter", {}).get("version") == expected
+assert policy.get("switchStrategy") == "durable-compensating-rename"
+assert policy.get("currentPointer") == "current"
+assert policy.get("components") == [
+    "adapter_release",
+    "word_plugin",
+    "excel_plugin",
+    "ppt_plugin",
+    "publish_manifest",
+    "runtime_state_snapshot",
+    "current_pointer",
+]
+PY
   bash "$DELIVERY_ROOT/installer/install_private_runtime.sh" \
     "$PYTHON_BIN" \
     "$RUNTIME_DEPS_DIR" \
@@ -382,7 +709,8 @@ prepare_candidate_adapter() {
 }
 
 run_candidate_preflight() {
-  bash "$DELIVERY_ROOT/installer/preflight_candidate.sh" \
+  AI_WPS_PREFLIGHT_STATE_SOURCE="$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID/state" \
+    bash "$DELIVERY_ROOT/installer/preflight_candidate.sh" \
     "$PYTHON_BIN" \
     "$CANDIDATE_TARGET" \
     "$CANDIDATE_TARGET/python-runtime" \
@@ -391,19 +719,18 @@ run_candidate_preflight() {
     "$PREFLIGHT_ROOT"
 }
 
-install_wps_plugin() {
+stage_wps_plugins() {
   [ -d "$WORD_PLUGIN_SOURCE" ] || fail "word_plugin_source_missing"
   [ -d "$EXCEL_PLUGIN_SOURCE" ] || fail "excel_plugin_source_missing"
   [ -d "$PPT_PLUGIN_SOURCE" ] || fail "ppt_plugin_source_missing"
   [ -f "$PUBLISH_SOURCE" ] || fail "publish_xml_missing"
 
   mkdir -p "$WPS_JSADDONS_DIR"
-  copy_dir "$WORD_PLUGIN_SOURCE" "$WPS_JSADDONS_DIR/$WORD_PLUGIN_NAME"
-  copy_dir "$EXCEL_PLUGIN_SOURCE" "$WPS_JSADDONS_DIR/$EXCEL_PLUGIN_NAME"
-  copy_dir "$PPT_PLUGIN_SOURCE" "$WPS_JSADDONS_DIR/$PPT_PLUGIN_NAME"
+  copy_dir "$WORD_PLUGIN_SOURCE" "$WORD_PLUGIN_CANDIDATE"
+  copy_dir "$EXCEL_PLUGIN_SOURCE" "$EXCEL_PLUGIN_CANDIDATE"
+  copy_dir "$PPT_PLUGIN_SOURCE" "$PPT_PLUGIN_CANDIDATE"
 
   if [ -f "$WPS_JSADDONS_DIR/publish.xml" ]; then
-    cp "$WPS_JSADDONS_DIR/publish.xml" "$WPS_JSADDONS_DIR/publish.xml.bak.$(date '+%Y%m%d%H%M%S')"
     {
       printf '%s\n' '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
       printf '%s\n' '<jsplugins>'
@@ -415,28 +742,132 @@ install_wps_plugin() {
         | grep -v 'name="wps-ai-assistant-et"' \
         | grep -v 'name="wps-ai-assistant-wpp"' || true
       printf '%s\n' '</jsplugins>'
-    } > "$WPS_JSADDONS_DIR/publish.xml.tmp"
-    mv "$WPS_JSADDONS_DIR/publish.xml.tmp" "$WPS_JSADDONS_DIR/publish.xml"
+    } > "$PUBLISH_CANDIDATE"
   else
-    cp "$PUBLISH_SOURCE" "$WPS_JSADDONS_DIR/publish.xml"
+    cp "$PUBLISH_SOURCE" "$PUBLISH_CANDIDATE"
   fi
 
-  log "word_plugin_installed=$WPS_JSADDONS_DIR/$WORD_PLUGIN_NAME"
-  log "excel_plugin_installed=$WPS_JSADDONS_DIR/$EXCEL_PLUGIN_NAME"
-  log "ppt_plugin_installed=$WPS_JSADDONS_DIR/$PPT_PLUGIN_NAME"
-  log "publish_xml_installed=$WPS_JSADDONS_DIR/publish.xml"
+  "$PYTHON_BIN" - "$RELEASE_MANIFEST_SOURCE" "$RELEASE_VERSION" \
+    "$WORD_PLUGIN_CANDIDATE" "$EXCEL_PLUGIN_CANDIDATE" \
+    "$PPT_PLUGIN_CANDIDATE" "$PUBLISH_CANDIDATE" <<'PY' \
+    || fail "candidate_plugin_generation_invalid"
+import json
+from pathlib import Path
+import sys
+import xml.etree.ElementTree as ET
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+release_version = sys.argv[2]
+expected_hosts = [
+    ("Word", "wps-ai-assistant_1.0.0", "wps", "wps-ai-assistant"),
+    ("Excel", "wps-ai-assistant-et_1.0.0", "et", "wps-ai-assistant-et"),
+    ("PPT", "wps-ai-assistant-wpp_1.0.0", "wpp", "wps-ai-assistant-wpp"),
+]
+actual_hosts = [
+    (item.get("name"), item.get("plugin"), item.get("ribbonType"))
+    for item in manifest.get("hosts", [])
+]
+assert actual_hosts == [item[:3] for item in expected_hosts]
+for plugin_root, expected_host in zip(map(Path, sys.argv[3:6]), expected_hosts):
+    plugin = json.loads(
+        (plugin_root / "manifest.json").read_text(encoding="utf-8")
+    )
+    assert plugin.get("name") == expected_host[3]
+    assert plugin.get("version") == release_version
+publish = ET.parse(sys.argv[6]).getroot()
+declared = {
+    (item.get("name"), item.get("type"), item.get("version"))
+    for item in publish.findall("jsplugin")
+}
+assert {
+    (item[3], item[2], item[1].rsplit("_", 1)[1])
+    for item in expected_hosts
+}.issubset(declared)
+PY
+
+  log "candidate_plugins=staged transaction=$TRANSACTION_ID"
 }
 
-install_adapter() {
-  [ -d "$CANDIDATE_TARGET" ] || fail "candidate_adapter_missing"
-  stop_adapter_for_state_transition
-  prepare_runtime_state
-  rm -rf "$ADAPTER_TARGET"
-  mv "$CANDIDATE_TARGET" "$ADAPTER_TARGET"
-  CANDIDATE_TARGET=""
-  initialize_writing_policy_database
-  enable_exec_permissions
-  log "adapter_installed=$ADAPTER_TARGET"
+write_generation_manifest() {
+  "$PYTHON_BIN" - "$CANDIDATE_TARGET/release-generation.json" \
+    "$RELEASE_VERSION" "$CANDIDATE_SNAPSHOT_ID" "$RELEASE_MANIFEST_SOURCE" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+target = Path(sys.argv[1])
+release_manifest = Path(sys.argv[4])
+payload = {
+    "schemaVersion": 1,
+    "releaseVersion": sys.argv[2],
+    "candidateSnapshotId": sys.argv[3],
+    "releaseManifestSha256": hashlib.sha256(release_manifest.read_bytes()).hexdigest(),
+    "components": [
+        "adapter_release",
+        "word_plugin",
+        "excel_plugin",
+        "ppt_plugin",
+        "publish_manifest",
+        "runtime_state_snapshot",
+        "current_pointer",
+    ],
+}
+target.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+PY
+  chmod 600 "$CANDIDATE_TARGET/release-generation.json"
+}
+
+prepare_release_transaction() {
+  local transaction_result
+  local transaction_arguments=(
+    prepare
+    --transaction-dir "$VAR_DIR/transactions"
+    --transaction-id "$TRANSACTION_ID"
+    --release-version "$RELEASE_VERSION"
+    --backup-dir "$BACKUP_DIR"
+    --candidate-snapshot-id "$CANDIDATE_SNAPSHOT_ID"
+    --component adapter_release "$CANDIDATE_TARGET" "$RELEASE_TARGET"
+    --component word_plugin "$WORD_PLUGIN_CANDIDATE" "$WPS_JSADDONS_DIR/$WORD_PLUGIN_NAME"
+    --component excel_plugin "$EXCEL_PLUGIN_CANDIDATE" "$WPS_JSADDONS_DIR/$EXCEL_PLUGIN_NAME"
+    --component ppt_plugin "$PPT_PLUGIN_CANDIDATE" "$WPS_JSADDONS_DIR/$PPT_PLUGIN_NAME"
+    --component publish_manifest "$PUBLISH_CANDIDATE" "$WPS_JSADDONS_DIR/publish.xml"
+    --component runtime_state_snapshot "$CANDIDATE_STATE" "$STATE_DIR"
+    --component current_pointer "$CURRENT_CANDIDATE" "$CURRENT_LINK"
+  )
+  if ! transaction_result="$(
+    "$PYTHON_BIN" -s "$TRANSACTION_TOOL" "${transaction_arguments[@]}"
+  )"; then
+    log "$transaction_result"
+    fail "release_transaction_prepare_failed"
+  fi
+  TRANSACTION_LOG="$(printf '%s' "$transaction_result" | json_field transactionLog)"
+  [ -n "$TRANSACTION_LOG" ] || fail "release_transaction_log_missing"
+  log "release_transaction=prepared path=$TRANSACTION_LOG"
+}
+
+switch_release_generation() {
+  "$PYTHON_BIN" -s "$TRANSACTION_TOOL" switch "$TRANSACTION_LOG" \
+    || fail "release_generation_switch_failed"
+  ADAPTER_TARGET="$CURRENT_LINK"
+  log "release_generation=switched version=$RELEASE_VERSION"
+}
+
+finalize_release_generation() {
+  if [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" = "1" ]; then
+    "$PYTHON_BIN" -s "$TRANSACTION_TOOL" finalize "$TRANSACTION_LOG" --defer-commit \
+      || fail "release_generation_finalization_failed"
+    if ! write_systemd_handoff; then
+      "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$TRANSACTION_LOG" \
+        || log "release_transaction_rollback_failed=$TRANSACTION_LOG"
+      fail "adapter_systemd_handoff_write_failed"
+    fi
+    log "release_generation=ready_to_commit version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+  else
+    "$PYTHON_BIN" -s "$TRANSACTION_TOOL" finalize "$TRANSACTION_LOG" \
+      || fail "release_generation_finalization_failed"
+    log "release_generation=committed version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+  fi
 }
 
 start_and_check_adapter() {
@@ -449,22 +880,54 @@ start_and_check_adapter() {
 parse_arguments "$@"
 resolve_installation_principal
 resolve_python_binary
-ADAPTER_TARGET="$INSTALL_ROOT/adapter-start-kit"
+case "$SYSTEMD_SERVICE_FILE" in
+  /*) ;;
+  *) fail "adapter_systemd_service_file_must_be_absolute" ;;
+esac
 STATE_DIR="${AI_WPS_STATE_DIR:-$INSTALL_ROOT/state}"
 BACKUP_DIR="${AI_WPS_BACKUP_DIR:-$INSTALL_ROOT/backups}"
 VAR_DIR="${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"
+SYSTEMD_HANDOFF_FILE="${AI_WPS_SYSTEMD_HANDOFF_FILE:-$VAR_DIR/run/systemd-release-handoff.json}"
+RELEASES_DIR="$INSTALL_ROOT/releases"
+RELEASE_TARGET="$RELEASES_DIR/$RELEASE_VERSION"
+CURRENT_LINK="$INSTALL_ROOT/current"
+LEGACY_ADAPTER_TARGET="$INSTALL_ROOT/adapter-start-kit"
+resolve_active_adapter
 validate_target_path "state_dir" "$STATE_DIR"
 validate_target_path "backup_dir" "$BACKUP_DIR"
 validate_target_path "var_dir" "$VAR_DIR"
 export AI_WPS_STATE_DIR="$STATE_DIR"
 export AI_WPS_BACKUP_DIR="$BACKUP_DIR"
 export AI_WPS_VAR_DIR="$VAR_DIR"
+recover_systemd_handoff
 ensure_wps_processes_stopped
 stop_adapter_for_state_transition
 reexec_as_target_if_needed
 
-CANDIDATE_TARGET="$INSTALL_ROOT/.adapter-candidate-${RELEASE_VERSION}-$$"
+mkdir -p "$INSTALL_ROOT" "$RELEASES_DIR" "$WPS_JSADDONS_DIR" \
+  "$BACKUP_DIR" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
+chmod 700 "$INSTALL_ROOT" "$RELEASES_DIR" "$BACKUP_DIR" "$VAR_DIR" \
+  "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
+recover_incomplete_transactions
+resolve_active_adapter
+if [ -f "$ADAPTER_TARGET/release-manifest.json" ]; then
+  PREVIOUS_RELEASE_VERSION="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("version", "legacy"))' \
+      "$ADAPTER_TARGET/release-manifest.json" 2>/dev/null || printf '%s' legacy
+  )"
+fi
+
+TRANSACTION_ID="release-${RELEASE_VERSION}-$(date -u '+%Y%m%dT%H%M%SZ')-$$"
+CANDIDATE_TARGET="$RELEASES_DIR/.${RELEASE_VERSION}.${TRANSACTION_ID}.candidate"
+CANDIDATE_STATE="$(dirname "$STATE_DIR")/.ai-wps-${TRANSACTION_ID}-state.candidate"
 PREFLIGHT_ROOT="$INSTALL_ROOT/.candidate-preflight-$$"
+WORD_PLUGIN_CANDIDATE="$WPS_JSADDONS_DIR/.ai-wps-${TRANSACTION_ID}-${WORD_PLUGIN_NAME}.candidate"
+EXCEL_PLUGIN_CANDIDATE="$WPS_JSADDONS_DIR/.ai-wps-${TRANSACTION_ID}-${EXCEL_PLUGIN_NAME}.candidate"
+PPT_PLUGIN_CANDIDATE="$WPS_JSADDONS_DIR/.ai-wps-${TRANSACTION_ID}-${PPT_PLUGIN_NAME}.candidate"
+PUBLISH_CANDIDATE="$WPS_JSADDONS_DIR/.ai-wps-${TRANSACTION_ID}-publish.xml.candidate"
+CURRENT_CANDIDATE="$INSTALL_ROOT/.ai-wps-${TRANSACTION_ID}-current.candidate"
+RELEASE_SWITCHED="0"
 case "$PORT" in
   ''|*[!0-9]*) fail "runtime_port_invalid" ;;
 esac
@@ -480,12 +943,77 @@ fi
 [ "$CANDIDATE_PORT" != "$PORT" ] || fail "isolated_port_matches_runtime_port"
 
 cleanup_installation_candidate() {
-  if [ -n "${CANDIDATE_TARGET:-}" ] && [ -e "$CANDIDATE_TARGET" ]; then
+  local transaction_status=""
+  if [ -n "${TRANSACTION_LOG:-}" ] && [ -f "$TRANSACTION_LOG" ]; then
+    transaction_status="$(
+      "$PYTHON_BIN" -c \
+        'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", ""))' \
+        "$TRANSACTION_LOG" 2>/dev/null || true
+    )"
+    if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
+      && [ "$transaction_status" != "committed" ] \
+      && [ "$transaction_status" != "ready_to_commit" ]; then
+      ADAPTER_TARGET="$CURRENT_LINK"
+      if [ -f "$ADAPTER_TARGET/scripts/stop_adapter.sh" ]; then
+        AI_WPS_STATE_DIR="$STATE_DIR" \
+          AI_WPS_BACKUP_DIR="$BACKUP_DIR" \
+          AI_WPS_VAR_DIR="$VAR_DIR" \
+          bash "$ADAPTER_TARGET/scripts/stop_adapter.sh" "$PORT" \
+          || log "candidate_adapter_stop_failed=$ADAPTER_TARGET"
+      fi
+    fi
+    case "$transaction_status" in
+      committed|rolled_back) ;;
+      ready_to_commit)
+        [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" = "1" ] \
+          || "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$TRANSACTION_LOG"
+        ;;
+      *)
+        "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$TRANSACTION_LOG" \
+          || log "release_transaction_rollback_failed=$TRANSACTION_LOG"
+        ;;
+    esac
+  fi
+  if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
+    && [ "$transaction_status" != "committed" ] \
+    && [ "$transaction_status" != "ready_to_commit" ]; then
+    resolve_active_adapter
+    if [ -f "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" ]; then
+      if [ "$PREVIOUS_RELEASE_VERSION" = "legacy" ] && ! runtime_state_exists; then
+        env -u AI_WPS_STATE_DIR -u AI_WPS_BACKUP_DIR -u AI_WPS_VAR_DIR \
+          bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT" \
+          || log "previous_adapter_restart_failed=$ADAPTER_TARGET"
+      else
+        AI_WPS_REQUIRE_PRIVATE_RUNTIME=1 \
+          bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT" \
+          || log "previous_adapter_restart_failed=$ADAPTER_TARGET"
+      fi
+    fi
+  fi
+  if [ -n "${CANDIDATE_TARGET:-}" ] && { [ -e "$CANDIDATE_TARGET" ] || [ -L "$CANDIDATE_TARGET" ]; }; then
     rm -rf "$CANDIDATE_TARGET"
+  fi
+  if [ -n "${CANDIDATE_STATE:-}" ] && { [ -e "$CANDIDATE_STATE" ] || [ -L "$CANDIDATE_STATE" ]; }; then
+    rm -rf "$CANDIDATE_STATE"
+  fi
+  if [ -z "${TRANSACTION_LOG:-}" ] \
+    && [ -n "${CANDIDATE_SNAPSHOT_ID:-}" ] \
+    && [ -d "$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID" ]; then
+    rm -rf "$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID"
   fi
   if [ -n "${PREFLIGHT_ROOT:-}" ] && [ -e "$PREFLIGHT_ROOT" ]; then
     rm -rf "$PREFLIGHT_ROOT"
   fi
+  for candidate_path in \
+    "${WORD_PLUGIN_CANDIDATE:-}" \
+    "${EXCEL_PLUGIN_CANDIDATE:-}" \
+    "${PPT_PLUGIN_CANDIDATE:-}" \
+    "${PUBLISH_CANDIDATE:-}" \
+    "${CURRENT_CANDIDATE:-}"; do
+    if [ -n "$candidate_path" ] && { [ -e "$candidate_path" ] || [ -L "$candidate_path" ]; }; then
+      rm -rf "$candidate_path"
+    fi
+  done
 }
 trap cleanup_installation_candidate EXIT
 
@@ -498,10 +1026,18 @@ log "install_root=$INSTALL_ROOT"
 log "candidate_port=$CANDIDATE_PORT"
 
 prepare_candidate_adapter
+prepare_runtime_state
+initialize_writing_policy_database "$CANDIDATE_TARGET" "$CANDIDATE_STATE"
+create_candidate_state_snapshot
 run_candidate_preflight
-install_wps_plugin
-install_adapter
+stage_wps_plugins
+write_generation_manifest
+ln -s "$RELEASE_TARGET" "$CURRENT_CANDIDATE"
+prepare_release_transaction
+switch_release_generation
+RELEASE_SWITCHED="1"
 start_and_check_adapter
+finalize_release_generation
 
 cleanup_installation_candidate
 trap - EXIT

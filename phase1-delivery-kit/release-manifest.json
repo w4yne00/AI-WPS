@@ -87,5 +87,20 @@
       "imported-user-content",
       "unapproved-review-drafts"
     ]
+  },
+  "releaseGenerationPolicy": {
+    "releaseRoot": "releases/<version>/",
+    "currentPointer": "current",
+    "transactionLogRoot": "var/transactions/",
+    "switchStrategy": "durable-compensating-rename",
+    "components": [
+      "adapter_release",
+      "word_plugin",
+      "excel_plugin",
+      "ppt_plugin",
+      "publish_manifest",
+      "runtime_state_snapshot",
+      "current_pointer"
+    ]
   }
 }

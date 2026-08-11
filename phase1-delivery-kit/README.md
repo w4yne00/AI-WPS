@@ -30,9 +30,12 @@ sudo bash installer/install_phase1.sh \
 - Excel 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-et_1.0.0`
 - PPT 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-wpp_1.0.0`
 - `publish.xml`：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/publish.xml`
-- Adapter：`$HOME/ai-wps-phase1/adapter-start-kit`
+- 当前 Adapter 指针：`$HOME/ai-wps-phase1/current`
+- 不可变 Adapter 发布目录：`$HOME/ai-wps-phase1/releases/0.23.1-alpha`
 - Adapter 端口：`18100`
-- 发布私有依赖：`$HOME/ai-wps-phase1/adapter-start-kit/python-runtime`
+- 发布私有依赖：`$HOME/ai-wps-phase1/releases/0.23.1-alpha/python-runtime`
+- 共享运行状态：`$HOME/ai-wps-phase1/state`
+- 发布事务日志：`$HOME/ai-wps-phase1/var/transactions`
 
 如需覆盖：
 
@@ -62,7 +65,11 @@ python3.8 scripts/python38_delivery_runtime_gate.py \
 
 门禁会重新解包最终产物，扫描其中全部 Python 文件，完整导入 FastAPI 应用，实际启动并停止 Uvicorn，再检查版本、Provider 状态、模型配置列表和写作规范摘要。门禁通过只标记为候选构建，不能替代麒麟 V10/WPS 真机验收。
 
-目标机安装时会先校验离线 Wheel 与锁定清单的 SHA-256，再通过 `pip --target` 安装到候选的发布私有依赖目录。候选使用独立端口完成完整导入、Uvicorn 启动、版本和业务就绪检查；正式启动继续使用同一发布私有依赖目录。安装器会写入发布标记，后续启动若发现该依赖目录缺失会明确失败，不会回退系统或用户依赖。候选和正式进程均设置 `PYTHONNOUSERSITE=1` 与 Python `-s`，不会读取或修改系统、用户 `site-packages`。
+目标机安装时会先校验离线 Wheel 与锁定清单的 SHA-256，再通过 `pip --target` 安装到候选的发布私有依赖目录。候选使用匹配的数据快照和独立端口完成完整导入、Uvicorn 启动、版本和业务就绪检查；正式启动继续使用同一发布私有依赖目录。安装器会写入发布标记，后续启动若发现该依赖目录缺失会明确失败，不会回退系统或用户依赖。候选和正式进程均设置 `PYTHONNOUSERSITE=1` 与 Python `-s`，不会读取或修改系统、用户 `site-packages`。
+
+三个宿主插件、`publish.xml`、Adapter 发布目录、私有依赖、`current` 指针和候选数据快照按一个发布代际处理。切换前，安装器将全部候选放在各目标的同文件系统临时路径，并把逐项状态原子写入 `var/transactions/*.json`；每项通过重命名切换。最终健康或组件哈希检查失败时，安装器先停止候选 Adapter，再按事务日志反向补偿并重启上一 Adapter。安装进程异常中断时，下次执行会在创建新候选前恢复未完成事务；混合代际不会标记为安装成功。
+
+目标机已存在 `ai-wps-adapter.service` 时，升级必须由管理员入口执行。七组件终检后事务先保留补偿数据进入 `ready_to_commit`；安装器把 unit 重新绑定到稳定的 `current` 指针并启动成功、再次复验组件后，才最终提交并清理备份。父进程失败或中断时会恢复旧 unit 与上一代际，避免 systemd 或主机重启后启动旧发布目录。
 
 ## 包内内容
 
@@ -76,6 +83,7 @@ python3.8 scripts/python38_delivery_runtime_gate.py \
 - `installer/install_phase1.sh`：一键安装脚本。
 - `installer/install_private_runtime.sh`：离线依赖哈希校验与发布私有依赖安装脚本。
 - `installer/preflight_candidate.sh`：隔离候选完整导入、启动、版本和业务就绪门禁。
+- `installer/release_transaction.py`：完整发布代际的持久化切换、校验、中断恢复和反向补偿工具。
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `scripts/check_python38_compatibility.py`：Python 3.8 生产代码兼容性扫描。
 - `scripts/python38_delivery_runtime_gate.py`：最终 tar 包 Python 3.8 导入、Uvicorn 启动和关键接口门禁。
@@ -115,7 +123,7 @@ python3.8 scripts/python38_delivery_runtime_gate.py \
 10. 旧版 Dify 工作流应继续读取 `inputs.query`；新版“用户输入”节点工作流应在首次 HTTP 400 后自动切换到顶层 `query/files` 并成功返回。
 11. 智能总结的文档模式应接受单个 UTF-8 `.md` 或有效 `.docx`（最大 10 MB），并可选择整套 5、8、10、12、15 页建议，默认 10 页。
 12. 智能总结只提供预览和复制，绝不自动创建或修改 PPT；同一个 `ppt.slide_assistant` 工作流档案和 API Key 必须用于 `/files/upload` 与 `/chat-messages`，Dify 文件分支必须连接 `userinput.files` 和文档提取节点。
-13. 覆盖安装前后应核对 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、`run/writing_policies.db` 和全部已有规范库备份，确认现场配置和写作规范均被保留。
+13. 覆盖安装前后应核对共享 `state/adapter.json`、统一 API Key、`state/provider_api_keys/`、`state/writing_policies.db` 和全部已有规范库备份，确认现场配置和写作规范均被保留。
 14. 设置页按任务显示当前宿主的模型配置；每项配置独立保存接入方式、服务地址、API Key，以及模型直连所需模型标识。功能页下拉仅显示完整配置并在选择后立即激活。
 15. 在 Word 设置页维护企业术语和文体规则，分别验证新增、修改、删除、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；规范库不可用时任务仍应继续并明确显示降级提示。
 16. 首次安装后应存在权限为 `0600` 的空组织规范数据库；再次覆盖安装必须保留原数据库字节、组织覆盖/自定义/停用状态、全部已有备份和模型配置。

@@ -10,7 +10,7 @@ INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$HOME/ai-wps-phase1}"
 PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant_1.0.0"
 EXCEL_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-et_1.0.0"
 PPT_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0"
-ADAPTER_DIR="$INSTALL_ROOT/adapter-start-kit"
+ADAPTER_DIR="$INSTALL_ROOT/current"
 PRIVATE_RUNTIME_DIR="$ADAPTER_DIR/python-runtime"
 WRITING_POLICY_DB="$ADAPTER_DIR/run/writing_policies.db"
 

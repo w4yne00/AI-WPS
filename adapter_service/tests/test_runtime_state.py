@@ -189,7 +189,14 @@ class RuntimeStateManagerTests(unittest.TestCase):
         self.assertIn("runtime_state_snapshot_reason=pre_install", installer)
         self.assertIn("runtime_state_migration_status=degraded", installer)
         self.assertIn('export AI_WPS_STATE_DIR="$STATE_DIR"', installer)
-        self.assertIn('database_root="${STATE_DIR:-$ADAPTER_TARGET/run}"', installer)
+        self.assertIn(
+            'database_root="${2:-${STATE_DIR:-$ADAPTER_TARGET/run}}"',
+            installer,
+        )
+        self.assertIn(
+            '--component runtime_state_snapshot "$CANDIDATE_STATE" "$STATE_DIR"',
+            installer,
+        )
         self.assertIn("runtime-state-recovery.md", build_script)
         self.assertIn("RESTORE_WHOLE_STATE", operator_script)
         policy = manifest["runtimeStatePolicy"]

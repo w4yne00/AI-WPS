@@ -59,6 +59,19 @@ chmod 700 \
   "$PREFLIGHT_ROOT/var/run" \
   "$PREFLIGHT_ROOT/var/transactions"
 
+PREFLIGHT_STATE_SOURCE="${AI_WPS_PREFLIGHT_STATE_SOURCE:-}"
+if [ -n "$PREFLIGHT_STATE_SOURCE" ]; then
+  case "$PREFLIGHT_STATE_SOURCE" in
+    /*) ;;
+    *) fail "preflight_state_source_must_be_absolute" ;;
+  esac
+  [ -d "$PREFLIGHT_STATE_SOURCE" ] || fail "preflight_state_source_missing"
+  [ ! -L "$PREFLIGHT_STATE_SOURCE" ] || fail "preflight_state_source_symlink_rejected"
+  cp -R "$PREFLIGHT_STATE_SOURCE/." "$PREFLIGHT_ROOT/state/"
+  find "$PREFLIGHT_ROOT/state" -type d -exec chmod 700 {} \;
+  find "$PREFLIGHT_ROOT/state" -type f -exec chmod 600 {} \;
+fi
+
 cd "$CANDIDATE_ROOT/adapter_service"
 AI_WPS_STATE_DIR="$PREFLIGHT_ROOT/state" \
 AI_WPS_BACKUP_DIR="$PREFLIGHT_ROOT/backups" \

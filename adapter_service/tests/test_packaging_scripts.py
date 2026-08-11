@@ -535,6 +535,31 @@ esac
             ["backups/", "var/logs/", "var/run/", "var/transactions/"],
         )
 
+    def test_release_manifest_declares_complete_generation_contract(self) -> None:
+        manifest = json.loads(
+            (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        policy = manifest["releaseGenerationPolicy"]
+        self.assertEqual(policy["releaseRoot"], "releases/<version>/")
+        self.assertEqual(policy["currentPointer"], "current")
+        self.assertEqual(policy["transactionLogRoot"], "var/transactions/")
+        self.assertEqual(policy["switchStrategy"], "durable-compensating-rename")
+        self.assertEqual(
+            policy["components"],
+            [
+                "adapter_release",
+                "word_plugin",
+                "excel_plugin",
+                "ppt_plugin",
+                "publish_manifest",
+                "runtime_state_snapshot",
+                "current_pointer",
+            ],
+        )
+
     def test_delivery_declares_release_private_runtime_contract(self) -> None:
         manifest = json.loads(
             (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(
@@ -726,6 +751,21 @@ esac
         self.assertIn("开机自启动", guide)
         self.assertIn("bash scripts/install_autostart.sh", guide)
 
+    def test_phase1_upgrade_rebinds_existing_systemd_service_to_current(self) -> None:
+        installer = (
+            ROOT / "phase1-delivery-kit/installer/install_phase1.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("install_current_systemd_service", installer)
+        self.assertIn('"$CURRENT_LINK" \\', installer)
+        self.assertIn('systemctl start "$SYSTEMD_SERVICE_NAME"', installer)
+        self.assertIn("AI_WPS_SYSTEMD_MANAGED_BY_PARENT", installer)
+        self.assertIn("--defer-commit", installer)
+        self.assertIn('"$TRANSACTION_TOOL" commit', installer)
+        self.assertIn("compensate_systemd_release", installer)
+        self.assertIn("recover_systemd_handoff", installer)
+        self.assertNotIn("exec runuser", installer)
+
     def test_phase1_delivery_includes_smart_write_dify_manual(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
 
@@ -879,20 +919,23 @@ esac
         self.assertIn("prepare_runtime_state", script)
         self.assertIn("runtime_state_snapshot_reason=pre_install", script)
 
-    def test_phase1_installer_prepares_state_before_replacing_adapter(self) -> None:
+    def test_phase1_installer_prepares_state_before_switching_release_generation(self) -> None:
         installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
         )
-        install_adapter = installer.split("install_adapter() {", 1)[1].split("}", 1)[0]
+        install_flow = installer.rsplit('log "phase1_install_start=true"', 1)[1]
 
         self.assertLess(
-            install_adapter.index("prepare_runtime_state"),
-            install_adapter.index('rm -rf "$ADAPTER_TARGET"'),
+            install_flow.index("prepare_runtime_state"),
+            install_flow.index("switch_release_generation"),
         )
         self.assertLess(
-            install_adapter.index("stop_adapter_for_state_transition"),
-            install_adapter.index("prepare_runtime_state"),
+            install_flow.index("create_candidate_state_snapshot"),
+            install_flow.index("switch_release_generation"),
         )
+        self.assertIn("prepare_release_transaction", install_flow)
+        self.assertIn("finalize_release_generation", install_flow)
+        self.assertNotIn('rm -rf "$ADAPTER_TARGET"', installer)
         self.assertNotIn("preserve_adapter_runtime_config", installer)
         self.assertNotIn("restore_adapter_runtime_config", installer)
 
