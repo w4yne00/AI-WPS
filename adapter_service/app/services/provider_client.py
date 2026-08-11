@@ -10,6 +10,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
 from app.core.config import AppSettings, TaskRoute, load_settings
+from app.core.runtime_paths import resolve_runtime_paths
 from app.core.errors import AdapterError, ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.logging import get_logger
 from app.core.models import (
@@ -1438,20 +1439,23 @@ def build_ppt_unconfigured_result(context: Dict, mode: str, prompt: str) -> Dict
 
 
 def get_local_api_key_path(path: Optional[Path] = None) -> Path:
-    return path or LOCAL_KEY_PATH
+    return Path(path) if path is not None else resolve_runtime_paths().local_api_key_path
 
 
 def get_route_api_key_path(api_key_ref: str, base_path: Optional[Path] = None) -> Path:
     safe_ref = "".join(ch for ch in (api_key_ref or "default") if ch.isalnum() or ch in ("-", "_", "."))
     safe_ref = safe_ref or "default"
-    root = base_path or LOCAL_KEY_PATH.parent
-    return root / "provider_api_keys" / safe_ref
+    if base_path is not None:
+        return Path(base_path) / "provider_api_keys" / safe_ref
+    return resolve_runtime_paths().api_key_dir / safe_ref
 
 
 def save_local_api_key(api_key: str, path: Optional[Path] = None) -> None:
     target = get_local_api_key_path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(target.parent), 0o700)
     target.write_text(api_key.strip(), encoding="utf-8")
+    os.chmod(str(target), 0o600)
 
 
 def clear_local_api_key(path: Optional[Path] = None) -> None:
@@ -1470,7 +1474,9 @@ def load_local_api_key(path: Optional[Path] = None) -> str:
 def save_route_api_key(api_key_ref: str, api_key: str, base_path: Optional[Path] = None) -> None:
     target = get_route_api_key_path(api_key_ref, base_path)
     target.parent.mkdir(parents=True, exist_ok=True)
+    os.chmod(str(target.parent), 0o700)
     target.write_text(api_key.strip(), encoding="utf-8")
+    os.chmod(str(target), 0o600)
 
 
 def clear_route_api_key(api_key_ref: str, base_path: Optional[Path] = None) -> None:

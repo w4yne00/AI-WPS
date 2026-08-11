@@ -127,13 +127,16 @@ def run_compatibility_scan(delivery_root: Path) -> None:
 
 def adapter_environment(adapter_root: Path, runtime_root: Path) -> Dict[str, str]:
     environment = dict(os.environ)
+    environment.pop("AI_WPS_WRITING_POLICY_DB", None)
     environment.update(
         {
             "PYTHONPATH": str(adapter_root),
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "AI_WPS_ENABLE_MOCK_PROVIDER": "0",
-            "AI_WPS_WRITING_POLICY_DB": str(runtime_root / "writing_policies.db"),
+            "AI_WPS_STATE_DIR": str(runtime_root / "state"),
+            "AI_WPS_BACKUP_DIR": str(runtime_root / "backups"),
+            "AI_WPS_VAR_DIR": str(runtime_root / "var"),
         }
     )
     return environment
@@ -238,6 +241,60 @@ def check_contracts(port: int, expected_version: str) -> None:
     print("key_contracts=passed count={0}".format(len(CHECK_ENDPOINTS)))
 
 
+def prepare_runtime_layout(runtime_root: Path) -> None:
+    for path in (
+        runtime_root / "state",
+        runtime_root / "backups",
+        runtime_root / "var/logs",
+        runtime_root / "var/run",
+        runtime_root / "var/transactions",
+    ):
+        path.mkdir(mode=0o700, parents=True, exist_ok=True)
+        path.chmod(0o700)
+
+
+def check_runtime_path_contract(adapter_root: Path, runtime_root: Path) -> None:
+    state_root = runtime_root / "state"
+    backup_root = runtime_root / "backups"
+    var_root = runtime_root / "var"
+    if not (state_root / "writing_policies.db").is_file():
+        raise GateFailure("RUNTIME_STATE_WRITING_POLICY_MISSING")
+    if not (var_root / "logs/adapter.log").is_file():
+        raise GateFailure("RUNTIME_VAR_APPLICATION_LOG_MISSING")
+    for path in (
+        backup_root,
+        var_root / "run",
+        var_root / "transactions",
+    ):
+        if not path.is_dir():
+            raise GateFailure("RUNTIME_AREA_MISSING {0}".format(path.name))
+    for forbidden_name in ("logs", "run", "transactions"):
+        if (state_root / forbidden_name).exists():
+            raise GateFailure(
+                "RUNTIME_STATE_BOUNDARY_INVALID {0}".format(forbidden_name)
+            )
+
+    program_root = adapter_root.parent
+    forbidden_program_paths = (
+        program_root / "config/adapter.json",
+        program_root / "run/provider_api_key",
+        program_root / "run/provider_api_keys",
+        program_root / "run/writing_policies.db",
+        program_root / "run/adapter.pid",
+        program_root / "run/transactions",
+        program_root / "logs",
+        adapter_root / "logs",
+    )
+    for path in forbidden_program_paths:
+        if path.exists():
+            raise GateFailure(
+                "MUTABLE_PROGRAM_PATH_CREATED {0}".format(
+                    path.relative_to(program_root)
+                )
+            )
+    print("runtime_path_contract=passed")
+
+
 def stop_process(process: subprocess.Popen) -> None:
     if process.poll() is not None:
         return
@@ -261,11 +318,12 @@ def run_gate(archive_path: Path, expected_version: str) -> None:
         adapter_root = delivery_root / "packages/adapter-start-kit/adapter_service"
         runtime_root = temp_root / "runtime"
         runtime_root.mkdir(mode=0o700)
+        prepare_runtime_layout(runtime_root)
         environment = adapter_environment(adapter_root, runtime_root)
         import_application(adapter_root, environment, expected_version)
 
         port = reserve_port()
-        log_path = runtime_root / "uvicorn.log"
+        log_path = runtime_root / "var/logs/uvicorn.log"
         with log_path.open("w", encoding="utf-8") as log_file:
             process = subprocess.Popen(
                 [
@@ -289,6 +347,7 @@ def run_gate(archive_path: Path, expected_version: str) -> None:
                 wait_for_health(process, port, expected_version)
                 print("uvicorn_start=passed")
                 check_contracts(port, expected_version)
+                check_runtime_path_contract(adapter_root, runtime_root)
             finally:
                 stop_process(process)
         print("python38_delivery_runtime_gate=passed")

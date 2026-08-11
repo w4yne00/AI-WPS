@@ -2,7 +2,9 @@
 set -euo pipefail
 
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PID_FILE="$KIT_ROOT/run/adapter.pid"
+source "$KIT_ROOT/scripts/runtime_paths.sh"
+resolve_adapter_runtime_paths "$KIT_ROOT"
+PID_FILE="$ADAPTER_PID_FILE"
 PORT="${1:-18100}"
 BASE_URL="http://127.0.0.1:${PORT}"
 HEALTH_URL="$BASE_URL/health"

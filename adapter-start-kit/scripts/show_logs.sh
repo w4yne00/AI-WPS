@@ -2,7 +2,9 @@
 set -euo pipefail
 
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-LOG_FILE="$KIT_ROOT/logs/adapter.log"
+source "$KIT_ROOT/scripts/runtime_paths.sh"
+resolve_adapter_runtime_paths "$KIT_ROOT"
+LOG_FILE="$ADAPTER_LOG_FILE"
 LINES="${1:-80}"
 
 if [ ! -f "$LOG_FILE" ]; then

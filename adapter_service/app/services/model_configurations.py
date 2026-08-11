@@ -7,9 +7,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
-from app.core.config import DEFAULT_CONFIG_PATH, load_config_payload, save_config_payload
+from app.core.config import default_config_path, load_config_payload, save_config_payload
+from app.core.runtime_paths import resolve_runtime_paths
 from app.services.workflow_profiles import (
-    DEFAULT_PROFILE_KEY_DIR,
     MAX_PROFILES_PER_TASK,
     SUPPORTED_WORKFLOW_TASKS,
     WorkflowProfileError,
@@ -77,11 +77,17 @@ def normalize_service_base_url(value: str) -> str:
 class ModelConfigurationStore:
     def __init__(
         self,
-        config_path: Path = DEFAULT_CONFIG_PATH,
-        key_dir: Path = DEFAULT_PROFILE_KEY_DIR,
+        config_path: Optional[Path] = None,
+        key_dir: Optional[Path] = None,
     ) -> None:
-        self.config_path = Path(config_path)
-        self.key_dir = Path(key_dir)
+        self.config_path = (
+            Path(config_path) if config_path is not None else default_config_path()
+        )
+        self.key_dir = (
+            Path(key_dir)
+            if key_dir is not None
+            else resolve_runtime_paths().api_key_dir
+        )
 
     def list_for_task(self, task_type: str) -> dict:
         task = self._validate_task_type(task_type)
@@ -644,6 +650,7 @@ class ModelConfigurationStore:
     def _write_key(self, api_key_ref: str, api_key: str) -> None:
         path = self._key_path(api_key_ref)
         path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(path.parent), 0o700)
         temporary = path.parent / ".{0}.{1}.tmp".format(path.name, uuid.uuid4().hex)
         try:
             temporary.write_text(api_key.strip() + "\n", encoding="utf-8")
@@ -668,8 +675,8 @@ class WorkflowProfileCompatibilityStore:
 
     def __init__(
         self,
-        config_path: Path = DEFAULT_CONFIG_PATH,
-        key_dir: Path = DEFAULT_PROFILE_KEY_DIR,
+        config_path: Optional[Path] = None,
+        key_dir: Optional[Path] = None,
     ) -> None:
         self.store = ModelConfigurationStore(config_path, key_dir)
         self.config_path = self.store.config_path

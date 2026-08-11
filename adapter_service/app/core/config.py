@@ -3,10 +3,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, Optional
 
+from app.core.runtime_paths import resolve_runtime_paths
+
 
 BASE_DIR = Path(__file__).resolve().parents[3]
 DEFAULT_CONFIG_PATH = BASE_DIR / "config/adapter.json"
 EXAMPLE_CONFIG_PATH = BASE_DIR / "config/adapter.example.json"
+
+
+def default_config_path() -> Path:
+    return resolve_runtime_paths(BASE_DIR).config_path
 
 
 @dataclass
@@ -40,7 +46,7 @@ class AppSettings:
 
 
 def load_config_payload(config_path: Optional[Path] = None) -> dict:
-    path = config_path or DEFAULT_CONFIG_PATH
+    path = config_path or default_config_path()
     if path.exists():
         return json.loads(path.read_text(encoding="utf-8"))
     if EXAMPLE_CONFIG_PATH.exists():
@@ -49,7 +55,7 @@ def load_config_payload(config_path: Optional[Path] = None) -> dict:
 
 
 def save_config_payload(payload: dict, config_path: Optional[Path] = None) -> None:
-    path = config_path or DEFAULT_CONFIG_PATH
+    path = config_path or default_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -122,7 +128,7 @@ def _parse_task_api_key_refs(payload: dict) -> Dict[str, str]:
 
 
 def load_settings(config_path: Optional[Path] = None) -> AppSettings:
-    path = config_path or DEFAULT_CONFIG_PATH
+    path = config_path or default_config_path()
     if not path.exists():
         path = EXAMPLE_CONFIG_PATH
 
@@ -132,6 +138,13 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     payload = json.loads(path.read_text(encoding="utf-8"))
     task_routes = _parse_task_routes(payload)
     task_api_key_refs = _parse_task_api_key_refs(payload)
+    runtime_paths = resolve_runtime_paths(BASE_DIR)
+    configured_log_path = payload.get("logPath", "./logs/adapter.log")
+    log_path = (
+        str(runtime_paths.log_dir / "adapter.log")
+        if runtime_paths.shared_state_enabled or runtime_paths.var_dir != BASE_DIR
+        else configured_log_path
+    )
 
     return AppSettings(
         service_port=payload.get("servicePort", 18100),
@@ -144,7 +157,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         dify_base_url=payload.get("difyBaseUrl", "http://intranet-dify.local/v1"),
         dify_api_key_env=payload.get("difyApiKeyEnv", "DIFY_API_KEY"),
         dify_workflow_id=payload.get("difyWorkflowId", "wps-word-rewrite"),
-        log_path=payload.get("logPath", "./logs/adapter.log"),
+        log_path=log_path,
         template_root=payload.get("templateRoot", "./templates"),
         timeout_seconds=payload.get("timeoutSeconds", 75),
         task_routes=task_routes,

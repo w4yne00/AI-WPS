@@ -68,6 +68,7 @@ class ConfigApiTests(unittest.TestCase):
                 "excel.analysis",
                 "excel.formula_assistant",
                 "ppt.slide_assistant",
+                "ppt.structure_review",
             ],
         )
         self.assertEqual(data["providerChatPath"], "/chat-messages")

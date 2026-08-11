@@ -2,15 +2,22 @@
 set -euo pipefail
 
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$KIT_ROOT/scripts/runtime_paths.sh"
+resolve_adapter_runtime_paths "$KIT_ROOT"
 PORT="${1:-18100}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 EXPECTED_VERSION="${EXPECTED_VERSION:-0.23.1-alpha}"
-PID_FILE="$KIT_ROOT/run/adapter.pid"
-LOG_DIR="$KIT_ROOT/logs"
-LOG_FILE="$LOG_DIR/adapter.log"
+PID_FILE="$ADAPTER_PID_FILE"
+LOG_DIR="$ADAPTER_LOG_DIR"
+LOG_FILE="$ADAPTER_LOG_FILE"
 HEALTH_URL="http://127.0.0.1:${PORT}/health"
 
-mkdir -p "$KIT_ROOT/run" "$LOG_DIR"
+mkdir -p "$ADAPTER_RUN_DIR" "$LOG_DIR" "$ADAPTER_TRANSACTION_DIR"
+chmod 700 "$ADAPTER_RUN_DIR" "$LOG_DIR" "$ADAPTER_TRANSACTION_DIR"
+if [ -n "${AI_WPS_STATE_DIR:-}" ]; then
+  mkdir -p "$AI_WPS_STATE_DIR" "$AI_WPS_BACKUP_DIR"
+  chmod 700 "$AI_WPS_STATE_DIR" "$AI_WPS_BACKUP_DIR"
+fi
 
 if ! "$PYTHON_BIN" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
   echo "uvicorn_runtime_missing=true"

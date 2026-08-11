@@ -2,6 +2,11 @@
 set -euo pipefail
 
 KIT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REQUESTED_STATE_DIR="${AI_WPS_STATE_DIR:-}"
+REQUESTED_BACKUP_DIR="${AI_WPS_BACKUP_DIR:-}"
+REQUESTED_VAR_DIR="${AI_WPS_VAR_DIR:-}"
+source "$KIT_ROOT/scripts/runtime_paths.sh"
+resolve_adapter_runtime_paths "$KIT_ROOT"
 PORT="${1:-18100}"
 SERVICE_USER="${2:-${SUDO_USER:-$(id -un)}}"
 SERVICE_NAME="${SERVICE_NAME:-ai-wps-adapter.service}"
@@ -16,7 +21,13 @@ fi
 
 if [ "$(id -u)" -ne 0 ]; then
   echo "autostart_install_requires_sudo=true"
-  exec sudo env SERVICE_NAME="$SERVICE_NAME" PYTHON_BIN="$PYTHON_BIN" bash "$0" "$PORT" "$SERVICE_USER"
+  exec sudo env \
+    SERVICE_NAME="$SERVICE_NAME" \
+    PYTHON_BIN="$PYTHON_BIN" \
+    AI_WPS_STATE_DIR="$REQUESTED_STATE_DIR" \
+    AI_WPS_BACKUP_DIR="$REQUESTED_BACKUP_DIR" \
+    AI_WPS_VAR_DIR="$REQUESTED_VAR_DIR" \
+    bash "$0" "$PORT" "$SERVICE_USER"
 fi
 
 if ! command -v systemctl >/dev/null 2>&1; then
@@ -31,6 +42,13 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   exit 1
 fi
 
+RUNTIME_ENVIRONMENT_LINES=""
+if [ -n "$REQUESTED_STATE_DIR$REQUESTED_BACKUP_DIR$REQUESTED_VAR_DIR" ]; then
+  RUNTIME_ENVIRONMENT_LINES="Environment=AI_WPS_STATE_DIR=${AI_WPS_STATE_DIR:-}
+Environment=AI_WPS_BACKUP_DIR=${AI_WPS_BACKUP_DIR:-}
+Environment=AI_WPS_VAR_DIR=${AI_WPS_VAR_DIR:-}"
+fi
+
 cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=AI-WPS local adapter
@@ -42,7 +60,8 @@ Type=forking
 User=$SERVICE_USER
 WorkingDirectory=$KIT_ROOT
 Environment=PYTHON_BIN=$PYTHON_BIN
-PIDFile=$KIT_ROOT/run/adapter.pid
+$RUNTIME_ENVIRONMENT_LINES
+PIDFile=$ADAPTER_PID_FILE
 ExecStart=/bin/bash $KIT_ROOT/scripts/start_adapter.sh $PORT
 ExecStop=/bin/bash $KIT_ROOT/scripts/stop_adapter.sh $PORT
 Restart=on-failure

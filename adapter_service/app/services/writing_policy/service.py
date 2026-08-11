@@ -7,6 +7,8 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
+from app.core.runtime_paths import resolve_runtime_paths
+
 from .audit import (
     audit_document_review_writing_policy,
     audit_writing_policy_result,
@@ -43,11 +45,7 @@ def default_database_path() -> Path:
     configured = os.getenv("AI_WPS_WRITING_POLICY_DB", "").strip()
     if configured:
         return Path(configured)
-    return (
-        Path(__file__).resolve().parents[4]
-        / "run"
-        / "writing_policies.db"
-    )
+    return resolve_runtime_paths().writing_policy_db_path
 
 
 def _safe_error_code(error: Exception) -> str:

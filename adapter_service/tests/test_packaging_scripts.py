@@ -14,6 +14,24 @@ PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 
 
 class PackagingScriptTests(unittest.TestCase):
+    def test_release_manifest_declares_runtime_path_contract(self) -> None:
+        manifest = json.loads(
+            (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+
+        policy = manifest["runtimeStatePolicy"]
+        self.assertEqual(policy["sharedStateEnv"], "AI_WPS_STATE_DIR")
+        self.assertEqual(policy["backupEnv"], "AI_WPS_BACKUP_DIR")
+        self.assertEqual(policy["runtimeVarEnv"], "AI_WPS_VAR_DIR")
+        self.assertTrue(policy["legacyLayoutFallback"])
+        self.assertEqual(policy["snapshotRoot"], "state/")
+        self.assertEqual(
+            policy["snapshotExcluded"],
+            ["backups/", "var/logs/", "var/run/", "var/transactions/"],
+        )
+
     def test_uvicorn_start_script_replaces_stale_running_adapter(self) -> None:
         script = (ROOT / "adapter-start-kit/scripts/start_uvicorn_adapter.sh").read_text(encoding="utf-8")
 

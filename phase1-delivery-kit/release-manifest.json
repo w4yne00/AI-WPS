@@ -55,6 +55,17 @@
     "xlsxTemplate": "docs/import-templates/writing-policies-import-template.xlsx"
   },
   "runtimeStatePolicy": {
+    "sharedStateEnv": "AI_WPS_STATE_DIR",
+    "backupEnv": "AI_WPS_BACKUP_DIR",
+    "runtimeVarEnv": "AI_WPS_VAR_DIR",
+    "legacyLayoutFallback": true,
+    "snapshotRoot": "state/",
+    "snapshotExcluded": [
+      "backups/",
+      "var/logs/",
+      "var/run/",
+      "var/transactions/"
+    ],
     "firstInstall": "initialize-empty-organization-database",
     "upgrade": "preserve-existing-organization-database-backups-and-model-configuration",
     "excluded": [

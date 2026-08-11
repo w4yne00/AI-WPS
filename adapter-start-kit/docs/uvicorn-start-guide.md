@@ -29,6 +29,20 @@ bash scripts/start_uvicorn_adapter.sh 18100
 bash scripts/check_health.sh 18100
 ```
 
+若 Adapter 程序位于不可变发布目录，启动前配置共享运行状态路径：
+
+```bash
+export AI_WPS_STATE_DIR="$HOME/ai-wps-phase1/state"
+export AI_WPS_BACKUP_DIR="$HOME/ai-wps-phase1/backups"
+export AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var"
+bash scripts/start_uvicorn_adapter.sh 18100
+```
+
+只设置 `AI_WPS_STATE_DIR` 时，脚本自动使用同级 `backups/` 和 `var/`。配置、
+API Key 与写作规范库进入 `state/`；日志、PID 和事务记录分别进入
+`var/logs/`、`var/run/` 和 `var/transactions/`，不属于运行数据快照。
+三个变量均未设置时继续使用旧版启动包内的 `config/`、`run/` 和 `logs/`。
+
 成功标志：
 
 ```text
@@ -51,5 +65,6 @@ bash scripts/restart_adapter.sh 18100
 ## 4. 说明
 
 - `start_uvicorn_adapter.sh` 只走 uvicorn；缺依赖会直接提示安装离线依赖，并会在端口被旧 standalone 占用时自动替换旧进程。
+- `status_adapter.sh`、`show_logs.sh`、`stop_adapter.sh` 与 systemd 自启动使用同一组运行路径变量，不能混用不同路径执行管理命令。
 - `start_adapter.sh` 会优先 uvicorn，缺 uvicorn 时自动降级 standalone，也会避免被旧模式进程占用端口。
 - WPS 插件访问地址固定为 `http://127.0.0.1:18100`，因此启动端口建议保持 `18100`。

@@ -11,6 +11,24 @@ Use it when the target intranet machine needs a simple, operator-friendly startu
 
 The target default listen address is `127.0.0.1:18100`.
 
+## Shared Runtime Layout
+
+For an immutable release directory, configure the live state root before using
+any start, stop, status, log, or autostart command:
+
+```bash
+export AI_WPS_STATE_DIR="$HOME/ai-wps-phase1/state"
+export AI_WPS_BACKUP_DIR="$HOME/ai-wps-phase1/backups"
+export AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var"
+```
+
+`state/` stores configuration, API Keys, and the writing-policy database.
+`backups/` is reserved for whole-state snapshots. `var/` stores logs, the PID,
+and transaction records, so none of those files enter a state snapshot. If only
+`AI_WPS_STATE_DIR` is set, the start kit derives sibling `backups/` and `var/`
+directories. If no path variables are set, existing `config/`, `run/`, and
+`logs/` locations remain in use for legacy installations.
+
 ## Uvicorn Operations
 
 The start kit now treats the uvicorn/FastAPI adapter as the managed runtime.

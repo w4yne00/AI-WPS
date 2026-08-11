@@ -1,3 +1,4 @@
+import importlib.util
 import os
 import subprocess
 import sys
@@ -5,13 +6,36 @@ import tempfile
 import unittest
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 COMPATIBILITY_SCANNER = ROOT / "packaging/check_python38_compatibility.py"
+GATE_SPEC = importlib.util.spec_from_file_location(
+    "python38_delivery_runtime_gate",
+    ROOT / "packaging/python38_delivery_runtime_gate.py",
+)
+assert GATE_SPEC is not None and GATE_SPEC.loader is not None
+GATE_MODULE = importlib.util.module_from_spec(GATE_SPEC)
+GATE_SPEC.loader.exec_module(GATE_MODULE)
+adapter_environment = GATE_MODULE.adapter_environment
 
 
 class Python38CompatibilityScanTests(unittest.TestCase):
+    def test_delivery_gate_uses_separate_state_backup_and_var_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adapter_root = root / "delivery" / "adapter_service"
+            runtime_root = root / "runtime"
+
+            environment = adapter_environment(adapter_root, runtime_root)
+
+            self.assertEqual(environment["AI_WPS_STATE_DIR"], str(runtime_root / "state"))
+            self.assertEqual(
+                environment["AI_WPS_BACKUP_DIR"],
+                str(runtime_root / "backups"),
+            )
+            self.assertEqual(environment["AI_WPS_VAR_DIR"], str(runtime_root / "var"))
+            self.assertNotIn("AI_WPS_WRITING_POLICY_DB", environment)
+
     def test_scan_reproduces_runtime_evaluated_builtin_generic_failure(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             source_root = Path(temp_dir) / "adapter_service"
@@ -161,6 +185,7 @@ class Python38RuntimeGateTests(unittest.TestCase):
         self.assertIn("adapter_import=passed", build.stdout)
         self.assertIn("uvicorn_start=passed", build.stdout)
         self.assertIn("key_contracts=passed", build.stdout)
+        self.assertIn("runtime_path_contract=passed", build.stdout)
         self.assertIn("python38_delivery_runtime_gate=passed", build.stdout)
 
 

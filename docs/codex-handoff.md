@@ -14,6 +14,9 @@
 
 ## 0. v0.23.1-alpha 当前事实
 
+- Issue #27 已建立兼容旧布局的运行路径契约：显式 `AI_WPS_STATE_DIR` 保存配置、API Key 与写作规范数据库，`AI_WPS_BACKUP_DIR` 预留一致性快照，`AI_WPS_VAR_DIR` 隔离日志、PID 与事务记录；仅配置状态目录时自动使用同级 `backups/` 和 `var/`，三项均未配置时继续使用旧 `config/`、`run/`、`logs/`。
+- Adapter 配置、模型配置、兼容工作流配置、统一/任务 Key 和写作规范库均遵循共享状态路径；Key 文件保持 `0600`、Key 目录保持 `0700`。启动、停止、状态、日志和 systemd 自启动脚本共享同一路径解析，避免管理命令读写不同 PID 或日志位置。
+- Python 3.8 最终包门禁现同时验证发布程序目录不产生配置、Key、数据库、日志、PID 或事务记录，且运行状态、备份和 `var/{logs,run,transactions}` 边界成立；本次本地验证为 Python `597 tests OK / 6 skipped`、正式插件 Node 契约测试 `14/14`、三宿主 JavaScript 检查通过、Python 3.8.20 最终包运行门禁通过。
 - 修复 `WorkflowProfileCompatibilityStore._platform_configurations` 在 Python 3.8 导入时执行 `tuple[...]` 导致 Adapter 退出的问题，改用 `typing.Tuple/Dict/List`。
 - 新增生产 Python 兼容性扫描和最终 tar 包运行门禁；门禁必须由真实 Python 3.8 完整导入应用、启动 Uvicorn，并检查版本、Provider 状态、模型配置和写作规范摘要接口。
 - 自动化门禁通过只代表候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户现场验收。

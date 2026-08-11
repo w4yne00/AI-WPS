@@ -19,6 +19,16 @@ bash scripts/install_autostart.sh 18100
 PYTHON_BIN=/usr/bin/python3.8 bash scripts/install_autostart.sh 18100
 ```
 
+若使用共享运行状态布局，应在安装服务时一并提供路径。脚本会把解析后的
+路径写入 systemd 服务环境，后续启动、停止、PID 和日志位置保持一致：
+
+```bash
+AI_WPS_STATE_DIR="$HOME/ai-wps-phase1/state" \
+AI_WPS_BACKUP_DIR="$HOME/ai-wps-phase1/backups" \
+AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var" \
+bash scripts/install_autostart.sh 18100
+```
+
 脚本会自动请求 `sudo`，并默认使用执行 sudo 的登录用户运行 adapter。若需要指定运行用户：
 
 ```bash
@@ -43,7 +53,8 @@ bash scripts/status_adapter.sh 18100
 
 ## 查看日志
 
-adapter 自身日志仍在启动包目录：
+adapter 自身日志通过统一命令查看。共享布局下实际文件位于
+`$AI_WPS_VAR_DIR/logs/adapter.log`；旧布局仍位于启动包 `logs/`：
 
 ```bash
 bash scripts/show_logs.sh 120
