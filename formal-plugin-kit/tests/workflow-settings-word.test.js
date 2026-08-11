@@ -105,7 +105,7 @@ assert.ok(!refreshConfigSource.includes("setResult("));
 assert.ok(!refreshConfigSource.includes("setAdapterUnavailableState("));
 assert.ok(!refreshConfigSource.includes(".finally("));
 assert.ok(refreshConfigSource.includes("SETTINGS_REFRESH_REQUEST_TIMEOUT_MS"));
-assert.ok(refreshConfigSource.indexOf("state.configRefreshRequestId !== requestId") < refreshConfigSource.indexOf("setHealthBadge"));
+assert.ok(refreshConfigSource.indexOf("state.configRefreshRequestId !== requestId") < refreshConfigSource.indexOf("applyAdapterHealthState"));
 
 const providerLineSource = functionSource("setProviderLine");
 assert.ok(providerLineSource.startsWith("function setProviderLine(providerName)"));
@@ -429,6 +429,7 @@ function createRefreshHarness(options = {}) {
   };
   const context = {
     state,
+    helpers: sharedHelpers,
     SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     TASK_API_KEY_DEFS: taskDefinitions.map(([taskType, label]) => ({ taskType, label })),
     request(path, payload, requestOptions) {
@@ -464,6 +465,7 @@ function createRefreshHarness(options = {}) {
     setResult() { calls.setResult += 1; },
     setAdapterUnavailableState() { calls.setAdapterUnavailableState += 1; }
   };
+  context.applyAdapterHealthState = loadFunction("applyAdapterHealthState", context);
   return {
     health,
     calls,
@@ -497,7 +499,7 @@ async function runSettingsRefreshBehaviorTests() {
   const healthFailurePromise = healthFailure.refreshConfig();
   healthFailure.health.reject(new Error("本地 adapter 未启动"));
   await healthFailurePromise;
-  assert.deepStrictEqual(healthFailure.calls.healthBadges.at(-1), ["badge-warn", "待启动"]);
+  assert.deepStrictEqual(healthFailure.calls.healthBadges.at(-1), ["badge-error", "未连接"]);
   assert.strictEqual(healthFailure.calls.healthBadges.length, 2);
   assert.strictEqual(healthFailure.state.modelInterfaceDetectable, false);
   assert.strictEqual(healthFailure.calls.renderDetectable.at(-1), false);

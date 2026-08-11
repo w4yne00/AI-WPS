@@ -43,6 +43,7 @@ from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
 from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
 from app.services.long_task_coordinator import get_long_task_coordinator
+from app.services.health import get_health_snapshot, get_operation_block
 from app.services.writing_policy.imports import (
     DEFAULT_IMPORT_PREVIEW_STORE,
     XLSX_MIME,
@@ -1396,6 +1397,24 @@ class Handler(BaseHTTPRequestHandler):
         sys.stdout.write(fmt % args + "\n")
         sys.stdout.flush()
 
+    def _reject_operation_block(self, method, path):
+        operation_block = get_operation_block(method, path)
+        if operation_block is None:
+            return False
+        code = operation_block.get("code") or "ADAPTER_RECOVERY_MODE"
+        message = operation_block.get("message") or "当前操作已被安全阻止。"
+        self._write(
+            503,
+            envelope(
+                "standalone-operation-guard",
+                "adapter.recovery",
+                success=False,
+                message=message,
+                errors=[{"code": code, "message": message}],
+            ),
+        )
+        return True
+
     def do_OPTIONS(self):
         self.send_response(204)
         self._set_cors_headers()
@@ -1410,11 +1429,7 @@ class Handler(BaseHTTPRequestHandler):
         if writing_policy_response is not None:
             self._write_writing_policy_response(writing_policy_response)
             return
-        if path == "/health":
-            settings = load_settings()
-            provider = ProviderClient(
-                settings, model_configuration_store=ModelConfigurationStore()
-            )
+        if path == "/health/live":
             self._write(
                 200,
                 envelope(
@@ -1422,19 +1437,20 @@ class Handler(BaseHTTPRequestHandler):
                     "adapter.health",
                     {
                         "service": "wps-ai-adapter",
-                        "status": "ok",
+                        "status": "live",
                         "version": VERSION,
                         "mode": "standalone",
-                        "providerName": settings.provider_name,
-                        "providerType": settings.provider_type,
-                        "providerBaseUrlConfigured": bool(settings.provider_base_url.strip()),
-                        "providerConfigured": provider.is_configured(),
-                        "providerAuthSource": provider.get_auth_source(),
-                        "taskApiKeys": provider.build_task_api_key_status(),
-                        "taskRouteCount": 0,
-                        "taskRouteConfiguredCount": 0,
                     },
                 ),
+            )
+            return
+
+        if path == "/health/ready" or path == "/health":
+            snapshot = get_health_snapshot()
+            snapshot["mode"] = "standalone"
+            self._write(
+                503 if path == "/health/ready" and snapshot["status"] == "recovery" else 200,
+                envelope("standalone-health", "adapter.health", snapshot),
             )
             return
 
@@ -1729,6 +1745,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if self._reject_operation_block("POST", path):
+            return
         if self._reject_writing_policy_route_or_method("POST", path):
             return
         is_writing_policy = _is_writing_policy_path(path)
@@ -2481,6 +2499,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_PATCH(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if self._reject_operation_block("PATCH", path):
+            return
         if self._reject_writing_policy_route_or_method("PATCH", path):
             return
         try:
@@ -2561,6 +2581,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_PUT(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if self._reject_operation_block("PUT", path):
+            return
         if _is_writing_policy_path(path):
             if self._reject_writing_policy_route_or_method("PUT", path):
                 return
@@ -2590,6 +2612,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_DELETE(self):
         parsed = urlparse(self.path)
         path = parsed.path
+        if self._reject_operation_block("DELETE", path):
+            return
         writing_policy_response = dispatch_writing_policy(
             "DELETE", path, query=parsed.query
         )

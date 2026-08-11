@@ -6,6 +6,7 @@ const root = "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
 const html = fs.readFileSync(`${root}/taskpane.html`, "utf8");
 const css = fs.readFileSync(`${root}/taskpane.css`, "utf8");
 const js = fs.readFileSync(`${root}/taskpane.js`, "utf8");
+const sharedHelpers = require(`../wps-ai-assistant-et_1.0.0/taskpane-helpers.js`);
 
 function functionSource(name) {
   const start = js.indexOf(`  function ${name}(`);
@@ -524,6 +525,7 @@ function createRefreshHarness(options = {}) {
   };
   const context = {
     state,
+    helpers: sharedHelpers,
     SETTINGS_REFRESH_REQUEST_TIMEOUT_MS: 8000,
     request(path, payload, requestOptions) {
       assert.strictEqual(path, "/health");
@@ -556,6 +558,7 @@ function createRefreshHarness(options = {}) {
     setTrace() { calls.taskTrace += 1; },
     setAdapterUnavailableState() { calls.adapterUnavailable += 1; }
   };
+  context.applyAdapterHealthState = loadFunction("applyAdapterHealthState", context);
   return { health, calls, state, refreshConfig: loadFunction("refreshConfig", context) };
 }
 
@@ -580,7 +583,7 @@ async function runSettingsBehaviorTests() {
   const healthFailurePromise = healthFailure.refreshConfig();
   healthFailure.health.reject(new Error("adapter 未启动"));
   await healthFailurePromise;
-  assert.deepStrictEqual(healthFailure.calls.healthBadges.at(-1), ["badge-warn", "待启动"]);
+  assert.deepStrictEqual(healthFailure.calls.healthBadges.at(-1), ["badge-error", "未连接"]);
   assert.strictEqual(healthFailure.state.modelInterfaceDetectable, false);
   assert.strictEqual(healthFailure.calls.taskResult, 0);
 

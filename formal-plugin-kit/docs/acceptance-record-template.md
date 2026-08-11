@@ -22,7 +22,9 @@
 
 ## 3. 适配层验证
 
-- `/health` 结果：
+- `/health/live` 结果：
+- `/health/ready` HTTP 状态和结果：
+- `/health` 聚合状态（ready/degraded/recovery）：
 - `/templates` 结果：
 - 日志目录：
 - 启动是否成功：

@@ -218,6 +218,10 @@
     providerName: "未检测",
     providerBaseUrl: "",
     providerAuthSource: "none",
+    adapterHealthStatus: "unknown",
+    configurationMutationsAllowed: true,
+    modelTasksAllowed: true,
+    writingPolicyMutationsAllowed: true,
     taskApiKeys: {},
     workflowProfiles: {},
     workflowProfileSelections: {},
@@ -555,6 +559,21 @@
     var node = byId("health-indicator");
     setNodeClassNameIfChanged(node, "badge " + mode);
     setNodeTextIfChanged(node, text);
+  }
+
+  function applyAdapterHealthState(data, connected) {
+    var healthState = helpers.normalizeAdapterHealth(data, connected);
+    state.adapterHealthStatus = healthState.status;
+    state.configurationMutationsAllowed = healthState.configurationMutationsAllowed;
+    state.modelTasksAllowed = healthState.modelTasksAllowed;
+    state.writingPolicyMutationsAllowed = healthState.writingPolicyMutationsAllowed;
+    setHealthBadge(healthState.badgeClass, healthState.badgeLabel);
+    if (healthState.status === "recovery") {
+      state.modelInterfaceDetectable = false;
+      renderModelInterfaceState(false);
+      setSettingsStatus(healthState.summary);
+    }
+    return healthState;
   }
 
   function setResult(text, copyText) {
@@ -1408,6 +1427,38 @@
     var options = {
       method: requestMethod || (payload ? "POST" : "GET")
     };
+    var normalizedMethod = String(options.method || "GET").toUpperCase();
+    var mutating = ["POST", "PUT", "PATCH", "DELETE"].indexOf(normalizedMethod) >= 0;
+    var blockedCode = "";
+
+    if (mutating && path.indexOf("/provider/") === 0 && !state.configurationMutationsAllowed) {
+      blockedCode = "ADAPTER_RECOVERY_MODE";
+    } else if (
+      mutating &&
+      path.indexOf("/writing-policies/") === 0 &&
+      !state.writingPolicyMutationsAllowed
+    ) {
+      blockedCode = state.adapterHealthStatus === "recovery"
+        ? "ADAPTER_RECOVERY_MODE"
+        : "WRITING_POLICY_READ_ONLY";
+    } else if (
+      normalizedMethod === "POST" &&
+      ["/word/", "/excel/", "/ppt/"].some(function (prefix) {
+        return path.indexOf(prefix) === 0;
+      }) &&
+      !state.modelTasksAllowed
+    ) {
+      blockedCode = "ADAPTER_RECOVERY_MODE";
+    }
+    if (blockedCode) {
+      var blockedError = new Error(
+        blockedCode === "WRITING_POLICY_READ_ONLY"
+          ? "写作规范增强能力当前处于降级状态，仅允许只读查看。"
+          : "Adapter 当前处于恢复模式，配置变更和模型任务已被安全阻止。"
+      );
+      blockedError.adapterCode = blockedCode;
+      return Promise.reject(blockedError);
+    }
 
     if (payload) {
       options.headers = {
@@ -1687,13 +1738,17 @@
       timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
     }).then(function (health) {
       var healthData;
+      var healthState;
       if (state.configRefreshRequestId !== requestId) {
         return null;
       }
       healthData = health.data || {};
       healthConnected = true;
-      setHealthBadge("badge-ok", "已连接");
+      healthState = applyAdapterHealthState(healthData, true);
       setProviderLine(healthData.providerType || "未检测");
+      if (healthState.status === "recovery") {
+        return null;
+      }
       return Promise.all([
         Promise.resolve(health),
         readAdapterJson("/templates", { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
@@ -1736,7 +1791,9 @@
         state.modelInterfaceDetectable = true;
         renderModelInterfaceState(state.modelInterfaceDetectable);
         if (!state.configRefreshActiveSilent) {
-          setSettingsStatus("就绪");
+          setSettingsStatus(state.adapterHealthStatus === "degraded"
+            ? "增强能力降级，核心功能可用。"
+            : "就绪");
         }
         return results;
       });
@@ -1745,7 +1802,7 @@
         return null;
       }
       if (!healthConnected) {
-        setHealthBadge("badge-warn", "待启动");
+        applyAdapterHealthState(null, false);
       }
       state.modelInterfaceDetectable = false;
       renderModelInterfaceState(state.modelInterfaceDetectable);
@@ -1756,7 +1813,7 @@
     refreshPromise = refreshOperation.then(releaseRefresh, function (error) {
       if (state.configRefreshRequestId === requestId) {
         if (!healthConnected) {
-          setHealthBadge("badge-warn", "待启动");
+          applyAdapterHealthState(null, false);
         }
         state.modelInterfaceDetectable = false;
         renderModelInterfaceState(state.modelInterfaceDetectable);
@@ -5770,6 +5827,10 @@
   }
 
   function runPrimaryAction() {
+    if (state.adapterHealthStatus === "recovery" || !state.modelTasksAllowed) {
+      setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
+      return;
+    }
     if (state.workflowProfileMutationBusy) {
       setStatus("模型配置正在更新，请稍后再提交任务。");
       return;

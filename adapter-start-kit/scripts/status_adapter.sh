@@ -7,6 +7,7 @@ resolve_adapter_runtime_paths "$KIT_ROOT"
 PID_FILE="$ADAPTER_PID_FILE"
 PORT="${1:-18100}"
 BASE_URL="http://127.0.0.1:${PORT}"
+LIVE_URL="$BASE_URL/health/live"
 HEALTH_URL="$BASE_URL/health"
 PROVIDER_STATUS_URL="$BASE_URL/provider/status"
 
@@ -17,13 +18,21 @@ read_endpoint() {
 }
 
 print_health() {
+  local live_body
   local health_body
+  live_body="$(read_endpoint "$LIVE_URL")"
   health_body="$(read_endpoint "$HEALTH_URL")"
+  if [ -n "$live_body" ]; then
+    echo "adapter_health=reachable url=$LIVE_URL"
+    printf '%s\n' "$live_body"
+  else
+    echo "adapter_health=unreachable url=$LIVE_URL"
+  fi
   if [ -n "$health_body" ]; then
-    echo "adapter_health=reachable url=$HEALTH_URL"
+    echo "adapter_business_health=reachable url=$HEALTH_URL"
     printf '%s\n' "$health_body"
   else
-    echo "adapter_health=unreachable url=$HEALTH_URL"
+    echo "adapter_business_health=unreachable url=$HEALTH_URL"
   fi
 }
 
@@ -39,7 +48,7 @@ print_provider_status() {
 }
 
 if [ ! -f "$PID_FILE" ]; then
-  if [ -n "$(read_endpoint "$HEALTH_URL")" ]; then
+  if [ -n "$(read_endpoint "$LIVE_URL")" ]; then
     echo "adapter_status=running pid=untracked port=$PORT"
     print_health
     print_provider_status

@@ -66,6 +66,8 @@ bash scripts/restart_adapter.sh 18100
 bash scripts/check_health.sh 18100
 ```
 
+脚本先检查 `/health/live`，再读取聚合 `/health`。聚合状态为 `ready` 时核心与增强子系统均正常；`degraded` 表示增强能力降级但核心任务仍可用；`recovery` 表示进程存活但业务未就绪，脚本返回非零并提示先备份和导出脱敏诊断。
+
 如果返回 `adapter_health=unreachable`，继续执行：
 
 ```bash

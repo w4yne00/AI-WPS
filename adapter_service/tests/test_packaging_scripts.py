@@ -14,6 +14,17 @@ PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 
 
 class PackagingScriptTests(unittest.TestCase):
+    def test_standalone_adapter_exposes_split_health_and_recovery_guard(self) -> None:
+        script = (ROOT / "adapter_service/standalone_adapter.py").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('path == "/health/live"', script)
+        self.assertIn('path == "/health/ready"', script)
+        self.assertIn("get_health_snapshot", script)
+        self.assertIn("get_operation_block", script)
+        self.assertIn("ADAPTER_RECOVERY_MODE", script)
+
     def test_release_manifest_declares_runtime_path_contract(self) -> None:
         manifest = json.loads(
             (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(
@@ -57,6 +68,10 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("start_uvicorn_adapter.sh", scripts["start_adapter.sh"])
         self.assertIn("start_uvicorn_adapter.sh", scripts["restart_adapter.sh"])
         self.assertIn("/provider/status", scripts["status_adapter.sh"])
+        self.assertIn("/health/live", scripts["status_adapter.sh"])
+        self.assertIn("/health/live", scripts["check_health.sh"])
+        self.assertIn("/health/ready", scripts["check_health.sh"])
+        self.assertIn("adapter_business_status", scripts["check_health.sh"])
         self.assertIn("/provider/route-diagnostics", scripts["check_health.sh"])
         self.assertIn("/provider/debug-last", scripts["check_health.sh"])
         self.assertIn("provider=mock", scripts["show_logs.sh"])

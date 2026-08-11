@@ -3,6 +3,8 @@ set -euo pipefail
 
 PORT="${1:-18100}"
 BASE_URL="http://127.0.0.1:${PORT}"
+LIVE_URL="$BASE_URL/health/live"
+READY_URL="$BASE_URL/health/ready"
 HEALTH_URL="$BASE_URL/health"
 STATUS_URL="$BASE_URL/provider/status"
 ROUTE_URL="$BASE_URL/provider/route-diagnostics"
@@ -35,22 +37,33 @@ print_endpoint() {
   echo
 }
 
-HEALTH_BODY="$(read_endpoint "$HEALTH_URL")"
-if [ -z "$HEALTH_BODY" ]; then
-  echo "adapter_health=unreachable url=$HEALTH_URL"
+LIVE_BODY="$(read_endpoint "$LIVE_URL")"
+if [ -z "$LIVE_BODY" ]; then
+  echo "adapter_health=unreachable url=$LIVE_URL"
   echo "possible_causes=service_not_started|startup_crash|wrong_port|local_firewall"
   echo "next_step_1=bash scripts/status_adapter.sh ${PORT}"
   echo "next_step_2=bash scripts/show_logs.sh 80"
   exit 1
 fi
 
+echo "adapter_health=reachable url=$LIVE_URL"
+printf '%s\n' "$LIVE_BODY"
+echo
+
+HEALTH_BODY="$(read_endpoint "$HEALTH_URL")"
+if [ -z "$HEALTH_BODY" ]; then
+  echo "adapter_business_status=unknown url=$HEALTH_URL"
+  exit 1
+fi
+
 printf '%s\n' "$HEALTH_BODY"
 MODE="$(json_value "$HEALTH_BODY" mode)"
 VERSION="$(json_value "$HEALTH_BODY" version)"
+BUSINESS_STATUS="$(json_value "$HEALTH_BODY" status)"
 PROVIDER_CONFIGURED="$(json_value "$HEALTH_BODY" providerConfigured)"
 AUTH_SOURCE="$(json_value "$HEALTH_BODY" providerAuthSource)"
 echo
-echo "adapter_health=reachable url=$HEALTH_URL"
+echo "adapter_business_status=${BUSINESS_STATUS:-unknown} ready_url=$READY_URL"
 if [ "$MODE" = "uvicorn" ]; then
   echo "adapter_mode=uvicorn"
   echo "adapter_runtime=fastapi"
@@ -64,6 +77,10 @@ echo "provider_configured=${PROVIDER_CONFIGURED:-unknown}"
 echo "provider_auth_source=${AUTH_SOURCE:-unknown}"
 if [ "$MODE" != "uvicorn" ]; then
   echo "hint=当前不是 uvicorn；执行 bash scripts/restart_adapter.sh ${PORT} 切换到 uvicorn。"
+fi
+if [ "$BUSINESS_STATUS" = "recovery" ]; then
+  echo "hint=Adapter 已存活但业务未就绪；配置变更和模型任务已被阻止，请先备份并导出脱敏诊断。"
+  exit 1
 fi
 if [ "$PROVIDER_CONFIGURED" != "true" ]; then
   echo "hint=provider 未配置完整；真实转发需要同时保存 API URL 和统一 Dify API Key，否则日志会出现 provider=mock。"

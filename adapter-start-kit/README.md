@@ -62,7 +62,9 @@ systemctl status ai-wps-adapter.service --no-pager
 
 See `docs/autostart-guide.md` for uninstall and troubleshooting commands.
 
-`check_health.sh` prints `/health`, `/provider/status`,
-`/provider/route-diagnostics`, and `/provider/debug-last`. A log line with
+`check_health.sh` checks `/health/live`, `/health/ready`, and aggregate `/health`
+before printing `/provider/status`, `/provider/route-diagnostics`, and
+`/provider/debug-last`. Recovery mode fails the business-readiness check while
+keeping liveness visible. A log line with
 `provider=mock` means the adapter did not forward that task to enterprise Dify;
 confirm the unified API URL and Dify API Key are both configured.

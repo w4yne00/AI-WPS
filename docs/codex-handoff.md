@@ -14,6 +14,10 @@
 
 ## 0. v0.23.1-alpha 当前事实
 
+- Issue #28 已将健康契约拆为 `/health/live`、`/health/ready` 和兼容聚合 `/health`：存活检查不读取业务数据；核心配置与任务路由可用时业务就绪，写作规范单项失败为 `degraded`，核心数据失败为 `recovery`。
+- 聚合健康在三种状态下均返回 HTTP 200；业务就绪接口在 `recovery` 返回 503。子系统仅披露稳定错误码、阶段和允许动作，不返回配置正文、API Key、异常原文或敏感绝对路径。
+- `degraded` 状态下 Word 核心任务继续并沿用既有 `writingPolicyUsage`/审查提示，写作规范管理只读；`recovery` 状态下 Adapter 仍可连接，但配置变更和新模型任务由 FastAPI、standalone 与三宿主共同阻止。
+- Word、Excel、PPT 设置页分别显示“已连接”“增强降级”“恢复模式”或“未连接”，恢复模式不会继续读取模型配置，从而避免把核心数据故障误报为网络断开或显示敏感异常。
 - Issue #27 已建立兼容旧布局的运行路径契约：显式 `AI_WPS_STATE_DIR` 保存配置、API Key 与写作规范数据库，`AI_WPS_BACKUP_DIR` 预留一致性快照，`AI_WPS_VAR_DIR` 隔离日志、PID 与事务记录；仅配置状态目录时自动使用同级 `backups/` 和 `var/`，三项均未配置时继续使用旧 `config/`、`run/`、`logs/`。
 - 三个运行路径环境变量必须是无控制字符的绝对路径（空格受支持，`~` 不自动展开）；systemd unit 会引用并转义路径，API Key 通过 `0600` 临时文件原子替换，避免首次创建的权限窗口。
 - Adapter 配置、模型配置、兼容工作流配置、统一/任务 Key 和写作规范库均遵循共享状态路径；Key 文件保持 `0600`、Key 目录保持 `0700`。启动、停止、状态、日志和 systemd 自启动脚本共享同一路径解析，避免管理命令读写不同 PID 或日志位置。
@@ -136,6 +140,8 @@ adapter 继续使用 Dify 官方 `/chat-messages`。旧工作流默认使用：
 当前关键接口：
 
 ```text
+GET    /health/live
+GET    /health/ready
 GET    /health
 GET    /config
 GET    /templates
@@ -333,7 +339,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - 智能总结长任务沿用 1800 秒 provider 等待预算和可恢复轮询；状态查询短暂失败或重开任务窗格时保留任务号，不重复上传文件或发起模型任务。
 - Word、Excel、PPT 统一标题栏、连接状态、按钮、输入控件、结果区和设置页视觉；三宿主插件目录、Ribbon 入口、任务档案和业务行为继续隔离。
 - Word、Excel、PPT 任务窗格分别使用文字蓝、表格绿、演示橙的平衡宿主主题；布局和状态语义保持统一。
-- 三个宿主健康检查成功时统一显示“已连接”，不直接展示 adapter `/health` 的原始 `ok`。
+- 三个宿主根据聚合健康显示“已连接”“增强降级”或“恢复模式”；只有请求无法到达 Adapter 时显示“未连接”。恢复模式不再继续读取配置或允许提交新模型任务。
 - Word 和 Excel 右上角新增与 PPT 一致的设置/返回快捷按钮；Word 返回进入设置前的功能，Excel 返回智能分析。
 - 三个宿主的主生成按钮均为高对比度纯文字按钮，不显示图片、SVG 或伪元素图标。
 - 统一正式交付包包含 `docs/prompt-templates/excel-smart-analysis-prompt-template.md` 与 `docs/prompt-templates/ppt-smart-summary-prompt-template.md`，仍由一个安装脚本覆盖安装三个宿主并保留现场 API URL、统一 API Key 和全部工作流档案密钥。

@@ -1931,6 +1931,39 @@
     };
   }
 
+  function normalizeAdapterHealth(value, connected) {
+    var source = value && typeof value === "object" ? value : {};
+    var policy = source.operationPolicy && typeof source.operationPolicy === "object"
+      ? source.operationPolicy
+      : {};
+    var status = String(source.status || "").toLowerCase();
+    if (connected === false) {
+      status = "unavailable";
+    } else if (status === "ok") {
+      status = "ready";
+    } else if (["ready", "degraded", "recovery"].indexOf(status) < 0) {
+      status = "ready";
+    }
+    var recovery = status === "recovery";
+    var degraded = status === "degraded";
+    return {
+      status: status,
+      connected: status !== "unavailable",
+      badgeClass: status === "ready" ? "badge-ok" : (degraded ? "badge-warn" : "badge-error"),
+      badgeLabel: status === "ready" ? "已连接" : (
+        degraded ? "增强降级" : (recovery ? "恢复模式" : "未连接")
+      ),
+      summary: degraded
+        ? "Adapter 已连接，写作规范增强能力降级，核心功能可继续使用。"
+        : (recovery
+          ? "Adapter 已连接但处于恢复模式，配置变更和模型任务已被阻止。"
+          : (status === "unavailable" ? "无法连接本地 Adapter。" : "Adapter 已连接。")),
+      configurationMutationsAllowed: !recovery && policy.configurationMutationsAllowed !== false,
+      modelTasksAllowed: !recovery && policy.modelTasksAllowed !== false,
+      writingPolicyMutationsAllowed: !recovery && !degraded && policy.writingPolicyMutationsAllowed !== false
+    };
+  }
+
   function createSettingsRefreshController(options) {
     var settings = options || {};
     var refresh = typeof settings.refresh === "function" ? settings.refresh : function () {};
@@ -2347,6 +2380,7 @@
     normalizeWorkflowProfileData: normalizeWorkflowProfileData,
     getActiveWorkflowProfileName: getActiveWorkflowProfileName,
     deriveModelInterfaceState: deriveModelInterfaceState,
+    normalizeAdapterHealth: normalizeAdapterHealth,
     createSettingsRefreshController: createSettingsRefreshController,
     extractExcelFormulaSelection: extractExcelFormulaSelection,
     createExcelSelectionWatcher: createExcelSelectionWatcher,

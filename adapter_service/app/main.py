@@ -15,6 +15,7 @@ from app.core.errors import AdapterError
 from app.core.logging import get_logger
 from app.core.tracing import new_trace_id
 from app.services.provider_client import record_provider_debug
+from app.services.health import get_operation_block
 
 app = FastAPI(title="wps-ai-adapter", version="0.23.1-alpha")
 app.include_router(health_router)
@@ -176,6 +177,21 @@ class WritingPolicyImportBodyLimitMiddleware:
 async def log_requests(request: Request, call_next):
     trace_id = request.headers.get("X-Trace-Id", new_trace_id("http"))
     request.state.request_trace_id = trace_id
+    operation_block = get_operation_block(request.method, request.url.path)
+    if operation_block is not None:
+        response = JSONResponse(
+            status_code=503,
+            content={
+                "success": False,
+                "traceId": trace_id,
+                "taskType": _task_type_from_path(request.url.path),
+                "message": operation_block["message"],
+                "data": {},
+                "errors": [operation_block],
+            },
+        )
+        response.headers["X-Trace-Id"] = trace_id
+        return response
     if request.url.path == "/ppt/document-files":
         try:
             content_length = int(request.headers.get("Content-Length", ""))
@@ -378,6 +394,11 @@ async def handle_unexpected_error(request: Request, exc: Exception) -> JSONRespo
             "taskType": "adapter.error",
             "message": "Unexpected adapter failure.",
             "data": {},
-            "errors": [{"code": "UNEXPECTED_ERROR", "message": str(exc)}],
+            "errors": [
+                {
+                    "code": "UNEXPECTED_ERROR",
+                    "message": "Unexpected adapter failure.",
+                }
+            ],
         },
     )

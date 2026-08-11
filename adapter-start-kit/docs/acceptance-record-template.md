@@ -22,7 +22,9 @@
 
 ## 健康检查
 
-- `/health` 输出：
+- `/health/live` 输出：
+- `/health/ready` HTTP 状态和输出：
+- `/health` 聚合状态（ready/degraded/recovery）：
 - `/templates` 是否可访问：
 
 ## 问题记录

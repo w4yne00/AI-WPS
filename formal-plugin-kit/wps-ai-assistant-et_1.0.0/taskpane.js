@@ -76,6 +76,10 @@
     resultViewMode: "preview",
     latestExcelPayload: null,
     providerBaseUrl: "",
+    adapterHealthStatus: "unknown",
+    configurationMutationsAllowed: true,
+    modelTasksAllowed: true,
+    writingPolicyMutationsAllowed: true,
     taskApiKeys: {},
     configRefreshRequestId: 0,
     configRefreshPromise: null,
@@ -403,6 +407,22 @@
     setNodeTextIfChanged(node, text);
   }
 
+  function applyAdapterHealthState(data, connected) {
+    var healthState = helpers.normalizeAdapterHealth(data, connected);
+    state.adapterHealthStatus = healthState.status;
+    state.configurationMutationsAllowed = healthState.configurationMutationsAllowed;
+    state.modelTasksAllowed = healthState.modelTasksAllowed;
+    state.writingPolicyMutationsAllowed = healthState.writingPolicyMutationsAllowed;
+    setHealthBadge(healthState.badgeClass, healthState.badgeLabel);
+    if (healthState.status === "recovery") {
+      state.modelInterfaceConfigDetectable = false;
+      state.modelInterfaceDetectable = false;
+      renderModelInterfaceState(false);
+      setSettingsStatus(healthState.summary);
+    }
+    return healthState;
+  }
+
   function setScopeLine(label) {
     var text = label || "未检测";
     setNodeTextIfChanged(byId("scope-line"), text);
@@ -437,6 +457,27 @@
     var options = {
       method: requestMethod || (payload ? "POST" : "GET")
     };
+    var normalizedMethod = String(options.method || "GET").toUpperCase();
+    var mutating = ["POST", "PUT", "PATCH", "DELETE"].indexOf(normalizedMethod) >= 0;
+    var blockedCode = "";
+    if (mutating && path.indexOf("/provider/") === 0 && !state.configurationMutationsAllowed) {
+      blockedCode = "ADAPTER_RECOVERY_MODE";
+    } else if (
+      normalizedMethod === "POST" &&
+      ["/word/", "/excel/", "/ppt/"].some(function (prefix) {
+        return path.indexOf(prefix) === 0;
+      }) &&
+      !state.modelTasksAllowed
+    ) {
+      blockedCode = "ADAPTER_RECOVERY_MODE";
+    }
+    if (blockedCode) {
+      var blockedError = new Error(
+        "Adapter 当前处于恢复模式，配置变更和模型任务已被安全阻止。"
+      );
+      blockedError.adapterCode = blockedCode;
+      return Promise.reject(blockedError);
+    }
     if (payload) {
       options.headers = { "Content-Type": "application/json" };
       options.body = JSON.stringify(payload);
@@ -1303,6 +1344,10 @@
   function runExcelAnalysisAction() {
     var stopWaiting;
     var clientJobId;
+    if (state.adapterHealthStatus === "recovery" || !state.modelTasksAllowed) {
+      setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
+      return;
+    }
     var startedAt;
     if (state.busy || state.workflowProfileMutationBusy) {
       return;
@@ -1625,6 +1670,10 @@
     var stopWaiting;
     var clientJobId;
     var startedAt;
+    if (state.adapterHealthStatus === "recovery" || !state.modelTasksAllowed) {
+      setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
+      return;
+    }
     if (state.busy || state.workflowProfileMutationBusy) {
       return;
     }
@@ -2602,14 +2651,18 @@
       timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
     }).then(function (health) {
       var healthData;
+      var healthState;
       if (state.configRefreshRequestId !== requestId) {
         return null;
       }
       healthData = health.data || {};
       healthConnected = true;
       state.settingsProbeTraceId = health.traceId || "";
-      setHealthBadge("badge-ok", "已连接");
+      healthState = applyAdapterHealthState(healthData, true);
       setProviderLine(healthData.providerType || "未检测");
+      if (healthState.status === "recovery") {
+        return null;
+      }
       return readAdapterJson("/config", {
         timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS
       });
@@ -2638,7 +2691,9 @@
         state.modelInterfaceDetectable = true;
         renderModelInterfaceState(state.modelInterfaceDetectable);
         if (!state.configRefreshActiveSilent) {
-          setSettingsStatus("就绪");
+          setSettingsStatus(state.adapterHealthStatus === "degraded"
+            ? "增强能力降级，核心功能可用。"
+            : "就绪");
         }
         return config;
       });
@@ -2648,7 +2703,7 @@
       }
       if (!healthConnected) {
         state.settingsProbeTraceId = "";
-        setHealthBadge("badge-warn", "待启动");
+        applyAdapterHealthState(null, false);
       }
       if (!configLoaded) {
         state.modelInterfaceConfigDetectable = false;
@@ -2663,7 +2718,7 @@
       if (state.configRefreshRequestId === requestId) {
         if (!healthConnected) {
           state.settingsProbeTraceId = "";
-          setHealthBadge("badge-warn", "待启动");
+          applyAdapterHealthState(null, false);
         }
         if (!configLoaded) {
           state.modelInterfaceConfigDetectable = false;
