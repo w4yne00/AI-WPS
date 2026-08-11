@@ -6,7 +6,7 @@
 - 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
 - 交付包：`ai-wps-phase1-delivery-20260811-v0231.tar.gz`
 - 对应工单：Issue #26、#28、#30、#31、#32、#33
-- 构建状态：候选构建；白名单组装、静态审计及 Linux ARM64 / Python 3.8.20 最终包生命周期门禁通过，麒麟 V10/WPS 真机验收待执行
+- 构建状态：候选构建；白名单组装与静态审计通过；Linux ARM64 / Python 3.8.20 最终包生命周期门禁通过，麒麟 V10/WPS 真机验收待执行
 - 发布清单：`release-manifest.json`
 - 项目：
 - 终端编号：

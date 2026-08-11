@@ -893,7 +893,9 @@ esac
             self.assertIn("Issue #33", record_text)
             self.assertIn("Python 3.8 最终包生命周期门禁", record_text)
             self.assertIn("白名单组装与静态审计通过", record_text)
-            self.assertIn("尚未标记候选构建", record_text)
+            self.assertIn("python38_delivery_lifecycle_gate=passed status=candidate", record_text)
+            self.assertIn("Issue #33 候选构建通过", record_text)
+            self.assertNotIn("尚未标记候选构建", record_text)
             self.assertIn("不得宣称目标机已经恢复", record_text)
             self.assertIn("父票后续动作", record_text)
 
