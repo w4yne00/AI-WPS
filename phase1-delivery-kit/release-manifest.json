@@ -75,8 +75,19 @@
     "firstInstall": "initialize-empty-organization-database",
     "upgrade": "copy-on-write-migration-with-consistent-snapshot",
     "snapshotManifestSchemaVersion": 1,
+    "copyVerificationField": "copyVerified",
     "minimumValidSnapshots": 3,
     "wholeStateRestoreOnly": true,
+    "recoveryActivation": {
+      "automaticSwitch": false,
+      "explicitFlag": "--activate-recovery",
+      "terminalStatus": "recovery_activated"
+    },
+    "recoveryApi": {
+      "createReadOnlyBackup": "POST /recovery/backups",
+      "sanitizedDiagnostics": "GET /recovery/diagnostics",
+      "restoreEndpoint": null
+    },
     "excluded": [
       "writing_policies.db",
       "writing_policies.db.backup-*",

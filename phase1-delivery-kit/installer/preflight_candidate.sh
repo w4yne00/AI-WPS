@@ -103,9 +103,9 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 [ -n "$LIVE_BODY" ] || fail "candidate_live_timeout"
 
-READY_BODY="$(curl -fsS "$BASE_URL/health/ready" 2>/dev/null || true)"
+READY_BODY="$(curl -sS "$BASE_URL/health/ready" 2>/dev/null || true)"
 [ -n "$READY_BODY" ] || fail "candidate_business_not_ready"
-HEALTH_BODY="$(curl -fsS "$BASE_URL/health" 2>/dev/null || true)"
+HEALTH_BODY="$(curl -sS "$BASE_URL/health" 2>/dev/null || true)"
 [ -n "$HEALTH_BODY" ] || fail "candidate_health_unreachable"
 
 COMPACT_LIVE="$(printf '%s' "$LIVE_BODY" | tr -d '[:space:]')"
@@ -115,20 +115,63 @@ case "$COMPACT_LIVE" in
   *'"status":"live"'*) ;;
   *) fail "candidate_live_contract_invalid" ;;
 esac
-case "$COMPACT_READY" in
-  *'"status":"ready"'*) ;;
-  *) fail "candidate_business_not_ready" ;;
-esac
 case "$COMPACT_HEALTH" in
   *'"version":"'"$EXPECTED_VERSION"'"'*) ;;
   *) fail "candidate_version_mismatch expected=$EXPECTED_VERSION" ;;
 esac
-case "$COMPACT_HEALTH" in
-  *'"status":"ready"'*|*'"status":"degraded"'*) ;;
-  *) fail "candidate_business_not_ready" ;;
+
+CANDIDATE_STATUS=""
+case "$COMPACT_HEALTH:$COMPACT_READY" in
+  *'"status":"recovery"'*:*'"status":"recovery"'*)
+    CANDIDATE_STATUS="recovery"
+    ;;
+  *'"status":"ready"'*:*'"status":"ready"'*)
+    CANDIDATE_STATUS="ready"
+    ;;
+  *'"status":"degraded"'*:*'"status":"degraded"'*)
+    CANDIDATE_STATUS="degraded"
+    ;;
+  *)
+    fail "candidate_business_not_ready"
+    ;;
 esac
+
+RECOVERY_FAULT_SUMMARY=""
+if [ "$CANDIDATE_STATUS" = "recovery" ]; then
+  RECOVERY_FAULT_SUMMARY="$(
+    printf '%s' "$HEALTH_BODY" \
+      | "$PYTHON_BIN" -c '
+import json
+import re
+import sys
+
+safe = re.compile(r"^[A-Za-z0-9_.-]{1,96}$")
+payload = json.load(sys.stdin)
+data = payload.get("data", payload) if isinstance(payload, dict) else {}
+subsystems = data.get("subsystems", {}) if isinstance(data, dict) else {}
+parts = []
+for name in ("modelConfigurations", "taskRoutes", "writingPolicies"):
+    item = subsystems.get(name, {}) if isinstance(subsystems, dict) else {}
+    if not isinstance(item, dict):
+        continue
+    status = str(item.get("status", ""))
+    if status == "ready":
+        continue
+    code = str(item.get("errorCode", "unknown")) or "unknown"
+    stage = str(item.get("stage", "unknown")) or "unknown"
+    if not safe.fullmatch(status) or not safe.fullmatch(code) or not safe.fullmatch(stage):
+        continue
+    parts.append(":".join((name, status, code, stage)))
+print(",".join(parts))
+' candidate-recovery-summary
+  )" || fail "candidate_recovery_summary_invalid"
+  [ -n "$RECOVERY_FAULT_SUMMARY" ] || fail "candidate_recovery_summary_missing"
+fi
 
 stop_candidate
 CANDIDATE_PID=""
-log "candidate_preflight=ready version=$EXPECTED_VERSION port=$CANDIDATE_PORT dependencies=$PRIVATE_RUNTIME_DIR"
+log "candidate_preflight=$CANDIDATE_STATUS version=$EXPECTED_VERSION port=$CANDIDATE_PORT dependencies=$PRIVATE_RUNTIME_DIR"
+if [ -n "$RECOVERY_FAULT_SUMMARY" ]; then
+  log "candidate_recovery_fault_summary=$RECOVERY_FAULT_SUMMARY"
+fi
 trap - EXIT

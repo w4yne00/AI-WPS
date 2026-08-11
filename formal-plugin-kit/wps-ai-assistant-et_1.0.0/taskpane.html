@@ -114,6 +114,21 @@
               </div>
             </section>
 
+            <section id="recovery-actions-card" class="settings-card recovery-actions-card" hidden>
+              <div class="settings-card-head">
+                <div>
+                  <h4>恢复模式安全操作</h4>
+                  <span id="recovery-backup-status" class="inline-status">尚未读取备份状态</span>
+                </div>
+              </div>
+              <p id="recovery-subsystem-status" class="field-hint">仅开放重新检测、只读备份和脱敏诊断；数据恢复须使用运维命令。</p>
+              <div class="button-row settings-actions">
+                <button id="btn-recovery-refresh" class="ghost-action" type="button">重新检测</button>
+                <button id="btn-recovery-backup" class="ghost-action" type="button">创建只读备份</button>
+                <button id="btn-recovery-diagnostics" class="ghost-action" type="button">导出脱敏诊断</button>
+              </div>
+            </section>
+
             <section class="settings-card workflow-settings-card">
               <div class="workflow-settings-heading">
                 <h4>模型配置</h4>

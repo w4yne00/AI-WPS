@@ -341,6 +341,88 @@ class ReleaseTransactionTests(unittest.TestCase):
                 "old",
             )
 
+    def test_recovery_snapshot_requires_explicit_activation_and_never_commits_as_upgrade(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = self._prepare_generation(Path(temp_dir))
+            manifest_path = (
+                paths["backups"]
+                / paths["candidate_snapshot_id"]
+                / "manifest.json"
+            )
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest.update(
+                {
+                    "valid": False,
+                    "copyVerified": True,
+                    "coreStatus": "recovery",
+                    "writingPolicyStatus": "ready",
+                }
+            )
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+
+            ordinary_arguments = [
+                "prepare",
+                "--transaction-dir",
+                str(paths["transactions"]),
+                "--transaction-id",
+                "txn-recovery-ordinary",
+                "--release-version",
+                paths["release_version"],
+                "--backup-dir",
+                str(paths["backups"]),
+                "--candidate-snapshot-id",
+                paths["candidate_snapshot_id"],
+            ]
+            for name, candidate, target in paths["components"]:
+                ordinary_arguments.extend(
+                    ["--component", name, str(candidate), str(target)]
+                )
+
+            ordinary = self._run(*ordinary_arguments)
+
+            self.assertNotEqual(ordinary.returncode, 0)
+            self.assertIn(
+                "candidate_snapshot_manifest_invalid",
+                ordinary.stdout + ordinary.stderr,
+            )
+
+            explicit_arguments = list(ordinary_arguments)
+            explicit_arguments[explicit_arguments.index("txn-recovery-ordinary")] = (
+                "txn-recovery-explicit"
+            )
+            explicit_arguments.insert(1, "--recovery-activation")
+            explicit = self._run(*explicit_arguments)
+            self.assertEqual(explicit.returncode, 0, explicit.stderr or explicit.stdout)
+            transaction_log = paths["transactions"] / "txn-recovery-explicit.json"
+
+            self.assertEqual(self._run("switch", str(transaction_log)).returncode, 0)
+            finalized = self._run("finalize", str(transaction_log))
+
+            self.assertEqual(
+                finalized.returncode,
+                0,
+                finalized.stderr or finalized.stdout,
+            )
+            transaction = json.loads(transaction_log.read_text(encoding="utf-8"))
+            self.assertEqual(transaction["activationMode"], "recovery")
+            self.assertEqual(transaction["status"], "recovery_activated")
+            self.assertNotIn("committedAt", transaction)
+            for command in ("recover", "rollback"):
+                repeated = self._run(command, str(transaction_log))
+                self.assertEqual(
+                    repeated.returncode,
+                    0,
+                    repeated.stderr or repeated.stdout,
+                )
+                self.assertEqual(
+                    json.loads(transaction_log.read_text(encoding="utf-8"))["status"],
+                    "recovery_activated",
+                )
+                self.assertEqual(
+                    (paths["state"] / "version.txt").read_text(encoding="utf-8"),
+                    "new",
+                )
+
     def test_mixed_generation_fails_finalization_and_recovers(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = self._prepare_generation(Path(temp_dir))
@@ -423,7 +505,7 @@ class ReleaseTransactionTests(unittest.TestCase):
             for script_name, body in {
                 "stop_adapter.sh": "#!/usr/bin/env bash\nif [ -n \"${FAIL_STOP_MARKER:-}\" ] && [ -f \"$FAIL_STOP_MARKER\" ]; then exit 12; fi\nexit 0\n",
                 "start_uvicorn_adapter.sh": "#!/usr/bin/env bash\nKIT_ROOT=\"$(cd \"$(dirname \"${BASH_SOURCE[0]}\")/..\" && pwd)\"\ncat \"$KIT_ROOT/version.txt\" >> \"$ADAPTER_START_LOG\"\nprintf '\\n' >> \"$ADAPTER_START_LOG\"\n",
-                "check_health.sh": "#!/usr/bin/env bash\nexit 0\n",
+                "check_health.sh": "#!/usr/bin/env bash\nif [ \"${FAKE_RUNTIME_STATUS:-ready}\" = recovery ]; then printf '%s\\n' 'adapter_health=reachable' 'adapter_business_status=recovery'; exit 1; fi\nexit 0\n",
             }.items():
                 script = scripts / script_name
                 script.write_text(body, encoding="utf-8")
@@ -450,8 +532,11 @@ else:
     degraded=(source/'writing_policies.db').exists() and (source/'writing_policies.db').read_bytes() == b'existing-policy'
     status=os.environ.get('FAKE_RUNTIME_STATUS') or ('degraded' if degraded else 'ready')
     files=[{'path':p.relative_to(source).as_posix(),'sha256':hashlib.sha256(p.read_bytes()).hexdigest(),'size':p.stat().st_size} for p in sorted(source.rglob('*')) if p.is_file()]
-    (target/'manifest.json').write_text(json.dumps({'schemaVersion':1,'snapshotId':snapshot_id,'releaseVersion':a.release_version,'valid':not degraded,'coreStatus':'ready','writingPolicyStatus':'degraded' if degraded else 'ready','files':files}), encoding='utf-8')
-    print(json.dumps({'success':True,'status':status,'snapshotId':snapshot_id,'valid':not degraded}))
+    core_status='recovery' if status == 'recovery' else 'ready'
+    policy_status='degraded' if status == 'degraded' else 'ready'
+    valid=status == 'ready'
+    (target/'manifest.json').write_text(json.dumps({'schemaVersion':1,'snapshotId':snapshot_id,'releaseVersion':a.release_version,'copyVerified':True,'valid':valid,'coreStatus':core_status,'writingPolicyStatus':policy_status,'files':files}), encoding='utf-8')
+    print(json.dumps({'success':True,'status':status,'snapshotId':snapshot_id,'copyVerified':True,'valid':valid}))
 """,
                 encoding="utf-8",
             )
@@ -459,7 +544,7 @@ else:
 
             for script_name, body in {
                 "install_private_runtime.sh": "#!/usr/bin/env bash\nmkdir -p \"$4\"\n",
-                "preflight_candidate.sh": "#!/usr/bin/env bash\nexit 0\n",
+                "preflight_candidate.sh": "#!/usr/bin/env bash\nprintf '%s\\n' \"candidate_preflight=${FAKE_RUNTIME_STATUS:-ready}\"\nif [ \"${FAKE_RUNTIME_STATUS:-ready}\" = recovery ]; then printf '%s\\n' 'candidate_recovery_fault_summary=modelConfigurations:recovery:MODEL_CONFIGURATION_DATA_UNAVAILABLE:load_model_configurations'; fi\nexit 0\n",
             }.items():
                 script = installer_dir / script_name
                 script.write_text(body, encoding="utf-8")
@@ -539,6 +624,19 @@ else:
                     ),
                 }
             )
+            curl_stub = bin_dir / "curl"
+            curl_stub.write_text(
+                """#!/usr/bin/env bash
+url="${@: -1}"
+if [ "${FAKE_CURRENT_READY:-0}" = "1" ] && [[ "$url" == */health/ready ]]; then
+  printf '%s' '{"status":"ready"}'
+  exit 0
+fi
+exit 22
+""",
+                encoding="utf-8",
+            )
+            curl_stub.chmod(0o755)
             result = subprocess.run(
                 ["bash", str(installer_dir / "install_phase1.sh")],
                 check=False,
@@ -960,6 +1058,101 @@ esac
                 "rolled_back",
             )
 
+            (scripts / "check_health.sh").write_text(
+                "#!/usr/bin/env bash\n"
+                "if [ \"${FAKE_RUNTIME_STATUS:-ready}\" = recovery ]; then "
+                "printf '%s\\n' 'adapter_health=reachable' "
+                "'adapter_business_status=recovery'; exit 1; fi\n"
+                "exit 0\n",
+                encoding="utf-8",
+            )
+            recovery_environment = dict(systemd_environment)
+            recovery_environment["FAKE_RUNTIME_STATUS"] = "recovery"
+            (adapter / "version.txt").write_text(
+                "generation-recovery", encoding="utf-8"
+            )
+
+            blocked_recovery = subprocess.run(
+                admin_arguments,
+                check=False,
+                capture_output=True,
+                text=True,
+                env=recovery_environment,
+            )
+
+            self.assertNotEqual(blocked_recovery.returncode, 0)
+            self.assertIn(
+                "candidate_recovery_requires_explicit_activation",
+                blocked_recovery.stdout,
+            )
+            self.assertIn(
+                "candidate_recovery_fault_summary=modelConfigurations:recovery:MODEL_CONFIGURATION_DATA_UNAVAILABLE:load_model_configurations",
+                blocked_recovery.stdout,
+            )
+            self.assertEqual(
+                (release / "version.txt").read_text(encoding="utf-8"),
+                "generation-systemd",
+            )
+            preserved_candidates = list(
+                (install_root / "releases").glob(".*.candidate")
+            )
+            self.assertTrue(preserved_candidates)
+            recovery_manifests = [
+                json.loads(path.read_text(encoding="utf-8"))
+                for path in (install_root / "backups").glob("*/manifest.json")
+                if json.loads(path.read_text(encoding="utf-8")).get("coreStatus")
+                == "recovery"
+            ]
+            self.assertTrue(recovery_manifests)
+            self.assertTrue(
+                all(item.get("copyVerified") is True for item in recovery_manifests)
+            )
+
+            ready_recovery_environment = dict(recovery_environment)
+            ready_recovery_environment["FAKE_CURRENT_READY"] = "1"
+            rejected_ready_activation = subprocess.run(
+                [
+                    *admin_arguments,
+                    "--activate-recovery",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=ready_recovery_environment,
+            )
+            self.assertNotEqual(rejected_ready_activation.returncode, 0)
+            self.assertIn(
+                "current_install_still_ready",
+                rejected_ready_activation.stdout,
+            )
+
+            activated_recovery = subprocess.run(
+                [
+                    *admin_arguments,
+                    "--activate-recovery",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=recovery_environment,
+            )
+
+            self.assertEqual(
+                activated_recovery.returncode,
+                0,
+                activated_recovery.stderr or activated_recovery.stdout,
+            )
+            self.assertIn("recovery_mode_activated=true", activated_recovery.stdout)
+            self.assertNotIn("phase1_install_done=true", activated_recovery.stdout)
+            latest_transaction = max(
+                (install_root / "var" / "transactions").glob("*.json"),
+                key=lambda path: path.stat().st_mtime_ns,
+            )
+            self.assertEqual(
+                json.loads(latest_transaction.read_text(encoding="utf-8"))["status"],
+                "recovery_activated",
+            )
+
     def test_candidate_preflight_uses_the_verified_runtime_state_copy(self) -> None:
         script = ROOT / "phase1-delivery-kit/installer/preflight_candidate.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1041,6 +1234,91 @@ esac
                     encoding="utf-8"
                 ),
                 '{"providerName":"verified-copy"}\n',
+            )
+
+    def test_candidate_preflight_reports_recovery_as_a_live_restricted_candidate(self) -> None:
+        script = ROOT / "phase1-delivery-kit/installer/preflight_candidate.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            candidate = root / "candidate"
+            (candidate / "adapter_service").mkdir(parents=True)
+            private_runtime = candidate / "python-runtime"
+            private_runtime.mkdir()
+            snapshot_state = root / "snapshot-state"
+            snapshot_state.mkdir()
+            (snapshot_state / "adapter.json").write_text(
+                '{"modelConfigurations":{"broken":', encoding="utf-8"
+            )
+            preflight_root = root / "preflight"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            started = root / "started"
+            python_stub = bin_dir / "python"
+            python_stub.write_text(
+                """#!/usr/bin/env bash
+if [[ " $* " == *" candidate-recovery-summary "* ]]; then
+  exec "$PREFLIGHT_REAL_PYTHON" "$@"
+fi
+if [[ " $* " == *" -m uvicorn "* ]]; then
+  printf '%s\n' started > "$PREFLIGHT_STARTED"
+  sleep 10
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            curl_stub = bin_dir / "curl"
+            curl_stub.write_text(
+                """#!/usr/bin/env bash
+if [ ! -f "$PREFLIGHT_STARTED" ]; then exit 1; fi
+url="${@: -1}"
+case "$url" in
+  */health/live) printf '%s' '{"status":"live"}' ;;
+  */health/ready) printf '%s' '{"status":"recovery"}' ;;
+  */health) printf '%s' '{"status":"recovery","version":"0.23.1-alpha","subsystems":{"modelConfigurations":{"status":"recovery","errorCode":"MODEL_CONFIGURATION_DATA_UNAVAILABLE","stage":"load_model_configurations"},"taskRoutes":{"status":"ready","errorCode":"","stage":"load_task_routes"},"writingPolicies":{"status":"ready","errorCode":"","stage":"load_writing_policies"}}}' ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            curl_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "AI_WPS_PREFLIGHT_STATE_SOURCE": str(snapshot_state),
+                    "PATH": "{0}:{1}".format(
+                        bin_dir, environment.get("PATH", "")
+                    ),
+                    "PREFLIGHT_STARTED": str(started),
+                    "PREFLIGHT_REAL_PYTHON": sys.executable,
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    str(python_stub),
+                    str(candidate),
+                    str(private_runtime),
+                    "28124",
+                    "0.23.1-alpha",
+                    str(preflight_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertIn(
+                "candidate_preflight=recovery",
+                result.stdout,
+            )
+            self.assertIn(
+                "candidate_recovery_fault_summary=modelConfigurations:recovery:MODEL_CONFIGURATION_DATA_UNAVAILABLE:load_model_configurations",
+                result.stdout,
             )
 
 

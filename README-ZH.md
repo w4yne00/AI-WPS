@@ -130,7 +130,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
-| `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`，在写作规范故障时保持 Word 核心任务可用，在核心配置故障时阻止配置变更和模型任务；三宿主同步显示降级、恢复和真正未连接。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
+| `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`。恢复候选默认不切换，只有当前安装不就绪、安装前备份完整校验且候选存活时才允许 `--activate-recovery`；恢复模式只提供重新检测、只读备份和脱敏诊断。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
 | `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
 | `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |
 | `v0.21.0-alpha` | 将独立 Excel“公式助手”正式收敛进统一三宿主交付包：支持生成公式和解释排错、严格明确选区与 30×20 上限、由 `HasFormula` 保护的 `Formula`/`FormulaLocal`/`FormulaR1C1` 只读降级、共享长任务排队与恢复、不执行公式的本地检查和纯复制结果；包内同时提供 Dify 操作手册和提示词模板，Word/PPT 业务行为不变 |
@@ -275,6 +275,8 @@ curl http://127.0.0.1:18100/health
 
 `/health/live` 只验证进程和基础 Web 应用并始终不读取业务数据；`/health/ready` 在 `ready` 或仅增强能力降级时返回 200，在核心数据进入 `recovery` 时返回 503；聚合 `/health` 始终返回 200，并给出脱敏的子系统状态和操作策略。
 
+候选只能进入恢复模式时，普通安装会在切换前停止并保留当前安装、候选与已校验备份。只有当前安装已不就绪时，运维人员才能用 `bash installer/install_phase1.sh --activate-recovery` 显式激活。恢复模式下可调用 `POST /recovery/backups` 创建只读故障现场备份，或调用 `GET /recovery/diagnostics` 导出脱敏诊断；整体恢复仍必须通过带快照 ID 和二次确认的命令行完成。详见 [运行数据恢复手册](./docs/operations/runtime-state-recovery.md)。
+
 如果目标环境不方便安装 FastAPI 依赖，也可以使用仓库内置的轻量 standalone 服务：
 
 ```bash
@@ -344,6 +346,8 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `GET` | `/health/live` | 只检查 Adapter 进程与基础 Web 应用是否存活，不读取业务数据 |
 | `GET` | `/health/ready` | 检查核心业务是否就绪；恢复模式返回 HTTP 503 |
 | `GET` | `/health` | 以 HTTP 200 返回 `ready`、`degraded` 或 `recovery` 及脱敏子系统状态 |
+| `POST` | `/recovery/backups` | 仅在恢复模式下创建只读运行数据备份 |
+| `GET` | `/recovery/diagnostics` | 导出不含配置正文、密钥、文档和敏感路径的诊断摘要 |
 | `GET` | `/config` | 查看当前运行配置摘要 |
 | `GET` | `/templates` | 获取可用模板列表 |
 | `GET` | `/provider/status` | 查看企业 AI provider 认证状态 |

@@ -298,24 +298,36 @@ class RuntimeStateManager:
                 shutil.rmtree(str(stage))
 
     def restore_snapshot(self, snapshot_id: str, confirmed: bool = False) -> dict:
+        raw_id = str(snapshot_id or "").strip()
+        audit_id = raw_id if _SAFE_REF.fullmatch(raw_id) else "snapshot-invalid"
+
+        def reject(code: str, status: str = "blocked") -> None:
+            if not self._append_audit("restore", status, audit_id):
+                raise RuntimeStateError("RESTORE_AUDIT_FAILED", "recovery")
+            raise RuntimeStateError(code, status)
+
         if not confirmed:
-            raise RuntimeStateError("RESTORE_CONFIRMATION_REQUIRED", "blocked")
-        clean_id = str(snapshot_id or "").strip()
+            reject("RESTORE_CONFIRMATION_REQUIRED")
+        clean_id = raw_id
         if not _SAFE_REF.fullmatch(clean_id):
-            raise RuntimeStateError("SNAPSHOT_ID_INVALID", "blocked")
+            reject("SNAPSHOT_ID_INVALID")
         snapshot_dir = self.backup_dir / clean_id
         manifest_path = snapshot_dir / "manifest.json"
         state_source = snapshot_dir / "state"
         try:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except Exception:
-            raise RuntimeStateError("SNAPSHOT_NOT_FOUND", "blocked")
+            reject("SNAPSHOT_NOT_FOUND")
         if not isinstance(manifest, dict) or not manifest.get("valid"):
-            raise RuntimeStateError("SNAPSHOT_NOT_VALID", "blocked")
-        self._verify_snapshot_files(state_source, manifest)
-
-        stage = self._new_stage("restore")
+            reject("SNAPSHOT_NOT_VALID")
         try:
+            self._verify_snapshot_files(state_source, manifest)
+        except RuntimeStateError as error:
+            reject(error.code, error.status)
+
+        stage = None
+        try:
+            stage = self._new_stage("restore")
             self._copy_state(state_source, stage, legacy_layout=False)
             core, unused_comparison = self._inspect_core(stage)
             policy = self._inspect_policy(stage / "writing_policies.db", migrate=False)
@@ -323,19 +335,26 @@ class RuntimeStateManager:
                 raise RuntimeStateError("SNAPSHOT_NOT_VALID", "blocked")
             pre_restore = self.create_snapshot("pre_restore")
             self._secure_state_tree(stage)
+            if not self._append_audit("restore", "pending", clean_id):
+                raise RuntimeStateError("RESTORE_AUDIT_FAILED", "recovery")
             self._switch_state(stage)
             stage = None
-            self._append_audit("restore", "ready", clean_id)
+            if not self._append_audit("restore", "ready", clean_id):
+                raise RuntimeStateError("RESTORE_AUDIT_FAILED", "recovery")
             return {
                 "status": "ready",
                 "snapshotId": clean_id,
                 "preRestoreSnapshotId": pre_restore["snapshotId"],
             }
         except RuntimeStateError as error:
-            self._append_audit("restore", error.status, clean_id)
+            if error.code != "RESTORE_AUDIT_FAILED" and not self._append_audit(
+                "restore", error.status, clean_id
+            ):
+                raise RuntimeStateError("RESTORE_AUDIT_FAILED", "recovery")
             raise
         except Exception:
-            self._append_audit("restore", "recovery", clean_id)
+            if not self._append_audit("restore", "recovery", clean_id):
+                raise RuntimeStateError("RESTORE_AUDIT_FAILED", "recovery")
             raise RuntimeStateError("RESTORE_FAILED", "recovery")
         finally:
             if stage is not None and stage.exists():
@@ -368,6 +387,7 @@ class RuntimeStateManager:
                 state_copy / "writing_policies.db", migrate=False
             )
             files = self._file_manifest(state_copy)
+            self._verify_snapshot_files(state_copy, {"files": files})
             valid = core["status"] == "ready" and policy["status"] == "ready"
             manifest = {
                 "schemaVersion": SNAPSHOT_SCHEMA_VERSION,
@@ -376,6 +396,7 @@ class RuntimeStateManager:
                 "reason": clean_reason,
                 "releaseVersion": self.release_version,
                 "sourceLayout": "legacy" if legacy_layout else "shared",
+                "copyVerified": True,
                 "valid": valid,
                 "coreStatus": core["status"],
                 "writingPolicyStatus": policy["status"],
@@ -402,6 +423,7 @@ class RuntimeStateManager:
                     "recovery" if core["status"] != "ready" else "degraded"
                 ),
                 "snapshotId": snapshot_id,
+                "copyVerified": True,
                 "valid": valid,
                 "coreStatus": core["status"],
                 "writingPolicyStatus": policy["status"],

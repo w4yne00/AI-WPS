@@ -9,6 +9,7 @@ from app.api.excel import router as excel_router
 from app.api.health import router as health_router
 from app.api.ppt import router as ppt_router
 from app.api.provider import router as provider_router
+from app.api.recovery import router as recovery_router
 from app.api.templates import router as templates_router
 from app.api.word import router as word_router
 from app.core.errors import AdapterError
@@ -21,6 +22,7 @@ app = FastAPI(title="wps-ai-adapter", version="0.23.1-alpha")
 app.include_router(health_router)
 app.include_router(config_router)
 app.include_router(provider_router)
+app.include_router(recovery_router)
 app.include_router(templates_router)
 app.include_router(word_router)
 app.include_router(excel_router)

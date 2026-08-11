@@ -414,6 +414,9 @@
     state.modelTasksAllowed = healthState.modelTasksAllowed;
     state.writingPolicyMutationsAllowed = healthState.writingPolicyMutationsAllowed;
     setHealthBadge(healthState.badgeClass, healthState.badgeLabel);
+    if (typeof renderRecoveryActions === "function") {
+      renderRecoveryActions(data || {}, healthState.status === "recovery");
+    }
     if (healthState.status === "recovery") {
       state.modelInterfaceConfigDetectable = false;
       state.modelInterfaceDetectable = false;
@@ -421,6 +424,82 @@
       setSettingsStatus(healthState.summary);
     }
     return healthState;
+  }
+
+  function renderRecoveryActions(data, visible) {
+    var card = byId("recovery-actions-card");
+    var subsystemLine = byId("recovery-subsystem-status");
+    var backupLine = byId("recovery-backup-status");
+    var subsystems = data && data.subsystems || {};
+    var labels = {
+      modelConfigurations: "模型配置",
+      taskRoutes: "任务路由",
+      writingPolicies: "写作规范"
+    };
+    var failures = Object.keys(labels).filter(function (name) {
+      return subsystems[name] && subsystems[name].status !== "ready";
+    }).map(function (name) {
+      var item = subsystems[name];
+      return labels[name] + "（" + (item.stage || item.errorCode || "状态异常") + "）";
+    });
+    var backup = data && data.backupStatus || {};
+    if (!card) {
+      return;
+    }
+    card.hidden = !visible;
+    if (!visible) {
+      return;
+    }
+    setNodeTextIfChanged(
+      subsystemLine,
+      failures.length ? "故障子系统：" + failures.join("、") : "核心运行数据需要恢复。"
+    );
+    setNodeTextIfChanged(
+      backupLine,
+      backup.latestValid && backup.latestValid.snapshotId
+        ? "最近有效备份：" + backup.latestValid.snapshotId
+        : (backup.latestVerified && backup.latestVerified.snapshotId
+          ? "无有效备份；最近只读备份不可恢复：" + backup.latestVerified.snapshotId
+          : "尚无有效备份")
+    );
+  }
+
+  function createRecoveryBackup() {
+    var button = byId("btn-recovery-backup");
+    button.disabled = true;
+    setSettingsStatus("正在创建只读整体备份...");
+    return request("/recovery/backups", {}).then(function (response) {
+      var data = response.data || {};
+      renderRecoveryActions({
+        status: "recovery",
+        subsystems: {},
+        backupStatus: data.backupStatus || {}
+      }, true);
+      setSettingsStatus("只读备份已创建：" + (data.snapshotId || "已完成"));
+    }).catch(function (error) {
+      setSettingsStatus(error && error.message || "只读备份创建失败，请重试。");
+    }).then(function () {
+      button.removeAttribute("disabled");
+    });
+  }
+
+  function exportRecoveryDiagnostics() {
+    setSettingsStatus("正在生成脱敏诊断...");
+    return request("/recovery/diagnostics", null).then(function (response) {
+      var text = JSON.stringify(response.data || {}, null, 2);
+      var blob = new Blob([text], { type: "application/json;charset=utf-8" });
+      var objectUrl = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "ai-wps-recovery-diagnostics.json";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+      setSettingsStatus("脱敏诊断已导出。");
+    }).catch(function (error) {
+      setSettingsStatus(error && error.message || "脱敏诊断导出失败，请重试。");
+    });
   }
 
   function setScopeLine(label) {
@@ -3056,6 +3135,11 @@
     byId("btn-back-provider-summary").addEventListener("click", hideProviderEditor);
     byId("btn-refresh-diagnostics").addEventListener("click", refreshDiagnostics);
     byId("btn-copy-diagnostics").addEventListener("click", copyDiagnostics);
+    byId("btn-recovery-refresh").addEventListener("click", function () {
+      refreshConfig({ silent: false });
+    });
+    byId("btn-recovery-backup").addEventListener("click", createRecoveryBackup);
+    byId("btn-recovery-diagnostics").addEventListener("click", exportRecoveryDiagnostics);
     byId("btn-cancel-excel-analysis-job").addEventListener("click", cancelQueuedExcelAnalysisJob);
     byId("btn-cancel-excel-formula-job").addEventListener("click", cancelQueuedExcelFormulaJob);
     byId("btn-resubmit-interrupted-job").addEventListener("click", runExcelAnalysisAction);

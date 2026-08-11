@@ -44,6 +44,7 @@ from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
 from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
 from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.health import get_health_snapshot, get_operation_block
+from app.services.recovery import RecoveryOperationError, get_recovery_operations
 from app.services.writing_policy.imports import (
     DEFAULT_IMPORT_PREVIEW_STORE,
     XLSX_MIME,
@@ -1454,6 +1455,20 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/recovery/diagnostics":
+            snapshot = get_health_snapshot()
+            snapshot["mode"] = "standalone"
+            data = get_recovery_operations(VERSION).build_diagnostics(snapshot)
+            self._write(
+                200,
+                envelope(
+                    "standalone-recovery-diagnostics",
+                    "adapter.recovery",
+                    data,
+                ),
+            )
+            return
+
         if path == "/config":
             settings = load_settings()
             provider = ProviderClient(
@@ -1859,6 +1874,40 @@ class Handler(BaseHTTPRequestHandler):
         )
         if writing_policy_response is not None:
             self._write_writing_policy_response(writing_policy_response)
+            return
+
+        if path == "/recovery/backups":
+            snapshot = get_health_snapshot()
+            try:
+                data = get_recovery_operations(VERSION).create_read_only_backup(
+                    current_status=snapshot.get("status", "")
+                )
+            except RecoveryOperationError as error:
+                recovery_mode_required = error.code == "RECOVERY_MODE_REQUIRED"
+                message = (
+                    "只允许在恢复模式下创建只读运行数据备份。"
+                    if recovery_mode_required
+                    else "只读运行数据备份创建失败，请检查磁盘和运行状态后重试。"
+                )
+                self._write(
+                    409 if recovery_mode_required else 503,
+                    envelope(
+                        "standalone-recovery-backup",
+                        "adapter.recovery",
+                        success=False,
+                        message=message,
+                        errors=[{"code": error.code, "message": message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-recovery-backup",
+                    "adapter.recovery",
+                    data,
+                ),
+            )
             return
 
         if path == "/ppt/document-files":

@@ -8,6 +8,7 @@ TARGET_USER_ARG=""
 TARGET_UID_ARG=""
 TARGET_HOME_ARG=""
 WPS_JSADDONS_DIR_ARG=""
+ACTIVATE_RECOVERY="0"
 
 WORD_PLUGIN_NAME="wps-ai-assistant_1.0.0"
 EXCEL_PLUGIN_NAME="wps-ai-assistant-et_1.0.0"
@@ -36,6 +37,12 @@ SYSTEMD_SERVICE_NAME="${SERVICE_NAME:-ai-wps-adapter.service}"
 SYSTEMD_SERVICE_FILE="${AI_WPS_SYSTEMD_SERVICE_FILE:-/etc/systemd/system/$SYSTEMD_SERVICE_NAME}"
 SYSTEMD_HANDOFF_FILE=""
 SYSTEMD_UNIT_BACKUP="${AI_WPS_SYSTEMD_UNIT_BACKUP:-${SYSTEMD_SERVICE_FILE}.ai-wps.previous}"
+CURRENT_INSTALL_PRESENT="0"
+CURRENT_INSTALL_READY="0"
+RUNTIME_BACKUP_VERIFIED="0"
+CANDIDATE_HEALTH_STATUS=""
+CANDIDATE_RECOVERY_SUMMARY=""
+PRESERVE_RECOVERY_CANDIDATE="0"
 
 log() {
   printf '%s\n' "$*"
@@ -69,11 +76,43 @@ parse_arguments() {
         WPS_JSADDONS_DIR_ARG="$2"
         shift 2
         ;;
+      --activate-recovery)
+        ACTIVATE_RECOVERY="1"
+        shift
+        ;;
       *)
         fail "unknown_argument value=$1"
         ;;
     esac
   done
+}
+
+probe_current_install_readiness() {
+  local ready_body=""
+  if [ -e "$ADAPTER_TARGET" ] || [ -L "$ADAPTER_TARGET" ]; then
+    CURRENT_INSTALL_PRESENT="1"
+  else
+    CURRENT_INSTALL_PRESENT="0"
+  fi
+  if [ "$CURRENT_INSTALL_PRESENT" = "1" ]; then
+    ready_body="$(curl -fsS "http://127.0.0.1:${PORT}/health/ready" 2>/dev/null || true)"
+    ready_body="$(printf '%s' "$ready_body" | tr -d '[:space:]')"
+    case "$ready_body" in
+      *'"status":"ready"'*|*'"status":"degraded"'*)
+        CURRENT_INSTALL_READY="1"
+        ;;
+      *)
+        CURRENT_INSTALL_READY="0"
+        ;;
+    esac
+  fi
+  log "current_install_present=$CURRENT_INSTALL_PRESENT current_install_ready=$CURRENT_INSTALL_READY"
+  if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+    [ "$CURRENT_INSTALL_PRESENT" = "1" ] \
+      || fail "current_install_missing_for_recovery_activation"
+    [ "$CURRENT_INSTALL_READY" = "0" ] \
+      || fail "current_install_still_ready"
+  fi
 }
 
 resolve_user_home() {
@@ -346,7 +385,8 @@ recover_systemd_handoff() {
       'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", ""))' \
       "$transaction_log" 2>/dev/null || true
   )"
-  if [ "$transaction_status" = "committed" ]; then
+  if [ "$transaction_status" = "committed" ] \
+    || [ "$transaction_status" = "recovery_activated" ]; then
     rm -f "$SYSTEMD_UNIT_BACKUP" "$SYSTEMD_HANDOFF_FILE"
     return 0
   fi
@@ -417,7 +457,7 @@ compensate_systemd_release() {
 }
 
 complete_systemd_release() {
-  local transaction_log
+  local transaction_log transaction_status
   transaction_log="$(
     "$PYTHON_BIN" -c \
       'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("transactionLog", ""))' \
@@ -437,12 +477,30 @@ complete_systemd_release() {
     compensate_systemd_release "$transaction_log"
     return 1
   fi
+  transaction_status="$(
+    "$PYTHON_BIN" -c \
+      'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("status", ""))' \
+      "$transaction_log" 2>/dev/null || true
+  )"
   rm -f "$SYSTEMD_UNIT_BACKUP" "$SYSTEMD_HANDOFF_FILE"
-  log "release_generation=committed_with_systemd"
+  if [ "$transaction_status" = "recovery_activated" ]; then
+    log "recovery_mode_activated=true systemd=true"
+  else
+    log "release_generation=committed_with_systemd"
+  fi
 }
 
 reexec_as_target_if_needed() {
   local child_status
+  local reexec_arguments=(
+    --target-user "$TARGET_USER"
+    --target-uid "$TARGET_UID"
+    --target-home "$TARGET_HOME"
+    --wps-jsaddons-dir "$WPS_JSADDONS_DIR"
+  )
+  if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+    reexec_arguments+=(--activate-recovery)
+  fi
   [ "$CURRENT_UID" = "0" ] || return 0
   if command -v runuser >/dev/null 2>&1; then
     child_status="0"
@@ -462,10 +520,7 @@ reexec_as_target_if_needed() {
       AI_WPS_SYSTEMD_UNIT_BACKUP="$SYSTEMD_UNIT_BACKUP" \
       AI_WPS_SYSTEMD_WAS_ACTIVE="$SYSTEMD_WAS_ACTIVE" \
       bash "$DELIVERY_ROOT/installer/install_phase1.sh" \
-        --target-user "$TARGET_USER" \
-        --target-uid "$TARGET_UID" \
-        --target-home "$TARGET_HOME" \
-        --wps-jsaddons-dir "$WPS_JSADDONS_DIR" \
+        "${reexec_arguments[@]}" \
       || child_status="$?"
     if [ "$child_status" = "0" ] && [ "$SYSTEMD_SERVICE_PRESENT" = "1" ]; then
       if ! complete_systemd_release; then
@@ -567,7 +622,7 @@ legacy_runtime_state_exists() {
 }
 
 prepare_runtime_state() {
-  local result status
+  local result status copy_verified
   local candidate_state_tool="$CANDIDATE_TARGET/adapter_service/tools/runtime_state.py"
   local candidate_pythonpath="$CANDIDATE_TARGET/python-runtime:$CANDIDATE_TARGET/adapter_service"
 
@@ -588,9 +643,15 @@ prepare_runtime_state() {
     PREVIOUS_SNAPSHOT_ID="$(printf '%s' "$result" | json_field snapshotId)"
     [ -n "$PREVIOUS_SNAPSHOT_ID" ] || fail "runtime_state_snapshot_id_missing"
     status="$(printf '%s' "$result" | json_field status)"
+    copy_verified="$(printf '%s' "$result" | json_field copyVerified)"
+    [ "$copy_verified" = "True" ] || [ "$copy_verified" = "true" ] \
+      || fail "runtime_state_snapshot_copy_not_verified"
+    RUNTIME_BACKUP_VERIFIED="1"
     log "runtime_state_snapshot_reason=pre_install"
     case "$status" in
-      recovery) fail "runtime_state_snapshot_status=recovery" ;;
+      recovery)
+        log "runtime_state_snapshot_status=recovery"
+        ;;
       degraded)
         log "runtime_state_snapshot_status=degraded"
         ;;
@@ -630,7 +691,7 @@ prepare_runtime_state() {
 }
 
 create_candidate_state_snapshot() {
-  local result status
+  local result status copy_verified
   local candidate_state_tool="$CANDIDATE_TARGET/adapter_service/tools/runtime_state.py"
   local candidate_pythonpath="$CANDIDATE_TARGET/python-runtime:$CANDIDATE_TARGET/adapter_service"
 
@@ -645,8 +706,11 @@ create_candidate_state_snapshot() {
   CANDIDATE_SNAPSHOT_ID="$(printf '%s' "$result" | json_field snapshotId)"
   [ -n "$CANDIDATE_SNAPSHOT_ID" ] || fail "candidate_state_snapshot_id_missing"
   status="$(printf '%s' "$result" | json_field status)"
+  copy_verified="$(printf '%s' "$result" | json_field copyVerified)"
+  [ "$copy_verified" = "True" ] || [ "$copy_verified" = "true" ] \
+    || fail "candidate_state_snapshot_copy_not_verified"
   case "$status" in
-    recovery) fail "candidate_state_snapshot_status=recovery" ;;
+    recovery) log "candidate_state_snapshot_status=recovery" ;;
     degraded) log "candidate_state_snapshot_status=degraded" ;;
     ready) log "candidate_state_snapshot_status=ready" ;;
     *) fail "candidate_state_snapshot_status=invalid value=$status" ;;
@@ -709,14 +773,65 @@ PY
 }
 
 run_candidate_preflight() {
-  AI_WPS_PREFLIGHT_STATE_SOURCE="$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID/state" \
-    bash "$DELIVERY_ROOT/installer/preflight_candidate.sh" \
-    "$PYTHON_BIN" \
-    "$CANDIDATE_TARGET" \
-    "$CANDIDATE_TARGET/python-runtime" \
-    "$CANDIDATE_PORT" \
-    "$RELEASE_VERSION" \
-    "$PREFLIGHT_ROOT"
+  local result
+  result="$(
+    AI_WPS_PREFLIGHT_STATE_SOURCE="$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID/state" \
+      bash "$DELIVERY_ROOT/installer/preflight_candidate.sh" \
+      "$PYTHON_BIN" \
+      "$CANDIDATE_TARGET" \
+      "$CANDIDATE_TARGET/python-runtime" \
+      "$CANDIDATE_PORT" \
+      "$RELEASE_VERSION" \
+      "$PREFLIGHT_ROOT"
+  )" || {
+    log "$result"
+    fail "candidate_preflight_failed"
+  }
+  log "$result"
+  CANDIDATE_HEALTH_STATUS="$(
+    printf '%s\n' "$result" \
+      | sed -n 's/^candidate_preflight=\([^ ]*\).*/\1/p' \
+      | tail -n 1
+  )"
+  case "$CANDIDATE_HEALTH_STATUS" in
+    ready|degraded|recovery) ;;
+    *) fail "candidate_preflight_status_missing" ;;
+  esac
+  CANDIDATE_RECOVERY_SUMMARY="$(
+    printf '%s\n' "$result" \
+      | sed -n 's/^candidate_recovery_fault_summary=\(.*\)$/\1/p' \
+      | tail -n 1
+  )"
+  if [ "$CANDIDATE_HEALTH_STATUS" = "recovery" ]; then
+    [ -n "$CANDIDATE_RECOVERY_SUMMARY" ] \
+      || fail "candidate_recovery_summary_missing"
+  fi
+}
+
+enforce_recovery_activation_gate() {
+  if [ "$CANDIDATE_HEALTH_STATUS" = "recovery" ]; then
+    [ "$CURRENT_INSTALL_PRESENT" = "1" ] \
+      || fail "current_install_missing_for_recovery_activation"
+    [ "$RUNTIME_BACKUP_VERIFIED" = "1" ] \
+      || fail "recovery_activation_backup_not_verified"
+    [ -n "$PREVIOUS_SNAPSHOT_ID" ] \
+      || fail "recovery_activation_backup_id_missing"
+    if [ "$ACTIVATE_RECOVERY" != "1" ]; then
+      PRESERVE_RECOVERY_CANDIDATE="1"
+      log "candidate_recovery_requires_explicit_activation=true"
+      log "candidate_recovery_path=$CANDIDATE_TARGET"
+      log "candidate_recovery_state_path=$CANDIDATE_STATE"
+      log "verified_backup_id=$PREVIOUS_SNAPSHOT_ID"
+      log "recovery_command=bash installer/install_phase1.sh --activate-recovery"
+      exit 2
+    fi
+    [ "$CURRENT_INSTALL_READY" = "0" ] \
+      || fail "current_install_still_ready"
+    log "recovery_activation_gate=accepted backup=$PREVIOUS_SNAPSHOT_ID"
+    return 0
+  fi
+  [ "$ACTIVATE_RECOVERY" != "1" ] \
+    || fail "candidate_not_in_recovery"
 }
 
 stage_wps_plugins() {
@@ -835,6 +950,9 @@ prepare_release_transaction() {
     --component runtime_state_snapshot "$CANDIDATE_STATE" "$STATE_DIR"
     --component current_pointer "$CURRENT_CANDIDATE" "$CURRENT_LINK"
   )
+  if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+    transaction_arguments=(prepare --recovery-activation "${transaction_arguments[@]:1}")
+  fi
   if ! transaction_result="$(
     "$PYTHON_BIN" -s "$TRANSACTION_TOOL" "${transaction_arguments[@]}"
   )"; then
@@ -862,19 +980,53 @@ finalize_release_generation() {
         || log "release_transaction_rollback_failed=$TRANSACTION_LOG"
       fail "adapter_systemd_handoff_write_failed"
     fi
-    log "release_generation=ready_to_commit version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+    if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+      log "recovery_mode_activation=ready_to_commit snapshot=$CANDIDATE_SNAPSHOT_ID"
+    else
+      log "release_generation=ready_to_commit version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+    fi
   else
     "$PYTHON_BIN" -s "$TRANSACTION_TOOL" finalize "$TRANSACTION_LOG" \
       || fail "release_generation_finalization_failed"
-    log "release_generation=committed version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+    if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+      log "recovery_mode_activated=true snapshot=$CANDIDATE_SNAPSHOT_ID"
+    else
+      log "release_generation=committed version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+    fi
   fi
 }
 
 start_and_check_adapter() {
+  local health_result health_status
   log "adapter_start=uvicorn port=$PORT"
   AI_WPS_REQUIRE_PRIVATE_RUNTIME=1 \
     bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT"
-  bash "$ADAPTER_TARGET/scripts/check_health.sh" "$PORT"
+  if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+    health_status="0"
+    health_result="$(
+      bash "$ADAPTER_TARGET/scripts/check_health.sh" "$PORT"
+    )" || health_status="$?"
+    log "$health_result"
+    case "$health_result" in
+      *"adapter_health=reachable"*"adapter_business_status=recovery"*) ;;
+      *) fail "activated_recovery_health_contract_invalid status=$health_status" ;;
+    esac
+  else
+    bash "$ADAPTER_TARGET/scripts/check_health.sh" "$PORT"
+  fi
+}
+
+restart_previous_adapter() {
+  [ -f "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" ] || return 0
+  if [ "$PREVIOUS_RELEASE_VERSION" = "legacy" ] && ! runtime_state_exists; then
+    env -u AI_WPS_STATE_DIR -u AI_WPS_BACKUP_DIR -u AI_WPS_VAR_DIR \
+      bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT" \
+      || log "previous_adapter_restart_failed=$ADAPTER_TARGET"
+  else
+    AI_WPS_REQUIRE_PRIVATE_RUNTIME=1 \
+      bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT" \
+      || log "previous_adapter_restart_failed=$ADAPTER_TARGET"
+  fi
 }
 
 parse_arguments "$@"
@@ -901,6 +1053,7 @@ export AI_WPS_BACKUP_DIR="$BACKUP_DIR"
 export AI_WPS_VAR_DIR="$VAR_DIR"
 recover_systemd_handoff
 ensure_wps_processes_stopped
+probe_current_install_readiness
 stop_adapter_for_state_transition
 reexec_as_target_if_needed
 
@@ -952,6 +1105,7 @@ cleanup_installation_candidate() {
     )"
     if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
       && [ "$transaction_status" != "committed" ] \
+      && [ "$transaction_status" != "recovery_activated" ] \
       && [ "$transaction_status" != "ready_to_commit" ]; then
       ADAPTER_TARGET="$CURRENT_LINK"
       if [ -f "$ADAPTER_TARGET/scripts/stop_adapter.sh" ]; then
@@ -963,7 +1117,7 @@ cleanup_installation_candidate() {
       fi
     fi
     case "$transaction_status" in
-      committed|rolled_back) ;;
+      committed|recovery_activated|rolled_back) ;;
       ready_to_commit)
         [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" = "1" ] \
           || "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$TRANSACTION_LOG"
@@ -976,27 +1130,23 @@ cleanup_installation_candidate() {
   fi
   if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
     && [ "$transaction_status" != "committed" ] \
+    && [ "$transaction_status" != "recovery_activated" ] \
     && [ "$transaction_status" != "ready_to_commit" ]; then
     resolve_active_adapter
-    if [ -f "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" ]; then
-      if [ "$PREVIOUS_RELEASE_VERSION" = "legacy" ] && ! runtime_state_exists; then
-        env -u AI_WPS_STATE_DIR -u AI_WPS_BACKUP_DIR -u AI_WPS_VAR_DIR \
-          bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT" \
-          || log "previous_adapter_restart_failed=$ADAPTER_TARGET"
-      else
-        AI_WPS_REQUIRE_PRIVATE_RUNTIME=1 \
-          bash "$ADAPTER_TARGET/scripts/start_uvicorn_adapter.sh" "$PORT" \
-          || log "previous_adapter_restart_failed=$ADAPTER_TARGET"
-      fi
-    fi
+    restart_previous_adapter
   fi
-  if [ -n "${CANDIDATE_TARGET:-}" ] && { [ -e "$CANDIDATE_TARGET" ] || [ -L "$CANDIDATE_TARGET" ]; }; then
+  if [ "$PRESERVE_RECOVERY_CANDIDATE" != "1" ] \
+    && [ -n "${CANDIDATE_TARGET:-}" ] \
+    && { [ -e "$CANDIDATE_TARGET" ] || [ -L "$CANDIDATE_TARGET" ]; }; then
     rm -rf "$CANDIDATE_TARGET"
   fi
-  if [ -n "${CANDIDATE_STATE:-}" ] && { [ -e "$CANDIDATE_STATE" ] || [ -L "$CANDIDATE_STATE" ]; }; then
+  if [ "$PRESERVE_RECOVERY_CANDIDATE" != "1" ] \
+    && [ -n "${CANDIDATE_STATE:-}" ] \
+    && { [ -e "$CANDIDATE_STATE" ] || [ -L "$CANDIDATE_STATE" ]; }; then
     rm -rf "$CANDIDATE_STATE"
   fi
   if [ -z "${TRANSACTION_LOG:-}" ] \
+    && [ "$PRESERVE_RECOVERY_CANDIDATE" != "1" ] \
     && [ -n "${CANDIDATE_SNAPSHOT_ID:-}" ] \
     && [ -d "$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID" ]; then
     rm -rf "$BACKUP_DIR/$CANDIDATE_SNAPSHOT_ID"
@@ -1014,6 +1164,10 @@ cleanup_installation_candidate() {
       rm -rf "$candidate_path"
     fi
   done
+  if [ "$PRESERVE_RECOVERY_CANDIDATE" = "1" ] \
+    && [ "${AI_WPS_SYSTEMD_MANAGED_BY_PARENT:-0}" != "1" ]; then
+    restart_previous_adapter
+  fi
 }
 trap cleanup_installation_candidate EXIT
 
@@ -1030,6 +1184,7 @@ prepare_runtime_state
 initialize_writing_policy_database "$CANDIDATE_TARGET" "$CANDIDATE_STATE"
 create_candidate_state_snapshot
 run_candidate_preflight
+enforce_recovery_activation_gate
 stage_wps_plugins
 write_generation_manifest
 ln -s "$RELEASE_TARGET" "$CURRENT_CANDIDATE"
@@ -1042,5 +1197,14 @@ finalize_release_generation
 cleanup_installation_candidate
 trap - EXIT
 
-log "phase1_install_done=true"
-log "next_step=restart WPS, open WPS AI 助理 tab, then run scripts/phase1_smoke_test.sh"
+if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+  if [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" = "1" ]; then
+    log "recovery_mode_activation_staged=true"
+  else
+    log "recovery_mode_activated=true"
+  fi
+  log "recovery_mode_scope=diagnostics,backup,restore"
+else
+  log "phase1_install_done=true"
+  log "next_step=restart WPS, open WPS AI 助理 tab, then run scripts/phase1_smoke_test.sh"
+fi

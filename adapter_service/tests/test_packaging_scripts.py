@@ -513,6 +513,9 @@ esac
 
         self.assertIn('path == "/health/live"', script)
         self.assertIn('path == "/health/ready"', script)
+        self.assertIn('path == "/recovery/backups"', script)
+        self.assertIn('path == "/recovery/diagnostics"', script)
+        self.assertNotIn('path == "/recovery/restore"', script)
         self.assertIn("get_health_snapshot", script)
         self.assertIn("get_operation_block", script)
         self.assertIn("ADAPTER_RECOVERY_MODE", script)
@@ -534,6 +537,16 @@ esac
             policy["snapshotExcluded"],
             ["backups/", "var/logs/", "var/run/", "var/transactions/"],
         )
+        self.assertEqual(policy["copyVerificationField"], "copyVerified")
+        self.assertFalse(policy["recoveryActivation"]["automaticSwitch"])
+        self.assertEqual(
+            policy["recoveryActivation"]["explicitFlag"], "--activate-recovery"
+        )
+        self.assertEqual(
+            policy["recoveryActivation"]["terminalStatus"],
+            "recovery_activated",
+        )
+        self.assertIsNone(policy["recoveryApi"]["restoreEndpoint"])
 
     def test_release_manifest_declares_complete_generation_contract(self) -> None:
         manifest = json.loads(
@@ -918,6 +931,75 @@ esac
         self.assertIn("run/writing_policies.db", script)
         self.assertIn("prepare_runtime_state", script)
         self.assertIn("runtime_state_snapshot_reason=pre_install", script)
+
+    def test_recovery_candidate_restart_preserves_legacy_runtime_layout(self) -> None:
+        script = (
+            ROOT / "phase1-delivery-kit/installer/install_phase1.sh"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("restart_previous_adapter()", script)
+        self.assertIn(
+            'if [ "$PREVIOUS_RELEASE_VERSION" = "legacy" ] && ! runtime_state_exists; then',
+            script,
+        )
+        self.assertIn(
+            'env -u AI_WPS_STATE_DIR -u AI_WPS_BACKUP_DIR -u AI_WPS_VAR_DIR',
+            script,
+        )
+        self.assertGreaterEqual(script.count("restart_previous_adapter"), 3)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            adapter = root / "legacy-adapter"
+            (adapter / "scripts").mkdir(parents=True)
+            marker = root / "legacy-restarted"
+            start_script = adapter / "scripts/start_uvicorn_adapter.sh"
+            start_script.write_text(
+                "#!/usr/bin/env bash\n"
+                "[ -z \"${AI_WPS_STATE_DIR+x}\" ] || exit 21\n"
+                "[ -z \"${AI_WPS_BACKUP_DIR+x}\" ] || exit 22\n"
+                "[ -z \"${AI_WPS_VAR_DIR+x}\" ] || exit 23\n"
+                "printf '%s\\n' restarted > \"$LEGACY_RESTART_MARKER\"\n",
+                encoding="utf-8",
+            )
+            start_script.chmod(0o755)
+            harness = root / "restart-legacy.sh"
+            function_definitions = script.split('\nparse_arguments "$@"\n', 1)[0]
+            harness.write_text(
+                function_definitions
+                + "\nADAPTER_TARGET=\"$TEST_LEGACY_ADAPTER\"\n"
+                + "PREVIOUS_RELEASE_VERSION=legacy\n"
+                + "STATE_DIR=\"$TEST_MISSING_STATE\"\n"
+                + "BACKUP_DIR=\"$TEST_BACKUP_DIR\"\n"
+                + "VAR_DIR=\"$TEST_VAR_DIR\"\n"
+                + "PORT=28123\n"
+                + "export AI_WPS_STATE_DIR=\"$STATE_DIR\"\n"
+                + "export AI_WPS_BACKUP_DIR=\"$BACKUP_DIR\"\n"
+                + "export AI_WPS_VAR_DIR=\"$VAR_DIR\"\n"
+                + "restart_previous_adapter\n",
+                encoding="utf-8",
+            )
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "TEST_LEGACY_ADAPTER": str(adapter),
+                    "TEST_MISSING_STATE": str(root / "missing-state"),
+                    "TEST_BACKUP_DIR": str(root / "backups"),
+                    "TEST_VAR_DIR": str(root / "var"),
+                    "LEGACY_RESTART_MARKER": str(marker),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(harness)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr or result.stdout)
+            self.assertEqual(marker.read_text(encoding="utf-8"), "restarted\n")
 
     def test_phase1_installer_prepares_state_before_switching_release_generation(self) -> None:
         installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(

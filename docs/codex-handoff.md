@@ -14,6 +14,10 @@
 
 ## 0. v0.23.1-alpha 当前事实
 
+- Issue #32 已实现恢复候选的显式激活门禁：候选只达到 `recovery` 时，默认安装在切换前停止，并保留当前安装、候选目录、候选状态副本和已完整复制校验的安装前快照；只有当前安装不就绪、备份已校验且候选存活并明确处于恢复模式时，`--activate-recovery` 才能继续。
+- 恢复激活事务使用独立终态 `recovery_activated`，不写入 `committedAt`，也不输出普通安装成功标记。恢复模式只开放重新检测、只读备份与脱敏诊断，不开放前端重置或一键恢复。
+- FastAPI 与 standalone 新增 `POST /recovery/backups` 和 `GET /recovery/diagnostics`。诊断只输出健康子系统、操作策略、备份摘要和受控审计字段，不包含配置内容、文档正文、API Key、模型原始响应、异常原文或敏感绝对路径。
+- 快照清单新增 `copyVerified`：完整复制校验与业务有效性分开记录。整体恢复仍要求有效快照 ID 和 `RESTORE_WHOLE_STATE` 二次确认，并在全文件复验后原子切换；三宿主只显示最近有效/已校验备份状态。
 - Issue #29 已实现旧布局运行数据的写时复制迁移和一致性快照：安装器先停止旧 Adapter 并确认端口释放；快照对配置、Key、数据库及 WAL/SHM 做前后稳定性校验，只在同文件系统副本上迁移，并以 Linux/macOS 原生目录交换整体切换。核心失败保持正式状态不变并返回 `recovery`，仅写作规范失败保留原数据库字节并返回 `degraded`。
 - 快照清单记录版本、八类任务配置数量、Key 引用/不可逆 SHA-256 指纹、激活关系、规范条目数量/启用状态、数据库完整性和文件校验值，不记录 Key 明文或服务地址正文；状态、快照目录为 `0700`，文件为 `0600`。
 - 运行数据恢复只支持带快照 ID 和 `RESTORE_WHOLE_STATE` 二次确认的整体恢复；恢复前再创建 `pre_restore` 快照。默认保留最近三个有效快照，并保护标记为上一已验收版本最后有效快照的快照。
@@ -24,7 +28,7 @@
 - Issue #27 已建立兼容旧布局的运行路径契约：显式 `AI_WPS_STATE_DIR` 保存配置、API Key 与写作规范数据库，`AI_WPS_BACKUP_DIR` 预留一致性快照，`AI_WPS_VAR_DIR` 隔离日志、PID 与事务记录；仅配置状态目录时自动使用同级 `backups/` 和 `var/`，三项均未配置时继续使用旧 `config/`、`run/`、`logs/`。
 - 三个运行路径环境变量必须是无控制字符的绝对路径（空格受支持，`~` 不自动展开）；systemd unit 会引用并转义路径，API Key 通过 `0600` 临时文件原子替换，避免首次创建的权限窗口。
 - Adapter 配置、模型配置、兼容工作流配置、统一/任务 Key 和写作规范库均遵循共享状态路径；Key 文件保持 `0600`、Key 目录保持 `0700`。启动、停止、状态、日志和 systemd 自启动脚本共享同一路径解析，避免管理命令读写不同 PID 或日志位置。
-- Python 3.8 最终包门禁现同时验证发布程序目录不产生配置、Key、数据库、日志、PID 或事务记录，且运行状态、备份和 `var/{logs,run,transactions}` 边界成立；本次本地验证为 Python `603 tests OK / 6 skipped`、正式插件 Node 契约测试 `14/14`、三宿主 JavaScript 检查通过、Python 3.8.20 最终包运行门禁通过。
+- Python 3.8 最终包门禁会同时验证发布程序目录不产生配置、Key、数据库、日志、PID 或事务记录，且运行状态、备份和 `var/{logs,run,transactions}` 边界成立。本次 Issue #32 本地验证为 Python `656 tests OK / 66 skipped`、正式插件 Node 契约测试 `15/15`、三宿主 JavaScript 与全部 Shell 语法检查通过、Python 3.8 静态兼容扫描 `111` 个生产文件通过。当前 Mac 没有真实 Python 3.8，完整打包已执行到运行时门禁并按预期以 `PYTHON38_REQUIRED current=3.9` 停止；合并或交付前仍须用真实 Python 3.8 重跑最终包 Uvicorn 门禁。
 - 修复 `WorkflowProfileCompatibilityStore._platform_configurations` 在 Python 3.8 导入时执行 `tuple[...]` 导致 Adapter 退出的问题，改用 `typing.Tuple/Dict/List`。
 - 新增生产 Python 兼容性扫描和最终 tar 包运行门禁；门禁必须由真实 Python 3.8 完整导入应用、启动 Uvicorn，并检查版本、Provider 状态、模型配置和写作规范摘要接口。
 - 自动化门禁通过只代表候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户现场验收。
@@ -146,6 +150,8 @@ adapter 继续使用 Dify 官方 `/chat-messages`。旧工作流默认使用：
 GET    /health/live
 GET    /health/ready
 GET    /health
+POST   /recovery/backups
+GET    /recovery/diagnostics
 GET    /config
 GET    /templates
 GET    /provider/status
@@ -493,22 +499,22 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.22.0-alpha` 已执行本地自动化、静态契约、首次安装/覆盖保护和交付包审计。麒麟 V10/WPS 真机验收仍需在目标终端执行，不能由当前 Mac 开发机替代。
+`v0.23.1-alpha` 已执行本地自动化、静态契约、安装恢复门禁和交付包结构审计。麒麟 V10/WPS 真机验收与真实 Python 3.8 最终包运行门禁仍需在对应环境执行，不能由当前 Mac 开发机替代。
 
 ```bash
-PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
+AI_WPS_ENABLE_MOCK_PROVIDER=1 PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
 for test_file in formal-plugin-kit/tests/*.test.js; do node "$test_file"; done
 node --check <Word/Excel/PPT taskpane.js、taskpane-helpers.js、ribbon.js>
 npm exec --prefix wps-addon tsc -- --noEmit -p wps-addon/tsconfig.json
 bash -n packaging/build_phase1_delivery_kit.sh phase1-delivery-kit/installer/install_phase1.sh phase1-delivery-kit/scripts/phase1_smoke_test.sh
 git diff --check
-DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
+DATE_TAG=20260811 PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 bash packaging/build_phase1_delivery_kit.sh
 ```
 
 当前结果：
 
-- Python 全量单测：`584 tests OK (skipped=59)`；跳过项来自当前 FastAPI/条件门禁及未设置真实 Python 3.8 路径的普通测试进程。Python 3.8 导入和最终包 Uvicorn 门禁已在独立真实运行时测试中执行。
-- 全部 14 个正式前端测试文件通过，覆盖三宿主 layout smoke、PPT 结构提取与只读边界、公式属性读取降级、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
+- Python 全量单测：`656 tests OK (skipped=66)`；跳过项来自当前 FastAPI/条件门禁、受限本地套接字及未设置真实 Python 3.8 路径。
+- 全部 15 个正式前端测试文件通过，新增覆盖三宿主恢复卡片、只读备份、脱敏诊断和无 HTTP 恢复/重置入口契约。
 - 当前开发机未安装 `wps-addon` 开发依赖，本轮未执行该旧脚手架的 Vitest 与 `tsc --noEmit`；该子目录不是本次三宿主正式交付包构建源。
 - Word/Excel/PPT 的 10 个 JavaScript 文件语法检查、TypeScript 类型检查和 24 个构建/安装/联调脚本 `bash -n`：通过。
 - 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。

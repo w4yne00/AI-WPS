@@ -8,6 +8,7 @@ from app.core.config import default_config_path
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 from app.services.writing_policy import get_writing_policy_service
+from app.services.recovery import get_recovery_operations
 
 
 SERVICE_NAME = "wps-ai-adapter"
@@ -326,6 +327,15 @@ def get_health_snapshot() -> dict:
             else "ready"
         )
     )
+    try:
+        backup_status = get_recovery_operations(SERVICE_VERSION).backup_status()
+    except Exception:
+        backup_status = {
+            "verifiedCount": 0,
+            "validCount": 0,
+            "latestVerified": None,
+            "latestValid": None,
+        }
     return {
         "service": SERVICE_NAME,
         "status": status,
@@ -344,6 +354,7 @@ def get_health_snapshot() -> dict:
                 not recovery and writing_policy_status["status"] == "ready"
             ),
         },
+        "backupStatus": backup_status,
     }
 
 

@@ -325,7 +325,12 @@ class RuntimeStateManagerTests(unittest.TestCase):
             )
             manifests = list(backup_dir.glob("*/manifest.json"))
             self.assertEqual(len(manifests), 1)
-            self.assertFalse(json.loads(manifests[0].read_text())["valid"])
+            manifest = json.loads(manifests[0].read_text())
+            self.assertTrue(manifest["copyVerified"])
+            self.assertFalse(manifest["valid"])
+            with self.assertRaises(RuntimeStateError) as restore_error:
+                manager.restore_snapshot(manifest["snapshotId"], confirmed=True)
+            self.assertEqual(restore_error.exception.code, "SNAPSHOT_NOT_VALID")
 
     def test_writing_policy_failure_preserves_database_and_reports_degraded(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -495,6 +500,14 @@ class RuntimeStateManagerTests(unittest.TestCase):
             with self.assertRaises(RuntimeStateError) as raised:
                 manager.restore_snapshot(snapshot_id, confirmed=False)
             self.assertEqual(raised.exception.code, "RESTORE_CONFIRMATION_REQUIRED")
+            audit_entries = [
+                json.loads(line)
+                for line in (backup_dir / "runtime-state-audit.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(audit_entries[-1]["action"], "restore")
+            self.assertEqual(audit_entries[-1]["status"], "blocked")
 
             result = manager.restore_snapshot(snapshot_id, confirmed=True)
 
@@ -505,6 +518,37 @@ class RuntimeStateManagerTests(unittest.TestCase):
             )
             self.assertFalse((state_dir / "extra-file").exists())
             self.assertTrue(result["preRestoreSnapshotId"])
+            audit_entries = [
+                json.loads(line)
+                for line in (backup_dir / "runtime-state-audit.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(
+                [item["status"] for item in audit_entries[-2:]],
+                ["pending", "ready"],
+            )
+
+    def test_restore_aborts_before_switch_when_audit_intent_cannot_be_persisted(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_root = root / "legacy"
+            state_dir = root / "state"
+            backup_dir = root / "backups"
+            _write_legacy_state(legacy_root)
+            manager = RuntimeStateManager(state_dir, backup_dir, "0.23.1-alpha")
+            snapshot_id = manager.migrate_legacy_state(legacy_root)["snapshotId"]
+            sentinel = state_dir / "sentinel"
+            sentinel.write_text("original", encoding="utf-8")
+
+            with mock.patch.object(manager, "_append_audit", return_value=False):
+                with self.assertRaises(RuntimeStateError) as raised:
+                    manager.restore_snapshot(snapshot_id, confirmed=True)
+
+            self.assertEqual(raised.exception.code, "RESTORE_AUDIT_FAILED")
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "original")
 
     def test_restore_switch_failure_keeps_original_state_and_audits_recovery(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -536,6 +580,35 @@ class RuntimeStateManagerTests(unittest.TestCase):
             ]
             self.assertEqual(audit_entries[-1]["action"], "restore")
             self.assertEqual(audit_entries[-1]["status"], "recovery")
+
+    def test_restore_stage_creation_failure_is_sanitized_and_audited(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            legacy_root = root / "legacy"
+            state_dir = root / "state"
+            backup_dir = root / "backups"
+            _write_legacy_state(legacy_root)
+            manager = RuntimeStateManager(state_dir, backup_dir, "0.23.1-alpha")
+            snapshot_id = manager.migrate_legacy_state(legacy_root)["snapshotId"]
+
+            with mock.patch.object(
+                manager,
+                "_new_stage",
+                side_effect=OSError("sensitive local path"),
+            ):
+                with self.assertRaises(RuntimeStateError) as raised:
+                    manager.restore_snapshot(snapshot_id, confirmed=True)
+
+            self.assertEqual(raised.exception.code, "RESTORE_FAILED")
+            audit_entries = [
+                json.loads(line)
+                for line in (backup_dir / "runtime-state-audit.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
+            self.assertEqual(audit_entries[-1]["action"], "restore")
+            self.assertEqual(audit_entries[-1]["status"], "recovery")
+            self.assertNotIn("sensitive local path", json.dumps(audit_entries))
 
 
 if __name__ == "__main__":

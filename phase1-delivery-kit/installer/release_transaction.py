@@ -153,7 +153,11 @@ def _absolute_path(value, label):
 
 
 def _load_snapshot(
-    backup_dir, snapshot_id, release_version=None, allow_degraded=False
+    backup_dir,
+    snapshot_id,
+    release_version=None,
+    allow_degraded=False,
+    allow_recovery=False,
 ):
     if not SAFE_ID.fullmatch(snapshot_id):
         raise TransactionError("candidate_snapshot_id_invalid")
@@ -165,10 +169,19 @@ def _load_snapshot(
         raise TransactionError("candidate_snapshot_manifest_missing")
     if not isinstance(manifest, dict):
         raise TransactionError("candidate_snapshot_manifest_invalid")
-    validated = manifest.get("valid") is True or (allow_degraded and (
-        manifest.get("coreStatus") == "ready"
-        and manifest.get("writingPolicyStatus") == "degraded"
-    ))
+    validated = (
+        manifest.get("valid") is True
+        or (
+            allow_degraded
+            and manifest.get("coreStatus") == "ready"
+            and manifest.get("writingPolicyStatus") == "degraded"
+        )
+        or (
+            allow_recovery
+            and manifest.get("copyVerified") is True
+            and manifest.get("coreStatus") == "recovery"
+        )
+    )
     if (
         manifest.get("snapshotId") != snapshot_id
         or not validated
@@ -225,6 +238,7 @@ def _prepare(arguments):
         arguments.candidate_snapshot_id,
         release_version,
         allow_degraded=True,
+        allow_recovery=arguments.recovery_activation,
     )
 
     transaction_path = transaction_dir / (transaction_id + ".json")
@@ -302,6 +316,9 @@ def _prepare(arguments):
         "releaseVersion": release_version,
         "candidateSnapshotId": arguments.candidate_snapshot_id,
         "candidateSnapshotSha256": _hash_path(candidate_snapshot),
+        "activationMode": (
+            "recovery" if arguments.recovery_activation else "upgrade"
+        ),
         "backupDir": str(backup_dir),
         "createdAt": _utc_now(),
         "updatedAt": _utc_now(),
@@ -415,6 +432,7 @@ def _finalize(transaction_path, defer_commit=False, external_commit=False):
             transaction["candidateSnapshotId"],
             transaction["releaseVersion"],
             allow_degraded=True,
+            allow_recovery=transaction.get("activationMode") == "recovery",
         )
         if _hash_path(candidate_snapshot) != transaction.get(
             "candidateSnapshotSha256"
@@ -443,9 +461,14 @@ def _finalize(transaction_path, defer_commit=False, external_commit=False):
         transaction["updatedAt"] = transaction["verifiedAt"]
         _write_json(transaction_path, transaction)
         return transaction
-    transaction["status"] = "committed"
-    transaction["committedAt"] = _utc_now()
-    transaction["updatedAt"] = transaction["committedAt"]
+    if transaction.get("activationMode") == "recovery":
+        transaction["status"] = "recovery_activated"
+        transaction["activatedAt"] = _utc_now()
+        transaction["updatedAt"] = transaction["activatedAt"]
+    else:
+        transaction["status"] = "committed"
+        transaction["committedAt"] = _utc_now()
+        transaction["updatedAt"] = transaction["committedAt"]
     _write_json(transaction_path, transaction)
     for component in transaction["components"]:
         _remove_path(Path(component["backup"]))
@@ -465,6 +488,7 @@ def _parser():
     prepare.add_argument("--release-version", required=True)
     prepare.add_argument("--backup-dir", required=True)
     prepare.add_argument("--candidate-snapshot-id", required=True)
+    prepare.add_argument("--recovery-activation", action="store_true")
     prepare.add_argument(
         "--component", nargs=3, action="append", metavar=("NAME", "CANDIDATE", "TARGET"), required=True
     )
@@ -501,7 +525,11 @@ def main(argv=None):
                 )
             else:
                 current = _read_json(transaction_path)
-                if current.get("status") in {"committed", "rolled_back"}:
+                if current.get("status") in {
+                    "committed",
+                    "recovery_activated",
+                    "rolled_back",
+                }:
                     transaction = current
                 else:
                     transaction = _rollback_components(

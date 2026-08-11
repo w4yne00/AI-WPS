@@ -130,7 +130,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Adds a production compatibility scan and a final-tar runtime gate that uses real Python 3.8 to import the complete app, start Uvicorn, and verify version plus key configuration contracts. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
+| `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |
 | `v0.22.0-alpha` | Adds the PPT Structure Review minimum loop with an independent Ribbon entry, workflow profile, and API key; explicit ranges up to 60 slides; separated title/subtitle extraction and bounded untitled-slide fallback; merged local and single-call semantic review findings; prioritized/page-specific results, recommended outline, and copy-only read-only behavior |
 | `v0.21.0-alpha` | Formally packages the independent Excel Formula Assistant with Generate and Explain/Debug modes, selection-only 30×20 extraction, `Formula`/`FormulaLocal`/`FormulaR1C1` read fallback guarded by `HasFormula`, shared long-task queuing and recovery, local non-executing checks, and copy-only results. The unified package includes its Dify operations guide and prompt template; Word and PPT business behavior remains unchanged |
@@ -268,8 +268,12 @@ uvicorn app.main:app --host 127.0.0.1 --port 18100
 Health check:
 
 ```bash
+curl http://127.0.0.1:18100/health/live
+curl -i http://127.0.0.1:18100/health/ready
 curl http://127.0.0.1:18100/health
 ```
+
+When a candidate can only enter recovery mode, a normal install stops before switching and preserves the current installation, candidate, and verified backup. An operator may use `bash installer/install_phase1.sh --activate-recovery` only when the current installation is not ready and the recovery candidate is live. Recovery mode offers `POST /recovery/backups` for a read-only incident snapshot and `GET /recovery/diagnostics` for a sanitized diagnostic export. Whole-state restore remains a CLI-only operation requiring a snapshot ID and explicit confirmation. See the [runtime-state recovery guide](./docs/operations/runtime-state-recovery.md).
 
 If FastAPI dependencies are inconvenient in the target environment, use the built-in lightweight standalone server:
 
@@ -337,7 +341,11 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| `GET` | `/health` | Adapter health, version, and provider configuration status |
+| `GET` | `/health/live` | Process and basic web-application liveness without business-data reads |
+| `GET` | `/health/ready` | Core business readiness; returns HTTP 503 in recovery mode |
+| `GET` | `/health` | Adapter health, version, and sanitized subsystem status |
+| `POST` | `/recovery/backups` | Create a read-only runtime-state backup in recovery mode |
+| `GET` | `/recovery/diagnostics` | Export sanitized health, backup, and audit summaries |
 | `GET` | `/config` | Current runtime configuration summary |
 | `GET` | `/templates` | Available template list |
 | `GET` | `/provider/status` | Enterprise AI provider authentication status |

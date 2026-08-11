@@ -93,10 +93,25 @@ hosts.forEach(({ name, root, helpers }) => {
   assert.strictEqual(unknown.writingPolicyMutationsAllowed, false, name);
 
   const taskpane = fs.readFileSync(`${root}/taskpane.js`, "utf8");
+  const taskpaneHtml = fs.readFileSync(`${root}/taskpane.html`, "utf8");
   assert.ok(taskpane.includes("helpers.normalizeAdapterHealth"), `${name} taskpane health normalization`);
   assert.ok(taskpane.includes("adapterHealthStatus"), `${name} taskpane health state`);
   assert.ok(taskpane.includes('healthState.status === "recovery"'), `${name} recovery rendering`);
   assert.ok(taskpane.includes('blockedCode = "ADAPTER_RECOVERY_MODE"'), `${name} recovery request guard`);
+  assert.ok(taskpaneHtml.includes('id="recovery-actions-card"'), `${name} recovery actions card`);
+  assert.ok(taskpaneHtml.includes('id="btn-recovery-refresh"'), `${name} recovery refresh`);
+  assert.ok(taskpaneHtml.includes('id="btn-recovery-backup"'), `${name} read-only backup`);
+  assert.ok(taskpaneHtml.includes('id="btn-recovery-diagnostics"'), `${name} redacted diagnostics`);
+  assert.ok(taskpaneHtml.includes("创建只读备份"), `${name} read-only backup label`);
+  assert.ok(taskpaneHtml.includes("导出脱敏诊断"), `${name} redacted diagnostics label`);
+  assert.ok(taskpane.includes('"/recovery/backups"'), `${name} recovery backup endpoint`);
+  assert.ok(taskpane.includes('"/recovery/diagnostics"'), `${name} recovery diagnostics endpoint`);
+  assert.ok(taskpane.includes("最近有效备份"), `${name} valid restore backup status`);
+  assert.ok(taskpane.includes("最近只读备份不可恢复"), `${name} incident backup warning`);
+  assert.ok(taskpane.includes('status !== "ready"'), `${name} shows every non-ready subsystem`);
+  assert.ok(!taskpaneHtml.includes('id="btn-recovery-restore"'), `${name} has no recovery button`);
+  assert.ok(!taskpaneHtml.includes('id="btn-recovery-reset"'), `${name} has no reset button`);
+  assert.ok(!taskpane.includes('"/recovery/restore"'), `${name} has no HTTP restore path`);
 });
 
 const wordTaskpane = fs.readFileSync(
