@@ -197,7 +197,22 @@ class RuntimeStateManagerTests(unittest.TestCase):
             '--component runtime_state_snapshot "$CANDIDATE_STATE" "$STATE_DIR"',
             installer,
         )
-        self.assertIn("runtime-state-recovery.md", build_script)
+        source_policy = json.loads(
+            (root / "packaging/delivery-sources-v0231.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        delivered_files = {
+            entry["target"].rstrip("/") + "/" + relative
+            for entry in source_policy["entries"]
+            if entry["type"] in {"tree", "archive"}
+            for relative in entry["include"]
+        }
+        self.assertIn(
+            "docs/operations/runtime-state-recovery.md",
+            delivered_files,
+        )
+        self.assertIn("assemble_phase1_delivery.py", build_script)
         self.assertIn("RESTORE_WHOLE_STATE", operator_script)
         policy = manifest["runtimeStatePolicy"]
         self.assertEqual(policy["snapshotManifestSchemaVersion"], 1)

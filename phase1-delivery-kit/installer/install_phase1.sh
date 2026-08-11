@@ -965,7 +965,22 @@ prepare_release_transaction() {
 }
 
 switch_release_generation() {
-  "$PYTHON_BIN" -s "$TRANSACTION_TOOL" switch "$TRANSACTION_LOG" \
+  local fail_after="${AI_WPS_TRANSACTION_FAIL_AFTER:-}"
+  local switch_arguments=(switch "$TRANSACTION_LOG")
+  case "$fail_after" in
+    '') ;;
+    after_backup:adapter_release|after_switch:adapter_release|\
+    after_backup:word_plugin|after_switch:word_plugin|\
+    after_backup:excel_plugin|after_switch:excel_plugin|\
+    after_backup:ppt_plugin|after_switch:ppt_plugin|\
+    after_backup:publish_manifest|after_switch:publish_manifest|\
+    after_backup:runtime_state_snapshot|after_switch:runtime_state_snapshot|\
+    after_backup:current_pointer|after_switch:current_pointer)
+      switch_arguments+=(--fail-after "$fail_after")
+      ;;
+    *) fail "transaction_failpoint_invalid value=$fail_after" ;;
+  esac
+  "$PYTHON_BIN" -s "$TRANSACTION_TOOL" "${switch_arguments[@]}" \
     || fail "release_generation_switch_failed"
   ADAPTER_TARGET="$CURRENT_LINK"
   log "release_generation=switched version=$RELEASE_VERSION"
@@ -1189,8 +1204,8 @@ stage_wps_plugins
 write_generation_manifest
 ln -s "$RELEASE_TARGET" "$CURRENT_CANDIDATE"
 prepare_release_transaction
-switch_release_generation
 RELEASE_SWITCHED="1"
+switch_release_generation
 start_and_check_adapter
 finalize_release_generation
 

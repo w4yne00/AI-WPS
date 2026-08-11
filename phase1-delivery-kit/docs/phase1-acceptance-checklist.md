@@ -22,7 +22,7 @@
 - [ ] 注入最终健康、版本或组件哈希失败后，事务为 `rolled_back`，上一 Adapter 重启成功，WPS 重开后仍为上一完整代际。
 - [ ] 已安装 systemd 服务时，事务先进入 `ready_to_commit`；分别注入 unit 渲染、`daemon-reload`、服务启动和外部提交复验失败，均恢复旧 unit 与上一完整代际。正常完成后 unit 的 `WorkingDirectory`、`ExecStart`、`ExecStop` 均通过 `current`。
 - [ ] `release-manifest.json` 的版本、三宿主、四个规范包和版本规则号与本包一致。
-- [ ] 使用真实 Python 3.8 执行 `python3.8 scripts/python38_delivery_runtime_gate.py <最终tar包> --expected-version 0.23.1-alpha` 通过。
+- [ ] 使用真实 Python 3.8 执行 `python3.8 scripts/python38_delivery_lifecycle_gate.py <最终tar包> --expected-version 0.23.1-alpha` 通过；运行时门禁作为该单一入口的一部分执行。
 
 ## 2. Adapter 检查
 
@@ -169,6 +169,10 @@
 
 ## 11. 交付包完整性与排除检查
 
+- [ ] `release-allowlist.json` 与实际文件集合完全一致，构建路径为源白名单组装，不从旧交付目录复制后删除。
+- [ ] `release-file-hashes.json` 覆盖除自身外全部交付文件，逐项 SHA-256 复验通过；包外归档 SHA-256 复验通过。
+- [ ] 发布清单、三宿主 manifest、Adapter、安装脚本和版本规则号全部为 `v0.23.1-alpha` 身份，不复用 `v0.23.0-alpha`。
+- [ ] 清单路径、插件 HTML/manifest 资产、System Prompt、目标 Wheel、锁定清单和哈希清单的引用闭包完整。
 - [ ] 包内包含四个规范包、四份已批准审阅清单、`schema-v1.json`、来源文档和 `THIRD_PARTY_NOTICES.md`。
 - [ ] 包内包含 CSV/XLSX 空白导入模板、写作规范使用说明、验收清单和验收记录。
 - [ ] 包内包含 `dify-excel-formula-assistant-workflow.md` 和 `excel-formula-assistant-prompt-template.md`。
@@ -178,6 +182,9 @@
 - [ ] 包内不包含 `writing_policies.db`、任何数据库备份、`adapter.json`、API Key、日志目录或 `.log` 文件。
 - [ ] 包内除 `docs/import-templates/` 空白模板外，不包含其他 CSV/XLSX 用户导入内容。
 - [ ] 包内不包含名称含 `.draft.` 的未确认审阅草稿。
+- [ ] 包内不包含测试、`__pycache__`、`.pytest_cache`、`node_modules`、standalone 兼容入口、开发生成脚本、旧安装依赖脚本、旧归档或嵌套归档。
+- [ ] 敏感信息扫描未发现私钥、真实 API Key、认证 URL、现场配置正文或其他密钥值。
+- [ ] 生命周期门禁覆盖全新安装、v0.22 升级、损坏 v0.23.0，以及导入失败、候选启动失败、健康版本错误、核心/规范数据失败、权限错误、WPS 未退出和安装中断。
 - [ ] Python 全量测试、全部 Node 测试、三宿主脚本语法、Shell 语法、浏览器布局和交付包构建审计均通过。
 
 ## 12. 麒麟 V10 发布验收

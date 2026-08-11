@@ -14,6 +14,35 @@ PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 
 
 class PackagingScriptTests(unittest.TestCase):
+    def _delivery_source_pairs(self):
+        policy = json.loads(
+            (ROOT / "packaging/delivery-sources-v0231.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        return {
+            (entry["source"], entry["target"])
+            for entry in policy["entries"]
+        }
+
+    def _delivery_target_files(self):
+        policy = json.loads(
+            (ROOT / "packaging/delivery-sources-v0231.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        targets = set()
+        for entry in policy["entries"]:
+            target = entry["target"].rstrip("/")
+            if entry["type"] == "file":
+                targets.add(target)
+            else:
+                targets.update(
+                    target + "/" + relative
+                    for relative in entry["include"]
+                )
+        return targets
+
     def _copy_phase1_installer(self, destination: Path) -> Path:
         installer_dir = destination / "delivery" / "installer"
         installer_dir.mkdir(parents=True)
@@ -579,9 +608,7 @@ esac
                 encoding="utf-8"
             )
         )
-        build_script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
-            encoding="utf-8"
-        )
+        delivery_sources = self._delivery_source_pairs()
         installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
         )
@@ -598,8 +625,20 @@ esac
                 "disableUserSite": True,
             },
         )
-        self.assertIn('requirements-lock.txt"', build_script)
-        self.assertIn('SHA256SUMS"', build_script)
+        self.assertIn(
+            (
+                "offline-deps/kylin-v10-arm-py38/requirements-lock.txt",
+                "packages/kylin-v10-arm-py38/requirements-lock.txt",
+            ),
+            delivery_sources,
+        )
+        self.assertIn(
+            (
+                "offline-deps/kylin-v10-arm-py38/SHA256SUMS",
+                "packages/kylin-v10-arm-py38/SHA256SUMS",
+            ),
+            delivery_sources,
+        )
         self.assertNotIn(" --user ", installer)
         self.assertIn("install_private_runtime.sh", installer)
         self.assertIn("preflight_candidate.sh", installer)
@@ -700,12 +739,27 @@ esac
 
     def test_delivery_audits_eight_versioned_system_prompts(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
+        auditor = (ROOT / "packaging/audit_phase1_delivery.py").read_text(
+            encoding="utf-8"
+        )
         manifest = json.loads(
             (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(encoding="utf-8")
         )
 
         self.assertIn("SystemPromptStore", script)
-        self.assertIn("system prompt task inventory mismatch", script)
+        self.assertIn("PROMPT_REFERENCE_MISSING", auditor)
+        self.assertIn("PROMPT_HASH_MISMATCH", auditor)
+        self.assertIn(
+            (
+                "adapter_service/system_prompts",
+                "packages/adapter-start-kit/adapter_service/system_prompts",
+            ),
+            self._delivery_source_pairs(),
+        )
+        self.assertIn(
+            "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
+            self._delivery_target_files(),
+        )
         self.assertEqual(manifest["adapter"]["systemPromptCount"], 8)
         self.assertEqual(
             manifest["adapter"]["accessMethods"],
@@ -780,15 +834,21 @@ esac
         self.assertNotIn("exec runuser", installer)
 
     def test_phase1_delivery_includes_smart_write_dify_manual(self) -> None:
-        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
-
-        self.assertIn("dify-smart-write-workflow.md", script)
-        self.assertIn("dify-smart-imitation-workflow.md", script)
-        self.assertIn("dify-document-review-workflow.md", script)
-        self.assertIn("dify-format-review-workflow.md", script)
-        self.assertIn("dify-excel-analysis-workflow.md", script)
-        self.assertIn("dify-excel-formula-assistant-workflow.md", script)
-        self.assertIn("dify-ppt-structure-review-workflow.md", script)
+        self.assertIn(
+            ("docs/operations", "docs/operations"),
+            self._delivery_source_pairs(),
+        )
+        for name in [
+            "dify-smart-write-workflow.md",
+            "dify-smart-imitation-workflow.md",
+            "dify-document-review-workflow.md",
+            "dify-format-review-workflow.md",
+            "dify-excel-analysis-workflow.md",
+            "dify-excel-formula-assistant-workflow.md",
+            "dify-ppt-structure-review-workflow.md",
+        ]:
+            self.assertIn("docs/operations/" + name, self._delivery_target_files())
+            self.assertTrue((ROOT / "docs/operations" / name).is_file())
 
     def test_formula_assistant_release_guide_defines_kylin_fallback_and_read_only_evidence(self) -> None:
         guide = (ROOT / "docs/operations/dify-excel-formula-assistant-workflow.md").read_text(
@@ -814,10 +874,11 @@ esac
 
     def test_v0231_acceptance_record_tracks_release_issue_and_external_validation(self) -> None:
         def assert_release_acceptance_state(record_text: str) -> None:
-            self.assertIn("Issue #26", record_text)
-            self.assertIn("Python 3.8 最终包运行门禁", record_text)
-            self.assertIn("自动化验收通过", record_text)
-            self.assertIn("候选构建", record_text)
+            self.assertIn("Issue #33", record_text)
+            self.assertIn("Python 3.8 最终包生命周期门禁", record_text)
+            self.assertIn("白名单组装与静态审计通过", record_text)
+            self.assertIn("尚未标记候选构建", record_text)
+            self.assertIn("不得宣称目标机已经恢复", record_text)
             self.assertIn("父票后续动作", record_text)
 
         record = (ROOT / "phase1-delivery-kit/docs/phase1-acceptance-record.md").read_text(
@@ -826,9 +887,10 @@ esac
         assert_release_acceptance_state(record)
 
     def test_delivery_includes_excel_and_ppt_prompt_templates(self) -> None:
-        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
-
-        self.assertIn("docs/prompt-templates", script)
+        self.assertIn(
+            ("docs/prompt-templates", "docs/prompt-templates"),
+            self._delivery_source_pairs(),
+        )
         template_names = [
             "excel-smart-analysis-prompt-template.md",
             "excel-formula-assistant-prompt-template.md",
@@ -836,7 +898,7 @@ esac
             "ppt-structure-review-prompt-template.md",
         ]
         for name in template_names:
-            self.assertIn(name, script)
+            self.assertIn("docs/prompt-templates/" + name, self._delivery_target_files())
             template_path = ROOT / "docs/prompt-templates" / name
             self.assertTrue(template_path.is_file(), f"missing prompt template: {name}")
             text = template_path.read_text(encoding="utf-8")
@@ -856,19 +918,50 @@ esac
             self.assertNotIn("provider_api_key", text)
 
     def test_phase1_packaging_includes_word_and_excel_addins(self) -> None:
-        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
-
-        self.assertIn("WORD_FORMAL_SRC", script)
-        self.assertIn("EXCEL_FORMAL_SRC", script)
-        self.assertIn("wps-ai-assistant_1.0.0", script)
-        self.assertIn("wps-ai-assistant-et_1.0.0", script)
+        sources = self._delivery_source_pairs()
+        self.assertIn(
+            (
+                "formal-plugin-kit/wps-ai-assistant_1.0.0",
+                "packages/wps-ai-assistant_1.0.0",
+            ),
+            sources,
+        )
+        targets = self._delivery_target_files()
+        self.assertIn(
+            "packages/wps-ai-assistant_1.0.0/manifest.json",
+            targets,
+        )
+        self.assertIn(
+            "packages/wps-ai-assistant-et_1.0.0/manifest.json",
+            targets,
+        )
+        self.assertIn(
+            (
+                "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
+                "packages/wps-ai-assistant-et_1.0.0",
+            ),
+            sources,
+        )
 
     def test_phase1_packaging_includes_all_three_host_addins_and_ppt_guide(self) -> None:
-        script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
-
-        self.assertIn("PPT_FORMAL_SRC", script)
-        self.assertIn("wps-ai-assistant-wpp_1.0.0", script)
-        self.assertIn("dify-ppt-slide-assistant-workflow.md", script)
+        self.assertIn(
+            (
+                "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0",
+                "packages/wps-ai-assistant-wpp_1.0.0",
+            ),
+            self._delivery_source_pairs(),
+        )
+        self.assertIn(
+            "packages/wps-ai-assistant-wpp_1.0.0/manifest.json",
+            self._delivery_target_files(),
+        )
+        self.assertIn(
+            "docs/operations/dify-ppt-slide-assistant-workflow.md",
+            self._delivery_target_files(),
+        )
+        self.assertTrue(
+            (ROOT / "docs/operations/dify-ppt-slide-assistant-workflow.md").is_file()
+        )
 
     def test_phase1_installer_installs_word_and_excel_addins(self) -> None:
         script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
@@ -1032,9 +1125,35 @@ esac
         self.assertIn("generate_xlsx_template", script)
         self.assertIn("writing-policies-import-template.csv", script)
         self.assertIn("writing-policies-import-template.xlsx", script)
-        self.assertIn("writing-policy-library.md", script)
-        self.assertIn("writing-policy-sources.md", script)
-        self.assertIn('cp -R "$ROOT_DIR/adapter_service"', script)
+        sources = self._delivery_source_pairs()
+        self.assertIn(("docs/operations", "docs/operations"), sources)
+        self.assertIn(
+            ("docs/writing-policy-sources.md", "docs/writing-policy-sources.md"),
+            sources,
+        )
+        targets = self._delivery_target_files()
+        self.assertIn("docs/operations/writing-policy-library.md", targets)
+        self.assertIn("docs/writing-policy-sources.md", targets)
+        self.assertIn(
+            "packages/adapter-start-kit/adapter_service/app/main.py",
+            targets,
+        )
+        self.assertIn(
+            "packages/adapter-start-kit/adapter_service/writing_policy_packs/yangqi-tech-writing-base.json",
+            targets,
+        )
+        self.assertIn(
+            (
+                "adapter_service/writing_policy_packs",
+                "packages/adapter-start-kit/adapter_service/writing_policy_packs",
+            ),
+            sources,
+        )
+        self.assertIn(
+            ("adapter_service/app", "packages/adapter-start-kit/adapter_service/app"),
+            sources,
+        )
+        self.assertNotIn('cp -R "$ROOT_DIR/adapter_service"', script)
         self.assertTrue(guide.is_file(), "missing writing policy operations guide")
         self.assertTrue(
             (ROOT / "adapter_service/writing_policy_packs/yangqi-tech-writing-base.json").is_file()

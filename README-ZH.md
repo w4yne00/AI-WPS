@@ -81,7 +81,7 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 自动化候选构建，麒麟 V10/WPS 真机验收待执行 |
+| 交付状态 | 白名单组装与静态审计通过；Python 3.8 生命周期门禁及麒麟 V10/WPS 真机验收待执行 |
 | 一期交付包 | 构建目标：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；SHA-256 由同名 `.sha256` 文件记录 |
 
 版本规则格式：

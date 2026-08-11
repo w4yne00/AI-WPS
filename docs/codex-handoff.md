@@ -1,6 +1,6 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-11
+更新时间：2026-08-12
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
@@ -14,6 +14,9 @@
 
 ## 0. v0.23.1-alpha 当前事实
 
+- Issue #33 已把交付构建改为源白名单组装：仅复制明确允许的安装器、三宿主插件、Adapter 生产模块、目标 Python 3.8 ARM Wheel、清单、运维/验收脚本、必要文档和许可证材料；测试、缓存、standalone、开发生成工具、现场配置与旧依赖安装残留不进入产物。
+- 构建生成 `release-allowlist.json` 与 `release-file-hashes.json`，并执行精确文件集合、版本一致性、发布清单/插件/System Prompt/Wheel 引用闭包、敏感值和目标依赖哈希审计。归档外 `.sha256` 继续覆盖包含文件哈希清单在内的最终 tar 包。
+- 新增唯一的 `python38_delivery_lifecycle_gate.py` 候选门禁入口：从最终 tar 包复验审计，调用真实 Python 3.8 导入/Uvicorn 门禁，并覆盖全新安装、v0.22 升级、损坏 v0.23.0、核心/规范数据故障、导入/启动/版本故障、权限错误、WPS 未退出和安装中断恢复。门禁终态固定为 `candidate`，不宣称目标机恢复。
 - Issue #32 已实现恢复候选的显式激活门禁：候选只达到 `recovery` 时，默认安装在切换前停止，并保留当前安装、候选目录、候选状态副本和已完整复制校验的安装前快照；只有当前安装不就绪、备份已校验且候选存活并明确处于恢复模式时，`--activate-recovery` 才能继续。
 - 恢复激活事务使用独立终态 `recovery_activated`，不写入 `committedAt`，也不输出普通安装成功标记。恢复模式只开放重新检测、只读备份与脱敏诊断，不开放前端重置或一键恢复。
 - FastAPI 与 standalone 新增 `POST /recovery/backups` 和 `GET /recovery/diagnostics`。诊断只输出健康子系统、操作策略、备份摘要和受控审计字段，不包含配置内容、文档正文、API Key、模型原始响应、异常原文或敏感绝对路径。
@@ -499,7 +502,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.23.1-alpha` 已执行本地自动化、静态契约、安装恢复门禁和交付包结构审计。麒麟 V10/WPS 真机验收与真实 Python 3.8 最终包运行门禁仍需在对应环境执行，不能由当前 Mac 开发机替代。
+`v0.23.1-alpha` 已执行本地自动化、静态契约和白名单交付审计。当前 Mac 没有 Python 3.8，因此完整生命周期门禁、候选归档生成和麒麟 V10/WPS 真机验收仍需在对应环境执行，不能由 Python 3.9 或静态扫描替代。
 
 ```bash
 AI_WPS_ENABLE_MOCK_PROVIDER=1 PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
@@ -513,21 +516,22 @@ DATE_TAG=20260811 PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 bash packagi
 
 当前结果：
 
-- Python 全量单测：`656 tests OK (skipped=66)`；跳过项来自当前 FastAPI/条件门禁、受限本地套接字及未设置真实 Python 3.8 路径。
+- Issue #33 定向测试通过；实际构建完成 205 个源白名单文件组装，生成模板/清单后共 209 个文件，Python 3.8 静态兼容扫描 66 个生产/交付脚本文件通过，白名单、引用闭包、版本、敏感值和文件哈希审计通过。
+- 当前 Mac 仅有 Python 3.9.6；构建在调用真实 Python 3.8 生命周期门禁时阻断并清理临时目录、归档与校验文件，尚未生成或标记候选构建。
+- Python 全量单测：`664 tests OK (skipped=66)`；跳过项来自当前 FastAPI/条件门禁、受限本地套接字及未设置真实 Python 3.8 路径。
 - 全部 15 个正式前端测试文件通过，新增覆盖三宿主恢复卡片、只读备份、脱敏诊断和无 HTTP 恢复/重置入口契约。
 - 当前开发机未安装 `wps-addon` 开发依赖，本轮未执行该旧脚手架的 Vitest 与 `tsc --noEmit`；该子目录不是本次三宿主正式交付包构建源。
-- Word/Excel/PPT 的 10 个 JavaScript 文件语法检查、TypeScript 类型检查和 24 个构建/安装/联调脚本 `bash -n`：通过。
+- Word/Excel/PPT 正式插件 JavaScript 语法检查、Issue #33 构建/安装脚本 `bash -n` 与 67 个生产/交付 Python 文件的 3.8 静态兼容扫描：通过。
 - 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
-- 已生成单一正式包 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260808-v0220.tar.gz`，大小 8,724,393 字节、共 257 个归档条目，SHA256：`3d13afeda4798e4587fced5a001c80c803ef2829684220862539ca09aae968e1`；构建脚本同步生成同名 `.sha256` 包外校验记录。
-- 构建审计已核对三宿主和 adapter 均为 `0.22.0-alpha`，公式助手与结构审查操作手册/提示词模板、四个规范包及四份已批准审阅清单、schema、来源/许可证、CSV/XLSX 空白模板、验收清单与记录齐全；包内无数据库、备份、API Key、`adapter.json`、日志、用户导入内容或未确认草稿。
+- `v0.23.1-alpha` 候选归档目标仍为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；只有真实 Python 3.8 生命周期门禁全部通过后才会原子发布归档与同名 `.sha256`。
 
 当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
 
 ## 7. 目标机验证建议
 
-1. 先在无历史安装目录的麒麟 V10 终端安装 `20260808-v0220`，确认自动生成权限为 `0600` 的 `run/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
-2. 记录 API URL、统一 API Key、`run/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一安装包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.22.0-alpha` 且所有运行态数据未丢失。
+1. 先在无历史安装目录的麒麟 V10 终端安装通过生命周期门禁的 `20260811-v0231` 候选包，确认自动生成权限为 `0600` 的 `state/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
+2. 记录 API URL、统一 API Key、`state/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一候选包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.23.1-alpha` 且所有运行态数据未丢失。
 3. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 4. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“公式助手”“智能总结”“结构审查”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用 `ppt.slide_assistant`，结构审查必须独立使用 `ppt.structure_review`。
 5. 在 Word 设置页进入写作规范管理，验证术语和文体规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造规范库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。

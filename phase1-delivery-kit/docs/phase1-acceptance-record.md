@@ -5,8 +5,8 @@
 - 版本：`v0.23.1-alpha`
 - 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
 - 交付包：`ai-wps-phase1-delivery-20260811-v0231.tar.gz`
-- 对应工单：Issue #26、#28、#30、#31
-- 构建状态：自动化候选构建，非已验收恢复构建
+- 对应工单：Issue #26、#28、#30、#31、#32、#33
+- 构建状态：白名单组装与静态审计通过；真实 Python 3.8 生命周期门禁待执行，尚未标记候选构建
 - 发布清单：`release-manifest.json`
 - 项目：
 - 终端编号：
@@ -59,17 +59,11 @@
 
 ```
 
-### Python 3.8 最终包运行门禁
+### Python 3.8 最终包生命周期门禁
 
 ```text
-python38_version=3.8.20
-original_failure_reproduction=passed
-delivery_manifest=passed version=0.23.1-alpha
-production_compatibility_scan=passed
-adapter_import=passed version=0.23.1-alpha
-uvicorn_start=passed
-key_contracts=passed count=4
-python38_delivery_runtime_gate=passed
+待在真实 Python 3.8 / 麒麟 V10 ARM 环境执行：
+python3.8 scripts/python38_delivery_lifecycle_gate.py <最终tar包> --expected-version 0.23.1-alpha
 ```
 
 ## WPS 功能验证
@@ -130,10 +124,12 @@ python38_delivery_runtime_gate=passed
 ## 交付包检查记录
 
 - `release-manifest.json` 版本与版本规则号：本地审计通过，`0.23.1-alpha` / `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
+- 白名单组装：本地通过，205 个源白名单文件；生成模板与清单后 209 个文件
+- `release-allowlist.json`、引用闭包、版本一致性、敏感值扫描和 `release-file-hashes.json`：本地审计通过
 - 公式助手操作手册与提示词模板：本地审计通过
 - 结构审查操作手册与提示词模板：本地审计通过
 - 八类任务 System Prompt Markdown 与哈希清单：本地审计通过
-- Python 3.8 最终包运行门禁：真实 Python 3.8.20 完成应用导入、Uvicorn 启动和四项关键接口检查
+- Python 3.8 最终包生命周期门禁：当前 Mac 仅有 Python 3.9.6，未执行；不得以静态扫描或 Python 3.9 代替
 - 工作流平台/模型直连双接入配置与旧档案迁移：本地自动化通过，目标模型验证待执行
 - 智能编写/智能仿写后台任务、600 秒预算与恢复轮询：本地自动化通过，慢模型真机验收待执行
 - 四个规范包及四份审阅清单：本地审计通过
@@ -142,8 +138,8 @@ python38_delivery_runtime_gate=passed
 - 现场数据库与备份排除：本地审计通过
 - API Key、`adapter.json` 与日志排除：本地审计通过
 - 用户导入内容与未确认草稿排除：本地审计通过
-- Python 全量测试：584 项通过，59 项因当前 FastAPI/条件门禁或普通测试进程未设置真实 Python 3.8 路径而跳过；Python 3.8 门禁另行通过
-- Node 正式插件契约测试：14 个测试文件全部通过
+- Python 全量测试：664 项通过，66 项按环境条件跳过；真实 Python 3.8 生命周期门禁独立记录，不得沿用历史版本结果
+- Node 正式插件契约测试：15 个测试文件全部通过
 - `wps-addon` Vitest/Vite：当前开发机未安装该子目录开发依赖，未执行；该子目录不是本次三宿主正式交付包构建源
 - 三宿主 JavaScript 语法：10 个脚本通过
 - TypeScript 类型检查：当前开发机未安装 `wps-addon` 开发依赖，未执行
@@ -194,6 +190,6 @@ python38_delivery_runtime_gate=passed
 
 ## 验收结论
 
-- 是否通过：Issue #26 自动化验收通过；最终候选包已在真实 Python 3.8 下启动 Uvicorn 并验证关键接口。
-- 本票边界：仅修复 Python 3.8 启动兼容性并建立最终包运行门禁，不包含覆盖升级、运行态恢复或完整麒麟 V10/WPS 验收。
+- 是否通过：Issue #33 本地白名单组装、静态兼容和交付审计通过；真实 Python 3.8 生命周期门禁与麒麟 V10/WPS 真机验收待执行。
+- 本票边界：自动化门禁通过后只标记候选构建；未完成真机验收前不得宣称目标机已经恢复。
 - 父票后续动作：Issue #25 的目标终端覆盖升级、配置/Key/规范库恢复与重启保持仍须单独执行和记录。

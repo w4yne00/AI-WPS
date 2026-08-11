@@ -81,7 +81,7 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Automated candidate build; Kylin V10/WPS acceptance pending |
+| Delivery status | Allowlist assembly and static audit passed; Python 3.8 lifecycle gate and Kylin V10/WPS acceptance pending |
 | Phase 1 delivery kit | Build target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`; SHA-256 is emitted in the adjacent `.sha256` file |
 
 Version rule format:

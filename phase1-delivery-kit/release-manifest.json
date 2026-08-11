@@ -31,6 +31,7 @@
     "systemPromptManifest": "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
     "systemPromptCount": 8,
     "pythonRuntimeGate": "scripts/python38_delivery_runtime_gate.py",
+    "lifecycleGate": "scripts/python38_delivery_lifecycle_gate.py",
     "minimumPython": "3.8",
     "privateRuntime": {
       "path": "python-runtime/",
@@ -38,6 +39,15 @@
       "hashManifest": "packages/kylin-v10-arm-py38/SHA256SUMS",
       "disableUserSite": true
     }
+  },
+  "deliveryPolicy": {
+    "status": "candidate",
+    "sourceAssembly": "explicit-allowlist",
+    "allowlist": "release-allowlist.json",
+    "fileHashes": "release-file-hashes.json",
+    "auditScript": "scripts/audit_delivery.py",
+    "lifecycleGate": "scripts/python38_delivery_lifecycle_gate.py",
+    "targetAcceptanceRequired": true
   },
   "excelFormulaAssistantAssets": {
     "operationsGuide": "docs/operations/dify-excel-formula-assistant-workflow.md",

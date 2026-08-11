@@ -53,17 +53,17 @@ bash installer/install_phase1.sh
 bash scripts/phase1_smoke_test.sh
 ```
 
-## Python 3.8 候选门禁
+## Python 3.8 候选生命周期门禁
 
 构建环境准备好仓库锁定的运行依赖后，必须使用真实 Python 3.8 对最终 tar 包执行：
 
 ```bash
-python3.8 scripts/python38_delivery_runtime_gate.py \
+python3.8 scripts/python38_delivery_lifecycle_gate.py \
   ../ai-wps-phase1-delivery-20260811-v0231.tar.gz \
   --expected-version 0.23.1-alpha
 ```
 
-门禁会重新解包最终产物，扫描其中全部 Python 文件，完整导入 FastAPI 应用，实际启动并停止 Uvicorn，再检查版本、Provider 状态、模型配置列表和写作规范摘要。门禁通过只标记为候选构建，不能替代麒麟 V10/WPS 真机验收。
+门禁会重新解包最终产物并复验白名单与全文件哈希，调用运行时门禁完成 Python 3.8 导入和 Uvicorn 契约，再覆盖全新安装、v0.22 升级、损坏 v0.23.0，以及导入、启动、版本、核心数据、规范数据、权限、WPS 未退出和安装中断故障。门禁通过只标记为候选构建，不能替代麒麟 V10/WPS 真机验收。
 
 目标机安装时会先校验离线 Wheel 与锁定清单的 SHA-256，再通过 `pip --target` 安装到候选的发布私有依赖目录。候选使用匹配的数据快照和独立端口完成完整导入、Uvicorn 启动、版本和业务就绪检查；正式启动继续使用同一发布私有依赖目录。安装器会写入发布标记，后续启动若发现该依赖目录缺失会明确失败，不会回退系统或用户依赖。候选和正式进程均设置 `PYTHONNOUSERSITE=1` 与 Python `-s`，不会读取或修改系统、用户 `site-packages`。
 
@@ -87,7 +87,11 @@ python3.8 scripts/python38_delivery_runtime_gate.py \
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `scripts/check_python38_compatibility.py`：Python 3.8 生产代码兼容性扫描。
 - `scripts/python38_delivery_runtime_gate.py`：最终 tar 包 Python 3.8 导入、Uvicorn 启动和关键接口门禁。
+- `scripts/python38_delivery_lifecycle_gate.py`：最终 tar 包完整安装、升级、损坏现场和故障注入门禁。
+- `scripts/audit_delivery.py`：白名单、引用闭包、版本、敏感值与文件哈希复验工具。
 - `release-manifest.json`：版本、三宿主、四个规范包、来源许可资产及运行态排除策略清单。
+- `release-allowlist.json`：由源白名单组装生成的精确文件清单。
+- `release-file-hashes.json`：除自身外全部交付文件的 SHA-256 清单；包外归档哈希继续覆盖该清单自身。
 - `packages/adapter-start-kit/adapter_service/system_prompts/`：八类任务的版本化 System Prompt Markdown 及哈希清单，供模型直连接入使用。
 - 包外同名 `.tar.gz.sha256`：构建脚本自动生成的正式包 SHA-256 校验记录。
 - `docs/phase1-acceptance-checklist.md`：验收清单。

@@ -75,7 +75,45 @@ class Python38CompatibilityScanTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("python38_compatibility_scan=passed", result.stdout)
 
-    def test_delivery_build_clears_stale_outputs_on_any_gate_failure(self) -> None:
+    def test_delivery_build_preserves_existing_published_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            archive = (
+                Path(temp_dir)
+                / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
+            )
+            checksum = archive.with_name(archive.name + ".sha256")
+            archive.write_text("published archive", encoding="utf-8")
+            checksum.write_text("published checksum", encoding="utf-8")
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "DATE_TAG": "20260811",
+                    "PYTHON_BIN": sys.executable,
+                    "PYTHON38_BIN": "/usr/bin/false",
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(ROOT / "packaging/build_phase1_delivery_kit.sh"),
+                    temp_dir,
+                ],
+                cwd=ROOT,
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("delivery_output_exists", result.stdout)
+            self.assertEqual(archive.read_text(encoding="utf-8"), "published archive")
+            self.assertEqual(
+                checksum.read_text(encoding="utf-8"), "published checksum"
+            )
+
+    def test_delivery_build_clears_only_current_temporary_outputs_on_failure(self) -> None:
         failure_environments = (
             {"PYTHON_BIN": "/usr/bin/false", "PYTHON38_BIN": "/usr/bin/false"},
             {"PYTHON_BIN": sys.executable, "PYTHON38_BIN": "/usr/bin/false"},
@@ -88,8 +126,6 @@ class Python38CompatibilityScanTests(unittest.TestCase):
                         / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
                     )
                     checksum = archive.with_name(archive.name + ".sha256")
-                    archive.write_text("stale archive", encoding="utf-8")
-                    checksum.write_text("stale checksum", encoding="utf-8")
                     environment = dict(os.environ)
                     environment.update({"DATE_TAG": "20260811"})
                     environment.update(failure_environment)
@@ -110,6 +146,12 @@ class Python38CompatibilityScanTests(unittest.TestCase):
                     self.assertNotEqual(result.returncode, 0)
                     self.assertFalse(archive.exists())
                     self.assertFalse(checksum.exists())
+                    self.assertFalse(
+                        (
+                            Path(temp_dir)
+                            / "ai-wps-phase1-delivery-20260811-v0231"
+                        ).exists()
+                    )
 
 
 @unittest.skipUnless(PYTHON38_BIN, "AI_WPS_PYTHON38_BIN is required for the Python 3.8 gate")

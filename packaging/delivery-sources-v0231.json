@@ -1,0 +1,392 @@
+{
+  "schemaVersion": 1,
+  "version": "0.23.1-alpha",
+  "generatedFiles": [
+    "docs/import-templates/writing-policies-import-template.csv",
+    "docs/import-templates/writing-policies-import-template.xlsx",
+    "release-file-hashes.json"
+  ],
+  "entries": [
+    {
+      "type": "file",
+      "source": "phase1-delivery-kit/README.md",
+      "target": "README.md"
+    },
+    {
+      "type": "file",
+      "source": "phase1-delivery-kit/release-manifest.json",
+      "target": "release-manifest.json"
+    },
+    {
+      "type": "tree",
+      "source": "phase1-delivery-kit/docs",
+      "target": "docs",
+      "include": [
+        "phase1-acceptance-checklist.md",
+        "phase1-acceptance-record.md"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "phase1-delivery-kit/installer",
+      "target": "installer",
+      "include": [
+        "install_phase1.sh",
+        "install_private_runtime.sh",
+        "preflight_candidate.sh",
+        "release_transaction.py"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "phase1-delivery-kit/scripts",
+      "target": "scripts",
+      "include": [
+        "enable_exec_permissions.sh",
+        "phase1_smoke_test.sh"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "phase1-delivery-kit/wps-jsaddons/publish.xml",
+      "target": "wps-jsaddons/publish.xml"
+    },
+    {
+      "type": "tree",
+      "source": "formal-plugin-kit/wps-ai-assistant_1.0.0",
+      "target": "packages/wps-ai-assistant_1.0.0",
+      "include": [
+        "assets/ai-assistant-32.png",
+        "assets/ai-assistant.svg",
+        "assets/icon-format.png",
+        "assets/icon-proofread.png",
+        "assets/icon-review.png",
+        "assets/icon-settings.png",
+        "assets/icon-smart-imitation.png",
+        "assets/icon-smart-write.png",
+        "index.html",
+        "main.js",
+        "manifest.json",
+        "manifest.xml",
+        "ribbon.js",
+        "ribbon.xml",
+        "taskpane-helpers.js",
+        "taskpane.css",
+        "taskpane.html",
+        "taskpane.js"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
+      "target": "packages/wps-ai-assistant-et_1.0.0",
+      "include": [
+        "assets/ai-assistant-32.png",
+        "assets/icon-excel-analysis.png",
+        "assets/icon-settings.png",
+        "index.html",
+        "manifest.json",
+        "manifest.xml",
+        "ribbon.js",
+        "ribbon.xml",
+        "taskpane-helpers.js",
+        "taskpane.css",
+        "taskpane.html",
+        "taskpane.js"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0",
+      "target": "packages/wps-ai-assistant-wpp_1.0.0",
+      "include": [
+        "assets/ai-assistant-32.png",
+        "assets/icon-ppt-slide-assistant.png",
+        "assets/icon-settings.png",
+        "index.html",
+        "manifest.json",
+        "manifest.xml",
+        "ribbon.js",
+        "ribbon.xml",
+        "taskpane-helpers.js",
+        "taskpane.css",
+        "taskpane.html",
+        "taskpane.js"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "adapter-start-kit/README.md",
+      "target": "packages/adapter-start-kit/README.md"
+    },
+    {
+      "type": "tree",
+      "source": "adapter-start-kit/docs",
+      "target": "packages/adapter-start-kit/docs",
+      "include": [
+        "acceptance-record-template.md",
+        "autostart-guide.md",
+        "dependencies.md",
+        "start-guide.md",
+        "uvicorn-start-guide.md"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "adapter-start-kit/scripts",
+      "target": "packages/adapter-start-kit/scripts",
+      "include": [
+        "check_environment.sh",
+        "check_health.sh",
+        "enable_exec_permissions.sh",
+        "install_autostart.sh",
+        "restart_adapter.sh",
+        "runtime_paths.sh",
+        "runtime_state.sh",
+        "show_logs.sh",
+        "start_adapter.sh",
+        "start_uvicorn_adapter.sh",
+        "status_adapter.sh",
+        "stop_adapter.sh",
+        "systemd_unit.sh",
+        "uninstall_autostart.sh"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/app",
+      "target": "packages/adapter-start-kit/adapter_service/app",
+      "include": [
+        "__init__.py",
+        "api/__init__.py",
+        "api/config.py",
+        "api/excel.py",
+        "api/health.py",
+        "api/ppt.py",
+        "api/provider.py",
+        "api/recovery.py",
+        "api/templates.py",
+        "api/word.py",
+        "api/writing_policies.py",
+        "core/config.py",
+        "core/errors.py",
+        "core/logging.py",
+        "core/models.py",
+        "core/runtime_paths.py",
+        "core/tracing.py",
+        "main.py",
+        "services/dify_client.py",
+        "services/document_normalizer.py",
+        "services/excel/__init__.py",
+        "services/excel/analysis_jobs.py",
+        "services/excel/analyzer.py",
+        "services/excel/formula_assistant.py",
+        "services/excel/formula_assistant_jobs.py",
+        "services/excel/formula_checks.py",
+        "services/health.py",
+        "services/long_task_coordinator.py",
+        "services/model_configurations.py",
+        "services/ppt/__init__.py",
+        "services/ppt/document_files.py",
+        "services/ppt/document_text_extractor.py",
+        "services/ppt/slide_assistant.py",
+        "services/ppt/slide_assistant_jobs.py",
+        "services/ppt/structure_review.py",
+        "services/ppt/structure_review_jobs.py",
+        "services/provider_client.py",
+        "services/recovery.py",
+        "services/runtime_state.py",
+        "services/system_prompts.py",
+        "services/template_loader.py",
+        "services/word/__init__.py",
+        "services/word/document_review_jobs.py",
+        "services/word/document_reviewer.py",
+        "services/word/format_reviewer.py",
+        "services/word/rewriter.py",
+        "services/word/smart_imitator.py",
+        "services/word/writing_jobs.py",
+        "services/workflow_profiles.py",
+        "services/writing_policy/__init__.py",
+        "services/writing_policy/audit.py",
+        "services/writing_policy/imports.py",
+        "services/writing_policy/matcher.py",
+        "services/writing_policy/models.py",
+        "services/writing_policy/packs.py",
+        "services/writing_policy/roundtrip.py",
+        "services/writing_policy/scenes.py",
+        "services/writing_policy/service.py",
+        "services/writing_policy/store.py"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/system_prompts",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts",
+      "include": [
+        "excel-analysis.md",
+        "excel-formula-assistant.md",
+        "manifest.json",
+        "ppt-slide-assistant.md",
+        "ppt-structure-review.md",
+        "word-document-review.md",
+        "word-format-review.md",
+        "word-smart-imitation.md",
+        "word-smart-write.md"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/writing_policy_packs",
+      "target": "packages/adapter-start-kit/adapter_service/writing_policy_packs",
+      "include": [
+        "THIRD_PARTY_NOTICES.md",
+        "cybersecurity-terminology.json",
+        "cybersecurity-terminology.review.json",
+        "official-document-style.json",
+        "official-document-style.review.json",
+        "schema-v1.json",
+        "technical-document-style.json",
+        "technical-document-style.review.json",
+        "yangqi-tech-writing-base.json",
+        "yangqi-tech-writing-base.review.json"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/tools/__init__.py",
+      "target": "packages/adapter-start-kit/adapter_service/tools/__init__.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/tools/runtime_state.py",
+      "target": "packages/adapter-start-kit/adapter_service/tools/runtime_state.py"
+    },
+    {
+      "type": "file",
+      "source": "config/adapter.example.json",
+      "target": "packages/adapter-start-kit/config/adapter.example.json"
+    },
+    {
+      "type": "tree",
+      "source": "templates",
+      "target": "packages/adapter-start-kit/templates",
+      "include": [
+        "company/README.md",
+        "company/technical-file-format-requirements.docx",
+        "company/technical-file-format-requirements.json",
+        "general/general-office.json",
+        "general/proofread-rules.json"
+      ]
+    },
+    {
+      "type": "archive",
+      "source": "dist-offline-deps/kylin-v10-arm-py38-pip-bootstrap-20260506.tar.gz",
+      "sourceRoot": "kylin-v10-arm-py38-pip-bootstrap-20260506",
+      "target": "packages/kylin-v10-arm-py38-pip-bootstrap",
+      "include": [
+        "README.md",
+        "SHA256SUMS",
+        "get-pip.py",
+        "wheels/pip-24.0-py3-none-any.whl",
+        "wheels/setuptools-69.5.1-py3-none-any.whl",
+        "wheels/wheel-0.43.0-py3-none-any.whl"
+      ]
+    },
+    {
+      "type": "archive",
+      "source": "dist-offline-deps/kylin-v10-arm-py38-runtime-deps-20260506.tar.gz",
+      "sourceRoot": "kylin-v10-arm-py38",
+      "target": "packages/kylin-v10-arm-py38",
+      "include": [
+        "README.md",
+        "wheels/annotated_types-0.7.0-py3-none-any.whl",
+        "wheels/anyio-4.5.2-py3-none-any.whl",
+        "wheels/certifi-2026.4.22-py3-none-any.whl",
+        "wheels/charset_normalizer-3.4.7-cp38-cp38-manylinux2014_aarch64.manylinux_2_17_aarch64.manylinux_2_28_aarch64.whl",
+        "wheels/click-8.1.8-py3-none-any.whl",
+        "wheels/exceptiongroup-1.2.2-py3-none-any.whl",
+        "wheels/fastapi-0.110.3-py3-none-any.whl",
+        "wheels/h11-0.16.0-py3-none-any.whl",
+        "wheels/idna-3.13-py3-none-any.whl",
+        "wheels/pydantic-2.8.2-py3-none-any.whl",
+        "wheels/pydantic_core-2.20.1-cp38-cp38-manylinux_2_17_aarch64.manylinux2014_aarch64.whl",
+        "wheels/requests-2.32.3-py3-none-any.whl",
+        "wheels/sniffio-1.3.1-py3-none-any.whl",
+        "wheels/starlette-0.37.2-py3-none-any.whl",
+        "wheels/typing_extensions-4.13.2-py3-none-any.whl",
+        "wheels/urllib3-2.2.3-py3-none-any.whl",
+        "wheels/uvicorn-0.30.6-py3-none-any.whl"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "offline-deps/kylin-v10-arm-py38/requirements-lock.txt",
+      "target": "packages/kylin-v10-arm-py38/requirements-lock.txt"
+    },
+    {
+      "type": "file",
+      "source": "offline-deps/kylin-v10-arm-py38/SHA256SUMS",
+      "target": "packages/kylin-v10-arm-py38/SHA256SUMS"
+    },
+    {
+      "type": "file",
+      "source": "offline-deps/kylin-v10-arm-py38/README.md",
+      "target": "packages/kylin-v10-arm-py38/README.md",
+      "replace": true
+    },
+    {
+      "type": "tree",
+      "source": "docs/operations",
+      "target": "docs/operations",
+      "include": [
+        "dify-document-review-workflow.md",
+        "dify-excel-analysis-workflow.md",
+        "dify-excel-formula-assistant-workflow.md",
+        "dify-format-review-workflow.md",
+        "dify-ppt-slide-assistant-workflow.md",
+        "dify-ppt-structure-review-workflow.md",
+        "dify-smart-imitation-workflow.md",
+        "dify-smart-write-workflow.md",
+        "runtime-state-recovery.md",
+        "workflow-profile-management.md",
+        "writing-policy-library.md"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "docs/prompt-templates",
+      "target": "docs/prompt-templates",
+      "include": [
+        "excel-formula-assistant-prompt-template.md",
+        "excel-smart-analysis-prompt-template.md",
+        "ppt-smart-summary-prompt-template.md",
+        "ppt-structure-review-prompt-template.md"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "docs/writing-policy-sources.md",
+      "target": "docs/writing-policy-sources.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/check_python38_compatibility.py",
+      "target": "scripts/check_python38_compatibility.py"
+    },
+    {
+      "type": "file",
+      "source": "packaging/python38_delivery_runtime_gate.py",
+      "target": "scripts/python38_delivery_runtime_gate.py"
+    },
+    {
+      "type": "file",
+      "source": "packaging/python38_delivery_lifecycle_gate.py",
+      "target": "scripts/python38_delivery_lifecycle_gate.py"
+    },
+    {
+      "type": "file",
+      "source": "packaging/audit_phase1_delivery.py",
+      "target": "scripts/audit_delivery.py"
+    }
+  ]
+}
