@@ -20,7 +20,9 @@ PIP_BOOTSTRAP_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38-pip-bootstrap"
 RUNTIME_DEPS_DIR="$DELIVERY_ROOT/packages/kylin-v10-arm-py38"
 PUBLISH_SOURCE="$DELIVERY_ROOT/wps-jsaddons/publish.xml"
 ADAPTER_TARGET=""
-ADAPTER_CONFIG_BACKUP=""
+STATE_DIR=""
+BACKUP_DIR=""
+VAR_DIR=""
 RELEASE_VERSION="0.23.1-alpha"
 
 log() {
@@ -161,6 +163,7 @@ resolve_installation_principal() {
   fi
   [ -d "$TARGET_HOME" ] || fail "target_home_missing user=$TARGET_USER"
   [ "$(path_owner_uid "$TARGET_HOME")" = "$TARGET_UID" ] || fail "target_home_uid_mismatch user=$TARGET_USER"
+
   if [ -n "$WPS_JSADDONS_DIR_ARG" ]; then
     if [ -n "${WPS_JSADDONS_DIR:-}" ] && [ "$WPS_JSADDONS_DIR" != "$WPS_JSADDONS_DIR_ARG" ]; then
       fail "wps_jsaddons_dir_mismatch"
@@ -196,6 +199,40 @@ ensure_wps_processes_stopped() {
   done <<< "$process_list"
 }
 
+adapter_port_is_listening() {
+  if command -v lsof >/dev/null 2>&1; then
+    [ -n "$(lsof -ti TCP:"$PORT" -sTCP:LISTEN 2>/dev/null || true)" ]
+    return
+  fi
+  if command -v ss >/dev/null 2>&1; then
+    ss -ltn "sport = :$PORT" 2>/dev/null | grep -q LISTEN
+    return
+  fi
+  if command -v fuser >/dev/null 2>&1; then
+    fuser "${PORT}/tcp" >/dev/null 2>&1
+    return
+  fi
+  curl -fsS "http://127.0.0.1:${PORT}/health/live" >/dev/null 2>&1
+}
+
+stop_adapter_for_state_transition() {
+  local service_name="${SERVICE_NAME:-ai-wps-adapter.service}"
+  if command -v systemctl >/dev/null 2>&1 \
+    && systemctl is-active --quiet "$service_name"; then
+    [ "$(id -u)" = "0" ] || fail "adapter_service_stop_requires_admin service=$service_name"
+    systemctl stop "$service_name" || fail "adapter_service_stop_failed service=$service_name"
+  fi
+  if [ -f "$ADAPTER_TARGET/scripts/stop_adapter.sh" ]; then
+    AI_WPS_STATE_DIR="$STATE_DIR" \
+      AI_WPS_BACKUP_DIR="$BACKUP_DIR" \
+      AI_WPS_VAR_DIR="$VAR_DIR" \
+      bash "$ADAPTER_TARGET/scripts/stop_adapter.sh" "$PORT" \
+      || fail "adapter_stop_failed"
+  fi
+  adapter_port_is_listening && fail "adapter_port_still_listening port=$PORT"
+  log "adapter_state_transition_lock=stopped port=$PORT"
+}
+
 reexec_as_target_if_needed() {
   [ "$CURRENT_UID" = "0" ] || return 0
   if command -v runuser >/dev/null 2>&1; then
@@ -203,6 +240,9 @@ reexec_as_target_if_needed() {
       HOME="$TARGET_HOME" \
       AI_WPS_INSTALL_ROOT="$INSTALL_ROOT" \
       WPS_JSADDONS_DIR="$WPS_JSADDONS_DIR" \
+      AI_WPS_STATE_DIR="$STATE_DIR" \
+      AI_WPS_BACKUP_DIR="$BACKUP_DIR" \
+      AI_WPS_VAR_DIR="$VAR_DIR" \
       PYTHON_BIN="$PYTHON_BIN" \
       PORT="$PORT" \
       AI_WPS_CANDIDATE_PORT="${AI_WPS_CANDIDATE_PORT:-}" \
@@ -223,80 +263,9 @@ copy_dir() {
   cp -R "$source_dir" "$target_dir"
 }
 
-preserve_adapter_runtime_config() {
-  local writing_policy_backup
-  local -a writing_policy_backups=()
-
-  [ -d "$ADAPTER_TARGET" ] || return 0
-  ADAPTER_CONFIG_BACKUP="$(mktemp -d "${TMPDIR:-/tmp}/ai-wps-adapter-config.XXXXXX")"
-  mkdir -p "$ADAPTER_CONFIG_BACKUP/config" "$ADAPTER_CONFIG_BACKUP/run"
-
-  if [ -f "$ADAPTER_TARGET/config/adapter.json" ]; then
-    cp "$ADAPTER_TARGET/config/adapter.json" "$ADAPTER_CONFIG_BACKUP/config/adapter.json"
-    log "preserve_adapter_runtime_config=config/adapter.json"
-  fi
-  if [ -f "$ADAPTER_TARGET/run/provider_api_key" ]; then
-    cp "$ADAPTER_TARGET/run/provider_api_key" "$ADAPTER_CONFIG_BACKUP/run/provider_api_key"
-    log "preserve_adapter_runtime_config=run/provider_api_key"
-  fi
-  if [ -d "$ADAPTER_TARGET/run/provider_api_keys" ]; then
-    cp -R "$ADAPTER_TARGET/run/provider_api_keys" "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys"
-    log "preserve_adapter_runtime_config=run/provider_api_keys"
-  fi
-  if [ -f "$ADAPTER_TARGET/run/writing_policies.db" ]; then
-    cp "$ADAPTER_TARGET/run/writing_policies.db" "$ADAPTER_CONFIG_BACKUP/run/writing_policies.db"
-    log "preserve_adapter_runtime_config=run/writing_policies.db"
-  fi
-  for writing_policy_backup in "$ADAPTER_TARGET"/run/writing_policies.db.backup-*; do
-    [ -e "$writing_policy_backup" ] || continue
-    writing_policy_backups+=("$writing_policy_backup")
-  done
-  for writing_policy_backup in "${writing_policy_backups[@]}"; do
-    cp "$writing_policy_backup" "$ADAPTER_CONFIG_BACKUP/run/$(basename "$writing_policy_backup")"
-    log "preserve_adapter_runtime_config=run/$(basename "$writing_policy_backup")"
-  done
-}
-
-restore_adapter_runtime_config() {
-  local writing_policy_backup
-
-  [ -n "$ADAPTER_CONFIG_BACKUP" ] || return 0
-  [ -d "$ADAPTER_CONFIG_BACKUP" ] || return 0
-
-  if [ -f "$ADAPTER_CONFIG_BACKUP/config/adapter.json" ]; then
-    mkdir -p "$ADAPTER_TARGET/config"
-    cp "$ADAPTER_CONFIG_BACKUP/config/adapter.json" "$ADAPTER_TARGET/config/adapter.json"
-    log "restore_adapter_runtime_config=config/adapter.json"
-  fi
-  if [ -f "$ADAPTER_CONFIG_BACKUP/run/provider_api_key" ]; then
-    mkdir -p "$ADAPTER_TARGET/run"
-    cp "$ADAPTER_CONFIG_BACKUP/run/provider_api_key" "$ADAPTER_TARGET/run/provider_api_key"
-    log "restore_adapter_runtime_config=run/provider_api_key"
-  fi
-  if [ -d "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys" ]; then
-    mkdir -p "$ADAPTER_TARGET/run"
-    rm -rf "$ADAPTER_TARGET/run/provider_api_keys"
-    cp -R "$ADAPTER_CONFIG_BACKUP/run/provider_api_keys" "$ADAPTER_TARGET/run/provider_api_keys"
-    log "restore_adapter_runtime_config=run/provider_api_keys"
-  fi
-  if [ -f "$ADAPTER_CONFIG_BACKUP/run/writing_policies.db" ]; then
-    mkdir -p "$ADAPTER_TARGET/run"
-    cp "$ADAPTER_CONFIG_BACKUP/run/writing_policies.db" "$ADAPTER_TARGET/run/writing_policies.db"
-    log "restore_adapter_runtime_config=run/writing_policies.db"
-  fi
-  for writing_policy_backup in "$ADAPTER_CONFIG_BACKUP"/run/writing_policies.db.backup-*; do
-    [ -e "$writing_policy_backup" ] || continue
-    mkdir -p "$ADAPTER_TARGET/run"
-    cp "$writing_policy_backup" "$ADAPTER_TARGET/run/$(basename "$writing_policy_backup")"
-    log "restore_adapter_runtime_config=run/$(basename "$writing_policy_backup")"
-  done
-
-  rm -rf "$ADAPTER_CONFIG_BACKUP"
-  ADAPTER_CONFIG_BACKUP=""
-}
-
 initialize_writing_policy_database() {
-  local database_path="$ADAPTER_TARGET/run/writing_policies.db"
+  local database_root="${STATE_DIR:-$ADAPTER_TARGET/run}"
+  local database_path="$database_root/writing_policies.db"
   local adapter_pythonpath="$ADAPTER_TARGET/adapter_service"
 
   if [ -d "$ADAPTER_TARGET/python-runtime" ]; then
@@ -308,8 +277,8 @@ initialize_writing_policy_database() {
     return 0
   fi
 
-  mkdir -p "$ADAPTER_TARGET/run"
-  chmod 700 "$ADAPTER_TARGET/run"
+  mkdir -p "$database_root"
+  chmod 700 "$database_root"
   if AI_WPS_WRITING_POLICY_DB="$database_path" \
     PYTHONNOUSERSITE=1 \
     PYTHONPATH="$adapter_pythonpath" \
@@ -321,6 +290,67 @@ initialize_writing_policy_database() {
   fi
 
   fail "writing_policy_database_initialization_failed"
+}
+
+runtime_state_exists() {
+  [ -f "$STATE_DIR/adapter.json" ] \
+    || [ -f "$STATE_DIR/provider_api_key" ] \
+    || [ -d "$STATE_DIR/provider_api_keys" ] \
+    || [ -f "$STATE_DIR/writing_policies.db" ]
+}
+
+legacy_runtime_state_exists() {
+  [ -f "$ADAPTER_TARGET/config/adapter.json" ] \
+    || [ -f "$ADAPTER_TARGET/run/provider_api_key" ] \
+    || [ -d "$ADAPTER_TARGET/run/provider_api_keys" ] \
+    || [ -f "$ADAPTER_TARGET/run/writing_policies.db" ]
+}
+
+prepare_runtime_state() {
+  local result
+  local candidate_state_tool="$CANDIDATE_TARGET/adapter_service/tools/runtime_state.py"
+  local candidate_pythonpath="$CANDIDATE_TARGET/python-runtime:$CANDIDATE_TARGET/adapter_service"
+
+  [ -f "$candidate_state_tool" ] || fail "runtime_state_tool_missing"
+  mkdir -p "$STATE_DIR" "$BACKUP_DIR" "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
+  chmod 700 "$STATE_DIR" "$BACKUP_DIR" "$VAR_DIR" \
+    "$VAR_DIR/logs" "$VAR_DIR/run" "$VAR_DIR/transactions"
+
+  if runtime_state_exists; then
+    result="$(
+      PYTHONNOUSERSITE=1 PYTHONPATH="$candidate_pythonpath" \
+        "$PYTHON_BIN" -s "$candidate_state_tool" snapshot \
+        --state-dir "$STATE_DIR" \
+        --backup-dir "$BACKUP_DIR" \
+        --release-version "$RELEASE_VERSION" \
+        --reason pre_install
+    )" || fail "runtime_state_snapshot_failed"
+    log "runtime_state_snapshot_reason=pre_install"
+    case "$result" in
+      *'"status": "recovery"'*) fail "runtime_state_snapshot_status=recovery" ;;
+      *'"status": "degraded"'*) log "runtime_state_snapshot_status=degraded" ;;
+      *) log "runtime_state_snapshot_status=ready" ;;
+    esac
+    return 0
+  fi
+
+  if legacy_runtime_state_exists; then
+    result="$(
+      PYTHONNOUSERSITE=1 PYTHONPATH="$candidate_pythonpath" \
+        "$PYTHON_BIN" -s "$candidate_state_tool" migrate \
+        --state-dir "$STATE_DIR" \
+        --backup-dir "$BACKUP_DIR" \
+        --release-version "$RELEASE_VERSION" \
+        --legacy-root "$ADAPTER_TARGET"
+    )" || fail "runtime_state_migration_status=recovery"
+    case "$result" in
+      *'"status": "degraded"'*) log "runtime_state_migration_status=degraded" ;;
+      *) log "runtime_state_migration_status=ready" ;;
+    esac
+    return 0
+  fi
+
+  log "runtime_state_status=fresh"
 }
 
 enable_exec_permissions() {
@@ -337,6 +367,7 @@ prepare_candidate_adapter() {
   [ -x "$PYTHON_BIN" ] || fail "python_not_executable path=$PYTHON_BIN"
   [ -f "$DELIVERY_ROOT/installer/install_private_runtime.sh" ] || fail "private_runtime_installer_missing"
   [ -f "$DELIVERY_ROOT/installer/preflight_candidate.sh" ] || fail "candidate_preflight_script_missing"
+
   mkdir -p "$INSTALL_ROOT"
   copy_dir "$ADAPTER_SOURCE" "$CANDIDATE_TARGET"
   bash "$DELIVERY_ROOT/installer/install_private_runtime.sh" \
@@ -398,11 +429,11 @@ install_wps_plugin() {
 
 install_adapter() {
   [ -d "$CANDIDATE_TARGET" ] || fail "candidate_adapter_missing"
-  preserve_adapter_runtime_config
+  stop_adapter_for_state_transition
+  prepare_runtime_state
   rm -rf "$ADAPTER_TARGET"
   mv "$CANDIDATE_TARGET" "$ADAPTER_TARGET"
   CANDIDATE_TARGET=""
-  restore_adapter_runtime_config
   initialize_writing_policy_database
   enable_exec_permissions
   log "adapter_installed=$ADAPTER_TARGET"
@@ -419,7 +450,17 @@ parse_arguments "$@"
 resolve_installation_principal
 resolve_python_binary
 ADAPTER_TARGET="$INSTALL_ROOT/adapter-start-kit"
+STATE_DIR="${AI_WPS_STATE_DIR:-$INSTALL_ROOT/state}"
+BACKUP_DIR="${AI_WPS_BACKUP_DIR:-$INSTALL_ROOT/backups}"
+VAR_DIR="${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"
+validate_target_path "state_dir" "$STATE_DIR"
+validate_target_path "backup_dir" "$BACKUP_DIR"
+validate_target_path "var_dir" "$VAR_DIR"
+export AI_WPS_STATE_DIR="$STATE_DIR"
+export AI_WPS_BACKUP_DIR="$BACKUP_DIR"
+export AI_WPS_VAR_DIR="$VAR_DIR"
 ensure_wps_processes_stopped
+stop_adapter_for_state_transition
 reexec_as_target_if_needed
 
 CANDIDATE_TARGET="$INSTALL_ROOT/.adapter-candidate-${RELEASE_VERSION}-$$"

@@ -46,6 +46,7 @@ cp "$ROOT_DIR/docs/operations/dify-ppt-slide-assistant-workflow.md" "$TMP_DIR/do
 cp "$ROOT_DIR/docs/operations/dify-ppt-structure-review-workflow.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/workflow-profile-management.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/operations/writing-policy-library.md" "$TMP_DIR/docs/operations/"
+cp "$ROOT_DIR/docs/operations/runtime-state-recovery.md" "$TMP_DIR/docs/operations/"
 cp "$ROOT_DIR/docs/writing-policy-sources.md" "$TMP_DIR/docs/"
 cp "$ROOT_DIR/docs/prompt-templates/excel-smart-analysis-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/excel-formula-assistant-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"

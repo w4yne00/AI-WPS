@@ -830,8 +830,7 @@ esac
         self.assertIn('type="et"', script)
         self.assertIn('grep -v \'name="wps-ai-assistant"\'', script)
         self.assertIn('grep -v \'name="wps-ai-assistant-et"\'', script)
-        self.assertIn("preserve_adapter_runtime_config", script)
-        self.assertIn("restore_adapter_runtime_config", script)
+        self.assertIn("prepare_runtime_state", script)
 
     def test_phase1_installer_installs_ppt_addin_in_same_package(self) -> None:
         installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
@@ -847,7 +846,7 @@ esac
         self.assertIn('grep -v \'name="wps-ai-assistant-wpp"\'', installer)
         self.assertIn('name="wps-ai-assistant-wpp"', publish_xml)
         self.assertIn('type="wpp"', publish_xml)
-        self.assertIn("preserve_adapter_runtime_config", installer)
+        self.assertIn("prepare_runtime_state", installer)
         self.assertIn("config/adapter.json", installer)
         self.assertIn("provider_api_key", installer)
         self.assertIn("provider_api_keys", installer)
@@ -860,11 +859,12 @@ esac
         config = (ROOT / "config/adapter.example.json").read_text(encoding="utf-8")
         self.assertIn('"word.smart_imitation": "word_smart_imitation"', config)
 
-    def test_phase1_installer_preserves_adapter_runtime_configuration(self) -> None:
+    def test_phase1_installer_migrates_adapter_runtime_configuration(self) -> None:
         script = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(encoding="utf-8")
 
-        self.assertIn("preserve_adapter_runtime_config", script)
-        self.assertIn("restore_adapter_runtime_config", script)
+        self.assertIn("prepare_runtime_state", script)
+        self.assertIn("legacy_runtime_state_exists", script)
+        self.assertIn("runtime_state_migration_status", script)
         self.assertIn("config/adapter.json", script)
         self.assertIn("run/provider_api_key", script)
         self.assertIn("run/provider_api_keys", script)
@@ -876,61 +876,25 @@ esac
         )
 
         self.assertIn("run/writing_policies.db", script)
-        self.assertIn("writing_policies.db.backup-*", script)
-        self.assertIn("preserve_adapter_runtime_config", script)
-        self.assertIn("restore_adapter_runtime_config", script)
-        self.assertIn('[ -e "$writing_policy_backup" ] || continue', script)
+        self.assertIn("prepare_runtime_state", script)
+        self.assertIn("runtime_state_snapshot_reason=pre_install", script)
 
-    def test_phase1_installer_restores_live_writing_policy_files_after_replacement(self) -> None:
+    def test_phase1_installer_prepares_state_before_replacing_adapter(self) -> None:
         installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
             encoding="utf-8"
         )
-        function_prefix = installer.split("enable_exec_permissions() {", 1)[0]
+        install_adapter = installer.split("install_adapter() {", 1)[1].split("}", 1)[0]
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            adapter_target = Path(temp_dir) / "adapter-start-kit"
-            run_dir = adapter_target / "run"
-            run_dir.mkdir(parents=True)
-            (run_dir / "writing_policies.db").write_text("live-db", encoding="utf-8")
-            for index in range(1, 6):
-                (run_dir / f"writing_policies.db.backup-{index}").write_text(
-                    f"backup-{index}", encoding="utf-8"
-                )
-
-            harness = Path(temp_dir) / "preserve-test.sh"
-            harness.write_text(
-                function_prefix
-                + "\nADAPTER_TARGET=\"$1\"\n"
-                + "ADAPTER_CONFIG_BACKUP=\"\"\n"
-                + "preserve_adapter_runtime_config\n"
-                + "rm -rf \"$ADAPTER_TARGET\"\n"
-                + "mkdir -p \"$ADAPTER_TARGET/run\"\n"
-                + "restore_adapter_runtime_config\n",
-                encoding="utf-8",
-            )
-            result = subprocess.run(
-                ["bash", str(harness), str(adapter_target)],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertEqual(
-                (run_dir / "writing_policies.db").read_text(encoding="utf-8"),
-                "live-db",
-            )
-            restored_backups = sorted(run_dir.glob("writing_policies.db.backup-*"))
-            self.assertEqual(
-                [path.name for path in restored_backups],
-                [
-                    "writing_policies.db.backup-1",
-                    "writing_policies.db.backup-2",
-                    "writing_policies.db.backup-3",
-                    "writing_policies.db.backup-4",
-                    "writing_policies.db.backup-5",
-                ],
-            )
+        self.assertLess(
+            install_adapter.index("prepare_runtime_state"),
+            install_adapter.index('rm -rf "$ADAPTER_TARGET"'),
+        )
+        self.assertLess(
+            install_adapter.index("stop_adapter_for_state_transition"),
+            install_adapter.index("prepare_runtime_state"),
+        )
+        self.assertNotIn("preserve_adapter_runtime_config", installer)
+        self.assertNotIn("restore_adapter_runtime_config", installer)
 
     def test_phase1_delivery_generates_writing_policy_templates_and_includes_guide(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(

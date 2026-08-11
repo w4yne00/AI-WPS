@@ -73,7 +73,10 @@
       "var/transactions/"
     ],
     "firstInstall": "initialize-empty-organization-database",
-    "upgrade": "preserve-existing-organization-database-backups-and-model-configuration",
+    "upgrade": "copy-on-write-migration-with-consistent-snapshot",
+    "snapshotManifestSchemaVersion": 1,
+    "minimumValidSnapshots": 3,
+    "wholeStateRestoreOnly": true,
     "excluded": [
       "writing_policies.db",
       "writing_policies.db.backup-*",
