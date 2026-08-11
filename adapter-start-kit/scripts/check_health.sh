@@ -19,6 +19,10 @@ read_endpoint() {
   curl -fsS "$1" 2>/dev/null || true
 }
 
+read_http_status() {
+  curl -sS -o /dev/null -w '%{http_code}' "$1" 2>/dev/null || true
+}
+
 json_value() {
   printf '%s' "$1" | sed -n 's/.*"'"$2"'"[[:space:]]*:[[:space:]]*"\{0,1\}\([^",}]*\)"\{0,1\}.*/\1/p' | head -n 1
 }
@@ -56,14 +60,23 @@ if [ -z "$HEALTH_BODY" ]; then
   exit 1
 fi
 
+READY_HTTP_STATUS="$(read_http_status "$READY_URL")"
+if [ "$READY_HTTP_STATUS" != "200" ] && [ "$READY_HTTP_STATUS" != "503" ]; then
+  echo "adapter_readiness=unknown http_status=${READY_HTTP_STATUS:-unreachable} url=$READY_URL"
+  exit 1
+fi
+
 printf '%s\n' "$HEALTH_BODY"
 MODE="$(json_value "$HEALTH_BODY" mode)"
 VERSION="$(json_value "$HEALTH_BODY" version)"
 BUSINESS_STATUS="$(json_value "$HEALTH_BODY" status)"
+if [ "$READY_HTTP_STATUS" = "503" ]; then
+  BUSINESS_STATUS="recovery"
+fi
 PROVIDER_CONFIGURED="$(json_value "$HEALTH_BODY" providerConfigured)"
 AUTH_SOURCE="$(json_value "$HEALTH_BODY" providerAuthSource)"
 echo
-echo "adapter_business_status=${BUSINESS_STATUS:-unknown} ready_url=$READY_URL"
+echo "adapter_business_status=${BUSINESS_STATUS:-unknown} ready_http_status=$READY_HTTP_STATUS ready_url=$READY_URL"
 if [ "$MODE" = "uvicorn" ]; then
   echo "adapter_mode=uvicorn"
   echo "adapter_runtime=fastapi"

@@ -85,6 +85,13 @@ hosts.forEach(({ name, root, helpers }) => {
   assert.strictEqual(unavailable.badgeClass, "badge-error", name);
   assert.strictEqual(unavailable.badgeLabel, "未连接", name);
 
+  const unknown = helpers.normalizeAdapterHealth({ status: "unexpected" }, true);
+  assert.strictEqual(unknown.status, "recovery", name);
+  assert.strictEqual(unknown.connected, true, name);
+  assert.strictEqual(unknown.configurationMutationsAllowed, false, name);
+  assert.strictEqual(unknown.modelTasksAllowed, false, name);
+  assert.strictEqual(unknown.writingPolicyMutationsAllowed, false, name);
+
   const taskpane = fs.readFileSync(`${root}/taskpane.js`, "utf8");
   assert.ok(taskpane.includes("helpers.normalizeAdapterHealth"), `${name} taskpane health normalization`);
   assert.ok(taskpane.includes("adapterHealthStatus"), `${name} taskpane health state`);

@@ -479,7 +479,7 @@ async function runSettingsRefreshBehaviorTests() {
     config: { success: false, data: {}, errors: [{ message: "配置读取失败" }] }
   });
   const configFailurePromise = configFailure.refreshConfig();
-  configFailure.health.resolve({ traceId: "health-config-failure", data: { providerType: "enterprise-dify-chat" } });
+  configFailure.health.resolve({ traceId: "health-config-failure", data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await configFailurePromise;
   assert.strictEqual(configFailure.state.modelInterfaceDetectable, false);
   assert.strictEqual(configFailure.calls.renderDetectable.at(-1), false);
@@ -510,7 +510,7 @@ async function runSettingsRefreshBehaviorTests() {
 
   const profileFailure = createRefreshHarness({ profileResults: [{}, null, {}, {}] });
   const profileFailurePromise = profileFailure.refreshConfig();
-  profileFailure.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  profileFailure.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await profileFailurePromise;
   assert.strictEqual(profileFailure.state.modelInterfaceDetectable, false);
   assert.strictEqual(profileFailure.calls.renderDetectable.at(-1), false);
@@ -521,7 +521,7 @@ async function runSettingsRefreshBehaviorTests() {
   const secondRefresh = concurrent.refreshConfig();
   assert.strictEqual(firstRefresh, secondRefresh);
   assert.strictEqual(concurrent.calls.request, 1);
-  concurrent.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  concurrent.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await firstRefresh;
   assert.strictEqual(concurrent.state.modelInterfaceDetectable, true);
   assert.deepStrictEqual(concurrent.calls.requestTimeouts, [8000]);
@@ -543,7 +543,7 @@ async function runSettingsRefreshBehaviorTests() {
   });
   syncStoppedController();
   assert.strictEqual(controllerRunning, false);
-  stopped.health.resolve({ traceId: "late-trace", data: { providerType: "enterprise-dify-chat" } });
+  stopped.health.resolve({ traceId: "late-trace", data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await stoppedPromise;
   assert.deepStrictEqual(stopped.calls.renderDetectable, []);
   assert.strictEqual(stopped.calls.setStatus, 0);
@@ -553,7 +553,7 @@ async function runSettingsRefreshBehaviorTests() {
   const lateProfiles = deferred();
   const stoppedDuringProfiles = createRefreshHarness({ profilePromise: lateProfiles.promise });
   const stoppedDuringProfilesPromise = stoppedDuringProfiles.refreshConfig();
-  stoppedDuringProfiles.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  stoppedDuringProfiles.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await Promise.resolve();
   await Promise.resolve();
   let profileControllerRunning = true;

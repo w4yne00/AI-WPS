@@ -825,7 +825,7 @@
     } else if (status === "ok") {
       status = "ready";
     } else if (["ready", "degraded", "recovery"].indexOf(status) < 0) {
-      status = "ready";
+      status = "recovery";
     }
     var recovery = status === "recovery";
     var degraded = status === "degraded";

@@ -77,6 +77,51 @@ class PackagingScriptTests(unittest.TestCase):
         self.assertIn("provider=mock", scripts["show_logs.sh"])
         self.assertIn("stop_port_listener", scripts["stop_adapter.sh"])
 
+    def test_health_script_rejects_recovery_from_ready_http_status(self) -> None:
+        script = ROOT / "adapter-start-kit/scripts/check_health.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bin_dir = Path(temp_dir)
+            curl_stub = bin_dir / "curl"
+            curl_stub.write_text(
+                """#!/usr/bin/env bash
+url="${@: -1}"
+case "$url" in
+  */health/live)
+    printf '%s' '{"success":true,"data":{"status":"live"}}'
+    ;;
+  */health/ready)
+    printf '%s' '503'
+    ;;
+  */health)
+    printf '%s' '{"success":true,"data":{"service":"wps-ai-adapter","status":"recovery","version":"0.23.1-alpha","mode":"uvicorn","providerConfigured":false,"providerAuthSource":"none","subsystems":{"modelConfigurations":{"status":"recovery"},"writingPolicies":{"status":"ready"}}}}'
+    ;;
+  *)
+    printf '%s' '{}'
+    ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            curl_stub.chmod(0o755)
+            environment = os.environ.copy()
+            environment["PATH"] = "{0}:{1}".format(
+                bin_dir, environment.get("PATH", "")
+            )
+
+            result = subprocess.run(
+                ["bash", str(script), "18100"],
+                cwd=ROOT,
+                env=environment,
+                text=True,
+                capture_output=True,
+                check=False,
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("adapter_business_status=recovery", result.stdout)
+        self.assertIn("ready_http_status=503", result.stdout)
+        self.assertNotIn("provider_status=reachable", result.stdout)
+
     def test_standalone_adapter_exposes_model_configuration_management(self) -> None:
         script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
 

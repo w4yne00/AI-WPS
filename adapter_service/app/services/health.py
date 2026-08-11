@@ -16,6 +16,11 @@ SERVICE_MODE = "uvicorn"
 _SAFE_REF = re.compile(r"^[A-Za-z0-9_.-]+$")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
+_PROVIDER_TYPES = {
+    "enterprise-chat-api",
+    "enterprise-dify-chat",
+    "enterprise-dify-workflow",
+}
 
 
 class _CoreHealthError(ValueError):
@@ -256,7 +261,6 @@ def _provider_metadata(payload: dict) -> dict:
         )
         task_api_keys[task_type] = {
             "label": label,
-            "apiKeyRef": key_ref,
             "taskKeyConfigured": key_configured,
             "configured": complete,
             "authSource": "task-file" if key_configured else "none",
@@ -285,9 +289,16 @@ def _provider_metadata(payload: dict) -> dict:
         provider_auth_source = (
             "env" if env_configured else ("file" if file_configured else "none")
         )
+    raw_provider_type = str(
+        payload.get("providerType", "enterprise-dify-chat")
+    ).strip()
     return {
-        "providerName": str(payload.get("providerName", "企业大模型接口")),
-        "providerType": str(payload.get("providerType", "enterprise-dify-chat")),
+        "providerName": "企业大模型接口",
+        "providerType": (
+            raw_provider_type
+            if raw_provider_type in _PROVIDER_TYPES
+            else "unknown"
+        ),
         "providerBaseUrlConfigured": bool(provider_base_url),
         "providerConfigured": provider_configured,
         "providerAuthSource": provider_auth_source,

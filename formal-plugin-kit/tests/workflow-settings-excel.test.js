@@ -567,7 +567,7 @@ async function runSettingsBehaviorTests() {
     config: { success: false, data: {}, errors: [{ message: "配置读取失败" }] }
   });
   const configFailurePromise = configFailure.refreshConfig();
-  configFailure.health.resolve({ traceId: "probe-1", data: { providerType: "enterprise-dify-chat" } });
+  configFailure.health.resolve({ traceId: "probe-1", data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await configFailurePromise;
   assert.deepStrictEqual(configFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
   assert.strictEqual(configFailure.state.settingsProbeTraceId, "probe-1");
@@ -589,14 +589,14 @@ async function runSettingsBehaviorTests() {
 
   const profileFailure = createRefreshHarness({ profileResult: null });
   const profileFailurePromise = profileFailure.refreshConfig();
-  profileFailure.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  profileFailure.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await profileFailurePromise;
   assert.deepStrictEqual(profileFailure.calls.healthBadges, [["badge-ok", "已连接"]]);
   assert.strictEqual(profileFailure.state.modelInterfaceDetectable, false);
 
   const supersededProfile = createRefreshHarness({ profileResult: { superseded: true } });
   const supersededProfilePromise = supersededProfile.refreshConfig({ silent: true });
-  supersededProfile.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  supersededProfile.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await supersededProfilePromise;
   assert.strictEqual(supersededProfile.state.modelInterfaceDetectable, true);
   assert.deepStrictEqual(supersededProfile.calls.renderDetectable, []);
@@ -607,7 +607,7 @@ async function runSettingsBehaviorTests() {
   const secondRefresh = concurrent.refreshConfig();
   assert.strictEqual(firstRefresh, secondRefresh);
   assert.strictEqual(concurrent.calls.requests, 1);
-  concurrent.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  concurrent.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await firstRefresh;
   assert.strictEqual(concurrent.state.modelInterfaceDetectable, true);
   assert.deepStrictEqual(concurrent.calls.requestTimeouts, [8000]);
@@ -615,7 +615,7 @@ async function runSettingsBehaviorTests() {
 
   const silent = createRefreshHarness();
   const silentPromise = silent.refreshConfig({ silent: true });
-  silent.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  silent.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await silentPromise;
   assert.deepStrictEqual(silent.calls.settingsStatus, []);
 
@@ -629,7 +629,7 @@ async function runSettingsBehaviorTests() {
   const promotedSilent = promoted.refreshConfig({ silent: true });
   const promotedInteractive = promoted.refreshConfig({ silent: false });
   assert.strictEqual(promotedSilent, promotedInteractive);
-  promoted.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  promoted.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await promotedInteractive;
   assert.deepStrictEqual(promoted.calls.settingsStatus, ["正在刷新配置...", "就绪"]);
 
@@ -649,7 +649,7 @@ async function runSettingsBehaviorTests() {
     invalidateConfigRefresh() { stopped.state.configRefreshRequestId += 1; }
   });
   stopRefresh();
-  stopped.health.resolve({ traceId: "late", data: { providerType: "enterprise-dify-chat" } });
+  stopped.health.resolve({ traceId: "late", data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await stoppedPromise;
   assert.strictEqual(running, false);
   assert.deepStrictEqual(stopped.calls.healthBadges, []);
@@ -695,7 +695,7 @@ async function runSettingsBehaviorTests() {
     syncSettingsRefreshController: interleavedSync
   });
   const interleavedRefresh = interleaved.refreshConfig({ silent: true });
-  interleaved.health.resolve({ data: { providerType: "enterprise-dify-chat" } });
+  interleaved.health.resolve({ data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await Promise.resolve();
   await Promise.resolve();
   setInterleavedMutationBusy(true);
@@ -920,7 +920,7 @@ async function runSettingsBehaviorTests() {
   });
   const draftPromise = draftRefresh.refreshConfig({ silent: true });
   draftRefresh.state.configRefreshRequestId += 1;
-  draftRefresh.health.resolve({ traceId: "stale", data: { providerType: "enterprise-dify-chat" } });
+  draftRefresh.health.resolve({ traceId: "stale", data: { status: "ready", providerType: "enterprise-dify-chat" } });
   await draftPromise;
   assert.strictEqual(draftRefresh.calls.renderDetectable.length, 0);
   assert.strictEqual(draftRefresh.calls.providerLines.length, 0);

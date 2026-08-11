@@ -154,6 +154,45 @@ class HealthApiTests(unittest.TestCase):
         self.assertNotIn("private-token", serialized)
         self.assertNotIn("analysis-key", serialized)
 
+    def test_recovery_health_redacts_model_key_refs_and_provider_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "adapter.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "providerName": "secret-provider-/private/runtime",
+                        "providerType": "secret-provider-type",
+                        "modelConfigurations": {
+                            "broken": {
+                                "id": "broken",
+                                "taskType": "word.smart_write",
+                                "apiKeyRef": "../../secret-key-ref",
+                            }
+                        },
+                        "activeModelConfigurations": {
+                            "word.smart_write": "broken"
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "app.services.health.default_config_path",
+                return_value=config_path,
+            ):
+                client = TestClient(app)
+                response = client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["status"], "recovery")
+        self.assertEqual(data["providerType"], "unknown")
+        serialized = json.dumps(response.json(), ensure_ascii=False)
+        self.assertNotIn("secret-provider", serialized)
+        self.assertNotIn("secret-key-ref", serialized)
+        self.assertNotIn("/private/runtime", serialized)
+        self.assertNotIn("apiKeyRef", serialized)
+
     def test_degraded_writing_policy_is_read_only_while_core_remains_ready(self) -> None:
         class BrokenWritingPolicyStore:
             error_code = "writing_policy_data_corrupt"
