@@ -82,7 +82,7 @@ from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJob
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 TEMPLATE_ROOT = ROOT_DIR / "templates"
-VERSION = "0.23.0-alpha"
+VERSION = "0.23.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.

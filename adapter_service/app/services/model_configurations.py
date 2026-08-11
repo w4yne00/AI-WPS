@@ -4,7 +4,7 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlsplit, urlunsplit
 
 from app.core.config import DEFAULT_CONFIG_PATH, load_config_payload, save_config_payload
@@ -704,7 +704,9 @@ class WorkflowProfileCompatibilityStore:
         }
         raise WorkflowProfileError(code_map.get(exc.code, exc.code), exc.message) from exc
 
-    def _platform_configurations(self, task_type: str) -> tuple[dict, list]:
+    def _platform_configurations(
+        self, task_type: str
+    ) -> Tuple[Dict, List]:
         try:
             data = self.store.list_for_task(task_type)
         except ModelConfigurationError as exc:

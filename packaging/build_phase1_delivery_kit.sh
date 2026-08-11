@@ -3,10 +3,19 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+PYTHON38_BIN="${PYTHON38_BIN:-python3.8}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
-KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0230"
+KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0231"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
+ARCHIVE_PATH="$OUT_DIR/$KIT_NAME.tar.gz"
+PENDING_ARCHIVE_PATH="$OUT_DIR/.$KIT_NAME.pending.tar.gz"
+
+cleanup_failed_outputs() {
+  rm -f "$PENDING_ARCHIVE_PATH" "$ARCHIVE_PATH" "$ARCHIVE_PATH.sha256"
+}
+trap cleanup_failed_outputs EXIT
+cleanup_failed_outputs
 
 WORD_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant_1.0.0"
 EXCEL_FORMAL_SRC="$ROOT_DIR/formal-plugin-kit/wps-ai-assistant-et_1.0.0"
@@ -42,6 +51,13 @@ cp "$ROOT_DIR/docs/prompt-templates/excel-smart-analysis-prompt-template.md" "$T
 cp "$ROOT_DIR/docs/prompt-templates/excel-formula-assistant-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/ppt-smart-summary-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
 cp "$ROOT_DIR/docs/prompt-templates/ppt-structure-review-prompt-template.md" "$TMP_DIR/docs/prompt-templates/"
+cp "$ROOT_DIR/packaging/check_python38_compatibility.py" "$TMP_DIR/scripts/"
+cp "$ROOT_DIR/packaging/python38_delivery_runtime_gate.py" "$TMP_DIR/scripts/"
+
+"$PYTHON_BIN" "$ROOT_DIR/packaging/check_python38_compatibility.py" \
+  "$TMP_DIR/packages/adapter-start-kit/adapter_service" \
+  "$TMP_DIR/scripts/check_python38_compatibility.py" \
+  "$TMP_DIR/scripts/python38_delivery_runtime_gate.py"
 
 PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" - "$TMP_DIR/docs/import-templates" <<'PY'
 from pathlib import Path
@@ -71,7 +87,7 @@ date_tag = sys.argv[2]
 manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 manifest["releaseDate"] = date_tag
 manifest["versionRule"] = (
-    "AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-" + date_tag
+    "AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-" + date_tag
 )
 manifest_path.write_text(
     json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -155,6 +171,8 @@ for required in (
     root / "docs" / "import-templates" / "writing-policies-import-template.csv",
     root / "docs" / "import-templates" / "writing-policies-import-template.xlsx",
     root / manifest["adapter"]["systemPromptManifest"],
+    root / manifest["adapter"]["pythonRuntimeGate"],
+    root / "scripts" / "check_python38_compatibility.py",
 ):
     if not required.is_file():
         raise SystemExit("missing delivery file: " + str(required.relative_to(root)))
@@ -176,8 +194,13 @@ for path in root.rglob("*"):
         raise SystemExit("non-template import content leaked into delivery: " + relative)
 PY
 
-ARCHIVE_PATH="$OUT_DIR/$KIT_NAME.tar.gz"
-COPYFILE_DISABLE=1 tar -czf "$ARCHIVE_PATH" -C "$OUT_DIR" "$KIT_NAME"
+COPYFILE_DISABLE=1 tar -czf "$PENDING_ARCHIVE_PATH" -C "$OUT_DIR" "$KIT_NAME"
+
+"$PYTHON38_BIN" "$ROOT_DIR/packaging/python38_delivery_runtime_gate.py" \
+  "$PENDING_ARCHIVE_PATH" \
+  --expected-version 0.23.1-alpha
+
+mv "$PENDING_ARCHIVE_PATH" "$ARCHIVE_PATH"
 
 "$PYTHON_BIN" - "$ARCHIVE_PATH" <<'PY'
 import hashlib
@@ -195,3 +218,4 @@ PY
 
 echo "Phase1 delivery kit created at $ARCHIVE_PATH"
 echo "Phase1 delivery checksum created at $ARCHIVE_PATH.sha256"
+trap - EXIT

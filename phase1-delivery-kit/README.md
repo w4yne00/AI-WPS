@@ -1,14 +1,14 @@
 # AI-WPS 一期交付总包
 
-版本：`v0.23.0-alpha`
+版本：`v0.23.1-alpha`
 
 适用目标：麒麟 V10 ARM、Python 3.8、WPS `jsaddons` 插件目录。
 
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260811-v0230.tar.gz
-cd ai-wps-phase1-delivery-20260811-v0230
+tar -xzf ai-wps-phase1-delivery-20260811-v0231.tar.gz
+cd ai-wps-phase1-delivery-20260811-v0231
 bash installer/install_phase1.sh
 ```
 
@@ -37,6 +37,18 @@ bash installer/install_phase1.sh
 bash scripts/phase1_smoke_test.sh
 ```
 
+## Python 3.8 候选门禁
+
+构建环境准备好仓库锁定的运行依赖后，必须使用真实 Python 3.8 对最终 tar 包执行：
+
+```bash
+python3.8 scripts/python38_delivery_runtime_gate.py \
+  ../ai-wps-phase1-delivery-20260811-v0231.tar.gz \
+  --expected-version 0.23.1-alpha
+```
+
+门禁会重新解包最终产物，扫描其中全部 Python 文件，完整导入 FastAPI 应用，实际启动并停止 Uvicorn，再检查版本、Provider 状态、模型配置列表和写作规范摘要。门禁通过只标记为候选构建，不能替代麒麟 V10/WPS 真机验收。
+
 ## 包内内容
 
 - `packages/wps-ai-assistant_1.0.0/`：WPS Word 正式一期插件。
@@ -48,6 +60,8 @@ bash scripts/phase1_smoke_test.sh
 - `wps-jsaddons/publish.xml`：WPS `jsaddons` 发布文件。
 - `installer/install_phase1.sh`：一键安装脚本。
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
+- `scripts/check_python38_compatibility.py`：Python 3.8 生产代码兼容性扫描。
+- `scripts/python38_delivery_runtime_gate.py`：最终 tar 包 Python 3.8 导入、Uvicorn 启动和关键接口门禁。
 - `release-manifest.json`：版本、三宿主、四个规范包、来源许可资产及运行态排除策略清单。
 - `packages/adapter-start-kit/adapter_service/system_prompts/`：八类任务的版本化 System Prompt Markdown 及哈希清单，供模型直连接入使用。
 - 包外同名 `.tar.gz.sha256`：构建脚本自动生成的正式包 SHA-256 校验记录。

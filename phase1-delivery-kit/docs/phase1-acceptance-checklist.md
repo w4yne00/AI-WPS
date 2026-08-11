@@ -11,13 +11,16 @@
 - [ ] `publish.xml` 同时包含 Word 的 `type="wps"`、Excel 的 `type="et"` 和 PPT 的 `type="wpp"`。
 - [ ] 首次安装自动创建非空的 `adapter-start-kit/run/writing_policies.db`，文件权限为 `0600`。
 - [ ] `release-manifest.json` 的版本、三宿主、四个规范包和版本规则号与本包一致。
+- [ ] 使用真实 Python 3.8 执行 `python3.8 scripts/python38_delivery_runtime_gate.py <最终tar包> --expected-version 0.23.1-alpha` 通过。
 
 ## 2. Adapter 检查
 
 - [ ] `bash scripts/phase1_smoke_test.sh` 执行成功。
 - [ ] `/health` 返回 `status=ok`。
 - [ ] `/health` 返回 `mode=uvicorn`。
-- [ ] `/health` 返回 `version=0.23.0-alpha`。
+- [ ] `/health` 返回 `version=0.23.1-alpha`。
+- [ ] Python 3.8 最终包运行门禁完成生产代码兼容性扫描、完整应用导入和 Uvicorn 实际启动。
+- [ ] 运行门禁通过 `/health`、`/provider/status`、`/provider/model-configurations` 和 `/writing-policies/summary` 契约检查。
 - [ ] `/templates` 返回 `general-office`。
 - [ ] `/templates` 返回 `technical-file-format-requirements`。
 - [ ] 旧版 Dify 工作流可继续读取 `inputs.query`。

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "release": "0.23.0-alpha",
+  "release": "0.23.1-alpha",
   "tasks": {
     "word.smart_write": {
       "version": "2026-08-10.1",

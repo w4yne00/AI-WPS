@@ -77,12 +77,12 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.23.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811` |
+| Version | `v0.23.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Internal test build, not final production release |
-| Phase 1 delivery kit | One combined Word/Excel/PPT package: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0230.tar.gz`; SHA256: `acee06ff18b17591079531fcae7bb9fe046648db8b221a67a2794211025ddb2f` |
+| Delivery status | Automated candidate build; Kylin V10/WPS acceptance pending |
+| Phase 1 delivery kit | Build target: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`; SHA-256 is emitted in the adjacent `.sha256` file |
 
 Version rule format:
 
@@ -130,6 +130,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Adds a production compatibility scan and a final-tar runtime gate that uses real Python 3.8 to import the complete app, start Uvicorn, and verify version plus key configuration contracts. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |
 | `v0.22.0-alpha` | Adds the PPT Structure Review minimum loop with an independent Ribbon entry, workflow profile, and API key; explicit ranges up to 60 slides; separated title/subtitle extraction and bounded untitled-slide fallback; merged local and single-call semantic review findings; prioritized/page-specific results, recommended outline, and copy-only read-only behavior |
 | `v0.21.0-alpha` | Formally packages the independent Excel Formula Assistant with Generate and Explain/Debug modes, selection-only 30×20 extraction, `Formula`/`FormulaLocal`/`FormulaR1C1` read fallback guarded by `HasFormula`, shared long-task queuing and recovery, local non-executing checks, and copy-only results. The unified package includes its Dify operations guide and prompt template; Word and PPT business behavior remains unchanged |

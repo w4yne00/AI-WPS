@@ -10,6 +10,7 @@ import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 
 
 class PackagingScriptTests(unittest.TestCase):
@@ -18,7 +19,7 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("EXPECTED_VERSION", script)
         self.assertIn("CURRENT_VERSION", script)
-        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.23.0-alpha}"', script)
+        self.assertIn('EXPECTED_VERSION="${EXPECTED_VERSION:-0.23.1-alpha}"', script)
         self.assertIn("replace_existing_adapter", script)
         self.assertIn("adapter_stale_running", script)
 
@@ -151,31 +152,18 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(token, guide + checklist + record)
 
-    def test_v0230_acceptance_record_tracks_release_issue_and_external_validation(self) -> None:
+    def test_v0231_acceptance_record_tracks_release_issue_and_external_validation(self) -> None:
         def assert_release_acceptance_state(record_text: str) -> None:
-            self.assertIn("Issue #24", record_text)
-            self.assertIn("麒麟 V10/WPS 演示真机验收待执行", record_text)
-            self.assertNotIn("全部通过后再关闭 Issue #22", record_text)
+            self.assertIn("Issue #26", record_text)
+            self.assertIn("Python 3.8 最终包运行门禁", record_text)
+            self.assertIn("自动化验收通过", record_text)
+            self.assertIn("候选构建", record_text)
+            self.assertIn("父票后续动作", record_text)
 
         record = (ROOT / "phase1-delivery-kit/docs/phase1-acceptance-record.md").read_text(
             encoding="utf-8"
         )
         assert_release_acceptance_state(record)
-
-        archive_path = (
-            ROOT
-            / "dist-phase1-delivery-kit"
-            / "ai-wps-phase1-delivery-20260811-v0230.tar.gz"
-        )
-        with tarfile.open(archive_path, "r:gz") as package:
-            member = package.extractfile(
-                "ai-wps-phase1-delivery-20260811-v0230/"
-                "docs/phase1-acceptance-record.md"
-            )
-            self.assertIsNotNone(member)
-            packaged_record = member.read().decode("utf-8")
-
-        assert_release_acceptance_state(packaged_record)
 
     def test_delivery_includes_excel_and_ppt_prompt_templates(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
@@ -376,12 +364,12 @@ class PackagingScriptTests(unittest.TestCase):
         ]:
             self.assertIn(required_text, text)
 
-    def test_phase1_delivery_uses_v0230_release_name(self) -> None:
+    def test_phase1_delivery_uses_v0231_release_name(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
             encoding="utf-8"
         )
 
-        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0230"', script)
+        self.assertIn('KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0231"', script)
 
     def test_delivery_build_revalidates_approved_pack_reviews(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
@@ -442,11 +430,16 @@ class PackagingScriptTests(unittest.TestCase):
             self.assertEqual(database.read_bytes(), original)
             self.assertIn("writing_policy_database=reused", second_result.stdout)
 
-    def test_built_v0230_delivery_has_complete_safe_release_inventory(self) -> None:
+    @unittest.skipUnless(
+        PYTHON38_BIN,
+        "AI_WPS_PYTHON38_BIN is required for the final delivery build gate",
+    )
+    def test_built_v0231_delivery_has_complete_safe_release_inventory(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             environment = dict(os.environ)
             environment["DATE_TAG"] = "20260811"
             environment["PYTHON_BIN"] = sys.executable
+            environment["PYTHON38_BIN"] = PYTHON38_BIN
             result = subprocess.run(
                 [
                     "bash",
@@ -462,7 +455,7 @@ class PackagingScriptTests(unittest.TestCase):
 
             archive = (
                 Path(temp_dir)
-                / "ai-wps-phase1-delivery-20260811-v0230.tar.gz"
+                / "ai-wps-phase1-delivery-20260811-v0231.tar.gz"
             )
             self.assertTrue(archive.is_file())
             checksum = archive.with_name(archive.name + ".sha256")
@@ -476,18 +469,23 @@ class PackagingScriptTests(unittest.TestCase):
             )
             with tarfile.open(archive, "r:gz") as package:
                 names = package.getnames()
-                root = "ai-wps-phase1-delivery-20260811-v0230"
+                root = "ai-wps-phase1-delivery-20260811-v0231"
                 manifest_member = package.extractfile(
                     root + "/release-manifest.json"
                 )
                 self.assertIsNotNone(manifest_member)
                 release_manifest = json.load(manifest_member)
 
-                self.assertEqual(release_manifest["version"], "0.23.0-alpha")
+                self.assertEqual(release_manifest["version"], "0.23.1-alpha")
                 self.assertEqual(
                     release_manifest["versionRule"],
-                    "AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811",
+                    "AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811",
                 )
+                self.assertEqual(
+                    release_manifest["adapter"]["pythonRuntimeGate"],
+                    "scripts/python38_delivery_runtime_gate.py",
+                )
+                self.assertEqual(release_manifest["adapter"]["minimumPython"], "3.8")
                 self.assertEqual(
                     release_manifest["excelFormulaAssistantAssets"],
                     {
@@ -538,6 +536,8 @@ class PackagingScriptTests(unittest.TestCase):
                     )
 
                 required_files = [
+                    "/scripts/check_python38_compatibility.py",
+                    "/scripts/python38_delivery_runtime_gate.py",
                     "/docs/operations/dify-excel-formula-assistant-workflow.md",
                     "/docs/prompt-templates/excel-formula-assistant-prompt-template.md",
                     "/docs/writing-policy-sources.md",

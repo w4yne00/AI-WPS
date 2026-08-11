@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
   "product": "AI-WPS",
-  "version": "0.23.0-alpha",
+  "version": "0.23.1-alpha",
   "releaseDate": "20260811",
-  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811",
+  "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811",
   "hosts": [
     {
       "name": "Word",
@@ -23,13 +23,15 @@
   ],
   "adapter": {
     "name": "wps-ai-adapter",
-    "version": "0.23.0-alpha",
+    "version": "0.23.1-alpha",
     "accessMethods": [
       "workflow_platform",
       "direct_model"
     ],
     "systemPromptManifest": "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
-    "systemPromptCount": 8
+    "systemPromptCount": 8,
+    "pythonRuntimeGate": "scripts/python38_delivery_runtime_gate.py",
+    "minimumPython": "3.8"
   },
   "excelFormulaAssistantAssets": {
     "operationsGuide": "docs/operations/dify-excel-formula-assistant-workflow.md",

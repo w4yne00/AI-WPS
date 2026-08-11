@@ -6,13 +6,20 @@
 
 当前分支：`main`
 
-当前版本：`v0.23.0-alpha`
+当前版本：`v0.23.1-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.0-20260811`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
 
-当前交付包：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0230.tar.gz`，8,765,340 字节、283 个归档条目，SHA256：`acee06ff18b17591079531fcae7bb9fe046648db8b221a67a2794211025ddb2f`。
+当前候选交付包构建目标：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260811-v0231.tar.gz`；构建脚本生成同名 `.sha256` 校验文件，麒麟 V10/WPS 真机验收待执行。
 
-## 0. v0.23.0-alpha 当前事实
+## 0. v0.23.1-alpha 当前事实
+
+- 修复 `WorkflowProfileCompatibilityStore._platform_configurations` 在 Python 3.8 导入时执行 `tuple[...]` 导致 Adapter 退出的问题，改用 `typing.Tuple/Dict/List`。
+- 新增生产 Python 兼容性扫描和最终 tar 包运行门禁；门禁必须由真实 Python 3.8 完整导入应用、启动 Uvicorn，并检查版本、Provider 状态、模型配置和写作规范摘要接口。
+- 自动化门禁通过只代表候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户现场验收。
+- 本次兼容修复不改变八类任务模型配置迁移、API Key 引用、写作规范或业务任务行为。
+
+`v0.23.0-alpha` 的既有双模型接入与任务行为继续作为恢复候选基线：
 
 - 八类任务统一使用按任务隔离的“模型配置”，支持“工作流平台”与“模型直连”两种接入方式；运行时不再回退统一 URL 或统一 Key。
 - 工作流平台使用类 Dify `/chat-messages`，继续兼容旧 `inputs.query` 与新版顶层 `query/files`；模型直连使用 OpenAI 兼容 `/chat/completions`。
@@ -23,7 +30,7 @@
 - 共享协调器仍为 2 个运行槽位、8 个排队位置；智能编写/仿写为交互优先级，连续 3 个交互任务后必须给普通长任务一次调度机会。
 - 生产环境默认禁止 mock 结果，仅设置 `AI_WPS_ENABLE_MOCK_PROVIDER=1` 时允许开发模拟。
 - 三宿主设置页使用紧凑下钻模型配置编辑器，任务页下拉只显示完整配置；Word 结果与回写、Excel/PPT 只读边界不变。
-- 本地验证结果：Python `526 passed / 55 skipped`，正式插件 Node 契约测试 `14/14`，三宿主 10 个 JavaScript 文件和交付 Shell 脚本语法通过；麒麟 V10/WPS 真机验收仍待执行。
+- 本地验证结果：Python `584 tests OK / 59 skipped`，真实 Python 3.8 最终包运行门禁通过，正式插件 Node 契约测试 `14/14`，三宿主 JavaScript 检查通过；当前开发机未安装 `wps-addon` 开发依赖，未重复执行该脚手架的 TypeScript 检查；麒麟 V10/WPS 真机验收仍待执行。
 
 ## 1. 当前项目状态
 
@@ -487,9 +494,9 @@ DATE_TAG=20260808 PYTHON_BIN=python3 bash packaging/build_phase1_delivery_kit.sh
 
 当前结果：
 
-- Python 全量单测：`559 tests OK (skipped=55)`；跳过项来自当前 FastAPI/条件门禁。未跳过的 standalone 分发、结构审查、公式助手、写作规范数据层、往返导入、降级、provider、后台任务、PPT 文件和安装保护均已执行。
-- 全部 13 个正式前端测试文件通过，覆盖三宿主 layout smoke、PPT 结构提取与只读边界、公式属性读取降级、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
-- `wps-addon` 的 4 个 Vitest 文件、11 个用例和真实 `tsc --noEmit` 类型检查通过；旧脚手架复用统一 WPS 文档公共类型，第三方声明文件内部检查与项目类型门禁分离。
+- Python 全量单测：`584 tests OK (skipped=59)`；跳过项来自当前 FastAPI/条件门禁及未设置真实 Python 3.8 路径的普通测试进程。Python 3.8 导入和最终包 Uvicorn 门禁已在独立真实运行时测试中执行。
+- 全部 14 个正式前端测试文件通过，覆盖三宿主 layout smoke、PPT 结构提取与只读边界、公式属性读取降级、设置刷新与编辑保护、任务状态隔离、Word/Excel 事件优先选区监听、Word 写作规范管理和结果契约。
+- 当前开发机未安装 `wps-addon` 开发依赖，本轮未执行该旧脚手架的 Vitest 与 `tsc --noEmit`；该子目录不是本次三宿主正式交付包构建源。
 - Word/Excel/PPT 的 10 个 JavaScript 文件语法检查、TypeScript 类型检查和 24 个构建/安装/联调脚本 `bash -n`：通过。
 - 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
 - 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
