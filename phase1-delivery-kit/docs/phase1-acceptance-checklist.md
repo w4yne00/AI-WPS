@@ -3,8 +3,14 @@
 ## 1. 安装检查
 
 - [ ] 执行 `bash installer/install_phase1.sh` 无错误退出。
-- [ ] `python3 -m pip --version` 可返回版本。
-- [ ] `python3 -c "import fastapi, uvicorn, pydantic, requests"` 执行成功。
+- [ ] 默认安装拒绝 `root`、隐式 `sudo`、目标 UID 不一致、主目录不存在或目标目录不可写，且失败前发布组件摘要不变。
+- [ ] 管理员代装显式提交 `--target-user`、`--target-uid`、`--target-home`、`--wps-jsaddons-dir`，四项均与系统账户和目录信息交叉验证。
+- [ ] WPS、ET 或 WPP 任一进程仍运行，或目标用户进程枚举失败时安装停止，且发布组件摘要不变。
+- [ ] `adapter-start-kit/python-runtime/requirements-lock.txt` 存在，离线 Wheel 与 `SHA256SUMS` 校验通过。
+- [ ] 候选隔离端口完成完整导入、Uvicorn 启动、版本 `0.23.1-alpha` 和 `/health/ready` 业务就绪检查。
+- [ ] 候选预检与正式启动日志指向同一 `adapter-start-kit/python-runtime`，并设置 `PYTHONNOUSERSITE=1`。
+- [ ] 安装后移除或重命名 `adapter-start-kit/python-runtime`，正式启动明确报告 `private_runtime_missing`，且不从环境 `PYTHONPATH` 回退。
+- [ ] 安装前后系统和用户 `site-packages` 文件摘要一致。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0` 存在。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-et_1.0.0` 存在。
 - [ ] `~/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant-wpp_1.0.0` 存在。

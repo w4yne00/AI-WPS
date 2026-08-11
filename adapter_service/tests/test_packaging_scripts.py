@@ -14,6 +14,498 @@ PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 
 
 class PackagingScriptTests(unittest.TestCase):
+    def _copy_phase1_installer(self, destination: Path) -> Path:
+        installer_dir = destination / "delivery" / "installer"
+        installer_dir.mkdir(parents=True)
+        installer = installer_dir / "install_phase1.sh"
+        shutil.copy2(
+            ROOT / "phase1-delivery-kit/installer/install_phase1.sh",
+            installer,
+        )
+        return installer
+
+    def test_phase1_installer_rejects_sudo_context_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = self._copy_phase1_installer(root)
+            install_root = root / "install"
+            jsaddons = root / "jsaddons"
+            install_root.mkdir()
+            jsaddons.mkdir()
+            sentinel = install_root / "keep.txt"
+            sentinel.write_text("unchanged", encoding="utf-8")
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "AI_WPS_INSTALL_ROOT": str(install_root),
+                    "WPS_JSADDONS_DIR": str(jsaddons),
+                    "PYTHON_BIN": "/usr/bin/false",
+                    "SUDO_USER": "operator",
+                    "SUDO_UID": str(os.getuid()),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(installer)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("target_user_required_for_admin_install", result.stdout)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged")
+            self.assertEqual(sorted(path.name for path in install_root.iterdir()), ["keep.txt"])
+            self.assertEqual(list(jsaddons.iterdir()), [])
+
+    def test_phase1_admin_install_requires_explicit_target_identity_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = self._copy_phase1_installer(root)
+            install_root = root / "install"
+            jsaddons = root / "jsaddons"
+            install_root.mkdir()
+            jsaddons.mkdir()
+            sentinel = install_root / "keep.txt"
+            sentinel.write_text("unchanged", encoding="utf-8")
+            current_user = subprocess.check_output(
+                ["id", "-un"], text=True
+            ).strip()
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "AI_WPS_INSTALL_ROOT": str(install_root),
+                    "WPS_JSADDONS_DIR": str(jsaddons),
+                    "PYTHON_BIN": "/usr/bin/false",
+                    "SUDO_USER": current_user,
+                    "SUDO_UID": str(os.getuid()),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(installer), "--target-user", current_user],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("admin_target_identity_required", result.stdout)
+            self.assertIn("--target-uid", result.stdout)
+            self.assertIn("--target-home", result.stdout)
+            self.assertIn("--wps-jsaddons-dir", result.stdout)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged")
+            self.assertEqual(sorted(path.name for path in install_root.iterdir()), ["keep.txt"])
+            self.assertEqual(list(jsaddons.iterdir()), [])
+
+    def test_phase1_installer_rejects_running_wps_before_writes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = self._copy_phase1_installer(root)
+            install_root = root / "install"
+            jsaddons = root / "jsaddons"
+            bin_dir = root / "bin"
+            install_root.mkdir()
+            jsaddons.mkdir()
+            bin_dir.mkdir()
+            sentinel = install_root / "keep.txt"
+            sentinel.write_text("unchanged", encoding="utf-8")
+            ps_stub = bin_dir / "ps"
+            ps_stub.write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' wps\n",
+                encoding="utf-8",
+            )
+            ps_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment.pop("SUDO_USER", None)
+            environment.pop("SUDO_UID", None)
+            environment.update(
+                {
+                    "AI_WPS_INSTALL_ROOT": str(install_root),
+                    "WPS_JSADDONS_DIR": str(jsaddons),
+                    "PATH": "{0}:{1}".format(bin_dir, environment.get("PATH", "")),
+                    "PYTHON_BIN": "/usr/bin/false",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(installer)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("wps_process_running", result.stdout)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged")
+            self.assertEqual(sorted(path.name for path in install_root.iterdir()), ["keep.txt"])
+            self.assertEqual(list(jsaddons.iterdir()), [])
+
+    def test_phase1_installer_fails_closed_when_process_check_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            installer = self._copy_phase1_installer(root)
+            install_root = root / "install"
+            jsaddons = root / "jsaddons"
+            bin_dir = root / "bin"
+            install_root.mkdir()
+            jsaddons.mkdir()
+            bin_dir.mkdir()
+            sentinel = install_root / "keep.txt"
+            sentinel.write_text("unchanged", encoding="utf-8")
+            ps_stub = bin_dir / "ps"
+            ps_stub.write_text("#!/usr/bin/env bash\nexit 2\n", encoding="utf-8")
+            ps_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment.pop("SUDO_USER", None)
+            environment.pop("SUDO_UID", None)
+            environment.update(
+                {
+                    "AI_WPS_INSTALL_ROOT": str(install_root),
+                    "WPS_JSADDONS_DIR": str(jsaddons),
+                    "PATH": "{0}:{1}".format(bin_dir, environment.get("PATH", "")),
+                    "PYTHON_BIN": "/usr/bin/false",
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(installer)],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("wps_process_check_failed", result.stdout)
+            self.assertEqual(sentinel.read_text(encoding="utf-8"), "unchanged")
+            self.assertEqual(sorted(path.name for path in install_root.iterdir()), ["keep.txt"])
+            self.assertEqual(list(jsaddons.iterdir()), [])
+
+    def test_private_runtime_installs_hashed_lock_to_release_target(self) -> None:
+        script = ROOT / "phase1-delivery-kit/installer/install_private_runtime.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            bootstrap = root / "bootstrap"
+            target = root / "release" / "python-runtime"
+            runtime_wheels = runtime / "wheels"
+            bootstrap_wheels = bootstrap / "wheels"
+            runtime_wheels.mkdir(parents=True)
+            bootstrap_wheels.mkdir(parents=True)
+            runtime_wheel = runtime_wheels / "demo-1.0-py3-none-any.whl"
+            bootstrap_wheel = bootstrap_wheels / "pip-24.0-py3-none-any.whl"
+            runtime_wheel.write_bytes(b"runtime-wheel")
+            bootstrap_wheel.write_bytes(b"bootstrap-wheel")
+            runtime_hash = hashlib.sha256(runtime_wheel.read_bytes()).hexdigest()
+            bootstrap_hash = hashlib.sha256(bootstrap_wheel.read_bytes()).hexdigest()
+            (runtime / "requirements-lock.txt").write_text(
+                "demo==1.0 --hash=sha256:{0}\n".format(runtime_hash),
+                encoding="utf-8",
+            )
+            (runtime / "SHA256SUMS").write_text(
+                "{0}  wheels/{1}\n".format(runtime_hash, runtime_wheel.name)
+                + "{0}  requirements-lock.txt\n".format(
+                    hashlib.sha256(
+                        (runtime / "requirements-lock.txt").read_bytes()
+                    ).hexdigest()
+                ),
+                encoding="utf-8",
+            )
+            (bootstrap / "SHA256SUMS").write_text(
+                "{0}  wheels/{1}\n".format(bootstrap_hash, bootstrap_wheel.name),
+                encoding="utf-8",
+            )
+            python_log = root / "python.log"
+            python_stub = root / "python"
+            python_stub.write_text(
+                """#!/usr/bin/env bash
+printf 'PYTHONNOUSERSITE=%s PYTHONPATH=%s ARGS=%s\\n' "${PYTHONNOUSERSITE:-}" "${PYTHONPATH:-}" "$*" >> "$PYTHON_STUB_LOG"
+if [[ " $* " == *" --target "* ]]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--target" ]; then
+      mkdir -p "$2"
+      printf '%s\\n' installed > "$2/demo-installed.txt"
+      break
+    fi
+    shift
+  done
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment["PYTHON_STUB_LOG"] = str(python_log)
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    str(python_stub),
+                    str(runtime),
+                    str(bootstrap),
+                    str(target),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            invocations = python_log.read_text(encoding="utf-8")
+            self.assertIn("PYTHONNOUSERSITE=1", invocations)
+            self.assertIn("--require-hashes", invocations)
+            self.assertIn("--target {0}".format(target), invocations)
+            self.assertNotIn(" --user ", invocations)
+            self.assertTrue((target / "demo-installed.txt").is_file())
+            self.assertEqual(
+                (target / "requirements-lock.txt").read_text(encoding="utf-8"),
+                (runtime / "requirements-lock.txt").read_text(encoding="utf-8"),
+            )
+
+    def test_private_runtime_rejects_corrupt_wheel_before_target_write(self) -> None:
+        script = ROOT / "phase1-delivery-kit/installer/install_private_runtime.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            bootstrap = root / "bootstrap"
+            target = root / "release" / "python-runtime"
+            (runtime / "wheels").mkdir(parents=True)
+            (bootstrap / "wheels").mkdir(parents=True)
+            wheel = runtime / "wheels" / "demo-1.0-py3-none-any.whl"
+            wheel.write_bytes(b"corrupt")
+            (runtime / "requirements-lock.txt").write_text(
+                "demo==1.0 --hash=sha256:{0}\n".format("0" * 64),
+                encoding="utf-8",
+            )
+            (runtime / "SHA256SUMS").write_text(
+                "{0}  wheels/{1}\n".format("0" * 64, wheel.name),
+                encoding="utf-8",
+            )
+            (bootstrap / "SHA256SUMS").write_text("", encoding="utf-8")
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    sys.executable,
+                    str(runtime),
+                    str(bootstrap),
+                    str(target),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("offline_hash_verification_failed", result.stdout)
+            self.assertFalse(target.exists())
+
+    def test_uvicorn_start_uses_release_private_runtime_and_disables_user_site(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            kit = root / "adapter-start-kit"
+            shutil.copytree(ROOT / "adapter-start-kit", kit)
+            (kit / "adapter_service").mkdir()
+            private_runtime = kit / "python-runtime"
+            private_runtime.mkdir()
+            state = root / "state"
+            backup = root / "backups"
+            var = root / "var"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            python_log = root / "python.log"
+            started = root / "started"
+            python_stub = bin_dir / "python"
+            python_stub.write_text(
+                """#!/usr/bin/env bash
+printf 'PYTHONNOUSERSITE=%s PYTHONPATH=%s ARGS=%s\\n' "${PYTHONNOUSERSITE:-}" "${PYTHONPATH:-}" "$*" >> "$PYTHON_STUB_LOG"
+if [[ " $* " == *" -m uvicorn "* ]]; then
+  printf '%s\\n' started > "$PYTHON_STUB_STARTED"
+  sleep 10
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            curl_stub = bin_dir / "curl"
+            curl_stub.write_text(
+                """#!/usr/bin/env bash
+if [ -f "$PYTHON_STUB_STARTED" ]; then
+  printf '%s' '{"success":true,"data":{"status":"ready","version":"0.23.1-alpha","mode":"uvicorn"}}'
+  exit 0
+fi
+exit 1
+""",
+                encoding="utf-8",
+            )
+            curl_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "AI_WPS_STATE_DIR": str(state),
+                    "AI_WPS_BACKUP_DIR": str(backup),
+                    "AI_WPS_VAR_DIR": str(var),
+                    "PATH": "{0}:{1}".format(bin_dir, environment.get("PATH", "")),
+                    "PYTHON_BIN": str(python_stub),
+                    "PYTHON_STUB_LOG": str(python_log),
+                    "PYTHON_STUB_STARTED": str(started),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(kit / "scripts/start_uvicorn_adapter.sh"), "28100"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+            pid_file = var / "run" / "adapter.pid"
+            if pid_file.is_file():
+                try:
+                    os.kill(int(pid_file.read_text(encoding="utf-8").strip()), 15)
+                except (OSError, ValueError):
+                    pass
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            invocations = python_log.read_text(encoding="utf-8")
+            self.assertIn("PYTHONNOUSERSITE=1", invocations)
+            self.assertIn("PYTHONPATH={0}".format(private_runtime), invocations)
+            self.assertIn("ARGS=-s -m uvicorn", invocations)
+
+    def test_installed_release_does_not_fallback_when_private_runtime_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            kit = root / "adapter-start-kit"
+            shutil.copytree(ROOT / "adapter-start-kit", kit)
+            (kit / ".release-private-runtime-required").touch()
+            state = root / "state"
+            backup = root / "backups"
+            var = root / "var"
+            python_log = root / "python.log"
+            python_stub = root / "python"
+            python_stub.write_text(
+                "#!/usr/bin/env bash\nprintf '%s\\n' invoked >> \"$PYTHON_STUB_LOG\"\n",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "AI_WPS_STATE_DIR": str(state),
+                    "AI_WPS_BACKUP_DIR": str(backup),
+                    "AI_WPS_VAR_DIR": str(var),
+                    "PYTHON_BIN": str(python_stub),
+                    "PYTHON_STUB_LOG": str(python_log),
+                }
+            )
+
+            result = subprocess.run(
+                ["bash", str(kit / "scripts/start_uvicorn_adapter.sh"), "28100"],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("private_runtime_missing", result.stdout)
+            self.assertFalse(python_log.exists())
+
+    def test_candidate_preflight_checks_import_start_version_and_readiness(self) -> None:
+        script = ROOT / "phase1-delivery-kit/installer/preflight_candidate.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            candidate = root / "candidate"
+            adapter_service = candidate / "adapter_service"
+            private_runtime = candidate / "python-runtime"
+            preflight_var = root / "preflight-var"
+            bin_dir = root / "bin"
+            adapter_service.mkdir(parents=True)
+            private_runtime.mkdir()
+            bin_dir.mkdir()
+            python_log = root / "python.log"
+            started = root / "started"
+            python_stub = bin_dir / "python"
+            python_stub.write_text(
+                """#!/usr/bin/env bash
+printf 'PYTHONNOUSERSITE=%s PYTHONPATH=%s ARGS=%s\\n' "${PYTHONNOUSERSITE:-}" "${PYTHONPATH:-}" "$*" >> "$PYTHON_STUB_LOG"
+if [[ " $* " == *" -m uvicorn "* ]]; then
+  printf '%s\\n' "$$" > "$PYTHON_STUB_STARTED"
+  sleep 10
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            curl_stub = bin_dir / "curl"
+            curl_stub.write_text(
+                """#!/usr/bin/env bash
+if [ ! -f "$PYTHON_STUB_STARTED" ]; then
+  exit 1
+fi
+url="${@: -1}"
+case "$url" in
+  */health/live)
+    printf '%s' '{"success":true,"data":{"status":"live","version":"0.23.1-alpha"}}'
+    ;;
+  */health/ready)
+    printf '%s' '{"success":true,"data":{"status":"ready","version":"0.23.1-alpha"}}'
+    ;;
+  */health)
+    printf '%s' '{"success":true,"data":{"status":"ready","version":"0.23.1-alpha","mode":"uvicorn"}}'
+    ;;
+esac
+""",
+                encoding="utf-8",
+            )
+            curl_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "PATH": "{0}:{1}".format(bin_dir, environment.get("PATH", "")),
+                    "PYTHON_STUB_LOG": str(python_log),
+                    "PYTHON_STUB_STARTED": str(started),
+                }
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    str(python_stub),
+                    str(candidate),
+                    str(private_runtime),
+                    "28101",
+                    "0.23.1-alpha",
+                    str(preflight_var),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("candidate_preflight=ready", result.stdout)
+            invocations = python_log.read_text(encoding="utf-8")
+            self.assertIn("PYTHONNOUSERSITE=1", invocations)
+            self.assertIn("PYTHONPATH={0}".format(private_runtime), invocations)
+            self.assertIn("ARGS=-s -c", invocations)
+            self.assertIn("ARGS=-s -m uvicorn", invocations)
+            candidate_pid = int(started.read_text(encoding="utf-8").strip())
+            with self.assertRaises(OSError):
+                os.kill(candidate_pid, 0)
+
     def test_standalone_adapter_exposes_split_health_and_recovery_guard(self) -> None:
         script = (ROOT / "adapter_service/standalone_adapter.py").read_text(
             encoding="utf-8"
@@ -42,6 +534,39 @@ class PackagingScriptTests(unittest.TestCase):
             policy["snapshotExcluded"],
             ["backups/", "var/logs/", "var/run/", "var/transactions/"],
         )
+
+    def test_delivery_declares_release_private_runtime_contract(self) -> None:
+        manifest = json.loads(
+            (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        build_script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(
+            encoding="utf-8"
+        )
+        installer = (ROOT / "phase1-delivery-kit/installer/install_phase1.sh").read_text(
+            encoding="utf-8"
+        )
+        smoke_test = (ROOT / "phase1-delivery-kit/scripts/phase1_smoke_test.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertEqual(
+            manifest["adapter"]["privateRuntime"],
+            {
+                "path": "python-runtime/",
+                "lock": "packages/kylin-v10-arm-py38/requirements-lock.txt",
+                "hashManifest": "packages/kylin-v10-arm-py38/SHA256SUMS",
+                "disableUserSite": True,
+            },
+        )
+        self.assertIn('requirements-lock.txt"', build_script)
+        self.assertIn('SHA256SUMS"', build_script)
+        self.assertNotIn(" --user ", installer)
+        self.assertIn("install_private_runtime.sh", installer)
+        self.assertIn("preflight_candidate.sh", installer)
+        self.assertIn("python-runtime", smoke_test)
+        self.assertIn("PYTHONNOUSERSITE=1", smoke_test)
 
     def test_uvicorn_start_script_replaces_stale_running_adapter(self) -> None:
         script = (ROOT / "adapter-start-kit/scripts/start_uvicorn_adapter.sh").read_text(encoding="utf-8")

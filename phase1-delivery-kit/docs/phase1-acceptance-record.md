@@ -5,7 +5,7 @@
 - 版本：`v0.23.1-alpha`
 - 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
 - 交付包：`ai-wps-phase1-delivery-20260811-v0231.tar.gz`
-- 对应工单：Issue #26
+- 对应工单：Issue #26、#28、#30
 - 构建状态：自动化候选构建，非已验收恢复构建
 - 发布清单：`release-manifest.json`
 - 项目：
@@ -25,6 +25,16 @@
 - publish.xml 路径：
 - Adapter 安装目录：
 - Adapter 端口：
+- 安装主体（`--target-user`）：
+- 目标 UID（`--target-uid`）：
+- 目标主目录（`--target-home`）：
+- WPS 插件目录参数（`--wps-jsaddons-dir`）：
+- 安装前 WPS/ET/WPP 进程检查：
+- 发布私有依赖目录：
+- 离线依赖锁定清单 SHA-256：
+- 安装前后系统/用户 `site-packages` 摘要：
+- 候选隔离端口、版本与业务就绪结果：
+- 候选和正式启动依赖目录一致性：
 - Dify 用户输入模式（旧版/新版）：
 - 首次安装规范库路径：
 - 首次安装规范库权限：

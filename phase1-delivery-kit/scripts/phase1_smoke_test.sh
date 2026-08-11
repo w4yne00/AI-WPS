@@ -11,6 +11,7 @@ PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant_1.0.0"
 EXCEL_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-et_1.0.0"
 PPT_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0"
 ADAPTER_DIR="$INSTALL_ROOT/adapter-start-kit"
+PRIVATE_RUNTIME_DIR="$ADAPTER_DIR/python-runtime"
 WRITING_POLICY_DB="$ADAPTER_DIR/run/writing_policies.db"
 
 http_get() {
@@ -18,7 +19,8 @@ http_get() {
   if command -v curl >/dev/null 2>&1; then
     curl -fsS "$url"
   else
-    "$PYTHON_BIN" - "$url" <<'PY'
+    PYTHONNOUSERSITE=1 PYTHONPATH="$PRIVATE_RUNTIME_DIR" \
+      "$PYTHON_BIN" -s - "$url" <<'PY'
 import sys
 from urllib.request import urlopen
 print(urlopen(sys.argv[1], timeout=5).read().decode("utf-8"))
@@ -63,7 +65,12 @@ else
   exit 1
 fi
 
-"$PYTHON_BIN" -c "import fastapi, uvicorn, pydantic, requests; print('runtime_deps_ok')"
+if [ ! -s "$PRIVATE_RUNTIME_DIR/requirements-lock.txt" ]; then
+  echo "private_runtime=missing_or_unlocked path=$PRIVATE_RUNTIME_DIR"
+  exit 1
+fi
+PYTHONNOUSERSITE=1 PYTHONPATH="$PRIVATE_RUNTIME_DIR" "$PYTHON_BIN" -s -c \
+  "import os, fastapi, pydantic, requests, uvicorn; root=os.path.realpath(r'$PRIVATE_RUNTIME_DIR'); paths=[os.path.realpath(module.__file__) for module in (fastapi, pydantic, requests, uvicorn)]; assert all(os.path.commonpath([root, path]) == root for path in paths); print('private_runtime_deps_ok')"
 
 if [ -s "$WRITING_POLICY_DB" ]; then
   echo "writing_policy_database=ok path=$WRITING_POLICY_DB"

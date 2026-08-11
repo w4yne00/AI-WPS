@@ -99,6 +99,12 @@ tar -xzf "$PIP_TAR" -C "$TMP_DIR/packages"
 mv "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap-20260506" "$TMP_DIR/packages/kylin-v10-arm-py38-pip-bootstrap"
 
 tar -xzf "$RUNTIME_TAR" -C "$TMP_DIR/packages"
+cp "$ROOT_DIR/offline-deps/kylin-v10-arm-py38/requirements-lock.txt" \
+  "$TMP_DIR/packages/kylin-v10-arm-py38/requirements-lock.txt"
+cp "$ROOT_DIR/offline-deps/kylin-v10-arm-py38/SHA256SUMS" \
+  "$TMP_DIR/packages/kylin-v10-arm-py38/SHA256SUMS"
+cp "$ROOT_DIR/offline-deps/kylin-v10-arm-py38/README.md" \
+  "$TMP_DIR/packages/kylin-v10-arm-py38/README.md"
 
 rm -rf \
   "$TMP_DIR/packages/adapter-start-kit/run" \
@@ -120,6 +126,7 @@ find "$TMP_DIR" -type f -name '*.sh' -exec chmod 755 {} \;
 find "$TMP_DIR/packages/adapter-start-kit/adapter_service" -type f -name '*.py' -exec chmod 755 {} \;
 
 "$PYTHON_BIN" - "$TMP_DIR" <<'PY'
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -173,9 +180,27 @@ for required in (
     root / manifest["adapter"]["systemPromptManifest"],
     root / manifest["adapter"]["pythonRuntimeGate"],
     root / "scripts" / "check_python38_compatibility.py",
+    root / manifest["adapter"]["privateRuntime"]["lock"],
+    root / manifest["adapter"]["privateRuntime"]["hashManifest"],
+    root / "installer" / "install_private_runtime.sh",
+    root / "installer" / "preflight_candidate.sh",
 ):
     if not required.is_file():
         raise SystemExit("missing delivery file: " + str(required.relative_to(root)))
+
+runtime_root = root / "packages" / "kylin-v10-arm-py38"
+hash_manifest = runtime_root / "SHA256SUMS"
+for line in hash_manifest.read_text(encoding="utf-8").splitlines():
+    digest, relative = line.split(None, 1)
+    relative = relative.lstrip("*")
+    if relative.startswith("/") or ".." in Path(relative).parts:
+        raise SystemExit("invalid runtime hash path: " + relative)
+    runtime_file = runtime_root / relative
+    if not runtime_file.is_file():
+        raise SystemExit("missing hashed runtime file: " + relative)
+    actual = hashlib.sha256(runtime_file.read_bytes()).hexdigest()
+    if actual != digest.lower():
+        raise SystemExit("runtime hash mismatch: " + relative)
 
 for path in root.rglob("*"):
     relative = path.relative_to(root).as_posix()

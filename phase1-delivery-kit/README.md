@@ -12,6 +12,18 @@ cd ai-wps-phase1-delivery-20260811-v0231
 bash installer/install_phase1.sh
 ```
 
+安装前必须完全退出 WPS 文字、表格和演示进程。默认安装只允许当前 WPS 登录用户直接执行；`root` 或 `sudo` 上下文不会根据当前 `$HOME` 猜测目标身份。管理员代装必须显式提交目标用户、UID、主目录和 WPS 插件目录：
+
+```bash
+sudo bash installer/install_phase1.sh \
+  --target-user cloud \
+  --target-uid 1000 \
+  --target-home /home/cloud \
+  --wps-jsaddons-dir /home/cloud/.local/share/Kingsoft/wps/jsaddons
+```
+
+安装器会在写入插件或正式 Adapter 前，将四项显式参数与系统账户信息交叉验证，并检查插件目录和安装目录的归属与可写性。任一 WPS、ET 或 WPP 进程仍在运行，或进程枚举失败时，安装都会直接停止，不修改发布组件。
+
 默认安装路径：
 
 - Word 插件：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/wps-ai-assistant_1.0.0`
@@ -20,6 +32,7 @@ bash installer/install_phase1.sh
 - `publish.xml`：`/home/cloud/.local/share/Kingsoft/wps/jsaddons/publish.xml`
 - Adapter：`$HOME/ai-wps-phase1/adapter-start-kit`
 - Adapter 端口：`18100`
+- 发布私有依赖：`$HOME/ai-wps-phase1/adapter-start-kit/python-runtime`
 
 如需覆盖：
 
@@ -49,6 +62,8 @@ python3.8 scripts/python38_delivery_runtime_gate.py \
 
 门禁会重新解包最终产物，扫描其中全部 Python 文件，完整导入 FastAPI 应用，实际启动并停止 Uvicorn，再检查版本、Provider 状态、模型配置列表和写作规范摘要。门禁通过只标记为候选构建，不能替代麒麟 V10/WPS 真机验收。
 
+目标机安装时会先校验离线 Wheel 与锁定清单的 SHA-256，再通过 `pip --target` 安装到候选的发布私有依赖目录。候选使用独立端口完成完整导入、Uvicorn 启动、版本和业务就绪检查；正式启动继续使用同一发布私有依赖目录。安装器会写入发布标记，后续启动若发现该依赖目录缺失会明确失败，不会回退系统或用户依赖。候选和正式进程均设置 `PYTHONNOUSERSITE=1` 与 Python `-s`，不会读取或修改系统、用户 `site-packages`。
+
 ## 包内内容
 
 - `packages/wps-ai-assistant_1.0.0/`：WPS Word 正式一期插件。
@@ -59,6 +74,8 @@ python3.8 scripts/python38_delivery_runtime_gate.py \
 - `packages/kylin-v10-arm-py38/`：Python 3.8 ARM 离线运行依赖。
 - `wps-jsaddons/publish.xml`：WPS `jsaddons` 发布文件。
 - `installer/install_phase1.sh`：一键安装脚本。
+- `installer/install_private_runtime.sh`：离线依赖哈希校验与发布私有依赖安装脚本。
+- `installer/preflight_candidate.sh`：隔离候选完整导入、启动、版本和业务就绪门禁。
 - `scripts/phase1_smoke_test.sh`：一键联调脚本。
 - `scripts/check_python38_compatibility.py`：Python 3.8 生产代码兼容性扫描。
 - `scripts/python38_delivery_runtime_gate.py`：最终 tar 包 Python 3.8 导入、Uvicorn 启动和关键接口门禁。

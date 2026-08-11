@@ -7,6 +7,8 @@ resolve_adapter_runtime_paths "$KIT_ROOT"
 PORT="${1:-18100}"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 EXPECTED_VERSION="${EXPECTED_VERSION:-0.23.1-alpha}"
+PRIVATE_RUNTIME_DIR="${AI_WPS_PYTHON_DEPS_DIR:-$KIT_ROOT/python-runtime}"
+PRIVATE_RUNTIME_REQUIRED_MARKER="$KIT_ROOT/.release-private-runtime-required"
 PID_FILE="$ADAPTER_PID_FILE"
 LOG_DIR="$ADAPTER_LOG_DIR"
 LOG_FILE="$ADAPTER_LOG_FILE"
@@ -19,9 +21,20 @@ if [ -n "${AI_WPS_STATE_DIR:-}" ]; then
   chmod 700 "$AI_WPS_STATE_DIR" "$AI_WPS_BACKUP_DIR"
 fi
 
-if ! "$PYTHON_BIN" -c "import uvicorn, fastapi" >/dev/null 2>&1; then
+if [ -d "$PRIVATE_RUNTIME_DIR" ]; then
+  ADAPTER_PYTHONPATH="$PRIVATE_RUNTIME_DIR"
+elif [ "${AI_WPS_REQUIRE_PRIVATE_RUNTIME:-0}" = "1" ] \
+  || [ -f "$PRIVATE_RUNTIME_REQUIRED_MARKER" ]; then
+  echo "private_runtime_missing=$PRIVATE_RUNTIME_DIR"
+  exit 1
+else
+  ADAPTER_PYTHONPATH="${PYTHONPATH:-}"
+fi
+
+if ! PYTHONNOUSERSITE=1 PYTHONPATH="$ADAPTER_PYTHONPATH" \
+  "$PYTHON_BIN" -s -c "import uvicorn, fastapi" >/dev/null 2>&1; then
   echo "uvicorn_runtime_missing=true"
-  echo "请先安装离线运行依赖：python3 -m pip install --no-index --find-links <runtime-deps>/wheels -r <runtime-deps>/requirements-runtime.txt"
+  echo "请使用安装器创建并校验发布私有 Python 依赖目录。"
   exit 1
 fi
 
@@ -93,7 +106,8 @@ if [ -n "$HEALTH_BODY" ]; then
 fi
 
 cd "$KIT_ROOT/adapter_service"
-nohup "$PYTHON_BIN" -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" >> "$LOG_FILE" 2>&1 &
+nohup env PYTHONNOUSERSITE=1 PYTHONPATH="$ADAPTER_PYTHONPATH" \
+  "$PYTHON_BIN" -s -m uvicorn app.main:app --host 127.0.0.1 --port "$PORT" >> "$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 PID="$(cat "$PID_FILE")"
 

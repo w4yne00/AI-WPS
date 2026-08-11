@@ -154,6 +154,7 @@ class RuntimePathContractTests(unittest.TestCase):
         python_path.write_text(
             "#!/usr/bin/env bash\n"
             "if [ \"${1:-}\" = \"-c\" ]; then exit 0; fi\n"
+            "if [ \"${1:-}\" = \"-s\" ] && [ \"${2:-}\" = \"-c\" ]; then exit 0; fi\n"
             "printf '%s|%s|%s\\n' \"${AI_WPS_STATE_DIR:-}\" "
             "\"${AI_WPS_BACKUP_DIR:-}\" \"${AI_WPS_VAR_DIR:-}\" > \"$FAKE_CAPTURE\"\n"
             "trap 'exit 0' TERM INT\n"
@@ -222,8 +223,12 @@ class RuntimePathContractTests(unittest.TestCase):
                         ]
                     ),
                 )
-                self.assertFalse(any((program_root / "logs").iterdir()))
-                self.assertFalse(any((program_root / "run").iterdir()))
+                program_logs = program_root / "logs"
+                program_run = program_root / "run"
+                self.assertFalse(
+                    program_logs.exists() and any(program_logs.iterdir())
+                )
+                self.assertFalse(program_run.exists() and any(program_run.iterdir()))
             finally:
                 subprocess.run(
                     ["bash", str(program_root / "scripts/stop_adapter.sh"), "65529"],
