@@ -1198,6 +1198,9 @@ esac
             python_stub = bin_dir / "python"
             python_stub.write_text(
                 """#!/usr/bin/env bash
+if [[ " $* " == *" candidate-status "* ]]; then
+  exec "$PREFLIGHT_REAL_PYTHON" "$@"
+fi
 if [[ " $* " == *" -c "* ]]; then
   test -f "$AI_WPS_STATE_DIR/adapter.json" || exit 7
   grep -q verified-copy "$AI_WPS_STATE_DIR/adapter.json" || exit 8
@@ -1218,8 +1221,8 @@ if [ ! -f "$PREFLIGHT_STARTED" ]; then exit 1; fi
 url="${@: -1}"
 case "$url" in
   */health/live) printf '%s' '{"status":"live"}' ;;
-  */health/ready) printf '%s' '{"status":"ready"}' ;;
-  */health) printf '%s' '{"status":"ready","version":"0.23.1-alpha"}' ;;
+  */health/ready) printf '%s' '{"status":"degraded","subsystems":{"modelConfigurations":{"status":"ready"}}}' ;;
+  */health) printf '%s' '{"status":"degraded","version":"0.23.1-alpha","subsystems":{"modelConfigurations":{"status":"ready"},"taskRoutes":{"status":"ready"}}}' ;;
 esac
 """,
                 encoding="utf-8",
@@ -1233,6 +1236,7 @@ esac
                         bin_dir, environment.get("PATH", "")
                     ),
                     "PREFLIGHT_STARTED": str(started),
+                    "PREFLIGHT_REAL_PYTHON": sys.executable,
                 }
             )
 
@@ -1260,6 +1264,7 @@ esac
                 ),
                 '{"providerName":"verified-copy"}\n',
             )
+            self.assertIn("candidate_preflight=degraded", result.stdout)
 
     def test_candidate_preflight_reports_recovery_as_a_live_restricted_candidate(self) -> None:
         script = ROOT / "phase1-delivery-kit/installer/preflight_candidate.sh"
@@ -1281,7 +1286,7 @@ esac
             python_stub = bin_dir / "python"
             python_stub.write_text(
                 """#!/usr/bin/env bash
-if [[ " $* " == *" candidate-recovery-summary "* ]]; then
+if [[ " $* " == *" candidate-recovery-summary "* ]] || [[ " $* " == *" candidate-status "* ]]; then
   exec "$PREFLIGHT_REAL_PYTHON" "$@"
 fi
 if [[ " $* " == *" -m uvicorn "* ]]; then

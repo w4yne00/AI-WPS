@@ -18,6 +18,19 @@ fail() {
   exit 1
 }
 
+json_response_field() {
+  local field="$1"
+  "$PYTHON_BIN" -c '
+import json
+import sys
+
+payload = json.load(sys.stdin)
+data = payload.get("data", payload) if isinstance(payload, dict) else {}
+value = data.get(sys.argv[1], "") if isinstance(data, dict) else ""
+print(value if isinstance(value, str) else "")
+' "$field" candidate-status
+}
+
 stop_candidate() {
   if [ -n "$CANDIDATE_PID" ] && kill -0 "$CANDIDATE_PID" >/dev/null 2>&1; then
     kill "$CANDIDATE_PID" >/dev/null 2>&1 || true
@@ -108,27 +121,27 @@ READY_BODY="$(curl -sS "$BASE_URL/health/ready" 2>/dev/null || true)"
 HEALTH_BODY="$(curl -sS "$BASE_URL/health" 2>/dev/null || true)"
 [ -n "$HEALTH_BODY" ] || fail "candidate_health_unreachable"
 
-COMPACT_LIVE="$(printf '%s' "$LIVE_BODY" | tr -d '[:space:]')"
-COMPACT_READY="$(printf '%s' "$READY_BODY" | tr -d '[:space:]')"
-COMPACT_HEALTH="$(printf '%s' "$HEALTH_BODY" | tr -d '[:space:]')"
-case "$COMPACT_LIVE" in
-  *'"status":"live"'*) ;;
-  *) fail "candidate_live_contract_invalid" ;;
-esac
-case "$COMPACT_HEALTH" in
-  *'"version":"'"$EXPECTED_VERSION"'"'*) ;;
-  *) fail "candidate_version_mismatch expected=$EXPECTED_VERSION" ;;
-esac
+LIVE_STATUS="$(printf '%s' "$LIVE_BODY" | json_response_field status)" \
+  || fail "candidate_live_contract_invalid"
+READY_STATUS="$(printf '%s' "$READY_BODY" | json_response_field status)" \
+  || fail "candidate_ready_contract_invalid"
+HEALTH_STATUS="$(printf '%s' "$HEALTH_BODY" | json_response_field status)" \
+  || fail "candidate_health_contract_invalid"
+HEALTH_VERSION="$(printf '%s' "$HEALTH_BODY" | json_response_field version)" \
+  || fail "candidate_health_contract_invalid"
+[ "$LIVE_STATUS" = "live" ] || fail "candidate_live_contract_invalid"
+[ "$HEALTH_VERSION" = "$EXPECTED_VERSION" ] \
+  || fail "candidate_version_mismatch expected=$EXPECTED_VERSION"
 
 CANDIDATE_STATUS=""
-case "$COMPACT_HEALTH:$COMPACT_READY" in
-  *'"status":"recovery"'*:*'"status":"recovery"'*)
+case "$HEALTH_STATUS:$READY_STATUS" in
+  recovery:recovery)
     CANDIDATE_STATUS="recovery"
     ;;
-  *'"status":"ready"'*:*'"status":"ready"'*)
+  ready:ready)
     CANDIDATE_STATUS="ready"
     ;;
-  *'"status":"degraded"'*:*'"status":"degraded"'*)
+  degraded:degraded)
     CANDIDATE_STATUS="degraded"
     ;;
   *)

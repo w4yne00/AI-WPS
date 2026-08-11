@@ -479,6 +479,9 @@ exit 1
             python_stub.write_text(
                 """#!/usr/bin/env bash
 printf 'PYTHONNOUSERSITE=%s PYTHONPATH=%s ARGS=%s\\n' "${PYTHONNOUSERSITE:-}" "${PYTHONPATH:-}" "$*" >> "$PYTHON_STUB_LOG"
+if [[ " $* " == *" candidate-status "* ]]; then
+  exec "$PREFLIGHT_REAL_PYTHON" "$@"
+fi
 if [[ " $* " == *" -m uvicorn "* ]]; then
   printf '%s\\n' "$$" > "$PYTHON_STUB_STARTED"
   sleep 10
@@ -516,6 +519,7 @@ esac
                     "PATH": "{0}:{1}".format(bin_dir, environment.get("PATH", "")),
                     "PYTHON_STUB_LOG": str(python_log),
                     "PYTHON_STUB_STARTED": str(started),
+                    "PREFLIGHT_REAL_PYTHON": sys.executable,
                 }
             )
 
