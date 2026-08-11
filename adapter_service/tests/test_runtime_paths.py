@@ -1,3 +1,4 @@
+import json
 import os
 import shutil
 import stat
@@ -25,6 +26,92 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 class RuntimePathContractTests(unittest.TestCase):
+    def test_runtime_state_contract_is_observable_from_external_python_processes(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            program_root = temp_root / "adapter-start-kit"
+            service_root = program_root / "adapter_service"
+            shutil.copytree(ROOT / "adapter_service/app", service_root / "app")
+            probe = (
+                "import json, stat\n"
+                "from app.core.config import load_settings, save_config_payload\n"
+                "from app.core.runtime_paths import resolve_runtime_paths\n"
+                "from app.services.provider_client import save_local_api_key, save_route_api_key\n"
+                "from app.services.writing_policy.service import default_database_path\n"
+                "from app.services.writing_policy.store import WritingPolicyStore\n"
+                "save_config_payload({'servicePort': 19127})\n"
+                "save_local_api_key('local-secret')\n"
+                "save_route_api_key('word_smart_write', 'route-secret')\n"
+                "WritingPolicyStore(default_database_path())\n"
+                "paths = resolve_runtime_paths()\n"
+                "print(json.dumps({\n"
+                "  'port': load_settings().service_port,\n"
+                "  'config': str(paths.config_path),\n"
+                "  'local_key': str(paths.local_api_key_path),\n"
+                "  'route_key': str(paths.api_key_dir / 'word_smart_write'),\n"
+                "  'policy': str(paths.writing_policy_db_path),\n"
+                "  'local_mode': stat.S_IMODE(paths.local_api_key_path.stat().st_mode),\n"
+                "  'route_mode': stat.S_IMODE((paths.api_key_dir / 'word_smart_write').stat().st_mode),\n"
+                "}))\n"
+            )
+
+            for shared_state_enabled in (False, True):
+                with self.subTest(shared_state_enabled=shared_state_enabled):
+                    state_dir = temp_root / "shared-state"
+                    environment = dict(os.environ)
+                    environment["PYTHONPATH"] = str(service_root)
+                    for name in (
+                        "AI_WPS_STATE_DIR",
+                        "AI_WPS_BACKUP_DIR",
+                        "AI_WPS_VAR_DIR",
+                        "AI_WPS_WRITING_POLICY_DB",
+                    ):
+                        environment.pop(name, None)
+                    if shared_state_enabled:
+                        environment["AI_WPS_STATE_DIR"] = str(state_dir)
+
+                    result = subprocess.run(
+                        [os.sys.executable, "-c", probe],
+                        cwd=str(service_root),
+                        env=environment,
+                        check=False,
+                        capture_output=True,
+                        text=True,
+                    )
+
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    payload = json.loads(result.stdout.splitlines()[-1])
+                    expected_root = (
+                        state_dir if shared_state_enabled else program_root.resolve()
+                    )
+                    expected_config = (
+                        expected_root / "adapter.json"
+                        if shared_state_enabled
+                        else expected_root / "config/adapter.json"
+                    )
+                    expected_local_key = (
+                        expected_root / "provider_api_key"
+                        if shared_state_enabled
+                        else expected_root / "run/provider_api_key"
+                    )
+                    expected_route_key = (
+                        expected_root / "provider_api_keys/word_smart_write"
+                        if shared_state_enabled
+                        else expected_root / "run/provider_api_keys/word_smart_write"
+                    )
+                    expected_policy = (
+                        expected_root / "writing_policies.db"
+                        if shared_state_enabled
+                        else expected_root / "run/writing_policies.db"
+                    )
+                    self.assertEqual(payload["port"], 19127)
+                    self.assertEqual(Path(payload["config"]), expected_config)
+                    self.assertEqual(Path(payload["local_key"]), expected_local_key)
+                    self.assertEqual(Path(payload["route_key"]), expected_route_key)
+                    self.assertEqual(Path(payload["policy"]), expected_policy)
+                    self.assertEqual(payload["local_mode"], 0o600)
+                    self.assertEqual(payload["route_mode"], 0o600)
+
     def test_shared_state_persists_configuration_model_key_and_policy_database(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
@@ -254,6 +341,27 @@ class RuntimePathContractTests(unittest.TestCase):
             for key_path in key_paths:
                 self.assertEqual(stat.S_IMODE(key_path.stat().st_mode), 0o600)
 
+    def test_key_file_is_private_even_when_final_permission_update_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target = Path(temp_dir) / "state" / "provider_api_key"
+            real_chmod = os.chmod
+
+            def fail_target_chmod(path, mode):
+                if Path(path) == target:
+                    raise OSError("simulated final chmod failure")
+                real_chmod(path, mode)
+
+            previous_umask = os.umask(0o022)
+            try:
+                with patch("app.services.provider_client.os.chmod", side_effect=fail_target_chmod):
+                    with self.assertRaisesRegex(OSError, "simulated final chmod failure"):
+                        save_local_api_key("local-secret", target)
+            finally:
+                os.umask(previous_umask)
+
+            self.assertTrue(target.is_file())
+            self.assertEqual(stat.S_IMODE(target.stat().st_mode), 0o600)
+
     def test_model_stores_follow_explicit_shared_state_by_default(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             state_dir = Path(temp_dir) / "state"
@@ -347,6 +455,105 @@ class RuntimePathContractTests(unittest.TestCase):
             self.assertEqual(paths.pid_path, program_root / "run" / "adapter.pid")
             self.assertEqual(paths.transaction_dir, program_root / "run" / "transactions")
             self.assertFalse(paths.shared_state_enabled)
+
+    def test_runtime_path_environment_requires_absolute_paths(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"AI_WPS_STATE_DIR": "relative/state"},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "AI_WPS_STATE_DIR.*absolute"):
+                resolve_runtime_paths()
+
+    def test_python_and_shell_reject_unicode_control_characters(self) -> None:
+        invalid_path = "/tmp/ai-wps\u0085state"
+        with patch.dict(
+            os.environ,
+            {"AI_WPS_STATE_DIR": invalid_path},
+            clear=True,
+        ):
+            with self.assertRaisesRegex(ValueError, "control characters"):
+                resolve_runtime_paths()
+
+        environment = dict(os.environ)
+        environment["AI_WPS_STATE_DIR"] = invalid_path
+        result = subprocess.run(
+            ["bash", str(ROOT / "adapter-start-kit/scripts/status_adapter.sh")],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("control_character_rejected", result.stderr)
+
+    def test_shell_runtime_path_contract_rejects_relative_paths(self) -> None:
+        environment = dict(os.environ)
+        environment["AI_WPS_STATE_DIR"] = "relative/state"
+        result = subprocess.run(
+            ["bash", str(ROOT / "adapter-start-kit/scripts/status_adapter.sh")],
+            env=environment,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("AI_WPS_STATE_DIR", result.stderr)
+        self.assertIn("absolute_path_required", result.stderr)
+
+    def test_systemd_unit_quotes_explicit_runtime_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "install with space%blue"
+            unit_path = Path(temp_dir) / "ai-wps-adapter.service"
+            environment = dict(os.environ)
+            environment.update(
+                {
+                    "UNIT_HELPER": str(
+                        ROOT / "adapter-start-kit/scripts/systemd_unit.sh"
+                    ),
+                    "UNIT_PATH": str(unit_path),
+                    "KIT_ROOT": str(root / "releases/current"),
+                    "PYTHON_BIN": str(root / "python env/bin/python3"),
+                    "PID_PATH": str(root / "var/run/adapter.pid"),
+                    "AI_WPS_STATE_DIR": str(root / "state"),
+                    "AI_WPS_BACKUP_DIR": str(root / "backups"),
+                    "AI_WPS_VAR_DIR": str(root / "var"),
+                }
+            )
+            result = subprocess.run(
+                [
+                    "bash",
+                    "-c",
+                    'source "$UNIT_HELPER"; '
+                    'render_adapter_systemd_unit "$UNIT_PATH" "wps-user" '
+                    '"$KIT_ROOT" "$PYTHON_BIN" "18100" "$PID_PATH" '
+                    '"$AI_WPS_STATE_DIR" "$AI_WPS_BACKUP_DIR" "$AI_WPS_VAR_DIR"',
+                ],
+                env=environment,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            unit = unit_path.read_text(encoding="utf-8")
+            escaped_root = str(root).replace("%", "%%")
+            self.assertIn(
+                'Environment="AI_WPS_STATE_DIR={0}/state"'.format(escaped_root),
+                unit,
+            )
+            self.assertIn(
+                'WorkingDirectory="{0}/releases/current"'.format(escaped_root),
+                unit,
+            )
+            self.assertIn(
+                'ExecStart=/bin/bash "{0}/releases/current/scripts/start_adapter.sh" "18100"'.format(
+                    escaped_root
+                ),
+                unit,
+            )
+            self.assertNotIn("Environment=AI_WPS_STATE_DIR=", unit)
 
 
 if __name__ == "__main__":

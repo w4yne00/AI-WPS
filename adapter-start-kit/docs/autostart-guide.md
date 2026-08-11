@@ -29,6 +29,9 @@ AI_WPS_VAR_DIR="$HOME/ai-wps-phase1/var" \
 bash scripts/install_autostart.sh 18100
 ```
 
+运行目录变量必须是绝对路径且不得包含控制字符；允许路径包含空格，安装脚本会按
+systemd 语法引用和转义。变量值不会展开 `~`，请使用 `$HOME`。
+
 脚本会自动请求 `sudo`，并默认使用执行 sudo 的登录用户运行 adapter。若需要指定运行用户：
 
 ```bash

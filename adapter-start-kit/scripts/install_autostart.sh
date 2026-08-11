@@ -7,6 +7,7 @@ REQUESTED_BACKUP_DIR="${AI_WPS_BACKUP_DIR:-}"
 REQUESTED_VAR_DIR="${AI_WPS_VAR_DIR:-}"
 source "$KIT_ROOT/scripts/runtime_paths.sh"
 resolve_adapter_runtime_paths "$KIT_ROOT"
+source "$KIT_ROOT/scripts/systemd_unit.sh"
 PORT="${1:-18100}"
 SERVICE_USER="${2:-${SUDO_USER:-$(id -un)}}"
 SERVICE_NAME="${SERVICE_NAME:-ai-wps-adapter.service}"
@@ -42,36 +43,16 @@ if ! id "$SERVICE_USER" >/dev/null 2>&1; then
   exit 1
 fi
 
-RUNTIME_ENVIRONMENT_LINES=""
-if [ -n "$REQUESTED_STATE_DIR$REQUESTED_BACKUP_DIR$REQUESTED_VAR_DIR" ]; then
-  RUNTIME_ENVIRONMENT_LINES="Environment=AI_WPS_STATE_DIR=${AI_WPS_STATE_DIR:-}
-Environment=AI_WPS_BACKUP_DIR=${AI_WPS_BACKUP_DIR:-}
-Environment=AI_WPS_VAR_DIR=${AI_WPS_VAR_DIR:-}"
-fi
-
-cat > "$SERVICE_FILE" <<EOF
-[Unit]
-Description=AI-WPS local adapter
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=forking
-User=$SERVICE_USER
-WorkingDirectory=$KIT_ROOT
-Environment=PYTHON_BIN=$PYTHON_BIN
-$RUNTIME_ENVIRONMENT_LINES
-PIDFile=$ADAPTER_PID_FILE
-ExecStart=/bin/bash $KIT_ROOT/scripts/start_adapter.sh $PORT
-ExecStop=/bin/bash $KIT_ROOT/scripts/stop_adapter.sh $PORT
-Restart=on-failure
-RestartSec=10
-TimeoutStartSec=30
-TimeoutStopSec=20
-
-[Install]
-WantedBy=multi-user.target
-EOF
+render_adapter_systemd_unit \
+  "$SERVICE_FILE" \
+  "$SERVICE_USER" \
+  "$KIT_ROOT" \
+  "$PYTHON_BIN" \
+  "$PORT" \
+  "$ADAPTER_PID_FILE" \
+  "$REQUESTED_STATE_DIR" \
+  "$REQUESTED_BACKUP_DIR" \
+  "$REQUESTED_VAR_DIR"
 
 chmod 644 "$SERVICE_FILE"
 systemctl daemon-reload

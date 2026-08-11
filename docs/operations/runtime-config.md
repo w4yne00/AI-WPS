@@ -19,6 +19,10 @@ The directories have separate responsibilities:
 - `AI_WPS_BACKUP_DIR`: reserved for validated whole-state snapshots. It is not a live configuration source.
 - `AI_WPS_VAR_DIR`: `logs/`, `run/adapter.pid`, and `transactions/`. These files are excluded from state snapshots.
 
+Each configured value must be an absolute path and must not contain control
+characters. Paths containing spaces are supported, including in the generated
+systemd unit. `~` is not expanded; use `$HOME` when exporting a value.
+
 When only `AI_WPS_STATE_DIR` is set, `backups/` and `var/` default to siblings of
 that directory. `AI_WPS_BACKUP_DIR` and `AI_WPS_VAR_DIR` override those derived
 locations. When none of the three variables is set, the Adapter keeps the legacy

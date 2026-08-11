@@ -1450,12 +1450,28 @@ def get_route_api_key_path(api_key_ref: str, base_path: Optional[Path] = None) -
     return resolve_runtime_paths().api_key_dir / safe_ref
 
 
-def save_local_api_key(api_key: str, path: Optional[Path] = None) -> None:
-    target = get_local_api_key_path(path)
+def _write_private_api_key(target: Path, api_key: str) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     os.chmod(str(target.parent), 0o700)
-    target.write_text(api_key.strip(), encoding="utf-8")
-    os.chmod(str(target), 0o600)
+    temporary = target.parent / ".{0}.{1}.tmp".format(target.name, uuid.uuid4().hex)
+    descriptor = os.open(
+        str(temporary),
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+        0o600,
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(api_key.strip())
+        os.replace(str(temporary), str(target))
+        os.chmod(str(target), 0o600)
+    finally:
+        if temporary.exists():
+            temporary.unlink()
+
+
+def save_local_api_key(api_key: str, path: Optional[Path] = None) -> None:
+    target = get_local_api_key_path(path)
+    _write_private_api_key(target, api_key)
 
 
 def clear_local_api_key(path: Optional[Path] = None) -> None:
@@ -1473,10 +1489,7 @@ def load_local_api_key(path: Optional[Path] = None) -> str:
 
 def save_route_api_key(api_key_ref: str, api_key: str, base_path: Optional[Path] = None) -> None:
     target = get_route_api_key_path(api_key_ref, base_path)
-    target.parent.mkdir(parents=True, exist_ok=True)
-    os.chmod(str(target.parent), 0o700)
-    target.write_text(api_key.strip(), encoding="utf-8")
-    os.chmod(str(target), 0o600)
+    _write_private_api_key(target, api_key)
 
 
 def clear_route_api_key(api_key_ref: str, base_path: Optional[Path] = None) -> None:

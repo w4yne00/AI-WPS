@@ -1,9 +1,34 @@
 #!/usr/bin/env bash
 
+validate_adapter_runtime_path() {
+  local name="$1"
+  local value="$2"
+  if [ -z "$value" ]; then
+    return 0
+  fi
+  case "$value" in
+    /*) ;;
+    *)
+      echo "runtime_path_invalid=$name reason=absolute_path_required" >&2
+      return 1
+      ;;
+  esac
+  case "$value" in
+    *[[:cntrl:]]*)
+      echo "runtime_path_invalid=$name reason=control_character_rejected" >&2
+      return 1
+      ;;
+  esac
+}
+
 resolve_adapter_runtime_paths() {
   local kit_root="$1"
   local state_dir="${AI_WPS_STATE_DIR:-}"
   local configured_var_dir="${AI_WPS_VAR_DIR:-}"
+
+  validate_adapter_runtime_path "AI_WPS_STATE_DIR" "$state_dir"
+  validate_adapter_runtime_path "AI_WPS_BACKUP_DIR" "${AI_WPS_BACKUP_DIR:-}"
+  validate_adapter_runtime_path "AI_WPS_VAR_DIR" "$configured_var_dir"
 
   if [ -n "$state_dir" ]; then
     local layout_root

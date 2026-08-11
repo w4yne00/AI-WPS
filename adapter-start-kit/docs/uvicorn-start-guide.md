@@ -42,6 +42,8 @@ bash scripts/start_uvicorn_adapter.sh 18100
 API Key 与写作规范库进入 `state/`；日志、PID 和事务记录分别进入
 `var/logs/`、`var/run/` 和 `var/transactions/`，不属于运行数据快照。
 三个变量均未设置时继续使用旧版启动包内的 `config/`、`run/` 和 `logs/`。
+三个变量必须填写绝对路径且不得包含控制字符；允许路径包含空格。变量值不会展开
+`~`，请使用 `$HOME`。
 
 成功标志：
 

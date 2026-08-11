@@ -121,6 +121,9 @@ class PackagingScriptTests(unittest.TestCase):
         install_script = (ROOT / "adapter-start-kit/scripts/install_autostart.sh").read_text(
             encoding="utf-8"
         )
+        unit_script = (ROOT / "adapter-start-kit/scripts/systemd_unit.sh").read_text(
+            encoding="utf-8"
+        )
         uninstall_script = (ROOT / "adapter-start-kit/scripts/uninstall_autostart.sh").read_text(
             encoding="utf-8"
         )
@@ -128,10 +131,11 @@ class PackagingScriptTests(unittest.TestCase):
 
         self.assertIn("ai-wps-adapter.service", install_script)
         self.assertIn("systemctl enable --now", install_script)
-        self.assertIn("ExecStart=", install_script)
-        self.assertIn("scripts/start_adapter.sh", install_script)
-        self.assertIn("Restart=on-failure", install_script)
-        self.assertIn("User=", install_script)
+        self.assertIn("render_adapter_systemd_unit", install_script)
+        self.assertIn("ExecStart=", unit_script)
+        self.assertIn("scripts/start_adapter.sh", unit_script)
+        self.assertIn("Restart=on-failure", unit_script)
+        self.assertIn("User=", unit_script)
         self.assertIn("systemctl disable --now", uninstall_script)
         self.assertIn("daemon-reload", uninstall_script)
         self.assertIn("开机自启动", guide)

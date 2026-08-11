@@ -1,4 +1,5 @@
 import os
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
@@ -8,8 +9,15 @@ PROGRAM_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _configured_path(name: str) -> Optional[Path]:
-    value = os.environ.get(name, "").strip()
-    return Path(value).expanduser() if value else None
+    value = os.environ.get(name, "")
+    if not value:
+        return None
+    if any(unicodedata.category(character) == "Cc" for character in value):
+        raise ValueError("{0} must not contain control characters".format(name))
+    path = Path(value)
+    if not path.is_absolute():
+        raise ValueError("{0} must be an absolute path".format(name))
+    return path
 
 
 @dataclass(frozen=True)

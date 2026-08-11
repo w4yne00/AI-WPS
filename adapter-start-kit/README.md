@@ -29,6 +29,10 @@ and transaction records, so none of those files enter a state snapshot. If only
 directories. If no path variables are set, existing `config/`, `run/`, and
 `logs/` locations remain in use for legacy installations.
 
+Configured runtime directories must use absolute paths and must not contain
+control characters. Paths containing spaces are supported. Use `$HOME` rather
+than `~`, because runtime path values are not shell-expanded.
+
 ## Uvicorn Operations
 
 The start kit now treats the uvicorn/FastAPI adapter as the managed runtime.
