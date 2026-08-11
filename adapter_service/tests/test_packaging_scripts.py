@@ -1126,6 +1126,19 @@ esac
         )
         self.assertIn("prepare_release_transaction", install_flow)
         self.assertIn("finalize_release_generation", install_flow)
+        self.assertIn("commit_release_generation", install_flow)
+        self.assertLess(
+            install_flow.index("switch_release_generation"),
+            install_flow.index("finalize_release_generation"),
+        )
+        self.assertLess(
+            install_flow.index("finalize_release_generation"),
+            install_flow.index("start_and_check_adapter"),
+        )
+        self.assertLess(
+            install_flow.index("start_and_check_adapter"),
+            install_flow.index("commit_release_generation"),
+        )
         self.assertNotIn('rm -rf "$ADAPTER_TARGET"', installer)
         self.assertNotIn("preserve_adapter_runtime_config", installer)
         self.assertNotIn("restore_adapter_runtime_config", installer)

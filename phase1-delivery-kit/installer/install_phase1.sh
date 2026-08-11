@@ -996,9 +996,9 @@ switch_release_generation() {
 }
 
 finalize_release_generation() {
+  "$PYTHON_BIN" -s "$TRANSACTION_TOOL" finalize "$TRANSACTION_LOG" --defer-commit \
+    || fail "release_generation_finalization_failed"
   if [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" = "1" ]; then
-    "$PYTHON_BIN" -s "$TRANSACTION_TOOL" finalize "$TRANSACTION_LOG" --defer-commit \
-      || fail "release_generation_finalization_failed"
     if ! write_systemd_handoff; then
       "$PYTHON_BIN" -s "$TRANSACTION_TOOL" rollback "$TRANSACTION_LOG" \
         || log "release_transaction_rollback_failed=$TRANSACTION_LOG"
@@ -1010,13 +1010,18 @@ finalize_release_generation() {
       log "release_generation=ready_to_commit version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
     fi
   else
-    "$PYTHON_BIN" -s "$TRANSACTION_TOOL" finalize "$TRANSACTION_LOG" \
-      || fail "release_generation_finalization_failed"
-    if [ "$ACTIVATE_RECOVERY" = "1" ]; then
-      log "recovery_mode_activated=true snapshot=$CANDIDATE_SNAPSHOT_ID"
-    else
-      log "release_generation=committed version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
-    fi
+    log "release_generation=verified version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
+  fi
+}
+
+commit_release_generation() {
+  [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" != "1" ] || return 0
+  "$PYTHON_BIN" -s "$TRANSACTION_TOOL" commit "$TRANSACTION_LOG" \
+    || fail "release_generation_commit_failed"
+  if [ "$ACTIVATE_RECOVERY" = "1" ]; then
+    log "recovery_mode_activated=true snapshot=$CANDIDATE_SNAPSHOT_ID"
+  else
+    log "release_generation=committed version=$RELEASE_VERSION snapshot=$CANDIDATE_SNAPSHOT_ID"
   fi
 }
 
@@ -1130,7 +1135,8 @@ cleanup_installation_candidate() {
     if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
       && [ "$transaction_status" != "committed" ] \
       && [ "$transaction_status" != "recovery_activated" ] \
-      && [ "$transaction_status" != "ready_to_commit" ]; then
+      && { [ "$transaction_status" != "ready_to_commit" ] \
+        || [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" != "1" ]; }; then
       ADAPTER_TARGET="$CURRENT_LINK"
       if [ -f "$ADAPTER_TARGET/scripts/stop_adapter.sh" ]; then
         AI_WPS_STATE_DIR="$STATE_DIR" \
@@ -1155,7 +1161,8 @@ cleanup_installation_candidate() {
   if [ "${RELEASE_SWITCHED:-0}" = "1" ] \
     && [ "$transaction_status" != "committed" ] \
     && [ "$transaction_status" != "recovery_activated" ] \
-    && [ "$transaction_status" != "ready_to_commit" ]; then
+    && { [ "$transaction_status" != "ready_to_commit" ] \
+      || [ "${AI_WPS_DEFER_RELEASE_COMMIT:-0}" != "1" ]; }; then
     resolve_active_adapter
     restart_previous_adapter
   fi
@@ -1216,8 +1223,9 @@ ln -s "$RELEASE_TARGET" "$CURRENT_CANDIDATE"
 prepare_release_transaction
 RELEASE_SWITCHED="1"
 switch_release_generation
-start_and_check_adapter
 finalize_release_generation
+start_and_check_adapter
+commit_release_generation
 
 cleanup_installation_candidate
 trap - EXIT

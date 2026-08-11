@@ -314,10 +314,10 @@ class ReleaseTransactionTests(unittest.TestCase):
                 "new",
             )
 
-    def test_external_commit_failure_keeps_compensation_available(self) -> None:
+    def test_external_commit_allows_verified_runtime_state_to_evolve(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             paths = self._prepare_generation(Path(temp_dir))
-            transaction_log = self._prepare_transaction(paths, "txn-external-failure")
+            transaction_log = self._prepare_transaction(paths, "txn-runtime-write")
             self.assertEqual(self._run("switch", str(transaction_log)).returncode, 0)
             self.assertEqual(
                 self._run(
@@ -331,13 +331,38 @@ class ReleaseTransactionTests(unittest.TestCase):
 
             committed = self._run("commit", str(transaction_log))
 
+            self.assertEqual(committed.returncode, 0, committed.stderr or committed.stdout)
+            transaction = json.loads(transaction_log.read_text(encoding="utf-8"))
+            self.assertEqual(transaction["status"], "committed")
+            self.assertEqual(
+                (paths["state"] / "version.txt").read_text(encoding="utf-8"),
+                "mutated-after-systemd-start",
+            )
+
+    def test_external_commit_failure_keeps_compensation_available(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            paths = self._prepare_generation(Path(temp_dir))
+            transaction_log = self._prepare_transaction(paths, "txn-external-failure")
+            self.assertEqual(self._run("switch", str(transaction_log)).returncode, 0)
+            self.assertEqual(
+                self._run(
+                    "finalize", str(transaction_log), "--defer-commit"
+                ).returncode,
+                0,
+            )
+            (paths["release_target"] / "version.txt").write_text(
+                "tampered-after-verification", encoding="utf-8"
+            )
+
+            committed = self._run("commit", str(transaction_log))
+
             self.assertNotEqual(committed.returncode, 0)
             transaction = json.loads(transaction_log.read_text(encoding="utf-8"))
             self.assertEqual(transaction["status"], "verification_failed")
             recovered = self._run("recover", str(transaction_log))
             self.assertEqual(recovered.returncode, 0, recovered.stderr or recovered.stdout)
             self.assertEqual(
-                (paths["state"] / "version.txt").read_text(encoding="utf-8"),
+                (paths["release_target"] / "version.txt").read_text(encoding="utf-8"),
                 "old",
             )
 

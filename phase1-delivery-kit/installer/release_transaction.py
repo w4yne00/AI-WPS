@@ -444,6 +444,15 @@ def _finalize(transaction_path, defer_commit=False, external_commit=False):
                 raise TransactionError(
                     "component_target_missing name={0}".format(component["name"])
                 )
+            if (
+                external_commit
+                and component["name"] == "runtime_state_snapshot"
+            ):
+                if component.get("verified") is not True:
+                    raise TransactionError(
+                        "component_not_preverified name={0}".format(component["name"])
+                    )
+                continue
             if _hash_path(target) != component["candidateSha256"]:
                 raise TransactionError(
                     "component_verification_failed name={0}".format(component["name"])
