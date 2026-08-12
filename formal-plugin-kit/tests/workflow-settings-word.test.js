@@ -226,11 +226,11 @@ assert.strictEqual(integratedActivation({ profileCount: 0, activeProfileId: "" }
 assert.strictEqual(integratedActivation({ profileCount: 2, activeProfileId: "p1" }, false), false);
 
 const stripSource = functionSource("renderWorkflowProfileStrip");
-assert.ok(stripSource.includes("option.disabled = optionState.disabled"));
-assert.ok(stripSource.includes("select.disabled = isWorkflowInteractionBlocked()"));
+assert.ok(stripSource.includes("syncWorkflowProfileSelectOptions(select, optionModels)"));
+assert.ok(stripSource.includes("select.disabled = interactionBlocked || !availableProfiles.length"));
 
 const selectChangeSource = functionSource("handleWorkflowProfileSelectionChange");
-assert.ok(selectChangeSource.includes("activateWorkflowProfile"));
+assert.ok(selectChangeSource.includes("scheduleWorkflowProfileActivation"));
 assert.ok(selectChangeSource.includes("previousProfileId"));
 
 const activateSource = functionSource("activateWorkflowProfile");
@@ -374,6 +374,116 @@ reviewCheck("diagnostics feedback stays inside settings", () => {
 
 reviewCheck("workflow mutations pause settings refresh", () => {
   assert.ok(functionSource("setWorkflowProfileMutationBusy").includes("syncSettingsRefreshController()"));
+});
+
+reviewCheck("repeated model selector renders preserve native option nodes", () => {
+  function createSelect() {
+    const select = {
+      children: [],
+      disabled: false,
+      appendChild(option) {
+        this.children.push(option);
+      }
+    };
+    Object.defineProperty(select, "innerHTML", {
+      get() { return ""; },
+      set() { this.children = []; }
+    });
+    return select;
+  }
+
+  const select = createSelect();
+  const nodes = {
+    "workflow-profile-strip": { hidden: false },
+    "workflow-profile-select": select,
+    "workflow-profile-current": { textContent: "" }
+  };
+  const selectorState = {
+    workflowProfileSelections: { "word.smart_write": "profile-a" }
+  };
+  const profileData = {
+    taskType: "word.smart_write",
+    activeProfileId: "profile-a",
+    profiles: [
+      { id: "profile-a", name: "主模型", complete: true, accessMethod: "direct_model", modelName: "model-a" },
+      { id: "profile-b", name: "备用模型", complete: true, accessMethod: "workflow_platform", modelName: "" }
+    ]
+  };
+  const renderSelector = loadFunction("renderWorkflowProfileStrip", {
+    state: selectorState,
+    helpers: { getActiveWorkflowProfileName() { return "主模型"; } },
+    byId(id) { return nodes[id]; },
+    getCurrentWorkflowTaskType() { return "word.smart_write"; },
+    getWorkflowProfileData() { return profileData; },
+    getWorkflowProfileOptionState(profile) {
+      return { disabled: !profile.complete };
+    },
+    isWorkflowInteractionBlocked() { return false; },
+    setNodeTextIfChanged(node, value) { node.textContent = value; },
+    syncWorkflowProfileSelectOptions: loadFunction("syncWorkflowProfileSelectOptions", {
+      document: { createElement() { return {}; } }
+    }),
+    document: { createElement() { return {}; } }
+  });
+
+  renderSelector();
+  const firstOptions = select.children.slice();
+  renderSelector();
+  assert.strictEqual(select.children.length, 2);
+  assert.strictEqual(select.children[0], firstOptions[0]);
+  assert.strictEqual(select.children[1], firstOptions[1]);
+});
+
+reviewCheck("model activation starts after the native select change event", () => {
+  const callbacks = [];
+  const calls = [];
+  const activationState = {
+    workflowProfileSelections: { "word.smart_write": "profile-a" },
+    workflowProfileActivationTimer: null
+  };
+  const scheduleActivation = loadFunction("scheduleWorkflowProfileActivation", {
+    state: activationState,
+    window: {
+      setTimeout(callback) { callbacks.push(callback); return callbacks.length; },
+      clearTimeout() {}
+    },
+    activateWorkflowProfile(profileId, taskType, previousProfileId) {
+      calls.push([profileId, taskType, previousProfileId]);
+    }
+  });
+
+  scheduleActivation("profile-b", "word.smart_write", "profile-a");
+  assert.deepStrictEqual(calls, []);
+  assert.strictEqual(callbacks.length, 1);
+  callbacks[0]();
+  assert.deepStrictEqual(calls, [["profile-b", "word.smart_write", "profile-a"]]);
+  assert.strictEqual(activationState.workflowProfileActivationTimer, null);
+});
+
+reviewCheck("rapid model selections activate only the latest choice", () => {
+  let nextTimerId = 1;
+  const callbacks = new Map();
+  const calls = [];
+  const activationState = { workflowProfileActivationTimer: null };
+  const scheduleActivation = loadFunction("scheduleWorkflowProfileActivation", {
+    state: activationState,
+    window: {
+      setTimeout(callback) {
+        const timerId = nextTimerId;
+        nextTimerId += 1;
+        callbacks.set(timerId, callback);
+        return timerId;
+      },
+      clearTimeout(timerId) { callbacks.delete(timerId); }
+    },
+    activateWorkflowProfile(profileId) { calls.push(profileId); }
+  });
+
+  scheduleActivation("profile-b", "word.smart_write", "profile-a");
+  scheduleActivation("profile-c", "word.smart_write", "profile-a");
+  assert.strictEqual(callbacks.size, 1);
+  callbacks.values().next().value();
+  assert.deepStrictEqual(calls, ["profile-c"]);
 });
 
 if (reviewFailures.length) {

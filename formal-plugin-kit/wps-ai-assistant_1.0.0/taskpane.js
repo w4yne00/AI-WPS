@@ -227,6 +227,7 @@
     workflowProfileSelections: {},
     workflowProfileRequestSequence: {},
     workflowProfileMutationBusy: false,
+    workflowProfileActivationTimer: null,
     settingsWorkflowTaskType: "word.smart_write",
     workflowProfileEditor: null,
     configRefreshRequestId: 0,
@@ -2104,6 +2105,44 @@
     }));
   }
 
+  function syncWorkflowProfileSelectOptions(select, optionModels) {
+    var options = select.options || select.children || [];
+    var canReuseOptions = options.length === optionModels.length;
+    var index;
+    var option;
+    var model;
+    if (canReuseOptions) {
+      for (index = 0; index < optionModels.length; index += 1) {
+        if (!options[index] || String(options[index].value || "") !== optionModels[index].value) {
+          canReuseOptions = false;
+          break;
+        }
+      }
+    }
+    if (!canReuseOptions) {
+      select.innerHTML = "";
+      for (index = 0; index < optionModels.length; index += 1) {
+        option = document.createElement("option");
+        option.value = optionModels[index].value;
+        select.appendChild(option);
+      }
+      options = select.options || select.children || [];
+    }
+    for (index = 0; index < optionModels.length; index += 1) {
+      option = options[index];
+      model = optionModels[index];
+      if (option.textContent !== model.text) {
+        option.textContent = model.text;
+      }
+      if (option.selected !== model.selected) {
+        option.selected = model.selected;
+      }
+      if (option.disabled !== model.disabled) {
+        option.disabled = model.disabled;
+      }
+    }
+  }
+
   function renderWorkflowProfileStrip() {
     var strip = byId("workflow-profile-strip");
     var select = byId("workflow-profile-select");
@@ -2112,6 +2151,8 @@
     var data;
     var selectedId;
     var availableProfiles;
+    var optionModels = [];
+    var interactionBlocked;
     if (!strip || !select || !current) {
       return;
     }
@@ -2122,32 +2163,37 @@
     data = getWorkflowProfileData(taskType);
     availableProfiles = data.profiles.filter(function (profile) { return profile.complete; });
     selectedId = state.workflowProfileSelections[taskType] || data.activeProfileId || "";
-    select.innerHTML = "";
+    interactionBlocked = isWorkflowInteractionBlocked();
     if (!availableProfiles.length) {
-      var emptyOption = document.createElement("option");
-      emptyOption.value = "";
-      emptyOption.textContent = data.loadError ? "配置读取失败" : "未配置";
-      select.appendChild(emptyOption);
+      optionModels.push({
+        value: "",
+        text: data.loadError ? "配置读取失败" : "未配置",
+        selected: true,
+        disabled: false
+      });
     } else {
       availableProfiles.forEach(function (profile) {
-        var option = document.createElement("option");
         var optionState = getWorkflowProfileOptionState(
           profile,
           data.activeProfileId,
-          isWorkflowInteractionBlocked()
+          interactionBlocked
         );
-        option.value = profile.id;
-        option.textContent = (profile.id === data.activeProfileId ? "✓ " : "") + profile.name + " · " +
-          (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + profile.modelName : "") : "工作流平台");
-        option.selected = profile.id === selectedId;
-        option.disabled = optionState.disabled;
-        select.appendChild(option);
+        optionModels.push({
+          value: profile.id,
+          text: (profile.id === data.activeProfileId ? "✓ " : "") + profile.name + " · " +
+            (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + profile.modelName : "") : "工作流平台"),
+          selected: profile.id === selectedId,
+          disabled: optionState.disabled
+        });
       });
     }
-    select.disabled = isWorkflowInteractionBlocked() || !availableProfiles.length;
-    current.textContent = "当前配置：" + (
+    syncWorkflowProfileSelectOptions(select, optionModels);
+    if (select.disabled !== (interactionBlocked || !availableProfiles.length)) {
+      select.disabled = interactionBlocked || !availableProfiles.length;
+    }
+    setNodeTextIfChanged(current, "当前配置：" + (
       helpers.getActiveWorkflowProfileName ? helpers.getActiveWorkflowProfileName(data) : "尚未配置"
-    );
+    ));
   }
 
   function getWorkflowProfileById(taskType, profileId) {
@@ -2702,17 +2748,31 @@
       });
   }
 
+  function scheduleWorkflowProfileActivation(profileId, taskType, previousProfileId) {
+    if (state.workflowProfileActivationTimer !== null) {
+      window.clearTimeout(state.workflowProfileActivationTimer);
+    }
+    state.workflowProfileActivationTimer = window.setTimeout(function () {
+      state.workflowProfileActivationTimer = null;
+      activateWorkflowProfile(profileId, taskType, previousProfileId);
+    }, 0);
+  }
+
   function handleWorkflowProfileSelectionChange(event) {
     var taskType = getCurrentWorkflowTaskType();
     var data = getWorkflowProfileData(taskType);
     var previousProfileId = data.activeProfileId || state.workflowProfileSelections[taskType] || "";
     var profileId = event.target.value;
     if (!profileId || profileId === previousProfileId) {
+      if (state.workflowProfileActivationTimer !== null) {
+        window.clearTimeout(state.workflowProfileActivationTimer);
+        state.workflowProfileActivationTimer = null;
+      }
       state.workflowProfileSelections[taskType] = previousProfileId;
       renderWorkflowProfileStrip();
       return;
     }
-    activateWorkflowProfile(profileId, taskType, previousProfileId);
+    scheduleWorkflowProfileActivation(profileId, taskType, previousProfileId);
   }
 
   function handleWorkflowTaskTabClick(event) {
