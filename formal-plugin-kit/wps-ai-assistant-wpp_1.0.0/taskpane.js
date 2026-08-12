@@ -49,6 +49,7 @@
     profilesByTask: {},
     selectedProfileId: "",
     workflowProfileMutationBusy: false,
+    workflowProfileActivationTimer: null,
     profileLoadRequestId: 0,
     workflowEditor: { open: false, mode: "create", profileId: "", dirty: false },
     providerBaseUrl: "",
@@ -1575,10 +1576,49 @@
     button.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
+  function syncWorkflowProfileSelectOptions(select, optionModels) {
+    var options = select.options || select.children || [];
+    var canReuseOptions = options.length === optionModels.length;
+    var index;
+    var option;
+    var model;
+    if (canReuseOptions) {
+      for (index = 0; index < optionModels.length; index += 1) {
+        if (!options[index] || String(options[index].value || "") !== optionModels[index].value) {
+          canReuseOptions = false;
+          break;
+        }
+      }
+    }
+    if (!canReuseOptions) {
+      select.innerHTML = "";
+      for (index = 0; index < optionModels.length; index += 1) {
+        option = document.createElement("option");
+        option.value = optionModels[index].value;
+        select.appendChild(option);
+      }
+      options = select.options || select.children || [];
+    }
+    for (index = 0; index < optionModels.length; index += 1) {
+      option = options[index];
+      model = optionModels[index];
+      if (option.textContent !== model.text) {
+        option.textContent = model.text;
+      }
+      if (option.selected !== model.selected) {
+        option.selected = model.selected;
+      }
+      if (option.disabled !== model.disabled) {
+        option.disabled = model.disabled;
+      }
+    }
+  }
+
   function renderProfileStrip() {
     var select = byId("workflow-profile-select");
     var selectedProfileId = state.selectedProfileId || state.profiles.activeProfileId;
     var availableProfiles = state.profiles.profiles.filter(function (profile) { return profile.complete; });
+    var optionModels = [];
     if (!select) {
       return;
     }
@@ -1588,22 +1628,25 @@
         ? "选择结构审查模型配置"
         : "选择智能总结模型配置"
     );
-    select.innerHTML = "";
     if (!availableProfiles.length) {
-      select.innerHTML = state.profiles.loadError
-        ? '<option value="">配置读取失败</option>'
-        : '<option value="">未配置</option>';
+      optionModels.push({
+        value: "",
+        text: state.profiles.loadError ? "配置读取失败" : "未配置",
+        selected: true,
+        disabled: false
+      });
     } else {
       availableProfiles.forEach(function (profile) {
-        var option = document.createElement("option");
         var optionState = workflowProfileOptionState(profile);
-        option.value = optionState.id;
-        option.textContent = optionState.label;
-        option.disabled = optionState.disabled;
-        option.selected = optionState.id === selectedProfileId;
-        select.appendChild(option);
+        optionModels.push({
+          value: optionState.id,
+          text: optionState.label,
+          disabled: optionState.disabled,
+          selected: optionState.id === selectedProfileId
+        });
       });
     }
+    syncWorkflowProfileSelectOptions(select, optionModels);
     select.disabled = state.busy || state.workflowProfileMutationBusy || !availableProfiles.length;
     setNodeTextIfChanged(byId("workflow-switch-feedback"), "当前配置：" + activeProfileName());
   }
@@ -2049,6 +2092,21 @@
         byId("workflow-switch-feedback").textContent = "切换失败，当前：" + activeProfileName();
         setStatus("切换模型配置失败：" + error.message);
       });
+  }
+
+  function cancelWorkflowProfileActivation() {
+    if (state.workflowProfileActivationTimer !== null) {
+      window.clearTimeout(state.workflowProfileActivationTimer);
+      state.workflowProfileActivationTimer = null;
+    }
+  }
+
+  function scheduleWorkflowProfileActivation(profileId) {
+    cancelWorkflowProfileActivation();
+    state.workflowProfileActivationTimer = window.setTimeout(function () {
+      state.workflowProfileActivationTimer = null;
+      activateWorkflowProfile(profileId);
+    }, 0);
   }
 
   function deleteWorkflowProfile(profileId) {
@@ -2542,7 +2600,7 @@
     byId("result-output").addEventListener("click", handleDocumentResultCopy);
     byId("workflow-profile-select").addEventListener("change", function (event) {
       state.selectedProfileId = event.target.value;
-      activateWorkflowProfile(event.target.value);
+      scheduleWorkflowProfileActivation(event.target.value);
     });
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileAction);
     byId("btn-new-workflow-profile").addEventListener("click", function () {

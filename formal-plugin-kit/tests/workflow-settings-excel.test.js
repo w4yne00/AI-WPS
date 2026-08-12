@@ -117,11 +117,11 @@ function assertImmediateActivationContract() {
 
   assertIncludesAll(renderStrip, [
     "helpers.workflowProfileOptionState",
-    "option.disabled = optionState.disabled",
+    "syncWorkflowProfileSelectOptions(select, optionModels)",
     "select.disabled = state.busy || state.workflowProfileMutationBusy"
   ]);
   assert.ok(bind.includes('byId("workflow-profile-select").addEventListener("change"'));
-  assert.ok(bind.includes("activateWorkflowProfile("));
+  assert.ok(bind.includes("scheduleWorkflowProfileActivation("));
   assert.ok(bind.includes("event.target.value"));
   assert.ok(!bind.includes("workflowProfileSelection = event.target.value"));
   assertIncludesAll(activate, [
@@ -563,6 +563,89 @@ function createRefreshHarness(options = {}) {
 }
 
 async function runSettingsBehaviorTests() {
+  const optionSelect = {
+    children: [],
+    disabled: false,
+    attributes: {},
+    appendChild(option) { this.children.push(option); },
+    setAttribute(name, value) { this.attributes[name] = value; }
+  };
+  Object.defineProperty(optionSelect, "innerHTML", {
+    get() { return ""; },
+    set() { this.children = []; }
+  });
+  const optionNodes = {
+    "workflow-profile-strip": { hidden: false },
+    "workflow-profile-select": optionSelect,
+    "workflow-switch-feedback": { textContent: "" }
+  };
+  const optionState = {
+    currentMode: "excelAnalysis",
+    busy: false,
+    workflowProfileMutationBusy: false,
+    workflowProfileSelections: { "excel.analysis": "profile-a" }
+  };
+  const optionProfiles = {
+    activeProfileId: "profile-a",
+    profiles: [
+      { id: "profile-a", name: "主模型", complete: true },
+      { id: "profile-b", name: "备用模型", complete: true }
+    ]
+  };
+  const syncOptions = loadFunction("syncWorkflowProfileSelectOptions", {
+    document: { createElement() { return {}; } }
+  });
+  const renderOptions = loadFunction("renderWorkflowProfileStrip", {
+    state: optionState,
+    helpers: {
+      workflowProfileOptionState(profile, activeProfileId) {
+        return { id: profile.id, label: profile.id === activeProfileId ? "✓ " + profile.name : profile.name, disabled: false };
+      }
+    },
+    EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
+    getTaskPageWorkflowType() { return "excel.analysis"; },
+    getWorkflowProfileData() { return optionProfiles; },
+    getActiveWorkflowProfileName() { return "主模型"; },
+    byId(id) { return optionNodes[id]; },
+    setNodeTextIfChanged(node, value) { node.textContent = value; },
+    syncWorkflowProfileSelectOptions: syncOptions,
+    document: { createElement() { return {}; } }
+  });
+  renderOptions();
+  const firstOptionNodes = optionSelect.children.slice();
+  renderOptions();
+  assert.strictEqual(optionSelect.children[0], firstOptionNodes[0]);
+  assert.strictEqual(optionSelect.children[1], firstOptionNodes[1]);
+
+  let nextTimerId = 1;
+  const pendingActivations = new Map();
+  const activatedProfiles = [];
+  const activationState = { workflowProfileActivationTimer: null };
+  const activationWindow = {
+    setTimeout(callback) {
+      const timerId = nextTimerId;
+      nextTimerId += 1;
+      pendingActivations.set(timerId, callback);
+      return timerId;
+    },
+    clearTimeout(timerId) { pendingActivations.delete(timerId); }
+  };
+  const cancelActivation = loadFunction("cancelWorkflowProfileActivation", {
+    state: activationState,
+    window: activationWindow
+  });
+  const scheduleActivation = loadFunction("scheduleWorkflowProfileActivation", {
+    state: activationState,
+    window: activationWindow,
+    cancelWorkflowProfileActivation: cancelActivation,
+    activateWorkflowProfile(profileId) { activatedProfiles.push(profileId); }
+  });
+  scheduleActivation("profile-b", "profile-a", "excel.analysis");
+  scheduleActivation("profile-c", "profile-a", "excel.analysis");
+  assert.strictEqual(pendingActivations.size, 1);
+  pendingActivations.values().next().value();
+  assert.deepStrictEqual(activatedProfiles, ["profile-c"]);
+
   const configFailure = createRefreshHarness({
     config: { success: false, data: {}, errors: [{ message: "配置读取失败" }] }
   });

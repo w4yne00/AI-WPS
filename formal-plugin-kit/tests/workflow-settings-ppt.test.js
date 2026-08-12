@@ -116,12 +116,12 @@ function testImmediateActivationContract() {
   const binding = functionSource("bindEvents");
   includesAll(render, [
     "workflowProfileOptionState",
-    "option.disabled = optionState.disabled",
+    "syncWorkflowProfileSelectOptions(select, optionModels)",
     "state.workflowProfileMutationBusy"
   ], "profile dropdown option state");
   includesAll(binding, [
     'byId("workflow-profile-select").addEventListener("change"',
-    "activateWorkflowProfile(event.target.value)"
+    "scheduleWorkflowProfileActivation(event.target.value)"
   ], "immediate dropdown activation");
   includesAll(activate, [
     "previousProfileId",
@@ -132,6 +132,86 @@ function testImmediateActivationContract() {
   ], "activation rollback and busy state");
   const disable = functionSource("setRunDisabled");
   assert.ok(disable.includes('"workflow-profile-select"'), "busy tasks must disable the dropdown");
+}
+
+function testStableProfileSelectionInteraction() {
+  const select = {
+    children: [],
+    disabled: false,
+    attributes: {},
+    appendChild(option) { this.children.push(option); },
+    setAttribute(name, value) { this.attributes[name] = value; }
+  };
+  Object.defineProperty(select, "innerHTML", {
+    get() { return ""; },
+    set() { this.children = []; }
+  });
+  const nodes = {
+    "workflow-profile-select": select,
+    "workflow-switch-feedback": { textContent: "" }
+  };
+  const profileState = {
+    workflowTaskType: "ppt.slide_assistant",
+    selectedProfileId: "profile-a",
+    profiles: {
+      activeProfileId: "profile-a",
+      profiles: [
+        { id: "profile-a", name: "主模型", complete: true },
+        { id: "profile-b", name: "备用模型", complete: true }
+      ]
+    },
+    busy: false,
+    workflowProfileMutationBusy: false
+  };
+  const syncOptions = loadPureFunction("syncWorkflowProfileSelectOptions", {
+    document: { createElement() { return {}; } }
+  });
+  const render = loadPureFunction("renderProfileStrip", {
+    state: profileState,
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
+    byId(id) { return nodes[id]; },
+    workflowProfileOptionState(profile) {
+      return { id: profile.id, label: profile.name, disabled: false };
+    },
+    activeProfileName() { return "主模型"; },
+    setNodeTextIfChanged(node, value) { node.textContent = value; },
+    syncWorkflowProfileSelectOptions: syncOptions,
+    document: { createElement() { return {}; } }
+  });
+  render();
+  const firstOptions = select.children.slice();
+  render();
+  assert.strictEqual(select.children[0], firstOptions[0]);
+  assert.strictEqual(select.children[1], firstOptions[1]);
+
+  let nextTimerId = 1;
+  const pending = new Map();
+  const activated = [];
+  const activationState = { workflowProfileActivationTimer: null };
+  const activationWindow = {
+    setTimeout(callback) {
+      const timerId = nextTimerId;
+      nextTimerId += 1;
+      pending.set(timerId, callback);
+      return timerId;
+    },
+    clearTimeout(timerId) { pending.delete(timerId); }
+  };
+  const cancelActivation = loadPureFunction("cancelWorkflowProfileActivation", {
+    state: activationState,
+    window: activationWindow
+  });
+  const scheduleActivation = loadPureFunction("scheduleWorkflowProfileActivation", {
+    state: activationState,
+    window: activationWindow,
+    cancelWorkflowProfileActivation: cancelActivation,
+    activateWorkflowProfile(profileId) { activated.push(profileId); }
+  });
+  scheduleActivation("profile-b");
+  scheduleActivation("profile-c");
+  assert.strictEqual(pending.size, 1);
+  pending.values().next().value();
+  assert.deepStrictEqual(activated, ["profile-c"]);
 }
 
 function testManagerAndEditorContract() {
@@ -379,6 +459,7 @@ testStaticMarkupContract();
 testStatusAndMutationBusyContract();
 testTaskScopedProfileAndHelperContract();
 testImmediateActivationContract();
+testStableProfileSelectionInteraction();
 testManagerAndEditorContract();
 testProfileLoadFailureAndRequestOrderingContract();
 testEscapedFallbackContract();

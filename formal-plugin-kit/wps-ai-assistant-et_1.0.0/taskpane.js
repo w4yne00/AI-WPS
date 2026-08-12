@@ -98,6 +98,7 @@
     workflowProfileLoadSequences: {},
     workflowTaskType: EXCEL_WORKFLOW_TASK_TYPE,
     workflowProfileMutationBusy: false,
+    workflowProfileActivationTimer: null,
     workflowEditor: { open: false, mode: "create", profileId: "", dirty: false },
     workflowDeleteCandidate: null,
     busy: false,
@@ -2064,6 +2065,44 @@
       : EXCEL_WORKFLOW_TASK_TYPE;
   }
 
+  function syncWorkflowProfileSelectOptions(select, optionModels) {
+    var options = select.options || select.children || [];
+    var canReuseOptions = options.length === optionModels.length;
+    var index;
+    var option;
+    var model;
+    if (canReuseOptions) {
+      for (index = 0; index < optionModels.length; index += 1) {
+        if (!options[index] || String(options[index].value || "") !== optionModels[index].value) {
+          canReuseOptions = false;
+          break;
+        }
+      }
+    }
+    if (!canReuseOptions) {
+      select.innerHTML = "";
+      for (index = 0; index < optionModels.length; index += 1) {
+        option = document.createElement("option");
+        option.value = optionModels[index].value;
+        select.appendChild(option);
+      }
+      options = select.options || select.children || [];
+    }
+    for (index = 0; index < optionModels.length; index += 1) {
+      option = options[index];
+      model = optionModels[index];
+      if (option.textContent !== model.text) {
+        option.textContent = model.text;
+      }
+      if (option.selected !== model.selected) {
+        option.selected = model.selected;
+      }
+      if (option.disabled !== model.disabled) {
+        option.disabled = model.disabled;
+      }
+    }
+  }
+
   function renderWorkflowProfileStrip() {
     var strip = byId("workflow-profile-strip");
     var select = byId("workflow-profile-select");
@@ -2072,20 +2111,21 @@
     var data = getWorkflowProfileData(taskType);
     var selectedId = state.workflowProfileSelections[taskType] || data.activeProfileId || "";
     var availableProfiles = data.profiles.filter(function (profile) { return profile.complete; });
+    var optionModels = [];
     if (!strip || !select || !feedback) {
       return;
     }
     strip.hidden = state.currentMode === "settings";
     select.setAttribute("aria-label", taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE ? "选择公式助手模型配置" : "选择智能分析模型配置");
-    select.innerHTML = "";
     if (!availableProfiles.length) {
-      var emptyOption = document.createElement("option");
-      emptyOption.value = "";
-      emptyOption.textContent = data.loadError ? "配置读取失败" : "未配置";
-      select.appendChild(emptyOption);
+      optionModels.push({
+        value: "",
+        text: data.loadError ? "配置读取失败" : "未配置",
+        selected: true,
+        disabled: false
+      });
     } else {
       availableProfiles.forEach(function (profile) {
-        var option = document.createElement("option");
         var optionState = helpers.workflowProfileOptionState
           ? helpers.workflowProfileOptionState(profile, data.activeProfileId)
           : {
@@ -2094,13 +2134,15 @@
               (profile.keyConfigured ? "" : "（Key 未配置）"),
             disabled: !profile.keyConfigured
           };
-        option.value = optionState.id;
-        option.textContent = optionState.label;
-        option.disabled = optionState.disabled;
-        option.selected = optionState.id === selectedId;
-        select.appendChild(option);
+        optionModels.push({
+          value: optionState.id,
+          text: optionState.label,
+          disabled: optionState.disabled,
+          selected: optionState.id === selectedId
+        });
       });
     }
+    syncWorkflowProfileSelectOptions(select, optionModels);
     select.disabled = state.busy || state.workflowProfileMutationBusy || !availableProfiles.length;
     setNodeTextIfChanged(
       feedback,
@@ -2578,6 +2620,21 @@
           "切换失败，当前：" + getActiveWorkflowProfileName(getWorkflowProfileData(targetTask))
         );
       });
+  }
+
+  function cancelWorkflowProfileActivation() {
+    if (state.workflowProfileActivationTimer !== null) {
+      window.clearTimeout(state.workflowProfileActivationTimer);
+      state.workflowProfileActivationTimer = null;
+    }
+  }
+
+  function scheduleWorkflowProfileActivation(profileId, previousProfileId, taskType) {
+    cancelWorkflowProfileActivation();
+    state.workflowProfileActivationTimer = window.setTimeout(function () {
+      state.workflowProfileActivationTimer = null;
+      activateWorkflowProfile(profileId, previousProfileId, taskType);
+    }, 0);
   }
 
   function showWorkflowDeleteDialog(profileId) {
@@ -3182,7 +3239,7 @@
     document.addEventListener("visibilitychange", syncScopeWatcher);
     byId("workflow-profile-select").addEventListener("change", function (event) {
       var taskType = getTaskPageWorkflowType();
-      activateWorkflowProfile(
+      scheduleWorkflowProfileActivation(
         event.target.value,
         getWorkflowProfileData(taskType).activeProfileId,
         taskType
