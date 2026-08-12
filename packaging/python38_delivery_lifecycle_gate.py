@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the complete v0.23.1 candidate lifecycle against the final archive."""
+"""Run the complete candidate lifecycle against the final delivery archive."""
 
 import argparse
 import hashlib
@@ -15,7 +15,7 @@ from typing import Dict, List, Optional, Tuple
 from urllib.request import urlopen
 
 
-SCENARIOS = ["fresh_install", "upgrade_v022", "damaged_v0230"]
+SCENARIOS = ["fresh_install", "upgrade_v022", "upgrade_v0231", "damaged_v0230"]
 FAULTS = [
     "python_import_failure",
     "candidate_start_failure",
@@ -326,7 +326,77 @@ def run_install_scenarios(
     print("lifecycle_fault=writing_policy_failure passed")
 
 
-def run_preflight_faults(delivery_root: Path, temp_root: Path, reserve_port) -> None:
+def run_v0231_upgrade_scenario(
+    delivery_root: Path,
+    baseline_root: Path,
+    temp_root: Path,
+    expected_version: str,
+    reserve_port,
+) -> None:
+    root = temp_root / "upgrade-v0231"
+    port = reserve_port()
+    baseline_result, baseline_environment = run_installer(
+        baseline_root, root, port
+    )
+    try:
+        verify_committed_install(root, "0.23.1-alpha")
+        install_root = root / "install"
+        jsaddons = root / "jsaddons"
+        baseline_release = install_root / "releases/0.23.1-alpha"
+        components = {
+            "adapter_release": baseline_release,
+            "word_plugin": jsaddons / "wps-ai-assistant_1.0.0",
+            "excel_plugin": jsaddons / "wps-ai-assistant-et_1.0.0",
+            "ppt_plugin": jsaddons / "wps-ai-assistant-wpp_1.0.0",
+            "publish_manifest": jsaddons / "publish.xml",
+            "runtime_state_snapshot": install_root / "state",
+            "current_pointer": install_root / "current",
+        }
+        for name in (
+            "adapter_release",
+            "word_plugin",
+            "excel_plugin",
+            "ppt_plugin",
+            "runtime_state_snapshot",
+        ):
+            (components[name] / ".v0231-lifecycle-sentinel").write_text(
+                name + "\n", encoding="utf-8"
+            )
+        with components["publish_manifest"].open("a", encoding="utf-8") as handle:
+            handle.write("\n<!-- v0231-lifecycle-sentinel -->\n")
+        before = {
+            name: component_fingerprint(path) for name, path in components.items()
+        }
+        interrupted, interrupted_environment = run_installer(
+            delivery_root,
+            root,
+            port,
+            expected_returncode=1,
+            environment_updates={
+                "AI_WPS_TRANSACTION_FAIL_AFTER": "after_switch:excel_plugin"
+            },
+        )
+        require(
+            "release_generation_switch_failed" in interrupted.stdout,
+            "V0231_UPGRADE_INTERRUPTION_NOT_INJECTED",
+        )
+        after = {
+            name: component_fingerprint(path) for name, path in components.items()
+        }
+        require(before == after, "V0231_UPGRADE_ROLLBACK_MISMATCH")
+        wait_for_adapter_version(port, "0.23.1-alpha")
+        require(
+            not (install_root / "releases" / expected_version).exists(),
+            "V0231_UPGRADE_PARTIAL_RELEASE_LEFT",
+        )
+    finally:
+        stop_installed_adapter(root, baseline_environment)
+    print("lifecycle_scenario=upgrade_v0231 passed")
+
+
+def run_preflight_faults(
+    delivery_root: Path, temp_root: Path, reserve_port, expected_version: str
+) -> None:
     preflight = delivery_root / "installer/preflight_candidate.sh"
 
     def run_fault(name: str, mutate) -> str:
@@ -345,7 +415,7 @@ def run_preflight_faults(delivery_root: Path, temp_root: Path, reserve_port) -> 
                 str(candidate),
                 str(candidate / "python-runtime"),
                 str(reserve_port()),
-                "0.23.1-alpha",
+                expected_version,
                 str(root / "preflight"),
             ],
             env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"),
@@ -389,7 +459,7 @@ def run_preflight_faults(delivery_root: Path, temp_root: Path, reserve_port) -> 
             path = candidate / relative
             path.write_text(
                 path.read_text(encoding="utf-8").replace(
-                    "0.23.1-alpha", "0.23.0-alpha"
+                    expected_version, "0.23.0-alpha"
                 ),
                 encoding="utf-8",
             )
@@ -555,19 +625,38 @@ def run_interruption_fault(
     print("lifecycle_fault=install_interruption passed")
 
 
-def run_gate(archive: Path, expected_version: str) -> None:
+def run_gate(
+    archive: Path,
+    expected_version: str,
+    baseline_archive: Optional[Path],
+) -> None:
     runtime_gate = load_runtime_gate()
     runtime_gate.require_python38()
+    if baseline_archive is None:
+        raise LifecycleFailure("BASELINE_ARCHIVE_REQUIRED")
     with tempfile.TemporaryDirectory(prefix="ai-wps-lifecycle-") as temp_dir:
         temp_root = Path(temp_dir)
         delivery_root = runtime_gate.safe_extract(archive, temp_root / "delivery")
+        baseline_root = runtime_gate.safe_extract(
+            baseline_archive, temp_root / "baseline-delivery"
+        )
         run_delivery_audit(delivery_root)
         runtime_gate.run_gate(archive, expected_version)
+        run_v0231_upgrade_scenario(
+            delivery_root,
+            baseline_root,
+            temp_root,
+            expected_version,
+            runtime_gate.reserve_port,
+        )
         run_install_scenarios(
             delivery_root, temp_root / "install-scenarios", expected_version, runtime_gate.reserve_port
         )
         run_preflight_faults(
-            delivery_root, temp_root / "preflight-faults", runtime_gate.reserve_port
+            delivery_root,
+            temp_root / "preflight-faults",
+            runtime_gate.reserve_port,
+            expected_version,
         )
         run_prewrite_guards(
             delivery_root, temp_root / "prewrite-faults", runtime_gate.reserve_port
@@ -585,6 +674,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("archive", nargs="?", type=Path)
     parser.add_argument("--expected-version")
+    parser.add_argument("--baseline-archive", type=Path)
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args(argv)
     if args.list:
@@ -593,7 +683,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if args.archive is None or not args.expected_version:
         parser.error("archive and --expected-version are required")
     try:
-        run_gate(args.archive.resolve(), args.expected_version)
+        run_gate(
+            args.archive.resolve(),
+            args.expected_version,
+            args.baseline_archive.resolve() if args.baseline_archive else None,
+        )
     except (
         LifecycleFailure,
         OSError,

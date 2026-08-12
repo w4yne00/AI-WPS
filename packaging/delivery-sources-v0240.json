@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "version": "0.24.0-alpha",
+  "basePolicy": "delivery-sources-v0231.json",
+  "generatedFiles": [],
+  "entries": [
+    {
+      "type": "file",
+      "source": "packaging/v0240-delivery.md",
+      "target": "docs/v0240-delivery.md"
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/system_prompts",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts",
+      "include": [
+        "word-document-review-full-chunk-correction.md",
+        "word-document-review-full-aggregate.md",
+        "word-document-review-full-aggregate-correction.md"
+      ]
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/system_prompts/schemas",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts/schemas",
+      "include": [
+        "word-document-review-full-chunk.v2.json",
+        "word-document-review-full-aggregate.v1.json"
+      ]
+    }
+  ]
+}

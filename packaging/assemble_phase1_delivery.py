@@ -143,6 +143,32 @@ def copy_archive(repo_root: Path, output: Path, entry: Dict) -> None:
         raise AssemblyFailure("SOURCE_ARCHIVE_FILE_MISSING {0}".format(missing[0]))
 
 
+def load_source_policy(source_allowlist: Path) -> Dict:
+    policy = json.loads(source_allowlist.read_text(encoding="utf-8"))
+    if policy.get("schemaVersion") != 1:
+        raise AssemblyFailure("SOURCE_ALLOWLIST_SCHEMA_INVALID")
+    base_name = str(policy.get("basePolicy", "")).strip()
+    if not base_name:
+        return policy
+    base_path = (source_allowlist.parent / explicit_relative(base_name)).resolve()
+    try:
+        base_path.relative_to(source_allowlist.parent.resolve())
+    except ValueError:
+        raise AssemblyFailure("SOURCE_POLICY_OUTSIDE_PACKAGING {0}".format(base_name))
+    if base_path == source_allowlist.resolve() or not base_path.is_file():
+        raise AssemblyFailure("SOURCE_POLICY_BASE_MISSING {0}".format(base_name))
+    base = load_source_policy(base_path)
+    merged = dict(base)
+    merged["version"] = policy.get("version", base.get("version"))
+    merged["entries"] = list(base.get("entries", [])) + list(
+        policy.get("entries", [])
+    )
+    merged["generatedFiles"] = sorted(
+        set(base.get("generatedFiles", [])) | set(policy.get("generatedFiles", []))
+    )
+    return merged
+
+
 def assemble(
     repo_root: Path,
     source_allowlist: Path,
@@ -150,9 +176,7 @@ def assemble(
 ) -> None:
     if output.exists():
         raise AssemblyFailure("DELIVERY_OUTPUT_EXISTS {0}".format(output))
-    source_policy = json.loads(source_allowlist.read_text(encoding="utf-8"))
-    if source_policy.get("schemaVersion") != 1:
-        raise AssemblyFailure("SOURCE_ALLOWLIST_SCHEMA_INVALID")
+    source_policy = load_source_policy(source_allowlist)
     output.mkdir(parents=True)
     try:
         for entry in source_policy.get("entries", []):

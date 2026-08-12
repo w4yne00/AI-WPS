@@ -47,22 +47,34 @@
     "word.document_review.full.chunk": {
       "version": "2026-08-12.2",
       "file": "word-document-review-full-chunk.md",
-      "sha256": "465e5542fed80eaa26750756e8c27b43ff0040528df1380a85cba9548ca70f0d"
+      "sha256": "465e5542fed80eaa26750756e8c27b43ff0040528df1380a85cba9548ca70f0d",
+      "schemaVersion": "word.document_review.full.chunk.v2",
+      "schema": "schemas/word-document-review-full-chunk.v2.json",
+      "schemaSha256": "5ca092a38995661b5f08d10cb4c91ac77c0362127fb5ca7ce1a2aab05cfcbc88"
     },
     "word.document_review.full.chunk.correction": {
       "version": "2026-08-12.3",
       "file": "word-document-review-full-chunk-correction.md",
-      "sha256": "e6aea78ae9cbc7e0a6a7f36ffcfe3f817973f1603fa68dfc509751dbfcc5e7b1"
+      "sha256": "e6aea78ae9cbc7e0a6a7f36ffcfe3f817973f1603fa68dfc509751dbfcc5e7b1",
+      "schemaVersion": "word.document_review.full.chunk.v2",
+      "schema": "schemas/word-document-review-full-chunk.v2.json",
+      "schemaSha256": "5ca092a38995661b5f08d10cb4c91ac77c0362127fb5ca7ce1a2aab05cfcbc88"
     },
     "word.document_review.full.aggregate": {
       "version": "2026-08-12.1",
       "file": "word-document-review-full-aggregate.md",
-      "sha256": "832e91226c669dc8f56f964280f34df3b5828ef6f9937997b863b7eab7f1bbda"
+      "sha256": "832e91226c669dc8f56f964280f34df3b5828ef6f9937997b863b7eab7f1bbda",
+      "schemaVersion": "word.document_review.full.aggregate.v1",
+      "schema": "schemas/word-document-review-full-aggregate.v1.json",
+      "schemaSha256": "f25ada3cf1d6d030a8417a76f718f3e24be971b69baf84772f83e9f7e8e5a8b1"
     },
     "word.document_review.full.aggregate.correction": {
       "version": "2026-08-12.1",
       "file": "word-document-review-full-aggregate-correction.md",
-      "sha256": "2a5946cf00a43a6a85dbc617078e3693e3ef264a25e0e6d42964c63078f6691d"
+      "sha256": "2a5946cf00a43a6a85dbc617078e3693e3ef264a25e0e6d42964c63078f6691d",
+      "schemaVersion": "word.document_review.full.aggregate.v1",
+      "schema": "schemas/word-document-review-full-aggregate.v1.json",
+      "schemaSha256": "f25ada3cf1d6d030a8417a76f718f3e24be971b69baf84772f83e9f7e8e5a8b1"
     }
   }
 }

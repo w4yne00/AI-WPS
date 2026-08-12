@@ -52,7 +52,7 @@ class SystemPromptStore:
             raise SystemPromptError(
                 "SYSTEM_PROMPT_DAMAGED", "任务 System Prompt 校验失败，请重新安装当前版本。"
             )
-        return {
+        result = {
             "taskType": item_type,
             "version": version,
             "file": filename,
@@ -60,6 +60,46 @@ class SystemPromptStore:
             "hashPrefix": actual_hash[:12],
             "content": content.strip(),
         }
+        schema_filename = str(item.get("schema", "")).strip()
+        schema_version = str(item.get("schemaVersion", "")).strip()
+        schema_hash = str(item.get("schemaSha256", "")).strip().lower()
+        if schema_filename:
+            schema_path = self.root / schema_filename
+            schema_relative = Path(schema_filename)
+            if (
+                not schema_version
+                or not schema_hash
+                or schema_relative.is_absolute()
+                or "\\" in schema_filename
+                or ".." in schema_relative.parts
+            ):
+                raise SystemPromptError(
+                    "SYSTEM_PROMPT_MANIFEST_INVALID", "System Prompt Schema 清单格式无效。"
+                )
+            try:
+                schema_content = schema_path.read_text(encoding="utf-8")
+                schema_payload = json.loads(schema_content)
+            except (OSError, ValueError) as exc:
+                raise SystemPromptError(
+                    "SYSTEM_PROMPT_SCHEMA_MISSING", "任务 Schema 缺失或损坏。"
+                ) from exc
+            actual_schema_hash = hashlib.sha256(schema_content.encode("utf-8")).hexdigest()
+            if (
+                not isinstance(schema_payload, dict)
+                or actual_schema_hash != schema_hash
+                or schema_payload.get("version") != schema_version
+            ):
+                raise SystemPromptError(
+                    "SYSTEM_PROMPT_SCHEMA_DAMAGED", "任务 Schema 校验失败，请重新安装当前版本。"
+                )
+            result.update(
+                {
+                    "schemaVersion": schema_version,
+                    "schema": schema_filename,
+                    "schemaSha256": actual_schema_hash,
+                }
+            )
+        return result
 
     def metadata(self, task_type: str) -> dict:
         loaded = self.load(task_type)

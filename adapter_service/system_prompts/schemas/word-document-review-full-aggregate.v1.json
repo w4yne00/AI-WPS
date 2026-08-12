@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-wps://word.document_review.full.aggregate.v1",
+  "title": "AI-WPS full document review aggregate result",
+  "version": "word.document_review.full.aggregate.v1",
+  "type": "object",
+  "required": ["schemaVersion", "summary", "findings"],
+  "properties": {
+    "schemaVersion": {"const": "word.document_review.full.aggregate.v1"},
+    "summary": {"type": "string"},
+    "findings": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

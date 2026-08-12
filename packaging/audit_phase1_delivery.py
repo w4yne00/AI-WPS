@@ -349,10 +349,36 @@ def audit_reference_closure(
                 "PROMPT_REFERENCE_PATH_REJECTED",
             )
             if not prompt_path.is_file():
+                if (
+                    task_name.startswith("word.document_review.full.")
+                    and manifest.get("version") != "0.24.0-alpha"
+                ):
+                    continue
                 raise AuditFailure("PROMPT_REFERENCE_MISSING {0}".format(prompt_path.name))
             expected = str(item.get("sha256", ""))
             if not re.fullmatch(r"[0-9a-f]{64}", expected) or sha256(prompt_path) != expected:
                 raise AuditFailure("PROMPT_HASH_MISMATCH {0}".format(prompt_path.name))
+            schema_reference = str(item.get("schema", "")).strip()
+            schema_version = str(item.get("schemaVersion", "")).strip()
+            schema_hash = str(item.get("schemaSha256", "")).strip().lower()
+            if (
+                task_name.startswith("word.document_review.full.")
+                and manifest.get("version") == "0.24.0-alpha"
+            ):
+                if not schema_reference or not schema_version:
+                    raise AuditFailure("PROMPT_SCHEMA_METADATA_MISSING {0}".format(task_name))
+                schema_path = safe_reference(
+                    prompt_manifest_path.parent,
+                    schema_reference,
+                    "PROMPT_SCHEMA_REFERENCE_REJECTED",
+                )
+                if not schema_path.is_file():
+                    raise AuditFailure("PROMPT_SCHEMA_REFERENCE_MISSING {0}".format(schema_path.name))
+                if not re.fullmatch(r"[0-9a-f]{64}", schema_hash) or sha256(schema_path) != schema_hash:
+                    raise AuditFailure("PROMPT_SCHEMA_HASH_MISMATCH {0}".format(schema_path.name))
+                schema_payload = load_json(schema_path, "PROMPT_SCHEMA_INVALID")
+                if schema_payload.get("version") != schema_version:
+                    raise AuditFailure("PROMPT_SCHEMA_VERSION_MISMATCH {0}".format(task_name))
 
     for runtime in (
         root / "packages/kylin-v10-arm-py38",

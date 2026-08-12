@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ai-wps://word.document_review.full.chunk.v2",
+  "title": "AI-WPS full document review chunk result",
+  "version": "word.document_review.full.chunk.v2",
+  "type": "object",
+  "required": ["schemaVersion", "chunkId", "summary", "enumerationStatus", "issues", "hasMoreIssues", "facts", "crossChecks"],
+  "properties": {
+    "schemaVersion": {"const": "word.document_review.full.chunk.v2"},
+    "chunkId": {"type": "string", "minLength": 1},
+    "summary": {"type": "string"},
+    "enumerationStatus": {"enum": ["complete", "limited"]},
+    "issues": {"type": "array", "items": {"type": "object"}},
+    "hasMoreIssues": {"type": "boolean"},
+    "facts": {"type": "array", "items": {"type": "object"}},
+    "crossChecks": {"type": "array", "items": {"type": "object"}}
+  },
+  "additionalProperties": false
+}

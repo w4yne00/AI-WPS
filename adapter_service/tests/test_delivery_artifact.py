@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[2]
 ASSEMBLER = ROOT / "packaging/assemble_phase1_delivery.py"
 AUDITOR = ROOT / "packaging/audit_phase1_delivery.py"
 SOURCE_ALLOWLIST = ROOT / "packaging/delivery-sources-v0231.json"
+SOURCE_ALLOWLIST_V0240 = ROOT / "packaging/delivery-sources-v0240.json"
 LIFECYCLE_GATE = ROOT / "packaging/python38_delivery_lifecycle_gate.py"
+V0240_BUILD = ROOT / "packaging/build_v0240_delivery_kit.sh"
 
 
 class DeliveryArtifactTests(unittest.TestCase):
@@ -148,7 +150,7 @@ class DeliveryArtifactTests(unittest.TestCase):
                     "--repo-root",
                     str(ROOT),
                     "--source-allowlist",
-                    str(SOURCE_ALLOWLIST),
+                    str(SOURCE_ALLOWLIST_V0240),
                     "--output",
                     str(delivery),
                 ],
@@ -179,6 +181,14 @@ class DeliveryArtifactTests(unittest.TestCase):
                     / "packages/adapter-start-kit/adapter_service/tools/runtime_state.py"
                 ).is_file()
             )
+            for relative in (
+                "packages/adapter-start-kit/adapter_service/system_prompts/word-document-review-full-chunk-correction.md",
+                "packages/adapter-start-kit/adapter_service/system_prompts/word-document-review-full-aggregate.md",
+                "packages/adapter-start-kit/adapter_service/system_prompts/word-document-review-full-aggregate-correction.md",
+                "packages/adapter-start-kit/adapter_service/system_prompts/schemas/word-document-review-full-chunk.v2.json",
+                "packages/adapter-start-kit/adapter_service/system_prompts/schemas/word-document-review-full-aggregate.v1.json",
+            ):
+                self.assertTrue((delivery / relative).is_file(), relative)
 
             names = {
                 path.relative_to(delivery).as_posix()
@@ -527,7 +537,7 @@ class DeliveryArtifactTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(
             payload["scenarios"],
-            ["fresh_install", "upgrade_v022", "damaged_v0230"],
+            ["fresh_install", "upgrade_v022", "upgrade_v0231", "damaged_v0230"],
         )
         self.assertEqual(
             payload["faults"],
@@ -542,6 +552,67 @@ class DeliveryArtifactTests(unittest.TestCase):
                 "install_interruption",
             ],
         )
+
+    def test_v0240_allowlist_and_build_are_explicit_candidate_inputs(self) -> None:
+        policy = json.loads(SOURCE_ALLOWLIST_V0240.read_text(encoding="utf-8"))
+        self.assertEqual(policy["version"], "0.24.0-alpha")
+        self.assertEqual(policy["basePolicy"], "delivery-sources-v0231.json")
+        serialized_entries = json.dumps(policy["entries"], ensure_ascii=False)
+        for asset in (
+            "word-document-review-full-chunk-correction.md",
+            "word-document-review-full-aggregate.md",
+            "word-document-review-full-aggregate-correction.md",
+            "system_prompts/schemas",
+        ):
+            self.assertIn(asset, serialized_entries)
+
+        build = V0240_BUILD.read_text(encoding="utf-8")
+        self.assertIn("0.24.0-alpha", build)
+        self.assertIn("delivery-sources-v0240.json", build)
+        self.assertIn("python38_delivery_lifecycle_gate.py", build)
+        self.assertIn("--baseline-archive", build)
+        self.assertIn("status=candidate", build)
+
+    def test_v0240_preparation_preserves_previous_candidate_baseline(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / "release-manifest.json").write_text(
+                json.dumps(
+                    {
+                        "version": "0.23.1-alpha",
+                        "adapter": {
+                            "version": "0.23.1-alpha",
+                            "systemPromptManifest": "prompts/manifest.json",
+                        },
+                        "deliveryPolicy": {"status": "candidate"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (root / "release-allowlist.json").write_text(
+                json.dumps({"version": "0.23.1-alpha"}), encoding="utf-8"
+            )
+            (root / "packages").mkdir()
+            (root / "prompts").mkdir()
+            (root / "prompts/manifest.json").write_text(
+                json.dumps({"release": "0.23.1-alpha"}), encoding="utf-8"
+            )
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(ROOT / "packaging/prepare_v0240_delivery.py"),
+                    str(root),
+                    "--date",
+                    "20260812",
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            manifest = json.loads((root / "release-manifest.json").read_text())
+            self.assertEqual(manifest["version"], "0.24.0-alpha")
+            self.assertEqual(manifest["baseline"]["previousCandidate"], "0.23.1-alpha")
 
 
 if __name__ == "__main__":
