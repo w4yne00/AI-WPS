@@ -7,6 +7,7 @@ import re
 import secrets
 import shutil
 import threading
+import tempfile
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -30,6 +31,8 @@ LEGACY_CHUNK_SCHEMA_VERSION = "word.document_review.full.chunk.v1"
 CHUNK_SCHEMA_VERSION = "word.document_review.full.chunk.v2"
 REPORT_SCHEMA_VERSION = "word.document_review.full.report.v1"
 REPORT_RESULT_TTL_SECONDS = 24 * 60 * 60
+RECOVERABLE_FAILURE_TTL_SECONDS = 2 * 60 * 60
+PERSISTENCE_SCHEMA_VERSION = 1
 DEFAULT_ISSUE_PAGE_SIZE = 20
 MAX_ISSUE_PAGE_SIZE = 100
 MAX_REVIEW_CHARACTERS = 120000
@@ -73,6 +76,26 @@ _RETRYABLE_PROVIDER_CODES = {
     "PROVIDER_MID_STREAM_DISCONNECT",
     "DIFY_UNREACHABLE",
     "ADAPTER_UNAVAILABLE",
+}
+_NON_RECOVERABLE_FAILURE_CODES = {
+    "FULL_DOCUMENT_REVIEW_AUTH_SNAPSHOT_MISMATCH",
+    "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED",
+    "FULL_DOCUMENT_REVIEW_SNAPSHOT_MISMATCH",
+    "FULL_DOCUMENT_REVIEW_TOO_LARGE",
+    "FULL_DOCUMENT_REVIEW_AGGREGATE_INPUT_TOO_LARGE",
+    "MODEL_CONFIG_INCOMPLETE",
+    "MODEL_DIRECT_REQUIRED",
+    "MODEL_CONTEXT_TOKENS_REQUIRED",
+    "MODEL_OUTPUT_TOKENS_REQUIRED",
+    "MODEL_OUTPUT_TOKENS_TOO_SMALL",
+    "MODEL_INPUT_OVER_BUDGET",
+    "MODEL_INPUT_BUDGET_EXCEEDED",
+    "MODEL_PARAMETER_INVALID",
+    "PROVIDER_AUTH_FAILED",
+    "PROVIDER_PERMISSION_DENIED",
+    "SYSTEM_PROMPT_DAMAGED",
+    "SYSTEM_PROMPT_MISSING",
+    "SYSTEM_PROMPT_MANIFEST_INVALID",
 }
 _EXCLUDED_REGIONS = (
     "headers",
@@ -185,12 +208,15 @@ class FullDocumentReviewService:
         self._wall_clock = wall_clock
         self._sessions: Dict[str, Dict] = {}
         self._reports: Dict[str, Dict] = {}
+        self._job_records: Dict[str, Dict] = {}
+        self._recovery_rejections: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         self._cleanup_stop = threading.Event()
         self._cleanup_thread = None
         self._staging_ttl_seconds = max(int(staging_ttl_seconds), 1)
         self._last_cleanup_at = 0.0
         self._cleanup_expired(force=True)
+        self._restore_persisted_jobs()
 
     @property
     def staging_root(self) -> Path:
@@ -215,6 +241,421 @@ class FullDocumentReviewService:
         if not _SAFE_ID.fullmatch(str(job_id or "")):
             return self.staging_root / "report-invalid"
         return self.staging_root / "report-{0}.json".format(job_id)
+
+    def _job_path(self, job_id: str) -> Path:
+        if not _SAFE_ID.fullmatch(str(job_id or "")):
+            return self.staging_root / "job-invalid" / "job.json"
+        return self.staging_root / "job-{0}".format(job_id) / "job.json"
+
+    def _job_dir(self, job_id: str) -> Path:
+        return self._job_path(job_id).parent
+
+    @staticmethod
+    def _canonical_sha256(value: object) -> str:
+        return _sha256_text(
+            json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        )
+
+    def _prompt_identity(self) -> Dict:
+        stages = (
+            "word.document_review.full.chunk",
+            "word.document_review.full.chunk.correction",
+            "word.document_review.full.aggregate",
+            "word.document_review.full.aggregate.correction",
+        )
+        store = getattr(self.provider_client, "system_prompt_store", None)
+        metadata = []
+        for stage in stages:
+            item = {"stage": stage, "version": "unavailable", "sha256": ""}
+            if store is not None:
+                try:
+                    loaded = store.metadata(stage)
+                    item = {
+                        "stage": stage,
+                        "version": str(loaded.get("version", "")),
+                        "sha256": str(loaded.get("sha256", "")),
+                    }
+                except Exception:
+                    pass
+            metadata.append(item)
+        return {
+            "version": "word-full-review-prompts.v1",
+            "stages": metadata,
+            "sha256": self._canonical_sha256(metadata),
+        }
+
+    @classmethod
+    def _auth_identity(cls, task_auth: Dict) -> Dict:
+        api_key = str(task_auth.get("apiKey", ""))
+        model_configuration = task_auth.get("modelConfiguration")
+        config = {
+            key: task_auth.get(key)
+            for key in (
+                "providerBaseUrl",
+                "providerChatPath",
+                "providerMode",
+                "providerType",
+                "accessMethod",
+                "modelConfigurationId",
+                "modelConfigurationName",
+                "modelName",
+                "temperature",
+                "maxOutputTokens",
+                "contextWindowTokens",
+                "contextWindowTokensExplicit",
+                "apiKeyRef",
+                "providerInputMode",
+            )
+        }
+        if isinstance(model_configuration, dict):
+            config["modelConfigurationVersion"] = model_configuration.get("configVersion")
+        return {
+            "configuration": config,
+            "configurationSha256": cls._canonical_sha256(config),
+            "apiKeyRef": str(task_auth.get("apiKeyRef", "")),
+            "keyFingerprint": _sha256_text(api_key) if api_key else "",
+        }
+
+    def _build_task_identity(self, snapshot: Dict) -> Dict:
+        auth_identity = snapshot.get("authIdentity") or self._auth_identity(
+            snapshot.get("taskAuth", {})
+        )
+        identity = {
+            "snapshotSha256": str(snapshot.get("contentSha256", "")),
+            "documentIdSha256": str(snapshot.get("documentIdSha256", "")),
+            "documentType": str(snapshot.get("documentType", "")),
+            "reviewPrompt": str(snapshot.get("reviewPrompt", "")),
+            "writingPolicyScene": str(snapshot.get("writingPolicyScene", "auto")),
+            "coverage": deepcopy(snapshot.get("coverage", {})),
+            "auth": auth_identity,
+            "prompt": snapshot.get("promptIdentity") or self._prompt_identity(),
+            "chunkStrategyVersion": CHUNK_STRATEGY_VERSION,
+        }
+        return {
+            "version": "word-full-review-task-identity.v1",
+            "fields": identity,
+            "sha256": self._canonical_sha256(identity),
+        }
+
+    @staticmethod
+    def _persistent_snapshot(snapshot: Dict) -> Dict:
+        safe = deepcopy(snapshot)
+        safe.pop("taskAuth", None)
+        safe.pop("_reviewState", None)
+        safe["authIdentity"] = deepcopy(
+            snapshot.get("authIdentity") or FullDocumentReviewService._auth_identity({})
+        )
+        return safe
+
+    @staticmethod
+    def _persistent_state(state: Dict) -> Dict:
+        safe = deepcopy(state)
+        for key in ("rawAnswer", "answer", "modelResponse", "providerResponse"):
+            safe.pop(key, None)
+        return safe
+
+    def _persist_job_state(
+        self,
+        snapshot: Dict,
+        state: Dict,
+        status: str = "active",
+        error_code: str = "",
+    ) -> None:
+        if not snapshot.get("_persistentJob"):
+            return
+        job_id = str(snapshot.get("jobId", ""))
+        if not _SAFE_ID.fullmatch(job_id):
+            return
+        if not snapshot.get("authIdentity"):
+            snapshot["authIdentity"] = self._auth_identity(snapshot.get("taskAuth", {}))
+        if not snapshot.get("taskIdentity"):
+            snapshot["taskIdentity"] = self._build_task_identity(snapshot)
+        now = self._wall_clock()
+        with self._lock:
+            previous = self._job_records.get(job_id, {})
+            checkpoint_sequence = int(previous.get("checkpointSequence", 0) or 0) + 1
+        persisted_snapshot = self._persistent_snapshot(snapshot)
+        persisted_state = self._persistent_state(state)
+        checkpoint = {
+            "schemaVersion": PERSISTENCE_SCHEMA_VERSION,
+            "jobId": job_id,
+            "checkpointSequence": checkpoint_sequence,
+            "completedChunkIds": [
+                str(item.get("chunkId", ""))
+                for item in persisted_state.get("parsedChunks", [])
+                if isinstance(item, dict)
+            ],
+            "state": persisted_state,
+        }
+        checkpoint["checkpointSha256"] = self._canonical_sha256(
+            {key: value for key, value in checkpoint.items() if key != "checkpointSha256"}
+        )
+        record = {
+            "schemaVersion": PERSISTENCE_SCHEMA_VERSION,
+            "jobId": job_id,
+            "traceId": str(snapshot.get("traceId", "")),
+            "taskType": TASK_TYPE,
+            "status": status,
+            "createdAt": previous.get("createdAt", now),
+            "updatedAt": now,
+            "expiresAt": (
+                now + RECOVERABLE_FAILURE_TTL_SECONDS
+                if status == "recoverable_failed"
+                else 0
+            ),
+            "errorCode": str(error_code or ""),
+            "checkpointSequence": checkpoint_sequence,
+            "taskIdentity": deepcopy(snapshot.get("taskIdentity") or self._build_task_identity(snapshot)),
+            "snapshot": persisted_snapshot,
+            "checkpoint": checkpoint,
+        }
+        record["recordSha256"] = self._canonical_sha256(
+            {key: value for key, value in record.items() if key != "recordSha256"}
+        )
+        self._ensure_root()
+        job_dir = self._job_dir(job_id)
+        job_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        os.chmod(str(job_dir), 0o700)
+        self._write_private_json(job_dir / "job.json", record)
+        self._write_private_json(job_dir / "checkpoint.json", checkpoint)
+        with self._lock:
+            self._job_records[job_id] = record
+
+    def _load_persisted_job(self, path: Path) -> Optional[Dict]:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        if not isinstance(record, dict) or record.get("schemaVersion") != PERSISTENCE_SCHEMA_VERSION:
+            return None
+        expected = self._canonical_sha256(
+            {key: value for key, value in record.items() if key != "recordSha256"}
+        )
+        if record.get("recordSha256") != expected:
+            return None
+        checkpoint = record.get("checkpoint")
+        if not isinstance(checkpoint, dict):
+            return None
+        try:
+            with path.with_name("checkpoint.json").open("r", encoding="utf-8") as handle:
+                external_checkpoint = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        if external_checkpoint != checkpoint:
+            return None
+        checkpoint_expected = self._canonical_sha256(
+            {key: value for key, value in checkpoint.items() if key != "checkpointSha256"}
+        )
+        if checkpoint.get("checkpointSha256") != checkpoint_expected:
+            return None
+        snapshot = record.get("snapshot")
+        state = checkpoint.get("state")
+        if not isinstance(snapshot, dict) or not isinstance(state, dict):
+            return None
+        if self._contains_secret_field(record):
+            return None
+        if (
+            checkpoint.get("jobId") != record.get("jobId")
+            or checkpoint.get("checkpointSequence") != record.get("checkpointSequence")
+        ):
+            return None
+        blocks = snapshot.get("blocks")
+        if not isinstance(blocks, list) or not blocks:
+            return None
+        try:
+            source_text = "\n".join(self._block_texts(blocks))
+            snapshot_valid = (
+                _sha256_text(source_text) == snapshot.get("contentSha256")
+                and _review_character_count(source_text) == snapshot.get("reviewCharacterCount")
+                and (
+                    not snapshot.get("structureSha256")
+                    or self._structure_sha256(blocks) == snapshot.get("structureSha256")
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            return None
+        if not snapshot_valid:
+            return None
+        completed_chunk_ids = checkpoint.get("completedChunkIds")
+        parsed_chunk_ids = [
+            item.get("chunkId")
+            for item in state.get("parsedChunks", [])
+            if isinstance(item, dict)
+        ]
+        if completed_chunk_ids != parsed_chunk_ids:
+            return None
+        if record.get("taskIdentity") != self._build_task_identity(snapshot):
+            return None
+        snapshot["_reviewState"] = state
+        snapshot["_persistentJob"] = True
+        return record
+
+    @classmethod
+    def _contains_secret_field(cls, value: object) -> bool:
+        if isinstance(value, dict):
+            return any(
+                key == "apiKey" or cls._contains_secret_field(item)
+                for key, item in value.items()
+            )
+        if isinstance(value, list):
+            return any(cls._contains_secret_field(item) for item in value)
+        return False
+
+    def _restore_persisted_jobs(self) -> None:
+        if not full_document_review_enabled():
+            return
+        root = self.staging_root
+        if not root.exists() or not root.is_dir():
+            return
+        try:
+            paths = sorted(
+                child / "job.json"
+                for child in root.iterdir()
+                if child.is_dir() and child.name.startswith("job-")
+            )
+        except OSError:
+            return
+        now = self._wall_clock()
+        for path in paths:
+            record = self._load_persisted_job(path)
+            if record is None:
+                self._remove_job_data(path.parent.name[4:])
+                continue
+            expiry = float(record.get("expiresAt", 0) or 0)
+            if expiry and now >= expiry:
+                self._remove_job_data(str(record.get("jobId", "")))
+                continue
+            snapshot = record.get("snapshot", {})
+            job_id = str(record.get("jobId", ""))
+            if not _SAFE_ID.fullmatch(job_id) or str(snapshot.get("jobId", "")) != job_id:
+                self._remove_job_data(job_id)
+                continue
+            try:
+                task_auth = self.provider_client.resolve_task_auth("word.document_review")
+                self._require_full_review_ready(task_auth)
+            except Exception:
+                self._reject_recovery(job_id, record, "FULL_DOCUMENT_REVIEW_AUTH_SNAPSHOT_MISMATCH")
+                continue
+            current_identity = self._auth_identity(task_auth)
+            expected_identity = snapshot.get("authIdentity")
+            if expected_identity != current_identity:
+                self._reject_recovery(job_id, record, "FULL_DOCUMENT_REVIEW_AUTH_SNAPSHOT_MISMATCH")
+                continue
+            if snapshot.get("promptIdentity") and snapshot.get("promptIdentity") != self._prompt_identity():
+                self._reject_recovery(job_id, record, "FULL_DOCUMENT_REVIEW_PROMPT_SNAPSHOT_MISMATCH")
+                continue
+            snapshot["taskAuth"] = task_auth
+            snapshot["authIdentity"] = current_identity
+            snapshot["taskIdentity"] = record.get("taskIdentity") or self._build_task_identity(snapshot)
+            self._job_records[job_id] = record
+            try:
+                self._submit_persisted_snapshot(snapshot, persist=False)
+            except Exception:
+                self._reject_recovery(job_id, record, "FULL_DOCUMENT_REVIEW_RECOVERY_FAILED")
+
+    def _reject_recovery(self, job_id: str, record: Dict, code: str) -> None:
+        self._remove_job_data(job_id)
+        self._recovery_rejections[job_id] = {
+            "jobId": job_id,
+            "traceId": str(record.get("traceId", "")),
+            "taskType": TASK_TYPE,
+            "status": "failed",
+            "phase": "failed",
+            "createdAt": record.get("createdAt", self._wall_clock()),
+            "updatedAt": self._wall_clock(),
+            "error": {
+                "code": code,
+                "message": "全篇审查任务无法在当前认证边界下恢复。",
+            },
+        }
+
+    def _submit_persisted_snapshot(self, snapshot: Dict, persist: bool = True) -> Dict:
+        job_id = str(snapshot.get("jobId", ""))
+        snapshot["_persistentJob"] = True
+        existing = self.coordinator.get(job_id, task_type=TASK_TYPE)
+        if existing is not None:
+            if existing.get("snapshotId") != snapshot.get("snapshotId"):
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_JOB_ID_CONFLICT",
+                    "客户端任务编号已绑定到其他全篇审查快照。",
+                    status_code=409,
+                )
+            return existing
+        if persist:
+            state = snapshot.get("_reviewState") or self._initial_review_state(snapshot)
+            snapshot["_reviewState"] = state
+            self._persist_job_state(snapshot, state)
+        job = self.coordinator.submit(
+            job_id=job_id,
+            trace_id=str(snapshot.get("traceId", "")),
+            task_type=TASK_TYPE,
+            runner=self._run_job,
+            snapshot=snapshot,
+            failure_code="FULL_DOCUMENT_REVIEW_JOB_FAILED",
+            failure_message="全篇审查任务失败，未生成报告。",
+            safe_failure_codes={
+                "FULL_DOCUMENT_REVIEW_RESULT_INVALID",
+                "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                "FULL_DOCUMENT_REVIEW_AGGREGATE_INPUT_TOO_LARGE",
+                "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED",
+                "FULL_DOCUMENT_REVIEW_AUTH_SNAPSHOT_MISMATCH",
+                "MODEL_CONFIG_INCOMPLETE",
+                "MODEL_DIRECT_REQUIRED",
+                "PROVIDER_TIMEOUT",
+                "PROVIDER_UNREACHABLE",
+            },
+            public_metadata={
+                "reviewMode": "full",
+                "snapshotId": str(snapshot.get("snapshotId", "")),
+                "chunkCount": snapshot.get("capacity", {}).get("initialChunkCount", 0),
+                "capacity": deepcopy(snapshot.get("capacity", {})),
+            },
+            allow_running_cancel=True,
+        )
+        self._job_records[job_id] = {
+            **self._job_records.get(job_id, {}),
+            "taskIdentity": deepcopy(snapshot.get("taskIdentity") or self._build_task_identity(snapshot)),
+            "authIdentity": deepcopy(snapshot.get("authIdentity") or self._auth_identity(snapshot.get("taskAuth", {}))),
+            "status": job.get("status", "queued"),
+            "updatedAt": self._wall_clock(),
+        }
+        return job
+
+    def _initial_review_state(self, snapshot: Dict) -> Dict:
+        return {
+            "pendingChunks": self._build_review_chunks(snapshot),
+            "parsedChunks": [],
+            "limitedRanges": [],
+            "callCount": 0,
+            "aggregateScheduled": False,
+            "aggregateRetried": False,
+            "aggregateResult": None,
+        }
+
+    def _reuse_active_task(self, snapshot: Dict) -> Optional[Dict]:
+        identity = snapshot.get("taskIdentity") or self._build_task_identity(snapshot)
+        expected = str(identity.get("sha256", ""))
+        for job_id, record in list(self._job_records.items()):
+            if str(record.get("taskIdentity", {}).get("sha256", "")) != expected:
+                continue
+            job = self.coordinator.get(job_id, task_type=TASK_TYPE)
+            if job and job.get("status") in {"queued", "running", "failed"}:
+                return job
+        return None
+
+    def _require_current_auth(self, snapshot: Dict) -> None:
+        expected = snapshot.get("authIdentity")
+        if not isinstance(expected, dict):
+            return
+        current = self.provider_client.resolve_task_auth("word.document_review")
+        self._require_full_review_ready(current)
+        if current is None or self._auth_identity(current) != expected:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_AUTH_SNAPSHOT_MISMATCH",
+                "全篇审查任务的模型配置或认证指纹已变化，拒绝继续使用当前任务。",
+                status_code=409,
+            )
 
     def create_session(self, payload: Dict) -> Dict:
         self._require_enabled()
@@ -1027,11 +1468,6 @@ class FullDocumentReviewService:
                 "FULL_DOCUMENT_REVIEW_JOB_ID_INVALID",
                 "全篇审查客户端任务编号格式无效。",
             )
-        job_id = (
-            requested_job_id
-            if _SAFE_ID.fullmatch(requested_job_id)
-            else "full-review-job-{0}".format(secrets.token_hex(16))
-        )
         with self._lock:
             session = self._sessions.get(snapshot_id)
             if session is None:
@@ -1040,13 +1476,18 @@ class FullDocumentReviewService:
                     "全篇审查快照不存在或已过期。",
                     status_code=404,
                 )
+            self._verify_snapshot_token(session, {"snapshotToken": snapshot_token})
+            if session.get("status") == "submitted":
+                existing_job_id = str(session.get("submittedJobId", ""))
+                existing = self.coordinator.get(existing_job_id, task_type=TASK_TYPE)
+                if existing is not None:
+                    return existing
             if session.get("status") not in {"committed", "awaiting_confirmation"}:
                 raise AdapterError(
                     "FULL_DOCUMENT_REVIEW_SNAPSHOT_STATE_INVALID",
                     "全篇审查快照状态不允许当前操作。",
                     status_code=409,
                 )
-            self._verify_snapshot_token(session, {"snapshotToken": snapshot_token})
             if session.get("status") == "awaiting_confirmation":
                 if payload.get("confirmLarge") is not True:
                     raise AdapterError(
@@ -1056,6 +1497,11 @@ class FullDocumentReviewService:
                     )
                 self._verify_confirmation_token(session, payload)
                 session["confirmationTokenSha256"] = ""
+            job_id = (
+                requested_job_id
+                if _SAFE_ID.fullmatch(requested_job_id)
+                else "full-review-job-{0}".format(secrets.token_hex(16))
+            )
             session["status"] = "submitting"
             session["submittedJobId"] = job_id
             snapshot = {
@@ -1066,6 +1512,8 @@ class FullDocumentReviewService:
                 "blocks": deepcopy(session["blocks"]),
                 "documentType": session["documentType"],
                 "reviewPrompt": session["reviewPrompt"],
+                "writingPolicyScene": session.get("writingPolicyScene", "auto"),
+                "documentIdSha256": session.get("documentIdSha256", ""),
                 "coverage": deepcopy(session["coverage"]),
                 "reviewCharacterCount": session["reviewCharacterCount"],
                 "contentSha256": session["contentSha256"],
@@ -1075,31 +1523,24 @@ class FullDocumentReviewService:
                 "committedAt": session["committedAt"],
                 "taskAuth": task_auth,
             }
+            snapshot["authIdentity"] = self._auth_identity(task_auth)
+            snapshot["promptIdentity"] = self._prompt_identity()
+            snapshot["taskIdentity"] = self._build_task_identity(snapshot)
+            session["authIdentity"] = deepcopy(snapshot["authIdentity"])
+            session["taskIdentity"] = deepcopy(snapshot["taskIdentity"])
+            existing = self._reuse_active_task(snapshot)
+            if existing is not None:
+                session["status"] = "submitted"
+                session["submittedJobId"] = existing["jobId"]
+                reused_job = existing
+            else:
+                reused_job = None
+                snapshot["_reviewState"] = self._initial_review_state(snapshot)
+        if reused_job is not None:
+            self._remove_snapshot(snapshot_id)
+            return reused_job
         try:
-            job = self.coordinator.submit(
-                job_id=job_id,
-                trace_id=trace_id,
-                task_type=TASK_TYPE,
-                runner=self._run_job,
-                snapshot=snapshot,
-                failure_code="FULL_DOCUMENT_REVIEW_JOB_FAILED",
-                failure_message="全篇审查任务失败，未生成报告。",
-                safe_failure_codes={
-                    "FULL_DOCUMENT_REVIEW_RESULT_INVALID",
-                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
-                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INPUT_TOO_LARGE",
-                    "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED",
-                    "MODEL_CONFIG_INCOMPLETE",
-                    "MODEL_DIRECT_REQUIRED",
-                },
-                public_metadata={
-                    "reviewMode": "full",
-                    "snapshotId": snapshot_id,
-                    "chunkCount": snapshot["capacity"]["initialChunkCount"],
-                    "capacity": deepcopy(snapshot["capacity"]),
-                },
-                allow_running_cancel=True,
-            )
+            job = self._submit_persisted_snapshot(snapshot)
             if job.get("snapshotId") != snapshot_id:
                 raise AdapterError(
                     "FULL_DOCUMENT_REVIEW_JOB_ID_CONFLICT",
@@ -1107,6 +1548,7 @@ class FullDocumentReviewService:
                     status_code=409,
                 )
         except Exception:
+            remove_job_data = False
             with self._lock:
                 if session.get("status") == "submitting":
                     session["status"] = (
@@ -1115,6 +1557,11 @@ class FullDocumentReviewService:
                         else "committed"
                     )
                     session.pop("submittedJobId", None)
+                persisted = self._job_records.get(job_id, {})
+                persisted_snapshot = persisted.get("snapshot", {})
+                remove_job_data = not persisted or persisted_snapshot.get("snapshotId") == snapshot_id
+            if remove_job_data:
+                self._remove_job_data(job_id)
             raise
         with self._lock:
             session["status"] = "submitted"
@@ -1122,6 +1569,9 @@ class FullDocumentReviewService:
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         self._require_enabled()
+        rejected = self._recovery_rejections.get(job_id)
+        if rejected is not None:
+            return deepcopy(rejected)
         job = self.coordinator.get(job_id, task_type=TASK_TYPE)
         if job is None:
             return None
@@ -1149,6 +1599,7 @@ class FullDocumentReviewService:
             snapshot_id = str(job.get("snapshotId", ""))
             if snapshot_id:
                 self._remove_snapshot(snapshot_id)
+            self._remove_job_data(job_id)
         return job
 
     def get_report(self, job_id: str) -> Dict:
@@ -1312,22 +1763,12 @@ class FullDocumentReviewService:
             report_path.unlink(missing_ok=True)
         except OSError:
             pass
+        self._remove_job_data(job_id)
         return {"jobId": job_id, "status": "deleted"}
 
     def _run_job(self, snapshot: Dict, progress) -> object:
         job_id = str(snapshot.get("jobId", ""))
-        state = snapshot.setdefault(
-            "_reviewState",
-            {
-                "pendingChunks": self._build_review_chunks(snapshot),
-                "parsedChunks": [],
-                "limitedRanges": [],
-                "callCount": 0,
-                "aggregateScheduled": False,
-                "aggregateRetried": False,
-                "aggregateResult": None,
-            },
-        )
+        state = snapshot.setdefault("_reviewState", self._initial_review_state(snapshot))
         state.setdefault("pendingChunks", self._build_review_chunks(snapshot))
         state.setdefault("parsedChunks", [])
         state.setdefault("limitedRanges", [])
@@ -1337,6 +1778,7 @@ class FullDocumentReviewService:
         state.setdefault("aggregateResult", None)
         call_limit = int(snapshot.get("capacity", {}).get("callLimit", 0) or 0)
         keep_staging = False
+        active_chunk = None
 
         def call_provider(chunk: Dict, correction: bool = False) -> str:
             if state["callCount"] >= call_limit:
@@ -1373,6 +1815,7 @@ class FullDocumentReviewService:
             )
 
         try:
+            self._require_current_auth(snapshot)
             self._raise_if_cancelled(job_id)
             if not state["pendingChunks"]:
                 if len(state["parsedChunks"]) > 1 and state.get("aggregateResult") is None:
@@ -1380,6 +1823,7 @@ class FullDocumentReviewService:
                         state["aggregateScheduled"] = True
                         progress("aggregating")
                         keep_staging = True
+                        self._persist_job_state(snapshot, state)
                         return LongTaskContinuation(snapshot, phase="aggregating")
                     aggregate_input = self._build_aggregate_input(snapshot, state["parsedChunks"])
                     progress("aggregating")
@@ -1390,6 +1834,7 @@ class FullDocumentReviewService:
                             state["aggregateRetried"] = True
                             progress("retrying")
                             keep_staging = True
+                            self._persist_job_state(snapshot, state, status="recoverable_failed", error_code=exc.code)
                             return LongTaskContinuation(snapshot, phase="aggregating")
                         raise
                     try:
@@ -1406,6 +1851,7 @@ class FullDocumentReviewService:
                             aggregate_answer, aggregate_input
                         )
                     state["aggregateResult"] = aggregate_result
+                    self._persist_job_state(snapshot, state)
                 progress("aggregating")
                 report = self._build_report(
                     snapshot,
@@ -1417,6 +1863,7 @@ class FullDocumentReviewService:
                 return report
 
             chunk = state["pendingChunks"].pop(0)
+            active_chunk = chunk
             self._raise_if_cancelled(job_id)
             progress("chunking")
             try:
@@ -1429,6 +1876,7 @@ class FullDocumentReviewService:
                     state["pendingChunks"].insert(0, chunk)
                     progress("retrying")
                     keep_staging = True
+                    self._persist_job_state(snapshot, state)
                     return LongTaskContinuation(snapshot)
                 raise
 
@@ -1444,6 +1892,7 @@ class FullDocumentReviewService:
                     progress("splitting")
                     state["pendingChunks"] = split_chunks + state["pendingChunks"]
                     keep_staging = True
+                    self._persist_job_state(snapshot, state)
                     return LongTaskContinuation(snapshot)
                 if exc.code != "FULL_DOCUMENT_REVIEW_RESULT_INVALID" or chunk.get("_retried"):
                     raise
@@ -1460,17 +1909,21 @@ class FullDocumentReviewService:
                     progress("splitting")
                     state["pendingChunks"] = split_chunks + state["pendingChunks"]
                     keep_staging = True
+                    self._persist_job_state(snapshot, state)
                     return LongTaskContinuation(snapshot)
                 state["limitedRanges"].append(chunk["chunkId"])
 
             parsed.pop("_saturationReason", None)
             state["parsedChunks"].append(parsed)
+            self._persist_job_state(snapshot, state)
             self._raise_if_cancelled(job_id)
             if state["pendingChunks"]:
                 keep_staging = True
+                self._persist_job_state(snapshot, state)
                 return LongTaskContinuation(snapshot)
             if len(state["parsedChunks"]) > 1 and state.get("aggregateResult") is None:
                 keep_staging = True
+                self._persist_job_state(snapshot, state)
                 return LongTaskContinuation(snapshot, phase="aggregating")
             progress("aggregating")
             report = self._build_report(
@@ -1481,9 +1934,29 @@ class FullDocumentReviewService:
             )
             self._save_report(job_id, report)
             return report
+        except AdapterError as exc:
+            if snapshot.get("_persistentJob") and self._is_recoverable_failure(exc):
+                keep_staging = True
+                if active_chunk is not None and not any(
+                    item.get("chunkId") == active_chunk.get("chunkId")
+                    for item in state.get("pendingChunks", [])
+                ):
+                    state["pendingChunks"].insert(0, active_chunk)
+                self._persist_job_state(
+                    snapshot,
+                    state,
+                    status="recoverable_failed",
+                    error_code=exc.code,
+                )
+            raise
         finally:
             if not keep_staging:
                 self._remove_snapshot(str(snapshot.get("snapshotId", "")))
+                self._remove_job_data(job_id)
+
+    @staticmethod
+    def _is_recoverable_failure(error: AdapterError) -> bool:
+        return str(getattr(error, "code", "")) not in _NON_RECOVERABLE_FAILURE_CODES
 
     @staticmethod
     def _is_retryable_provider_error(error: AdapterError) -> bool:
@@ -2560,10 +3033,18 @@ class FullDocumentReviewService:
             if report.get("reportSha256") != _report_sha256(report):
                 with self._lock:
                     self._reports.pop(job_id, None)
+                try:
+                    self._report_path(job_id).unlink(missing_ok=True)
+                except OSError:
+                    pass
                 return None
             if self._wall_clock() >= float(report.get("reportExpiresAt", 0)):
                 with self._lock:
                     self._reports.pop(job_id, None)
+                try:
+                    self._report_path(job_id).unlink(missing_ok=True)
+                except OSError:
+                    pass
                 return None
             return deepcopy(report)
         path = self._report_path(job_id)
@@ -2579,6 +3060,10 @@ class FullDocumentReviewService:
             or report.get("reportSha256") != _report_sha256(report)
             or self._wall_clock() >= float(report.get("reportExpiresAt", 0))
         ):
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
             return None
         with self._lock:
             self._reports[job_id] = report
@@ -2872,6 +3357,17 @@ class FullDocumentReviewService:
                 or not _SAFE_ID.fullmatch(child.name)
             ):
                 continue
+            if child.name.startswith("job-"):
+                job_id = child.name[4:]
+                record = self._load_persisted_job(child / "job.json")
+                expiry = float((record or {}).get("expiresAt", 0) or 0)
+                expired = record is None or (expiry and now >= expiry)
+                if expired:
+                    try:
+                        self._remove_job_data(job_id)
+                    except OSError:
+                        pass
+                continue
             try:
                 session = self._sessions.get(child.name)
                 session_file = child / "session.json"
@@ -2934,12 +3430,28 @@ class FullDocumentReviewService:
 
     @staticmethod
     def _write_private_json(path: Path, payload: Dict) -> None:
-        descriptor = os.open(
-            str(path), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600
+        path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        descriptor, temporary_name = tempfile.mkstemp(
+            prefix=".private-", dir=str(path.parent)
         )
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
-        os.chmod(str(path), 0o600)
+        try:
+            os.fchmod(descriptor, 0o600)
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, separators=(",", ":"))
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary_name, str(path))
+            os.chmod(str(path), 0o600)
+        except Exception:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+            try:
+                os.unlink(temporary_name)
+            except OSError:
+                pass
+            raise
 
     @staticmethod
     def _safe_session(session: Dict) -> Dict:
@@ -2976,6 +3488,15 @@ class FullDocumentReviewService:
         with self._lock:
             self._sessions.pop(snapshot_id, None)
         path = self.snapshot_path(snapshot_id)
+        if path.exists():
+            shutil.rmtree(str(path))
+
+    def _remove_job_data(self, job_id: str) -> None:
+        if not _SAFE_ID.fullmatch(str(job_id or "")):
+            return
+        with self._lock:
+            self._job_records.pop(job_id, None)
+        path = self._job_dir(job_id)
         if path.exists():
             shutil.rmtree(str(path))
 

@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import threading
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -98,6 +99,46 @@ class FullDocumentReviewProtocolTests(unittest.TestCase):
                 continue
             return result, phases
 
+    def _stage_public_snapshot(self, service, text, document_id="document-1"):
+        created = service.create_session({
+            "documentId": document_id,
+            "documentType": "technical_solution",
+            "reviewPrompt": "检查",
+            "writingPolicyScene": "auto",
+            "coverage": {"includedRegions": ["body"], "excludedRegions": []},
+        })
+        digest = _digest(text)
+        uploaded = service.upload_batch(
+            created["sessionId"],
+            0,
+            {
+                "uploadToken": created["uploadToken"],
+                "blocks": [{
+                    "blockId": "paragraph-1",
+                    "blockType": "paragraph",
+                    "paragraphIndex": 1,
+                    "text": text,
+                }],
+                "characterCount": len(text),
+                "contentSha256": digest,
+                "batchId": "batch-1",
+                "range": {"start": "paragraph-1", "end": "paragraph-1"},
+                "editSequence": 1,
+            },
+        )
+        self.assertEqual(uploaded["status"], "uploaded")
+        return service.commit_snapshot(
+            created["sessionId"],
+            {
+                "uploadToken": created["uploadToken"],
+                "batchCount": 1,
+                "reviewCharacterCount": len(text),
+                "contentSha256": digest,
+                "verificationSha256": digest,
+                "structureSha256": uploaded["structureSha256"],
+            },
+        )
+
     def test_saturation_splits_parent_and_keeps_call_count_across_continuations(self):
         class Provider:
             def __init__(self):
@@ -137,6 +178,252 @@ class FullDocumentReviewProtocolTests(unittest.TestCase):
         self.assertEqual([len(item[0]) for item in provider.calls], [18000, 9000, 9000])
         self.assertEqual(report["issueCount"], 2)
         self.assertIn("splitting", phases)
+
+    def test_persisted_checkpoint_resumes_after_service_restart_without_repeating_completed_chunk(self):
+        class RestartProvider:
+            def __init__(self, fail_on_call=0, api_key="secret"):
+                self.calls = []
+                self.fail_on_call = fail_on_call
+                self.api_key = api_key
+
+            def resolve_task_auth(self, task_type):
+                return {
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "providerBaseUrl": "https://model.example/v1",
+                    "apiKey": self.api_key,
+                    "modelName": "review-model",
+                    "contextWindowTokens": 40000,
+                    "contextWindowTokensExplicit": True,
+                    "maxOutputTokens": 2048,
+                    "modelConfigurationId": "config-review",
+                }
+
+            def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                           document_type, review_prompt, task_auth,
+                                           correction=False, blocks=None):
+                self.calls.append((chunk_id, (blocks or [{}])[0].get("blockId", "")))
+                if self.fail_on_call and len(self.calls) == self.fail_on_call:
+                    raise AdapterError("PROVIDER_TIMEOUT", "模型超时。", 504)
+                usable = next(
+                    (block for block in (blocks or []) if block.get("core", True)),
+                    (blocks or [{}])[0],
+                )
+                return FullDocumentReviewProtocolTests._answer(chunk_id, [usable])
+
+            def full_document_review_aggregate(self, payload, trace_id, task_auth,
+                                               correction=False):
+                return json.dumps({
+                    "schemaVersion": "word.document_review.full.aggregate.v1",
+                    "summary": "跨片汇总。",
+                    "findings": [],
+                }, ensure_ascii=False)
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            root = Path(tmp) / "full-review"
+            first_provider = RestartProvider(fail_on_call=2)
+            first_service = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=first_provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            snapshot = self._stage_public_snapshot(first_service, "甲" * 22000)
+            first_service.start_job(
+                {
+                    "snapshotId": snapshot["snapshotId"],
+                    "snapshotToken": snapshot["snapshotToken"],
+                    "clientJobId": "restart-job",
+                },
+                "restart-trace",
+            )
+            failed = first_service.coordinator.wait(
+                "restart-job", task_type="word.document_review.full"
+            )
+            self.assertEqual(failed["status"], "failed")
+            job_path = root / "job-restart-job" / "job.json"
+            self.assertTrue(job_path.exists(), (failed, first_provider.calls))
+            persisted = json.loads(job_path.read_text(encoding="utf-8"))
+            second_provider = RestartProvider()
+            second_service = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=second_provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            resumed = second_service.coordinator.wait(
+                "restart-job", task_type="word.document_review.full"
+            )
+
+        self.assertEqual(failed["status"], "failed")
+        self.assertEqual(resumed["status"], "completed", (resumed, second_provider.calls))
+        self.assertEqual(len(second_provider.calls), 1)
+        self.assertNotIn('"apiKey":', json.dumps(persisted, ensure_ascii=False))
+        self.assertFalse(job_path.exists())
+
+    def test_key_rotation_rejects_persisted_task_before_provider_call(self):
+        class AuthProvider:
+            def __init__(self, api_key):
+                self.api_key = api_key
+                self.calls = 0
+
+            def resolve_task_auth(self, task_type):
+                return {
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "providerBaseUrl": "https://model.example/v1",
+                    "apiKey": self.api_key,
+                    "modelName": "review-model",
+                    "contextWindowTokens": 40000,
+                    "contextWindowTokensExplicit": True,
+                    "maxOutputTokens": 2048,
+                    "modelConfigurationId": "config-review",
+                }
+
+            def full_document_review_chunk(self, *args, **kwargs):
+                self.calls += 1
+                if self.api_key == "old-secret":
+                    raise AdapterError("PROVIDER_TIMEOUT", "模型超时。", 504)
+                return FullDocumentReviewProtocolTests._answer(
+                    args[2], kwargs.get("blocks")
+                )
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            root = Path(tmp) / "full-review"
+            provider = AuthProvider("old-secret")
+            service = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            snapshot = self._stage_public_snapshot(service, "甲" * 20)
+            service.start_job(
+                {
+                    "snapshotId": snapshot["snapshotId"],
+                    "snapshotToken": snapshot["snapshotToken"],
+                    "clientJobId": "rotated-job",
+                },
+                "rotated-trace",
+            )
+            service.coordinator.wait("rotated-job", task_type="word.document_review.full")
+            restarted_provider = AuthProvider("new-secret")
+            restarted = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=restarted_provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            rejected = restarted.get_job("rotated-job")
+
+        self.assertIsNotNone(rejected)
+        self.assertEqual(rejected["status"], "failed")
+        self.assertEqual(
+            rejected["error"]["code"], "FULL_DOCUMENT_REVIEW_AUTH_SNAPSHOT_MISMATCH"
+        )
+        self.assertEqual(restarted_provider.calls, 0)
+
+    def test_identical_active_task_reuses_original_job_id(self):
+        class Provider:
+            def __init__(self):
+                self.calls = []
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def resolve_task_auth(self, task_type):
+                return {
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "providerBaseUrl": "https://model.example/v1",
+                    "apiKey": "secret",
+                    "modelName": "review-model",
+                    "contextWindowTokens": 40000,
+                    "contextWindowTokensExplicit": True,
+                    "maxOutputTokens": 2048,
+                    "modelConfigurationId": "config-review",
+                }
+
+            def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                           document_type, review_prompt, task_auth,
+                                           correction=False, blocks=None):
+                self.started.set()
+                self.release.wait(timeout=2)
+                self.calls.append(chunk_id)
+                return FullDocumentReviewProtocolTests._answer(chunk_id, blocks)
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            provider = Provider()
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            first = self._stage_public_snapshot(service, "相同正文")
+            first_job = service.start_job(
+                {
+                    "snapshotId": first["snapshotId"],
+                    "snapshotToken": first["snapshotToken"],
+                    "clientJobId": "active-job",
+                },
+                "active-trace",
+            )
+            self.assertTrue(provider.started.wait(timeout=1))
+            duplicate = self._stage_public_snapshot(service, "相同正文")
+            reused = service.start_job(
+                {
+                    "snapshotId": duplicate["snapshotId"],
+                    "snapshotToken": duplicate["snapshotToken"],
+                },
+                "duplicate-trace",
+            )
+            provider.release.set()
+            service.coordinator.wait("active-job", task_type="word.document_review.full")
+
+        self.assertEqual(first_job["jobId"], reused["jobId"])
+        self.assertEqual(provider.calls, ["chunk-1"])
+
+    def test_corrupt_persisted_task_is_removed_at_startup_and_private_files_are_restricted(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            root = Path(tmp) / "full-review"
+            corrupt = root / "job-corrupt"
+            corrupt.mkdir(parents=True)
+            (corrupt / "job.json").write_text("not-json", encoding="utf-8")
+            service = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=_auth_provider(),
+                coordinator=LongTaskCoordinator(),
+            )
+            snapshot = self._snapshot("私有正文")
+            snapshot.update({
+                "_persistentJob": True,
+                "jobId": "permission-job",
+                "snapshotId": "permission-snapshot",
+                "taskAuth": _auth_provider().resolve_task_auth("word.document_review"),
+            })
+            service._persist_job_state(snapshot, {
+                "pendingChunks": service._build_review_chunks(snapshot),
+                "parsedChunks": [],
+                "limitedRanges": [],
+                "callCount": 0,
+                "aggregateScheduled": False,
+                "aggregateRetried": False,
+                "aggregateResult": None,
+            })
+            job_dir = root / "job-permission-job"
+            job_mode = job_dir.stat().st_mode & 0o777
+            file_mode = (job_dir / "job.json").stat().st_mode & 0o777
+            (job_dir / "checkpoint.json").write_text("not-json", encoding="utf-8")
+            restarted = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=_auth_provider(),
+                coordinator=LongTaskCoordinator(),
+            )
+
+        self.assertFalse(corrupt.exists())
+        self.assertEqual(job_mode, 0o700)
+        self.assertEqual(file_mode, 0o600)
+        self.assertFalse(job_dir.exists())
 
     def test_review_chunks_keep_semantic_boundaries_and_bounded_overlap(self):
         with TemporaryDirectory() as tmp, patch.dict(

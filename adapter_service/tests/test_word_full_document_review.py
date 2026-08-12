@@ -908,7 +908,11 @@ class FullDocumentReviewApiTests(unittest.TestCase):
                 provider.release.set()
                 self._wait_job(client, first.json()["data"]["jobId"])
 
-        self.assertEqual(duplicate_snapshot.status_code, 409)
+        self.assertEqual(duplicate_snapshot.status_code, 200)
+        self.assertEqual(
+            duplicate_snapshot.json()["data"]["jobId"],
+            first.json()["data"]["jobId"],
+        )
         self.assertEqual(conflicting.status_code, 409)
         self.assertEqual(
             conflicting.json()["errors"][0]["code"],
