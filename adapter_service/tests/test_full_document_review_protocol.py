@@ -1,0 +1,332 @@
+import hashlib
+import os
+import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from unittest.mock import patch
+
+from app.core.errors import AdapterError
+from app.services.long_task_coordinator import LongTaskCoordinator
+from app.services.model_configurations import ACCESS_DIRECT_MODEL
+from app.services.word.full_document_review import (
+    FullDocumentReviewService,
+    classify_review_capacity,
+)
+
+
+def _digest(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _auth_provider():
+    class Provider:
+        def resolve_task_auth(self, task_type):
+            return {
+                "accessMethod": ACCESS_DIRECT_MODEL,
+                "providerBaseUrl": "https://model.example/v1",
+                "apiKey": "secret",
+                "modelName": "review-model",
+                "contextWindowTokens": 40000,
+                "contextWindowTokensExplicit": True,
+                "maxOutputTokens": 2048,
+                "modelConfigurationId": "config-review",
+            }
+
+    return Provider()
+
+
+class FullDocumentReviewProtocolTests(unittest.TestCase):
+    def test_capacity_tiers_expose_confirmation_and_call_limits(self):
+        self.assertEqual(classify_review_capacity(20000)["tier"], "single_chunk")
+        self.assertEqual(classify_review_capacity(20001)["tier"], "standard")
+        self.assertEqual(classify_review_capacity(60000)["tier"], "standard")
+        large = classify_review_capacity(60001)
+        self.assertEqual(large["tier"], "large")
+        self.assertTrue(large["requiresConfirmation"])
+        self.assertEqual(large["callLimit"], 24)
+        with self.assertRaises(AdapterError) as context:
+            classify_review_capacity(120001)
+        self.assertEqual(context.exception.code, "FULL_DOCUMENT_REVIEW_TOO_LARGE")
+
+    def test_call_limit_rejects_before_provider_request(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            provider = _auth_provider()
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            with self.assertRaises(AdapterError) as context:
+                service._run_job(
+                    {
+                        "jobId": "job-1",
+                        "snapshotId": "snapshot-1",
+                        "documentType": "technical_solution",
+                        "reviewPrompt": "检查",
+                        "traceId": "trace-1",
+                        "taskAuth": {},
+                        "capacity": {"callLimit": 0},
+                        "blocks": [{
+                            "blockId": "paragraph-1",
+                            "blockType": "paragraph",
+                            "paragraphIndex": 1,
+                            "text": "正文",
+                        }],
+                    },
+                    lambda _phase: None,
+                )
+            self.assertEqual(
+                context.exception.code, "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED"
+            )
+
+    def test_structured_table_batch_preserves_merge_and_nested_relationships(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=_auth_provider(),
+                coordinator=LongTaskCoordinator(),
+            )
+            session = service.create_session(
+                {
+                    "documentId": "doc-1",
+                    "coverage": {
+                        "includedRegions": ["body", "tables"],
+                        "excludedRegions": [],
+                    },
+                }
+            )
+            text = "金额"
+            block = {
+                "blockId": "table-1",
+                "blockType": "table",
+                "tableId": "table-1",
+                "tableIndex": 1,
+                "rows": [
+                    {
+                        "rowIndex": 1,
+                        "cells": [
+                            {
+                                "cellId": "cell-1",
+                                "rowIndex": 1,
+                                "columnIndex": 1,
+                                "rowSpan": 1,
+                                "columnSpan": 2,
+                                "mergeId": "merge-1",
+                                "text": text,
+                                "nestedTableIds": ["table-1-1"],
+                            }
+                        ],
+                    }
+                ],
+                "nestedTables": [
+                    {
+                        "tableId": "table-1-1",
+                        "parentCellId": "cell-1",
+                        "rows": [
+                            {
+                                "rowIndex": 1,
+                                "cells": [
+                                    {
+                                        "cellId": "cell-1-1",
+                                        "rowIndex": 1,
+                                        "columnIndex": 1,
+                                        "rowSpan": 1,
+                                        "columnSpan": 1,
+                                        "text": "子表",
+                                    }
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            }
+            source_text = "\n".join([text, "子表"])
+            uploaded = service.upload_batch(
+                session["sessionId"],
+                0,
+                {
+                    "uploadToken": session["uploadToken"],
+                    "batchId": "batch-0",
+                    "blocks": [block],
+                    "characterCount": len(text) + len("子表"),
+                    "contentSha256": _digest(source_text),
+                },
+            )
+            self.assertEqual(uploaded["tableCount"], 2)
+            self.assertEqual(uploaded["cellCount"], 2)
+            committed = service.commit_snapshot(
+                session["sessionId"],
+                {
+                    "uploadToken": session["uploadToken"],
+                    "batchCount": 1,
+                    "reviewCharacterCount": len(text) + len("子表"),
+                    "contentSha256": _digest(source_text),
+                    "verification": {
+                        "batchCount": 1,
+                        "reviewCharacterCount": len(text) + len("子表"),
+                        "contentSha256": _digest(source_text),
+                        "structureSha256": uploaded["structureSha256"],
+                        "blockCount": 1,
+                        "tableCount": 2,
+                        "cellCount": 2,
+                    },
+                },
+            )
+            self.assertEqual(committed["capacity"]["tier"], "single_chunk")
+            self.assertEqual(committed["tableCount"], 2)
+            self.assertEqual(committed["cellCount"], 2)
+
+    def test_retrying_same_batch_is_idempotent_but_conflicting_retry_is_rejected(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=_auth_provider(),
+                coordinator=LongTaskCoordinator(),
+            )
+            session = service.create_session(
+                {
+                    "documentId": "doc-1",
+                    "coverage": {"includedRegions": ["body"], "excludedRegions": []},
+                }
+            )
+            payload = {
+                "uploadToken": session["uploadToken"],
+                "batchId": "batch-0",
+                "blocks": [
+                    {
+                        "blockId": "paragraph-1",
+                        "blockType": "heading",
+                        "paragraphIndex": 1,
+                        "headingLevel": 1,
+                        "text": "标题",
+                    }
+                ],
+                "characterCount": 2,
+                "contentSha256": _digest("标题"),
+            }
+            first = service.upload_batch(session["sessionId"], 0, payload)
+            retry = service.upload_batch(session["sessionId"], 0, payload)
+            self.assertEqual(first["reviewCharacterCount"], retry["reviewCharacterCount"])
+            self.assertTrue(retry["idempotent"])
+            payload["contentSha256"] = _digest("改写")
+            with self.assertRaises(AdapterError) as context:
+                service.upload_batch(session["sessionId"], 0, payload)
+            self.assertEqual(
+                context.exception.code, "FULL_DOCUMENT_REVIEW_BATCH_IDEMPOTENCY_CONFLICT"
+            )
+
+    def test_second_pass_metric_mismatch_deletes_staging(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=_auth_provider(),
+                coordinator=LongTaskCoordinator(),
+            )
+            session = service.create_session(
+                {
+                    "documentId": "doc-1",
+                    "coverage": {"includedRegions": ["body"], "excludedRegions": []},
+                }
+            )
+            service.upload_batch(
+                session["sessionId"],
+                0,
+                {
+                    "uploadToken": session["uploadToken"],
+                    "blocks": [
+                        {
+                            "blockId": "paragraph-1",
+                            "blockType": "paragraph",
+                            "paragraphIndex": 1,
+                            "text": "首遍正文",
+                        }
+                    ],
+                    "characterCount": 4,
+                    "contentSha256": _digest("首遍正文"),
+                },
+            )
+            with self.assertRaises(AdapterError) as context:
+                service.commit_snapshot(
+                    session["sessionId"],
+                    {
+                        "uploadToken": session["uploadToken"],
+                        "batchCount": 1,
+                        "reviewCharacterCount": 4,
+                        "contentSha256": _digest("首遍正文"),
+                        "verification": {
+                            "batchCount": 1,
+                            "reviewCharacterCount": 5,
+                            "contentSha256": _digest("次遍正文"),
+                            "blockCount": 1,
+                        },
+                    },
+                )
+            self.assertEqual(context.exception.code, "FULL_DOCUMENT_REVIEW_SNAPSHOT_MISMATCH")
+            self.assertFalse(service.snapshot_path(session["sessionId"]).exists())
+
+    def test_standard_snapshot_accepts_multiple_contiguous_batches(self):
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=_auth_provider(),
+                coordinator=LongTaskCoordinator(),
+            )
+            session = service.create_session(
+                {
+                    "documentId": "doc-1",
+                    "coverage": {"includedRegions": ["body"], "excludedRegions": []},
+                }
+            )
+            first = "甲" * 11000
+            second = "乙" * 11000
+            for sequence, block_id, text in ((0, "paragraph-1", first), (1, "paragraph-2", second)):
+                service.upload_batch(
+                    session["sessionId"],
+                    sequence,
+                    {
+                        "uploadToken": session["uploadToken"],
+                        "batchId": "batch-{0}".format(sequence),
+                        "blocks": [{
+                            "blockId": block_id,
+                            "blockType": "paragraph",
+                            "paragraphIndex": sequence + 1,
+                            "text": text,
+                        }],
+                        "characterCount": len(text),
+                        "contentSha256": _digest(text),
+                    },
+                )
+            digest = _digest(first + "\n" + second)
+            committed = service.commit_snapshot(
+                session["sessionId"],
+                {
+                    "uploadToken": session["uploadToken"],
+                    "batchCount": 2,
+                    "reviewCharacterCount": len(first) + len(second),
+                    "contentSha256": digest,
+                    "verification": {
+                        "batchCount": 2,
+                        "reviewCharacterCount": len(first) + len(second),
+                        "contentSha256": digest,
+                        "blockCount": 2,
+                        "tableCount": 0,
+                        "cellCount": 0,
+                    },
+                },
+            )
+            self.assertEqual(committed["capacity"]["tier"], "standard")
+            self.assertEqual(committed["capacity"]["initialChunkCount"], 2)
+
+
+if __name__ == "__main__":
+    unittest.main()

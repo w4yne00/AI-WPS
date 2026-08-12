@@ -212,6 +212,8 @@
     fullDocumentReviewEnabled: false,
     fullDocumentReviewJobId: "",
     fullDocumentReviewPollErrorCount: 0,
+    fullDocumentReviewPreparing: false,
+    fullDocumentReviewCancelRequested: false,
     writingJobId: "",
     writingJobTaskType: "",
     writingJobMode: "",
@@ -5768,22 +5770,44 @@
   function extractFullDocumentReviewBody() {
     var document = getActiveDocument();
     var paragraphs;
+    var tables;
     var body;
     if (!document) {
       throw new Error("未检测到活动文档。");
     }
-    paragraphs = collectParagraphs(document, {
-      avoidFallbackTextRead: true,
-      excludeTableParagraphs: true
-    });
-    body = helpers.buildFullDocumentReviewBody(paragraphs, 20000);
+    paragraphs = helpers.collectFullDocumentReviewParagraphs
+      ? helpers.collectFullDocumentReviewParagraphs(document)
+      : collectParagraphs(document, {
+        avoidFallbackTextRead: true,
+        excludeTableParagraphs: true
+      });
+    tables = helpers.collectFullDocumentReviewTables
+      ? helpers.collectFullDocumentReviewTables(document)
+      : [];
+    body = helpers.buildFullDocumentReviewBody({
+      paragraphs: paragraphs,
+      tables: tables
+    }, 120000);
     body.documentId = "wps-document-" + helpers.sha256Text(getDocumentName(document)).slice(0, 24);
+    body.editSignal = helpers.readFullDocumentReviewEditSignal
+      ? helpers.readFullDocumentReviewEditSignal(document)
+      : "";
+    body.batches = helpers.buildFullDocumentReviewBatches
+      ? helpers.buildFullDocumentReviewBatches(body, 3500)
+      : [{
+        sequence: 0,
+        batchId: "batch-0",
+        blocks: body.blocks,
+        characterCount: body.reviewCharacterCount,
+        contentSha256: body.contentSha256
+      }];
     return body;
   }
 
   function renderFullDocumentReviewReport(report) {
     var snapshot = report && report.snapshot || {};
     var coverage = report && report.coverage || {};
+    var capacity = report && report.capacity || {};
     var issues = report && Array.isArray(report.issues) ? report.issues : [];
     var excludedRegions = Array.isArray(coverage.excludedRegions) ? coverage.excludedRegions : [];
     var lines = [
@@ -5796,6 +5820,11 @@
       "- 快照哈希：" + String(snapshot.contentSha256 || "").slice(0, 16),
       "- 已审查字符：" + Number(coverage.reviewedCharacterCount || 0),
       "- 已审查段落：" + Number(coverage.reviewedParagraphCount || 0),
+      "- 已审查表格：" + Number(coverage.reviewedTableCount || 0),
+      "- 已审查单元格：" + Number(coverage.reviewedCellCount || 0),
+      "- 容量等级：" + (capacity.label || capacity.tier || "未记录"),
+      "- 初始分片估算：" + Number(capacity.initialChunkCount || 0),
+      "- 调用上限：" + Number(capacity.callLimit || 0),
       "- 覆盖状态：" + (coverage.status === "complete" ? "声明范围覆盖完整" : "覆盖未完成"),
       "- 问题枚举：" + (report && report.enumerationStatus === "complete" ? "完整" : "受限"),
       "- 未审查区域：" + (excludedRegions.length ? excludedRegions.join("、") : "未披露"),
@@ -5890,10 +5919,66 @@
     });
   }
 
+  function extractFullDocumentReviewBodyYielding() {
+    return new Promise(function (resolve, reject) {
+      setTimeout(function () {
+        try {
+          resolve(extractFullDocumentReviewBody());
+        } catch (error) {
+          reject(error);
+        }
+      }, 0);
+    });
+  }
+
+  function uploadFullDocumentReviewBatches(session, body) {
+    var batches = Array.isArray(body && body.batches) ? body.batches : [];
+    return batches.reduce(function (promise, batch) {
+      return promise.then(function () {
+        return new Promise(function (resolve) {
+          setTimeout(resolve, 0);
+        });
+      }).then(function () {
+        ensureFullDocumentReviewPreparation(body.editSignal);
+        return request(
+          "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId) +
+            "/batches/" + batch.sequence,
+          {
+            uploadToken: session.uploadToken,
+            batchId: batch.batchId,
+            blocks: batch.blocks,
+            characterCount: batch.characterCount,
+            contentSha256: batch.contentSha256,
+            structureSha256: batch.structureSha256,
+            range: batch.range,
+            editSequence: body.editSignal
+          },
+          { method: "PUT" }
+        );
+      });
+    }, Promise.resolve());
+  }
+
+  function ensureFullDocumentReviewPreparation(editSignal) {
+    var document;
+    var currentSignal;
+    if (state.fullDocumentReviewCancelRequested) {
+      throw new Error("已取消全篇审查准备，未调用模型。");
+    }
+    document = getActiveDocument();
+    currentSignal = helpers.readFullDocumentReviewEditSignal
+      ? helpers.readFullDocumentReviewEditSignal(document)
+      : "";
+    if (editSignal && currentSignal !== editSignal) {
+      throw new Error("检测到文档在全篇审查准备期间被编辑，已停止并清理快照。");
+    }
+  }
+
   function runFullDocumentReview() {
     var readiness = getFullDocumentReviewReadiness();
     var firstPass;
     var session = null;
+    var firstPassStartedAt = Date.now();
     if (!state.fullDocumentReviewEnabled || !readiness.fullDocumentReviewReady) {
       setStatus(readiness.label || "全篇审查尚未就绪。");
       return;
@@ -5902,67 +5987,100 @@
       setStatus("已有文档审查任务尚未结束。");
       return;
     }
-    try {
-      firstPass = extractFullDocumentReviewBody();
-    } catch (error) {
-      setStatus(error.message);
-      setResult(error.message);
-      return;
-    }
     setModelTaskBusy(true);
+    state.fullDocumentReviewPreparing = true;
+    state.fullDocumentReviewCancelRequested = false;
+    setDocumentReviewCancelVisible(true, false);
     renderFullDocumentReviewEntry();
-    setStatus("正在创建全篇审查快照...");
-    request("/word/document-review/full/snapshots", {
-      documentId: firstPass.documentId,
-      documentType: state.technicalDocumentType,
-      reviewPrompt: state.technicalReviewPrompt,
-      writingPolicyScene: getWritingPolicyScene(),
-      coverage: {
-        includedRegions: ["body"],
-        excludedRegions: ["tables", "headers", "footers", "footnotes", "endnotes", "comments",
-          "revisions", "textBoxes", "shapes", "images", "formulas", "charts",
-          "attachments", "hiddenText"]
-      }
+    setStatus("正在执行第一遍轻量抽取...");
+    return extractFullDocumentReviewBodyYielding().then(function (body) {
+      firstPass = body;
+      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      firstPass.firstPassDurationMs = Date.now() - firstPassStartedAt;
+      setStatus("正在创建全篇审查快照...");
+      return request("/word/document-review/full/snapshots", {
+        documentId: firstPass.documentId,
+        documentType: state.technicalDocumentType,
+        reviewPrompt: state.technicalReviewPrompt,
+        writingPolicyScene: getWritingPolicyScene(),
+        coverage: {
+          includedRegions: ["body", "tables"],
+          excludedRegions: ["headers", "footers", "footnotes", "endnotes", "comments",
+            "revisions", "textBoxes", "shapes", "images", "formulas", "charts",
+            "attachments", "hiddenText"]
+        }
+      });
     }).then(function (body) {
       session = body.data || {};
-      return request(
-        "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId) + "/batches/0",
-        {
-          uploadToken: session.uploadToken,
-          blocks: firstPass.blocks,
-          characterCount: firstPass.reviewCharacterCount,
-          contentSha256: firstPass.contentSha256
-        },
-        { method: "PUT" }
-      );
+      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      return uploadFullDocumentReviewBatches(session, firstPass);
     }).then(function () {
-      var secondPass = extractFullDocumentReviewBody();
+      setStatus("正在执行第二遍轻量哈希验证...");
+      firstPass.secondPassStartedAt = Date.now();
+      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      return extractFullDocumentReviewBodyYielding();
+    }).then(function (secondPass) {
+      secondPass.secondPassDurationMs = Date.now() - firstPass.secondPassStartedAt;
       if (firstPass.contentSha256 !== secondPass.contentSha256 ||
+          firstPass.structureSha256 !== secondPass.structureSha256 ||
           firstPass.reviewCharacterCount !== secondPass.reviewCharacterCount ||
-          firstPass.blocks.length !== secondPass.blocks.length) {
-        throw new Error("两遍正文校验不一致，请停止编辑后重新发起全篇审查。");
+          firstPass.blocks.length !== secondPass.blocks.length ||
+          firstPass.tableCount !== secondPass.tableCount ||
+          firstPass.cellCount !== secondPass.cellCount ||
+          firstPass.batches.length !== secondPass.batches.length ||
+          firstPass.editSignal !== secondPass.editSignal) {
+        throw new Error("两遍正文与表格校验不一致，请停止编辑后重新发起全篇审查。");
       }
       return request(
         "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId) + "/commit",
         {
           uploadToken: session.uploadToken,
-          batchCount: 1,
+          batchCount: firstPass.batches.length,
           reviewCharacterCount: firstPass.reviewCharacterCount,
           contentSha256: firstPass.contentSha256,
-          verificationSha256: secondPass.contentSha256
+          verificationSha256: secondPass.contentSha256,
+          verification: {
+            batchCount: secondPass.batches.length,
+            reviewCharacterCount: secondPass.reviewCharacterCount,
+            contentSha256: secondPass.contentSha256,
+            structureSha256: secondPass.structureSha256,
+            blockCount: secondPass.blocks.length,
+            tableCount: secondPass.tableCount,
+            cellCount: secondPass.cellCount,
+            editSequence: secondPass.editSignal
+          }
         }
       );
     }).then(function (body) {
-      session.snapshotToken = body.data && body.data.snapshotToken;
+      var snapshot = body.data || {};
+      var capacity = snapshot.capacity || {};
+      ensureFullDocumentReviewPreparation(firstPass.editSignal);
+      session.snapshotToken = snapshot.snapshotToken;
+      setStatus("快照完成：" + firstPass.reviewCharacterCount + " 个审查字符，初始约 " +
+        Number(capacity.initialChunkCount || 0) + " 个分片，调用上限 " +
+        Number(capacity.callLimit || 0) + " 次。");
+      if (capacity.requiresConfirmation) {
+        setStatus("大型文档已冻结，等待确认后才会调用模型。");
+        if (typeof window === "undefined" || typeof window.confirm !== "function" ||
+            !window.confirm("本次全篇审查将处理 " + firstPass.reviewCharacterCount +
+              " 个审查字符，初始约 " + capacity.initialChunkCount +
+              " 个分片，调用上限 " + capacity.callLimit + " 次。是否继续？")) {
+          throw new Error("已取消大型全篇审查，快照未调用模型并将清理。");
+        }
+      }
       return request("/word/document-review/full/jobs", {
-        snapshotId: body.data && body.data.snapshotId,
-        snapshotToken: session.snapshotToken
+        snapshotId: snapshot.snapshotId,
+        snapshotToken: session.snapshotToken,
+        confirmLarge: Boolean(capacity.requiresConfirmation),
+        confirmationToken: snapshot.confirmationToken || ""
       });
     }).then(function (body) {
       var job = body.data || {};
       if (!job.jobId) {
         throw new Error("Adapter 未返回全篇审查任务编号。");
       }
+      state.fullDocumentReviewPreparing = false;
+      state.fullDocumentReviewCancelRequested = false;
       state.fullDocumentReviewJobId = job.jobId;
       state.fullDocumentReviewPollErrorCount = 0;
       saveFullDocumentReviewActiveJob(job.jobId);
@@ -5981,8 +6099,11 @@
       return cleanup.then(function () {
         state.fullDocumentReviewJobId = "";
         state.fullDocumentReviewPollErrorCount = 0;
+        state.fullDocumentReviewPreparing = false;
+        state.fullDocumentReviewCancelRequested = false;
         clearFullDocumentReviewActiveJob();
         setModelTaskBusy(false);
+        setDocumentReviewCancelVisible(false, false);
         renderFullDocumentReviewEntry();
         setStatus("全篇审查失败：" + describeFetchError(error));
         setResult(describeFetchError(error));
@@ -6010,6 +6131,11 @@
     }).catch(function (error) {
       setStatus("取消全篇审查失败：" + describeFetchError(error));
     });
+  }
+
+  function cancelFullDocumentReviewPreparation() {
+    state.fullDocumentReviewCancelRequested = true;
+    setStatus("正在取消全篇审查准备并清理暂存快照...");
   }
 
   function resumeFullDocumentReviewActiveJob() {
@@ -6384,6 +6510,8 @@
         cancelQueuedWritingJob();
       } else if (state.fullDocumentReviewJobId) {
         cancelFullDocumentReviewJob();
+      } else if (state.fullDocumentReviewPreparing) {
+        cancelFullDocumentReviewPreparation();
       } else {
         cancelQueuedDocumentReviewJob();
       }

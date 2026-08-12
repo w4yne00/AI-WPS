@@ -104,38 +104,244 @@
     }).join("");
   }
 
-  function buildFullDocumentReviewBody(paragraphs, maxReviewCharacters) {
+  function getFullDocumentReviewCapacity(reviewCharacterCount) {
+    var count = Number(reviewCharacterCount);
+    var tier;
+    var initialChunkCount;
+    if (!isFinite(count) || count <= 0 || Math.floor(count) !== count) {
+      throw new Error("全篇审查字符数必须是正整数。");
+    }
+    if (count > 120000) {
+      throw new Error("全篇审查最多支持 120,000 审查字符，请缩小正文或表格范围。");
+    }
+    if (count <= 20000) {
+      return {
+        tier: "single_chunk",
+        requiresConfirmation: false,
+        initialChunkCount: 1,
+        estimatedCallCount: 1,
+        callLimit: 8
+      };
+    }
+    tier = count <= 60000 ? "standard" : "large";
+    initialChunkCount = Math.ceil(count / 18000);
+    return {
+      tier: tier,
+      requiresConfirmation: tier === "large",
+      initialChunkCount: initialChunkCount,
+      estimatedCallCount: initialChunkCount + 1,
+      callLimit: tier === "large" ? 24 : 16
+    };
+  }
+
+  function reviewBlockTextValues(block) {
+    var values = [];
+    if (!block || block.blockType !== "table") {
+      return block && block.text ? [block.text] : [];
+    }
+    (block.rows || []).forEach(function (row) {
+      (row.cells || []).forEach(function (cell) {
+        if (cell.text) {
+          values.push(cell.text);
+        }
+      });
+    });
+    (block.nestedTables || []).forEach(function (table) {
+      var nested = reviewBlockTextValues({
+        blockType: "table",
+        rows: table.rows,
+        nestedTables: table.nestedTables
+      });
+      values = values.concat(nested);
+    });
+    return values;
+  }
+
+  function reviewStructureProjection(block) {
+    var projection = {
+      blockId: block.blockId,
+      blockType: block.blockType,
+      paragraphIndex: Number(block.paragraphIndex || 0),
+      headingLevel: Number(block.headingLevel || 0),
+      listLabel: String(block.listLabel || "")
+    };
+    if (block.blockType !== "table") {
+      return projection;
+    }
+    function projectTable(table) {
+      return {
+        tableId: String(table.tableId || ""),
+        tableIndex: Number(table.tableIndex || 0),
+        rows: (table.rows || []).map(function (row) {
+          return {
+            rowIndex: Number(row.rowIndex || 0),
+            cells: (row.cells || []).map(function (cell) {
+              return {
+                cellId: String(cell.cellId || ""),
+                rowIndex: Number(cell.rowIndex || 0),
+                columnIndex: Number(cell.columnIndex || 0),
+                rowSpan: Number(cell.rowSpan || 1),
+                columnSpan: Number(cell.columnSpan || 1),
+                mergeId: String(cell.mergeId || ""),
+                nestedTableIds: Array.isArray(cell.nestedTableIds) ? cell.nestedTableIds.slice() : []
+              };
+            })
+          };
+        }),
+        nestedTables: (table.nestedTables || []).map(projectTable)
+      };
+    }
+    projection.table = projectTable(block);
+    return projection;
+  }
+
+  function reviewStructureSha256(blocks) {
+    return sha256Text(JSON.stringify((Array.isArray(blocks) ? blocks : []).map(reviewStructureProjection)));
+  }
+
+  function buildFullDocumentReviewBody(paragraphsOrContent, maxReviewCharacters) {
+    var content = Array.isArray(paragraphsOrContent)
+      ? { paragraphs: paragraphsOrContent, tables: [] }
+      : (paragraphsOrContent || {});
     var limit = Math.max(1, Number(maxReviewCharacters) || 20000);
     var blocks = [];
+    var pendingBlocks = [];
+    var sourceValues = [];
+    var seenIds = {};
     var characterCount = 0;
-    (Array.isArray(paragraphs) ? paragraphs : []).forEach(function (paragraph) {
+    var tableCount = 0;
+    var cellCount = 0;
+
+    function appendBlock(block) {
+      var values;
+      if (!block || !block.blockId || seenIds[block.blockId]) {
+        return;
+      }
+      values = reviewBlockTextValues(block);
+      if (!values.length) {
+        return;
+      }
+      seenIds[block.blockId] = true;
+      blocks.push(block);
+      values.forEach(function (value) {
+        characterCount += value.length;
+        sourceValues.push(value);
+      });
+      if (block.blockType === "table") {
+        function countNestedTables(table) {
+          return 1 + (table.nestedTables || []).reduce(function (total, nested) {
+            return total + countNestedTables(nested);
+          }, 0);
+        }
+        function countNestedCells(table) {
+          return (table.rows || []).reduce(function (total, row) {
+            return total + (row.cells || []).length;
+          }, 0) + (table.nestedTables || []).reduce(function (total, nested) {
+            return total + countNestedCells(nested);
+          }, 0);
+        }
+        tableCount += countNestedTables(block);
+        cellCount += countNestedCells(block);
+      }
+    }
+
+    (Array.isArray(content.paragraphs) ? content.paragraphs : []).forEach(function (paragraph) {
       var text = String(paragraph && paragraph.text || "")
         .replace(/[\r\u0007]+$/g, "")
         .trim();
+      var paragraphIndex = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || pendingBlocks.length + 1;
       if (!text) {
         return;
       }
-      characterCount += text.length;
-      if (characterCount > limit) {
-        throw new Error("当前单分片全篇审查最多支持 20,000 审查字符。");
-      }
-      blocks.push({
-        blockId: "paragraph-" + (blocks.length + 1),
-        blockType: "paragraph",
-        paragraphIndex: blocks.length + 1,
+      pendingBlocks.push({
+        blockId: "paragraph-" + paragraphIndex,
+        blockType: paragraph.outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"),
+        paragraphIndex: paragraphIndex,
+        headingLevel: paragraph.outlineLevel > 0 ? Number(paragraph.outlineLevel) : undefined,
+        listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         text: text
       });
     });
+    (Array.isArray(content.tables) ? content.tables : []).forEach(function (table, index) {
+      var tableId = String(table && (table.tableId || table.id) || "table-" + (index + 1));
+      pendingBlocks.push({
+        blockId: tableId,
+        blockType: "table",
+        paragraphIndex: Number(table && table.paragraphIndex) || pendingBlocks.length + 1,
+        tableId: tableId,
+        tableIndex: Number(table && table.tableIndex) || index + 1,
+        rows: Array.isArray(table && table.rows) ? table.rows : [],
+        nestedTables: Array.isArray(table && table.nestedTables) ? table.nestedTables : []
+      });
+    });
+    pendingBlocks.sort(function (left, right) {
+      return Number(left.paragraphIndex || 0) - Number(right.paragraphIndex || 0);
+    });
+    pendingBlocks.forEach(appendBlock);
     if (!blocks.length) {
-      throw new Error("未读取到可审查的普通正文段落。");
+      throw new Error("未读取到可审查的正文或结构化正文表格。");
     }
-    var sourceText = blocks.map(function (block) { return block.text; }).join("\n");
+    if (characterCount > limit) {
+      throw new Error("当前全篇审查范围超过本次抽取设定的字符上限（20,000 审查字符）。");
+    }
     return {
       blocks: blocks,
-      sourceText: sourceText,
+      sourceText: sourceValues.join("\n"),
       reviewCharacterCount: characterCount,
-      contentSha256: sha256Text(sourceText)
+      contentSha256: sha256Text(sourceValues.join("\n")),
+      structureSha256: reviewStructureSha256(blocks),
+      tableCount: tableCount,
+      cellCount: cellCount,
+      capacity: getFullDocumentReviewCapacity(characterCount)
     };
+  }
+
+  function buildFullDocumentReviewBatches(body, targetCharacters) {
+    var target = Math.max(1, Number(targetCharacters) || 3500);
+    var batches = [];
+    var current = [];
+    var currentCount = 0;
+    var blocks = body && Array.isArray(body.blocks) ? body.blocks : [];
+
+    function flush() {
+      var values = [];
+      var count = 0;
+      if (!current.length) {
+        return;
+      }
+      current.forEach(function (block) {
+        var blockValues = reviewBlockTextValues(block);
+        values = values.concat(blockValues);
+        blockValues.forEach(function (value) { count += value.length; });
+      });
+      batches.push({
+        sequence: batches.length,
+        batchId: "batch-" + batches.length,
+        blocks: current,
+        characterCount: count,
+        contentSha256: sha256Text(values.join("\n")),
+        structureSha256: reviewStructureSha256(current),
+        range: {
+          start: current[0].blockId,
+          end: current[current.length - 1].blockId
+        }
+      });
+      current = [];
+      currentCount = 0;
+    }
+
+    blocks.forEach(function (block) {
+      var blockCount = reviewBlockTextValues(block).reduce(function (total, value) {
+        return total + value.length;
+      }, 0);
+      if (current.length && currentCount + blockCount > target) {
+        flush();
+      }
+      current.push(block);
+      currentCount += blockCount;
+    });
+    flush();
+    return batches;
   }
 
   function escapeHtml(value) {
@@ -1823,6 +2029,99 @@
     );
   }
 
+  function getTableCollection(document) {
+    var content = safeRead(document, "Content") || safeRead(document, "content");
+    return firstDefined(
+      safeRead(document, "Tables"),
+      safeRead(document, "tables"),
+      safeRead(content, "Tables"),
+      safeRead(content, "tables"),
+      []
+    );
+  }
+
+  function readTableRows(table) {
+    return firstDefined(safeRead(table, "Rows"), safeRead(table, "rows"), []);
+  }
+
+  function readTableCells(row) {
+    return firstDefined(safeRead(row, "Cells"), safeRead(row, "cells"), []);
+  }
+
+  function readFullDocumentReviewTable(table, tableIndex, parentCellId) {
+    var rows = [];
+    var rowCollection = readTableRows(table);
+    var tableId = toSafeString(firstDefined(
+      safeRead(table, "Id"), safeRead(table, "ID"), safeRead(table, "tableId")
+    ), "table-" + tableIndex);
+    var nestedTables = [];
+    for (var rowIndex = 1; rowIndex <= readCollectionCount(rowCollection); rowIndex += 1) {
+      var row = getCollectionItem(rowCollection, rowIndex);
+      var cells = [];
+      var cellCollection = readTableCells(row);
+      for (var columnIndex = 1; columnIndex <= readCollectionCount(cellCollection); columnIndex += 1) {
+        var cell = getCollectionItem(cellCollection, columnIndex);
+        var cellId = toSafeString(firstDefined(
+          safeRead(cell, "Id"), safeRead(cell, "ID"), safeRead(cell, "cellId")
+        ), tableId + "-cell-" + rowIndex + "-" + columnIndex);
+        var nestedCollection = firstDefined(safeRead(cell, "Tables"), safeRead(cell, "tables"), []);
+        var nested = [];
+        for (var nestedIndex = 1; nestedIndex <= readCollectionCount(nestedCollection); nestedIndex += 1) {
+          nested.push(readFullDocumentReviewTable(
+            getCollectionItem(nestedCollection, nestedIndex),
+            tableIndex + "-" + nestedIndex,
+            cellId
+          ));
+        }
+        nested.forEach(function (item) { nestedTables.push(item); });
+        cells.push({
+          cellId: cellId,
+          rowIndex: normalizePositiveInteger(firstDefined(safeRead(cell, "RowIndex"), safeRead(cell, "rowIndex"), rowIndex)) || rowIndex,
+          columnIndex: normalizePositiveInteger(firstDefined(safeRead(cell, "ColumnIndex"), safeRead(cell, "columnIndex"), columnIndex)) || columnIndex,
+          rowSpan: normalizePositiveInteger(firstDefined(safeRead(cell, "RowSpan"), safeRead(cell, "rowSpan"), 1)) || 1,
+          columnSpan: normalizePositiveInteger(firstDefined(safeRead(cell, "ColumnSpan"), safeRead(cell, "columnSpan"), 1)) || 1,
+          mergeId: toSafeString(firstDefined(safeRead(cell, "MergeId"), safeRead(cell, "mergeId")), ""),
+          text: readText(cell),
+          nestedTableIds: nested.map(function (item) { return item.tableId; })
+        });
+      }
+      if (cells.length) {
+        rows.push({ rowIndex: rowIndex, cells: cells });
+      }
+    }
+    return {
+      tableId: tableId,
+      tableIndex: Number(tableIndex) || 0,
+      paragraphIndex: normalizePositiveInteger(firstDefined(
+        safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
+      )),
+      parentCellId: parentCellId || "",
+      rows: rows,
+      nestedTables: nestedTables
+    };
+  }
+
+  function collectFullDocumentReviewTables(document) {
+    var collection = getTableCollection(document);
+    var tables = [];
+    for (var index = 1; index <= readCollectionCount(collection); index += 1) {
+      tables.push(readFullDocumentReviewTable(getCollectionItem(collection, index), index, ""));
+    }
+    return tables;
+  }
+
+  function readFullDocumentReviewEditSignal(document) {
+    var source = document || {};
+    var content = safeRead(source, "Content") || safeRead(source, "content") || {};
+    return [
+      toSafeString(firstDefined(
+        safeRead(source, "EditSequence"), safeRead(source, "editSequence"),
+        safeRead(source, "RevisionNumber"), safeRead(source, "revisionNumber"),
+        safeRead(content, "EditSequence"), safeRead(content, "editSequence")
+      ), "")
+    ].join(":");
+  }
+
   function collectParagraphsFromText(text, options) {
     var collectOptions = normalizeCollectOptions(options);
     var normalized = String(text || "").replace(/\r/g, "\n");
@@ -1908,6 +2207,48 @@
       return [];
     }
     return collectParagraphsFromText(readDocumentText(document), collectOptions);
+  }
+
+  function collectFullDocumentReviewParagraphs(document) {
+    var collection = getParagraphCollection(document);
+    var count = readCollectionCount(collection);
+    var items = [];
+    for (var index = 1; index <= count; index += 1) {
+      var paragraph = getCollectionItem(collection, index);
+      var range;
+      var containingTables;
+      var paragraphFormat;
+      var listFormat;
+      var text;
+      if (!paragraph) {
+        continue;
+      }
+      range = resolveRange(paragraph);
+      containingTables = firstDefined(safeRead(range, "Tables"), safeRead(paragraph, "Tables"));
+      if (readCollectionCount(containingTables) > 0) {
+        continue;
+      }
+      text = readText(paragraph).trim();
+      if (!text) {
+        continue;
+      }
+      paragraphFormat = firstDefined(
+        safeRead(paragraph, "ParagraphFormat"), safeRead(range, "ParagraphFormat"), {}
+      );
+      listFormat = firstDefined(safeRead(paragraph, "ListFormat"), safeRead(range, "ListFormat"), {});
+      items.push({
+        index: index,
+        text: text,
+        outlineLevel: normalizePositiveInteger(firstDefined(
+          safeRead(paragraphFormat, "OutlineLevel"), safeRead(paragraphFormat, "outlineLevel"), 0
+        )) || 0,
+        listLabel: toSafeString(firstDefined(
+          safeRead(listFormat, "ListString"), safeRead(listFormat, "listString"),
+          safeRead(paragraph, "ListLabel"), safeRead(paragraph, "listLabel")
+        ), "")
+      });
+    }
+    return items;
   }
 
   function collectParagraphsFromSelectionSources(selectionSources, selectedText, options) {
@@ -2741,7 +3082,9 @@
   return {
     normalizeText: normalizeText,
     sha256Text: sha256Text,
+    getFullDocumentReviewCapacity: getFullDocumentReviewCapacity,
     buildFullDocumentReviewBody: buildFullDocumentReviewBody,
+    buildFullDocumentReviewBatches: buildFullDocumentReviewBatches,
     escapeHtml: escapeHtml,
     renderMarkdown: renderMarkdown,
     buildInlineWritebackRuns: buildInlineWritebackRuns,
@@ -2759,6 +3102,9 @@
     readCollectionCount: readCollectionCount,
     getCollectionItem: getCollectionItem,
     getParagraphCollection: getParagraphCollection,
+    collectFullDocumentReviewParagraphs: collectFullDocumentReviewParagraphs,
+    collectFullDocumentReviewTables: collectFullDocumentReviewTables,
+    readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
     collectParagraphs: collectParagraphs,
     collectParagraphsFromSelectionSources: collectParagraphsFromSelectionSources,
     collectParagraphsFromText: collectParagraphsFromText,

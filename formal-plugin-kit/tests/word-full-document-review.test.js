@@ -54,9 +54,74 @@ assert.throws(
   /20,000/
 );
 
+const structured = helpers.buildFullDocumentReviewBody({
+  paragraphs: [
+    { index: 1, text: "第一标题", outlineLevel: 1 },
+    { index: 2, text: "第一段正文", listLabel: "1." }
+  ],
+  tables: [{
+    tableId: "table-1",
+    tableIndex: 1,
+    rows: [{
+      rowIndex: 1,
+      cells: [{
+        cellId: "cell-1",
+        rowIndex: 1,
+        columnIndex: 1,
+        rowSpan: 1,
+        columnSpan: 2,
+        mergeId: "merge-1",
+        text: "表头",
+        nestedTableIds: ["table-1-1"]
+      }]
+    }],
+    nestedTables: [{
+      tableId: "table-1-1",
+      parentCellId: "cell-1",
+      rows: [{
+        rowIndex: 1,
+        cells: [{
+          cellId: "cell-1-1",
+          rowIndex: 1,
+          columnIndex: 1,
+          text: "嵌套"
+        }]
+      }]
+    }]
+  }]
+}, 20000);
+assert.strictEqual(structured.blocks[0].blockType, "heading");
+assert.strictEqual(structured.blocks[1].blockType, "listItem");
+assert.strictEqual(structured.tableCount, 2);
+assert.strictEqual(structured.cellCount, 2);
+assert.deepStrictEqual(structured.capacity, {
+  tier: "single_chunk",
+  requiresConfirmation: false,
+  initialChunkCount: 1,
+  estimatedCallCount: 1,
+  callLimit: 8
+});
+assert.deepStrictEqual(helpers.getFullDocumentReviewCapacity(60001), {
+  tier: "large",
+  requiresConfirmation: true,
+  initialChunkCount: 4,
+  estimatedCallCount: 5,
+  callLimit: 24
+});
+assert.throws(() => helpers.getFullDocumentReviewCapacity(120001), /120,000/);
+const batches = helpers.buildFullDocumentReviewBatches({ blocks: [
+  { blockId: "paragraph-1", blockType: "paragraph", text: "甲".repeat(4) },
+  { blockId: "paragraph-2", blockType: "paragraph", text: "乙".repeat(4) },
+  { blockId: "paragraph-3", blockType: "paragraph", text: "丙".repeat(4) }
+] }, 5);
+assert.strictEqual(batches.length, 3);
+assert.strictEqual(batches[1].sequence, 1);
+assert.strictEqual(batches[2].range.end, "paragraph-3");
+
 const extract = functionSource("extractFullDocumentReviewBody");
 assert.ok(extract.includes("collectParagraphs"));
-assert.ok(extract.includes("excludeTableParagraphs: true"));
+assert.ok(extract.includes("collectFullDocumentReviewTables"));
+assert.ok(extract.includes("readFullDocumentReviewEditSignal"));
 assert.ok(extract.includes("buildFullDocumentReviewBody"));
 assert.ok(!extract.includes("InsertAfter"));
 assert.ok(!extract.includes("Text ="));
@@ -71,15 +136,35 @@ const collectedBody = helpers.collectParagraphs({
 assert.strictEqual(collectedBody.length, 1);
 assert.strictEqual(collectedBody[0].text, "普通正文。");
 
+const tables = helpers.collectFullDocumentReviewTables({
+  Tables: [{
+    Id: "table-1",
+    Rows: [{
+      Index: 1,
+      Cells: [{
+        Id: "cell-1",
+        RowIndex: 1,
+        ColumnIndex: 1,
+        RowSpan: 1,
+        ColumnSpan: 2,
+        MergeId: "merge-1",
+        Text: "表格正文"
+      }]
+    }]
+  }]
+});
+assert.strictEqual(tables.length, 1);
+assert.strictEqual(tables[0].rows[0].cells[0].text, "表格正文");
+
 // The WPS path uses the independent session/job/report protocol and performs
 // a second extraction before commit. It never invokes any Word writeback path.
 const run = functionSource("runFullDocumentReview");
 [
   "/word/document-review/full/snapshots",
-  "/batches/0",
   "/commit",
   "/word/document-review/full/jobs"
 ].forEach((token) => assert.ok(run.includes(token), token));
+assert.ok(functionSource("uploadFullDocumentReviewBatches").includes("/batches/"));
 assert.ok(run.includes("extractFullDocumentReviewBody"));
 assert.ok(run.includes("verificationSha256"));
 assert.ok(run.includes("firstPass.contentSha256 !== secondPass.contentSha256"));
