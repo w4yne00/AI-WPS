@@ -615,6 +615,94 @@ class FullDocumentReviewProtocolTests(unittest.TestCase):
         self.assertEqual(issue["sourceAnchor"]["end"], 25)
         self.assertTrue(issue["issueId"].startswith("issue-"))
 
+    def test_issue_identity_sorts_multiple_evidence_anchors_and_preserves_table_location(self):
+        service = FullDocumentReviewService(
+            staging_root=Path("/tmp/full-document-review-test"),
+            provider_client=_auth_provider(),
+            coordinator=LongTaskCoordinator(),
+        )
+        snapshot = self._snapshot("甲\n乙")
+        chunk = {
+            "chunkId": "chunk-1",
+            "blocks": [
+                {
+                    "blockId": "paragraph-1",
+                    "blockType": "paragraph",
+                    "paragraphIndex": 1,
+                    "text": "甲",
+                    "sourceOffsetStart": 0,
+                },
+                {
+                    "blockId": "table-1",
+                    "blockType": "table",
+                    "tableId": "table-1",
+                    "tableIndex": 1,
+                    "sourceOffsetStart": 2,
+                    "rows": [{
+                        "rowIndex": 1,
+                        "cells": [{
+                            "cellId": "cell-1",
+                            "rowIndex": 1,
+                            "columnIndex": 1,
+                            "text": "乙",
+                        }],
+                    }],
+                    "nestedTables": [],
+                },
+            ],
+        }
+        base_issue = {
+            "category": "logic",
+            "severity": "medium",
+            "anchorId": "paragraph-1",
+            "anchorStart": 0,
+            "originalText": "甲",
+            "problem": "两处内容需要一起核对。",
+            "suggestion": "核对上下文。",
+            "suggestedRewrite": "",
+        }
+        first = service._parse_strict_result(json.dumps({
+            "schemaVersion": "word.document_review.full.chunk.v2",
+            "chunkId": "chunk-1",
+            "summary": "跨结构问题。",
+            "enumerationStatus": "complete",
+            "hasMoreIssues": False,
+            "facts": [],
+            "crossChecks": [],
+            "issues": [{
+                **base_issue,
+                "anchors": [{
+                    "anchorId": "cell-1",
+                    "anchorStart": 0,
+                    "originalText": "乙",
+                }],
+            }],
+        }, ensure_ascii=False), snapshot, chunk)["issues"][0]
+        second = service._parse_strict_result(json.dumps({
+            "schemaVersion": "word.document_review.full.chunk.v2",
+            "chunkId": "chunk-1",
+            "summary": "跨结构问题。",
+            "enumerationStatus": "complete",
+            "hasMoreIssues": False,
+            "facts": [],
+            "crossChecks": [],
+            "issues": [{
+                **base_issue,
+                "anchors": [{
+                    "anchorId": "cell-1",
+                    "anchorStart": 0,
+                    "originalText": "乙",
+                }],
+            }],
+        }, ensure_ascii=False), snapshot, chunk)["issues"][0]
+        self.assertEqual(first["issueId"], second["issueId"])
+        self.assertEqual(first["anchorIds"], ["paragraph-1", "cell-1"])
+        self.assertEqual(first["sourceAnchors"][1]["tableId"], "table-1")
+        self.assertEqual(first["sourceAnchors"][1]["cellId"], "cell-1")
+        self.assertEqual(first["sourceAnchors"][1]["rowIndex"], 1)
+        self.assertEqual(first["sourceAnchors"][1]["columnIndex"], 1)
+        self.assertEqual(first["sourceAnchors"][1]["cellOffsetStart"], 0)
+
     def test_aggregate_input_budget_is_checked_before_provider_request(self):
         snapshot = self._snapshot("甲。")
         parsed = [{

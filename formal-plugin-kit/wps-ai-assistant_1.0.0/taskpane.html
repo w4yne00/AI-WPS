@@ -222,6 +222,48 @@
           </section>
           <div id="result-output" class="markdown-output">等待运行。</div>
           <div id="full-document-review-issue-controls" class="full-document-review-issue-controls" hidden>
+            <div id="full-review-issue-filters" class="full-review-issue-filters" aria-label="全篇审查问题筛选">
+              <label>严重程度
+                <select id="full-review-filter-severity">
+                  <option value="">全部</option>
+                  <option value="high">高</option>
+                  <option value="medium">中</option>
+                  <option value="low">低</option>
+                </select>
+              </label>
+              <label>问题类别
+                <select id="full-review-filter-category">
+                  <option value="">全部</option>
+                  <option value="typo">错别字</option>
+                  <option value="expression">表达</option>
+                  <option value="logic">逻辑</option>
+                  <option value="fluency">流畅性</option>
+                  <option value="professional">专业性</option>
+                </select>
+              </label>
+              <label>位置
+                <select id="full-review-filter-location">
+                  <option value="">全部</option>
+                  <option value="body">正文</option>
+                  <option value="chapter">章节</option>
+                  <option value="table">表格</option>
+                </select>
+              </label>
+              <label>处理状态
+                <select id="full-review-filter-status">
+                  <option value="">全部</option>
+                  <option value="open">待处理</option>
+                  <option value="processed">已处理</option>
+                  <option value="ignored">已忽略</option>
+                </select>
+              </label>
+              <label>排序
+                <select id="full-review-filter-sort">
+                  <option value="source">原文顺序</option>
+                  <option value="severity">严重程度</option>
+                </select>
+              </label>
+            </div>
             <div>
               <button id="btn-full-review-previous-page" type="button" disabled>上一页</button>
               <span id="full-review-page-status" role="status" aria-live="polite"></span>

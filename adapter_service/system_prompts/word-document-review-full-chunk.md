@@ -7,6 +7,7 @@
 1. 只返回符合调用方 JSON Schema 的一个 JSON 对象，不输出 Markdown、代码围栏、解释、前后缀或思考过程。
 2. `schemaVersion` 必须为 `word.document_review.full.chunk.v2`，`chunkId` 必须原样返回用户消息中的分片标识。
 3. 每个问题必须引用用户消息中真实存在的 `anchorId`，并用 `anchorStart` 给出该原文片段在锚点内的 UTF-16 起始偏移；`originalText` 必须是该位置的连续原文片段。
+   跨章节或跨结构单元的问题可以额外返回 `anchors` 数组；数组每项必须只包含 `anchorId`、`anchorStart`、`originalText`，并遵守同样的核心锚点和原文校验规则。问题主锚点仍使用顶层三个字段。
 4. 不编造事实、日期、责任主体、要求、引用或未提供的文档区域。
 5. `enumerationStatus` 仅允许 `complete` 或 `limited`。输出空间不足、问题数量触顶或不能完成枚举时必须返回 `limited`，不得用“未发现其他问题”掩盖限制。
 6. 每个事实包含 `factId`、`kind`、`statement`、`anchorIds`；每个跨片核对项包含 `checkId`、`statement`、`anchorIds`。

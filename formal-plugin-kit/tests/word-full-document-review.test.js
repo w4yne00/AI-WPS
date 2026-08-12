@@ -203,7 +203,24 @@ assert.ok(fullIssuePage.includes("globalFindings"));
 assert.ok(fullIssuePage.includes("定位原文"));
 assert.ok(fullIssuePage.includes("复制建议"));
 assert.ok(fullIssuePage.includes("复制原文"));
+assert.ok(html.includes('id="full-review-filter-severity"'));
+assert.ok(html.includes('id="full-review-filter-category"'));
+assert.ok(html.includes('id="full-review-filter-location"'));
+assert.ok(html.includes('id="full-review-filter-status"'));
+assert.ok(functionSource("loadFullDocumentReviewIssuePage").includes("severity"));
+assert.ok(functionSource("loadFullDocumentReviewIssuePage").includes("category"));
+assert.ok(functionSource("loadFullDocumentReviewIssuePage").includes("location"));
+assert.ok(functionSource("loadFullDocumentReviewIssuePage").includes("status"));
+assert.ok(functionSource("changeFullDocumentReviewIssueFilter").includes("fullDocumentReviewIssueCursorHistory"));
+assert.ok(fullIssuePage.includes("duplicateGroupSize"));
 assert.ok(functionSource("locateFullDocumentReviewIssue").includes("唯一匹配"));
+assert.ok(functionSource("locateFullDocumentReviewIssue").includes("tableIndex"));
+assert.ok(functionSource("locateFullDocumentReviewIssue").includes("tablePath"));
+assert.ok(functionSource("locateFullDocumentReviewIssue").includes("anchorVerification"));
+assert.ok(functionSource("locateFullDocumentReviewIssue").includes("预期附近"));
+assert.ok(functionSource("markFullDocumentReviewAnchorVerification").includes("anchorVerification"));
+assert.ok(fullIssuePage.includes("issue.issueId"));
+assert.ok(fullIssuePage.includes("锚点未验证"));
 
 assert.ok(functionSource("bindEvents").includes(
   'byId("btn-run-full-document-review").addEventListener("click", runFullDocumentReview)'

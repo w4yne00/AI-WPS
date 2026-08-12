@@ -108,13 +108,21 @@ def list_full_document_review_issues(
 
 @router.patch("/word/document-review/full/jobs/{job_id}/issues/{issue_id}")
 def update_full_document_review_issue(job_id: str, issue_id: str, request: dict):
-    if not isinstance(request, dict) or set(request) != {"status"}:
+    allowed_fields = {"status", "anchorVerification"}
+    if (
+        not isinstance(request, dict)
+        or not set(request)
+        or not set(request).issubset(allowed_fields)
+    ):
         raise AdapterError(
             "FULL_DOCUMENT_REVIEW_ISSUE_REQUEST_INVALID",
-            "问题处理状态请求格式无效。",
+            "问题更新请求格式无效。",
         )
     data = full_document_review_service.update_issue_status(
-        job_id, issue_id, request.get("status")
+        job_id,
+        issue_id,
+        request.get("status"),
+        request.get("anchorVerification"),
     )
     return _full_review_envelope(data, trace_id=job_id, message="issue updated")
 

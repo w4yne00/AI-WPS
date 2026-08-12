@@ -223,6 +223,13 @@
     fullDocumentReviewIssueJobId: "",
     fullDocumentReviewIssueReport: null,
     fullDocumentReviewIssueCursorHistory: [],
+    fullDocumentReviewIssueFilters: {
+      severity: "",
+      category: "",
+      location: "",
+      status: "",
+      sort: "source"
+    },
     writingJobId: "",
     writingJobTaskType: "",
     writingJobMode: "",
@@ -5813,62 +5820,141 @@
     return body;
   }
 
-  function locateFullDocumentReviewIssue(issue) {
+  function markFullDocumentReviewAnchorVerification(jobId, issueId, verification) {
+    if (!jobId || !issueId || (verification !== "verified" && verification !== "unverified")) {
+      return Promise.resolve();
+    }
+    return request(
+      "/word/document-review/full/jobs/" + encodeURIComponent(jobId) +
+        "/issues/" + encodeURIComponent(issueId),
+      { anchorVerification: verification },
+      { method: "PATCH", timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS }
+    );
+  }
+
+  function locateFullDocumentReviewIssue(issue, jobId) {
     var document = getActiveDocument();
     var anchor = issue && issue.sourceAnchor || {};
-    var paragraphIndex = Number(anchor.paragraphIndex || 0);
-    var paragraphs;
-    var paragraph;
+    var originalText;
+    var location = String(anchor.location || issue && issue.location || "body");
+    var target;
     var range;
     var text;
-    var originalText;
-    var firstIndex;
-    var secondIndex;
+    var occurrences = [];
+    var index;
     var start;
     var end;
-    if (!document || !paragraphIndex) {
-      setStatus("缺少可验证的原文段落锚点，未自动定位。");
+    var expectedOffset;
+    var nearbyOccurrences;
+    var paragraphs;
+    var tables;
+    var table;
+    var rows;
+    var row;
+    var cells;
+    function failLocation(message) {
+      if (issue) {
+        issue.anchorVerification = "unverified";
+      }
+      setStatus(message);
+      markFullDocumentReviewAnchorVerification(jobId, issue && issue.issueId, "unverified")
+        .catch(function () {
+          setStatus(message + "（定位状态未能写回服务器。）");
+        });
       return false;
     }
-    paragraphs = getParagraphs(document);
-    paragraph = helpers.getCollectionItem
-      ? helpers.getCollectionItem(paragraphs, paragraphIndex)
-      : null;
-    range = getRangeFromTarget(paragraph);
+    if (!document || String(issue && issue.anchorVerification || "") !== "verified") {
+      return failLocation("该问题的原文锚点未通过快照校验，未自动跳转。");
+    }
     originalText = String(issue && issue.originalText || "");
+    if (!document || !originalText) {
+      return failLocation("缺少可验证的原文锚点，未自动定位。");
+    }
+    if (location === "table") {
+      tables = readValue(document, "Tables") || readValue(document, "tables") || [];
+      var tablePath = Array.isArray(anchor.tablePath) && anchor.tablePath.length
+        ? anchor.tablePath : [{ tableIndex: Number(anchor.tableIndex || 0) }];
+      table = helpers.getCollectionItem
+        ? helpers.getCollectionItem(tables, Number(tablePath[0].tableIndex || 0))
+        : null;
+      for (var pathIndex = 1; table && pathIndex < tablePath.length; pathIndex += 1) {
+        var parentPath = tablePath[pathIndex];
+        var parentRows = readValue(table, "Rows") || readValue(table, "rows") || [];
+        var parentRow = helpers.getCollectionItem
+          ? helpers.getCollectionItem(parentRows, Number(parentPath.rowIndex || 0))
+          : null;
+        var parentCells = parentRow && (readValue(parentRow, "Cells") || readValue(parentRow, "cells") || []);
+        var parentCell = helpers.getCollectionItem
+          ? helpers.getCollectionItem(parentCells, Number(parentPath.columnIndex || 0))
+          : null;
+        var nestedTables = parentCell && (readValue(parentCell, "Tables") || readValue(parentCell, "tables") || []);
+        table = helpers.getCollectionItem
+          ? helpers.getCollectionItem(nestedTables, Number(parentPath.tableIndex || 0))
+          : null;
+      }
+      rows = table && (readValue(table, "Rows") || readValue(table, "rows") || []);
+      row = helpers.getCollectionItem
+        ? helpers.getCollectionItem(rows, Number(anchor.rowIndex || 0))
+        : null;
+      cells = row && (readValue(row, "Cells") || readValue(row, "cells") || []);
+      target = helpers.getCollectionItem
+        ? helpers.getCollectionItem(cells, Number(anchor.columnIndex || 0))
+        : null;
+      range = getRangeFromTarget(target);
+    } else {
+      paragraphs = getParagraphs(document);
+      target = helpers.getCollectionItem
+        ? helpers.getCollectionItem(paragraphs, Number(anchor.paragraphIndex || 0))
+        : null;
+      range = getRangeFromTarget(target);
+    }
     text = String(readValue(range, "Text") || readValue(range, "text") || "")
       .replace(/[\r\u0007]+$/g, "");
-    firstIndex = originalText ? text.indexOf(originalText) : -1;
-    secondIndex = firstIndex < 0 ? -1 : text.indexOf(originalText, firstIndex + originalText.length);
-    if (!range || !originalText || firstIndex < 0 || secondIndex >= 0) {
-      setStatus("原文无法在预期段落内唯一匹配，未自动跳转。");
-      return false;
+    if (!range) {
+      return failLocation("原文结构单元已不存在，未自动跳转。");
     }
+    index = text.indexOf(originalText);
+    while (index >= 0) {
+      occurrences.push(index);
+      index = text.indexOf(originalText, index + Math.max(originalText.length, 1));
+    }
+    expectedOffset = Number(issue && issue.anchorStart);
+    if (isFinite(expectedOffset) && expectedOffset >= 0 &&
+        text.slice(expectedOffset, expectedOffset + originalText.length) === originalText) {
+      occurrences = [expectedOffset];
+    } else {
+      nearbyOccurrences = occurrences.filter(function (candidate) {
+        return isFinite(expectedOffset) && Math.abs(candidate - expectedOffset) <= 512;
+      });
+      occurrences = nearbyOccurrences;
+    }
+    if (occurrences.length !== 1) {
+      return failLocation("原文无法在预期" + (location === "table" ? "表格单元格" : "段落") + "内唯一匹配，未自动跳转。");
+    }
+    index = occurrences[0];
     start = Number(readValue(range, "Start"));
     if (isNaN(start)) {
-      setStatus("当前 WPS 未提供可验证的原文范围，未自动跳转。");
-      return false;
+      return failLocation("当前 WPS 未提供可验证的原文范围，未自动跳转。");
     }
-    end = start + firstIndex + originalText.length;
+    end = start + index + originalText.length;
     try {
       if (typeof range.SetRange === "function") {
-        range.SetRange(start + firstIndex, end);
+        range.SetRange(start + index, end);
       } else if (typeof range.setRange === "function") {
-        range.setRange(start + firstIndex, end);
+        range.setRange(start + index, end);
       } else {
-        setStatus("当前 WPS 不支持保守范围定位。");
-        return false;
+        return failLocation("当前 WPS 不支持保守范围定位。");
       }
       if (typeof range.Select === "function") {
         range.Select();
       } else if (typeof range.select === "function") {
         range.select();
       }
-      setStatus("已按唯一原文匹配定位；文档变化后仍以人工复核为准。");
+      issue.anchorVerification = "verified";
+      setStatus("已按原始范围或预期附近的唯一原文匹配定位；文档变化后仍以人工复核为准。");
       return true;
     } catch (error) {
-      setStatus("原文定位失败，未修改文档正文。");
-      return false;
+      return failLocation("原文定位失败，未修改文档正文。");
     }
   }
 
@@ -5937,12 +6023,21 @@
     var exportMarkdown = byId("btn-full-review-export-markdown");
     var pageStatus = byId("full-review-page-status");
     var actions = byId("full-review-issue-actions");
+    var filterNames = ["severity", "category", "location", "status", "sort"];
     if (!controls || !previous || !next || !exportJson || !exportMarkdown ||
         !pageStatus || !actions) {
       return;
     }
     controls.hidden = false;
-    pageStatus.textContent = "第 " + Number(pageData && pageData.page || 1) + " 页";
+    filterNames.forEach(function (name) {
+      var select = byId("full-review-filter-" + name);
+      var value = state.fullDocumentReviewIssueFilters[name] || "";
+      if (select && select.value !== value) {
+        select.value = value;
+      }
+    });
+    pageStatus.textContent = "第 " + Number(pageData && pageData.page || 1) + " 页，共 " +
+      Number(pageData && pageData.total || 0) + " 项";
     previous.disabled = state.fullDocumentReviewIssueCursorHistory.length <= 1;
     next.disabled = !pageData.nextCursor;
     exportJson.onclick = function () {
@@ -5977,7 +6072,9 @@
       row.className = "full-review-issue-row";
       row.textContent = (issue.issueId || "问题") + "［" +
         (issue.category || "未分类") + "／" + (issue.severity || "未标注") + "］：" +
-        (issue.problem || "审查问题");
+        (issue.problem || "审查问题") +
+        (issue.duplicateGroupSize > 1 ? "（重复组 " + issue.duplicateGroupSize + " 处）" : "") +
+        (issue.anchorVerification !== "verified" ? "（锚点未验证）" : "");
       locate.type = "button";
       locate.textContent = "定位原文";
       copyOriginal.type = "button";
@@ -5988,8 +6085,10 @@
       processed.textContent = "标记已处理";
       ignored.type = "button";
       ignored.textContent = "标记已忽略";
+      processed.disabled = issue.status === "processed";
+      ignored.disabled = issue.status === "ignored";
       locate.addEventListener("click", function () {
-        locateFullDocumentReviewIssue(issue);
+        locateFullDocumentReviewIssue(issue, jobId);
       });
       copyOriginal.addEventListener("click", function () {
         writeClipboardText(issue.originalText || "", "原文已复制。");
@@ -6028,8 +6127,14 @@
   }
 
   function loadFullDocumentReviewIssuePage(jobId, report, cursor) {
+    var filters = state.fullDocumentReviewIssueFilters || {};
     var path = "/word/document-review/full/jobs/" + encodeURIComponent(jobId) +
-      "/issues?pageSize=20&sort=source";
+      "/issues?pageSize=20&sort=" + encodeURIComponent(filters.sort || "source");
+    ["severity", "category", "location", "status"].forEach(function (name) {
+      if (filters[name]) {
+        path += "&" + name + "=" + encodeURIComponent(filters[name]);
+      }
+    });
     if (cursor) {
       path += "&cursor=" + encodeURIComponent(cursor);
     }
@@ -6054,6 +6159,24 @@
       { status: status },
       { method: "PATCH", timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS }
     );
+  }
+
+  function changeFullDocumentReviewIssueFilter(name, value) {
+    if (!state.fullDocumentReviewIssueFilters ||
+        ["severity", "category", "location", "status", "sort"].indexOf(name) < 0) {
+      return;
+    }
+    state.fullDocumentReviewIssueFilters[name] = String(value || "");
+    state.fullDocumentReviewIssueCursorHistory = [""];
+    if (state.fullDocumentReviewIssueJobId && state.fullDocumentReviewIssueReport) {
+      loadFullDocumentReviewIssuePage(
+        state.fullDocumentReviewIssueJobId,
+        state.fullDocumentReviewIssueReport,
+        ""
+      ).catch(function (error) {
+        setStatus("问题筛选读取失败：" + describeFetchError(error));
+      });
+    }
   }
 
   function downloadFullDocumentReviewExport(jobId, format) {
@@ -6098,6 +6221,13 @@
       excludedRegions: excludedRegions,
       issueEnumeration: issueEnumerationLabel,
       disclaimer: disclaimer
+    };
+    state.fullDocumentReviewIssueFilters = {
+      severity: "",
+      category: "",
+      location: "",
+      status: "",
+      sort: "source"
     };
     state.fullDocumentReviewIssueCursorHistory = [""];
     return loadFullDocumentReviewIssuePage(jobId, report, "");
@@ -6771,6 +6901,11 @@
       }
     });
     byId("btn-run-full-document-review").addEventListener("click", runFullDocumentReview);
+    ["severity", "category", "location", "status", "sort"].forEach(function (name) {
+      byId("full-review-filter-" + name).addEventListener("change", function (event) {
+        changeFullDocumentReviewIssueFilter(name, event.target.value);
+      });
+    });
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;

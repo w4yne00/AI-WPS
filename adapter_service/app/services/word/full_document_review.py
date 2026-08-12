@@ -9,6 +9,7 @@ import shutil
 import threading
 import tempfile
 import time
+import unicodedata
 from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -58,8 +59,10 @@ LARGE_SNAPSHOT_CONFIRMATION_TTL_SECONDS = 30 * 60
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
 _CATEGORIES = {"typo", "expression", "logic", "fluency", "professional"}
 _SEVERITIES = {"high", "medium", "low"}
+_LOCATIONS = {"body", "chapter", "table"}
 _ENUMERATION_STATUSES = {"complete", "limited"}
 _ISSUE_STATUSES = {"open", "processed", "ignored"}
+_ANCHOR_VERIFICATIONS = {"verified", "unverified"}
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 _NON_RETRYABLE_PROVIDER_CODES = {
     "PROVIDER_TIMEOUT",
@@ -112,6 +115,30 @@ _EXCLUDED_REGIONS = (
     "attachments",
     "hiddenText",
 )
+_EXPORT_BLOCKED_KEYS = {
+    "blocks",
+    "sourceText",
+    "fullSnapshot",
+    "rawAnswer",
+    "rawResponse",
+    "modelResponse",
+    "apiKey",
+    "apiKeyRef",
+    "keyFingerprint",
+    "localPath",
+    "tempPath",
+    "stagingPath",
+    "errorDetail",
+}
+_EXPORT_BLOCKED_KEY_NAMES = {
+    re.sub(r"[^a-z0-9]", "", key.casefold())
+    for key in _EXPORT_BLOCKED_KEYS
+} | {
+    "fulltext",
+    "documenttext",
+    "snapshottext",
+    "modelrawresponse",
+}
 
 
 def classify_review_capacity(review_character_count: int) -> Dict:
@@ -181,6 +208,28 @@ def _report_sha256(report: Dict) -> str:
 
 def _review_character_count(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
+
+
+def _normalize_issue_semantic(value: object) -> str:
+    """Normalize model wording before using it in a stable issue identity."""
+    return re.sub(
+        r"\s+", " ", unicodedata.normalize("NFKC", str(value or ""))
+    ).strip().casefold()
+
+
+def _sanitize_export_value(value: object) -> object:
+    """Remove private execution data from user-controlled report exports."""
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_export_value(item)
+            for key, item in value.items()
+            if not str(key).startswith("_")
+            and re.sub(r"[^a-z0-9]", "", str(key).casefold())
+            not in _EXPORT_BLOCKED_KEY_NAMES
+        }
+    if isinstance(value, list):
+        return [_sanitize_export_value(item) for item in value]
+    return value
 
 
 def _full_review_disabled() -> AdapterError:
@@ -967,6 +1016,7 @@ class FullDocumentReviewService:
                     "paragraphIndex": paragraph_index,
                     "tableId": table_id,
                     "tableIndex": self._positive_int(item.get("tableIndex", len(normalized) + 1)),
+                    "tablePath": self._normalize_table_path(item.get("tablePath", [])),
                     "rows": self._normalize_table_rows(item.get("rows")),
                     "nestedTables": self._normalize_nested_tables(item.get("nestedTables", [])),
                     "range": self._normalize_range(item.get("range", item.get("sourceRange"))),
@@ -1084,6 +1134,8 @@ class FullDocumentReviewService:
                 )
             normalized.append({
                 "tableId": table_id,
+                "tableIndex": table.get("tableIndex", 0),
+                "tablePath": self._normalize_table_path(table.get("tablePath", [])),
                 "parentCellId": self._optional_string(table, "parentCellId", "", 96),
                 "rows": self._normalize_table_rows(table.get("rows")),
                 "nestedTables": self._normalize_nested_tables(table.get("nestedTables", [])),
@@ -1157,6 +1209,31 @@ class FullDocumentReviewService:
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_RANGE_INVALID", "正文原文范围格式无效。"
             )
+        return normalized
+
+    @staticmethod
+    def _normalize_table_path(value: object) -> List[Dict]:
+        if value is None:
+            return []
+        if not isinstance(value, list) or len(value) > 32:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_TABLE_INVALID", "表格路径格式无效。"
+            )
+        normalized = []
+        for item in value:
+            if not isinstance(item, dict) or set(item) != {"tableIndex", "rowIndex", "columnIndex"}:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_TABLE_INVALID", "表格路径格式无效。"
+                )
+            if any(type(item[key]) is not int or item[key] < 0 for key in item):
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_TABLE_INVALID", "表格路径索引格式无效。"
+                )
+            if item["tableIndex"] <= 0:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_TABLE_INVALID", "表格路径索引格式无效。"
+                )
+            normalized.append({key: item[key] for key in ("tableIndex", "rowIndex", "columnIndex")})
         return normalized
 
     @staticmethod
@@ -1654,6 +1731,11 @@ class FullDocumentReviewService:
                 "FULL_DOCUMENT_REVIEW_ISSUE_FILTER_INVALID",
                 "问题类别筛选值无效。",
             )
+        if location and location not in _LOCATIONS:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_FILTER_INVALID",
+                "问题位置筛选值无效。",
+            )
         if status and status not in _ISSUE_STATUSES:
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_ISSUE_STATUS_INVALID",
@@ -1713,6 +1795,19 @@ class FullDocumentReviewService:
         next_cursor = ""
         if offset + size < len(issues) and selected:
             next_cursor = self._encode_issue_cursor(selected[-1]["issueId"])
+        filtered_group_ids = {
+            item.get("duplicateGroupId", "") for item in issues if item.get("duplicateGroupId")
+        }
+        duplicate_groups = {}
+        for item in report.get("issues", []):
+            group_id = item.get("duplicateGroupId", "")
+            if group_id in filtered_group_ids:
+                duplicate_groups.setdefault(group_id, []).append(item.get("issueId", ""))
+        duplicate_groups = {
+            group_id: issue_ids
+            for group_id, issue_ids in duplicate_groups.items()
+            if len(issue_ids) > 1
+        }
         return {
             "items": selected,
             "total": len(issues),
@@ -1720,6 +1815,14 @@ class FullDocumentReviewService:
             "page": (offset // size) + 1,
             "nextCursor": next_cursor,
             "hasMore": bool(next_cursor),
+            "duplicateGroups": [
+                {
+                    "duplicateGroupId": group_id,
+                    "issueIds": issue_ids,
+                    "count": len(issue_ids),
+                }
+                for group_id, issue_ids in sorted(duplicate_groups.items())
+            ],
             "filters": {
                 "severity": severity,
                 "category": category,
@@ -1729,22 +1832,41 @@ class FullDocumentReviewService:
             "sort": sort,
         }
 
-    def update_issue_status(self, job_id: str, issue_id: str, status: str) -> Dict:
+    def update_issue_status(
+        self,
+        job_id: str,
+        issue_id: str,
+        status: Optional[str] = None,
+        anchor_verification: Optional[str] = None,
+    ) -> Dict:
         if not _SAFE_ID.fullmatch(str(issue_id or "")):
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_ISSUE_NOT_FOUND",
                 "全篇审查问题不存在或已过期。",
                 status_code=404,
             )
-        if status not in _ISSUE_STATUSES:
+        if status is None and anchor_verification is None:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_REQUEST_INVALID",
+                "问题更新请求不能为空。",
+            )
+        if status is not None and status not in _ISSUE_STATUSES:
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_ISSUE_STATUS_INVALID",
                 "问题处理状态无效。",
             )
+        if anchor_verification is not None and anchor_verification not in _ANCHOR_VERIFICATIONS:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ANCHOR_VERIFICATION_INVALID",
+                "问题锚点验证状态无效。",
+            )
         report = self._require_report(job_id)
         for issue in report.get("issues", []):
             if issue.get("issueId") == issue_id:
-                issue["status"] = status
+                if status is not None:
+                    issue["status"] = status
+                if anchor_verification is not None:
+                    issue["anchorVerification"] = anchor_verification
                 self._refresh_report_counts(report)
                 self._save_report(job_id, report)
                 return deepcopy(issue)
@@ -2477,7 +2599,12 @@ class FullDocumentReviewService:
                 "suggestedRewrite",
             }
             item_required = required | {"anchorStart"} if is_current_schema else required
-            if not isinstance(item, dict) or set(item) != item_required:
+            allowed_item_keys = item_required | ({"anchors"} if is_current_schema else set())
+            if (
+                not isinstance(item, dict)
+                or not item_required.issubset(set(item))
+                or not set(item).issubset(allowed_item_keys)
+            ):
                 self._invalid_result()
             if not all(isinstance(item.get(field), str) for field in required):
                 self._invalid_result()
@@ -2485,19 +2612,9 @@ class FullDocumentReviewService:
                 type(item.get("anchorStart")) is not int or item["anchorStart"] < 0
             ):
                 self._invalid_result()
-            anchor_id = item["anchorId"]
-            original_text = item["originalText"]
-            anchor = blocks.get(anchor_id, {})
-            anchor_start = item.get("anchorStart", anchor.get("text", "").find(original_text))
-            original_end = anchor_start + _review_character_count(original_text)
             if (
                 item.get("category") not in _CATEGORIES
                 or item.get("severity") not in _SEVERITIES
-                or not 0 < len(anchor_id) <= 96
-                or anchor_id not in blocks
-                or not anchor.get("core", True)
-                or not 0 < len(original_text) <= 1000
-                or self._slice_by_review_chars(anchor.get("text", ""), anchor_start, original_end) != original_text
                 or not item["problem"].strip()
                 or len(item["problem"]) > 2000
                 or not item["suggestion"].strip()
@@ -2505,60 +2622,164 @@ class FullDocumentReviewService:
                 or len(item["suggestedRewrite"]) > 4000
             ):
                 self._invalid_result()
+            evidence_items = [{
+                "anchorId": item["anchorId"],
+                "anchorStart": item.get("anchorStart"),
+                "originalText": item["originalText"],
+            }]
+            if "anchors" in item:
+                if (
+                    not isinstance(item["anchors"], list)
+                    or not item["anchors"]
+                    or any(
+                        not isinstance(evidence, dict)
+                        or set(evidence) != {"anchorId", "anchorStart", "originalText"}
+                        for evidence in item["anchors"]
+                    )
+                ):
+                    self._invalid_result()
+                evidence_items.extend(item["anchors"])
+            evidence_records = []
+            seen_evidence = set()
+            for evidence in evidence_items:
+                anchor_id = evidence["anchorId"]
+                original_text = evidence["originalText"]
+                if not isinstance(anchor_id, str) or not isinstance(original_text, str):
+                    self._invalid_result()
+                anchor = blocks.get(anchor_id, {})
+                anchor_start = evidence.get("anchorStart")
+                if anchor_start is None:
+                    anchor_start = anchor.get("text", "").find(original_text)
+                evidence_key = (anchor_id, anchor_start, original_text)
+                if evidence_key in seen_evidence:
+                    continue
+                seen_evidence.add(evidence_key)
+                original_end = anchor_start + _review_character_count(original_text)
+                is_table_anchor = anchor.get("location") == "table"
+                table_anchor_complete = all(
+                    anchor.get(field) not in (None, "")
+                    for field in (
+                        "tableId", "tableIndex", "cellId", "rowIndex", "columnIndex"
+                    )
+                )
+                if (
+                    type(anchor_start) is not int
+                    or anchor_start < 0
+                    or not 0 < len(anchor_id) <= 96
+                    or anchor_id not in blocks
+                    or not anchor.get("core", True)
+                    or not 0 < len(original_text) <= 1000
+                    or (is_table_anchor and not table_anchor_complete)
+                    or self._slice_by_review_chars(anchor.get("text", ""), anchor_start, original_end) != original_text
+                ):
+                    self._invalid_result()
+                source_offset = anchor.get("sourceOffsetStart", 0) + anchor_start
+                source_anchor = {
+                    "anchorId": anchor.get("sourceAnchorId", anchor_id),
+                    "location": anchor.get("location", "body"),
+                    "start": source_offset,
+                    "end": source_offset + _review_character_count(original_text),
+                    "paragraphIndex": anchor.get("paragraphIndex", 0),
+                    "localStart": anchor_start,
+                    "localEnd": original_end,
+                    "verification": "verified",
+                    "originalTextSha256": _sha256_text(original_text),
+                }
+                if is_table_anchor:
+                    for field in (
+                        "tableId",
+                        "tableIndex",
+                        "cellId",
+                        "rowIndex",
+                        "columnIndex",
+                        "rowSpan",
+                        "columnSpan",
+                        "mergeId",
+                    ):
+                        if field in anchor and anchor[field] not in (None, ""):
+                            source_anchor[field] = anchor[field]
+                    source_anchor["tablePath"] = deepcopy(anchor.get("tablePath", []))
+                    source_anchor["cellOffsetStart"] = anchor_start
+                    source_anchor["cellOffsetEnd"] = original_end
+                elif anchor.get("range"):
+                    source_anchor["range"] = deepcopy(anchor["range"])
+                evidence_records.append({
+                    "anchor": anchor,
+                    "anchorId": anchor_id,
+                    "anchorStart": anchor_start,
+                    "originalText": original_text,
+                    "originalEnd": original_end,
+                    "sourceOffset": source_offset,
+                    "sourceAnchor": source_anchor,
+                })
+            if not evidence_records:
+                self._invalid_result()
+            anchor_signatures = sorted(
+                [
+                    {
+                        "location": record["sourceAnchor"].get("location", "body"),
+                        "anchorId": record["sourceAnchor"].get("anchorId", ""),
+                        "start": record["sourceAnchor"].get("start", 0),
+                        "end": record["sourceAnchor"].get("end", 0),
+                        "tableId": record["sourceAnchor"].get("tableId", ""),
+                        "tableIndex": record["sourceAnchor"].get("tableIndex", ""),
+                        "tablePath": record["sourceAnchor"].get("tablePath", []),
+                        "cellId": record["sourceAnchor"].get("cellId", ""),
+                        "rowIndex": record["sourceAnchor"].get("rowIndex", 0),
+                        "columnIndex": record["sourceAnchor"].get("columnIndex", 0),
+                        "cellOffsetStart": record["sourceAnchor"].get("cellOffsetStart", record["anchorStart"]),
+                        "cellOffsetEnd": record["sourceAnchor"].get("cellOffsetEnd", record["originalEnd"]),
+                    }
+                    for record in evidence_records
+                ],
+                key=lambda anchor: (
+                    anchor["start"], anchor["end"], anchor["location"], anchor["anchorId"]
+                ),
+            )
             issue_id = "issue-{0}".format(
                 _sha256_text(
-                    "|".join(
-                        [
-                            snapshot["contentSha256"],
-                            str(item["category"]),
-                            str(anchor.get("sourceAnchorId", anchor_id)),
-                            str(anchor.get("sourceOffsetStart", 0) + anchor_start),
-                            original_text,
-                            re.sub(r"\s+", " ", str(item["problem"]).strip()),
-                        ]
+                    json.dumps(
+                        {
+                            "snapshot": snapshot["contentSha256"],
+                            "category": item["category"],
+                            "anchors": anchor_signatures,
+                            "semantic": _normalize_issue_semantic(item["problem"]),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
                     )
                 )[:24]
             )
-            source_offset = anchor.get("sourceOffsetStart", 0) + anchor_start
             duplicate_group_id = "group-{0}".format(
                 _sha256_text(
-                    "|".join([
-                        str(item["category"]),
-                        re.sub(r"\s+", " ", str(item["problem"]).strip()),
-                    ])
+                    json.dumps(
+                        {
+                            "category": item["category"],
+                            "semantic": _normalize_issue_semantic(item["problem"]),
+                        },
+                        ensure_ascii=False,
+                        sort_keys=True,
+                        separators=(",", ":"),
+                    )
                 )[:24]
             )
-            source_anchor = {
-                "anchorId": anchor.get("sourceAnchorId", anchor_id),
-                "location": anchor.get("location", "body"),
-                "start": source_offset,
-                "end": source_offset + _review_character_count(original_text),
-                "paragraphIndex": anchor.get("paragraphIndex", 0),
-            }
-            if anchor.get("location") == "table":
-                for field in (
-                    "tableId",
-                    "rowIndex",
-                    "columnIndex",
-                    "rowSpan",
-                    "columnSpan",
-                    "mergeId",
-                ):
-                    if field in anchor and anchor[field] not in (None, ""):
-                        source_anchor[field] = anchor[field]
-            elif anchor.get("range"):
-                source_anchor["range"] = deepcopy(anchor["range"])
-            normalized_issues.append({
+            primary = evidence_records[0]
+            normalized_item = {
                 **item,
                 "issueId": issue_id,
-                "location": blocks[anchor_id].get("location", "body"),
-                "anchorId": anchor.get("sourceAnchorId", anchor_id),
-                "chunkAnchorId": anchor_id,
-                "anchorStart": anchor_start,
-                "sourceOffset": source_offset,
+                "location": primary["anchor"].get("location", "body"),
+                "anchorId": primary["sourceAnchor"].get("anchorId", primary["anchorId"]),
+                "chunkAnchorId": primary["anchorId"],
+                "anchorStart": primary["anchorStart"],
+                "sourceOffset": primary["sourceOffset"],
                 "duplicateGroupId": duplicate_group_id,
-                "sourceAnchor": source_anchor,
-            })
+                "sourceAnchor": primary["sourceAnchor"],
+                "sourceAnchors": [record["sourceAnchor"] for record in evidence_records],
+                "anchorIds": [record["sourceAnchor"].get("anchorId", record["anchorId"]) for record in evidence_records],
+                "anchorVerification": "verified",
+            }
+            normalized_issues.append(normalized_item)
         facts = self._parse_chunk_facts(payload.get("facts", []), blocks, chunk["chunkId"])
         cross_checks = self._parse_chunk_cross_checks(
             payload.get("crossChecks", []), blocks, chunk["chunkId"]
@@ -2672,6 +2893,8 @@ class FullDocumentReviewService:
                         "sourceOffsetStart": source_start,
                         "sourceOffsetEnd": source_end,
                         "tableId": table.get("tableId", ""),
+                        "tableIndex": table.get("tableIndex", 0),
+                        "tablePath": deepcopy(table.get("tablePath", [])),
                         "rowIndex": cell.get("rowIndex", row.get("rowIndex", 0)),
                         "columnIndex": cell.get("columnIndex", 0),
                         "rowSpan": cell.get("rowSpan", 1),
@@ -2945,6 +3168,33 @@ class FullDocumentReviewService:
         unique_issues = {}
         for issue in issues:
             unique_issues[issue["issueId"]] = issue
+        ordered_issues = sorted(
+            unique_issues.values(),
+            key=lambda issue: (
+                issue.get("sourceAnchor", {}).get("start", issue.get("sourceOffset", 0)),
+                issue.get("sourceAnchor", {}).get("end", 0),
+                issue.get("issueId", ""),
+            ),
+        )
+        duplicate_groups = {}
+        for issue in ordered_issues:
+            group_id = issue.get("duplicateGroupId", "")
+            if not group_id:
+                continue
+            duplicate_groups.setdefault(group_id, []).append(issue)
+        duplicate_group_summaries = [
+            {
+                "duplicateGroupId": group_id,
+                "category": members[0].get("category", ""),
+                "issueIds": [member.get("issueId", "") for member in members],
+                "count": len(members),
+            }
+            for group_id, members in sorted(duplicate_groups.items())
+            if len(members) > 1
+        ]
+        for members in duplicate_groups.values():
+            for issue in members:
+                issue["duplicateGroupSize"] = len(members)
         initial_chunks = FullDocumentReviewService._build_review_chunks(snapshot)
         overlap_count = sum(item.get("overlapCharacterCount", 0) for item in initial_chunks)
         report = {
@@ -2976,11 +3226,12 @@ class FullDocumentReviewService:
             "chunkStrategyVersion": CHUNK_STRATEGY_VERSION,
             "globalSummary": (aggregate_result or {}).get("summary", ""),
             "globalFindings": deepcopy((aggregate_result or {}).get("findings", [])),
+            "duplicateGroups": duplicate_group_summaries,
             "disclaimer": "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。",
             "issues": [
                 {**issue, "status": issue.get("status", "open"),
                  "location": issue.get("location", "body")}
-                for issue in unique_issues.values()
+                for issue in ordered_issues
             ],
         }
         FullDocumentReviewService._refresh_report_counts(report)
@@ -3002,6 +3253,14 @@ class FullDocumentReviewService:
             status: sum(1 for issue in issues if issue.get("status", "open") == status)
             for status in ("open", "processed", "ignored")
         }
+        duplicate_group_sizes = {}
+        for issue in issues:
+            group_id = issue.get("duplicateGroupId")
+            if group_id:
+                duplicate_group_sizes[group_id] = duplicate_group_sizes.get(group_id, 0) + 1
+        report["duplicateGroupCount"] = sum(
+            1 for count in duplicate_group_sizes.values() if count > 1
+        )
 
     def _require_report(self, job_id: str) -> Dict:
         self._require_enabled()
@@ -3070,7 +3329,7 @@ class FullDocumentReviewService:
         return deepcopy(report)
 
     def _public_report(self, report: Dict) -> Dict:
-        public = deepcopy(report)
+        public = _sanitize_export_value(report)
         public.pop("issues", None)
         public.pop("reportExpiresAt", None)
         public.pop("reportSha256", None)
@@ -3078,10 +3337,11 @@ class FullDocumentReviewService:
         return public
 
     def export_report(self, job_id: str, output_format: str) -> object:
-        report = self._require_report(job_id)
+        report = _sanitize_export_value(self._require_report(job_id))
         if output_format == "json":
             report.pop("reportExpiresAt", None)
             report.pop("reportSha256", None)
+            report["exportSchemaVersion"] = "word.document_review.full.export.v1"
             return report
         if output_format != "markdown":
             raise AdapterError(
@@ -3089,9 +3349,11 @@ class FullDocumentReviewService:
                 "全篇审查报告仅支持 json 或 markdown 格式。",
             )
         lines = ["# 全篇审查报告", "", report.get("summary") or "审查已完成。", ""]
+        lines.insert(1, "导出版本：word.document_review.full.export.v1")
         lines.append("## 覆盖与统计")
         lines.append("- 审查字符：{0}".format(report.get("coverage", {}).get("reviewedCharacterCount", 0)))
         lines.append("- 问题数量：{0}".format(report.get("issueCount", 0)))
+        lines.append("- 重复问题组：{0}".format(report.get("duplicateGroupCount", 0)))
         lines.append("- 问题枚举：{0}".format(report.get("enumerationStatus", "limited")))
         lines.append("")
         if report.get("globalSummary"):
@@ -3113,6 +3375,7 @@ class FullDocumentReviewService:
                 "- 状态：{0}".format(issue.get("status", "open")),
                 "- 严重程度：{0}".format(issue.get("severity", "")),
                 "- 原文锚点：{0}".format(issue.get("anchorId", "")),
+                "- 锚点验证：{0}".format(issue.get("anchorVerification", "unverified")),
                 "- 原文：{0}".format(issue.get("originalText", "")),
                 "- 建议：{0}".format(issue.get("suggestion", "")),
             ])

@@ -381,6 +381,10 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
 | `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails; add `?resume=1` only when recovering a previously persisted active job |
 | `DELETE` | `/word/document-review/jobs/{jobId}` | Cancel a queued Document Review job; running blocking provider requests are not cancellable; recovery calls may add `?resume=1` |
+| `GET` / `POST` / `PUT` / `DELETE` | `/word/document-review/full/...` | Full-document review snapshot, batch, job, and cleanup protocol |
+| `GET` | `/word/document-review/full/jobs/{jobId}/issues` | Read the terminal issues page (20 by default) with severity, category, body/chapter/table location, status, and source/severity sorting filters |
+| `PATCH` | `/word/document-review/full/jobs/{jobId}/issues/{issueId}` | Update one stable issue instance: `status` (`open`/`processed`/`ignored`) and/or `anchorVerification` (`verified`/`unverified`), without sharing state with its duplicate group |
+| `GET` | `/word/document-review/full/jobs/{jobId}/report?format=json|markdown` | Export a versioned, sanitized JSON or Markdown report without the full snapshot, model response, credentials, or local staging paths |
 | `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
 | `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
 | `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |

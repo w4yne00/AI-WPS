@@ -751,8 +751,19 @@ class FullDocumentReviewApiTests(unittest.TestCase):
                     ),
                     json={"status": "processed"},
                 )
+                unverified = client.patch(
+                    "/word/document-review/full/jobs/{0}/issues/{1}".format(
+                        job_id, issue_id
+                    ),
+                    json={"anchorVerification": "unverified"},
+                )
                 processed = client.get(
                     "/word/document-review/full/jobs/{0}/issues?status=processed".format(
+                        job_id
+                    )
+                )
+                json_export = client.get(
+                    "/word/document-review/full/jobs/{0}/report?format=json".format(
                         job_id
                     )
                 )
@@ -779,7 +790,19 @@ class FullDocumentReviewApiTests(unittest.TestCase):
         )
         self.assertEqual(marked.status_code, 200, marked.text)
         self.assertEqual(marked.json()["data"]["status"], "processed")
+        self.assertEqual(unverified.status_code, 200, unverified.text)
+        self.assertEqual(unverified.json()["data"]["anchorVerification"], "unverified")
         self.assertEqual(processed.json()["data"]["items"][0]["issueId"], issue_id)
+        self.assertEqual(json_export.status_code, 200, json_export.text)
+        exported = json_export.json()["data"]
+        self.assertEqual(
+            exported["exportSchemaVersion"],
+            "word.document_review.full.export.v1",
+        )
+        self.assertNotIn("blocks", exported)
+        self.assertNotIn("sourceText", exported)
+        self.assertEqual(processed.json()["data"]["items"][0]["anchorVerification"], "unverified")
+        self.assertEqual(first_data["duplicateGroups"], [])
         self.assertEqual(deleted.status_code, 200, deleted.text)
         self.assertEqual(missing_report.status_code, 404)
 

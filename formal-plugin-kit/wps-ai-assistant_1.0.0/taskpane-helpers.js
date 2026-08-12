@@ -172,6 +172,13 @@
       return {
         tableId: String(table.tableId || ""),
         tableIndex: Number(table.tableIndex || 0),
+        tablePath: Array.isArray(table.tablePath) ? table.tablePath.map(function (item) {
+          return {
+            tableIndex: Number(item.tableIndex || 0),
+            rowIndex: Number(item.rowIndex || 0),
+            columnIndex: Number(item.columnIndex || 0)
+          };
+        }) : [],
         rows: (table.rows || []).map(function (row) {
           return {
             rowIndex: Number(row.rowIndex || 0),
@@ -2048,9 +2055,12 @@
     return firstDefined(safeRead(row, "Cells"), safeRead(row, "cells"), []);
   }
 
-  function readFullDocumentReviewTable(table, tableIndex, parentCellId) {
+  function readFullDocumentReviewTable(table, tableIndex, parentCellId, tablePath) {
     var rows = [];
     var rowCollection = readTableRows(table);
+    var currentTablePath = Array.isArray(tablePath)
+      ? tablePath.slice()
+      : [{ tableIndex: Number(tableIndex) || 0, rowIndex: 0, columnIndex: 0 }];
     var tableId = toSafeString(firstDefined(
       safeRead(table, "Id"), safeRead(table, "ID"), safeRead(table, "tableId")
     ), "table-" + tableIndex);
@@ -2069,8 +2079,13 @@
         for (var nestedIndex = 1; nestedIndex <= readCollectionCount(nestedCollection); nestedIndex += 1) {
           nested.push(readFullDocumentReviewTable(
             getCollectionItem(nestedCollection, nestedIndex),
-            tableIndex + "-" + nestedIndex,
-            cellId
+            nestedIndex,
+            cellId,
+            currentTablePath.concat([{
+              tableIndex: nestedIndex,
+              rowIndex: rowIndex,
+              columnIndex: columnIndex
+            }])
           ));
         }
         nested.forEach(function (item) { nestedTables.push(item); });
@@ -2092,6 +2107,7 @@
     return {
       tableId: tableId,
       tableIndex: Number(tableIndex) || 0,
+      tablePath: currentTablePath,
       paragraphIndex: normalizePositiveInteger(firstDefined(
         safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
       )),
@@ -2105,7 +2121,12 @@
     var collection = getTableCollection(document);
     var tables = [];
     for (var index = 1; index <= readCollectionCount(collection); index += 1) {
-      tables.push(readFullDocumentReviewTable(getCollectionItem(collection, index), index, ""));
+      tables.push(readFullDocumentReviewTable(
+        getCollectionItem(collection, index),
+        index,
+        "",
+        [{ tableIndex: index, rowIndex: 0, columnIndex: 0 }]
+      ));
     }
     return tables;
   }
