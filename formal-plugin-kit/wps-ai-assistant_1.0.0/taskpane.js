@@ -21,8 +21,14 @@
   var DOCUMENT_REVIEW_PHASE_TEXT = {
     queued: "排队等待",
     preparing: "准备审查内容",
+    extracting: "抽取审查内容",
+    confirming: "等待大型文档确认",
+    chunking: "处理审查分片",
     provider_processing: "模型后台处理",
+    retrying: "受控重试中",
+    splitting: "拆分饱和分片",
     parsing: "解析并整理审查结果",
+    aggregating: "汇总分片结果",
     completed: "已完成",
     failed: "已失败",
     cancelled: "已取消"

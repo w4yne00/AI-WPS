@@ -17,6 +17,7 @@ from app.core.features import full_document_review_enabled
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.long_task_coordinator import (
     LongTaskCancelled,
+    LongTaskContinuation,
     LongTaskCoordinator,
     get_long_task_coordinator,
 )
@@ -35,6 +36,8 @@ SINGLE_CHUNK_MAX_REVIEW_CHARACTERS = 20000
 STANDARD_REVIEW_CHARACTERS = 60000
 REVIEW_CHUNK_TARGET_CHARACTERS = 18000
 REVIEW_CHUNK_HARD_LIMIT = 20000
+SATURATION_SPLIT_LIMITS = (9000, 4500)
+MAX_CHUNK_ISSUES = 200
 REVIEW_CALL_LIMITS = {
     "single_chunk": 8,
     "standard": 16,
@@ -49,6 +52,22 @@ _SEVERITIES = {"high", "medium", "low"}
 _ENUMERATION_STATUSES = {"complete", "limited"}
 _ISSUE_STATUSES = {"open", "processed", "ignored"}
 _SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
+_NON_RETRYABLE_PROVIDER_CODES = {
+    "PROVIDER_TIMEOUT",
+    "DIFY_TIMEOUT",
+    "MODEL_CONFIG_INCOMPLETE",
+    "MODEL_DIRECT_REQUIRED",
+    "MODEL_INPUT_BUDGET_EXCEEDED",
+    "MODEL_PARAMETER_INVALID",
+    "PROVIDER_AUTH_FAILED",
+    "PROVIDER_PERMISSION_DENIED",
+}
+_RETRYABLE_PROVIDER_CODES = {
+    "PROVIDER_UNREACHABLE",
+    "PROVIDER_MID_STREAM_DISCONNECT",
+    "DIFY_UNREACHABLE",
+    "ADAPTER_UNAVAILABLE",
+}
 _EXCLUDED_REGIONS = (
     "headers",
     "footers",
@@ -1078,6 +1097,9 @@ class FullDocumentReviewService:
         if isinstance(result, dict):
             job["coverage"] = result.get("coverage", {})
             job["enumerationStatus"] = result.get("enumerationStatus", "")
+            job["enumerationLimitedRanges"] = deepcopy(
+                result.get("enumerationLimitedRanges", [])
+            )
             job["issueCount"] = result.get("issueCount", 0)
             job["categoryCounts"] = deepcopy(result.get("categoryCounts", {}))
             job["severityCounts"] = deepcopy(result.get("severityCounts", {}))
@@ -1256,20 +1278,32 @@ class FullDocumentReviewService:
             pass
         return {"jobId": job_id, "status": "deleted"}
 
-    def _run_job(self, snapshot: Dict, progress) -> Dict:
+    def _run_job(self, snapshot: Dict, progress) -> object:
         job_id = str(snapshot.get("jobId", ""))
-        call_count = 0
+        state = snapshot.setdefault(
+            "_reviewState",
+            {
+                "pendingChunks": self._build_review_chunks(snapshot),
+                "parsedChunks": [],
+                "limitedRanges": [],
+                "callCount": 0,
+            },
+        )
+        state.setdefault("pendingChunks", self._build_review_chunks(snapshot))
+        state.setdefault("parsedChunks", [])
+        state.setdefault("limitedRanges", [])
+        state.setdefault("callCount", 0)
         call_limit = int(snapshot.get("capacity", {}).get("callLimit", 0) or 0)
+        keep_staging = False
 
         def call_provider(chunk: Dict, correction: bool = False) -> str:
-            nonlocal call_count
-            if call_count >= call_limit:
+            if state["callCount"] >= call_limit:
                 raise AdapterError(
                     "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED",
                     "全篇审查已达到当前容量档位的模型调用上限，未继续发起模型请求。",
                     status_code=409,
                 )
-            call_count += 1
+            state["callCount"] += 1
             return self.provider_client.full_document_review_chunk(
                 chunk["sourceText"],
                 snapshot.get("traceId", ""),
@@ -1282,28 +1316,158 @@ class FullDocumentReviewService:
             )
 
         try:
-            parsed_chunks = []
-            chunks = self._build_review_chunks(snapshot)
-            for chunk in chunks:
-                self._raise_if_cancelled(job_id)
+            self._raise_if_cancelled(job_id)
+            if not state["pendingChunks"]:
+                progress("aggregating")
+                report = self._build_report(
+                    snapshot,
+                    state["parsedChunks"],
+                    state.get("limitedRanges", []),
+                )
+                self._save_report(job_id, report)
+                return report
+
+            chunk = state["pendingChunks"].pop(0)
+            self._raise_if_cancelled(job_id)
+            progress("chunking")
+            try:
                 progress("provider_processing")
                 answer = call_provider(chunk)
-                self._raise_if_cancelled(job_id)
-                try:
-                    parsed = self._parse_strict_result(answer, snapshot, chunk)
-                except AdapterError:
+            except AdapterError as exc:
+                if self._is_retryable_provider_error(exc) and not chunk.get("_retried"):
                     self._raise_if_cancelled(job_id)
-                    corrected = call_provider(chunk, correction=True)
-                    self._raise_if_cancelled(job_id)
-                    parsed = self._parse_strict_result(corrected, snapshot, chunk)
-                parsed_chunks.append(parsed)
+                    chunk["_retried"] = True
+                    state["pendingChunks"].insert(0, chunk)
+                    progress("retrying")
+                    keep_staging = True
+                    return LongTaskContinuation(snapshot)
+                raise
+
             self._raise_if_cancelled(job_id)
             progress("parsing")
-            report = self._build_report(snapshot, parsed_chunks)
+            try:
+                parsed = self._parse_strict_result(answer, snapshot, chunk)
+            except AdapterError as exc:
+                if exc.code == "FULL_DOCUMENT_REVIEW_OUTPUT_SATURATED":
+                    split_chunks = self._split_saturated_chunk(chunk)
+                    if not split_chunks:
+                        raise
+                    progress("splitting")
+                    state["pendingChunks"] = split_chunks + state["pendingChunks"]
+                    keep_staging = True
+                    return LongTaskContinuation(snapshot)
+                if exc.code != "FULL_DOCUMENT_REVIEW_RESULT_INVALID" or chunk.get("_retried"):
+                    raise
+                self._raise_if_cancelled(job_id)
+                chunk["_retried"] = True
+                progress("retrying")
+                corrected = call_provider(chunk, correction=True)
+                self._raise_if_cancelled(job_id)
+                parsed = self._parse_strict_result(corrected, snapshot, chunk)
+
+            if parsed.get("_saturationReason"):
+                split_chunks = self._split_saturated_chunk(chunk)
+                if split_chunks:
+                    progress("splitting")
+                    state["pendingChunks"] = split_chunks + state["pendingChunks"]
+                    keep_staging = True
+                    return LongTaskContinuation(snapshot)
+                state["limitedRanges"].append(chunk["chunkId"])
+
+            parsed.pop("_saturationReason", None)
+            state["parsedChunks"].append(parsed)
+            self._raise_if_cancelled(job_id)
+            if state["pendingChunks"]:
+                keep_staging = True
+                return LongTaskContinuation(snapshot)
+            progress("aggregating")
+            report = self._build_report(
+                snapshot,
+                state["parsedChunks"],
+                state.get("limitedRanges", []),
+            )
             self._save_report(job_id, report)
             return report
         finally:
-            self._remove_snapshot(str(snapshot.get("snapshotId", "")))
+            if not keep_staging:
+                self._remove_snapshot(str(snapshot.get("snapshotId", "")))
+
+    @staticmethod
+    def _is_retryable_provider_error(error: AdapterError) -> bool:
+        code = str(getattr(error, "code", ""))
+        if code in _NON_RETRYABLE_PROVIDER_CODES or "TIMEOUT" in code.upper():
+            return False
+        if code in _RETRYABLE_PROVIDER_CODES:
+            return True
+        return int(getattr(error, "status_code", 0) or 0) in {502, 503, 504}
+
+    @classmethod
+    def _split_saturated_chunk(cls, chunk: Dict) -> List[Dict]:
+        split_level = int(chunk.get("_splitLevel", 0) or 0)
+        if split_level >= len(SATURATION_SPLIT_LIMITS):
+            return []
+        limit = SATURATION_SPLIT_LIMITS[split_level]
+        blocks = []
+        for block in chunk.get("blocks", []):
+            block_count = sum(
+                _review_character_count(text) for text in cls._block_texts([block])
+            )
+            if block_count <= limit:
+                blocks.append(deepcopy(block))
+                continue
+            text = "\n".join(cls._block_texts([block]))
+            for index, fragment_text in enumerate(cls._split_text(text, limit), 1):
+                fragment = {
+                    "blockId": "{0}-part-{1}".format(block["blockId"], index),
+                    "blockType": "paragraph",
+                    "paragraphIndex": block.get("paragraphIndex", index),
+                    "text": fragment_text,
+                }
+                blocks.append(fragment)
+        if len(blocks) < 2:
+            return []
+        chunks = []
+        current = []
+        current_count = 0
+        for block in blocks:
+            block_count = sum(
+                _review_character_count(text) for text in cls._block_texts([block])
+            )
+            if current and current_count + block_count > limit:
+                chunks.append(current)
+                current = []
+                current_count = 0
+            current.append(block)
+            current_count += block_count
+        if current:
+            chunks.append(current)
+        return [
+            {
+                "chunkId": "{0}-split-{1}".format(chunk["chunkId"], index),
+                "blocks": deepcopy(blocks),
+                "sourceText": "\n".join(cls._block_texts(blocks)),
+                "_splitLevel": split_level + 1,
+            }
+            for index, blocks in enumerate(chunks, 1)
+        ]
+
+    @staticmethod
+    def _split_text(text: str, limit: int) -> List[str]:
+        fragments = []
+        start = 0
+        while start < len(text):
+            end = min(start + limit, len(text))
+            while end > start and _review_character_count(text[start:end]) > limit:
+                end -= 1
+            if end <= start:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_OUTPUT_SATURATED",
+                    "审查分片无法按当前字符边界拆分。",
+                    status_code=409,
+                )
+            fragments.append(text[start:end])
+            start = end
+        return fragments
 
     @classmethod
     def _build_review_chunks(cls, snapshot: Dict) -> List[Dict]:
@@ -1355,19 +1519,32 @@ class FullDocumentReviewService:
             "chunkId": "chunk-1",
             "blocks": snapshot["blocks"],
         }
+        finish_reason = (
+            answer.get("finishReason", "")
+            if isinstance(answer, dict)
+            else getattr(answer, "finishReason", "")
+        )
+        answer_text = answer.get("answer") if isinstance(answer, dict) else answer
+        if finish_reason == "length":
+            self._saturated_result("length")
         try:
-            payload = json.loads(answer) if isinstance(answer, str) else None
+            payload = json.loads(answer_text) if isinstance(answer_text, str) else None
         except (TypeError, ValueError):
+            if self._looks_like_truncated_json(answer_text):
+                self._saturated_result("json_truncated")
             payload = None
         if not isinstance(payload, dict):
             self._invalid_result()
-        if set(payload) != {
+        required_fields = {
             "schemaVersion",
             "chunkId",
             "summary",
             "enumerationStatus",
             "issues",
-        }:
+        }
+        if not required_fields.issubset(set(payload)) or set(payload) - (
+            required_fields | {"hasMoreIssues"}
+        ):
             self._invalid_result()
         if (
             payload.get("schemaVersion") != CHUNK_SCHEMA_VERSION
@@ -1376,7 +1553,11 @@ class FullDocumentReviewService:
             or len(payload.get("summary", "")) > 4000
             or payload.get("enumerationStatus") not in _ENUMERATION_STATUSES
             or not isinstance(payload.get("issues"), list)
-            or len(payload.get("issues", [])) > 200
+            or len(payload.get("issues", [])) > MAX_CHUNK_ISSUES
+            or (
+                "hasMoreIssues" in payload
+                and type(payload.get("hasMoreIssues")) is not bool
+            )
         ):
             self._invalid_result()
         blocks = self._review_anchor_blocks(chunk["blocks"])
@@ -1432,7 +1613,18 @@ class FullDocumentReviewService:
                 "location": blocks[anchor_id].get("location", "body"),
                 **item,
             })
-        return {**payload, "issues": normalized_issues}
+        saturation_reason = ""
+        if payload.get("hasMoreIssues") is True:
+            saturation_reason = "has_more_issues"
+        elif len(normalized_issues) >= MAX_CHUNK_ISSUES:
+            saturation_reason = "issue_limit"
+        elif payload.get("enumerationStatus") == "limited":
+            saturation_reason = "enumeration_limited"
+        return {
+            **payload,
+            "issues": normalized_issues,
+            "_saturationReason": saturation_reason,
+        }
 
     @classmethod
     def _review_anchor_blocks(cls, blocks: List[Dict]) -> Dict[str, Dict]:
@@ -1468,7 +1660,34 @@ class FullDocumentReviewService:
         )
 
     @staticmethod
-    def _build_report(snapshot: Dict, parsed_chunks: List[Dict]) -> Dict:
+    def _saturated_result(reason: str) -> None:
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_OUTPUT_SATURATED",
+            "模型输出达到当前分片的枚举边界（{0}）。".format(reason),
+            status_code=409,
+        )
+
+    @staticmethod
+    def _looks_like_truncated_json(answer: object) -> bool:
+        if not isinstance(answer, str):
+            return False
+        value = answer.strip()
+        if not value:
+            return False
+        if value.endswith(("...", "…")):
+            return True
+        if value.startswith("{") and not value.endswith("}"):
+            return True
+        if value.startswith("[") and not value.endswith("]"):
+            return True
+        return False
+
+    @staticmethod
+    def _build_report(
+        snapshot: Dict,
+        parsed_chunks: List[Dict],
+        limited_ranges: Optional[List[str]] = None,
+    ) -> Dict:
         paragraph_count = len(snapshot["blocks"])
         issues = []
         summaries = []
@@ -1503,6 +1722,7 @@ class FullDocumentReviewService:
                 "excludedRegions": snapshot["coverage"]["excludedRegions"],
             },
             "enumerationStatus": enumeration_status,
+            "enumerationLimitedRanges": list(limited_ranges or []),
             "disclaimer": "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。",
             "issues": [
                 {**issue, "status": issue.get("status", "open"),

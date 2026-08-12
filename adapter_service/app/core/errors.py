@@ -39,3 +39,10 @@ class ProviderAuthError(AdapterError):
 class ProviderUnavailableError(AdapterError):
     def __init__(self, message: str = "Enterprise AI endpoint is unreachable.") -> None:
         super().__init__("PROVIDER_UNREACHABLE", message, status_code=502)
+
+
+class ProviderMidStreamDisconnectError(AdapterError):
+    def __init__(
+        self, message: str = "Enterprise AI response disconnected mid-stream."
+    ) -> None:
+        super().__init__("PROVIDER_MID_STREAM_DISCONNECT", message, status_code=502)

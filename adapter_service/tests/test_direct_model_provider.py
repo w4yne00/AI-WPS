@@ -1,5 +1,6 @@
 import json
 import unittest
+from http.client import IncompleteRead
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
@@ -116,6 +117,18 @@ class DirectModelProviderTests(unittest.TestCase):
             with self.assertRaises(AdapterError) as raised:
                 client.post_task("word.smart_write", "trace-no-final", {}, "改写")
         self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_MISSING")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_request_maps_mid_stream_disconnect_to_retryable_error(
+        self, urlopen
+    ) -> None:
+        urlopen.side_effect = IncompleteRead(b"{\"choices\": [")
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.post_task("word.smart_write", "trace-disconnect", {}, "改写")
+        self.assertEqual(raised.exception.code, "PROVIDER_MID_STREAM_DISCONNECT")
+        self.assertEqual(raised.exception.status_code, 502)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_request_rejects_over_budget_before_network(self, urlopen) -> None:

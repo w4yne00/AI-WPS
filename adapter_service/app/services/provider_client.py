@@ -5,13 +5,20 @@ import socket
 import threading
 import uuid
 from copy import deepcopy
+from http.client import IncompleteRead, RemoteDisconnected
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
 from app.core.config import AppSettings, TaskRoute, load_settings
 from app.core.runtime_paths import resolve_runtime_paths
-from app.core.errors import AdapterError, ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
+from app.core.errors import (
+    AdapterError,
+    ProviderAuthError,
+    ProviderMidStreamDisconnectError,
+    ProviderTimeoutError,
+    ProviderUnavailableError,
+)
 from app.core.logging import get_logger
 from app.core.models import (
     ExcelAnalysisRequest,
@@ -48,6 +55,17 @@ DIFY_INPUT_MODE_LEGACY = "legacy-input-query"
 DIFY_INPUT_MODE_USER_INPUT = "user-input-node"
 DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
 _PROVIDER_INPUT_MODE_CACHE: Dict[str, str] = {}
+
+
+class FullDocumentReviewChunkAnswer(str):
+    """String-compatible answer carrying the provider finish reason."""
+
+    def __new__(cls, value: str, finish_reason: str = ""):
+        result = str.__new__(cls, value)
+        result.finishReason = finish_reason
+        return result
+
+
 _WRITING_POLICY_DEBUG_BOOLEAN_FIELDS = (
     "writingPolicyApplied",
     "writingPolicyDegraded",
@@ -1601,6 +1619,7 @@ def _full_document_review_chunk_response_format() -> Dict:
                     "chunkId",
                     "summary",
                     "enumerationStatus",
+                    "hasMoreIssues",
                     "issues",
                 ],
                 "properties": {
@@ -1608,12 +1627,13 @@ def _full_document_review_chunk_response_format() -> Dict:
                         "type": "string",
                         "const": "word.document_review.full.chunk.v1",
                     },
-                    "chunkId": {"type": "string", "const": "chunk-1"},
+                    "chunkId": {"type": "string", "minLength": 1, "maxLength": 96},
                     "summary": {"type": "string", "maxLength": 4000},
                     "enumerationStatus": {
                         "type": "string",
                         "enum": ["complete", "limited"],
                     },
+                    "hasMoreIssues": {"type": "boolean"},
                     "issues": {
                         "type": "array",
                         "maxItems": 200,
@@ -2363,6 +2383,13 @@ class ProviderClient:
                     )
                 normalized = {
                     "answer": content,
+                    "finishReason": str(
+                        choices[0].get("finish_reason", "")
+                        if isinstance(choices, list)
+                        and choices
+                        and isinstance(choices[0], dict)
+                        else ""
+                    ),
                     "id": str(body.get("id", "")),
                     "model": str(body.get("model", resolved_task_auth.get("modelName", ""))),
                     "promptVersion": prompt_asset["version"],
@@ -2420,6 +2447,14 @@ class ProviderClient:
             if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
                 raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
             raise ProviderUnavailableError("无法访问模型后台，请检查服务地址和网络。") from exc
+        except (
+            IncompleteRead,
+            RemoteDisconnected,
+            ConnectionResetError,
+            ConnectionAbortedError,
+            BrokenPipeError,
+        ) as exc:
+            raise ProviderMidStreamDisconnectError("模型后台在返回结果过程中断开连接。") from exc
         except (TimeoutError, socket.timeout) as exc:
             raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
 
@@ -2684,7 +2719,7 @@ class ProviderClient:
         task_auth: Dict,
         correction: bool = False,
         blocks: Optional[List[Dict]] = None,
-    ) -> str:
+    ) -> object:
         if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
             raise AdapterError(
                 "MODEL_DIRECT_REQUIRED",
@@ -2726,7 +2761,10 @@ class ProviderClient:
             prompt_asset=prompt_asset,
             response_format=_full_document_review_chunk_response_format(),
         )
-        return str(body.get("answer", ""))
+        return FullDocumentReviewChunkAnswer(
+            str(body.get("answer", "")),
+            str(body.get("finishReason", "")),
+        )
 
     def validate_model_configuration(
         self, configuration_id: str, trace_id: str

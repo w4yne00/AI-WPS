@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import unittest
 from pathlib import Path
@@ -6,7 +7,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from app.core.errors import AdapterError
-from app.services.long_task_coordinator import LongTaskCoordinator
+from app.services.long_task_coordinator import LongTaskContinuation, LongTaskCoordinator
 from app.services.model_configurations import ACCESS_DIRECT_MODEL
 from app.services.word.full_document_review import (
     FullDocumentReviewService,
@@ -36,6 +37,141 @@ def _auth_provider():
 
 
 class FullDocumentReviewProtocolTests(unittest.TestCase):
+    @staticmethod
+    def _snapshot(text, call_limit=8):
+        return {
+            "jobId": "protocol-job",
+            "snapshotId": "protocol-snapshot",
+            "documentType": "technical_solution",
+            "reviewPrompt": "检查",
+            "traceId": "protocol-trace",
+            "taskAuth": {},
+            "capacity": {"callLimit": call_limit},
+            "reviewCharacterCount": len(text),
+            "contentSha256": _digest(text),
+            "committedAt": 1,
+            "coverage": {"includedRegions": ["body"], "excludedRegions": []},
+            "blocks": [{
+                "blockId": "paragraph-1",
+                "blockType": "paragraph",
+                "paragraphIndex": 1,
+                "text": text,
+            }],
+        }
+
+    @staticmethod
+    def _answer(chunk_id, blocks, saturated=False):
+        if saturated:
+            return json.dumps({
+                "schemaVersion": "word.document_review.full.chunk.v1",
+                "chunkId": chunk_id,
+                "summary": "枚举受限。",
+                "enumerationStatus": "limited",
+                "hasMoreIssues": True,
+                "issues": [],
+            }, ensure_ascii=False)
+        block = blocks[0]
+        original = block["text"][:2] or "正文"
+        return json.dumps({
+            "schemaVersion": "word.document_review.full.chunk.v1",
+            "chunkId": chunk_id,
+            "summary": "发现 1 项问题。",
+            "enumerationStatus": "complete",
+            "issues": [{
+                "category": "expression",
+                "severity": "medium",
+                "anchorId": block["blockId"],
+                "originalText": original,
+                "problem": "表达需要进一步明确。",
+                "suggestion": "补充可验收的限定条件。",
+                "suggestedRewrite": original + "（已明确）",
+            }],
+        }, ensure_ascii=False)
+
+    @staticmethod
+    def _run_to_completion(service, snapshot):
+        phases = []
+        while True:
+            result = service._run_job(snapshot, phases.append)
+            if isinstance(result, LongTaskContinuation):
+                snapshot = result.snapshot
+                continue
+            return result, phases
+
+    def test_saturation_splits_parent_and_keeps_call_count_across_continuations(self):
+        class Provider:
+            def __init__(self):
+                self.calls = []
+
+            def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                           document_type, review_prompt, task_auth,
+                                           correction=False, blocks=None):
+                self.calls.append((source_text, chunk_id))
+                return FullDocumentReviewProtocolTests._answer(
+                    chunk_id,
+                    blocks,
+                    saturated=len(self.calls) == 1,
+                )
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            provider = Provider()
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            report, phases = self._run_to_completion(
+                service, self._snapshot("甲" * 18000)
+            )
+
+        self.assertEqual([len(item[0]) for item in provider.calls], [18000, 9000, 9000])
+        self.assertEqual(report["issueCount"], 2)
+        self.assertIn("splitting", phases)
+
+    def test_provider_timeout_is_not_retried_but_connection_failure_is(self):
+        class Provider:
+            def __init__(self, error):
+                self.error = error
+                self.calls = 0
+
+            def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                           document_type, review_prompt, task_auth,
+                                           correction=False, blocks=None):
+                self.calls += 1
+                if self.calls == 1:
+                    raise self.error
+                return FullDocumentReviewProtocolTests._answer(chunk_id, blocks)
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            provider = Provider(AdapterError("PROVIDER_UNREACHABLE", "down", 502))
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            report, phases = self._run_to_completion(service, self._snapshot("乙" * 20))
+        self.assertEqual(report["issueCount"], 1)
+        self.assertEqual(provider.calls, 2)
+        self.assertIn("retrying", phases)
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            provider = Provider(AdapterError("PROVIDER_TIMEOUT", "timeout", 504))
+            service = FullDocumentReviewService(
+                staging_root=Path(tmp),
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            with self.assertRaises(AdapterError) as context:
+                self._run_to_completion(service, self._snapshot("丙" * 20))
+        self.assertEqual(context.exception.code, "PROVIDER_TIMEOUT")
+        self.assertEqual(provider.calls, 1)
+
     def test_capacity_tiers_expose_confirmation_and_call_limits(self):
         self.assertEqual(classify_review_capacity(20000)["tier"], "single_chunk")
         self.assertEqual(classify_review_capacity(20001)["tier"], "standard")

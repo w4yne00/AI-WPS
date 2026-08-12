@@ -6,6 +6,7 @@ import unittest
 from app.core.errors import AdapterError, ProviderTimeoutError
 from app.services.long_task_coordinator import (
     PRIORITY_INTERACTIVE,
+    LongTaskContinuation,
     LongTaskCoordinator,
 )
 
@@ -53,6 +54,54 @@ def wait_for_status(coordinator, job_id, expected, timeout=2):
 
 
 class LongTaskCoordinatorTests(unittest.TestCase):
+    def test_continuation_releases_slot_and_interactive_job_runs_before_resume(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        first_slice_ready = threading.Event()
+        release_first_slice = threading.Event()
+        calls = []
+
+        def review_runner(snapshot, _progress):
+            calls.append("review-{0}".format(snapshot["slice"]))
+            if snapshot["slice"] == 0:
+                first_slice_ready.set()
+                self.assertTrue(release_first_slice.wait(timeout=1))
+                return LongTaskContinuation({"slice": 1}, phase="queued")
+            return {"status": "review-complete"}
+
+        def interactive_runner(snapshot, _progress):
+            calls.append(snapshot["name"])
+            return {"status": "interactive-complete"}
+
+        coordinator.submit(
+            job_id="review-job",
+            trace_id="trace-review",
+            task_type="word.document_review.full",
+            runner=review_runner,
+            snapshot={"slice": 0},
+            failure_code="REVIEW_FAILED",
+            failure_message="review failed",
+        )
+        self.assertTrue(first_slice_ready.wait(timeout=1))
+        queued = coordinator.submit(
+            job_id="interactive-job",
+            trace_id="trace-interactive",
+            task_type="word.smart_write",
+            runner=interactive_runner,
+            snapshot={"name": "interactive"},
+            failure_code="INTERACTIVE_FAILED",
+            failure_message="interactive failed",
+            priority_class=PRIORITY_INTERACTIVE,
+        )
+        self.assertEqual(queued["status"], "queued")
+        release_first_slice.set()
+
+        review = coordinator.wait("review-job", task_type="word.document_review.full")
+        interactive = coordinator.wait("interactive-job", task_type="word.smart_write")
+        self.assertEqual(review["status"], "completed")
+        self.assertEqual(interactive["status"], "completed")
+        self.assertEqual(calls, ["review-0", "interactive", "review-1"])
+        self.assertEqual(coordinator.diagnostics()["queuedCount"], 0)
+
     def test_interactive_jobs_are_prioritized_without_starving_regular_jobs(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
         runners = [BlockingRunner() for _ in range(6)]

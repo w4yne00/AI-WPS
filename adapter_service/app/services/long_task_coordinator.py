@@ -15,9 +15,15 @@ DEFAULT_MAX_TERMINAL_JOBS = 50
 PUBLIC_PHASES = {
     "queued",
     "preparing",
+    "extracting",
+    "confirming",
+    "chunking",
     "uploading",
     "provider_processing",
+    "retrying",
+    "splitting",
     "parsing",
+    "aggregating",
     "completed",
     "failed",
     "cancelled",
@@ -31,6 +37,14 @@ JobKey = Tuple[str, str]
 
 class LongTaskCancelled(Exception):
     """Signals cooperative cancellation after an in-flight call returns."""
+
+
+class LongTaskContinuation:
+    """Requests that a running task yield its slot and resume with new state."""
+
+    def __init__(self, snapshot: Dict, phase: str = "queued") -> None:
+        self.snapshot = deepcopy(snapshot)
+        self.phase = phase if phase in PUBLIC_PHASES else "queued"
 
 
 def _positive_int_from_env(name: str, default: int) -> int:
@@ -61,6 +75,7 @@ class LongTaskCoordinator:
         self._wall_clock = wall_clock
         self._jobs: Dict[JobKey, Dict] = {}
         self._queue: Deque[JobKey] = deque()
+        self._deferred: Deque[JobKey] = deque()
         self._running_count = 0
         self._cancelled_count = 0
         self._rejected_count = 0
@@ -129,6 +144,7 @@ class LongTaskCoordinator:
                 "_priorityClass": normalized_priority,
                 "_allowRunningCancel": bool(allow_running_cancel),
                 "_cancelRequested": False,
+                "_occupiesSlot": status == "running",
                 "result": None,
                 "error": None,
             }
@@ -227,6 +243,8 @@ class LongTaskCoordinator:
     ) -> Optional[Dict]:
         """Atomically cancel a queued job or request cooperative running cancellation."""
         now_mono = self._monotonic()
+        next_job_key: Optional[JobKey] = None
+        public_job: Optional[Dict] = None
         with self._lock:
             self._cleanup_locked(now_mono)
             job_key = self._find_job_key_locked(job_id, task_type)
@@ -248,17 +266,32 @@ class LongTaskCoordinator:
                 self._condition.notify_all()
                 return self._public_job_locked(job, now_mono)
             if job["status"] == "running" and job.get("_allowRunningCancel"):
-                job["_cancelRequested"] = True
-                job["_updatedMonotonic"] = now_mono
-                job["updatedAt"] = self._wall_clock()
+                if not job.get("_occupiesSlot"):
+                    try:
+                        self._deferred.remove(job_key)
+                    except ValueError:
+                        pass
+                    self._finish_locked(job, "cancelled", now_mono)
+                    self._cancelled_count += 1
+                    next_job_key = self._promote_next_locked(now_mono)
+                else:
+                    job["_cancelRequested"] = True
+                    job["_updatedMonotonic"] = now_mono
+                    job["updatedAt"] = self._wall_clock()
+                public_job = self._public_job_locked(job, now_mono)
+            elif job["status"] in TERMINAL_STATUSES:
                 return self._public_job_locked(job, now_mono)
-            if job["status"] in TERMINAL_STATUSES:
-                return self._public_job_locked(job, now_mono)
-            raise AdapterError(
-                "LONG_TASK_NOT_CANCELLABLE",
-                "当前任务状态不允许取消。",
-                status_code=409,
-            )
+            else:
+                raise AdapterError(
+                    "LONG_TASK_NOT_CANCELLABLE",
+                    "当前任务状态不允许取消。",
+                    status_code=409,
+                )
+            self._trim_terminal_locked()
+            self._condition.notify_all()
+        if next_job_key is not None:
+            self._start_worker(next_job_key)
+        return public_job
 
     def is_cancel_requested(
         self, job_id: str, task_type: Optional[str] = None
@@ -290,6 +323,11 @@ class LongTaskCoordinator:
                 "maxQueued": self.max_queued,
                 "runningCount": self._running_count,
                 "queuedCount": len(self._queue),
+                "deferredCount": sum(
+                    1
+                    for job_key in self._deferred
+                    if self._jobs.get(job_key, {}).get("status") == "running"
+                ),
                 "interactiveQueuedCount": sum(
                     1
                     for job_key in self._queue
@@ -338,8 +376,11 @@ class LongTaskCoordinator:
         result = None
         error = None
         cancelled = False
+        continuation = None
         try:
             result = runner(snapshot, progress)
+            if isinstance(result, LongTaskContinuation):
+                continuation = result
         except LongTaskCancelled:
             cancelled = True
         except Exception as exc:
@@ -371,9 +412,18 @@ class LongTaskCoordinator:
                 job["result"] = None
                 self._finish_locked(job, "cancelled", now_mono)
                 self._cancelled_count += 1
+                self._running_count = max(self._running_count - 1, 0)
+            elif continuation is not None:
+                job["_snapshot"] = continuation.snapshot
+                job["_occupiesSlot"] = False
+                self._transition_phase_locked(job, continuation.phase, now_mono)
+                self._running_count = max(self._running_count - 1, 0)
+                self._deferred.append(job_key)
+                next_job_key = self._promote_next_locked(now_mono)
             elif error is None:
                 job["result"] = result
                 self._finish_locked(job, "completed", now_mono)
+                self._running_count = max(self._running_count - 1, 0)
             else:
                 diagnostic_error_code = str(error.pop("_diagnosticCode", ""))
                 job["error"] = error
@@ -381,8 +431,9 @@ class LongTaskCoordinator:
                 if "TIMEOUT" in diagnostic_error_code.upper():
                     self._timed_out_count += 1
                 self._finish_locked(job, "failed", now_mono)
-            self._running_count = max(self._running_count - 1, 0)
-            next_job_key = self._promote_next_locked(now_mono)
+                self._running_count = max(self._running_count - 1, 0)
+            if continuation is None:
+                next_job_key = self._promote_next_locked(now_mono)
             self._trim_terminal_locked()
             self._condition.notify_all()
 
@@ -390,23 +441,34 @@ class LongTaskCoordinator:
             self._start_worker(next_job_key)
 
     def _promote_next_locked(self, now_mono: float) -> Optional[JobKey]:
-        while self._queue and self._running_count < self.max_running:
+        while (self._queue or self._deferred) and self._running_count < self.max_running:
             ordered = self._ordered_queue_locked()
             if not ordered:
                 return None
             job_key = ordered[0]
+            removed = False
             try:
                 self._queue.remove(job_key)
+                removed = True
             except ValueError:
+                try:
+                    self._deferred.remove(job_key)
+                    removed = True
+                except ValueError:
+                    pass
+            if not removed:
                 continue
             job = self._jobs.get(job_key)
-            if job is None or job["status"] != "queued":
+            if job is None or job["status"] not in {"queued", "running"}:
+                continue
+            if job["status"] == "running" and job.get("_occupiesSlot"):
                 continue
             if job.get("_priorityClass") == PRIORITY_INTERACTIVE:
                 self._interactive_dispatch_streak += 1
             else:
                 self._interactive_dispatch_streak = 0
             job["status"] = "running"
+            job["_occupiesSlot"] = True
             self._transition_phase_locked(job, "preparing", now_mono)
             self._running_count += 1
             return job_key
@@ -415,8 +477,14 @@ class LongTaskCoordinator:
     def _ordered_queue_locked(self):
         pending = [
             job_key
-            for job_key in self._queue
-            if self._jobs.get(job_key, {}).get("status") == "queued"
+            for job_key in list(self._deferred) + list(self._queue)
+            if (
+                self._jobs.get(job_key, {}).get("status") == "queued"
+                or (
+                    self._jobs.get(job_key, {}).get("status") == "running"
+                    and not self._jobs.get(job_key, {}).get("_occupiesSlot")
+                )
+            )
         ]
         ordered = []
         streak = self._interactive_dispatch_streak
@@ -463,6 +531,7 @@ class LongTaskCoordinator:
 
     def _finish_locked(self, job: Dict, status: str, now_mono: float) -> None:
         job["status"] = status
+        job["_occupiesSlot"] = False
         self._transition_phase_locked(job, status, now_mono)
         job["_terminalAtMonotonic"] = now_mono
         job["_runner"] = None
@@ -517,7 +586,12 @@ class LongTaskCoordinator:
         if job["status"] == "queued":
             try:
                 job_key = (job["taskType"], job["jobId"])
-                queue_position = self._ordered_queue_locked().index(job_key) + 1
+                queued_order = [
+                    key
+                    for key in self._ordered_queue_locked()
+                    if self._jobs.get(key, {}).get("status") == "queued"
+                ]
+                queue_position = queued_order.index(job_key) + 1
             except ValueError:
                 queue_position = None
         public_job = {

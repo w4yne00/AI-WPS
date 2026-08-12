@@ -26,7 +26,7 @@ HAS_API_DEPS = (
 if HAS_API_DEPS:
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.services.long_task_coordinator import LongTaskCoordinator
+    from app.services.long_task_coordinator import LongTaskContinuation, LongTaskCoordinator
     from app.services.word.full_document_review import FullDocumentReviewService
 
 
@@ -315,6 +315,91 @@ class StrictFullReviewProvider:
         )
 
 
+class SaturatingFullReviewProvider(StrictFullReviewProvider):
+    def __init__(self, always_saturated=False, saturate_calls=0):
+        super().__init__()
+        self.always_saturated = always_saturated
+        self.saturate_calls = saturate_calls
+
+    def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                   document_type, review_prompt, task_auth,
+                                   correction=False, blocks=None):
+        self.calls.append({
+            "sourceText": source_text,
+            "traceId": trace_id,
+            "chunkId": chunk_id,
+            "taskAuth": task_auth,
+            "correction": correction,
+        })
+        if self.always_saturated or len(self.calls) <= self.saturate_calls:
+            return json.dumps({
+                "schemaVersion": "word.document_review.full.chunk.v1",
+                "chunkId": chunk_id,
+                "summary": "问题较多，未能在本分片内完成枚举。",
+                "enumerationStatus": "limited",
+                "hasMoreIssues": True,
+                "issues": [],
+            }, ensure_ascii=False)
+        anchor = (blocks or [{"blockId": "paragraph-1", "text": "正文"}])[0]
+        anchor_id = anchor["blockId"]
+        original_text = anchor.get("text", "正文")[:2] or "正文"
+        return json.dumps({
+            "schemaVersion": "word.document_review.full.chunk.v1",
+            "chunkId": chunk_id,
+            "summary": "发现 1 项问题。",
+            "enumerationStatus": "complete",
+            "issues": [{
+                "category": "expression",
+                "severity": "medium",
+                "anchorId": anchor_id,
+                "originalText": original_text,
+                "problem": "表达需要进一步明确。",
+                "suggestion": "补充可验收的限定条件。",
+                "suggestedRewrite": original_text + "（已明确）",
+            }],
+        }, ensure_ascii=False)
+
+
+class SequencedFullReviewProvider(StrictFullReviewProvider):
+    def __init__(self, outcomes):
+        super().__init__()
+        self.outcomes = list(outcomes)
+
+    def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                   document_type, review_prompt, task_auth,
+                                   correction=False, blocks=None):
+        self.calls.append({
+            "sourceText": source_text,
+            "traceId": trace_id,
+            "chunkId": chunk_id,
+            "taskAuth": task_auth,
+            "correction": correction,
+        })
+        if self.outcomes:
+            outcome = self.outcomes.pop(0)
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        anchor = (blocks or [{"blockId": "paragraph-1", "text": "正文"}])[0]
+        anchor_id = anchor["blockId"]
+        original_text = anchor.get("text", "正文")[:2] or "正文"
+        return json.dumps({
+            "schemaVersion": "word.document_review.full.chunk.v1",
+            "chunkId": chunk_id,
+            "summary": "发现 1 项问题。",
+            "enumerationStatus": "complete",
+            "issues": [{
+                "category": "expression",
+                "severity": "medium",
+                "anchorId": anchor_id,
+                "originalText": original_text,
+                "problem": "表达需要进一步明确。",
+                "suggestion": "补充可验收的限定条件。",
+                "suggestedRewrite": original_text + "（已明确）",
+            }],
+        }, ensure_ascii=False)
+
+
 class PaginatedFullReviewProvider(StrictFullReviewProvider):
     def full_document_review_chunk(self, source_text, trace_id, chunk_id,
                                    document_type, review_prompt, task_auth,
@@ -388,6 +473,100 @@ class FullDocumentReviewApiTests(unittest.TestCase):
             provider_client=provider or StrictFullReviewProvider(),
             coordinator=LongTaskCoordinator(max_running=2, max_queued=2),
         )
+
+    @staticmethod
+    def _run_service_to_terminal(service, snapshot):
+        phases = []
+        while True:
+            result = service._run_job(snapshot, phases.append)
+            if isinstance(result, LongTaskContinuation):
+                snapshot = result.snapshot
+                continue
+            return result, phases
+
+    @staticmethod
+    def _review_snapshot(text, call_limit=8):
+        return {
+            "jobId": "job-38",
+            "snapshotId": "snapshot-38",
+            "documentType": "technical_solution",
+            "reviewPrompt": "检查",
+            "traceId": "trace-38",
+            "taskAuth": {},
+            "capacity": {"callLimit": call_limit},
+            "reviewCharacterCount": len(text),
+            "contentSha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "committedAt": 1,
+            "coverage": {"includedRegions": ["body"], "excludedRegions": []},
+            "blocks": [{
+                "blockId": "paragraph-1",
+                "blockType": "paragraph",
+                "paragraphIndex": 1,
+                "text": text,
+            }],
+        }
+
+    def test_saturated_chunk_is_invalidated_and_split_into_9000_character_children(self):
+        provider = SaturatingFullReviewProvider()
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = self._service(Path(tmp), provider)
+            report, phases = self._run_service_to_terminal(
+                service, self._review_snapshot("甲" * 18000)
+            )
+
+        self.assertEqual(len(provider.calls), 3)
+        self.assertEqual(
+            [len(call["sourceText"]) for call in provider.calls],
+            [18000, 9000, 9000],
+        )
+        self.assertEqual(report["issueCount"], 2)
+        self.assertIn("splitting", phases)
+
+    def test_call_limit_is_not_reset_when_saturated_work_is_rescheduled(self):
+        provider = SaturatingFullReviewProvider(saturate_calls=2)
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = self._service(Path(tmp), provider)
+            with self.assertRaises(AdapterError) as context:
+                self._run_service_to_terminal(
+                    service,
+                    self._review_snapshot("乙" * 18000, call_limit=3),
+                )
+
+        self.assertEqual(context.exception.code, "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED")
+        self.assertEqual(len(provider.calls), 3)
+
+    def test_provider_unavailable_retries_once_but_provider_timeout_does_not(self):
+        provider = SequencedFullReviewProvider([
+            AdapterError("PROVIDER_UNREACHABLE", "unavailable", status_code=502),
+        ])
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = self._service(Path(tmp), provider)
+            report, phases = self._run_service_to_terminal(
+                service, self._review_snapshot("丙" * 20)
+            )
+        self.assertEqual(report["issueCount"], 1)
+        self.assertEqual(len(provider.calls), 2)
+        self.assertIn("retrying", phases)
+
+        timeout_provider = SequencedFullReviewProvider([
+            AdapterError("PROVIDER_TIMEOUT", "timeout", status_code=504),
+        ])
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = self._service(Path(tmp), timeout_provider)
+            with self.assertRaises(AdapterError) as context:
+                self._run_service_to_terminal(
+                    service, self._review_snapshot("丁" * 20)
+                )
+        self.assertEqual(context.exception.code, "PROVIDER_TIMEOUT")
+        self.assertEqual(len(timeout_provider.calls), 1)
 
     def _stage_snapshot(self, client, text="系统应尽快完成联调。"):
         created = client.post(
