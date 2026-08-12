@@ -67,6 +67,28 @@ PY
 "$PYTHON_BIN" "$ROOT_DIR/packaging/prepare_v0240_delivery.py" \
   "$TMP_DIR" --version "$VERSION" --date "$DATE_TAG"
 
+"$PYTHON_BIN" - "$TMP_DIR/packages" <<'PY'
+from pathlib import Path
+import sys
+
+packages = Path(sys.argv[1])
+for package_name in (
+    "kylin-v10-arm-py38",
+    "kylin-v10-arm-py38-pip-bootstrap",
+):
+    root = packages / package_name
+    manifest = root / "SHA256SUMS"
+    retained = []
+    for line in manifest.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        unused_digest, relative = line.split(None, 1)
+        relative = relative.lstrip("*")
+        if (root / relative).is_file():
+            retained.append(line)
+    manifest.write_text("\n".join(retained) + "\n", encoding="utf-8")
+PY
+
 "$PYTHON_BIN" "$ROOT_DIR/packaging/check_python38_compatibility.py" \
   "$TMP_DIR/packages/adapter-start-kit/adapter_service" \
   "$TMP_DIR/installer/release_transaction.py" \

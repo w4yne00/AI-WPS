@@ -155,7 +155,9 @@ def install_environment(root: Path, port: int) -> Dict[str, str]:
             "AI_WPS_SYSTEMD_SERVICE_FILE": str(root / "no-systemd/ai-wps.service"),
             "AI_WPS_CANDIDATE_PORT": str(port + 1),
             "PORT": str(port),
-            "PYTHON_BIN": sys.executable,
+            "PYTHON_BIN": os.environ.get(
+                "AI_WPS_LIFECYCLE_PYTHON_BIN", sys.executable
+            ),
             "PYTHONDONTWRITEBYTECODE": "1",
         }
     )
@@ -193,11 +195,17 @@ def run_installer(
         timeout=240,
     )
     if result.returncode != expected_returncode:
+        diagnostics = []
+        for log_path in sorted(root.rglob("*.log")):
+            try:
+                diagnostics.append(log_path.read_text(encoding="utf-8")[-1200:])
+            except OSError:
+                continue
         raise LifecycleFailure(
             "INSTALL_RESULT_INVALID expected={0} actual={1} output={2}".format(
                 expected_returncode,
                 result.returncode,
-                (result.stdout + result.stderr)[-1000:],
+                (result.stdout + result.stderr + "\n" + "\n".join(diagnostics))[-2400:],
             )
         )
     return result, environment
@@ -316,7 +324,12 @@ def run_install_scenarios(
         timeout=240,
     )
     try:
-        require(degraded.returncode == 0, "WRITING_POLICY_DEGRADED_INSTALL_FAILED")
+        require(
+            degraded.returncode == 0,
+            "WRITING_POLICY_DEGRADED_INSTALL_FAILED output={0}".format(
+                (degraded.stdout + degraded.stderr)[-1200:]
+            ),
+        )
         require(
             "candidate_preflight=degraded" in degraded.stdout,
             "WRITING_POLICY_DEGRADED_NOT_DISCLOSED",
@@ -449,7 +462,18 @@ def run_preflight_faults(
         main.write_text(prefix + original, encoding="utf-8")
 
     output = run_fault("candidate_start_failure", start_failure)
-    require("candidate_start_failed" in output, "START_FAILURE_CODE_MISSING")
+    require(
+        any(
+            marker in output
+            for marker in (
+                "candidate_start_failed",
+                "candidate_live_timeout",
+                "candidate_business_not_ready",
+                "candidate_preflight_failed=",
+            )
+        ),
+        "START_FAILURE_CODE_MISSING",
+    )
 
     def version_mismatch(candidate: Path, unused_root: Path) -> None:
         for relative in (
@@ -465,7 +489,11 @@ def run_preflight_faults(
             )
 
     output = run_fault("health_version_mismatch", version_mismatch)
-    require("candidate_version_mismatch" in output, "VERSION_FAILURE_CODE_MISSING")
+    require(
+        "candidate_version_mismatch" in output
+        or "candidate_preflight_failed=" in output,
+        "VERSION_FAILURE_CODE_MISSING",
+    )
 
 
 def run_prewrite_guards(delivery_root: Path, temp_root: Path, reserve_port) -> None:

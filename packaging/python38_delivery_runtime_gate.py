@@ -147,12 +147,19 @@ def run_compatibility_scan(delivery_root: Path) -> None:
     print("production_compatibility_scan=passed")
 
 
-def adapter_environment(adapter_root: Path, runtime_root: Path) -> Dict[str, str]:
+def adapter_environment(
+    adapter_root: Path,
+    runtime_root: Path,
+    dependency_root: Optional[Path] = None,
+) -> Dict[str, str]:
+    dependency_root = dependency_root or adapter_root
     environment = dict(os.environ)
     environment.pop("AI_WPS_WRITING_POLICY_DB", None)
     environment.update(
         {
-            "PYTHONPATH": str(adapter_root),
+            "PYTHONPATH": os.pathsep.join(
+                (str(dependency_root), str(adapter_root))
+            ),
             "PYTHONNOUSERSITE": "1",
             "PYTHONDONTWRITEBYTECODE": "1",
             "AI_WPS_ENABLE_MOCK_PROVIDER": "0",
@@ -275,6 +282,45 @@ def prepare_runtime_layout(runtime_root: Path) -> None:
         path.chmod(0o700)
 
 
+def prepare_python_runtime(delivery_root: Path, runtime_root: Path) -> Path:
+    external_root = os.environ.get("AI_WPS_PYTHON38_GATE_SITE_PACKAGES", "").strip()
+    if external_root:
+        dependency_root = Path(external_root).resolve()
+        if not dependency_root.is_dir():
+            raise GateFailure(
+                "PYTHON38_GATE_DEPENDENCIES_MISSING {0}".format(dependency_root)
+            )
+        print("python38_gate_dependencies=external")
+        return dependency_root
+
+    runtime_deps = delivery_root / "packages/kylin-v10-arm-py38"
+    pip_bootstrap = delivery_root / "packages/kylin-v10-arm-py38-pip-bootstrap"
+    installer = delivery_root / "installer/install_private_runtime.sh"
+    dependency_root = runtime_root / "python-runtime"
+    result = subprocess.run(
+        [
+            "bash",
+            str(installer),
+            sys.executable,
+            str(runtime_deps),
+            str(pip_bootstrap),
+            str(dependency_root),
+        ],
+        env=dict(os.environ, PYTHONNOUSERSITE="1", PYTHONPATH=""),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise GateFailure(
+            "PRIVATE_RUNTIME_INSTALL_FAILED {0}".format(
+                (result.stdout + result.stderr).strip()[-1000:]
+            )
+        )
+    print("python38_gate_dependencies=package")
+    return dependency_root
+
+
 def check_runtime_path_contract(adapter_root: Path, runtime_root: Path) -> None:
     state_root = runtime_root / "state"
     backup_root = runtime_root / "backups"
@@ -341,7 +387,8 @@ def run_gate(archive_path: Path, expected_version: str) -> None:
         runtime_root = temp_root / "runtime"
         runtime_root.mkdir(mode=0o700)
         prepare_runtime_layout(runtime_root)
-        environment = adapter_environment(adapter_root, runtime_root)
+        dependency_root = prepare_python_runtime(delivery_root, runtime_root)
+        environment = adapter_environment(adapter_root, runtime_root, dependency_root)
         import_application(adapter_root, environment, expected_version)
 
         port = reserve_port()
