@@ -214,6 +214,9 @@
     fullDocumentReviewPollErrorCount: 0,
     fullDocumentReviewPreparing: false,
     fullDocumentReviewCancelRequested: false,
+    fullDocumentReviewIssueJobId: "",
+    fullDocumentReviewIssueReport: null,
+    fullDocumentReviewIssueCursorHistory: [],
     writingJobId: "",
     writingJobTaskType: "",
     writingJobMode: "",
@@ -5804,11 +5807,11 @@
     return body;
   }
 
-  function renderFullDocumentReviewReport(report) {
+  function renderFullDocumentReviewIssuePage(report, pageData, jobId) {
     var snapshot = report && report.snapshot || {};
     var coverage = report && report.coverage || {};
     var capacity = report && report.capacity || {};
-    var issues = report && Array.isArray(report.issues) ? report.issues : [];
+    var issues = pageData && Array.isArray(pageData.items) ? pageData.items : [];
     var excludedRegions = Array.isArray(coverage.excludedRegions) ? coverage.excludedRegions : [];
     var lines = [
       "# 全篇审查报告",
@@ -5831,15 +5834,18 @@
       "",
       "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。",
       "",
-      "## 问题清单"
+      "## 问题清单（第 " + Number(pageData && pageData.page || 1) + " 页，共 " +
+        Number(pageData && pageData.total || 0) + " 项）"
     ];
     if (!issues.length) {
       lines.push("未返回结构化问题；这不表示文档不存在其他问题。");
     }
-    issues.forEach(function (issue, index) {
+    issues.forEach(function (issue) {
       lines.push("");
-      lines.push("### " + (index + 1) + ". " + (issue.problem || "审查问题"));
+      lines.push("### " + (issue.issueId || "未标识问题") + " · " + (issue.problem || "审查问题"));
       lines.push("- 严重程度：" + (issue.severity || "未标注"));
+      lines.push("- 处理状态：" + (issue.status || "open"));
+      lines.push("- 问题类别：" + (issue.category || "未标注"));
       lines.push("- 原文锚点：" + (issue.anchorId || "未标注"));
       lines.push("- 原文：" + (issue.originalText || "未提供"));
       lines.push("- 建议：" + (issue.suggestion || "请人工复核。"));
@@ -5847,8 +5853,150 @@
         lines.push("- 建议改写：" + issue.suggestedRewrite);
       }
     });
+    if (pageData && pageData.nextCursor) {
+      lines.push("");
+      lines.push("下一页游标：" + pageData.nextCursor);
+    }
     setResult(lines.join("\n"), lines.join("\n"));
     setStatus("全篇审查只读报告已生成。");
+    var controls = byId("full-document-review-issue-controls");
+    var previous = byId("btn-full-review-previous-page");
+    var next = byId("btn-full-review-next-page");
+    var exportJson = byId("btn-full-review-export-json");
+    var exportMarkdown = byId("btn-full-review-export-markdown");
+    var pageStatus = byId("full-review-page-status");
+    var actions = byId("full-review-issue-actions");
+    if (!controls || !previous || !next || !exportJson || !exportMarkdown ||
+        !pageStatus || !actions) {
+      return;
+    }
+    controls.hidden = false;
+    pageStatus.textContent = "第 " + Number(pageData && pageData.page || 1) + " 页";
+    previous.disabled = state.fullDocumentReviewIssueCursorHistory.length <= 1;
+    next.disabled = !pageData.nextCursor;
+    exportJson.onclick = function () {
+      downloadFullDocumentReviewExport(jobId, "json");
+    };
+    exportMarkdown.onclick = function () {
+      downloadFullDocumentReviewExport(jobId, "markdown");
+    };
+    previous.onclick = function () {
+      var history = state.fullDocumentReviewIssueCursorHistory;
+      if (history.length <= 1) {
+        return;
+      }
+      history.pop();
+      loadFullDocumentReviewIssuePage(jobId, report, history[history.length - 1]);
+    };
+    next.onclick = function () {
+      if (!pageData.nextCursor) {
+        return;
+      }
+      state.fullDocumentReviewIssueCursorHistory.push(pageData.nextCursor);
+      loadFullDocumentReviewIssuePage(jobId, report, pageData.nextCursor);
+    };
+    actions.textContent = "";
+    issues.forEach(function (issue) {
+      var row = document.createElement("div");
+      var processed = document.createElement("button");
+      var ignored = document.createElement("button");
+      row.textContent = (issue.issueId || "问题") + "：";
+      processed.type = "button";
+      processed.textContent = "标记已处理";
+      ignored.type = "button";
+      ignored.textContent = "标记已忽略";
+      processed.addEventListener("click", function () {
+        updateFullDocumentReviewIssueStatus(jobId, issue.issueId, "processed")
+          .then(function () {
+            loadFullDocumentReviewIssuePage(jobId, report, pageData._cursor || "");
+          });
+      });
+      ignored.addEventListener("click", function () {
+        updateFullDocumentReviewIssueStatus(jobId, issue.issueId, "ignored")
+          .then(function () {
+            loadFullDocumentReviewIssuePage(jobId, report, pageData._cursor || "");
+          });
+      });
+      row.appendChild(processed);
+      row.appendChild(ignored);
+      actions.appendChild(row);
+    });
+  }
+
+  function loadFullDocumentReviewIssuePage(jobId, report, cursor) {
+    var path = "/word/document-review/full/jobs/" + encodeURIComponent(jobId) +
+      "/issues?pageSize=20&sort=source";
+    if (cursor) {
+      path += "&cursor=" + encodeURIComponent(cursor);
+    }
+    return request(path, null, {
+      timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var pageData = body.data || {};
+      pageData._cursor = cursor || "";
+      state.fullDocumentReviewIssueJobId = jobId;
+      state.fullDocumentReviewIssueReport = report;
+      renderFullDocumentReviewIssuePage(report, pageData, jobId);
+    });
+  }
+
+  function updateFullDocumentReviewIssueStatus(jobId, issueId, status) {
+    if (!jobId || !issueId || (status !== "processed" && status !== "ignored" && status !== "open")) {
+      return Promise.reject(new Error("全篇审查问题状态参数无效。"));
+    }
+    return request(
+      "/word/document-review/full/jobs/" + encodeURIComponent(jobId) +
+        "/issues/" + encodeURIComponent(issueId),
+      { status: status },
+      { method: "PATCH", timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS }
+    );
+  }
+
+  function downloadFullDocumentReviewExport(jobId, format) {
+    var path = "/word/document-review/full/jobs/" + encodeURIComponent(jobId) +
+      "/report?format=" + encodeURIComponent(format);
+    return fetch(ADAPTER_BASE_URL + path).then(function (response) {
+      if (!response.ok) {
+        return response.json().then(function (body) {
+          throw new Error(body.message || "全篇审查报告导出失败。");
+        });
+      }
+      return format === "markdown" ? response.text() : response.json();
+    }).then(function (body) {
+      var extension = format === "markdown" ? "md" : "json";
+      var text = format === "markdown" ? body : JSON.stringify(body.data || body, null, 2);
+      var blob = new Blob([text], { type: format === "markdown" ? "text/markdown" : "application/json" });
+      var objectUrl = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "word-full-review." + extension;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    }).catch(function (error) {
+      setStatus("全篇审查报告导出失败：" + describeFetchError(error));
+    });
+  }
+
+  function renderFullDocumentReviewReport(report, jobId) {
+    var snapshot = report && report.snapshot || {};
+    var coverage = report && report.coverage || {};
+    var excludedRegions = Array.isArray(coverage.excludedRegions) ? coverage.excludedRegions : [];
+    var enumerationStatus = report && report.enumerationStatus || "limited";
+    var issueEnumerationLabel = "问题枚举：" +
+      (enumerationStatus === "complete" ? "完整" : "受限");
+    var disclaimer = report && report.disclaimer ||
+      "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。";
+    state.fullDocumentReviewReportMetadata = {
+      snapshotId: snapshot.snapshotId || "",
+      coverageStatus: coverage.status || "",
+      excludedRegions: excludedRegions,
+      issueEnumeration: issueEnumerationLabel,
+      disclaimer: disclaimer
+    };
+    state.fullDocumentReviewIssueCursorHistory = [""];
+    return loadFullDocumentReviewIssuePage(jobId, report, "");
   }
 
   function pollFullDocumentReviewJob(jobId) {
@@ -5872,7 +6020,9 @@
           setModelTaskBusy(false);
           setDocumentReviewCancelVisible(false, false);
           renderFullDocumentReviewEntry();
-          renderFullDocumentReviewReport(reportBody.data || {});
+          renderFullDocumentReviewReport(reportBody.data || {}, jobId).catch(function (error) {
+            setStatus("全篇审查报告分页读取失败：" + describeFetchError(error));
+          });
         });
       }
       if (job.status === "failed" || job.status === "cancelled") {

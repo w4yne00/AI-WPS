@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.core.models import (
     DocumentReviewResponseData,
@@ -75,6 +75,50 @@ def get_full_document_review_job(job_id: str):
     return _full_review_envelope(data, trace_id=data.get("traceId", job_id), message=data["status"])
 
 
+@router.get("/word/document-review/full/jobs/{job_id}/issues")
+def list_full_document_review_issues(
+    job_id: str,
+    pageSize: str = "",
+    cursor: str = "",
+    severity: str = "",
+    category: str = "",
+    location: str = "",
+    status: str = "",
+    sort: str = "source",
+):
+    try:
+        parsed_page_size = int(pageSize) if pageSize else None
+    except (TypeError, ValueError):
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_ISSUE_PAGE_SIZE_INVALID",
+            "问题分页大小必须是 1 到 100 之间的整数。",
+        )
+    data = full_document_review_service.list_issues(
+        job_id,
+        page_size=parsed_page_size,
+        cursor=cursor,
+        severity=severity,
+        category=category,
+        location=location,
+        status=status,
+        sort=sort,
+    )
+    return _full_review_envelope(data, trace_id=job_id, message="issues")
+
+
+@router.patch("/word/document-review/full/jobs/{job_id}/issues/{issue_id}")
+def update_full_document_review_issue(job_id: str, issue_id: str, request: dict):
+    if not isinstance(request, dict) or set(request) != {"status"}:
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_ISSUE_REQUEST_INVALID",
+            "问题处理状态请求格式无效。",
+        )
+    data = full_document_review_service.update_issue_status(
+        job_id, issue_id, request.get("status")
+    )
+    return _full_review_envelope(data, trace_id=job_id, message="issue updated")
+
+
 @router.delete("/word/document-review/full/jobs/{job_id}")
 def cancel_full_document_review_job(job_id: str):
     data = full_document_review_service.cancel_job(job_id)
@@ -88,9 +132,24 @@ def cancel_full_document_review_job(job_id: str):
 
 
 @router.get("/word/document-review/full/jobs/{job_id}/report")
-def get_full_document_review_report(job_id: str) -> dict:
-    data = full_document_review_service.get_report(job_id)
-    return _full_review_envelope(data, trace_id=job_id, message="completed")
+def get_full_document_review_report(job_id: str, format: str = "summary"):
+    if format == "summary":
+        data = full_document_review_service.get_report(job_id)
+        return _full_review_envelope(data, trace_id=job_id, message="completed")
+    exported = full_document_review_service.export_report(job_id, format)
+    if format == "markdown":
+        return PlainTextResponse(
+            exported,
+            media_type="text/markdown",
+            headers={"Content-Disposition": 'attachment; filename="word-full-review.md"'},
+        )
+    return _full_review_envelope(exported, trace_id=job_id, message="exported")
+
+
+@router.delete("/word/document-review/full/jobs/{job_id}/result")
+def delete_full_document_review_result(job_id: str) -> dict:
+    data = full_document_review_service.delete_result(job_id)
+    return _full_review_envelope(data, trace_id=job_id, message="deleted")
 
 
 def _full_review_envelope(

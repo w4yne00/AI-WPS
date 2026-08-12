@@ -315,6 +315,55 @@ class StrictFullReviewProvider:
         )
 
 
+class PaginatedFullReviewProvider(StrictFullReviewProvider):
+    def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                   document_type, review_prompt, task_auth,
+                                   correction=False, blocks=None):
+        self.calls.append({
+            "sourceText": source_text,
+            "traceId": trace_id,
+            "chunkId": chunk_id,
+            "taskAuth": task_auth,
+            "correction": correction,
+        })
+        issues = [
+            {
+                "category": "expression",
+                "severity": "high",
+                "anchorId": "paragraph-1",
+                "originalText": "尽快",
+                "problem": "时间要求不可验收。",
+                "suggestion": "补充明确完成日期。",
+                "suggestedRewrite": "于 2026 年 8 月 31 日前完成",
+            },
+            {
+                "category": "logic",
+                "severity": "medium",
+                "anchorId": "paragraph-1",
+                "originalText": "尽快",
+                "problem": "缺少责任主体。",
+                "suggestion": "补充责任部门或责任人。",
+                "suggestedRewrite": "由项目组于 2026 年 8 月 31 日前完成",
+            },
+            {
+                "category": "fluency",
+                "severity": "low",
+                "anchorId": "paragraph-1",
+                "originalText": "尽快",
+                "problem": "表达过于笼统。",
+                "suggestion": "改用可执行的时间表达。",
+                "suggestedRewrite": "按计划完成",
+            },
+        ]
+        return json.dumps({
+            "schemaVersion": "word.document_review.full.chunk.v1",
+            "chunkId": chunk_id,
+            "summary": "发现 3 项问题。",
+            "enumerationStatus": "complete",
+            "issues": issues,
+        }, ensure_ascii=False)
+
+
 class BlockingStrictFullReviewProvider(StrictFullReviewProvider):
     def __init__(self) -> None:
         super().__init__()
@@ -452,6 +501,9 @@ class FullDocumentReviewApiTests(unittest.TestCase):
                 report_response = client.get(
                     "/word/document-review/full/jobs/{0}/report".format(job_id)
                 )
+                issues_response = client.get(
+                    "/word/document-review/full/jobs/{0}/issues".format(job_id)
+                )
 
             self.assertEqual(terminal["status"], "completed")
             self.assertEqual(report_response.status_code, 200, report_response.text)
@@ -464,10 +516,85 @@ class FullDocumentReviewApiTests(unittest.TestCase):
             self.assertIn("tables", report["coverage"]["excludedRegions"])
             self.assertEqual(report["enumerationStatus"], "complete")
             self.assertIn("不承诺检出全部问题", report["disclaimer"])
-            self.assertEqual(report["issues"][0]["anchorId"], "paragraph-1")
+            self.assertNotIn("issues", report)
+            self.assertEqual(
+                issues_response.json()["data"]["items"][0]["anchorId"],
+                "paragraph-1",
+            )
             self.assertNotIn("rawAnswer", report)
             self.assertEqual(len(provider.calls), 1)
             self.assertFalse(service.snapshot_path(snapshot["snapshotId"]).exists())
+
+    def test_completed_review_paginates_by_issue_id_and_tracks_status(self) -> None:
+        provider = PaginatedFullReviewProvider()
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            service = self._service(Path(tmp), provider)
+            with patch("app.api.word.full_document_review_service", service):
+                client = TestClient(app)
+                snapshot = self._stage_snapshot(client)
+                started = client.post(
+                    "/word/document-review/full/jobs",
+                    json={
+                        "snapshotId": snapshot["snapshotId"],
+                        "snapshotToken": snapshot["snapshotToken"],
+                    },
+                )
+                terminal = self._wait_job(client, started.json()["data"]["jobId"])
+                job_id = started.json()["data"]["jobId"]
+                report = client.get(
+                    "/word/document-review/full/jobs/{0}/report".format(job_id)
+                )
+                first_page = client.get(
+                    "/word/document-review/full/jobs/{0}/issues?pageSize=2&sort=severity".format(
+                        job_id
+                    )
+                )
+                first_data = first_page.json()["data"]
+                second_page = client.get(
+                    "/word/document-review/full/jobs/{0}/issues?pageSize=2&sort=severity&cursor={1}".format(
+                        job_id, first_data["nextCursor"]
+                    )
+                )
+                issue_id = first_data["items"][0]["issueId"]
+                marked = client.patch(
+                    "/word/document-review/full/jobs/{0}/issues/{1}".format(
+                        job_id, issue_id
+                    ),
+                    json={"status": "processed"},
+                )
+                processed = client.get(
+                    "/word/document-review/full/jobs/{0}/issues?status=processed".format(
+                        job_id
+                    )
+                )
+                deleted = client.delete(
+                    "/word/document-review/full/jobs/{0}/result".format(job_id)
+                )
+                missing_report = client.get(
+                    "/word/document-review/full/jobs/{0}/report".format(job_id)
+                )
+
+        self.assertEqual(terminal["status"], "completed")
+        self.assertNotIn("result", terminal)
+        self.assertNotIn("issues", report.json()["data"])
+        self.assertEqual(report.json()["data"]["issueCount"], 3)
+        self.assertEqual(first_page.status_code, 200, first_page.text)
+        self.assertEqual(first_data["total"], 3)
+        self.assertEqual(len(first_data["items"]), 2)
+        self.assertTrue(first_data["nextCursor"])
+        self.assertEqual(second_page.status_code, 200, second_page.text)
+        self.assertEqual(len(second_page.json()["data"]["items"]), 1)
+        self.assertNotEqual(
+            first_data["items"][0]["issueId"],
+            second_page.json()["data"]["items"][0]["issueId"],
+        )
+        self.assertEqual(marked.status_code, 200, marked.text)
+        self.assertEqual(marked.json()["data"]["status"], "processed")
+        self.assertEqual(processed.json()["data"]["items"][0]["issueId"], issue_id)
+        self.assertEqual(deleted.status_code, 200, deleted.text)
+        self.assertEqual(missing_report.status_code, 404)
 
     def test_non_bmp_characters_use_the_same_count_as_wps(self) -> None:
         with TemporaryDirectory() as tmp, patch.dict(

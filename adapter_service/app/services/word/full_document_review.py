@@ -1,3 +1,5 @@
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -25,6 +27,9 @@ from app.services.provider_client import ProviderClient
 TASK_TYPE = "word.document_review.full"
 CHUNK_SCHEMA_VERSION = "word.document_review.full.chunk.v1"
 REPORT_SCHEMA_VERSION = "word.document_review.full.report.v1"
+REPORT_RESULT_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_ISSUE_PAGE_SIZE = 20
+MAX_ISSUE_PAGE_SIZE = 100
 MAX_REVIEW_CHARACTERS = 120000
 SINGLE_CHUNK_MAX_REVIEW_CHARACTERS = 20000
 STANDARD_REVIEW_CHARACTERS = 60000
@@ -42,6 +47,8 @@ _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,95}$")
 _CATEGORIES = {"typo", "expression", "logic", "fluency", "professional"}
 _SEVERITIES = {"high", "medium", "low"}
 _ENUMERATION_STATUSES = {"complete", "limited"}
+_ISSUE_STATUSES = {"open", "processed", "ignored"}
+_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2}
 _EXCLUDED_REGIONS = (
     "headers",
     "footers",
@@ -108,6 +115,15 @@ def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _report_sha256(report: Dict) -> str:
+    payload = {
+        key: value for key, value in report.items() if key != "reportSha256"
+    }
+    return _sha256_text(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    )
+
+
 def _review_character_count(value: str) -> int:
     return len(value.encode("utf-16-le")) // 2
 
@@ -136,6 +152,7 @@ class FullDocumentReviewService:
         self.coordinator = coordinator or get_long_task_coordinator()
         self._wall_clock = wall_clock
         self._sessions: Dict[str, Dict] = {}
+        self._reports: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         self._cleanup_stop = threading.Event()
         self._cleanup_thread = None
@@ -161,6 +178,11 @@ class FullDocumentReviewService:
 
     def snapshot_path(self, snapshot_id: str) -> Path:
         return self.staging_root / str(snapshot_id)
+
+    def _report_path(self, job_id: str) -> Path:
+        if not _SAFE_ID.fullmatch(str(job_id or "")):
+            return self.staging_root / "report-invalid"
+        return self.staging_root / "report-{0}.json".format(job_id)
 
     def create_session(self, payload: Dict) -> Dict:
         self._require_enabled()
@@ -1048,14 +1070,18 @@ class FullDocumentReviewService:
         job = self.coordinator.get(job_id, task_type=TASK_TYPE)
         if job is None:
             return None
-        result = job.pop("result", None)
+        job.pop("result", None)
+        result = self._get_report(job_id) if job.get("status") == "completed" else None
         job["reportAvailable"] = bool(
             job.get("status") == "completed" and isinstance(result, dict)
         )
         if isinstance(result, dict):
             job["coverage"] = result.get("coverage", {})
             job["enumerationStatus"] = result.get("enumerationStatus", "")
-            job["issueCount"] = len(result.get("issues", []))
+            job["issueCount"] = result.get("issueCount", 0)
+            job["categoryCounts"] = deepcopy(result.get("categoryCounts", {}))
+            job["severityCounts"] = deepcopy(result.get("severityCounts", {}))
+            job["statusCounts"] = deepcopy(result.get("statusCounts", {}))
         return job
 
     def cancel_job(self, job_id: str) -> Optional[Dict]:
@@ -1076,13 +1102,159 @@ class FullDocumentReviewService:
                 "全篇审查任务不存在或已过期。",
                 status_code=404,
             )
-        if job.get("status") != "completed" or not isinstance(job.get("result"), dict):
+        report = self._get_report(job_id)
+        if job.get("status") != "completed":
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_REPORT_NOT_AVAILABLE",
                 "全篇审查尚未生成可用的结构化报告。",
                 status_code=409,
             )
-        return job["result"]
+        if not isinstance(report, dict):
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_RESULT_NOT_FOUND",
+                "全篇审查结果不存在或已删除。",
+                status_code=404,
+            )
+        return self._public_report(report)
+
+    def list_issues(
+        self,
+        job_id: str,
+        page_size: Optional[int] = None,
+        cursor: str = "",
+        severity: str = "",
+        category: str = "",
+        location: str = "",
+        status: str = "",
+        sort: str = "source",
+    ) -> Dict:
+        report = self._require_report(job_id)
+        size = DEFAULT_ISSUE_PAGE_SIZE if page_size is None else page_size
+        if type(size) is not int or not 0 < size <= MAX_ISSUE_PAGE_SIZE:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_PAGE_SIZE_INVALID",
+                "问题分页大小必须是 1 到 100 之间的整数。",
+            )
+        if severity and severity not in _SEVERITIES:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_FILTER_INVALID",
+                "问题严重程度筛选值无效。",
+            )
+        if category and category not in _CATEGORIES:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_FILTER_INVALID",
+                "问题类别筛选值无效。",
+            )
+        if status and status not in _ISSUE_STATUSES:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_STATUS_INVALID",
+                "问题处理状态无效。",
+            )
+        if sort not in {"source", "severity"}:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_SORT_INVALID",
+                "问题排序方式无效。",
+            )
+        if not isinstance(cursor, str) or len(cursor) > 256:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUES_CURSOR_INVALID",
+                "问题分页游标无效。",
+            )
+        issues = []
+        for index, issue in enumerate(report.get("issues", [])):
+            item = deepcopy(issue)
+            item.setdefault("status", "open")
+            item["_sourceOrder"] = index
+            if severity and item.get("severity") != severity:
+                continue
+            if category and item.get("category") != category:
+                continue
+            if location and item.get("location", "body") != location:
+                continue
+            if status and item.get("status") != status:
+                continue
+            issues.append(item)
+        if sort == "severity":
+            issues.sort(key=lambda item: (
+                _SEVERITY_ORDER.get(item.get("severity"), 99),
+                item.get("_sourceOrder", 0),
+                item.get("issueId", ""),
+            ))
+        else:
+            issues.sort(key=lambda item: (
+                item.get("_sourceOrder", 0), item.get("issueId", "")
+            ))
+        offset = 0
+        if cursor:
+            cursor_issue_id = self._decode_issue_cursor(cursor)
+            matching_index = next(
+                (index for index, item in enumerate(issues)
+                 if item.get("issueId") == cursor_issue_id),
+                None,
+            )
+            if matching_index is None:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_ISSUES_CURSOR_INVALID",
+                    "问题分页游标已失效，请从第一页重新读取。",
+                )
+            offset = matching_index + 1
+        selected = issues[offset : offset + size]
+        for item in selected:
+            item.pop("_sourceOrder", None)
+        next_cursor = ""
+        if offset + size < len(issues) and selected:
+            next_cursor = self._encode_issue_cursor(selected[-1]["issueId"])
+        return {
+            "items": selected,
+            "total": len(issues),
+            "pageSize": size,
+            "page": (offset // size) + 1,
+            "nextCursor": next_cursor,
+            "hasMore": bool(next_cursor),
+            "filters": {
+                "severity": severity,
+                "category": category,
+                "location": location,
+                "status": status,
+            },
+            "sort": sort,
+        }
+
+    def update_issue_status(self, job_id: str, issue_id: str, status: str) -> Dict:
+        if not _SAFE_ID.fullmatch(str(issue_id or "")):
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_NOT_FOUND",
+                "全篇审查问题不存在或已过期。",
+                status_code=404,
+            )
+        if status not in _ISSUE_STATUSES:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUE_STATUS_INVALID",
+                "问题处理状态无效。",
+            )
+        report = self._require_report(job_id)
+        for issue in report.get("issues", []):
+            if issue.get("issueId") == issue_id:
+                issue["status"] = status
+                self._refresh_report_counts(report)
+                self._save_report(job_id, report)
+                return deepcopy(issue)
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_ISSUE_NOT_FOUND",
+            "全篇审查问题不存在或已过期。",
+            status_code=404,
+        )
+
+    def delete_result(self, job_id: str) -> Dict:
+        self._require_report(job_id)
+        with self._lock:
+            self._reports.pop(job_id, None)
+        report_path = self._report_path(job_id)
+        try:
+            report_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"jobId": job_id, "status": "deleted"}
 
     def _run_job(self, snapshot: Dict, progress) -> Dict:
         job_id = str(snapshot.get("jobId", ""))
@@ -1127,7 +1299,9 @@ class FullDocumentReviewService:
                 parsed_chunks.append(parsed)
             self._raise_if_cancelled(job_id)
             progress("parsing")
-            return self._build_report(snapshot, parsed_chunks)
+            report = self._build_report(snapshot, parsed_chunks)
+            self._save_report(job_id, report)
+            return report
         finally:
             self._remove_snapshot(str(snapshot.get("snapshotId", "")))
 
@@ -1253,7 +1427,11 @@ class FullDocumentReviewService:
                     )
                 )[:24]
             )
-            normalized_issues.append({"issueId": issue_id, **item})
+            normalized_issues.append({
+                "issueId": issue_id,
+                "location": blocks[anchor_id].get("location", "body"),
+                **item,
+            })
         return {**payload, "issues": normalized_issues}
 
     @classmethod
@@ -1263,13 +1441,18 @@ class FullDocumentReviewService:
         def add_table_cells(table: Dict) -> None:
             for row in table.get("rows", []):
                 for cell in row.get("cells", []):
-                    anchors[cell["cellId"]] = cell
+                    anchors[cell["cellId"]] = {**cell, "location": "table"}
             for nested in table.get("nestedTables", []):
                 add_table_cells(nested)
 
         for block in blocks:
             anchors[block["blockId"]] = {
-                "text": "\n".join(cls._block_texts([block]))
+                "text": "\n".join(cls._block_texts([block])),
+                "location": (
+                    "table"
+                    if block["blockType"] == "table"
+                    else "chapter" if block["blockType"] == "heading" else "body"
+                ),
             }
             if block["blockType"] != "table":
                 continue
@@ -1298,7 +1481,7 @@ class FullDocumentReviewService:
         unique_issues = {}
         for issue in issues:
             unique_issues[issue["issueId"]] = issue
-        return {
+        report = {
             "schemaVersion": REPORT_SCHEMA_VERSION,
             "reviewMode": "full",
             "snapshot": {
@@ -1321,8 +1504,146 @@ class FullDocumentReviewService:
             },
             "enumerationStatus": enumeration_status,
             "disclaimer": "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。",
-            "issues": list(unique_issues.values()),
+            "issues": [
+                {**issue, "status": issue.get("status", "open"),
+                 "location": issue.get("location", "body")}
+                for issue in unique_issues.values()
+            ],
         }
+        FullDocumentReviewService._refresh_report_counts(report)
+        return report
+
+    @staticmethod
+    def _refresh_report_counts(report: Dict) -> None:
+        issues = report.get("issues", [])
+        report["issueCount"] = len(issues)
+        report["categoryCounts"] = {
+            category: sum(1 for issue in issues if issue.get("category") == category)
+            for category in sorted(_CATEGORIES)
+        }
+        report["severityCounts"] = {
+            severity: sum(1 for issue in issues if issue.get("severity") == severity)
+            for severity in ("high", "medium", "low")
+        }
+        report["statusCounts"] = {
+            status: sum(1 for issue in issues if issue.get("status", "open") == status)
+            for status in ("open", "processed", "ignored")
+        }
+
+    def _require_report(self, job_id: str) -> Dict:
+        self._require_enabled()
+        job = self.coordinator.get(job_id, task_type=TASK_TYPE)
+        report = self._get_report(job_id)
+        if job is None or job.get("status") != "completed" or not isinstance(report, dict):
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_REPORT_NOT_AVAILABLE",
+                "全篇审查尚未生成可用的结构化报告。",
+                status_code=404,
+            )
+        return report
+
+    def _save_report(self, job_id: str, report: Dict) -> None:
+        stored = deepcopy(report)
+        stored["reportExpiresAt"] = report.get(
+            "reportExpiresAt", self._wall_clock() + REPORT_RESULT_TTL_SECONDS
+        )
+        stored["reportSha256"] = _report_sha256(stored)
+        with self._lock:
+            self._reports[job_id] = stored
+        self._ensure_root()
+        self._write_private_json(self._report_path(job_id), stored)
+
+    def _get_report(self, job_id: str) -> Optional[Dict]:
+        with self._lock:
+            report = self._reports.get(job_id)
+        if isinstance(report, dict):
+            if report.get("reportSha256") != _report_sha256(report):
+                with self._lock:
+                    self._reports.pop(job_id, None)
+                return None
+            if self._wall_clock() >= float(report.get("reportExpiresAt", 0)):
+                with self._lock:
+                    self._reports.pop(job_id, None)
+                return None
+            return deepcopy(report)
+        path = self._report_path(job_id)
+        if not path.exists():
+            return None
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                report = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        if (
+            not isinstance(report, dict)
+            or report.get("reportSha256") != _report_sha256(report)
+            or self._wall_clock() >= float(report.get("reportExpiresAt", 0))
+        ):
+            return None
+        with self._lock:
+            self._reports[job_id] = report
+        return deepcopy(report)
+
+    def _public_report(self, report: Dict) -> Dict:
+        public = deepcopy(report)
+        public.pop("issues", None)
+        public.pop("reportExpiresAt", None)
+        public.pop("reportSha256", None)
+        public["issuesEndpoint"] = "issues"
+        return public
+
+    def export_report(self, job_id: str, output_format: str) -> object:
+        report = self._require_report(job_id)
+        if output_format == "json":
+            report.pop("reportExpiresAt", None)
+            report.pop("reportSha256", None)
+            return report
+        if output_format != "markdown":
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_REPORT_FORMAT_INVALID",
+                "全篇审查报告仅支持 json 或 markdown 格式。",
+            )
+        lines = ["# 全篇审查报告", "", report.get("summary") or "审查已完成。", ""]
+        lines.append("## 覆盖与统计")
+        lines.append("- 审查字符：{0}".format(report.get("coverage", {}).get("reviewedCharacterCount", 0)))
+        lines.append("- 问题数量：{0}".format(report.get("issueCount", 0)))
+        lines.append("- 问题枚举：{0}".format(report.get("enumerationStatus", "limited")))
+        lines.append("")
+        for index, issue in enumerate(report.get("issues", []), 1):
+            lines.extend([
+                "## {0}. {1}".format(index, issue.get("problem", "审查问题")),
+                "- 问题编号：{0}".format(issue.get("issueId", "")),
+                "- 状态：{0}".format(issue.get("status", "open")),
+                "- 严重程度：{0}".format(issue.get("severity", "")),
+                "- 原文锚点：{0}".format(issue.get("anchorId", "")),
+                "- 原文：{0}".format(issue.get("originalText", "")),
+                "- 建议：{0}".format(issue.get("suggestion", "")),
+            ])
+            if issue.get("suggestedRewrite"):
+                lines.append("- 建议改写：{0}".format(issue["suggestedRewrite"]))
+            lines.append("")
+        return "\n".join(lines)
+
+    @staticmethod
+    def _encode_issue_cursor(issue_id: str) -> str:
+        return base64.urlsafe_b64encode(issue_id.encode("utf-8")).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_issue_cursor(cursor: str) -> str:
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            issue_id = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        except (ValueError, UnicodeError, binascii.Error):
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUES_CURSOR_INVALID",
+                "问题分页游标无效。",
+            )
+        if not _SAFE_ID.fullmatch(issue_id):
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_ISSUES_CURSOR_INVALID",
+                "问题分页游标无效。",
+            )
+        return issue_id
 
     @staticmethod
     def _require_full_review_ready(task_auth: Dict) -> None:
@@ -1514,6 +1835,24 @@ class FullDocumentReviewService:
             children = list(root.iterdir())
         except OSError:
             return
+        for report_path in children:
+            if not report_path.is_file() or not report_path.name.startswith("report-"):
+                continue
+            try:
+                with report_path.open("r", encoding="utf-8") as handle:
+                    report = json.load(handle)
+                if not isinstance(report, dict):
+                    report_path.unlink()
+                    self._reports.pop(report_path.stem[len("report-"):], None)
+                    continue
+                expiry = float(report.get("reportExpiresAt", 0))
+                if report.get("reportSha256") != _report_sha256(report) or (
+                    expiry and now >= expiry
+                ):
+                    report_path.unlink()
+                    self._reports.pop(report_path.stem[len("report-"):], None)
+            except (OSError, ValueError, TypeError):
+                continue
         for child in children:
             if (
                 child.is_symlink()

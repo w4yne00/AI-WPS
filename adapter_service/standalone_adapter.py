@@ -1731,12 +1731,56 @@ class Handler(BaseHTTPRequestHandler):
         full_review_job_prefix = "/word/document-review/full/jobs/"
         if path.startswith(full_review_job_prefix):
             suffix = unquote(path[len(full_review_job_prefix):]).strip("/")
+            if suffix.endswith("/issues"):
+                job_id = suffix[: -len("/issues")].strip("/")
+                query_params = parse_qs(parsed.query, keep_blank_values=True)
+                def query_int(name):
+                    value = query_params.get(name, [""])[0]
+                    return int(value) if value else None
+                try:
+                    data = FULL_DOCUMENT_REVIEW_SERVICE.list_issues(
+                        job_id,
+                        page_size=query_int("pageSize"),
+                        cursor=str(query_params.get("cursor", [""])[0]),
+                        severity=str(query_params.get("severity", [""])[0]),
+                        category=str(query_params.get("category", [""])[0]),
+                        location=str(query_params.get("location", [""])[0]),
+                        status=str(query_params.get("status", [""])[0]),
+                        sort=str(query_params.get("sort", ["source"])[0]),
+                    )
+                except (AdapterError, ValueError) as error:
+                    if not isinstance(error, AdapterError):
+                        error = AdapterError(
+                            "FULL_DOCUMENT_REVIEW_ISSUE_QUERY_INVALID",
+                            "全篇审查问题查询参数无效。",
+                        )
+                    self._write(
+                        error.status_code,
+                        envelope(
+                            job_id,
+                            "word.document_review.full",
+                            success=False,
+                            message=error.message,
+                            errors=[{"code": error.code, "message": error.message}],
+                        ),
+                    )
+                    return
+                self._write(
+                    200,
+                    envelope(job_id, "word.document_review.full", data, message="issues"),
+                )
+                return
             report_requested = suffix.endswith("/report")
             job_id = suffix[: -len("/report")].strip("/") if report_requested else suffix
             try:
                 if report_requested:
-                    data = FULL_DOCUMENT_REVIEW_SERVICE.get_report(job_id)
-                    message = "completed"
+                    output_format = str(parse_qs(parsed.query).get("format", ["summary"])[0])
+                    if output_format == "summary":
+                        data = FULL_DOCUMENT_REVIEW_SERVICE.get_report(job_id)
+                        message = "completed"
+                    else:
+                        data = FULL_DOCUMENT_REVIEW_SERVICE.export_report(job_id, output_format)
+                        message = "exported"
                 else:
                     data = FULL_DOCUMENT_REVIEW_SERVICE.get_job(job_id)
                     if data is None:
@@ -2781,6 +2825,35 @@ class Handler(BaseHTTPRequestHandler):
         if writing_policy_response is not None:
             self._write_writing_policy_response(writing_policy_response)
             return
+        full_issue_prefix = "/word/document-review/full/jobs/"
+        if path.startswith(full_issue_prefix) and "/issues/" in path:
+            suffix = path[len(full_issue_prefix):]
+            job_id, issue_id = suffix.split("/issues/", 1)
+            job_id = unquote(job_id).strip("/")
+            issue_id = unquote(issue_id).strip("/")
+            try:
+                if not isinstance(payload, dict) or set(payload) != {"status"}:
+                    raise AdapterError(
+                        "FULL_DOCUMENT_REVIEW_ISSUE_REQUEST_INVALID",
+                        "问题处理状态请求格式无效。",
+                    )
+                data = FULL_DOCUMENT_REVIEW_SERVICE.update_issue_status(
+                    job_id, issue_id, payload["status"]
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(200, envelope(job_id, "word.document_review.full", data, message="issue updated"))
+            return
         prefix = "/provider/workflow-profiles/"
         if path.startswith(prefix):
             profile_id = unquote(path[len(prefix):]).strip("/")
@@ -2954,6 +3027,26 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             self._write(200, envelope(session_id, "word.document_review.full", data, message="deleted"))
+            return
+
+        full_result_suffix = "/word/document-review/full/jobs/"
+        if path.startswith(full_result_suffix) and path.endswith("/result"):
+            job_id = unquote(path[len(full_result_suffix): -len("/result")]).strip("/")
+            try:
+                data = FULL_DOCUMENT_REVIEW_SERVICE.delete_result(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(200, envelope(job_id, "word.document_review.full", data, message="deleted"))
             return
 
         full_job_prefix = "/word/document-review/full/jobs/"

@@ -227,7 +227,12 @@ DELETE /word/document-review/full/snapshots/{sessionId}
 POST   /word/document-review/full/jobs
 GET    /word/document-review/full/jobs/{jobId}
 DELETE /word/document-review/full/jobs/{jobId}
+GET    /word/document-review/full/jobs/{jobId}/issues
+PATCH  /word/document-review/full/jobs/{jobId}/issues/{issueId}
 GET    /word/document-review/full/jobs/{jobId}/report
+DELETE /word/document-review/full/jobs/{jobId}/result
+
+全篇审查问题接口默认每页 20 项，`pageSize` 支持 1–100，使用不透明 `cursor` 续读；`sort` 支持 `source`（原文顺序）和 `severity`（高到低），并支持 `severity`、`category`、`location`（`body`/`chapter`/`table`）和 `status`（`open`/`processed`/`ignored`）筛选。终态任务和摘要报告不返回完整问题数组；`PATCH` 仅按稳定 `issueId` 更新独立处理状态。报告默认返回摘要，`?format=json` 导出完整版本化 JSON，`?format=markdown` 导出 Markdown；结果可由 `/result` 主动删除。
 DELETE /word/document-review/jobs/{jobId}[?resume=1]
 POST   /word/format-review
 POST   /excel/analysis
