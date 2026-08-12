@@ -218,6 +218,8 @@ class DeliveryArtifactTests(unittest.TestCase):
             (delivery / "prompts").mkdir()
             prompt = delivery / "prompts/system.md"
             prompt.write_text("safe prompt\n", encoding="utf-8")
+            stage_prompt = delivery / "prompts/full-review-chunk.md"
+            stage_prompt.write_text("strict stage prompt\n", encoding="utf-8")
             (delivery / "prompts/manifest.json").write_text(
                 json.dumps(
                     {
@@ -227,6 +229,14 @@ class DeliveryArtifactTests(unittest.TestCase):
                             "word.smart_write": {
                                 "file": "system.md",
                                 "sha256": hashlib.sha256(prompt.read_bytes()).hexdigest(),
+                            }
+                        },
+                        "stages": {
+                            "word.document_review.full.chunk": {
+                                "file": "full-review-chunk.md",
+                                "sha256": hashlib.sha256(
+                                    stage_prompt.read_bytes()
+                                ).hexdigest(),
                             }
                         },
                     }
@@ -268,6 +278,7 @@ class DeliveryArtifactTests(unittest.TestCase):
                             "payload/app.py",
                             "payload/settings.json",
                             "prompts/manifest.json",
+                            "prompts/full-review-chunk.md",
                             "prompts/system.md",
                             "release-manifest.json",
                             "scripts/audit_delivery.py",
@@ -309,6 +320,18 @@ class DeliveryArtifactTests(unittest.TestCase):
             self.assertNotEqual(prompt_tampered.returncode, 0)
             self.assertIn("PROMPT_HASH_MISMATCH", prompt_tampered.stdout)
             prompt.write_text("safe prompt\n", encoding="utf-8")
+
+            stage_prompt.write_text("tampered stage prompt\n", encoding="utf-8")
+            stage_prompt_tampered = subprocess.run(
+                [sys.executable, str(AUDITOR), str(delivery), "--write-hashes"],
+                cwd=ROOT,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+            self.assertNotEqual(stage_prompt_tampered.returncode, 0)
+            self.assertIn("PROMPT_HASH_MISMATCH", stage_prompt_tampered.stdout)
+            stage_prompt.write_text("strict stage prompt\n", encoding="utf-8")
 
             payload.write_text("VERSION = 'tampered'\n", encoding="utf-8")
             tampered = subprocess.run(

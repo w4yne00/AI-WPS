@@ -331,13 +331,16 @@ def audit_reference_closure(
     if prompt_manifest_path.is_file():
         prompt_manifest = load_json(prompt_manifest_path, "PROMPT_MANIFEST_INVALID")
         tasks = prompt_manifest.get("tasks", {})
+        stages = prompt_manifest.get("stages", {})
         if (
             not isinstance(tasks, dict)
+            or not isinstance(stages, dict)
             or len(tasks) != manifest.get("adapter", {}).get("systemPromptCount")
             or prompt_manifest.get("release") != manifest.get("adapter", {}).get("version")
         ):
             raise AuditFailure("PROMPT_INVENTORY_MISMATCH")
-        for task_name, item in sorted(tasks.items()):
+        prompt_entries = list(tasks.items()) + list(stages.items())
+        for task_name, item in sorted(prompt_entries):
             if not isinstance(item, dict):
                 raise AuditFailure("PROMPT_ENTRY_INVALID {0}".format(task_name))
             prompt_path = safe_reference(

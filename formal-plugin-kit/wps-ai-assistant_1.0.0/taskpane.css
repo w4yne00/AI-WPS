@@ -1915,6 +1915,26 @@ body[data-task-mode="smartWrite"] #result-output {
   }
 }
 
+.full-document-review-entry {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  background: var(--color-surface-muted);
+}
+
+.full-document-review-entry[hidden] {
+  display: none;
+}
+
+.full-document-review-entry p,
+.full-document-review-entry small {
+  margin: 0;
+  color: var(--color-text-muted);
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

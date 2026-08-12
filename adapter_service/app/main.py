@@ -32,6 +32,93 @@ app.include_router(writing_policy_router)
 logger = get_logger(__name__)
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
+FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES = 2 * 1024 * 1024
+
+
+class FullDocumentReviewBodyLimitMiddleware:
+    def __init__(self, app, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = int(max_bytes)
+
+    async def __call__(self, scope, receive, send) -> None:
+        if not self._is_full_review_mutation(scope):
+            await self.app(scope, receive, send)
+            return
+        declared = WritingPolicyImportBodyLimitMiddleware._content_length(scope)
+        if declared > self.max_bytes:
+            await self._reject(scope, send, declared)
+            return
+        buffered_body = bytearray()
+        disconnected = False
+        while True:
+            message = await receive()
+            if message.get("type") == "http.disconnect":
+                disconnected = True
+                break
+            if message.get("type") != "http.request":
+                continue
+            chunk = message.get("body", b"")
+            received = len(buffered_body) + len(chunk)
+            if received > self.max_bytes:
+                await self._reject(scope, send, received)
+                return
+            buffered_body.extend(chunk)
+            if not message.get("more_body", False):
+                break
+
+        consolidated_body = bytes(buffered_body)
+        replayed = False
+
+        async def replay_receive():
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {
+                    "type": "http.request",
+                    "body": consolidated_body,
+                    "more_body": False,
+                }
+            if disconnected:
+                return {"type": "http.disconnect"}
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+    @staticmethod
+    def _is_full_review_mutation(scope) -> bool:
+        return bool(
+            scope.get("type") == "http"
+            and scope.get("method") in {"POST", "PUT", "DELETE"}
+            and str(scope.get("path", "")).startswith("/word/document-review/full/")
+        )
+
+    async def _reject(self, scope, send, received: int) -> None:
+        trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
+        message = "全篇审查请求超过 2 MB 限制。"
+        response = JSONResponse(
+            status_code=413,
+            content={
+                "success": False,
+                "traceId": trace_id,
+                "taskType": "word.document_review.full",
+                "message": message,
+                "data": {},
+                "errors": [{
+                    "code": "FULL_DOCUMENT_REVIEW_REQUEST_TOO_LARGE",
+                    "message": message,
+                }],
+            },
+        )
+        response.headers["X-Trace-Id"] = trace_id
+        logger.warning(
+            "traceId=%s method=%s path=%s status=413 receivedBytes=%s",
+            trace_id, scope.get("method", ""), scope.get("path", ""), received,
+        )
+        await response(scope, self._empty_receive, send)
+
+    @staticmethod
+    async def _empty_receive():
+        return {"type": "http.request", "body": b"", "more_body": False}
 
 
 class WritingPolicyImportBodyLimitMiddleware:
@@ -194,6 +281,34 @@ async def log_requests(request: Request, call_next):
         )
         response.headers["X-Trace-Id"] = trace_id
         return response
+    if (
+        request.url.path.startswith("/word/document-review/full/")
+        and request.method in {"POST", "PUT", "DELETE"}
+    ):
+        try:
+            content_length = int(request.headers.get("Content-Length", "") or 0)
+        except (TypeError, ValueError):
+            content_length = 0
+        if content_length > 2 * 1024 * 1024:
+            message = "全篇审查请求超过 2 MB 限制。"
+            response = JSONResponse(
+                status_code=413,
+                content={
+                    "success": False,
+                    "traceId": trace_id,
+                    "taskType": "word.document_review.full",
+                    "message": message,
+                    "data": {},
+                    "errors": [
+                        {
+                            "code": "FULL_DOCUMENT_REVIEW_REQUEST_TOO_LARGE",
+                            "message": message,
+                        }
+                    ],
+                },
+            )
+            response.headers["X-Trace-Id"] = trace_id
+            return response
     if request.url.path == "/ppt/document-files":
         try:
             content_length = int(request.headers.get("Content-Length", ""))
@@ -268,6 +383,10 @@ app.add_middleware(
     max_bytes=WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES,
 )
 app.add_middleware(
+    FullDocumentReviewBodyLimitMiddleware,
+    max_bytes=FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES,
+)
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
@@ -303,6 +422,8 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
 def _task_type_from_path(path: str) -> str:
     if path.startswith("/writing-policies/"):
         return "writing_policy"
+    if path.startswith("/word/document-review/full/"):
+        return "word.document_review.full"
     if path.startswith("/word/document-review/jobs/"):
         return "word.document_review"
     if path.startswith("/word/smart-write/jobs/"):

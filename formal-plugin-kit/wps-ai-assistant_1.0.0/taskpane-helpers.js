@@ -9,6 +9,135 @@
     return String(text || "").replace(/\r/g, "").trim();
   }
 
+  function sha256Text(value) {
+    var text = unescape(encodeURIComponent(String(value || "")));
+    var maxWord = Math.pow(2, 32);
+    var words = [];
+    var hash = [];
+    var constants = [];
+    var primeCounter = 0;
+    var candidate = 2;
+    var bitLength = text.length * 8;
+    var index;
+    var isPrime;
+    var divisor;
+
+    function rightRotate(number, amount) {
+      return (number >>> amount) | (number << (32 - amount));
+    }
+
+    while (primeCounter < 64) {
+      isPrime = true;
+      for (divisor = 2; divisor * divisor <= candidate; divisor += 1) {
+        if (candidate % divisor === 0) {
+          isPrime = false;
+          break;
+        }
+      }
+      if (isPrime) {
+        if (primeCounter < 8) {
+          hash[primeCounter] = (Math.pow(candidate, 0.5) * maxWord) | 0;
+        }
+        constants[primeCounter] = (Math.pow(candidate, 1 / 3) * maxWord) | 0;
+        primeCounter += 1;
+      }
+      candidate += 1;
+    }
+    text += "\x80";
+    while (text.length % 64 !== 56) {
+      text += "\x00";
+    }
+    for (index = 0; index < text.length; index += 1) {
+      words[index >> 2] = words[index >> 2] || 0;
+      words[index >> 2] |= text.charCodeAt(index) << ((3 - index) % 4) * 8;
+    }
+    words.push(Math.floor(bitLength / maxWord));
+    words.push(bitLength);
+
+    for (index = 0; index < words.length; index += 16) {
+      var working = hash.slice(0);
+      var schedule = words.slice(index, index + 16);
+      var round;
+      for (round = 0; round < 64; round += 1) {
+        var word = schedule[round];
+        var a = working[0];
+        var e = working[4];
+        if (round >= 16) {
+          var w15 = schedule[round - 15];
+          var w2 = schedule[round - 2];
+          word = schedule[round] = (
+            schedule[round - 16] +
+            (rightRotate(w15, 7) ^ rightRotate(w15, 18) ^ (w15 >>> 3)) +
+            schedule[round - 7] +
+            (rightRotate(w2, 17) ^ rightRotate(w2, 19) ^ (w2 >>> 10))
+          ) | 0;
+        }
+        var temp1 = (
+          working[7] +
+          (rightRotate(e, 6) ^ rightRotate(e, 11) ^ rightRotate(e, 25)) +
+          ((e & working[5]) ^ ((~e) & working[6])) +
+          constants[round] +
+          word
+        ) | 0;
+        var temp2 = (
+          (rightRotate(a, 2) ^ rightRotate(a, 13) ^ rightRotate(a, 22)) +
+          ((a & working[1]) ^ (a & working[2]) ^ (working[1] & working[2]))
+        ) | 0;
+        working = [
+          (temp1 + temp2) | 0,
+          working[0],
+          working[1],
+          working[2],
+          (working[3] + temp1) | 0,
+          working[4],
+          working[5],
+          working[6]
+        ];
+      }
+      for (round = 0; round < 8; round += 1) {
+        hash[round] = (hash[round] + working[round]) | 0;
+      }
+    }
+    return hash.map(function (word) {
+      var hex = (word >>> 0).toString(16);
+      return "00000000".slice(hex.length) + hex;
+    }).join("");
+  }
+
+  function buildFullDocumentReviewBody(paragraphs, maxReviewCharacters) {
+    var limit = Math.max(1, Number(maxReviewCharacters) || 20000);
+    var blocks = [];
+    var characterCount = 0;
+    (Array.isArray(paragraphs) ? paragraphs : []).forEach(function (paragraph) {
+      var text = String(paragraph && paragraph.text || "")
+        .replace(/[\r\u0007]+$/g, "")
+        .trim();
+      if (!text) {
+        return;
+      }
+      characterCount += text.length;
+      if (characterCount > limit) {
+        throw new Error("当前单分片全篇审查最多支持 20,000 审查字符。");
+      }
+      blocks.push({
+        blockId: "paragraph-" + (blocks.length + 1),
+        blockType: "paragraph",
+        paragraphIndex: blocks.length + 1,
+        text: text
+      });
+    });
+    if (!blocks.length) {
+      throw new Error("未读取到可审查的普通正文段落。");
+    }
+    var sourceText = blocks.map(function (block) { return block.text; }).join("\n");
+    return {
+      blocks: blocks,
+      sourceText: sourceText,
+      reviewCharacterCount: characterCount,
+      contentSha256: sha256Text(sourceText)
+    };
+  }
+
   function escapeHtml(value) {
     return String(value || "")
       .replace(/&/g, "&amp;")
@@ -1513,7 +1642,8 @@
     return {
       maxParagraphs: normalizePositiveInteger(source.maxParagraphs),
       maxParagraphTextLength: normalizePositiveInteger(source.maxParagraphTextLength),
-      avoidFallbackTextRead: Boolean(source.avoidFallbackTextRead)
+      avoidFallbackTextRead: Boolean(source.avoidFallbackTextRead),
+      excludeTableParagraphs: Boolean(source.excludeTableParagraphs)
     };
   }
 
@@ -1740,6 +1870,16 @@
       if (!paragraph) {
         continue;
       }
+      if (collectOptions.excludeTableParagraphs) {
+        var paragraphRange = resolveRange(paragraph);
+        var containingTables = firstDefined(
+          safeRead(paragraphRange, "Tables"),
+          safeRead(paragraph, "Tables")
+        );
+        if (readCollectionCount(containingTables) > 0) {
+          continue;
+        }
+      }
       var font = readFont(paragraph);
       var paragraphFormat = readParagraphFormat(paragraph);
       items.push({
@@ -1858,6 +1998,13 @@
         temperature: profile.temperature,
         maxOutputTokens: profile.maxOutputTokens,
         contextWindowTokens: Number(profile.contextWindowTokens || 40000),
+        limitedReviewReady: typeof profile.limitedReviewReady === "boolean"
+          ? profile.limitedReviewReady : Boolean(profile.complete),
+        fullDocumentReviewReady: Boolean(profile.fullDocumentReviewReady),
+        fullDocumentReviewReadiness: profile.fullDocumentReviewReadiness || {
+          code: "unavailable",
+          label: "全篇审查尚未就绪。"
+        },
         missingFields: Array.isArray(profile.missingFields) ? profile.missingFields : [],
         configVersion: Number(profile.configVersion || 1),
         lastValidation: profile.lastValidation || null,
@@ -2593,6 +2740,8 @@
 
   return {
     normalizeText: normalizeText,
+    sha256Text: sha256Text,
+    buildFullDocumentReviewBody: buildFullDocumentReviewBody,
     escapeHtml: escapeHtml,
     renderMarkdown: renderMarkdown,
     buildInlineWritebackRuns: buildInlineWritebackRuns,

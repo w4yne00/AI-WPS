@@ -7,7 +7,7 @@ from unittest.mock import patch
 from app.core.config import AppSettings
 from app.core.errors import AdapterError
 from app.services.model_configurations import ACCESS_DIRECT_MODEL, ModelConfigurationStore
-from app.services.provider_client import ProviderClient
+from app.services.provider_client import ProviderClient, get_last_provider_debug
 from app.services.system_prompts import SystemPromptStore
 
 
@@ -144,6 +144,77 @@ class DirectModelProviderTests(unittest.TestCase):
             self.assertEqual(auth["providerBaseUrl"], "")
             self.assertEqual(auth["apiKey"], "")
             self.assertFalse(client.is_task_configured("word.smart_write"))
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_full_document_review_uses_versioned_strict_json_contract(
+        self, urlopen
+    ) -> None:
+        strict_answer = json.dumps(
+            {
+                "schemaVersion": "word.document_review.full.chunk.v1",
+                "chunkId": "chunk-1",
+                "summary": "未发现问题。",
+                "enumerationStatus": "complete",
+                "issues": [],
+            },
+            ensure_ascii=False,
+        )
+        urlopen.return_value = FakeResponse(
+            {
+                "choices": [
+                    {"message": {"role": "assistant", "content": strict_answer}}
+                ]
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(
+                config_path, root / "provider_api_keys"
+            )
+            configuration = store.create_configuration(
+                "word.document_review",
+                "全篇审查直连",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://model.example/v1",
+                model_name="review-model",
+                max_output_tokens=2048,
+                context_window_tokens=40000,
+            )
+            store.replace_api_key(configuration["id"], "direct-secret")
+            store.activate_configuration(configuration["id"])
+            client = ProviderClient(
+                AppSettings(timeout_seconds=75), model_configuration_store=store
+            )
+            auth = client.resolve_task_auth("word.document_review")
+
+            answer = client.full_document_review_chunk(
+                "系统应尽快完成联调。",
+                "trace-full-review",
+                "chunk-1",
+                "technical_solution",
+                "重点检查可验收性。",
+                auth,
+            )
+
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(answer, strict_answer)
+        self.assertEqual(payload["max_tokens"], 2048)
+        self.assertEqual(payload["response_format"]["type"], "json_schema")
+        self.assertTrue(payload["response_format"]["json_schema"]["strict"])
+        self.assertEqual(
+            payload["response_format"]["json_schema"]["schema"][
+                "properties"
+            ]["schemaVersion"]["const"],
+            "word.document_review.full.chunk.v1",
+        )
+        self.assertIn("单分片全篇审查", payload["messages"][0]["content"])
+        self.assertNotIn("系统应尽快完成联调", payload["messages"][0]["content"])
+        self.assertEqual(
+            get_last_provider_debug()["taskType"], "word.document_review.full"
+        )
 
 
 if __name__ == "__main__":

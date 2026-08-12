@@ -29,6 +29,10 @@ INTERACTIVE_BURST_LIMIT = 3
 JobKey = Tuple[str, str]
 
 
+class LongTaskCancelled(Exception):
+    """Signals cooperative cancellation after an in-flight call returns."""
+
+
 def _positive_int_from_env(name: str, default: int) -> int:
     try:
         value = int(os.environ.get(name, ""))
@@ -77,6 +81,7 @@ class LongTaskCoordinator:
         public_metadata: Optional[Dict] = None,
         safe_failure_codes: Optional[Set[str]] = None,
         priority_class: str = PRIORITY_REGULAR,
+        allow_running_cancel: bool = False,
     ) -> Dict:
         worker_job_key: Optional[JobKey] = None
         now_mono = self._monotonic()
@@ -122,6 +127,8 @@ class LongTaskCoordinator:
                 "_safeFailureCodes": set(safe_failure_codes or set()),
                 "_publicMetadata": deepcopy(public_metadata or {}),
                 "_priorityClass": normalized_priority,
+                "_allowRunningCancel": bool(allow_running_cancel),
+                "_cancelRequested": False,
                 "result": None,
                 "error": None,
             }
@@ -215,6 +222,56 @@ class LongTaskCoordinator:
             self._condition.notify_all()
             return self._public_job_locked(job, now_mono)
 
+    def request_cancel(
+        self, job_id: str, task_type: Optional[str] = None
+    ) -> Optional[Dict]:
+        """Atomically cancel a queued job or request cooperative running cancellation."""
+        now_mono = self._monotonic()
+        with self._lock:
+            self._cleanup_locked(now_mono)
+            job_key = self._find_job_key_locked(job_id, task_type)
+            job = self._jobs.get(job_key) if job_key is not None else None
+            if job is None:
+                return None
+            if job["status"] == "queued":
+                try:
+                    self._queue.remove(job_key)
+                except ValueError:
+                    raise AdapterError(
+                        "LONG_TASK_NOT_CANCELLABLE",
+                        "任务已离开排队队列，无法取消。",
+                        status_code=409,
+                    )
+                self._finish_locked(job, "cancelled", now_mono)
+                self._cancelled_count += 1
+                self._trim_terminal_locked()
+                self._condition.notify_all()
+                return self._public_job_locked(job, now_mono)
+            if job["status"] == "running" and job.get("_allowRunningCancel"):
+                job["_cancelRequested"] = True
+                job["_updatedMonotonic"] = now_mono
+                job["updatedAt"] = self._wall_clock()
+                return self._public_job_locked(job, now_mono)
+            if job["status"] in TERMINAL_STATUSES:
+                return self._public_job_locked(job, now_mono)
+            raise AdapterError(
+                "LONG_TASK_NOT_CANCELLABLE",
+                "当前任务状态不允许取消。",
+                status_code=409,
+            )
+
+    def is_cancel_requested(
+        self, job_id: str, task_type: Optional[str] = None
+    ) -> bool:
+        with self._lock:
+            job_key = self._find_job_key_locked(job_id, task_type)
+            job = self._jobs.get(job_key) if job_key is not None else None
+            return bool(
+                job
+                and job.get("status") == "running"
+                and job.get("_cancelRequested")
+            )
+
     def diagnostics(self) -> Dict:
         now_mono = self._monotonic()
         with self._lock:
@@ -280,8 +337,11 @@ class LongTaskCoordinator:
 
         result = None
         error = None
+        cancelled = False
         try:
             result = runner(snapshot, progress)
+        except LongTaskCancelled:
+            cancelled = True
         except Exception as exc:
             diagnostic_error_code = (
                 exc.code if isinstance(exc, AdapterError) else ""
@@ -307,7 +367,11 @@ class LongTaskCoordinator:
             job = self._jobs.get(job_key)
             if job is None or job["status"] != "running":
                 return
-            if error is None:
+            if cancelled or job.get("_cancelRequested"):
+                job["result"] = None
+                self._finish_locked(job, "cancelled", now_mono)
+                self._cancelled_count += 1
+            elif error is None:
                 job["result"] = result
                 self._finish_locked(job, "completed", now_mono)
             else:
@@ -473,8 +537,14 @@ class LongTaskCoordinator:
                 max(now_mono - job.get("_updatedMonotonic", now_mono), 0.0)
             ),
             "queuePosition": queue_position,
-            "canCancel": job["status"] == "queued",
+            "canCancel": job["status"] == "queued" or bool(
+                job["status"] == "running"
+                and job.get("_allowRunningCancel")
+                and not job.get("_cancelRequested")
+            ),
         }
+        if job.get("_allowRunningCancel"):
+            public_job["cancelRequested"] = bool(job.get("_cancelRequested"))
         public_job.update(job.get("_publicMetadata", {}))
         if job["status"] in TERMINAL_STATUSES:
             public_job.pop("runningMessage", None)

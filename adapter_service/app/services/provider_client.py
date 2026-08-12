@@ -1575,6 +1575,61 @@ def _validate_probe_answer(task_type: str, answer: str) -> None:
         raise AdapterError("MODEL_RESULT_INVALID", "模型返回结果不符合任务契约。", status_code=502)
 
 
+def _full_document_review_chunk_response_format() -> Dict:
+    issue_properties = {
+        "category": {
+            "type": "string",
+            "enum": ["typo", "expression", "logic", "fluency", "professional"],
+        },
+        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+        "anchorId": {"type": "string", "minLength": 1, "maxLength": 96},
+        "originalText": {"type": "string", "minLength": 1, "maxLength": 1000},
+        "problem": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "suggestion": {"type": "string", "minLength": 1, "maxLength": 3000},
+        "suggestedRewrite": {"type": "string", "maxLength": 4000},
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "word_document_review_full_chunk_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "schemaVersion",
+                    "chunkId",
+                    "summary",
+                    "enumerationStatus",
+                    "issues",
+                ],
+                "properties": {
+                    "schemaVersion": {
+                        "type": "string",
+                        "const": "word.document_review.full.chunk.v1",
+                    },
+                    "chunkId": {"type": "string", "const": "chunk-1"},
+                    "summary": {"type": "string", "maxLength": 4000},
+                    "enumerationStatus": {
+                        "type": "string",
+                        "enum": ["complete", "limited"],
+                    },
+                    "issues": {
+                        "type": "array",
+                        "maxItems": 200,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": list(issue_properties.keys()),
+                            "properties": issue_properties,
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
 class ProviderClient:
     def __init__(
         self,
@@ -1635,6 +1690,9 @@ class ProviderClient:
                 "contextWindowTokens": int(
                     model_configuration.get("contextWindowTokens")
                     or DEFAULT_CONTEXT_WINDOW_TOKENS
+                ),
+                "contextWindowTokensExplicit": bool(
+                    model_configuration.get("contextWindowTokensExplicit", False)
                 ),
                 "apiKeyRef": api_key_ref,
                 "apiKey": str(model_configuration.get("apiKey", "")),
@@ -2202,11 +2260,14 @@ class ProviderClient:
         query: str,
         resolved_task_auth: Dict,
         timeout: int,
+        prompt_asset: Optional[Dict] = None,
+        response_format: Optional[Dict] = None,
     ) -> Dict:
-        try:
-            prompt_asset = self.system_prompt_store.load(task_type)
-        except SystemPromptError as exc:
-            raise AdapterError(exc.code, exc.message, status_code=500) from exc
+        if prompt_asset is None:
+            try:
+                prompt_asset = self.system_prompt_store.load(task_type)
+            except SystemPromptError as exc:
+                raise AdapterError(exc.code, exc.message, status_code=500) from exc
         context_window = int(
             resolved_task_auth.get("contextWindowTokens")
             or DEFAULT_CONTEXT_WINDOW_TOKENS
@@ -2237,6 +2298,8 @@ class ProviderClient:
             payload_body["temperature"] = temperature
         if max_output_tokens is not None:
             payload_body["max_tokens"] = int(max_output_tokens)
+        if response_format is not None:
+            payload_body["response_format"] = response_format
         debug_metadata = self.build_debug_metadata(task_type, task_auth=resolved_task_auth)
         safe_validation = {
             "stage": "model-processing",
@@ -2610,6 +2673,60 @@ class ProviderClient:
                     }
                 )
                 raise ProviderTimeoutError() from exc
+
+    def full_document_review_chunk(
+        self,
+        source_text: str,
+        trace_id: str,
+        chunk_id: str,
+        document_type: str,
+        review_prompt: str,
+        task_auth: Dict,
+        correction: bool = False,
+        blocks: Optional[List[Dict]] = None,
+    ) -> str:
+        if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
+            raise AdapterError(
+                "MODEL_DIRECT_REQUIRED",
+                "全篇审查只支持模型直连配置。",
+                status_code=409,
+            )
+        try:
+            prompt_asset = self.system_prompt_store.load_stage(
+                "word.document_review.full.chunk"
+            )
+        except SystemPromptError as exc:
+            raise AdapterError(exc.code, exc.message, status_code=500) from exc
+        source_blocks = blocks or [
+            {
+                "blockId": "paragraph-1",
+                "blockType": "paragraph",
+                "paragraphIndex": 1,
+                "text": source_text,
+            }
+        ]
+        query_payload = {
+            "schemaVersion": "word.document_review.full.request.v1",
+            "chunkId": chunk_id,
+            "documentType": document_type,
+            "reviewPrompt": review_prompt,
+            "blocks": source_blocks,
+        }
+        if correction:
+            query_payload["correctionInstruction"] = (
+                "上次结果未通过严格 JSON 契约校验。请重新生成完整 JSON，"
+                "不得输出 Markdown、解释或非 Schema 字段。"
+            )
+        body = self._post_direct_task(
+            "word.document_review.full",
+            trace_id,
+            json.dumps(query_payload, ensure_ascii=False, separators=(",", ":")),
+            task_auth,
+            max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
+            prompt_asset=prompt_asset,
+            response_format=_full_document_review_chunk_response_format(),
+        )
+        return str(body.get("answer", ""))
 
     def validate_model_configuration(
         self, configuration_id: str, trace_id: str

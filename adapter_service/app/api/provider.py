@@ -66,8 +66,8 @@ class ModelConfigurationCreateRequest(BaseModel):
     model_name: str = Field(default="", alias="modelName")
     temperature: Optional[float] = None
     max_output_tokens: Optional[int] = Field(default=None, alias="maxOutputTokens")
-    context_window_tokens: int = Field(
-        default=DEFAULT_CONTEXT_WINDOW_TOKENS, alias="contextWindowTokens"
+    context_window_tokens: Optional[int] = Field(
+        default=None, alias="contextWindowTokens"
     )
 
 
@@ -79,8 +79,8 @@ class ModelConfigurationUpdateRequest(BaseModel):
     model_name: str = Field(default="", alias="modelName")
     temperature: Optional[float] = None
     max_output_tokens: Optional[int] = Field(default=None, alias="maxOutputTokens")
-    context_window_tokens: int = Field(
-        default=DEFAULT_CONTEXT_WINDOW_TOKENS, alias="contextWindowTokens"
+    context_window_tokens: Optional[int] = Field(
+        default=None, alias="contextWindowTokens"
     )
 
 

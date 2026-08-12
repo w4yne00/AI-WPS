@@ -120,7 +120,7 @@ class ModelConfigurationStore:
         model_name: str = "",
         temperature=None,
         max_output_tokens=None,
-        context_window_tokens=DEFAULT_CONTEXT_WINDOW_TOKENS,
+        context_window_tokens=None,
     ) -> dict:
         task = self._validate_task_type(task_type)
         clean = self._validated_fields(
@@ -178,9 +178,17 @@ class ModelConfigurationStore:
                 "context_window_tokens": fields.get(
                     "context_window_tokens",
                     configuration.get("contextWindowTokens", DEFAULT_CONTEXT_WINDOW_TOKENS),
+                )
+                if fields.get("context_window_tokens") not in (None, "")
+                else configuration.get(
+                    "contextWindowTokens", DEFAULT_CONTEXT_WINDOW_TOKENS
                 ),
             }
             clean = self._validated_fields(**merged)
+            if fields.get("context_window_tokens") in (None, ""):
+                clean["contextWindowTokensExplicit"] = bool(
+                    configuration.get("contextWindowTokensExplicit", False)
+                )
             same_task = [
                 item
                 for item in configurations.values()
@@ -445,6 +453,37 @@ class ModelConfigurationStore:
             last_validation = {**last_validation, "stale": True}
         else:
             last_validation = {**last_validation, "stale": False}
+        limited_review_ready = not missing
+        if access_method != ACCESS_DIRECT_MODEL:
+            full_review_readiness = {
+                "code": "direct_model_required",
+                "label": "仅限量审查可用：全篇审查要求模型直连。",
+            }
+        elif configuration.get("maxOutputTokens") is None:
+            full_review_readiness = {
+                "code": "explicit_output_tokens_required",
+                "label": "仅限量审查可用：请显式设置最大输出 Token。",
+            }
+        elif not bool(configuration.get("contextWindowTokensExplicit", False)):
+            full_review_readiness = {
+                "code": "explicit_context_tokens_required",
+                "label": "仅限量审查可用：请显式设置上下文容量。",
+            }
+        elif int(configuration.get("maxOutputTokens") or 0) < 2048:
+            full_review_readiness = {
+                "code": "output_tokens_too_small",
+                "label": "仅限量审查可用：全篇审查至少需要 2048 输出 Token。",
+            }
+        elif not limited_review_ready:
+            full_review_readiness = {
+                "code": "configuration_incomplete",
+                "label": "模型配置不完整。",
+            }
+        else:
+            full_review_readiness = {
+                "code": "ready",
+                "label": "限量审查与全篇审查均可用。",
+            }
         return {
             "id": str(configuration.get("id", "")),
             "host": str(configuration.get("host", "")),
@@ -462,9 +501,15 @@ class ModelConfigurationStore:
             "contextWindowTokens": int(
                 configuration.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS
             ),
+            "contextWindowTokensExplicit": bool(
+                configuration.get("contextWindowTokensExplicit", False)
+            ),
             "apiKeyRef": str(configuration.get("apiKeyRef", "")),
             "keyConfigured": key_configured,
             "complete": not missing,
+            "limitedReviewReady": limited_review_ready,
+            "fullDocumentReviewReady": full_review_readiness["code"] == "ready",
+            "fullDocumentReviewReadiness": full_review_readiness,
             "missingFields": missing,
             "configVersion": int(configuration.get("configVersion") or 1),
             "lastValidation": last_validation,
@@ -507,6 +552,7 @@ class ModelConfigurationStore:
         clean_context = self._optional_int(
             context_window_tokens, 1000, 2000000, "上下文容量"
         )
+        context_explicit = clean_context is not None
         if clean_context is None:
             clean_context = DEFAULT_CONTEXT_WINDOW_TOKENS
         if clean_max_output is not None and clean_max_output >= clean_context:
@@ -522,6 +568,7 @@ class ModelConfigurationStore:
             "temperature": clean_temperature,
             "maxOutputTokens": clean_max_output,
             "contextWindowTokens": clean_context,
+            "contextWindowTokensExplicit": context_explicit,
         }
 
     @staticmethod

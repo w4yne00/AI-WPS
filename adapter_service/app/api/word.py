@@ -9,9 +9,11 @@ from app.core.models import (
     WordDocumentRequest,
 )
 from app.core.logging import get_logger
+from app.core.errors import AdapterError
 from app.core.tracing import new_trace_id
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
+from app.services.word.full_document_review import full_document_review_service
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.word.rewriter import WordRewriter
@@ -26,6 +28,82 @@ document_review_jobs = DocumentReviewJobStore(document_reviewer)
 smart_write_jobs = SmartWriteJobStore(rewriter)
 smart_imitation_jobs = SmartImitationJobStore(smart_imitator)
 logger = get_logger(__name__)
+
+
+@router.post("/word/document-review/full/snapshots")
+def create_full_document_review_snapshot(request: dict) -> dict:
+    data = full_document_review_service.create_session(request)
+    return _full_review_envelope(data, message="created")
+
+
+@router.put("/word/document-review/full/snapshots/{session_id}/batches/{sequence}")
+def upload_full_document_review_batch(
+    session_id: str, sequence: int, request: dict
+) -> dict:
+    data = full_document_review_service.upload_batch(session_id, sequence, request)
+    return _full_review_envelope(data, message="uploaded")
+
+
+@router.post("/word/document-review/full/snapshots/{session_id}/commit")
+def commit_full_document_review_snapshot(session_id: str, request: dict) -> dict:
+    data = full_document_review_service.commit_snapshot(session_id, request)
+    return _full_review_envelope(data, message="committed")
+
+
+@router.delete("/word/document-review/full/snapshots/{session_id}")
+def delete_full_document_review_snapshot(session_id: str, request: dict) -> dict:
+    data = full_document_review_service.delete_snapshot(session_id, request)
+    return _full_review_envelope(data, message="deleted")
+
+
+@router.post("/word/document-review/full/jobs")
+def start_full_document_review_job(request: dict) -> dict:
+    trace_id = new_trace_id("word-full-document-review")
+    data = full_document_review_service.start_job(request, trace_id)
+    return _full_review_envelope(data, trace_id=trace_id, message="accepted")
+
+
+@router.get("/word/document-review/full/jobs/{job_id}")
+def get_full_document_review_job(job_id: str):
+    data = full_document_review_service.get_job(job_id)
+    if data is None:
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_JOB_NOT_FOUND",
+            "全篇审查任务不存在或已过期。",
+            status_code=404,
+        )
+    return _full_review_envelope(data, trace_id=data.get("traceId", job_id), message=data["status"])
+
+
+@router.delete("/word/document-review/full/jobs/{job_id}")
+def cancel_full_document_review_job(job_id: str):
+    data = full_document_review_service.cancel_job(job_id)
+    if data is None:
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_JOB_NOT_FOUND",
+            "全篇审查任务不存在或已过期。",
+            status_code=404,
+        )
+    return _full_review_envelope(data, trace_id=data.get("traceId", job_id), message=data["status"])
+
+
+@router.get("/word/document-review/full/jobs/{job_id}/report")
+def get_full_document_review_report(job_id: str) -> dict:
+    data = full_document_review_service.get_report(job_id)
+    return _full_review_envelope(data, trace_id=job_id, message="completed")
+
+
+def _full_review_envelope(
+    data: dict, trace_id: str = "", message: str = "completed"
+) -> dict:
+    return {
+        "success": True,
+        "traceId": trace_id or str(data.get("jobId", data.get("sessionId", data.get("snapshotId", "")))),
+        "taskType": "word.document_review.full",
+        "message": message,
+        "data": data,
+        "errors": [],
+    }
 
 
 def _missing_document_review_response(

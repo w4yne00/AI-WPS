@@ -12,6 +12,14 @@
 
 当前候选交付包已生成：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；同名 `.sha256` 校验通过，麒麟 V10/WPS 真机验收待执行。
 
+## 0.1 v0.24.0-alpha 开发中能力
+
+- Issue #35 已形成默认关闭的 Word 全篇审查单分片最小闭环，开关为 `AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW=1`。关闭时 WPS 隐藏入口，全部新协议端点返回 `FULL_DOCUMENT_REVIEW_DISABLED`，且不会创建暂存目录；现有限量审查接口不变。
+- 首个闭环只读抽取不超过 20,000 审查字符的普通正文段落，执行两遍内容哈希确认；表格内段落、页眉页脚、脚注尾注、批注修订、文本框、形状、图片、公式、图表、附件和隐藏文本均明确列为未审查区域，不写回 Word。
+- 全篇审查复用 `word.document_review` 模型配置，但仅模型直连、显式上下文容量和至少 2,048 输出 Token 的配置可启动；设置页分别披露限量审查和全篇审查就绪度。
+- 全篇审查使用独立的快照、批次、提交、任务、状态、运行中协作取消和报告协议，以及版本化单分片 System Prompt 和严格 JSON Schema。请求体按实际接收字节限制为 2 MB，快照只能原子提交一次；暂存目录在启动时无条件扫描，并由后台维护线程周期清理。格式错误固定纠正一次，再次失败则任务失败，不以原始文本或限量结果降级。
+- 报告固定披露快照哈希、审查字符数、覆盖范围、排除区域和枚举状态，并声明覆盖完整不等于承诺检出全部问题。该闭环尚未完成麒麟 V10/WPS 真机验收，不能替代 `v0.23.1-alpha` 恢复构建的独立验收。
+
 ## 0. v0.23.1-alpha 当前事实
 
 - Issue #34 已修复 Word、Excel、PPT 前台模型选择器反复操作后间歇性卡死的问题：渲染时复用稳定的 `option` 节点，模型激活延迟到当前下拉交互结束后执行，并合并连续选择为最后一次操作；三宿主均有节点复用和快速切换回归测试，麒麟 V10/WPS WebView 现场验收仍待执行。
@@ -203,6 +211,15 @@ DELETE /word/smart-imitation/jobs/{jobId}[?resume=1]
 POST   /word/document-review
 POST   /word/document-review/jobs
 GET    /word/document-review/jobs/{jobId}[?resume=1]
+DELETE /word/document-review/jobs/{jobId}[?resume=1]
+POST   /word/document-review/full/snapshots
+PUT    /word/document-review/full/snapshots/{sessionId}/batches/{sequence}
+POST   /word/document-review/full/snapshots/{sessionId}/commit
+DELETE /word/document-review/full/snapshots/{sessionId}
+POST   /word/document-review/full/jobs
+GET    /word/document-review/full/jobs/{jobId}
+DELETE /word/document-review/full/jobs/{jobId}
+GET    /word/document-review/full/jobs/{jobId}/report
 DELETE /word/document-review/jobs/{jobId}[?resume=1]
 POST   /word/format-review
 POST   /excel/analysis

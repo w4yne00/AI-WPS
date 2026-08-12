@@ -14,6 +14,16 @@ PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
 
 
 class PackagingScriptTests(unittest.TestCase):
+    def _delivery_source_entry(self, source):
+        policy = json.loads(
+            (ROOT / "packaging/delivery-sources-v0231.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        return next(
+            entry for entry in policy["entries"] if entry["source"] == source
+        )
+
     def _delivery_source_pairs(self):
         policy = json.loads(
             (ROOT / "packaging/delivery-sources-v0231.json").read_text(
@@ -786,6 +796,20 @@ esac
             "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
         )
         self.assertTrue((ROOT / "adapter_service/system_prompts/manifest.json").is_file())
+        self.assertIn(
+            "word-document-review-full-chunk.md",
+            self._delivery_source_entry(
+                "adapter_service/system_prompts"
+            )["include"],
+        )
+
+    def test_delivery_allowlist_contains_full_review_runtime(self) -> None:
+        app_entry = self._delivery_source_entry("adapter_service/app")
+
+        self.assertIn("core/features.py", app_entry["include"])
+        self.assertIn(
+            "services/word/full_document_review.py", app_entry["include"]
+        )
 
     def test_standalone_adapter_exposes_ppt_background_routes(self) -> None:
         script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")

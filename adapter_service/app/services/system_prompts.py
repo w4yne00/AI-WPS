@@ -21,9 +21,17 @@ class SystemPromptStore:
     def load(self, task_type: str) -> dict:
         manifest = self._manifest()
         item = manifest.get("tasks", {}).get(str(task_type))
+        return self._load_item(str(task_type), item)
+
+    def load_stage(self, stage_type: str) -> dict:
+        manifest = self._manifest()
+        item = manifest.get("stages", {}).get(str(stage_type))
+        return self._load_item(str(stage_type), item)
+
+    def _load_item(self, item_type: str, item: object) -> dict:
         if not isinstance(item, dict):
             raise SystemPromptError(
-                "SYSTEM_PROMPT_TASK_UNKNOWN", "当前任务没有可用的 System Prompt。"
+                "SYSTEM_PROMPT_TASK_UNKNOWN", "当前任务阶段没有可用的 System Prompt。"
             )
         filename = str(item.get("file", "")).strip()
         expected_hash = str(item.get("sha256", "")).strip().lower()
@@ -45,7 +53,7 @@ class SystemPromptStore:
                 "SYSTEM_PROMPT_DAMAGED", "任务 System Prompt 校验失败，请重新安装当前版本。"
             )
         return {
-            "taskType": str(task_type),
+            "taskType": item_type,
             "version": version,
             "file": filename,
             "sha256": actual_hash,

@@ -170,6 +170,7 @@
         "api/writing_policies.py",
         "core/config.py",
         "core/errors.py",
+        "core/features.py",
         "core/logging.py",
         "core/models.py",
         "core/runtime_paths.py",
@@ -201,6 +202,7 @@
         "services/word/__init__.py",
         "services/word/document_review_jobs.py",
         "services/word/document_reviewer.py",
+        "services/word/full_document_review.py",
         "services/word/format_reviewer.py",
         "services/word/rewriter.py",
         "services/word/smart_imitator.py",
@@ -229,6 +231,7 @@
         "ppt-slide-assistant.md",
         "ppt-structure-review.md",
         "word-document-review.md",
+        "word-document-review-full-chunk.md",
         "word-format-review.md",
         "word-smart-imitation.md",
         "word-smart-write.md"

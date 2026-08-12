@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from app.core.config import load_settings, save_provider_base_url
 from app.core.errors import AdapterError
+from app.core.features import full_document_review_enabled
 from app.core.models import (
     DocumentReviewResponseData,
     ExcelAnalysisRequest,
@@ -69,6 +70,7 @@ from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
+from app.services.word.full_document_review import full_document_review_service
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
@@ -87,6 +89,7 @@ TEMPLATE_ROOT = ROOT_DIR / "templates"
 VERSION = "0.23.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
+FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES = 2 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.
 WRITING_POLICY_JSON_REQUEST_MAX_BYTES = 1 * 1024 * 1024
 WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS = 5.0
@@ -157,6 +160,7 @@ _WRITING_POLICY_STATIC_ROUTE_METHODS = {
     "/writing-policies/diagnostics": ("GET",),
 }
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
+FULL_DOCUMENT_REVIEW_SERVICE = full_document_review_service
 SMART_WRITE_JOB_STORE = SmartWriteJobStore()
 SMART_IMITATION_JOB_STORE = SmartImitationJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
@@ -1056,6 +1060,89 @@ def dispatch_writing_policy(method, path, query="", payload=None, body_size=None
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _read_full_document_review_body(self):
+        get_all = getattr(self.headers, "get_all", None)
+        if callable(get_all):
+            content_lengths = get_all("Content-Length", [])
+            transfer_encodings = get_all("Transfer-Encoding", [])
+        else:
+            content_length = self.headers.get("Content-Length")
+            transfer_encoding = self.headers.get("Transfer-Encoding")
+            content_lengths = [] if content_length is None else [content_length]
+            transfer_encodings = [] if transfer_encoding is None else [transfer_encoding]
+        if len(content_lengths) != 1 or transfer_encodings:
+            self.close_connection = True
+            raise AdapterError(
+                "CONTENT_LENGTH_REQUIRED",
+                "全篇审查请求缺少有效的 Content-Length。",
+                status_code=411,
+            )
+        raw_length = content_lengths[0].strip()
+        if not re.fullmatch(r"[0-9]+", raw_length or ""):
+            self.close_connection = True
+            raise AdapterError(
+                "CONTENT_LENGTH_REQUIRED",
+                "全篇审查请求缺少有效的 Content-Length。",
+                status_code=411,
+            )
+        length = int(raw_length)
+        if length <= 0:
+            self.close_connection = True
+            raise AdapterError(
+                "CONTENT_LENGTH_REQUIRED",
+                "全篇审查请求缺少有效的 Content-Length。",
+                status_code=411,
+            )
+        if length > FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES:
+            self.close_connection = True
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_REQUEST_TOO_LARGE",
+                "全篇审查请求超过 2 MB 限制。",
+                status_code=413,
+            )
+        connection = getattr(self, "connection", None)
+        previous_timeout = None
+        try:
+            if connection is not None:
+                previous_timeout = connection.gettimeout()
+                connection.settimeout(WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS)
+            body = self._read_writing_policy_exact(
+                length, time.monotonic() + WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS
+            )
+            if len(body) != length:
+                self.close_connection = True
+                raise AdapterError(
+                    "INCOMPLETE_REQUEST_BODY",
+                    "全篇审查请求体不完整，请重新提交。",
+                    status_code=400,
+                )
+            return body
+        except (socket.timeout, TimeoutError, OSError) as exc:
+            self.close_connection = True
+            raise AdapterError(
+                "REQUEST_BODY_TIMEOUT",
+                "读取全篇审查请求体超时，请重新提交。",
+                status_code=400,
+            ) from exc
+        finally:
+            if connection is not None:
+                try:
+                    connection.settimeout(previous_timeout)
+                except OSError:
+                    pass
+
+    def _write_full_document_review_error(self, error, trace_id="standalone-word-full-review"):
+        self._write(
+            error.status_code,
+            envelope(
+                trace_id,
+                "word.document_review.full",
+                success=False,
+                message=error.message,
+                errors=[{"code": error.code, "message": error.message}],
+            ),
+        )
+
     def _set_cors_headers(self):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header(
@@ -1495,6 +1582,9 @@ class Handler(BaseHTTPRequestHandler):
                         "logPath": settings.log_path,
                         "templateRoot": settings.template_root,
                         "timeoutSeconds": settings.timeout_seconds,
+                        "features": {
+                            "fullDocumentReviewEnabled": full_document_review_enabled(),
+                        },
                     },
                 ),
             )
@@ -1638,6 +1728,47 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
 
+        full_review_job_prefix = "/word/document-review/full/jobs/"
+        if path.startswith(full_review_job_prefix):
+            suffix = unquote(path[len(full_review_job_prefix):]).strip("/")
+            report_requested = suffix.endswith("/report")
+            job_id = suffix[: -len("/report")].strip("/") if report_requested else suffix
+            try:
+                if report_requested:
+                    data = FULL_DOCUMENT_REVIEW_SERVICE.get_report(job_id)
+                    message = "completed"
+                else:
+                    data = FULL_DOCUMENT_REVIEW_SERVICE.get_job(job_id)
+                    if data is None:
+                        raise AdapterError(
+                            "FULL_DOCUMENT_REVIEW_JOB_NOT_FOUND",
+                            "全篇审查任务不存在或已过期。",
+                            status_code=404,
+                        )
+                    message = data.get("status", "")
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    data.get("traceId", job_id) if isinstance(data, dict) else job_id,
+                    "word.document_review.full",
+                    data,
+                    message=message,
+                ),
+            )
+            return
+
         if path.startswith("/word/document-review/jobs/"):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = DOCUMENT_REVIEW_JOB_STORE.get(job_id)
@@ -1775,10 +1906,18 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_writing_policy_response(rejection)
                 return
         else:
-            try:
-                length = int(self.headers.get("Content-Length", "0"))
-            except (TypeError, ValueError):
-                length = 0
+            if path.startswith("/word/document-review/full/"):
+                try:
+                    raw_bytes = self._read_full_document_review_body()
+                except AdapterError as error:
+                    self._write_full_document_review_error(error)
+                    return
+                length = len(raw_bytes)
+            else:
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                except (TypeError, ValueError):
+                    length = 0
             if path == "/ppt/document-files" and (
                 length <= 0 or self.headers.get("Transfer-Encoding")
             ):
@@ -1807,7 +1946,8 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                 )
                 return
-            raw_bytes = self.rfile.read(length) if length else b"{}"
+            if not path.startswith("/word/document-review/full/"):
+                raw_bytes = self.rfile.read(length) if length else b"{}"
         try:
             raw_body = raw_bytes.decode("utf-8")
             payload = json.loads(raw_body or "{}")
@@ -1874,6 +2014,67 @@ class Handler(BaseHTTPRequestHandler):
         )
         if writing_policy_response is not None:
             self._write_writing_policy_response(writing_policy_response)
+            return
+
+        if path == "/word/document-review/full/snapshots":
+            trace_id = new_trace_id("standalone-word-full-review")
+            try:
+                data = FULL_DOCUMENT_REVIEW_SERVICE.create_session(payload)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(200, envelope(trace_id, "word.document_review.full", data, message="created"))
+            return
+
+        full_snapshot_prefix = "/word/document-review/full/snapshots/"
+        if path.startswith(full_snapshot_prefix) and path.endswith("/commit"):
+            trace_id = new_trace_id("standalone-word-full-review")
+            session_id = unquote(
+                path[len(full_snapshot_prefix): -len("/commit")]
+            ).strip("/")
+            try:
+                data = FULL_DOCUMENT_REVIEW_SERVICE.commit_snapshot(session_id, payload)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(200, envelope(trace_id, "word.document_review.full", data, message="committed"))
+            return
+
+        if path == "/word/document-review/full/jobs":
+            trace_id = new_trace_id("standalone-word-full-review")
+            try:
+                data = FULL_DOCUMENT_REVIEW_SERVICE.start_job(payload, trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(200, envelope(trace_id, "word.document_review.full", data, message="accepted"))
             return
 
         if path == "/recovery/backups":
@@ -1967,7 +2168,7 @@ class Handler(BaseHTTPRequestHandler):
                     model_name=payload.get("modelName", ""),
                     temperature=payload.get("temperature"),
                     max_output_tokens=payload.get("maxOutputTokens"),
-                    context_window_tokens=payload.get("contextWindowTokens", 40000),
+                    context_window_tokens=payload.get("contextWindowTokens"),
                 )
             except ModelConfigurationError as error:
                 self._write_model_configuration_error(error)
@@ -2607,7 +2808,7 @@ class Handler(BaseHTTPRequestHandler):
                     model_name=payload.get("modelName", ""),
                     temperature=payload.get("temperature"),
                     max_output_tokens=payload.get("maxOutputTokens"),
-                    context_window_tokens=payload.get("contextWindowTokens", 40000),
+                    context_window_tokens=payload.get("contextWindowTokens"),
                 )
             except ModelConfigurationError as error:
                 self._write_model_configuration_error(error)
@@ -2631,6 +2832,50 @@ class Handler(BaseHTTPRequestHandler):
         parsed = urlparse(self.path)
         path = parsed.path
         if self._reject_operation_block("PUT", path):
+            return
+        full_batch_prefix = "/word/document-review/full/snapshots/"
+        if path.startswith(full_batch_prefix) and "/batches/" in path:
+            suffix = path[len(full_batch_prefix):]
+            session_id, sequence_text = suffix.rsplit("/batches/", 1)
+            try:
+                payload = json.loads(self._read_full_document_review_body().decode("utf-8"))
+                data = FULL_DOCUMENT_REVIEW_SERVICE.upload_batch(
+                    unquote(session_id).strip("/"), int(sequence_text), payload
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        "standalone-word-full-review",
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (UnicodeDecodeError, ValueError):
+                message = "全篇审查正文批次格式无效。"
+                self._write(
+                    400,
+                    envelope(
+                        "standalone-word-full-review",
+                        "word.document_review.full",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-word-full-review",
+                    "word.document_review.full",
+                    data,
+                    message="uploaded",
+                ),
+            )
             return
         if _is_writing_policy_path(path):
             if self._reject_writing_policy_route_or_method("PUT", path):
@@ -2673,6 +2918,76 @@ class Handler(BaseHTTPRequestHandler):
             clear_local_api_key()
             client = ProviderClient()
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="cleared"))
+            return
+
+        full_snapshot_prefix = "/word/document-review/full/snapshots/"
+        if path.startswith(full_snapshot_prefix):
+            session_id = unquote(path[len(full_snapshot_prefix):]).strip("/")
+            try:
+                payload = json.loads(self._read_full_document_review_body().decode("utf-8"))
+                data = FULL_DOCUMENT_REVIEW_SERVICE.delete_snapshot(
+                    session_id, payload
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        session_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (UnicodeDecodeError, ValueError):
+                message = "全篇审查删除请求格式无效。"
+                self._write(
+                    400,
+                    envelope(
+                        session_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                    ),
+                )
+                return
+            self._write(200, envelope(session_id, "word.document_review.full", data, message="deleted"))
+            return
+
+        full_job_prefix = "/word/document-review/full/jobs/"
+        if path.startswith(full_job_prefix):
+            job_id = unquote(path[len(full_job_prefix):]).strip("/")
+            try:
+                job = FULL_DOCUMENT_REVIEW_SERVICE.cancel_job(job_id)
+                if job is None:
+                    raise AdapterError(
+                        "FULL_DOCUMENT_REVIEW_JOB_NOT_FOUND",
+                        "全篇审查任务不存在或已过期。",
+                        status_code=404,
+                    )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.document_review.full",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "word.document_review.full",
+                    job,
+                    message=job.get("status", "cancelled"),
+                ),
+            )
             return
 
         document_review_prefix = "/word/document-review/jobs/"

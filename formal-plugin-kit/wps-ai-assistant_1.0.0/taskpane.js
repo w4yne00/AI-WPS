@@ -13,6 +13,7 @@
   var DOCUMENT_REVIEW_POLL_MAX_ERRORS = 240;
   var DOCUMENT_REVIEW_POLL_MAX_WAIT_MS = 60 * 60 * 1000;
   var DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-document-review-active-job-v1";
+  var FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY = "ai-wps-full-document-review-active-job-v1";
   var WRITING_ACTIVE_JOB_STORAGE_KEY = "ai-wps-writing-active-job-v1";
   var WRITING_POLL_INTERVAL_MS = 3000;
   var WRITING_POLL_RETRY_DELAY_MS = 15000;
@@ -208,6 +209,9 @@
     documentReviewPollStartedAt: 0,
     documentReviewPollErrorCount: 0,
     documentReviewStopWaiting: null,
+    fullDocumentReviewEnabled: false,
+    fullDocumentReviewJobId: "",
+    fullDocumentReviewPollErrorCount: 0,
     writingJobId: "",
     writingJobTaskType: "",
     writingJobMode: "",
@@ -469,6 +473,54 @@
     }
   }
 
+  function loadFullDocumentReviewActiveJob() {
+    var raw;
+    try {
+      raw = window.localStorage && window.localStorage.getItem(
+        FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY
+      );
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function saveFullDocumentReviewActiveJob(jobId) {
+    if (!jobId) {
+      return;
+    }
+    try {
+      if (window.localStorage) {
+        window.localStorage.setItem(
+          FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY,
+          JSON.stringify({
+            jobId: jobId,
+            startedAt: Date.now(),
+            frontendVersion: FRONTEND_BUILD_VERSION
+          })
+        );
+      }
+    } catch (error) {
+      // Storage may be unavailable; in-memory polling remains active.
+    }
+  }
+
+  function clearFullDocumentReviewActiveJob(jobId) {
+    var active;
+    try {
+      if (!window.localStorage) {
+        return;
+      }
+      active = loadFullDocumentReviewActiveJob();
+      if (jobId && active && active.jobId && active.jobId !== jobId) {
+        return;
+      }
+      window.localStorage.removeItem(FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+    } catch (error) {
+      // Storage cleanup must not block report rendering.
+    }
+  }
+
   function setProviderLine(providerName) {
     var providerText = {
       "enterprise-chat-api": "企业接口",
@@ -506,8 +558,52 @@
     setProviderBaseUrl(configData.providerBaseUrl || "");
     setProviderAuthLine(configData.providerAuthSource || "none");
     state.taskApiKeys = configData.taskApiKeys || {};
+    state.fullDocumentReviewEnabled = Boolean(
+      configData.features && configData.features.fullDocumentReviewEnabled
+    );
     renderWorkflowProfileManager();
     renderWorkflowProfileStrip();
+    renderFullDocumentReviewEntry();
+    if (
+      state.fullDocumentReviewEnabled &&
+      state.currentMode === "documentReview" &&
+      !state.fullDocumentReviewJobId
+    ) {
+      resumeFullDocumentReviewActiveJob();
+    }
+  }
+
+  function getFullDocumentReviewReadiness() {
+    var data = getWorkflowProfileData("word.document_review");
+    var active = data.profiles.filter(function (profile) {
+      return profile.id === data.activeProfileId;
+    })[0];
+    if (!active) {
+      return { fullDocumentReviewReady: false, label: "请先启用文档审查模型配置。" };
+    }
+    return {
+      fullDocumentReviewReady: Boolean(active.fullDocumentReviewReady),
+      label: active.fullDocumentReviewReadiness && active.fullDocumentReviewReadiness.label ||
+        "当前配置尚未满足全篇审查要求。"
+    };
+  }
+
+  function renderFullDocumentReviewEntry() {
+    var entry = byId("full-document-review-entry");
+    var button = byId("btn-run-full-document-review");
+    var readinessNode = byId("full-document-review-readiness");
+    var readiness;
+    if (!entry || !button || !readinessNode) {
+      return;
+    }
+    entry.hidden = !state.fullDocumentReviewEnabled;
+    if (!state.fullDocumentReviewEnabled) {
+      return;
+    }
+    readiness = getFullDocumentReviewReadiness();
+    readinessNode.textContent = readiness.label;
+    button.disabled = !readiness.fullDocumentReviewReady ||
+      Boolean(state.fullDocumentReviewJobId || state.documentReviewJobId);
   }
 
   function renderModelInterfaceState(detectable) {
@@ -1186,6 +1282,7 @@
     byId("document-review-options").hidden = !config.showDocumentReviewOptions;
     byId("fixed-template-options").hidden = !config.showFixedTemplate;
     byId("smart-imitation-options").hidden = !config.showSmartImitationOptions;
+    renderFullDocumentReviewEntry();
     writingPolicyMode = ["smartWrite", "smartImitation", "documentReview"].indexOf(state.currentMode) >= 0;
     byId("writing-policy-scene-block").hidden = !writingPolicyMode;
     if (writingPolicyMode) {
@@ -1203,7 +1300,9 @@
       fillSmartImitationTemplateFromSelection();
     }
     if (state.currentMode === "documentReview") {
-      resumeDocumentReviewActiveJob();
+      if (!resumeFullDocumentReviewActiveJob()) {
+        resumeDocumentReviewActiveJob();
+      }
     } else if (state.currentMode === "smartWrite" || state.currentMode === "smartImitation") {
       resumeWritingActiveJob();
     }
@@ -1601,6 +1700,14 @@
     return message;
   }
 
+  function isFullDocumentReviewPermanentPollError(error) {
+    var status = Number(error && error.httpStatus);
+    return Boolean(error) && (
+      (status >= 400 && status < 500) ||
+      error.adapterCode === "FULL_DOCUMENT_REVIEW_JOB_NOT_FOUND"
+    );
+  }
+
   function describeDocumentReviewError(error) {
     var message = describeFetchError(error);
     if (error && error.name === "AbortError") {
@@ -1959,7 +2066,7 @@
   }
 
   function isWorkflowInteractionBlocked() {
-    return Boolean(state.documentReviewJobId || state.workflowProfileMutationBusy);
+    return Boolean(state.documentReviewJobId || state.fullDocumentReviewJobId || state.workflowProfileMutationBusy);
   }
 
   function nextWorkflowProfileRequestId(taskType) {
@@ -2065,6 +2172,7 @@
         renderWorkflowProfileStrip();
         renderWorkflowProfileManager();
         renderModelInterfaceState(state.modelInterfaceDetectable);
+        renderFullDocumentReviewEntry();
         return state.workflowProfiles[taskType];
       })
       .catch(function (error) {
@@ -2466,6 +2574,13 @@
           (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + escapeWorkflowText(profile.modelName) : "") : "工作流平台") + '</span>');
         if (profile.note) {
           rows.push('<span class="workflow-profile-note">' + escapeWorkflowText(profile.note) + '</span>');
+        }
+        if (taskType === "word.document_review") {
+          rows.push('<span class="workflow-profile-note">限量审查：' +
+            (profile.limitedReviewReady ? "可用" : "不可用") + '</span>');
+          rows.push('<span class="workflow-profile-note">全篇审查：' +
+            escapeWorkflowText(profile.fullDocumentReviewReadiness &&
+              profile.fullDocumentReviewReadiness.label || "尚未就绪") + '</span>');
         }
         rows.push('</div>');
         rows.push('<span class="provider-badge">' + escapeWorkflowText(statusText) + '</span>');
@@ -5650,6 +5765,267 @@
     });
   }
 
+  function extractFullDocumentReviewBody() {
+    var document = getActiveDocument();
+    var paragraphs;
+    var body;
+    if (!document) {
+      throw new Error("未检测到活动文档。");
+    }
+    paragraphs = collectParagraphs(document, {
+      avoidFallbackTextRead: true,
+      excludeTableParagraphs: true
+    });
+    body = helpers.buildFullDocumentReviewBody(paragraphs, 20000);
+    body.documentId = "wps-document-" + helpers.sha256Text(getDocumentName(document)).slice(0, 24);
+    return body;
+  }
+
+  function renderFullDocumentReviewReport(report) {
+    var snapshot = report && report.snapshot || {};
+    var coverage = report && report.coverage || {};
+    var issues = report && Array.isArray(report.issues) ? report.issues : [];
+    var excludedRegions = Array.isArray(coverage.excludedRegions) ? coverage.excludedRegions : [];
+    var lines = [
+      "# 全篇审查报告",
+      "",
+      report && report.summary || "审查已完成。",
+      "",
+      "## 快照与覆盖",
+      "- 快照编号：" + (snapshot.snapshotId || "未记录"),
+      "- 快照哈希：" + String(snapshot.contentSha256 || "").slice(0, 16),
+      "- 已审查字符：" + Number(coverage.reviewedCharacterCount || 0),
+      "- 已审查段落：" + Number(coverage.reviewedParagraphCount || 0),
+      "- 覆盖状态：" + (coverage.status === "complete" ? "声明范围覆盖完整" : "覆盖未完成"),
+      "- 问题枚举：" + (report && report.enumerationStatus === "complete" ? "完整" : "受限"),
+      "- 未审查区域：" + (excludedRegions.length ? excludedRegions.join("、") : "未披露"),
+      "",
+      "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。",
+      "",
+      "## 问题清单"
+    ];
+    if (!issues.length) {
+      lines.push("未返回结构化问题；这不表示文档不存在其他问题。");
+    }
+    issues.forEach(function (issue, index) {
+      lines.push("");
+      lines.push("### " + (index + 1) + ". " + (issue.problem || "审查问题"));
+      lines.push("- 严重程度：" + (issue.severity || "未标注"));
+      lines.push("- 原文锚点：" + (issue.anchorId || "未标注"));
+      lines.push("- 原文：" + (issue.originalText || "未提供"));
+      lines.push("- 建议：" + (issue.suggestion || "请人工复核。"));
+      if (issue.suggestedRewrite) {
+        lines.push("- 建议改写：" + issue.suggestedRewrite);
+      }
+    });
+    setResult(lines.join("\n"), lines.join("\n"));
+    setStatus("全篇审查只读报告已生成。");
+  }
+
+  function pollFullDocumentReviewJob(jobId) {
+    if (!jobId || state.fullDocumentReviewJobId !== jobId) {
+      return;
+    }
+    request("/word/document-review/full/jobs/" + encodeURIComponent(jobId), null, {
+      timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var job = body.data || {};
+      if (state.fullDocumentReviewJobId !== jobId) {
+        return;
+      }
+      if (job.status === "completed") {
+        return request("/word/document-review/full/jobs/" + encodeURIComponent(jobId) + "/report", null, {
+          timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+        }).then(function (reportBody) {
+          state.fullDocumentReviewJobId = "";
+          state.fullDocumentReviewPollErrorCount = 0;
+          clearFullDocumentReviewActiveJob(jobId);
+          setModelTaskBusy(false);
+          setDocumentReviewCancelVisible(false, false);
+          renderFullDocumentReviewEntry();
+          renderFullDocumentReviewReport(reportBody.data || {});
+        });
+      }
+      if (job.status === "failed" || job.status === "cancelled") {
+        var terminalMessage = job.error && job.error.message || "全篇审查未生成报告。";
+        state.fullDocumentReviewJobId = "";
+        state.fullDocumentReviewPollErrorCount = 0;
+        clearFullDocumentReviewActiveJob(jobId);
+        setModelTaskBusy(false);
+        setDocumentReviewCancelVisible(false, false);
+        renderFullDocumentReviewEntry();
+        setStatus(job.status === "cancelled" ? "全篇审查已取消。" : "全篇审查失败：" + terminalMessage);
+        setResult(terminalMessage);
+        return;
+      }
+      setDocumentReviewCancelVisible(Boolean(job.canCancel), false);
+      state.fullDocumentReviewPollErrorCount = 0;
+      setStatus("全篇审查：" + (DOCUMENT_REVIEW_PHASE_TEXT[job.phase] || job.phase || "处理中"));
+      setTimeout(function () {
+        pollFullDocumentReviewJob(jobId);
+      }, DOCUMENT_REVIEW_POLL_INTERVAL_MS);
+    }).catch(function (error) {
+      if (state.fullDocumentReviewJobId !== jobId) {
+        return;
+      }
+      if (isFullDocumentReviewPermanentPollError(error)) {
+        state.fullDocumentReviewJobId = "";
+        state.fullDocumentReviewPollErrorCount = 0;
+        clearFullDocumentReviewActiveJob(jobId);
+        setModelTaskBusy(false);
+        setDocumentReviewCancelVisible(false, false);
+        renderFullDocumentReviewEntry();
+        setStatus(Number(error.httpStatus) === 404
+          ? "原全篇审查任务不存在或已过期，请重新发起。"
+          : "原全篇审查任务已无法继续查询，请检查配置后重新发起。");
+        setResult(describeFetchError(error));
+        return;
+      }
+      state.fullDocumentReviewPollErrorCount += 1;
+      setStatus("全篇审查连接暂时中断，正在保留任务并重试：" + describeFetchError(error));
+      setTimeout(function () {
+        pollFullDocumentReviewJob(jobId);
+      }, Math.min(30000, DOCUMENT_REVIEW_POLL_INTERVAL_MS *
+        Math.pow(2, Math.min(state.fullDocumentReviewPollErrorCount, 4))));
+    });
+  }
+
+  function runFullDocumentReview() {
+    var readiness = getFullDocumentReviewReadiness();
+    var firstPass;
+    var session = null;
+    if (!state.fullDocumentReviewEnabled || !readiness.fullDocumentReviewReady) {
+      setStatus(readiness.label || "全篇审查尚未就绪。");
+      return;
+    }
+    if (state.fullDocumentReviewJobId || state.documentReviewJobId) {
+      setStatus("已有文档审查任务尚未结束。");
+      return;
+    }
+    try {
+      firstPass = extractFullDocumentReviewBody();
+    } catch (error) {
+      setStatus(error.message);
+      setResult(error.message);
+      return;
+    }
+    setModelTaskBusy(true);
+    renderFullDocumentReviewEntry();
+    setStatus("正在创建全篇审查快照...");
+    request("/word/document-review/full/snapshots", {
+      documentId: firstPass.documentId,
+      documentType: state.technicalDocumentType,
+      reviewPrompt: state.technicalReviewPrompt,
+      writingPolicyScene: getWritingPolicyScene(),
+      coverage: {
+        includedRegions: ["body"],
+        excludedRegions: ["tables", "headers", "footers", "footnotes", "endnotes", "comments",
+          "revisions", "textBoxes", "shapes", "images", "formulas", "charts",
+          "attachments", "hiddenText"]
+      }
+    }).then(function (body) {
+      session = body.data || {};
+      return request(
+        "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId) + "/batches/0",
+        {
+          uploadToken: session.uploadToken,
+          blocks: firstPass.blocks,
+          characterCount: firstPass.reviewCharacterCount,
+          contentSha256: firstPass.contentSha256
+        },
+        { method: "PUT" }
+      );
+    }).then(function () {
+      var secondPass = extractFullDocumentReviewBody();
+      if (firstPass.contentSha256 !== secondPass.contentSha256 ||
+          firstPass.reviewCharacterCount !== secondPass.reviewCharacterCount ||
+          firstPass.blocks.length !== secondPass.blocks.length) {
+        throw new Error("两遍正文校验不一致，请停止编辑后重新发起全篇审查。");
+      }
+      return request(
+        "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId) + "/commit",
+        {
+          uploadToken: session.uploadToken,
+          batchCount: 1,
+          reviewCharacterCount: firstPass.reviewCharacterCount,
+          contentSha256: firstPass.contentSha256,
+          verificationSha256: secondPass.contentSha256
+        }
+      );
+    }).then(function (body) {
+      session.snapshotToken = body.data && body.data.snapshotToken;
+      return request("/word/document-review/full/jobs", {
+        snapshotId: body.data && body.data.snapshotId,
+        snapshotToken: session.snapshotToken
+      });
+    }).then(function (body) {
+      var job = body.data || {};
+      if (!job.jobId) {
+        throw new Error("Adapter 未返回全篇审查任务编号。");
+      }
+      state.fullDocumentReviewJobId = job.jobId;
+      state.fullDocumentReviewPollErrorCount = 0;
+      saveFullDocumentReviewActiveJob(job.jobId);
+      renderFullDocumentReviewEntry();
+      setStatus("全篇审查任务已提交。");
+      pollFullDocumentReviewJob(job.jobId);
+    }).catch(function (error) {
+      var cleanup = Promise.resolve();
+      if (session && session.sessionId && session.uploadToken) {
+        cleanup = request(
+          "/word/document-review/full/snapshots/" + encodeURIComponent(session.sessionId),
+          { uploadToken: session.uploadToken, snapshotToken: session.snapshotToken },
+          { method: "DELETE" }
+        ).catch(function () { return null; });
+      }
+      return cleanup.then(function () {
+        state.fullDocumentReviewJobId = "";
+        state.fullDocumentReviewPollErrorCount = 0;
+        clearFullDocumentReviewActiveJob();
+        setModelTaskBusy(false);
+        renderFullDocumentReviewEntry();
+        setStatus("全篇审查失败：" + describeFetchError(error));
+        setResult(describeFetchError(error));
+      });
+    });
+  }
+
+  function cancelFullDocumentReviewJob() {
+    var jobId = state.fullDocumentReviewJobId;
+    if (!jobId) {
+      return;
+    }
+    request("/word/document-review/full/jobs/" + encodeURIComponent(jobId), null, {
+      method: "DELETE",
+      timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      if (body.data && body.data.status === "cancelled") {
+        state.fullDocumentReviewJobId = "";
+        state.fullDocumentReviewPollErrorCount = 0;
+        clearFullDocumentReviewActiveJob(jobId);
+        setModelTaskBusy(false);
+        renderFullDocumentReviewEntry();
+        setStatus("排队中的全篇审查任务已取消。");
+      }
+    }).catch(function (error) {
+      setStatus("取消全篇审查失败：" + describeFetchError(error));
+    });
+  }
+
+  function resumeFullDocumentReviewActiveJob() {
+    var active = loadFullDocumentReviewActiveJob();
+    if (!state.fullDocumentReviewEnabled || !active || !active.jobId) {
+      return false;
+    }
+    state.fullDocumentReviewJobId = active.jobId;
+    state.fullDocumentReviewPollErrorCount = 0;
+    setModelTaskBusy(true);
+    renderFullDocumentReviewEntry();
+    setStatus("正在续查未完成的全篇审查任务...");
+    pollFullDocumentReviewJob(active.jobId);
+    return true;
+  }
+
   function startDocumentReviewWaitFeedback() {
     var timers = [];
     timers.push(setTimeout(function () {
@@ -6006,10 +6382,13 @@
     byId("btn-cancel-document-review-job").addEventListener("click", function () {
       if (state.writingJobId) {
         cancelQueuedWritingJob();
+      } else if (state.fullDocumentReviewJobId) {
+        cancelFullDocumentReviewJob();
       } else {
         cancelQueuedDocumentReviewJob();
       }
     });
+    byId("btn-run-full-document-review").addEventListener("click", runFullDocumentReview);
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
