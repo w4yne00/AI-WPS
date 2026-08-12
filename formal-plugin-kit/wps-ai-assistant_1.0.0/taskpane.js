@@ -5813,6 +5813,65 @@
     return body;
   }
 
+  function locateFullDocumentReviewIssue(issue) {
+    var document = getActiveDocument();
+    var anchor = issue && issue.sourceAnchor || {};
+    var paragraphIndex = Number(anchor.paragraphIndex || 0);
+    var paragraphs;
+    var paragraph;
+    var range;
+    var text;
+    var originalText;
+    var firstIndex;
+    var secondIndex;
+    var start;
+    var end;
+    if (!document || !paragraphIndex) {
+      setStatus("缺少可验证的原文段落锚点，未自动定位。");
+      return false;
+    }
+    paragraphs = getParagraphs(document);
+    paragraph = helpers.getCollectionItem
+      ? helpers.getCollectionItem(paragraphs, paragraphIndex)
+      : null;
+    range = getRangeFromTarget(paragraph);
+    originalText = String(issue && issue.originalText || "");
+    text = String(readValue(range, "Text") || readValue(range, "text") || "")
+      .replace(/[\r\u0007]+$/g, "");
+    firstIndex = originalText ? text.indexOf(originalText) : -1;
+    secondIndex = firstIndex < 0 ? -1 : text.indexOf(originalText, firstIndex + originalText.length);
+    if (!range || !originalText || firstIndex < 0 || secondIndex >= 0) {
+      setStatus("原文无法在预期段落内唯一匹配，未自动跳转。");
+      return false;
+    }
+    start = Number(readValue(range, "Start"));
+    if (isNaN(start)) {
+      setStatus("当前 WPS 未提供可验证的原文范围，未自动跳转。");
+      return false;
+    }
+    end = start + firstIndex + originalText.length;
+    try {
+      if (typeof range.SetRange === "function") {
+        range.SetRange(start + firstIndex, end);
+      } else if (typeof range.setRange === "function") {
+        range.setRange(start + firstIndex, end);
+      } else {
+        setStatus("当前 WPS 不支持保守范围定位。");
+        return false;
+      }
+      if (typeof range.Select === "function") {
+        range.Select();
+      } else if (typeof range.select === "function") {
+        range.select();
+      }
+      setStatus("已按唯一原文匹配定位；文档变化后仍以人工复核为准。");
+      return true;
+    } catch (error) {
+      setStatus("原文定位失败，未修改文档正文。");
+      return false;
+    }
+  }
+
   function renderFullDocumentReviewIssuePage(report, pageData, jobId) {
     var snapshot = report && report.snapshot || {};
     var coverage = report && report.coverage || {};
@@ -5823,6 +5882,12 @@
       "# 全篇审查报告",
       "",
       report && report.summary || "审查已完成。",
+      report && report.globalSummary ? "\n## 跨片全局结论\n" + report.globalSummary : "",
+      report && Array.isArray(report.globalFindings) && report.globalFindings.length
+        ? "\n## 跨片发现\n" + report.globalFindings.map(function (finding) {
+          return "- [" + (finding.severity || "未标注") + "] " +
+            (finding.summary || "") + "（" + (finding.findingId || "未标识") + "）";
+        }).join("\n") : "",
       "",
       "## 快照与覆盖",
       "- 快照编号：" + (snapshot.snapshotId || "未记录"),
@@ -5904,13 +5969,34 @@
     actions.textContent = "";
     issues.forEach(function (issue) {
       var row = document.createElement("div");
+      var locate = document.createElement("button");
+      var copyOriginal = document.createElement("button");
+      var copySuggestion = document.createElement("button");
       var processed = document.createElement("button");
       var ignored = document.createElement("button");
-      row.textContent = (issue.issueId || "问题") + "：";
+      row.className = "full-review-issue-row";
+      row.textContent = (issue.issueId || "问题") + "［" +
+        (issue.category || "未分类") + "／" + (issue.severity || "未标注") + "］：" +
+        (issue.problem || "审查问题");
+      locate.type = "button";
+      locate.textContent = "定位原文";
+      copyOriginal.type = "button";
+      copyOriginal.textContent = "复制原文";
+      copySuggestion.type = "button";
+      copySuggestion.textContent = "复制建议";
       processed.type = "button";
       processed.textContent = "标记已处理";
       ignored.type = "button";
       ignored.textContent = "标记已忽略";
+      locate.addEventListener("click", function () {
+        locateFullDocumentReviewIssue(issue);
+      });
+      copyOriginal.addEventListener("click", function () {
+        writeClipboardText(issue.originalText || "", "原文已复制。");
+      });
+      copySuggestion.addEventListener("click", function () {
+        writeClipboardText(issue.suggestion || "", "修改建议已复制。");
+      });
       processed.addEventListener("click", function () {
         updateFullDocumentReviewIssueStatus(jobId, issue.issueId, "processed")
           .then(function () {
@@ -5923,6 +6009,18 @@
             loadFullDocumentReviewIssuePage(jobId, report, pageData._cursor || "");
           });
       });
+      row.appendChild(locate);
+      row.appendChild(copyOriginal);
+      row.appendChild(copySuggestion);
+      if (issue.suggestedRewrite) {
+        var copyRewrite = document.createElement("button");
+        copyRewrite.type = "button";
+        copyRewrite.textContent = "复制改写";
+        copyRewrite.addEventListener("click", function () {
+          writeClipboardText(issue.suggestedRewrite, "建议改写已复制。");
+        });
+        row.appendChild(copyRewrite);
+      }
       row.appendChild(processed);
       row.appendChild(ignored);
       actions.appendChild(row);

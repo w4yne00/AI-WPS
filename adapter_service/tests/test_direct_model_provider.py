@@ -221,7 +221,7 @@ class DirectModelProviderTests(unittest.TestCase):
             payload["response_format"]["json_schema"]["schema"][
                 "properties"
             ]["schemaVersion"]["const"],
-            "word.document_review.full.chunk.v1",
+            "word.document_review.full.chunk.v2",
         )
         self.assertIn("单分片全篇审查", payload["messages"][0]["content"])
         self.assertNotIn("系统应尽快完成联调", payload["messages"][0]["content"])

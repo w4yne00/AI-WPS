@@ -198,6 +198,12 @@ assert.ok(renderReport.includes("问题枚举"));
 assert.ok(renderReport.includes("enumerationStatus"));
 assert.ok(renderReport.includes("不承诺检出全部问题"));
 assert.ok(!renderReport.includes("applyRewrite"));
+const fullIssuePage = functionSource("renderFullDocumentReviewIssuePage");
+assert.ok(fullIssuePage.includes("globalFindings"));
+assert.ok(fullIssuePage.includes("定位原文"));
+assert.ok(fullIssuePage.includes("复制建议"));
+assert.ok(fullIssuePage.includes("复制原文"));
+assert.ok(functionSource("locateFullDocumentReviewIssue").includes("唯一匹配"));
 
 assert.ok(functionSource("bindEvents").includes(
   'byId("btn-run-full-document-review").addEventListener("click", runFullDocumentReview)'

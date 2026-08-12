@@ -47,7 +47,22 @@
     "word.document_review.full.chunk": {
       "version": "2026-08-12.1",
       "file": "word-document-review-full-chunk.md",
-      "sha256": "9e8fae78eff0c760404947bd6f02e85a506f3581d992383732eebc6dca22ad9d"
+      "sha256": "b176384c0f755db53c77b4510fe6b2fb89a4d8245b63252883a18c77069bb616"
+    },
+    "word.document_review.full.chunk.correction": {
+      "version": "2026-08-12.2",
+      "file": "word-document-review-full-chunk-correction.md",
+      "sha256": "02b69f03a92d8c4bf0c2008d004d6133abf97f218bd2704910d61a43950db392"
+    },
+    "word.document_review.full.aggregate": {
+      "version": "2026-08-12.1",
+      "file": "word-document-review-full-aggregate.md",
+      "sha256": "832e91226c669dc8f56f964280f34df3b5828ef6f9937997b863b7eab7f1bbda"
+    },
+    "word.document_review.full.aggregate.correction": {
+      "version": "2026-08-12.1",
+      "file": "word-document-review-full-aggregate-correction.md",
+      "sha256": "2a5946cf00a43a6a85dbc617078e3693e3ef264a25e0e6d42964c63078f6691d"
     }
   }
 }

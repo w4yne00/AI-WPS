@@ -26,7 +26,8 @@ from app.services.provider_client import ProviderClient
 
 
 TASK_TYPE = "word.document_review.full"
-CHUNK_SCHEMA_VERSION = "word.document_review.full.chunk.v1"
+LEGACY_CHUNK_SCHEMA_VERSION = "word.document_review.full.chunk.v1"
+CHUNK_SCHEMA_VERSION = "word.document_review.full.chunk.v2"
 REPORT_SCHEMA_VERSION = "word.document_review.full.report.v1"
 REPORT_RESULT_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_ISSUE_PAGE_SIZE = 20
@@ -36,8 +37,13 @@ SINGLE_CHUNK_MAX_REVIEW_CHARACTERS = 20000
 STANDARD_REVIEW_CHARACTERS = 60000
 REVIEW_CHUNK_TARGET_CHARACTERS = 18000
 REVIEW_CHUNK_HARD_LIMIT = 20000
+REVIEW_CHUNK_OVERLAP_CHARACTERS = 800
+CHUNK_STRATEGY_VERSION = "word.full.chunking.v2"
 SATURATION_SPLIT_LIMITS = (9000, 4500)
 MAX_CHUNK_ISSUES = 200
+MAX_CHUNK_FACTS = 80
+MAX_CHUNK_CROSS_CHECKS = 40
+MAX_AGGREGATE_INPUT_CHARACTERS = 60000
 REVIEW_CALL_LIMITS = {
     "single_chunk": 8,
     "standard": 16,
@@ -132,6 +138,13 @@ def classify_review_capacity(review_character_count: int) -> Dict:
 
 def _sha256_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def _derived_id(*parts: object) -> str:
+    raw = "-".join(str(part) for part in parts if str(part))
+    if len(raw) <= 96:
+        return raw
+    return "{0}-{1}".format(raw[:47], _sha256_text(raw)[:48])
 
 
 def _report_sha256(report: Dict) -> str:
@@ -545,6 +558,27 @@ class FullDocumentReviewService:
                     item, "listLabel", "FULL_DOCUMENT_REVIEW_BLOCK_INVALID", 120
                 )
             normalized.append(normalized_item)
+        anchor_ids = set()
+
+        def reserve_anchor(anchor_id: str) -> None:
+            if anchor_id in anchor_ids:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_BLOCK_INVALID",
+                    "正文块和表格单元格标识必须全局唯一。",
+                )
+            anchor_ids.add(anchor_id)
+
+        def reserve_table_cells(table: Dict) -> None:
+            for row in table.get("rows", []):
+                for cell in row.get("cells", []):
+                    reserve_anchor(cell["cellId"])
+            for nested in table.get("nestedTables", []):
+                reserve_table_cells(nested)
+
+        for block in normalized:
+            reserve_anchor(block["blockId"])
+            if block["blockType"] == "table":
+                reserve_table_cells(block)
         return normalized
 
     def _normalize_table_rows(self, rows: object) -> List[Dict]:
@@ -1052,6 +1086,8 @@ class FullDocumentReviewService:
                 failure_message="全篇审查任务失败，未生成报告。",
                 safe_failure_codes={
                     "FULL_DOCUMENT_REVIEW_RESULT_INVALID",
+                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INPUT_TOO_LARGE",
                     "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED",
                     "MODEL_CONFIG_INCOMPLETE",
                     "MODEL_DIRECT_REQUIRED",
@@ -1287,12 +1323,18 @@ class FullDocumentReviewService:
                 "parsedChunks": [],
                 "limitedRanges": [],
                 "callCount": 0,
+                "aggregateScheduled": False,
+                "aggregateRetried": False,
+                "aggregateResult": None,
             },
         )
         state.setdefault("pendingChunks", self._build_review_chunks(snapshot))
         state.setdefault("parsedChunks", [])
         state.setdefault("limitedRanges", [])
         state.setdefault("callCount", 0)
+        state.setdefault("aggregateScheduled", False)
+        state.setdefault("aggregateRetried", False)
+        state.setdefault("aggregateResult", None)
         call_limit = int(snapshot.get("capacity", {}).get("callLimit", 0) or 0)
         keep_staging = False
 
@@ -1315,14 +1357,61 @@ class FullDocumentReviewService:
                 blocks=chunk["blocks"],
             )
 
+        def call_aggregate(payload: Dict, correction: bool = False) -> object:
+            if state["callCount"] >= call_limit:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_CALL_LIMIT_EXCEEDED",
+                    "全篇审查已达到当前容量档位的模型调用上限，未继续发起模型请求。",
+                    status_code=409,
+                )
+            state["callCount"] += 1
+            return self.provider_client.full_document_review_aggregate(
+                payload,
+                snapshot.get("traceId", ""),
+                snapshot["taskAuth"],
+                correction=correction,
+            )
+
         try:
             self._raise_if_cancelled(job_id)
             if not state["pendingChunks"]:
+                if len(state["parsedChunks"]) > 1 and state.get("aggregateResult") is None:
+                    if not state.get("aggregateScheduled"):
+                        state["aggregateScheduled"] = True
+                        progress("aggregating")
+                        keep_staging = True
+                        return LongTaskContinuation(snapshot, phase="aggregating")
+                    aggregate_input = self._build_aggregate_input(snapshot, state["parsedChunks"])
+                    progress("aggregating")
+                    try:
+                        aggregate_answer = call_aggregate(aggregate_input)
+                    except AdapterError as exc:
+                        if self._is_retryable_provider_error(exc) and not state.get("aggregateRetried"):
+                            state["aggregateRetried"] = True
+                            progress("retrying")
+                            keep_staging = True
+                            return LongTaskContinuation(snapshot, phase="aggregating")
+                        raise
+                    try:
+                        aggregate_result = self._parse_aggregate_result(
+                            aggregate_answer, aggregate_input
+                        )
+                    except AdapterError as exc:
+                        if exc.code != "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID" or state.get("aggregateRetried"):
+                            raise
+                        state["aggregateRetried"] = True
+                        progress("retrying")
+                        aggregate_answer = call_aggregate(aggregate_input, correction=True)
+                        aggregate_result = self._parse_aggregate_result(
+                            aggregate_answer, aggregate_input
+                        )
+                    state["aggregateResult"] = aggregate_result
                 progress("aggregating")
                 report = self._build_report(
                     snapshot,
                     state["parsedChunks"],
                     state.get("limitedRanges", []),
+                    state.get("aggregateResult"),
                 )
                 self._save_report(job_id, report)
                 return report
@@ -1380,11 +1469,15 @@ class FullDocumentReviewService:
             if state["pendingChunks"]:
                 keep_staging = True
                 return LongTaskContinuation(snapshot)
+            if len(state["parsedChunks"]) > 1 and state.get("aggregateResult") is None:
+                keep_staging = True
+                return LongTaskContinuation(snapshot, phase="aggregating")
             progress("aggregating")
             report = self._build_report(
                 snapshot,
                 state["parsedChunks"],
                 state.get("limitedRanges", []),
+                state.get("aggregateResult"),
             )
             self._save_report(job_id, report)
             return report
@@ -1415,14 +1508,14 @@ class FullDocumentReviewService:
             if block_count <= limit:
                 blocks.append(deepcopy(block))
                 continue
-            text = "\n".join(cls._block_texts([block]))
-            for index, fragment_text in enumerate(cls._split_text(text, limit), 1):
-                fragment = {
-                    "blockId": "{0}-part-{1}".format(block["blockId"], index),
-                    "blockType": "paragraph",
-                    "paragraphIndex": block.get("paragraphIndex", index),
-                    "text": fragment_text,
-                }
+            if block.get("blockType") == "table":
+                blocks.extend(cls._split_table_block(block, limit))
+                continue
+            for fragment in cls._split_text_unit(block, limit):
+                if block.get("isOverlap") is True:
+                    fragment["isOverlap"] = True
+                    fragment["core"] = False
+                    fragment["contextOnly"] = True
                 blocks.append(fragment)
         if len(blocks) < 2:
             return []
@@ -1443,7 +1536,7 @@ class FullDocumentReviewService:
             chunks.append(current)
         return [
             {
-                "chunkId": "{0}-split-{1}".format(chunk["chunkId"], index),
+                "chunkId": _derived_id(chunk["chunkId"], "split", index),
                 "blocks": deepcopy(blocks),
                 "sourceText": "\n".join(cls._block_texts(blocks)),
                 "_splitLevel": split_level + 1,
@@ -1469,47 +1562,381 @@ class FullDocumentReviewService:
             start = end
         return fragments
 
+    @staticmethod
+    def _block_character_count(block: Dict) -> int:
+        return sum(_review_character_count(text) for text in FullDocumentReviewService._block_texts([block]))
+
+    @classmethod
+    def _block_core_character_count(cls, block: Dict) -> int:
+        if block.get("isOverlap") is True or block.get("contextOnly") is True:
+            return 0
+        if block.get("blockType") != "table":
+            return cls._block_character_count(block)
+
+        def table_count(table: Dict) -> int:
+            if table.get("isOverlap") is True:
+                return 0
+            total = 0
+            for row in table.get("rows", []):
+                if row.get("isOverlap") is True:
+                    continue
+                for cell in row.get("cells", []):
+                    if cell.get("isOverlap") is not True:
+                        total += _review_character_count(cell.get("text", ""))
+            total += sum(table_count(nested) for nested in table.get("nestedTables", []))
+            return total
+
+        return table_count(block)
+
+    @staticmethod
+    def _slice_by_review_chars(text: str, start: int, end: int) -> str:
+        if start >= end:
+            return ""
+        current = 0
+        first = None
+        last = None
+        for index, character in enumerate(text):
+            next_count = current + _review_character_count(character)
+            if first is None and next_count > start:
+                first = index
+            if next_count <= end:
+                last = index + 1
+            current = next_count
+            if current >= end:
+                break
+        if first is None:
+            return ""
+        return text[first : last or first]
+
+    @classmethod
+    def _split_text_semantically(cls, text: str, limit: int) -> List[Dict]:
+        total = _review_character_count(text)
+        if total <= limit:
+            return [{"text": text, "sourceOffsetStart": 0, "sourceOffsetEnd": total}]
+        pieces = []
+        start = 0
+        while start < total:
+            target_end = min(start + limit, total)
+            candidate = target_end
+            minimum = start + max(1, int(limit * 0.55))
+            raw = cls._slice_by_review_chars(text, start, target_end)
+            raw_length = _review_character_count(raw)
+            if raw_length < target_end - start:
+                target_end = start + raw_length
+                candidate = target_end
+            python_end = 0
+            consumed = 0
+            for index, character in enumerate(text):
+                next_count = consumed + _review_character_count(character)
+                if next_count > candidate:
+                    break
+                python_end = index + 1
+                consumed = next_count
+            boundary = None
+            for index in range(python_end - 1, -1, -1):
+                if text[index] in "。！？!?；;\n。":
+                    boundary = index + 1
+                    break
+            if boundary is None:
+                for index in range(python_end - 1, -1, -1):
+                    if text[index].isspace():
+                        boundary = index + 1
+                        break
+            if boundary is not None:
+                boundary_count = _review_character_count(text[:boundary])
+                if boundary_count >= minimum:
+                    candidate = boundary_count
+            if candidate <= start:
+                candidate = min(start + limit, total)
+            piece = cls._slice_by_review_chars(text, start, candidate)
+            actual_end = start + _review_character_count(piece)
+            if not piece or actual_end <= start:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_CHUNKING_FAILED",
+                    "正文分片无法按审查字符边界拆分。",
+                    status_code=409,
+                )
+            pieces.append({
+                "text": piece,
+                "sourceOffsetStart": start,
+                "sourceOffsetEnd": actual_end,
+            })
+            start = actual_end
+        return pieces
+
+    @classmethod
+    def _split_text_block(cls, block: Dict, limit: int) -> List[Dict]:
+        fragments = cls._split_text_semantically(block.get("text", ""), limit)
+        result = []
+        for index, fragment in enumerate(fragments, 1):
+            item = deepcopy(block)
+            item["text"] = fragment["text"]
+            item["sourceBlockId"] = block["blockId"]
+            item["sourceOffsetStart"] = fragment["sourceOffsetStart"]
+            item["sourceOffsetEnd"] = fragment["sourceOffsetEnd"]
+            item["isOverlap"] = False
+            item["core"] = True
+            if len(fragments) > 1:
+                item["blockId"] = _derived_id(block["blockId"], "part", index)
+            result.append(item)
+        return result
+
+    @classmethod
+    def _split_text_unit(cls, block: Dict, limit: int) -> List[Dict]:
+        pieces = cls._split_text_semantically(block.get("text", ""), limit)
+        result = []
+        base_offset = int(block.get("sourceOffsetStart", 0) or 0)
+        for index, piece in enumerate(pieces, 1):
+            item = deepcopy(block)
+            item["text"] = piece["text"]
+            item["sourceOffsetStart"] = base_offset + piece["sourceOffsetStart"]
+            item["sourceOffsetEnd"] = base_offset + piece["sourceOffsetEnd"]
+            item["isOverlap"] = False
+            item["core"] = True
+            if len(pieces) > 1:
+                item["blockId"] = _derived_id(block["blockId"], "part", index)
+            result.append(item)
+        return result
+
+    @classmethod
+    def _split_table_block(cls, block: Dict, limit: int) -> List[Dict]:
+        rows = block.get("rows", [])
+        if cls._block_character_count(block) <= limit:
+            item = deepcopy(block)
+            item["sourceBlockId"] = block["blockId"]
+            item["isOverlap"] = False
+            item["core"] = True
+            return [item]
+
+        header = deepcopy(rows[0]) if rows else None
+        nested_by_id = {
+            nested.get("tableId"): nested
+            for nested in block.get("nestedTables", [])
+            if nested.get("tableId")
+        }
+        fragments = []
+        current_rows = []
+        current_count = 0
+        current_nested_tables = []
+
+        def row_count(row: Dict) -> int:
+            cell_count = sum(
+                _review_character_count(cell.get("text", ""))
+                for cell in row.get("cells", [])
+            )
+            nested_count = sum(
+                _review_character_count("\n".join(cls._table_texts(nested_by_id[nested_id])))
+                for cell in row.get("cells", [])
+                for nested_id in cell.get("nestedTableIds", [])
+                if nested_id in nested_by_id
+            )
+            return cell_count + nested_count
+
+        def overlap_header() -> Optional[Dict]:
+            if header is None:
+                return None
+            header_copy = deepcopy(header)
+            header_copy["isOverlap"] = True
+            for cell in header_copy.get("cells", []):
+                cell["isOverlap"] = True
+            return header_copy
+
+        def flush() -> None:
+            nonlocal current_rows, current_count, current_nested_tables
+            if not current_rows:
+                return
+            fragment = deepcopy(block)
+            fragment["rows"] = current_rows
+            fragment["nestedTables"] = deepcopy(current_nested_tables)
+            if fragments:
+                def mark_nested(table: Dict) -> None:
+                    table["isOverlap"] = True
+                    for row in table.get("rows", []):
+                        row["isOverlap"] = True
+                        for cell in row.get("cells", []):
+                            cell["isOverlap"] = True
+                    for nested in table.get("nestedTables", []):
+                        mark_nested(nested)
+                for nested in fragment["nestedTables"]:
+                    mark_nested(nested)
+            fragment["sourceBlockId"] = block["blockId"]
+            fragment["isOverlap"] = False
+            fragment["core"] = True
+            fragment["blockId"] = _derived_id(block["blockId"], "part", len(fragments) + 1)
+            fragments.append(fragment)
+            current_rows = []
+            current_count = 0
+            current_nested_tables = []
+
+        for row in rows:
+            count = row_count(row)
+            if count > limit:
+                if not (
+                    header is not None
+                    and len(current_rows) == 1
+                    and current_rows[0].get("rowIndex") == header.get("rowIndex")
+                ):
+                    flush()
+                else:
+                    current_rows = []
+                    current_count = 0
+                    current_nested_tables = []
+                for cell in row.get("cells", []):
+                    nested_tables = [
+                        deepcopy(nested_by_id[nested_id])
+                        for nested_id in cell.get("nestedTableIds", [])
+                        if nested_id in nested_by_id
+                    ]
+                    nested_count = sum(
+                        _review_character_count("\n".join(cls._table_texts(nested)))
+                        for nested in nested_tables
+                    )
+                    header_count = row_count(header) if header is not None else 0
+                    cell_limit = max(1, limit - header_count - nested_count)
+                    cell_fragments = cls._split_text_semantically(
+                        cell.get("text", ""), cell_limit
+                    )
+                    for cell_fragment in cell_fragments:
+                        cell_copy = deepcopy(cell)
+                        cell_copy["text"] = cell_fragment["text"]
+                        cell_copy["sourceCellId"] = cell["cellId"]
+                        cell_copy["sourceOffsetStart"] = cell_fragment["sourceOffsetStart"]
+                        cell_copy["sourceOffsetEnd"] = cell_fragment["sourceOffsetEnd"]
+                        row_copy = {"rowIndex": row.get("rowIndex"), "cells": [cell_copy]}
+                        header_copy = overlap_header()
+                        current_rows = [header_copy] if header_copy is not None else []
+                        current_count = row_count(header_copy) if header_copy is not None else 0
+                        current_nested_tables = deepcopy(nested_tables)
+                        current_count += nested_count
+                        if current_count + _review_character_count(cell_copy["text"]) > limit:
+                            flush()
+                            current_rows = [header_copy] if header_copy is not None else []
+                            current_count = row_count(header_copy) if header_copy is not None else 0
+                            current_nested_tables = deepcopy(nested_tables)
+                            current_count += nested_count
+                        current_rows.append(row_copy)
+                        current_count += _review_character_count(cell_copy["text"])
+                        flush()
+                continue
+            proposed = current_count + count
+            if current_rows and proposed > limit:
+                flush()
+                header_copy = overlap_header()
+                if header_copy is not None:
+                    current_rows = [header_copy]
+                    current_count = row_count(header_copy)
+            current_rows.append(deepcopy(row))
+            current_count += count
+            for nested_id in (
+                nested_id
+                for cell in row.get("cells", [])
+                for nested_id in cell.get("nestedTableIds", [])
+            ):
+                if nested_id in nested_by_id and not any(
+                    existing.get("tableId") == nested_id
+                    for existing in current_nested_tables
+                ):
+                    current_nested_tables.append(deepcopy(nested_by_id[nested_id]))
+        flush()
+        if not fragments:
+            return cls._split_text_block(
+                {**block, "blockType": "paragraph", "text": "\n".join(cls._table_texts(block))},
+                limit,
+            )
+        for index, fragment in enumerate(fragments, 1):
+            if index > 1 and fragment.get("rows"):
+                fragment["rows"][0]["isOverlap"] = True
+                for cell in fragment["rows"][0].get("cells", []):
+                    cell["isOverlap"] = True
+        return fragments
+
+    @classmethod
+    def _tail_overlap_blocks(cls, blocks: List[Dict]) -> List[Dict]:
+        remaining = REVIEW_CHUNK_OVERLAP_CHARACTERS
+        overlap = []
+        for block in reversed(blocks):
+            text = "\n".join(cls._block_texts([block]))
+            if not text:
+                continue
+            count = _review_character_count(text)
+            take = min(remaining, count)
+            piece = cls._slice_by_review_chars(text, count - take, count)
+            context = {
+                "blockId": _derived_id(block.get("sourceBlockId", block["blockId"]), "overlap", len(overlap) + 1),
+                "sourceBlockId": block.get("sourceBlockId", block["blockId"]),
+                "blockType": "paragraph",
+                "paragraphIndex": block.get("paragraphIndex", 0),
+                "text": piece,
+                "isOverlap": True,
+                "core": False,
+                "contextOnly": True,
+            }
+            overlap.insert(0, context)
+            remaining -= take
+            if remaining <= 0:
+                break
+        return overlap
+
     @classmethod
     def _build_review_chunks(cls, snapshot: Dict) -> List[Dict]:
-        chunks = []
+        units = []
+        for block in snapshot["blocks"]:
+            if block["blockType"] == "table":
+                units.extend(cls._split_table_block(block, REVIEW_CHUNK_TARGET_CHARACTERS))
+            else:
+                units.extend(cls._split_text_block(block, REVIEW_CHUNK_TARGET_CHARACTERS))
+        core_chunks = []
         current = []
         current_count = 0
-        expanded_blocks = []
-        for block in snapshot["blocks"]:
-            block_count = sum(
-                _review_character_count(text) for text in cls._block_texts([block])
-            )
-            if block["blockType"] != "table" and block_count > REVIEW_CHUNK_HARD_LIMIT:
-                text = block.get("text", "")
-                for offset in range(0, len(text), REVIEW_CHUNK_HARD_LIMIT):
-                    fragment = deepcopy(block)
-                    fragment["blockId"] = "{0}-part-{1}".format(
-                        block["blockId"], offset // REVIEW_CHUNK_HARD_LIMIT + 1
-                    )
-                    fragment["text"] = text[offset : offset + REVIEW_CHUNK_HARD_LIMIT]
-                    expanded_blocks.append(fragment)
-            else:
-                expanded_blocks.append(block)
-        for block in expanded_blocks:
-            block_count = sum(
-                _review_character_count(text) for text in cls._block_texts([block])
-            )
-            if current and current_count + block_count > REVIEW_CHUNK_HARD_LIMIT:
-                chunks.append(cls._make_review_chunk(len(chunks) + 1, current))
+        pending = list(units)
+        while pending:
+            block = pending.pop(0)
+            count = cls._block_character_count(block)
+            if current and current_count + count > REVIEW_CHUNK_TARGET_CHARACTERS:
+                available = REVIEW_CHUNK_TARGET_CHARACTERS - current_count
+                if block["blockType"] != "table" and available > 0:
+                    split_units = cls._split_text_unit(block, available)
+                    current.append(split_units.pop(0))
+                    current_count = REVIEW_CHUNK_TARGET_CHARACTERS
+                    core_chunks.append(current)
+                    current = []
+                    current_count = 0
+                    pending = split_units + pending
+                    continue
+                core_chunks.append(current)
                 current = []
                 current_count = 0
             current.append(block)
-            current_count += block_count
+            current_count += count
         if current:
-            chunks.append(cls._make_review_chunk(len(chunks) + 1, current))
+            core_chunks.append(current)
+        chunks = []
+        for index, core_blocks in enumerate(core_chunks, 1):
+            overlap_blocks = cls._tail_overlap_blocks(core_chunks[index - 2]) if index > 1 else []
+            chunks.append(cls._make_review_chunk(index, overlap_blocks + core_blocks))
         return chunks
 
     @classmethod
     def _make_review_chunk(cls, number: int, blocks: List[Dict]) -> Dict:
+        review_count = sum(cls._block_character_count(block) for block in blocks)
+        core_count = sum(cls._block_core_character_count(block) for block in blocks)
+        overlap_count = max(review_count - core_count, 0)
         return {
             "chunkId": "chunk-{0}".format(number),
             "blocks": deepcopy(blocks),
             "sourceText": "\n".join(cls._block_texts(blocks)),
+            "reviewCharacterCount": core_count + overlap_count,
+            "coreCharacterCount": core_count,
+            "overlapCharacterCount": overlap_count,
+            "coreRanges": [
+                {
+                    "sourceBlockId": block.get("sourceBlockId", block["blockId"]),
+                    "start": block.get("sourceOffsetStart", 0),
+                    "end": block.get("sourceOffsetEnd", cls._block_character_count(block)),
+                }
+                for block in blocks if block.get("isOverlap") is not True
+            ],
+            "chunkStrategyVersion": CHUNK_STRATEGY_VERSION,
         }
 
     def _parse_strict_result(
@@ -1535,6 +1962,8 @@ class FullDocumentReviewService:
             payload = None
         if not isinstance(payload, dict):
             self._invalid_result()
+        schema_version = payload.get("schemaVersion") if isinstance(payload, dict) else ""
+        is_current_schema = schema_version == CHUNK_SCHEMA_VERSION
         required_fields = {
             "schemaVersion",
             "chunkId",
@@ -1542,12 +1971,14 @@ class FullDocumentReviewService:
             "enumerationStatus",
             "issues",
         }
+        if is_current_schema:
+            required_fields.update({"hasMoreIssues", "facts", "crossChecks"})
         if not required_fields.issubset(set(payload)) or set(payload) - (
-            required_fields | {"hasMoreIssues"}
+            required_fields | {"hasMoreIssues", "facts", "crossChecks"}
         ):
             self._invalid_result()
         if (
-            payload.get("schemaVersion") != CHUNK_SCHEMA_VERSION
+            payload.get("schemaVersion") not in {LEGACY_CHUNK_SCHEMA_VERSION, CHUNK_SCHEMA_VERSION}
             or payload.get("chunkId") != chunk["chunkId"]
             or not isinstance(payload.get("summary"), str)
             or len(payload.get("summary", "")) > 4000
@@ -1572,22 +2003,28 @@ class FullDocumentReviewService:
                 "suggestion",
                 "suggestedRewrite",
             }
-            if not isinstance(item, dict) or set(item) != required:
+            item_required = required | {"anchorStart"} if is_current_schema else required
+            if not isinstance(item, dict) or set(item) != item_required:
                 self._invalid_result()
-            if not all(
-                isinstance(item.get(field), str)
-                for field in required
+            if not all(isinstance(item.get(field), str) for field in required):
+                self._invalid_result()
+            if is_current_schema and (
+                type(item.get("anchorStart")) is not int or item["anchorStart"] < 0
             ):
                 self._invalid_result()
             anchor_id = item["anchorId"]
             original_text = item["originalText"]
+            anchor = blocks.get(anchor_id, {})
+            anchor_start = item.get("anchorStart", anchor.get("text", "").find(original_text))
+            original_end = anchor_start + _review_character_count(original_text)
             if (
                 item.get("category") not in _CATEGORIES
                 or item.get("severity") not in _SEVERITIES
                 or not 0 < len(anchor_id) <= 96
                 or anchor_id not in blocks
+                or not anchor.get("core", True)
                 or not 0 < len(original_text) <= 1000
-                or original_text not in blocks[anchor_id]["text"]
+                or self._slice_by_review_chars(anchor.get("text", ""), anchor_start, original_end) != original_text
                 or not item["problem"].strip()
                 or len(item["problem"]) > 2000
                 or not item["suggestion"].strip()
@@ -1601,18 +2038,58 @@ class FullDocumentReviewService:
                         [
                             snapshot["contentSha256"],
                             str(item["category"]),
-                            anchor_id,
+                            str(anchor.get("sourceAnchorId", anchor_id)),
+                            str(anchor.get("sourceOffsetStart", 0) + anchor_start),
                             original_text,
-                            str(item["problem"]),
+                            re.sub(r"\s+", " ", str(item["problem"]).strip()),
                         ]
                     )
                 )[:24]
             )
+            source_offset = anchor.get("sourceOffsetStart", 0) + anchor_start
+            duplicate_group_id = "group-{0}".format(
+                _sha256_text(
+                    "|".join([
+                        str(item["category"]),
+                        re.sub(r"\s+", " ", str(item["problem"]).strip()),
+                    ])
+                )[:24]
+            )
+            source_anchor = {
+                "anchorId": anchor.get("sourceAnchorId", anchor_id),
+                "location": anchor.get("location", "body"),
+                "start": source_offset,
+                "end": source_offset + _review_character_count(original_text),
+                "paragraphIndex": anchor.get("paragraphIndex", 0),
+            }
+            if anchor.get("location") == "table":
+                for field in (
+                    "tableId",
+                    "rowIndex",
+                    "columnIndex",
+                    "rowSpan",
+                    "columnSpan",
+                    "mergeId",
+                ):
+                    if field in anchor and anchor[field] not in (None, ""):
+                        source_anchor[field] = anchor[field]
+            elif anchor.get("range"):
+                source_anchor["range"] = deepcopy(anchor["range"])
             normalized_issues.append({
+                **item,
                 "issueId": issue_id,
                 "location": blocks[anchor_id].get("location", "body"),
-                **item,
+                "anchorId": anchor.get("sourceAnchorId", anchor_id),
+                "chunkAnchorId": anchor_id,
+                "anchorStart": anchor_start,
+                "sourceOffset": source_offset,
+                "duplicateGroupId": duplicate_group_id,
+                "sourceAnchor": source_anchor,
             })
+        facts = self._parse_chunk_facts(payload.get("facts", []), blocks, chunk["chunkId"])
+        cross_checks = self._parse_chunk_cross_checks(
+            payload.get("crossChecks", []), blocks, chunk["chunkId"]
+        )
         saturation_reason = ""
         if payload.get("hasMoreIssues") is True:
             saturation_reason = "has_more_issues"
@@ -1623,21 +2100,124 @@ class FullDocumentReviewService:
         return {
             **payload,
             "issues": normalized_issues,
+            "facts": facts,
+            "crossChecks": cross_checks,
             "_saturationReason": saturation_reason,
         }
+
+    @staticmethod
+    def _parse_chunk_facts(items: object, blocks: Dict[str, Dict], chunk_id: str) -> List[Dict]:
+        if items is None:
+            return []
+        if not isinstance(items, list) or len(items) > MAX_CHUNK_FACTS:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_RESULT_INVALID",
+                "模型返回的分片事实索引格式无效。",
+                status_code=502,
+            )
+        facts = []
+        fact_ids = set()
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {"factId", "kind", "statement", "anchorIds"}:
+                FullDocumentReviewService._invalid_result()
+            fact_id = item.get("factId")
+            kind = item.get("kind")
+            statement = item.get("statement")
+            anchor_ids = item.get("anchorIds")
+            if (
+                not isinstance(fact_id, str) or not _SAFE_ID.fullmatch(fact_id)
+                or not isinstance(kind, str) or not kind.strip() or len(kind) > 48
+                or not isinstance(statement, str) or not statement.strip() or len(statement) > 1200
+                or not isinstance(anchor_ids, list) or not anchor_ids
+                or not all(isinstance(anchor_id, str) and anchor_id in blocks and blocks[anchor_id].get("core", True) for anchor_id in anchor_ids)
+            ):
+                FullDocumentReviewService._invalid_result()
+            if fact_id in fact_ids:
+                FullDocumentReviewService._invalid_result()
+            fact_ids.add(fact_id)
+            facts.append({
+                "factId": _derived_id(chunk_id, "fact", fact_id),
+                "kind": kind,
+                "statement": statement,
+                "anchorIds": [blocks[anchor_id].get("sourceAnchorId", anchor_id) for anchor_id in anchor_ids],
+                "chunkAnchorIds": list(anchor_ids),
+            })
+        return facts
+
+    @staticmethod
+    def _parse_chunk_cross_checks(items: object, blocks: Dict[str, Dict], chunk_id: str) -> List[Dict]:
+        if items is None:
+            return []
+        if not isinstance(items, list) or len(items) > MAX_CHUNK_CROSS_CHECKS:
+            FullDocumentReviewService._invalid_result()
+        checks = []
+        check_ids = set()
+        for item in items:
+            if not isinstance(item, dict) or set(item) != {"checkId", "statement", "anchorIds"}:
+                FullDocumentReviewService._invalid_result()
+            check_id = item.get("checkId")
+            statement = item.get("statement")
+            anchor_ids = item.get("anchorIds")
+            if (
+                not isinstance(check_id, str) or not _SAFE_ID.fullmatch(check_id)
+                or not isinstance(statement, str) or not statement.strip() or len(statement) > 1200
+                or not isinstance(anchor_ids, list) or not anchor_ids
+                or not all(isinstance(anchor_id, str) and anchor_id in blocks and blocks[anchor_id].get("core", True) for anchor_id in anchor_ids)
+            ):
+                FullDocumentReviewService._invalid_result()
+            if check_id in check_ids:
+                FullDocumentReviewService._invalid_result()
+            check_ids.add(check_id)
+            checks.append({
+                "checkId": _derived_id(chunk_id, "check", check_id),
+                "statement": statement,
+                "anchorIds": [blocks[anchor_id].get("sourceAnchorId", anchor_id) for anchor_id in anchor_ids],
+                "chunkAnchorIds": list(anchor_ids),
+            })
+        return checks
 
     @classmethod
     def _review_anchor_blocks(cls, blocks: List[Dict]) -> Dict[str, Dict]:
         anchors = {}
 
-        def add_table_cells(table: Dict) -> None:
+        def add_table_cells(table: Dict, inherited_overlap: bool = False) -> None:
             for row in table.get("rows", []):
                 for cell in row.get("cells", []):
-                    anchors[cell["cellId"]] = {**cell, "location": "table"}
+                    overlap = inherited_overlap or cell.get("isOverlap") is True or row.get("isOverlap") is True
+                    source_start = int(cell.get("sourceOffsetStart", 0) or 0)
+                    source_end = int(
+                        cell.get(
+                            "sourceOffsetEnd",
+                            source_start + _review_character_count(cell.get("text", "")),
+                        )
+                        or source_start
+                    )
+                    anchors[cell["cellId"]] = {
+                        **cell,
+                        "location": "table",
+                        "sourceAnchorId": cell.get("sourceCellId", cell["cellId"]),
+                        "sourceOffsetStart": source_start,
+                        "sourceOffsetEnd": source_end,
+                        "tableId": table.get("tableId", ""),
+                        "rowIndex": cell.get("rowIndex", row.get("rowIndex", 0)),
+                        "columnIndex": cell.get("columnIndex", 0),
+                        "rowSpan": cell.get("rowSpan", 1),
+                        "columnSpan": cell.get("columnSpan", 1),
+                        "mergeId": cell.get("mergeId", ""),
+                        "core": not overlap,
+                    }
             for nested in table.get("nestedTables", []):
-                add_table_cells(nested)
+                add_table_cells(nested, inherited_overlap or table.get("isOverlap") is True)
 
         for block in blocks:
+            source_start = int(block.get("sourceOffsetStart", 0) or 0)
+            source_end = int(
+                block.get(
+                    "sourceOffsetEnd",
+                    source_start + _review_character_count("\n".join(cls._block_texts([block]))),
+                )
+                or source_start
+            )
             anchors[block["blockId"]] = {
                 "text": "\n".join(cls._block_texts([block])),
                 "location": (
@@ -1645,6 +2225,12 @@ class FullDocumentReviewService:
                     if block["blockType"] == "table"
                     else "chapter" if block["blockType"] == "heading" else "body"
                 ),
+                "sourceAnchorId": block.get("sourceBlockId", block["blockId"]),
+                "sourceOffsetStart": source_start,
+                "sourceOffsetEnd": source_end,
+                "paragraphIndex": block.get("paragraphIndex", 0),
+                "range": deepcopy(block.get("range", {})),
+                "core": block.get("isOverlap") is not True and block.get("contextOnly") is not True,
             }
             if block["blockType"] != "table":
                 continue
@@ -1682,11 +2268,197 @@ class FullDocumentReviewService:
             return True
         return False
 
+    @classmethod
+    def _build_aggregate_input(cls, snapshot: Dict, parsed_chunks: List[Dict]) -> Dict:
+        heading_structure = []
+        for block in snapshot.get("blocks", []):
+            if block.get("blockType") == "heading":
+                heading_structure.append({
+                    "blockId": block.get("blockId", ""),
+                    "paragraphIndex": block.get("paragraphIndex", 0),
+                    "headingLevel": block.get("headingLevel", 0),
+                    "text": block.get("text", "")[:400],
+                })
+        chunks = []
+        fact_index = []
+        cross_check_index = []
+        issue_index = []
+        for parsed in parsed_chunks:
+            chunk = {
+                "chunkId": parsed.get("chunkId", ""),
+                "summary": parsed.get("summary", "")[:4000],
+            }
+            chunks.append(chunk)
+            fact_index.extend(
+                {
+                    "factId": fact.get("factId", ""),
+                    "kind": fact.get("kind", ""),
+                    "statement": fact.get("statement", "")[:1200],
+                    "anchorIds": list(fact.get("anchorIds", [])),
+                    "chunkId": parsed.get("chunkId", ""),
+                }
+                for fact in parsed.get("facts", [])
+            )
+            cross_check_index.extend(
+                {
+                    "checkId": check.get("checkId", ""),
+                    "statement": check.get("statement", "")[:1200],
+                    "anchorIds": list(check.get("anchorIds", [])),
+                    "chunkId": parsed.get("chunkId", ""),
+                }
+                for check in parsed.get("crossChecks", [])
+            )
+            issue_index.extend(
+                {
+                    "issueId": issue.get("issueId", ""),
+                    "category": issue.get("category", ""),
+                    "severity": issue.get("severity", ""),
+                    "anchorId": issue.get("anchorId", ""),
+                    "problem": issue.get("problem", "")[:240],
+                    "chunkId": parsed.get("chunkId", ""),
+                }
+                for issue in parsed.get("issues", [])
+            )
+        aggregate_input = {
+            "schemaVersion": "word.document_review.full.aggregate.request.v1",
+            "documentType": snapshot.get("documentType", ""),
+            "reviewPrompt": snapshot.get("reviewPrompt", ""),
+            "headingStructure": heading_structure,
+            "chunks": chunks,
+            "facts": fact_index,
+            "crossChecks": cross_check_index,
+            "issues": issue_index,
+        }
+        serialized = json.dumps(aggregate_input, ensure_ascii=False, separators=(",", ":"))
+        if _review_character_count(serialized) > MAX_AGGREGATE_INPUT_CHARACTERS:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_AGGREGATE_INPUT_TOO_LARGE",
+                "全局汇总索引超过当前模型输入预算，未发起汇总请求。",
+                status_code=409,
+            )
+        return aggregate_input
+
+    @staticmethod
+    def _parse_aggregate_result(answer: object, aggregate_input: Dict) -> Dict:
+        answer_text = answer.get("answer") if isinstance(answer, dict) else answer
+        try:
+            payload = json.loads(answer_text) if isinstance(answer_text, str) else None
+        except (TypeError, ValueError) as exc:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                "模型返回的全局汇总不是有效 JSON。",
+                status_code=502,
+            ) from exc
+        if not isinstance(payload, dict) or set(payload) - {"schemaVersion", "summary", "findings"}:
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                "模型返回的全局汇总字段不符合严格契约。",
+                status_code=502,
+            )
+        if (
+            payload.get("schemaVersion") != "word.document_review.full.aggregate.v1"
+            or not isinstance(payload.get("summary"), str)
+            or len(payload.get("summary", "")) > 4000
+            or not isinstance(payload.get("findings"), list)
+            or len(payload.get("findings", [])) > 100
+        ):
+            raise AdapterError(
+                "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                "模型返回的全局汇总内容不符合严格契约。",
+                status_code=502,
+            )
+        issue_ids = {
+            issue.get("issueId")
+            for chunk in aggregate_input.get("chunks", [])
+            for issue in chunk.get("issues", [])
+        }
+        issue_ids.update(issue.get("issueId") for issue in aggregate_input.get("issues", []))
+        fact_ids = {
+            fact.get("factId")
+            for chunk in aggregate_input.get("chunks", [])
+            for fact in chunk.get("facts", [])
+        }
+        fact_ids.update(fact.get("factId") for fact in aggregate_input.get("facts", []))
+        anchor_ids = {
+            issue.get("anchorId")
+            for chunk in aggregate_input.get("chunks", [])
+            for issue in chunk.get("issues", [])
+        }
+        anchor_ids.update(
+            issue.get("anchorId")
+            for issue in aggregate_input.get("issues", [])
+        )
+        anchor_ids.update(
+            anchor_id
+            for chunk in aggregate_input.get("chunks", [])
+            for fact in chunk.get("facts", [])
+            for anchor_id in fact.get("anchorIds", [])
+        )
+        anchor_ids.update(
+            anchor_id
+            for fact in aggregate_input.get("facts", [])
+            for anchor_id in fact.get("anchorIds", [])
+        )
+        anchor_ids.update(
+            anchor_id
+            for check in aggregate_input.get("crossChecks", [])
+            for anchor_id in check.get("anchorIds", [])
+        )
+        findings = []
+        finding_ids = set()
+        for item in payload["findings"]:
+            required = {"findingId", "kind", "severity", "summary", "issueIds", "factIds", "anchorIds"}
+            if not isinstance(item, dict) or set(item) != required:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                    "全局汇总问题字段不完整。",
+                    status_code=502,
+                )
+            for field in ("issueIds", "factIds", "anchorIds"):
+                if not isinstance(item[field], list) or not all(
+                    isinstance(value, str) and 0 < len(value) <= 120
+                    for value in item[field]
+                ):
+                    raise AdapterError(
+                        "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                        "全局汇总引用列表格式无效。",
+                        status_code=502,
+                    )
+            if (
+                not isinstance(item["findingId"], str) or not _SAFE_ID.fullmatch(item["findingId"])
+                or item["severity"] not in _SEVERITIES
+                or not isinstance(item["kind"], str) or not _SAFE_ID.fullmatch(item["kind"])
+                or not isinstance(item["summary"], str) or not item["summary"].strip() or len(item["summary"]) > 2000
+                or not isinstance(item["issueIds"], list) or not all(issue_id in issue_ids for issue_id in item["issueIds"])
+                or not isinstance(item["factIds"], list) or not all(fact_id in fact_ids for fact_id in item["factIds"])
+                or not isinstance(item["anchorIds"], list) or not all(anchor_id in anchor_ids for anchor_id in item["anchorIds"])
+                or not item["issueIds"] and not item["factIds"] and not item["anchorIds"]
+            ):
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                    "全局汇总引用了未知问题、事实或锚点。",
+                    status_code=502,
+                )
+            if item["findingId"] in finding_ids:
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_AGGREGATE_INVALID",
+                    "全局汇总包含重复的 findingId。",
+                    status_code=502,
+                )
+            finding_ids.add(item["findingId"])
+            findings.append(deepcopy(item))
+        return {
+            "schemaVersion": payload["schemaVersion"],
+            "summary": payload["summary"],
+            "findings": findings,
+        }
+
     @staticmethod
     def _build_report(
         snapshot: Dict,
         parsed_chunks: List[Dict],
         limited_ranges: Optional[List[str]] = None,
+        aggregate_result: Optional[Dict] = None,
     ) -> Dict:
         paragraph_count = len(snapshot["blocks"])
         issues = []
@@ -1700,6 +2472,8 @@ class FullDocumentReviewService:
         unique_issues = {}
         for issue in issues:
             unique_issues[issue["issueId"]] = issue
+        initial_chunks = FullDocumentReviewService._build_review_chunks(snapshot)
+        overlap_count = sum(item.get("overlapCharacterCount", 0) for item in initial_chunks)
         report = {
             "schemaVersion": REPORT_SCHEMA_VERSION,
             "reviewMode": "full",
@@ -1718,11 +2492,17 @@ class FullDocumentReviewService:
                 ),
                 "reviewedTableCount": snapshot.get("tableCount", 0),
                 "reviewedCellCount": snapshot.get("cellCount", 0),
+                "initialChunkCount": len(initial_chunks),
+                "overlapCharacterCount": overlap_count,
+                "uniqueCoreCharacterCount": snapshot["reviewCharacterCount"],
                 "includedRegions": snapshot["coverage"]["includedRegions"],
                 "excludedRegions": snapshot["coverage"]["excludedRegions"],
             },
             "enumerationStatus": enumeration_status,
             "enumerationLimitedRanges": list(limited_ranges or []),
+            "chunkStrategyVersion": CHUNK_STRATEGY_VERSION,
+            "globalSummary": (aggregate_result or {}).get("summary", ""),
+            "globalFindings": deepcopy((aggregate_result or {}).get("findings", [])),
             "disclaimer": "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部问题。",
             "issues": [
                 {**issue, "status": issue.get("status", "open"),
@@ -1829,6 +2609,18 @@ class FullDocumentReviewService:
         lines.append("- 问题数量：{0}".format(report.get("issueCount", 0)))
         lines.append("- 问题枚举：{0}".format(report.get("enumerationStatus", "limited")))
         lines.append("")
+        if report.get("globalSummary"):
+            lines.extend(["## 跨片全局结论", report["globalSummary"], ""])
+        for finding in report.get("globalFindings", []):
+            lines.extend([
+                "### {0} · {1}".format(finding.get("findingId", "全局发现"), finding.get("summary", "")),
+                "- 类型：{0}".format(finding.get("kind", "")),
+                "- 严重程度：{0}".format(finding.get("severity", "")),
+                "- 问题引用：{0}".format(", ".join(finding.get("issueIds", [])) or "无"),
+                "- 事实引用：{0}".format(", ".join(finding.get("factIds", [])) or "无"),
+                "- 锚点引用：{0}".format(", ".join(finding.get("anchorIds", [])) or "无"),
+                "",
+            ])
         for index, issue in enumerate(report.get("issues", []), 1):
             lines.extend([
                 "## {0}. {1}".format(index, issue.get("problem", "审查问题")),

@@ -57,8 +57,8 @@ DIFY_INPUT_MODES = (DIFY_INPUT_MODE_LEGACY, DIFY_INPUT_MODE_USER_INPUT)
 _PROVIDER_INPUT_MODE_CACHE: Dict[str, str] = {}
 
 
-class FullDocumentReviewChunkAnswer(str):
-    """String-compatible answer carrying the provider finish reason."""
+class FullDocumentReviewAnswer(str):
+    """String-compatible full-review answer carrying the provider finish reason."""
 
     def __new__(cls, value: str, finish_reason: str = ""):
         result = str.__new__(cls, value)
@@ -1601,6 +1601,7 @@ def _full_document_review_chunk_response_format() -> Dict:
         },
         "severity": {"type": "string", "enum": ["high", "medium", "low"]},
         "anchorId": {"type": "string", "minLength": 1, "maxLength": 96},
+        "anchorStart": {"type": "integer", "minimum": 0, "maximum": 120000},
         "originalText": {"type": "string", "minLength": 1, "maxLength": 1000},
         "problem": {"type": "string", "minLength": 1, "maxLength": 2000},
         "suggestion": {"type": "string", "minLength": 1, "maxLength": 3000},
@@ -1609,7 +1610,7 @@ def _full_document_review_chunk_response_format() -> Dict:
     return {
         "type": "json_schema",
         "json_schema": {
-            "name": "word_document_review_full_chunk_v1",
+            "name": "word_document_review_full_chunk_v2",
             "strict": True,
             "schema": {
                 "type": "object",
@@ -1620,12 +1621,14 @@ def _full_document_review_chunk_response_format() -> Dict:
                     "summary",
                     "enumerationStatus",
                     "hasMoreIssues",
+                    "facts",
+                    "crossChecks",
                     "issues",
                 ],
                 "properties": {
                     "schemaVersion": {
                         "type": "string",
-                        "const": "word.document_review.full.chunk.v1",
+                        "const": "word.document_review.full.chunk.v2",
                     },
                     "chunkId": {"type": "string", "minLength": 1, "maxLength": 96},
                     "summary": {"type": "string", "maxLength": 4000},
@@ -1634,6 +1637,45 @@ def _full_document_review_chunk_response_format() -> Dict:
                         "enum": ["complete", "limited"],
                     },
                     "hasMoreIssues": {"type": "boolean"},
+                    "facts": {
+                        "type": "array",
+                        "maxItems": 80,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["factId", "kind", "statement", "anchorIds"],
+                            "properties": {
+                                "factId": {"type": "string", "minLength": 1, "maxLength": 96},
+                                "kind": {"type": "string", "minLength": 1, "maxLength": 48},
+                                "statement": {"type": "string", "minLength": 1, "maxLength": 1200},
+                                "anchorIds": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "items": {"type": "string", "minLength": 1, "maxLength": 96},
+                                },
+                            },
+                        },
+                    },
+                    "crossChecks": {
+                        "type": "array",
+                        "maxItems": 40,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": ["checkId", "statement", "anchorIds"],
+                            "properties": {
+                                "checkId": {"type": "string", "minLength": 1, "maxLength": 96},
+                                "statement": {"type": "string", "minLength": 1, "maxLength": 1200},
+                                "anchorIds": {
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 8,
+                                    "items": {"type": "string", "minLength": 1, "maxLength": 96},
+                                },
+                            },
+                        },
+                    },
                     "issues": {
                         "type": "array",
                         "maxItems": 200,
@@ -1642,6 +1684,56 @@ def _full_document_review_chunk_response_format() -> Dict:
                             "additionalProperties": False,
                             "required": list(issue_properties.keys()),
                             "properties": issue_properties,
+                        },
+                    },
+                },
+            },
+        },
+    }
+
+
+def _full_document_review_aggregate_response_format() -> Dict:
+    finding_properties = {
+        "findingId": {"type": "string", "minLength": 1, "maxLength": 96},
+        "kind": {"type": "string", "minLength": 1, "maxLength": 48},
+        "severity": {"type": "string", "enum": ["high", "medium", "low"]},
+        "summary": {"type": "string", "minLength": 1, "maxLength": 2000},
+        "issueIds": {
+            "type": "array", "maxItems": 20,
+            "items": {"type": "string", "minLength": 1, "maxLength": 96},
+        },
+        "factIds": {
+            "type": "array", "maxItems": 20,
+            "items": {"type": "string", "minLength": 1, "maxLength": 120},
+        },
+        "anchorIds": {
+            "type": "array", "maxItems": 20,
+            "items": {"type": "string", "minLength": 1, "maxLength": 96},
+        },
+    }
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "word_document_review_full_aggregate_v1",
+            "strict": True,
+            "schema": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": ["schemaVersion", "summary", "findings"],
+                "properties": {
+                    "schemaVersion": {
+                        "type": "string",
+                        "const": "word.document_review.full.aggregate.v1",
+                    },
+                    "summary": {"type": "string", "maxLength": 4000},
+                    "findings": {
+                        "type": "array",
+                        "maxItems": 100,
+                        "items": {
+                            "type": "object",
+                            "additionalProperties": False,
+                            "required": list(finding_properties.keys()),
+                            "properties": finding_properties,
                         },
                     },
                 },
@@ -2728,7 +2820,8 @@ class ProviderClient:
             )
         try:
             prompt_asset = self.system_prompt_store.load_stage(
-                "word.document_review.full.chunk"
+                "word.document_review.full.chunk.correction"
+                if correction else "word.document_review.full.chunk"
             )
         except SystemPromptError as exc:
             raise AdapterError(exc.code, exc.message, status_code=500) from exc
@@ -2761,7 +2854,47 @@ class ProviderClient:
             prompt_asset=prompt_asset,
             response_format=_full_document_review_chunk_response_format(),
         )
-        return FullDocumentReviewChunkAnswer(
+        return FullDocumentReviewAnswer(
+            str(body.get("answer", "")),
+            str(body.get("finishReason", "")),
+        )
+
+    def full_document_review_aggregate(
+        self,
+        aggregate_input: Dict,
+        trace_id: str,
+        task_auth: Dict,
+        correction: bool = False,
+    ) -> object:
+        if str(task_auth.get("accessMethod", "")) != ACCESS_DIRECT_MODEL:
+            raise AdapterError(
+                "MODEL_DIRECT_REQUIRED",
+                "全篇审查只支持模型直连配置。",
+                status_code=409,
+            )
+        try:
+            prompt_asset = self.system_prompt_store.load_stage(
+                "word.document_review.full.aggregate.correction"
+                if correction else "word.document_review.full.aggregate"
+            )
+        except SystemPromptError as exc:
+            raise AdapterError(exc.code, exc.message, status_code=500) from exc
+        payload = dict(aggregate_input)
+        if correction:
+            payload["correctionInstruction"] = (
+                "上次全局汇总未通过严格 JSON 契约校验。请只返回完整 JSON，"
+                "所有 issueId、factId 和 anchorId 必须来自输入索引。"
+            )
+        body = self._post_direct_task(
+            "word.document_review.full",
+            trace_id,
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")),
+            task_auth,
+            max(self.settings.timeout_seconds, DOCUMENT_REVIEW_TIMEOUT_SECONDS),
+            prompt_asset=prompt_asset,
+            response_format=_full_document_review_aggregate_response_format(),
+        )
+        return FullDocumentReviewAnswer(
             str(body.get("answer", "")),
             str(body.get("finishReason", "")),
         )

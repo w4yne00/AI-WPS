@@ -314,6 +314,14 @@ class StrictFullReviewProvider:
             ensure_ascii=False,
         )
 
+    def full_document_review_aggregate(self, payload, trace_id, task_auth,
+                                       correction=False):
+        return json.dumps({
+            "schemaVersion": "word.document_review.full.aggregate.v1",
+            "summary": "跨片汇总。",
+            "findings": [],
+        }, ensure_ascii=False)
+
 
 class SaturatingFullReviewProvider(StrictFullReviewProvider):
     def __init__(self, always_saturated=False, saturate_calls=0):
