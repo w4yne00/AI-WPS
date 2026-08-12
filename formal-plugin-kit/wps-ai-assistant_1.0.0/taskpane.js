@@ -2749,13 +2749,18 @@
   }
 
   function scheduleWorkflowProfileActivation(profileId, taskType, previousProfileId) {
-    if (state.workflowProfileActivationTimer !== null) {
-      window.clearTimeout(state.workflowProfileActivationTimer);
-    }
+    cancelWorkflowProfileActivation();
     state.workflowProfileActivationTimer = window.setTimeout(function () {
       state.workflowProfileActivationTimer = null;
       activateWorkflowProfile(profileId, taskType, previousProfileId);
     }, 0);
+  }
+
+  function cancelWorkflowProfileActivation() {
+    if (state.workflowProfileActivationTimer !== null) {
+      window.clearTimeout(state.workflowProfileActivationTimer);
+      state.workflowProfileActivationTimer = null;
+    }
   }
 
   function handleWorkflowProfileSelectionChange(event) {
@@ -2764,10 +2769,7 @@
     var previousProfileId = data.activeProfileId || state.workflowProfileSelections[taskType] || "";
     var profileId = event.target.value;
     if (!profileId || profileId === previousProfileId) {
-      if (state.workflowProfileActivationTimer !== null) {
-        window.clearTimeout(state.workflowProfileActivationTimer);
-        state.workflowProfileActivationTimer = null;
-      }
+      cancelWorkflowProfileActivation();
       state.workflowProfileSelections[taskType] = previousProfileId;
       renderWorkflowProfileStrip();
       return;

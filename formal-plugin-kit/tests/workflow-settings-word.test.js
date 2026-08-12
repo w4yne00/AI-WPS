@@ -231,6 +231,7 @@ assert.ok(stripSource.includes("select.disabled = interactionBlocked || !availab
 
 const selectChangeSource = functionSource("handleWorkflowProfileSelectionChange");
 assert.ok(selectChangeSource.includes("scheduleWorkflowProfileActivation"));
+assert.ok(selectChangeSource.includes("cancelWorkflowProfileActivation"));
 assert.ok(selectChangeSource.includes("previousProfileId"));
 
 const activateSource = functionSource("activateWorkflowProfile");
@@ -441,12 +442,18 @@ reviewCheck("model activation starts after the native select change event", () =
     workflowProfileSelections: { "word.smart_write": "profile-a" },
     workflowProfileActivationTimer: null
   };
+  const activationWindow = {
+    setTimeout(callback) { callbacks.push(callback); return callbacks.length; },
+    clearTimeout() {}
+  };
+  const cancelActivation = loadFunction("cancelWorkflowProfileActivation", {
+    state: activationState,
+    window: activationWindow
+  });
   const scheduleActivation = loadFunction("scheduleWorkflowProfileActivation", {
     state: activationState,
-    window: {
-      setTimeout(callback) { callbacks.push(callback); return callbacks.length; },
-      clearTimeout() {}
-    },
+    window: activationWindow,
+    cancelWorkflowProfileActivation: cancelActivation,
     activateWorkflowProfile(profileId, taskType, previousProfileId) {
       calls.push([profileId, taskType, previousProfileId]);
     }
@@ -465,17 +472,23 @@ reviewCheck("rapid model selections activate only the latest choice", () => {
   const callbacks = new Map();
   const calls = [];
   const activationState = { workflowProfileActivationTimer: null };
+  const activationWindow = {
+    setTimeout(callback) {
+      const timerId = nextTimerId;
+      nextTimerId += 1;
+      callbacks.set(timerId, callback);
+      return timerId;
+    },
+    clearTimeout(timerId) { callbacks.delete(timerId); }
+  };
+  const cancelActivation = loadFunction("cancelWorkflowProfileActivation", {
+    state: activationState,
+    window: activationWindow
+  });
   const scheduleActivation = loadFunction("scheduleWorkflowProfileActivation", {
     state: activationState,
-    window: {
-      setTimeout(callback) {
-        const timerId = nextTimerId;
-        nextTimerId += 1;
-        callbacks.set(timerId, callback);
-        return timerId;
-      },
-      clearTimeout(timerId) { callbacks.delete(timerId); }
-    },
+    window: activationWindow,
+    cancelWorkflowProfileActivation: cancelActivation,
     activateWorkflowProfile(profileId) { calls.push(profileId); }
   });
 
