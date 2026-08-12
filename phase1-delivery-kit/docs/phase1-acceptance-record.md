@@ -3,9 +3,9 @@
 ## 基本信息
 
 - 版本：`v0.23.1-alpha`
-- 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
-- 交付包：`ai-wps-phase1-delivery-20260811-v0231.tar.gz`
-- 对应工单：Issue #26、#28、#30、#31、#32、#33
+- 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260812`
+- 交付包：`ai-wps-phase1-delivery-20260812-v0231.tar.gz`
+- 对应工单：Issue #26、#28、#30、#31、#32、#33、#34
 - 构建状态：候选构建；白名单组装与静态审计通过；Linux ARM64 / Python 3.8.20 最终包生命周期门禁通过，麒麟 V10/WPS 真机验收待执行
 - 发布清单：`release-manifest.json`
 - 项目：
@@ -135,7 +135,7 @@ python38_delivery_lifecycle_gate=passed status=candidate
 
 ## 交付包检查记录
 
-- `release-manifest.json` 版本与版本规则号：本地审计通过，`0.23.1-alpha` / `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260811`
+- `release-manifest.json` 版本与版本规则号：本地审计通过，`0.23.1-alpha` / `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260812`
 - 白名单组装：本地通过，205 个源白名单文件；生成模板与清单后 209 个文件
 - `release-allowlist.json`、引用闭包、版本一致性、敏感值扫描和 `release-file-hashes.json`：本地审计通过
 - 公式助手操作手册与提示词模板：本地审计通过

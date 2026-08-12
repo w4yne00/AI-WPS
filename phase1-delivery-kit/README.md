@@ -7,8 +7,8 @@
 ## 一键安装
 
 ```bash
-tar -xzf ai-wps-phase1-delivery-20260811-v0231.tar.gz
-cd ai-wps-phase1-delivery-20260811-v0231
+tar -xzf ai-wps-phase1-delivery-20260812-v0231.tar.gz
+cd ai-wps-phase1-delivery-20260812-v0231
 bash installer/install_phase1.sh
 ```
 
@@ -59,7 +59,7 @@ bash scripts/phase1_smoke_test.sh
 
 ```bash
 python3.8 scripts/python38_delivery_lifecycle_gate.py \
-  ../ai-wps-phase1-delivery-20260811-v0231.tar.gz \
+  ../ai-wps-phase1-delivery-20260812-v0231.tar.gz \
   --expected-version 0.23.1-alpha
 ```
 
