@@ -315,6 +315,97 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         structure_changed = self.service._format_metrics(blocks)
         self.assertNotEqual(format_changed["structureSha256"], structure_changed["structureSha256"])
 
+    def test_format_metrics_count_segments_cells_and_unsupported_objects(self):
+        blocks = self.service._normalize_format_blocks([{
+            "blockId": "format-paragraph-mixed",
+            "blockType": "paragraph",
+            "scope": "in_scope",
+            "text": "混合格式",
+            "format": {
+                "segments": [
+                    {"start": 0, "end": 2, "format": {"fontName": "宋体"}},
+                    {"start": 2, "end": 4, "format": {"fontName": "黑体"}},
+                ],
+                "dataStatus": "verified",
+            },
+        }, {
+            "blockId": "format-table-mixed",
+            "blockType": "table",
+            "scope": "in_scope",
+            "text": "表格",
+            "rows": [{"rowIndex": 1, "cells": [
+                {"cellId": "cell-1", "text": "一", "format": {
+                    "segments": [{"start": 0, "end": 1, "format": {"bold": True}}]
+                }},
+                {"cellId": "cell-2", "text": "二", "format": {}}
+            ]}],
+            "format": {},
+        }])
+        metrics = self.service._format_metrics(blocks, {
+            "headerFooter": {
+                "header": {"status": "unavailable", "failureCount": 1},
+                "footer": {"status": "read", "characterCount": 8},
+            },
+            "unsupportedObjects": [
+                {"type": "textBox", "count": 2, "status": "not_supported"},
+                {"type": "comment", "count": 1, "status": "not_supported"},
+            ],
+        })
+        self.assertEqual(metrics["coverage"]["formatSegmentCount"], 3)
+        self.assertEqual(metrics["coverage"]["tableCellCount"], 2)
+        self.assertEqual(metrics["coverage"]["unsupportedObjectCount"], 3)
+        self.assertEqual(metrics["coverage"]["headerFooter"]["header"]["status"], "unavailable")
+        self.assertEqual(metrics["capacityTier"], "standard")
+
+    def test_capacity_tiers_are_explicit_and_over_limit_is_rejected(self):
+        self.assertEqual(self.service.classify_capacity(60000)["tier"], "standard")
+        self.assertEqual(self.service.classify_capacity(60001)["tier"], "large")
+        self.assertEqual(self.service.classify_capacity(120000)["tier"], "large")
+        with self.assertRaises(AdapterError) as context:
+            self.service.classify_capacity(120001, raise_error=True)
+        self.assertEqual(context.exception.code, "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE")
+
+    def test_format_fragmentation_insufficient_status_is_preserved(self):
+        blocks = self.service._normalize_format_blocks([{
+            "blockId": "format-paragraph-insufficient",
+            "blockType": "paragraph",
+            "scope": "in_scope",
+            "text": "无法完整读取",
+            "format": {
+                "segments": [],
+                "dataStatus": "insufficient",
+                "insufficientReason": "format_fragmentation_limit",
+            },
+        }])
+        metrics = self.service._format_metrics(blocks)
+        self.assertEqual(metrics["coverage"]["formatDataStatus"], "insufficient")
+        self.assertEqual(metrics["coverage"]["formatDataInsufficientBlockCount"], 1)
+
+    def test_character_format_attributes_are_preserved_in_segments(self):
+        blocks = self.service._normalize_format_blocks([{
+            "blockId": "format-paragraph-attributes",
+            "blockType": "paragraph",
+            "scope": "in_scope",
+            "text": "属性",
+            "format": {
+                "segments": [{
+                    "start": 0,
+                    "end": 2,
+                    "format": {
+                        "strikeThrough": True,
+                        "superscript": True,
+                        "color": "red",
+                        "characterScale": 90,
+                    },
+                }],
+            },
+        }])
+        segment_format = blocks[0]["format"]["segments"][0]["format"]
+        self.assertTrue(segment_format["strikeThrough"])
+        self.assertTrue(segment_format["superscript"])
+        self.assertEqual(segment_format["color"], "red")
+        self.assertEqual(segment_format["characterScale"], 90)
+
 
 if __name__ == "__main__":
     unittest.main()

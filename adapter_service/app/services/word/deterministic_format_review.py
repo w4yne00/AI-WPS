@@ -35,6 +35,11 @@ MAX_FORMAT_BLOCKS = 10_000
 MAX_FORMAT_BATCHES = 1024
 MAX_FORMAT_BATCH_BYTES = 2 * 1024 * 1024
 MAX_FORMAT_SNAPSHOT_BYTES = 16 * 1024 * 1024
+MAX_FORMAT_TABLE_CELLS = 50_000
+MAX_FORMAT_SEGMENTS = 50_000
+MAX_FORMAT_UNSUPPORTED_OBJECTS = 5_000
+MAX_FORMAT_STANDARD_CHARACTERS = 60_000
+MAX_FORMAT_LARGE_CHARACTERS = 120_000
 SNAPSHOT_TTL_SECONDS = 15 * 60
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
 FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context"}
@@ -211,6 +216,7 @@ class DeterministicFormatReviewService:
             "templateId": str(payload.get("templateId") or "technical-file-format-requirements"),
             "scope": self._normalize_scope(payload.get("scope"), selection_mode),
             "pageSetup": self._normalize_page_setup(payload.get("pageSetup")),
+            "sourceCoverage": self._normalize_source_coverage(payload.get("coverage")),
             "editSequence": self._optional_scalar(payload.get("editSequence")),
             "batches": [],
             "snapshotBytes": 0,
@@ -218,6 +224,7 @@ class DeterministicFormatReviewService:
             "blockCount": 0,
             "coverage": {"inScopeBlockCount": 0, "contextBlockCount": 0},
         }
+        self._enforce_complexity(self._format_metrics([], record["sourceCoverage"]), 0)
         path = self._snapshot_dir(snapshot_id)
         self._ensure_staging_root()
         try:
@@ -347,13 +354,18 @@ class DeterministicFormatReviewService:
                     status_code=409,
                 )
         total_characters = int(record.get("reviewCharacterCount", 0)) + metrics["characterCount"]
-        if total_characters > 120000:
+        all_blocks = [
+            block
+            for existing_batch in batches
+            for block in existing_batch.get("blocks", [])
+        ] + blocks
+        all_metrics = self._format_metrics(all_blocks, record.get("sourceCoverage"))
+        try:
+            capacity = self.classify_capacity(all_metrics["characterCount"], raise_error=True)
+            self._enforce_complexity(all_metrics, int(record.get("snapshotBytes", 0) or 0))
+        except AdapterError:
             self._remove_snapshot(snapshot_id)
-            raise AdapterError(
-                "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE",
-                "格式审查最多支持 120,000 个审查字符，未保留部分快照。",
-                status_code=413,
-            )
+            raise
         batch = {
             "sequence": sequence,
             "batchId": batch_id,
@@ -387,6 +399,7 @@ class DeterministicFormatReviewService:
         record["reviewCharacterCount"] = total_characters
         record["blockCount"] = int(record.get("blockCount", 0)) + len(blocks)
         record["coverage"] = self._merge_coverage(record.get("coverage"), metrics["coverage"])
+        record["capacityTier"] = capacity["tier"]
         record["snapshotBytes"] = snapshot_bytes
         record["expiresAt"] = self._wall_clock() + SNAPSHOT_TTL_SECONDS
         self._persist_snapshot_record(snapshot_id, record, batch)
@@ -417,7 +430,7 @@ class DeterministicFormatReviewService:
             )
         self._verify_token(record, payload.get("uploadToken"))
         blocks = [block for batch in record.get("batches", []) for block in batch.get("blocks", [])]
-        metrics = self._format_metrics(blocks)
+        metrics = self._format_metrics(blocks, record.get("sourceCoverage"))
         if metrics["coverage"]["inScopeBlockCount"] == 0:
             self._remove_snapshot(snapshot_id)
             raise AdapterError(
@@ -433,13 +446,21 @@ class DeterministicFormatReviewService:
             "structureSha256": metrics["structureSha256"],
             "formatSha256": metrics["formatSha256"],
         }
-        if any(payload.get(key) != value for key, value in expected.items()):
+        if any(payload.get(key) != value for key, value in expected.items()) or (
+            "coverage" in payload and payload.get("coverage") != metrics["coverage"]
+        ):
             self._remove_snapshot(snapshot_id)
             raise AdapterError(
                 "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH",
                 "格式审查快照首遍指标不一致，已清理暂存数据，请停止编辑后重试。",
                 status_code=409,
             )
+        try:
+            capacity = self.classify_capacity(metrics["characterCount"], raise_error=True)
+            self._enforce_complexity(metrics, int(record.get("snapshotBytes", 0) or 0))
+        except AdapterError:
+            self._remove_snapshot(snapshot_id)
+            raise
         verification = payload.get("verification")
         if not isinstance(verification, dict) or any(
             verification.get(key) != value for key, value in expected.items()
@@ -482,6 +503,8 @@ class DeterministicFormatReviewService:
             "structureSha256": metrics["structureSha256"],
             "formatSha256": metrics["formatSha256"],
             "verificationStatus": "verified",
+            "capacityTier": capacity["tier"],
+            "complexity": deepcopy(metrics["complexity"]),
         }
 
     def start_job(self, payload: dict, trace_id: str) -> Dict:
@@ -532,6 +555,8 @@ class DeterministicFormatReviewService:
                 "contentSha256": record.get("contentSha256", ""),
                 "structureSha256": record.get("structureSha256", ""),
                 "formatSha256": record.get("formatSha256", ""),
+                "reviewCharacterCount": record.get("reviewCharacterCount", 0),
+                "sourceCoverage": deepcopy(record.get("sourceCoverage", {})),
             },
             failure_code="DETERMINISTIC_FORMAT_REVIEW_JOB_FAILED",
             failure_message="确定性格式审查后台任务执行失败，请稍后重试。",
@@ -577,16 +602,30 @@ class DeterministicFormatReviewService:
             result = self.reviewer.review(request, trace_id="")
             issues = result.get("issues", [])
             summary = result.setdefault("summary", {})
+            structure = request.content.document_structure or {}
+            coverage = structure.get("coverage", {}) or {}
+            header_footer = coverage.get("headerFooter", {})
+            coverage_status = "partial" if (
+                coverage.get("formatDataStatus") == "insufficient"
+                or int(coverage.get("unsupportedObjectCount", 0) or 0) > 0
+                or any(
+                    isinstance(item, dict) and item.get("status") == "unavailable"
+                    for item in header_footer.values()
+                )
+            ) else "complete"
             summary.update(
                 {
                     "executionStatus": "completed",
-                    "complianceStatus": "violations_found" if issues else "passed",
-                    "coverageStatus": "complete",
+                    "complianceStatus": (
+                        "not_assessable"
+                        if coverage_status != "complete"
+                        else ("violations_found" if issues else "passed")
+                    ),
+                    "coverageStatus": coverage_status,
                     "semanticStatus": "not_needed",
                     "readOnly": True,
                 }
             )
-            structure = request.content.document_structure or {}
             if structure.get("formatSnapshotSchemaVersion") == FORMAT_SNAPSHOT_SCHEMA_VERSION:
                 summary.update(
                     {
@@ -595,7 +634,16 @@ class DeterministicFormatReviewService:
                         "snapshotStructureSha256": snapshot.get("structureSha256", ""),
                         "snapshotFormatSha256": snapshot.get("formatSha256", ""),
                         "scope": snapshot.get("selectionMode", "document"),
-                        "coverage": deepcopy(structure.get("coverage", {})),
+                        "coverage": deepcopy(coverage),
+                        "capacityTier": self.classify_capacity(
+                            snapshot.get("reviewCharacterCount", 0)
+                        )["tier"],
+                        "complexity": deepcopy(
+                            self._format_metrics(
+                                structure.get("formatBlocks", []),
+                                snapshot.get("sourceCoverage"),
+                            )["complexity"]
+                        ),
                     }
                 )
             return result
@@ -828,6 +876,10 @@ class DeterministicFormatReviewService:
             for key in ("headingLevel", "listLabel", "tableId", "tableIndex", "captionFor"):
                 if key in item:
                     normalized_item[key] = item[key]
+            if "unsupportedObjects" in item:
+                normalized_item["unsupportedObjects"] = cls._normalize_source_coverage({
+                    "unsupportedObjects": item.get("unsupportedObjects")
+                }).get("unsupportedObjects", [])
             if block_type == "table":
                 normalized_item["rows"] = cls._normalize_table_rows(item.get("rows", []))
                 normalized_item["nestedTables"] = item.get("nestedTables", []) if isinstance(item.get("nestedTables", []), list) else []
@@ -841,14 +893,114 @@ class DeterministicFormatReviewService:
             return {}
         allowed = {
             "styleName", "fontName", "fontSize", "bold", "italic", "underline",
-            "alignment", "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter",
-            "leftIndent", "rightIndent", "segments", "dataStatus"
+            "strikeThrough", "superscript", "subscript", "allCaps", "smallCaps",
+            "color", "highlight", "characterSpacing", "characterScale", "alignment",
+            "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent",
+            "rightIndent", "segments", "dataStatus"
         }
-        return {
+        normalized = {
             key: deepcopy(value[key])
             for key in allowed
             if key in value
         }
+        if "segments" in normalized:
+            normalized["segments"] = DeterministicFormatReviewService._normalize_format_segments(
+                normalized["segments"]
+            )
+        if "dataStatus" in normalized and normalized["dataStatus"] not in {
+            "verified", "insufficient", "context_only"
+        }:
+            normalized["dataStatus"] = "insufficient"
+        if normalized.get("dataStatus") == "insufficient" and value.get("insufficientReason"):
+            normalized["insufficientReason"] = str(value["insufficientReason"])[:120]
+        return normalized
+
+    @staticmethod
+    def _normalize_format_segments(value: object) -> List[Dict]:
+        if not isinstance(value, list) or len(value) > MAX_FORMAT_SEGMENTS:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_TOO_COMPLEX",
+                "格式区段数量超过安全上限。",
+                status_code=413,
+            )
+        segments = []
+        previous_end = 0
+        for segment in value:
+            if not isinstance(segment, dict):
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
+                    "格式区段格式无效。",
+                )
+            start = segment.get("start")
+            end = segment.get("end")
+            if (
+                type(start) is not int or type(end) is not int
+                or start < 0 or end <= start or start < previous_end
+            ):
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
+                    "格式区段范围无效或未按顺序排列。",
+                )
+            segments.append({
+                "start": start,
+                "end": end,
+                "format": DeterministicFormatReviewService._normalize_format_facts(
+                    segment.get("format", {})
+                ),
+            })
+            previous_end = end
+        return segments
+
+    @classmethod
+    def _normalize_source_coverage(cls, value: object) -> Dict:
+        if value in (None, {}):
+            return {}
+        if not isinstance(value, dict):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                "格式审查覆盖统计格式无效。",
+            )
+        result = {}
+        header_footer = value.get("headerFooter")
+        if header_footer is not None:
+            if not isinstance(header_footer, dict):
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                    "页眉页脚覆盖统计格式无效。",
+                )
+            result["headerFooter"] = {
+                area: deepcopy(header_footer[area])
+                for area in ("header", "footer")
+                if isinstance(header_footer.get(area), dict)
+            }
+        objects = value.get("unsupportedObjects", [])
+        if not isinstance(objects, list) or len(objects) > 64:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                "不支持对象统计格式无效。",
+            )
+        normalized_objects = []
+        for item in objects:
+            if not isinstance(item, dict):
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                    "不支持对象统计格式无效。",
+                )
+            count = item.get("count", 0)
+            if type(count) is not int or count < 0:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                    "不支持对象数量必须是非负整数。",
+                )
+            normalized_objects.append({
+                "type": str(item.get("type") or "unknown")[:64],
+                "count": count,
+                "status": str(item.get("status") or "not_supported")[:32],
+                **({"reason": str(item["reason"])[:120]} if item.get("reason") else {}),
+            })
+        if normalized_objects:
+            result["unsupportedObjects"] = normalized_objects
+        return result
 
     @classmethod
     def _normalize_table_rows(cls, value: object) -> List[Dict]:
@@ -886,9 +1038,76 @@ class DeterministicFormatReviewService:
         return rows
 
     @classmethod
-    def _format_metrics(cls, blocks: List[Dict]) -> Dict:
+    def classify_capacity(cls, review_character_count: object, raise_error: bool = False) -> Dict:
+        if type(review_character_count) is not int or review_character_count < 0:
+            error = AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE",
+                "格式审查字符数必须是非负整数。",
+                status_code=413,
+            )
+            if raise_error:
+                raise error
+            return {"tier": "rejected", "accepted": False, "requiresConfirmation": False}
+        if review_character_count > MAX_FORMAT_LARGE_CHARACTERS:
+            error = AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE",
+                "格式审查超过 120,000 个审查字符，未保留部分快照。",
+                status_code=413,
+            )
+            if raise_error:
+                raise error
+            return {"tier": "rejected", "accepted": False, "requiresConfirmation": False}
+        return {
+            "tier": "standard" if review_character_count <= MAX_FORMAT_STANDARD_CHARACTERS else "large",
+            "accepted": True,
+            "requiresConfirmation": False,
+        }
+
+    @classmethod
+    def _format_metrics(cls, blocks: List[Dict], source_coverage: Optional[Dict] = None) -> Dict:
         in_scope = [block for block in blocks if block.get("scope") == "in_scope"]
         text_values = [block.get("text", "") for block in in_scope]
+        format_segment_count = 0
+        table_cell_count = 0
+        insufficient_blocks = 0
+        unsupported_objects = []
+
+        def count_table(table: Dict) -> None:
+            nonlocal table_cell_count, format_segment_count, insufficient_blocks
+            for row in table.get("rows", []) if isinstance(table.get("rows", []), list) else []:
+                for cell in row.get("cells", []) if isinstance(row, dict) and isinstance(row.get("cells", []), list) else []:
+                    table_cell_count += 1
+                    cell_format = cell.get("format", {}) if isinstance(cell, dict) else {}
+                    segments = cell_format.get("segments", []) if isinstance(cell_format, dict) else []
+                    format_segment_count += len(segments) if isinstance(segments, list) else 0
+                    if isinstance(cell_format, dict) and cell_format.get("dataStatus") == "insufficient":
+                        insufficient_blocks += 1
+            for nested in table.get("nestedTables", []) if isinstance(table.get("nestedTables", []), list) else []:
+                if isinstance(nested, dict):
+                    count_table(nested)
+
+        for block in blocks:
+            facts = block.get("format", {}) if isinstance(block.get("format", {}), dict) else {}
+            segments = facts.get("segments", [])
+            format_segment_count += len(segments) if isinstance(segments, list) else 0
+            if facts.get("dataStatus") == "insufficient":
+                insufficient_blocks += 1
+            if block.get("blockType") == "table":
+                table_cell_count += 0
+                count_table(block)
+            for item in block.get("unsupportedObjects", []) if isinstance(block.get("unsupportedObjects", []), list) else []:
+                if isinstance(item, dict):
+                    unsupported_objects.append(deepcopy(item))
+
+        source_coverage = source_coverage if isinstance(source_coverage, dict) else {}
+        for item in source_coverage.get("unsupportedObjects", []) if isinstance(source_coverage.get("unsupportedObjects", []), list) else []:
+            if isinstance(item, dict):
+                unsupported_objects.append(deepcopy(item))
+        unsupported_object_count = sum(int(item.get("count", 0) or 0) for item in unsupported_objects)
+        unsupported_by_type = {}
+        for item in unsupported_objects:
+            object_type = str(item.get("type") or "unknown")
+            unsupported_by_type[object_type] = unsupported_by_type.get(object_type, 0) + int(item.get("count", 0) or 0)
         structure = [
             {
                 "blockId": block["blockId"],
@@ -921,27 +1140,80 @@ class DeterministicFormatReviewService:
             }
             for block in blocks
         ]
-        return {
-            "characterCount": sum(
+        character_count = sum(
                 len(value.encode("utf-16-le")) // 2 for value in text_values
-            ),
-            "contentSha256": hashlib.sha256("\n".join(text_values).encode("utf-8")).hexdigest(),
-            "structureSha256": hashlib.sha256(json.dumps(structure, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
-            "formatSha256": hashlib.sha256(json.dumps(formats, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
-            "coverage": {
+            )
+        capacity = cls.classify_capacity(character_count)
+        coverage = {
                 "inScopeBlockCount": len(in_scope),
                 "contextBlockCount": len(blocks) - len(in_scope),
                 "paragraphCount": sum(1 for block in in_scope if block["blockType"] in {"paragraph", "heading", "listItem"}),
                 "tableCount": sum(1 for block in in_scope if block["blockType"] == "table"),
                 "captionCount": sum(1 for block in in_scope if block["blockType"] == "caption"),
+                "tableCellCount": table_cell_count,
+                "formatSegmentCount": format_segment_count,
+                "formatDataStatus": "insufficient" if insufficient_blocks else "verified",
+                "formatDataInsufficientBlockCount": insufficient_blocks,
+                "unsupportedObjectCount": unsupported_object_count,
+                "unsupportedObjectsByType": unsupported_by_type,
+            }
+        if isinstance(source_coverage.get("headerFooter"), dict):
+            coverage["headerFooter"] = deepcopy(source_coverage["headerFooter"])
+        if unsupported_objects:
+            coverage["unsupportedObjects"] = unsupported_objects
+        return {
+            "characterCount": character_count,
+            "contentSha256": hashlib.sha256("\n".join(text_values).encode("utf-8")).hexdigest(),
+            "structureSha256": hashlib.sha256(json.dumps(structure, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
+            "formatSha256": hashlib.sha256(json.dumps(formats, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest(),
+            "coverage": coverage,
+            "capacityTier": capacity["tier"],
+            "complexity": {
+                "blockCount": len(blocks),
+                "tableCellCount": table_cell_count,
+                "formatSegmentCount": format_segment_count,
+                "unsupportedObjectCount": unsupported_object_count,
             },
         }
 
     @staticmethod
+    def _enforce_complexity(metrics: Dict, snapshot_bytes: int) -> None:
+        limits = {
+            "blockCount": MAX_FORMAT_BLOCKS,
+            "tableCellCount": MAX_FORMAT_TABLE_CELLS,
+            "formatSegmentCount": MAX_FORMAT_SEGMENTS,
+            "unsupportedObjectCount": MAX_FORMAT_UNSUPPORTED_OBJECTS,
+        }
+        for dimension, limit in limits.items():
+            actual = int(metrics.get("complexity", {}).get(dimension, 0) or 0)
+            if actual > limit:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_TOO_COMPLEX",
+                    "格式审查{0}超过安全上限（实际 {1}，上限 {2}）。".format(dimension, actual, limit),
+                    status_code=413,
+                )
+        if snapshot_bytes > MAX_FORMAT_SNAPSHOT_BYTES:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_TOO_COMPLEX",
+                "格式审查累计快照字节数超过安全上限（实际 {0}，上限 {1}）。".format(
+                    snapshot_bytes, MAX_FORMAT_SNAPSHOT_BYTES
+                ),
+                status_code=413,
+            )
+
+    @staticmethod
     def _merge_coverage(current: object, increment: Dict) -> Dict:
         result = dict(current) if isinstance(current, dict) else {}
+        additive = {
+            "inScopeBlockCount", "contextBlockCount", "paragraphCount", "tableCount",
+            "captionCount", "tableCellCount", "formatSegmentCount",
+            "formatDataInsufficientBlockCount", "unsupportedObjectCount",
+        }
         for key, value in increment.items():
-            result[key] = int(result.get(key, 0) or 0) + int(value or 0)
+            if key in additive:
+                result[key] = int(result.get(key, 0) or 0) + int(value or 0)
+            else:
+                result[key] = deepcopy(value)
         return result
 
     @classmethod
@@ -953,6 +1225,7 @@ class DeterministicFormatReviewService:
             "reviewCharacterCount": record.get("reviewCharacterCount", 0),
             "blockCount": record.get("blockCount", 0),
             "coverage": deepcopy(record.get("coverage", {})),
+            "capacityTier": record.get("capacityTier", "standard"),
             "structureSha256": batch.get("structureSha256", ""),
             "formatSha256": batch.get("formatSha256", ""),
             "idempotent": idempotent,

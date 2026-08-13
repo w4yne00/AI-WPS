@@ -86,3 +86,67 @@ const captionBody = helpers.buildDeterministicFormatReviewBody({
 });
 assert.strictEqual(captionBody.blocks[0].blockType, "caption");
 assert.strictEqual(captionBody.coverage.captionCount, 1);
+
+assert.deepStrictEqual(helpers.getDeterministicFormatReviewCapacity(60000), {
+  tier: "standard",
+  accepted: true,
+  requiresConfirmation: false
+});
+assert.strictEqual(helpers.getDeterministicFormatReviewCapacity(60001).tier, "large");
+assert.strictEqual(helpers.getDeterministicFormatReviewCapacity(120000).accepted, true);
+assert.strictEqual(helpers.getDeterministicFormatReviewCapacity(120001).accepted, false);
+
+const mixedRange = {
+  Text: "甲乙丙丁",
+  Font: { Name: "混合", Size: 9999999, Bold: 9999999 },
+  Characters(start, end) {
+    const formats = [
+      { Name: "宋体", Size: 12, Bold: false },
+      { Name: "宋体", Size: 12, Bold: false },
+      { Name: "黑体", Size: 12, Bold: true },
+      { Name: "黑体", Size: 14, Bold: true }
+    ];
+    const first = start - 1;
+    const last = end || start;
+    const selected = formats.slice(first, last);
+    const same = selected.every((item) => JSON.stringify(item) === JSON.stringify(selected[0]));
+    return {
+      Text: this.Text.slice(first, last),
+      Font: same ? selected[0] : { Name: "mixed", Size: 9999999, Bold: 9999999 }
+    };
+  }
+};
+const mixedSegments = helpers.extractHomogeneousFormatSegments(mixedRange, { maxSegments: 16 });
+assert.strictEqual(mixedSegments.dataStatus, "verified");
+assert.deepStrictEqual(mixedSegments.segments.map((item) => [item.start, item.end]), [[0, 2], [2, 3], [3, 4]]);
+assert.strictEqual(mixedSegments.segments[0].format.fontName, "宋体");
+assert.strictEqual(mixedSegments.segments[2].format.fontSize, 14);
+
+const insufficientSegments = helpers.extractHomogeneousFormatSegments(mixedRange, { maxSegments: 2 });
+assert.strictEqual(insufficientSegments.dataStatus, "insufficient");
+assert.strictEqual(insufficientSegments.insufficientReason, "format_fragmentation_limit");
+assert.strictEqual(helpers.extractHomogeneousFormatSegments({ Text: "无格式属性" }).dataStatus, "insufficient");
+
+const coveredBody = helpers.buildDeterministicFormatReviewBody({
+  selectionMode: "document",
+  content: {
+    paragraphs: [{
+      index: 1,
+      text: "混合格式正文",
+      formatSegments: mixedSegments.segments,
+      formatDataStatus: mixedSegments.dataStatus
+    }],
+    documentStructure: {}
+  }
+}, {
+  coverage: {
+    headerFooter: {
+      header: { status: "unavailable", failureCount: 1 },
+      footer: { status: "read", characterCount: 8 }
+    },
+    unsupportedObjects: [{ type: "textBox", count: 2, status: "not_supported" }]
+  }
+});
+assert.strictEqual(coveredBody.coverage.formatSegmentCount, 3);
+assert.strictEqual(coveredBody.coverage.unsupportedObjectCount, 2);
+assert.strictEqual(coveredBody.coverage.headerFooter.header.status, "unavailable");

@@ -134,6 +134,18 @@
     };
   }
 
+  function getDeterministicFormatReviewCapacity(reviewCharacterCount) {
+    var count = Number(reviewCharacterCount);
+    if (!isFinite(count) || count < 0 || Math.floor(count) !== count || count > 120000) {
+      return { tier: "rejected", accepted: false, requiresConfirmation: false };
+    }
+    return {
+      tier: count <= 60000 ? "standard" : "large",
+      accepted: true,
+      requiresConfirmation: false
+    };
+  }
+
   function reviewBlockTextValues(block) {
     var values = [];
     if (!block || block.blockType !== "table") {
@@ -514,7 +526,9 @@
         spaceAfter: paragraph.spaceAfter,
         leftIndent: paragraph.leftIndent,
         rightIndent: paragraph.rightIndent,
-        dataStatus: paragraph.dataStatus || "verified"
+        segments: Array.isArray(paragraph.formatSegments) ? paragraph.formatSegments : [],
+        dataStatus: paragraph.formatDataStatus || paragraph.dataStatus || "verified",
+        insufficientReason: paragraph.formatInsufficientReason || ""
       };
       pushBlock({
         blockId: "format-paragraph-" + index,
@@ -567,9 +581,46 @@
 
     var inScope = blocks.filter(function (block) { return block.scope === "in_scope"; });
     var sourceValues = [];
+    var formatSegmentCount = 0;
+    var tableCellCount = 0;
+    var formatDataInsufficientBlockCount = 0;
     inScope.forEach(function (block) {
       sourceValues = sourceValues.concat(formatReviewBlockTextValues(block));
+      formatSegmentCount += block.format && Array.isArray(block.format.segments)
+        ? block.format.segments.length : 0;
+      if (block.format && block.format.dataStatus === "insufficient") {
+        formatDataInsufficientBlockCount += 1;
+      }
+      if (block.blockType === "table") {
+        function countTable(table) {
+          (table.rows || []).forEach(function (row) {
+            (row.cells || []).forEach(function (cell) {
+              tableCellCount += 1;
+              formatSegmentCount += cell.format && Array.isArray(cell.format.segments)
+                ? cell.format.segments.length : 0;
+              if (cell.format && cell.format.dataStatus === "insufficient") {
+                formatDataInsufficientBlockCount += 1;
+              }
+            });
+          });
+          (table.nestedTables || []).forEach(countTable);
+        }
+        countTable(block);
+      }
     });
+    var suppliedCoverage = (options || {}).coverage || {};
+    var unsupportedObjects = Array.isArray(suppliedCoverage.unsupportedObjects)
+      ? suppliedCoverage.unsupportedObjects : [];
+    var unsupportedObjectCount = unsupportedObjects.reduce(function (total, item) {
+      return total + Math.max(0, Math.floor(Number(item && item.count) || 0));
+    }, 0);
+    var reviewCharacterCount = sourceValues.reduce(function (total, value) {
+      return total + value.length;
+    }, 0);
+    var capacity = getDeterministicFormatReviewCapacity(reviewCharacterCount);
+    if (!capacity.accepted) {
+      throw new Error("格式审查超过 120,000 个审查字符，请缩小正文或表格范围。");
+    }
     var structureProjection = blocks.map(formatReviewStructureProjection);
     var formatProjection = blocks.map(formatReviewFormatProjection);
     return {
@@ -584,7 +635,7 @@
       },
       templateId: source.options && source.options.templateId || "technical-file-format-requirements",
       blocks: blocks,
-      reviewCharacterCount: sourceValues.reduce(function (total, value) { return total + value.length; }, 0),
+      reviewCharacterCount: reviewCharacterCount,
       contentSha256: sha256Text(sourceValues.join("\n")),
       structureSha256: sha256Text(stableFormatReviewJson(structureProjection)),
       formatSha256: sha256Text(stableFormatReviewJson(formatProjection)),
@@ -595,9 +646,17 @@
           return ["paragraph", "heading", "listItem"].indexOf(block.blockType) >= 0;
         }).length,
         tableCount: inScope.filter(function (block) { return block.blockType === "table"; }).length,
-        captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length
+        captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length,
+        tableCellCount: tableCellCount,
+        formatSegmentCount: formatSegmentCount,
+        formatDataStatus: formatDataInsufficientBlockCount ? "insufficient" : "verified",
+        formatDataInsufficientBlockCount: formatDataInsufficientBlockCount,
+        unsupportedObjectCount: unsupportedObjectCount,
+        unsupportedObjects: unsupportedObjects,
+        headerFooter: suppliedCoverage.headerFooter || {}
       },
-      pageSetup: structure.page_setup || structure.pageSetup || {}
+      pageSetup: structure.page_setup || structure.pageSetup || {},
+      capacityTier: capacity.tier
     };
   }
 
@@ -1819,6 +1878,24 @@
       "以下仅显示需要调整的格式项，正文内容不会在检查中改写。",
       ""
     ];
+    var coverage = summary.coverage || {};
+    if (Object.keys(coverage).length) {
+      lines.splice(7, 0,
+        "- 容量档位：" + (summary.capacityTier || "standard"),
+        "- 格式区段：" + Number(coverage.formatSegmentCount || 0),
+        "- 表格单元格：" + Number(coverage.tableCellCount || 0),
+        "- 不支持对象：" + Number(coverage.unsupportedObjectCount || 0),
+        "- 覆盖状态：" + (summary.coverageStatus === "partial" || summary.coverageStatus === "insufficient" ? "数据不足" : "已完成")
+      );
+      if (coverage.headerFooter) {
+        ["header", "footer"].forEach(function (area) {
+          var item = coverage.headerFooter[area];
+          if (item && item.status === "unavailable") {
+            lines.push("- " + (area === "header" ? "页眉" : "页脚") + "：读取失败，已标记数据不足");
+          }
+        });
+      }
+    }
 
     if (!issues.length) {
       lines.push("当前范围未发现明显格式问题。");
@@ -2158,7 +2235,9 @@
       maxParagraphs: normalizePositiveInteger(source.maxParagraphs),
       maxParagraphTextLength: normalizePositiveInteger(source.maxParagraphTextLength),
       avoidFallbackTextRead: Boolean(source.avoidFallbackTextRead),
-      excludeTableParagraphs: Boolean(source.excludeTableParagraphs)
+      excludeTableParagraphs: Boolean(source.excludeTableParagraphs),
+      includeCharacterFormatSegments: Boolean(source.includeCharacterFormatSegments),
+      maxFormatSegments: normalizePositiveInteger(source.maxFormatSegments) || 2048
     };
   }
 
@@ -2292,6 +2371,177 @@
     );
   }
 
+  function isMixedCharacterValue(value) {
+    var resolved = resolveScalarValue(value);
+    var text = String(resolved === null || typeof resolved === "undefined" ? "" : resolved).toLowerCase();
+    return resolved === 9999999 || resolved === -9999999 ||
+      text === "wdundefined" || text === "mixed" || text === "undefined";
+  }
+
+  function readCharacterFormat(range) {
+    var font = firstDefined(safeRead(range, "Font"), safeRead(range, "font"), {});
+    var values = {
+      fontName: firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name"), safeRead(font, "name")),
+      fontSize: firstDefined(safeRead(font, "Size"), safeRead(font, "size")),
+      bold: firstDefined(safeRead(font, "Bold"), safeRead(font, "bold")),
+      italic: firstDefined(safeRead(font, "Italic"), safeRead(font, "italic")),
+      underline: firstDefined(safeRead(font, "Underline"), safeRead(font, "underline")),
+      strikeThrough: firstDefined(safeRead(font, "StrikeThrough"), safeRead(font, "strikeThrough")),
+      superscript: firstDefined(safeRead(font, "Superscript"), safeRead(font, "superscript")),
+      subscript: firstDefined(safeRead(font, "Subscript"), safeRead(font, "subscript")),
+      allCaps: firstDefined(safeRead(font, "AllCaps"), safeRead(font, "allCaps")),
+      smallCaps: firstDefined(safeRead(font, "SmallCaps"), safeRead(font, "smallCaps")),
+      color: firstDefined(safeRead(font, "Color"), safeRead(font, "ColorIndex"), safeRead(font, "color")),
+      highlight: firstDefined(safeRead(font, "Shading"), safeRead(font, "HighlightColorIndex"), safeRead(font, "highlight")),
+      characterSpacing: firstDefined(safeRead(font, "Spacing"), safeRead(font, "characterSpacing")),
+      characterScale: firstDefined(safeRead(font, "Scaling"), safeRead(font, "characterScale"))
+    };
+    var keys = Object.keys(values);
+    var readable = keys.some(function (key) {
+      return values[key] !== null && typeof values[key] !== "undefined";
+    });
+    var mixed = !readable || keys.some(function (key) {
+      return values[key] !== null && typeof values[key] !== "undefined" &&
+        isMixedCharacterValue(values[key]);
+    });
+    return {
+      mixed: mixed,
+      format: {
+        fontName: toSafeString(values.fontName, ""),
+        fontSize: normalizeFontSize(values.fontSize),
+        bold: isMixedCharacterValue(values.bold) ? null : Boolean(resolveScalarValue(values.bold)),
+        italic: isMixedCharacterValue(values.italic) ? null : Boolean(resolveScalarValue(values.italic)),
+        underline: isMixedCharacterValue(values.underline) ? null : normalizeInteger(values.underline),
+        strikeThrough: isMixedCharacterValue(values.strikeThrough) ? null : Boolean(resolveScalarValue(values.strikeThrough)),
+        superscript: isMixedCharacterValue(values.superscript) ? null : Boolean(resolveScalarValue(values.superscript)),
+        subscript: isMixedCharacterValue(values.subscript) ? null : Boolean(resolveScalarValue(values.subscript)),
+        allCaps: isMixedCharacterValue(values.allCaps) ? null : Boolean(resolveScalarValue(values.allCaps)),
+        smallCaps: isMixedCharacterValue(values.smallCaps) ? null : Boolean(resolveScalarValue(values.smallCaps)),
+        color: isMixedCharacterValue(values.color) ? null : toSafeString(values.color, ""),
+        highlight: isMixedCharacterValue(values.highlight) ? null : toSafeString(values.highlight, ""),
+        characterSpacing: isMixedCharacterValue(values.characterSpacing) ? null : normalizeNumber(values.characterSpacing),
+        characterScale: isMixedCharacterValue(values.characterScale) ? null : normalizeNumber(values.characterScale)
+      }
+    };
+  }
+
+  function callRangeMethod(range, method, args) {
+    var fn = safeRead(range, method);
+    if (typeof fn !== "function") {
+      return null;
+    }
+    try {
+      return fn.apply(range, args || []);
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function sliceCharacterRange(range, start, end) {
+    var duplicate = callRangeMethod(range, "Duplicate", []);
+    if (!duplicate) {
+      duplicate = callRangeMethod(range, "duplicate", []);
+    }
+    if (duplicate) {
+      var setRange = safeRead(duplicate, "SetRange");
+      if (typeof setRange === "function") {
+        try {
+          setRange.call(duplicate, start, end);
+          return duplicate;
+        } catch (error) {
+          // Fall through to the Characters API.
+        }
+      }
+      try {
+        duplicate.Start = start;
+        duplicate.End = end;
+        return duplicate;
+      } catch (error) {
+        // Fall through to the Characters API.
+      }
+    }
+    var characters = safeRead(range, "Characters") || safeRead(range, "characters");
+    if (typeof characters === "function") {
+      try {
+        return characters.call(range, start + 1, end);
+      } catch (error) {
+        return null;
+      }
+    }
+    return null;
+  }
+
+  function extractHomogeneousFormatSegments(range, options) {
+    var source = range || {};
+    var text = readText(source);
+    var maxSegments = Math.max(1, Number(options && options.maxSegments) || 2048);
+    var segments = [];
+    var insufficientReason = "";
+
+    function fail(reason) {
+      insufficientReason = reason;
+    }
+
+    function scan(start, end, candidate) {
+      var value;
+      var length = end - start;
+      if (insufficientReason) {
+        return;
+      }
+      if (segments.length >= maxSegments && length > 1) {
+        fail("format_fragmentation_limit");
+        return;
+      }
+      value = readCharacterFormat(candidate);
+      if (!value.mixed) {
+        if (segments.length >= maxSegments) {
+          fail("format_fragmentation_limit");
+          return;
+        }
+        segments.push({ start: start, end: end, format: value.format });
+        return;
+      }
+      if (length <= 1) {
+        fail("format_range_unreadable");
+        return;
+      }
+      var middle = start + Math.floor(length / 2);
+      var left = sliceCharacterRange(source, start, middle);
+      var right = sliceCharacterRange(source, middle, end);
+      if (!left || !right || readText(left).length !== middle - start || readText(right).length !== end - middle) {
+        fail("format_range_unreadable");
+        return;
+      }
+      scan(start, middle, left);
+      scan(middle, end, right);
+    }
+
+    if (!text) {
+      return { segments: [], dataStatus: "verified", segmentCount: 0 };
+    }
+    scan(0, text.length, source);
+    if (insufficientReason) {
+      return {
+        segments: [],
+        dataStatus: "insufficient",
+        insufficientReason: insufficientReason,
+        segmentCount: segments.length,
+        maxSegments: maxSegments
+      };
+    }
+    var merged = [];
+    segments.forEach(function (segment) {
+      var previous = merged[merged.length - 1];
+      if (previous && previous.end === segment.start &&
+          stableFormatReviewJson(previous.format) === stableFormatReviewJson(segment.format)) {
+        previous.end = segment.end;
+      } else {
+        merged.push(segment);
+      }
+    });
+    return { segments: merged, dataStatus: "verified", segmentCount: merged.length };
+  }
+
   function readCollectionCount(collection) {
     if (!collection) {
       return 0;
@@ -2357,7 +2607,7 @@
     return firstDefined(safeRead(row, "Cells"), safeRead(row, "cells"), []);
   }
 
-  function readFullDocumentReviewTable(table, tableIndex, parentCellId, tablePath) {
+  function readFullDocumentReviewTable(table, tableIndex, parentCellId, tablePath, options) {
     var rows = [];
     var rowCollection = readTableRows(table);
     var currentTablePath = Array.isArray(tablePath)
@@ -2387,10 +2637,17 @@
               tableIndex: nestedIndex,
               rowIndex: rowIndex,
               columnIndex: columnIndex
-            }])
+            }]),
+            options
           ));
         }
         nested.forEach(function (item) { nestedTables.push(item); });
+        var cellRange = resolveRange(cell);
+        var cellFormat = options && options.includeCharacterFormatSegments
+          ? extractHomogeneousFormatSegments(cellRange || cell, {
+            maxSegments: options.maxFormatSegments || 2048
+          })
+          : null;
         cells.push({
           cellId: cellId,
           rowIndex: normalizePositiveInteger(firstDefined(safeRead(cell, "RowIndex"), safeRead(cell, "rowIndex"), rowIndex)) || rowIndex,
@@ -2399,7 +2656,12 @@
           columnSpan: normalizePositiveInteger(firstDefined(safeRead(cell, "ColumnSpan"), safeRead(cell, "columnSpan"), 1)) || 1,
           mergeId: toSafeString(firstDefined(safeRead(cell, "MergeId"), safeRead(cell, "mergeId")), ""),
           text: readText(cell),
-          nestedTableIds: nested.map(function (item) { return item.tableId; })
+          nestedTableIds: nested.map(function (item) { return item.tableId; }),
+          format: cellFormat ? {
+            segments: cellFormat.segments,
+            dataStatus: cellFormat.dataStatus,
+            insufficientReason: cellFormat.insufficientReason || ""
+          } : {}
         });
       }
       if (cells.length) {
@@ -2419,7 +2681,7 @@
     };
   }
 
-  function collectFullDocumentReviewTables(document) {
+  function collectFullDocumentReviewTables(document, options) {
     var collection = getTableCollection(document);
     var tables = [];
     for (var index = 1; index <= readCollectionCount(collection); index += 1) {
@@ -2427,7 +2689,8 @@
         getCollectionItem(collection, index),
         index,
         "",
-        [{ tableIndex: index, rowIndex: 0, columnIndex: 0 }]
+        [{ tableIndex: index, rowIndex: 0, columnIndex: 0 }],
+        options
       ));
     }
     return tables;
@@ -2443,6 +2706,76 @@
         safeRead(content, "EditSequence"), safeRead(content, "editSequence")
       ), "")
     ].join(":");
+  }
+
+  function collectFormatReviewCoverage(document) {
+    var source = document || {};
+    var sections = firstDefined(safeRead(source, "Sections"), safeRead(source, "sections"));
+    var unsupportedObjects = [];
+
+    function readHeaderFooter(area) {
+      var count = 0;
+      var characterCount = 0;
+      var failureCount = 0;
+      var attempted = Boolean(sections);
+      if (!sections || !readCollectionCount(sections)) {
+        return { status: "unavailable", attempted: attempted, failureCount: 1 };
+      }
+      for (var index = 1; index <= readCollectionCount(sections); index += 1) {
+        var section = getCollectionItem(sections, index);
+        var collection = firstDefined(
+          safeRead(section, area === "header" ? "Headers" : "Footers"),
+          safeRead(section, area === "header" ? "headers" : "footers")
+        );
+        if (!collection) {
+          failureCount += 1;
+          continue;
+        }
+        for (var itemIndex = 1; itemIndex <= readCollectionCount(collection); itemIndex += 1) {
+          var item = getCollectionItem(collection, itemIndex);
+          var exists = firstDefined(safeRead(item, "Exists"), safeRead(item, "exists"));
+          if (exists === false || exists === 0) {
+            continue;
+          }
+          var text = readText(item);
+          count += 1;
+          characterCount += text.length;
+        }
+      }
+      return {
+        status: failureCount ? "unavailable" : "read",
+        attempted: attempted,
+        paragraphCount: count,
+        characterCount: characterCount,
+        failureCount: failureCount
+      };
+    }
+
+    function addObjects(type, candidates) {
+      var collection = firstDefined.apply(null, candidates.map(function (key) {
+        return safeRead(source, key);
+      }));
+      var count = readCollectionCount(collection);
+      if (count) {
+        unsupportedObjects.push({ type: type, count: count, status: "not_supported" });
+      }
+    }
+
+    var header = readHeaderFooter("header");
+    var footer = readHeaderFooter("footer");
+    addObjects("textBox", ["TextBoxes", "textBoxes", "TextBoxObjects"]);
+    addObjects("smartArt", ["SmartArt", "SmartArts", "smartArt"]);
+    addObjects("equation", ["OMaths", "Equations", "MathObjects"]);
+    addObjects("comment", ["Comments", "comments"]);
+    addObjects("revision", ["Revisions", "revisions"]);
+    addObjects("floatingShape", ["Shapes", "shapes"]);
+    return {
+      headerFooter: {
+        header: header,
+        footer: footer
+      },
+      unsupportedObjects: unsupportedObjects
+    };
   }
 
   function collectParagraphsFromText(text, options) {
@@ -2504,6 +2837,11 @@
       }
       var font = readFont(paragraph);
       var paragraphFormat = readParagraphFormat(paragraph);
+      var characterFormat = collectOptions.includeCharacterFormatSegments
+        ? extractHomogeneousFormatSegments(paragraphRange || paragraph, {
+          maxSegments: collectOptions.maxFormatSegments
+        })
+        : null;
       items.push({
         index: i,
         text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
@@ -2520,7 +2858,10 @@
         spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
         spaceAfter: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceAfter"), safeRead(paragraphFormat, "spaceAfter"), null)),
         leftIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LeftIndent"), safeRead(paragraphFormat, "leftIndent"), null)),
-        rightIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "RightIndent"), safeRead(paragraphFormat, "rightIndent"), null))
+        rightIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "RightIndent"), safeRead(paragraphFormat, "rightIndent"), null)),
+        formatSegments: characterFormat ? characterFormat.segments : [],
+        formatDataStatus: characterFormat ? characterFormat.dataStatus : "verified",
+        formatInsufficientReason: characterFormat ? characterFormat.insufficientReason || "" : ""
       });
     }
     if (items.length) {
@@ -2586,7 +2927,9 @@
       paragraphs = collectParagraphs(sources[index], {
         maxParagraphs: collectOptions.maxParagraphs,
         maxParagraphTextLength: collectOptions.maxParagraphTextLength,
-        avoidFallbackTextRead: true
+        avoidFallbackTextRead: true,
+        includeCharacterFormatSegments: collectOptions.includeCharacterFormatSegments,
+        maxFormatSegments: collectOptions.maxFormatSegments
       });
       if (paragraphs.length) {
         return paragraphs;
@@ -3406,6 +3749,7 @@
     normalizeText: normalizeText,
     sha256Text: sha256Text,
     getFullDocumentReviewCapacity: getFullDocumentReviewCapacity,
+    getDeterministicFormatReviewCapacity: getDeterministicFormatReviewCapacity,
     buildFullDocumentReviewBody: buildFullDocumentReviewBody,
     buildFullDocumentReviewBatches: buildFullDocumentReviewBatches,
     buildDeterministicFormatReviewBody: buildDeterministicFormatReviewBody,
@@ -3429,6 +3773,8 @@
     getParagraphCollection: getParagraphCollection,
     collectFullDocumentReviewParagraphs: collectFullDocumentReviewParagraphs,
     collectFullDocumentReviewTables: collectFullDocumentReviewTables,
+    collectFormatReviewCoverage: collectFormatReviewCoverage,
+    extractHomogeneousFormatSegments: extractHomogeneousFormatSegments,
     readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
     collectParagraphs: collectParagraphs,
     collectParagraphsFromSelectionSources: collectParagraphsFromSelectionSources,

@@ -48,7 +48,9 @@
     preferSelectionTextParagraphs: false,
     preferSelectionRangeParagraphs: true,
     avoidFullTextRead: true,
-    avoidFallbackTextRead: true
+    avoidFallbackTextRead: true,
+    includeCharacterFormatSegments: true,
+    maxFormatSegments: 2048
   };
   var DOCUMENT_REVIEW_EXTRACTION_OPTIONS = {
     maxParagraphs: 80,
@@ -6839,14 +6841,18 @@
       if (scope.selectionMode === "selection") {
         var selectionSources = getSelectionSources(document);
         for (var sourceIndex = 0; sourceIndex < selectionSources.length; sourceIndex += 1) {
-          var selectedTables = helpers.collectFullDocumentReviewTables(selectionSources[sourceIndex]);
+          var selectedTables = helpers.collectFullDocumentReviewTables(
+            selectionSources[sourceIndex], DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS
+          );
           if (selectedTables.length) {
             tables = selectedTables;
             break;
           }
         }
       } else {
-        tables = helpers.collectFullDocumentReviewTables(document);
+        tables = helpers.collectFullDocumentReviewTables(
+          document, DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS
+        );
       }
     }
     payload.content.documentStructure = payload.content.documentStructure || {};
@@ -6906,6 +6912,8 @@
       contextBlocks: contextBlocks,
       documentIdentity: documentIdentity,
       editSequence: editSequence,
+      coverage: helpers.collectFormatReviewCoverage
+        ? helpers.collectFormatReviewCoverage(document) : {},
       scope: {
         mode: scope.selectionMode,
         expandedToSemanticUnits: scope.selectionMode === "selection",
@@ -7003,7 +7011,8 @@
         editSequence: firstPass.editSequence,
         templateId: firstPass.templateId,
         pageSetup: firstPass.pageSetup,
-        scope: firstPass.scope
+        scope: firstPass.scope,
+        coverage: firstPass.coverage
       }, {
         timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
       }).then(function (snapshotBody) {
@@ -7031,6 +7040,7 @@
             firstPass.formatSha256 !== secondPass.formatSha256 ||
             firstPass.reviewCharacterCount !== secondPass.reviewCharacterCount ||
             firstPass.blocks.length !== secondPass.blocks.length ||
+            JSON.stringify(firstPass.coverage) !== JSON.stringify(secondPass.coverage) ||
             firstPass.batches.length !== secondPass.batches.length ||
             firstPass.editSequence !== secondPass.editSequence ||
             JSON.stringify(firstPass.documentIdentity) !== JSON.stringify(secondPass.documentIdentity)) {
