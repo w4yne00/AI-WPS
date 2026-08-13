@@ -324,7 +324,7 @@ class StrictFullReviewProvider:
 
 
 class SaturatingFullReviewProvider(StrictFullReviewProvider):
-    def __init__(self, always_saturated=False, saturate_calls=0):
+    def __init__(self, always_saturated=False, saturate_calls=1):
         super().__init__()
         self.always_saturated = always_saturated
         self.saturate_calls = saturate_calls
@@ -987,9 +987,9 @@ class FullDocumentReviewApiTests(unittest.TestCase):
             service = self._service(Path(tmp), provider)
             parse_result = service._parse_strict_result
 
-            def cancel_while_parsing(answer, snapshot):
+            def cancel_while_parsing(answer, snapshot, chunk=None):
                 try:
-                    return parse_result(answer, snapshot)
+                    return parse_result(answer, snapshot, chunk)
                 except AdapterError:
                     service.cancel_job(snapshot["jobId"])
                     raise

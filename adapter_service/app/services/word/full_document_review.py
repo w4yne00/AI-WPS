@@ -744,6 +744,9 @@ class FullDocumentReviewService:
         session_id = "full-review-{0}".format(secrets.token_hex(16))
         upload_token = secrets.token_urlsafe(32)
         now = self._wall_clock()
+        excluded_regions = list(_EXCLUDED_REGIONS)
+        if "tables" not in included_regions:
+            excluded_regions.append("tables")
         session = {
             "sessionId": session_id,
             "snapshotId": session_id,
@@ -754,7 +757,7 @@ class FullDocumentReviewService:
             "writingPolicyScene": writing_policy_scene,
             "coverage": {
                 "includedRegions": included_regions,
-                "excludedRegions": list(_EXCLUDED_REGIONS),
+                "excludedRegions": excluded_regions,
             },
             "uploadTokenSha256": _sha256_text(upload_token),
             "createdAt": now,
@@ -2132,11 +2135,11 @@ class FullDocumentReviewService:
         return [
             {
                 "chunkId": _derived_id(chunk["chunkId"], "split", index),
-                "blocks": deepcopy(blocks),
-                "sourceText": "\n".join(cls._block_texts(blocks)),
+                "blocks": deepcopy(chunk_blocks),
+                "sourceText": "\n".join(cls._block_texts(chunk_blocks)),
                 "_splitLevel": split_level + 1,
             }
-            for index, blocks in enumerate(chunks, 1)
+            for index, chunk_blocks in enumerate(chunks, 1)
         ]
 
     @staticmethod
