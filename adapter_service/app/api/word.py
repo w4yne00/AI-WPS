@@ -13,6 +13,9 @@ from app.core.errors import AdapterError
 from app.core.tracing import new_trace_id
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
+from app.services.word.deterministic_format_review import (
+    deterministic_format_review_service,
+)
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.smart_imitator import WordSmartImitator
@@ -444,5 +447,53 @@ def format_review_word(request: WordDocumentRequest) -> dict:
         "taskType": "word.format_review",
         "message": "completed",
         "data": payload.dict(by_alias=True),
+        "errors": [],
+    }
+
+
+@router.post("/word/format-review/snapshots")
+def create_deterministic_format_review_snapshot(request: WordDocumentRequest) -> dict:
+    data = deterministic_format_review_service.create_snapshot(request)
+    return _deterministic_format_review_envelope(data, message="created")
+
+
+@router.post("/word/format-review/jobs")
+def start_deterministic_format_review_job(request: dict) -> dict:
+    trace_id = new_trace_id("word-deterministic-format-review")
+    data = deterministic_format_review_service.start_job(request, trace_id)
+    return _deterministic_format_review_envelope(
+        data, trace_id=trace_id, message="accepted"
+    )
+
+
+@router.get("/word/format-review/jobs/{job_id}")
+def get_deterministic_format_review_job(job_id: str) -> dict:
+    data = deterministic_format_review_service.get_job(job_id)
+    if data is None:
+        raise AdapterError(
+            "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND",
+            "确定性格式审查后台任务不存在或已过期。",
+            status_code=404,
+        )
+    return _deterministic_format_review_envelope(
+        data, trace_id=data.get("traceId", job_id), message=data["status"]
+    )
+
+
+@router.delete("/word/format-review/snapshots/{snapshot_id}")
+def delete_deterministic_format_review_snapshot(snapshot_id: str, request: dict) -> dict:
+    data = deterministic_format_review_service.delete_snapshot(snapshot_id, request)
+    return _deterministic_format_review_envelope(data, message="deleted")
+
+
+def _deterministic_format_review_envelope(
+    data: dict, trace_id: str = "", message: str = "completed"
+) -> dict:
+    return {
+        "success": True,
+        "traceId": trace_id or str(data.get("jobId", data.get("snapshotId", ""))),
+        "taskType": "word.format_review.deterministic",
+        "message": message,
+        "data": data,
         "errors": [],
     }

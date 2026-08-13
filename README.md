@@ -386,6 +386,10 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `PATCH` | `/word/document-review/full/jobs/{jobId}/issues/{issueId}` | Update one stable issue instance: `status` (`open`/`processed`/`ignored`) and/or `anchorVerification` (`verified`/`unverified`), without sharing state with its duplicate group |
 | `GET` | `/word/document-review/full/jobs/{jobId}/report?format=json|markdown` | Export a versioned, sanitized JSON or Markdown report without the full snapshot, model response, credentials, or local staging paths |
 | `POST` | `/word/format-review` | Read-only format compliance review against the standard template |
+| `POST` | `/word/format-review/snapshots` | Feature-gated small read-only deterministic format snapshot |
+| `POST` | `/word/format-review/jobs` | Feature-gated deterministic format review background job |
+| `GET` | `/word/format-review/jobs/{jobId}` | Poll the deterministic format review job and structured result |
+| `DELETE` | `/word/format-review/snapshots/{snapshotId}` | Feature-gated cleanup for an unsubmitted deterministic format snapshot |
 | `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
 | `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |
 | `GET` | `/excel/analysis/jobs/{jobId}` | Poll a background “智能分析” job |

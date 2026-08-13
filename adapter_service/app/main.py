@@ -424,6 +424,10 @@ def _task_type_from_path(path: str) -> str:
         return "writing_policy"
     if path.startswith("/word/document-review/full/"):
         return "word.document_review.full"
+    if path.startswith("/word/format-review/jobs/"):
+        return "word.format_review.deterministic"
+    if path.startswith("/word/format-review/snapshots/"):
+        return "word.format_review.deterministic"
     if path.startswith("/word/document-review/jobs/"):
         return "word.document_review"
     if path.startswith("/word/smart-write/jobs/"):
@@ -444,6 +448,8 @@ def _task_type_from_path(path: str) -> str:
         "/word/document-review": "word.document_review",
         "/word/document-review/jobs": "word.document_review",
         "/word/format-review": "word.format_review",
+        "/word/format-review/snapshots": "word.format_review.deterministic",
+        "/word/format-review/jobs": "word.format_review.deterministic",
         "/excel/analysis": "excel.analysis",
         "/excel/analysis/jobs": "excel.analysis",
         "/excel/formula-assistant/jobs": "excel.formula_assistant",

@@ -60,19 +60,20 @@ class WordFormatReviewer:
             else:
                 provider = "工作流平台"
         issues = self._build_issues(request, template, ai_roles)
+        summary = {
+            "scope": request.selection_mode,
+            "templateId": template["id"],
+            "provider": provider,
+            "paragraphCount": len(paragraphs),
+            "issueCount": len(issues),
+            "aiClassifiedParagraphCount": len(ai_roles),
+            "localFallbackParagraphCount": max(len(paragraphs) - len(ai_roles), 0),
+            "aiBatchCount": ai_batch_count,
+            **ai_diagnostics,
+        }
         return {
             "issues": [self._dump_issue(issue) for issue in issues],
-            "summary": {
-                "scope": request.selection_mode,
-                "templateId": template["id"],
-                "provider": provider,
-                "paragraphCount": len(paragraphs),
-                "issueCount": len(issues),
-                "aiClassifiedParagraphCount": len(ai_roles),
-                "localFallbackParagraphCount": max(len(paragraphs) - len(ai_roles), 0),
-                "aiBatchCount": ai_batch_count,
-                **ai_diagnostics,
-            },
+            "summary": summary,
         }
 
     def _dump_issue(self, issue: FormatReviewIssue) -> Dict:

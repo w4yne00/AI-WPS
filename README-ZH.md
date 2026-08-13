@@ -383,6 +383,10 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/word/document-review/jobs` | 启动后台文档审查任务，适配模型后台慢响应 |
 | `GET` | `/word/document-review/jobs/{jobId}` | 轮询后台文档审查任务状态，直到完成或失败 |
 | `POST` | `/word/format-review` | 格式审查，按标准模板输出格式合规检查意见 |
+| `POST` | `/word/format-review/snapshots` | （开关控制）创建小型只读确定性格式审查快照 |
+| `POST` | `/word/format-review/jobs` | （开关控制）提交确定性格式审查后台任务 |
+| `GET` | `/word/format-review/jobs/{jobId}` | （开关控制）轮询确定性格式审查任务状态和结构化结果 |
+| `DELETE` | `/word/format-review/snapshots/{snapshotId}` | （开关控制）删除未提交的确定性格式审查快照 |
 | `POST` | `/excel/analysis` | 智能分析，只读分析选区或当前工作表已用范围 |
 | `POST` | `/excel/analysis/jobs` | 提交可恢复的智能分析后台任务 |
 | `GET` | `/excel/analysis/jobs/{jobId}` | 查询智能分析后台任务状态 |

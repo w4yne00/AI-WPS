@@ -1,7 +1,10 @@
 from fastapi import APIRouter
 
 from app.core.config import load_settings
-from app.core.features import full_document_review_enabled
+from app.core.features import (
+    deterministic_format_review_enabled,
+    full_document_review_enabled,
+)
 from app.services.provider_client import ProviderClient
 
 router = APIRouter()
@@ -31,6 +34,7 @@ def get_config() -> dict:
             "timeoutSeconds": settings.timeout_seconds,
             "features": {
                 "fullDocumentReviewEnabled": full_document_review_enabled(),
+                "deterministicFormatReviewEnabled": deterministic_format_review_enabled(),
             },
         },
     }

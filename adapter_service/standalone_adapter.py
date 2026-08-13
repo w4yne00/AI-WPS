@@ -15,7 +15,10 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from app.core.config import load_settings, save_provider_base_url
 from app.core.errors import AdapterError
-from app.core.features import full_document_review_enabled
+from app.core.features import (
+    deterministic_format_review_enabled,
+    full_document_review_enabled,
+)
 from app.core.models import (
     DocumentReviewResponseData,
     ExcelAnalysisRequest,
@@ -70,6 +73,9 @@ from app.services.ppt.structure_review import PptStructureReviewer
 from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
+from app.services.word.deterministic_format_review import (
+    deterministic_format_review_service,
+)
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
@@ -161,6 +167,7 @@ _WRITING_POLICY_STATIC_ROUTE_METHODS = {
 }
 DOCUMENT_REVIEW_JOB_STORE = DocumentReviewJobStore()
 FULL_DOCUMENT_REVIEW_SERVICE = full_document_review_service
+DETERMINISTIC_FORMAT_REVIEW_SERVICE = deterministic_format_review_service
 SMART_WRITE_JOB_STORE = SmartWriteJobStore()
 SMART_IMITATION_JOB_STORE = SmartImitationJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
@@ -1584,6 +1591,7 @@ class Handler(BaseHTTPRequestHandler):
                         "timeoutSeconds": settings.timeout_seconds,
                         "features": {
                             "fullDocumentReviewEnabled": full_document_review_enabled(),
+                            "deterministicFormatReviewEnabled": deterministic_format_review_enabled(),
                         },
                     },
                 ),
@@ -1727,6 +1735,40 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                 )
                 return
+
+        deterministic_format_job_prefix = "/word/format-review/jobs/"
+        if path.startswith(deterministic_format_job_prefix):
+            job_id = unquote(path[len(deterministic_format_job_prefix):]).strip("/")
+            try:
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.get_job(job_id)
+                if data is None:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND",
+                        "确定性格式审查后台任务不存在或已过期。",
+                        status_code=404,
+                    )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    data.get("traceId", job_id),
+                    "word.format_review.deterministic",
+                    data,
+                    message=data.get("status", ""),
+                ),
+            )
+            return
 
         full_review_job_prefix = "/word/document-review/full/jobs/"
         if path.startswith(full_review_job_prefix):
@@ -2119,6 +2161,64 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             self._write(200, envelope(trace_id, "word.document_review.full", data, message="accepted"))
+            return
+
+        if path == "/word/format-review/snapshots":
+            trace_id = new_trace_id("standalone-word-deterministic-format-review")
+            try:
+                if hasattr(WordDocumentRequest, "model_validate"):
+                    request = WordDocumentRequest.model_validate(payload)
+                else:
+                    request = WordDocumentRequest.parse_obj(payload)
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.create_snapshot(request)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "word.format_review.deterministic",
+                    data,
+                    message="created",
+                ),
+            )
+            return
+
+        if path == "/word/format-review/jobs":
+            trace_id = new_trace_id("standalone-word-deterministic-format-review")
+            try:
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.start_job(payload, trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "word.format_review.deterministic",
+                    data,
+                    message="accepted",
+                ),
+            )
             return
 
         if path == "/recovery/backups":
@@ -2991,6 +3091,57 @@ class Handler(BaseHTTPRequestHandler):
             clear_local_api_key()
             client = ProviderClient()
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="cleared"))
+            return
+
+        deterministic_snapshot_prefix = "/word/format-review/snapshots/"
+        if path.startswith(deterministic_snapshot_prefix):
+            snapshot_id = unquote(path[len(deterministic_snapshot_prefix):]).strip("/")
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(
+                    self.rfile.read(length).decode("utf-8") if length else "{}"
+                )
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.delete_snapshot(
+                    snapshot_id, payload
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        snapshot_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (UnicodeDecodeError, ValueError):
+                self._write(
+                    400,
+                    envelope(
+                        snapshot_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message="确定性格式审查删除请求格式无效。",
+                        errors=[
+                            {
+                                "code": "REQUEST_VALIDATION_FAILED",
+                                "message": "确定性格式审查删除请求格式无效。",
+                            }
+                        ],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    snapshot_id,
+                    "word.format_review.deterministic",
+                    data,
+                    message="deleted",
+                ),
+            )
             return
 
         full_snapshot_prefix = "/word/document-review/full/snapshots/"
