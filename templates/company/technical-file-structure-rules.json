@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "id": "technical-file-format-requirements",
+  "version": "2026-05-23",
+  "source": "AI-WPS 人工审定结构规则清单",
+  "confirmed": true,
+  "rules": [
+    {
+      "id": "structure.heading_hierarchy",
+      "algorithm": "heading_hierarchy",
+      "source": "ai-wps-manual",
+      "appliesTo": ["heading"],
+      "unit": "heading-sequence",
+      "tolerance": {"maxLevelJump": 1},
+      "severity": "warning",
+      "enabled": true
+    },
+    {
+      "id": "structure.list_semantics",
+      "algorithm": "list_semantics",
+      "source": "ai-wps-manual",
+      "appliesTo": ["list_item"],
+      "unit": "list-item",
+      "tolerance": {"maxLevel": 2},
+      "severity": "warning",
+      "enabled": true
+    },
+    {
+      "id": "structure.table_semantics",
+      "algorithm": "table_semantics",
+      "source": "ai-wps-manual",
+      "appliesTo": ["table"],
+      "unit": "table",
+      "tolerance": {"minimumDataRows": 1},
+      "severity": "warning",
+      "enabled": true
+    },
+    {
+      "id": "structure.caption_placement",
+      "algorithm": "caption_placement",
+      "source": "ai-wps-manual",
+      "appliesTo": ["caption", "figure", "table"],
+      "unit": "object-caption-pair",
+      "tolerance": {"maxCandidates": 1},
+      "severity": "error",
+      "enabled": true
+    },
+    {
+      "id": "structure.appendix_roles",
+      "algorithm": "appendix_roles",
+      "source": "ai-wps-manual",
+      "appliesTo": ["appendix"],
+      "unit": "paragraph",
+      "tolerance": {"maxHeadingLevel": 3},
+      "severity": "warning",
+      "enabled": true
+    },
+    {
+      "id": "structure.note_roles",
+      "algorithm": "note_roles",
+      "source": "ai-wps-manual",
+      "appliesTo": ["note"],
+      "unit": "paragraph",
+      "tolerance": {"numbering": "explicit"},
+      "severity": "warning",
+      "enabled": true
+    }
+  ]
+}

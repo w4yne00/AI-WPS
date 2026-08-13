@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "product": "AI-WPS",
+  "version": "0.25.0-format-rules-alpha",
+  "purpose": "offline-authorized-deterministic-format-rules",
+  "rulePack": "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json",
+  "algorithm": {
+    "sourceVersion": "0.12.15",
+    "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",
+    "notice": "adapter_service/vendor/wx_doc_format_algorithm/THIRD_PARTY_NOTICES.md"
+  },
+  "python": {
+    "minimum": "3.8",
+    "compatibilityGate": "packaging/check_python38_compatibility.py"
+  },
+  "runtimePolicy": {
+    "templateParsing": "build-time-only",
+    "rulePackAccess": "read-only",
+    "automaticWriteBack": false,
+    "thirdPartyTemplateDefaults": false
+  }
+}

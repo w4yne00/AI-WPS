@@ -1,0 +1,527 @@
+{
+  "algorithm": {
+    "adapterPath": "vendor/wx_doc_format_algorithm/algorithm.py",
+    "adapterSha256": "59a1dfbd9a7a98dec86c5dfb8b719ba0fefdc2871aea93b4f52982c1b20ba154",
+    "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",
+    "name": "wx-doc-format deterministic recognition",
+    "sourceManifest": "vendor/wx_doc_format_algorithm/SOURCE_MANIFEST.json",
+    "sourceManifestSha256": "2da499dd21f0a429950acfd1d26edca990cb0702391472d3f9858bc5fc1e09a8",
+    "sourceVersion": "0.12.15",
+    "writeBack": false
+  },
+  "integrity": {
+    "contentSha256": "124f36d4caf21d6fc9d48fb76290f070c46668fd8bef2a6884e5ff6c351054e9"
+  },
+  "rules": [
+    {
+      "algorithm": "heading_hierarchy",
+      "appliesTo": [
+        "heading"
+      ],
+      "enabled": true,
+      "id": "structure.heading_hierarchy",
+      "severity": "warning",
+      "source": "ai-wps-manual",
+      "tolerance": {
+        "maxLevelJump": 1
+      },
+      "unit": "heading-sequence"
+    },
+    {
+      "algorithm": "list_semantics",
+      "appliesTo": [
+        "list_item"
+      ],
+      "enabled": true,
+      "id": "structure.list_semantics",
+      "severity": "warning",
+      "source": "ai-wps-manual",
+      "tolerance": {
+        "maxLevel": 2
+      },
+      "unit": "list-item"
+    },
+    {
+      "algorithm": "table_semantics",
+      "appliesTo": [
+        "table"
+      ],
+      "enabled": true,
+      "id": "structure.table_semantics",
+      "severity": "warning",
+      "source": "ai-wps-manual",
+      "tolerance": {
+        "minimumDataRows": 1
+      },
+      "unit": "table"
+    },
+    {
+      "algorithm": "caption_placement",
+      "appliesTo": [
+        "caption",
+        "figure",
+        "table"
+      ],
+      "enabled": true,
+      "id": "structure.caption_placement",
+      "severity": "error",
+      "source": "ai-wps-manual",
+      "tolerance": {
+        "maxCandidates": 1
+      },
+      "unit": "object-caption-pair"
+    },
+    {
+      "algorithm": "appendix_roles",
+      "appliesTo": [
+        "appendix"
+      ],
+      "enabled": true,
+      "id": "structure.appendix_roles",
+      "severity": "warning",
+      "source": "ai-wps-manual",
+      "tolerance": {
+        "maxHeadingLevel": 3
+      },
+      "unit": "paragraph"
+    },
+    {
+      "algorithm": "note_roles",
+      "appliesTo": [
+        "note"
+      ],
+      "enabled": true,
+      "id": "structure.note_roles",
+      "severity": "warning",
+      "source": "ai-wps-manual",
+      "tolerance": {
+        "numbering": "explicit"
+      },
+      "unit": "paragraph"
+    }
+  ],
+  "schemaVersion": 1,
+  "template": {
+    "body": {
+      "alignment": "justify",
+      "asciiFontName": "Times New Roman",
+      "firstLineIndentTwips": 640,
+      "fontName": "宋体",
+      "fontSize": 12.0,
+      "lineRule": "auto",
+      "lineSpacing": 1.25,
+      "lineSpacingTwips": 300,
+      "role": "body",
+      "styleId": "1",
+      "styleName": "Normal"
+    },
+    "headings": {
+      "level1": {
+        "roleRef": "heading1"
+      },
+      "level2": {
+        "roleRef": "heading2"
+      },
+      "level3": {
+        "roleRef": "heading3"
+      },
+      "level4": {
+        "roleRef": "heading4"
+      }
+    },
+    "id": "technical-file-format-requirements",
+    "name": "技术文件格式及书写要求",
+    "page": {
+      "footerTwips": 992,
+      "headerTwips": 851,
+      "heightTwips": 16838,
+      "marginBottomTwips": 1440,
+      "marginLeftTwips": 1800,
+      "marginRightTwips": 1800,
+      "marginTopTwips": 1440,
+      "widthTwips": 11906
+    },
+    "roleRules": {
+      "appendix_heading1": {
+        "alignment": "justify",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 567,
+        "leftIndentTwips": 567,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 2,
+        "role": "appendix_heading1",
+        "spaceAfterTwips": 50,
+        "spaceBeforeTwips": 50,
+        "styleId": "27",
+        "styleName": "附录一级标题"
+      },
+      "appendix_heading2": {
+        "alignment": "justify",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 709,
+        "leftIndentTwips": 709,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 3,
+        "role": "appendix_heading2",
+        "styleId": "28",
+        "styleName": "附录二级标题"
+      },
+      "appendix_heading3": {
+        "alignment": "justify",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 850,
+        "leftIndentTwips": 850,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 4,
+        "role": "appendix_heading3",
+        "styleId": "29",
+        "styleName": "附录三级标题"
+      },
+      "appendix_title": {
+        "alignment": "center",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 0,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 14.0,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 2,
+        "role": "appendix_title",
+        "spaceAfterTwips": 50,
+        "spaceBeforeTwips": 50,
+        "styleId": "38",
+        "styleName": "附录标题"
+      },
+      "body": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontName": "宋体",
+        "fontSize": 12.0,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "body",
+        "styleId": "1",
+        "styleName": "Normal"
+      },
+      "caption": {
+        "alignment": "center",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 0,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "lineRule": "auto",
+        "lineSpacing": 1.0,
+        "lineSpacingTwips": 240,
+        "role": "caption",
+        "spaceAfterTwips": 50,
+        "spaceBeforeTwips": 50,
+        "styleId": "12",
+        "styleName": "caption"
+      },
+      "document_title": {
+        "alignment": "center",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 0,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 14.0,
+        "leftIndentTwips": 0,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 10,
+        "role": "document_title",
+        "styleId": "22",
+        "styleName": "文档标题"
+      },
+      "heading1": {
+        "alignment": "justify",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 432,
+        "leftIndentTwips": 432,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 1,
+        "role": "heading1",
+        "spaceAfterTwips": 50,
+        "spaceBeforeTwips": 50,
+        "styleId": "2",
+        "styleName": "heading 1"
+      },
+      "heading2": {
+        "alignment": "justify",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 575,
+        "leftIndentTwips": 575,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 2,
+        "role": "heading2",
+        "styleId": "3",
+        "styleName": "heading 2"
+      },
+      "heading3": {
+        "alignment": "justify",
+        "asciiFontName": "黑体",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 720,
+        "leftIndentTwips": 720,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 3,
+        "role": "heading3",
+        "styleId": "4",
+        "styleName": "heading 3"
+      },
+      "heading4": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "黑体",
+          "SimHei"
+        ],
+        "fontName": "黑体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 864,
+        "leftIndentTwips": 864,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "outlineLevel": 4,
+        "role": "heading4",
+        "styleId": "5",
+        "styleName": "heading 4"
+      },
+      "list1_numbered": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 12.0,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "list1_numbered",
+        "styleId": "23",
+        "styleName": "1.1一级列项-编号"
+      },
+      "list1_plain": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 497,
+        "leftIndentTwips": 998,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "list1_plain",
+        "styleId": "25",
+        "styleName": "1.2一级列项-无编号"
+      },
+      "list2_numbered": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 425,
+        "leftIndentTwips": 1385,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "list2_numbered",
+        "styleId": "33",
+        "styleName": "2.1二级列项-有编号"
+      },
+      "list2_plain": {
+        "alignment": "left",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 12.0,
+        "hangingIndentTwips": 499,
+        "leftIndentTwips": 1457,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "list2_plain",
+        "styleId": "24",
+        "styleName": "2.2二级列项-无编号"
+      },
+      "note": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 10.5,
+        "hangingIndentTwips": 419,
+        "leftIndentTwips": 867,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "note",
+        "styleId": "37",
+        "styleName": "3.1注-无编号注"
+      },
+      "numbered_note": {
+        "alignment": "justify",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 10.5,
+        "hangingIndentTwips": 578,
+        "leftIndentTwips": 1026,
+        "lineRule": "auto",
+        "lineSpacing": 1.25,
+        "lineSpacingTwips": 300,
+        "role": "numbered_note",
+        "styleId": "26",
+        "styleName": "3.2注-有编号注"
+      },
+      "table_body": {
+        "alignment": "center",
+        "asciiFontName": "Times New Roman",
+        "firstLineIndentTwips": 0,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
+        "fontName": "宋体",
+        "fontSize": 12.0,
+        "lineRule": "atLeast",
+        "lineSpacing": 0.0,
+        "lineSpacingTwips": 0,
+        "role": "table_body",
+        "styleId": "43",
+        "styleName": "表正文"
+      }
+    },
+    "sourceDocument": "technical-file-format-requirements.docx",
+    "sourceDocumentSha256": "0e193da0f16a80afb693382d3bbfac25b1820ccb85b7a8f0c26dc875d48b08f2",
+    "styles": {
+      "3.1注-无编号注": {
+        "roleRef": "note"
+      },
+      "3.2注-有编号注": {
+        "roleRef": "numbered_note"
+      },
+      "Caption": {
+        "roleRef": "caption"
+      },
+      "caption": {
+        "roleRef": "caption"
+      },
+      "文档标题": {
+        "roleRef": "document_title"
+      },
+      "表正文": {
+        "roleRef": "table_body"
+      },
+      "附录一级标题": {
+        "roleRef": "appendix_heading1"
+      },
+      "附录三级标题": {
+        "roleRef": "appendix_heading3"
+      },
+      "附录二级标题": {
+        "roleRef": "appendix_heading2"
+      },
+      "附录标题": {
+        "roleRef": "appendix_title"
+      }
+    },
+    "version": "2026-05-23"
+  },
+  "version": "2026-05-23.rules.1"
+}

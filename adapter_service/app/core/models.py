@@ -705,6 +705,10 @@ class FormatReviewIssue(BaseModel):
     severity: Literal["info", "warning", "error"] = "warning"
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
     role: str = "body"
+    source: str = ""
+    template_hash: str = Field(default="", alias="templateHash")
+    rule_version: str = Field(default="", alias="ruleVersion")
+    rule_pack_sha256: str = Field(default="", alias="rulePackSha256")
     message: str
     current_value: str = Field(default="", alias="currentValue")
     expected_value: str = Field(default="", alias="expectedValue")
@@ -714,6 +718,9 @@ class FormatReviewIssue(BaseModel):
 class FormatReviewSummary(BaseModel):
     scope: Literal["document", "selection"] = "document"
     template_id: str = Field(alias="templateId")
+    rule_pack_version: str = Field(default="", alias="rulePackVersion")
+    rule_pack_sha256: str = Field(default="", alias="rulePackSha256")
+    authorized_algorithm_version: str = Field(default="", alias="authorizedAlgorithmVersion")
     paragraph_count: int = Field(default=0, alias="paragraphCount")
     issue_count: int = Field(default=0, alias="issueCount")
     provider: str = "local"

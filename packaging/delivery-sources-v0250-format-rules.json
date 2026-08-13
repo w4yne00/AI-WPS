@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "version": "0.25.0-format-rules-alpha",
+  "generatedFiles": [],
+  "entries": [
+    {
+      "type": "file",
+      "source": "packaging/v0250-format-rule-assets-manifest.json",
+      "target": "format-rule-assets-manifest.json"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/authorized_format_algorithm.py",
+      "target": "adapter_service/app/services/word/authorized_format_algorithm.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/core/models.py",
+      "target": "adapter_service/app/core/models.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/format_reviewer.py",
+      "target": "adapter_service/app/services/word/format_reviewer.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/format_rule_pack.py",
+      "target": "adapter_service/app/services/word/format_rule_pack.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/tools/compile_format_rule_pack.py",
+      "target": "adapter_service/tools/compile_format_rule_pack.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json",
+      "target": "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json"
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/vendor/wx_doc_format_algorithm",
+      "target": "adapter_service/vendor/wx_doc_format_algorithm",
+      "include": [
+        "__init__.py",
+        "algorithm.py",
+        "SOURCE_MANIFEST.json",
+        "THIRD_PARTY_NOTICES.md"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "packaging/check_python38_compatibility.py",
+      "target": "packaging/check_python38_compatibility.py"
+    }
+  ]
+}

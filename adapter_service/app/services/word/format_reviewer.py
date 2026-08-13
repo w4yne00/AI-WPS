@@ -1,11 +1,14 @@
 import json
 import re
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import FormatReviewIssue, Paragraph, WordDocumentRequest
 from app.services.document_normalizer import body_paragraphs
 from app.services.provider_client import ProviderClient, extract_answer
+from app.services.word.authorized_format_algorithm import audit_format_facts
+from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
 from app.services.template_loader import TemplateLoader
 
 
@@ -40,9 +43,11 @@ class WordFormatReviewer:
         self,
         template_loader: Optional[TemplateLoader] = None,
         provider_client: Optional[ProviderClient] = None,
+        rule_pack_loader: Optional[FormatRulePackLoader] = None,
     ) -> None:
         self.template_loader = template_loader or TemplateLoader()
         self.provider_client = provider_client or ProviderClient()
+        self.rule_pack_loader = rule_pack_loader or FormatRulePackLoader()
 
     def review(self, request: WordDocumentRequest, trace_id: str = "") -> Dict:
         requested_template = request.options.template_id or DEFAULT_TEMPLATE_ID
@@ -60,9 +65,13 @@ class WordFormatReviewer:
             else:
                 provider = "工作流平台"
         issues = self._build_issues(request, template, ai_roles)
+        issues = self._annotate_issues(issues, template)
         summary = {
             "scope": request.selection_mode,
             "templateId": template["id"],
+            "rulePackVersion": template.get("_rulePackVersion", "legacy-template"),
+            "rulePackSha256": template.get("_rulePackSha256", ""),
+            "authorizedAlgorithmVersion": template.get("_algorithmAdapterVersion", ""),
             "provider": provider,
             "paragraphCount": len(paragraphs),
             "issueCount": len(issues),
@@ -83,9 +92,16 @@ class WordFormatReviewer:
 
     def _resolve_template(self, template_id: str) -> Dict:
         try:
-            return self.template_loader.get_template(template_id)
+            rule_pack = self.rule_pack_loader.load(template_id)
+            template = deepcopy(rule_pack["template"])
+            template["_rulePackVersion"] = rule_pack["version"]
+            template["_rulePackSha256"] = rule_pack["integrity"]["contentSha256"]
+            template["_templateHash"] = template["sourceDocumentSha256"]
+            template["_algorithmAdapterVersion"] = rule_pack["algorithm"]["adapterVersion"]
+            template["_rulePackRules"] = deepcopy(rule_pack["rules"])
+            return template
         except FileNotFoundError:
-            return self.template_loader.get_template(DEFAULT_TEMPLATE_ID)
+            raise FormatRulePackError("FORMAT_RULE_PACK_REQUIRED {0}".format(template_id))
 
     def _build_issues(
         self,
@@ -98,6 +114,8 @@ class WordFormatReviewer:
         if page_issue:
             issues.append(page_issue)
 
+        issues.extend(self._authorized_structure_issues(request, template))
+
         ai_roles = ai_roles or {}
         for paragraph in body_paragraphs(request):
             role_info = ai_roles.get(paragraph.index, {})
@@ -105,6 +123,101 @@ class WordFormatReviewer:
             rule = self._rule_for_role(role, template)
             issues.extend(self._paragraph_issues(paragraph, rule, role))
         return issues
+
+    def _authorized_structure_issues(
+        self, request: WordDocumentRequest, template: Dict
+    ) -> List[FormatReviewIssue]:
+        structure = request.content.document_structure or {}
+        facts = structure.get("formatFacts") if isinstance(structure.get("formatFacts"), dict) else {}
+        facts = deepcopy(facts)
+        facts["headings"] = [
+            {"level": heading.level, "text": heading.text}
+            for heading in request.content.headings
+        ]
+        facts["paragraphs"] = [
+            {
+                "role": "body",
+                "text": paragraph.text,
+                "styleName": paragraph.style_name,
+            }
+            for paragraph in body_paragraphs(request)
+        ]
+        facts.setdefault(
+            "appendixFacts",
+            [{"styleName": paragraph.style_name, "text": paragraph.text} for paragraph in body_paragraphs(request)],
+        )
+        facts.setdefault(
+            "noteFacts",
+            [{"styleName": paragraph.style_name, "text": paragraph.text} for paragraph in body_paragraphs(request)],
+        )
+        pack = {"template": template, "rules": template.get("_rulePackRules", [])}
+        audit = audit_format_facts(facts, pack)
+        issues: List[FormatReviewIssue] = []
+        for warning in audit["issues"]:
+            if warning.get("ruleId") != "structure.heading_hierarchy":
+                continue
+            issues.append(
+                FormatReviewIssue(
+                    ruleId="structure.heading_hierarchy",
+                    paragraphIndex=None,
+                    role="heading",
+                    message="标题层级出现跳级。",
+                    currentValue=str(warning.get("level", "")),
+                    expectedValue="不超过一级跳级",
+                    suggestion="请补齐缺失的标题层级。",
+                )
+            )
+        for index, result in enumerate(audit.get("tables", []), start=1):
+            if result.get("tableType") == "unknown":
+                issues.append(
+                    FormatReviewIssue(
+                        ruleId="structure.table_semantics",
+                        paragraphIndex=None,
+                        role="table",
+                        message="表格缺少可确认的数据表结构证据。",
+                        currentValue=str(result.get("evidence", [])),
+                        expectedValue="表头及重复数据行",
+                        suggestion="请补充表头和至少一行结构一致的数据记录。",
+                    )
+                )
+        for result in audit.get("captions", []):
+            if result.get("status") != "associated":
+                issues.append(
+                    FormatReviewIssue(
+                        ruleId="structure.caption_placement",
+                        paragraphIndex=result.get("captionIndex"),
+                        role="caption",
+                        message="图表题未能与唯一相邻对象关联。",
+                        currentValue=result.get("status", "unknown"),
+                        expectedValue="associated",
+                        suggestion="请将图表题放置在对应图表对象的相邻位置。",
+                    )
+                )
+        return issues
+
+    def _annotate_issues(
+        self, issues: List[FormatReviewIssue], template: Dict
+    ) -> List[FormatReviewIssue]:
+        rule_sources = {
+            rule.get("id"): rule.get("source", "")
+            for rule in template.get("_rulePackRules", [])
+            if isinstance(rule, dict)
+        }
+        metadata = {
+            "source": "compiled-template",
+            "template_hash": template.get("_templateHash", ""),
+            "rule_version": template.get("_rulePackVersion", ""),
+            "rule_pack_sha256": template.get("_rulePackSha256", ""),
+        }
+        annotated = []
+        for issue in issues:
+            update = dict(metadata)
+            update["source"] = rule_sources.get(issue.rule_id, metadata["source"])
+            if hasattr(issue, "model_copy"):
+                annotated.append(issue.model_copy(update=update))
+            else:
+                annotated.append(issue.copy(update=update))
+        return annotated
 
     def _build_page_issue(self, request: WordDocumentRequest, template: Dict) -> Optional[FormatReviewIssue]:
         page_rule = template.get("page", {})
