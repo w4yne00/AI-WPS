@@ -1,10 +1,30 @@
 # AI-WPS 格式审查 Dify 工作流配置手册
 
-适用版本：`v0.13.7-alpha`
+适用版本：`v0.25.0-alpha`（兼容保留旧同步入口）
 
 适用任务：`word.format_review`
 
 ## 1. 功能定位
+
+### 1.1 两遍格式快照协议
+
+确定性格式审查的新任务窗格入口使用独立的格式快照会话，而不是一次性提交全文：
+
+1. WPS 先按稳定文档顺序抽取正文、标题、列表、表格和题注等格式语义单元，并按批次上传；批次必须使用秘密上传令牌、连续序号、批次编号和内容/结构/格式哈希。
+2. 选区会扩展到完整段落、表格或题注语义单元；为判定读取的相邻标题等上下文标记为 `context`，只参与判定，不计入问题范围。
+3. 上传完成后，WPS 重新读取同一范围，只比较文档身份、编辑序号、对象数量、覆盖统计、结构哈希和格式指纹。任一不一致都会清理快照并要求重试。
+4. 只有二遍校验通过后才提交后台任务。快照目录为本地隔离暂存，目录权限为 `0700`，文件权限为 `0600`；任务终态立即删除完整格式事实。
+
+协议端点为：
+
+```text
+POST /word/format-review/snapshots
+PUT  /word/format-review/snapshots/{snapshotId}/batches/{sequence}
+POST /word/format-review/snapshots/{snapshotId}/commit
+POST /word/format-review/jobs
+```
+
+旧的 `POST /word/format-review/snapshots` 直接提交 `WordDocumentRequest` 的兼容行为仍保留，但不支持全文分批和二遍格式指纹验证。
 
 “格式审查”由原“智能排版”收敛而来。当前版本只做“根据标准文档模板进行格式检查”，不再让大模型生成全文排版结果，也不再自动写回 Word 格式。
 

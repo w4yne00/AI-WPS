@@ -351,6 +351,308 @@
     return batches;
   }
 
+  function formatReviewBlockTextValues(block) {
+    var values = [];
+    if (!block) {
+      return values;
+    }
+    if (block.text) {
+      return [String(block.text)];
+    }
+    (block.rows || []).forEach(function (row) {
+      (row.cells || []).forEach(function (cell) {
+        if (cell.text) {
+          values.push(String(cell.text));
+        }
+      });
+    });
+    (block.nestedTables || []).forEach(function (table) {
+      values = values.concat(formatReviewBlockTextValues(table));
+    });
+    return values;
+  }
+
+  function formatReviewFormatProjection(block) {
+    function tableProjection(table) {
+      return {
+        tableId: String(table && table.tableId || ""),
+        rows: (table && table.rows || []).map(function (row) {
+          return {
+            rowIndex: Number(row && row.rowIndex || 0),
+            cells: (row && row.cells || []).map(function (cell) {
+              return {
+                cellId: String(cell && cell.cellId || ""),
+                format: cell && cell.format || {}
+              };
+            })
+          };
+        }),
+        nestedTables: (table && table.nestedTables || []).map(tableProjection)
+      };
+    }
+    return {
+      blockId: String(block && block.blockId || ""),
+      scope: String(block && block.scope || "in_scope"),
+      format: block && block.format || {},
+      segments: block && block.format && Array.isArray(block.format.segments)
+        ? block.format.segments : [],
+      table: block && block.blockType === "table" ? tableProjection(block) : null
+    };
+  }
+
+  function stableFormatReviewJson(value) {
+    if (Array.isArray(value)) {
+      return "[" + value.map(stableFormatReviewJson).join(",") + "]";
+    }
+    if (value && typeof value === "object") {
+      return "{" + Object.keys(value).filter(function (key) {
+        return typeof value[key] !== "undefined" && typeof value[key] !== "function";
+      }).sort().map(function (key) {
+        return JSON.stringify(key) + ":" + stableFormatReviewJson(value[key]);
+      }).join(",") + "}";
+    }
+    return typeof value === "undefined" ? "null" : JSON.stringify(value);
+  }
+
+  function formatReviewTableStructureProjection(table) {
+    return {
+      tableId: String(table && table.tableId || ""),
+      tableIndex: Number(table && table.tableIndex || 0),
+      rows: (table && table.rows || []).map(function (row) {
+        return {
+          rowIndex: Number(row && row.rowIndex || 0),
+          cells: (row && row.cells || []).map(function (cell) {
+            return {
+              cellId: String(cell && cell.cellId || ""),
+              rowIndex: Number(cell && cell.rowIndex || 0),
+              columnIndex: Number(cell && cell.columnIndex || 0),
+              rowSpan: Number(cell && cell.rowSpan || 1),
+              columnSpan: Number(cell && cell.columnSpan || 1)
+            };
+          })
+        };
+      }),
+      nestedTables: (table && table.nestedTables || []).map(formatReviewTableStructureProjection)
+    };
+  }
+
+  function formatReviewStructureProjection(block) {
+    return {
+      blockId: block.blockId,
+      blockType: block.blockType,
+      scope: block.scope,
+      paragraphIndex: Number(block.paragraphIndex || 0),
+      range: block.range || {},
+      tableId: block.tableId || "",
+      tableIndex: Number(block.tableIndex || 0),
+      headingLevel: Number(block.headingLevel || 0),
+      listLabel: block.listLabel || "",
+      captionFor: block.captionFor || "",
+      rows: (block.rows || []).map(function (row) {
+        return {
+          rowIndex: Number(row && row.rowIndex || 0),
+          cells: (row && row.cells || []).map(function (cell) {
+            return {
+              cellId: String(cell && cell.cellId || ""),
+              rowIndex: Number(cell && cell.rowIndex || 0),
+              columnIndex: Number(cell && cell.columnIndex || 0),
+              rowSpan: Number(cell && cell.rowSpan || 1),
+              columnSpan: Number(cell && cell.columnSpan || 1)
+            };
+          })
+        };
+      }),
+      nestedTables: (block.nestedTables || []).map(formatReviewTableStructureProjection)
+    };
+  }
+
+  function buildDeterministicFormatReviewBody(payload, options) {
+    var source = payload || {};
+    var content = source.content || {};
+    var structure = content.documentStructure || {};
+    var paragraphs = Array.isArray(content.paragraphs) ? content.paragraphs : [];
+    var tables = Array.isArray(structure.tables) ? structure.tables : [];
+    var contextBlocks = Array.isArray((options || {}).contextBlocks)
+      ? (options || {}).contextBlocks : [];
+    var blocks = [];
+    var seen = {};
+
+    function pushBlock(block) {
+      if (!block || !block.blockId || seen[block.blockId]) {
+        return;
+      }
+      block.scope = block.scope === "context" ? "context" : "in_scope";
+      block.text = String(block.text || "");
+      seen[block.blockId] = true;
+      blocks.push(block);
+    }
+
+    function isCaptionParagraph(paragraph) {
+      var styleName = String(paragraph && (paragraph.styleName || paragraph.style_name) || "");
+      var text = String(paragraph && paragraph.text || "").trim();
+      return /caption|题注/i.test(styleName) || /^(图|表)\s*[0-9０-９一二三四五六七八九十]+[：:.、\s]/.test(text);
+    }
+
+    paragraphs.forEach(function (paragraph) {
+      var index = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || blocks.length + 1;
+      var text = String(paragraph && paragraph.text || "").replace(/[\r\u0007]+$/g, "").trim();
+      var format;
+      if (!text) {
+        return;
+      }
+      format = {
+        styleName: paragraph.styleName || paragraph.style_name || "",
+        fontName: paragraph.fontName || paragraph.font_name || "",
+        fontSize: paragraph.fontSize,
+        bold: Boolean(paragraph.bold),
+        italic: Boolean(paragraph.italic),
+        underline: paragraph.underline,
+        alignment: paragraph.alignment || "",
+        lineSpacing: paragraph.lineSpacing,
+        firstLineIndent: paragraph.firstLineIndent,
+        spaceBefore: paragraph.spaceBefore,
+        spaceAfter: paragraph.spaceAfter,
+        leftIndent: paragraph.leftIndent,
+        rightIndent: paragraph.rightIndent,
+        dataStatus: paragraph.dataStatus || "verified"
+      };
+      pushBlock({
+        blockId: "format-paragraph-" + index,
+        blockType: isCaptionParagraph(paragraph) ? "caption" :
+          (Number(paragraph.outlineLevel || 0) > 0
+            ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph")),
+        paragraphIndex: index,
+        headingLevel: Number(paragraph.outlineLevel || 0) || undefined,
+        listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
+        captionFor: paragraph.captionFor ? String(paragraph.captionFor) : undefined,
+        text: text,
+        format: format,
+        range: paragraph.range || {}
+      });
+    });
+
+    tables.forEach(function (table, index) {
+      var tableId = String(table && (table.tableId || table.id) || "format-table-" + (index + 1));
+      var values = formatReviewBlockTextValues(table);
+      pushBlock({
+        blockId: "format-table-" + tableId,
+        blockType: "table",
+        tableId: tableId,
+        tableIndex: Number(table && table.tableIndex) || index + 1,
+        paragraphIndex: Number(table && table.paragraphIndex) || paragraphs.length + index + 1,
+        rows: Array.isArray(table && table.rows) ? table.rows : [],
+        nestedTables: Array.isArray(table && table.nestedTables) ? table.nestedTables : [],
+        text: values.join("\n"),
+        format: table && table.format || {},
+        range: table && table.range || {}
+      });
+    });
+    contextBlocks.forEach(function (block) {
+      pushBlock({
+        blockId: String(block.blockId || "format-context-" + blocks.length),
+        blockType: "context",
+        paragraphIndex: Number(block.paragraphIndex || 0),
+        text: String(block.text || ""),
+        format: block.format || {},
+        range: block.range || {},
+        scope: "context"
+      });
+    });
+    blocks.sort(function (left, right) {
+      return Number(left.paragraphIndex || 0) - Number(right.paragraphIndex || 0);
+    });
+    if (!blocks.some(function (block) { return block.scope === "in_scope"; })) {
+      throw new Error("未读取到可审查的格式语义单元。");
+    }
+
+    var inScope = blocks.filter(function (block) { return block.scope === "in_scope"; });
+    var sourceValues = [];
+    inScope.forEach(function (block) {
+      sourceValues = sourceValues.concat(formatReviewBlockTextValues(block));
+    });
+    var structureProjection = blocks.map(formatReviewStructureProjection);
+    var formatProjection = blocks.map(formatReviewFormatProjection);
+    return {
+      documentId: source.documentId || "unnamed.docx",
+      selectionMode: source.selectionMode || "document",
+      documentIdentity: (options || {}).documentIdentity || {},
+      editSequence: (options || {}).editSequence,
+      scope: (options || {}).scope || {
+        mode: source.selectionMode || "document",
+        expandedToSemanticUnits: source.selectionMode === "selection",
+        contextOnly: contextBlocks.map(function (block) { return block.blockId; })
+      },
+      templateId: source.options && source.options.templateId || "technical-file-format-requirements",
+      blocks: blocks,
+      reviewCharacterCount: sourceValues.reduce(function (total, value) { return total + value.length; }, 0),
+      contentSha256: sha256Text(sourceValues.join("\n")),
+      structureSha256: sha256Text(stableFormatReviewJson(structureProjection)),
+      formatSha256: sha256Text(stableFormatReviewJson(formatProjection)),
+      coverage: {
+        inScopeBlockCount: inScope.length,
+        contextBlockCount: blocks.length - inScope.length,
+        paragraphCount: inScope.filter(function (block) {
+          return ["paragraph", "heading", "listItem"].indexOf(block.blockType) >= 0;
+        }).length,
+        tableCount: inScope.filter(function (block) { return block.blockType === "table"; }).length,
+        captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length
+      },
+      pageSetup: structure.page_setup || structure.pageSetup || {}
+    };
+  }
+
+  function buildDeterministicFormatReviewBatches(body, targetCharacters) {
+    var target = Math.max(1, Number(targetCharacters) || 3500);
+    var batches = [];
+    var current = [];
+    var currentCount = 0;
+    var blocks = body && Array.isArray(body.blocks) ? body.blocks : [];
+
+    function flush() {
+      var values = [];
+      if (!current.length) {
+        return;
+      }
+      current.forEach(function (block) {
+        values = values.concat(formatReviewBlockTextValues(block));
+      });
+      batches.push({
+        sequence: batches.length,
+        batchId: "format-batch-" + batches.length,
+        blocks: current,
+        characterCount: current.filter(function (block) { return block.scope === "in_scope"; })
+          .reduce(function (total, block) {
+            return total + formatReviewBlockTextValues(block).reduce(function (count, value) {
+              return count + value.length;
+            }, 0);
+          }, 0),
+        contentSha256: sha256Text(current.filter(function (block) { return block.scope === "in_scope"; })
+          .reduce(function (list, block) { return list.concat(formatReviewBlockTextValues(block)); }, []).join("\n")),
+        structureSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewStructureProjection))),
+        formatSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewFormatProjection))),
+        range: {
+          start: current[0].blockId,
+          end: current[current.length - 1].blockId
+        }
+      });
+      current = [];
+      currentCount = 0;
+    }
+
+    blocks.forEach(function (block) {
+      var blockCount = formatReviewBlockTextValues(block).reduce(function (total, value) {
+        return total + value.length;
+      }, 0);
+      if (current.length && currentCount + blockCount > target) {
+        flush();
+      }
+      current.push(block);
+      currentCount += blockCount;
+    });
+    flush();
+    return batches;
+  }
+
   function escapeHtml(value) {
     return String(value || "")
       .replace(/&/g, "&amp;")
@@ -3106,6 +3408,8 @@
     getFullDocumentReviewCapacity: getFullDocumentReviewCapacity,
     buildFullDocumentReviewBody: buildFullDocumentReviewBody,
     buildFullDocumentReviewBatches: buildFullDocumentReviewBatches,
+    buildDeterministicFormatReviewBody: buildDeterministicFormatReviewBody,
+    buildDeterministicFormatReviewBatches: buildDeterministicFormatReviewBatches,
     escapeHtml: escapeHtml,
     renderMarkdown: renderMarkdown,
     buildInlineWritebackRuns: buildInlineWritebackRuns,

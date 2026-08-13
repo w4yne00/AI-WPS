@@ -4,6 +4,7 @@ const fs = require("fs");
 const root = "formal-plugin-kit/wps-ai-assistant_1.0.0";
 const html = fs.readFileSync(`${root}/taskpane.html`, "utf8");
 const js = fs.readFileSync(`${root}/taskpane.js`, "utf8");
+const helpers = require("../wps-ai-assistant_1.0.0/taskpane-helpers.js");
 
 function functionSource(name) {
   const start = js.indexOf(`function ${name}(`);
@@ -53,3 +54,35 @@ assert.ok(poll.includes("renderGroupedFormatReview"));
 
 assert.ok(js.includes('configData.features && configData.features.deterministicFormatReviewEnabled'));
 assert.ok(js.includes('byId("btn-run-deterministic-format-review")'));
+
+const body = helpers.buildDeterministicFormatReviewBody({
+  documentId: "table.docx",
+  selectionMode: "document",
+  content: {
+    paragraphs: [{ index: 1, text: "正文", styleName: "Normal" }],
+    documentStructure: {
+      page_setup: { paperSize: "A4", marginTop: 72 },
+      tables: [{
+        tableId: "table-1",
+        rows: [{ cells: [{ text: "表头" }] }, { cells: [{ text: "单元格" }] }]
+      }]
+    }
+  }
+});
+assert.strictEqual(body.reviewCharacterCount, "正文".length + "表头\n单元格".length);
+assert.strictEqual(body.coverage.tableCount, 1);
+assert.deepStrictEqual(body.pageSetup, { paperSize: "A4", marginTop: 72 });
+const batches = helpers.buildDeterministicFormatReviewBatches(body, 1);
+assert.ok(batches.length >= 2);
+assert.strictEqual(batches[0].characterCount, batches[0].blocks
+  .filter((block) => block.scope === "in_scope")
+  .reduce((sum, block) => sum + String(block.text || "").length, 0));
+const captionBody = helpers.buildDeterministicFormatReviewBody({
+  selectionMode: "selection",
+  content: {
+    paragraphs: [{ index: 1, text: "表 1：测试", styleName: "Caption" }],
+    documentStructure: {}
+  }
+});
+assert.strictEqual(captionBody.blocks[0].blockType, "caption");
+assert.strictEqual(captionBody.coverage.captionCount, 1);

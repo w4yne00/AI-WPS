@@ -2166,11 +2166,7 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/word/format-review/snapshots":
             trace_id = new_trace_id("standalone-word-deterministic-format-review")
             try:
-                if hasattr(WordDocumentRequest, "model_validate"):
-                    request = WordDocumentRequest.model_validate(payload)
-                else:
-                    request = WordDocumentRequest.parse_obj(payload)
-                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.create_snapshot(request)
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.create_snapshot(payload)
             except AdapterError as error:
                 self._write(
                     error.status_code,
@@ -2190,6 +2186,39 @@ class Handler(BaseHTTPRequestHandler):
                     "word.format_review.deterministic",
                     data,
                     message="created",
+                ),
+            )
+            return
+
+        format_snapshot_prefix = "/word/format-review/snapshots/"
+        if path.startswith(format_snapshot_prefix) and path.endswith("/commit"):
+            trace_id = new_trace_id("standalone-word-deterministic-format-review")
+            snapshot_id = unquote(
+                path[len(format_snapshot_prefix): -len("/commit")]
+            ).strip("/")
+            try:
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.commit_snapshot(
+                    snapshot_id, payload
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "word.format_review.deterministic",
+                    data,
+                    message="committed",
                 ),
             )
             return
@@ -3045,6 +3074,50 @@ class Handler(BaseHTTPRequestHandler):
                 envelope(
                     "standalone-word-full-review",
                     "word.document_review.full",
+                    data,
+                    message="uploaded",
+                ),
+            )
+            return
+        format_batch_prefix = "/word/format-review/snapshots/"
+        if path.startswith(format_batch_prefix) and "/batches/" in path:
+            suffix = path[len(format_batch_prefix):]
+            snapshot_id, sequence_text = suffix.rsplit("/batches/", 1)
+            try:
+                payload = json.loads(self._read_full_document_review_body().decode("utf-8"))
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.upload_batch(
+                    unquote(snapshot_id).strip("/"), int(sequence_text), payload
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        "standalone-word-deterministic-format-review",
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (UnicodeDecodeError, ValueError):
+                message = "确定性格式审查格式快照批次格式无效。"
+                self._write(
+                    400,
+                    envelope(
+                        "standalone-word-deterministic-format-review",
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=message,
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-word-deterministic-format-review",
+                    "word.format_review.deterministic",
                     data,
                     message="uploaded",
                 ),

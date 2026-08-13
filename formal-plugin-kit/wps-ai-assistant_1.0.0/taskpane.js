@@ -44,10 +44,9 @@
     avoidFallbackTextRead: true
   };
   var DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS = {
-    maxParagraphs: 40,
-    maxParagraphTextLength: 500,
-    maxPlainTextLength: 8000,
-    preferSelectionTextParagraphs: true,
+    maxPlainTextLength: 130000,
+    preferSelectionTextParagraphs: false,
+    preferSelectionRangeParagraphs: true,
     avoidFullTextRead: true,
     avoidFallbackTextRead: true
   };
@@ -1523,6 +1522,10 @@
       paragraphs = helpers.collectParagraphsFromSelectionSources
         ? helpers.collectParagraphsFromSelectionSources(selectionSources, selectedText, options)
         : helpers.collectParagraphsFromText(selectedText, options);
+    } else if (selectionMode === "selection" && options.preferSelectionRangeParagraphs &&
+        helpers.collectParagraphsFromSelectionSources) {
+      paragraphs = helpers.collectParagraphsFromSelectionSources(selectionSources, selectedText, options);
+      plainText = selectedText || paragraphs.map(function (item) { return item.text; }).join("\n");
     } else {
       paragraphs = collectParagraphs(document, options);
       if (!options.avoidFullTextRead && helpers.readDocumentText) {
@@ -6793,12 +6796,12 @@
   function discardDeterministicFormatReviewSnapshot() {
     var snapshot = state.deterministicFormatReviewSnapshot;
     state.deterministicFormatReviewSnapshot = null;
-    if (!snapshot || !snapshot.snapshotId || !snapshot.snapshotToken) {
+    if (!snapshot || !snapshot.snapshotId || !(snapshot.snapshotToken || snapshot.uploadToken)) {
       return;
     }
     request(
       "/word/format-review/snapshots/" + encodeURIComponent(snapshot.snapshotId),
-      { snapshotToken: snapshot.snapshotToken },
+      { snapshotToken: snapshot.snapshotToken || snapshot.uploadToken },
       {
         method: "DELETE",
         timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
@@ -6808,8 +6811,161 @@
     });
   }
 
+  function extractDeterministicFormatReviewSnapshot(scope) {
+    var document = getActiveDocument();
+    var payload;
+    var documentName;
+    var editSequence;
+    var documentIdentity;
+    var tables = [];
+    var contextBlocks = [];
+    if (!document) {
+      throw new Error("未检测到活动文档。");
+    }
+    payload = extractDocument(
+      scope.selectionMode,
+      null,
+      DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS
+    );
+    documentName = getDocumentName(document);
+    editSequence = helpers.readFullDocumentReviewEditSignal
+      ? helpers.readFullDocumentReviewEditSignal(document)
+      : "";
+    documentIdentity = {
+      documentIdSha256: helpers.sha256Text(documentName).slice(0, 64),
+      hostDocumentId: String(readValue(document, "Id") || readValue(document, "ID") || documentName)
+    };
+    if (helpers.collectFullDocumentReviewTables) {
+      if (scope.selectionMode === "selection") {
+        var selectionSources = getSelectionSources(document);
+        for (var sourceIndex = 0; sourceIndex < selectionSources.length; sourceIndex += 1) {
+          var selectedTables = helpers.collectFullDocumentReviewTables(selectionSources[sourceIndex]);
+          if (selectedTables.length) {
+            tables = selectedTables;
+            break;
+          }
+        }
+      } else {
+        tables = helpers.collectFullDocumentReviewTables(document);
+      }
+    }
+    payload.content.documentStructure = payload.content.documentStructure || {};
+    payload.content.documentStructure.tables = tables;
+    if (scope.selectionMode === "selection" && helpers.collectParagraphs) {
+      var selectedIndexes = (payload.content.paragraphs || []).map(function (paragraph) {
+        return Number(paragraph.index || 0);
+      }).filter(function (index) { return index > 0; });
+      var semanticIndexes = selectedIndexes.concat(tables.map(function (table) {
+        return Number(table.paragraphIndex || 0);
+      }).filter(function (index) { return index > 0; }));
+      if (semanticIndexes.length) {
+        helpers.collectParagraphs(document, {
+          maxParagraphTextLength: 500,
+          avoidFallbackTextRead: true
+        }).forEach(function (paragraph) {
+          var paragraphIndex = Number(paragraph.index || 0);
+          var styleName = String(paragraph.styleName || paragraph.style_name || "");
+          var paragraphText = String(paragraph.text || "").trim();
+          var isCaption = /caption|题注/i.test(styleName) ||
+            /^(图|表)\s*[0-9０-９一二三四五六七八九十]+[：:.、\s]/.test(paragraphText);
+          if (selectedIndexes.indexOf(paragraphIndex) < 0 && isCaption && semanticIndexes.some(function (index) {
+            return Math.abs(paragraphIndex - index) <= 1;
+          })) {
+            payload.content.paragraphs.push({
+              index: paragraphIndex,
+              text: paragraphText,
+              styleName: paragraph.styleName || paragraph.style_name || "Caption",
+              fontName: paragraph.fontName || paragraph.font_name || "",
+              fontSize: paragraph.fontSize,
+              bold: Boolean(paragraph.bold),
+              italic: Boolean(paragraph.italic),
+              underline: paragraph.underline,
+              alignment: paragraph.alignment || "",
+              outlineLevel: paragraph.outlineLevel || 0,
+              captionFor: paragraph.captionFor || "",
+              range: { paragraphIndex: paragraphIndex }
+            });
+          } else if (selectedIndexes.length && selectedIndexes.indexOf(paragraphIndex) < 0 &&
+              Math.abs(paragraphIndex - selectedIndexes[0]) <= 1) {
+            contextBlocks.push({
+              blockId: "format-context-paragraph-" + paragraphIndex,
+              paragraphIndex: paragraphIndex,
+              text: paragraph.text || "",
+              format: {
+                styleName: paragraph.styleName || "",
+                outlineLevel: paragraph.outlineLevel || 0,
+                dataStatus: "context_only"
+              },
+              range: { paragraphIndex: paragraphIndex }
+            });
+          }
+        });
+      }
+    }
+    return helpers.buildDeterministicFormatReviewBody(payload, {
+      contextBlocks: contextBlocks,
+      documentIdentity: documentIdentity,
+      editSequence: editSequence,
+      scope: {
+        mode: scope.selectionMode,
+        expandedToSemanticUnits: scope.selectionMode === "selection",
+        selectedTextSha256: scope.selectionMode === "selection"
+          ? helpers.sha256Text(scope.selectedText || getSelectionText(document)) : "",
+        contextOnly: contextBlocks.map(function (block) { return block.blockId; })
+      }
+    });
+  }
+
+  function ensureDeterministicFormatReviewPreparation(editSequence, documentIdentity) {
+    var document = getActiveDocument();
+    var currentSequence;
+    var currentName;
+    if (!document) {
+      throw new Error("活动文档已关闭，已安全中止格式审查并清理快照。");
+    }
+    currentSequence = helpers.readFullDocumentReviewEditSignal
+      ? helpers.readFullDocumentReviewEditSignal(document)
+      : "";
+    currentName = getDocumentName(document);
+    if (String(editSequence || "") !== String(currentSequence || "") ||
+        String(documentIdentity && documentIdentity.hostDocumentId || "") !==
+          String(readValue(document, "Id") || readValue(document, "ID") || currentName)) {
+      throw new Error("检测到文档编辑或文档身份变化，已安全中止格式审查并清理快照。");
+    }
+  }
+
+  function uploadDeterministicFormatReviewBatches(session, body) {
+    var batches = Array.isArray(body && body.batches) ? body.batches : [];
+    return batches.reduce(function (promise, batch) {
+      return promise.then(function () {
+        return new Promise(function (resolve) { setTimeout(resolve, 0); });
+      }).then(function () {
+        ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+        return request(
+          "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) +
+            "/batches/" + batch.sequence,
+          {
+            uploadToken: session.uploadToken || session.snapshotToken,
+            batchId: batch.batchId,
+            blocks: batch.blocks,
+            characterCount: batch.characterCount,
+            contentSha256: batch.contentSha256,
+            structureSha256: batch.structureSha256,
+            formatSha256: batch.formatSha256,
+            range: batch.range,
+            editSequence: body.editSequence
+          },
+          { method: "PUT", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
+        );
+      });
+    }, Promise.resolve());
+  }
+
   function runDeterministicFormatReview() {
     var scope;
+    var firstPass;
+    var session = null;
+    // Extraction is bounded by DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS.
     if (!state.deterministicFormatReviewEnabled) {
       setStatus("确定性格式审查功能尚未启用。");
       return;
@@ -6825,35 +6981,96 @@
       return;
     }
     setModelTaskBusy(true);
-    setStatus("正在读取小型格式审查快照...");
-    setPlainResult("正在读取小型正文快照，请稍候。不会修改 Word 文档。");
+    setStatus("正在执行第一遍格式语义抽取...");
+    setPlainResult("正在分批读取格式语义单元，请稍候。不会修改 Word 文档。");
     setTimeout(function () {
       try {
-        state.latestDocumentPayload = extractDocument(
-          scope.selectionMode,
-          null,
-          DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS
-        );
-        state.latestDocumentPayload.options.templateId = "technical-file-format-requirements";
-        state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+        firstPass = extractDeterministicFormatReviewSnapshot(scope);
+        firstPass.batches = helpers.buildDeterministicFormatReviewBatches(firstPass, 3500);
+        ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
+        state.latestSelectionMode = firstPass.selectionMode;
       } catch (error) {
         setModelTaskBusy(false);
         setStatus(error.message);
         setResult(error.message);
         return;
       }
-      request("/word/format-review/snapshots", state.latestDocumentPayload, {
+      setStatus("正在创建格式快照会话...");
+      request("/word/format-review/snapshots", {
+        documentId: firstPass.documentId,
+        selectionMode: firstPass.selectionMode,
+        documentIdentity: firstPass.documentIdentity,
+        editSequence: firstPass.editSequence,
+        templateId: firstPass.templateId,
+        pageSetup: firstPass.pageSetup,
+        scope: firstPass.scope
+      }, {
         timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
       }).then(function (snapshotBody) {
-        var snapshot = snapshotBody.data || {};
-        state.deterministicFormatReviewSnapshot = snapshot;
+        session = snapshotBody.data || {};
+        state.deterministicFormatReviewSnapshot = session;
+        setTrace(snapshotBody.traceId || session.snapshotId || "");
+        setStatus("正在上传第一遍格式事实，共 " + firstPass.batches.length + " 个批次...");
+        return uploadDeterministicFormatReviewBatches(session, firstPass);
+      }).then(function () {
+        setStatus("正在执行第二遍格式结构与指纹验证...");
+        ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
+        return new Promise(function (resolve, reject) {
+          setTimeout(function () {
+            try {
+              resolve(extractDeterministicFormatReviewSnapshot(scope));
+            } catch (error) {
+              reject(error);
+            }
+          }, 0);
+        });
+      }).then(function (secondPass) {
+        secondPass.batches = helpers.buildDeterministicFormatReviewBatches(secondPass, 3500);
+        if (firstPass.contentSha256 !== secondPass.contentSha256 ||
+            firstPass.structureSha256 !== secondPass.structureSha256 ||
+            firstPass.formatSha256 !== secondPass.formatSha256 ||
+            firstPass.reviewCharacterCount !== secondPass.reviewCharacterCount ||
+            firstPass.blocks.length !== secondPass.blocks.length ||
+            firstPass.batches.length !== secondPass.batches.length ||
+            firstPass.editSequence !== secondPass.editSequence ||
+            JSON.stringify(firstPass.documentIdentity) !== JSON.stringify(secondPass.documentIdentity)) {
+          throw new Error("两遍格式结构、对象、覆盖或格式指纹不一致，请停止编辑后重新发起格式审查。");
+        }
+        return request(
+          "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) + "/commit",
+          {
+            uploadToken: session.uploadToken || session.snapshotToken,
+            batchCount: firstPass.batches.length,
+            blockCount: firstPass.blocks.length,
+            reviewCharacterCount: firstPass.reviewCharacterCount,
+            contentSha256: firstPass.contentSha256,
+            structureSha256: firstPass.structureSha256,
+            formatSha256: firstPass.formatSha256,
+            coverage: firstPass.coverage,
+            verification: {
+              batchCount: secondPass.batches.length,
+              blockCount: secondPass.blocks.length,
+              reviewCharacterCount: secondPass.reviewCharacterCount,
+              contentSha256: secondPass.contentSha256,
+              structureSha256: secondPass.structureSha256,
+              formatSha256: secondPass.formatSha256,
+              documentIdentity: secondPass.documentIdentity,
+              editSequence: secondPass.editSequence,
+              coverage: secondPass.coverage
+            }
+          },
+          { method: "POST", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
+        );
+      }).then(function (commitBody) {
+        var committed = commitBody.data || {};
+        state.deterministicFormatReviewSnapshot = committed;
         state.deterministicFormatReviewJobId = "format-client-" +
           Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
-        setTrace(snapshotBody.traceId || snapshot.snapshotId || "");
+        setTrace(commitBody.traceId || committed.snapshotId || "");
         setStatus("正在提交确定性格式审查后台任务...");
         return request("/word/format-review/jobs", {
-          snapshotId: snapshot.snapshotId,
-          snapshotToken: snapshot.snapshotToken,
+          snapshotId: committed.snapshotId,
+          snapshotToken: committed.snapshotToken,
           clientJobId: state.deterministicFormatReviewJobId
         }, { timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS });
       }).then(function (jobBody) {

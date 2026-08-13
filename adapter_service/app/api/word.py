@@ -452,9 +452,25 @@ def format_review_word(request: WordDocumentRequest) -> dict:
 
 
 @router.post("/word/format-review/snapshots")
-def create_deterministic_format_review_snapshot(request: WordDocumentRequest) -> dict:
+def create_deterministic_format_review_snapshot(request: dict) -> dict:
     data = deterministic_format_review_service.create_snapshot(request)
     return _deterministic_format_review_envelope(data, message="created")
+
+
+@router.put("/word/format-review/snapshots/{snapshot_id}/batches/{sequence}")
+def upload_deterministic_format_review_batch(
+    snapshot_id: str, sequence: int, request: dict
+) -> dict:
+    data = deterministic_format_review_service.upload_batch(snapshot_id, sequence, request)
+    return _deterministic_format_review_envelope(data, message="uploaded")
+
+
+@router.post("/word/format-review/snapshots/{snapshot_id}/commit")
+def commit_deterministic_format_review_snapshot(
+    snapshot_id: str, request: dict
+) -> dict:
+    data = deterministic_format_review_service.commit_snapshot(snapshot_id, request)
+    return _deterministic_format_review_envelope(data, message="committed")
 
 
 @router.post("/word/format-review/jobs")
