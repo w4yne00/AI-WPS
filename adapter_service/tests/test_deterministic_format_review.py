@@ -14,6 +14,37 @@ from app.services.word.deterministic_format_review import (
 import app.api.word as word_api
 
 
+class RecordingFormatReviewer:
+    def __init__(self) -> None:
+        self.snapshot_calls = 0
+        self.review_calls = []
+
+    def snapshot_task_auth(self):
+        self.snapshot_calls += 1
+        return {
+            "providerBaseUrl": "https://model.example/v1",
+            "apiKey": "frozen-secret",
+            "accessMethod": "direct_model",
+            "modelName": "review-model",
+            "maxOutputTokens": 4096,
+            "contextWindowTokens": 40000,
+            "modelConfigurationId": "config-format-1",
+            "modelConfiguration": {"configVersion": 7, "taskType": "word.format_review"},
+        }
+
+    def review(self, request, trace_id="", task_auth=None):
+        self.review_calls.append({"traceId": trace_id, "taskAuth": task_auth})
+        return {
+            "summary": {
+                "scope": request.selection_mode,
+                "templateId": "technical-file-format-requirements",
+                "provider": "local",
+                "semanticStatus": "not_needed",
+            },
+            "issues": [],
+        }
+
+
 class DeterministicFormatReviewContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.previous_flag = os.environ.pop(
@@ -115,6 +146,46 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
 
         config = self.client.get("/config")
         self.assertTrue(config.json()["data"]["features"]["deterministicFormatReviewEnabled"])
+
+    def test_job_freezes_format_review_auth_at_submission(self) -> None:
+        os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = "1"
+        reviewer = RecordingFormatReviewer()
+        self.service = DeterministicFormatReviewService(
+            staging_root=Path(self.temp_dir.name),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=2),
+            reviewer=reviewer,
+        )
+        word_api.deterministic_format_review_service = self.service
+
+        snapshot_response = self.client.post(
+            "/word/format-review/snapshots", json=self._payload()
+        )
+        snapshot = snapshot_response.json()["data"]
+        job_response = self.client.post(
+            "/word/format-review/jobs",
+            json={
+                "snapshotId": snapshot["snapshotId"],
+                "snapshotToken": snapshot["snapshotToken"],
+                "clientJobId": "format-auth-freeze-job",
+            },
+        )
+        self.assertEqual(job_response.status_code, 200)
+
+        for _ in range(50):
+            job = self.client.get(
+                "/word/format-review/jobs/format-auth-freeze-job"
+            ).json()["data"]
+            if job["status"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(job["status"], "completed")
+        self.assertEqual(reviewer.snapshot_calls, 1)
+        self.assertEqual(len(reviewer.review_calls), 1)
+        self.assertEqual(
+            reviewer.review_calls[0]["taskAuth"]["modelConfigurationId"],
+            "config-format-1",
+        )
 
 
 if __name__ == "__main__":

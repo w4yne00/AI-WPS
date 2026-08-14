@@ -40,6 +40,11 @@ ROLE_TEXT = {
 AI_ROLE_BATCH_SIZE = 20
 AI_ROLE_MAX_PARAGRAPHS = 40
 DEFAULT_TEMPLATE_ID = "technical-file-format-requirements"
+SEMANTIC_ROLE_NAMES = (
+    "document_title", "heading", "body", "list_item", "note", "caption",
+    "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula",
+    "table_body",
+)
 
 
 class WordFormatReviewer:
@@ -53,19 +58,37 @@ class WordFormatReviewer:
         self.provider_client = provider_client or ProviderClient()
         self.rule_pack_loader = rule_pack_loader or FormatRulePackLoader()
 
-    def review(self, request: WordDocumentRequest, trace_id: str = "") -> Dict:
+    def snapshot_task_auth(self) -> Optional[Dict]:
+        resolver = getattr(self.provider_client, "resolve_task_auth", None)
+        if not callable(resolver):
+            return None
+        try:
+            return deepcopy(resolver("word.format_review"))
+        except Exception as exc:
+            return {"authSnapshotStatus": "unavailable", "authSnapshotError": type(exc).__name__}
+
+    def review(
+        self,
+        request: WordDocumentRequest,
+        trace_id: str = "",
+        task_auth: Optional[Dict] = None,
+    ) -> Dict:
         requested_template = request.options.template_id or DEFAULT_TEMPLATE_ID
         template = self._resolve_template(requested_template)
         paragraphs = body_paragraphs(request)
         ai_diagnostics = self._empty_ai_diagnostics()
         if trace_id:
-            ai_roles, ai_batch_count, ai_diagnostics = self._classify_roles_with_ai(request, template, trace_id)
+            ai_roles, ai_batch_count, ai_diagnostics = self._classify_roles_with_ai(
+                request, template, trace_id, task_auth=task_auth
+            )
         else:
             ai_roles, ai_batch_count = {}, 0
         provider = "local"
         if ai_roles:
             if hasattr(self.provider_client, "build_provider_source"):
-                provider = self.provider_client.build_provider_source("word.format_review")
+                provider = self.provider_client.build_provider_source(
+                    "word.format_review", task_auth=task_auth
+                )
             else:
                 provider = "工作流平台"
         issues = self._build_issues(request, template, ai_roles)
@@ -84,6 +107,14 @@ class WordFormatReviewer:
             "aiBatchCount": ai_batch_count,
             **ai_diagnostics,
         }
+        binding = self._snapshot_binding(request)
+        if any(binding.values()):
+            summary["snapshotBinding"] = binding
+        if isinstance(task_auth, dict):
+            summary["modelConfigurationId"] = str(task_auth.get("modelConfigurationId", ""))
+            configuration = task_auth.get("modelConfiguration")
+            if isinstance(configuration, dict):
+                summary["modelConfigurationVersion"] = int(configuration.get("configVersion") or 1)
         return {
             "issues": [self._dump_issue(issue) for issue in issues],
             "summary": summary,
@@ -140,10 +171,14 @@ class WordFormatReviewer:
             ai_role = ai_roles.get(paragraph.index)
             if isinstance(ai_role, dict) and ai_role.get("status") == "confirmed":
                 if deterministic_role.get("status") != "confirmed":
-                    role_result = {
-                        **deterministic_role,
-                        "evidence": deterministic_role.get("evidence", []) + ["model_role_unverified"],
-                    }
+                    if deterministic_role.get("status") != "conflict":
+                        role_result = {
+                            "role": ai_role.get("role", "unknown"),
+                            "attributes": deepcopy(ai_role.get("attributes", {})),
+                            "status": "confirmed",
+                            "confidence": ai_role.get("confidence"),
+                            "evidence": deterministic_role.get("evidence", []) + ["model_role_confirmed"],
+                        }
                 elif not self._same_role(deterministic_role, ai_role):
                     role_result = {
                         "role": "unknown",
@@ -483,67 +518,98 @@ class WordFormatReviewer:
         request: WordDocumentRequest,
         template: Dict,
         trace_id: str,
+        task_auth: Optional[Dict] = None,
     ) -> Tuple[Dict[int, Dict], int, Dict]:
         task_type = "word.format_review"
         diagnostics = self._empty_ai_diagnostics()
-        paragraphs = body_paragraphs(request)
-        if not paragraphs:
-            diagnostics["aiFallbackReason"] = "no_paragraphs"
+        candidates = self._role_candidates(request)
+        diagnostics["aiCandidateCount"] = len(candidates)
+        if not candidates:
+            diagnostics["semanticStatus"] = "not_needed"
+            diagnostics["aiFallbackReason"] = "no_candidates"
             if hasattr(self.provider_client, "record_skipped_debug"):
                 self.provider_client.record_skipped_debug(
                     task_type,
                     trace_id,
-                    "格式审查未读取到正文段落，未调用模型后台。",
-                    "no_paragraphs",
+                    self._build_role_prompt(request, template, []),
+                    "no_candidates",
                     provider="local",
                 )
             return {}, 0, diagnostics
 
-        if not self.provider_client.is_task_configured(task_type):
+        configured = self._task_auth_configured(task_auth) if task_auth is not None else self.provider_client.is_task_configured(task_type)
+        if not configured:
+            diagnostics["semanticStatus"] = "degraded"
             diagnostics["aiFallbackReason"] = "provider_not_configured"
             if hasattr(self.provider_client, "record_unconfigured_debug"):
                 self.provider_client.record_unconfigured_debug(
                     task_type,
                     trace_id,
-                    self._build_role_prompt(request, template, paragraphs[:AI_ROLE_BATCH_SIZE]),
+                    self._build_role_prompt(request, template, candidates[:AI_ROLE_BATCH_SIZE]),
+                )
+            return {}, 0, diagnostics
+
+        if self._direct_capability_unknown(task_auth):
+            diagnostics["semanticStatus"] = "degraded"
+            diagnostics["aiFallbackReason"] = "model_capability_unknown"
+            if hasattr(self.provider_client, "record_skipped_debug"):
+                self.provider_client.record_skipped_debug(
+                    task_type,
+                    trace_id,
+                    self._build_role_prompt(request, template, candidates[:AI_ROLE_BATCH_SIZE]),
+                    "model_capability_unknown",
+                    provider="local",
                 )
             return {}, 0, diagnostics
 
         roles: Dict[int, Dict] = {}
         batch_count = 0
-        valid_roles = {
-            "document_title", "heading", "body", "list_item", "note", "caption",
-            "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula", "table_body", "unknown",
-        }
-        ai_paragraphs = paragraphs[:AI_ROLE_MAX_PARAGRAPHS]
-        if len(paragraphs) > len(ai_paragraphs):
+        ai_candidates = candidates[:AI_ROLE_MAX_PARAGRAPHS]
+        if len(candidates) > len(ai_candidates):
             diagnostics["aiFallbackReason"] = "ai_budget_limited"
-        for start in range(0, len(ai_paragraphs), AI_ROLE_BATCH_SIZE):
-            batch = ai_paragraphs[start:start + AI_ROLE_BATCH_SIZE]
-            batch_indexes = {paragraph.index for paragraph in batch}
+        strict_binding = bool(all(self._snapshot_binding(request).values()))
+        for start in range(0, len(ai_candidates), AI_ROLE_BATCH_SIZE):
+            batch = ai_candidates[start:start + AI_ROLE_BATCH_SIZE]
+            batch_by_block = {item["blockId"]: item for item in batch}
+            batch_by_index = {item["paragraphIndex"]: item for item in batch}
             prompt = self._build_role_prompt(request, template, batch)
             if hasattr(self.provider_client, "build_task_input_data"):
                 input_data = self.provider_client.build_task_input_data(
                     task_type,
                     trace_id,
-                    {"templateId": template.get("id"), "scope": request.selection_mode},
+                    {
+                        "templateId": template.get("id"),
+                        "scope": request.selection_mode,
+                        "operation": "classify_role",
+                        "candidateBlockIds": list(batch_by_block),
+                        "snapshotBinding": self._snapshot_binding(request),
+                    },
                 )
             else:
                 input_data = {
                     "scene": "word",
                     "task_id": task_type,
                     "taskType": task_type,
-                    "trace_id": trace_id,
-                    "templateId": template.get("id"),
-                    "scope": request.selection_mode,
-                }
+                        "trace_id": trace_id,
+                        "templateId": template.get("id"),
+                        "scope": request.selection_mode,
+                        "operation": "classify_role",
+                        "candidateBlockIds": list(batch_by_block),
+                        "snapshotBinding": self._snapshot_binding(request),
+                    }
             batch_count += 1
             diagnostics["aiAttempted"] = True
             try:
                 if hasattr(self.provider_client, "format_review_roles"):
-                    body = self.provider_client.format_review_roles(trace_id, input_data, prompt)
+                    if task_auth is None:
+                        body = self.provider_client.format_review_roles(trace_id, input_data, prompt)
+                    else:
+                        body = self.provider_client.format_review_roles(
+                            trace_id, input_data, prompt, task_auth=task_auth
+                        )
                 else:
-                    body = self.provider_client.post_task(task_type, trace_id, input_data, prompt)
+                    kwargs = {"task_auth": task_auth} if task_auth is not None else {}
+                    body = self.provider_client.post_task(task_type, trace_id, input_data, prompt, **kwargs)
                 answer = extract_answer(body)
             except AdapterError:
                 diagnostics["aiRequestErrorCount"] += 1
@@ -551,7 +617,11 @@ class WordFormatReviewer:
             except (TypeError, ValueError, json.JSONDecodeError):
                 diagnostics["aiRequestErrorCount"] += 1
                 continue
-            items = self._extract_role_items(answer)
+            response_payload = self._extract_semantic_payload(answer)
+            if strict_binding and response_payload.get("snapshotBinding") != self._snapshot_binding(request):
+                diagnostics["aiInvalidBindingCount"] += 1
+                continue
+            items = response_payload.get("items")
             if not isinstance(items, list):
                 diagnostics["aiParseErrorCount"] += 1
                 continue
@@ -559,32 +629,57 @@ class WordFormatReviewer:
                 if not isinstance(item, dict):
                     diagnostics["aiInvalidRoleCount"] += 1
                     continue
+                block_id = str(item.get("blockId", "")).strip()
+                candidate = batch_by_block.get(block_id) if strict_binding else None
+                if strict_binding and candidate is None:
+                    diagnostics["aiOutOfBatchCount"] += 1
+                    continue
+                raw_index = item.get("paragraphIndex", item.get("paragraph_index"))
+                if raw_index is None and candidate is not None:
+                    raw_index = candidate.get("paragraphIndex")
                 try:
-                    index = int(item.get("paragraphIndex", item.get("paragraph_index")))
+                    index = int(raw_index)
                 except (TypeError, ValueError):
                     diagnostics["aiInvalidRoleCount"] += 1
                     continue
-                if index not in batch_indexes:
+                if candidate is None:
+                    candidate = batch_by_index.get(index)
+                if candidate is None:
                     diagnostics["aiOutOfBatchCount"] += 1
                     continue
                 role = str(item.get("role", "")).strip()
                 normalized = self._normalize_model_role(role, item)
-                if normalized is None or normalized["role"] not in valid_roles or normalized["role"] == "unknown":
+                if normalized is None or normalized["role"] == "unknown":
+                    diagnostics["aiInvalidRoleCount"] += 1
+                    continue
+                if not self._model_target_allowed(normalized, candidate.get("allowedTargets", [])):
                     diagnostics["aiInvalidRoleCount"] += 1
                     continue
                 confidence = item.get("confidence")
                 try:
                     confidence = float(confidence)
                 except (TypeError, ValueError):
-                    confidence = 0.75
+                    diagnostics["aiInvalidRoleCount"] += 1
+                    continue
                 confidence = max(0.0, min(1.0, confidence))
+                if confidence < 0.85:
+                    diagnostics["aiLowConfidenceCount"] += 1
+                    continue
+                if candidate.get("deterministicStatus") == "conflict":
+                    diagnostics["aiConflictCount"] += 1
+                    continue
                 roles[index] = {
                     "role": normalized["role"],
                     "attributes": normalized["attributes"],
                     "status": "confirmed" if confidence >= 0.85 else "needs_confirmation",
                     "confidence": confidence,
+                    "blockId": candidate["blockId"],
                     "evidence": ["model_candidate"],
                 }
+        if roles and len(roles) == len(ai_candidates):
+            diagnostics["semanticStatus"] = "completed"
+        else:
+            diagnostics["semanticStatus"] = "degraded"
         if diagnostics["aiAttempted"] and not roles:
             if diagnostics["aiParseErrorCount"]:
                 diagnostics["aiFallbackReason"] = "dify_response_not_role_json"
@@ -596,44 +691,104 @@ class WordFormatReviewer:
                 diagnostics["aiFallbackReason"] = "dify_returned_no_roles"
         return roles, batch_count, diagnostics
 
+    @staticmethod
+    def _model_target_allowed(normalized: Dict, allowed_targets: List[Dict]) -> bool:
+        for target in allowed_targets:
+            if not isinstance(target, dict) or target.get("role") != normalized.get("role"):
+                continue
+            expected = target.get("attributes") or {}
+            actual = normalized.get("attributes") or {}
+            if all(actual.get(key) == value for key, value in expected.items()):
+                return True
+        return False
+
+    def _role_candidates(self, request: WordDocumentRequest) -> List[Dict]:
+        facts = self._format_structure_facts(request)
+        role_facts = {
+            int(item.get("paragraphIndex")): item
+            for item in facts.get("paragraphs", [])
+            if isinstance(item, dict) and str(item.get("paragraphIndex", "")).isdigit()
+        }
+        blocks = {
+            int(item.get("paragraphIndex")): item
+            for item in (request.content.document_structure or {}).get("formatBlocks", [])
+            if isinstance(item, dict) and item.get("paragraphIndex") is not None
+        }
+        candidates = []
+        for paragraph in body_paragraphs(request):
+            fact = role_facts.get(paragraph.index, {"paragraphIndex": paragraph.index, "text": paragraph.text})
+            deterministic = classify_role_fact(fact)
+            if deterministic.get("status") == "confirmed":
+                continue
+            block = blocks.get(paragraph.index, {})
+            if block and block.get("scope", "in_scope") != "in_scope":
+                continue
+            block_id = str(block.get("blockId") or "format-paragraph-{0}".format(paragraph.index))
+            allowed = []
+            for item in deterministic.get("candidates", []):
+                if isinstance(item, dict) and item.get("role") in SEMANTIC_ROLE_NAMES:
+                    allowed.append({"role": item["role"], "attributes": deepcopy(item.get("attributes", {}))})
+            if not allowed:
+                allowed = [{"role": role, "attributes": {}} for role in SEMANTIC_ROLE_NAMES]
+            candidates.append({
+                "blockId": block_id,
+                "paragraphIndex": paragraph.index,
+                "text": paragraph.text[:600],
+                "evidence": deepcopy(deterministic.get("evidence", [])),
+                "deterministicStatus": deterministic.get("status", "needs_confirmation"),
+                "allowedTargets": allowed,
+                "format": deepcopy(block.get("format", {})) if isinstance(block.get("format"), dict) else {
+                    "styleName": paragraph.style_name or "",
+                    "outlineLevel": paragraph.outline_level or 0,
+                },
+            })
+        return candidates
+
+    @staticmethod
+    def _task_auth_configured(task_auth: Optional[Dict]) -> bool:
+        if not isinstance(task_auth, dict) or task_auth.get("authSnapshotStatus") == "unavailable":
+            return False
+        return bool(
+            str(task_auth.get("providerBaseUrl", "")).strip()
+            and str(task_auth.get("apiKey", "")).strip()
+        )
+
+    @staticmethod
+    def _direct_capability_unknown(task_auth: Optional[Dict]) -> bool:
+        if not isinstance(task_auth, dict) or task_auth.get("accessMethod") != "direct_model":
+            return False
+        return not str(task_auth.get("modelName", "")).strip() or task_auth.get("maxOutputTokens") is None
+
+    @staticmethod
+    def _snapshot_binding(request: WordDocumentRequest) -> Dict[str, str]:
+        structure = request.content.document_structure or {}
+        return {
+            "contentSha256": str(structure.get("contentFingerprint") or structure.get("contentSha256") or ""),
+            "structureSha256": str(structure.get("structureFingerprint") or structure.get("structureSha256") or ""),
+            "formatSha256": str(structure.get("formatFingerprint") or structure.get("formatSha256") or ""),
+        }
+
     def _build_role_prompt(
         self,
         request: WordDocumentRequest,
         template: Dict,
-        paragraphs: Optional[List[Paragraph]] = None,
+        candidates: Optional[List[Dict]] = None,
     ) -> str:
-        paragraphs = paragraphs if paragraphs is not None else body_paragraphs(request)
+        candidates = candidates if candidates is not None else self._role_candidates(request)
         payload = {
             "templateId": template.get("id"),
             "scope": request.selection_mode,
-            "roles": [
-                "document_title", "heading", "body", "list_item", "note", "caption",
-                "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula", "table_body",
-            ],
-            "roleAttributes": {
-                "heading": {"level": [1, 2, 3, 4]},
-                "list_item": {"level": [1, 2], "ordered": [True, False]},
-                "note": {"numbered": [True, False]},
-                "appendix_heading": {"level": [1, 2, 3]},
-            },
-            "paragraphs": [
-                {
-                    "paragraphIndex": paragraph.index,
-                    "text": paragraph.text[:300],
-                    "styleName": paragraph.style_name or "",
-                    "outlineLevel": paragraph.outline_level or 0,
-                }
-                for paragraph in paragraphs
-            ],
+            "operation": "classify_role",
+            "snapshotBinding": self._snapshot_binding(request),
+            "candidates": candidates,
         }
         return "\n".join(
             [
                 "你是 Word 技术文件段落角色识别助手。",
-                "请只判断每个段落在模板中的角色，不要改写原文，不要判断格式是否合规。",
-                "只返回一个 Markdown json 代码块，格式为：",
-                '{"paragraphs":[{"paragraphIndex":1,"role":"heading","level":1,"confidence":0.95}]}',
-                "role 只能从给定 roles 中选择；level、ordered、numbered 只能使用 roleAttributes 中的值。",
-                "模型输出只是候选证据；没有结构事实或第二类独立强证据时，不得视为已确认。",
+                "只处理 candidates 中列出的模糊候选；不得返回未列出的 blockId，不得处理确定性规则已确认的对象。",
+                "role 和属性只能从每个候选的 allowedTargets 中选择；confidence 必须是 0 到 1 的数字。",
+                "只返回 JSON，不要 Markdown 代码围栏、推理过程、思考标签或格式合规结论。",
+                '{"snapshotBinding":{"contentSha256":"...","structureSha256":"...","formatSha256":"..."},"candidates":[{"blockId":"...","paragraphIndex":1,"role":"heading","level":1,"confidence":0.95}]}',
                 "",
                 "输入：",
                 json.dumps(payload, ensure_ascii=False),
@@ -721,6 +876,17 @@ class WordFormatReviewer:
         payload = self._extract_json(answer)
         return self._role_items_from_payload(payload)
 
+    def _extract_semantic_payload(self, answer: str) -> Dict:
+        payload = self._extract_json(answer)
+        if not isinstance(payload, dict):
+            return {"items": None, "snapshotBinding": None}
+        if isinstance(payload.get("candidates"), list):
+            return {
+                "items": payload.get("candidates"),
+                "snapshotBinding": payload.get("snapshotBinding") or payload.get("snapshot"),
+            }
+        return {"items": self._role_items_from_payload(payload), "snapshotBinding": None}
+
     def _role_items_from_payload(self, payload: Any, depth: int = 0):
         if depth > 4 or payload is None:
             return None
@@ -755,7 +921,12 @@ class WordFormatReviewer:
             "aiRequestErrorCount": 0,
             "aiInvalidRoleCount": 0,
             "aiOutOfBatchCount": 0,
+            "aiInvalidBindingCount": 0,
+            "aiLowConfidenceCount": 0,
+            "aiConflictCount": 0,
+            "aiCandidateCount": 0,
             "aiFallbackReason": "",
+            "semanticStatus": "not_needed",
         }
 
     def _infer_role(self, paragraph: Paragraph, template: Dict) -> str:

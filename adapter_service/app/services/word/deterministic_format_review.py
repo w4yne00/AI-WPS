@@ -612,6 +612,13 @@ class DeterministicFormatReviewService:
             request = WordDocumentRequest.model_validate(record["request"])
         else:
             request = WordDocumentRequest.parse_obj(record["request"])
+        snapshot_task_auth = getattr(self.reviewer, "snapshot_task_auth", None)
+        task_auth = None
+        if callable(snapshot_task_auth):
+            try:
+                task_auth = deepcopy(snapshot_task_auth())
+            except Exception:
+                task_auth = {"authSnapshotStatus": "unavailable"}
         self._remove_snapshot(snapshot_id)
         return self.coordinator.submit(
             job_id=job_id,
@@ -620,7 +627,9 @@ class DeterministicFormatReviewService:
             runner=self._run,
             snapshot={
                 "jobId": job_id,
+                "traceId": trace_id,
                 "request": request,
+                "taskAuth": task_auth,
                 "snapshotId": snapshot_id,
                 "selectionMode": record.get("selectionMode", request.selection_mode),
                 "contentSha256": record.get("contentSha256", ""),
@@ -916,7 +925,10 @@ class DeterministicFormatReviewService:
         try:
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
-            result = self.reviewer.review(request, trace_id="")
+            review_kwargs = {"trace_id": snapshot.get("traceId", "") or ""}
+            if snapshot.get("taskAuth") is not None:
+                review_kwargs["task_auth"] = snapshot["taskAuth"]
+            result = self.reviewer.review(request, **review_kwargs)
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
             report = self._build_report(result, snapshot)
@@ -969,17 +981,22 @@ class DeterministicFormatReviewService:
                     "count": len(members),
                 })
         semantic_status = str(summary.get("semanticStatus") or "not_needed")
+        unresolved_semantic_roles = any(
+            issue.get("ruleId") == "structure.role_confirmation"
+            for issue in issues
+        )
         summary.update({
             "executionStatus": "completed",
             "complianceStatus": (
                 "not_assessable" if coverage_status != "complete"
+                or unresolved_semantic_roles
                 else ("violations_found" if issues else "passed")
             ),
             "coverageStatus": coverage_status,
             "semanticStatus": semantic_status,
             "readOnly": True,
             "issueCount": len(issues),
-            "zeroIssuesNotSufficient": coverage_status != "complete" or semantic_status in {"partial", "not_ready"},
+            "zeroIssuesNotSufficient": coverage_status != "complete" or unresolved_semantic_roles or semantic_status in {"partial", "not_ready", "degraded"},
         })
         if structure.get("formatSnapshotSchemaVersion") == FORMAT_SNAPSHOT_SCHEMA_VERSION:
             summary.update({
@@ -1826,6 +1843,7 @@ class DeterministicFormatReviewService:
         document_structure = {
             "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
             "formatBlocks": deepcopy(blocks),
+            "contentFingerprint": metrics["contentSha256"],
             "formatFingerprint": metrics["formatSha256"],
             "structureFingerprint": metrics["structureSha256"],
             "coverage": deepcopy(metrics["coverage"]),

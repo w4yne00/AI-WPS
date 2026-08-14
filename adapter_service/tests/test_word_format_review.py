@@ -28,8 +28,8 @@ class RecordingFormatReviewProvider:
     def get_auth_source_for_task(self, task_type: str) -> str:
         return "task-file"
 
-    def format_review_roles(self, trace_id: str, input_data: dict, prompt: str) -> dict:
-        self.calls.append({"traceId": trace_id, "inputData": input_data, "prompt": prompt})
+    def format_review_roles(self, trace_id: str, input_data: dict, prompt: str, task_auth=None) -> dict:
+        self.calls.append({"traceId": trace_id, "inputData": input_data, "prompt": prompt, "taskAuth": task_auth})
         if self.fail:
             raise ValueError("invalid provider response")
         return {"answer": self.answer}
@@ -138,7 +138,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         request = self._request("selection")
         request.content.document_structure["formatFacts"] = {
             "paragraphs": [
-                {"paragraphIndex": 1, "blockType": "heading", "headingLevel": 1}
+                {"paragraphIndex": 1, "styleName": "Normal", "text": "1 总则"}
             ]
         }
 
@@ -162,6 +162,97 @@ class WordFormatReviewerTests(unittest.TestCase):
             ),
             {"role": "heading", "attributes": {"level": 2}},
         )
+
+    def test_format_review_sends_only_ambiguous_candidates_with_snapshot_binding(self) -> None:
+        provider = RecordingFormatReviewProvider(
+            answer=(
+                '{"snapshot":{"contentSha256":"content-1","structureSha256":"structure-1",'
+                '"formatSha256":"format-1"},"candidates":[{"blockId":"format-context-2",'
+                '"role":"heading","level":1,"confidence":0.95}]}'
+            )
+        )
+        request = self._request("document")
+        request.content.paragraphs[1] = request.content.paragraphs[1].copy(
+            update={"text": "待确认内容"}
+        )
+        request.content.document_structure = {
+            "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+            "formatFingerprint": "format-1",
+            "structureFingerprint": "structure-1",
+            "contentFingerprint": "content-1",
+            "formatBlocks": [
+                {
+                    "blockId": "format-paragraph-1",
+                    "blockType": "paragraph",
+                    "scope": "in_scope",
+                    "paragraphIndex": 1,
+                    "text": "普通正文",
+                    "format": {"styleName": "Normal"},
+                },
+                {
+                    "blockId": "format-context-2",
+                    "blockType": "context",
+                    "scope": "in_scope",
+                    "paragraphIndex": 2,
+                    "text": "待确认内容",
+                    "format": {"styleName": "Normal"},
+                },
+            ],
+        }
+        task_auth = {
+            "providerBaseUrl": "https://model.example/v1",
+            "apiKey": "frozen-secret",
+            "accessMethod": "direct_model",
+            "modelName": "review-model",
+            "maxOutputTokens": 4096,
+            "contextWindowTokens": 40000,
+            "modelConfigurationId": "config-format-1",
+            "modelConfiguration": {"configVersion": 7, "taskType": "word.format_review"},
+        }
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            request,
+            trace_id="trace-format-candidates",
+            task_auth=task_auth,
+        )
+
+        self.assertEqual(len(provider.calls), 1)
+        prompt = provider.calls[0]["prompt"]
+        self.assertIn("format-context-2", prompt)
+        self.assertNotIn("format-paragraph-1", prompt)
+        self.assertIn("content-1", prompt)
+        self.assertEqual(provider.calls[0]["taskAuth"], task_auth)
+        self.assertEqual(result["summary"]["aiCandidateCount"], 1)
+        self.assertEqual(result["summary"]["semanticStatus"], "completed")
+        self.assertTrue(any(issue["paragraphIndex"] == 2 for issue in result["issues"]))
+
+    def test_format_review_keeps_deterministic_review_when_direct_capability_is_unknown(self) -> None:
+        provider = RecordingFormatReviewProvider()
+        request = self._request("document")
+        request.content.document_structure["formatFacts"] = {
+            "paragraphs": [{"paragraphIndex": 1, "styleName": "Normal", "text": "待确认"}]
+        }
+        task_auth = {
+            "providerBaseUrl": "https://model.example/v1",
+            "apiKey": "frozen-secret",
+            "accessMethod": "direct_model",
+            "modelName": "unknown-model",
+            "maxOutputTokens": None,
+            "contextWindowTokens": 40000,
+            "modelConfigurationId": "config-format-unknown",
+            "modelConfiguration": {"configVersion": 3, "taskType": "word.format_review"},
+        }
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            request,
+            trace_id="trace-format-capability-unknown",
+            task_auth=task_auth,
+        )
+
+        self.assertEqual(provider.calls, [])
+        self.assertEqual(result["summary"]["semanticStatus"], "degraded")
+        self.assertEqual(result["summary"]["aiFallbackReason"], "model_capability_unknown")
+        self.assertGreaterEqual(result["summary"]["issueCount"], 1)
 
     def test_format_review_normalizes_wps_font_size_and_alignment_values(self) -> None:
         request = parse_word_request(

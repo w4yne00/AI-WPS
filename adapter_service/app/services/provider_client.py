@@ -3832,13 +3832,24 @@ class ProviderClient:
             "messageId": body.get("message_id", ""),
         }
 
-    def format_review_roles(self, trace_id: str, input_data: Dict, prompt: str) -> Dict:
+    def format_review_roles(
+        self,
+        trace_id: str,
+        input_data: Dict,
+        prompt: str,
+        task_auth: Optional[Dict] = None,
+    ) -> Dict:
+        kwargs = {
+            "timeout_seconds": min(self.settings.timeout_seconds, FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS),
+        }
+        if task_auth is not None:
+            kwargs["task_auth"] = task_auth
         return self.post_task(
             "word.format_review",
             trace_id,
             input_data,
             prompt,
-            timeout_seconds=min(self.settings.timeout_seconds, FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS),
+            **kwargs
         )
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:

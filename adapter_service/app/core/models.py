@@ -745,7 +745,15 @@ class FormatReviewSummary(BaseModel):
     ai_request_error_count: int = Field(default=0, alias="aiRequestErrorCount")
     ai_invalid_role_count: int = Field(default=0, alias="aiInvalidRoleCount")
     ai_out_of_batch_count: int = Field(default=0, alias="aiOutOfBatchCount")
+    ai_invalid_binding_count: int = Field(default=0, alias="aiInvalidBindingCount")
+    ai_low_confidence_count: int = Field(default=0, alias="aiLowConfidenceCount")
+    ai_conflict_count: int = Field(default=0, alias="aiConflictCount")
+    ai_candidate_count: int = Field(default=0, alias="aiCandidateCount")
     ai_fallback_reason: str = Field(default="", alias="aiFallbackReason")
+    semantic_status: str = Field(default="not_needed", alias="semanticStatus")
+    model_configuration_id: str = Field(default="", alias="modelConfigurationId")
+    model_configuration_version: int = Field(default=0, alias="modelConfigurationVersion")
+    snapshot_binding: Dict[str, str] = Field(default_factory=dict, alias="snapshotBinding")
 
 
 class FormatReviewResponseData(BaseModel):
