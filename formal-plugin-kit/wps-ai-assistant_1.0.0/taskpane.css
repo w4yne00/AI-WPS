@@ -458,6 +458,7 @@ textarea {
 }
 
 button {
+  min-height: 36px;
   border: 0;
   border-radius: var(--radius-control);
   background: var(--color-primary);
@@ -560,6 +561,7 @@ button:active:not(:disabled) {
 
 .mini-button {
   min-width: 66px;
+  min-height: 32px;
   padding: 8px 12px;
   border-radius: var(--radius-control);
   font-size: 13px;
@@ -981,6 +983,27 @@ body[data-task-mode="smartWrite"] #result-output {
   line-height: 1.45;
 }
 
+.settings-status-strip {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-left: 0;
+  border-radius: var(--radius-control);
+}
+
+.settings-status-strip span {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.settings-status-strip strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  text-align: right;
+}
+
 .settings-head {
   margin-bottom: 14px;
 }
@@ -1234,7 +1257,8 @@ body[data-task-mode="smartWrite"] #result-output {
   border-top: 1px solid var(--hairline);
 }
 
-.workflow-profile-row {
+.workflow-profile-row,
+.workflow-profile-list-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 6px 8px;
@@ -1242,6 +1266,31 @@ body[data-task-mode="smartWrite"] #result-output {
   padding: 10px 0;
   border-bottom: 1px solid var(--hairline);
   min-width: 0;
+}
+
+.workflow-manager-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.workflow-manager-head h3,
+.workflow-manager-head p {
+  margin: 0;
+}
+
+.workflow-manager-head h3 {
+  letter-spacing: 0;
+}
+
+.workflow-manager-head p {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .workflow-profile-summary {
@@ -1288,7 +1337,20 @@ body[data-task-mode="smartWrite"] #result-output {
 }
 
 .workflow-editor-actions {
+  display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 10px;
+  background: var(--surface);
+}
+
+.workflow-editor-view {
+  display: grid;
+  gap: 14px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .workflow-activate-check {

@@ -358,21 +358,26 @@
     return false;
   }
 
+  function getSettingsStatusTarget() {
+    var statusLine = byId("settings-status-line");
+    return statusLine && (statusLine.querySelector("strong") || statusLine);
+  }
+
   function setStatus(message) {
     var statusLine = byId("status-line");
-    var settingsStatusLine = byId("settings-status-line");
+    var settingsStatusLine = getSettingsStatusTarget();
     if (statusLine) {
       setNodeTextIfChanged(statusLine, message);
     }
     if (settingsStatusLine) {
-      setNodeTextIfChanged(settingsStatusLine, message);
+      setNodeTextIfChanged(settingsStatusLine.querySelector("strong") || settingsStatusLine, message);
     }
   }
 
   function setSettingsStatus(message) {
-    var settingsStatusLine = byId("settings-status-line");
+    var settingsStatusLine = getSettingsStatusTarget();
     if (settingsStatusLine) {
-      setNodeTextIfChanged(settingsStatusLine, message);
+      setNodeTextIfChanged(settingsStatusLine.querySelector("strong") || settingsStatusLine, message);
     }
   }
 
@@ -2481,15 +2486,24 @@
 
   function syncWorkflowProfileManagerBusyState() {
     var manager = byId("workflow-profile-manager");
+    var editorView = byId("workflow-editor-view");
     var controls;
     var index;
-    if (!manager) {
+    var roots = [manager, editorView];
+    var rootIndex;
+    if (!manager && !editorView) {
       return;
     }
-    controls = manager.querySelectorAll("button, input, textarea, select");
-    for (index = 0; index < controls.length; index += 1) {
-      controls[index].disabled = state.workflowProfileMutationBusy;
+    for (rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
+      if (!roots[rootIndex]) {
+        continue;
+      }
+      controls = roots[rootIndex].querySelectorAll("button, input, textarea, select");
+      for (index = 0; index < controls.length; index += 1) {
+        controls[index].disabled = state.workflowProfileMutationBusy;
+      }
     }
+    byId("btn-new-workflow-profile").disabled = state.workflowProfileMutationBusy;
   }
 
   function setWorkflowProfileMutationBusy(busy) {
@@ -2546,6 +2560,12 @@
 
   function renderWorkflowProfileManager() {
     var manager = byId("workflow-profile-manager");
+    var settingsHome = byId("workflow-settings-home");
+    var editorView = byId("workflow-editor-view");
+    var editorContent = byId("workflow-editor-content");
+    var managerTitle = byId("workflow-manager-title");
+    var managerSummary = byId("workflow-manager-summary");
+    var newProfileButton = byId("btn-new-workflow-profile");
     var taskType = getSettingsWorkflowTaskType();
     var definition = TASK_API_KEY_DEFS.filter(function (item) {
       return item.taskType === taskType;
@@ -2561,6 +2581,12 @@
     }
     renderWorkflowTaskTabs();
     if (editor && editor.taskType === taskType) {
+      if (settingsHome) {
+        settingsHome.hidden = true;
+      }
+      if (editorView) {
+        editorView.hidden = false;
+      }
       var profile = editor.mode === "edit" ? getWorkflowProfileById(taskType, editor.profileId) : null;
       if (editor.mode === "edit" && !profile) {
         state.workflowProfileEditor = null;
@@ -2613,13 +2639,30 @@
         taskType + '"' + (profile ? ' data-profile-id="' + escapeWorkflowText(profile.id) + '"' : "") + disabledAttribute + '>保存</button>');
       rows.push('<button type="button" class="ghost-action" data-workflow-action="editor-cancel"' + disabledAttribute + '>取消</button>');
       rows.push('</div></section>');
-      manager.innerHTML = rows.join("");
+      editorContent.innerHTML = rows.join("");
+      manager.innerHTML = "";
       return;
     }
 
-    rows.push('<div class="workflow-settings-toolbar"><div><strong>' + definition.label + '</strong><span>当前配置：' +
-      escapeWorkflowText(helpers.getActiveWorkflowProfileName ? helpers.getActiveWorkflowProfileName(data) : "尚未配置") +
-      '</span></div><button type="button" data-workflow-action="create-open" data-task-type="' + taskType + '"' + createDisabledAttribute + '>新建模型配置</button></div>');
+    if (settingsHome) {
+      settingsHome.hidden = false;
+    }
+    if (editorView) {
+      editorView.hidden = true;
+    }
+    if (editorContent) {
+      editorContent.innerHTML = "";
+    }
+    if (managerTitle) {
+      managerTitle.textContent = "模型配置";
+    }
+    if (managerSummary) {
+      managerSummary.textContent = "当前配置：" +
+        (helpers.getActiveWorkflowProfileName ? helpers.getActiveWorkflowProfileName(data) : "尚未配置");
+    }
+    if (newProfileButton) {
+      newProfileButton.disabled = Boolean(createDisabledAttribute.trim());
+    }
     if (data.loadError) {
       rows.push('<div class="workflow-profile-error-actions"><p class="workflow-profile-error">无法读取工作流配置：' +
         escapeWorkflowText(data.loadError) + '</p><button type="button" class="ghost-action mini-button" data-workflow-action="reload" data-task-type="' +
@@ -2636,7 +2679,7 @@
         var statusText = helpers.workflowProfileStatusText ?
           helpers.workflowProfileStatusText(profile, data.activeProfileId) :
           (isActive ? "当前使用" : (profile.complete ? "配置完整" : "配置不完整"));
-        rows.push('<div class="workflow-profile-row" data-profile-id="' + escapeWorkflowText(profile.id) + '">');
+        rows.push('<div class="workflow-profile-list-row workflow-profile-row" data-profile-id="' + escapeWorkflowText(profile.id) + '">');
         rows.push('<div class="workflow-profile-summary"><strong>' + escapeWorkflowText(profile.name) + '</strong>');
         rows.push('<span class="workflow-profile-note">' +
           (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + escapeWorkflowText(profile.modelName) : "") : "工作流平台") + '</span>');
@@ -7908,9 +7951,15 @@
     });
     document.addEventListener("visibilitychange", syncSettingsRefreshController);
     document.addEventListener("visibilitychange", syncScopeWatcher);
+    byId("btn-new-workflow-profile").addEventListener("click", function (event) {
+      handleWorkflowProfileManagerAction({ target: event.currentTarget });
+    });
     byId("workflow-profile-manager").addEventListener("click", handleWorkflowProfileManagerAction);
     byId("workflow-profile-manager").addEventListener("input", markWorkflowProfileEditorDirty);
     byId("workflow-profile-manager").addEventListener("change", handleModelConfigurationEditorChange);
+    byId("workflow-editor-view").addEventListener("click", handleWorkflowProfileManagerAction);
+    byId("workflow-editor-view").addEventListener("input", markWorkflowProfileEditorDirty);
+    byId("workflow-editor-view").addEventListener("change", handleModelConfigurationEditorChange);
     byId("btn-open-writing-policy-manager").addEventListener("click", openWritingPolicyPresetView);
     for (writingPolicyLayerIndex = 0; writingPolicyLayerIndex < writingPolicyLayerButtons.length; writingPolicyLayerIndex += 1) {
       writingPolicyLayerButtons[writingPolicyLayerIndex].addEventListener("click", handleWritingPolicyLayerClick);

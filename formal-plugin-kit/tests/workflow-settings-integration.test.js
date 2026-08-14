@@ -74,7 +74,7 @@ const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
   'id="workflow-profile-current"'
 ].forEach((marker) => assert.ok(wordHtml.includes(marker), `Word missing ${marker}`));
 [
-  'data-workflow-action="create-open"',
+  'byId("btn-new-workflow-profile").addEventListener',
   'class="workflow-settings-subpage"',
   "data-workflow-editor-name",
   "data-workflow-editor-note",

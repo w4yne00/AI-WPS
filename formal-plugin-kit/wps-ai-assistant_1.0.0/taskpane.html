@@ -321,7 +321,10 @@
 
       <section id="settings-view" class="view">
         <section class="settings-shell glass-card">
-          <p id="settings-status-line" class="settings-status-line" aria-live="polite">等待操作。</p>
+          <div id="settings-status-line" class="status-strip settings-status-strip settings-status-line" aria-live="polite">
+            <span>当前状态</span>
+            <strong>等待操作。</strong>
+          </div>
           <section id="connection-settings-section" class="settings-group">
             <section id="provider-summary-card" class="settings-card model-interface-card" hidden>
               <div class="model-interface-heading">
@@ -376,8 +379,18 @@
                 <button type="button" role="tab" data-workflow-task-tab="word.format_review" aria-selected="false">格式审查</button>
               </div>
               <div id="workflow-settings-home" class="workflow-settings-home">
+                <div class="workflow-manager-head">
+                  <div>
+                    <h3 id="workflow-manager-title">模型配置</h3>
+                    <p id="workflow-manager-summary">正在读取模型配置...</p>
+                  </div>
+                  <button id="btn-new-workflow-profile" type="button" data-workflow-action="create-open">新建模型配置</button>
+                </div>
                 <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
               </div>
+              <section id="workflow-editor-view" class="workflow-editor-view" hidden>
+                <div id="workflow-editor-content"></div>
+              </section>
             </section>
 
             <section id="writing-policies-summary-card" class="settings-card writing-policy-summary-card">

@@ -34,6 +34,12 @@ const taskDefinitions = [
 assert.ok(html.includes('id="workflow-task-tabs"'));
 assert.ok(html.includes('id="workflow-settings-home"'));
 assert.ok(html.includes('id="workflow-profile-manager"'));
+assert.ok(html.includes('id="workflow-manager-title"'));
+assert.ok(html.includes('id="workflow-manager-summary"'));
+assert.ok(html.includes('id="btn-new-workflow-profile"'));
+assert.ok(html.includes('id="workflow-editor-view"'));
+assert.ok(html.includes('id="workflow-editor-content"'));
+assert.ok(/id="workflow-editor-view"[^>]*\bhidden\b/.test(html));
 taskDefinitions.forEach(([taskType, label]) => {
   assert.ok(html.includes(`data-workflow-task-tab="${taskType}"`), taskType);
   assert.ok(html.includes(`>${label}</button>`), label);
@@ -51,8 +57,14 @@ assert.ok(html.includes('id="provider-base-url"'));
 
 const managerSource = functionSource("renderWorkflowProfileManager");
 assert.ok(managerSource.includes("getSettingsWorkflowTaskType()"));
+assert.ok(managerSource.includes('var settingsHome = byId("workflow-settings-home")'));
+assert.ok(managerSource.includes('var editorView = byId("workflow-editor-view")'));
+assert.ok(managerSource.includes('var editorContent = byId("workflow-editor-content")'));
+assert.ok(managerSource.includes('var managerTitle = byId("workflow-manager-title")'));
+assert.ok(managerSource.includes('var managerSummary = byId("workflow-manager-summary")'));
 assert.ok(!managerSource.includes("TASK_API_KEY_DEFS.forEach"));
-assert.ok(managerSource.includes('data-workflow-action="create-open"'));
+assert.ok(html.includes('data-workflow-action="create-open"'));
+assert.ok(functionSource("bindEvents").includes('byId("btn-new-workflow-profile").addEventListener'));
 assert.ok(managerSource.includes('data-workflow-action="edit-open"'));
 assert.ok(managerSource.includes("canDeleteWorkflowProfile"));
 assert.ok(!managerSource.includes('profile.note || "暂无备注"'));
@@ -60,6 +72,21 @@ assert.ok(managerSource.includes("if (profile.note)"));
 assert.ok(managerSource.includes("workflow-profile-note"));
 assert.ok(!managerSource.includes("else if (!data.profiles.length)"));
 assert.ok(managerSource.includes("if (data.profiles.length)"));
+assert.ok(managerSource.includes('workflow-profile-list-row'));
+
+const wordSettingsCss = css;
+assert.ok(wordSettingsCss.includes('--radius-control: 6px;'));
+assert.ok(wordSettingsCss.includes('--radius-panel: 8px;'));
+assert.ok(wordSettingsCss.includes('.workflow-profile-list-row'));
+assert.ok(wordSettingsCss.includes('min-height: 36px;'));
+assert.ok(wordSettingsCss.includes('min-height: 32px;'));
+['button:hover', 'button:active:not(:disabled)', 'button:focus-visible', 'button[disabled]'].forEach((selector) => {
+  assert.ok(wordSettingsCss.includes(selector), `Word missing ${selector} state`);
+});
+const narrowSettingsCss = wordSettingsCss.slice(wordSettingsCss.indexOf('@media (max-width: 420px)'));
+assert.ok(narrowSettingsCss.includes('.workflow-manager-head'));
+assert.ok(narrowSettingsCss.includes('.workflow-profile-list-row'));
+assert.ok(narrowSettingsCss.includes('.workflow-profile-actions'));
 
 // Live model-interface state is derived from the URL and active workflow profiles.
 [
@@ -282,7 +309,8 @@ function reviewCheck(name, check) {
 
 reviewCheck("settings status is visible and synchronized", () => {
   assert.ok(html.includes('id="settings-status-line"'), "missing visible settings status line");
-  assert.ok(functionSource("setStatus").includes('byId("settings-status-line")'));
+  assert.ok(js.includes("function getSettingsStatusTarget()"));
+  assert.ok(js.includes('byId("settings-status-line")'));
 });
 
 reviewCheck("workflow activation is blocked while review or mutation is active", () => {
