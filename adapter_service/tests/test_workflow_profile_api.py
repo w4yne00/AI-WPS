@@ -11,6 +11,8 @@ HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.uti
 if HAS_API_DEPS:
     from app.core.errors import AdapterError
     from app.api.provider import (
+        ModelConfigurationCreateRequest,
+        ModelConfigurationImageAuthorizationRequest,
         WorkflowProfileApiKeyRequest,
         WorkflowProfileCreateRequest,
         WorkflowProfileUpdateRequest,
@@ -23,6 +25,12 @@ if HAS_API_DEPS:
         save_provider_task_api_key,
         update_workflow_profile,
         ProviderTaskApiKeyRequest,
+        create_model_configuration,
+        set_model_configuration_image_authorization,
+    )
+    from app.services.model_configurations import (
+        ACCESS_DIRECT_MODEL,
+        ModelConfigurationStore,
     )
 
 
@@ -32,6 +40,34 @@ class WorkflowProfileApiTests(unittest.TestCase):
         config_path = root / "adapter.json"
         config_path.write_text("{}\n", encoding="utf-8")
         return WorkflowProfileStore(config_path, root / "provider_api_keys")
+
+    def test_model_image_authorization_route_is_bound_to_explicit_mode(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+            with patch("app.api.provider.get_model_configuration_store", return_value=store):
+                created = create_model_configuration(
+                    ModelConfigurationCreateRequest(
+                        taskType="word.format_review",
+                        name="视觉配置",
+                        accessMethod=ACCESS_DIRECT_MODEL,
+                        serviceBaseUrl="https://vision.example/v1",
+                        modelName="vision-1",
+                        imageInputMode="openai_image_url",
+                    )
+                )
+                configuration_id = created["data"]["configuration"]["id"]
+                authorized = set_model_configuration_image_authorization(
+                    configuration_id,
+                    ModelConfigurationImageAuthorizationRequest(authorized=True),
+                )
+
+            self.assertEqual(
+                authorized["data"]["configuration"]["imageSemanticReadiness"]["code"],
+                "validation_required",
+            )
 
     def test_crud_routes_return_sanitized_profile_data(self) -> None:
         with TemporaryDirectory() as tmp:

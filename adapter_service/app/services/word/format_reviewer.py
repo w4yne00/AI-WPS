@@ -21,6 +21,7 @@ from app.services.word.format_semantics import (
     FormatSemanticExecutor,
     MAX_FORMAT_SEMANTIC_CALLS,
 )
+from app.services.word.image_semantics import collect_image_inventory
 from app.services.template_loader import TemplateLoader
 
 
@@ -89,6 +90,7 @@ class WordFormatReviewer:
         template = self._resolve_template(requested_template)
         paragraphs = body_paragraphs(request)
         ai_diagnostics = self._empty_ai_diagnostics()
+        image_inventory = collect_image_inventory(request.content.document_structure)
         table_caption_suggestions: Dict[str, Dict] = {}
         if trace_id:
             ai_roles, ai_batch_count, ai_diagnostics = self._classify_roles_with_ai(
@@ -129,7 +131,9 @@ class WordFormatReviewer:
                 )
             else:
                 provider = "工作流平台"
-        issues = self._build_issues(request, template, ai_roles, table_caption_suggestions)
+        issues = self._build_issues(
+            request, template, ai_roles, table_caption_suggestions, image_inventory
+        )
         issues = self._annotate_issues(issues, template)
         summary = {
             "scope": request.selection_mode,
@@ -143,6 +147,7 @@ class WordFormatReviewer:
             "aiClassifiedParagraphCount": len(ai_roles),
             "localFallbackParagraphCount": max(len(paragraphs) - len(ai_roles), 0),
             "aiBatchCount": ai_batch_count,
+            **{key: value for key, value in image_inventory.items() if key != "images"},
             **ai_diagnostics,
         }
         binding = self._snapshot_binding(request)
@@ -182,6 +187,7 @@ class WordFormatReviewer:
         template: Dict,
         ai_roles: Optional[Dict[int, Dict]] = None,
         table_caption_suggestions: Optional[Dict[str, Dict]] = None,
+        image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         issues: List[FormatReviewIssue] = []
         page_issue = self._build_page_issue(request, template)
@@ -190,7 +196,7 @@ class WordFormatReviewer:
 
         issues.extend(
             self._authorized_structure_issues(
-                request, template, table_caption_suggestions or {}
+                request, template, table_caption_suggestions or {}, image_inventory or {}
             )
         )
 
@@ -663,6 +669,7 @@ class WordFormatReviewer:
         request: WordDocumentRequest,
         template: Dict,
         table_caption_suggestions: Optional[Dict[str, Dict]] = None,
+        image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         facts = self._format_structure_facts(request)
         facts.setdefault("appendixFacts", [])
@@ -671,6 +678,7 @@ class WordFormatReviewer:
         audit = audit_format_facts(facts, pack)
         issues: List[FormatReviewIssue] = []
         table_caption_suggestions = table_caption_suggestions or {}
+        image_inventory = image_inventory or {}
         for warning in audit["issues"]:
             if warning.get("ruleId") != "structure.heading_hierarchy":
                 continue
@@ -759,6 +767,28 @@ class WordFormatReviewer:
                         suggestion="请调整题注与图表对象的相对位置。",
                     )
                 )
+        for image in image_inventory.get("images", []):
+            if not isinstance(image, dict) or image.get("captionStatus") not in {"missing", "absent", "none"}:
+                continue
+            evidence_status = str(image.get("evidenceStatus") or "not_assessable")
+            issues.append(
+                FormatReviewIssue(
+                    ruleId="structure.missing_figure_caption",
+                    paragraphIndex=None,
+                    role="figure",
+                    message=(
+                        "正文图片缺少图题，当前仅保留文字证据建议。"
+                        if evidence_status == "text_evidence_only"
+                        else "正文图片缺少图题，当前证据不足以可靠判断。"
+                    ),
+                    currentValue=str(image.get("imageId") or ""),
+                    expectedValue="图题正文",
+                    suggestion="无法可靠建议",
+                    dataStatus=(
+                        "restricted" if evidence_status == "text_evidence_only" else "not_assessable"
+                    ),
+                )
+            )
         return issues
 
     def _annotate_issues(

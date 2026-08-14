@@ -14,6 +14,13 @@ from app.services.workflow_profiles import (
     SUPPORTED_WORKFLOW_TASKS,
     WorkflowProfileError,
 )
+from app.services.word.image_semantics import (
+    IMAGE_INPUT_MODES,
+    IMAGE_SEMANTICS_CONFIG_VERSION,
+    _binding_matches,
+    _image_binding,
+    image_pixel_policy,
+)
 
 
 ACCESS_WORKFLOW_PLATFORM = "workflow_platform"
@@ -121,6 +128,7 @@ class ModelConfigurationStore:
         temperature=None,
         max_output_tokens=None,
         context_window_tokens=None,
+        image_input_mode="disabled",
     ) -> dict:
         task = self._validate_task_type(task_type)
         clean = self._validated_fields(
@@ -132,6 +140,7 @@ class ModelConfigurationStore:
             temperature=temperature,
             max_output_tokens=max_output_tokens,
             context_window_tokens=context_window_tokens,
+            image_input_mode=image_input_mode,
         )
         with _STORE_LOCK:
             payload = self._load_and_migrate()
@@ -153,6 +162,8 @@ class ModelConfigurationStore:
                 "configVersion": 1,
                 "createdAt": now,
                 "updatedAt": now,
+                "imageExternalAuthorization": None,
+                "imageSemanticValidation": None,
                 **clean,
             }
             configurations[configuration["id"]] = configuration
@@ -183,6 +194,9 @@ class ModelConfigurationStore:
                 else configuration.get(
                     "contextWindowTokens", DEFAULT_CONTEXT_WINDOW_TOKENS
                 ),
+                "image_input_mode": fields.get("image_input_mode")
+                if fields.get("image_input_mode") not in (None, "")
+                else configuration.get("imageInputMode", "disabled"),
             }
             clean = self._validated_fields(**merged)
             if fields.get("context_window_tokens") in (None, ""):
@@ -225,6 +239,46 @@ class ModelConfigurationStore:
             configuration = self._require_configuration(configurations, configuration_id)
             self._write_key(configuration["apiKeyRef"], clean_key)
             self._touch(configuration)
+            configurations[configuration["id"]] = configuration
+            payload["modelConfigurations"] = configurations
+            save_config_payload(payload, self.config_path)
+            return self._sanitize(configuration)
+
+    def set_image_external_authorization(
+        self, configuration_id: str, authorized: bool
+    ) -> dict:
+        with _STORE_LOCK:
+            payload = self._load_and_migrate()
+            configurations = self._configuration_map(payload)
+            configuration = self._require_configuration(configurations, configuration_id)
+            mode = str(configuration.get("imageInputMode", "disabled"))
+            if authorized and mode == "disabled":
+                raise ModelConfigurationError(
+                    "IMAGE_INPUT_MODE_REQUIRED",
+                    "启用图片外发授权前必须选择图片输入模式。",
+                )
+            configuration["imageExternalAuthorization"] = {
+                "authorized": bool(authorized),
+                **_image_binding(configuration),
+            }
+            configurations[configuration["id"]] = configuration
+            payload["modelConfigurations"] = configurations
+            save_config_payload(payload, self.config_path)
+            return self._sanitize(configuration)
+
+    def record_image_semantic_validation(
+        self, configuration_id: str, summary: dict
+    ) -> dict:
+        with _STORE_LOCK:
+            payload = self._load_and_migrate()
+            configurations = self._configuration_map(payload)
+            configuration = self._require_configuration(configurations, configuration_id)
+            configuration["imageSemanticValidation"] = {
+                "validated": bool(summary.get("validated", summary.get("success", False))),
+                "completedAt": str(summary.get("completedAt") or _utc_now()),
+                "errorCode": str(summary.get("errorCode") or "")[:80],
+                **_image_binding(configuration),
+            }
             configurations[configuration["id"]] = configuration
             payload["modelConfigurations"] = configurations
             save_config_payload(payload, self.config_path)
@@ -292,6 +346,8 @@ class ModelConfigurationStore:
                     "createdAt",
                     "updatedAt",
                     "lastValidation",
+                    "imageExternalAuthorization",
+                    "imageSemanticValidation",
                     "configVersion",
                 }
             }
@@ -305,6 +361,9 @@ class ModelConfigurationStore:
                     "configVersion": 1,
                     "createdAt": now,
                     "updatedAt": now,
+                    "imageInputMode": "disabled",
+                    "imageExternalAuthorization": None,
+                    "imageSemanticValidation": None,
                 }
             )
             source_key = self._read_key(str(source.get("apiKeyRef", "")))
@@ -426,6 +485,51 @@ class ModelConfigurationStore:
         configurations = self._configuration_map(payload)
         active = self._active_map(payload)
         changed = False
+        for configuration in configurations.values():
+            if "imageInputMode" not in configuration:
+                configuration["imageInputMode"] = "disabled"
+                changed = True
+            if "imageExternalAuthorization" not in configuration:
+                configuration["imageExternalAuthorization"] = None
+                changed = True
+            if "imageSemanticValidation" not in configuration:
+                configuration["imageSemanticValidation"] = None
+                changed = True
+        format_review = payload.get("formatReview")
+        if not isinstance(format_review, dict):
+            format_review = {}
+            changed = True
+        image_semantics = format_review.get("imageSemantics")
+        if not isinstance(image_semantics, dict):
+            format_review["imageSemantics"] = {
+                "enabled": False,
+                "wpsAcceptanceConfirmed": False,
+                "configVersion": 1,
+            }
+            payload["formatReview"] = format_review
+            changed = True
+        else:
+            image_semantics = dict(image_semantics)
+            image_version = int(image_semantics.get("configVersion") or 0)
+            image_changed = False
+            if not isinstance(image_semantics.get("enabled"), bool):
+                image_semantics["enabled"] = False
+                image_changed = True
+            elif image_version <= IMAGE_SEMANTICS_CONFIG_VERSION:
+                if image_semantics["enabled"]:
+                    image_semantics["enabled"] = False
+                    image_semantics["wpsAcceptanceConfirmed"] = False
+                    image_changed = True
+            if not isinstance(image_semantics.get("wpsAcceptanceConfirmed"), bool):
+                image_semantics["wpsAcceptanceConfirmed"] = False
+                image_changed = True
+            if image_version < IMAGE_SEMANTICS_CONFIG_VERSION:
+                image_semantics["configVersion"] = IMAGE_SEMANTICS_CONFIG_VERSION
+                image_changed = True
+            if image_changed:
+                format_review["imageSemantics"] = image_semantics
+                payload["formatReview"] = format_review
+                changed = True
         legacy_profiles = payload.get("workflowProfiles", {})
         if isinstance(legacy_profiles, dict):
             for legacy_id, legacy in legacy_profiles.items():
@@ -503,6 +607,61 @@ class ModelConfigurationStore:
             format_semantic_validation = {**format_semantic_validation, "stale": True}
         else:
             format_semantic_validation = {**format_semantic_validation, "stale": False}
+        image_input_mode = str(configuration.get("imageInputMode", "disabled"))
+        image_binding = _image_binding(configuration)
+        image_authorization = configuration.get("imageExternalAuthorization")
+        if not isinstance(image_authorization, dict):
+            image_authorization = None
+        elif not _binding_matches(image_authorization, image_binding):
+            image_authorization = {**image_authorization, "stale": True}
+        else:
+            image_authorization = {**image_authorization, "stale": False}
+        image_validation = configuration.get("imageSemanticValidation")
+        if not isinstance(image_validation, dict):
+            image_validation = None
+        elif not _binding_matches(image_validation, image_binding):
+            image_validation = {**image_validation, "stale": True}
+        else:
+            image_validation = {**image_validation, "stale": False}
+        image_policy = image_pixel_policy(
+            {"enabled": True, "wpsAcceptanceConfirmed": True},
+            {
+                **configuration,
+                "imageInputMode": image_input_mode,
+                "imageExternalAuthorization": image_authorization,
+                "imageSemanticValidation": image_validation,
+            },
+        )
+        if image_input_mode not in IMAGE_INPUT_MODES:
+            image_readiness = {
+                "code": "invalid",
+                "ready": False,
+                "label": "图片输入模式无效，已禁止图片外发。",
+            }
+        elif image_input_mode == "disabled":
+            image_readiness = {
+                "code": "disabled",
+                "ready": False,
+                "label": "图片语义默认关闭。",
+            }
+        elif image_policy["reason"] == "image_external_authorization_required":
+            image_readiness = {
+                "code": "authorization_required",
+                "ready": False,
+                "label": "请明确授权将图片发送至当前模型服务。",
+            }
+        elif image_policy["reason"] == "image_capability_validation_required":
+            image_readiness = {
+                "code": "validation_required",
+                "ready": False,
+                "label": "请使用无敏感测试图片完成视觉能力验证。",
+            }
+        else:
+            image_readiness = {
+                "code": "ready",
+                "ready": True,
+                "label": "图片外发授权和视觉能力验证均有效。",
+            }
         if str(configuration.get("taskType", "")) == "word.format_review" and access_method == ACCESS_WORKFLOW_PLATFORM:
             semantic_ready = (
                 not missing
@@ -590,6 +749,10 @@ class ModelConfigurationStore:
             "lastValidation": last_validation,
             "formatSemanticValidation": format_semantic_validation,
             "formatSemanticReadiness": format_semantic_readiness,
+            "imageInputMode": image_input_mode,
+            "imageExternalAuthorization": image_authorization,
+            "imageSemanticValidation": image_validation,
+            "imageSemanticReadiness": image_readiness,
             "createdAt": str(configuration.get("createdAt", "")),
             "updatedAt": str(configuration.get("updatedAt", "")),
         }
@@ -604,6 +767,7 @@ class ModelConfigurationStore:
         temperature,
         max_output_tokens,
         context_window_tokens,
+        image_input_mode="disabled",
     ) -> dict:
         clean_name = str(name or "").strip()
         if not clean_name:
@@ -636,6 +800,12 @@ class ModelConfigurationStore:
             raise ModelConfigurationError(
                 "MODEL_CONFIG_TOKEN_BUDGET_INVALID", "最大输出 Token 必须小于上下文容量。"
             )
+        clean_image_mode = str(image_input_mode or "disabled").strip()
+        if clean_image_mode not in IMAGE_INPUT_MODES:
+            raise ModelConfigurationError(
+                "IMAGE_INPUT_MODE_INVALID",
+                "图片输入模式必须是 disabled、openai_image_url 或 dify_file。",
+            )
         return {
             "name": clean_name,
             "note": clean_note,
@@ -646,6 +816,7 @@ class ModelConfigurationStore:
             "maxOutputTokens": clean_max_output,
             "contextWindowTokens": clean_context,
             "contextWindowTokensExplicit": context_explicit,
+            "imageInputMode": clean_image_mode,
         }
 
     @staticmethod

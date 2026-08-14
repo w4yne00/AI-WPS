@@ -69,6 +69,7 @@ class ModelConfigurationCreateRequest(BaseModel):
     context_window_tokens: Optional[int] = Field(
         default=None, alias="contextWindowTokens"
     )
+    image_input_mode: str = Field(default="disabled", alias="imageInputMode")
 
 
 class ModelConfigurationUpdateRequest(BaseModel):
@@ -82,10 +83,15 @@ class ModelConfigurationUpdateRequest(BaseModel):
     context_window_tokens: Optional[int] = Field(
         default=None, alias="contextWindowTokens"
     )
+    image_input_mode: Optional[str] = Field(default=None, alias="imageInputMode")
 
 
 class ModelConfigurationApiKeyRequest(BaseModel):
     api_key: str = Field(alias="apiKey")
+
+
+class ModelConfigurationImageAuthorizationRequest(BaseModel):
+    authorized: bool
 
 
 class ModelConfigurationCopyRequest(BaseModel):
@@ -216,6 +222,7 @@ def create_model_configuration(request: ModelConfigurationCreateRequest) -> dict
             temperature=request.temperature,
             max_output_tokens=request.max_output_tokens,
             context_window_tokens=request.context_window_tokens,
+            image_input_mode=request.image_input_mode,
         )
     except ModelConfigurationError as exc:
         _raise_model_configuration_error(exc)
@@ -241,6 +248,7 @@ def update_model_configuration(
             temperature=request.temperature,
             max_output_tokens=request.max_output_tokens,
             context_window_tokens=request.context_window_tokens,
+            image_input_mode=request.image_input_mode,
         )
     except ModelConfigurationError as exc:
         _raise_model_configuration_error(exc)
@@ -258,6 +266,23 @@ def replace_model_configuration_api_key(
     try:
         configuration = get_model_configuration_store().replace_api_key(
             configuration_id, request.api_key
+        )
+    except ModelConfigurationError as exc:
+        _raise_model_configuration_error(exc)
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {"configuration": configuration},
+    }
+
+
+@router.post("/provider/model-configurations/{configuration_id}/image-authorization")
+def set_model_configuration_image_authorization(
+    configuration_id: str, request: ModelConfigurationImageAuthorizationRequest
+) -> dict:
+    try:
+        configuration = get_model_configuration_store().set_image_external_authorization(
+            configuration_id, request.authorized
         )
     except ModelConfigurationError as exc:
         _raise_model_configuration_error(exc)
@@ -335,6 +360,15 @@ def validate_model_configuration(configuration_id: str) -> dict:
             pass
         raise
     duration_ms = int((time.monotonic() - started) * 1000)
+    current = store.get_configuration(configuration_id)
+    if current.get("imageInputMode", "disabled") != "disabled":
+        store.record_image_semantic_validation(
+            configuration_id,
+            {
+                "validated": False,
+                "errorCode": "IMAGE_CAPABILITY_PROBE_REQUIRED",
+            },
+        )
     if isinstance(result.get("formatSemanticValidation"), dict):
         store.record_format_semantic_validation(
             configuration_id,

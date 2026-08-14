@@ -9,6 +9,13 @@
   "logPath": "./logs/adapter.log",
   "templateRoot": "./templates",
   "timeoutSeconds": 75,
+  "formatReview": {
+    "imageSemantics": {
+      "enabled": false,
+      "wpsAcceptanceConfirmed": false,
+      "configVersion": 1
+    }
+  },
   "taskApiKeyRefs": {
     "word.smart_write": "word_smart_write",
     "word.smart_imitation": "word_smart_imitation",

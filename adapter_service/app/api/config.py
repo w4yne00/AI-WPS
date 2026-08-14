@@ -1,19 +1,30 @@
 from fastapi import APIRouter
+from pydantic import BaseModel, Field
 
-from app.core.config import load_settings
+from app.core.config import default_config_path, load_settings
 from app.core.features import (
     deterministic_format_review_enabled,
     full_document_review_enabled,
+    image_semantics_enabled,
 )
 from app.services.provider_client import ProviderClient
+from app.services.word.image_semantics import ImageSemanticConfigStore
 
 router = APIRouter()
+
+
+class ImageSemanticSettingsRequest(BaseModel):
+    enabled: bool
+    wps_acceptance_confirmed: bool = Field(
+        default=False, alias="wpsAcceptanceConfirmed"
+    )
 
 
 @router.get("/config")
 def get_config() -> dict:
     settings = load_settings()
     provider = ProviderClient(settings)
+    image_semantic_settings = ImageSemanticConfigStore(default_config_path()).get()
     return {
         "success": True,
         "data": {
@@ -35,6 +46,28 @@ def get_config() -> dict:
             "features": {
                 "fullDocumentReviewEnabled": full_document_review_enabled(),
                 "deterministicFormatReviewEnabled": deterministic_format_review_enabled(),
+                "imageSemanticsEnabled": image_semantics_enabled(),
+            },
+            "formatReview": {
+                "imageSemantics": image_semantic_settings,
             },
         },
     }
+
+
+@router.get("/config/image-semantics")
+def get_image_semantic_settings() -> dict:
+    return {
+        "success": True,
+        "data": ImageSemanticConfigStore(default_config_path()).get(),
+    }
+
+
+@router.put("/config/image-semantics")
+def update_image_semantic_settings(request: ImageSemanticSettingsRequest) -> dict:
+    store = ImageSemanticConfigStore(default_config_path())
+    data = store.set_enabled(
+        request.enabled,
+        wps_acceptance_confirmed=request.wps_acceptance_confirmed,
+    )
+    return {"success": True, "message": "saved", "data": data}

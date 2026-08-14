@@ -221,6 +221,7 @@ class FormatSemanticContract:
         candidates: Dict[str, Dict],
         snapshot_binding: Dict[str, str],
         require_complete: bool = False,
+        allow_pixel_inspection: bool = False,
     ) -> Dict:
         if not cls.is_allowed_operation(operation):
             raise _error("FORMAT_SEMANTIC_OPERATION_NOT_ALLOWED", "格式语义操作不在白名单内。")
@@ -283,6 +284,17 @@ class FormatSemanticContract:
                     "not_assessable",
                 }:
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议状态无效。")
+                if status == "pixel_inspected":
+                    if not allow_pixel_inspection:
+                        raise _error(
+                            "IMAGE_SEMANTICS_DISABLED",
+                            "图片语义总开关关闭时不能标记为已完成视觉判断。",
+                        )
+                    if candidate.get("pixelEvidenceVerified") is not True:
+                        raise _error(
+                            "IMAGE_PIXEL_EVIDENCE_NOT_VERIFIED",
+                            "未验证实际图片像素，不能标记为已完成视觉判断。",
+                        )
                 if status in {"not_assessable", "text_evidence_only"} and not suggestion:
                     suggestion = ""
                 if not isinstance(suggestion, str) or (not suggestion.strip() and status not in {"not_assessable", "text_evidence_only"}):

@@ -181,6 +181,8 @@ GET    /health
 POST   /recovery/backups
 GET    /recovery/diagnostics
 GET    /config
+GET    /config/image-semantics
+PUT    /config/image-semantics
 GET    /templates
 GET    /provider/status
 GET    /provider/route-diagnostics
@@ -194,6 +196,7 @@ POST   /provider/model-configurations/{configurationId}/api-key
 POST   /provider/model-configurations/{configurationId}/activate
 POST   /provider/model-configurations/{configurationId}/copy
 POST   /provider/model-configurations/{configurationId}/validate
+POST   /provider/model-configurations/{configurationId}/image-authorization
 POST   /provider/base-url
 POST   /provider/api-key
 DELETE /provider/api-key

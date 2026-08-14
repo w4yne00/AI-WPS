@@ -1,7 +1,9 @@
 from pathlib import Path
 import importlib.util
+import json
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from app.core.config import load_settings
 
@@ -10,6 +12,12 @@ HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.uti
 if HAS_API_DEPS:
     from fastapi.testclient import TestClient
     from app.main import app
+    from app.core.errors import AdapterError
+    from app.api.config import (
+        ImageSemanticSettingsRequest,
+        get_image_semantic_settings,
+        update_image_semantic_settings,
+    )
 
 
 def test_load_settings_reads_example_file(tmp_path: Path) -> None:
@@ -47,6 +55,27 @@ class ConfigSettingsTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 class ConfigApiTests(unittest.TestCase):
+    def test_image_semantics_api_is_closed_until_wps_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "adapter.json"
+            with patch(
+                "app.api.config.default_config_path", return_value=config_path
+            ):
+                self.assertFalse(get_image_semantic_settings()["data"]["enabled"])
+                with self.assertRaises(AdapterError):
+                    update_image_semantic_settings(
+                        ImageSemanticSettingsRequest(enabled=True)
+                    )
+                enabled = update_image_semantic_settings(
+                    ImageSemanticSettingsRequest(
+                        enabled=True, wpsAcceptanceConfirmed=True
+                    )
+                )
+
+            self.assertTrue(enabled["data"]["enabled"])
+            persisted = json.loads(config_path.read_text(encoding="utf-8"))
+            self.assertTrue(persisted["formatReview"]["imageSemantics"]["enabled"])
+
     def test_config_exposes_unified_provider_status_and_empty_routes(self) -> None:
         client = TestClient(app)
 

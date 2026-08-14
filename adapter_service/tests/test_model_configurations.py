@@ -179,6 +179,110 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             )
             self.assertTrue(changed["formatSemanticValidation"]["stale"])
 
+    def test_image_semantics_requires_explicit_mode_authorization_and_validation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            configuration = store.create_configuration(
+                "word.format_review",
+                "图片门禁",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://vision.example/v1",
+                model_name="vision-1",
+            )
+            self.assertEqual(configuration["imageInputMode"], "disabled")
+            self.assertEqual(configuration["imageSemanticReadiness"]["code"], "disabled")
+
+            configuration = store.update_configuration(
+                configuration["id"],
+                name="图片门禁",
+                access_method=ACCESS_DIRECT_MODEL,
+                service_base_url="https://vision.example/v1",
+                model_name="vision-1",
+                image_input_mode="openai_image_url",
+            )
+            self.assertEqual(
+                configuration["imageSemanticReadiness"]["code"],
+                "authorization_required",
+            )
+            configuration = store.set_image_external_authorization(
+                configuration["id"], authorized=True
+            )
+            self.assertEqual(
+                configuration["imageSemanticReadiness"]["code"],
+                "validation_required",
+            )
+            configuration = store.record_image_semantic_validation(
+                configuration["id"], {"validated": True}
+            )
+            self.assertTrue(configuration["imageSemanticReadiness"]["ready"])
+
+            changed = store.update_configuration(
+                configuration["id"],
+                name="图片门禁",
+                access_method=ACCESS_DIRECT_MODEL,
+                service_base_url="https://other-vision.example/v1",
+                model_name="vision-1",
+                image_input_mode="openai_image_url",
+            )
+            self.assertTrue(changed["imageExternalAuthorization"]["stale"])
+            self.assertTrue(changed["imageSemanticValidation"]["stale"])
+            self.assertEqual(
+                changed["imageSemanticReadiness"]["code"],
+                "authorization_required",
+            )
+
+    def test_image_semantics_migration_closes_legacy_switch_and_fills_fields(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "formatReview": {
+                            "imageSemantics": {
+                                "enabled": True,
+                                "wpsAcceptanceConfirmed": True,
+                                "configVersion": 1,
+                            }
+                        },
+                        "modelConfigurations": {
+                            "legacy": {
+                                "id": "legacy",
+                                "taskType": "word.format_review",
+                                "accessMethod": ACCESS_DIRECT_MODEL,
+                                "serviceBaseUrl": "https://vision.example/v1",
+                                "modelName": "vision-1",
+                                "apiKeyRef": "legacy-key",
+                                "configVersion": 1,
+                            }
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            ModelConfigurationStore(config_path, root / "provider_api_keys").list_for_task(
+                "word.format_review"
+            )
+            migrated = json.loads(config_path.read_text(encoding="utf-8"))
+
+            self.assertFalse(migrated["formatReview"]["imageSemantics"]["enabled"])
+            self.assertFalse(
+                migrated["formatReview"]["imageSemantics"]["wpsAcceptanceConfirmed"]
+            )
+            self.assertEqual(
+                migrated["modelConfigurations"]["legacy"]["imageInputMode"],
+                "disabled",
+            )
+            self.assertIsNone(
+                migrated["modelConfigurations"]["legacy"][
+                    "imageExternalAuthorization"
+                ]
+            )
+            self.assertIsNone(
+                migrated["modelConfigurations"]["legacy"]["imageSemanticValidation"]
+            )
+
     def test_legacy_workflow_facade_writes_the_new_configuration_store(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

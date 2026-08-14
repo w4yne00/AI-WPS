@@ -28,6 +28,7 @@ from app.services.long_task_coordinator import (
     get_long_task_coordinator,
 )
 from app.services.word.format_reviewer import WordFormatReviewer
+from app.services.word.image_semantics import collect_image_inventory
 
 
 TASK_TYPE = "word.format_review.deterministic"
@@ -1754,6 +1755,10 @@ class DeterministicFormatReviewService:
                 "unsupportedObjectCount": unsupported_object_count,
                 "unsupportedObjectsByType": unsupported_by_type,
             }
+        image_inventory = collect_image_inventory({"formatBlocks": blocks})
+        coverage.update({
+            key: value for key, value in image_inventory.items() if key != "images"
+        })
         if isinstance(source_coverage.get("headerFooter"), dict):
             coverage["headerFooter"] = deepcopy(source_coverage["headerFooter"])
         if unsupported_objects:
@@ -1805,6 +1810,9 @@ class DeterministicFormatReviewService:
             "inScopeBlockCount", "contextBlockCount", "paragraphCount", "tableCount",
             "captionCount", "tableCellCount", "formatSegmentCount",
             "formatDataInsufficientBlockCount", "unsupportedObjectCount",
+            "imageCount", "supportedImageCount", "missingFigureCaptionCount",
+            "textEvidenceOnlyCount", "notAssessableCount", "pixelExportCount",
+            "pixelUploadCount", "pixelInspectedCount",
         }
         for key, value in increment.items():
             if key in additive:

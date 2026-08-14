@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
-from app.core.config import AppSettings, TaskRoute, load_settings
+from app.core.config import AppSettings, TaskRoute, default_config_path, load_settings
 from app.core.runtime_paths import resolve_runtime_paths
 from app.core.errors import (
     AdapterError,
@@ -36,6 +36,7 @@ from app.services.model_configurations import (
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
 from app.services.ppt.document_text_extractor import extract_staged_document_text
+from app.services.word.image_semantics import ImageSemanticConfigStore
 
 
 logger = get_logger(__name__)
@@ -1764,6 +1765,14 @@ class ProviderClient:
         if self.reload_settings:
             self.settings = load_settings()
 
+    def image_semantic_settings(self) -> Dict:
+        config_path = (
+            self.model_configuration_store.config_path
+            if self.model_configuration_store is not None
+            else default_config_path()
+        )
+        return ImageSemanticConfigStore(config_path).get()
+
     def resolve_task_auth(self, task_type: str) -> Dict:
         self.refresh_settings()
         model_configuration = self.get_active_model_configuration(task_type, include_secret=True)
@@ -1811,6 +1820,14 @@ class ProviderClient:
                 ),
                 "formatSemanticReadiness": model_configuration.get(
                     "formatSemanticReadiness"
+                ),
+                "imageSemantics": self.image_semantic_settings(),
+                "imageInputMode": model_configuration.get("imageInputMode", "disabled"),
+                "imageExternalAuthorization": model_configuration.get(
+                    "imageExternalAuthorization"
+                ),
+                "imageSemanticValidation": model_configuration.get(
+                    "imageSemanticValidation"
                 ),
                 "apiKeyRef": api_key_ref,
                 "apiKey": str(model_configuration.get("apiKey", "")),
@@ -1936,6 +1953,10 @@ class ProviderClient:
             "apiKeyRef": api_key_ref,
             "apiKey": str(configuration.get("apiKey", "")),
             "authSource": "task-file",
+            "imageSemantics": self.image_semantic_settings(),
+            "imageInputMode": configuration.get("imageInputMode", "disabled"),
+            "imageExternalAuthorization": configuration.get("imageExternalAuthorization"),
+            "imageSemanticValidation": configuration.get("imageSemanticValidation"),
         }
 
     def resolve_task_route(self, task_type: str) -> TaskRoute:
