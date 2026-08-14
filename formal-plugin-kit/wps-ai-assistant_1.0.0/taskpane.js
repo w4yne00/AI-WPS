@@ -240,6 +240,7 @@
       sort: "source"
     },
     deterministicFormatReviewDocumentIdentity: null,
+    deterministicFormatReviewImageObjects: {},
     fullDocumentReviewJobId: "",
     fullDocumentReviewPollErrorCount: 0,
     fullDocumentReviewPreparing: false,
@@ -7161,6 +7162,7 @@
 
   function discardDeterministicFormatReviewSnapshot() {
     var snapshot = state.deterministicFormatReviewSnapshot;
+    state.deterministicFormatReviewImageObjects = {};
     state.deterministicFormatReviewSnapshot = null;
     if (!snapshot || !snapshot.snapshotId || !(snapshot.snapshotToken || snapshot.uploadToken)) {
       return;
@@ -7175,6 +7177,78 @@
     ).catch(function () {
       // The adapter also expires abandoned snapshots; cleanup must not hide the original error.
     });
+  }
+
+  function collectDeterministicFormatReviewImages(document, paragraphs) {
+    var images = [];
+    var objects = {};
+    var sources = [
+      firstDefined(readValue(document, "InlineShapes"), readValue(document, "inlineShapes")),
+      firstDefined(readValue(document, "Shapes"), readValue(document, "shapes"))
+    ];
+    var paragraphList = Array.isArray(paragraphs) ? paragraphs : [];
+
+    function readImageObject(item, index, sourceType) {
+      var type = firstDefined(readValue(item, "Type"), readValue(item, "type"));
+      var typeText = String(type || "").toLowerCase();
+      var isFloatingPicture = sourceType !== "floating" ||
+        type === 13 || type === 11 || /picture|image|inlinepicture|inline_image/.test(typeText) ||
+        readValue(item, "IsPicture") === true || readValue(item, "isPicture") === true;
+      var hostId = String(firstDefined(
+        readValue(item, "Id"), readValue(item, "ID"), readValue(item, "Name"), readValue(item, "name")
+      ) || (sourceType + "-" + index));
+      var imageId = "wps-image-" + helpers.sha256Text(sourceType + ":" + hostId + ":" + index).slice(0, 24);
+      var paragraphIndex = Number(firstDefined(
+        readValue(item, "ParagraphIndex"), readValue(item, "paragraphIndex"),
+        readValue(item, "AnchorParagraphIndex"), readValue(item, "anchorParagraphIndex")
+      ) || 0);
+      if (!isFloatingPicture) {
+        return;
+      }
+      var altText = String(firstDefined(
+        readValue(item, "AlternativeText"), readValue(item, "AltText"), readValue(item, "altText")
+      ) || "");
+      var nearby = paragraphList.filter(function (paragraph) {
+        var indexValue = Number(paragraph && paragraph.index || 0);
+        return paragraphIndex > 0 && Math.abs(indexValue - paragraphIndex) <= 1 && paragraph.text;
+      }).map(function (paragraph) { return String(paragraph.text || ""); });
+      var hasCaption = nearby.some(function (text) {
+        return /^(图|figure)\s*[0-9０-９一二三四五六七八九十]+[：:.、\s]/i.test(text.trim());
+      });
+      var fact = {
+        imageId: imageId,
+        groupId: String(firstDefined(readValue(item, "GroupID"), readValue(item, "groupId")) || imageId),
+        fingerprint: helpers.sha256Text(sourceType + ":" + hostId + ":" + paragraphIndex),
+        captionStatus: hasCaption ? "present" : "missing",
+        associationStatus: "missing",
+        supported: true,
+        altText: altText.slice(0, 2000),
+        nearbyText: nearby.join(" ").slice(0, 4000),
+        paragraphIndex: paragraphIndex
+      };
+      images.push(fact);
+      objects[imageId] = item;
+    }
+
+    sources.forEach(function (collection, sourceIndex) {
+      var count = readCollectionCount(collection);
+      for (var index = 1; index <= count; index += 1) {
+        readImageObject(getCollectionItem(collection, index), index, sourceIndex === 0 ? "inline" : "floating");
+      }
+    });
+    return { facts: images, objects: objects };
+  }
+
+  function saveFormatReviewImageAsPng(imageObject, slotPath) {
+    if (!imageObject || typeof imageObject.SaveAsPicture !== "function") {
+      throw new Error("当前 WPS 图片对象不支持 SaveAsPicture PNG 导出。");
+    }
+    if (!slotPath || typeof slotPath !== "string") {
+      throw new Error("Adapter 未返回受控图片槽位。");
+    }
+    // WPS SaveAsPicture filter id 2 is PNG. The Adapter validates the file
+    // container, owner, dimensions and hash after this call.
+    imageObject.SaveAsPicture(slotPath, 2);
   }
 
   function extractDeterministicFormatReviewSnapshot(scope) {
@@ -7221,6 +7295,10 @@
     }
     payload.content.documentStructure = payload.content.documentStructure || {};
     payload.content.documentStructure.tables = tables;
+    var imageCollection = collectDeterministicFormatReviewImages(
+      document, payload.content.paragraphs || []
+    );
+    payload.content.documentStructure.imageInventory = imageCollection.facts;
     if (scope.selectionMode === "selection" && helpers.collectParagraphs) {
       var selectedIndexes = (payload.content.paragraphs || []).map(function (paragraph) {
         return Number(paragraph.index || 0);
@@ -7272,7 +7350,7 @@
         });
       }
     }
-    return helpers.buildDeterministicFormatReviewBody(payload, {
+    var body = helpers.buildDeterministicFormatReviewBody(payload, {
       contextBlocks: contextBlocks,
       documentIdentity: documentIdentity,
       editSequence: editSequence,
@@ -7284,8 +7362,11 @@
         selectedTextSha256: scope.selectionMode === "selection"
           ? helpers.sha256Text(scope.selectedText || getSelectionText(document)) : "",
         contextOnly: contextBlocks.map(function (block) { return block.blockId; })
-      }
+      },
+      imageFacts: imageCollection.facts
     });
+    body._imageObjects = imageCollection.objects;
+    return body;
   }
 
   function ensureDeterministicFormatReviewPreparation(editSequence, documentIdentity) {
@@ -7333,6 +7414,57 @@
     }, Promise.resolve());
   }
 
+  function exportDeterministicFormatReviewImageGroups(session, body) {
+    var imageObjects = state.deterministicFormatReviewImageObjects || {};
+    var committedGroups = 0;
+
+    function next(remainingCalls) {
+      ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+      return request(
+        "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) + "/image-groups",
+        {
+          uploadToken: session.uploadToken || session.snapshotToken,
+          documentIdentity: body.documentIdentity,
+          editSequence: body.editSequence,
+          remainingCalls: remainingCalls
+        },
+        { method: "POST", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
+      ).then(function (groupBody) {
+        var data = groupBody.data || {};
+        if (data.status !== "allocated" || !data.group) {
+          return data;
+        }
+        var group = data.group;
+        (group.assets || []).forEach(function (asset) {
+          var imageObject = imageObjects[String(asset.imageId || "")];
+          if (!imageObject) {
+            throw new Error("未找到图片对象，已停止受控图片导出。");
+          }
+          ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+          saveFormatReviewImageAsPng(imageObject, asset.slotPath);
+        });
+        ensureDeterministicFormatReviewPreparation(body.editSequence, body.documentIdentity);
+        return request(
+          "/word/format-review/snapshots/" + encodeURIComponent(session.snapshotId) +
+            "/image-groups/" + encodeURIComponent(group.groupId) + "/commit",
+          {
+            uploadToken: session.uploadToken || session.snapshotToken,
+            documentIdentity: body.documentIdentity,
+            editSequence: body.editSequence
+          },
+          { method: "POST", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
+        ).then(function () {
+          committedGroups += 1;
+          return next(Math.max(0, Number(remainingCalls || 0) - 1));
+        });
+      });
+    }
+
+    return next(16).then(function (result) {
+      return { result: result, committedGroups: committedGroups };
+    });
+  }
+
   function runDeterministicFormatReview() {
     var scope;
     var firstPass;
@@ -7359,6 +7491,7 @@
       try {
         firstPass = extractDeterministicFormatReviewSnapshot(scope);
         firstPass.batches = helpers.buildDeterministicFormatReviewBatches(firstPass, 3500);
+        state.deterministicFormatReviewImageObjects = firstPass._imageObjects || {};
         ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
         state.deterministicFormatReviewDocumentIdentity = firstPass.documentIdentity;
         state.latestSelectionMode = firstPass.selectionMode;
@@ -7436,6 +7569,13 @@
           },
           { method: "POST", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
         );
+      }).then(function (commitBody) {
+        var committed = commitBody.data || {};
+        state.deterministicFormatReviewSnapshot = committed;
+        setStatus("正在按受控槽位导出缺失图题图片...");
+        return exportDeterministicFormatReviewImageGroups(session, firstPass).then(function () {
+          return commitBody;
+        });
       }).then(function (commitBody) {
         var committed = commitBody.data || {};
         state.deterministicFormatReviewSnapshot = committed;

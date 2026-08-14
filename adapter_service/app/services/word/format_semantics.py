@@ -157,8 +157,37 @@ class FormatSemanticContract:
                 if not cls._evidence_contains(match.group(0), evidence_text):
                     raise _error(
                         "FORMAT_SEMANTIC_EVIDENCE_VIOLATION",
-                        "表题建议引入了证据外的机构、时间、地域或统计口径。",
-                    )
+                    "表题建议引入了证据外的机构、时间、地域或统计口径。",
+                )
+
+    @classmethod
+    def validate_figure_caption_suggestion(
+        cls, suggestion: str, candidate: Dict, allow_pixel_inspection: bool
+    ) -> str:
+        evidence = candidate.get("evidence") if isinstance(candidate, dict) else {}
+        evidence = evidence if isinstance(evidence, dict) else {}
+        pixel_verified = candidate.get("pixelEvidenceVerified") is True
+        evidence_status = str(evidence.get("evidenceStatus") or "")
+        # Older model-configuration probes used synthetic figure candidates
+        # without an evidence view. Keep that probe contract compatible; real
+        # review candidates always carry evidence and therefore take the
+        # stricter branch below.
+        if "evidence" not in candidate:
+            return "text_evidence_only"
+        if pixel_verified:
+            if not allow_pixel_inspection:
+                raise _error(
+                    "IMAGE_SEMANTICS_DISABLED",
+                    "图片语义总开关关闭时不能标记为已完成视觉判断。",
+                )
+            return "pixel_inspected"
+        if evidence_status not in {"complete", "restricted"}:
+            raise _error(
+                "FORMAT_SEMANTIC_EVIDENCE_INSUFFICIENT",
+                "图题证据不足，无法可靠生成建议。",
+            )
+        cls.validate_evidence_bound_suggestion(suggestion, candidate)
+        return "text_evidence_only"
 
     @classmethod
     def _normalize_role_item(cls, item: Dict, candidate: Dict) -> Dict:
@@ -295,6 +324,12 @@ class FormatSemanticContract:
                             "IMAGE_PIXEL_EVIDENCE_NOT_VERIFIED",
                             "未验证实际图片像素，不能标记为已完成视觉判断。",
                         )
+                if operation == "suggest_figure_caption" and suggestion:
+                    expected_status = cls.validate_figure_caption_suggestion(
+                        suggestion.strip(), candidate, allow_pixel_inspection
+                    )
+                    if status is None:
+                        status = expected_status
                 if status in {"not_assessable", "text_evidence_only"} and not suggestion:
                     suggestion = ""
                 if not isinstance(suggestion, str) or (not suggestion.strip() and status not in {"not_assessable", "text_evidence_only"}):
@@ -341,6 +376,7 @@ class FormatSemanticExecutor:
         task_auth: Optional[Dict] = None,
         phase_started_at: Optional[float] = None,
         monotonic_clock: Callable[[], float] = time.monotonic,
+        allow_pixel_inspection: bool = False,
     ) -> None:
         self.call = call
         self.used_calls = int(used_calls)
@@ -348,6 +384,7 @@ class FormatSemanticExecutor:
         self.retry_count = 0
         self.correction_count = 0
         self.monotonic_clock = monotonic_clock
+        self.allow_pixel_inspection = bool(allow_pixel_inspection)
         self.phase_started_at = (
             self.monotonic_clock() if phase_started_at is None else phase_started_at
         )
@@ -381,7 +418,12 @@ class FormatSemanticExecutor:
                     return self._failure("FORMAT_SEMANTIC_PHASE_TIMEOUT", "格式语义阶段已超过 10 分钟。")
                 payload = self._payload_from_response(response)
                 normalized = FormatSemanticContract.validate_response(
-                    operation, payload, candidates, snapshot_binding, require_complete=True
+                    operation,
+                    payload,
+                    candidates,
+                    snapshot_binding,
+                    require_complete=True,
+                    allow_pixel_inspection=self.allow_pixel_inspection,
                 )
                 return {
                     "payload": normalized,

@@ -1,4 +1,6 @@
 import json
+import struct
+import zlib
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -7,14 +9,33 @@ from app.core.errors import AdapterError
 from app.services.word.format_semantics import FormatSemanticContract
 from app.services.word.image_semantics import (
     IMAGE_INPUT_MODES,
+    ImageAssetStore,
     ImageSemanticConfigStore,
     ImageSemanticRuntime,
     collect_image_inventory,
     image_pixel_policy,
+    select_image_export_groups,
 )
 
 
 class ImageSemanticSafetyTests(unittest.TestCase):
+    @staticmethod
+    def _png(width=32, height=16, payload=b"pixels"):
+        def chunk(kind, data):
+            return (
+                struct.pack(">I", len(data))
+                + kind
+                + data
+                + struct.pack(">I", zlib.crc32(kind + data) & 0xffffffff)
+            )
+
+        return (
+            b"\x89PNG\r\n\x1a\n"
+            + chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0))
+            + chunk(b"IDAT", payload)
+            + chunk(b"IEND", b"")
+        )
+
     def test_missing_runtime_setting_is_closed_and_can_be_enabled_only_after_acceptance(self):
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "adapter.json"
@@ -154,6 +175,100 @@ class ImageSemanticSafetyTests(unittest.TestCase):
                 allow_pixel_inspection=True,
             )
         self.assertEqual(raised.exception.code, "IMAGE_PIXEL_EVIDENCE_NOT_VERIFIED")
+
+    def test_figure_caption_suggestion_requires_text_or_verified_pixel_evidence(self):
+        candidate = {
+            "figureCaptionStatus": "missing",
+            "evidence": {"evidenceStatus": "insufficient", "altText": ""},
+        }
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "suggest_figure_caption",
+            "snapshotBinding": {},
+            "items": [{"blockId": "figure-1", "status": "suggested", "suggestion": "系统架构"}],
+        }
+        with self.assertRaises(AdapterError) as raised:
+            FormatSemanticContract.validate_response(
+                "suggest_figure_caption", payload, {"figure-1": candidate}, {}, allow_pixel_inspection=True
+            )
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_EVIDENCE_INSUFFICIENT")
+
+        candidate["pixelEvidenceVerified"] = True
+        payload["items"][0]["status"] = "pixel_inspected"
+        normalized = FormatSemanticContract.validate_response(
+            "suggest_figure_caption", payload, {"figure-1": candidate}, {}, allow_pixel_inspection=True
+        )
+        self.assertEqual(normalized["items"][0]["status"], "pixel_inspected")
+
+    def test_image_export_groups_only_include_confirmed_missing_captions_and_preserve_order(self):
+        groups = select_image_export_groups(
+            [
+                {"imageId": "figure-1", "captionStatus": "missing", "supported": True},
+                {"imageId": "figure-2", "captionStatus": "present", "supported": True},
+                {"imageId": "figure-3", "captionStatus": "missing", "supported": False},
+                {"imageId": "figure-4", "captionStatus": "missing", "supported": True, "groupId": "g2"},
+                {"imageId": "figure-5", "captionStatus": "missing", "supported": True, "groupId": "g2"},
+            ],
+            remaining_calls=2,
+        )
+        self.assertEqual([[item["imageId"] for item in group] for group in groups], [["figure-1"], ["figure-4", "figure-5"]])
+
+    def test_image_asset_store_rejects_path_escape_and_fake_png(self):
+        with TemporaryDirectory() as tmp:
+            store = ImageAssetStore(Path(tmp) / "assets")
+            group = store.allocate_group(
+                "format-snapshot-12345678",
+                [{"imageId": "figure-1", "groupId": "g1"}],
+                {"documentId": "doc-a", "editSequence": "7"},
+            )
+            slot = Path(group["assets"][0]["slotPath"])
+            slot.write_bytes(self._png())
+            committed = store.commit_group(group["groupId"], {"documentId": "doc-a", "editSequence": "7"})
+            self.assertEqual(committed["status"], "committed")
+            self.assertEqual(committed["assets"][0]["width"], 32)
+            self.assertEqual(committed["assets"][0]["height"], 16)
+            store.delete_group(group["groupId"])
+            self.assertFalse(slot.exists())
+
+            escaped = store.allocate_group(
+                "format-snapshot-12345678",
+                [{"imageId": "figure-2", "groupId": "g2"}],
+                {"documentId": "doc-a", "editSequence": "7"},
+            )
+            escaped_slot = Path(escaped["assets"][0]["slotPath"])
+            escaped_slot.symlink_to(Path(tmp) / "outside.png")
+            with self.assertRaises(AdapterError) as raised:
+                store.commit_group(escaped["groupId"], {"documentId": "doc-a", "editSequence": "7"})
+            self.assertEqual(raised.exception.code, "IMAGE_ASSET_PATH_INVALID")
+
+    def test_image_asset_store_group_is_atomic_and_enforces_resource_limits(self):
+        with TemporaryDirectory() as tmp:
+            store = ImageAssetStore(Path(tmp) / "assets")
+            group = store.allocate_group(
+                "format-snapshot-12345678",
+                [
+                    {"imageId": "figure-1", "groupId": "g1"},
+                    {"imageId": "figure-2", "groupId": "g1"},
+                ],
+                {"documentId": "doc-a", "editSequence": "7"},
+            )
+            Path(group["assets"][0]["slotPath"]).write_bytes(self._png())
+            Path(group["assets"][1]["slotPath"]).write_bytes(b"not-a-png")
+            with self.assertRaises(AdapterError) as raised:
+                store.commit_group(group["groupId"], {"documentId": "doc-a", "editSequence": "7"})
+            self.assertEqual(raised.exception.code, "IMAGE_ASSET_PNG_INVALID")
+            self.assertFalse(Path(group["assets"][0]["slotPath"]).exists())
+            self.assertFalse(Path(group["assets"][1]["slotPath"]).exists())
+
+            oversized = store.allocate_group(
+                "format-snapshot-12345678",
+                [{"imageId": "figure-3", "groupId": "g2"}],
+                {"documentId": "doc-a", "editSequence": "7"},
+            )
+            Path(oversized["assets"][0]["slotPath"]).write_bytes(self._png(width=9000, height=1))
+            with self.assertRaises(AdapterError) as raised:
+                store.commit_group(oversized["groupId"], {"documentId": "doc-a", "editSequence": "7"})
+            self.assertEqual(raised.exception.code, "IMAGE_ASSET_DIMENSION_LIMIT")
 
 
 if __name__ == "__main__":

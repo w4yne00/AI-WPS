@@ -474,7 +474,19 @@
           })
         };
       }),
-      nestedTables: (block.nestedTables || []).map(formatReviewTableStructureProjection)
+      nestedTables: (block.nestedTables || []).map(formatReviewTableStructureProjection),
+      images: (block.images || []).map(function (image) {
+        return {
+          imageId: String(image && image.imageId || ""),
+          groupId: String(image && image.groupId || ""),
+          fingerprint: String(image && image.fingerprint || ""),
+          captionStatus: String(image && image.captionStatus || "unknown"),
+          associationStatus: String(image && image.associationStatus || "missing"),
+          supported: image && image.supported !== false,
+          altText: String(image && image.altText || ""),
+          nearbyText: String(image && image.nearbyText || "")
+        };
+      })
     };
   }
 
@@ -559,6 +571,29 @@
         text: values.join("\n"),
         format: table && table.format || {},
         range: table && table.range || {}
+      });
+    });
+    (Array.isArray((options || {}).imageFacts) ? (options || {}).imageFacts : []).forEach(function (image, index) {
+      if (!image || !image.imageId) {
+        return;
+      }
+      pushBlock({
+        blockId: "format-image-" + String(image.imageId),
+        blockType: "image",
+        paragraphIndex: Number(image.paragraphIndex || paragraphs.length + tables.length + index + 1),
+        text: "",
+        images: [{
+          imageId: String(image.imageId),
+          groupId: String(image.groupId || image.imageId),
+          fingerprint: String(image.fingerprint || ""),
+          captionStatus: String(image.captionStatus || "unknown"),
+          associationStatus: String(image.associationStatus || "missing"),
+          supported: image.supported !== false,
+          altText: String(image.altText || ""),
+          nearbyText: String(image.nearbyText || "")
+        }],
+        format: { dataStatus: "verified" },
+        range: image.range || {}
       });
     });
     contextBlocks.forEach(function (block) {
@@ -2761,6 +2796,25 @@
       }
     }
 
+    function addFloatingShapes() {
+      var collection = firstDefined(safeRead(source, "Shapes"), safeRead(source, "shapes"));
+      var count = readCollectionCount(collection);
+      var unsupportedCount = 0;
+      for (var index = 1; index <= count; index += 1) {
+        var shape = getCollectionItem(collection, index);
+        var type = firstDefined(safeRead(shape, "Type"), safeRead(shape, "type"));
+        var typeText = String(type || "").toLowerCase();
+        var picture = type === 13 || type === 11 || /picture|image|inlinepicture|inline_image/.test(typeText) ||
+          safeRead(shape, "IsPicture") === true || safeRead(shape, "isPicture") === true;
+        if (!picture) {
+          unsupportedCount += 1;
+        }
+      }
+      if (unsupportedCount) {
+        unsupportedObjects.push({ type: "floatingShape", count: unsupportedCount, status: "not_supported" });
+      }
+    }
+
     var header = readHeaderFooter("header");
     var footer = readHeaderFooter("footer");
     addObjects("textBox", ["TextBoxes", "textBoxes", "TextBoxObjects"]);
@@ -2768,7 +2822,7 @@
     addObjects("equation", ["OMaths", "Equations", "MathObjects"]);
     addObjects("comment", ["Comments", "comments"]);
     addObjects("revision", ["Revisions", "revisions"]);
-    addObjects("floatingShape", ["Shapes", "shapes"]);
+    addFloatingShapes();
     return {
       headerFooter: {
         header: header,

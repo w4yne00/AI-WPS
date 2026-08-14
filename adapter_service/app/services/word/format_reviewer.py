@@ -21,7 +21,12 @@ from app.services.word.format_semantics import (
     FormatSemanticExecutor,
     MAX_FORMAT_SEMANTIC_CALLS,
 )
-from app.services.word.image_semantics import collect_image_inventory
+from app.services.word.image_semantics import (
+    IMAGE_TEXT_STATUS,
+    collect_image_inventory,
+    image_pixel_policy,
+    select_image_export_groups,
+)
 from app.services.template_loader import TemplateLoader
 
 
@@ -85,6 +90,8 @@ class WordFormatReviewer:
         task_auth: Optional[Dict] = None,
         semantic_state: Optional[Dict] = None,
         max_semantic_batches: Optional[int] = None,
+        image_assets: Optional[List[Dict]] = None,
+        image_asset_cleanup=None,
     ) -> Dict:
         requested_template = request.options.template_id or DEFAULT_TEMPLATE_ID
         template = self._resolve_template(requested_template)
@@ -92,6 +99,7 @@ class WordFormatReviewer:
         ai_diagnostics = self._empty_ai_diagnostics()
         image_inventory = collect_image_inventory(request.content.document_structure)
         table_caption_suggestions: Dict[str, Dict] = {}
+        figure_caption_suggestions: Dict[str, Dict] = {}
         if trace_id:
             ai_roles, ai_batch_count, ai_diagnostics = self._classify_roles_with_ai(
                 request,
@@ -120,10 +128,25 @@ class WordFormatReviewer:
                 used_calls=int(ai_diagnostics.get("aiCallCount", 0) or 0),
             )
             ai_diagnostics.update(table_caption_diagnostics)
+            figure_caption_suggestions, figure_caption_diagnostics = self._suggest_missing_figure_captions(
+                request,
+                trace_id,
+                task_auth=task_auth,
+                used_calls=int(ai_diagnostics.get("aiCallCount", 0) or 0),
+                image_assets=image_assets,
+                image_asset_cleanup=image_asset_cleanup,
+            )
+            ai_diagnostics.update(figure_caption_diagnostics)
+            self._apply_figure_image_diagnostics(
+                image_inventory, figure_caption_suggestions, figure_caption_diagnostics
+            )
         provider = "local"
         if ai_roles or any(
             isinstance(item, dict) and item.get("status") == "suggested"
             for item in table_caption_suggestions.values()
+        ) or any(
+            isinstance(item, dict) and item.get("status") in {"suggested", "text_evidence_only", "pixel_inspected"}
+            for item in figure_caption_suggestions.values()
         ):
             if hasattr(self.provider_client, "build_provider_source"):
                 provider = self.provider_client.build_provider_source(
@@ -132,7 +155,12 @@ class WordFormatReviewer:
             else:
                 provider = "工作流平台"
         issues = self._build_issues(
-            request, template, ai_roles, table_caption_suggestions, image_inventory
+            request,
+            template,
+            ai_roles,
+            table_caption_suggestions,
+            figure_caption_suggestions,
+            image_inventory,
         )
         issues = self._annotate_issues(issues, template)
         summary = {
@@ -141,7 +169,7 @@ class WordFormatReviewer:
             "rulePackVersion": template.get("_rulePackVersion", "legacy-template"),
             "rulePackSha256": template.get("_rulePackSha256", ""),
             "authorizedAlgorithmVersion": template.get("_algorithmAdapterVersion", ""),
-            "provider": provider if (ai_roles or table_caption_suggestions) else "local",
+            "provider": provider if (ai_roles or table_caption_suggestions or figure_caption_suggestions) else "local",
             "paragraphCount": len(paragraphs),
             "issueCount": len(issues),
             "aiClassifiedParagraphCount": len(ai_roles),
@@ -187,6 +215,7 @@ class WordFormatReviewer:
         template: Dict,
         ai_roles: Optional[Dict[int, Dict]] = None,
         table_caption_suggestions: Optional[Dict[str, Dict]] = None,
+        figure_caption_suggestions: Optional[Dict[str, Dict]] = None,
         image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         issues: List[FormatReviewIssue] = []
@@ -196,7 +225,11 @@ class WordFormatReviewer:
 
         issues.extend(
             self._authorized_structure_issues(
-                request, template, table_caption_suggestions or {}, image_inventory or {}
+                request,
+                template,
+                table_caption_suggestions or {},
+                figure_caption_suggestions or {},
+                image_inventory or {},
             )
         )
 
@@ -597,6 +630,255 @@ class WordFormatReviewer:
             json.dumps(payload, ensure_ascii=False),
         ])
 
+    def _figure_caption_candidates(self, request: WordDocumentRequest) -> List[Dict]:
+        inventory = collect_image_inventory(request.content.document_structure)
+        candidates = []
+        for image in inventory.get("images", []):
+            if not isinstance(image, dict):
+                continue
+            if image.get("captionStatus") not in {"missing", "absent", "none"}:
+                continue
+            if image.get("supported") is False or image.get("associationStatus") in {"ambiguous", "unmatched"}:
+                continue
+            image_id = str(image.get("imageId") or "").strip()
+            if not image_id:
+                continue
+            evidence_status = str(image.get("evidenceStatus") or "not_assessable")
+            candidates.append({
+                "blockId": image_id,
+                "imageId": image_id,
+                "groupId": str(image.get("groupId") or image_id),
+                "fingerprint": str(image.get("fingerprint") or ""),
+                "captionStatus": "missing",
+                "associationStatus": str(image.get("associationStatus") or "missing"),
+                "evidence": {
+                    "evidenceStatus": "complete" if evidence_status == IMAGE_TEXT_STATUS else "insufficient",
+                    "imageId": image_id,
+                    "altText": str(image.get("altText") or ""),
+                    "nearbyText": str(image.get("nearbyText") or ""),
+                },
+            })
+        return candidates
+
+    def _image_semantic_policy(self, task_auth: Optional[Dict]) -> Dict[str, Any]:
+        runtime = {}
+        configuration = {}
+        if isinstance(task_auth, dict):
+            runtime = task_auth.get("imageSemantics") if isinstance(task_auth.get("imageSemantics"), dict) else {}
+            configuration = task_auth.get("modelConfiguration") if isinstance(task_auth.get("modelConfiguration"), dict) else task_auth
+        if not runtime and hasattr(self.provider_client, "image_semantic_settings"):
+            try:
+                runtime = self.provider_client.image_semantic_settings()
+            except Exception:
+                runtime = {}
+        if not configuration and hasattr(self.provider_client, "resolve_task_auth"):
+            try:
+                resolved = self.provider_client.resolve_task_auth("word.format_review")
+                if isinstance(resolved, dict):
+                    configuration = resolved.get("modelConfiguration") if isinstance(resolved.get("modelConfiguration"), dict) else resolved
+            except Exception:
+                configuration = {}
+        return image_pixel_policy(runtime, configuration)
+
+    def _suggest_missing_figure_captions(
+        self,
+        request: WordDocumentRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        used_calls: int = 0,
+        image_assets: Optional[List[Dict]] = None,
+        image_asset_cleanup=None,
+    ) -> Tuple[Dict[str, Dict], Dict]:
+        candidates = self._figure_caption_candidates(request)
+        policy = self._image_semantic_policy(task_auth)
+        diagnostics = {
+            "figureCaptionCandidateCount": len(candidates),
+            "figureCaptionSuggestedCount": 0,
+            "figureCaptionPixelInspectedCount": 0,
+            "figureCaptionTextEvidenceOnlyCount": 0,
+            "figureCaptionNotAssessableCount": 0,
+            "figureCaptionCallCount": 0,
+            "figureCaptionSemanticStatus": "not_needed" if not candidates else "not_run",
+            "imageSemanticStatus": "disabled" if not policy["allowed"] else "ready",
+            "imageSemanticReason": policy["reason"],
+        }
+        if not candidates:
+            return {}, diagnostics
+
+        assets_by_image = {}
+        for asset in image_assets or []:
+            if isinstance(asset, dict) and asset.get("imageId"):
+                assets_by_image[str(asset["imageId"])] = asset
+        suggestions: Dict[str, Dict] = {}
+        eligible = []
+        for candidate in candidates:
+            image_id = candidate["imageId"]
+            evidence = deepcopy(candidate["evidence"])
+            asset = assets_by_image.get(image_id)
+            if asset and asset.get("pixelEvidenceVerified") is True:
+                candidate["pixelEvidenceVerified"] = True
+                candidate["_imageAsset"] = deepcopy(asset)
+                candidate["evidence"]["evidenceStatus"] = "complete"
+            if candidate["evidence"].get("evidenceStatus") in {"complete", "restricted"}:
+                eligible.append(candidate)
+            else:
+                suggestions[image_id] = {"status": "not_assessable", "evidence": evidence}
+                diagnostics["figureCaptionNotAssessableCount"] += 1
+
+        configured = self._task_auth_configured(task_auth) if task_auth is not None else self.provider_client.is_task_configured("word.format_review")
+        if not configured or not self._semantic_protocol_ready(task_auth) or self._direct_capability_unknown(task_auth):
+            for candidate in eligible:
+                suggestions[candidate["imageId"]] = {
+                    "status": "not_assessable",
+                    "evidence": deepcopy(candidate["evidence"]),
+                }
+                diagnostics["figureCaptionNotAssessableCount"] += 1
+            diagnostics["figureCaptionSemanticStatus"] = "degraded"
+            return suggestions, diagnostics
+
+        remaining = max(0, MAX_FORMAT_SEMANTIC_CALLS - max(int(used_calls or 0), 0))
+        for group in select_image_export_groups(eligible, remaining):
+            current_calls = max(0, int(used_calls or 0)) + diagnostics["figureCaptionCallCount"]
+            if current_calls >= MAX_FORMAT_SEMANTIC_CALLS or not hasattr(self.provider_client, "format_semantics"):
+                for candidate in group:
+                    suggestions[candidate["imageId"]] = {"status": "not_assessable", "evidence": deepcopy(candidate["evidence"])}
+                    diagnostics["figureCaptionNotAssessableCount"] += 1
+                continue
+            candidate_payload = {}
+            image_files = []
+            for candidate in group:
+                safe_candidate = deepcopy(candidate)
+                asset = safe_candidate.pop("_imageAsset", None)
+                candidate_payload[candidate["blockId"]] = safe_candidate
+                if isinstance(asset, dict) and asset.get("slotPath"):
+                    image_files.append({
+                        "path": str(asset["slotPath"]),
+                        "assetId": str(asset.get("assetId") or ""),
+                        "imageId": candidate["imageId"],
+                        "mimeType": "image/png",
+                    })
+            prompt = self._build_figure_caption_prompt(request, group)
+            input_data = {
+                "scene": "word",
+                "task_id": "word.format_review",
+                "taskType": "word.format_review",
+                "trace_id": trace_id,
+                "templateId": request.options.template_id or DEFAULT_TEMPLATE_ID,
+                "scope": request.selection_mode,
+                "operation": "suggest_figure_caption",
+                "candidateBlockIds": list(candidate_payload),
+                "snapshotBinding": self._snapshot_binding(request),
+                "candidate_json": json.dumps(candidate_payload, ensure_ascii=False, sort_keys=True),
+            }
+            if image_files:
+                input_data["image_files"] = image_files
+            if hasattr(self.provider_client, "build_task_input_data"):
+                input_data = self.provider_client.build_task_input_data("word.format_review", trace_id, input_data)
+
+            def semantic_call(query, output_budget):
+                return self.provider_client.format_semantics(
+                    "suggest_figure_caption", trace_id, input_data, query,
+                    task_auth=task_auth, output_token_budget=output_budget,
+                )
+
+            executor = FormatSemanticExecutor(
+                semantic_call,
+                used_calls=current_calls,
+                task_auth=task_auth or {"accessMethod": "workflow_platform"},
+                allow_pixel_inspection=policy["allowed"],
+            )
+            outcome = executor.execute(
+                "suggest_figure_caption", prompt, candidate_payload, self._snapshot_binding(request)
+            )
+            asset_group_ids = {
+                str(candidate.get("_imageAsset", {}).get("groupId"))
+                for candidate in group
+                if isinstance(candidate.get("_imageAsset"), dict)
+                and candidate.get("_imageAsset", {}).get("groupId")
+            }
+            if callable(image_asset_cleanup):
+                for asset_group_id in asset_group_ids:
+                    image_asset_cleanup(asset_group_id)
+            diagnostics["figureCaptionCallCount"] += outcome["usedCalls"] - current_calls
+            diagnostics["aiCallCount"] = outcome["usedCalls"]
+            diagnostics["aiRetryCount"] = diagnostics.get("aiRetryCount", 0) + outcome["retryCount"]
+            diagnostics["aiCorrectionCount"] = diagnostics.get("aiCorrectionCount", 0) + outcome["correctionCount"]
+            if outcome.get("error") is not None or not outcome.get("items"):
+                for candidate in group:
+                    suggestions[candidate["imageId"]] = {"status": "not_assessable", "evidence": deepcopy(candidate["evidence"])}
+                    diagnostics["figureCaptionNotAssessableCount"] += 1
+                continue
+            by_id = {item.get("blockId"): item for item in outcome["items"] if isinstance(item, dict)}
+            for candidate in group:
+                item = by_id.get(candidate["blockId"])
+                status = item.get("status") if item else "not_assessable"
+                suggestion = str(item.get("suggestion") or "") if item else ""
+                if status == "suggested":
+                    status = (
+                        "pixel_inspected"
+                        if candidate.get("pixelEvidenceVerified") is True
+                        else "text_evidence_only"
+                    )
+                if status not in {"suggested", "text_evidence_only", "pixel_inspected"} or not suggestion:
+                    status = "not_assessable"
+                    suggestion = ""
+                    diagnostics["figureCaptionNotAssessableCount"] += 1
+                else:
+                    diagnostics["figureCaptionSuggestedCount"] += 1
+                    if status == "pixel_inspected":
+                        diagnostics["figureCaptionPixelInspectedCount"] += 1
+                    elif status == "text_evidence_only":
+                        diagnostics["figureCaptionTextEvidenceOnlyCount"] += 1
+                suggestions[candidate["imageId"]] = {
+                    "status": status,
+                    "suggestion": suggestion,
+                    "evidence": deepcopy(candidate["evidence"]),
+                }
+        for candidate in eligible:
+            suggestions.setdefault(candidate["imageId"], {"status": "not_assessable", "evidence": deepcopy(candidate["evidence"])})
+            if suggestions[candidate["imageId"]]["status"] == "not_assessable":
+                diagnostics["figureCaptionNotAssessableCount"] += 1
+        diagnostics["figureCaptionSemanticStatus"] = (
+            "completed" if diagnostics["figureCaptionNotAssessableCount"] == 0 else "degraded"
+        )
+        return suggestions, diagnostics
+
+    @staticmethod
+    def _apply_figure_image_diagnostics(
+        image_inventory: Dict[str, Any], suggestions: Dict[str, Dict], diagnostics: Dict[str, Any]
+    ) -> None:
+        if not suggestions:
+            return
+        image_inventory["pixelInspectedCount"] = sum(
+            1 for item in suggestions.values() if isinstance(item, dict) and item.get("status") == "pixel_inspected"
+        )
+        image_inventory["pixelExportCount"] = image_inventory["pixelInspectedCount"]
+        image_inventory["pixelUploadCount"] = image_inventory["pixelInspectedCount"]
+        image_inventory["imageSemanticStatus"] = diagnostics.get("imageSemanticStatus", "disabled")
+        image_inventory["imageSemanticReason"] = diagnostics.get("imageSemanticReason", "")
+
+    def _build_figure_caption_prompt(self, request: WordDocumentRequest, candidates: List[Dict]) -> str:
+        safe_candidates = []
+        for candidate in candidates:
+            safe_candidate = deepcopy(candidate)
+            safe_candidate.pop("_imageAsset", None)
+            safe_candidates.append(safe_candidate)
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "suggest_figure_caption",
+            "snapshotBinding": self._snapshot_binding(request),
+            "candidates": {item["blockId"]: item for item in safe_candidates},
+        }
+        return "\n".join([
+            "你是技术文件图题建议助手。",
+            "只处理正文故事中已确认缺少图题且不存在歧义关联的图片。",
+            "只能依据 evidence 文字和已验证的图片像素生成图题正文，不得补造证据外的机构、时间、地域、数值或统计口径。",
+            "若没有可用证据，返回 status=not_assessable 且 suggestion 为空。",
+            "suggestion 最长 80 个 Unicode 字符，不含图前缀、编号、Markdown、换行或解释。",
+            "只返回 JSON，不要 Markdown、推理过程或思考标签。",
+            json.dumps(payload, ensure_ascii=False),
+        ])
+
     def _format_structure_facts(self, request: WordDocumentRequest) -> Dict:
         structure = request.content.document_structure or {}
         supplied = structure.get("formatFacts") if isinstance(structure.get("formatFacts"), dict) else {}
@@ -669,6 +951,7 @@ class WordFormatReviewer:
         request: WordDocumentRequest,
         template: Dict,
         table_caption_suggestions: Optional[Dict[str, Dict]] = None,
+        figure_caption_suggestions: Optional[Dict[str, Dict]] = None,
         image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         facts = self._format_structure_facts(request)
@@ -678,6 +961,7 @@ class WordFormatReviewer:
         audit = audit_format_facts(facts, pack)
         issues: List[FormatReviewIssue] = []
         table_caption_suggestions = table_caption_suggestions or {}
+        figure_caption_suggestions = figure_caption_suggestions or {}
         image_inventory = image_inventory or {}
         for warning in audit["issues"]:
             if warning.get("ruleId") != "structure.heading_hierarchy":
@@ -771,6 +1055,28 @@ class WordFormatReviewer:
             if not isinstance(image, dict) or image.get("captionStatus") not in {"missing", "absent", "none"}:
                 continue
             evidence_status = str(image.get("evidenceStatus") or "not_assessable")
+            suggestion = figure_caption_suggestions.get(str(image.get("imageId") or ""), {})
+            suggestion_status = suggestion.get("status") if isinstance(suggestion, dict) else None
+            if suggestion_status in {"suggested", "text_evidence_only", "pixel_inspected"} and suggestion.get("suggestion"):
+                issues.append(
+                    FormatReviewIssue(
+                        ruleId="structure.missing_figure_caption",
+                        paragraphIndex=None,
+                        role="figure",
+                        message=(
+                            "正文图片缺少图题，已生成只读图题建议。"
+                            if suggestion_status != "text_evidence_only"
+                            else "正文图片缺少图题，已依据文字证据生成只读图题建议。"
+                        ),
+                        currentValue=str(image.get("imageId") or ""),
+                        expectedValue="图题正文",
+                        suggestion=str(suggestion.get("suggestion") or ""),
+                        evidence=[deepcopy(suggestion.get("evidence"))]
+                        if isinstance(suggestion.get("evidence"), dict) else [],
+                        dataStatus="verified" if suggestion_status == "pixel_inspected" else "restricted",
+                    )
+                )
+                continue
             issues.append(
                 FormatReviewIssue(
                     ruleId="structure.missing_figure_caption",

@@ -36,6 +36,9 @@ const run = functionSource("runDeterministicFormatReview");
   "snapshotToken",
   "pollDeterministicFormatReviewJob"
 ].forEach((token) => assert.ok(run.includes(token), token));
+assert.ok(run.includes("ensureDeterministicFormatReviewPreparation"));
+assert.ok(js.includes("/image-groups"));
+assert.ok(js.includes("SaveAsPicture(slotPath, 2)"));
 [
   "InsertAfter",
   "Text =",

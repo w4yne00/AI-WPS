@@ -473,6 +473,22 @@ def commit_deterministic_format_review_snapshot(
     return _deterministic_format_review_envelope(data, message="committed")
 
 
+@router.post("/word/format-review/snapshots/{snapshot_id}/image-groups")
+def allocate_deterministic_format_review_image_group(
+    snapshot_id: str, request: dict
+) -> dict:
+    data = deterministic_format_review_service.allocate_image_group(snapshot_id, request)
+    return _deterministic_format_review_envelope(data, message=data.get("status", "allocated"))
+
+
+@router.post("/word/format-review/snapshots/{snapshot_id}/image-groups/{group_id}/commit")
+def commit_deterministic_format_review_image_group(
+    snapshot_id: str, group_id: str, request: dict
+) -> dict:
+    data = deterministic_format_review_service.commit_image_group(snapshot_id, group_id, request)
+    return _deterministic_format_review_envelope(data, message="committed")
+
+
 @router.post("/word/format-review/jobs")
 def start_deterministic_format_review_job(request: dict) -> dict:
     trace_id = new_trace_id("word-deterministic-format-review")

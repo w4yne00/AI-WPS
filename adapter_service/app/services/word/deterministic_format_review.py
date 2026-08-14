@@ -28,7 +28,11 @@ from app.services.long_task_coordinator import (
     get_long_task_coordinator,
 )
 from app.services.word.format_reviewer import WordFormatReviewer
-from app.services.word.image_semantics import collect_image_inventory
+from app.services.word.image_semantics import (
+    ImageAssetStore,
+    collect_image_inventory,
+    select_image_export_groups,
+)
 
 
 TASK_TYPE = "word.format_review.deterministic"
@@ -52,7 +56,7 @@ MAX_FORMAT_STANDARD_CHARACTERS = 60_000
 MAX_FORMAT_LARGE_CHARACTERS = 120_000
 SNAPSHOT_TTL_SECONDS = 15 * 60
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
-FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context"}
+FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context", "image"}
 FORMAT_SCOPES = {"in_scope", "context"}
 FORMAT_ISSUE_STATUSES = {"open", "processed", "ignored"}
 FORMAT_ANCHOR_VERIFICATIONS = {"verified", "unverified"}
@@ -90,7 +94,7 @@ def _sanitize_export_value(value: object) -> object:
     blocked = {
         "blocks", "formatBlocks", "request", "fullSnapshot", "rawAnswer",
         "rawResponse", "modelResponse", "apiKey", "apiKeyRef", "localPath",
-        "tempPath", "stagingPath", "errorDetail",
+        "tempPath", "stagingPath", "slotPath", "imageAsset", "imageAssets", "imageFiles", "errorDetail",
     }
     blocked_names = {
         re.sub(r"[^a-z0-9]", "", key.casefold()) for key in blocked
@@ -149,6 +153,7 @@ class DeterministicFormatReviewService:
         self._reports: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         self._snapshot_mutation_lock = threading.Lock()
+        self.image_asset_store = ImageAssetStore(self.staging_root / "image-assets")
         self._cleanup_expired()
 
     @property
@@ -290,6 +295,8 @@ class DeterministicFormatReviewService:
             "sourceCoverage": self._normalize_source_coverage(payload.get("coverage")),
             "editSequence": self._optional_scalar(payload.get("editSequence")),
             "batches": [],
+            "imageGroups": [],
+            "imageAssets": [],
             "snapshotBytes": 0,
             "reviewCharacterCount": 0,
             "blockCount": 0,
@@ -579,6 +586,95 @@ class DeterministicFormatReviewService:
             "complexity": deepcopy(metrics["complexity"]),
         }
 
+    def allocate_image_group(self, snapshot_id: str, payload: Dict) -> Dict:
+        with self._snapshot_mutation_lock:
+            self._require_enabled()
+            record = self._load_snapshot(snapshot_id)
+            self._verify_token(record, payload.get("uploadToken") if isinstance(payload, dict) else None)
+            if record.get("status") != "committed" or record.get("legacy"):
+                raise AdapterError(
+                    "IMAGE_ASSET_SNAPSHOT_STATE_INVALID",
+                    "图片导出组只能绑定已验证的格式审查快照。",
+                    status_code=409,
+                )
+            binding = self._image_document_binding(record, payload)
+            if binding != {"documentIdentity": record.get("documentIdentity", {}), "editSequence": record.get("editSequence")}:
+                raise AdapterError(
+                    "IMAGE_EXPORT_DOCUMENT_CHANGED",
+                    "检测到文档身份或编辑状态变化，已停止图片导出。",
+                    status_code=409,
+                )
+            task_auth = self._snapshot_task_auth()
+            policy = self.reviewer._image_semantic_policy(task_auth) if hasattr(self.reviewer, "_image_semantic_policy") else {"allowed": False, "reason": "image_semantics_disabled"}
+            if not policy.get("allowed"):
+                return {"snapshotId": snapshot_id, "status": "disabled", "reason": policy.get("reason", "image_semantics_disabled"), "groups": []}
+            blocks = [block for batch in record.get("batches", []) for block in batch.get("blocks", [])]
+            request = self._request_from_blocks(record, blocks, self._format_metrics(blocks, record.get("sourceCoverage")))
+            candidates = self.reviewer._figure_caption_candidates(
+                WordDocumentRequest.model_validate(request) if hasattr(WordDocumentRequest, "model_validate") else WordDocumentRequest.parse_obj(request)
+            )
+            existing_ids = {
+                str(item.get("imageId"))
+                for item in record.get("imageAssets", [])
+                if isinstance(item, dict)
+            }
+            candidates = [item for item in candidates if item.get("imageId") not in existing_ids]
+            try:
+                remaining_calls = max(0, min(16, int(payload.get("remainingCalls", 16))))
+            except (TypeError, ValueError):
+                remaining_calls = 0
+            groups = select_image_export_groups(candidates, remaining_calls)
+            if not groups:
+                return {"snapshotId": snapshot_id, "status": "no_candidates", "reason": "no_confirmed_missing_caption_group", "groups": []}
+            selected = groups[0]
+            allocated = self.image_asset_store.allocate_group(snapshot_id, selected, binding)
+            record.setdefault("imageGroups", []).append({"groupId": allocated["groupId"], "status": "allocated"})
+            try:
+                self._persist_snapshot_record(snapshot_id, record)
+            except Exception:
+                self.image_asset_store.delete_group(allocated["groupId"])
+                raise
+            return {"snapshotId": snapshot_id, "status": "allocated", "policy": policy, "group": allocated}
+
+    def commit_image_group(self, snapshot_id: str, group_id: str, payload: Dict) -> Dict:
+        with self._snapshot_mutation_lock:
+            self._require_enabled()
+            record = self._load_snapshot(snapshot_id)
+            self._verify_token(record, payload.get("uploadToken") if isinstance(payload, dict) else None)
+            if record.get("status") != "committed" or record.get("legacy"):
+                raise AdapterError(
+                    "IMAGE_ASSET_SNAPSHOT_STATE_INVALID",
+                    "图片导出组只能绑定已验证的格式审查快照。",
+                    status_code=409,
+                )
+            binding = self._image_document_binding(record, payload)
+            allocated_group = self.image_asset_store.get_group(group_id)
+            if not allocated_group or allocated_group.get("snapshotId") != snapshot_id:
+                raise AdapterError(
+                    "IMAGE_ASSET_GROUP_NOT_FOUND",
+                    "图片导出对象组不存在或与当前快照不匹配。",
+                    status_code=404,
+                )
+            committed = self.image_asset_store.commit_group(group_id, binding)
+            record["imageAssets"] = record.get("imageAssets", []) + deepcopy(committed.get("assets", []))
+            for item in record.get("imageGroups", []):
+                if isinstance(item, dict) and item.get("groupId") == group_id:
+                    item["status"] = "committed"
+            try:
+                self._persist_snapshot_record(snapshot_id, record)
+            except Exception:
+                self.image_asset_store.delete_group(group_id)
+                raise
+            return {
+                "snapshotId": snapshot_id,
+                "groupId": group_id,
+                "status": "committed",
+                "assets": [
+                    {key: value for key, value in asset.items() if key not in {"slotPath"}}
+                    for asset in committed.get("assets", [])
+                ],
+            }
+
     def start_job(self, payload: dict, trace_id: str) -> Dict:
         self._require_enabled()
         if not isinstance(payload, dict):
@@ -621,7 +717,8 @@ class DeterministicFormatReviewService:
                 task_auth = deepcopy(snapshot_task_auth())
             except Exception:
                 task_auth = {"authSnapshotStatus": "unavailable"}
-        self._remove_snapshot(snapshot_id)
+        image_assets = deepcopy(record.get("imageAssets", []))
+        self._remove_snapshot(snapshot_id, cleanup_images=False)
         return self.coordinator.submit(
             job_id=job_id,
             trace_id=trace_id,
@@ -640,6 +737,7 @@ class DeterministicFormatReviewService:
                 "committedAt": record.get("committedAt", self._wall_clock()),
                 "reviewCharacterCount": record.get("reviewCharacterCount", 0),
                 "sourceCoverage": deepcopy(record.get("sourceCoverage", {})),
+                "imageAssets": image_assets,
             },
             failure_code="DETERMINISTIC_FORMAT_REVIEW_JOB_FAILED",
             failure_message="确定性格式审查后台任务执行失败，请稍后重试。",
@@ -939,6 +1037,10 @@ class DeterministicFormatReviewService:
                 })
             if snapshot.get("taskAuth") is not None:
                 review_kwargs["task_auth"] = snapshot["taskAuth"]
+            if "image_assets" in review_parameters:
+                review_kwargs["image_assets"] = deepcopy(snapshot.get("imageAssets", []))
+            if "image_asset_cleanup" in review_parameters:
+                review_kwargs["image_asset_cleanup"] = self.image_asset_store.delete_group
             result = self.reviewer.review(request, **review_kwargs)
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
@@ -958,6 +1060,7 @@ class DeterministicFormatReviewService:
             }
         finally:
             self._remove_snapshot(snapshot.get("snapshotId", ""))
+            self.image_asset_store.cleanup_snapshot(snapshot.get("snapshotId", ""))
 
     def _build_report(self, result: Dict, snapshot: Dict) -> Dict:
         result = result if isinstance(result, dict) else {}
@@ -1478,11 +1581,50 @@ class DeterministicFormatReviewService:
                 normalized_item["unsupportedObjects"] = cls._normalize_source_coverage({
                     "unsupportedObjects": item.get("unsupportedObjects")
                 }).get("unsupportedObjects", [])
+            if "images" in item:
+                normalized_item["images"] = cls._normalize_image_facts(item.get("images"))
+            if block_type == "image":
+                normalized_item["image"] = cls._normalize_image_facts([item])[0]
             if block_type == "table":
                 normalized_item["rows"] = cls._normalize_table_rows(item.get("rows", []))
                 normalized_item["nestedTables"] = item.get("nestedTables", []) if isinstance(item.get("nestedTables", []), list) else []
             seen.add(block_id)
             normalized.append(normalized_item)
+        return normalized
+
+    @staticmethod
+    def _normalize_image_facts(value: object) -> List[Dict]:
+        if not isinstance(value, list) or len(value) > 64:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
+                "格式审查图片对象数量无效。",
+            )
+        normalized = []
+        for item in value:
+            if not isinstance(item, dict):
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
+                    "格式审查图片对象格式无效。",
+                )
+            image_id = str(item.get("imageId") or item.get("pictureId") or item.get("objectId") or "").strip()
+            if not image_id or len(image_id) > 160:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
+                    "格式审查图片对象标识无效。",
+                )
+            nearby = item.get("nearbyText", item.get("contextText", item.get("adjacentText", "")))
+            if isinstance(nearby, list):
+                nearby = " ".join(str(part) for part in nearby)
+            normalized.append({
+                "imageId": image_id,
+                "groupId": str(item.get("groupId") or item.get("imageGroupId") or image_id)[:160],
+                "fingerprint": str(item.get("fingerprint") or item.get("objectFingerprint") or "")[:256],
+                "captionStatus": str(item.get("captionStatus") or item.get("figureCaptionStatus") or "unknown")[:32],
+                "associationStatus": str(item.get("associationStatus") or "missing")[:32],
+                "supported": item.get("supported", item.get("supportedType", True)) is not False,
+                "altText": str(item.get("altText") or item.get("alternativeText") or "")[:2000],
+                "nearbyText": str(nearby or "")[:4000],
+            })
         return normalized
 
     @staticmethod
@@ -1898,6 +2040,24 @@ class DeterministicFormatReviewService:
             )
 
     @staticmethod
+    def _image_document_binding(record: Dict, payload: Dict) -> Dict:
+        if not isinstance(payload, dict):
+            raise AdapterError("IMAGE_EXPORT_DOCUMENT_CHANGED", "图片导出文档绑定信息无效。")
+        return {
+            "documentIdentity": deepcopy(payload.get("documentIdentity")),
+            "editSequence": str(payload.get("editSequence")) if payload.get("editSequence") is not None else None,
+        }
+
+    def _snapshot_task_auth(self) -> Optional[Dict]:
+        resolver = getattr(self.reviewer, "snapshot_task_auth", None)
+        if not callable(resolver):
+            return None
+        try:
+            return deepcopy(resolver())
+        except Exception:
+            return {"authSnapshotStatus": "unavailable"}
+
+    @staticmethod
     def _normalize_page_setup(value: object) -> Dict:
         if value in (None, {}):
             return {}
@@ -1997,7 +2157,7 @@ class DeterministicFormatReviewService:
         record["path"] = path
         return record
 
-    def _remove_snapshot(self, snapshot_id: str) -> None:
+    def _remove_snapshot(self, snapshot_id: str, cleanup_images: bool = True) -> None:
         if not snapshot_id:
             return
         with self._lock:
@@ -2010,6 +2170,8 @@ class DeterministicFormatReviewService:
                 path.unlink(missing_ok=True)
         except OSError:
             pass
+        if cleanup_images:
+            self.image_asset_store.cleanup_snapshot(snapshot_id)
 
     def _cleanup_expired(self) -> None:
         now = self._wall_clock()

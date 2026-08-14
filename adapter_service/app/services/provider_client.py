@@ -1,3 +1,4 @@
+import base64
 import json
 import os
 import re
@@ -7,6 +8,7 @@ import uuid
 from copy import deepcopy
 from http.client import IncompleteRead, RemoteDisconnected
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
@@ -592,7 +594,7 @@ def build_provider_request_payload(
 
 def encode_dify_file_upload(content: bytes, extension: str, mime_type: str) -> Tuple[bytes, str]:
     safe_extension = str(extension or "").strip().lower().lstrip(".")
-    if safe_extension not in ("md", "docx"):
+    if safe_extension not in ("md", "docx", "png"):
         raise ValueError("Unsupported PPT document extension.")
     safe_mime_type = str(mime_type or "").strip()
     if not safe_mime_type or "\r" in safe_mime_type or "\n" in safe_mime_type:
@@ -2392,6 +2394,22 @@ class ProviderClient:
             )
             raise ProviderTimeoutError() from exc
 
+    @staticmethod
+    def _image_data_uri(image: Dict) -> str:
+        if not isinstance(image, dict) or str(image.get("mimeType", "image/png")) != "image/png":
+            raise AdapterError("IMAGE_ASSET_TYPE_INVALID", "图片语义输入仅允许 PNG。", status_code=409)
+        path_value = image.get("path") or image.get("slotPath")
+        path = Path(str(path_value or ""))
+        if not path.is_absolute() or path.is_symlink() or not path.is_file():
+            raise AdapterError("IMAGE_ASSET_PATH_INVALID", "图片语义输入路径不是受控普通文件。", status_code=409)
+        try:
+            content = path.read_bytes()
+        except OSError as exc:
+            raise AdapterError("IMAGE_ASSET_FILE_UNREADABLE", "图片语义输入无法读取。", status_code=409) from exc
+        if len(content) > 5 * 1024 * 1024:
+            raise AdapterError("IMAGE_ASSET_SIZE_LIMIT", "图片语义输入超过 5 MiB 上限。", status_code=413)
+        return "data:image/png;base64," + base64.b64encode(content).decode("ascii")
+
     def _post_direct_task(
         self,
         task_type: str,
@@ -2402,6 +2420,7 @@ class ProviderClient:
         prompt_asset: Optional[Dict] = None,
         response_format: Optional[Dict] = None,
         input_token_limit: Optional[int] = None,
+        image_files: Optional[List[Dict]] = None,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -2427,11 +2446,20 @@ class ProviderClient:
             )
         base_url = str(resolved_task_auth.get("providerBaseUrl", "")).rstrip("/")
         url = "{0}/chat/completions".format(base_url)
+        user_content = query
+        if image_files:
+            content_parts = [{"type": "text", "text": query}]
+            for image in image_files:
+                content_parts.append({
+                    "type": "image_url",
+                    "image_url": {"url": self._image_data_uri(image)},
+                })
+            user_content = content_parts
         payload_body = {
             "model": str(resolved_task_auth.get("modelName", "")),
             "messages": [
                 {"role": "system", "content": prompt_asset["content"]},
-                {"role": "user", "content": query},
+                {"role": "user", "content": user_content},
             ],
             "stream": False,
         }
@@ -2590,6 +2618,7 @@ class ProviderClient:
         files: Optional[List[Dict]] = None,
         task_auth: Optional[Dict] = None,
         input_token_limit: Optional[int] = None,
+        image_files: Optional[List[Dict]] = None,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -2607,6 +2636,7 @@ class ProviderClient:
                 resolved_task_auth,
                 timeout,
                 input_token_limit=input_token_limit,
+                image_files=image_files,
             )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
@@ -3991,6 +4021,39 @@ class ProviderClient:
             **kwargs
         )
 
+    def _prepare_format_image_files(
+        self, image_files: object, auth: Dict, trace_id: str
+    ) -> List[Dict]:
+        if not isinstance(image_files, list):
+            return []
+        prepared = []
+        for item in image_files:
+            if not isinstance(item, dict):
+                raise AdapterError("IMAGE_ASSET_INPUT_INVALID", "图片语义输入格式无效。", status_code=409)
+            path = item.get("path") or item.get("slotPath")
+            if not isinstance(path, str) or not path:
+                raise AdapterError("IMAGE_ASSET_PATH_INVALID", "图片语义输入缺少受控槽位路径。", status_code=409)
+            if str(auth.get("accessMethod", "")) == ACCESS_WORKFLOW_PLATFORM:
+                upload_id = self.upload_task_file(
+                    "word.format_review",
+                    trace_id,
+                    SimpleNamespace(path=path, extension="png", mime_type="image/png"),
+                    task_auth=auth,
+                    timeout_seconds=60,
+                )
+                prepared.append({
+                    "type": "image",
+                    "transfer_method": "local_file",
+                    "upload_file_id": upload_id,
+                })
+            else:
+                prepared.append({
+                    "path": path,
+                    "mimeType": "image/png",
+                    "imageId": str(item.get("imageId") or ""),
+                })
+        return prepared
+
     def format_semantics(
         self,
         operation: str,
@@ -4042,9 +4105,22 @@ class ProviderClient:
                 max(int(auth["maxOutputTokens"]), 0), int(budget), 4096
             )
         input_data = dict(input_data or {})
+        input_data["image_files"] = self._prepare_format_image_files(
+            input_data.get("image_files"), auth, trace_id
+        )
         candidate_json = input_data.get("candidate_json")
         if not isinstance(candidate_json, str) or not candidate_json.strip():
-            candidate_json = json.dumps(input_data, ensure_ascii=False, sort_keys=True)
+            candidate_source = deepcopy(input_data)
+            candidate_source["image_files"] = [
+                {
+                    key: value
+                    for key, value in item.items()
+                    if key not in {"path", "slotPath"}
+                }
+                for item in input_data.get("image_files", [])
+                if isinstance(item, dict)
+            ]
+            candidate_json = json.dumps(candidate_source, ensure_ascii=False, sort_keys=True)
         input_data.update({
             "schemaVersion": "format_semantics.v1",
             "contract_version": "format_semantics.v1",
@@ -4069,6 +4145,7 @@ class ProviderClient:
             timeout_seconds=60,
             task_auth=auth,
             input_token_limit=MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
+            image_files=input_data.get("image_files"),
         )
 
     def _post_workflow_format_semantics(

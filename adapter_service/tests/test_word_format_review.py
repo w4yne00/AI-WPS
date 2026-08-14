@@ -484,6 +484,47 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["tableCaptionSuggestedCount"], 1)
         self.assertEqual(provider.calls[0]["operation"], "suggest_table_caption")
 
+    def test_missing_figure_caption_uses_text_evidence_without_pixel_export(self) -> None:
+        provider = TableCaptionFormatSemanticsProvider(suggestion="系统架构")
+        request = parse_word_request({
+            "documentId": "figure-caption.docx",
+            "scene": "word",
+            "selectionMode": "document",
+            "content": {
+                "plainText": "正文",
+                "paragraphs": [{"index": 1, "text": "正文"}],
+                "headings": [],
+                "documentStructure": {
+                    "formatBlocks": [{
+                        "blockId": "format-image-figure-1",
+                        "blockType": "image",
+                        "paragraphIndex": 2,
+                        "text": "",
+                        "images": [{
+                            "imageId": "figure-1",
+                            "captionStatus": "missing",
+                            "nearbyText": "系统架构",
+                            "supported": True,
+                        }],
+                    }],
+                },
+            },
+            "options": {"templateId": "technical-file-format-requirements"},
+        })
+
+        reviewer = WordFormatReviewer(provider_client=provider)
+        suggestions, diagnostics = reviewer._suggest_missing_figure_captions(
+            request, "trace-figure-caption"
+        )
+
+        self.assertEqual(suggestions["figure-1"]["status"], "text_evidence_only")
+        self.assertEqual(suggestions["figure-1"]["suggestion"], "系统架构")
+        self.assertEqual(diagnostics["figureCaptionTextEvidenceOnlyCount"], 1)
+        self.assertEqual(diagnostics["imageSemanticStatus"], "disabled")
+        call = provider.calls[0]
+        self.assertEqual(call["operation"], "suggest_figure_caption")
+        self.assertNotIn("image_files", call["inputData"])
+
     def test_large_data_table_uses_explicit_first_three_last_two_evidence(self) -> None:
         rows = [
             {"rowIndex": 0, "cells": [
