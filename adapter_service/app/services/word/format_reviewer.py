@@ -10,7 +10,9 @@ from app.services.document_normalizer import body_paragraphs
 from app.services.provider_client import ProviderClient, extract_answer
 from app.services.word.authorized_format_algorithm import (
     audit_format_facts,
+    associate_captions,
     classify_role_fact,
+    classify_table_fact,
     resolve_role_rule,
 )
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
@@ -45,6 +47,8 @@ ROLE_TEXT = {
 
 AI_ROLE_BATCH_SIZE = 20
 AI_ROLE_MAX_PARAGRAPHS = 40
+TABLE_CAPTION_SAMPLE_HEAD_ROWS = 3
+TABLE_CAPTION_SAMPLE_TAIL_ROWS = 2
 DEFAULT_TEMPLATE_ID = "technical-file-format-requirements"
 SEMANTIC_ROLE_NAMES = (
     "document_title", "heading", "body", "list_item", "note", "caption",
@@ -85,6 +89,7 @@ class WordFormatReviewer:
         template = self._resolve_template(requested_template)
         paragraphs = body_paragraphs(request)
         ai_diagnostics = self._empty_ai_diagnostics()
+        table_caption_suggestions: Dict[str, Dict] = {}
         if trace_id:
             ai_roles, ai_batch_count, ai_diagnostics = self._classify_roles_with_ai(
                 request,
@@ -105,15 +110,26 @@ class WordFormatReviewer:
                 "_semanticComplete": False,
                 "_semanticState": ai_diagnostics.pop("_semanticState", semantic_state),
             }
+        if trace_id:
+            table_caption_suggestions, table_caption_diagnostics = self._suggest_missing_table_captions(
+                request,
+                trace_id,
+                task_auth=task_auth,
+                used_calls=int(ai_diagnostics.get("aiCallCount", 0) or 0),
+            )
+            ai_diagnostics.update(table_caption_diagnostics)
         provider = "local"
-        if ai_roles:
+        if ai_roles or any(
+            isinstance(item, dict) and item.get("status") == "suggested"
+            for item in table_caption_suggestions.values()
+        ):
             if hasattr(self.provider_client, "build_provider_source"):
                 provider = self.provider_client.build_provider_source(
                     "word.format_review", task_auth=task_auth
                 )
             else:
                 provider = "工作流平台"
-        issues = self._build_issues(request, template, ai_roles)
+        issues = self._build_issues(request, template, ai_roles, table_caption_suggestions)
         issues = self._annotate_issues(issues, template)
         summary = {
             "scope": request.selection_mode,
@@ -121,7 +137,7 @@ class WordFormatReviewer:
             "rulePackVersion": template.get("_rulePackVersion", "legacy-template"),
             "rulePackSha256": template.get("_rulePackSha256", ""),
             "authorizedAlgorithmVersion": template.get("_algorithmAdapterVersion", ""),
-            "provider": provider,
+            "provider": provider if (ai_roles or table_caption_suggestions) else "local",
             "paragraphCount": len(paragraphs),
             "issueCount": len(issues),
             "aiClassifiedParagraphCount": len(ai_roles),
@@ -165,13 +181,18 @@ class WordFormatReviewer:
         request: WordDocumentRequest,
         template: Dict,
         ai_roles: Optional[Dict[int, Dict]] = None,
+        table_caption_suggestions: Optional[Dict[str, Dict]] = None,
     ) -> List[FormatReviewIssue]:
         issues: List[FormatReviewIssue] = []
         page_issue = self._build_page_issue(request, template)
         if page_issue:
             issues.append(page_issue)
 
-        issues.extend(self._authorized_structure_issues(request, template))
+        issues.extend(
+            self._authorized_structure_issues(
+                request, template, table_caption_suggestions or {}
+            )
+        )
 
         ai_roles = ai_roles or {}
         structure_facts = self._format_structure_facts(request)
@@ -252,6 +273,324 @@ class WordFormatReviewer:
             suggestion="请核对段落的结构、编号、题注或标题事实。",
         )
 
+    def _table_caption_candidates(self, request: WordDocumentRequest) -> List[Dict]:
+        facts = self._format_structure_facts(request)
+        blocks = [deepcopy(block) for block in facts.get("blocks", []) if isinstance(block, dict)]
+        table_facts = [table for table in facts.get("tables", []) if isinstance(table, dict)]
+        if not blocks:
+            blocks = [deepcopy(paragraph) for paragraph in facts.get("paragraphs", []) if isinstance(paragraph, dict)]
+            blocks.extend(deepcopy(table) for table in table_facts)
+        table_results_by_id = {}
+        table_facts_by_id = {}
+        for table in table_facts:
+            table_id = str(table.get("tableId") or table.get("objectId") or table.get("blockId") or "")
+            if not table_id:
+                continue
+            table_facts_by_id[table_id] = table
+            table_results_by_id[table_id] = classify_table_fact(table)
+        for block in blocks:
+            if str(block.get("blockType") or block.get("type") or "") != "table":
+                continue
+            table_id = str(block.get("tableId") or block.get("objectId") or block.get("blockId") or "")
+            result = table_results_by_id.get(table_id)
+            if result:
+                block["captionEligible"] = result.get("captionEligible", False)
+        association_results = associate_captions(blocks)
+        blocks_by_id = {
+            str(block.get("tableId") or block.get("objectId") or block.get("blockId") or ""): block
+            for block in blocks
+            if isinstance(block, dict)
+        }
+        candidates = []
+        for association in association_results:
+            if association.get("status") != "missing" or association.get("captionType") != "table":
+                continue
+            table_id = str(association.get("objectId") or "")
+            table = table_facts_by_id.get(table_id) or blocks_by_id.get(table_id)
+            if not isinstance(table, dict):
+                continue
+            table_result = table_results_by_id.get(table_id) or classify_table_fact(table)
+            if table_result.get("tableType") != "data" or not table_result.get("captionEligible"):
+                continue
+            evidence = self._build_table_caption_evidence(table, table_result, blocks, request)
+            candidates.append({
+                "blockId": table_id,
+                "tableId": table_id,
+                "tableType": "data",
+                "captionStatus": "missing",
+                "associationStatus": "missing",
+                "association": deepcopy(association),
+                "evidence": evidence,
+            })
+        return candidates
+
+    @staticmethod
+    def _table_rows(table: Dict) -> List[Dict]:
+        rows = []
+        for row_index, row in enumerate(table.get("rows", []) if isinstance(table.get("rows"), list) else []):
+            if not isinstance(row, dict):
+                continue
+            cells = []
+            for column_index, cell in enumerate(row.get("cells", []) if isinstance(row.get("cells"), list) else []):
+                if not isinstance(cell, dict):
+                    continue
+                cells.append({
+                    "columnIndex": cell.get("columnIndex", cell.get("column", column_index)),
+                    "text": str(cell.get("text", "") or ""),
+                    "isHeader": bool(cell.get("isHeader", cell.get("header", False))),
+                    "rowSpan": int(cell.get("rowSpan", cell.get("rowspan", 1)) or 1),
+                    "columnSpan": int(cell.get("columnSpan", cell.get("colSpan", 1)) or 1),
+                    "mergeId": str(cell.get("mergeId", "") or ""),
+                })
+            if cells:
+                rows.append({
+                    "rowIndex": row.get("rowIndex", row_index),
+                    "cells": cells,
+                })
+        return rows
+
+    def _build_table_caption_evidence(
+        self,
+        table: Dict,
+        table_result: Dict,
+        blocks: List[Dict],
+        request: WordDocumentRequest,
+    ) -> Dict:
+        rows = self._table_rows(table)
+        row_indexes = [int(row.get("rowIndex", index) or index) for index, row in enumerate(rows)]
+        header_rows = int(table.get("headerRows", table_result.get("headerRows", 0)) or 0)
+        if not header_rows:
+            header_indexes = {
+                int(row.get("rowIndex", index) or index)
+                for index, row in enumerate(rows)
+                if any(cell.get("isHeader") for cell in row.get("cells", []))
+            }
+            header_rows = len([index for index in row_indexes if index in header_indexes])
+        column_count = 0
+        merged_relations = []
+        for row in rows:
+            for cell in row.get("cells", []):
+                column = int(cell.get("columnIndex", 0) or 0)
+                span = max(1, int(cell.get("columnSpan", 1) or 1))
+                column_count = max(column_count, column + span)
+                if int(cell.get("rowSpan", 1) or 1) > 1 or span > 1 or cell.get("mergeId"):
+                    merged_relations.append({
+                        "rowIndex": row.get("rowIndex"),
+                        "columnIndex": column,
+                        "rowSpan": max(1, int(cell.get("rowSpan", 1) or 1)),
+                        "columnSpan": span,
+                        "mergeId": cell.get("mergeId", ""),
+                    })
+        row_count = int(table.get("rowCount", 0) or 0) or len(row_indexes)
+        column_count = int(table.get("columnCount", 0) or 0) or column_count
+        heading_candidates = []
+        table_position = int(table.get("paragraphIndex", 0) or 0)
+        for block in blocks:
+            block_type = str(block.get("blockType") or block.get("type") or "")
+            block_position = int(block.get("paragraphIndex", 0) or 0)
+            if block_type in {"heading", "paragraph"} and block_position <= table_position and str(block.get("text", "")).strip():
+                heading_candidates.append((block_position, str(block.get("text", "")).strip()))
+        for heading in request.content.headings:
+            if heading.paragraph_index is not None and heading.paragraph_index <= table_position:
+                heading_candidates.append((heading.paragraph_index, heading.text.strip()))
+        heading_candidates.sort(key=lambda item: item[0])
+        nearby_context = []
+        table_block_index = next(
+            (index for index, block in enumerate(blocks) if str(block.get("tableId") or block.get("blockId") or "") == str(table.get("tableId") or table.get("blockId") or "")),
+            None,
+        )
+        if table_block_index is not None:
+            for block in blocks[max(0, table_block_index - 2):table_block_index + 3]:
+                if block is table or str(block.get("blockType") or "") in {"table", "caption"}:
+                    continue
+                text = str(block.get("text", "") or "").strip()
+                if text:
+                    nearby_context.append({
+                        "blockType": block.get("blockType", ""),
+                        "paragraphIndex": block.get("paragraphIndex"),
+                        "text": text,
+                    })
+        headers = [
+            row for row in rows
+            if int(row.get("rowIndex", 0) or 0) < header_rows
+            or any(cell.get("isHeader") for cell in row.get("cells", []))
+        ]
+        evidence = {
+            "evidenceStatus": "complete",
+            "sampling": "full_table",
+            "tableId": table.get("tableId") or table.get("blockId"),
+            "rowCount": row_count,
+            "columnCount": column_count,
+            "headerRows": header_rows,
+            "headers": headers,
+            "mergedRelations": merged_relations,
+            "rows": rows,
+            "units": deepcopy(table.get("units", table.get("unit", []))),
+            "source": deepcopy(table.get("source", table.get("dataSource", table.get("sourceText", "")))),
+            "footnotes": deepcopy(table.get("footnotes", table.get("footnotesText", table.get("notes", [])))),
+            "heading": heading_candidates[-1][1] if heading_candidates else "",
+            "nearbyContext": nearby_context,
+            "tableEvidence": deepcopy(table_result.get("evidence", [])),
+        }
+        candidate_for_budget = {"blockId": evidence["tableId"], "evidence": evidence}
+        budget_overhead = "\n" + ("表题建议约束。" * 80)
+        try:
+            FormatSemanticContract.require_input_budget(
+                json.dumps(candidate_for_budget, ensure_ascii=False, separators=(",", ":")) + budget_overhead
+            )
+            return evidence
+        except AdapterError:
+            ordered_rows = rows
+            sampled_rows = ordered_rows[:TABLE_CAPTION_SAMPLE_HEAD_ROWS]
+            for row in ordered_rows[-TABLE_CAPTION_SAMPLE_TAIL_ROWS:]:
+                if row not in sampled_rows:
+                    sampled_rows.append(row)
+            evidence["evidenceStatus"] = "restricted"
+            evidence["sampling"] = "first_three_and_last_two_rows"
+            evidence["omittedRowCount"] = max(len(ordered_rows) - len(sampled_rows), 0)
+            evidence["rows"] = sampled_rows
+            try:
+                FormatSemanticContract.require_input_budget(
+                    json.dumps({"blockId": evidence["tableId"], "evidence": evidence}, ensure_ascii=False, separators=(",", ":")) + budget_overhead
+                )
+                return evidence
+            except AdapterError:
+                evidence["evidenceStatus"] = "insufficient"
+                evidence["sampling"] = "unavailable"
+                evidence["rows"] = []
+                evidence["insufficientReason"] = "bounded_table_evidence_over_budget"
+                return evidence
+
+    def _suggest_missing_table_captions(
+        self,
+        request: WordDocumentRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        used_calls: int = 0,
+    ) -> Tuple[Dict[str, Dict], Dict]:
+        candidates = self._table_caption_candidates(request)
+        diagnostics = {
+            "tableCaptionCandidateCount": len(candidates),
+            "tableCaptionSuggestedCount": 0,
+            "tableCaptionRestrictedCount": sum(
+                1 for item in candidates if item.get("evidence", {}).get("evidenceStatus") == "restricted"
+            ),
+            "tableCaptionNotAssessableCount": 0,
+            "tableCaptionCallCount": 0,
+            "tableCaptionSemanticStatus": "not_needed" if not candidates else "not_run",
+        }
+        if not candidates:
+            return {}, diagnostics
+        suggestions = {
+            item["tableId"]: {"status": "not_assessable", "evidence": deepcopy(item["evidence"])}
+            for item in candidates
+            if item.get("evidence", {}).get("evidenceStatus") == "insufficient"
+        }
+        candidates = [
+            item for item in candidates
+            if item.get("evidence", {}).get("evidenceStatus") in {"complete", "restricted"}
+        ]
+        diagnostics["tableCaptionNotAssessableCount"] = len(suggestions)
+        if not candidates:
+            diagnostics["tableCaptionSemanticStatus"] = "degraded"
+            return suggestions, diagnostics
+        configured = self._task_auth_configured(task_auth) if task_auth is not None else self.provider_client.is_task_configured("word.format_review")
+        if not configured or not self._semantic_protocol_ready(task_auth) or self._direct_capability_unknown(task_auth):
+            diagnostics["tableCaptionSemanticStatus"] = "degraded"
+            diagnostics["tableCaptionNotAssessableCount"] += len(candidates)
+            suggestions.update({
+                item["tableId"]: {"status": "not_assessable", "evidence": deepcopy(item["evidence"])}
+                for item in candidates
+            })
+            return suggestions, diagnostics
+        current_calls = max(0, int(used_calls or 0))
+        for candidate in candidates:
+            if current_calls >= MAX_FORMAT_SEMANTIC_CALLS or not hasattr(self.provider_client, "format_semantics"):
+                diagnostics["tableCaptionNotAssessableCount"] += 1
+                suggestions[candidate["tableId"]] = {"status": "not_assessable", "evidence": deepcopy(candidate["evidence"])}
+                continue
+            candidate_payload = {candidate["blockId"]: candidate}
+            prompt = self._build_table_caption_prompt(request, candidate)
+            input_data = {
+                "scene": "word",
+                "task_id": "word.format_review",
+                "taskType": "word.format_review",
+                "trace_id": trace_id,
+                "templateId": request.options.template_id or DEFAULT_TEMPLATE_ID,
+                "scope": request.selection_mode,
+                "operation": "suggest_table_caption",
+                "candidateBlockIds": [candidate["blockId"]],
+                "snapshotBinding": self._snapshot_binding(request),
+                "candidate_json": json.dumps(candidate_payload, ensure_ascii=False, sort_keys=True),
+            }
+            if hasattr(self.provider_client, "build_task_input_data"):
+                input_data = self.provider_client.build_task_input_data(
+                    "word.format_review", trace_id, input_data
+                )
+
+            def semantic_call(query, output_budget):
+                return self.provider_client.format_semantics(
+                    "suggest_table_caption",
+                    trace_id,
+                    input_data,
+                    query,
+                    task_auth=task_auth,
+                    output_token_budget=output_budget,
+                )
+
+            executor = FormatSemanticExecutor(
+                semantic_call,
+                used_calls=current_calls,
+                task_auth=task_auth or {"accessMethod": "workflow_platform"},
+            )
+            outcome = executor.execute(
+                "suggest_table_caption",
+                prompt,
+                candidate_payload,
+                self._snapshot_binding(request),
+            )
+            current_calls = outcome["usedCalls"]
+            diagnostics["tableCaptionCallCount"] += outcome["usedCalls"] - diagnostics.get("aiCallCount", used_calls)
+            diagnostics["aiCallCount"] = current_calls
+            diagnostics["aiRetryCount"] = diagnostics.get("aiRetryCount", 0) + outcome["retryCount"]
+            diagnostics["aiCorrectionCount"] = diagnostics.get("aiCorrectionCount", 0) + outcome["correctionCount"]
+            if outcome.get("error") is not None or not outcome.get("items"):
+                diagnostics["tableCaptionNotAssessableCount"] += 1
+                suggestions[candidate["tableId"]] = {"status": "not_assessable", "evidence": deepcopy(candidate["evidence"])}
+                continue
+            item = outcome["items"][0]
+            suggestions[candidate["tableId"]] = {
+                "status": item.get("status", "suggested"),
+                "suggestion": item.get("suggestion", ""),
+                "evidence": deepcopy(candidate["evidence"]),
+            }
+            if item.get("status") == "suggested" and item.get("suggestion"):
+                diagnostics["tableCaptionSuggestedCount"] += 1
+            else:
+                diagnostics["tableCaptionNotAssessableCount"] += 1
+        diagnostics["tableCaptionSemanticStatus"] = (
+            "completed" if diagnostics["tableCaptionNotAssessableCount"] == 0 else "degraded"
+        )
+        return suggestions, diagnostics
+
+    def _build_table_caption_prompt(self, request: WordDocumentRequest, candidate: Dict) -> str:
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "suggest_table_caption",
+            "snapshotBinding": self._snapshot_binding(request),
+            "candidates": {candidate["blockId"]: candidate},
+        }
+        return "\n".join([
+            "你是技术文件表题建议助手。",
+            "只处理已确定为数据表、已确认缺少表题且不存在歧义关联的候选。",
+            "只能根据 evidence 视图生成只读表题正文；不得补造证据外的机构、时间、地域、数值或统计口径。",
+            "evidenceStatus=restricted 时，只能使用首三行和末两行样例，不得将样例描述为整表。",
+            "证据不足时返回 status=not_assessable 且 suggestion 为空。",
+            "suggestion 最长 80 个 Unicode 字符，不含表前缀、编号、Markdown、换行或解释。",
+            "只返回 JSON，不要 Markdown、推理过程或思考标签。",
+            json.dumps(payload, ensure_ascii=False),
+        ])
+
     def _format_structure_facts(self, request: WordDocumentRequest) -> Dict:
         structure = request.content.document_structure or {}
         supplied = structure.get("formatFacts") if isinstance(structure.get("formatFacts"), dict) else {}
@@ -273,6 +612,7 @@ class WordFormatReviewer:
             for block in format_blocks:
                 if not isinstance(block, dict) or block.get("blockType") != "table":
                     continue
+                table_fact = deepcopy(block)
                 cells = []
                 for row_index, row in enumerate(block.get("rows", [])):
                     if not isinstance(row, dict):
@@ -280,15 +620,15 @@ class WordFormatReviewer:
                     for column_index, cell in enumerate(row.get("cells", [])):
                         if isinstance(cell, dict):
                             cells.append({
+                                **deepcopy(cell),
                                 "text": cell.get("text", ""),
                                 "row": cell.get("rowIndex", row.get("rowIndex", row_index)),
                                 "column": cell.get("columnIndex", column_index),
                                 "isHeader": cell.get("isHeader", False),
                             })
-                facts["tables"].append({
-                    "tableId": block.get("tableId") or block.get("blockId"),
-                    "cells": cells,
-                })
+                table_fact["tableId"] = block.get("tableId") or block.get("blockId")
+                table_fact["cells"] = cells
+                facts["tables"].append(table_fact)
         if "paragraphs" not in facts:
             facts["paragraphs"] = []
         if not facts["paragraphs"]:
@@ -319,7 +659,10 @@ class WordFormatReviewer:
         return facts
 
     def _authorized_structure_issues(
-        self, request: WordDocumentRequest, template: Dict
+        self,
+        request: WordDocumentRequest,
+        template: Dict,
+        table_caption_suggestions: Optional[Dict[str, Dict]] = None,
     ) -> List[FormatReviewIssue]:
         facts = self._format_structure_facts(request)
         facts.setdefault("appendixFacts", [])
@@ -327,6 +670,7 @@ class WordFormatReviewer:
         pack = {"template": template, "rules": template.get("_rulePackRules", [])}
         audit = audit_format_facts(facts, pack)
         issues: List[FormatReviewIssue] = []
+        table_caption_suggestions = table_caption_suggestions or {}
         for warning in audit["issues"]:
             if warning.get("ruleId") != "structure.heading_hierarchy":
                 continue
@@ -356,6 +700,41 @@ class WordFormatReviewer:
                 )
         for result in audit.get("captions", []):
             status = result.get("status")
+            if status == "missing" and result.get("captionType") == "table":
+                table_id = str(result.get("objectId") or "")
+                suggestion = table_caption_suggestions.get(table_id, {})
+                evidence = suggestion.get("evidence") if isinstance(suggestion, dict) else None
+                suggestion_status = suggestion.get("status") if isinstance(suggestion, dict) else None
+                if suggestion_status == "suggested":
+                    issues.append(
+                        FormatReviewIssue(
+                            ruleId="structure.missing_table_caption",
+                            paragraphIndex=None,
+                            role="table",
+                            message="数据表缺少表题，已生成只读题注建议。",
+                            currentValue=table_id,
+                            expectedValue="表题正文",
+                            suggestion=str(suggestion.get("suggestion", "")),
+                            evidence=[deepcopy(evidence)] if isinstance(evidence, dict) else [],
+                            dataStatus="verified" if (evidence or {}).get("evidenceStatus") == "complete" else "insufficient",
+                        )
+                    )
+                    continue
+                if suggestion_status in {"not_assessable", "text_evidence_only"}:
+                    issues.append(
+                        FormatReviewIssue(
+                            ruleId="structure.missing_table_caption",
+                            paragraphIndex=None,
+                            role="table",
+                            message="数据表缺少表题，但当前证据不足以可靠生成建议。",
+                            currentValue=table_id,
+                            expectedValue="表题正文",
+                            suggestion="无法可靠建议",
+                            evidence=[deepcopy(evidence)] if isinstance(evidence, dict) else [],
+                            dataStatus="not_assessable",
+                        )
+                    )
+                    continue
             if status in {"orphaned", "missing", "ambiguous"}:
                 issues.append(
                     FormatReviewIssue(

@@ -2992,7 +2992,18 @@ class ProviderClient:
             "associate_caption": {
                 "synthetic-2": {"allowedTargetBlockIds": ["figure-1"]}
             },
-            "suggest_table_caption": {"synthetic-3": {"allowedTargets": []}},
+            "suggest_table_caption": {
+                "synthetic-3": {
+                    "tableType": "data",
+                    "captionStatus": "missing",
+                    "associationStatus": "missing",
+                    "evidence": {
+                        "evidenceStatus": "complete",
+                        "headers": [["合成字段"]],
+                        "rows": [["合成值"]],
+                    },
+                }
+            },
             "suggest_figure_caption": {"synthetic-4": {"allowedTargets": []}},
         }
         operations = {}

@@ -25,6 +25,17 @@ MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS = 4096
 MAX_FORMAT_SEMANTIC_CALLS = 16
 MAX_FORMAT_SEMANTIC_SUGGESTION_LENGTH = 80
 _MARKDOWN_PREFIX = re.compile(r"(^|\s)([#>*`]|[-+]\s|\d+[.)]\s)")
+_CAPTION_PREFIX = re.compile(r"^(?:图|表)\s*[0-9０-９一二三四五六七八九十]+(?:[：:.、\s]|$)")
+_EVIDENCE_NUMBER = re.compile(r"(?<![\w])\d+(?:[.,]\d+)*(?:%|％)?")
+_EVIDENCE_CJK_NUMBER = re.compile(
+    r"[零〇一二三四五六七八九十百千万亿]+(?:年|月|日|季度|期|人|家|项|类|个|%)"
+)
+_PROTECTED_EVIDENCE_PATTERNS = (
+    re.compile(r"(?:截至|上半年|下半年|同比|环比|\d{4}年|\d{1,2}季度|\d{1,2}月|\d{1,2}日)"),
+    re.compile(r"(?:全国|全省|全市|国内|国外|中国|本省|本市|东部|中部|西部|省|市|区|县|地区|区域)"),
+    re.compile(r"(?:公司|集团|机构|委员会|政府|大学|学院|研究院|中心|银行|医院|部门|局|所)"),
+    re.compile(r"(?:平均|总计|占比|增速|增长率|均值|中位数|比例|人均|每[个家项]|总量|样本|基期|口径)"),
+)
 
 
 def _error(code: str, message: str, status_code: int = 409) -> AdapterError:
@@ -99,6 +110,55 @@ class FormatSemanticContract:
         if not 0 <= confidence <= 1:
             raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "模型置信度超出范围。")
         return confidence
+
+    @staticmethod
+    def _evidence_text(candidate: Dict) -> str:
+        evidence = candidate.get("evidence", {}) if isinstance(candidate, dict) else {}
+        if not isinstance(evidence, dict):
+            return ""
+
+        values = []
+
+        def collect(value: Any) -> None:
+            if isinstance(value, str):
+                values.append(value)
+            elif isinstance(value, dict):
+                for nested in value.values():
+                    collect(nested)
+            elif isinstance(value, list):
+                for nested in value:
+                    collect(nested)
+
+        collect(evidence)
+        return " ".join(values)
+
+    @staticmethod
+    def _evidence_contains(needle: str, haystack: str) -> bool:
+        normalize = lambda value: re.sub(r"[\s，。；：、,.!?！？（）()\[\]{}]", "", str(value))
+        return normalize(needle) in normalize(haystack)
+
+    @classmethod
+    def validate_evidence_bound_suggestion(cls, suggestion: str, candidate: Dict) -> None:
+        evidence_status = str((candidate.get("evidence") or {}).get("evidenceStatus", ""))
+        if evidence_status not in {"complete", "restricted"}:
+            raise _error(
+                "FORMAT_SEMANTIC_EVIDENCE_INSUFFICIENT",
+                "表题证据不足，无法可靠生成建议。",
+            )
+        evidence_text = cls._evidence_text(candidate)
+        for token in _EVIDENCE_NUMBER.findall(suggestion) + _EVIDENCE_CJK_NUMBER.findall(suggestion):
+            if not cls._evidence_contains(token, evidence_text):
+                raise _error(
+                    "FORMAT_SEMANTIC_EVIDENCE_VIOLATION",
+                    "表题建议引入了证据外的数值或时间事实。",
+                )
+        for pattern in _PROTECTED_EVIDENCE_PATTERNS:
+            for match in pattern.finditer(suggestion):
+                if not cls._evidence_contains(match.group(0), evidence_text):
+                    raise _error(
+                        "FORMAT_SEMANTIC_EVIDENCE_VIOLATION",
+                        "表题建议引入了证据外的机构、时间、地域或统计口径。",
+                    )
 
     @classmethod
     def _normalize_role_item(cls, item: Dict, candidate: Dict) -> Dict:
@@ -208,6 +268,12 @@ class FormatSemanticContract:
                 if "confidence" in item:
                     clean["confidence"] = cls._as_bounded_confidence(item["confidence"])
             else:
+                if operation == "suggest_table_caption":
+                    if candidate.get("tableType") != "data" or candidate.get("captionStatus") != "missing" or candidate.get("associationStatus") != "missing":
+                        raise _error(
+                            "FORMAT_SEMANTIC_CANDIDATE_OUT_OF_RANGE",
+                            "缺表题建议候选不满足数据表和唯一缺题条件。",
+                        )
                 suggestion = item.get("suggestion")
                 status = item.get("status")
                 if status is not None and status not in {
@@ -223,8 +289,10 @@ class FormatSemanticContract:
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议不能为空。")
                 if len(suggestion) > MAX_FORMAT_SEMANTIC_SUGGESTION_LENGTH:
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议不得超过 80 个字符。")
-                if "\n" in suggestion or "\r" in suggestion or _MARKDOWN_PREFIX.search(suggestion):
+                if "\n" in suggestion or "\r" in suggestion or _MARKDOWN_PREFIX.search(suggestion) or _CAPTION_PREFIX.search(suggestion.strip()):
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议只能包含题注正文。")
+                if operation == "suggest_table_caption" and suggestion.strip():
+                    cls.validate_evidence_bound_suggestion(suggestion.strip(), candidate)
                 clean = {"blockId": block_id, "suggestion": suggestion.strip()}
                 if status is not None:
                     clean["status"] = status

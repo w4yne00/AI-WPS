@@ -1,10 +1,11 @@
 import importlib.util
+import json
 import unittest
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 
 if HAS_PYDANTIC:
-    from app.core.models import WordDocumentRequest
+    from app.core.models import FormatReviewSummary, WordDocumentRequest
     from app.services.word.format_reviewer import WordFormatReviewer
 
 
@@ -60,8 +61,50 @@ class VersionedFormatSemanticsProvider(RecordingFormatReviewProvider):
         }
 
 
+class TableCaptionFormatSemanticsProvider(RecordingFormatReviewProvider):
+    def __init__(self, suggestion="项目月度完成情况") -> None:
+        super().__init__()
+        self.suggestion = suggestion
+
+    def format_semantics(
+        self, operation: str, trace_id: str, input_data: dict, prompt: str,
+        task_auth=None, output_token_budget=None,
+    ) -> dict:
+        self.calls.append({"operation": operation, "inputData": input_data, "prompt": prompt})
+        block_id = input_data["candidateBlockIds"][0]
+        return {
+            "answer": json.dumps({
+                "schemaVersion": "format_semantics.v1",
+                "operation": operation,
+                "snapshotBinding": input_data.get("snapshotBinding", {}),
+                "items": [{
+                    "blockId": block_id,
+                    "status": "suggested",
+                    "suggestion": self.suggestion,
+                }],
+            }, ensure_ascii=False),
+        }
+
+
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
 class WordFormatReviewerTests(unittest.TestCase):
+    def test_format_review_summary_preserves_table_caption_diagnostics(self) -> None:
+        summary = FormatReviewSummary(
+            templateId="technical-file-format-requirements",
+            tableCaptionCandidateCount=2,
+            tableCaptionSuggestedCount=1,
+            tableCaptionRestrictedCount=1,
+        )
+
+        payload = (
+            summary.model_dump(by_alias=True)
+            if hasattr(summary, "model_dump")
+            else summary.dict(by_alias=True)
+        )
+        self.assertEqual(payload["tableCaptionCandidateCount"], 2)
+        self.assertEqual(payload["tableCaptionSuggestedCount"], 1)
+        self.assertEqual(payload["tableCaptionRestrictedCount"], 1)
+
     def _request(self, selection_mode: str = "selection"):
         return parse_word_request(
             {
@@ -360,3 +403,182 @@ class WordFormatReviewerTests(unittest.TestCase):
             any(issue["ruleId"] in {"font_size", "alignment"} for issue in result["issues"]),
             result["issues"],
         )
+
+    def test_missing_data_table_caption_uses_complete_evidence_and_returns_read_only_body(self) -> None:
+        provider = TableCaptionFormatSemanticsProvider()
+        request = parse_word_request({
+            "documentId": "table-caption.docx",
+            "scene": "word",
+            "selectionMode": "document",
+            "content": {
+                "plainText": "项目进展",
+                "paragraphs": [],
+                "headings": [],
+                "documentStructure": {
+                    "contentFingerprint": "content-1",
+                    "structureFingerprint": "structure-1",
+                    "formatFingerprint": "format-1",
+                    "formatBlocks": [
+                        {
+                            "blockId": "heading-1",
+                            "blockType": "heading",
+                            "paragraphIndex": 1,
+                            "text": "项目进展",
+                        },
+                        {
+                            "blockId": "format-table-table-1",
+                            "blockType": "table",
+                            "tableId": "table-1",
+                            "paragraphIndex": 2,
+                            "headerRows": 2,
+                            "rows": [
+                                {"rowIndex": 0, "cells": [
+                                    {"columnIndex": 0, "text": "月份", "isHeader": True, "columnSpan": 2},
+                                ]},
+                                {"rowIndex": 1, "cells": [
+                                    {"columnIndex": 0, "text": "月份", "isHeader": True},
+                                    {"columnIndex": 1, "text": "完成率", "isHeader": True},
+                                ]},
+                                {"rowIndex": 2, "cells": [
+                                    {"columnIndex": 0, "text": "1月"},
+                                    {"columnIndex": 1, "text": "80%"},
+                                ]},
+                                {"rowIndex": 3, "cells": [
+                                    {"columnIndex": 0, "text": "2月"},
+                                    {"columnIndex": 1, "text": "90%"},
+                                ]},
+                            ],
+                            "source": "项目台账",
+                            "footnotes": ["完成率按月统计"],
+                        },
+                    ],
+                },
+            },
+            "options": {"templateId": "technical-file-format-requirements"},
+        })
+        result = WordFormatReviewer(provider_client=provider).review(
+            request,
+            trace_id="trace-table-caption",
+            task_auth={
+                "providerBaseUrl": "https://model.example/v1",
+                "apiKey": "frozen-secret",
+                "accessMethod": "direct_model",
+                "modelName": "review-model",
+                "maxOutputTokens": 4096,
+                "contextWindowTokens": 40000,
+            },
+        )
+
+        caption_issues = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.missing_table_caption"
+        ]
+        self.assertEqual(len(caption_issues), 1)
+        self.assertEqual(caption_issues[0]["suggestion"], "项目月度完成情况")
+        self.assertEqual(caption_issues[0]["dataStatus"], "verified")
+        evidence = caption_issues[0]["evidence"][0]
+        self.assertEqual(evidence["evidenceStatus"], "complete")
+        self.assertEqual(evidence["headerRows"], 2)
+        self.assertEqual(evidence["heading"], "项目进展")
+        self.assertEqual(evidence["source"], "项目台账")
+        self.assertEqual(result["summary"]["tableCaptionSuggestedCount"], 1)
+        self.assertEqual(provider.calls[0]["operation"], "suggest_table_caption")
+
+    def test_large_data_table_uses_explicit_first_three_last_two_evidence(self) -> None:
+        rows = [
+            {"rowIndex": 0, "cells": [
+                {"columnIndex": 0, "text": "指标", "isHeader": True},
+                {"columnIndex": 1, "text": "说明", "isHeader": True},
+            ]}
+        ]
+        for index in range(1, 31):
+            rows.append({"rowIndex": index, "cells": [
+                {"columnIndex": 0, "text": "指标{0}".format(index)},
+                {"columnIndex": 1, "text": "数据" * 500},
+            ]})
+        request = parse_word_request({
+            "documentId": "large-table-caption.docx",
+            "scene": "word",
+            "content": {"documentStructure": {"formatBlocks": [{
+                "blockId": "format-table-large-table",
+                "blockType": "table",
+                "tableId": "large-table",
+                "paragraphIndex": 1,
+                "headerRows": 1,
+                "rows": rows,
+            }]}},
+        })
+
+        candidate = WordFormatReviewer()._table_caption_candidates(request)[0]
+        evidence = candidate["evidence"]
+        self.assertEqual(evidence["evidenceStatus"], "restricted")
+        self.assertEqual(evidence["sampling"], "first_three_and_last_two_rows")
+        self.assertEqual(
+            [row["rowIndex"] for row in evidence["rows"]],
+            [0, 1, 2, 29, 30],
+        )
+
+    def test_only_unambiguous_missing_data_tables_enter_caption_suggestion_candidates(self) -> None:
+        blocks = [
+            {
+                "blockId": "format-table-data",
+                "blockType": "table",
+                "tableId": "data-table",
+                "paragraphIndex": 1,
+                "rows": [
+                    {"rowIndex": 0, "cells": [
+                        {"columnIndex": 0, "text": "项目", "isHeader": True},
+                        {"columnIndex": 1, "text": "数量", "isHeader": True},
+                    ]},
+                    {"rowIndex": 1, "cells": [
+                        {"columnIndex": 0, "text": "甲"}, {"columnIndex": 1, "text": "1"},
+                    ]},
+                    {"rowIndex": 2, "cells": [
+                        {"columnIndex": 0, "text": "乙"}, {"columnIndex": 1, "text": "2"},
+                    ]},
+                ],
+            },
+            {
+                "blockId": "format-table-layout",
+                "blockType": "table",
+                "tableId": "layout-table",
+                "paragraphIndex": 2,
+                "nestedTable": True,
+                "rows": [{"rowIndex": 0, "cells": [{"columnIndex": 0, "text": "布局"}]}],
+            },
+            {
+                "blockId": "caption-1", "blockType": "caption", "paragraphIndex": 3,
+                "text": "表1 旧题注", "sectionId": "s", "storyId": "body",
+            },
+            {
+                "blockId": "caption-2", "blockType": "caption", "paragraphIndex": 4,
+                "text": "表2 另一题注", "sectionId": "s", "storyId": "body",
+            },
+            {
+                "blockId": "format-table-ambiguous",
+                "blockType": "table",
+                "tableId": "ambiguous-table",
+                "paragraphIndex": 5,
+                "rows": [
+                    {"rowIndex": 0, "cells": [
+                        {"columnIndex": 0, "text": "项目", "isHeader": True},
+                        {"columnIndex": 1, "text": "数量", "isHeader": True},
+                    ]},
+                    {"rowIndex": 1, "cells": [
+                        {"columnIndex": 0, "text": "甲"}, {"columnIndex": 1, "text": "1"},
+                    ]},
+                    {"rowIndex": 2, "cells": [
+                        {"columnIndex": 0, "text": "乙"}, {"columnIndex": 1, "text": "2"},
+                    ]},
+                ],
+                "sectionId": "s", "storyId": "body",
+            },
+        ]
+        request = parse_word_request({
+            "documentId": "candidate-boundary.docx",
+            "scene": "word",
+            "content": {"documentStructure": {"formatBlocks": blocks}},
+        })
+
+        candidates = WordFormatReviewer()._table_caption_candidates(request)
+        self.assertEqual([item["tableId"] for item in candidates], ["data-table"])

@@ -164,6 +164,102 @@ class FormatSemanticContractTests(unittest.TestCase):
                 "suggest_figure_caption", payload, candidates, {}
             )
 
+    def test_table_caption_suggestion_is_bound_to_data_table_and_evidence(self):
+        candidates = {
+            "table-1": {
+                "tableType": "data",
+                "captionStatus": "missing",
+                "associationStatus": "missing",
+                "evidence": {
+                    "evidenceStatus": "complete",
+                    "heading": "项目进展",
+                    "headers": [["月份", "完成率"]],
+                    "rows": [["1月", "80%"]],
+                    "source": "项目台账",
+                },
+            }
+        }
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "suggest_table_caption",
+            "snapshotBinding": {},
+            "items": [{
+                "blockId": "table-1",
+                "status": "suggested",
+                "suggestion": "项目进展完成率",
+            }],
+        }
+        self.assertEqual(
+            FormatSemanticContract.validate_response(
+                "suggest_table_caption", payload, candidates, {}
+            )["items"][0]["suggestion"],
+            "项目进展完成率",
+        )
+        payload["items"][0]["suggestion"] = "2025年全国公司完成率"
+        with self.assertRaises(AdapterError) as raised:
+            FormatSemanticContract.validate_response(
+                "suggest_table_caption", payload, candidates, {}
+            )
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_EVIDENCE_VIOLATION")
+
+    def test_table_caption_suggestion_rejects_table_number_prefix(self):
+        candidates = {
+            "table-1": {
+                "tableType": "data",
+                "captionStatus": "missing",
+                "associationStatus": "missing",
+                "evidence": {"evidenceStatus": "complete", "rows": [["项目进展"]]},
+            }
+        }
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "suggest_table_caption",
+            "snapshotBinding": {},
+            "items": [{
+                "blockId": "table-1",
+                "status": "suggested",
+                "suggestion": "表1 项目进展情况",
+            }],
+        }
+        with self.assertRaises(AdapterError) as raised:
+            FormatSemanticContract.validate_response(
+                "suggest_table_caption", payload, candidates, {}, require_complete=True
+            )
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_RESPONSE_INVALID")
+
+    def test_table_caption_suggestion_rejects_non_missing_or_insufficient_candidates(self):
+        candidates = {
+            "table-1": {
+                "tableType": "layout",
+                "captionStatus": "missing",
+                "associationStatus": "missing",
+                "evidence": {"evidenceStatus": "complete"},
+            }
+        }
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "suggest_table_caption",
+            "snapshotBinding": {},
+            "items": [{"blockId": "table-1", "status": "suggested", "suggestion": "布局"}],
+        }
+        with self.assertRaises(AdapterError) as raised:
+            FormatSemanticContract.validate_response(
+                "suggest_table_caption", payload, candidates, {}
+            )
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_CANDIDATE_OUT_OF_RANGE")
+
+        candidates["table-1"]["tableType"] = "data"
+        candidates["table-1"]["evidence"] = {"evidenceStatus": "insufficient"}
+        payload["items"][0] = {
+            "blockId": "table-1",
+            "status": "not_assessable",
+            "suggestion": "",
+        }
+        normalized = FormatSemanticContract.validate_response(
+            "suggest_table_caption", payload, candidates, {}
+        )
+        self.assertEqual(normalized["items"][0]["status"], "not_assessable")
+
     def test_call_budget_is_hard_and_counts_retries_and_corrections(self):
         self.assertEqual(MAX_FORMAT_SEMANTIC_CALLS, 16)
         self.assertEqual(
