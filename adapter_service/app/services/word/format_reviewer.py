@@ -1,5 +1,6 @@
 import json
 import re
+import time
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -13,6 +14,11 @@ from app.services.word.authorized_format_algorithm import (
     resolve_role_rule,
 )
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
+from app.services.word.format_semantics import (
+    FormatSemanticContract,
+    FormatSemanticExecutor,
+    MAX_FORMAT_SEMANTIC_CALLS,
+)
 from app.services.template_loader import TemplateLoader
 
 
@@ -72,6 +78,8 @@ class WordFormatReviewer:
         request: WordDocumentRequest,
         trace_id: str = "",
         task_auth: Optional[Dict] = None,
+        semantic_state: Optional[Dict] = None,
+        max_semantic_batches: Optional[int] = None,
     ) -> Dict:
         requested_template = request.options.template_id or DEFAULT_TEMPLATE_ID
         template = self._resolve_template(requested_template)
@@ -79,10 +87,24 @@ class WordFormatReviewer:
         ai_diagnostics = self._empty_ai_diagnostics()
         if trace_id:
             ai_roles, ai_batch_count, ai_diagnostics = self._classify_roles_with_ai(
-                request, template, trace_id, task_auth=task_auth
+                request,
+                template,
+                trace_id,
+                task_auth=task_auth,
+                semantic_state=semantic_state,
+                max_semantic_batches=max_semantic_batches,
             )
         else:
             ai_roles, ai_batch_count = {}, 0
+        if (
+            semantic_state is not None
+            and max_semantic_batches is not None
+            and not ai_diagnostics.get("semanticComplete", True)
+        ):
+            return {
+                "_semanticComplete": False,
+                "_semanticState": ai_diagnostics.pop("_semanticState", semantic_state),
+            }
         provider = "local"
         if ai_roles:
             if hasattr(self.provider_client, "build_provider_source"):
@@ -519,6 +541,8 @@ class WordFormatReviewer:
         template: Dict,
         trace_id: str,
         task_auth: Optional[Dict] = None,
+        semantic_state: Optional[Dict] = None,
+        max_semantic_batches: Optional[int] = None,
     ) -> Tuple[Dict[int, Dict], int, Dict]:
         task_type = "word.format_review"
         diagnostics = self._empty_ai_diagnostics()
@@ -568,10 +592,44 @@ class WordFormatReviewer:
         if len(candidates) > len(ai_candidates):
             diagnostics["aiFallbackReason"] = "ai_budget_limited"
         strict_binding = bool(all(self._snapshot_binding(request).values()))
-        for start in range(0, len(ai_candidates), AI_ROLE_BATCH_SIZE):
-            batch = ai_candidates[start:start + AI_ROLE_BATCH_SIZE]
+        semantic_batches, oversized = self._semantic_batches(request, template, ai_candidates)
+        diagnostics["aiSkippedCount"] += len(oversized)
+        diagnostics["aiSkippedReasons"] = (
+            ["input_over_budget"] * len(oversized)
+        )
+        state = semantic_state if isinstance(semantic_state, dict) else {}
+        state_candidate_ids = state.get("candidateBlockIds")
+        current_candidate_ids = [item["blockId"] for item in ai_candidates]
+        if state_candidate_ids not in (None, current_candidate_ids):
+            state = {}
+        stored_roles = state.get("roles", {})
+        if isinstance(stored_roles, dict):
+            for key, value in stored_roles.items():
+                try:
+                    roles[int(key)] = deepcopy(value)
+                except (TypeError, ValueError):
+                    continue
+        diagnostics.update(state.get("diagnostics", {}) if isinstance(state.get("diagnostics"), dict) else {})
+        diagnostics["aiCandidateCount"] = len(candidates)
+        diagnostics["aiSkippedCount"] = len(oversized)
+        diagnostics["aiSkippedReasons"] = ["input_over_budget"] * len(oversized)
+        start_batch = int(state.get("nextBatch", 0) or 0)
+        phase_started_at = float(state.get("phaseStartedAt", time.monotonic()))
+        if time.monotonic() - phase_started_at >= 10 * 60:
+            diagnostics["semanticStatus"] = "degraded"
+            diagnostics["semanticComplete"] = True
+            diagnostics["aiFallbackReason"] = "semantic_phase_timeout"
+            return roles, batch_count, diagnostics
+        batches_run = 0
+        for batch_index, batch in enumerate(semantic_batches[start_batch:], start=start_batch):
+            if max_semantic_batches is not None and batches_run >= max_semantic_batches:
+                break
+            if diagnostics.get("aiCallCount", 0) >= MAX_FORMAT_SEMANTIC_CALLS:
+                break
+            batches_run += 1
             batch_by_block = {item["blockId"]: item for item in batch}
             batch_by_index = {item["paragraphIndex"]: item for item in batch}
+            state["nextBatch"] = batch_index + 1
             prompt = self._build_role_prompt(request, template, batch)
             if hasattr(self.provider_client, "build_task_input_data"):
                 input_data = self.provider_client.build_task_input_data(
@@ -600,28 +658,65 @@ class WordFormatReviewer:
             batch_count += 1
             diagnostics["aiAttempted"] = True
             try:
-                if hasattr(self.provider_client, "format_review_roles"):
+                if hasattr(self.provider_client, "format_semantics"):
+                    def semantic_call(query, output_budget):
+                        return self.provider_client.format_semantics(
+                            "classify_role",
+                            trace_id,
+                            input_data,
+                            query,
+                            task_auth=task_auth,
+                            output_token_budget=output_budget,
+                        )
+
+                    executor = FormatSemanticExecutor(
+                        semantic_call,
+                        used_calls=diagnostics["aiCallCount"],
+                        task_auth=task_auth or {"accessMethod": "workflow_platform"},
+                        phase_started_at=phase_started_at,
+                    )
+                    outcome = executor.execute(
+                        "classify_role",
+                        prompt,
+                        batch_by_block,
+                        self._snapshot_binding(request),
+                    )
+                    diagnostics["aiCallCount"] = outcome["usedCalls"]
+                    diagnostics["aiRetryCount"] += outcome["retryCount"]
+                    diagnostics["aiCorrectionCount"] += outcome["correctionCount"]
+                    if outcome.get("error") is not None:
+                        if outcome["error"].code == "FORMAT_SEMANTIC_PROVIDER_ERROR":
+                            diagnostics["aiRequestErrorCount"] += 1
+                        else:
+                            diagnostics["aiParseErrorCount"] += 1
+                        continue
+                    items = outcome["items"]
+                    response_payload = outcome["payload"]
+                elif hasattr(self.provider_client, "format_review_roles"):
                     if task_auth is None:
                         body = self.provider_client.format_review_roles(trace_id, input_data, prompt)
                     else:
                         body = self.provider_client.format_review_roles(
                             trace_id, input_data, prompt, task_auth=task_auth
                         )
+                    answer = extract_answer(body)
+                    response_payload = self._extract_semantic_payload(answer)
+                    items = response_payload.get("items")
                 else:
                     kwargs = {"task_auth": task_auth} if task_auth is not None else {}
                     body = self.provider_client.post_task(task_type, trace_id, input_data, prompt, **kwargs)
-                answer = extract_answer(body)
+                    answer = extract_answer(body)
+                    response_payload = self._extract_semantic_payload(answer)
+                    items = response_payload.get("items")
             except AdapterError:
                 diagnostics["aiRequestErrorCount"] += 1
                 continue
             except (TypeError, ValueError, json.JSONDecodeError):
                 diagnostics["aiRequestErrorCount"] += 1
                 continue
-            response_payload = self._extract_semantic_payload(answer)
             if strict_binding and response_payload.get("snapshotBinding") != self._snapshot_binding(request):
                 diagnostics["aiInvalidBindingCount"] += 1
                 continue
-            items = response_payload.get("items")
             if not isinstance(items, list):
                 diagnostics["aiParseErrorCount"] += 1
                 continue
@@ -635,6 +730,8 @@ class WordFormatReviewer:
                     diagnostics["aiOutOfBatchCount"] += 1
                     continue
                 raw_index = item.get("paragraphIndex", item.get("paragraph_index"))
+                if raw_index is None and block_id in batch_by_block:
+                    raw_index = batch_by_block[block_id].get("paragraphIndex")
                 if raw_index is None and candidate is not None:
                     raw_index = candidate.get("paragraphIndex")
                 try:
@@ -676,10 +773,27 @@ class WordFormatReviewer:
                     "blockId": candidate["blockId"],
                     "evidence": ["model_candidate"],
                 }
-        if roles and len(roles) == len(ai_candidates):
+        semantic_complete = (
+            start_batch + batches_run >= len(semantic_batches)
+            or diagnostics.get("aiCallCount", 0) >= MAX_FORMAT_SEMANTIC_CALLS
+        )
+        if roles and len(roles) == len(ai_candidates) and not oversized:
             diagnostics["semanticStatus"] = "completed"
         else:
             diagnostics["semanticStatus"] = "degraded"
+        diagnostics["semanticComplete"] = semantic_complete
+        if not semantic_complete and semantic_state is not None:
+            diagnostics["_semanticState"] = {
+                "candidateBlockIds": current_candidate_ids,
+                "nextBatch": int(state.get("nextBatch", start_batch) or start_batch),
+                "roles": {str(key): deepcopy(value) for key, value in roles.items()},
+                "phaseStartedAt": phase_started_at,
+                "diagnostics": {
+                    key: deepcopy(value)
+                    for key, value in diagnostics.items()
+                    if not key.startswith("_")
+                },
+            }
         if diagnostics["aiAttempted"] and not roles:
             if diagnostics["aiParseErrorCount"]:
                 diagnostics["aiFallbackReason"] = "dify_response_not_role_json"
@@ -690,6 +804,44 @@ class WordFormatReviewer:
             elif not diagnostics["aiFallbackReason"]:
                 diagnostics["aiFallbackReason"] = "dify_returned_no_roles"
         return roles, batch_count, diagnostics
+
+    def _semantic_batches(
+        self,
+        request: WordDocumentRequest,
+        template: Dict,
+        candidates: List[Dict],
+    ) -> Tuple[List[List[Dict]], List[Dict]]:
+        batches: List[List[Dict]] = []
+        oversized: List[Dict] = []
+        current: List[Dict] = []
+        for candidate in candidates:
+            trial = current + [candidate]
+            try:
+                FormatSemanticContract.require_input_budget(
+                    self._build_role_prompt(request, template, trial)
+                )
+            except AdapterError:
+                if current:
+                    batches.append(current)
+                    current = []
+                    try:
+                        FormatSemanticContract.require_input_budget(
+                            self._build_role_prompt(request, template, [candidate])
+                        )
+                    except AdapterError:
+                        oversized.append(candidate)
+                    else:
+                        current = [candidate]
+                else:
+                    oversized.append(candidate)
+                continue
+            current = trial
+            if len(current) >= AI_ROLE_BATCH_SIZE:
+                batches.append(current)
+                current = []
+        if current:
+            batches.append(current)
+        return batches, oversized
 
     @staticmethod
     def _model_target_allowed(normalized: Dict, allowed_targets: List[Dict]) -> bool:
@@ -733,7 +885,7 @@ class WordFormatReviewer:
             candidates.append({
                 "blockId": block_id,
                 "paragraphIndex": paragraph.index,
-                "text": paragraph.text[:600],
+                "text": paragraph.text,
                 "evidence": deepcopy(deterministic.get("evidence", [])),
                 "deterministicStatus": deterministic.get("status", "needs_confirmation"),
                 "allowedTargets": allowed,
@@ -787,8 +939,9 @@ class WordFormatReviewer:
                 "你是 Word 技术文件段落角色识别助手。",
                 "只处理 candidates 中列出的模糊候选；不得返回未列出的 blockId，不得处理确定性规则已确认的对象。",
                 "role 和属性只能从每个候选的 allowedTargets 中选择；confidence 必须是 0 到 1 的数字。",
+                "遵守 format_semantics.v1；本次输入估算不得超过 8192 Token，输出不得超过运行时提供的任务预算。",
                 "只返回 JSON，不要 Markdown 代码围栏、推理过程、思考标签或格式合规结论。",
-                '{"snapshotBinding":{"contentSha256":"...","structureSha256":"...","formatSha256":"..."},"candidates":[{"blockId":"...","paragraphIndex":1,"role":"heading","level":1,"confidence":0.95}]}',
+                '{"schemaVersion":"format_semantics.v1","operation":"classify_role","snapshotBinding":{"contentSha256":"...","structureSha256":"...","formatSha256":"..."},"items":[{"blockId":"...","role":"heading","level":1,"confidence":0.95}]}',
                 "",
                 "输入：",
                 json.dumps(payload, ensure_ascii=False),
@@ -925,8 +1078,14 @@ class WordFormatReviewer:
             "aiLowConfidenceCount": 0,
             "aiConflictCount": 0,
             "aiCandidateCount": 0,
+            "aiCallCount": 0,
+            "aiRetryCount": 0,
+            "aiCorrectionCount": 0,
+            "aiSkippedCount": 0,
+            "aiSkippedReasons": [],
             "aiFallbackReason": "",
             "semanticStatus": "not_needed",
+            "semanticComplete": True,
         }
 
     def _infer_role(self, paragraph: Paragraph, template: Dict) -> str:

@@ -43,6 +43,23 @@ class RecordingFormatReviewProvider:
         )
 
 
+class VersionedFormatSemanticsProvider(RecordingFormatReviewProvider):
+    def format_semantics(
+        self, operation: str, trace_id: str, input_data: dict, prompt: str,
+        task_auth=None, output_token_budget=None,
+    ) -> dict:
+        self.calls.append({"traceId": trace_id, "inputData": input_data, "prompt": prompt, "taskAuth": task_auth})
+        return {
+            "answer": (
+                '{"schemaVersion":"format_semantics.v1","operation":"classify_role",'
+                '"snapshotBinding":{"contentSha256":"content-1","structureSha256":"structure-1",'
+                '"formatSha256":"format-1"},"items":[{"blockId":"format-paragraph-1",'
+                '"role":"heading","level":1,"confidence":0.95},{"blockId":"format-context-2",'
+                '"role":"heading","level":1,"confidence":0.95}]}'
+            )
+        }
+
+
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
 class WordFormatReviewerTests(unittest.TestCase):
     def _request(self, selection_mode: str = "selection"):
@@ -253,6 +270,51 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["semanticStatus"], "degraded")
         self.assertEqual(result["summary"]["aiFallbackReason"], "model_capability_unknown")
         self.assertGreaterEqual(result["summary"]["issueCount"], 1)
+
+    def test_format_review_uses_versioned_semantic_contract_when_available(self) -> None:
+        provider = VersionedFormatSemanticsProvider()
+        request = self._request("document")
+        request.content.document_structure = {
+            "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+            "formatFingerprint": "format-1",
+            "structureFingerprint": "structure-1",
+            "contentFingerprint": "content-1",
+            "formatBlocks": [
+                {
+                    "blockId": "format-paragraph-1",
+                    "blockType": "paragraph",
+                    "scope": "in_scope",
+                    "paragraphIndex": 1,
+                    "text": "1 总则",
+                    "format": {"styleName": "Normal"},
+                },
+                {
+                    "blockId": "format-context-2",
+                    "blockType": "context",
+                    "scope": "in_scope",
+                    "paragraphIndex": 2,
+                    "text": "正文内容",
+                    "format": {"styleName": "Normal"},
+                },
+            ],
+        }
+        task_auth = {
+            "providerBaseUrl": "https://model.example/v1",
+            "apiKey": "frozen-secret",
+            "accessMethod": "direct_model",
+            "modelName": "review-model",
+            "maxOutputTokens": 4096,
+            "contextWindowTokens": 40000,
+        }
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            request, trace_id="trace-format-versioned", task_auth=task_auth
+        )
+
+        self.assertEqual(result["summary"]["aiCallCount"], 1)
+        self.assertEqual(result["summary"]["aiCorrectionCount"], 0)
+        self.assertEqual(result["summary"]["semanticStatus"], "degraded")
+        self.assertEqual(provider.calls[0]["inputData"]["operation"], "classify_role")
 
     def test_format_review_normalizes_wps_font_size_and_alignment_values(self) -> None:
         request = parse_word_request(

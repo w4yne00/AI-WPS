@@ -1,6 +1,7 @@
 import base64
 import binascii
 import hashlib
+import inspect
 import json
 import os
 import re
@@ -926,11 +927,24 @@ class DeterministicFormatReviewService:
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
             review_kwargs = {"trace_id": snapshot.get("traceId", "") or ""}
+            try:
+                review_parameters = inspect.signature(self.reviewer.review).parameters
+            except (TypeError, ValueError):
+                review_parameters = {}
+            if "semantic_state" in review_parameters:
+                review_kwargs.update({
+                    "semantic_state": snapshot.setdefault("semanticState", {}),
+                    "max_semantic_batches": 1,
+                })
             if snapshot.get("taskAuth") is not None:
                 review_kwargs["task_auth"] = snapshot["taskAuth"]
             result = self.reviewer.review(request, **review_kwargs)
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
+            if isinstance(result, dict) and result.get("_semanticComplete") is False:
+                snapshot["semanticState"] = deepcopy(result.get("_semanticState", {}))
+                progress("provider_processing")
+                return LongTaskContinuation(snapshot, phase="provider_processing")
             report = self._build_report(result, snapshot)
             self._save_report(snapshot["jobId"], report)
             summary = report["summary"]

@@ -2374,6 +2374,7 @@ class ProviderClient:
         timeout: int,
         prompt_asset: Optional[Dict] = None,
         response_format: Optional[Dict] = None,
+        input_token_limit: Optional[int] = None,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -2388,6 +2389,8 @@ class ProviderClient:
         reserved_output = int(max_output_tokens or DEFAULT_RESERVED_OUTPUT_TOKENS)
         safety_margin = max(int(context_window * 0.1), 1)
         input_budget = context_window - reserved_output - safety_margin
+        if input_token_limit is not None:
+            input_budget = min(input_budget, int(input_token_limit))
         estimated_input = _estimate_direct_tokens(prompt_asset["content"], query)
         if input_budget <= 0 or estimated_input > input_budget:
             raise AdapterError(
@@ -2559,6 +2562,7 @@ class ProviderClient:
         timeout_seconds: Optional[int] = None,
         files: Optional[List[Dict]] = None,
         task_auth: Optional[Dict] = None,
+        input_token_limit: Optional[int] = None,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -2575,6 +2579,7 @@ class ProviderClient:
                 query,
                 resolved_task_auth,
                 timeout,
+                input_token_limit=input_token_limit,
             )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
@@ -3850,6 +3855,75 @@ class ProviderClient:
             input_data,
             prompt,
             **kwargs
+        )
+
+    def format_semantics(
+        self,
+        operation: str,
+        trace_id: str,
+        input_data: Dict,
+        prompt: str,
+        task_auth: Optional[Dict] = None,
+        output_token_budget: Optional[int] = None,
+    ) -> Dict:
+        """Call the versioned format-semantics contract with hard budgets."""
+        from copy import deepcopy
+        from app.services.word.format_semantics import (
+            FormatSemanticContract,
+            MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
+            MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS,
+            WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS,
+        )
+
+        if not FormatSemanticContract.is_allowed_operation(operation):
+            raise AdapterError(
+                "FORMAT_SEMANTIC_OPERATION_NOT_ALLOWED",
+                "格式语义操作不在白名单内。",
+                status_code=409,
+            )
+        FormatSemanticContract.require_input_budget(prompt)
+        auth = deepcopy(task_auth) if task_auth is not None else self.resolve_task_auth(
+            "word.format_review"
+        )
+        if output_token_budget is None:
+            budget = FormatSemanticContract.output_budget(auth)
+        else:
+            try:
+                budget = int(output_token_budget)
+            except (TypeError, ValueError):
+                budget = 0
+            budget = max(budget, 0)
+        if str(auth.get("accessMethod", "")) == "workflow_platform":
+            budget = min(budget or MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS, WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS)
+        else:
+            budget = min(budget or MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS, MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS)
+        if str(auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
+            if auth.get("maxOutputTokens") is None:
+                raise AdapterError(
+                    "FORMAT_SEMANTIC_OUTPUT_CAPABILITY_UNKNOWN",
+                    "直连模型未声明可用的最大输出 Token，无法执行格式语义操作。",
+                    status_code=409,
+                )
+            auth["maxOutputTokens"] = min(
+                max(int(auth["maxOutputTokens"]), 0), int(budget), 4096
+            )
+        input_data = dict(input_data or {})
+        input_data.update({
+            "schemaVersion": "format_semantics.v1",
+            "contract_version": "format_semantics.v1",
+            "operation": operation,
+            "inputTokenBudget": MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
+            "outputTokenBudget": int(budget),
+            "candidate_json": json.dumps(input_data, ensure_ascii=False, sort_keys=True),
+        })
+        return self.post_task(
+            "word.format_review",
+            trace_id,
+            input_data,
+            prompt,
+            timeout_seconds=60,
+            task_auth=auth,
+            input_token_limit=MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
         )
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:
