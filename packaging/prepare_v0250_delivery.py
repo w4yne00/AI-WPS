@@ -34,6 +34,19 @@ def rewrite_versions(root: Path, versions: Tuple[str, ...]) -> List[str]:
     return changed
 
 
+def preserve_final_audit_baseline(root: Path) -> None:
+    path = root / "scripts/audit_v0250_delivery.py"
+    if not path.is_file():
+        return
+    text = path.read_text(encoding="utf-8")
+    updated = text.replace(
+        'BASELINE_VERSION = "{0}"'.format(VERSION),
+        'BASELINE_VERSION = "{0}"'.format(BASELINE_VERSION),
+    )
+    if updated != text:
+        path.write_text(updated, encoding="utf-8")
+
+
 def baseline_metadata(archive: Path, expected_version: str) -> dict:
     if not archive.is_file():
         raise ValueError("V0240_BASELINE_ARCHIVE_MISSING")
@@ -118,6 +131,7 @@ def prepare(
         raise ValueError("V0250_DATE_INVALID")
     baseline = baseline_metadata(baseline_archive, baseline_version)
     rewrite_versions(root, ("0.23.1-alpha", "0.24.0-alpha"))
+    preserve_final_audit_baseline(root)
 
     manifest_path = root / "release-manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))

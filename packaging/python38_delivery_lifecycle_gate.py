@@ -362,6 +362,12 @@ def run_v0231_upgrade_scenario(
 ) -> None:
     root = temp_root / "upgrade-{0}".format(baseline_version.replace(".", "_"))
     port = reserve_port()
+    unused_adapter, task_types, writing_policy_store = adapter_modules(delivery_root)
+    write_legacy_state(
+        root / "install/adapter-start-kit",
+        task_types,
+        writing_policy_store,
+    )
     baseline_result, baseline_environment = run_installer(
         baseline_root, root, port
     )
@@ -417,7 +423,7 @@ def run_v0231_upgrade_scenario(
             "V0231_UPGRADE_PARTIAL_RELEASE_LEFT",
         )
         preserved_state = {
-            "adapter": component_fingerprint(install_root / "state/adapter.json"),
+            "adapter": state_configuration_contract(install_root / "state"),
             "keys": component_fingerprint(install_root / "state/provider_api_keys"),
             "writing_policy": component_fingerprint(
                 install_root / "state/writing_policies.db"
@@ -434,7 +440,7 @@ def run_v0231_upgrade_scenario(
                 "BASELINE_UPGRADE_SUCCESS_NOT_COMMITTED",
             )
             require(
-                component_fingerprint(install_root / "state/adapter.json")
+                state_configuration_contract(install_root / "state")
                 == preserved_state["adapter"],
                 "BASELINE_UPGRADE_CONFIGURATIONS_NOT_PRESERVED",
             )
@@ -594,6 +600,27 @@ def component_fingerprint(path: Path):
             for item in sorted(path.rglob("*"))
             if item.is_file()
         },
+    }
+
+
+def state_configuration_contract(state_root: Path) -> Dict[str, object]:
+    payload = json.loads((state_root / "adapter.json").read_text(encoding="utf-8"))
+    configurations = payload.get("modelConfigurations", {})
+    active = payload.get("activeModelConfigurations", {})
+    key_refs = payload.get("taskApiKeyRefs", {})
+    routes = payload.get("taskRoutes", {})
+    require(
+        isinstance(configurations, dict)
+        and isinstance(active, dict)
+        and isinstance(key_refs, dict)
+        and isinstance(routes, dict),
+        "STATE_CONFIGURATION_CONTRACT_INVALID",
+    )
+    return {
+        "configuration_count": len(configurations),
+        "active_task_types": sorted(active),
+        "task_key_refs": sorted(key_refs.items()),
+        "route_task_types": sorted(routes),
     }
 
 

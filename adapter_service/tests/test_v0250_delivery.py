@@ -83,6 +83,11 @@ def test_v0250_preparation_records_accepted_baseline(tmp_path):
     (delivery / "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json").write_text(
         json.dumps({"release": "0.24.0-alpha"}), encoding="utf-8"
     )
+    (delivery / "scripts").mkdir(parents=True)
+    (delivery / "scripts/audit_v0250_delivery.py").write_text(
+        'VERSION = "0.25.0-alpha"\nBASELINE_VERSION = "0.24.0-alpha"\n',
+        encoding="utf-8",
+    )
     (delivery / "format-rule-assets-manifest.json").write_text(
         json.dumps(
             {
@@ -146,5 +151,7 @@ def test_v0250_preparation_records_accepted_baseline(tmp_path):
     assert manifest["baseline"]["acceptanceStateRequired"] == "closed"
     assert manifest["visualPolicy"]["enabledByDefault"] is False
     assert manifest["formatReview"]["enabledByDefault"] is False
+    audit_script = (delivery / "scripts/audit_v0250_delivery.py").read_text()
+    assert 'BASELINE_VERSION = "0.24.0-alpha"' in audit_script
     assets = json.loads((delivery / "format-rule-assets-manifest.json").read_text())
     assert assets["rulePack"].startswith("packages/adapter-start-kit/")
