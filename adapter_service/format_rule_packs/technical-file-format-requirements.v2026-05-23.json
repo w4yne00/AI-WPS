@@ -1,7 +1,7 @@
 {
   "algorithm": {
     "adapterPath": "vendor/wx_doc_format_algorithm/algorithm.py",
-    "adapterSha256": "59a1dfbd9a7a98dec86c5dfb8b719ba0fefdc2871aea93b4f52982c1b20ba154",
+    "adapterSha256": "b764a2fbf95d6899c9139369c045568056d156ef5486872aed9c8e91f1b8d4d4",
     "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",
     "name": "wx-doc-format deterministic recognition",
     "sourceManifest": "vendor/wx_doc_format_algorithm/SOURCE_MANIFEST.json",
@@ -10,7 +10,7 @@
     "writeBack": false
   },
   "integrity": {
-    "contentSha256": "124f36d4caf21d6fc9d48fb76290f070c46668fd8bef2a6884e5ff6c351054e9"
+    "contentSha256": "234aecc4585b6c5ec39c3f6f4f3cceb1a8fa01162b546234c3390de6260a295f"
   },
   "rules": [
     {
@@ -140,6 +140,38 @@
       "marginRightTwips": 1800,
       "marginTopTwips": 1440,
       "widthTwips": 11906
+    },
+    "roleMappings": {
+      "appendix_heading": {
+        "1": "appendix_heading1",
+        "2": "appendix_heading2",
+        "3": "appendix_heading3"
+      },
+      "appendix_title": "appendix_title",
+      "body": "body",
+      "caption": "caption",
+      "document_title": "document_title",
+      "heading": {
+        "1": "heading1",
+        "2": "heading2",
+        "3": "heading3",
+        "4": "heading4"
+      },
+      "list_item": {
+        "1": {
+          "numbered": "list1_numbered",
+          "plain": "list1_plain"
+        },
+        "2": {
+          "numbered": "list2_numbered",
+          "plain": "list2_plain"
+        }
+      },
+      "note": {
+        "numbered": "numbered_note",
+        "unumbered": "note"
+      },
+      "table_body": "table_body"
     },
     "roleRules": {
       "appendix_heading1": {

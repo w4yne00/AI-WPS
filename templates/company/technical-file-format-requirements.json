@@ -257,6 +257,20 @@
     "level3": {"roleRef": "heading3"},
     "level4": {"roleRef": "heading4"}
   },
+  "roleMappings": {
+    "body": "body",
+    "document_title": "document_title",
+    "heading": {"1": "heading1", "2": "heading2", "3": "heading3", "4": "heading4"},
+    "caption": "caption",
+    "note": {"numbered": "numbered_note", "unumbered": "note"},
+    "list_item": {
+      "1": {"numbered": "list1_numbered", "plain": "list1_plain"},
+      "2": {"numbered": "list2_numbered", "plain": "list2_plain"}
+    },
+    "appendix_title": "appendix_title",
+    "appendix_heading": {"1": "appendix_heading1", "2": "appendix_heading2", "3": "appendix_heading3"},
+    "table_body": "table_body"
+  },
   "styles": {
     "文档标题": {"roleRef": "document_title"},
     "Caption": {"roleRef": "caption"},

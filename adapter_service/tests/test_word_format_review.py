@@ -135,15 +135,33 @@ class WordFormatReviewerTests(unittest.TestCase):
         provider = RecordingFormatReviewProvider(
             answer='<think>{"draft": true, "reason": "内部分析"}</think>\n{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}'
         )
+        request = self._request("selection")
+        request.content.document_structure["formatFacts"] = {
+            "paragraphs": [
+                {"paragraphIndex": 1, "blockType": "heading", "headingLevel": 1}
+            ]
+        }
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("selection"),
+            request,
             trace_id="trace-format-think",
         )
 
         self.assertEqual(result["summary"]["aiFallbackReason"], "")
         self.assertEqual(result["summary"]["aiClassifiedParagraphCount"], 1)
         self.assertEqual(result["summary"]["provider"], "工作流平台")
+
+    def test_format_review_rejects_unbounded_model_role_attributes(self) -> None:
+        reviewer = WordFormatReviewer()
+        self.assertIsNone(reviewer._normalize_model_role("heading", {"role": "heading"}))
+        self.assertIsNone(reviewer._normalize_model_role("heading10", {"role": "heading10"}))
+        self.assertIsNone(reviewer._normalize_model_role("list_item", {"role": "list_item", "level": 1}))
+        self.assertEqual(
+            reviewer._normalize_model_role(
+                "heading", {"role": "heading", "level": 2}
+            ),
+            {"role": "heading", "attributes": {"level": 2}},
+        )
 
     def test_format_review_normalizes_wps_font_size_and_alignment_values(self) -> None:
         request = parse_word_request(

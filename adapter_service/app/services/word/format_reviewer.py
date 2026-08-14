@@ -7,7 +7,11 @@ from app.core.errors import AdapterError
 from app.core.models import FormatReviewIssue, Paragraph, WordDocumentRequest
 from app.services.document_normalizer import body_paragraphs
 from app.services.provider_client import ProviderClient, extract_answer
-from app.services.word.authorized_format_algorithm import audit_format_facts
+from app.services.word.authorized_format_algorithm import (
+    audit_format_facts,
+    classify_role_fact,
+    resolve_role_rule,
+)
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
 from app.services.template_loader import TemplateLoader
 
@@ -117,39 +121,152 @@ class WordFormatReviewer:
         issues.extend(self._authorized_structure_issues(request, template))
 
         ai_roles = ai_roles or {}
+        structure_facts = self._format_structure_facts(request)
+        role_facts = {}
+        for item in structure_facts.get("paragraphs", []):
+            if not isinstance(item, dict):
+                continue
+            try:
+                paragraph_index = int(item.get("paragraphIndex", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if paragraph_index > 0:
+                role_facts[paragraph_index] = item
+        pack = {"template": template, "rules": template.get("_rulePackRules", [])}
         for paragraph in body_paragraphs(request):
-            role_info = ai_roles.get(paragraph.index, {})
-            role = role_info.get("role") or self._infer_role(paragraph, template)
-            rule = self._rule_for_role(role, template)
-            issues.extend(self._paragraph_issues(paragraph, rule, role))
+            fact = role_facts.get(paragraph.index, {"paragraphIndex": paragraph.index})
+            deterministic_role = classify_role_fact(fact)
+            role_result = deterministic_role
+            ai_role = ai_roles.get(paragraph.index)
+            if isinstance(ai_role, dict) and ai_role.get("status") == "confirmed":
+                if deterministic_role.get("status") != "confirmed":
+                    role_result = {
+                        **deterministic_role,
+                        "evidence": deterministic_role.get("evidence", []) + ["model_role_unverified"],
+                    }
+                elif not self._same_role(deterministic_role, ai_role):
+                    role_result = {
+                        "role": "unknown",
+                        "attributes": {},
+                        "status": "conflict",
+                        "evidence": deterministic_role.get("evidence", []) + ["model_role_conflict"],
+                    }
+                else:
+                    role_result = {
+                        **deterministic_role,
+                        "evidence": deterministic_role.get("evidence", []) + ["model_role_confirmed"],
+                    }
+            if role_result.get("status") != "confirmed":
+                issues.append(self._role_confirmation_issue(paragraph, role_result))
+                continue
+            mapping = resolve_role_rule(role_result, pack)
+            if mapping.get("status") != "mapped":
+                issues.append(
+                    FormatReviewIssue(
+                        ruleId="structure.role_mapping",
+                        paragraphIndex=paragraph.index,
+                        role=role_result.get("role", "unknown"),
+                        message="已确认的格式语义角色未配置模板规则映射。",
+                        currentValue=role_result.get("role", "unknown"),
+                        expectedValue="已配置的模板规则键",
+                        suggestion="请为该语义角色配置模板规则映射后再审查格式。",
+                    )
+                )
+                continue
+            rule = template.get("roleRules", {}).get(mapping["ruleKey"], {})
+            issues.extend(self._paragraph_issues(paragraph, rule, role_result.get("role", "unknown")))
         return issues
 
-    def _authorized_structure_issues(
-        self, request: WordDocumentRequest, template: Dict
-    ) -> List[FormatReviewIssue]:
+    def _same_role(self, left: Dict, right: Dict) -> bool:
+        return left.get("role") == right.get("role") and left.get("attributes", {}) == right.get("attributes", {})
+
+    def _role_confirmation_issue(self, paragraph: Paragraph, role_result: Dict) -> FormatReviewIssue:
+        status = role_result.get("status", "needs_confirmation")
+        message = "段落格式语义角色无法确认。"
+        if status == "conflict":
+            message = "段落格式语义证据存在冲突，需要核对。"
+        return FormatReviewIssue(
+            ruleId="structure.role_confirmation",
+            paragraphIndex=paragraph.index,
+            role="unknown",
+            message=message,
+            currentValue=json.dumps(role_result.get("evidence", []), ensure_ascii=False),
+            expectedValue="明确结构事实或两类独立强证据",
+            suggestion="请核对段落的结构、编号、题注或标题事实。",
+        )
+
+    def _format_structure_facts(self, request: WordDocumentRequest) -> Dict:
         structure = request.content.document_structure or {}
-        facts = structure.get("formatFacts") if isinstance(structure.get("formatFacts"), dict) else {}
-        facts = deepcopy(facts)
+        supplied = structure.get("formatFacts") if isinstance(structure.get("formatFacts"), dict) else {}
+        facts = deepcopy(supplied)
+        format_blocks = structure.get("formatBlocks")
+        if isinstance(format_blocks, list) and format_blocks:
+            facts["blocks"] = deepcopy(format_blocks)
+            facts["paragraphs"] = [
+                {
+                    **deepcopy(block),
+                    "paragraphIndex": block.get("paragraphIndex"),
+                    "blockType": block.get("blockType"),
+                    "styleName": (block.get("format") or {}).get("styleName", "") if isinstance(block.get("format"), dict) else "",
+                }
+                for block in format_blocks
+                if isinstance(block, dict) and block.get("blockType") in {"paragraph", "heading", "listItem", "caption", "formula", "tableCell"}
+            ]
+            facts["tables"] = []
+            for block in format_blocks:
+                if not isinstance(block, dict) or block.get("blockType") != "table":
+                    continue
+                cells = []
+                for row_index, row in enumerate(block.get("rows", [])):
+                    if not isinstance(row, dict):
+                        continue
+                    for column_index, cell in enumerate(row.get("cells", [])):
+                        if isinstance(cell, dict):
+                            cells.append({
+                                "text": cell.get("text", ""),
+                                "row": cell.get("rowIndex", row.get("rowIndex", row_index)),
+                                "column": cell.get("columnIndex", column_index),
+                                "isHeader": cell.get("isHeader", False),
+                            })
+                facts["tables"].append({
+                    "tableId": block.get("tableId") or block.get("blockId"),
+                    "cells": cells,
+                })
+        if "paragraphs" not in facts:
+            facts["paragraphs"] = []
+        if not facts["paragraphs"]:
+            heading_by_index = {
+                heading.paragraph_index: heading
+                for heading in request.content.headings
+                if heading.paragraph_index is not None
+            }
+            facts["paragraphs"] = [
+                {
+                    "paragraphIndex": paragraph.index,
+                    "blockType": "heading" if paragraph.index in heading_by_index or paragraph.outline_level else "",
+                    "text": paragraph.text,
+                    "styleName": paragraph.style_name or "",
+                    "outlineLevel": paragraph.outline_level or 0,
+                    "headingLevel": (
+                        heading_by_index[paragraph.index].level
+                        if paragraph.index in heading_by_index
+                        else paragraph.outline_level or 0
+                    ),
+                }
+                for paragraph in body_paragraphs(request)
+            ]
         facts["headings"] = [
             {"level": heading.level, "text": heading.text}
             for heading in request.content.headings
         ]
-        facts["paragraphs"] = [
-            {
-                "role": "body",
-                "text": paragraph.text,
-                "styleName": paragraph.style_name,
-            }
-            for paragraph in body_paragraphs(request)
-        ]
-        facts.setdefault(
-            "appendixFacts",
-            [{"styleName": paragraph.style_name, "text": paragraph.text} for paragraph in body_paragraphs(request)],
-        )
-        facts.setdefault(
-            "noteFacts",
-            [{"styleName": paragraph.style_name, "text": paragraph.text} for paragraph in body_paragraphs(request)],
-        )
+        return facts
+
+    def _authorized_structure_issues(
+        self, request: WordDocumentRequest, template: Dict
+    ) -> List[FormatReviewIssue]:
+        facts = self._format_structure_facts(request)
+        facts.setdefault("appendixFacts", [])
+        facts.setdefault("noteFacts", [])
         pack = {"template": template, "rules": template.get("_rulePackRules", [])}
         audit = audit_format_facts(facts, pack)
         issues: List[FormatReviewIssue] = []
@@ -181,16 +298,29 @@ class WordFormatReviewer:
                     )
                 )
         for result in audit.get("captions", []):
-            if result.get("status") != "associated":
+            status = result.get("status")
+            if status in {"orphaned", "missing", "ambiguous"}:
+                issues.append(
+                    FormatReviewIssue(
+                        ruleId="structure.caption_association",
+                        paragraphIndex=result.get("captionIndex"),
+                        role="caption" if result.get("captionIndex") is not None else result.get("captionType", "table"),
+                        message="题注未能与唯一兼容对象建立可追溯关联。",
+                        currentValue=json.dumps(result, ensure_ascii=False),
+                        expectedValue="唯一且同节同正文故事的兼容对象",
+                        suggestion="请核对题注类型、所在节和相邻对象关系。",
+                    )
+                )
+            elif status == "associated" and result.get("placementStatus") in {"violation", "non_adjacent"}:
                 issues.append(
                     FormatReviewIssue(
                         ruleId="structure.caption_placement",
                         paragraphIndex=result.get("captionIndex"),
                         role="caption",
-                        message="图表题未能与唯一相邻对象关联。",
-                        currentValue=result.get("status", "unknown"),
-                        expectedValue="associated",
-                        suggestion="请将图表题放置在对应图表对象的相邻位置。",
+                        message="题注已关联，但位置不符合模板要求。",
+                        currentValue=result.get("placement", "unknown"),
+                        expectedValue=result.get("expectedPlacement", "相邻位置"),
+                        suggestion="请调整题注与图表对象的相对位置。",
                     )
                 )
         return issues
@@ -381,7 +511,10 @@ class WordFormatReviewer:
 
         roles: Dict[int, Dict] = {}
         batch_count = 0
-        valid_roles = set((template.get("roleRules") or {}).keys()) | {"body"}
+        valid_roles = {
+            "document_title", "heading", "body", "list_item", "note", "caption",
+            "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula", "table_body", "unknown",
+        }
         ai_paragraphs = paragraphs[:AI_ROLE_MAX_PARAGRAPHS]
         if len(paragraphs) > len(ai_paragraphs):
             diagnostics["aiFallbackReason"] = "ai_budget_limited"
@@ -435,7 +568,8 @@ class WordFormatReviewer:
                     diagnostics["aiOutOfBatchCount"] += 1
                     continue
                 role = str(item.get("role", "")).strip()
-                if role not in valid_roles:
+                normalized = self._normalize_model_role(role, item)
+                if normalized is None or normalized["role"] not in valid_roles or normalized["role"] == "unknown":
                     diagnostics["aiInvalidRoleCount"] += 1
                     continue
                 confidence = item.get("confidence")
@@ -443,7 +577,14 @@ class WordFormatReviewer:
                     confidence = float(confidence)
                 except (TypeError, ValueError):
                     confidence = 0.75
-                roles[index] = {"role": role, "confidence": max(0.0, min(1.0, confidence))}
+                confidence = max(0.0, min(1.0, confidence))
+                roles[index] = {
+                    "role": normalized["role"],
+                    "attributes": normalized["attributes"],
+                    "status": "confirmed" if confidence >= 0.85 else "needs_confirmation",
+                    "confidence": confidence,
+                    "evidence": ["model_candidate"],
+                }
         if diagnostics["aiAttempted"] and not roles:
             if diagnostics["aiParseErrorCount"]:
                 diagnostics["aiFallbackReason"] = "dify_response_not_role_json"
@@ -462,11 +603,19 @@ class WordFormatReviewer:
         paragraphs: Optional[List[Paragraph]] = None,
     ) -> str:
         paragraphs = paragraphs if paragraphs is not None else body_paragraphs(request)
-        role_names = sorted((template.get("roleRules") or {}).keys())
         payload = {
             "templateId": template.get("id"),
             "scope": request.selection_mode,
-            "roles": role_names + ["body"],
+            "roles": [
+                "document_title", "heading", "body", "list_item", "note", "caption",
+                "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula", "table_body",
+            ],
+            "roleAttributes": {
+                "heading": {"level": [1, 2, 3, 4]},
+                "list_item": {"level": [1, 2], "ordered": [True, False]},
+                "note": {"numbered": [True, False]},
+                "appendix_heading": {"level": [1, 2, 3]},
+            },
             "paragraphs": [
                 {
                     "paragraphIndex": paragraph.index,
@@ -482,13 +631,61 @@ class WordFormatReviewer:
                 "你是 Word 技术文件段落角色识别助手。",
                 "请只判断每个段落在模板中的角色，不要改写原文，不要判断格式是否合规。",
                 "只返回一个 Markdown json 代码块，格式为：",
-                '{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}',
-                "role 只能从给定 roles 中选择。",
+                '{"paragraphs":[{"paragraphIndex":1,"role":"heading","level":1,"confidence":0.95}]}',
+                "role 只能从给定 roles 中选择；level、ordered、numbered 只能使用 roleAttributes 中的值。",
+                "模型输出只是候选证据；没有结构事实或第二类独立强证据时，不得视为已确认。",
                 "",
                 "输入：",
                 json.dumps(payload, ensure_ascii=False),
             ]
         )
+
+    def _normalize_model_role(self, role: str, item: Dict) -> Optional[Dict]:
+        attributes: Dict[str, Any] = {}
+        if role.startswith("heading") and role[7:].isdigit():
+            attributes["level"] = int(role[7:])
+            role = "heading"
+        elif role.startswith("list") and "_" in role:
+            prefix, kind = role.split("_", 1)
+            if prefix[4:].isdigit() and kind in {"numbered", "plain"}:
+                attributes.update({"level": int(prefix[4:]), "ordered": kind == "numbered"})
+                role = "list_item"
+        elif role.startswith("appendix_heading") and role[16:].isdigit():
+            attributes["level"] = int(role[16:])
+            role = "appendix_heading"
+        elif role == "numbered_note":
+            role = "note"
+            attributes["numbered"] = True
+        elif role == "note":
+            if not isinstance(item.get("numbered"), bool):
+                return None
+            attributes["numbered"] = item["numbered"]
+        if role == "heading":
+            if "level" not in item and "headingLevel" not in item and "level" not in attributes:
+                return None
+            try:
+                level = int(item.get("level", attributes.get("level", item.get("headingLevel", 1))))
+            except (TypeError, ValueError):
+                return None
+            if not 1 <= level <= 4:
+                return None
+            attributes["level"] = level
+        if role in {"list_item", "appendix_heading"}:
+            if "level" not in item and "level" not in attributes:
+                return None
+            try:
+                level = int(item.get("level", attributes.get("level", 1)))
+            except (TypeError, ValueError):
+                return None
+            limit = 2 if role == "list_item" else 3
+            if not 1 <= level <= limit:
+                return None
+            attributes["level"] = level
+        if role == "list_item" and "ordered" not in attributes:
+            if not isinstance(item.get("ordered"), bool):
+                return None
+            attributes["ordered"] = item["ordered"]
+        return {"role": role, "attributes": attributes}
 
     def _extract_json(self, answer: str):
         raw = (answer or "").strip()
@@ -562,49 +759,21 @@ class WordFormatReviewer:
         }
 
     def _infer_role(self, paragraph: Paragraph, template: Dict) -> str:
-        style_name = paragraph.style_name or ""
-        style_rule = (template.get("styles") or {}).get(style_name)
-        if isinstance(style_rule, dict) and style_rule.get("roleRef"):
-            return style_rule["roleRef"]
-
-        text = (paragraph.text or "").strip()
-        if not text:
-            return "body"
-        if re.match(r"^附录[A-ZＡ-Ｚ]?[（(]", text):
-            return "appendix_title"
-        if re.match(r"^[A-Z]\.\d+\.\d+\.\d+", text):
-            return "appendix_heading3"
-        if re.match(r"^[A-Z]\.\d+\.\d+", text):
-            return "appendix_heading2"
-        if re.match(r"^[A-Z]\.\d+", text):
-            return "appendix_heading1"
-        if re.match(r"^(图|表)\s*\d+", text):
-            return "caption"
-        if paragraph.index <= 3 and len(text) <= 40 and not re.match(r"^(\d+(\.\d+)*|[A-Z]\.\d+)", text):
-            return "document_title"
-        if re.match(r"^注\s*\d+[:：.．]", text):
-            return "numbered_note"
-        if text.startswith("注") and len(text) < 180:
-            return "note"
-        if re.match(r"^[（(]?[a-zA-Z]\)|^[a-zA-Z][）)]", text):
-            return "list1_numbered"
-        if re.match(r"^[（(]?\d+[）)]", text):
-            return "list2_numbered"
-
-        outline_level = paragraph.outline_level or 0
-        if 1 <= outline_level <= 4:
-            return "heading{0}".format(outline_level)
-        heading_match = re.match(r"^(\d+(?:\.\d+){0,3})(?:\s+|　+)", text)
-        if heading_match:
-            level = min(4, heading_match.group(1).count(".") + 1)
-            return "heading{0}".format(level)
-        return "body"
+        result = classify_role_fact(
+            {
+                "paragraphIndex": paragraph.index,
+                "text": paragraph.text,
+                "styleName": paragraph.style_name or "",
+                "outlineLevel": paragraph.outline_level or 0,
+            }
+        )
+        return result.get("role", "unknown") if result.get("status") == "confirmed" else "unknown"
 
     def _rule_for_role(self, role: str, template: Dict) -> Dict:
-        role_rules = template.get("roleRules") or {}
-        if role in role_rules:
-            return role_rules[role]
-        return template.get("body", {})
+        mapping = resolve_role_rule(role, {"template": template})
+        if mapping.get("status") != "mapped":
+            return {}
+        return (template.get("roleRules") or {}).get(mapping.get("ruleKey"), {})
 
     def _normalize_font_size(self, value) -> Optional[float]:
         try:

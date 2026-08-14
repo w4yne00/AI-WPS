@@ -48,6 +48,23 @@ def validate_rule_pack(pack: Dict[str, Any]) -> Dict[str, Any]:
     rules = pack.get("rules")
     if not isinstance(template, dict) or not isinstance(template.get("id"), str) or not template.get("id"):
         raise FormatRulePackError("FORMAT_RULE_PACK_TEMPLATE_INVALID")
+    role_mappings = template.get("roleMappings", {})
+    if not isinstance(role_mappings, dict):
+        raise FormatRulePackError("FORMAT_RULE_PACK_ROLE_MAPPING_INVALID")
+
+    def validate_mapping(value: Any) -> None:
+        if isinstance(value, str):
+            if not value:
+                raise FormatRulePackError("FORMAT_RULE_PACK_ROLE_MAPPING_INVALID")
+            return
+        if isinstance(value, dict) and value and all(isinstance(key, str) and key for key in value):
+            for nested in value.values():
+                validate_mapping(nested)
+            return
+        raise FormatRulePackError("FORMAT_RULE_PACK_ROLE_MAPPING_INVALID")
+
+    for mapping in role_mappings.values():
+        validate_mapping(mapping)
     if not isinstance(pack.get("version"), str) or not pack["version"]:
         raise FormatRulePackError("FORMAT_RULE_PACK_VERSION_INVALID")
     if not isinstance(algorithm, dict) or not isinstance(algorithm.get("sourceVersion"), str):

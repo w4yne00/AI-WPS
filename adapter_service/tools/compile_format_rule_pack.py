@@ -215,6 +215,7 @@ def _compile_template(template_docx: Path, template_json: Dict[str, Any]) -> Dic
         "body": body_rule,
         "roleRules": role_rules,
         "headings": copy.deepcopy(template_json.get("headings") or {}),
+        "roleMappings": copy.deepcopy(template_json.get("roleMappings") or {}),
         "styles": styles_map,
     }
 

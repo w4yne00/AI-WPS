@@ -6,8 +6,14 @@ from pathlib import Path
 
 from app.services.word.authorized_format_algorithm import (
     audit_format_facts,
+    associate_captions,
+    classify_appendix_fact,
+    classify_list_fact,
+    classify_note_fact,
+    classify_role_fact,
     classify_table_fact,
     heading_hierarchy_warnings,
+    resolve_role_rule,
 )
 from app.services.word.format_rule_pack import (
     FormatRulePackError,
@@ -25,6 +31,45 @@ STRUCTURE_RULES = ROOT / "templates/company/technical-file-structure-rules.json"
 
 
 class FormatRulePackTests(unittest.TestCase):
+    def test_semantic_roles_require_structural_evidence_and_use_explicit_mapping(self):
+        style_only = classify_role_fact({"styleName": "heading 1"})
+        self.assertEqual(style_only["role"], "unknown")
+        self.assertEqual(style_only["status"], "needs_confirmation")
+
+        heading = classify_role_fact(
+            {
+                "blockType": "heading",
+                "headingLevel": 2,
+                "text": "2 范围",
+                "styleName": "Normal",
+            }
+        )
+        self.assertEqual(heading["role"], "heading")
+        self.assertEqual(heading["attributes"]["level"], 2)
+        self.assertEqual(heading["status"], "confirmed")
+
+        pack = {
+            "template": {
+                "roleRules": {"heading2": {"styleName": "heading 2"}},
+                "roleMappings": {"heading": {"2": "heading2"}},
+            }
+        }
+        mapped = resolve_role_rule(heading, pack)
+        self.assertEqual(mapped["status"], "mapped")
+        self.assertEqual(mapped["ruleKey"], "heading2")
+
+        unmapped = resolve_role_rule(
+            {"role": "formula", "status": "confirmed", "attributes": {}}, pack
+        )
+        self.assertEqual(unmapped["status"], "unconfigured")
+        self.assertEqual(unmapped["ruleKey"], "formula")
+
+        same_named_rule_is_not_an_implicit_mapping = resolve_role_rule(
+            {"role": "body", "status": "confirmed", "attributes": {}},
+            {"template": {"roleRules": {"body": {"fontName": "宋体"}}}},
+        )
+        self.assertEqual(same_named_rule_is_not_an_implicit_mapping["status"], "unconfigured")
+
     def test_compiler_extracts_authoritative_docx_values_and_manual_rules(self):
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "technical.json"
@@ -46,6 +91,7 @@ class FormatRulePackTests(unittest.TestCase):
             self.assertEqual(pack["template"]["roleRules"]["heading1"]["fontSize"], 12.0)
             self.assertTrue(pack["rules"])
             self.assertTrue(all(rule["enabled"] for rule in pack["rules"]))
+            self.assertEqual(pack["template"]["roleMappings"]["heading"]["2"], "heading2")
             self.assertNotIn("defaultTemplateValues", pack["algorithm"])
             self.assertEqual(
                 json.loads(output.read_text(encoding="utf-8"))["integrity"],
@@ -79,8 +125,8 @@ class FormatRulePackTests(unittest.TestCase):
             classify_table_fact(
                 {
                     "cells": [
-                        {"text": "字段", "row": 0, "column": 0},
-                        {"text": "值", "row": 0, "column": 1},
+                        {"text": "字段", "row": 0, "column": 0, "isHeader": True},
+                        {"text": "值", "row": 0, "column": 1, "isHeader": True},
                         {"text": "版本", "row": 1, "column": 0},
                         {"text": "1.0", "row": 1, "column": 1},
                     ]
@@ -90,32 +136,170 @@ class FormatRulePackTests(unittest.TestCase):
         )
         self.assertEqual(
             classify_table_fact(
+                {
+                    "cells": [
+                        {"text": "甲", "row": 0, "column": 0},
+                        {"text": "乙", "row": 0, "column": 1},
+                        {"text": "丙", "row": 1, "column": 0},
+                        {"text": "丁", "row": 1, "column": 1},
+                    ]
+                }
+            )["tableType"],
+            "unknown",
+        )
+        self.assertEqual(
+            classify_table_fact(
                 {"cells": [{"text": "看起来像表格"}, {"text": "但没有记录结构"}]}
             )["tableType"],
             "unknown",
+        )
+        self.assertEqual(
+            classify_table_fact(
+                {
+                    "cells": [
+                        {"text": "甲", "row": 0, "column": 0},
+                        {"text": "乙", "row": 0, "column": 1},
+                        {"text": "丙", "row": 1, "column": 0},
+                        {"text": "丁", "row": 1, "column": 1},
+                        {"text": "戊", "row": 2, "column": 0},
+                        {"text": "己", "row": 2, "column": 1},
+                    ]
+                }
+            )["tableType"],
+            "data",
+        )
+        self.assertEqual(
+            classify_list_fact({"numFmt": "decimal", "level": 2})["role"],
+            "list_item",
+        )
+        self.assertEqual(
+            classify_appendix_fact("附录标题", "普通正文")["role"],
+            "unknown",
+        )
+        self.assertEqual(
+            classify_note_fact("", {"numFmt": "decimal", "lvlText": "注%:"}, "")["status"],
+            "needs_confirmation",
+        )
+        self.assertEqual(
+            classify_note_fact("注-有编号注", {"numFmt": "decimal", "lvlText": "注%:"}, "注：冲突")["status"],
+            "conflict",
         )
         warnings = heading_hierarchy_warnings(
             [{"level": 1, "text": "一"}, {"level": 3, "text": "三"}]
         )
         self.assertEqual(warnings[0]["type"], "heading_level_jump")
 
+    def test_caption_association_is_bounded_and_reports_position_separately(self):
+        results = associate_captions(
+            [
+                {"type": "heading", "sectionId": "s1", "storyId": "main"},
+                {"type": "table", "objectId": "t1", "sectionId": "s1", "storyId": "main", "captionEligible": True},
+                {"type": "paragraph", "sectionId": "s1", "storyId": "main"},
+                {"type": "caption", "text": "表 1：测试", "sectionId": "s1", "storyId": "main"},
+                {"type": "sectionBreak", "sectionId": "s2", "storyId": "main"},
+                {"type": "table", "objectId": "t2", "sectionId": "s2", "storyId": "main", "captionEligible": True},
+                {"type": "caption", "text": "表 2：跨节不可关联", "sectionId": "s1", "storyId": "main"},
+            ]
+        )
+        same_section = results[0]
+        self.assertEqual(same_section["status"], "associated")
+        self.assertEqual(same_section["placementStatus"], "non_adjacent")
+        cross_section = results[1]
+        self.assertEqual(cross_section["status"], "orphaned")
+        self.assertEqual(cross_section["associationStatus"], "orphaned")
+
+    def test_caption_scope_is_required_and_figure_missing_caption_is_reported_once(self):
+        unscoped = associate_captions(
+            [{"type": "figure", "objectId": "f1"}, {"type": "caption", "text": "图 1：无范围"}]
+        )
+        self.assertEqual(unscoped[0]["status"], "orphaned")
+
+        missing_figure = associate_captions(
+            [{"type": "figure", "objectId": "f2", "sectionId": "s1", "storyId": "main"}]
+        )
+        self.assertEqual(missing_figure[0]["status"], "missing")
+
+        ambiguous = associate_captions(
+            [
+                {"type": "table", "objectId": "t1", "captionEligible": True, "sectionId": "s1", "storyId": "main"},
+                {"type": "table", "objectId": "t2", "captionEligible": True, "sectionId": "s1", "storyId": "main"},
+                {"type": "caption", "text": "表 1：歧义", "sectionId": "s1", "storyId": "main"},
+            ]
+        )
+        self.assertEqual([item["status"] for item in ambiguous], ["ambiguous"])
+
+        missing_story_scope = associate_captions(
+            [
+                {"type": "figure", "objectId": "f3", "sectionId": "s1"},
+                {"type": "caption", "text": "图 3：缺正文故事范围", "sectionId": "s1"},
+            ]
+        )
+        self.assertEqual(missing_story_scope[0]["status"], "orphaned")
+
+        duplicate_caption = associate_captions(
+            [
+                {"type": "figure", "objectId": "f3", "sectionId": "s1", "storyId": "main"},
+                {"type": "caption", "text": "图 3：第一题注", "sectionId": "s1", "storyId": "main"},
+                {"type": "caption", "text": "图 3：第二题注", "sectionId": "s1", "storyId": "main"},
+            ]
+        )
+        self.assertEqual(len(duplicate_caption), 1)
+        self.assertEqual(duplicate_caption[0]["status"], "ambiguous")
+        self.assertEqual(duplicate_caption[0]["ambiguityReason"], "multiple_captions_for_object")
+
+        incomplete_scope = associate_captions(
+            [
+                {"type": "figure", "objectId": "f4", "sectionId": "s1"},
+                {"type": "caption", "text": "图 4：缺少正文故事范围", "sectionId": "s1"},
+            ]
+        )
+        self.assertEqual(incomplete_scope[0]["status"], "orphaned")
+
+        unknown_table = associate_captions(
+            [
+                {"type": "table", "objectId": "t3", "captionEligible": False, "sectionId": "s1", "storyId": "main"},
+                {"type": "caption", "text": "表 3：未知表语义", "sectionId": "s1", "storyId": "main"},
+            ]
+        )
+        self.assertEqual(unknown_table[0]["status"], "orphaned")
+
     def test_algorithm_never_supplies_template_defaults(self):
         facts = {
             "paragraphs": [
-                {"role": "body", "fontName": "第三方默认字体", "fontSize": 10}
+                {
+                    "role": "body",
+                    "roleSource": "structural",
+                    "fontName": "第三方默认字体",
+                    "fontSize": 10,
+                }
             ]
         }
         pack = {
             "template": {
                 "roleRules": {
                     "body": {"fontName": "宋体", "fontSize": 12.0}
-                }
+                },
+                "roleMappings": {"body": "body"},
             },
             "rules": [],
         }
         result = audit_format_facts(facts, pack)
         self.assertEqual(result["issues"][0]["expectedValue"], "宋体")
         self.assertNotEqual(result["issues"][0]["expectedValue"], "第三方默认字体")
+
+    def test_audit_does_not_apply_same_named_rule_without_mapping(self):
+        result = audit_format_facts(
+            {
+                "paragraphs": [
+                    {
+                        "blockType": "paragraph",
+                        "fontName": "第三方默认字体",
+                    }
+                ]
+            },
+            {"template": {"roleRules": {"body": {"fontName": "宋体"}}}, "rules": []},
+        )
+        self.assertEqual(result["issues"], [])
 
     def test_format_reviewer_reports_the_compiled_pack_as_its_authority(self):
         request = WordDocumentRequest(
@@ -157,6 +341,80 @@ class FormatRulePackTests(unittest.TestCase):
         rule_ids = {issue["ruleId"] for issue in result["issues"]}
         self.assertIn("structure.heading_hierarchy", rule_ids)
         self.assertIn("structure.table_semantics", rule_ids)
+
+    def test_confirmed_role_without_mapping_does_not_fall_back_to_body_rule(self):
+        import copy
+
+        source = FormatRulePackLoader().load("technical-file-format-requirements")
+        source = copy.deepcopy(source)
+        source["template"]["roleMappings"] = {"body": "body", "formula": "formula"}
+
+        class FixedLoader:
+            def load(self, template_id):
+                return source
+
+        request = WordDocumentRequest(
+            documentId="unconfigured-role.docx",
+            content={
+                "paragraphs": [{"index": 1, "text": "x", "styleName": "Normal"}],
+                "documentStructure": {
+                    "formatFacts": {
+                        "paragraphs": [{"paragraphIndex": 1, "blockType": "formula", "text": "x"}]
+                    }
+                },
+            },
+            options={"templateId": "technical-file-format-requirements"},
+        )
+        result = WordFormatReviewer(rule_pack_loader=FixedLoader()).review(request)
+        rule_ids = {issue["ruleId"] for issue in result["issues"]}
+        self.assertIn("structure.role_mapping", rule_ids)
+        self.assertNotIn("style_name", rule_ids)
+
+    def test_missing_structure_facts_require_role_confirmation(self):
+        request = WordDocumentRequest(
+            documentId="missing-structure-facts.docx",
+            content={
+                "paragraphs": [{"index": 1, "text": "正文", "styleName": "heading 1"}]
+            },
+            options={"templateId": "technical-file-format-requirements"},
+        )
+        result = WordFormatReviewer().review(request)
+        rule_ids = {issue["ruleId"] for issue in result["issues"]}
+        self.assertIn("structure.role_confirmation", rule_ids)
+        self.assertNotIn("style_name", rule_ids)
+
+    def test_caption_association_and_placement_produce_distinct_non_duplicate_issues(self):
+        request = WordDocumentRequest(
+            documentId="caption-review.docx",
+            content={
+                "paragraphs": [{"index": 1, "text": "正文", "styleName": "Normal"}],
+                "documentStructure": {
+                    "formatFacts": {
+                        "tables": [
+                            {
+                                "tableId": "t1",
+                                "cells": [
+                                    {"text": "字段", "row": 0, "column": 0, "isHeader": True},
+                                    {"text": "值", "row": 0, "column": 1, "isHeader": True},
+                                    {"text": "版本", "row": 1, "column": 0},
+                                    {"text": "1", "row": 1, "column": 1},
+                                ],
+                            }
+                        ],
+                        "blocks": [
+                            {"type": "table", "tableId": "t1", "sectionId": "s1", "storyId": "main"},
+                            {"type": "caption", "text": "表 1：测试", "sectionId": "s1", "storyId": "main"},
+                        ],
+                    }
+                },
+            },
+            options={"templateId": "technical-file-format-requirements"},
+        )
+        result = WordFormatReviewer().review(request)
+        placement_issues = [issue for issue in result["issues"] if issue["ruleId"] == "structure.caption_placement"]
+        association_issues = [issue for issue in result["issues"] if issue["ruleId"] == "structure.caption_association"]
+        self.assertEqual(len(placement_issues), 1)
+        self.assertEqual(association_issues, [])
 
 
 if __name__ == "__main__":
