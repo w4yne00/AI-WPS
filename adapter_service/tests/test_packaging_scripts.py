@@ -3,14 +3,70 @@ import hashlib
 import os
 import shutil
 import subprocess
+import struct
 import sys
 import tarfile
 import tempfile
 import unittest
+import zlib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 PYTHON38_BIN = os.environ.get("AI_WPS_PYTHON38_BIN", "")
+
+
+def png_metadata(path: Path):
+    payload = path.read_bytes()
+    if payload[:8] != b"\x89PNG\r\n\x1a\n":
+        raise AssertionError("not a PNG: {0}".format(path))
+    offset = 8
+    width = height = bit_depth = color_type = None
+    alpha_values = []
+    compressed = bytearray()
+    while offset < len(payload):
+        length = struct.unpack(">I", payload[offset:offset + 4])[0]
+        chunk_type = payload[offset + 4:offset + 8]
+        chunk = payload[offset + 8:offset + 8 + length]
+        offset += 12 + length
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type, _, _, _ = struct.unpack(
+                ">IIBBBBB", chunk
+            )
+        elif chunk_type == b"IDAT":
+            compressed.extend(chunk)
+        elif chunk_type == b"IEND":
+            break
+    if (bit_depth, color_type) != (8, 6):
+        return width, height, bit_depth, color_type, False
+    raw = zlib.decompress(bytes(compressed))
+    row_bytes = width * 4
+    previous = bytearray(row_bytes)
+    cursor = 0
+    for _ in range(height):
+        filter_type = raw[cursor]
+        cursor += 1
+        row = bytearray(raw[cursor:cursor + row_bytes])
+        cursor += row_bytes
+        for index in range(row_bytes):
+            left = row[index - 4] if index >= 4 else 0
+            above = previous[index]
+            upper_left = previous[index - 4] if index >= 4 else 0
+            if filter_type == 1:
+                row[index] = (row[index] + left) & 0xff
+            elif filter_type == 2:
+                row[index] = (row[index] + above) & 0xff
+            elif filter_type == 3:
+                row[index] = (row[index] + ((left + above) // 2)) & 0xff
+            elif filter_type == 4:
+                estimate = left + above - upper_left
+                distances = (abs(estimate - left), abs(estimate - above), abs(estimate - upper_left))
+                predictor = (left, above, upper_left)[distances.index(min(distances))]
+                row[index] = (row[index] + predictor) & 0xff
+            elif filter_type != 0:
+                raise AssertionError("unsupported PNG filter: {0}".format(filter_type))
+        alpha_values.extend(row[3::4])
+        previous = row
+    return width, height, bit_depth, color_type, any(value < 255 for value in alpha_values)
 
 
 class PackagingScriptTests(unittest.TestCase):
@@ -1664,3 +1720,63 @@ esac
         self.assertNotIn('label="格式审查"', ribbon)
         self.assertIn("btnAiExcelAnalysis", ribbon_js)
         self.assertIn("icon-excel-analysis.png", ribbon_js)
+        self.assertIn(
+            'btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png"',
+            ribbon_js,
+        )
+        self.assertNotIn(
+            'btnAiExcelFormulaAssistant: "assets/icon-excel-analysis.png"',
+            ribbon_js,
+        )
+
+    def test_excel_and_ppt_ribbon_assets_are_transparent_32px_pngs(self) -> None:
+        assets = [
+            ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png",
+            ROOT / "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/assets/icon-ppt-structure-review.png",
+        ]
+        metadata = [png_metadata(path) for path in assets]
+        for path, values in zip(assets, metadata):
+            self.assertEqual((32, 32, 8, 6), values[:4], str(path))
+            self.assertTrue(values[4], "PNG must contain transparent pixels: {0}".format(path))
+
+    def test_ribbon_asset_notice_and_allowlist_cover_fluent_resources(self) -> None:
+        notice = (ROOT / "formal-plugin-kit/docs/third-party-notices.md").read_text(
+            encoding="utf-8"
+        )
+        manifest = json.loads(
+            (ROOT / "phase1-delivery-kit/release-manifest.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        targets = self._delivery_target_files()
+        self.assertIn(
+            "packages/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png",
+            targets,
+        )
+        self.assertIn(
+            "packages/wps-ai-assistant-wpp_1.0.0/assets/icon-ppt-structure-review.png",
+            targets,
+        )
+        self.assertIn("docs/third-party-notices.md", targets)
+        self.assertEqual(
+            "docs/third-party-notices.md",
+            manifest["ribbonAssets"]["notices"],
+        )
+        self.assertIn("microsoft/fluentui-system-icons", notice)
+        self.assertIn("Math Formula 32 Regular", notice)
+        self.assertIn("Slide Text Multiple 32 Regular", notice)
+        self.assertIn("84e8a2ae0e55b3cbe176b5cc33154fe82ef363cc", notice)
+        self.assertIn("MIT License", notice)
+        self.assertIn("Copyright (c) 2020 Microsoft Corporation", notice)
+        self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', notice)
+        for ribbon_path in [
+            ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.js",
+            ROOT / "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/ribbon.js",
+        ]:
+            ribbon = ribbon_path.read_text(encoding="utf-8")
+            self.assertNotRegex(ribbon, r"https?://")
+        for path in [
+            ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png",
+            ROOT / "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/assets/icon-ppt-structure-review.png",
+        ]:
+            self.assertIn(hashlib.sha256(path.read_bytes()).hexdigest(), notice)

@@ -57,6 +57,9 @@
     "operationsGuide": "docs/operations/dify-ppt-structure-review-workflow.md",
     "promptTemplate": "docs/prompt-templates/ppt-structure-review-prompt-template.md"
   },
+  "ribbonAssets": {
+    "notices": "docs/third-party-notices.md"
+  },
   "writingPolicyPacks": [
     "yangqi-tech-writing-base",
     "technical-document-style",

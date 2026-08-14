@@ -21,7 +21,7 @@ function resolveMode(controlId) {
 
 var ribbonIconMap = {
   btnAiExcelAnalysis: "assets/icon-excel-analysis.png",
-  btnAiExcelFormulaAssistant: "assets/icon-excel-analysis.png",
+  btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 

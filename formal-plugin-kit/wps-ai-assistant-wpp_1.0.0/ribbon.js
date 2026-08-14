@@ -21,7 +21,7 @@ function resolveMode(controlId) {
 
 var ribbonIconMap = {
   btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png",
-  btnAiPptStructureReview: "assets/icon-ppt-slide-assistant.png",
+  btnAiPptStructureReview: "assets/icon-ppt-structure-review.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 

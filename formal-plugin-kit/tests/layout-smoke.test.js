@@ -100,8 +100,11 @@ assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "excelAnalysis"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelFormulaAssistant: "excelFormulaAssistant"'));
 assert.ok(excelRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysis.png"'));
+assert.ok(excelRibbonJs.includes('btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png"'));
+assert.ok(!excelRibbonJs.includes('btnAiExcelFormulaAssistant: "assets/icon-excel-analysis.png"'));
 assert.ok(excelRibbonJs.includes('build=0.23.1-alpha'));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
+assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png"));
 assert.ok(pptManifest.includes('"name": "wps-ai-assistant-wpp"'));
 assert.ok(pptManifest.includes('"version": "0.23.1-alpha"'));
 assert.ok(pptManifestXml.includes("<wps:AppId>wps-ai-assistant-wpp</wps:AppId>"));
@@ -122,8 +125,11 @@ assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "pptSlideAssistant"'));
 assert.ok(pptRibbonJs.includes('btnAiPptStructureReview: "pptStructureReview"'));
 assert.ok(pptRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png"'));
+assert.ok(pptRibbonJs.includes('btnAiPptStructureReview: "assets/icon-ppt-structure-review.png"'));
+assert.ok(!pptRibbonJs.includes('btnAiPptStructureReview: "assets/icon-ppt-slide-assistant.png"'));
 assert.ok(pptRibbonJs.includes("build=0.23.1-alpha"));
 assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
+assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-structure-review.png`));
 [
   'id="task-title">智能总结',
   'id="health-indicator"',

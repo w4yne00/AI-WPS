@@ -83,6 +83,7 @@
       "include": [
         "assets/ai-assistant-32.png",
         "assets/icon-excel-analysis.png",
+        "assets/icon-excel-formula-assistant.png",
         "assets/icon-settings.png",
         "index.html",
         "manifest.json",
@@ -102,6 +103,7 @@
       "include": [
         "assets/ai-assistant-32.png",
         "assets/icon-ppt-slide-assistant.png",
+        "assets/icon-ppt-structure-review.png",
         "assets/icon-settings.png",
         "index.html",
         "manifest.json",
@@ -113,6 +115,11 @@
         "taskpane.html",
         "taskpane.js"
       ]
+    },
+    {
+      "type": "file",
+      "source": "formal-plugin-kit/docs/third-party-notices.md",
+      "target": "docs/third-party-notices.md"
     },
     {
       "type": "file",
