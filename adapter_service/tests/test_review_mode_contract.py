@@ -7,6 +7,7 @@ from app.services.provider_client import ProviderClient
 
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 class ReviewModeContractTests(unittest.TestCase):
@@ -44,7 +45,7 @@ class ReviewModeContractTests(unittest.TestCase):
         )
 
     def test_fastapi_task_mapping_covers_formula_collection_and_job_paths(self) -> None:
-        source = Path("adapter_service/app/main.py").read_text(encoding="utf-8")
+        source = (REPO_ROOT / "adapter_service/app/main.py").read_text(encoding="utf-8")
 
         self.assertIn(
             'if path.startswith("/excel/formula-assistant/jobs/"):',
@@ -85,8 +86,8 @@ class ReviewModeContractTests(unittest.TestCase):
 
     def test_executable_code_no_longer_references_deleted_word_routes(self) -> None:
         roots = [
-            Path("adapter_service/app"),
-            Path("formal-plugin-kit/wps-ai-assistant_1.0.0"),
+            REPO_ROOT / "adapter_service/app",
+            REPO_ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0",
         ]
         deleted_tokens = [
             "/word/proofread",

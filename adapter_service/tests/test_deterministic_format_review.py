@@ -1,17 +1,24 @@
 import os
+import importlib.util
 import tempfile
 import time
 import unittest
 from pathlib import Path
 
-from fastapi.testclient import TestClient
-
-from app.main import app
 from app.services.long_task_coordinator import LongTaskCoordinator
 from app.services.word.deterministic_format_review import (
     DeterministicFormatReviewService,
 )
-import app.api.word as word_api
+
+HAS_API_DEPS = (
+    importlib.util.find_spec("fastapi") is not None
+    and importlib.util.find_spec("pydantic") is not None
+)
+
+if HAS_API_DEPS:
+    from fastapi.testclient import TestClient
+    from app.main import app
+    import app.api.word as word_api
 
 
 class RecordingFormatReviewer:
@@ -45,6 +52,7 @@ class RecordingFormatReviewer:
         }
 
 
+@unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 class DeterministicFormatReviewContractTests(unittest.TestCase):
     def setUp(self) -> None:
         self.previous_flag = os.environ.pop(
