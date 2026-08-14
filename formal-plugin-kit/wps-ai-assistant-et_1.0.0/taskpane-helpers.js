@@ -2321,11 +2321,9 @@
     var configured = Boolean(item.complete);
     var name = String(item.name || "未命名配置");
     var method = item.accessMethod === "direct_model" ? "模型直连" : "工作流平台";
-    var model = item.accessMethod === "direct_model" && item.modelName ? " · " + item.modelName : "";
     return {
       id: String(item.id || ""),
-      label: (active ? "✓ " : "") + name + " · " + method + model +
-        (configured ? "" : "（配置不完整）"),
+      label: name + " · " + method,
       active: active,
       disabled: !configured
     };

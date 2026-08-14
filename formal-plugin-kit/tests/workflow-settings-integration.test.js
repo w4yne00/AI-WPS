@@ -1,6 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const ROOT = path.resolve(__dirname, "..");
 const hosts = [
@@ -9,8 +10,16 @@ const hosts = [
     dir: "wps-ai-assistant_1.0.0",
     tasks: ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review"]
   },
-  { name: "Excel", dir: "wps-ai-assistant-et_1.0.0", tasks: ["excel.analysis"] },
-  { name: "PPT", dir: "wps-ai-assistant-wpp_1.0.0", tasks: ["ppt.slide_assistant"] }
+  {
+    name: "Excel",
+    dir: "wps-ai-assistant-et_1.0.0",
+    tasks: ["excel.analysis", "excel.formula_assistant"]
+  },
+  {
+    name: "PPT",
+    dir: "wps-ai-assistant-wpp_1.0.0",
+    tasks: ["ppt.slide_assistant", "ppt.structure_review"]
+  }
 ];
 
 const allTasks = hosts.flatMap((host) => host.tasks);
@@ -33,6 +42,16 @@ const commonCss = [
   ".workflow-profile-list",
   ".workflow-editor-actions"
 ];
+
+function loadWorkflowHelpers(hostRoot) {
+  const source = fs.readFileSync(path.join(hostRoot, "taskpane-helpers.js"), "utf8");
+  const module = { exports: {} };
+  const sandbox = { module, exports: module.exports, window: {} };
+  vm.runInNewContext(source, sandbox, { filename: path.join(hostRoot, "taskpane-helpers.js") });
+  return module.exports.workflowProfileOptionState
+    ? module.exports
+    : sandbox.window.WpsAiPptHelpers;
+}
 
 hosts.forEach((host) => {
   const hostRoot = path.join(ROOT, host.dir);
@@ -63,6 +82,43 @@ hosts.forEach((host) => {
   assert.ok(!js.includes("function saveProviderApiKey()"), `${host.name} still binds unified-key save`);
   assert.ok(!js.includes("function clearProviderApiKey()"), `${host.name} still binds unified-key clear`);
   assert.ok(!js.includes('request("/provider/api-key"'), `${host.name} still calls unified-key API`);
+
+  const helpers = loadWorkflowHelpers(hostRoot);
+  const workflowOption = helpers.workflowProfileOptionState({
+    id: "workflow-profile",
+    name: "流程配置",
+    accessMethod: "workflow_platform",
+    complete: true,
+    modelName: "hidden-model",
+    serviceBaseUrl: "https://hidden.example.test/v1",
+    note: "hidden note"
+  }, "workflow-profile");
+  const directOption = helpers.workflowProfileOptionState({
+    id: "direct-profile",
+    name: "直连配置",
+    accessMethod: "direct_model",
+    complete: true,
+    modelName: "hidden-model",
+    serviceBaseUrl: "https://hidden.example.test/v1",
+    note: "hidden note"
+  }, "workflow-profile");
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(workflowOption)), {
+    id: "workflow-profile",
+    label: "流程配置 · 工作流平台",
+    active: true,
+    disabled: false
+  });
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(directOption)), {
+    id: "direct-profile",
+    label: "直连配置 · 模型直连",
+    active: false,
+    disabled: false
+  });
+  [workflowOption.label, directOption.label].forEach((label) => {
+    ["hidden-model", "hidden.example.test", "hidden note", "✓", "配置不完整", "Key"].forEach((forbidden) => {
+      assert.ok(!label.includes(forbidden), `${host.name} selector label leaks ${forbidden}`);
+    });
+  });
 });
 
 const wordRoot = path.join(ROOT, hosts[0].dir);

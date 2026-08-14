@@ -2130,9 +2130,9 @@
           ? helpers.workflowProfileOptionState(profile, data.activeProfileId)
           : {
             id: profile.id,
-            label: (profile.id === data.activeProfileId ? "✓ " : "") + profile.name +
-              (profile.keyConfigured ? "" : "（Key 未配置）"),
-            disabled: !profile.keyConfigured
+            label: String(profile.name || "未命名配置") + " · " +
+              (profile.accessMethod === "direct_model" ? "模型直连" : "工作流平台"),
+            disabled: !profile.complete
           };
         optionModels.push({
           value: optionState.id,

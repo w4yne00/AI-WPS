@@ -1397,9 +1397,10 @@
     }
     return {
       id: safeText(profile && profile.id),
-      label: safeText(profile && profile.name) + (profile && profile.keyConfigured ? "" : "（Key 未配置）"),
+      label: safeText(profile && profile.name || "未命名配置") + " · " +
+        (profile && profile.accessMethod === "direct_model" ? "模型直连" : "工作流平台"),
       active: Boolean(profile && profile.id === state.profiles.activeProfileId),
-      disabled: !Boolean(profile && profile.keyConfigured)
+      disabled: !Boolean(profile && profile.complete)
     };
   }
 

@@ -2168,6 +2168,9 @@
     }
     return {
       active: Boolean(profile && profile.id === activeProfileId),
+      id: String(profile && profile.id || ""),
+      label: String(profile && profile.name || "未命名配置") + " · " +
+        (profile && profile.accessMethod === "direct_model" ? "模型直连" : "工作流平台"),
       disabled: Boolean(busy || !profile || !profile.keyConfigured)
     };
   }
@@ -2360,9 +2363,9 @@
           interactionBlocked
         );
         optionModels.push({
-          value: profile.id,
-          text: (profile.id === data.activeProfileId ? "✓ " : "") + profile.name + " · " +
-            (profile.accessMethod === "direct_model" ? "模型直连" + (profile.modelName ? " · " + profile.modelName : "") : "工作流平台"),
+          value: optionState.id || profile.id,
+          text: optionState.label || String(profile.name || "未命名配置") + " · " +
+            (profile.accessMethod === "direct_model" ? "模型直连" : "工作流平台"),
           selected: profile.id === selectedId,
           disabled: optionState.disabled
         });

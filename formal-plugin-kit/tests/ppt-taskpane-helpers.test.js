@@ -140,7 +140,23 @@ function assertWorkflowUiContract(targetHelpers) {
       { id: "p1", name: "生产版", keyConfigured: true, complete: true, accessMethod: "workflow_platform" },
       "p1"
     )),
-    { id: "p1", label: "✓ 生产版 · 工作流平台", active: true, disabled: false }
+    { id: "p1", label: "生产版 · 工作流平台", active: true, disabled: false }
+  );
+  assert.deepStrictEqual(
+    plain(targetHelpers.workflowProfileOptionState(
+      {
+        id: "p2",
+        name: "直连生产",
+        keyConfigured: true,
+        complete: true,
+        accessMethod: "direct_model",
+        modelName: "secret-model",
+        serviceBaseUrl: "https://secret.example.test/v1",
+        note: "secret note"
+      },
+      "p1"
+    )),
+    { id: "p2", label: "直连生产 · 模型直连", active: false, disabled: false }
   );
   assert.strictEqual(
     targetHelpers.workflowProfileOptionState(
