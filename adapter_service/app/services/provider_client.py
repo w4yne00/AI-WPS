@@ -1806,6 +1806,12 @@ class ProviderClient:
                 "contextWindowTokensExplicit": bool(
                     model_configuration.get("contextWindowTokensExplicit", False)
                 ),
+                "formatSemanticValidation": model_configuration.get(
+                    "formatSemanticValidation"
+                ),
+                "formatSemanticReadiness": model_configuration.get(
+                    "formatSemanticReadiness"
+                ),
                 "apiKeyRef": api_key_ref,
                 "apiKey": str(model_configuration.get("apiKey", "")),
                 "authSource": "task-file",
@@ -2910,6 +2916,23 @@ class ProviderClient:
         task_auth = self.resolve_configuration_auth(configuration_id)
         configuration = task_auth["modelConfiguration"]
         task_type = str(configuration.get("taskType", ""))
+        if (
+            task_type == "word.format_review"
+            and str(configuration.get("accessMethod", "")) == ACCESS_WORKFLOW_PLATFORM
+        ):
+            semantic_validation = self._validate_format_semantic_workflow(
+                configuration_id, trace_id, task_auth
+            )
+            return {
+                "success": True,
+                "taskType": task_type,
+                "configurationId": str(configuration.get("id", "")),
+                "configurationName": str(configuration.get("name", "")),
+                "accessMethod": str(configuration.get("accessMethod", "")),
+                "modelName": str(configuration.get("modelName", "")),
+                "promptVersion": "format_semantics.v1",
+                "formatSemanticValidation": semantic_validation,
+            }
         probe = _VALIDATION_PROBES.get(task_type)
         if not probe:
             raise AdapterError(
@@ -2940,6 +2963,85 @@ class ProviderClient:
             "accessMethod": str(configuration.get("accessMethod", "")),
             "modelName": str(configuration.get("modelName", "")),
             "promptVersion": prompt_version,
+        }
+
+    def _validate_format_semantic_workflow(
+        self, configuration_id: str, trace_id: str, task_auth: Dict
+    ) -> Dict:
+        """Validate all format_semantics.v1 operations with synthetic facts only."""
+        from app.services.word.format_semantics import (
+            FORMAT_SEMANTIC_OPERATIONS,
+            FORMAT_SEMANTIC_SCHEMA_VERSION,
+            FormatSemanticContract,
+        )
+
+        del configuration_id
+        binding = {
+            "contentSha256": "synthetic-content",
+            "structureSha256": "synthetic-structure",
+            "formatSha256": "synthetic-format",
+        }
+        cases = {
+            "classify_role": {
+                "synthetic-1": {
+                    "allowedTargets": [
+                        {"role": "heading", "attributes": {"level": 1}}
+                    ]
+                }
+            },
+            "associate_caption": {
+                "synthetic-2": {"allowedTargetBlockIds": ["figure-1"]}
+            },
+            "suggest_table_caption": {"synthetic-3": {"allowedTargets": []}},
+            "suggest_figure_caption": {"synthetic-4": {"allowedTargets": []}},
+        }
+        operations = {}
+        for operation in FORMAT_SEMANTIC_OPERATIONS:
+            candidates = cases[operation]
+            candidate_json = json.dumps(
+                {
+                    "schemaVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
+                    "operation": operation,
+                    "snapshotBinding": binding,
+                    "candidates": candidates,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
+            input_data = {"candidate_json": candidate_json}
+            if operation == "suggest_figure_caption":
+                input_data["image_files"] = []
+            response = self.format_semantics(
+                operation,
+                trace_id,
+                input_data,
+                "format_semantics.v1 synthetic validation",
+                task_auth=task_auth,
+            )
+            payload = response.get("result_json") if isinstance(response, dict) else None
+            if not isinstance(payload, dict):
+                raise AdapterError(
+                    "FORMAT_SEMANTIC_RESULT_JSON_INVALID",
+                    "格式语义验证未返回有效 result_json。",
+                    status_code=502,
+                )
+            FormatSemanticContract.validate_response(
+                operation,
+                payload,
+                candidates,
+                binding,
+                require_complete=True,
+            )
+            operations[operation] = True
+        return {
+            "success": True,
+            "protocolVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
+            "operations": operations,
+            "visualCapability": {
+                "validated": False,
+                "mode": "contract_only",
+                "reason": "synthetic_image_files_omitted",
+            },
         }
 
     def record_skipped_debug(
@@ -3908,14 +4010,25 @@ class ProviderClient:
                 max(int(auth["maxOutputTokens"]), 0), int(budget), 4096
             )
         input_data = dict(input_data or {})
+        candidate_json = input_data.get("candidate_json")
+        if not isinstance(candidate_json, str) or not candidate_json.strip():
+            candidate_json = json.dumps(input_data, ensure_ascii=False, sort_keys=True)
         input_data.update({
             "schemaVersion": "format_semantics.v1",
             "contract_version": "format_semantics.v1",
             "operation": operation,
             "inputTokenBudget": MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
             "outputTokenBudget": int(budget),
-            "candidate_json": json.dumps(input_data, ensure_ascii=False, sort_keys=True),
+            "candidate_json": candidate_json,
         })
+        if str(auth.get("accessMethod", "")) == ACCESS_WORKFLOW_PLATFORM:
+            return self._post_workflow_format_semantics(
+                operation,
+                trace_id,
+                input_data,
+                auth,
+                timeout_seconds=60,
+            )
         return self.post_task(
             "word.format_review",
             trace_id,
@@ -3925,6 +4038,111 @@ class ProviderClient:
             task_auth=auth,
             input_token_limit=MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
         )
+
+    def _post_workflow_format_semantics(
+        self,
+        operation: str,
+        trace_id: str,
+        input_data: Dict,
+        task_auth: Dict,
+        timeout_seconds: int,
+    ) -> Dict:
+        """Call Dify with only the fixed semantic inputs and read result_json."""
+        provider_base_url = str(task_auth.get("providerBaseUrl", "")).rstrip("/")
+        provider_chat_path = str(task_auth.get("providerChatPath") or "/chat-messages")
+        url = "{0}{1}".format(provider_base_url, provider_chat_path)
+        api_key = str(task_auth.get("apiKey", ""))
+        fixed_inputs = {
+            "contract_version": "format_semantics.v1",
+            "operation": operation,
+            "candidate_json": str(input_data.get("candidate_json", "")),
+        }
+        image_files = input_data.get("image_files")
+        if operation == "suggest_figure_caption":
+            fixed_inputs["image_files"] = image_files if isinstance(image_files, list) else []
+        payload = {
+            "inputs": fixed_inputs,
+            "query": "format_semantics.v1",
+            "conversation_id": "",
+            "response_mode": str(task_auth.get("providerMode") or "blocking"),
+            "user": "wps-ai-assistant",
+            "files": image_files if isinstance(image_files, list) else [],
+        }
+        debug_metadata = self.build_debug_metadata(
+            "word.format_review",
+            api_key_ref=str(task_auth.get("apiKeyRef", "")),
+            task_auth=task_auth,
+        )
+        record_provider_debug(
+            {
+                "traceId": trace_id,
+                "taskType": "word.format_review",
+                "url": url,
+                **debug_metadata,
+                "request": {"body": payload},
+            }
+        )
+        req = urllib_request.Request(
+            url,
+            data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+            method="POST",
+            headers={
+                "Authorization": "Bearer {0}".format(api_key),
+                "Content-Type": "application/json",
+                "X-Trace-Id": trace_id,
+            },
+        )
+        try:
+            with urllib_request.urlopen(req, timeout=timeout_seconds) as response:
+                raw_body = response.read().decode("utf-8")
+                body = json.loads(raw_body)
+        except error.HTTPError as exc:
+            if exc.code in (401, 403):
+                raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
+            if exc.code == 429:
+                raise AdapterError("MODEL_RATE_LIMITED", "模型后台请求较多，请稍后重新提交。", status_code=429) from exc
+            raise ProviderUnavailableError("模型后台返回 HTTP {0}。".format(exc.code)) from exc
+        except error.URLError as exc:
+            reason = getattr(exc, "reason", "")
+            if isinstance(reason, (TimeoutError, socket.timeout)) or "timed out" in str(reason).lower():
+                raise ProviderTimeoutError("模型处理超过当前任务等待时限。") from exc
+            raise ProviderUnavailableError("无法访问模型后台，请检查服务地址和网络。") from exc
+        except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            raise ProviderUnavailableError("模型后台返回了非 JSON 响应。") from exc
+        except (IncompleteRead, RemoteDisconnected, ConnectionResetError, ConnectionAbortedError, BrokenPipeError) as exc:
+            raise ProviderMidStreamDisconnectError("模型后台在返回结果过程中断开连接。") from exc
+        result_json = body.get("data", {}).get("outputs", {}).get("result_json") if isinstance(body, dict) else None
+        if result_json is None:
+            raise AdapterError(
+                "FORMAT_SEMANTIC_RESULT_JSON_MISSING",
+                "格式语义工作流未返回固定 result_json 输出。",
+                status_code=502,
+            )
+        if isinstance(result_json, str):
+            try:
+                result_json = json.loads(result_json)
+            except json.JSONDecodeError as exc:
+                raise AdapterError(
+                    "FORMAT_SEMANTIC_RESULT_JSON_INVALID",
+                    "格式语义工作流的 result_json 不是有效 JSON。",
+                    status_code=502,
+                ) from exc
+        if not isinstance(result_json, dict):
+            raise AdapterError(
+                "FORMAT_SEMANTIC_RESULT_JSON_INVALID",
+                "格式语义工作流的 result_json 必须是 JSON 对象。",
+                status_code=502,
+            )
+        record_provider_debug(
+            {
+                "traceId": trace_id,
+                "taskType": "word.format_review",
+                "url": url,
+                **debug_metadata,
+                "response": {"status": 200, "resultKeys": sorted(result_json.keys())},
+            }
+        )
+        return {"result_json": result_json}
 
     def _mock_rewrite(self, text: str, mode: str, user_instruction: str) -> str:
         prefix_map = {

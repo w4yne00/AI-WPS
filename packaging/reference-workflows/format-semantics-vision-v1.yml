@@ -1,0 +1,45 @@
+kind: app
+version: 0.1.5
+
+app:
+  mode: workflow
+  name: AI-WPS format semantics vision v1
+  description: Vision reference workflow for the versioned figure-caption semantics contract.
+
+workflow:
+  contract_version: format_semantics.v1
+  inputs:
+    - name: contract_version
+      type: text
+      required: true
+      fixed_value: format_semantics.v1
+    - name: operation
+      type: text
+      required: true
+      allowed_values:
+        - suggest_figure_caption
+    - name: candidate_json
+      type: paragraph
+      required: true
+    - name: image_files
+      type: files
+      required: true
+      max_items: 4
+  inherited_text_operations:
+    - classify_role
+    - associate_caption
+    - suggest_table_caption
+  output:
+    variable: result_json
+    type: json
+    required: true
+  operation_schemas:
+    suggest_figure_caption:
+      result_schema: figure_caption_suggestion_items
+      completeness: every_candidate
+      evidence: candidate_json_and_image_files
+  system_prompt: |
+    你是 AI-WPS 图题语义工作流。只处理 contract_version 为 format_semantics.v1 且 operation 为 suggest_figure_caption 的请求。
+    candidate_json 是结构和候选范围的唯一事实来源，image_files 仅用于视觉证据；不得从自由文本或聊天历史猜测结果。
+    每个候选必须返回一条结果；无法根据图像形成可靠建议时返回允许的降级状态，不得编造事实。
+    只返回与 operation 对应的完整 JSON 对象，并将该对象写入 result_json。

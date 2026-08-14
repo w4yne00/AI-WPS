@@ -2738,6 +2738,19 @@
     });
   }
 
+  function validateSavedFormatSemanticConfiguration(taskType, configurationId, draft) {
+    if (taskType !== "word.format_review" || draft.accessMethod !== "workflow_platform") {
+      return Promise.resolve({ validated: false, skipped: true });
+    }
+    return request("/provider/model-configurations/" + encodeURIComponent(configurationId) + "/validate", {})
+      .then(function () {
+        return { validated: true, skipped: false };
+      })
+      .catch(function (error) {
+        return { validated: false, skipped: false, error: error };
+      });
+  }
+
   function failWorkflowMutation(taskType, prefix, error, preserveEditor) {
     setWorkflowProfileMutationBusy(false);
     state.workflowProfileSelections[taskType] = getWorkflowProfileData(taskType).activeProfileId || "";
@@ -2765,15 +2778,22 @@
       .then(function (body) {
         var configuration = body && body.data && body.data.configuration || {};
         return saveModelConfigurationKey(configuration.id, draft).then(function () {
+          return validateSavedFormatSemanticConfiguration(taskType, configuration.id, draft).then(function (validation) {
           var complete = Boolean(draft.serviceBaseUrl && draft.apiKey &&
             (draft.accessMethod !== "direct_model" || draft.modelName));
           if (activate && complete) {
-            return request("/provider/model-configurations/" + encodeURIComponent(configuration.id) + "/activate", {});
+            return request("/provider/model-configurations/" + encodeURIComponent(configuration.id) + "/activate", {})
+              .then(function () { return validation; });
           }
-          return null;
+          return validation;
+          });
         });
-      }).then(function () {
-      return completeWorkflowMutation(taskType, "模型配置已保存。");
+      }).then(function (validation) {
+      var message = "模型配置已保存。";
+      if (validation && validation.skipped === false && !validation.validated) {
+        message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";
+      }
+      return completeWorkflowMutation(taskType, message);
     }).catch(function (error) {
       failWorkflowMutation(taskType, "保存模型配置失败", error, true);
     });
@@ -2792,7 +2812,13 @@
       modelConfigurationPayload(taskType, draft), { method: "PATCH" }).then(function () {
       metadataSaved = true;
       return saveModelConfigurationKey(profileId, draft).then(function () {
-        return completeWorkflowMutation(taskType, "模型配置已保存。");
+        return validateSavedFormatSemanticConfiguration(taskType, profileId, draft).then(function (validation) {
+          var message = "模型配置已保存。";
+          if (validation && validation.skipped === false && !validation.validated) {
+            message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";
+          }
+          return completeWorkflowMutation(taskType, message);
+        });
       });
     }).catch(function (error) {
       if (!metadataSaved) {

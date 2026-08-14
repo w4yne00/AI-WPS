@@ -8,6 +8,7 @@ from unittest.mock import patch
 from app.core.config import AppSettings
 from app.core.errors import AdapterError
 from app.services.model_configurations import ACCESS_DIRECT_MODEL, ModelConfigurationStore
+from app.services.model_configurations import ACCESS_WORKFLOW_PLATFORM
 from app.services.provider_client import ProviderClient, get_last_provider_debug
 from app.services.system_prompts import SystemPromptStore
 
@@ -66,6 +67,22 @@ class DirectModelProviderTests(unittest.TestCase):
         return ProviderClient(
             AppSettings(timeout_seconds=75), model_configuration_store=store
         )
+
+    def _workflow_format_client(self, root: Path):
+        config_path = root / "adapter.json"
+        config_path.write_text("{}\n", encoding="utf-8")
+        store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+        configuration = store.create_configuration(
+            "word.format_review",
+            "格式语义工作流",
+            ACCESS_WORKFLOW_PLATFORM,
+            service_base_url="https://workflow.example/v1",
+        )
+        store.replace_api_key(configuration["id"], "workflow-secret")
+        store.activate_configuration(configuration["id"])
+        return ProviderClient(
+            AppSettings(timeout_seconds=75), model_configuration_store=store
+        ), store, configuration["id"]
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_request_uses_chat_completions_and_only_returns_final_content(
@@ -196,6 +213,118 @@ class DirectModelProviderTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         payload = json.loads(request.data.decode("utf-8"))
         self.assertEqual(payload["max_tokens"], 4096)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_workflow_format_semantics_uses_fixed_inputs_and_result_json(self, urlopen) -> None:
+        urlopen.return_value = FakeResponse(
+            {
+                "answer": "这段自由文本不得被解析",
+                "data": {
+                    "outputs": {
+                        "result_json": json.dumps(
+                            {
+                                "schemaVersion": "format_semantics.v1",
+                                "operation": "classify_role",
+                                "snapshotBinding": {},
+                                "items": [],
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                },
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            client, _store, _configuration_id = self._workflow_format_client(Path(tmp))
+            result = client.format_semantics(
+                "classify_role",
+                "trace-workflow-format",
+                {"candidate_json": '{"candidates":[]}'},
+                "不得读取这段提示词作为结果",
+                task_auth=client.resolve_task_auth("word.format_review"),
+            )
+
+        request = urlopen.call_args.args[0]
+        payload = json.loads(request.data.decode("utf-8"))
+        self.assertEqual(request.full_url, "https://workflow.example/v1/chat-messages")
+        self.assertEqual(
+            payload["inputs"],
+            {
+                "contract_version": "format_semantics.v1",
+                "operation": "classify_role",
+                "candidate_json": '{"candidates":[]}',
+            },
+        )
+        self.assertNotIn("query", payload["inputs"])
+        self.assertEqual(result["result_json"]["operation"], "classify_role")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_workflow_format_semantics_requires_result_json(self, urlopen) -> None:
+        urlopen.return_value = FakeResponse(
+            {"answer": '{"schemaVersion":"format_semantics.v1","items":[]}'}
+        )
+        with TemporaryDirectory() as tmp:
+            client, _store, _configuration_id = self._workflow_format_client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.format_semantics(
+                    "classify_role",
+                    "trace-workflow-missing-result",
+                    {"candidate_json": '{"candidates":[]}'},
+                    "固定结果变量",
+                    task_auth=client.resolve_task_auth("word.format_review"),
+                )
+
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_RESULT_JSON_MISSING")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_workflow_format_validation_runs_all_four_operations(self, urlopen) -> None:
+        def response_for_request(req, timeout):
+            del timeout
+            request_payload = json.loads(req.data.decode("utf-8"))
+            operation = request_payload["inputs"]["operation"]
+            candidates = json.loads(request_payload["inputs"]["candidate_json"])["candidates"]
+            block_id = next(iter(candidates))
+            items = {
+                "classify_role": [{"blockId": block_id, "role": "heading", "level": 1, "confidence": 0.9}],
+                "associate_caption": [{"blockId": block_id, "targetBlockId": "figure-1", "status": "associated", "confidence": 0.9}],
+                "suggest_table_caption": [{"blockId": block_id, "suggestion": "合成表格题注"}],
+                "suggest_figure_caption": [{"blockId": block_id, "suggestion": "合成图题正文"}],
+            }[operation]
+            return FakeResponse({
+                "data": {
+                    "outputs": {
+                        "result_json": json.dumps({
+                            "schemaVersion": "format_semantics.v1",
+                            "operation": operation,
+                            "snapshotBinding": {
+                                "contentSha256": "synthetic-content",
+                                "structureSha256": "synthetic-structure",
+                                "formatSha256": "synthetic-format",
+                            },
+                            "items": items,
+                        })
+                    }
+                }
+            })
+
+        urlopen.side_effect = response_for_request
+        with TemporaryDirectory() as tmp:
+            client, _store, configuration_id = self._workflow_format_client(Path(tmp))
+            result = client.validate_model_configuration(
+                configuration_id, "trace-workflow-validation"
+            )
+
+        self.assertEqual(result["formatSemanticValidation"]["success"], True)
+        self.assertEqual(
+            result["formatSemanticValidation"]["operations"],
+            {
+                "classify_role": True,
+                "associate_caption": True,
+                "suggest_table_caption": True,
+                "suggest_figure_caption": True,
+            },
+        )
+        self.assertEqual(urlopen.call_count, 4)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_format_semantics_rejects_invalid_operation_and_over_budget_prompt(self, urlopen) -> None:

@@ -88,7 +88,7 @@ class FormatSemanticContract:
             return {"blockId", "role", "level", "headingLevel", "ordered", "numbered", "confidence", "attributes"}
         if operation == "associate_caption":
             return {"blockId", "targetBlockId", "status", "confidence"}
-        return {"blockId", "suggestion"}
+        return {"blockId", "suggestion", "status"}
 
     @staticmethod
     def _as_bounded_confidence(value: Any) -> float:
@@ -160,6 +160,7 @@ class FormatSemanticContract:
         payload: Dict,
         candidates: Dict[str, Dict],
         snapshot_binding: Dict[str, str],
+        require_complete: bool = False,
     ) -> Dict:
         if not cls.is_allowed_operation(operation):
             raise _error("FORMAT_SEMANTIC_OPERATION_NOT_ALLOWED", "格式语义操作不在白名单内。")
@@ -208,14 +209,31 @@ class FormatSemanticContract:
                     clean["confidence"] = cls._as_bounded_confidence(item["confidence"])
             else:
                 suggestion = item.get("suggestion")
-                if not isinstance(suggestion, str) or not suggestion.strip():
+                status = item.get("status")
+                if status is not None and status not in {
+                    "suggested",
+                    "text_evidence_only",
+                    "pixel_inspected",
+                    "not_assessable",
+                }:
+                    raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议状态无效。")
+                if status in {"not_assessable", "text_evidence_only"} and not suggestion:
+                    suggestion = ""
+                if not isinstance(suggestion, str) or (not suggestion.strip() and status not in {"not_assessable", "text_evidence_only"}):
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议不能为空。")
                 if len(suggestion) > MAX_FORMAT_SEMANTIC_SUGGESTION_LENGTH:
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议不得超过 80 个字符。")
                 if "\n" in suggestion or "\r" in suggestion or _MARKDOWN_PREFIX.search(suggestion):
                     raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "题注建议只能包含题注正文。")
                 clean = {"blockId": block_id, "suggestion": suggestion.strip()}
+                if status is not None:
+                    clean["status"] = status
             normalized.append(clean)
+        if require_complete and len(normalized) != len(candidates):
+            raise _error(
+                "FORMAT_SEMANTIC_RESPONSE_INCOMPLETE",
+                "格式语义验证响应未覆盖全部合成候选。",
+            )
         return {
             "schemaVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
             "operation": operation,
@@ -283,7 +301,7 @@ class FormatSemanticExecutor:
                     return self._failure("FORMAT_SEMANTIC_PHASE_TIMEOUT", "格式语义阶段已超过 10 分钟。")
                 payload = self._payload_from_response(response)
                 normalized = FormatSemanticContract.validate_response(
-                    operation, payload, candidates, snapshot_binding
+                    operation, payload, candidates, snapshot_binding, require_complete=True
                 )
                 return {
                     "payload": normalized,
@@ -329,6 +347,8 @@ class FormatSemanticExecutor:
 
     @staticmethod
     def _payload_from_response(response: Any) -> Dict:
+        if isinstance(response, dict) and "result_json" in response:
+            response = response.get("result_json")
         if isinstance(response, dict) and isinstance(response.get("answer"), str):
             response = response["answer"]
         if isinstance(response, str):

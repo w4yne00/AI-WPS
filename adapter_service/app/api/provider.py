@@ -307,6 +307,21 @@ def validate_model_configuration(configuration_id: str) -> dict:
     except AdapterError as exc:
         duration_ms = int((time.monotonic() - started) * 1000)
         try:
+            current = store.get_configuration(configuration_id)
+            if (
+                current.get("taskType") == "word.format_review"
+                and current.get("accessMethod") == "workflow_platform"
+            ):
+                store.record_format_semantic_validation(
+                    configuration_id,
+                    {
+                        "success": False,
+                        "protocolVersion": "format_semantics.v1",
+                        "durationMs": duration_ms,
+                        "errorCode": exc.code,
+                        "message": "格式语义协议验证失败，格式审查仅运行确定性规则。",
+                    },
+                )
             store.record_validation(
                 configuration_id,
                 {
@@ -320,6 +335,13 @@ def validate_model_configuration(configuration_id: str) -> dict:
             pass
         raise
     duration_ms = int((time.monotonic() - started) * 1000)
+    if isinstance(result.get("formatSemanticValidation"), dict):
+        store.record_format_semantic_validation(
+            configuration_id,
+            {
+                **result["formatSemanticValidation"],
+            },
+        )
     configuration = store.record_validation(
         configuration_id,
         {

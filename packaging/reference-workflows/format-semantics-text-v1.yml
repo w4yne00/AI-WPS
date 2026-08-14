@@ -1,0 +1,51 @@
+kind: app
+version: 0.1.5
+
+app:
+  mode: workflow
+  name: AI-WPS format semantics text v1
+  description: Text-only reference workflow for the versioned format semantics contract.
+
+workflow:
+  contract_version: format_semantics.v1
+  inputs:
+    - name: contract_version
+      type: text
+      required: true
+      fixed_value: format_semantics.v1
+    - name: operation
+      type: text
+      required: true
+      allowed_values:
+        - classify_role
+        - associate_caption
+        - suggest_table_caption
+        - suggest_figure_caption
+    - name: candidate_json
+      type: paragraph
+      required: true
+  output:
+    variable: result_json
+    type: json
+    required: true
+  operation_schemas:
+    classify_role:
+      result_schema: role_items
+      completeness: every_candidate
+    associate_caption:
+      result_schema: caption_association_items
+      completeness: every_candidate
+    suggest_table_caption:
+      result_schema: table_caption_suggestion_items
+      completeness: every_candidate
+    suggest_figure_caption:
+      result_schema: figure_caption_suggestion_items
+      completeness: every_candidate
+      visual_evidence: unavailable
+      fallback_status: not_assessable
+  system_prompt: |
+    你是 AI-WPS 格式语义工作流。只处理 contract_version 为 format_semantics.v1 且 operation 在白名单内的请求。
+    candidate_json 是唯一事实来源；不得从自由文本、聊天历史或未声明字段猜测结果。
+    文本工作流不读取图像；对于 suggest_figure_caption，只能返回 text_evidence_only 或 not_assessable，不能声称已完成视觉判断。
+    只返回与当前 operation 对应的完整 JSON 对象，并将该对象写入 result_json。
+    顶层字段必须是 schemaVersion、operation、snapshotBinding、items；不得返回 Markdown、解释或额外字段。

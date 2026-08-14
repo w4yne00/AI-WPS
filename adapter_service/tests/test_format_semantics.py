@@ -125,6 +125,25 @@ class FormatSemanticContractTests(unittest.TestCase):
                 "classify_role", role_payload, role_candidates, binding
             )
 
+    def test_validation_can_require_a_complete_result_for_every_synthetic_candidate(self):
+        candidates = {
+            "block-1": {"allowedTargets": [{"role": "heading", "attributes": {"level": 1}}]},
+            "block-2": {"allowedTargets": [{"role": "body", "attributes": {}}]},
+        }
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": {},
+            "items": [
+                {"blockId": "block-1", "role": "heading", "level": 1, "confidence": 0.9}
+            ],
+        }
+        with self.assertRaises(AdapterError) as raised:
+            FormatSemanticContract.validate_response(
+                "classify_role", payload, candidates, {}, require_complete=True
+            )
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_RESPONSE_INCOMPLETE")
+
     def test_suggestion_is_body_only_and_bounded(self):
         candidates = {"figure-1": {"allowedTargets": []}}
         payload = {

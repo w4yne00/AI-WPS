@@ -9,6 +9,26 @@
     "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",
     "notice": "adapter_service/vendor/wx_doc_format_algorithm/THIRD_PARTY_NOTICES.md"
   },
+  "referenceWorkflows": [
+    {
+      "name": "format-semantics-text-v1",
+      "target": "reference-workflows/format-semantics-text-v1.yml",
+      "contractVersion": "format_semantics.v1",
+      "sha256": "ffe15d87ff293b82c39b5865f9299f9c857a8662738ef8e9e6b4ec31f4bca1c3",
+      "autoImport": false,
+      "autoUpdate": false,
+      "autoOverwrite": false
+    },
+    {
+      "name": "format-semantics-vision-v1",
+      "target": "reference-workflows/format-semantics-vision-v1.yml",
+      "contractVersion": "format_semantics.v1",
+      "sha256": "ac2324e4620e4d945046745ac660393a9a51827796c902cc65ebc3ab49d52ec4",
+      "autoImport": false,
+      "autoUpdate": false,
+      "autoOverwrite": false
+    }
+  ],
   "python": {
     "minimum": "3.8",
     "compatibilityGate": "packaging/check_python38_compatibility.py"

@@ -5,6 +5,16 @@
   "entries": [
     {
       "type": "file",
+      "source": "packaging/reference-workflows/format-semantics-text-v1.yml",
+      "target": "reference-workflows/format-semantics-text-v1.yml"
+    },
+    {
+      "type": "file",
+      "source": "packaging/reference-workflows/format-semantics-vision-v1.yml",
+      "target": "reference-workflows/format-semantics-vision-v1.yml"
+    },
+    {
+      "type": "file",
       "source": "packaging/v0250-format-rule-assets-manifest.json",
       "target": "format-rule-assets-manifest.json"
     },

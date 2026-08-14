@@ -137,6 +137,48 @@ class ModelConfigurationStoreTests(unittest.TestCase):
         with self.assertRaises(ModelConfigurationError):
             normalize_service_base_url("https://host/v1?key=secret")
 
+    def test_format_semantic_readiness_is_stale_after_configuration_changes(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            configuration = store.create_configuration(
+                "word.format_review",
+                "格式协议",
+                ACCESS_WORKFLOW_PLATFORM,
+                service_base_url="https://workflow.example/v1",
+            )
+            configuration = store.replace_api_key(configuration["id"], "secret")
+            self.assertEqual(
+                configuration["formatSemanticReadiness"]["code"],
+                "validation_required",
+            )
+
+            ready = store.record_format_semantic_validation(
+                configuration["id"],
+                {
+                    "success": True,
+                    "protocolVersion": "format_semantics.v1",
+                    "operations": {
+                        "classify_role": True,
+                        "associate_caption": True,
+                        "suggest_table_caption": True,
+                        "suggest_figure_caption": True,
+                    },
+                },
+            )
+            self.assertEqual(ready["formatSemanticReadiness"]["code"], "ready")
+
+            changed = store.update_configuration(
+                configuration["id"],
+                name="格式协议",
+                access_method=ACCESS_WORKFLOW_PLATFORM,
+                service_base_url="https://workflow-2.example/v1",
+            )
+            self.assertEqual(
+                changed["formatSemanticReadiness"]["code"],
+                "validation_required",
+            )
+            self.assertTrue(changed["formatSemanticValidation"]["stale"])
+
     def test_legacy_workflow_facade_writes_the_new_configuration_store(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

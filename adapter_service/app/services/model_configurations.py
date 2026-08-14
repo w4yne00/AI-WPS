@@ -380,6 +380,47 @@ class ModelConfigurationStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize(configuration)
 
+    def record_format_semantic_validation(self, configuration_id: str, summary: dict) -> dict:
+        """Persist the safe, versioned validation state for workflow format semantics."""
+        operations = summary.get("operations")
+        if not isinstance(operations, dict):
+            operations = {}
+        visual_capability = summary.get("visualCapability")
+        if isinstance(visual_capability, dict):
+            visual_capability = {
+                "validated": bool(visual_capability.get("validated")),
+                "mode": str(visual_capability.get("mode") or "")[:40],
+            }
+        else:
+            visual_capability = bool(visual_capability)
+        safe_operations = {
+            operation: bool(operations.get(operation))
+            for operation in (
+                "classify_role",
+                "associate_caption",
+                "suggest_table_caption",
+                "suggest_figure_caption",
+            )
+        }
+        with _STORE_LOCK:
+            payload = self._load_and_migrate()
+            configurations = self._configuration_map(payload)
+            configuration = self._require_configuration(configurations, configuration_id)
+            configuration["formatSemanticValidation"] = {
+                "success": bool(summary.get("success")),
+                "protocolVersion": str(summary.get("protocolVersion") or ""),
+                "operations": safe_operations,
+                "visualCapability": visual_capability,
+                "completedAt": str(summary.get("completedAt") or _utc_now()),
+                "errorCode": str(summary.get("errorCode") or "")[:80],
+                "message": str(summary.get("message") or "")[:200],
+                "configVersion": int(configuration.get("configVersion") or 1),
+            }
+            configurations[configuration["id"]] = configuration
+            payload["modelConfigurations"] = configurations
+            save_config_payload(payload, self.config_path)
+            return self._sanitize(configuration)
+
     def _load_and_migrate(self) -> dict:
         payload = load_config_payload(self.config_path)
         configurations = self._configuration_map(payload)
@@ -453,6 +494,40 @@ class ModelConfigurationStore:
             last_validation = {**last_validation, "stale": True}
         else:
             last_validation = {**last_validation, "stale": False}
+        format_semantic_validation = configuration.get("formatSemanticValidation")
+        if not isinstance(format_semantic_validation, dict):
+            format_semantic_validation = None
+        elif int(format_semantic_validation.get("configVersion") or 0) != int(
+            configuration.get("configVersion") or 1
+        ):
+            format_semantic_validation = {**format_semantic_validation, "stale": True}
+        else:
+            format_semantic_validation = {**format_semantic_validation, "stale": False}
+        if str(configuration.get("taskType", "")) == "word.format_review" and access_method == ACCESS_WORKFLOW_PLATFORM:
+            semantic_ready = (
+                not missing
+                and isinstance(format_semantic_validation, dict)
+                and bool(format_semantic_validation.get("success"))
+                and not bool(format_semantic_validation.get("stale"))
+                and str(format_semantic_validation.get("protocolVersion")) == "format_semantics.v1"
+                and all(bool(format_semantic_validation.get("operations", {}).get(operation)) for operation in (
+                    "classify_role",
+                    "associate_caption",
+                    "suggest_table_caption",
+                    "suggest_figure_caption",
+                ))
+            )
+            format_semantic_readiness = {
+                "code": "ready" if semantic_ready else "validation_required",
+                "label": "格式语义协议已验证，格式审查可调用工作流。"
+                if semantic_ready
+                else "格式语义协议尚未验证，格式审查仅运行确定性规则。",
+            }
+        else:
+            format_semantic_readiness = {
+                "code": "not_applicable",
+                "label": "模型直连由 Adapter 内置格式语义协议校验。",
+            }
         limited_review_ready = not missing
         if access_method != ACCESS_DIRECT_MODEL:
             full_review_readiness = {
@@ -513,6 +588,8 @@ class ModelConfigurationStore:
             "missingFields": missing,
             "configVersion": int(configuration.get("configVersion") or 1),
             "lastValidation": last_validation,
+            "formatSemanticValidation": format_semantic_validation,
+            "formatSemanticReadiness": format_semantic_readiness,
             "createdAt": str(configuration.get("createdAt", "")),
             "updatedAt": str(configuration.get("updatedAt", "")),
         }

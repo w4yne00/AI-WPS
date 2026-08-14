@@ -573,6 +573,19 @@ class WordFormatReviewer:
                 )
             return {}, 0, diagnostics
 
+        if not self._semantic_protocol_ready(task_auth):
+            diagnostics["semanticStatus"] = "degraded"
+            diagnostics["aiFallbackReason"] = "format_semantic_protocol_not_ready"
+            if hasattr(self.provider_client, "record_skipped_debug"):
+                self.provider_client.record_skipped_debug(
+                    task_type,
+                    trace_id,
+                    self._build_role_prompt(request, template, candidates[:AI_ROLE_BATCH_SIZE]),
+                    "format_semantic_protocol_not_ready",
+                    provider="local",
+                )
+            return {}, 0, diagnostics
+
         if self._direct_capability_unknown(task_auth):
             diagnostics["semanticStatus"] = "degraded"
             diagnostics["aiFallbackReason"] = "model_capability_unknown"
@@ -629,6 +642,16 @@ class WordFormatReviewer:
             batches_run += 1
             batch_by_block = {item["blockId"]: item for item in batch}
             batch_by_index = {item["paragraphIndex"]: item for item in batch}
+            candidate_json = json.dumps(
+                {
+                    "schemaVersion": "format_semantics.v1",
+                    "operation": "classify_role",
+                    "snapshotBinding": self._snapshot_binding(request),
+                    "candidates": batch_by_block,
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+            )
             state["nextBatch"] = batch_index + 1
             prompt = self._build_role_prompt(request, template, batch)
             if hasattr(self.provider_client, "build_task_input_data"):
@@ -641,6 +664,7 @@ class WordFormatReviewer:
                         "operation": "classify_role",
                         "candidateBlockIds": list(batch_by_block),
                         "snapshotBinding": self._snapshot_binding(request),
+                        "candidate_json": candidate_json,
                     },
                 )
             else:
@@ -654,6 +678,7 @@ class WordFormatReviewer:
                         "operation": "classify_role",
                         "candidateBlockIds": list(batch_by_block),
                         "snapshotBinding": self._snapshot_binding(request),
+                        "candidate_json": candidate_json,
                     }
             batch_count += 1
             diagnostics["aiAttempted"] = True
@@ -804,6 +829,17 @@ class WordFormatReviewer:
             elif not diagnostics["aiFallbackReason"]:
                 diagnostics["aiFallbackReason"] = "dify_returned_no_roles"
         return roles, batch_count, diagnostics
+
+    @staticmethod
+    def _semantic_protocol_ready(task_auth: Optional[Dict]) -> bool:
+        if not isinstance(task_auth, dict):
+            return True
+        if str(task_auth.get("accessMethod", "")) != "workflow_platform":
+            return True
+        readiness = task_auth.get("formatSemanticReadiness")
+        if not isinstance(readiness, dict):
+            return False
+        return str(readiness.get("code", "")) == "ready"
 
     def _semantic_batches(
         self,

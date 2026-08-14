@@ -21,6 +21,8 @@ EXPECTED_FILES = {
     "adapter_service/vendor/wx_doc_format_algorithm/SOURCE_MANIFEST.json",
     "adapter_service/vendor/wx_doc_format_algorithm/THIRD_PARTY_NOTICES.md",
     "packaging/check_python38_compatibility.py",
+    "reference-workflows/format-semantics-text-v1.yml",
+    "reference-workflows/format-semantics-vision-v1.yml",
 }
 
 
@@ -32,6 +34,32 @@ def audit(root: Path) -> None:
     manifest = json.loads((root / "format-rule-assets-manifest.json").read_text(encoding="utf-8"))
     if manifest.get("version") != "0.25.0-format-rules-alpha":
         raise ValueError("FORMAT_RULE_ASSET_VERSION_INVALID")
+    references = manifest.get("referenceWorkflows")
+    if not isinstance(references, list) or len(references) != 2:
+        raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOWS_MISSING")
+    expected_references = {
+        "reference-workflows/format-semantics-text-v1.yml": "ffe15d87ff293b82c39b5865f9299f9c857a8662738ef8e9e6b4ec31f4bca1c3",
+        "reference-workflows/format-semantics-vision-v1.yml": "ac2324e4620e4d945046745ac660393a9a51827796c902cc65ebc3ab49d52ec4",
+    }
+    seen_references = set()
+    for reference in references:
+        if not isinstance(reference, dict):
+            raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_INVALID")
+        target = str(reference.get("target", ""))
+        if target in seen_references:
+            raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_DUPLICATE")
+        seen_references.add(target)
+        if target not in expected_references or reference.get("sha256") != expected_references[target]:
+            raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_HASH_INVALID")
+        if any(reference.get(key) is not False for key in ("autoImport", "autoUpdate", "autoOverwrite")):
+            raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_AUTO_MUTATION")
+        content = (root / target).read_text(encoding="utf-8")
+        if "contract_version: format_semantics.v1" not in content or "variable: result_json" not in content:
+            raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_CONTRACT_INVALID")
+        if any(token in content.lower() for token in ("api_key", "apikey", "providerbaseurl", "servicebaseurl", "http://", "https://")):
+            raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_SECRET_OR_ADDRESS")
+    if seen_references != set(expected_references):
+        raise ValueError("FORMAT_SEMANTIC_REFERENCE_WORKFLOW_SET_INVALID")
     pack = json.loads(
         (root / "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json").read_text(
             encoding="utf-8"
