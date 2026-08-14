@@ -496,6 +496,95 @@ def get_deterministic_format_review_job(job_id: str) -> dict:
     )
 
 
+@router.get("/word/format-review/jobs/{job_id}/issues")
+def list_deterministic_format_review_issues(
+    job_id: str,
+    pageSize: str = "",
+    cursor: str = "",
+    ruleId: str = "",
+    severity: str = "",
+    dataStatus: str = "",
+    status: str = "",
+    duplicateGroupId: str = "",
+    sort: str = "source",
+):
+    try:
+        parsed_page_size = int(pageSize) if pageSize else None
+    except (TypeError, ValueError):
+        raise AdapterError(
+            "DETERMINISTIC_FORMAT_REVIEW_ISSUE_PAGE_SIZE_INVALID",
+            "问题分页大小必须是 1 到 100 之间的整数。",
+        )
+    data = deterministic_format_review_service.list_issues(
+        job_id,
+        page_size=parsed_page_size,
+        cursor=cursor,
+        rule_id=ruleId,
+        severity=severity,
+        data_status=dataStatus,
+        status=status,
+        duplicate_group_id=duplicateGroupId,
+        sort=sort,
+    )
+    return _deterministic_format_review_envelope(data, trace_id=job_id, message="issues")
+
+
+@router.patch("/word/format-review/jobs/{job_id}/issues/{issue_id}")
+def update_deterministic_format_review_issue(job_id: str, issue_id: str, request: dict):
+    allowed_fields = {"status", "anchorVerification"}
+    if (
+        not isinstance(request, dict)
+        or not set(request)
+        or not set(request).issubset(allowed_fields)
+    ):
+        raise AdapterError(
+            "DETERMINISTIC_FORMAT_REVIEW_ISSUE_REQUEST_INVALID",
+            "格式问题更新请求格式无效。",
+        )
+    data = deterministic_format_review_service.update_issue(
+        job_id,
+        issue_id,
+        status=request.get("status"),
+        anchor_verification=request.get("anchorVerification"),
+    )
+    return _deterministic_format_review_envelope(data, trace_id=job_id, message="issue updated")
+
+
+@router.delete("/word/format-review/jobs/{job_id}")
+def cancel_deterministic_format_review_job(job_id: str) -> dict:
+    data = deterministic_format_review_service.cancel_job(job_id)
+    if data is None:
+        raise AdapterError(
+            "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND",
+            "确定性格式审查后台任务不存在或已过期。",
+            status_code=404,
+        )
+    return _deterministic_format_review_envelope(
+        data, trace_id=data.get("traceId", job_id), message=data["status"]
+    )
+
+
+@router.get("/word/format-review/jobs/{job_id}/report")
+def get_deterministic_format_review_report(job_id: str, format: str = "summary"):
+    if format == "summary":
+        data = deterministic_format_review_service.get_report(job_id)
+        return _deterministic_format_review_envelope(data, trace_id=job_id, message="completed")
+    exported = deterministic_format_review_service.export_report(job_id, format)
+    if format == "markdown":
+        return PlainTextResponse(
+            exported,
+            media_type="text/markdown",
+            headers={"Content-Disposition": 'attachment; filename="word-format-review.md"'},
+        )
+    return _deterministic_format_review_envelope(exported, trace_id=job_id, message="exported")
+
+
+@router.delete("/word/format-review/jobs/{job_id}/report")
+def delete_deterministic_format_review_report(job_id: str) -> dict:
+    data = deterministic_format_review_service.delete_report(job_id)
+    return _deterministic_format_review_envelope(data, trace_id=job_id, message="deleted")
+
+
 @router.delete("/word/format-review/snapshots/{snapshot_id}")
 def delete_deterministic_format_review_snapshot(snapshot_id: str, request: dict) -> dict:
     data = deterministic_format_review_service.delete_snapshot(snapshot_id, request)

@@ -1,3 +1,4 @@
+import hashlib
 import os
 import stat
 import tempfile
@@ -21,6 +22,33 @@ class _Reviewer:
     def review(self, request, trace_id=""):
         self.requests.append(request)
         return {"issues": [], "summary": {}}
+
+
+class _IssueReviewer:
+    def review(self, request, trace_id=""):
+        return {
+            "issues": [
+                {
+                    "ruleId": "font_size",
+                    "paragraphIndex": 1,
+                    "role": "body",
+                    "message": "字号不符合模板要求。",
+                    "currentValue": "14pt",
+                    "expectedValue": "12pt",
+                    "suggestion": "建议调整字号。",
+                },
+                {
+                    "ruleId": "font_size",
+                    "paragraphIndex": 2,
+                    "role": "body",
+                    "message": "字号不符合模板要求。",
+                    "currentValue": "14pt",
+                    "expectedValue": "12pt",
+                    "suggestion": "建议调整字号。",
+                },
+            ],
+            "summary": {"provider": "local", "templateId": "technical-file-format-requirements"},
+        }
 
 
 class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
@@ -169,6 +197,108 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
             "A4",
         )
         self.assertFalse(self.service.snapshot_path(session["snapshotId"]).exists())
+
+    def test_completed_report_has_stable_instances_pagination_groups_and_exports(self):
+        self.service.reviewer = _IssueReviewer()
+        session = self._session()
+        blocks = self._blocks()
+        blocks[0]["text"] = "第一段正文"
+        blocks[1]["text"] = "第二段正文"
+        _, metrics = self._upload(session, blocks=blocks)
+        committed = self._commit(session, metrics)
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "format-report-contract-job",
+            },
+            "format-report-trace",
+        )
+        for _ in range(50):
+            current = self.service.get_job(job["jobId"])
+            if current["status"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(current["status"], "completed")
+
+        report = self.service.get_report(job["jobId"])
+        self.assertEqual(report["summary"]["executionStatus"], "completed")
+        self.assertEqual(report["summary"]["complianceStatus"], "violations_found")
+        self.assertEqual(report["issueCount"], 2)
+        self.assertNotIn("issues", report)
+        page = self.service.list_issues(job["jobId"], page_size=1)
+        self.assertEqual(page["total"], 2)
+        self.assertEqual(page["page"], 1)
+        self.assertTrue(page["nextCursor"])
+        issue = page["items"][0]
+        self.assertTrue(issue["issueId"])
+        self.assertTrue(issue["anchorId"])
+        self.assertEqual(issue["propertyPath"], "format.fontSize")
+        self.assertEqual(issue["duplicateGroupSize"], 2)
+        self.assertEqual(len(page["duplicateGroups"]), 1)
+        filtered = self.service.list_issues(job["jobId"], rule_id="font_size")
+        self.assertEqual(filtered["total"], 2)
+        markdown = self.service.export_report(job["jobId"], "markdown")
+        self.assertIn("# 格式审查报告", markdown)
+        self.assertIn(issue["issueId"], markdown)
+
+    def test_report_expiry_and_anchor_verification_are_public_lifecycle(self):
+        now = [1000.0]
+        service = DeterministicFormatReviewService(
+            staging_root=Path(self.temp_dir.name),
+            reviewer=_IssueReviewer(),
+            coordinator=LongTaskCoordinator(max_running=1, max_queued=1),
+            wall_clock=lambda: now[0],
+        )
+        session = service.create_snapshot({
+            "documentId": "lifecycle.docx", "selectionMode": "document",
+            "documentIdentity": {"documentIdSha256": hashlib.sha256(b"lifecycle.docx").hexdigest()},
+        })
+        blocks = service._normalize_format_blocks([{
+            "blockId": "format-paragraph-1", "blockType": "paragraph",
+            "scope": "in_scope", "paragraphIndex": 1, "text": "正文",
+            "format": {"styleName": "Normal", "dataStatus": "verified"},
+        }])
+        metrics = service._format_metrics(blocks)
+        upload = service.upload_batch(session["snapshotId"], 0, {
+            "uploadToken": session["uploadToken"], "batchId": "format-life-batch",
+            "blocks": blocks, "editSequence": None,
+            **{key: metrics[key] for key in ("characterCount", "contentSha256", "structureSha256", "formatSha256")},
+        })
+        self.assertEqual(upload["status"], "uploaded")
+        committed = service.commit_snapshot(session["snapshotId"], {
+            "uploadToken": session["uploadToken"], "batchCount": 1,
+            "blockCount": 1, "reviewCharacterCount": metrics["characterCount"],
+            "contentSha256": metrics["contentSha256"],
+            "structureSha256": metrics["structureSha256"],
+            "formatSha256": metrics["formatSha256"], "coverage": metrics["coverage"],
+            "verification": {
+                "batchCount": 1, "blockCount": 1,
+                "reviewCharacterCount": metrics["characterCount"],
+                "contentSha256": metrics["contentSha256"],
+                "structureSha256": metrics["structureSha256"],
+                "formatSha256": metrics["formatSha256"], "coverage": metrics["coverage"],
+                "documentIdentity": {"documentIdSha256": hashlib.sha256(b"lifecycle.docx").hexdigest()},
+                "editSequence": None,
+            },
+        })
+        # The identity is omitted by this minimal document fixture; the report is the public seam.
+        job = service.start_job({
+            "snapshotId": committed["snapshotId"],
+            "snapshotToken": committed["snapshotToken"],
+            "clientJobId": "format-life-job",
+        }, "format-life-trace")
+        for _ in range(50):
+            if service.get_job(job["jobId"])["status"] == "completed":
+                break
+            time.sleep(0.01)
+        issue_id = service.list_issues(job["jobId"])["items"][0]["issueId"]
+        updated = service.update_issue(job["jobId"], issue_id, anchor_verification="unverified")
+        self.assertEqual(updated["anchorVerification"], "unverified")
+        now[0] += 24 * 60 * 60 + 1
+        with self.assertRaises(AdapterError) as context:
+            service.get_report(job["jobId"])
+        self.assertEqual(context.exception.code, "DETERMINISTIC_FORMAT_REVIEW_REPORT_NOT_FOUND")
 
     def test_same_batch_is_idempotent_and_conflict_is_rejected(self):
         session = self._session()

@@ -230,6 +230,16 @@
     deterministicFormatReviewEnabled: false,
     deterministicFormatReviewJobId: "",
     deterministicFormatReviewSnapshot: null,
+    deterministicFormatReviewReport: null,
+    deterministicFormatReviewIssueJobId: "",
+    deterministicFormatReviewIssueCursorHistory: [],
+    deterministicFormatReviewIssueFilters: {
+      rule: "",
+      severity: "",
+      dataStatus: "",
+      sort: "source"
+    },
+    deterministicFormatReviewDocumentIdentity: null,
     fullDocumentReviewJobId: "",
     fullDocumentReviewPollErrorCount: 0,
     fullDocumentReviewPreparing: false,
@@ -6245,6 +6255,297 @@
     });
   }
 
+  function markDeterministicFormatReviewAnchorVerification(jobId, issueId, verification) {
+    if (!jobId || !issueId || ["verified", "unverified"].indexOf(verification) < 0) {
+      return Promise.resolve();
+    }
+    return request(
+      "/word/format-review/jobs/" + encodeURIComponent(jobId) +
+        "/issues/" + encodeURIComponent(issueId),
+      { anchorVerification: verification },
+      { method: "PATCH", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
+    );
+  }
+
+  function locateDeterministicFormatReviewIssue(issue, jobId) {
+    var document = getActiveDocument();
+    var anchor = issue && issue.sourceAnchor || {};
+    var identity = state.deterministicFormatReviewDocumentIdentity || {};
+    var currentName = getDocumentName(document);
+    var currentHostId = String(readValue(document, "Id") || readValue(document, "ID") || currentName);
+    var target;
+    var range;
+    var paragraphs;
+    var text;
+    var expectedText = String(anchor.text || "");
+    var paragraphIndex = Number(anchor.paragraphIndex);
+    var start;
+    var occurrences = [];
+    var index;
+    var adjacentIds;
+    var currentAdjacentIds;
+    function failLocation(message) {
+      if (issue) {
+        issue.anchorVerification = "unverified";
+      }
+      setStatus(message);
+      markDeterministicFormatReviewAnchorVerification(jobId, issue && issue.issueId, "unverified")
+        .catch(function () {});
+      return false;
+    }
+    if (!document || String(issue && issue.anchorVerification || "") !== "verified" ||
+        !expectedText || !anchor.textSha256 || !anchor.adjacentStructureSha256) {
+      return failLocation("该格式问题缺少可验证锚点，未自动跳转。");
+    }
+    if ((identity.hostDocumentId && String(identity.hostDocumentId) !== currentHostId) ||
+        (identity.documentIdSha256 && helpers.sha256Text(currentName) !== identity.documentIdSha256)) {
+      return failLocation("当前文档身份与格式审查快照不一致，未自动跳转。");
+    }
+    paragraphs = getParagraphs(document);
+    target = helpers.getCollectionItem
+      ? helpers.getCollectionItem(paragraphs, paragraphIndex)
+      : null;
+    range = getRangeFromTarget(target);
+    if (!range) {
+      return failLocation("格式审查锚点对应的段落已不存在，未自动跳转。");
+    }
+    text = String(readValue(range, "Text") || readValue(range, "text") || "")
+      .replace(/[\r\u0007]+$/g, "");
+    if (helpers.sha256Text(text) !== String(anchor.textSha256)) {
+      return failLocation("格式审查锚点文本已变化，未自动跳转。");
+    }
+    adjacentIds = Array.isArray(anchor.adjacentBlockIds) ? anchor.adjacentBlockIds : [];
+    currentAdjacentIds = [];
+    [-1, 0, 1].forEach(function (offset) {
+      var neighbor = helpers.getCollectionItem
+        ? helpers.getCollectionItem(paragraphs, paragraphIndex + offset)
+        : null;
+      var neighborId = neighbor && (readValue(neighbor, "BlockId") || readValue(neighbor, "blockId") ||
+        readValue(neighbor, "Id") || readValue(neighbor, "ID"));
+      if (neighborId) {
+        currentAdjacentIds.push(String(neighborId));
+      }
+    });
+    if (adjacentIds.length && (currentAdjacentIds.length !== adjacentIds.length ||
+        helpers.sha256Text(JSON.stringify(currentAdjacentIds)) !== String(anchor.adjacentStructureSha256))) {
+      return failLocation("格式审查锚点相邻结构无法唯一验证，未自动跳转。");
+    }
+    index = text.indexOf(expectedText);
+    while (index >= 0) {
+      occurrences.push(index);
+      index = text.indexOf(expectedText, index + Math.max(expectedText.length, 1));
+    }
+    if (occurrences.length !== 1) {
+      return failLocation("格式审查锚点文本无法唯一匹配，未自动跳转。");
+    }
+    start = Number(readValue(range, "Start"));
+    if (isNaN(start)) {
+      return failLocation("当前 WPS 未提供可验证的格式范围，未自动跳转。");
+    }
+    try {
+      if (typeof range.SetRange === "function") {
+        range.SetRange(start + occurrences[0], start + occurrences[0] + expectedText.length);
+      } else if (typeof range.setRange === "function") {
+        range.setRange(start + occurrences[0], start + occurrences[0] + expectedText.length);
+      } else {
+        return failLocation("当前 WPS 不支持保守范围定位。");
+      }
+      if (typeof range.Select === "function") {
+        range.Select();
+      } else if (typeof range.select === "function") {
+        range.select();
+      }
+      setStatus("已通过文档身份、文本和相邻结构验证，定位到格式问题原文。");
+      return true;
+    } catch (error) {
+      return failLocation("格式问题定位失败，未修改文档正文。");
+    }
+  }
+
+  function renderDeterministicFormatReviewIssuePage(report, pageData, jobId) {
+    var summary = report && report.summary || {};
+    var coverage = report && report.coverage || {};
+    var issues = pageData && Array.isArray(pageData.items) ? pageData.items : [];
+    var lines = [
+      "# 格式审查报告",
+      "",
+      "执行状态：" + (summary.executionStatus || "未记录"),
+      "合规状态：" + (summary.complianceStatus || "未评估"),
+      "覆盖状态：" + (summary.coverageStatus || coverage.status || "未评估"),
+      "语义增强状态：" + (summary.semanticStatus || "未运行"),
+      "问题数量：" + Number(report && report.issueCount || 0) +
+        "｜重复问题组：" + Number(report && report.duplicateGroupCount || 0),
+      "覆盖说明：" + (report && report.disclaimer || "覆盖完整不承诺检出全部问题。"),
+      "",
+      "## 问题清单（第 " + Number(pageData && pageData.page || 1) + " 页，共 " +
+        Number(pageData && pageData.total || 0) + " 项）"
+    ];
+    if (!issues.length) {
+      lines.push("当前筛选条件下没有问题实例；零问题不单独形成通过结论。");
+    }
+    issues.forEach(function (issue) {
+      lines.push("");
+      lines.push("### " + (issue.issueId || "未标识问题") + " · " + (issue.ruleId || "未标识规则"));
+      lines.push("- 锚点：" + (issue.anchorId || "未标注") + "／" + (issue.propertyPath || "未标注"));
+      lines.push("- 当前值：" + (issue.currentValue === undefined ? "未读取" : String(issue.currentValue)));
+      lines.push("- 期望值：" + (issue.expectedValue === undefined ? "未给出" : String(issue.expectedValue)));
+      lines.push("- 证据：" + (issue.evidence || "未提供"));
+      lines.push("- 规则版本：" + (issue.ruleVersion || "未记录"));
+      lines.push("- 数据状态／处理状态：" + (issue.dataStatus || "未标注") + "／" + (issue.status || "open"));
+      lines.push("- 锚点验证：" + (issue.anchorVerification || "unverified"));
+      if (Number(issue.duplicateGroupSize || 0) > 1) {
+        lines.push("- 重复问题组：" + issue.duplicateGroupSize + " 个实例");
+      }
+    });
+    setResult(lines.join("\n"), lines.join("\n"));
+    setStatus("确定性格式审查只读报告已生成。");
+    var controls = byId("deterministic-format-review-issue-controls");
+    var previous = byId("btn-format-review-previous-page");
+    var next = byId("btn-format-review-next-page");
+    var pageStatus = byId("format-review-page-status");
+    var exportJson = byId("btn-format-review-export-json");
+    var exportMarkdown = byId("btn-format-review-export-markdown");
+    var actions = byId("format-review-issue-actions");
+    if (!controls || !previous || !next || !pageStatus || !exportJson || !exportMarkdown || !actions) {
+      return;
+    }
+    controls.hidden = false;
+    ["rule", "severity", "dataStatus", "sort"].forEach(function (name) {
+      var field = byId("format-review-filter-" + name.replace("dataStatus", "data-status"));
+      if (field && field.value !== String(state.deterministicFormatReviewIssueFilters[name] || "")) {
+        field.value = state.deterministicFormatReviewIssueFilters[name] || "";
+      }
+    });
+    pageStatus.textContent = "第 " + Number(pageData && pageData.page || 1) + " 页，共 " +
+      Number(pageData && pageData.total || 0) + " 项";
+    previous.disabled = state.deterministicFormatReviewIssueCursorHistory.length <= 1;
+    next.disabled = !pageData.nextCursor;
+    exportJson.onclick = function () { downloadDeterministicFormatReviewExport(jobId, "json"); };
+    exportMarkdown.onclick = function () { downloadDeterministicFormatReviewExport(jobId, "markdown"); };
+    previous.onclick = function () {
+      var history = state.deterministicFormatReviewIssueCursorHistory;
+      if (history.length <= 1) { return; }
+      history.pop();
+      loadDeterministicFormatReviewIssuePage(jobId, report, history[history.length - 1]);
+    };
+    next.onclick = function () {
+      if (!pageData.nextCursor) { return; }
+      state.deterministicFormatReviewIssueCursorHistory.push(pageData.nextCursor);
+      loadDeterministicFormatReviewIssuePage(jobId, report, pageData.nextCursor);
+    };
+    actions.textContent = "";
+    issues.forEach(function (issue) {
+      var row = document.createElement("div");
+      var locate = document.createElement("button");
+      var processed = document.createElement("button");
+      var ignored = document.createElement("button");
+      row.className = "full-review-issue-row";
+      row.textContent = (issue.issueId || "问题") + "［" + (issue.ruleId || "未分类") + "／" +
+        (issue.propertyPath || "未标注") + "］" + (issue.anchorVerification === "verified" ? "" : "（锚点未验证）");
+      locate.type = "button";
+      locate.textContent = "定位原文";
+      processed.type = "button";
+      processed.textContent = "标记已处理";
+      ignored.type = "button";
+      ignored.textContent = "标记已忽略";
+      locate.addEventListener("click", function () { locateDeterministicFormatReviewIssue(issue, jobId); });
+      processed.disabled = issue.status === "processed";
+      ignored.disabled = issue.status === "ignored";
+      processed.addEventListener("click", function () {
+        updateDeterministicFormatReviewIssueStatus(jobId, issue.issueId, "processed");
+      });
+      ignored.addEventListener("click", function () {
+        updateDeterministicFormatReviewIssueStatus(jobId, issue.issueId, "ignored");
+      });
+      row.appendChild(locate);
+      row.appendChild(processed);
+      row.appendChild(ignored);
+      actions.appendChild(row);
+    });
+  }
+
+  function loadDeterministicFormatReviewIssuePage(jobId, report, cursor) {
+    var filters = state.deterministicFormatReviewIssueFilters || {};
+    var path = "/word/format-review/jobs/" + encodeURIComponent(jobId) +
+      "/issues?pageSize=20&sort=" + encodeURIComponent(filters.sort || "source");
+    if (filters.rule) { path += "&ruleId=" + encodeURIComponent(filters.rule); }
+    if (filters.severity) { path += "&severity=" + encodeURIComponent(filters.severity); }
+    if (filters.dataStatus) { path += "&dataStatus=" + encodeURIComponent(filters.dataStatus); }
+    if (cursor) { path += "&cursor=" + encodeURIComponent(cursor); }
+    return request(path, null, { timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }).then(function (body) {
+      var pageData = body.data || {};
+      pageData._cursor = cursor || "";
+      state.deterministicFormatReviewIssueJobId = jobId;
+      state.deterministicFormatReviewReport = report;
+      renderDeterministicFormatReviewIssuePage(report, pageData, jobId);
+    });
+  }
+
+  function loadDeterministicFormatReviewReport(jobId) {
+    return request("/word/format-review/jobs/" + encodeURIComponent(jobId) + "/report?format=summary", null, {
+      timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var report = body.data || {};
+      state.deterministicFormatReviewIssueCursorHistory = [""];
+      return loadDeterministicFormatReviewIssuePage(jobId, report, "");
+    });
+  }
+
+  function updateDeterministicFormatReviewIssueStatus(jobId, issueId, status) {
+    if (!jobId || !issueId || ["open", "processed", "ignored"].indexOf(status) < 0) {
+      return Promise.reject(new Error("格式审查问题状态参数无效。"));
+    }
+    return request(
+      "/word/format-review/jobs/" + encodeURIComponent(jobId) + "/issues/" + encodeURIComponent(issueId),
+      { status: status },
+      { method: "PATCH", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }
+    ).then(function () {
+      return loadDeterministicFormatReviewIssuePage(
+        jobId, state.deterministicFormatReviewReport,
+        state.deterministicFormatReviewIssueCursorHistory.slice(-1)[0] || ""
+      );
+    });
+  }
+
+  function changeDeterministicFormatReviewIssueFilter(name, value) {
+    if (!state.deterministicFormatReviewIssueFilters ||
+        ["rule", "severity", "dataStatus", "sort"].indexOf(name) < 0) {
+      return;
+    }
+    state.deterministicFormatReviewIssueFilters[name] = String(value || "");
+    state.deterministicFormatReviewIssueCursorHistory = [""];
+    if (state.deterministicFormatReviewIssueJobId && state.deterministicFormatReviewReport) {
+      loadDeterministicFormatReviewIssuePage(
+        state.deterministicFormatReviewIssueJobId,
+        state.deterministicFormatReviewReport,
+        ""
+      ).catch(function (error) { setStatus("格式问题筛选读取失败：" + describeFetchError(error)); });
+    }
+  }
+
+  function downloadDeterministicFormatReviewExport(jobId, format) {
+    var path = "/word/format-review/jobs/" + encodeURIComponent(jobId) +
+      "/report?format=" + encodeURIComponent(format);
+    return fetch(ADAPTER_BASE_URL + path).then(function (response) {
+      if (!response.ok) {
+        return response.json().then(function (body) { throw new Error(body.message || "格式审查报告导出失败。"); });
+      }
+      return format === "markdown" ? response.text() : response.json();
+    }).then(function (body) {
+      var extension = format === "markdown" ? "md" : "json";
+      var text = format === "markdown" ? body : JSON.stringify(body.data || body, null, 2);
+      var blob = new Blob([text], { type: format === "markdown" ? "text/markdown" : "application/json" });
+      var objectUrl = URL.createObjectURL(blob);
+      var link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = "word-format-review." + extension;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(objectUrl);
+    }).catch(function (error) { setStatus("格式审查报告导出失败：" + describeFetchError(error)); });
+  }
+
   function renderFullDocumentReviewReport(report, jobId) {
     var snapshot = report && report.snapshot || {};
     var coverage = report && report.coverage || {};
@@ -6763,17 +7064,27 @@
       }
       setTrace(body.traceId || job.traceId || jobId);
       if (job.status === "completed") {
-        state.deterministicFormatReviewJobId = "";
-        state.deterministicFormatReviewSnapshot = null;
-        setModelTaskBusy(false);
-        setResult(renderGroupedFormatReview(job.result || {}));
-        setStatus("确定性格式审查完成。");
+        loadDeterministicFormatReviewReport(jobId).then(function () {
+          state.deterministicFormatReviewJobId = "";
+          state.deterministicFormatReviewSnapshot = null;
+          setModelTaskBusy(false);
+          setDocumentReviewCancelVisible(false, false);
+          setStatus("确定性格式审查完成，结构化报告已生成。");
+        }).catch(function (error) {
+          state.deterministicFormatReviewJobId = "";
+          state.deterministicFormatReviewSnapshot = null;
+          setModelTaskBusy(false);
+          setDocumentReviewCancelVisible(false, false);
+          setStatus("确定性格式审查完成，但报告读取失败：" + describeFetchError(error));
+          setResult(renderGroupedFormatReview(job.result || {}));
+        });
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
         state.deterministicFormatReviewJobId = "";
         state.deterministicFormatReviewSnapshot = null;
         setModelTaskBusy(false);
+        setDocumentReviewCancelVisible(false, false);
         setStatus("确定性格式审查" + (job.status === "cancelled" ? "已取消。" : "失败。"));
         setResult(job.error && job.error.message || "确定性格式审查后台任务执行失败，请重试。");
         return;
@@ -6790,8 +7101,35 @@
       state.deterministicFormatReviewJobId = "";
       state.deterministicFormatReviewSnapshot = null;
       setModelTaskBusy(false);
+      setDocumentReviewCancelVisible(false, false);
       setStatus("确定性格式审查失败：" + describeFetchError(error));
       setResult(describeFetchError(error));
+    });
+  }
+
+  function cancelDeterministicFormatReviewJob() {
+    var jobId = state.deterministicFormatReviewJobId;
+    if (!jobId) {
+      return;
+    }
+    setDocumentReviewCancelVisible(true, true);
+    request("/word/format-review/jobs/" + encodeURIComponent(jobId), null, {
+      method: "DELETE",
+      timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      if (body.data && body.data.status === "cancelled") {
+        state.deterministicFormatReviewJobId = "";
+        state.deterministicFormatReviewSnapshot = null;
+        setModelTaskBusy(false);
+        setDocumentReviewCancelVisible(false, false);
+        setStatus("确定性格式审查任务已取消，未保留问题实例。");
+        setPlainResult("确定性格式审查任务已取消。");
+        return;
+      }
+      setStatus("已请求取消确定性格式审查任务，正在等待后台确认。");
+    }).catch(function (error) {
+      setDocumentReviewCancelVisible(true, false);
+      setStatus("取消确定性格式审查失败：" + describeFetchError(error));
     });
   }
 
@@ -6996,6 +7334,7 @@
         firstPass = extractDeterministicFormatReviewSnapshot(scope);
         firstPass.batches = helpers.buildDeterministicFormatReviewBatches(firstPass, 3500);
         ensureDeterministicFormatReviewPreparation(firstPass.editSequence, firstPass.documentIdentity);
+        state.deterministicFormatReviewDocumentIdentity = firstPass.documentIdentity;
         state.latestSelectionMode = firstPass.selectionMode;
       } catch (error) {
         setModelTaskBusy(false);
@@ -7091,11 +7430,13 @@
           throw new Error("adapter 未返回确定性格式审查任务编号。");
         }
         state.deterministicFormatReviewJobId = jobId;
+        setDocumentReviewCancelVisible(true, false);
         pollDeterministicFormatReviewJob(jobId);
       }).catch(function (error) {
         state.deterministicFormatReviewJobId = "";
         discardDeterministicFormatReviewSnapshot();
         setModelTaskBusy(false);
+        setDocumentReviewCancelVisible(false, false);
         setStatus("确定性格式审查失败：" + describeFetchError(error));
         setResult(describeFetchError(error));
       });
@@ -7282,6 +7623,8 @@
         cancelQueuedWritingJob();
       } else if (state.fullDocumentReviewJobId) {
         cancelFullDocumentReviewJob();
+      } else if (state.deterministicFormatReviewJobId) {
+        cancelDeterministicFormatReviewJob();
       } else if (state.fullDocumentReviewPreparing) {
         cancelFullDocumentReviewPreparation();
       } else {
@@ -7294,6 +7637,18 @@
       byId("full-review-filter-" + name).addEventListener("change", function (event) {
         changeFullDocumentReviewIssueFilter(name, event.target.value);
       });
+    });
+    byId("format-review-filter-rule").addEventListener("change", function (event) {
+      changeDeterministicFormatReviewIssueFilter("rule", event.target.value);
+    });
+    byId("format-review-filter-severity").addEventListener("change", function (event) {
+      changeDeterministicFormatReviewIssueFilter("severity", event.target.value);
+    });
+    byId("format-review-filter-data-status").addEventListener("change", function (event) {
+      changeDeterministicFormatReviewIssueFilter("dataStatus", event.target.value);
+    });
+    byId("format-review-filter-sort").addEventListener("change", function (event) {
+      changeDeterministicFormatReviewIssueFilter("sort", event.target.value);
     });
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {

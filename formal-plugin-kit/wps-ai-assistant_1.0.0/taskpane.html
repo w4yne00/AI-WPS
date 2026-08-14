@@ -279,6 +279,43 @@
             </div>
             <div id="full-review-issue-actions"></div>
           </div>
+          <div id="deterministic-format-review-issue-controls" class="full-document-review-issue-controls" hidden>
+            <div class="full-review-issue-filters" aria-label="格式审查问题筛选">
+              <label>规则
+                <input id="format-review-filter-rule" type="text" placeholder="可选规则标识" />
+              </label>
+              <label>严重程度
+                <select id="format-review-filter-severity">
+                  <option value="">全部</option>
+                  <option value="error">错误</option>
+                  <option value="warning">警告</option>
+                  <option value="info">提示</option>
+                </select>
+              </label>
+              <label>数据状态
+                <select id="format-review-filter-data-status">
+                  <option value="">全部</option>
+                  <option value="verified">已验证</option>
+                  <option value="insufficient">数据不足</option>
+                </select>
+              </label>
+              <label>排序
+                <select id="format-review-filter-sort">
+                  <option value="source">原文顺序</option>
+                  <option value="severity">严重程度</option>
+                  <option value="rule">规则标识</option>
+                </select>
+              </label>
+            </div>
+            <div>
+              <button id="btn-format-review-previous-page" type="button" disabled>上一页</button>
+              <span id="format-review-page-status" role="status" aria-live="polite"></span>
+              <button id="btn-format-review-next-page" type="button" disabled>下一页</button>
+              <button id="btn-format-review-export-json" type="button">导出 JSON</button>
+              <button id="btn-format-review-export-markdown" type="button">导出 Markdown</button>
+            </div>
+            <div id="format-review-issue-actions"></div>
+          </div>
         </section>
       </section>
 

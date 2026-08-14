@@ -1,3 +1,5 @@
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -21,6 +23,7 @@ from app.core.runtime_paths import resolve_runtime_paths
 from app.services.document_normalizer import body_paragraphs
 from app.services.long_task_coordinator import (
     LongTaskCoordinator,
+    LongTaskCancelled,
     get_long_task_coordinator,
 )
 from app.services.word.format_reviewer import WordFormatReviewer
@@ -31,6 +34,11 @@ MAX_REVIEW_CHARACTERS = 20_000
 MAX_PARAGRAPHS = 200
 MAX_SNAPSHOT_BYTES = 512 * 1024
 FORMAT_SNAPSHOT_SCHEMA_VERSION = "word.format_review.snapshot.v2"
+FORMAT_REPORT_SCHEMA_VERSION = "word.format_review.report.v1"
+FORMAT_REPORT_EXPORT_SCHEMA_VERSION = "word.format_review.export.v1"
+REPORT_RESULT_TTL_SECONDS = 24 * 60 * 60
+DEFAULT_ISSUE_PAGE_SIZE = 20
+MAX_ISSUE_PAGE_SIZE = 100
 MAX_FORMAT_BLOCKS = 10_000
 MAX_FORMAT_BATCHES = 1024
 MAX_FORMAT_BATCH_BYTES = 2 * 1024 * 1024
@@ -44,6 +52,65 @@ SNAPSHOT_TTL_SECONDS = 15 * 60
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
 FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context"}
 FORMAT_SCOPES = {"in_scope", "context"}
+FORMAT_ISSUE_STATUSES = {"open", "processed", "ignored"}
+FORMAT_ANCHOR_VERIFICATIONS = {"verified", "unverified"}
+FORMAT_SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
+FORMAT_RULE_PROPERTY_PATHS = {
+    "page_setup": "documentStructure.pageSetup",
+    "font_name": "format.fontName",
+    "font_size": "format.fontSize",
+    "style_name": "format.styleName",
+    "alignment": "format.alignment",
+    "line_spacing": "format.lineSpacing",
+    "first_line_indent": "format.firstLineIndent",
+    "structure.heading_hierarchy": "structure.headingLevel",
+    "structure.table_semantics": "table.semanticRole",
+    "structure.caption_association": "caption.association",
+    "structure.caption_placement": "caption.placement",
+    "structure.role_confirmation": "structure.role",
+}
+FORMAT_RULE_UNITS = {
+    "font_size": "pt",
+    "line_spacing": "multiple",
+    "first_line_indent": "twips",
+}
+
+
+def _report_sha256(report: Dict) -> str:
+    payload = {key: value for key, value in report.items() if key != "reportSha256"}
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        .encode("utf-8")
+    ).hexdigest()
+
+
+def _sanitize_export_value(value: object) -> object:
+    blocked = {
+        "blocks", "formatBlocks", "request", "fullSnapshot", "rawAnswer",
+        "rawResponse", "modelResponse", "apiKey", "apiKeyRef", "localPath",
+        "tempPath", "stagingPath", "errorDetail",
+    }
+    blocked_names = {
+        re.sub(r"[^a-z0-9]", "", key.casefold()) for key in blocked
+    } | {"fulltext", "documenttext", "snapshottext", "modelrawresponse"}
+    if isinstance(value, dict):
+        return {
+            key: _sanitize_export_value(item)
+            for key, item in value.items()
+            if not str(key).startswith("_")
+            and re.sub(r"[^a-z0-9]", "", str(key).casefold()) not in blocked_names
+        }
+    if isinstance(value, list):
+        return [_sanitize_export_value(item) for item in value]
+    return value
+
+
+def _short_report_value(value: object, limit: int = 400) -> str:
+    if isinstance(value, str):
+        text = value
+    else:
+        text = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
+    return text[:limit]
 
 
 def _model_dump(value):
@@ -77,8 +144,10 @@ class DeterministicFormatReviewService:
         self.coordinator = coordinator or get_long_task_coordinator()
         self._wall_clock = wall_clock
         self._snapshots: Dict[str, Dict] = {}
+        self._reports: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         self._snapshot_mutation_lock = threading.Lock()
+        self._cleanup_expired()
 
     @property
     def staging_root(self) -> Path:
@@ -481,6 +550,7 @@ class DeterministicFormatReviewService:
             )
         request = self._request_from_blocks(record, blocks, metrics)
         record["status"] = "committed"
+        record["committedAt"] = self._wall_clock()
         record["request"] = request
         record["contentSha256"] = metrics["contentSha256"]
         record["structureSha256"] = metrics["structureSha256"]
@@ -549,25 +619,270 @@ class DeterministicFormatReviewService:
             task_type=TASK_TYPE,
             runner=self._run,
             snapshot={
+                "jobId": job_id,
                 "request": request,
                 "snapshotId": snapshot_id,
                 "selectionMode": record.get("selectionMode", request.selection_mode),
                 "contentSha256": record.get("contentSha256", ""),
                 "structureSha256": record.get("structureSha256", ""),
                 "formatSha256": record.get("formatSha256", ""),
+                "committedAt": record.get("committedAt", self._wall_clock()),
                 "reviewCharacterCount": record.get("reviewCharacterCount", 0),
                 "sourceCoverage": deepcopy(record.get("sourceCoverage", {})),
             },
             failure_code="DETERMINISTIC_FORMAT_REVIEW_JOB_FAILED",
             failure_message="确定性格式审查后台任务执行失败，请稍后重试。",
             public_metadata={"runningMessage": "正在执行确定性格式审查。"},
+            allow_running_cancel=True,
         )
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         self._require_enabled()
         if not SAFE_ID.fullmatch(str(job_id or "")):
             return None
-        return self.coordinator.get(job_id, task_type=TASK_TYPE)
+        job = self.coordinator.get(job_id, task_type=TASK_TYPE)
+        if job is None:
+            return None
+        if job.get("status") == "completed":
+            report = self._get_report(job_id)
+            job["reportAvailable"] = isinstance(report, dict)
+            if isinstance(report, dict):
+                job["issueCount"] = report.get("issueCount", 0)
+                job["duplicateGroupCount"] = report.get("duplicateGroupCount", 0)
+                job["summary"] = deepcopy(report.get("summary", {}))
+                job["coverage"] = deepcopy(report.get("coverage", {}))
+        return job
+
+    def cancel_job(self, job_id: str) -> Optional[Dict]:
+        self._require_enabled()
+        job = self.coordinator.request_cancel(job_id, task_type=TASK_TYPE)
+        if job is None:
+            return None
+        if job.get("status") == "cancelled":
+            job["result"] = None
+            job["reportAvailable"] = False
+            job["cancelledSummary"] = {
+                "executionStatus": "cancelled",
+                "complianceStatus": "not_assessable",
+                "coverageStatus": "not_available",
+                "semanticStatus": "not_run",
+                "issueCount": 0,
+                "issuesRetained": False,
+            }
+        return job
+
+    def get_report(self, job_id: str) -> Dict:
+        report = self._require_report(job_id)
+        return self._public_report(report)
+
+    def list_issues(
+        self,
+        job_id: str,
+        page_size: Optional[int] = None,
+        cursor: str = "",
+        rule_id: str = "",
+        severity: str = "",
+        data_status: str = "",
+        status: str = "",
+        duplicate_group_id: str = "",
+        sort: str = "source",
+    ) -> Dict:
+        report = self._require_report(job_id)
+        size = DEFAULT_ISSUE_PAGE_SIZE if page_size is None else page_size
+        if type(size) is not int or not 0 < size <= MAX_ISSUE_PAGE_SIZE:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUE_PAGE_SIZE_INVALID",
+                "问题分页大小必须是 1 到 100 之间的整数。",
+            )
+        if severity and severity not in {"info", "warning", "error"}:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUE_FILTER_INVALID",
+                "问题严重程度筛选值无效。",
+            )
+        if status and status not in FORMAT_ISSUE_STATUSES:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUE_STATUS_INVALID",
+                "问题处理状态无效。",
+            )
+        if data_status and data_status not in {"verified", "insufficient", "not_assessable"}:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUE_FILTER_INVALID",
+                "问题数据状态筛选值无效。",
+            )
+        if sort not in {"source", "severity", "rule"}:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUE_SORT_INVALID",
+                "问题排序方式无效。",
+            )
+        if not isinstance(cursor, str) or len(cursor) > 256:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUES_CURSOR_INVALID",
+                "问题分页游标无效。",
+            )
+        issues = []
+        for index, issue in enumerate(report.get("issues", [])):
+            item = deepcopy(issue)
+            item.setdefault("status", "open")
+            item["_sourceOrder"] = index
+            if rule_id and item.get("ruleId") != rule_id:
+                continue
+            if severity and item.get("severity") != severity:
+                continue
+            if data_status and item.get("dataStatus") != data_status:
+                continue
+            if status and item.get("status") != status:
+                continue
+            if duplicate_group_id and item.get("duplicateGroupId") != duplicate_group_id:
+                continue
+            issues.append(item)
+        if sort == "severity":
+            issues.sort(key=lambda item: (
+                FORMAT_SEVERITY_ORDER.get(item.get("severity"), 99),
+                item.get("_sourceOrder", 0), item.get("issueId", ""),
+            ))
+        elif sort == "rule":
+            issues.sort(key=lambda item: (
+                item.get("ruleId", ""), item.get("_sourceOrder", 0), item.get("issueId", ""),
+            ))
+        else:
+            issues.sort(key=lambda item: (item.get("_sourceOrder", 0), item.get("issueId", "")))
+        offset = 0
+        if cursor:
+            cursor_issue_id = self._decode_issue_cursor(cursor)
+            matching_index = next(
+                (index for index, item in enumerate(issues)
+                 if item.get("issueId") == cursor_issue_id),
+                None,
+            )
+            if matching_index is None:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_ISSUES_CURSOR_INVALID",
+                    "问题分页游标已失效，请从第一页重新读取。",
+                )
+            offset = matching_index + 1
+        selected = issues[offset:offset + size]
+        for item in selected:
+            item.pop("_sourceOrder", None)
+        next_cursor = ""
+        if offset + size < len(issues) and selected:
+            next_cursor = self._encode_issue_cursor(selected[-1]["issueId"])
+        group_ids = {item.get("duplicateGroupId") for item in issues if item.get("duplicateGroupId")}
+        groups = [
+            {
+                "duplicateGroupId": group_id,
+                "issueIds": [item.get("issueId", "") for item in report.get("issues", [])
+                             if item.get("duplicateGroupId") == group_id],
+                "count": sum(1 for item in report.get("issues", []) if item.get("duplicateGroupId") == group_id),
+            }
+            for group_id in sorted(group_ids)
+            if sum(1 for item in report.get("issues", []) if item.get("duplicateGroupId") == group_id) > 1
+        ]
+        return {
+            "items": _sanitize_export_value(selected),
+            "total": len(issues),
+            "pageSize": size,
+            "page": (offset // size) + 1,
+            "nextCursor": next_cursor,
+            "hasMore": bool(next_cursor),
+            "duplicateGroups": groups,
+            "filters": {
+                "ruleId": rule_id,
+                "severity": severity,
+                "dataStatus": data_status,
+                "status": status,
+                "duplicateGroupId": duplicate_group_id,
+            },
+            "sort": sort,
+        }
+
+    def update_issue(
+        self,
+        job_id: str,
+        issue_id: str,
+        status: Optional[str] = None,
+        anchor_verification: Optional[str] = None,
+    ) -> Dict:
+        report = self._require_report(job_id)
+        if status is not None and status not in FORMAT_ISSUE_STATUSES:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUE_STATUS_INVALID",
+                "问题处理状态无效。",
+            )
+        if anchor_verification is not None and anchor_verification not in FORMAT_ANCHOR_VERIFICATIONS:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ANCHOR_VERIFICATION_INVALID",
+                "格式问题锚点验证状态无效。",
+            )
+        for issue in report.get("issues", []):
+            if issue.get("issueId") != issue_id:
+                continue
+            if status is not None:
+                issue["status"] = status
+            if anchor_verification is not None:
+                issue["anchorVerification"] = anchor_verification
+                source_anchor = issue.setdefault("sourceAnchor", {})
+                source_anchor["verification"] = anchor_verification
+            self._refresh_report_counts(report)
+            self._save_report(job_id, report)
+            return _sanitize_export_value(issue)
+        raise AdapterError(
+            "DETERMINISTIC_FORMAT_REVIEW_ISSUE_NOT_FOUND",
+            "格式问题不存在或报告已过期。",
+            status_code=404,
+        )
+
+    def export_report(self, job_id: str, output_format: str) -> object:
+        report = _sanitize_export_value(self._require_report(job_id))
+        if output_format == "json":
+            report.pop("reportExpiresAt", None)
+            report.pop("reportSha256", None)
+            report["exportSchemaVersion"] = FORMAT_REPORT_EXPORT_SCHEMA_VERSION
+            return report
+        if output_format != "markdown":
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_REPORT_FORMAT_INVALID",
+                "格式审查报告仅支持 json 或 markdown 格式。",
+            )
+        summary = report.get("summary", {})
+        lines = [
+            "# 格式审查报告", "", "导出版本：{0}".format(FORMAT_REPORT_EXPORT_SCHEMA_VERSION),
+            "", "## 四维状态",
+            "- 执行状态：{0}".format(summary.get("executionStatus", "")),
+            "- 合规状态：{0}".format(summary.get("complianceStatus", "")),
+            "- 覆盖状态：{0}".format(summary.get("coverageStatus", "")),
+            "- 语义增强状态：{0}".format(summary.get("semanticStatus", "")),
+            "", "## 统计",
+            "- 问题数量：{0}".format(report.get("issueCount", 0)),
+            "- 重复问题组：{0}".format(report.get("duplicateGroupCount", 0)),
+            "- 审查字符：{0}".format(report.get("coverage", {}).get("reviewCharacterCount", 0)),
+            "", report.get("disclaimer", ""), "",
+        ]
+        for index, issue in enumerate(report.get("issues", []), 1):
+            lines.extend([
+                "## {0}. {1}".format(index, issue.get("message", "格式问题")),
+                "- 问题编号：{0}".format(issue.get("issueId", "")),
+                "- 规则：{0}".format(issue.get("ruleId", "")),
+                "- 锚点：{0}".format(issue.get("anchorId", "")),
+                "- 属性路径：{0}".format(issue.get("propertyPath", "")),
+                "- 当前值：{0}".format(issue.get("currentValue", "")),
+                "- 期望值：{0}".format(issue.get("expectedValue", "")),
+                "- 证据：{0}".format(json.dumps(issue.get("evidence", []), ensure_ascii=False)),
+                "- 规则版本：{0}".format(issue.get("ruleVersion", "")),
+                "- 状态：{0}".format(issue.get("status", "open")),
+                "- 锚点验证：{0}".format(issue.get("anchorVerification", "unverified")),
+                "- 建议：{0}".format(issue.get("suggestion", "")), "",
+            ])
+        return "\n".join(lines)
+
+    def delete_report(self, job_id: str) -> Dict:
+        self._require_report(job_id)
+        with self._lock:
+            self._reports.pop(job_id, None)
+        try:
+            self.report_path(job_id).unlink(missing_ok=True)
+        except OSError:
+            pass
+        return {"jobId": job_id, "status": "deleted"}
 
     def delete_snapshot(self, snapshot_id: str, payload: dict) -> Dict:
         with self._snapshot_mutation_lock:
@@ -599,56 +914,302 @@ class DeterministicFormatReviewService:
         progress("extracting")
         request = snapshot["request"]
         try:
+            if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
+                raise LongTaskCancelled()
             result = self.reviewer.review(request, trace_id="")
-            issues = result.get("issues", [])
-            summary = result.setdefault("summary", {})
-            structure = request.content.document_structure or {}
-            coverage = structure.get("coverage", {}) or {}
-            header_footer = coverage.get("headerFooter", {})
-            coverage_status = "partial" if (
-                coverage.get("formatDataStatus") == "insufficient"
-                or int(coverage.get("unsupportedObjectCount", 0) or 0) > 0
-                or any(
-                    isinstance(item, dict) and item.get("status") == "unavailable"
-                    for item in header_footer.values()
-                )
-            ) else "complete"
-            summary.update(
-                {
-                    "executionStatus": "completed",
-                    "complianceStatus": (
-                        "not_assessable"
-                        if coverage_status != "complete"
-                        else ("violations_found" if issues else "passed")
-                    ),
-                    "coverageStatus": coverage_status,
-                    "semanticStatus": "not_needed",
-                    "readOnly": True,
-                }
-            )
-            if structure.get("formatSnapshotSchemaVersion") == FORMAT_SNAPSHOT_SCHEMA_VERSION:
-                summary.update(
-                    {
-                        "snapshotVerification": "two_pass_verified",
-                        "snapshotContentSha256": snapshot.get("contentSha256", ""),
-                        "snapshotStructureSha256": snapshot.get("structureSha256", ""),
-                        "snapshotFormatSha256": snapshot.get("formatSha256", ""),
-                        "scope": snapshot.get("selectionMode", "document"),
-                        "coverage": deepcopy(coverage),
-                        "capacityTier": self.classify_capacity(
-                            snapshot.get("reviewCharacterCount", 0)
-                        )["tier"],
-                        "complexity": deepcopy(
-                            self._format_metrics(
-                                structure.get("formatBlocks", []),
-                                snapshot.get("sourceCoverage"),
-                            )["complexity"]
-                        ),
-                    }
-                )
-            return result
+            if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
+                raise LongTaskCancelled()
+            report = self._build_report(result, snapshot)
+            self._save_report(snapshot["jobId"], report)
+            summary = report["summary"]
+            return {
+                "summary": deepcopy(summary),
+                "issueCount": report.get("issueCount", 0),
+                "duplicateGroupCount": report.get("duplicateGroupCount", 0),
+                "coverage": deepcopy(report.get("coverage", {})),
+                "reportAvailable": True,
+            }
         finally:
             self._remove_snapshot(snapshot.get("snapshotId", ""))
+
+    def _build_report(self, result: Dict, snapshot: Dict) -> Dict:
+        result = result if isinstance(result, dict) else {}
+        request = snapshot["request"]
+        summary = deepcopy(result.get("summary", {}))
+        structure = request.content.document_structure or {}
+        coverage = deepcopy(structure.get("coverage", {}) or {})
+        if not coverage:
+            coverage = deepcopy(snapshot.get("sourceCoverage", {}) or {})
+        header_footer = coverage.get("headerFooter", {})
+        coverage_status = "partial" if (
+            coverage.get("formatDataStatus") in {"insufficient", "partial"}
+            or int(coverage.get("unsupportedObjectCount", 0) or 0) > 0
+            or int(coverage.get("formatDataInsufficientBlockCount", 0) or 0) > 0
+            or any(
+                isinstance(item, dict) and item.get("status") == "unavailable"
+                for item in header_footer.values()
+            )
+        ) else "complete"
+        issues = [
+            self._enrich_issue(issue, request, snapshot, coverage_status)
+            for issue in result.get("issues", [])
+            if isinstance(issue, dict)
+        ]
+        groups = {}
+        for issue in issues:
+            groups.setdefault(issue["duplicateGroupId"], []).append(issue)
+        duplicate_groups = []
+        for group_id, members in sorted(groups.items()):
+            for issue in members:
+                issue["duplicateGroupSize"] = len(members)
+            if len(members) > 1:
+                duplicate_groups.append({
+                    "duplicateGroupId": group_id,
+                    "issueIds": [item["issueId"] for item in members],
+                    "count": len(members),
+                })
+        semantic_status = str(summary.get("semanticStatus") or "not_needed")
+        summary.update({
+            "executionStatus": "completed",
+            "complianceStatus": (
+                "not_assessable" if coverage_status != "complete"
+                else ("violations_found" if issues else "passed")
+            ),
+            "coverageStatus": coverage_status,
+            "semanticStatus": semantic_status,
+            "readOnly": True,
+            "issueCount": len(issues),
+            "zeroIssuesNotSufficient": coverage_status != "complete" or semantic_status in {"partial", "not_ready"},
+        })
+        if structure.get("formatSnapshotSchemaVersion") == FORMAT_SNAPSHOT_SCHEMA_VERSION:
+            summary.update({
+                "snapshotVerification": "two_pass_verified",
+                "snapshotContentSha256": snapshot.get("contentSha256", ""),
+                "snapshotStructureSha256": snapshot.get("structureSha256", ""),
+                "snapshotFormatSha256": snapshot.get("formatSha256", ""),
+                "scope": snapshot.get("selectionMode", "document"),
+                "capacityTier": self.classify_capacity(snapshot.get("reviewCharacterCount", 0))["tier"],
+                "complexity": deepcopy(self._format_metrics(
+                    structure.get("formatBlocks", []), snapshot.get("sourceCoverage")
+                ).get("complexity", {})),
+            })
+        report = {
+            "schemaVersion": FORMAT_REPORT_SCHEMA_VERSION,
+            "reviewMode": "deterministic",
+            "snapshot": {
+                "snapshotId": snapshot.get("snapshotId", ""),
+                "contentSha256": snapshot.get("contentSha256", ""),
+                "structureSha256": snapshot.get("structureSha256", ""),
+                "formatSha256": snapshot.get("formatSha256", ""),
+                "committedAt": snapshot.get("committedAt", self._wall_clock()),
+            },
+            "summary": summary,
+            "coverage": coverage,
+            "issues": issues,
+            "issueCount": len(issues),
+            "duplicateGroups": duplicate_groups,
+            "duplicateGroupCount": len(duplicate_groups),
+            "disclaimer": "覆盖完整仅表示声明范围未被静默截断，不承诺检出全部格式问题。",
+        }
+        self._refresh_report_counts(report)
+        return report
+
+    def _enrich_issue(
+        self, issue: Dict, request: WordDocumentRequest, snapshot: Dict, coverage_status: str
+    ) -> Dict:
+        allowed_fields = {
+            "ruleId", "category", "severity", "paragraphIndex", "role", "source",
+            "templateHash", "ruleVersion", "rulePackSha256", "message", "currentValue",
+            "expectedValue", "suggestion", "unit", "tolerance", "evidence", "dataStatus",
+            "status",
+        }
+        item = {key: deepcopy(value) for key, value in issue.items() if key in allowed_fields}
+        rule_id = str(item.get("ruleId") or "unknown")
+        paragraph_index = item.get("paragraphIndex")
+        try:
+            paragraph_index = int(paragraph_index) if paragraph_index is not None else None
+        except (TypeError, ValueError):
+            paragraph_index = None
+        blocks = (request.content.document_structure or {}).get("formatBlocks", []) or []
+        block = next(
+            (candidate for candidate in blocks
+             if isinstance(candidate, dict) and paragraph_index is not None
+             and int(candidate.get("paragraphIndex", 0) or 0) == paragraph_index),
+            None,
+        )
+        block_index = blocks.index(block) if block in blocks else -1
+        block_text = str((block or {}).get("text", ""))
+        anchor_id = str((block or {}).get("blockId") or "structure:{0}".format(rule_id))
+        property_path = FORMAT_RULE_PROPERTY_PATHS.get(rule_id, "format.{0}".format(rule_id))
+        current_value = item.get("currentValue", "")
+        expected_value = item.get("expectedValue", "")
+        range_data = deepcopy((block or {}).get("range", {}))
+        neighbor_ids = [
+            str(candidate.get("blockId", ""))
+            for candidate in blocks[max(0, block_index - 1):block_index + 2]
+            if isinstance(candidate, dict) and candidate.get("blockId")
+        ]
+        adjacent_hash = hashlib.sha256(
+            json.dumps(neighbor_ids, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        source_anchor = {
+            "anchorId": anchor_id,
+            "blockId": anchor_id,
+            "location": "table" if (block or {}).get("blockType") == "table" else "body",
+            "paragraphIndex": paragraph_index,
+            "range": range_data,
+            "textSha256": hashlib.sha256(block_text.encode("utf-8")).hexdigest(),
+            "text": block_text[:240],
+            "adjacentBlockIds": neighbor_ids,
+            "adjacentStructureSha256": adjacent_hash,
+            "verification": "verified",
+        }
+        semantic_identity = {
+            "snapshot": snapshot.get("contentSha256", ""),
+            "ruleId": rule_id,
+            "anchorId": anchor_id,
+            "propertyPath": property_path,
+            "currentValue": current_value,
+            "expectedValue": expected_value,
+        }
+        issue_id = "format-issue-" + hashlib.sha256(
+            json.dumps(semantic_identity, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:24]
+        group_identity = {
+            "ruleId": rule_id,
+            "propertyPath": property_path,
+            "currentValue": current_value,
+            "expectedValue": expected_value,
+        }
+        duplicate_group_id = "format-group-" + hashlib.sha256(
+            json.dumps(group_identity, ensure_ascii=False, sort_keys=True, default=str, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()[:24]
+        evidence = item.get("evidence")
+        if not isinstance(evidence, list) or not evidence:
+            evidence = [{
+                "kind": "deterministic_format_fact",
+                "propertyPath": property_path,
+                "currentValue": str(current_value)[:400],
+                "expectedValue": str(expected_value)[:400],
+                "anchorId": anchor_id,
+            }]
+        item.update({
+            "issueId": issue_id,
+            "ruleId": rule_id,
+            "category": item.get("category") or "format",
+            "severity": item.get("severity") or "warning",
+            "paragraphIndex": paragraph_index,
+            "anchorId": anchor_id,
+            "sourceAnchor": source_anchor,
+            "propertyPath": property_path,
+            "unit": item.get("unit") or FORMAT_RULE_UNITS.get(rule_id, ""),
+            "evidence": evidence,
+            "dataStatus": item.get("dataStatus") or ("verified" if coverage_status == "complete" else "insufficient"),
+            "duplicateGroupId": duplicate_group_id,
+            "duplicateGroupSize": 1,
+            "anchorVerification": "verified",
+            "status": item.get("status") or "open",
+            "ruleVersion": item.get("ruleVersion") or "",
+            "currentValue": _short_report_value(current_value),
+            "expectedValue": _short_report_value(expected_value),
+            "message": _short_report_value(item.get("message", "格式问题"), 800),
+            "suggestion": _short_report_value(item.get("suggestion", ""), 1000),
+        })
+        return _sanitize_export_value(item)
+
+    @staticmethod
+    def _refresh_report_counts(report: Dict) -> None:
+        issues = report.get("issues", [])
+        report["issueCount"] = len(issues)
+        report["severityCounts"] = {
+            severity: sum(1 for issue in issues if issue.get("severity") == severity)
+            for severity in ("error", "warning", "info")
+        }
+        report["statusCounts"] = {
+            status: sum(1 for issue in issues if issue.get("status", "open") == status)
+            for status in ("open", "processed", "ignored")
+        }
+        group_sizes = {}
+        for issue in issues:
+            group_id = issue.get("duplicateGroupId")
+            if group_id:
+                group_sizes[group_id] = group_sizes.get(group_id, 0) + 1
+        report["duplicateGroupCount"] = sum(1 for count in group_sizes.values() if count > 1)
+
+    @staticmethod
+    def _encode_issue_cursor(issue_id: str) -> str:
+        return base64.urlsafe_b64encode(issue_id.encode("utf-8")).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_issue_cursor(cursor: str) -> str:
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            issue_id = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        except (ValueError, UnicodeError, binascii.Error):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUES_CURSOR_INVALID",
+                "问题分页游标无效。",
+            )
+        if not SAFE_ID.fullmatch(issue_id):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_ISSUES_CURSOR_INVALID",
+                "问题分页游标无效。",
+            )
+        return issue_id
+
+    def _require_report(self, job_id: str) -> Dict:
+        self._require_enabled()
+        report = self._get_report(job_id)
+        if not isinstance(report, dict):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_REPORT_NOT_FOUND",
+                "格式审查报告不存在或已过期。",
+                status_code=404,
+            )
+        return report
+
+    def _save_report(self, job_id: str, report: Dict) -> None:
+        stored = deepcopy(report)
+        stored["reportExpiresAt"] = report.get(
+            "reportExpiresAt", self._wall_clock() + REPORT_RESULT_TTL_SECONDS
+        )
+        stored["reportSha256"] = _report_sha256(stored)
+        self._ensure_staging_root()
+        with self._lock:
+            self._reports[job_id] = stored
+        self._write_private_json(self.report_path(job_id), stored)
+
+    def _get_report(self, job_id: str) -> Optional[Dict]:
+        with self._lock:
+            report = self._reports.get(job_id)
+        path = self.report_path(job_id)
+        if not isinstance(report, dict) and path.exists():
+            try:
+                report = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                report = None
+        if not isinstance(report, dict):
+            return None
+        if report.get("reportSha256") != _report_sha256(report) or self._wall_clock() >= float(report.get("reportExpiresAt", 0) or 0):
+            with self._lock:
+                self._reports.pop(job_id, None)
+            try:
+                path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+        with self._lock:
+            self._reports[job_id] = report
+        return deepcopy(report)
+
+    @staticmethod
+    def _public_report(report: Dict) -> Dict:
+        public = _sanitize_export_value(report)
+        public.pop("issues", None)
+        public.pop("reportExpiresAt", None)
+        public.pop("reportSha256", None)
+        public["issuesEndpoint"] = "issues"
+        return public
 
     def _require_enabled(self) -> None:
         if not deterministic_format_review_enabled():
@@ -668,6 +1229,11 @@ class DeterministicFormatReviewService:
 
     def snapshot_path(self, snapshot_id: str) -> Path:
         return self._snapshot_dir(snapshot_id)
+
+    def report_path(self, job_id: str) -> Path:
+        if not SAFE_ID.fullmatch(str(job_id or "")):
+            return self.staging_root / "report-invalid.json"
+        return self.staging_root / "report-{0}.json".format(job_id)
 
     def _snapshot_dir(self, snapshot_id: str) -> Path:
         if not SAFE_ID.fullmatch(str(snapshot_id or "")):
@@ -1420,6 +1986,23 @@ class DeterministicFormatReviewService:
             children = list(root.iterdir())
         except OSError:
             return
+        for child in children:
+            if not child.is_file() or not child.name.startswith("report-"):
+                continue
+            job_id = child.name[len("report-"):-len(".json")] if child.name.endswith(".json") else ""
+            try:
+                report = json.loads(child.read_text(encoding="utf-8"))
+                expired = (
+                    not isinstance(report, dict)
+                    or report.get("reportSha256") != _report_sha256(report)
+                    or now >= float(report.get("reportExpiresAt", 0) or 0)
+                )
+                if expired:
+                    child.unlink(missing_ok=True)
+                    with self._lock:
+                        self._reports.pop(job_id, None)
+            except (OSError, ValueError, TypeError):
+                continue
         for child in children:
             if not child.is_dir() or not SAFE_ID.fullmatch(child.name):
                 continue

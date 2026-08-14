@@ -109,7 +109,9 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         self.assertEqual(job["result"]["summary"]["executionStatus"], "completed")
         self.assertGreaterEqual(job["result"]["summary"]["issueCount"], 1)
         self.assertNotIn("changes", job["result"])
-        self.assertFalse(list(Path(self.temp_dir.name).iterdir()))
+        remaining_files = list(Path(self.temp_dir.name).iterdir())
+        self.assertEqual([path.name for path in remaining_files], ["report-format-contract-job-1.json"])
+        self.assertTrue(job["reportAvailable"])
 
         config = self.client.get("/config")
         self.assertTrue(config.json()["data"]["features"]["deterministicFormatReviewEnabled"])

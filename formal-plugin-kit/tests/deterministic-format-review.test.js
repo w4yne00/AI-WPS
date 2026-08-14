@@ -51,6 +51,21 @@ const poll = functionSource("pollDeterministicFormatReviewJob");
 assert.ok(poll.includes("/word/format-review/jobs/"));
 assert.ok(poll.includes('job.status === "completed"'));
 assert.ok(poll.includes("renderGroupedFormatReview"));
+assert.ok(poll.includes("loadDeterministicFormatReviewReport"));
+
+const issuePage = functionSource("renderDeterministicFormatReviewIssuePage");
+["executionStatus", "complianceStatus", "coverageStatus", "semanticStatus", "issueId",
+  "propertyPath", "duplicateGroupSize", "anchorVerification"].forEach((token) => {
+  assert.ok(issuePage.includes(token), token);
+});
+const locate = functionSource("locateDeterministicFormatReviewIssue");
+["textSha256", "adjacentStructureSha256", "anchorVerification", "markDeterministicFormatReviewAnchorVerification"].forEach((token) => {
+  assert.ok(locate.includes(token), token);
+});
+assert.ok(functionSource("loadDeterministicFormatReviewIssuePage").includes("dataStatus"));
+assert.ok(functionSource("downloadDeterministicFormatReviewExport").includes("word-format-review"));
+assert.ok(functionSource("bindEvents").includes("format-review-filter-data-status"));
+assert.ok(functionSource("cancelDeterministicFormatReviewJob").includes('method: "DELETE"'));
 
 assert.ok(js.includes('configData.features && configData.features.deterministicFormatReviewEnabled'));
 assert.ok(js.includes('byId("btn-run-deterministic-format-review")'));

@@ -700,18 +700,31 @@ class ApiEnvelope(BaseModel):
 
 
 class FormatReviewIssue(BaseModel):
+    issue_id: str = Field(default="", alias="issueId")
     rule_id: str = Field(alias="ruleId")
     category: Literal["format"] = "format"
     severity: Literal["info", "warning", "error"] = "warning"
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
     role: str = "body"
+    anchor_id: str = Field(default="", alias="anchorId")
+    source_anchor: Dict[str, Any] = Field(default_factory=dict, alias="sourceAnchor")
+    property_path: str = Field(default="", alias="propertyPath")
+    unit: str = ""
+    tolerance: Optional[float] = None
+    evidence: List[Any] = Field(default_factory=list)
+    data_status: str = Field(default="verified", alias="dataStatus")
+    duplicate_group_id: str = Field(default="", alias="duplicateGroupId")
+    duplicate_group_size: int = Field(default=1, alias="duplicateGroupSize")
+    anchor_verification: Literal["verified", "unverified"] = Field(
+        default="verified", alias="anchorVerification"
+    )
     source: str = ""
     template_hash: str = Field(default="", alias="templateHash")
     rule_version: str = Field(default="", alias="ruleVersion")
     rule_pack_sha256: str = Field(default="", alias="rulePackSha256")
     message: str
-    current_value: str = Field(default="", alias="currentValue")
-    expected_value: str = Field(default="", alias="expectedValue")
+    current_value: Any = Field(default="", alias="currentValue")
+    expected_value: Any = Field(default="", alias="expectedValue")
     suggestion: str = ""
 
 
