@@ -267,6 +267,15 @@ def check_contracts(port: int, expected_version: str) -> None:
     policy = responses["writing_policy_summary"]["data"]
     if "totalCount" not in policy or "enabledCount" not in policy:
         raise GateFailure("WRITING_POLICY_CONTRACT_INVALID")
+    openapi = get_json(port, "/openapi.json")
+    public_format_review_paths = {
+        "/word/format-review",
+        "/word/format-review/snapshots",
+        "/word/format-review/jobs",
+    }
+    if not public_format_review_paths.issubset(openapi.get("paths", {})):
+        raise GateFailure("PUBLIC_FORMAT_REVIEW_API_CONTRACT_INVALID")
+    print("public_format_review_api=passed")
     print("key_contracts=passed count={0}".format(len(CHECK_ENDPOINTS)))
 
 

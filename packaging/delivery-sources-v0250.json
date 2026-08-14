@@ -1,0 +1,96 @@
+{
+  "schemaVersion": 1,
+  "version": "0.25.0-alpha",
+  "basePolicy": "delivery-sources-v0240.json",
+  "generatedFiles": [],
+  "entries": [
+    {
+      "type": "file",
+      "source": "packaging/v0250-delivery.md",
+      "target": "docs/v0250-delivery.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0250-format-rule-assets-manifest.json",
+      "target": "format-rule-assets-manifest.json"
+    },
+    {
+      "type": "file",
+      "source": "packaging/reference-workflows/format-semantics-text-v1.yml",
+      "target": "reference-workflows/format-semantics-text-v1.yml"
+    },
+    {
+      "type": "file",
+      "source": "packaging/reference-workflows/format-semantics-vision-v1.yml",
+      "target": "reference-workflows/format-semantics-vision-v1.yml"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/core/models.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/core/models.py",
+      "replace": true
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/authorized_format_algorithm.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/authorized_format_algorithm.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/deterministic_format_review.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/deterministic_format_review.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/format_reviewer.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/format_reviewer.py",
+      "replace": true
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/format_rule_pack.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/format_rule_pack.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/format_semantics.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/format_semantics.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/image_semantics.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/image_semantics.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json",
+      "target": "packages/adapter-start-kit/adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/tools/compile_format_rule_pack.py",
+      "target": "packages/adapter-start-kit/adapter_service/tools/compile_format_rule_pack.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/vendor/__init__.py",
+      "target": "packages/adapter-start-kit/adapter_service/vendor/__init__.py"
+    },
+    {
+      "type": "tree",
+      "source": "adapter_service/vendor/wx_doc_format_algorithm",
+      "target": "packages/adapter-start-kit/adapter_service/vendor/wx_doc_format_algorithm",
+      "include": [
+        "__init__.py",
+        "algorithm.py",
+        "SOURCE_MANIFEST.json",
+        "THIRD_PARTY_NOTICES.md"
+      ]
+    },
+    {
+      "type": "file",
+      "source": "packaging/audit_v0250_delivery.py",
+      "target": "scripts/audit_v0250_delivery.py"
+    }
+  ]
+}

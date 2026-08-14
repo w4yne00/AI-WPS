@@ -59,6 +59,19 @@ def run_delivery_audit(delivery_root: Path) -> None:
     )
     require(result.returncode == 0, result.stdout.strip() or "DELIVERY_AUDIT_FAILED")
     print("lifecycle_delivery_audit=passed")
+    final_auditor = delivery_root / "scripts/audit_v0250_delivery.py"
+    if final_auditor.is_file():
+        final_result = subprocess.run(
+            [sys.executable, str(final_auditor), str(delivery_root)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        require(
+            final_result.returncode == 0,
+            final_result.stdout.strip() or "V0250_DELIVERY_AUDIT_FAILED",
+        )
+        print("lifecycle_v0250_delivery_audit=passed")
 
 
 def adapter_modules(delivery_root: Path):
@@ -345,17 +358,18 @@ def run_v0231_upgrade_scenario(
     temp_root: Path,
     expected_version: str,
     reserve_port,
+    baseline_version: str = "0.23.1-alpha",
 ) -> None:
-    root = temp_root / "upgrade-v0231"
+    root = temp_root / "upgrade-{0}".format(baseline_version.replace(".", "_"))
     port = reserve_port()
     baseline_result, baseline_environment = run_installer(
         baseline_root, root, port
     )
     try:
-        verify_committed_install(root, "0.23.1-alpha")
+        verify_committed_install(root, baseline_version)
         install_root = root / "install"
         jsaddons = root / "jsaddons"
-        baseline_release = install_root / "releases/0.23.1-alpha"
+        baseline_release = install_root / "releases" / baseline_version
         components = {
             "adapter_release": baseline_release,
             "word_plugin": jsaddons / "wps-ai-assistant_1.0.0",
@@ -372,11 +386,11 @@ def run_v0231_upgrade_scenario(
             "ppt_plugin",
             "runtime_state_snapshot",
         ):
-            (components[name] / ".v0231-lifecycle-sentinel").write_text(
+            (components[name] / ".baseline-lifecycle-sentinel").write_text(
                 name + "\n", encoding="utf-8"
             )
         with components["publish_manifest"].open("a", encoding="utf-8") as handle:
-            handle.write("\n<!-- v0231-lifecycle-sentinel -->\n")
+            handle.write("\n<!-- baseline-lifecycle-sentinel -->\n")
         before = {
             name: component_fingerprint(path) for name, path in components.items()
         }
@@ -391,20 +405,54 @@ def run_v0231_upgrade_scenario(
         )
         require(
             "release_generation_switch_failed" in interrupted.stdout,
-            "V0231_UPGRADE_INTERRUPTION_NOT_INJECTED",
+            "BASELINE_UPGRADE_INTERRUPTION_NOT_INJECTED",
         )
         after = {
             name: component_fingerprint(path) for name, path in components.items()
         }
-        require(before == after, "V0231_UPGRADE_ROLLBACK_MISMATCH")
-        wait_for_adapter_version(port, "0.23.1-alpha")
+        require(before == after, "BASELINE_UPGRADE_ROLLBACK_MISMATCH")
+        wait_for_adapter_version(port, baseline_version)
         require(
             not (install_root / "releases" / expected_version).exists(),
             "V0231_UPGRADE_PARTIAL_RELEASE_LEFT",
         )
+        preserved_state = {
+            "adapter": component_fingerprint(install_root / "state/adapter.json"),
+            "keys": component_fingerprint(install_root / "state/provider_api_keys"),
+            "writing_policy": component_fingerprint(
+                install_root / "state/writing_policies.db"
+            ),
+        }
+        stop_installed_adapter(root, interrupted_environment)
+        successful, successful_environment = run_installer(
+            delivery_root, root, port
+        )
+        try:
+            verify_committed_install(root, expected_version)
+            require(
+                "phase1_install_done=true" in successful.stdout,
+                "BASELINE_UPGRADE_SUCCESS_NOT_COMMITTED",
+            )
+            require(
+                component_fingerprint(install_root / "state/adapter.json")
+                == preserved_state["adapter"],
+                "BASELINE_UPGRADE_CONFIGURATIONS_NOT_PRESERVED",
+            )
+            require(
+                component_fingerprint(install_root / "state/provider_api_keys")
+                == preserved_state["keys"],
+                "BASELINE_UPGRADE_KEY_REFERENCES_NOT_PRESERVED",
+            )
+            require(
+                component_fingerprint(install_root / "state/writing_policies.db")
+                == preserved_state["writing_policy"],
+                "BASELINE_UPGRADE_WRITING_POLICY_NOT_PRESERVED",
+            )
+        finally:
+            stop_installed_adapter(root, successful_environment)
     finally:
         stop_installed_adapter(root, baseline_environment)
-    print("lifecycle_scenario=upgrade_v0231 passed")
+    print("lifecycle_scenario=upgrade_baseline version={0} passed".format(baseline_version))
 
 
 def run_preflight_faults(
@@ -657,6 +705,7 @@ def run_gate(
     archive: Path,
     expected_version: str,
     baseline_archive: Optional[Path],
+    baseline_version: str = "0.23.1-alpha",
 ) -> None:
     runtime_gate = load_runtime_gate()
     runtime_gate.require_python38()
@@ -676,6 +725,7 @@ def run_gate(
             temp_root,
             expected_version,
             runtime_gate.reserve_port,
+            baseline_version,
         )
         run_install_scenarios(
             delivery_root, temp_root / "install-scenarios", expected_version, runtime_gate.reserve_port
@@ -703,6 +753,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("archive", nargs="?", type=Path)
     parser.add_argument("--expected-version")
     parser.add_argument("--baseline-archive", type=Path)
+    parser.add_argument("--baseline-version", default="0.23.1-alpha")
     parser.add_argument("--list", action="store_true")
     args = parser.parse_args(argv)
     if args.list:
@@ -715,6 +766,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.archive.resolve(),
             args.expected_version,
             args.baseline_archive.resolve() if args.baseline_archive else None,
+            args.baseline_version,
         )
     except (
         LifecycleFailure,
