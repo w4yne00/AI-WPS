@@ -1083,6 +1083,36 @@ function testRenderReadableFormatReviewHandlesNoIssues() {
   assert.ok(markdown.includes("识别来源：本地规则"));
 }
 
+function testRenderReadableFormatReviewExplainsModelExecutionDiagnostics() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: {
+      scope: "document",
+      templateId: "technical-file-format-requirements",
+      provider: "local",
+      modelConfigurationName: "格式审查主配置",
+      modelConfigurationId: "config-format-1",
+      modelConfigurationVersion: 7,
+      accessMethod: "direct_model",
+      semanticStatus: "degraded",
+      aiCandidateCount: 2,
+      aiAttempted: true,
+      aiCallCount: 1,
+      aiAcceptedCount: 0,
+      aiFallbackReason: "format_semantic_zero_accepted"
+    },
+    issues: []
+  });
+
+  assert.ok(markdown.includes("模型配置：格式审查主配置"));
+  assert.ok(markdown.includes("配置 ID：config-format-1"));
+  assert.ok(markdown.includes("配置修订：7"));
+  assert.ok(markdown.includes("接入方式：模型直连"));
+  assert.ok(markdown.includes("语义增强状态：未完整生效"));
+  assert.ok(markdown.includes("模型调用事实：已尝试，候选 2、调用 1、接受 0"));
+  assert.ok(markdown.includes("模型已调用但没有接受任何结果"));
+  assert.ok(markdown.includes("识别来源：本地规则"));
+}
+
 function testRenderReadableFormatReviewLocalizesOtherFeedback() {
   const markdown = helpers.renderReadableFormatReview({
     summary: {
@@ -1445,6 +1475,7 @@ testBuildSmartWritePreviewModelSeparatesMultipleChangedSegments();
 testBuildSmartWritePreviewModelHandlesEmptyResult();
 testRenderReadableFormatReviewUsesChineseLabelsAndValues();
 testRenderReadableFormatReviewHandlesNoIssues();
+testRenderReadableFormatReviewExplainsModelExecutionDiagnostics();
 testRenderReadableFormatReviewLocalizesOtherFeedback();
 testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();

@@ -47,7 +47,20 @@ class _IssueReviewer:
                     "suggestion": "建议调整字号。",
                 },
             ],
-            "summary": {"provider": "local", "templateId": "technical-file-format-requirements"},
+            "summary": {
+                "provider": "local",
+                "templateId": "technical-file-format-requirements",
+                "modelConfigurationName": "格式审查主配置",
+                "modelConfigurationId": "config-format-1",
+                "modelConfigurationVersion": 7,
+                "accessMethod": "direct_model",
+                "semanticStatus": "degraded",
+                "aiCandidateCount": 2,
+                "aiAttempted": True,
+                "aiCallCount": 1,
+                "aiAcceptedCount": 0,
+                "aiFallbackReason": "format_semantic_zero_accepted",
+            },
         }
 
 
@@ -241,6 +254,9 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         markdown = self.service.export_report(job["jobId"], "markdown")
         self.assertIn("# 格式审查报告", markdown)
         self.assertIn(issue["issueId"], markdown)
+        self.assertIn("模型配置：格式审查主配置", markdown)
+        self.assertIn("模型调用事实：已尝试，候选 2、调用 1、接受 0", markdown)
+        self.assertIn("语义增强降级原因：模型已调用但没有接受任何结果", markdown)
 
     def test_report_expiry_and_anchor_verification_are_public_lifecycle(self):
         now = [1000.0]

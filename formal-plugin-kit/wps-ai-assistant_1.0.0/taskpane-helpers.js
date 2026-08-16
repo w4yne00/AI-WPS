@@ -1590,6 +1590,7 @@
     appendix_heading3: "附录三级标题",
     table_body: "表正文",
     body: "正文",
+    heading: "标题",
     page_setup: "页面设置"
   };
   var FORMAT_REVIEW_RULE_TEXT = {
@@ -1689,14 +1690,62 @@
   function formatAiFallbackReason(reason) {
     var reasonText = {
       no_paragraphs: "未读取到正文段落，未调用模型后台；请确认当前文档对象能暴露正文段落或全文文本。",
+      no_candidates: "没有需要模型确认的模糊候选，未调用模型后台。",
       provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
+      format_semantic_protocol_not_ready: "模型语义协议尚未就绪，已使用本地模板规则。",
+      model_capability_unknown: "模型能力状态未知，已使用本地模板规则。",
       dify_response_not_role_json: "模型后台未返回段落角色 JSON，已使用本地模板规则。",
       provider_request_failed: "模型后台请求失败，已使用本地模板规则。",
+      format_semantic_response_invalid: "模型后台响应无法解析或不符合协议，已使用本地模板规则。",
+      format_semantic_candidate_out_of_range: "模型后台返回了不在候选范围内的结果，已使用本地模板规则。",
+      format_semantic_low_confidence: "模型后台结果置信度不足，已使用本地模板规则。",
+      format_semantic_zero_accepted: "模型已调用但没有接受任何结果，已使用本地模板规则。",
       dify_response_no_valid_roles: "模型后台返回的角色无效，已使用本地模板规则。",
       dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。",
-      ai_budget_limited: "文档段落较多，AI 角色识别仅处理前 40 段；其余段落已使用本地模板规则。"
+      ai_budget_limited: "文档段落较多，AI 角色识别仅处理前 40 段；其余段落已使用本地模板规则。",
+      semantic_phase_timeout: "模型语义增强处理超时，已使用本地模板规则。"
     };
-    return reasonText[reason] || (reason ? "未记录的 AI 兜底原因，已使用本地模板规则。" : "");
+    return reasonText[reason] || (reason ? "模型语义增强未完成，已使用本地模板规则。" : "");
+  }
+
+  function formatReviewSemanticStatus(value) {
+    var labels = {
+      not_needed: "无需语义补充",
+      completed: "语义增强已完成",
+      degraded: "未完整生效",
+      partial: "部分完成",
+      not_ready: "未就绪"
+    };
+    return labels[String(value || "")] || "未记录";
+  }
+
+  function formatReviewAccessMethod(value) {
+    var labels = {
+      workflow_platform: "平台工作流",
+      direct_model: "模型直连"
+    };
+    return labels[String(value || "")] || "未记录";
+  }
+
+  function appendFormatReviewModelDiagnostics(lines, summary) {
+    var reason = formatAiFallbackReason(summary.aiFallbackReason);
+    var attempted = summary.aiAttempted
+      ? "已尝试"
+      : (summary.aiFallbackReason === "no_candidates" ? "未尝试（无候选）" : "未尝试");
+    lines.push("- 模型配置：" + (summary.modelConfigurationName || "未记录"));
+    lines.push("- 配置 ID：" + (summary.modelConfigurationId || "未记录"));
+    lines.push("- 配置修订：" + (summary.modelConfigurationVersion || "未记录"));
+    lines.push("- 接入方式：" + formatReviewAccessMethod(summary.accessMethod));
+    lines.push("- 语义增强状态：" + formatReviewSemanticStatus(summary.semanticStatus));
+    lines.push(
+      "- 模型调用事实：" + attempted +
+      "，候选 " + Number(summary.aiCandidateCount || 0) +
+      "、调用 " + Number(summary.aiCallCount || 0) +
+      "、接受 " + Number(summary.aiAcceptedCount || 0)
+    );
+    if (reason) {
+      lines.push("- 语义增强降级原因：" + reason);
+    }
   }
 
   function formatReviewRole(role) {
@@ -1944,6 +1993,7 @@
       lines.push("");
       lines.push("- 模板：" + formatReviewTemplate(summary.templateId));
       lines.push("- 识别来源：" + describeFormatReviewProvider(summary.provider));
+      appendFormatReviewModelDiagnostics(lines, summary);
       return lines.join("\n").trim();
     }
 
@@ -1988,6 +2038,7 @@
     lines.push("");
     lines.push("- 模板：" + formatReviewTemplate(summary.templateId));
     lines.push("- 识别来源：" + describeFormatReviewProvider(summary.provider));
+    appendFormatReviewModelDiagnostics(lines, summary);
     if (typeof summary.aiClassifiedParagraphCount !== "undefined") {
       lines.push(
         "- AI 识别段落：" + (summary.aiClassifiedParagraphCount || 0) +

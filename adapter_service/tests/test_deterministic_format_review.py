@@ -36,6 +36,7 @@ class RecordingFormatReviewer:
             "maxOutputTokens": 4096,
             "contextWindowTokens": 40000,
             "modelConfigurationId": "config-format-1",
+            "modelConfigurationName": "格式审查主配置",
             "modelConfiguration": {"configVersion": 7, "taskType": "word.format_review"},
         }
 
@@ -194,6 +195,12 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
             reviewer.review_calls[0]["taskAuth"]["modelConfigurationId"],
             "config-format-1",
         )
+        report = self.service.get_report("format-auth-freeze-job")
+        self.assertEqual(report["summary"]["modelConfigurationName"], "格式审查主配置")
+        self.assertEqual(report["summary"]["modelConfigurationId"], "config-format-1")
+        self.assertEqual(report["summary"]["modelConfigurationVersion"], 7)
+        self.assertEqual(report["summary"]["accessMethod"], "direct_model")
+        self.assertNotIn("apiKey", report["summary"])
 
 
 if __name__ == "__main__":

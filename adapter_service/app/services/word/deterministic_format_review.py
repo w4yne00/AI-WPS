@@ -28,7 +28,10 @@ from app.services.long_task_coordinator import (
     LongTaskCancelled,
     get_long_task_coordinator,
 )
-from app.services.word.format_reviewer import WordFormatReviewer
+from app.services.word.format_reviewer import (
+    WordFormatReviewer,
+    build_format_review_model_identity,
+)
 from app.services.word.image_semantics import (
     ImageAssetStore,
     collect_image_inventory,
@@ -81,6 +84,31 @@ FORMAT_RULE_UNITS = {
     "line_spacing": "multiple",
     "first_line_indent": "twips",
 }
+
+
+def _report_model_access_method(value: object) -> str:
+    labels = {
+        "workflow_platform": "平台工作流",
+        "direct_model": "模型直连",
+    }
+    return labels.get(str(value or ""), "未记录")
+
+
+def _report_semantic_reason(value: object) -> str:
+    labels = {
+        "no_candidates": "没有需要模型确认的模糊候选，无需调用模型。",
+        "provider_not_configured": "未配置可用的模型配置。",
+        "format_semantic_protocol_not_ready": "模型语义协议尚未就绪。",
+        "model_capability_unknown": "模型能力状态未知，未继续调用。",
+        "provider_request_failed": "模型请求失败。",
+        "format_semantic_response_invalid": "模型响应无法解析或不符合协议。",
+        "format_semantic_candidate_out_of_range": "模型返回了不在候选范围内的结果。",
+        "format_semantic_low_confidence": "模型结果置信度低于接受阈值。",
+        "format_semantic_zero_accepted": "模型已调用但没有接受任何结果。",
+        "ai_budget_limited": "候选数量超过本轮模型处理上限。",
+        "semantic_phase_timeout": "语义增强处理超时。",
+    }
+    return labels.get(str(value or ""), "")
 
 
 def _report_sha256(report: Dict) -> str:
@@ -954,6 +982,22 @@ class DeterministicFormatReviewService:
                 "格式审查报告仅支持 json 或 markdown 格式。",
             )
         summary = report.get("summary", {})
+        attempted = "已尝试" if summary.get("aiAttempted") else "未尝试"
+        candidate_count = int(summary.get("aiCandidateCount", 0) or 0)
+        call_count = int(summary.get("aiCallCount", 0) or 0)
+        accepted_count = int(summary.get("aiAcceptedCount", 0) or 0)
+        reason_text = _report_semantic_reason(summary.get("aiFallbackReason"))
+        model_lines = [
+            "- 模型配置：{0}".format(summary.get("modelConfigurationName") or "未记录"),
+            "- 配置 ID：{0}".format(summary.get("modelConfigurationId") or "未记录"),
+            "- 配置修订：{0}".format(summary.get("modelConfigurationVersion") or "未记录"),
+            "- 接入方式：{0}".format(_report_model_access_method(summary.get("accessMethod"))),
+            "- 模型调用事实：{0}，候选 {1}、调用 {2}、接受 {3}".format(
+                attempted, candidate_count, call_count, accepted_count
+            ),
+        ]
+        if reason_text:
+            model_lines.append("- 语义增强降级原因：{0}".format(reason_text))
         lines = [
             "# 格式审查报告", "", "导出版本：{0}".format(FORMAT_REPORT_EXPORT_SCHEMA_VERSION),
             "", "## 四维状态",
@@ -961,6 +1005,8 @@ class DeterministicFormatReviewService:
             "- 合规状态：{0}".format(summary.get("complianceStatus", "")),
             "- 覆盖状态：{0}".format(summary.get("coverageStatus", "")),
             "- 语义增强状态：{0}".format(summary.get("semanticStatus", "")),
+            "", "## 模型调用诊断",
+            *model_lines,
             "", "## 统计",
             "- 问题数量：{0}".format(report.get("issueCount", 0)),
             "- 重复问题组：{0}".format(report.get("duplicateGroupCount", 0)),
@@ -1067,6 +1113,12 @@ class DeterministicFormatReviewService:
         result = result if isinstance(result, dict) else {}
         request = snapshot["request"]
         summary = deepcopy(result.get("summary", {}))
+        model_identity = build_format_review_model_identity(snapshot.get("taskAuth"))
+        if any(
+            model_identity.get(key)
+            for key in ("modelConfigurationName", "modelConfigurationId", "modelConfigurationVersion", "accessMethod")
+        ):
+            summary.update(model_identity)
         structure = request.content.document_structure or {}
         coverage = deepcopy(structure.get("coverage", {}) or {})
         if not coverage:

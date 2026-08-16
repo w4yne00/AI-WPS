@@ -13,6 +13,14 @@ adapter 只读取 `data.outputs.result_json`，并按当前操作的完整 Schem
 
 工作流平台的四类操作（`classify_role`、`associate_caption`、`suggest_table_caption`、`suggest_figure_caption`）保持不变。`POST /provider/model-configurations/{configurationId}/validate` 只验证指定配置，不自动激活，也不改变任务路由；返回结果包含配置名称、ID、修订号及其是否为当前配置。服务地址、接入方式、模型、上下文、输出上限或 API Key 变化会使原验证记录过期。
 
+## 格式审查报告中的模型调用诊断
+
+同步 `/word/format-review` 与确定性格式审查后台报告都在 `summary` 中披露同一组安全字段：`modelConfigurationName`、`modelConfigurationId`、`modelConfigurationVersion`、`accessMethod`、`semanticStatus`、`aiCandidateCount`、`aiAttempted`、`aiCallCount`、`aiAcceptedCount` 和 `aiFallbackReason`。`provider` 只表示“识别来源”，不替代模型调用事实；前端和 Markdown 导出使用中文标签，不直接展示 Provider 标识。
+
+`aiAttempted=false` 且 `aiFallbackReason=no_candidates` 表示没有需要模型确认的模糊候选，属于正常未调用；这与模型未配置、协议未就绪或模型调用失败不同。模型已调用但没有被接受的结果仍返回确定性审查结果，并使用稳定原因码 `format_semantic_response_invalid`、`format_semantic_candidate_out_of_range`、`format_semantic_low_confidence` 或 `format_semantic_zero_accepted`；请求失败使用 `provider_request_failed`。
+
+诊断投影不包含 API Key、认证头、文档正文、原始模型响应、思考内容或本地敏感路径。模型配置快照在后台任务提交时冻结，报告和导出只保留上述身份及计数。
+
 ## 受控图片组生命周期
 
 `suggest_figure_caption` 的图片像素输入必须经过以下顺序：

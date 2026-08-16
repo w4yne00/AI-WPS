@@ -176,6 +176,48 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(provider.calls, [])
         self.assertEqual(provider.skipped[0]["taskType"], "word.format_review")
 
+    def test_format_review_reports_no_candidates_as_a_normal_no_call(self) -> None:
+        provider = RecordingFormatReviewProvider()
+        request = self._request("document")
+        request.content.document_structure = {
+            "formatBlocks": [
+                {
+                    "blockId": "format-paragraph-1",
+                    "blockType": "paragraph",
+                    "paragraphIndex": 1,
+                    "text": "正文内容一",
+                },
+                {
+                    "blockId": "format-paragraph-2",
+                    "blockType": "paragraph",
+                    "paragraphIndex": 2,
+                    "text": "正文内容",
+                },
+            ]
+        }
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            request,
+            trace_id="trace-format-no-candidates",
+            task_auth={
+                "providerBaseUrl": "https://model.example/v1",
+                "apiKey": "frozen-secret",
+                "accessMethod": "direct_model",
+                "modelName": "review-model",
+                "maxOutputTokens": 4096,
+                "contextWindowTokens": 40000,
+            },
+        )
+
+        summary = result["summary"]
+        self.assertEqual(summary["aiCandidateCount"], 0)
+        self.assertFalse(summary["aiAttempted"])
+        self.assertEqual(summary["aiCallCount"], 0)
+        self.assertEqual(summary["aiAcceptedCount"], 0)
+        self.assertEqual(summary["semanticStatus"], "not_needed")
+        self.assertEqual(summary["aiFallbackReason"], "no_candidates")
+        self.assertEqual(provider.calls, [])
+
     def test_format_review_falls_back_when_ai_role_provider_fails(self) -> None:
         provider = RecordingFormatReviewProvider(fail=True)
 
@@ -187,6 +229,8 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["scope"], "selection")
         self.assertEqual(result["summary"]["provider"], "local")
         self.assertEqual(result["summary"]["aiAttempted"], True)
+        self.assertEqual(result["summary"]["aiCallCount"], 1)
+        self.assertEqual(result["summary"]["aiAcceptedCount"], 0)
         self.assertEqual(result["summary"]["aiRequestErrorCount"], 1)
         self.assertEqual(result["summary"]["aiFallbackReason"], "provider_request_failed")
         self.assertGreaterEqual(result["summary"]["issueCount"], 1)
@@ -210,6 +254,86 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["aiFallbackReason"], "")
         self.assertEqual(result["summary"]["aiClassifiedParagraphCount"], 1)
         self.assertEqual(result["summary"]["provider"], "工作流平台")
+        self.assertEqual(result["summary"]["aiAttempted"], True)
+        self.assertEqual(result["summary"]["aiCallCount"], 1)
+        self.assertEqual(result["summary"]["aiAcceptedCount"], 1)
+
+    def test_format_review_distinguishes_parse_failure_from_zero_accepted(self) -> None:
+        request = self._request("document")
+        request.content.paragraphs = [request.content.paragraphs[1]]
+        request.content.plain_text = "待确认内容"
+        request.content.document_structure = {
+            "formatBlocks": [
+                {
+                    "blockId": "format-context-2",
+                    "blockType": "unknown",
+                    "scope": "in_scope",
+                    "paragraphIndex": 2,
+                    "text": "待确认内容",
+                    "format": {"styleName": "Normal"},
+                },
+            ],
+        }
+        task_auth = {
+            "providerBaseUrl": "https://model.example/v1",
+            "apiKey": "frozen-secret",
+            "accessMethod": "workflow_platform",
+            "formatSemanticReadiness": {"code": "ready"},
+        }
+
+        parse_provider = RecordingFormatReviewProvider(answer="not-json")
+        parse_result = WordFormatReviewer(provider_client=parse_provider).review(
+            request, trace_id="trace-format-parse-failed", task_auth=task_auth
+        )
+        self.assertEqual(parse_result["summary"]["aiCallCount"], 1)
+        self.assertEqual(parse_result["summary"]["aiParseErrorCount"], 1)
+        self.assertEqual(
+            parse_result["summary"]["aiFallbackReason"],
+            "format_semantic_response_invalid",
+        )
+
+        empty_provider = RecordingFormatReviewProvider(answer='{"paragraphs":[]}')
+        empty_result = WordFormatReviewer(provider_client=empty_provider).review(
+            request, trace_id="trace-format-zero-accepted", task_auth=task_auth
+        )
+        self.assertEqual(empty_result["summary"]["aiCallCount"], 1)
+        self.assertEqual(empty_result["summary"]["aiAcceptedCount"], 0)
+        self.assertEqual(
+            empty_result["summary"]["aiFallbackReason"],
+            "format_semantic_zero_accepted",
+        )
+
+    def test_format_review_reports_model_configuration_identity(self) -> None:
+        provider = RecordingFormatReviewProvider()
+        task_auth = {
+            "providerBaseUrl": "https://model.example/v1",
+            "apiKey": "frozen-secret",
+            "accessMethod": "direct_model",
+            "modelName": "review-model",
+            "maxOutputTokens": 4096,
+            "contextWindowTokens": 40000,
+            "modelConfigurationId": "config-format-identity",
+            "modelConfigurationName": "格式审查主配置",
+            "modelConfiguration": {
+                "id": "config-format-identity",
+                "name": "格式审查主配置",
+                "configVersion": 9,
+                "taskType": "word.format_review",
+            },
+        }
+
+        result = WordFormatReviewer(provider_client=provider).review(
+            self._request("selection"),
+            trace_id="trace-format-identity",
+            task_auth=task_auth,
+        )
+
+        summary = result["summary"]
+        self.assertEqual(summary["modelConfigurationName"], "格式审查主配置")
+        self.assertEqual(summary["modelConfigurationId"], "config-format-identity")
+        self.assertEqual(summary["modelConfigurationVersion"], 9)
+        self.assertEqual(summary["accessMethod"], "direct_model")
+        self.assertNotIn("apiKey", summary)
 
     def test_format_review_rejects_unbounded_model_role_attributes(self) -> None:
         reviewer = WordFormatReviewer()
@@ -325,7 +449,7 @@ class WordFormatReviewerTests(unittest.TestCase):
             "formatBlocks": [
                 {
                     "blockId": "format-paragraph-1",
-                    "blockType": "paragraph",
+                    "blockType": "unknown",
                     "scope": "in_scope",
                     "paragraphIndex": 1,
                     "text": "1 总则",

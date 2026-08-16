@@ -64,6 +64,52 @@ SEMANTIC_ROLE_NAMES = (
 )
 
 
+def build_format_review_model_identity(task_auth: Optional[Dict]) -> Dict[str, Any]:
+    """Project only safe model-configuration identity fields into a report."""
+    if not isinstance(task_auth, dict):
+        return {
+            "modelConfigurationName": "",
+            "modelConfigurationId": "",
+            "modelConfigurationVersion": 0,
+            "accessMethod": "",
+        }
+    configuration = task_auth.get("modelConfiguration")
+    configuration = configuration if isinstance(configuration, dict) else {}
+
+    def text(*values: Any) -> str:
+        for value in values:
+            candidate = str(value or "").replace("\r", " ").replace("\n", " ").strip()
+            if candidate:
+                return candidate[:160]
+        return ""
+
+    raw_version = task_auth.get(
+        "modelConfigurationVersion",
+        configuration.get("configVersion", 0),
+    )
+    try:
+        version = max(int(raw_version or 0), 0)
+    except (TypeError, ValueError):
+        version = 0
+    return {
+        "modelConfigurationName": text(
+            task_auth.get("modelConfigurationName"),
+            configuration.get("name"),
+            task_auth.get("workflowProfileName"),
+        ),
+        "modelConfigurationId": text(
+            task_auth.get("modelConfigurationId"),
+            configuration.get("id"),
+            task_auth.get("workflowProfileId"),
+        ),
+        "modelConfigurationVersion": version,
+        "accessMethod": text(
+            task_auth.get("accessMethod"),
+            configuration.get("accessMethod"),
+        ),
+    }
+
+
 class WordFormatReviewer:
     def __init__(
         self,
@@ -94,6 +140,8 @@ class WordFormatReviewer:
         image_assets: Optional[List[Dict]] = None,
         image_asset_cleanup=None,
     ) -> Dict:
+        if trace_id and task_auth is None:
+            task_auth = self.snapshot_task_auth()
         requested_template = request.options.template_id or DEFAULT_TEMPLATE_ID
         template = self._resolve_template(requested_template)
         paragraphs = body_paragraphs(request)
@@ -128,7 +176,9 @@ class WordFormatReviewer:
                 task_auth=task_auth,
                 used_calls=int(ai_diagnostics.get("aiCallCount", 0) or 0),
             )
+            role_accepted_count = int(ai_diagnostics.get("aiAcceptedCount", 0) or 0)
             ai_diagnostics.update(table_caption_diagnostics)
+            table_accepted_count = int(table_caption_diagnostics.get("aiAcceptedCount", 0) or 0)
             figure_caption_suggestions, figure_caption_diagnostics = self._suggest_missing_figure_captions(
                 request,
                 trace_id,
@@ -138,6 +188,20 @@ class WordFormatReviewer:
                 image_asset_cleanup=image_asset_cleanup,
             )
             ai_diagnostics.update(figure_caption_diagnostics)
+            table_call_count = int(table_caption_diagnostics.get("tableCaptionCallCount", 0) or 0)
+            figure_call_count = int(figure_caption_diagnostics.get("figureCaptionCallCount", 0) or 0)
+            ai_diagnostics["aiAcceptedCount"] = (
+                role_accepted_count
+                + table_accepted_count
+                + int(figure_caption_diagnostics.get("aiAcceptedCount", 0) or 0)
+            )
+            ai_diagnostics["aiAttempted"] = bool(
+                ai_diagnostics.get("aiAttempted") or table_call_count or figure_call_count
+            )
+            if ai_diagnostics["aiAttempted"] and ai_diagnostics.get("semanticStatus") == "not_needed":
+                ai_diagnostics["semanticStatus"] = (
+                    "completed" if ai_diagnostics["aiAcceptedCount"] else "degraded"
+                )
             self._apply_figure_image_diagnostics(
                 image_inventory, figure_caption_suggestions, figure_caption_diagnostics
             )
@@ -182,11 +246,7 @@ class WordFormatReviewer:
         binding = self._snapshot_binding(request)
         if any(binding.values()):
             summary["snapshotBinding"] = binding
-        if isinstance(task_auth, dict):
-            summary["modelConfigurationId"] = str(task_auth.get("modelConfigurationId", ""))
-            configuration = task_auth.get("modelConfiguration")
-            if isinstance(configuration, dict):
-                summary["modelConfigurationVersion"] = int(configuration.get("configVersion") or 1)
+        summary.update(build_format_review_model_identity(task_auth))
         return {
             "issues": [self._dump_issue(issue) for issue in issues],
             "summary": summary,
@@ -512,6 +572,7 @@ class WordFormatReviewer:
         diagnostics = {
             "tableCaptionCandidateCount": len(candidates),
             "tableCaptionSuggestedCount": 0,
+            "aiAcceptedCount": 0,
             "tableCaptionRestrictedCount": sum(
                 1 for item in candidates if item.get("evidence", {}).get("evidenceStatus") == "restricted"
             ),
@@ -606,6 +667,7 @@ class WordFormatReviewer:
             }
             if item.get("status") == "suggested" and item.get("suggestion"):
                 diagnostics["tableCaptionSuggestedCount"] += 1
+                diagnostics["aiAcceptedCount"] += 1
             else:
                 diagnostics["tableCaptionNotAssessableCount"] += 1
         diagnostics["tableCaptionSemanticStatus"] = (
@@ -695,6 +757,7 @@ class WordFormatReviewer:
         diagnostics = {
             "figureCaptionCandidateCount": len(candidates),
             "figureCaptionSuggestedCount": 0,
+            "aiAcceptedCount": 0,
             "figureCaptionPixelInspectedCount": 0,
             "figureCaptionTextEvidenceOnlyCount": 0,
             "figureCaptionNotAssessableCount": 0,
@@ -826,6 +889,7 @@ class WordFormatReviewer:
                     diagnostics["figureCaptionNotAssessableCount"] += 1
                 else:
                     diagnostics["figureCaptionSuggestedCount"] += 1
+                    diagnostics["aiAcceptedCount"] += 1
                     if status == "pixel_inspected":
                         diagnostics["figureCaptionPixelInspectedCount"] += 1
                     elif status == "text_evidence_only":
@@ -1291,6 +1355,31 @@ class WordFormatReviewer:
             suggestion=suggestion,
         )
 
+    @staticmethod
+    def _record_semantic_error(diagnostics: Dict, error: Optional[AdapterError]) -> None:
+        code = str(getattr(error, "code", "") or "")
+        request_codes = {
+            "FORMAT_SEMANTIC_PROVIDER_ERROR",
+            "PROVIDER_TIMEOUT",
+            "PROVIDER_UNREACHABLE",
+            "PROVIDER_MID_STREAM_DISCONNECT",
+            "MODEL_RATE_LIMITED",
+            "DIFY_TIMEOUT",
+            "DIFY_UNREACHABLE",
+        }
+        if code in request_codes or code.startswith("PROVIDER_") or code.startswith("DIFY_"):
+            diagnostics["aiRequestErrorCount"] += 1
+            diagnostics["aiFallbackReason"] = "provider_request_failed"
+        elif code == "FORMAT_SEMANTIC_CANDIDATE_OUT_OF_RANGE":
+            diagnostics["aiOutOfRangeCount"] += 1
+            diagnostics["aiFallbackReason"] = "format_semantic_candidate_out_of_range"
+        elif code == "FORMAT_SEMANTIC_BINDING_INVALID":
+            diagnostics["aiInvalidBindingCount"] += 1
+            diagnostics["aiFallbackReason"] = "format_semantic_response_invalid"
+        else:
+            diagnostics["aiParseErrorCount"] += 1
+            diagnostics["aiFallbackReason"] = "format_semantic_response_invalid"
+
     def _classify_roles_with_ai(
         self,
         request: WordDocumentRequest,
@@ -1466,14 +1555,12 @@ class WordFormatReviewer:
                     diagnostics["aiRetryCount"] += outcome["retryCount"]
                     diagnostics["aiCorrectionCount"] += outcome["correctionCount"]
                     if outcome.get("error") is not None:
-                        if outcome["error"].code == "FORMAT_SEMANTIC_PROVIDER_ERROR":
-                            diagnostics["aiRequestErrorCount"] += 1
-                        else:
-                            diagnostics["aiParseErrorCount"] += 1
+                        self._record_semantic_error(diagnostics, outcome["error"])
                         continue
                     items = outcome["items"]
                     response_payload = outcome["payload"]
                 elif hasattr(self.provider_client, "format_review_roles"):
+                    diagnostics["aiCallCount"] += 1
                     if task_auth is None:
                         body = self.provider_client.format_review_roles(trace_id, input_data, prompt)
                     else:
@@ -1484,22 +1571,28 @@ class WordFormatReviewer:
                     response_payload = self._extract_semantic_payload(answer)
                     items = response_payload.get("items")
                 else:
+                    diagnostics["aiCallCount"] += 1
                     kwargs = {"task_auth": task_auth} if task_auth is not None else {}
                     body = self.provider_client.post_task(task_type, trace_id, input_data, prompt, **kwargs)
                     answer = extract_answer(body)
                     response_payload = self._extract_semantic_payload(answer)
                     items = response_payload.get("items")
-            except AdapterError:
-                diagnostics["aiRequestErrorCount"] += 1
+            except AdapterError as error:
+                self._record_semantic_error(diagnostics, error)
                 continue
-            except (TypeError, ValueError, json.JSONDecodeError):
-                diagnostics["aiRequestErrorCount"] += 1
+            except json.JSONDecodeError:
+                self._record_semantic_error(diagnostics, AdapterError("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义响应无效。"))
                 continue
-            if strict_binding and response_payload.get("snapshotBinding") != self._snapshot_binding(request):
-                diagnostics["aiInvalidBindingCount"] += 1
+            except (TypeError, ValueError):
+                self._record_semantic_error(diagnostics, AdapterError("FORMAT_SEMANTIC_PROVIDER_ERROR", "格式语义模型调用失败。"))
                 continue
             if not isinstance(items, list):
                 diagnostics["aiParseErrorCount"] += 1
+                diagnostics["aiFallbackReason"] = "format_semantic_response_invalid"
+                continue
+            if strict_binding and response_payload.get("snapshotBinding") != self._snapshot_binding(request):
+                diagnostics["aiInvalidBindingCount"] += 1
+                diagnostics["aiFallbackReason"] = "format_semantic_response_invalid"
                 continue
             for item in items:
                 if not isinstance(item, dict):
@@ -1509,6 +1602,7 @@ class WordFormatReviewer:
                 candidate = batch_by_block.get(block_id) if strict_binding else None
                 if strict_binding and candidate is None:
                     diagnostics["aiOutOfBatchCount"] += 1
+                    diagnostics["aiFallbackReason"] = "format_semantic_candidate_out_of_range"
                     continue
                 raw_index = item.get("paragraphIndex", item.get("paragraph_index"))
                 if raw_index is None and block_id in batch_by_block:
@@ -1524,6 +1618,7 @@ class WordFormatReviewer:
                     candidate = batch_by_index.get(index)
                 if candidate is None:
                     diagnostics["aiOutOfBatchCount"] += 1
+                    diagnostics["aiFallbackReason"] = "format_semantic_candidate_out_of_range"
                     continue
                 role = str(item.get("role", "")).strip()
                 normalized = self._normalize_model_role(role, item)
@@ -1542,6 +1637,7 @@ class WordFormatReviewer:
                 confidence = max(0.0, min(1.0, confidence))
                 if confidence < 0.85:
                     diagnostics["aiLowConfidenceCount"] += 1
+                    diagnostics["aiFallbackReason"] = "format_semantic_low_confidence"
                     continue
                 if candidate.get("deterministicStatus") == "conflict":
                     diagnostics["aiConflictCount"] += 1
@@ -1554,6 +1650,7 @@ class WordFormatReviewer:
                     "blockId": candidate["blockId"],
                     "evidence": ["model_candidate"],
                 }
+                diagnostics["aiAcceptedCount"] += 1
         semantic_complete = (
             start_batch + batches_run >= len(semantic_batches)
             or diagnostics.get("aiCallCount", 0) >= MAX_FORMAT_SEMANTIC_CALLS
@@ -1576,14 +1673,18 @@ class WordFormatReviewer:
                 },
             }
         if diagnostics["aiAttempted"] and not roles:
-            if diagnostics["aiParseErrorCount"]:
-                diagnostics["aiFallbackReason"] = "dify_response_not_role_json"
-            elif diagnostics["aiRequestErrorCount"]:
+            if diagnostics["aiRequestErrorCount"]:
                 diagnostics["aiFallbackReason"] = "provider_request_failed"
-            elif diagnostics["aiInvalidRoleCount"] or diagnostics["aiOutOfBatchCount"]:
-                diagnostics["aiFallbackReason"] = "dify_response_no_valid_roles"
-            elif not diagnostics["aiFallbackReason"]:
-                diagnostics["aiFallbackReason"] = "dify_returned_no_roles"
+            elif diagnostics["aiOutOfRangeCount"] or diagnostics["aiOutOfBatchCount"]:
+                diagnostics["aiFallbackReason"] = "format_semantic_candidate_out_of_range"
+            elif diagnostics["aiLowConfidenceCount"]:
+                diagnostics["aiFallbackReason"] = "format_semantic_low_confidence"
+            elif diagnostics["aiParseErrorCount"]:
+                diagnostics["aiFallbackReason"] = "format_semantic_response_invalid"
+            elif diagnostics["aiInvalidRoleCount"]:
+                diagnostics["aiFallbackReason"] = "format_semantic_response_invalid"
+            elif diagnostics["aiAcceptedCount"] == 0:
+                diagnostics["aiFallbackReason"] = "format_semantic_zero_accepted"
         return roles, batch_count, diagnostics
 
     @staticmethod
@@ -1870,6 +1971,8 @@ class WordFormatReviewer:
             "aiLowConfidenceCount": 0,
             "aiConflictCount": 0,
             "aiCandidateCount": 0,
+            "aiAcceptedCount": 0,
+            "aiOutOfRangeCount": 0,
             "aiCallCount": 0,
             "aiRetryCount": 0,
             "aiCorrectionCount": 0,

@@ -4751,13 +4751,21 @@
   function formatAiFallbackReason(reason) {
     var reasonText = {
       no_paragraphs: "未读取到正文段落，未调用模型后台；请确认当前文档对象能暴露正文段落或全文文本。",
+      no_candidates: "没有需要模型确认的模糊候选，未调用模型后台。",
       provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
+      format_semantic_protocol_not_ready: "模型语义协议尚未就绪，已使用本地模板规则。",
+      model_capability_unknown: "模型能力状态未知，已使用本地模板规则。",
       dify_response_not_role_json: "模型后台未返回段落角色 JSON，已使用本地模板规则。",
       provider_request_failed: "模型后台请求失败，已使用本地模板规则。",
+      format_semantic_response_invalid: "模型后台响应无法解析或不符合协议，已使用本地模板规则。",
+      format_semantic_candidate_out_of_range: "模型后台返回了不在候选范围内的结果，已使用本地模板规则。",
+      format_semantic_low_confidence: "模型后台结果置信度不足，已使用本地模板规则。",
+      format_semantic_zero_accepted: "模型已调用但没有接受任何结果，已使用本地模板规则。",
       dify_response_no_valid_roles: "模型后台返回的角色无效，已使用本地模板规则。",
-      dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。"
+      dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。",
+      semantic_phase_timeout: "模型语义增强处理超时，已使用本地模板规则。"
     };
-    return reasonText[reason] || reason || "";
+    return reasonText[reason] || (reason ? "模型语义增强未完成，已使用本地模板规则。" : "");
   }
 
   function renderGroupedFormatReview(data) {
@@ -6456,6 +6464,17 @@
       "合规状态：" + (summary.complianceStatus || "未评估"),
       "覆盖状态：" + (summary.coverageStatus || coverage.status || "未评估"),
       "语义增强状态：" + (summary.semanticStatus || "未运行"),
+      "模型配置：" + (summary.modelConfigurationName || "未记录"),
+      "配置 ID：" + (summary.modelConfigurationId || "未记录"),
+      "配置修订：" + (summary.modelConfigurationVersion || "未记录"),
+      "接入方式：" + (
+        summary.accessMethod === "direct_model" ? "模型直连" :
+          (summary.accessMethod === "workflow_platform" ? "平台工作流" : "未记录")
+      ),
+      "模型调用事实：" + (summary.aiAttempted ? "已尝试" : "未尝试") +
+        "，候选 " + Number(summary.aiCandidateCount || 0) +
+        "、调用 " + Number(summary.aiCallCount || 0) +
+        "、接受 " + Number(summary.aiAcceptedCount || 0),
       "问题数量：" + Number(report && report.issueCount || 0) +
         "｜重复问题组：" + Number(report && report.duplicateGroupCount || 0),
       "覆盖说明：" + (report && report.disclaimer || "覆盖完整不承诺检出全部问题。"),
@@ -6463,6 +6482,10 @@
       "## 问题清单（第 " + Number(pageData && pageData.page || 1) + " 页，共 " +
         Number(pageData && pageData.total || 0) + " 项）"
     ];
+    var semanticReasonText = formatAiFallbackReason(summary.aiFallbackReason);
+    if (semanticReasonText) {
+      lines.splice(12, 0, "语义增强降级原因：" + semanticReasonText);
+    }
     if (!issues.length) {
       lines.push("当前筛选条件下没有问题实例；零问题不单独形成通过结论。");
     }
