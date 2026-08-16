@@ -988,7 +988,7 @@ class FullDocumentReviewService:
                 item, "blockType", "FULL_DOCUMENT_REVIEW_BLOCK_INVALID", 32
             ).strip()
             if not _SAFE_ID.fullmatch(block_id) or block_type not in {
-                "paragraph", "heading", "listItem", "table"
+                "paragraph", "heading", "listItem", "table", "unknown"
             }:
                 raise AdapterError(
                     "FULL_DOCUMENT_REVIEW_BLOCK_INVALID",

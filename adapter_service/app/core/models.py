@@ -2,6 +2,8 @@ from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field, validator
 
+from app.core.outline_level import normalize_heading_level, normalize_outline_level
+
 
 def _safe_str(value, default: str = "") -> str:
     if value is None:
@@ -82,9 +84,13 @@ class Paragraph(BaseModel):
     def coerce_optional_float(cls, value):
         return _safe_float(value)
 
-    @validator("index", "outline_level", pre=True, always=True)
-    def coerce_integer(cls, value):
+    @validator("index", pre=True, always=True)
+    def coerce_index(cls, value):
         return _safe_int(value) or 0
+
+    @validator("outline_level", pre=True, always=True)
+    def coerce_outline_level(cls, value):
+        return normalize_outline_level(value)
 
     @validator("bold", "italic", pre=True)
     def coerce_optional_bool(cls, value):
@@ -92,12 +98,16 @@ class Paragraph(BaseModel):
 
 
 class Heading(BaseModel):
-    level: int = 0
+    level: Optional[int] = None
     text: str = ""
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
 
-    @validator("level", "paragraph_index", pre=True)
-    def coerce_heading_integer(cls, value):
+    @validator("level", pre=True, always=True)
+    def coerce_heading_level(cls, value):
+        return normalize_heading_level(value)
+
+    @validator("paragraph_index", pre=True)
+    def coerce_paragraph_index(cls, value):
         return _safe_int(value)
 
     @validator("text", pre=True, always=True)

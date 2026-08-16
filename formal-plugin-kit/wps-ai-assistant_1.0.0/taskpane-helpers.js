@@ -268,15 +268,18 @@
       var text = String(paragraph && paragraph.text || "")
         .replace(/[\r\u0007]+$/g, "")
         .trim();
+      var outlineLevel = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
       var paragraphIndex = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || pendingBlocks.length + 1;
       if (!text) {
         return;
       }
       pendingBlocks.push({
         blockId: "paragraph-" + paragraphIndex,
-        blockType: paragraph.outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"),
+        blockType: outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
+          (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph")),
         paragraphIndex: paragraphIndex,
-        headingLevel: paragraph.outlineLevel > 0 ? Number(paragraph.outlineLevel) : undefined,
+        outlineLevel: outlineLevel,
+        headingLevel: outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         text: text
       });
@@ -520,6 +523,7 @@
     paragraphs.forEach(function (paragraph) {
       var index = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || blocks.length + 1;
       var text = String(paragraph && paragraph.text || "").replace(/[\r\u0007]+$/g, "").trim();
+      var outlineLevel = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
       var format;
       if (!text) {
         return;
@@ -545,10 +549,11 @@
       pushBlock({
         blockId: "format-paragraph-" + index,
         blockType: isCaptionParagraph(paragraph) ? "caption" :
-          (Number(paragraph.outlineLevel || 0) > 0
-            ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph")),
+          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") : (outlineLevel > 0
+            ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))),
         paragraphIndex: index,
-        headingLevel: Number(paragraph.outlineLevel || 0) || undefined,
+        outlineLevel: outlineLevel,
+        headingLevel: outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         captionFor: paragraph.captionFor ? String(paragraph.captionFor) : undefined,
         text: text,
@@ -2264,6 +2269,36 @@
     return Math.floor(numeric);
   }
 
+  function normalizeWpsOutlineLevel(value) {
+    var resolved = resolveScalarValue(value);
+    var numeric;
+    if (resolved === null || typeof resolved === "undefined" || resolved === "" || typeof resolved === "boolean") {
+      return null;
+    }
+    numeric = Number(resolved);
+    if (!isFinite(numeric) || Math.floor(numeric) !== numeric) {
+      return null;
+    }
+    if (numeric === 0 || numeric === 10) {
+      return 0;
+    }
+    return numeric >= 1 && numeric <= 9 ? numeric : null;
+  }
+
+  function collectHeadingsFromParagraphs(paragraphs) {
+    return (Array.isArray(paragraphs) ? paragraphs : []).map(function (paragraph) {
+      var level = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
+      if (level === null || level === 0) {
+        return null;
+      }
+      return {
+        level: level,
+        text: paragraph && paragraph.text || "",
+        paragraphIndex: paragraph && (paragraph.index || paragraph.paragraphIndex) || null
+      };
+    }).filter(Boolean);
+  }
+
   function normalizeCollectOptions(options) {
     var source = typeof options === "number" ? { maxParagraphs: options } : (options || {});
     return {
@@ -2855,7 +2890,7 @@
         italic: false,
         underline: null,
         alignment: "",
-        outlineLevel: 0,
+        outlineLevel: null,
         lineSpacing: null,
         firstLineIndent: null,
         spaceBefore: null,
@@ -2906,7 +2941,7 @@
         italic: Boolean(safeRead(font, "Italic")),
         underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
         alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
-        outlineLevel: normalizeInteger(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), 0)),
+        outlineLevel: normalizeWpsOutlineLevel(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), undefined)),
         lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
         firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
         spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
@@ -2957,9 +2992,9 @@
       items.push({
         index: index,
         text: text,
-        outlineLevel: normalizePositiveInteger(firstDefined(
-          safeRead(paragraphFormat, "OutlineLevel"), safeRead(paragraphFormat, "outlineLevel"), 0
-        )) || 0,
+        outlineLevel: normalizeWpsOutlineLevel(firstDefined(
+          safeRead(paragraphFormat, "OutlineLevel"), safeRead(paragraphFormat, "outlineLevel")
+        )),
         listLabel: toSafeString(firstDefined(
           safeRead(listFormat, "ListString"), safeRead(listFormat, "listString"),
           safeRead(paragraph, "ListLabel"), safeRead(paragraph, "listLabel")
@@ -3011,7 +3046,7 @@
           italic: Boolean(paragraph.italic),
           underline: paragraph.underline || null,
           alignment: normalizeAlignmentValue(paragraph.alignment, ""),
-          outline_level: normalizeNumber(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
+          outline_level: normalizeWpsOutlineLevel(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
           line_spacing: normalizeNumber(firstDefined(paragraph.lineSpacing, paragraph.line_spacing)),
           first_line_indent: normalizeNumber(firstDefined(paragraph.firstLineIndent, paragraph.first_line_indent)),
           space_before: normalizeNumber(firstDefined(paragraph.spaceBefore, paragraph.space_before)),
@@ -3021,12 +3056,13 @@
         };
       }),
       headings: headings.map(function (heading) {
+        var level = normalizeWpsOutlineLevel(firstDefined(heading.level, heading.outlineLevel));
         return {
-          level: heading.level || heading.outlineLevel || 0,
+          level: level > 0 ? level : null,
           text: heading.text || "",
           paragraph_index: heading.paragraphIndex || heading.index || null
         };
-      }),
+      }).filter(function (heading) { return heading.level !== null; }),
       tables: options.tables || [],
       captions: options.captions || [],
       capabilities: {
@@ -3854,6 +3890,8 @@
     extractHomogeneousFormatSegments: extractHomogeneousFormatSegments,
     readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
     collectParagraphs: collectParagraphs,
+    normalizeWpsOutlineLevel: normalizeWpsOutlineLevel,
+    collectHeadingsFromParagraphs: collectHeadingsFromParagraphs,
     collectParagraphsFromSelectionSources: collectParagraphsFromSelectionSources,
     collectParagraphsFromText: collectParagraphsFromText,
     readDocumentText: readDocumentText,

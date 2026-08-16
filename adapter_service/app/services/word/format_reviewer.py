@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import FormatReviewIssue, Paragraph, WordDocumentRequest
+from app.core.outline_level import normalize_heading_level, normalize_outline_level
 from app.services.document_normalizer import body_paragraphs
 from app.services.provider_client import ProviderClient, extract_answer
 from app.services.word.authorized_format_algorithm import (
@@ -885,7 +886,8 @@ class WordFormatReviewer:
         facts = deepcopy(supplied)
         format_blocks = structure.get("formatBlocks")
         if isinstance(format_blocks, list) and format_blocks:
-            facts["blocks"] = deepcopy(format_blocks)
+            normalized_blocks = [self._normalize_format_block(block) for block in format_blocks]
+            facts["blocks"] = normalized_blocks
             facts["paragraphs"] = [
                 {
                     **deepcopy(block),
@@ -893,11 +895,11 @@ class WordFormatReviewer:
                     "blockType": block.get("blockType"),
                     "styleName": (block.get("format") or {}).get("styleName", "") if isinstance(block.get("format"), dict) else "",
                 }
-                for block in format_blocks
-                if isinstance(block, dict) and block.get("blockType") in {"paragraph", "heading", "listItem", "caption", "formula", "tableCell"}
+                for block in normalized_blocks
+                if isinstance(block, dict) and block.get("blockType") in {"paragraph", "heading", "listItem", "caption", "formula", "tableCell", "unknown"}
             ]
             facts["tables"] = []
-            for block in format_blocks:
+            for block in normalized_blocks:
                 if not isinstance(block, dict) or block.get("blockType") != "table":
                     continue
                 table_fact = deepcopy(block)
@@ -923,28 +925,67 @@ class WordFormatReviewer:
             heading_by_index = {
                 heading.paragraph_index: heading
                 for heading in request.content.headings
-                if heading.paragraph_index is not None
+                if heading.paragraph_index is not None and normalize_heading_level(heading.level) is not None
             }
             facts["paragraphs"] = [
                 {
                     "paragraphIndex": paragraph.index,
-                    "blockType": "heading" if paragraph.index in heading_by_index or paragraph.outline_level else "",
+                    "blockType": (
+                        "heading"
+                        if paragraph.index in heading_by_index or (
+                            paragraph.outline_level is not None and paragraph.outline_level > 0
+                        )
+                        else "paragraph"
+                        if paragraph.outline_level == 0
+                        else "unknown"
+                    ),
                     "text": paragraph.text,
                     "styleName": paragraph.style_name or "",
-                    "outlineLevel": paragraph.outline_level or 0,
+                    "outlineLevel": paragraph.outline_level,
                     "headingLevel": (
                         heading_by_index[paragraph.index].level
                         if paragraph.index in heading_by_index
-                        else paragraph.outline_level or 0
+                        else paragraph.outline_level
                     ),
                 }
                 for paragraph in body_paragraphs(request)
             ]
         facts["headings"] = [
-            {"level": heading.level, "text": heading.text}
+            {"level": heading.level, "text": heading.text, "paragraphIndex": heading.paragraph_index}
             for heading in request.content.headings
+            if normalize_heading_level(heading.level) is not None
         ]
         return facts
+
+    @staticmethod
+    def _normalize_format_block(block: Dict) -> Dict:
+        normalized = deepcopy(block) if isinstance(block, dict) else {}
+        format_facts = normalized.get("format") if isinstance(normalized.get("format"), dict) else {}
+        has_outline_fact = (
+            "headingLevel" in normalized
+            or "outlineLevel" in normalized
+            or "outlineLevel" in format_facts
+        )
+        if not has_outline_fact:
+            return normalized
+        raw_level = normalized.get(
+            "headingLevel",
+            normalized.get("outlineLevel", format_facts.get("outlineLevel")),
+        )
+        level = normalize_outline_level(raw_level)
+        format_facts["outlineLevel"] = level
+        normalized["format"] = format_facts
+        normalized["outlineLevel"] = level
+        if normalized.get("blockType") == "heading":
+            if level == 0:
+                normalized["blockType"] = "paragraph"
+                normalized.pop("headingLevel", None)
+            elif level is None:
+                normalized["blockType"] = "unknown"
+                normalized.pop("headingLevel", None)
+            else:
+                normalized["headingLevel"] = level
+        return normalized
 
     def _authorized_structure_issues(
         self,
@@ -969,7 +1010,7 @@ class WordFormatReviewer:
             issues.append(
                 FormatReviewIssue(
                     ruleId="structure.heading_hierarchy",
-                    paragraphIndex=None,
+                    paragraphIndex=warning.get("paragraphIndex"),
                     role="heading",
                     message="标题层级出现跳级。",
                     currentValue=str(warning.get("level", "")),
@@ -1642,7 +1683,7 @@ class WordFormatReviewer:
                 "allowedTargets": allowed,
                 "format": deepcopy(block.get("format", {})) if isinstance(block.get("format"), dict) else {
                     "styleName": paragraph.style_name or "",
-                    "outlineLevel": paragraph.outline_level or 0,
+                    "outlineLevel": paragraph.outline_level,
                 },
             })
         return candidates
@@ -1845,7 +1886,7 @@ class WordFormatReviewer:
                 "paragraphIndex": paragraph.index,
                 "text": paragraph.text,
                 "styleName": paragraph.style_name or "",
-                "outlineLevel": paragraph.outline_level or 0,
+                "outlineLevel": paragraph.outline_level,
             }
         )
         return result.get("role", "unknown") if result.get("status") == "confirmed" else "unknown"

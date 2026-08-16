@@ -23,6 +23,20 @@ export interface WpsSelectionLike {
   };
 }
 
+export function normalizeWpsOutlineLevel(value: unknown): number | null {
+  if (value === null || value === undefined || value === "" || typeof value === "boolean") {
+    return null;
+  }
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric) || !Number.isInteger(numeric)) {
+    return null;
+  }
+  if (numeric === 0 || numeric === 10) {
+    return 0;
+  }
+  return numeric >= 1 && numeric <= 9 ? numeric : null;
+}
+
 export interface WpsDocumentLike {
   Name?: string;
   Content?: {
@@ -82,7 +96,7 @@ function toParagraph(paragraph: WpsParagraphLike, index: number): Paragraph {
     fontName: paragraph.Font?.NameFarEast ?? paragraph.Font?.Name,
     fontSize: paragraph.Font?.Size,
     alignment: String(paragraph.ParagraphFormat?.Alignment ?? "left"),
-    outlineLevel: paragraph.ParagraphFormat?.OutlineLevel ?? 0
+    outlineLevel: normalizeWpsOutlineLevel(paragraph.ParagraphFormat?.OutlineLevel)
   };
 }
 
@@ -93,7 +107,7 @@ export function collectParagraphs(document: WpsDocumentLike): Paragraph[] {
 
 export function collectHeadings(paragraphs: Paragraph[]): Heading[] {
   return paragraphs
-    .filter((paragraph) => (paragraph.outlineLevel ?? 0) > 0)
+    .filter((paragraph) => (paragraph.outlineLevel ?? 0) >= 1 && (paragraph.outlineLevel ?? 0) <= 9)
     .map((paragraph) => ({
       level: paragraph.outlineLevel ?? 1,
       text: paragraph.text

@@ -20,6 +20,7 @@ from pydantic import ValidationError
 from app.core.errors import AdapterError
 from app.core.features import deterministic_format_review_enabled
 from app.core.models import WordDocumentRequest
+from app.core.outline_level import normalize_outline_level
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.document_normalizer import body_paragraphs
 from app.services.long_task_coordinator import (
@@ -56,7 +57,7 @@ MAX_FORMAT_STANDARD_CHARACTERS = 60_000
 MAX_FORMAT_LARGE_CHARACTERS = 120_000
 SNAPSHOT_TTL_SECONDS = 15 * 60
 SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
-FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context", "image"}
+FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context", "image", "unknown"}
 FORMAT_SCOPES = {"in_scope", "context"}
 FORMAT_ISSUE_STATUSES = {"open", "processed", "ignored"}
 FORMAT_ANCHOR_VERIFICATIONS = {"verified", "unverified"}
@@ -1588,6 +1589,28 @@ class DeterministicFormatReviewService:
             if block_type == "table":
                 normalized_item["rows"] = cls._normalize_table_rows(item.get("rows", []))
                 normalized_item["nestedTables"] = item.get("nestedTables", []) if isinstance(item.get("nestedTables", []), list) else []
+            has_outline_fact = (
+                "headingLevel" in item
+                or "outlineLevel" in item
+                or "outlineLevel" in normalized_item["format"]
+            )
+            if has_outline_fact:
+                raw_level = item.get(
+                    "headingLevel",
+                    item.get("outlineLevel", normalized_item["format"].get("outlineLevel")),
+                )
+                outline_level = normalize_outline_level(raw_level)
+                normalized_item["outlineLevel"] = outline_level
+                normalized_item["format"]["outlineLevel"] = outline_level
+                if block_type == "heading":
+                    if outline_level == 0:
+                        normalized_item["blockType"] = "paragraph"
+                        normalized_item.pop("headingLevel", None)
+                    elif outline_level is None:
+                        normalized_item["blockType"] = "unknown"
+                        normalized_item.pop("headingLevel", None)
+                    else:
+                        normalized_item["headingLevel"] = outline_level
             seen.add(block_id)
             normalized.append(normalized_item)
         return normalized
@@ -1636,7 +1659,7 @@ class DeterministicFormatReviewService:
             "strikeThrough", "superscript", "subscript", "allCaps", "smallCaps",
             "color", "highlight", "characterSpacing", "characterScale", "alignment",
             "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent",
-            "rightIndent", "segments", "dataStatus"
+            "rightIndent", "outlineLevel", "segments", "dataStatus"
         }
         normalized = {
             key: deepcopy(value[key])

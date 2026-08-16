@@ -393,6 +393,56 @@ function testBuildDocumentStructureForProofread() {
   assert.strictEqual(structure.capabilities.table_extracted, false);
 }
 
+function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
+  const values = [0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, undefined, "not-a-number", -1, 11, 1.5];
+  assert.deepStrictEqual(
+    values.map((value) => helpers.normalizeWpsOutlineLevel(value)),
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null]
+  );
+
+  const paragraphs = values.map((outlineLevel, index) => ({
+    index: index + 1,
+    text: "段落 " + (index + 1),
+    outlineLevel
+  }));
+  const headings = helpers.collectHeadingsFromParagraphs(paragraphs);
+  assert.deepStrictEqual(
+    headings.map((heading) => [heading.level, heading.paragraphIndex]),
+    values.slice(2, 11).map((level, index) => [level, index + 3])
+  );
+
+  const structure = helpers.buildDocumentStructure({ paragraphs, headings });
+  assert.deepStrictEqual(
+    structure.paragraphs.map((paragraph) => paragraph.outline_level),
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null]
+  );
+  assert.deepStrictEqual(
+    structure.headings.map((heading) => heading.level),
+    [1, 2, 3, 4, 5, 6, 7, 8, 9]
+  );
+
+  const fullReview = helpers.buildFullDocumentReviewBody({ paragraphs }, 20000);
+  assert.deepStrictEqual(
+    fullReview.blocks.map((block) => [block.blockType, block.headingLevel, block.outlineLevel]),
+    paragraphs.map((paragraph) => {
+      const level = helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel);
+      return [level === null ? "unknown" : (level > 0 ? "heading" : "paragraph"), level > 0 ? level : undefined, level];
+    })
+  );
+
+  const deterministicReview = helpers.buildDeterministicFormatReviewBody({
+    documentId: "outline-levels.docx",
+    content: { paragraphs, documentStructure: {} }
+  });
+  assert.deepStrictEqual(
+    deterministicReview.blocks.map((block) => [block.blockType, block.headingLevel, block.outlineLevel]),
+    paragraphs.map((paragraph) => {
+      const level = helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel);
+      return [level === null ? "unknown" : (level > 0 ? "heading" : "paragraph"), level > 0 ? level : undefined, level];
+    })
+  );
+}
+
 function testCollectParagraphsSupportsWpsComCollection() {
   const paragraphs = [
     {
@@ -1365,6 +1415,7 @@ testResolveRewriteScope();
 testSelectionWritebackGuard();
 testGetWritableSelection();
 testBuildDocumentStructureForProofread();
+testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies();
 testCollectParagraphsSupportsWpsComCollection();
 testCollectParagraphsReadsRangeTextAndContentCollection();
 testCollectParagraphsFallsBackToDocumentText();

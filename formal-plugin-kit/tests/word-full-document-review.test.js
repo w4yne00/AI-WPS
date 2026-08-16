@@ -47,7 +47,7 @@ const snapshot = helpers.buildFullDocumentReviewBody([
 assert.strictEqual(snapshot.reviewCharacterCount, 8);
 assert.strictEqual(snapshot.blocks.length, 2);
 assert.strictEqual(snapshot.blocks[0].blockId, "paragraph-1");
-assert.strictEqual(snapshot.blocks[0].blockType, "paragraph");
+assert.strictEqual(snapshot.blocks[0].blockType, "unknown");
 assert.strictEqual(snapshot.sourceText, "第一段。\n第二段。");
 assert.throws(
   () => helpers.buildFullDocumentReviewBody([{ text: "文".repeat(20001) }], 20000),

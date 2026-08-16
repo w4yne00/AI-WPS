@@ -10,6 +10,8 @@ import re
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
+from app.core.outline_level import normalize_heading_level, normalize_outline_level
+
 
 _ORDERED_FORMATS = {
     "decimal",
@@ -51,6 +53,14 @@ def _number(value: Any, default: int = 0) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+def _outline_fact(fact: Dict[str, Any]) -> Tuple[Optional[int], bool]:
+    if "outlineLevel" in fact:
+        return normalize_outline_level(fact.get("outlineLevel")), True
+    if "headingLevel" in fact:
+        return normalize_outline_level(fact.get("headingLevel")), True
+    return None, False
 
 
 def _legacy_role(role: Any) -> Optional[Dict[str, Any]]:
@@ -101,8 +111,8 @@ def classify_role_fact(fact: Dict[str, Any]) -> Dict[str, Any]:
                 add(explicit["role"], "structural_role", explicit.get("attributes"))
                 break
     block_type = _text(fact.get("blockType"))
+    outline_level, has_outline_fact = _outline_fact(fact)
     block_roles = {
-        "heading": ("heading", {"level": max(1, min(9, _number(fact.get("headingLevel"), 1)))}, "block_type"),
         "listItem": ("list_item", {"level": max(1, min(9, _number(fact.get("listLevel"), 1)))}, "block_type"),
         "caption": ("caption", {}, "block_type"),
         "paragraph": ("body", {}, "block_type"),
@@ -112,9 +122,12 @@ def classify_role_fact(fact: Dict[str, Any]) -> Dict[str, Any]:
     if block_type in block_roles:
         role, attributes, source = block_roles[block_type]
         add(role, source, attributes)
+    elif block_type == "heading" and (not has_outline_fact or outline_level in range(1, 10)):
+        add("heading", "block_type", {"level": outline_level or 1})
 
     if fact.get("isHeading") is True:
-        add("heading", "structural_field", {"level": max(1, min(9, _number(fact.get("headingLevel") or fact.get("outlineLevel"), 1)))})
+        if not has_outline_fact or outline_level in range(1, 10):
+            add("heading", "structural_field", {"level": outline_level or 1})
     if fact.get("isCaption") is True:
         add("caption", "structural_field")
     if fact.get("isTableCell") is True:
@@ -141,15 +154,23 @@ def classify_role_fact(fact: Dict[str, Any]) -> Dict[str, Any]:
     if re.match(r"^[A-Z]((?:\.\d+){1,3})\s+", text, re.IGNORECASE):
         add("appendix_heading", "visible_appendix_heading_marker", {"level": min(3, text.split(" ", 1)[0].count("."))})
     heading_match = re.match(r"^(\d+(?:\.\d+){0,8})(?:\s+|　+)", text)
-    outline_level = _number(fact.get("outlineLevel") or fact.get("headingLevel"))
-    if heading_match and not num_fmt:
+    has_explicit_body_evidence = block_type in {"paragraph", "tableCell", "formula"} or (
+        has_outline_fact and outline_level not in range(1, 10)
+    )
+    if heading_match and not num_fmt and not has_explicit_body_evidence:
         add("heading", "visible_heading_marker", {"level": min(9, heading_match.group(1).count(".") + 1)})
-    if outline_level > 0:
-        add("heading", "outline_level", {"level": min(9, outline_level)})
+    if outline_level == 0:
+        add("body", "outline_level")
+    elif outline_level in range(1, 10):
+        add("heading", "outline_level", {"level": outline_level})
 
     if fact.get("role"):
         legacy = _legacy_role(fact.get("role"))
-        if legacy and _text(fact.get("roleSource")) in {"structural", "wps", "adapter"}:
+        if legacy and _text(fact.get("roleSource")) in {"structural", "wps", "adapter"} and (
+            legacy["role"] not in {"heading", "appendix_heading"}
+            or not has_outline_fact
+            or outline_level in range(1, 10)
+        ):
             add(legacy["role"], "provided_role", legacy.get("attributes"))
 
     style_name = _text(fact.get("styleName"))
@@ -172,7 +193,9 @@ def classify_role_fact(fact: Dict[str, Any]) -> Dict[str, Any]:
 
     role = next(iter(candidates))
     role_evidence = evidence[role]
-    direct = any(item in role_evidence for item in ("structural_role", "block_type", "structural_field", "provided_role"))
+    direct = any(item in role_evidence for item in (
+        "structural_role", "block_type", "structural_field", "provided_role", "outline_level"
+    ))
     strong = len(set(role_evidence)) >= 2 or ("visible_heading_marker" in role_evidence and "outline_level" in role_evidence)
     status = "confirmed" if direct or strong else "needs_confirmation"
     return {
@@ -230,19 +253,29 @@ def resolve_role_rule(role_result: Any, pack: Dict[str, Any]) -> Dict[str, Any]:
 def heading_hierarchy_warnings(heading_sequence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Return only observed hierarchy violations; never infer missing headings."""
     warnings = []
-    if not heading_sequence:
+    normalized_sequence = []
+    for heading in heading_sequence or []:
+        if not isinstance(heading, dict):
+            continue
+        level = normalize_heading_level(heading.get("level"))
+        if level is None:
+            continue
+        normalized_sequence.append({**heading, "level": level})
+    if not normalized_sequence:
         return warnings
-    previous_level = _number(heading_sequence[0].get("level"))
+    previous = normalized_sequence[0]
+    previous_level = previous["level"]
     if previous_level > 1:
         warnings.append(
             {
                 "type": "first_heading_below_level_one",
                 "level": previous_level,
-                "text": _text(heading_sequence[0].get("text")),
+                "text": _text(previous.get("text")),
+                "paragraphIndex": previous.get("paragraphIndex"),
             }
         )
-    for heading in heading_sequence[1:]:
-        level = _number(heading.get("level"))
+    for heading in normalized_sequence[1:]:
+        level = heading["level"]
         if previous_level and level > previous_level + 1:
             warnings.append(
                 {
@@ -250,6 +283,7 @@ def heading_hierarchy_warnings(heading_sequence: List[Dict[str, Any]]) -> List[D
                     "previousLevel": previous_level,
                     "level": level,
                     "text": _text(heading.get("text")),
+                    "paragraphIndex": heading.get("paragraphIndex"),
                 }
             )
         previous_level = level

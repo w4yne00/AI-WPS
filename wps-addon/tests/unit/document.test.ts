@@ -75,6 +75,21 @@ describe("Word document extraction", () => {
     expect(headings).toEqual([{ level: 2, text: "Section" }]);
   });
 
+  it("treats WPS outline level 10 as body and keeps invalid levels unknown", () => {
+    const paragraphs = collectParagraphs({
+      Paragraphs: [
+        { Text: "Body zero", ParagraphFormat: { OutlineLevel: 0 } },
+        { Text: "Body ten", ParagraphFormat: { OutlineLevel: 10 } },
+        { Text: "Heading", ParagraphFormat: { OutlineLevel: 1 } },
+        { Text: "Unknown", ParagraphFormat: { OutlineLevel: -1 } },
+        { Text: "Unknown text", ParagraphFormat: { OutlineLevel: "invalid" as unknown as number } }
+      ]
+    });
+
+    expect(paragraphs.map((paragraph) => paragraph.outlineLevel)).toEqual([0, 0, 1, null, null]);
+    expect(collectHeadings(paragraphs)).toEqual([{ level: 1, text: "Heading" }]);
+  });
+
   it("prefers the current selection for rewrite requests", () => {
     (
       globalThis as typeof globalThis & {

@@ -1483,7 +1483,9 @@
         italic: Boolean(font.Italic),
         underline: font.Underline || null,
         alignment: String(paragraphFormat.Alignment || ""),
-        outlineLevel: paragraphFormat.OutlineLevel || 0,
+        outlineLevel: helpers.normalizeWpsOutlineLevel
+          ? helpers.normalizeWpsOutlineLevel(paragraphFormat.OutlineLevel)
+          : paragraphFormat.OutlineLevel,
         lineSpacing: paragraphFormat.LineSpacing || paragraphFormat.lineSpacing || null,
         firstLineIndent: paragraphFormat.FirstLineIndent || paragraphFormat.firstLineIndent || null,
         spaceBefore: paragraphFormat.SpaceBefore || paragraphFormat.spaceBefore || null,
@@ -1496,11 +1498,14 @@
   }
 
   function collectHeadings(paragraphs) {
+    if (helpers.collectHeadingsFromParagraphs) {
+      return helpers.collectHeadingsFromParagraphs(paragraphs);
+    }
     return paragraphs.filter(function (item) {
-      return (item.outlineLevel || 0) > 0;
+      return item.outlineLevel >= 1 && item.outlineLevel <= 9;
     }).map(function (item) {
       return {
-        level: item.outlineLevel || 0,
+        level: item.outlineLevel,
         text: item.text || "",
         paragraphIndex: item.index
       };
@@ -7380,7 +7385,9 @@
               italic: Boolean(paragraph.italic),
               underline: paragraph.underline,
               alignment: paragraph.alignment || "",
-              outlineLevel: paragraph.outlineLevel || 0,
+              outlineLevel: helpers.normalizeWpsOutlineLevel
+                ? helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel)
+                : paragraph.outlineLevel,
               captionFor: paragraph.captionFor || "",
               range: { paragraphIndex: paragraphIndex }
             });
@@ -7392,7 +7399,9 @@
               text: paragraph.text || "",
               format: {
                 styleName: paragraph.styleName || "",
-                outlineLevel: paragraph.outlineLevel || 0,
+                outlineLevel: helpers.normalizeWpsOutlineLevel
+                  ? helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel)
+                  : paragraph.outlineLevel,
                 dataStatus: "context_only"
               },
               range: { paragraphIndex: paragraphIndex }
