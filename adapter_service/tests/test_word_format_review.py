@@ -105,7 +105,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(payload["tableCaptionSuggestedCount"], 1)
         self.assertEqual(payload["tableCaptionRestrictedCount"], 1)
 
-    def _request(self, selection_mode: str = "selection"):
+    def _request(self, selection_mode: str = "selection", first_outline_level=0):
         return parse_word_request(
             {
                 "documentId": "format-review.docx",
@@ -121,7 +121,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                             "fontName": "宋体",
                             "fontSize": 12,
                             "alignment": "left",
-                            "outlineLevel": 0,
+                            "outlineLevel": first_outline_level,
                         },
                         {
                             "index": 2,
@@ -232,7 +232,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         provider = RecordingFormatReviewProvider()
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("selection"),
+            self._request("selection", first_outline_level=None),
             trace_id="trace-format-review",
         )
 
@@ -249,7 +249,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         provider = RecordingFormatReviewProvider(configured=False)
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("document"),
+            self._request("document", first_outline_level=None),
             trace_id="trace-format-local",
         )
 
@@ -305,7 +305,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         provider = RecordingFormatReviewProvider(fail=True)
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("selection"),
+            self._request("selection", first_outline_level=None),
             trace_id="trace-format-provider-failed",
         )
 
