@@ -1481,20 +1481,21 @@ class EnterpriseProviderTests(unittest.TestCase):
                 self.debug_task_type = task_type
 
         provider = UnconfiguredProviderClient()
-        result = provider.ppt_slide_assistant(
-            {
-                "index": 4,
-                "title": "项目进展",
-                "subtitle": "",
-                "textBlocks": [],
-                "previousTitle": "项目背景",
-                "nextTitle": "风险与措施",
-                "truncated": False,
-            },
-            "生成本页内容。",
-            "generate",
-            "trace-ppt-unconfigured",
-        )
+        with patch.dict(os.environ, {"AI_WPS_ENABLE_MOCK_PROVIDER": "1"}):
+            result = provider.ppt_slide_assistant(
+                {
+                    "index": 4,
+                    "title": "项目进展",
+                    "subtitle": "",
+                    "textBlocks": [],
+                    "previousTitle": "项目背景",
+                    "nextTitle": "风险与措施",
+                    "truncated": False,
+                },
+                "生成本页内容。",
+                "generate",
+                "trace-ppt-unconfigured",
+            )
 
         self.assertEqual(provider.debug_task_type, "ppt.slide_assistant")
         self.assertEqual(result["provider"], "mock")
@@ -2261,7 +2262,8 @@ class EnterpriseProviderTests(unittest.TestCase):
         client = ProviderClient(settings)
         reset_provider_debug()
 
-        result = client.smart_write("待改写原文", "rewrite", "trace-mock-debug")
+        with patch.dict(os.environ, {"AI_WPS_ENABLE_MOCK_PROVIDER": "1"}):
+            result = client.smart_write("待改写原文", "rewrite", "trace-mock-debug")
         debug = get_last_provider_debug()
 
         self.assertEqual(result["provider"], "mock")

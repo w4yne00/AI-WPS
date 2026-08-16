@@ -533,10 +533,11 @@ class WordRewriterWritingPolicyTests(unittest.TestCase):
         writing_policy = FakeWritingPolicyService()
         provider = ProviderClient(AppSettings(provider_base_url=""))
 
-        result = WordRewriter(provider, writing_policy_service=writing_policy).smart_write(
-            self._request(),
-            "trace-smart-write-mock",
-        )
+        with patch.dict(os.environ, {"AI_WPS_ENABLE_MOCK_PROVIDER": "1"}):
+            result = WordRewriter(provider, writing_policy_service=writing_policy).smart_write(
+                self._request(),
+                "trace-smart-write-mock",
+            )
 
         debug = get_last_provider_debug()
         self.assertEqual(result["provider"], "mock")
