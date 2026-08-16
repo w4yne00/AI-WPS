@@ -6,6 +6,11 @@
   "entries": [
     {
       "type": "file",
+      "source": "adapter_service/app/core/outline_level.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/core/outline_level.py"
+    },
+    {
+      "type": "file",
       "source": "packaging/v0251-delivery.md",
       "target": "docs/v0251-delivery.md"
     },

@@ -33,6 +33,7 @@ def test_v0251_policy_keeps_phase1_baseline_and_excludes_future_work():
     entries = json.dumps(policy["entries"], ensure_ascii=False)
     assert "v0251-delivery.md" in entries
     assert "audit_v0251_delivery.py" in entries
+    assert "adapter_service/app/core/outline_level.py" in entries
     for excluded in ("material_composer", "ADR-0116", "D-0001", "ADR-0117"):
         assert excluded not in entries
 
