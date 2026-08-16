@@ -1927,7 +1927,7 @@
     }
     paragraphIndex = Number(issue.paragraphIndex);
     if (!isFinite(paragraphIndex) || Math.floor(paragraphIndex) !== paragraphIndex ||
-        paragraphIndex <= 0 || issue.anchorVerification === "unverified") {
+        paragraphIndex <= 0 || issue.anchorVerification !== "verified") {
       return "位置待确认";
     }
     return "P" + paragraphIndex;

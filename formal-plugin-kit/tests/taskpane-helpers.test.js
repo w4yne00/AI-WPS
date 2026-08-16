@@ -1010,6 +1010,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "font_size",
         paragraphIndex: 2,
+        anchorVerification: "verified",
         role: "body",
         message: "字号不符合模板要求。",
         currentValue: "14pt",
@@ -1019,6 +1020,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "font_name",
         paragraphIndex: 2,
+        anchorVerification: "verified",
         role: "body",
         message: "字体不符合模板要求。",
         currentValue: "楷体",
@@ -1028,6 +1030,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "alignment",
         paragraphIndex: 3,
+        anchorVerification: "verified",
         role: "heading1",
         message: "对齐方式不符合模板要求。",
         currentValue: "left",
@@ -1037,6 +1040,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "first_line_indent",
         paragraphIndex: 4,
+        anchorVerification: "verified",
         role: "body",
         message: "首行缩进不符合模板要求。",
         currentValue: "0",
@@ -1153,7 +1157,6 @@ function testRenderReadableFormatReviewDoesNotFabricateHeadingPosition() {
       previousLevel: 1,
       currentValue: 3,
       expectedValue: "前一有效标题为 1 级时，当前级别不超过 2 级",
-      anchorVerification: "unverified",
       message: "标题层级出现跳级。",
       suggestion: "请补齐 2 级标题，再保留当前 3 级标题。"
     }]
@@ -1197,6 +1200,7 @@ function testRenderReadableFormatReviewLocalizesOtherFeedback() {
       {
         ruleId: "style_name",
         paragraphIndex: 1,
+        anchorVerification: "verified",
         role: "document_title",
         message: "段落样式不符合模板要求。",
         currentValue: "Normal",
@@ -1206,6 +1210,7 @@ function testRenderReadableFormatReviewLocalizesOtherFeedback() {
       {
         ruleId: "line_spacing",
         paragraphIndex: 5,
+        anchorVerification: "verified",
         role: "body",
         message: "行距不符合模板要求。",
         currentValue: "1.0倍",

@@ -4824,7 +4824,8 @@
         lines.push("- 段落号：" + (
           helpers.formatReviewParagraphLabel
             ? helpers.formatReviewParagraphLabel(issue)
-            : (Number(issue.paragraphIndex) > 0 ? "P" + issue.paragraphIndex : "位置待确认")
+            : (Number(issue.paragraphIndex) > 0 && issue.anchorVerification === "verified"
+              ? "P" + issue.paragraphIndex : "位置待确认")
         ));
         lines.push("- 段落角色：" + (
           helpers.formatReviewRole ? helpers.formatReviewRole(issue.role) : (issue.role || "未标注")
@@ -6463,7 +6464,7 @@
     if (helpers.formatReviewParagraphLabel) {
       return helpers.formatReviewParagraphLabel(issue);
     }
-    return Number(issue && issue.paragraphIndex) > 0 && issue.anchorVerification !== "unverified"
+    return Number(issue && issue.paragraphIndex) > 0 && issue.anchorVerification === "verified"
       ? "P" + issue.paragraphIndex
       : "位置待确认";
   }
