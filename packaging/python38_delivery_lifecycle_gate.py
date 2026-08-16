@@ -59,7 +59,31 @@ def run_delivery_audit(delivery_root: Path) -> None:
     )
     require(result.returncode == 0, result.stdout.strip() or "DELIVERY_AUDIT_FAILED")
     print("lifecycle_delivery_audit=passed")
-    final_auditor = delivery_root / "scripts/audit_v0250_delivery.py"
+    manifest_path = delivery_root / "release-manifest.json"
+    configured_auditor = ""
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            delivery_policy = manifest.get("deliveryPolicy", {})
+            configured_auditor = str(
+                delivery_policy.get("candidateAuditScript")
+                or delivery_policy.get("auditScript", "")
+            )
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise LifecycleFailure("DELIVERY_MANIFEST_INVALID") from exc
+    if not manifest_path.is_file() or not configured_auditor or configured_auditor.endswith("audit_delivery.py"):
+        final_auditor = delivery_root / "scripts/audit_v0250_delivery.py"
+    else:
+        final_auditor = delivery_root / configured_auditor
+    if (
+        configured_auditor
+        and (
+            Path(configured_auditor).is_absolute()
+            or ".." in Path(configured_auditor).parts
+            or "\\" in configured_auditor
+        )
+    ):
+        raise LifecycleFailure("DELIVERY_AUDITOR_PATH_INVALID")
     if final_auditor.is_file():
         final_result = subprocess.run(
             [sys.executable, str(final_auditor), str(delivery_root)],
@@ -69,9 +93,9 @@ def run_delivery_audit(delivery_root: Path) -> None:
         )
         require(
             final_result.returncode == 0,
-            final_result.stdout.strip() or "V0250_DELIVERY_AUDIT_FAILED",
+            final_result.stdout.strip() or "FINAL_DELIVERY_AUDIT_FAILED",
         )
-        print("lifecycle_v0250_delivery_audit=passed")
+        print("lifecycle_final_delivery_audit=passed script={0}".format(final_auditor.name))
 
 
 def adapter_modules(delivery_root: Path):

@@ -1,0 +1,18 @@
+{
+  "schemaVersion": 1,
+  "version": "0.25.1-alpha",
+  "basePolicy": "delivery-sources-v0250.json",
+  "generatedFiles": [],
+  "entries": [
+    {
+      "type": "file",
+      "source": "packaging/v0251-delivery.md",
+      "target": "docs/v0251-delivery.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/audit_v0251_delivery.py",
+      "target": "scripts/audit_v0251_delivery.py"
+    }
+  ]
+}
