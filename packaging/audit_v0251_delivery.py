@@ -39,13 +39,15 @@ def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def audit_archive_checksum(archive: Path, checksum_file: Path) -> None:
+def audit_archive_checksum(
+    archive: Path, checksum_file: Path, expected_archive_name: Optional[str] = None
+) -> None:
     if not archive.is_file() or not checksum_file.is_file():
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_FILE_MISSING")
     fields = checksum_file.read_text(encoding="utf-8").strip().split()
     if len(fields) != 2 or not SHA256_RE.fullmatch(fields[0]):
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_FORMAT_INVALID")
-    if fields[1] != archive.name:
+    if fields[1] != (expected_archive_name or archive.name):
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_NAME_MISMATCH")
     if fields[0] != sha256(archive):
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_MISMATCH")
@@ -218,13 +220,18 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("delivery_root", type=Path)
     parser.add_argument("--archive", type=Path)
     parser.add_argument("--checksum-file", type=Path)
+    parser.add_argument("--expected-archive-name")
     args = parser.parse_args(argv)
     try:
         if (args.archive is None) != (args.checksum_file is None):
             raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_ARGUMENTS_INCOMPLETE")
         audit(args.delivery_root.resolve())
         if args.archive is not None and args.checksum_file is not None:
-            audit_archive_checksum(args.archive.resolve(), args.checksum_file.resolve())
+            audit_archive_checksum(
+                args.archive.resolve(),
+                args.checksum_file.resolve(),
+                args.expected_archive_name,
+            )
     except (DeliveryFailure, OSError, ValueError, json.JSONDecodeError) as exc:
         print("v0251_delivery_audit=failed {0}".format(exc))
         return 1

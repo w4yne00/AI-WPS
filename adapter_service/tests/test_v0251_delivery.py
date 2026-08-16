@@ -92,7 +92,7 @@ def test_v0251_archive_checksum_verification_checks_name_and_digest(tmp_path):
         encoding="utf-8",
     )
 
-    audit_module.audit_archive_checksum(archive, checksum)
+    audit_module.audit_archive_checksum(archive, checksum, archive.name)
     checksum.write_text("0" * 64 + "  " + archive.name + "\n", encoding="utf-8")
     with pytest.raises(audit_module.DeliveryFailure, match="CHECKSUM_MISMATCH"):
         audit_module.audit_archive_checksum(archive, checksum)

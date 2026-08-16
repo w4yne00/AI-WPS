@@ -150,7 +150,8 @@ PY
 
 "$PYTHON_BIN" "$ROOT_DIR/packaging/audit_v0251_delivery.py" "$TMP_DIR" \
   --archive "$PENDING_ARCHIVE_PATH" \
-  --checksum-file "$PENDING_CHECKSUM_PATH"
+  --checksum-file "$PENDING_CHECKSUM_PATH" \
+  --expected-archive-name "$(basename "$ARCHIVE_PATH")"
 
 mv "$PENDING_ARCHIVE_PATH" "$ARCHIVE_PATH"
 PUBLISHED_ARCHIVE="1"
