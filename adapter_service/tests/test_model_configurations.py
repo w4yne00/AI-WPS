@@ -179,6 +179,36 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             )
             self.assertTrue(changed["formatSemanticValidation"]["stale"])
 
+    def test_direct_format_validation_is_ready_until_key_or_protocol_inputs_change(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            configuration = store.create_configuration(
+                "word.format_review",
+                "直连格式协议",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://model.example/v1",
+                model_name="format-role-model",
+                max_output_tokens=1024,
+                context_window_tokens=40000,
+            )
+            configuration = store.replace_api_key(configuration["id"], "secret")
+            validated = store.record_format_semantic_validation(
+                configuration["id"],
+                {
+                    "success": True,
+                    "protocolVersion": "format_semantics.v1",
+                    "operations": {"classify_role": True},
+                },
+            )
+            self.assertEqual(validated["formatSemanticReadiness"]["code"], "ready")
+
+            changed = store.replace_api_key(configuration["id"], "new-secret")
+            self.assertGreater(changed["configVersion"], validated["configVersion"])
+            self.assertTrue(changed["formatSemanticValidation"]["stale"])
+            self.assertEqual(
+                changed["formatSemanticReadiness"]["code"], "validation_required"
+            )
+
     def test_image_semantics_requires_explicit_mode_authorization_and_validation(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))

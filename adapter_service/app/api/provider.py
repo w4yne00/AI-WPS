@@ -333,10 +333,7 @@ def validate_model_configuration(configuration_id: str) -> dict:
         duration_ms = int((time.monotonic() - started) * 1000)
         try:
             current = store.get_configuration(configuration_id)
-            if (
-                current.get("taskType") == "word.format_review"
-                and current.get("accessMethod") == "workflow_platform"
-            ):
+            if current.get("taskType") == "word.format_review":
                 store.record_format_semantic_validation(
                     configuration_id,
                     {

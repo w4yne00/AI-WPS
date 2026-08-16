@@ -3069,6 +3069,7 @@
         missingFields: Array.isArray(profile.missingFields) ? profile.missingFields : [],
         configVersion: Number(profile.configVersion || 1),
         lastValidation: profile.lastValidation || null,
+        formatSemanticValidation: profile.formatSemanticValidation || null,
         createdAt: String(profile.createdAt || ""),
         updatedAt: String(profile.updatedAt || "")
       };
@@ -3095,6 +3096,30 @@
       }
     }
     return "尚未配置";
+  }
+
+  function formatModelValidationStatus(profile, activeProfileId) {
+    var item = profile || {};
+    var validation = item.lastValidation;
+    var identity = "配置“" + String(item.name || "未命名配置") + "”（ID：" +
+      String(item.id || "未记录") + "，修订 " + String(item.configVersion || 1) + "）";
+    var message;
+    if (!validation) {
+      return "尚未验证";
+    }
+    if (validation.stale) {
+      return "验证已过期：" + identity + "，请重新验证。";
+    }
+    message = String(validation.message || "").trim();
+    if (!validation.success) {
+      return "验证失败：" + (message || "模型配置验证未通过") + "；" + identity + "。";
+    }
+    if (String(item.id || "") === String(activeProfileId || "")) {
+      return "验证成功：" + identity + "，是当前 " +
+        (String(item.taskType || "") === "word.format_review" ? "word.format_review" : "任务") +
+        " 配置。";
+    }
+    return "验证成功：" + identity + "，当前任务不会使用此配置。";
   }
 
   function deriveModelInterfaceState(input) {
@@ -3836,6 +3861,7 @@
     buildDocumentStructure: buildDocumentStructure,
     normalizeWorkflowProfileData: normalizeWorkflowProfileData,
     getActiveWorkflowProfileName: getActiveWorkflowProfileName,
+    formatModelValidationStatus: formatModelValidationStatus,
     deriveModelInterfaceState: deriveModelInterfaceState,
     normalizeAdapterHealth: normalizeAdapterHealth,
     createSettingsRefreshController: createSettingsRefreshController,

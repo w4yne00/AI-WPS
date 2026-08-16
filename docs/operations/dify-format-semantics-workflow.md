@@ -1,4 +1,4 @@
-# Word 格式语义 Dify 工作流
+# Word 格式语义模型接入
 
 `word.format_review` 的工作流平台接入使用 `format_semantics.v1` 协议。工作流必须把以下固定字段作为输入：
 
@@ -8,6 +8,10 @@
 - `image_files`：仅 `suggest_figure_caption` 使用，最多四个图像文件。
 
 adapter 只读取 `data.outputs.result_json`，并按当前操作的完整 Schema 校验。自由文本、聊天历史、其他输出变量和不在候选范围内的对象都不能作为结果来源。
+
+模型直连配置使用同一生产格式语义契约，但验证请求只执行 `classify_role`：Adapter 将固定的合成候选、`snapshotBinding` 和操作名放入直连模型的用户消息，并校验模型返回的完整契约对象。旧式角色 JSON 数组、错误 `operation`、错误绑定、未知候选 ID 或缺少候选结果均验证失败。验证只使用合成事实，不读取或发送用户文档、文档正文或图片像素。
+
+工作流平台的四类操作（`classify_role`、`associate_caption`、`suggest_table_caption`、`suggest_figure_caption`）保持不变。`POST /provider/model-configurations/{configurationId}/validate` 只验证指定配置，不自动激活，也不改变任务路由；返回结果包含配置名称、ID、修订号及其是否为当前配置。服务地址、接入方式、模型、上下文、输出上限或 API Key 变化会使原验证记录过期。
 
 ## 受控图片组生命周期
 

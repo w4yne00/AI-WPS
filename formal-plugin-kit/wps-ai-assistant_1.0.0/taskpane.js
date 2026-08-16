@@ -2599,6 +2599,11 @@
       }
       var accessMethod = profile ? profile.accessMethod : "workflow_platform";
       var directHidden = accessMethod === "direct_model" ? "" : " hidden";
+      var validationSummary = profile
+        ? (helpers.formatModelValidationStatus
+          ? helpers.formatModelValidationStatus(profile, data.activeProfileId)
+          : (profile.lastValidation && profile.lastValidation.message || "尚未验证"))
+        : "";
       rows.push('<section class="workflow-settings-subpage" aria-label="' +
         (editor.mode === "create" ? "新建模型配置" : "编辑模型配置") + '">');
       rows.push('<div class="workflow-subpage-head"><button type="button" class="ghost-action mini-button" data-workflow-action="editor-cancel"' + disabledAttribute + '>返回</button><div><h5>' +
@@ -2630,7 +2635,7 @@
         escapeWorkflowText(profile ? profile.contextWindowTokens : 40000) + '"' + disabledAttribute + ' /></label>' +
         (profile ? '<button type="button" class="ghost-action" data-workflow-action="validate" data-task-type="' + taskType + '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' +
           (!profile.complete || editor.dirty ? " disabled" : "") + '>验证调用</button><p class="inline-status" data-model-validation-summary>' +
-          escapeWorkflowText(profile.lastValidation && profile.lastValidation.message || "尚未验证") + '</p>' : '') +
+          escapeWorkflowText(validationSummary) + '</p>' : '') +
         '</div></details>');
       if (editor.mode === "create") {
         var shouldCheckActivate = getShouldActivateNewWorkflowProfile(data, false);
@@ -2785,8 +2790,8 @@
     });
   }
 
-  function validateSavedFormatSemanticConfiguration(taskType, configurationId, draft) {
-    if (taskType !== "word.format_review" || draft.accessMethod !== "workflow_platform") {
+  function validateSavedFormatSemanticConfiguration(taskType, configurationId) {
+    if (taskType !== "word.format_review") {
       return Promise.resolve({ validated: false, skipped: true });
     }
     return request("/provider/model-configurations/" + encodeURIComponent(configurationId) + "/validate", {})
@@ -2825,7 +2830,7 @@
       .then(function (body) {
         var configuration = body && body.data && body.data.configuration || {};
         return saveModelConfigurationKey(configuration.id, draft).then(function () {
-          return validateSavedFormatSemanticConfiguration(taskType, configuration.id, draft).then(function (validation) {
+          return validateSavedFormatSemanticConfiguration(taskType, configuration.id).then(function (validation) {
           var complete = Boolean(draft.serviceBaseUrl && draft.apiKey &&
             (draft.accessMethod !== "direct_model" || draft.modelName));
           if (activate && complete) {
@@ -2859,7 +2864,7 @@
       modelConfigurationPayload(taskType, draft), { method: "PATCH" }).then(function () {
       metadataSaved = true;
       return saveModelConfigurationKey(profileId, draft).then(function () {
-        return validateSavedFormatSemanticConfiguration(taskType, profileId, draft).then(function (validation) {
+        return validateSavedFormatSemanticConfiguration(taskType, profileId).then(function (validation) {
           var message = "模型配置已保存。";
           if (validation && validation.skipped === false && !validation.validated) {
             message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";

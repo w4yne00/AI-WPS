@@ -662,23 +662,38 @@ class ModelConfigurationStore:
                 "ready": True,
                 "label": "图片外发授权和视觉能力验证均有效。",
             }
-        if str(configuration.get("taskType", "")) == "word.format_review" and access_method == ACCESS_WORKFLOW_PLATFORM:
+        if str(configuration.get("taskType", "")) == "word.format_review" and access_method in (
+            ACCESS_WORKFLOW_PLATFORM,
+            ACCESS_DIRECT_MODEL,
+        ):
+            required_operations = (
+                ("classify_role",)
+                if access_method == ACCESS_DIRECT_MODEL
+                else (
+                    "classify_role",
+                    "associate_caption",
+                    "suggest_table_caption",
+                    "suggest_figure_caption",
+                )
+            )
             semantic_ready = (
                 not missing
                 and isinstance(format_semantic_validation, dict)
                 and bool(format_semantic_validation.get("success"))
                 and not bool(format_semantic_validation.get("stale"))
                 and str(format_semantic_validation.get("protocolVersion")) == "format_semantics.v1"
-                and all(bool(format_semantic_validation.get("operations", {}).get(operation)) for operation in (
-                    "classify_role",
-                    "associate_caption",
-                    "suggest_table_caption",
-                    "suggest_figure_caption",
-                ))
+                and all(
+                    bool(format_semantic_validation.get("operations", {}).get(operation))
+                    for operation in required_operations
+                )
             )
             format_semantic_readiness = {
                 "code": "ready" if semantic_ready else "validation_required",
-                "label": "格式语义协议已验证，格式审查可调用工作流。"
+                "label": (
+                    "格式语义协议已验证，格式审查可调用工作流。"
+                    if access_method == ACCESS_WORKFLOW_PLATFORM
+                    else "格式语义协议已验证，格式审查可调用模型直连。"
+                )
                 if semantic_ready
                 else "格式语义协议尚未验证，格式审查仅运行确定性规则。",
             }

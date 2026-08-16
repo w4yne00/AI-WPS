@@ -27,6 +27,7 @@ if HAS_API_DEPS:
         ProviderTaskApiKeyRequest,
         create_model_configuration,
         set_model_configuration_image_authorization,
+        validate_model_configuration,
     )
     from app.services.model_configurations import (
         ACCESS_DIRECT_MODEL,
@@ -67,6 +68,97 @@ class WorkflowProfileApiTests(unittest.TestCase):
             self.assertEqual(
                 authorized["data"]["configuration"]["imageSemanticReadiness"]["code"],
                 "validation_required",
+            )
+
+    def test_direct_format_validation_returns_identity_without_activation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+            created = store.create_configuration(
+                "word.format_review",
+                "直连格式验证",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="format-role-model",
+                max_output_tokens=1024,
+                context_window_tokens=40000,
+            )
+            store.replace_api_key(created["id"], "format-secret")
+            validation = {
+                "success": True,
+                "taskType": "word.format_review",
+                "configurationId": created["id"],
+                "configurationName": "直连格式验证",
+                "configurationRevision": 2,
+                "isCurrent": False,
+                "currentConfigurationId": "",
+                "currentConfigurationName": "",
+                "accessMethod": ACCESS_DIRECT_MODEL,
+                "modelName": "format-role-model",
+                "promptVersion": "format_semantics.v1",
+                "formatSemanticValidation": {
+                    "success": True,
+                    "protocolVersion": "format_semantics.v1",
+                    "operations": {"classify_role": True},
+                },
+            }
+            with patch("app.api.provider.get_model_configuration_store", return_value=store), patch(
+                "app.api.provider.ProviderClient.validate_model_configuration",
+                return_value=validation,
+            ):
+                result = validate_model_configuration(created["id"])
+
+            data = result["data"]
+            self.assertEqual(data["configurationId"], created["id"])
+            self.assertEqual(data["configurationName"], "直连格式验证")
+            self.assertEqual(data["configurationRevision"], 2)
+            self.assertFalse(data["isCurrent"])
+            self.assertEqual(data["currentConfigurationId"], "")
+            self.assertEqual(
+                store.list_for_task("word.format_review")["activeConfigurationId"], ""
+            )
+            self.assertTrue(data["configuration"]["lastValidation"]["success"])
+            self.assertTrue(data["configuration"]["formatSemanticValidation"]["success"])
+
+    def test_direct_format_validation_persists_safe_contract_failure(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+            created = store.create_configuration(
+                "word.format_review",
+                "失败格式验证",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="format-role-model",
+                max_output_tokens=1024,
+                context_window_tokens=40000,
+            )
+            with patch("app.api.provider.get_model_configuration_store", return_value=store), patch(
+                "app.api.provider.ProviderClient.validate_model_configuration",
+                side_effect=AdapterError(
+                    "FORMAT_SEMANTIC_BINDING_INVALID",
+                    "格式语义响应未绑定当前格式快照。",
+                    status_code=502,
+                ),
+            ):
+                with self.assertRaises(AdapterError) as raised:
+                    validate_model_configuration(created["id"])
+
+            self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_BINDING_INVALID")
+            configuration = store.get_configuration(created["id"])
+            self.assertFalse(configuration["lastValidation"]["success"])
+            self.assertEqual(
+                configuration["lastValidation"]["errorCode"],
+                "FORMAT_SEMANTIC_BINDING_INVALID",
+            )
+            self.assertFalse(configuration["formatSemanticValidation"]["success"])
+            self.assertEqual(
+                configuration["formatSemanticValidation"]["errorCode"],
+                "FORMAT_SEMANTIC_BINDING_INVALID",
             )
 
     def test_crud_routes_return_sanitized_profile_data(self) -> None:

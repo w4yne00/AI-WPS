@@ -84,6 +84,26 @@ class DirectModelProviderTests(unittest.TestCase):
             AppSettings(timeout_seconds=75), model_configuration_store=store
         ), store, configuration["id"]
 
+    def _direct_format_client(self, root: Path):
+        config_path = root / "adapter.json"
+        config_path.write_text("{}\n", encoding="utf-8")
+        store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+        configuration = store.create_configuration(
+            "word.format_review",
+            "格式语义直连",
+            ACCESS_DIRECT_MODEL,
+            service_base_url="https://format-model.example/v1",
+            model_name="format-role-model",
+            max_output_tokens=1024,
+            context_window_tokens=40000,
+        )
+        store.replace_api_key(configuration["id"], "format-secret")
+        return (
+            ProviderClient(AppSettings(timeout_seconds=75), model_configuration_store=store),
+            store,
+            configuration["id"],
+        )
+
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_request_uses_chat_completions_and_only_returns_final_content(
         self, urlopen
@@ -325,6 +345,178 @@ class DirectModelProviderTests(unittest.TestCase):
             },
         )
         self.assertEqual(urlopen.call_count, 4)
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_uses_formal_contract_and_exposes_identity(
+        self, urlopen
+    ) -> None:
+        urlopen.return_value = FakeResponse(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": json.dumps(
+                                {
+                                    "schemaVersion": "format_semantics.v1",
+                                    "operation": "classify_role",
+                                    "snapshotBinding": {
+                                        "contentSha256": "synthetic-content",
+                                        "structureSha256": "synthetic-structure",
+                                        "formatSha256": "synthetic-format",
+                                    },
+                                    "items": [
+                                        {
+                                            "blockId": "synthetic-1",
+                                            "role": "heading",
+                                            "level": 1,
+                                            "confidence": 0.95,
+                                        }
+                                    ],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        }
+                    }
+                ]
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            client, store, configuration_id = self._direct_format_client(Path(tmp))
+            result = client.validate_model_configuration(
+                configuration_id, "trace-direct-format-validation"
+            )
+
+        request = urlopen.call_args.args[0]
+        request_text = request.data.decode("utf-8")
+        payload = json.loads(request_text)
+        user_content = payload["messages"][1]["content"]
+        self.assertEqual(request.full_url, "https://format-model.example/v1/chat/completions")
+        self.assertEqual(payload["model"], "format-role-model")
+        self.assertIn("format_semantics.v1", user_content)
+        self.assertIn("snapshotBinding", user_content)
+        self.assertIn("synthetic-1", user_content)
+        self.assertNotIn("项目机密正文", request_text)
+        self.assertNotIn("format-secret", request_text)
+        self.assertEqual(
+            result["formatSemanticValidation"]["operations"],
+            {"classify_role": True},
+        )
+        self.assertEqual(result["configurationId"], configuration_id)
+        self.assertEqual(result["configurationName"], "格式语义直连")
+        self.assertEqual(result["configurationRevision"], 2)
+        self.assertFalse(result["isCurrent"])
+        self.assertEqual(result["currentConfigurationId"], "")
+        self.assertEqual(store.list_for_task("word.format_review")["activeConfigurationId"], "")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_rejects_legacy_and_invalid_contract_responses(
+        self, urlopen
+    ) -> None:
+        invalid_responses = [
+            (
+                "legacy-array",
+                [{"paragraphIndex": 1, "role": "body", "confidence": 0.9}],
+                "FORMAT_SEMANTIC_RESPONSE_INVALID",
+            ),
+            (
+                "wrong-schema",
+                {
+                    "schemaVersion": "format_semantics.v0",
+                    "operation": "classify_role",
+                    "snapshotBinding": {
+                        "contentSha256": "synthetic-content",
+                        "structureSha256": "synthetic-structure",
+                        "formatSha256": "synthetic-format",
+                    },
+                    "items": [],
+                },
+                "FORMAT_SEMANTIC_RESPONSE_INVALID",
+            ),
+            (
+                "wrong-operation",
+                {
+                    "schemaVersion": "format_semantics.v1",
+                    "operation": "associate_caption",
+                    "snapshotBinding": {
+                        "contentSha256": "synthetic-content",
+                        "structureSha256": "synthetic-structure",
+                        "formatSha256": "synthetic-format",
+                    },
+                    "items": [],
+                },
+                "FORMAT_SEMANTIC_RESPONSE_INVALID",
+            ),
+            (
+                "wrong-binding",
+                {
+                    "schemaVersion": "format_semantics.v1",
+                    "operation": "classify_role",
+                    "snapshotBinding": {
+                        "contentSha256": "other-content",
+                        "structureSha256": "synthetic-structure",
+                        "formatSha256": "synthetic-format",
+                    },
+                    "items": [],
+                },
+                "FORMAT_SEMANTIC_BINDING_INVALID",
+            ),
+            (
+                "out-of-range-block",
+                {
+                    "schemaVersion": "format_semantics.v1",
+                    "operation": "classify_role",
+                    "snapshotBinding": {
+                        "contentSha256": "synthetic-content",
+                        "structureSha256": "synthetic-structure",
+                        "formatSha256": "synthetic-format",
+                    },
+                    "items": [
+                        {
+                            "blockId": "not-requested",
+                            "role": "heading",
+                            "level": 1,
+                            "confidence": 0.95,
+                        }
+                    ],
+                },
+                "FORMAT_SEMANTIC_CANDIDATE_OUT_OF_RANGE",
+            ),
+            (
+                "missing-result-item",
+                {
+                    "schemaVersion": "format_semantics.v1",
+                    "operation": "classify_role",
+                    "snapshotBinding": {
+                        "contentSha256": "synthetic-content",
+                        "structureSha256": "synthetic-structure",
+                        "formatSha256": "synthetic-format",
+                    },
+                    "items": [],
+                },
+                "FORMAT_SEMANTIC_RESPONSE_INCOMPLETE",
+            ),
+        ]
+        for name, response_payload, expected_code in invalid_responses:
+            with self.subTest(name=name), TemporaryDirectory() as tmp:
+                urlopen.return_value = FakeResponse(
+                    {
+                        "choices": [
+                            {
+                                "message": {
+                                    "role": "assistant",
+                                    "content": json.dumps(response_payload, ensure_ascii=False),
+                                }
+                            }
+                        ]
+                    }
+                )
+                client, _store, configuration_id = self._direct_format_client(Path(tmp))
+                with self.assertRaises(AdapterError) as raised:
+                    client.validate_model_configuration(
+                        configuration_id, "trace-direct-format-{0}".format(name)
+                    )
+                self.assertEqual(raised.exception.code, expected_code)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_format_semantics_rejects_invalid_operation_and_over_budget_prompt(self, urlopen) -> None:

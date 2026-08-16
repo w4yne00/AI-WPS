@@ -1537,10 +1537,6 @@ _VALIDATION_PROBES = {
         '请审查“系统应尽快完成联调”。只返回 JSON：'
         '{"summary":"一句话结论","issues":[]}'
     ),
-    "word.format_review": (
-        '请判断段落角色，只返回 JSON 数组：'
-        '[{"paragraphIndex":1,"role":"body","confidence":0.9}]'
-    ),
     "excel.analysis": (
         '分析表格：表头为“状态”，数据为“已完成”。只返回 JSON：'
         '{"overview":"概述","findings":[],"risks":[],"actions":[]}'
@@ -1574,20 +1570,6 @@ def _validate_probe_answer(task_type: str, answer: str) -> None:
         "ppt.slide_assistant": parse_ppt_slide_answer,
         "ppt.structure_review": parse_ppt_structure_review_answer,
     }
-    if task_type == "word.format_review":
-        cleaned = strip_think_tag_content(answer).strip()
-        fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", cleaned, flags=re.IGNORECASE)
-        try:
-            payload = json.loads(fenced)
-        except (TypeError, ValueError) as exc:
-            raise AdapterError(
-                "MODEL_RESULT_INVALID", "模型返回结果不符合格式审查契约。", status_code=502
-            ) from exc
-        if not isinstance(payload, list):
-            raise AdapterError(
-                "MODEL_RESULT_INVALID", "模型返回结果不符合格式审查契约。", status_code=502
-            )
-        return
     parser = parsers.get(task_type)
     if parser is None:
         raise AdapterError("MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400)
@@ -2967,18 +2949,19 @@ class ProviderClient:
         task_auth = self.resolve_configuration_auth(configuration_id)
         configuration = task_auth["modelConfiguration"]
         task_type = str(configuration.get("taskType", ""))
-        if (
-            task_type == "word.format_review"
-            and str(configuration.get("accessMethod", "")) == ACCESS_WORKFLOW_PLATFORM
-        ):
-            semantic_validation = self._validate_format_semantic_workflow(
-                configuration_id, trace_id, task_auth
-            )
+        if task_type == "word.format_review":
+            if str(configuration.get("accessMethod", "")) == ACCESS_WORKFLOW_PLATFORM:
+                semantic_validation = self._validate_format_semantic_workflow(
+                    configuration_id, trace_id, task_auth
+                )
+            else:
+                semantic_validation = self._validate_format_semantic_direct(trace_id, task_auth)
             return {
                 "success": True,
                 "taskType": task_type,
                 "configurationId": str(configuration.get("id", "")),
                 "configurationName": str(configuration.get("name", "")),
+                **self._validation_configuration_identity(configuration),
                 "accessMethod": str(configuration.get("accessMethod", "")),
                 "modelName": str(configuration.get("modelName", "")),
                 "promptVersion": "format_semantics.v1",
@@ -3011,28 +2994,44 @@ class ProviderClient:
             "taskType": task_type,
             "configurationId": str(configuration.get("id", "")),
             "configurationName": str(configuration.get("name", "")),
+            **self._validation_configuration_identity(configuration),
             "accessMethod": str(configuration.get("accessMethod", "")),
             "modelName": str(configuration.get("modelName", "")),
             "promptVersion": prompt_version,
         }
 
-    def _validate_format_semantic_workflow(
-        self, configuration_id: str, trace_id: str, task_auth: Dict
-    ) -> Dict:
-        """Validate all format_semantics.v1 operations with synthetic facts only."""
-        from app.services.word.format_semantics import (
-            FORMAT_SEMANTIC_OPERATIONS,
-            FORMAT_SEMANTIC_SCHEMA_VERSION,
-            FormatSemanticContract,
-        )
+    def _validation_configuration_identity(self, configuration: Dict) -> Dict:
+        task_type = str(configuration.get("taskType", ""))
+        configuration_id = str(configuration.get("id", ""))
+        active_id = ""
+        active_name = ""
+        if self.model_configuration_store is not None:
+            task_data = self.model_configuration_store.list_for_task(task_type)
+            active_id = str(task_data.get("activeConfigurationId", ""))
+            active_configuration = next(
+                (
+                    item
+                    for item in task_data.get("configurations", [])
+                    if str(item.get("id", "")) == active_id
+                ),
+                None,
+            )
+            active_name = str((active_configuration or {}).get("name", ""))
+        return {
+            "configurationRevision": int(configuration.get("configVersion") or 1),
+            "isCurrent": bool(configuration_id and configuration_id == active_id),
+            "currentConfigurationId": active_id,
+            "currentConfigurationName": active_name,
+        }
 
-        del configuration_id
+    @staticmethod
+    def _format_semantic_validation_fixtures() -> Tuple[Dict[str, str], Dict[str, Dict]]:
         binding = {
             "contentSha256": "synthetic-content",
             "structureSha256": "synthetic-structure",
             "formatSha256": "synthetic-format",
         }
-        cases = {
+        candidates = {
             "classify_role": {
                 "synthetic-1": {
                     "allowedTargets": [
@@ -3057,6 +3056,79 @@ class ProviderClient:
             },
             "suggest_figure_caption": {"synthetic-4": {"allowedTargets": []}},
         }
+        return binding, candidates
+
+    def _validate_format_semantic_direct(self, trace_id: str, task_auth: Dict) -> Dict:
+        from app.services.word.format_semantics import (
+            FORMAT_SEMANTIC_SCHEMA_VERSION,
+            FormatSemanticContract,
+        )
+
+        binding, fixtures = self._format_semantic_validation_fixtures()
+        candidates = fixtures["classify_role"]
+        request_payload = {
+            "schemaVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
+            "operation": "classify_role",
+            "snapshotBinding": binding,
+            "candidates": candidates,
+        }
+        candidate_json = json.dumps(request_payload, ensure_ascii=False, sort_keys=True)
+        prompt = "\n".join(
+            [
+                "你是 Word 格式语义协议验证助手。",
+                "只处理下列合成 classify_role 候选，不得接收或引用用户文档。",
+                "只返回符合 format_semantics.v1 的 JSON 对象，不要返回旧式 JSON 数组、Markdown 或解释。",
+                json.dumps(request_payload, ensure_ascii=False),
+            ]
+        )
+        response = self.format_semantics(
+            "classify_role",
+            trace_id,
+            {
+                "operation": "classify_role",
+                "snapshotBinding": binding,
+                "candidate_json": candidate_json,
+            },
+            prompt,
+            task_auth=task_auth,
+        )
+        payload = _extract_json_payload(str(response.get("answer", "")))
+        if payload is None:
+            raise AdapterError(
+                "FORMAT_SEMANTIC_RESPONSE_INVALID",
+                "模型返回结果不符合 format_semantics.v1 格式语义契约。",
+                status_code=502,
+            )
+        FormatSemanticContract.validate_response(
+            "classify_role",
+            payload,
+            candidates,
+            binding,
+            require_complete=True,
+        )
+        return {
+            "success": True,
+            "protocolVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
+            "operations": {"classify_role": True},
+            "visualCapability": {
+                "validated": False,
+                "mode": "contract_only",
+                "reason": "synthetic_image_files_omitted",
+            },
+        }
+
+    def _validate_format_semantic_workflow(
+        self, configuration_id: str, trace_id: str, task_auth: Dict
+    ) -> Dict:
+        """Validate all format_semantics.v1 operations with synthetic facts only."""
+        from app.services.word.format_semantics import (
+            FORMAT_SEMANTIC_OPERATIONS,
+            FORMAT_SEMANTIC_SCHEMA_VERSION,
+            FormatSemanticContract,
+        )
+
+        del configuration_id
+        binding, cases = self._format_semantic_validation_fixtures()
         operations = {}
         for operation in FORMAT_SEMANTIC_OPERATIONS:
             candidates = cases[operation]

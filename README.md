@@ -376,7 +376,7 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/provider/model-configurations/{configurationId}/api-key` | Replace one configuration API key |
 | `POST` | `/provider/model-configurations/{configurationId}/activate` | Activate a complete configuration |
 | `POST` | `/provider/model-configurations/{configurationId}/copy` | Create a copy without copying key material |
-| `POST` | `/provider/model-configurations/{configurationId}/validate` | Perform a real validation request |
+| `POST` | `/provider/model-configurations/{configurationId}/validate` | Validate the selected configuration, return identity/current-route state, and never activate it automatically |
 | `GET` / `POST` | `/provider/workflow-profiles` | One-version compatibility wrapper for legacy clients |
 | `POST` | `/provider/api-key` | Save the unified Dify Chat API key |
 | `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |

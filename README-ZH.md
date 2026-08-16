@@ -357,7 +357,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/provider/model-configurations/{configurationId}/api-key` | 单独更换配置 API Key |
 | `POST` | `/provider/model-configurations/{configurationId}/activate` | 激活完整模型配置 |
 | `POST` | `/provider/model-configurations/{configurationId}/copy` | 创建不含密钥正文的配置副本 |
-| `POST` | `/provider/model-configurations/{configurationId}/validate` | 对完整配置执行真实验证调用 |
+| `POST` | `/provider/model-configurations/{configurationId}/validate` | 对指定配置执行真实验证调用；返回配置身份和当前路由关系，不自动激活 |
 | `GET` / `POST` | `/provider/workflow-profiles` | 旧版工作流档案兼容包装，保留一个版本 |
 | `POST` | `/provider/api-key` | 保存统一 Dify Chat API Key |
 | `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |

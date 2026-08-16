@@ -70,6 +70,7 @@ assert.ok(managerSource.includes("canDeleteWorkflowProfile"));
 assert.ok(!managerSource.includes('profile.note || "暂无备注"'));
 assert.ok(managerSource.includes("if (profile.note)"));
 assert.ok(managerSource.includes("workflow-profile-note"));
+assert.ok(managerSource.includes("helpers.formatModelValidationStatus"));
 assert.ok(!managerSource.includes("else if (!data.profiles.length)"));
 assert.ok(managerSource.includes("if (data.profiles.length)"));
 assert.ok(managerSource.includes('workflow-profile-list-row'));
@@ -251,6 +252,36 @@ assert.strictEqual(integratedValidation({ name: "流程 A", note: "", apiKey: ""
 const integratedActivation = loadPureFunction("getShouldActivateNewWorkflowProfile", sharedHelpers);
 assert.strictEqual(integratedActivation({ profileCount: 0, activeProfileId: "" }, false), true);
 assert.strictEqual(integratedActivation({ profileCount: 2, activeProfileId: "p1" }, false), false);
+
+const validationSummary = sharedHelpers.formatModelValidationStatus({
+  id: "candidate-63",
+  name: "格式直连",
+  taskType: "word.format_review",
+  configVersion: 3,
+  lastValidation: {
+    success: true,
+    stale: false,
+    message: "验证调用成功。"
+  }
+}, "active-63");
+assert.ok(validationSummary.includes("格式直连"));
+assert.ok(validationSummary.includes("candidate-63"));
+assert.ok(validationSummary.includes("修订 3"));
+assert.ok(validationSummary.includes("当前任务不会使用此配置"));
+assert.ok(!validationSummary.includes("API Key"));
+assert.ok(sharedHelpers.formatModelValidationStatus({
+  id: "active-63",
+  name: "格式直连",
+  taskType: "word.format_review",
+  configVersion: 3,
+  lastValidation: { success: true, stale: false, message: "验证调用成功。" }
+}, "active-63").includes("当前 word.format_review 配置"));
+assert.ok(sharedHelpers.formatModelValidationStatus({
+  id: "candidate-63",
+  name: "格式直连",
+  configVersion: 4,
+  lastValidation: { success: true, stale: true, message: "验证调用成功。" }
+}, "active-63").includes("验证已过期"));
 
 const stripSource = functionSource("renderWorkflowProfileStrip");
 assert.ok(stripSource.includes("syncWorkflowProfileSelectOptions(select, optionModels)"));
