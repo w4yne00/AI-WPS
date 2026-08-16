@@ -6420,7 +6420,9 @@
         ? helpers.getCollectionItem(paragraphs, neighborIndex)
         : null;
       if (issue && issue.ruleId === "structure.heading_hierarchy") {
-        if (neighbor) {
+        var neighborText = neighbor && String(readValue(neighbor, "Text") || readValue(neighbor, "text") || "")
+          .replace(/[\r\u0007]+$/g, "").trim();
+        if (neighbor && neighborText) {
           currentAdjacentIds.push("format-paragraph-" + neighborIndex);
         }
         return;

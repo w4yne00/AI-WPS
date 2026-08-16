@@ -1270,11 +1270,7 @@ class DeterministicFormatReviewService:
         }
         item = {key: deepcopy(value) for key, value in issue.items() if key in allowed_fields}
         rule_id = str(item.get("ruleId") or "unknown")
-        paragraph_index = item.get("paragraphIndex")
-        try:
-            paragraph_index = int(paragraph_index) if paragraph_index is not None else None
-        except (TypeError, ValueError):
-            paragraph_index = None
+        paragraph_index = normalize_paragraph_index(item.get("paragraphIndex"))
         blocks = (request.content.document_structure or {}).get("formatBlocks", []) or []
         block = next(
             (candidate for candidate in blocks
@@ -1285,6 +1281,7 @@ class DeterministicFormatReviewService:
         block_index = blocks.index(block) if block in blocks else -1
         block_text = str((block or {}).get("text", ""))
         anchor_id = str((block or {}).get("blockId") or "structure:{0}".format(rule_id))
+        anchor_verification = "verified" if block is not None and block_text else "unverified"
         property_path = FORMAT_RULE_PROPERTY_PATHS.get(rule_id, "format.{0}".format(rule_id))
         current_value = item.get("currentValue", "")
         expected_value = item.get("expectedValue", "")
@@ -1307,9 +1304,8 @@ class DeterministicFormatReviewService:
             "text": block_text[:240],
             "adjacentBlockIds": neighbor_ids,
             "adjacentStructureSha256": adjacent_hash,
-            "verification": "verified",
+            "verification": anchor_verification,
         }
-        anchor_verification = "verified"
         if rule_id == "structure.heading_hierarchy":
             hierarchy_anchor = build_format_issue_anchor(request, paragraph_index)
             anchor_id = hierarchy_anchor["anchorId"]
