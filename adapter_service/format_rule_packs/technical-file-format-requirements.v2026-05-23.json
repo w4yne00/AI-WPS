@@ -1,7 +1,7 @@
 {
   "algorithm": {
     "adapterPath": "vendor/wx_doc_format_algorithm/algorithm.py",
-    "adapterSha256": "a507bbfdfdfd93f3fb4060bcf30b76827393b96f699195ca83c1ddab58e0fdec",
+    "adapterSha256": "74eec3aa7aabc73e7662bb871cf260b663aa5112daf4339f4b2829de262722ed",
     "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",
     "name": "wx-doc-format deterministic recognition",
     "sourceManifest": "vendor/wx_doc_format_algorithm/SOURCE_MANIFEST.json",
@@ -10,7 +10,7 @@
     "writeBack": false
   },
   "integrity": {
-    "contentSha256": "68f4d67f451f94d31d130669bdd053d40b16b7859f03708c8469219b65a7b20e"
+    "contentSha256": "6a6b4a79966b11957d140111e01fdd0fba4542ba2b8a1ff4836196525787bd2d"
   },
   "rules": [
     {

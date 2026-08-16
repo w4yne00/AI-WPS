@@ -5,7 +5,7 @@ import unittest
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 
 if HAS_PYDANTIC:
-    from app.core.models import Heading, Paragraph
+    from app.core.models import Heading, Paragraph, WordDocumentRequest
     from app.services.word.authorized_format_algorithm import (
         classify_role_fact,
         heading_hierarchy_warnings,
@@ -55,6 +55,19 @@ class OutlineLevelTests(unittest.TestCase):
         warnings = heading_hierarchy_warnings([
             {"level": 10, "paragraphIndex": 1, "text": "正文"},
             {"level": 1, "paragraphIndex": 2, "text": "一、标题"},
+            {"level": 3, "paragraphIndex": 3, "text": "三级标题"},
+        ])
+
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["paragraphIndex"], 3)
+        self.assertEqual(warnings[0]["level"], 3)
+        self.assertEqual(warnings[0]["previousLevel"], 1)
+
+    def test_heading_hierarchy_deduplicates_same_violating_paragraph(self):
+        warnings = heading_hierarchy_warnings([
+            {"level": 1, "paragraphIndex": 1, "text": "一级标题"},
+            {"level": 3, "paragraphIndex": 3, "text": "三级标题"},
+            {"level": 1, "paragraphIndex": 4, "text": "另一个一级标题"},
             {"level": 3, "paragraphIndex": 3, "text": "三级标题"},
         ])
 
@@ -121,6 +134,52 @@ class OutlineLevelTests(unittest.TestCase):
             [(block["blockType"], block["outlineLevel"], block.get("headingLevel")) for block in blocks],
             [("paragraph", 0, None), ("heading", 1, 1)],
         )
+
+    def test_background_format_facts_derive_headings_from_verified_blocks(self):
+        blocks = [
+            {
+                "blockId": "format-paragraph-1",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 1,
+                "headingLevel": 1,
+                "text": "一级标题",
+                "format": {"outlineLevel": 1},
+            },
+            {
+                "blockId": "format-paragraph-2",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 2,
+                "headingLevel": 3,
+                "text": "三级标题",
+                "format": {"outlineLevel": 3},
+            },
+        ]
+        request = DeterministicFormatReviewService._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            blocks,
+            {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f", "coverage": {}},
+        )
+        parsed = (
+            WordDocumentRequest.model_validate(request)
+            if hasattr(WordDocumentRequest, "model_validate")
+            else WordDocumentRequest.parse_obj(request)
+        )
+        facts = WordFormatReviewer()._format_structure_facts(parsed)
+
+        self.assertEqual(
+            [(item["level"], item["paragraphIndex"]) for item in facts["headings"]],
+            [(1, 1), (3, 2)],
+        )
+        result = WordFormatReviewer().review(parsed, trace_id="")
+        hierarchy_issues = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.heading_hierarchy"
+        ]
+        self.assertEqual(len(hierarchy_issues), 1)
+        self.assertEqual(hierarchy_issues[0]["paragraphIndex"], 2)
+        self.assertEqual(hierarchy_issues[0]["anchorId"], "format-paragraph-2")
 
 
 if __name__ == "__main__":

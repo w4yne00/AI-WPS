@@ -1113,6 +1113,57 @@ function testRenderReadableFormatReviewExplainsModelExecutionDiagnostics() {
   assert.ok(markdown.includes("识别来源：本地规则"));
 }
 
+function testRenderReadableFormatReviewLocalizesHeadingHierarchyIssues() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: {
+      scope: "document",
+      templateId: "technical-file-format-requirements",
+      provider: "local",
+      issueCount: 1
+    },
+    issues: [{
+      ruleId: "structure.heading_hierarchy",
+      paragraphIndex: 3,
+      role: "heading",
+      currentLevel: 3,
+      previousLevel: 1,
+      currentValue: 3,
+      expectedValue: "前一有效标题为 1 级时，当前级别不超过 2 级",
+      anchorId: "format-paragraph-3",
+      anchorVerification: "verified",
+      message: "标题层级出现跳级（前一有效标题为 1 级，当前为 3 级）。",
+      suggestion: "请补齐 2 级标题，再保留当前 3 级标题。"
+    }]
+  });
+
+  assert.ok(markdown.includes("| P3 | 标题层级 | 3 | 前一有效标题为 1 级时，当前级别不超过 2 级 | 请补齐 2 级标题，再保留当前 3 级标题。 |"));
+  assert.ok(markdown.includes("#### P3 标题 - 标题层级出现跳级（前一有效标题为 1 级，当前为 3 级）"));
+  assert.ok(!markdown.includes("P0"));
+  assert.ok(!markdown.includes("未识别角色"));
+}
+
+function testRenderReadableFormatReviewDoesNotFabricateHeadingPosition() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: { scope: "document", templateId: "technical-file-format-requirements", issueCount: 1 },
+    issues: [{
+      ruleId: "structure.heading_hierarchy",
+      paragraphIndex: 0,
+      role: "heading",
+      currentLevel: 3,
+      previousLevel: 1,
+      currentValue: 3,
+      expectedValue: "前一有效标题为 1 级时，当前级别不超过 2 级",
+      anchorVerification: "unverified",
+      message: "标题层级出现跳级。",
+      suggestion: "请补齐 2 级标题，再保留当前 3 级标题。"
+    }]
+  });
+
+  assert.ok(markdown.includes("位置待确认"));
+  assert.ok(!markdown.includes("P0"));
+  assert.ok(!markdown.includes("未识别角色"));
+}
+
 function testRenderReadableFormatReviewLocalizesOtherFeedback() {
   const markdown = helpers.renderReadableFormatReview({
     summary: {
@@ -1476,6 +1527,8 @@ testBuildSmartWritePreviewModelHandlesEmptyResult();
 testRenderReadableFormatReviewUsesChineseLabelsAndValues();
 testRenderReadableFormatReviewHandlesNoIssues();
 testRenderReadableFormatReviewExplainsModelExecutionDiagnostics();
+testRenderReadableFormatReviewLocalizesHeadingHierarchyIssues();
+testRenderReadableFormatReviewDoesNotFabricateHeadingPosition();
 testRenderReadableFormatReviewLocalizesOtherFeedback();
 testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();

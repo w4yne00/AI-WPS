@@ -4821,8 +4821,14 @@
       lines.push("");
       groupIssues.forEach(function (issue, index) {
         lines.push("### " + FORMAT_REVIEW_GROUP_TEXT[group] + " #" + (index + 1));
-        lines.push("- 段落号：" + (issue.paragraphIndex || 0));
-        lines.push("- 段落角色：" + (issue.role || "未识别"));
+        lines.push("- 段落号：" + (
+          helpers.formatReviewParagraphLabel
+            ? helpers.formatReviewParagraphLabel(issue)
+            : (Number(issue.paragraphIndex) > 0 ? "P" + issue.paragraphIndex : "位置待确认")
+        ));
+        lines.push("- 段落角色：" + (
+          helpers.formatReviewRole ? helpers.formatReviewRole(issue.role) : (issue.role || "未标注")
+        ));
         lines.push("- 问题说明：" + (issue.message || "格式问题"));
         lines.push("- 当前值：" + (issue.currentValue || "未读取"));
         lines.push("- 模板要求：" + (issue.expectedValue || "未给出"));
@@ -6453,6 +6459,22 @@
     }
   }
 
+  function deterministicFormatReviewIssuePosition(issue) {
+    if (helpers.formatReviewParagraphLabel) {
+      return helpers.formatReviewParagraphLabel(issue);
+    }
+    return Number(issue && issue.paragraphIndex) > 0 && issue.anchorVerification !== "unverified"
+      ? "P" + issue.paragraphIndex
+      : "位置待确认";
+  }
+
+  function deterministicFormatReviewIssueRole(issue) {
+    if (helpers.formatReviewRole) {
+      return helpers.formatReviewRole(issue && issue.role);
+    }
+    return issue && issue.role === "heading" ? "标题" : ((issue && issue.role) || "未标注");
+  }
+
   function renderDeterministicFormatReviewIssuePage(report, pageData, jobId) {
     var summary = report && report.summary || {};
     var coverage = report && report.coverage || {};
@@ -6492,7 +6514,17 @@
     issues.forEach(function (issue) {
       lines.push("");
       lines.push("### " + (issue.issueId || "未标识问题") + " · " + (issue.ruleId || "未标识规则"));
+      lines.push("- 位置：" + deterministicFormatReviewIssuePosition(issue));
+      lines.push("- 角色：" + deterministicFormatReviewIssueRole(issue));
       lines.push("- 锚点：" + (issue.anchorId || "未标注") + "／" + (issue.propertyPath || "未标注"));
+      if (issue.ruleId === "structure.heading_hierarchy") {
+        lines.push("- 当前标题级别：" + (issue.currentLevel || issue.currentValue || "未读取"));
+        lines.push("- 前一有效标题级别：" + (
+          issue.previousLevel === null || typeof issue.previousLevel === "undefined"
+            ? "无"
+            : issue.previousLevel
+        ));
+      }
       lines.push("- 当前值：" + (issue.currentValue === undefined ? "未读取" : String(issue.currentValue)));
       lines.push("- 期望值：" + (issue.expectedValue === undefined ? "未给出" : String(issue.expectedValue)));
       lines.push("- 证据：" + (issue.evidence || "未提供"));
@@ -6546,8 +6578,10 @@
       var processed = document.createElement("button");
       var ignored = document.createElement("button");
       row.className = "full-review-issue-row";
-      row.textContent = (issue.issueId || "问题") + "［" + (issue.ruleId || "未分类") + "／" +
-        (issue.propertyPath || "未标注") + "］" + (issue.anchorVerification === "verified" ? "" : "（锚点未验证）");
+      row.textContent = deterministicFormatReviewIssuePosition(issue) + " " +
+        deterministicFormatReviewIssueRole(issue) + " · " + (issue.issueId || "问题") + "［" +
+        (issue.ruleId || "未分类") + "／" + (issue.propertyPath || "未标注") + "］" +
+        (issue.anchorVerification === "verified" ? "" : "（锚点未验证）");
       locate.type = "button";
       locate.textContent = "定位原文";
       processed.type = "button";

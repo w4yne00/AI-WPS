@@ -43,6 +43,7 @@ cmp "$COMPILED_CHECK" \
   "$ROOT_DIR/adapter_service/app/services/word/authorized_format_algorithm.py" \
   "$ROOT_DIR/adapter_service/app/services/word/format_rule_pack.py" \
   "$ROOT_DIR/adapter_service/app/services/word/format_reviewer.py" \
+  "$ROOT_DIR/adapter_service/app/services/word/format_issue_support.py" \
   "$ROOT_DIR/adapter_service/app/core/models.py" \
   "$ROOT_DIR/adapter_service/tools/compile_format_rule_pack.py" \
   "$ROOT_DIR/adapter_service/vendor/wx_doc_format_algorithm/algorithm.py" \

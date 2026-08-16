@@ -716,6 +716,8 @@ class FormatReviewIssue(BaseModel):
     severity: Literal["info", "warning", "error"] = "warning"
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
     role: str = "body"
+    current_level: Optional[int] = Field(default=None, alias="currentLevel")
+    previous_level: Optional[int] = Field(default=None, alias="previousLevel")
     anchor_id: str = Field(default="", alias="anchorId")
     source_anchor: Dict[str, Any] = Field(default_factory=dict, alias="sourceAnchor")
     property_path: str = Field(default="", alias="propertyPath")

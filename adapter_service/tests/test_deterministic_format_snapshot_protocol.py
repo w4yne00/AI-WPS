@@ -8,6 +8,7 @@ from unittest.mock import patch
 from pathlib import Path
 
 from app.core.errors import AdapterError
+from app.core.models import WordDocumentRequest
 from app.services.long_task_coordinator import LongTaskCoordinator
 from app.services.word.deterministic_format_review import (
     DeterministicFormatReviewService,
@@ -257,6 +258,74 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertIn("模型配置：格式审查主配置", markdown)
         self.assertIn("模型调用事实：已尝试，候选 2、调用 1、接受 0", markdown)
         self.assertIn("语义增强降级原因：模型已调用但没有接受任何结果", markdown)
+
+    def test_heading_hierarchy_report_deduplicates_and_exports_verified_location(self):
+        blocks = [
+            {
+                "blockId": "format-paragraph-1",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 1,
+                "headingLevel": 1,
+                "text": "一级标题",
+                "format": {"outlineLevel": 1},
+            },
+            {
+                "blockId": "format-paragraph-2",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 2,
+                "headingLevel": 3,
+                "text": "三级标题",
+                "format": {"outlineLevel": 3},
+            },
+        ]
+        metrics = self.service._format_metrics(blocks)
+        request_data = self.service._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            blocks,
+            metrics,
+        )
+        request = (
+            WordDocumentRequest.model_validate(request_data)
+            if hasattr(WordDocumentRequest, "model_validate")
+            else WordDocumentRequest.parse_obj(request_data)
+        )
+        snapshot = {
+            "request": request,
+            "contentSha256": "content-hierarchy",
+            "structureSha256": "structure-hierarchy",
+            "formatSha256": "format-hierarchy",
+        }
+        issue = {
+            "ruleId": "structure.heading_hierarchy",
+            "paragraphIndex": 2,
+            "role": "heading",
+            "currentLevel": 3,
+            "previousLevel": 1,
+            "currentValue": 3,
+            "expectedValue": "前一有效标题为 1 级时，当前级别不超过 2 级",
+            "message": "标题层级出现跳级。",
+            "suggestion": "请补齐 2 级标题，再保留当前 3 级标题。",
+        }
+
+        report = self.service._build_report({"issues": [issue, dict(issue)], "summary": {}}, snapshot)
+
+        self.assertEqual(report["issueCount"], 1)
+        exported_issue = report["issues"][0]
+        self.assertEqual(exported_issue["paragraphIndex"], 2)
+        self.assertEqual(exported_issue["anchorId"], "format-paragraph-2")
+        self.assertEqual(exported_issue["anchorVerification"], "verified")
+        self.assertEqual(exported_issue["currentLevel"], 3)
+        self.assertEqual(exported_issue["previousLevel"], 1)
+        markdown = self.service._build_report({"issues": [issue], "summary": {}}, snapshot)
+        self.service._save_report("heading-export-job", markdown)
+        exported_markdown = self.service.export_report("heading-export-job", "markdown")
+        self.assertIn("位置：P2", exported_markdown)
+        self.assertIn("角色：标题", exported_markdown)
+        self.assertIn("前一有效标题级别：1", exported_markdown)
+        self.assertNotIn("P0", exported_markdown)
+        self.assertNotIn("未识别角色", exported_markdown)
 
     def test_report_expiry_and_anchor_verification_are_public_lifecycle(self):
         now = [1000.0]

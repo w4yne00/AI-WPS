@@ -253,6 +253,7 @@ def resolve_role_rule(role_result: Any, pack: Dict[str, Any]) -> Dict[str, Any]:
 def heading_hierarchy_warnings(heading_sequence: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Return only observed hierarchy violations; never infer missing headings."""
     warnings = []
+    seen_violation_targets = set()
     normalized_sequence = []
     for heading in heading_sequence or []:
         if not isinstance(heading, dict):
@@ -266,26 +267,32 @@ def heading_hierarchy_warnings(heading_sequence: List[Dict[str, Any]]) -> List[D
     previous = normalized_sequence[0]
     previous_level = previous["level"]
     if previous_level > 1:
-        warnings.append(
-            {
-                "type": "first_heading_below_level_one",
-                "level": previous_level,
-                "text": _text(previous.get("text")),
-                "paragraphIndex": previous.get("paragraphIndex"),
-            }
-        )
+        target_key = (previous.get("paragraphIndex"), previous_level)
+        if target_key not in seen_violation_targets:
+            seen_violation_targets.add(target_key)
+            warnings.append(
+                {
+                    "type": "first_heading_below_level_one",
+                    "level": previous_level,
+                    "text": _text(previous.get("text")),
+                    "paragraphIndex": previous.get("paragraphIndex"),
+                }
+            )
     for heading in normalized_sequence[1:]:
         level = heading["level"]
         if previous_level and level > previous_level + 1:
-            warnings.append(
-                {
-                    "type": "heading_level_jump",
-                    "previousLevel": previous_level,
-                    "level": level,
-                    "text": _text(heading.get("text")),
-                    "paragraphIndex": heading.get("paragraphIndex"),
-                }
-            )
+            target_key = (heading.get("paragraphIndex"), level)
+            if target_key not in seen_violation_targets:
+                seen_violation_targets.add(target_key)
+                warnings.append(
+                    {
+                        "type": "heading_level_jump",
+                        "previousLevel": previous_level,
+                        "level": level,
+                        "text": _text(heading.get("text")),
+                        "paragraphIndex": heading.get("paragraphIndex"),
+                    }
+                )
         previous_level = level
     return warnings
 

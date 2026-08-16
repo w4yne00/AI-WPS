@@ -32,6 +32,7 @@ from app.services.word.format_reviewer import (
     WordFormatReviewer,
     build_format_review_model_identity,
 )
+from app.services.word.format_issue_support import build_format_issue_anchor
 from app.services.word.image_semantics import (
     ImageAssetStore,
     collect_image_inventory,
@@ -109,6 +110,29 @@ def _report_semantic_reason(value: object) -> str:
         "semantic_phase_timeout": "语义增强处理超时。",
     }
     return labels.get(str(value or ""), "")
+
+
+def _report_issue_position(issue: Dict) -> str:
+    if issue.get("ruleId") == "page_setup":
+        return "页面"
+    try:
+        paragraph_index = int(issue.get("paragraphIndex"))
+    except (TypeError, ValueError):
+        paragraph_index = 0
+    if paragraph_index > 0 and issue.get("anchorVerification") == "verified":
+        return "P{0}".format(paragraph_index)
+    return "位置待确认"
+
+
+def _report_issue_role(issue: Dict) -> str:
+    role = str(issue.get("role") or "")
+    if issue.get("ruleId") == "structure.heading_hierarchy" or role == "heading":
+        return "标题"
+    return {
+        "body": "正文",
+        "table": "表格",
+        "page_setup": "页面设置",
+    }.get(role, role or "未标注")
 
 
 def _report_sha256(report: Dict) -> str:
@@ -1018,6 +1042,8 @@ class DeterministicFormatReviewService:
                 "## {0}. {1}".format(index, issue.get("message", "格式问题")),
                 "- 问题编号：{0}".format(issue.get("issueId", "")),
                 "- 规则：{0}".format(issue.get("ruleId", "")),
+                "- 位置：{0}".format(_report_issue_position(issue)),
+                "- 角色：{0}".format(_report_issue_role(issue)),
                 "- 锚点：{0}".format(issue.get("anchorId", "")),
                 "- 属性路径：{0}".format(issue.get("propertyPath", "")),
                 "- 当前值：{0}".format(issue.get("currentValue", "")),
@@ -1028,6 +1054,17 @@ class DeterministicFormatReviewService:
                 "- 锚点验证：{0}".format(issue.get("anchorVerification", "unverified")),
                 "- 建议：{0}".format(issue.get("suggestion", "")), "",
             ])
+            if issue.get("ruleId") == "structure.heading_hierarchy":
+                lines.insert(
+                    len(lines) - 1,
+                    "- 当前标题级别：{0}".format(issue.get("currentLevel", issue.get("currentValue", ""))),
+                )
+                lines.insert(
+                    len(lines) - 1,
+                    "- 前一有效标题级别：{0}".format(
+                        issue.get("previousLevel") if issue.get("previousLevel") is not None else "无"
+                    ),
+                )
         return "\n".join(lines)
 
     def delete_report(self, job_id: str) -> Dict:
@@ -1133,11 +1170,27 @@ class DeterministicFormatReviewService:
                 for item in header_footer.values()
             )
         ) else "complete"
-        issues = [
-            self._enrich_issue(issue, request, snapshot, coverage_status)
-            for issue in result.get("issues", [])
-            if isinstance(issue, dict)
-        ]
+        issues = []
+        seen_heading_issues = set()
+        for issue in result.get("issues", []):
+            if not isinstance(issue, dict):
+                continue
+            if issue.get("ruleId") == "structure.heading_hierarchy":
+                paragraph_index = issue.get("paragraphIndex")
+                heading_key = (
+                    (paragraph_index, issue.get("currentLevel", issue.get("currentValue")))
+                    if paragraph_index is not None
+                    else (
+                        paragraph_index,
+                        issue.get("currentLevel", issue.get("currentValue")),
+                        issue.get("previousLevel"),
+                        issue.get("message", ""),
+                    )
+                )
+                if heading_key in seen_heading_issues:
+                    continue
+                seen_heading_issues.add(heading_key)
+            issues.append(self._enrich_issue(issue, request, snapshot, coverage_status))
         groups = {}
         for issue in issues:
             groups.setdefault(issue["duplicateGroupId"], []).append(issue)
@@ -1207,6 +1260,7 @@ class DeterministicFormatReviewService:
     ) -> Dict:
         allowed_fields = {
             "ruleId", "category", "severity", "paragraphIndex", "role", "source",
+            "currentLevel", "previousLevel",
             "templateHash", "ruleVersion", "rulePackSha256", "message", "currentValue",
             "expectedValue", "suggestion", "unit", "tolerance", "evidence", "dataStatus",
             "status",
@@ -1252,6 +1306,12 @@ class DeterministicFormatReviewService:
             "adjacentStructureSha256": adjacent_hash,
             "verification": "verified",
         }
+        anchor_verification = "verified"
+        if rule_id == "structure.heading_hierarchy":
+            hierarchy_anchor = build_format_issue_anchor(request, paragraph_index)
+            anchor_id = hierarchy_anchor["anchorId"]
+            source_anchor = hierarchy_anchor["sourceAnchor"]
+            anchor_verification = hierarchy_anchor["anchorVerification"]
         semantic_identity = {
             "snapshot": snapshot.get("contentSha256", ""),
             "ruleId": rule_id,
@@ -1295,7 +1355,7 @@ class DeterministicFormatReviewService:
             "dataStatus": item.get("dataStatus") or ("verified" if coverage_status == "complete" else "insufficient"),
             "duplicateGroupId": duplicate_group_id,
             "duplicateGroupSize": 1,
-            "anchorVerification": "verified",
+            "anchorVerification": anchor_verification,
             "status": item.get("status") or "open",
             "ruleVersion": item.get("ruleVersion") or "",
             "currentValue": _short_report_value(current_value),
@@ -2056,10 +2116,12 @@ class DeterministicFormatReviewService:
     @classmethod
     def _request_from_blocks(cls, record: Dict, blocks: List[Dict], metrics: Dict) -> Dict:
         paragraphs = []
+        headings = []
         for block in blocks:
             if block.get("scope") != "in_scope" or block.get("blockType") not in {"paragraph", "heading", "listItem", "caption"}:
                 continue
             facts = block.get("format", {})
+            heading_level = normalize_outline_level(block.get("headingLevel", facts.get("outlineLevel", 0)))
             paragraph = {
                 "index": int(block.get("paragraphIndex", len(paragraphs) + 1) or len(paragraphs) + 1),
                 "text": block.get("text", ""),
@@ -2067,7 +2129,7 @@ class DeterministicFormatReviewService:
                 "fontName": facts.get("fontName"),
                 "fontSize": facts.get("fontSize"),
                 "alignment": facts.get("alignment"),
-                "outlineLevel": block.get("headingLevel", facts.get("outlineLevel", 0)),
+                "outlineLevel": heading_level,
                 "lineSpacing": facts.get("lineSpacing"),
                 "firstLineIndent": facts.get("firstLineIndent"),
                 "spaceBefore": facts.get("spaceBefore"),
@@ -2079,6 +2141,12 @@ class DeterministicFormatReviewService:
                 "underline": facts.get("underline"),
             }
             paragraphs.append(paragraph)
+            if block.get("blockType") == "heading" and heading_level and heading_level > 0:
+                headings.append({
+                    "level": heading_level,
+                    "text": block.get("text", ""),
+                    "paragraphIndex": paragraph["index"],
+                })
         document_structure = {
             "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
             "formatBlocks": deepcopy(blocks),
@@ -2097,7 +2165,7 @@ class DeterministicFormatReviewService:
             "content": {
                 "plainText": "\n".join(item["text"] for item in paragraphs),
                 "paragraphs": paragraphs,
-                "headings": [],
+                "headings": headings,
                 "documentStructure": document_structure,
             },
             "options": {"templateId": record.get("templateId") or "technical-file-format-requirements"},

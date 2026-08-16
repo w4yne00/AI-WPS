@@ -1600,7 +1600,8 @@
     font_size: "字号",
     line_spacing: "行距",
     alignment: "对齐方式",
-    first_line_indent: "首行缩进"
+    first_line_indent: "首行缩进",
+    "structure.heading_hierarchy": "标题层级"
   };
   var FORMAT_REVIEW_TEMPLATE_TEXT = {
     "technical-file-format-requirements": "技术文件格式及书写要求",
@@ -1879,6 +1880,14 @@
   function normalizeFormatReviewSuggestion(issue) {
     var rule = String((issue && issue.ruleId) || "");
     var suggestion = String((issue && issue.suggestion) || "").trim();
+    if (rule === "structure.heading_hierarchy") {
+      var currentLevel = Number(issue && (issue.currentLevel || issue.currentValue));
+      var previousLevel = Number(issue && issue.previousLevel);
+      if (isFinite(previousLevel) && previousLevel > 0 && isFinite(currentLevel) && currentLevel > 0) {
+        return "请补齐 " + (previousLevel + 1) + " 级标题，再保留当前 " + currentLevel + " 级标题。";
+      }
+      return suggestion || "请先补充一级标题，再使用当前标题级别。";
+    }
     if (rule === "font_size") {
       return "字号调整为小四。";
     }
@@ -1912,10 +1921,16 @@
   }
 
   function formatReviewParagraphLabel(issue) {
-    if (!issue || issue.ruleId === "page_setup" || issue.paragraphIndex === 0) {
+    var paragraphIndex;
+    if (!issue || issue.ruleId === "page_setup") {
       return "页面";
     }
-    return "P" + (issue.paragraphIndex || 0);
+    paragraphIndex = Number(issue.paragraphIndex);
+    if (!isFinite(paragraphIndex) || Math.floor(paragraphIndex) !== paragraphIndex ||
+        paragraphIndex <= 0 || issue.anchorVerification === "unverified") {
+      return "位置待确认";
+    }
+    return "P" + paragraphIndex;
   }
 
   function formatReviewIssueTitle(issue) {
@@ -3927,6 +3942,8 @@
     formatSmartWriteResult: formatSmartWriteResult,
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
     renderReadableFormatReview: renderReadableFormatReview,
+    formatReviewRole: formatReviewRole,
+    formatReviewParagraphLabel: formatReviewParagraphLabel,
     buildDocumentReviewRecord: buildDocumentReviewRecord,
     getEffectiveSelectionText: getEffectiveSelectionText,
     getWritableSelection: getWritableSelection,

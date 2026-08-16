@@ -35,6 +35,11 @@
     },
     {
       "type": "file",
+      "source": "adapter_service/app/services/word/format_issue_support.py",
+      "target": "adapter_service/app/services/word/format_issue_support.py"
+    },
+    {
+      "type": "file",
       "source": "adapter_service/app/services/word/format_rule_pack.py",
       "target": "adapter_service/app/services/word/format_rule_pack.py"
     },
