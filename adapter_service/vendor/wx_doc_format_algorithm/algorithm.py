@@ -267,7 +267,11 @@ def heading_hierarchy_warnings(heading_sequence: List[Dict[str, Any]]) -> List[D
     previous = normalized_sequence[0]
     previous_level = previous["level"]
     if previous_level > 1:
-        target_key = (previous.get("paragraphIndex"), previous_level)
+        target_key = (
+            (previous.get("paragraphIndex"), previous_level)
+            if previous.get("paragraphIndex") is not None
+            else (None, previous_level, _text(previous.get("text")))
+        )
         if target_key not in seen_violation_targets:
             seen_violation_targets.add(target_key)
             warnings.append(
@@ -281,7 +285,11 @@ def heading_hierarchy_warnings(heading_sequence: List[Dict[str, Any]]) -> List[D
     for heading in normalized_sequence[1:]:
         level = heading["level"]
         if previous_level and level > previous_level + 1:
-            target_key = (heading.get("paragraphIndex"), level)
+            target_key = (
+                (heading.get("paragraphIndex"), level)
+                if heading.get("paragraphIndex") is not None
+                else (None, level, _text(heading.get("text")))
+            )
             if target_key not in seen_violation_targets:
                 seen_violation_targets.add(target_key)
                 warnings.append(

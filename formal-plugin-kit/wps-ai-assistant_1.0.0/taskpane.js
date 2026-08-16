@@ -6415,9 +6415,16 @@
     adjacentIds = Array.isArray(anchor.adjacentBlockIds) ? anchor.adjacentBlockIds : [];
     currentAdjacentIds = [];
     [-1, 0, 1].forEach(function (offset) {
+      var neighborIndex = paragraphIndex + offset;
       var neighbor = helpers.getCollectionItem
-        ? helpers.getCollectionItem(paragraphs, paragraphIndex + offset)
+        ? helpers.getCollectionItem(paragraphs, neighborIndex)
         : null;
+      if (issue && issue.ruleId === "structure.heading_hierarchy") {
+        if (neighbor) {
+          currentAdjacentIds.push("format-paragraph-" + neighborIndex);
+        }
+        return;
+      }
       var neighborId = neighbor && (readValue(neighbor, "BlockId") || readValue(neighbor, "blockId") ||
         readValue(neighbor, "Id") || readValue(neighbor, "ID"));
       if (neighborId) {

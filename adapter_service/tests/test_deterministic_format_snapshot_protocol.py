@@ -13,6 +13,7 @@ from app.services.long_task_coordinator import LongTaskCoordinator
 from app.services.word.deterministic_format_review import (
     DeterministicFormatReviewService,
 )
+from app.services.word.format_reviewer import WordFormatReviewer
 import app.services.word.deterministic_format_review as format_protocol
 
 
@@ -297,23 +298,18 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
             "structureSha256": "structure-hierarchy",
             "formatSha256": "format-hierarchy",
         }
-        issue = {
-            "ruleId": "structure.heading_hierarchy",
-            "paragraphIndex": 2,
-            "role": "heading",
-            "currentLevel": 3,
-            "previousLevel": 1,
-            "currentValue": 3,
-            "expectedValue": "前一有效标题为 1 级时，当前级别不超过 2 级",
-            "message": "标题层级出现跳级。",
-            "suggestion": "请补齐 2 级标题，再保留当前 3 级标题。",
-        }
+        sync_result = WordFormatReviewer().review(request, trace_id="")
+        issue = next(
+            item for item in sync_result["issues"]
+            if item["ruleId"] == "structure.heading_hierarchy"
+        )
 
         report = self.service._build_report({"issues": [issue, dict(issue)], "summary": {}}, snapshot)
 
         self.assertEqual(report["issueCount"], 1)
         exported_issue = report["issues"][0]
         self.assertEqual(exported_issue["paragraphIndex"], 2)
+        self.assertEqual(exported_issue["role"], "heading")
         self.assertEqual(exported_issue["anchorId"], "format-paragraph-2")
         self.assertEqual(exported_issue["anchorVerification"], "verified")
         self.assertEqual(exported_issue["currentLevel"], 3)

@@ -74,6 +74,16 @@ class OutlineLevelTests(unittest.TestCase):
         self.assertEqual(len(warnings), 1)
         self.assertEqual(warnings[0]["paragraphIndex"], 3)
 
+    def test_heading_hierarchy_keeps_distinct_unindexed_violations(self):
+        warnings = heading_hierarchy_warnings([
+            {"level": 1, "text": "一级标题"},
+            {"level": 3, "text": "第一个三级标题"},
+            {"level": 1, "text": "另一个一级标题"},
+            {"level": 3, "text": "第二个三级标题"},
+        ])
+
+        self.assertEqual(len(warnings), 2)
+
     def test_format_blocks_defensively_treat_wps_body_level_as_body(self):
         reviewer = WordFormatReviewer()
         request = type("Request", (), {})()

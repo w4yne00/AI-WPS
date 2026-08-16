@@ -8,6 +8,16 @@ from typing import Any, Dict, Optional
 from app.services.document_normalizer import body_paragraphs
 
 
+_ANCHOR_PARAGRAPH_BLOCK_TYPES = {
+    "paragraph",
+    "heading",
+    "listItem",
+    "caption",
+    "formula",
+    "tableCell",
+}
+
+
 def normalize_paragraph_index(value: Any) -> Optional[int]:
     """Return a positive paragraph index, or ``None`` when it is not verified."""
     if value is None or isinstance(value, bool):
@@ -42,11 +52,22 @@ def build_format_issue_anchor(request: Any, paragraph_index: Any) -> Dict[str, A
             for paragraph in body_paragraphs(request)
         ]
 
-    block_index = -1
+    anchor_blocks = []
+    for candidate in blocks:
+        candidate_index = normalize_paragraph_index(candidate.get("paragraphIndex"))
+        block_type = str(candidate.get("blockType") or "")
+        if candidate_index is None or not str(candidate.get("text") or ""):
+            continue
+        if block_type and block_type not in _ANCHOR_PARAGRAPH_BLOCK_TYPES:
+            continue
+        anchor_blocks.append((candidate_index, candidate))
+    anchor_blocks.sort(key=lambda item: item[0])
+
+    block_position = -1
     block = None
-    for candidate_index, candidate in enumerate(blocks):
-        if normalize_paragraph_index(candidate.get("paragraphIndex")) == index:
-            block_index = candidate_index
+    for candidate_position, (candidate_index, candidate) in enumerate(anchor_blocks):
+        if candidate_index == index:
+            block_position = candidate_position
             block = candidate
             break
     if block is None:
@@ -58,9 +79,10 @@ def build_format_issue_anchor(request: Any, paragraph_index: Any) -> Dict[str, A
         return {"anchorId": "", "sourceAnchor": {}, "anchorVerification": "unverified"}
 
     adjacent_ids = [
-        str(candidate.get("blockId") or "")
-        for candidate in blocks[max(0, block_index - 1):block_index + 2]
-        if candidate.get("blockId")
+        "format-paragraph-{0}".format(candidate_index)
+        for candidate_index, candidate in anchor_blocks[
+            max(0, block_position - 1):block_position + 2
+        ]
     ]
     adjacent_hash = hashlib.sha256(
         json.dumps(adjacent_ids, ensure_ascii=False, separators=(",", ":")).encode("utf-8")

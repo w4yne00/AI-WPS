@@ -65,6 +65,8 @@ const locate = functionSource("locateDeterministicFormatReviewIssue");
 ["textSha256", "adjacentStructureSha256", "anchorVerification", "markDeterministicFormatReviewAnchorVerification"].forEach((token) => {
   assert.ok(locate.includes(token), token);
 });
+assert.ok(locate.includes('issue.ruleId === "structure.heading_hierarchy"'));
+assert.ok(locate.includes('"format-paragraph-" + neighborIndex'));
 assert.ok(functionSource("loadDeterministicFormatReviewIssuePage").includes("dataStatus"));
 assert.ok(functionSource("downloadDeterministicFormatReviewExport").includes("word-format-review"));
 assert.ok(functionSource("bindEvents").includes("format-review-filter-data-status"));
