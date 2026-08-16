@@ -728,7 +728,7 @@ class FormatReviewIssue(BaseModel):
     duplicate_group_id: str = Field(default="", alias="duplicateGroupId")
     duplicate_group_size: int = Field(default=1, alias="duplicateGroupSize")
     anchor_verification: Literal["verified", "unverified"] = Field(
-        default="verified", alias="anchorVerification"
+        default="unverified", alias="anchorVerification"
     )
     source: str = ""
     template_hash: str = Field(default="", alias="templateHash")

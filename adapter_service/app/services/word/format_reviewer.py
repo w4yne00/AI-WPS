@@ -17,7 +17,10 @@ from app.services.word.authorized_format_algorithm import (
     resolve_role_rule,
 )
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
-from app.services.word.format_issue_support import build_format_issue_anchor
+from app.services.word.format_issue_support import (
+    build_format_issue_anchor,
+    normalize_paragraph_index,
+)
 from app.services.word.format_semantics import (
     FormatSemanticContract,
     FormatSemanticExecutor,
@@ -1015,16 +1018,30 @@ class WordFormatReviewer:
                 }
                 for paragraph in body_paragraphs(request)
             ]
-        heading_by_index = {}
+        headings = []
+        seen_heading_keys = set()
+
+        def append_heading(level, text, paragraph_index):
+            normalized_index = normalize_paragraph_index(paragraph_index)
+            heading_key = (
+                (normalized_index, level)
+                if normalized_index is not None
+                else (None, level, str(text or ""))
+            )
+            if heading_key in seen_heading_keys:
+                return
+            seen_heading_keys.add(heading_key)
+            headings.append({
+                "level": level,
+                "text": text,
+                "paragraphIndex": normalized_index,
+            })
+
         for heading in request.content.headings:
             level = normalize_heading_level(heading.level)
             if level is None:
                 continue
-            heading_by_index[heading.paragraph_index] = {
-                "level": level,
-                "text": heading.text,
-                "paragraphIndex": heading.paragraph_index,
-            }
+            append_heading(level, heading.text, heading.paragraph_index)
         for paragraph in facts.get("paragraphs", []):
             if not isinstance(paragraph, dict) or paragraph.get("blockType") != "heading":
                 continue
@@ -1033,14 +1050,8 @@ class WordFormatReviewer:
             )
             if level is None:
                 continue
-            paragraph_index = paragraph.get("paragraphIndex")
-            if paragraph_index not in heading_by_index:
-                heading_by_index[paragraph_index] = {
-                    "level": level,
-                    "text": paragraph.get("text", ""),
-                    "paragraphIndex": paragraph_index,
-                }
-        facts["headings"] = list(heading_by_index.values())
+            append_heading(level, paragraph.get("text", ""), paragraph.get("paragraphIndex"))
+        facts["headings"] = headings
         return facts
 
     @staticmethod
@@ -1096,11 +1107,7 @@ class WordFormatReviewer:
                 continue
             current_level = normalize_heading_level(warning.get("level"))
             previous_level = normalize_heading_level(warning.get("previousLevel"))
-            paragraph_index = warning.get("paragraphIndex")
-            try:
-                paragraph_index = int(paragraph_index) if paragraph_index is not None else None
-            except (TypeError, ValueError):
-                paragraph_index = None
+            paragraph_index = normalize_paragraph_index(warning.get("paragraphIndex"))
             target_key = (
                 (paragraph_index, current_level)
                 if paragraph_index is not None

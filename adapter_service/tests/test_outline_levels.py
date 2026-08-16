@@ -191,6 +191,41 @@ class OutlineLevelTests(unittest.TestCase):
         self.assertEqual(hierarchy_issues[0]["paragraphIndex"], 2)
         self.assertEqual(hierarchy_issues[0]["anchorId"], "format-paragraph-2")
 
+    def test_unindexed_background_headings_remain_unverified_and_ordered(self):
+        blocks = [
+            {
+                "blockId": "heading-one",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "headingLevel": 1,
+                "text": "一级标题",
+                "format": {"outlineLevel": 1},
+            },
+            {
+                "blockId": "heading-three",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "headingLevel": 3,
+                "text": "三级标题",
+                "format": {"outlineLevel": 3},
+            },
+        ]
+        request_data = DeterministicFormatReviewService._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            blocks,
+            {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f", "coverage": {}},
+        )
+        parsed = WordDocumentRequest.parse_obj(request_data)
+        facts = WordFormatReviewer()._format_structure_facts(parsed)
+        self.assertEqual([item["text"] for item in facts["headings"]], ["一级标题", "三级标题"])
+        result = WordFormatReviewer().review(parsed, trace_id="")
+        issue = next(
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.heading_hierarchy"
+        )
+        self.assertIsNone(issue["paragraphIndex"])
+        self.assertEqual(issue["anchorVerification"], "unverified")
+
 
 if __name__ == "__main__":
     unittest.main()

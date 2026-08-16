@@ -32,7 +32,10 @@ from app.services.word.format_reviewer import (
     WordFormatReviewer,
     build_format_review_model_identity,
 )
-from app.services.word.format_issue_support import build_format_issue_anchor
+from app.services.word.format_issue_support import (
+    build_format_issue_anchor,
+    normalize_paragraph_index,
+)
 from app.services.word.image_semantics import (
     ImageAssetStore,
     collect_image_inventory,
@@ -2123,7 +2126,7 @@ class DeterministicFormatReviewService:
             facts = block.get("format", {})
             heading_level = normalize_outline_level(block.get("headingLevel", facts.get("outlineLevel", 0)))
             paragraph = {
-                "index": int(block.get("paragraphIndex", len(paragraphs) + 1) or len(paragraphs) + 1),
+                "index": normalize_paragraph_index(block.get("paragraphIndex")) or 0,
                 "text": block.get("text", ""),
                 "styleName": facts.get("styleName"),
                 "fontName": facts.get("fontName"),
@@ -2145,7 +2148,7 @@ class DeterministicFormatReviewService:
                 headings.append({
                     "level": heading_level,
                     "text": block.get("text", ""),
-                    "paragraphIndex": paragraph["index"],
+                    "paragraphIndex": normalize_paragraph_index(paragraph["index"]),
                 })
         document_structure = {
             "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,

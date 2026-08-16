@@ -63,15 +63,14 @@ def build_format_issue_anchor(request: Any, paragraph_index: Any) -> Dict[str, A
         anchor_blocks.append((candidate_index, candidate))
     anchor_blocks.sort(key=lambda item: item[0])
 
-    block_position = -1
-    block = None
-    for candidate_position, (candidate_index, candidate) in enumerate(anchor_blocks):
-        if candidate_index == index:
-            block_position = candidate_position
-            block = candidate
-            break
-    if block is None:
+    matching_blocks = [
+        (candidate_position, candidate)
+        for candidate_position, (candidate_index, candidate) in enumerate(anchor_blocks)
+        if candidate_index == index
+    ]
+    if len(matching_blocks) != 1:
         return {"anchorId": "", "sourceAnchor": {}, "anchorVerification": "unverified"}
+    block_position, block = matching_blocks[0]
 
     block_id = str(block.get("blockId") or "").strip()
     block_text = str(block.get("text") or "")
