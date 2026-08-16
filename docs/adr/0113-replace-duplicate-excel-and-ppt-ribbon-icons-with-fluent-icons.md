@@ -1,0 +1,5 @@
+# 使用许可明确的 Fluent 图标替换 Excel 和 PPT 重复 Ribbon 图标
+
+当前 Excel 的“智能分析”和“公式助手”都映射到 `icon-excel-analysis.png`，PPT 的“智能总结”和“结构审查”都映射到 `icon-ppt-slide-assistant.png`。决定保留智能分析和智能总结现有图标，为公式助手采用 Microsoft Fluent System Icons 的 [`Math Formula 32 Regular`](https://github.com/microsoft/fluentui-system-icons/blob/main/assets/Math%20Formula/SVG/ic_fluent_math_formula_32_regular.svg)，为结构审查采用 [`Slide Text Multiple 32 Regular`](https://github.com/microsoft/fluentui-system-icons/blob/main/assets/Slide%20Text%20Multiple/SVG/ic_fluent_slide_text_multiple_32_regular.svg)。两者分别表达公式计算和多页文本结构，且上游提供 32 像素 SVG；实现时转换为与现有 Ribbon 视觉权重和宿主强调色协调的透明 32×32 PNG，分别命名为 `icon-excel-formula-assistant.png` 和 `icon-ppt-structure-review.png`，修改各宿主 `GetImage` 映射并禁止回退到旧共享图标。
+
+[Fluent System Icons](https://github.com/microsoft/fluentui-system-icons) 使用 [MIT 许可证](https://github.com/microsoft/fluentui-system-icons/blob/main/LICENSE)。交付仓库必须记录上游仓库、精确资产路径、取得时的版本或提交及 SHA-256，保留许可证和版权声明，并将派生 PNG、声明文件和引用关系纳入白名单交付与哈希审计；目标机不得联网加载图标，也不新增运行时依赖。Ribbon 验收必须确认六个 Excel/PPT 功能按钮的实际图片引用正确、两个新 PNG 均为透明 32×32、与旧共享图片哈希不同，并在 WPS 普通及高 DPI 环境中清晰可辨。

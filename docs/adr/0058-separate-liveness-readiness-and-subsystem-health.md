@@ -1,0 +1,3 @@
+# 分离 Adapter 存活、业务就绪和子系统状态
+
+当前 `/health` 会构造模型配置相关服务，持久化数据异常可能使健康接口本身不可达，无法支撑降级和恢复状态。决定新增三层稳定契约：`/health/live` 只验证进程和基础 Web 应用且不读取业务数据；`/health/ready` 验证核心必需子系统；现有 `/health` 保持 HTTP 兼容并返回聚合状态及脱敏子系统状态。全部子系统正常时聚合状态为 `ready`；仅写作规范等非核心增强子系统失败时为 `degraded`，`/health/ready` 仍返回 HTTP 200，任务按既有降级契约继续；模型配置或任务路由等核心数据失败时为 `recovery`，`/health/ready` 返回 HTTP 503。三种状态下 `/health/live` 和 `/health` 均返回 HTTP 200；各子系统报告 `ready`、`degraded` 或 `recovery`、稳定错误码、发生阶段和允许的恢复动作，不返回 API Key、配置正文或敏感绝对路径。安装器仅拒绝切换 `recovery` 候选；前端将 `degraded` 显示为增强能力降级，将 `recovery` 显示为 Adapter 已连接但核心功能受限。该方案增加端点、状态模型和兼容测试，但能够区分进程崩溃、非核心降级、核心业务未就绪和单一子系统故障，避免所有异常都被误报为无法连接 Adapter。
