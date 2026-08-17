@@ -105,7 +105,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(payload["tableCaptionSuggestedCount"], 1)
         self.assertEqual(payload["tableCaptionRestrictedCount"], 1)
 
-    def _request(self, selection_mode: str = "selection"):
+    def _request(self, selection_mode: str = "selection", first_outline_level=0):
         return parse_word_request(
             {
                 "documentId": "format-review.docx",
@@ -121,7 +121,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                             "fontName": "宋体",
                             "fontSize": 12,
                             "alignment": "left",
-                            "outlineLevel": 0,
+                            "outlineLevel": first_outline_level,
                         },
                         {
                             "index": 2,
@@ -145,11 +145,94 @@ class WordFormatReviewerTests(unittest.TestCase):
             }
         )
 
+    @staticmethod
+    def _hierarchy_request(levels=(1, 3), include_paragraph_indexes=True):
+        paragraphs = []
+        headings = []
+        blocks = []
+        for position, level in enumerate(levels, 1):
+            paragraph_index = position if include_paragraph_indexes else None
+            text = "{0}级标题".format(level)
+            paragraphs.append({
+                "index": paragraph_index,
+                "text": text,
+                "styleName": "Heading {0}".format(level),
+                "outlineLevel": level,
+            })
+            headings.append({
+                "level": level,
+                "text": text,
+                "paragraphIndex": paragraph_index,
+            })
+            blocks.append({
+                "blockId": "format-paragraph-{0}".format(position),
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": paragraph_index,
+                "headingLevel": level,
+                "text": text,
+                "range": {"paragraphIndex": paragraph_index},
+                "format": {"outlineLevel": level},
+            })
+        return parse_word_request({
+            "documentId": "heading-hierarchy.docx",
+            "scene": "word",
+            "selectionMode": "document",
+            "content": {
+                "plainText": "\n".join(item["text"] for item in paragraphs),
+                "paragraphs": paragraphs,
+                "headings": headings,
+                "documentStructure": {"formatBlocks": blocks},
+            },
+            "options": {"templateId": "technical-file-format-requirements"},
+        })
+
+    def test_heading_jump_is_one_localized_anchored_issue(self) -> None:
+        result = WordFormatReviewer().review(self._hierarchy_request(), trace_id="")
+
+        issues = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.heading_hierarchy"
+        ]
+        self.assertEqual(len(issues), 1)
+        issue = issues[0]
+        self.assertEqual(issue["paragraphIndex"], 2)
+        self.assertEqual(issue["role"], "heading")
+        self.assertEqual(issue["currentLevel"], 3)
+        self.assertEqual(issue["previousLevel"], 1)
+        self.assertEqual(issue["anchorId"], "format-paragraph-2")
+        self.assertEqual(issue["sourceAnchor"]["paragraphIndex"], 2)
+        self.assertEqual(issue["anchorVerification"], "verified")
+        self.assertIn("前一有效标题为 1 级", issue["message"])
+        self.assertIn("补齐 2 级标题", issue["suggestion"])
+
+    def test_normal_heading_sequence_does_not_create_hierarchy_issue(self) -> None:
+        result = WordFormatReviewer().review(self._hierarchy_request((1, 2)), trace_id="")
+
+        self.assertEqual(
+            [issue for issue in result["issues"] if issue["ruleId"] == "structure.heading_hierarchy"],
+            [],
+        )
+
+    def test_unverified_heading_position_does_not_fabricate_anchor(self) -> None:
+        result = WordFormatReviewer().review(
+            self._hierarchy_request(include_paragraph_indexes=False), trace_id=""
+        )
+
+        issue = next(
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.heading_hierarchy"
+        )
+        self.assertIsNone(issue["paragraphIndex"])
+        self.assertEqual(issue["anchorId"], "")
+        self.assertEqual(issue["sourceAnchor"], {})
+        self.assertEqual(issue["anchorVerification"], "unverified")
+
     def test_format_review_returns_issues_not_apply_changes(self) -> None:
         provider = RecordingFormatReviewProvider()
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("selection"),
+            self._request("selection", first_outline_level=None),
             trace_id="trace-format-review",
         )
 
@@ -166,7 +249,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         provider = RecordingFormatReviewProvider(configured=False)
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("document"),
+            self._request("document", first_outline_level=None),
             trace_id="trace-format-local",
         )
 
@@ -222,7 +305,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         provider = RecordingFormatReviewProvider(fail=True)
 
         result = WordFormatReviewer(provider_client=provider).review(
-            self._request("selection"),
+            self._request("selection", first_outline_level=None),
             trace_id="trace-format-provider-failed",
         )
 

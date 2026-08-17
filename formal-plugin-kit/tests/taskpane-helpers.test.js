@@ -394,10 +394,13 @@ function testBuildDocumentStructureForProofread() {
 }
 
 function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
-  const values = [0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, undefined, "not-a-number", -1, 11, 1.5];
+  const values = [
+    0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    undefined, "", " ", true, "not-a-number", -1, 11, 1.5, NaN, Infinity,
+  ];
   assert.deepStrictEqual(
     values.map((value) => helpers.normalizeWpsOutlineLevel(value)),
-    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null]
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null, null, null, null, null, null]
   );
 
   const paragraphs = values.map((outlineLevel, index) => ({
@@ -414,7 +417,7 @@ function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
   const structure = helpers.buildDocumentStructure({ paragraphs, headings });
   assert.deepStrictEqual(
     structure.paragraphs.map((paragraph) => paragraph.outline_level),
-    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null]
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null, null, null, null, null, null]
   );
   assert.deepStrictEqual(
     structure.headings.map((heading) => heading.level),
@@ -1010,6 +1013,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "font_size",
         paragraphIndex: 2,
+        anchorVerification: "verified",
         role: "body",
         message: "字号不符合模板要求。",
         currentValue: "14pt",
@@ -1019,6 +1023,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "font_name",
         paragraphIndex: 2,
+        anchorVerification: "verified",
         role: "body",
         message: "字体不符合模板要求。",
         currentValue: "楷体",
@@ -1028,6 +1033,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "alignment",
         paragraphIndex: 3,
+        anchorVerification: "verified",
         role: "heading1",
         message: "对齐方式不符合模板要求。",
         currentValue: "left",
@@ -1037,6 +1043,7 @@ function testRenderReadableFormatReviewUsesChineseLabelsAndValues() {
       {
         ruleId: "first_line_indent",
         paragraphIndex: 4,
+        anchorVerification: "verified",
         role: "body",
         message: "首行缩进不符合模板要求。",
         currentValue: "0",
@@ -1113,6 +1120,56 @@ function testRenderReadableFormatReviewExplainsModelExecutionDiagnostics() {
   assert.ok(markdown.includes("识别来源：本地规则"));
 }
 
+function testRenderReadableFormatReviewLocalizesHeadingHierarchyIssues() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: {
+      scope: "document",
+      templateId: "technical-file-format-requirements",
+      provider: "local",
+      issueCount: 1
+    },
+    issues: [{
+      ruleId: "structure.heading_hierarchy",
+      paragraphIndex: 3,
+      role: "heading",
+      currentLevel: 3,
+      previousLevel: 1,
+      currentValue: 3,
+      expectedValue: "前一有效标题为 1 级时，当前级别不超过 2 级",
+      anchorId: "format-paragraph-3",
+      anchorVerification: "verified",
+      message: "标题层级出现跳级（前一有效标题为 1 级，当前为 3 级）。",
+      suggestion: "请补齐 2 级标题，再保留当前 3 级标题。"
+    }]
+  });
+
+  assert.ok(markdown.includes("| P3 | 标题层级 | 3 | 前一有效标题为 1 级时，当前级别不超过 2 级 | 请补齐 2 级标题，再保留当前 3 级标题。 |"));
+  assert.ok(markdown.includes("#### P3 标题 - 标题层级出现跳级（前一有效标题为 1 级，当前为 3 级）"));
+  assert.ok(!markdown.includes("P0"));
+  assert.ok(!markdown.includes("未识别角色"));
+}
+
+function testRenderReadableFormatReviewDoesNotFabricateHeadingPosition() {
+  const markdown = helpers.renderReadableFormatReview({
+    summary: { scope: "document", templateId: "technical-file-format-requirements", issueCount: 1 },
+    issues: [{
+      ruleId: "structure.heading_hierarchy",
+      paragraphIndex: 0,
+      role: "heading",
+      currentLevel: 3,
+      previousLevel: 1,
+      currentValue: 3,
+      expectedValue: "前一有效标题为 1 级时，当前级别不超过 2 级",
+      message: "标题层级出现跳级。",
+      suggestion: "请补齐 2 级标题，再保留当前 3 级标题。"
+    }]
+  });
+
+  assert.ok(markdown.includes("位置待确认"));
+  assert.ok(!markdown.includes("P0"));
+  assert.ok(!markdown.includes("未识别角色"));
+}
+
 function testRenderReadableFormatReviewLocalizesOtherFeedback() {
   const markdown = helpers.renderReadableFormatReview({
     summary: {
@@ -1146,6 +1203,7 @@ function testRenderReadableFormatReviewLocalizesOtherFeedback() {
       {
         ruleId: "style_name",
         paragraphIndex: 1,
+        anchorVerification: "verified",
         role: "document_title",
         message: "段落样式不符合模板要求。",
         currentValue: "Normal",
@@ -1155,6 +1213,7 @@ function testRenderReadableFormatReviewLocalizesOtherFeedback() {
       {
         ruleId: "line_spacing",
         paragraphIndex: 5,
+        anchorVerification: "verified",
         role: "body",
         message: "行距不符合模板要求。",
         currentValue: "1.0倍",
@@ -1476,6 +1535,8 @@ testBuildSmartWritePreviewModelHandlesEmptyResult();
 testRenderReadableFormatReviewUsesChineseLabelsAndValues();
 testRenderReadableFormatReviewHandlesNoIssues();
 testRenderReadableFormatReviewExplainsModelExecutionDiagnostics();
+testRenderReadableFormatReviewLocalizesHeadingHierarchyIssues();
+testRenderReadableFormatReviewDoesNotFabricateHeadingPosition();
 testRenderReadableFormatReviewLocalizesOtherFeedback();
 testBuildDocumentReviewRecordUsesIssueStatuses();
 testBuildDocumentReviewRecordHandlesEmptyIssues();

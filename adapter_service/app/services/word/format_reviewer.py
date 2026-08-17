@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import FormatReviewIssue, Paragraph, WordDocumentRequest
-from app.core.outline_level import normalize_heading_level, normalize_outline_level
+from app.core.outline_level import (
+    normalize_format_block_outline_level,
+    normalize_heading_level,
+    normalize_outline_level,
+)
 from app.services.document_normalizer import body_paragraphs
 from app.services.provider_client import ProviderClient, extract_answer
 from app.services.word.authorized_format_algorithm import (
@@ -17,6 +21,10 @@ from app.services.word.authorized_format_algorithm import (
     resolve_role_rule,
 )
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
+from app.services.word.format_issue_support import (
+    build_format_issue_anchor,
+    normalize_paragraph_index,
+)
 from app.services.word.format_semantics import (
     FormatSemanticContract,
     FormatSemanticExecutor,
@@ -1014,11 +1022,38 @@ class WordFormatReviewer:
                 }
                 for paragraph in body_paragraphs(request)
             ]
-        facts["headings"] = [
-            {"level": heading.level, "text": heading.text, "paragraphIndex": heading.paragraph_index}
-            for heading in request.content.headings
-            if normalize_heading_level(heading.level) is not None
-        ]
+        headings = []
+        seen_heading_keys = set()
+
+        def append_heading(level, text, paragraph_index):
+            normalized_index = normalize_paragraph_index(paragraph_index)
+            heading_key = (
+                (normalized_index, level)
+                if normalized_index is not None
+                else (None, level, str(text or ""))
+            )
+            if heading_key in seen_heading_keys:
+                return
+            seen_heading_keys.add(heading_key)
+            headings.append({
+                "level": level,
+                "text": text,
+                "paragraphIndex": normalized_index,
+            })
+
+        for heading in request.content.headings:
+            level = normalize_heading_level(heading.level)
+            if level is None:
+                continue
+            append_heading(level, heading.text, heading.paragraph_index)
+        for paragraph in facts.get("paragraphs", []):
+            if not isinstance(paragraph, dict) or paragraph.get("blockType") != "heading":
+                continue
+            level = normalize_heading_level(normalize_format_block_outline_level(paragraph))
+            if level is None:
+                continue
+            append_heading(level, paragraph.get("text", ""), paragraph.get("paragraphIndex"))
+        facts["headings"] = headings
         return facts
 
     @staticmethod
@@ -1032,11 +1067,7 @@ class WordFormatReviewer:
         )
         if not has_outline_fact:
             return normalized
-        raw_level = normalized.get(
-            "headingLevel",
-            normalized.get("outlineLevel", format_facts.get("outlineLevel")),
-        )
-        level = normalize_outline_level(raw_level)
+        level = normalize_format_block_outline_level(normalized)
         format_facts["outlineLevel"] = level
         normalized["format"] = format_facts
         normalized["outlineLevel"] = level
@@ -1065,21 +1096,59 @@ class WordFormatReviewer:
         pack = {"template": template, "rules": template.get("_rulePackRules", [])}
         audit = audit_format_facts(facts, pack)
         issues: List[FormatReviewIssue] = []
+        seen_heading_issues = set()
         table_caption_suggestions = table_caption_suggestions or {}
         figure_caption_suggestions = figure_caption_suggestions or {}
         image_inventory = image_inventory or {}
         for warning in audit["issues"]:
             if warning.get("ruleId") != "structure.heading_hierarchy":
                 continue
+            current_level = normalize_heading_level(warning.get("level"))
+            previous_level = normalize_heading_level(warning.get("previousLevel"))
+            paragraph_index = normalize_paragraph_index(warning.get("paragraphIndex"))
+            target_key = (
+                (paragraph_index, current_level)
+                if paragraph_index is not None
+                else (paragraph_index, current_level, warning.get("text", ""))
+            )
+            if target_key in seen_heading_issues:
+                continue
+            seen_heading_issues.add(target_key)
+            if previous_level is None:
+                expected = "应先出现一级标题"
+                suggestion = "请先补充一级标题，再使用当前标题级别。"
+                message = "标题层级未从一级标题开始。"
+            else:
+                expected = "前一有效标题为 {0} 级时，当前级别不超过 {1} 级".format(
+                    previous_level, previous_level + 1
+                )
+                suggestion = "请补齐 {0} 级标题，再保留当前 {1} 级标题。".format(
+                    previous_level + 1, current_level
+                )
+                message = "标题层级出现跳级（前一有效标题为 {0} 级，当前为 {1} 级）。".format(
+                    previous_level, current_level
+                )
+            anchor = build_format_issue_anchor(request, paragraph_index)
             issues.append(
                 FormatReviewIssue(
                     ruleId="structure.heading_hierarchy",
-                    paragraphIndex=warning.get("paragraphIndex"),
+                    paragraphIndex=paragraph_index,
                     role="heading",
-                    message="标题层级出现跳级。",
-                    currentValue=str(warning.get("level", "")),
-                    expectedValue="不超过一级跳级",
-                    suggestion="请补齐缺失的标题层级。",
+                    currentLevel=current_level,
+                    previousLevel=previous_level,
+                    anchorId=anchor["anchorId"],
+                    sourceAnchor=anchor["sourceAnchor"],
+                    anchorVerification=anchor["anchorVerification"],
+                    message=message,
+                    currentValue=current_level,
+                    expectedValue=expected,
+                    evidence=[{
+                        "kind": "heading_hierarchy",
+                        "currentLevel": current_level,
+                        "previousLevel": previous_level,
+                        "paragraphIndex": paragraph_index,
+                    }],
+                    suggestion=suggestion,
                 )
             )
         for index, result in enumerate(audit.get("tables", []), start=1):
@@ -1755,7 +1824,7 @@ class WordFormatReviewer:
             if isinstance(item, dict) and str(item.get("paragraphIndex", "")).isdigit()
         }
         blocks = {
-            int(item.get("paragraphIndex")): item
+            int(item.get("paragraphIndex")): self._normalize_format_block(item)
             for item in (request.content.document_structure or {}).get("formatBlocks", [])
             if isinstance(item, dict) and item.get("paragraphIndex") is not None
         }

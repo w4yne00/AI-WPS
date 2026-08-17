@@ -32,3 +32,23 @@ def normalize_heading_level(value: Any) -> Optional[int]:
     """Return only the valid heading subset of a WPS outline level."""
     level = normalize_outline_level(value)
     return level if level is not None and level > 0 else None
+
+
+def normalize_format_block_outline_level(block: Any) -> Optional[int]:
+    """Normalize the authoritative outline fact from a format block.
+
+    ``headingLevel`` is a derived convenience field. When a client sends both
+    fields, the raw ``outlineLevel`` (including a nested format fact) wins so
+    an inconsistent derived heading cannot turn WPS body level ``10`` into a
+    heading.
+    """
+    if not isinstance(block, dict):
+        return None
+    if "outlineLevel" in block:
+        return normalize_outline_level(block.get("outlineLevel"))
+    format_facts = block.get("format")
+    if isinstance(format_facts, dict) and "outlineLevel" in format_facts:
+        return normalize_outline_level(format_facts.get("outlineLevel"))
+    if "headingLevel" in block:
+        return normalize_outline_level(block.get("headingLevel"))
+    return None

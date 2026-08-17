@@ -1,10 +1,12 @@
 import importlib.util
 import json
+import os
 import threading
 import time
 import unittest
 from copy import deepcopy
 from io import BytesIO
+from unittest.mock import patch
 
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
@@ -379,10 +381,11 @@ class ExcelFormulaAssistantTests(unittest.TestCase):
             pass
 
         provider = ProviderClient(AppSettings())
-        result = provider.excel_formula_assistant(
-            self._request(requirement="", mode="explain"),
-            trace_id="trace-formula-explain-prompt",
-        )
+        with patch.dict(os.environ, {"AI_WPS_ENABLE_MOCK_PROVIDER": "1"}):
+            result = provider.excel_formula_assistant(
+                self._request(requirement="", mode="explain"),
+                trace_id="trace-formula-explain-prompt",
+            )
 
         self.assertIn("解释排错", result["prompt"])
         self.assertIn("=100+200", result["prompt"])

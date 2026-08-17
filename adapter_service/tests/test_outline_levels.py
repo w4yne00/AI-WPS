@@ -5,7 +5,7 @@ import unittest
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 
 if HAS_PYDANTIC:
-    from app.core.models import Heading, Paragraph
+    from app.core.models import Heading, Paragraph, WordDocumentRequest
     from app.services.word.authorized_format_algorithm import (
         classify_role_fact,
         heading_hierarchy_warnings,
@@ -60,6 +60,29 @@ class OutlineLevelTests(unittest.TestCase):
 
         self.assertEqual(len(warnings), 1)
         self.assertEqual(warnings[0]["paragraphIndex"], 3)
+        self.assertEqual(warnings[0]["level"], 3)
+        self.assertEqual(warnings[0]["previousLevel"], 1)
+
+    def test_heading_hierarchy_deduplicates_same_violating_paragraph(self):
+        warnings = heading_hierarchy_warnings([
+            {"level": 1, "paragraphIndex": 1, "text": "一级标题"},
+            {"level": 3, "paragraphIndex": 3, "text": "三级标题"},
+            {"level": 1, "paragraphIndex": 4, "text": "另一个一级标题"},
+            {"level": 3, "paragraphIndex": 3, "text": "三级标题"},
+        ])
+
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["paragraphIndex"], 3)
+
+    def test_heading_hierarchy_keeps_distinct_unindexed_violations(self):
+        warnings = heading_hierarchy_warnings([
+            {"level": 1, "text": "一级标题"},
+            {"level": 3, "text": "第一个三级标题"},
+            {"level": 1, "text": "另一个一级标题"},
+            {"level": 3, "text": "第二个三级标题"},
+        ])
+
+        self.assertEqual(len(warnings), 2)
 
     def test_format_blocks_defensively_treat_wps_body_level_as_body(self):
         reviewer = WordFormatReviewer()
@@ -95,6 +118,53 @@ class OutlineLevelTests(unittest.TestCase):
         self.assertEqual(facts["paragraphs"][1]["blockType"], "heading")
         self.assertEqual(facts["paragraphs"][1]["outlineLevel"], 1)
 
+    def test_sync_review_does_not_trust_derived_heading_over_wps_body_level(self):
+        request = WordDocumentRequest.parse_obj(
+            {
+                "documentId": "conflicting-outline-facts.docx",
+                "scene": "word",
+                "selectionMode": "document",
+                "content": {
+                    "plainText": "正文",
+                    "paragraphs": [
+                        {
+                            "index": 1,
+                            "text": "正文",
+                            "outlineLevel": 10,
+                        }
+                    ],
+                    "headings": [],
+                    "documentStructure": {
+                        "formatBlocks": [
+                            {
+                                "blockId": "format-paragraph-1",
+                                "blockType": "heading",
+                                "paragraphIndex": 1,
+                                "headingLevel": 1,
+                                "outlineLevel": 10,
+                                "text": "正文",
+                                "format": {"outlineLevel": 10},
+                            }
+                        ]
+                    },
+                },
+                "options": {"templateId": "technical-file-format-requirements"},
+            }
+        )
+
+        reviewer = WordFormatReviewer()
+        facts = reviewer._format_structure_facts(request)
+        self.assertEqual(facts["paragraphs"][0]["blockType"], "paragraph")
+        self.assertEqual(facts["paragraphs"][0]["outlineLevel"], 0)
+        self.assertEqual(
+            [
+                issue
+                for issue in reviewer.review(request, trace_id="")["issues"]
+                if issue["ruleId"] == "structure.heading_hierarchy"
+            ],
+            [],
+        )
+
     def test_background_snapshot_normalizes_outline_levels_at_ingress(self):
         blocks = DeterministicFormatReviewService._normalize_format_blocks([
             {
@@ -121,6 +191,108 @@ class OutlineLevelTests(unittest.TestCase):
             [(block["blockType"], block["outlineLevel"], block.get("headingLevel")) for block in blocks],
             [("paragraph", 0, None), ("heading", 1, 1)],
         )
+
+        conflicting = DeterministicFormatReviewService._normalize_format_blocks([
+            {
+                "blockId": "body-ten-conflict",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 3,
+                "headingLevel": 1,
+                "outlineLevel": 10,
+                "text": "正文",
+                "format": {"outlineLevel": 10},
+            }
+        ])
+        self.assertEqual(
+            (
+                conflicting[0]["blockType"],
+                conflicting[0]["outlineLevel"],
+                conflicting[0].get("headingLevel"),
+            ),
+            ("paragraph", 0, None),
+        )
+
+    def test_background_format_facts_derive_headings_from_verified_blocks(self):
+        blocks = [
+            {
+                "blockId": "format-paragraph-1",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 1,
+                "headingLevel": 1,
+                "text": "一级标题",
+                "format": {"outlineLevel": 1},
+            },
+            {
+                "blockId": "format-paragraph-2",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 2,
+                "headingLevel": 3,
+                "text": "三级标题",
+                "format": {"outlineLevel": 3},
+            },
+        ]
+        request = DeterministicFormatReviewService._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            blocks,
+            {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f", "coverage": {}},
+        )
+        parsed = (
+            WordDocumentRequest.model_validate(request)
+            if hasattr(WordDocumentRequest, "model_validate")
+            else WordDocumentRequest.parse_obj(request)
+        )
+        facts = WordFormatReviewer()._format_structure_facts(parsed)
+
+        self.assertEqual(
+            [(item["level"], item["paragraphIndex"]) for item in facts["headings"]],
+            [(1, 1), (3, 2)],
+        )
+        result = WordFormatReviewer().review(parsed, trace_id="")
+        hierarchy_issues = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.heading_hierarchy"
+        ]
+        self.assertEqual(len(hierarchy_issues), 1)
+        self.assertEqual(hierarchy_issues[0]["paragraphIndex"], 2)
+        self.assertEqual(hierarchy_issues[0]["anchorId"], "format-paragraph-2")
+
+    def test_unindexed_background_headings_remain_unverified_and_ordered(self):
+        blocks = [
+            {
+                "blockId": "heading-one",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "headingLevel": 1,
+                "text": "一级标题",
+                "format": {"outlineLevel": 1},
+            },
+            {
+                "blockId": "heading-three",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "headingLevel": 3,
+                "text": "三级标题",
+                "format": {"outlineLevel": 3},
+            },
+        ]
+        request_data = DeterministicFormatReviewService._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            blocks,
+            {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f", "coverage": {}},
+        )
+        parsed = WordDocumentRequest.parse_obj(request_data)
+        facts = WordFormatReviewer()._format_structure_facts(parsed)
+        self.assertEqual([item["text"] for item in facts["headings"]], ["一级标题", "三级标题"])
+        result = WordFormatReviewer().review(parsed, trace_id="")
+        issue = next(
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.heading_hierarchy"
+        )
+        self.assertIsNone(issue["paragraphIndex"])
+        self.assertEqual(issue["anchorVerification"], "unverified")
 
 
 if __name__ == "__main__":

@@ -77,29 +77,25 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.25.0-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.0-20260814` |
+| Version | `v0.25.1-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Candidate: allowlist assembly, static audit, plugin tests, and Python 3.8 lifecycle scenarios passed; Kylin V10/WPS acceptance pending |
-| Phase 1 delivery kit | Current candidate: `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz`; SHA-256: `a6dd243d5f7bfdf9da145e13294132d0e16c2929632c6b22af5cf9070265ed27` |
+| Delivery status | Candidate build: v0.25.0 baseline, allowlist/static/plugin/Python 3.8 gates and Issue #59 manual acceptance evidence required; Kylin V10/WPS acceptance pending |
+| Phase 1 delivery kit | Build with `AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> packaging/build_v0251_delivery_kit.sh`; the archive and adjacent SHA-256 file are generated in `dist-phase1-delivery-kit/` |
 
-### v0.25.0-alpha Candidate Delivery
+### v0.25.1-alpha Candidate Delivery
 
-The current `main` branch contains the complete Phase 1 candidate delivery kit. The
-archive contains the unified Word, Excel, and PPT plugin package, the local adapter
-runtime, the Kylin V10 ARM/Python 3.8 offline dependency bundle, installation and
-operations scripts, acceptance documents, and the release manifest.
+This candidate keeps the existing Phase 1 installation system and packages the
+unified Word, Excel, and PPT plugin package, local adapter runtime, Kylin V10
+ARM/Python 3.8 offline dependency bundle, installation and operations scripts,
+acceptance documents, and the release manifest. Its scope is limited to the
+format-review fixes for WPS outline levels, heading anchors, formal direct-model
+validation, and runtime model-call diagnostics.
 
-Validation completed for this candidate:
-
-- Allowlist assembly and release-manifest audit passed.
-- Node plugin test suite passed: `17 passed`.
-- Python 3.8 lifecycle scenarios passed for fresh install, upgrade, damaged release,
-  and all defined fault-injection cases.
-- Adapter production test suite passed: `706 passed, 91 skipped`.
-- Archive checksum verification passed; use the adjacent
-  `ai-wps-phase1-delivery-20260814-v0250.tar.gz.sha256` file for offline verification.
+The build records the source Git commit, candidate status, baseline archive digest,
+archive checksum sidecar, automated gate results, and transaction-log rollback entry.
+Issue #59 remains the manual target-machine acceptance record.
 
 Automated validation marks this package as a `candidate`; final Kylin V10 and WPS
 acceptance remains a separate target-environment gate.
@@ -150,6 +146,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.25.1-alpha` | Packages the format-review repair candidate on the existing Phase 1 installation baseline, with WPS outline-level and heading-anchor fixes, formal direct-model validation, model-call diagnostics, explicit candidate evidence, and a separate Issue #59 manual acceptance gate |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |

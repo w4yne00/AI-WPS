@@ -716,6 +716,8 @@ class FormatReviewIssue(BaseModel):
     severity: Literal["info", "warning", "error"] = "warning"
     paragraph_index: Optional[int] = Field(default=None, alias="paragraphIndex")
     role: str = "body"
+    current_level: Optional[int] = Field(default=None, alias="currentLevel")
+    previous_level: Optional[int] = Field(default=None, alias="previousLevel")
     anchor_id: str = Field(default="", alias="anchorId")
     source_anchor: Dict[str, Any] = Field(default_factory=dict, alias="sourceAnchor")
     property_path: str = Field(default="", alias="propertyPath")
@@ -726,7 +728,7 @@ class FormatReviewIssue(BaseModel):
     duplicate_group_id: str = Field(default="", alias="duplicateGroupId")
     duplicate_group_size: int = Field(default=1, alias="duplicateGroupSize")
     anchor_verification: Literal["verified", "unverified"] = Field(
-        default="verified", alias="anchorVerification"
+        default="unverified", alias="anchorVerification"
     )
     source: str = ""
     template_hash: str = Field(default="", alias="templateHash")

@@ -13,6 +13,7 @@ EXPECTED_FILES = {
     "adapter_service/app/core/models.py",
     "adapter_service/app/services/word/authorized_format_algorithm.py",
     "adapter_service/app/services/word/format_reviewer.py",
+    "adapter_service/app/services/word/format_issue_support.py",
     "adapter_service/app/services/word/format_rule_pack.py",
     "adapter_service/tools/compile_format_rule_pack.py",
     "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json",
