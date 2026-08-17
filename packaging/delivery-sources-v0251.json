@@ -16,6 +16,11 @@
     },
     {
       "type": "file",
+      "source": "packaging/v0251-target-machine-acceptance.md",
+      "target": "docs/v0251-target-machine-acceptance.md"
+    },
+    {
+      "type": "file",
       "source": "packaging/audit_v0251_delivery.py",
       "target": "scripts/audit_v0251_delivery.py"
     }

@@ -125,6 +125,53 @@ def audit_visual_default(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("VISUAL_CLOSED_SIDE_EFFECT_CONTRACT_FAILED")
 
 
+def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
+    record = safe_path(
+        root,
+        "docs/v0251-target-machine-acceptance.md",
+        "TARGET_ACCEPTANCE_RECORD_MISSING",
+    )
+    content = record.read_text(encoding="utf-8")
+    required = (
+        "Issue #59",
+        "manual-pending",
+        "60,000",
+        "120,000",
+        "取消",
+        "只读",
+        "图片语义",
+        "不写入仓库",
+    )
+    for marker in required:
+        if marker not in content:
+            raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_INCOMPLETE {0}".format(marker))
+    result_rows = {}
+    for line in content.splitlines():
+        fields = [field.strip() for field in line.strip().strip("|").split("|")]
+        if len(fields) < 5 or not fields[0].isdigit():
+            continue
+        index = int(fields[0])
+        if 1 <= index <= 7:
+            result_rows[index] = fields[2].strip("`")
+    if set(result_rows) != set(range(1, 8)):
+        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_RESULTS_INCOMPLETE")
+    if any(status != "manual-pending" for status in result_rows.values()):
+        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING")
+    for marker in (
+        "当前记录状态：`manual-pending`",
+        "记录状态：`manual-pending`",
+        "`60,000` 字符全文两遍抽取目标 ≤ 30 秒",
+        "`120,000` 字符全文两遍抽取目标 ≤ 60 秒",
+        "两遍指纹（内容哈希、结构哈希和格式/对象摘要）一致",
+    ):
+        if marker not in content:
+            raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_INCOMPLETE {0}".format(marker))
+    if manifest.get("targetAcceptanceIssue") != 59:
+        raise DeliveryFailure("TARGET_ACCEPTANCE_ISSUE_MISMATCH")
+    if manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
+        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_STATUS_INVALID")
+
+
 def plugin_files(root: Path) -> Iterable[Path]:
     for path in sorted(root.glob("packages/wps-ai-assistant*/*")):
         if path.is_file() and path.suffix.lower() in {".html", ".js", ".json"}:
@@ -212,6 +259,7 @@ def audit(root: Path) -> None:
     audit_plugin_cache_identity(root, VERSION)
     audit_format_assets(root, manifest)
     audit_visual_default(root, manifest)
+    audit_target_acceptance_record(root, manifest)
     print("v0251_delivery_audit=passed status=candidate version={0}".format(VERSION))
 
 
