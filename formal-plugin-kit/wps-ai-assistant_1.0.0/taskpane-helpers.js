@@ -2338,7 +2338,9 @@
   function normalizeWpsOutlineLevel(value) {
     var resolved = resolveScalarValue(value);
     var numeric;
-    if (resolved === null || typeof resolved === "undefined" || resolved === "" || typeof resolved === "boolean") {
+    if (resolved === null || typeof resolved === "undefined" ||
+        (typeof resolved === "string" && !resolved.trim()) ||
+        typeof resolved === "boolean") {
       return null;
     }
     numeric = Number(resolved);

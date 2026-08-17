@@ -20,7 +20,10 @@ from pydantic import ValidationError
 from app.core.errors import AdapterError
 from app.core.features import deterministic_format_review_enabled
 from app.core.models import WordDocumentRequest
-from app.core.outline_level import normalize_outline_level
+from app.core.outline_level import (
+    normalize_format_block_outline_level,
+    normalize_outline_level,
+)
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.document_normalizer import body_paragraphs
 from app.services.long_task_coordinator import (
@@ -1706,11 +1709,7 @@ class DeterministicFormatReviewService:
                 or "outlineLevel" in normalized_item["format"]
             )
             if has_outline_fact:
-                raw_level = item.get(
-                    "headingLevel",
-                    item.get("outlineLevel", normalized_item["format"].get("outlineLevel")),
-                )
-                outline_level = normalize_outline_level(raw_level)
+                outline_level = normalize_format_block_outline_level(normalized_item)
                 normalized_item["outlineLevel"] = outline_level
                 normalized_item["format"]["outlineLevel"] = outline_level
                 if block_type == "heading":

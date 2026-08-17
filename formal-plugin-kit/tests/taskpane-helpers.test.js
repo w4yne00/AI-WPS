@@ -394,10 +394,13 @@ function testBuildDocumentStructureForProofread() {
 }
 
 function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
-  const values = [0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, undefined, "not-a-number", -1, 11, 1.5];
+  const values = [
+    0, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9,
+    undefined, "", " ", true, "not-a-number", -1, 11, 1.5, NaN, Infinity,
+  ];
   assert.deepStrictEqual(
     values.map((value) => helpers.normalizeWpsOutlineLevel(value)),
-    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null]
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null, null, null, null, null, null]
   );
 
   const paragraphs = values.map((outlineLevel, index) => ({
@@ -414,7 +417,7 @@ function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
   const structure = helpers.buildDocumentStructure({ paragraphs, headings });
   assert.deepStrictEqual(
     structure.paragraphs.map((paragraph) => paragraph.outline_level),
-    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null]
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null, null, null, null, null, null]
   );
   assert.deepStrictEqual(
     structure.headings.map((heading) => heading.level),

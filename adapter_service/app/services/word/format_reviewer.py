@@ -6,7 +6,11 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import FormatReviewIssue, Paragraph, WordDocumentRequest
-from app.core.outline_level import normalize_heading_level, normalize_outline_level
+from app.core.outline_level import (
+    normalize_format_block_outline_level,
+    normalize_heading_level,
+    normalize_outline_level,
+)
 from app.services.document_normalizer import body_paragraphs
 from app.services.provider_client import ProviderClient, extract_answer
 from app.services.word.authorized_format_algorithm import (
@@ -1045,9 +1049,7 @@ class WordFormatReviewer:
         for paragraph in facts.get("paragraphs", []):
             if not isinstance(paragraph, dict) or paragraph.get("blockType") != "heading":
                 continue
-            level = normalize_heading_level(
-                paragraph.get("headingLevel", paragraph.get("outlineLevel"))
-            )
+            level = normalize_heading_level(normalize_format_block_outline_level(paragraph))
             if level is None:
                 continue
             append_heading(level, paragraph.get("text", ""), paragraph.get("paragraphIndex"))
@@ -1065,11 +1067,7 @@ class WordFormatReviewer:
         )
         if not has_outline_fact:
             return normalized
-        raw_level = normalized.get(
-            "headingLevel",
-            normalized.get("outlineLevel", format_facts.get("outlineLevel")),
-        )
-        level = normalize_outline_level(raw_level)
+        level = normalize_format_block_outline_level(normalized)
         format_facts["outlineLevel"] = level
         normalized["format"] = format_facts
         normalized["outlineLevel"] = level
@@ -1826,7 +1824,7 @@ class WordFormatReviewer:
             if isinstance(item, dict) and str(item.get("paragraphIndex", "")).isdigit()
         }
         blocks = {
-            int(item.get("paragraphIndex")): item
+            int(item.get("paragraphIndex")): self._normalize_format_block(item)
             for item in (request.content.document_structure or {}).get("formatBlocks", [])
             if isinstance(item, dict) and item.get("paragraphIndex") is not None
         }

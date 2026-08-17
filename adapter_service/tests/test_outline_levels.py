@@ -118,6 +118,53 @@ class OutlineLevelTests(unittest.TestCase):
         self.assertEqual(facts["paragraphs"][1]["blockType"], "heading")
         self.assertEqual(facts["paragraphs"][1]["outlineLevel"], 1)
 
+    def test_sync_review_does_not_trust_derived_heading_over_wps_body_level(self):
+        request = WordDocumentRequest.parse_obj(
+            {
+                "documentId": "conflicting-outline-facts.docx",
+                "scene": "word",
+                "selectionMode": "document",
+                "content": {
+                    "plainText": "正文",
+                    "paragraphs": [
+                        {
+                            "index": 1,
+                            "text": "正文",
+                            "outlineLevel": 10,
+                        }
+                    ],
+                    "headings": [],
+                    "documentStructure": {
+                        "formatBlocks": [
+                            {
+                                "blockId": "format-paragraph-1",
+                                "blockType": "heading",
+                                "paragraphIndex": 1,
+                                "headingLevel": 1,
+                                "outlineLevel": 10,
+                                "text": "正文",
+                                "format": {"outlineLevel": 10},
+                            }
+                        ]
+                    },
+                },
+                "options": {"templateId": "technical-file-format-requirements"},
+            }
+        )
+
+        reviewer = WordFormatReviewer()
+        facts = reviewer._format_structure_facts(request)
+        self.assertEqual(facts["paragraphs"][0]["blockType"], "paragraph")
+        self.assertEqual(facts["paragraphs"][0]["outlineLevel"], 0)
+        self.assertEqual(
+            [
+                issue
+                for issue in reviewer.review(request, trace_id="")["issues"]
+                if issue["ruleId"] == "structure.heading_hierarchy"
+            ],
+            [],
+        )
+
     def test_background_snapshot_normalizes_outline_levels_at_ingress(self):
         blocks = DeterministicFormatReviewService._normalize_format_blocks([
             {
@@ -143,6 +190,27 @@ class OutlineLevelTests(unittest.TestCase):
         self.assertEqual(
             [(block["blockType"], block["outlineLevel"], block.get("headingLevel")) for block in blocks],
             [("paragraph", 0, None), ("heading", 1, 1)],
+        )
+
+        conflicting = DeterministicFormatReviewService._normalize_format_blocks([
+            {
+                "blockId": "body-ten-conflict",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 3,
+                "headingLevel": 1,
+                "outlineLevel": 10,
+                "text": "正文",
+                "format": {"outlineLevel": 10},
+            }
+        ])
+        self.assertEqual(
+            (
+                conflicting[0]["blockType"],
+                conflicting[0]["outlineLevel"],
+                conflicting[0].get("headingLevel"),
+            ),
+            ("paragraph", 0, None),
         )
 
     def test_background_format_facts_derive_headings_from_verified_blocks(self):
