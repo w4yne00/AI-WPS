@@ -39,6 +39,12 @@ from app.services.word.format_issue_support import (
     build_format_issue_anchor,
     normalize_paragraph_index,
 )
+from app.services.word.format_facts import (
+    FACT_SCHEMA_VERSION,
+    FACT_STATUSES,
+    normalize_format_facts as normalize_source_format_facts,
+    normalize_page_setup as normalize_source_page_setup,
+)
 from app.services.word.image_semantics import (
     ImageAssetStore,
     collect_image_inventory,
@@ -337,8 +343,12 @@ class DeterministicFormatReviewService:
         snapshot_id = "format-snapshot-" + uuid.uuid4().hex
         upload_token = secrets.token_urlsafe(32)
         now = self._wall_clock()
+        normalized_page_setup, page_setup_facts = normalize_source_page_setup(
+            payload.get("pageSetup"), payload.get("pageSetupFacts")
+        )
         record = {
             "schemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
+            "formatFactSchemaVersion": FACT_SCHEMA_VERSION,
             "snapshotId": snapshot_id,
             "snapshotTokenSha256": hashlib.sha256(upload_token.encode("utf-8")).hexdigest(),
             "createdAt": now,
@@ -350,7 +360,8 @@ class DeterministicFormatReviewService:
             "selectionMode": selection_mode,
             "templateId": str(payload.get("templateId") or "technical-file-format-requirements"),
             "scope": self._normalize_scope(payload.get("scope"), selection_mode),
-            "pageSetup": self._normalize_page_setup(payload.get("pageSetup")),
+            "pageSetup": normalized_page_setup,
+            "pageSetupFacts": page_setup_facts,
             "sourceCoverage": self._normalize_source_coverage(payload.get("coverage")),
             "editSequence": self._optional_scalar(payload.get("editSequence")),
             "batches": [],
@@ -382,7 +393,11 @@ class DeterministicFormatReviewService:
             "snapshotToken": upload_token,
             "uploadToken": upload_token,
             "status": "uploading",
+            "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
+            "formatFactSchemaVersion": FACT_SCHEMA_VERSION,
             "selectionMode": selection_mode,
+            "pageSetup": deepcopy(record.get("pageSetup", {})),
+            "pageSetupFacts": deepcopy(record.get("pageSetupFacts", {})),
             "scope": deepcopy(record["scope"]),
             "stagingExpiresAt": record["expiresAt"],
             "maxReviewCharacters": 120000,
@@ -633,7 +648,11 @@ class DeterministicFormatReviewService:
             "snapshotId": snapshot_id,
             "snapshotToken": payload.get("uploadToken"),
             "status": "committed",
+            "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
+            "formatFactSchemaVersion": FACT_SCHEMA_VERSION,
             "selectionMode": record.get("selectionMode", "document"),
+            "pageSetup": deepcopy(record.get("pageSetup", {})),
+            "pageSetupFacts": deepcopy(record.get("pageSetupFacts", {})),
             "reviewCharacterCount": metrics["characterCount"],
             "blockCount": len(blocks),
             "coverage": deepcopy(metrics["coverage"]),
@@ -1228,6 +1247,12 @@ class DeterministicFormatReviewService:
             "issueCount": len(issues),
             "zeroIssuesNotSufficient": coverage_status != "complete" or unresolved_semantic_roles or semantic_status in {"partial", "not_ready", "degraded"},
         })
+        format_fact_diagnostics = structure.get("formatFacts")
+        if isinstance(format_fact_diagnostics, dict):
+            summary["formatFactDiagnostics"] = deepcopy(format_fact_diagnostics)
+            summary["formatFactDiagnostics"]["statusCounts"] = deepcopy(
+                coverage.get("formatFactStatusCounts", {})
+            )
         if structure.get("formatSnapshotSchemaVersion") == FORMAT_SNAPSHOT_SCHEMA_VERSION:
             summary.update({
                 "snapshotVerification": "two_pass_verified",
@@ -1769,7 +1794,7 @@ class DeterministicFormatReviewService:
             "strikeThrough", "superscript", "subscript", "allCaps", "smallCaps",
             "color", "highlight", "characterSpacing", "characterScale", "alignment",
             "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent",
-            "rightIndent", "outlineLevel", "segments", "dataStatus"
+            "rightIndent", "outlineLevel", "segments", "dataStatus", "facts", "formatFacts", "lineSpacingMode"
         }
         normalized = {
             key: deepcopy(value[key])
@@ -1780,13 +1805,11 @@ class DeterministicFormatReviewService:
             normalized["segments"] = DeterministicFormatReviewService._normalize_format_segments(
                 normalized["segments"]
             )
-        if "dataStatus" in normalized and normalized["dataStatus"] not in {
-            "verified", "insufficient", "context_only"
-        }:
+        if "dataStatus" in normalized and normalized["dataStatus"] not in FACT_STATUSES:
             normalized["dataStatus"] = "insufficient"
         if normalized.get("dataStatus") == "insufficient" and value.get("insufficientReason"):
             normalized["insufficientReason"] = str(value["insufficientReason"])[:120]
-        return normalized
+        return normalize_source_format_facts(normalized)
 
     @staticmethod
     def _normalize_format_segments(value: object) -> List[Dict]:
@@ -1943,31 +1966,52 @@ class DeterministicFormatReviewService:
         format_segment_count = 0
         table_cell_count = 0
         insufficient_blocks = 0
+        format_fact_status_counts: Dict[str, int] = {}
         unsupported_objects = []
 
-        def count_table(table: Dict) -> None:
+        def count_fact_statuses(facts: object) -> None:
+            if not isinstance(facts, dict):
+                return
+            status = facts.get("dataStatus")
+            if status:
+                status = str(status)
+                format_fact_status_counts[status] = format_fact_status_counts.get(status, 0) + 1
+            nested = facts.get("facts")
+            if isinstance(nested, dict):
+                for fact in nested.values():
+                    if isinstance(fact, dict) and fact.get("dataStatus"):
+                        nested_status = str(fact["dataStatus"])
+                        format_fact_status_counts[nested_status] = (
+                            format_fact_status_counts.get(nested_status, 0) + 1
+                        )
+
+        def count_table(table: Dict, count_fact_statuses_for_scope: bool) -> None:
             nonlocal table_cell_count, format_segment_count, insufficient_blocks
             for row in table.get("rows", []) if isinstance(table.get("rows", []), list) else []:
                 for cell in row.get("cells", []) if isinstance(row, dict) and isinstance(row.get("cells", []), list) else []:
                     table_cell_count += 1
                     cell_format = cell.get("format", {}) if isinstance(cell, dict) else {}
+                    if count_fact_statuses_for_scope:
+                        count_fact_statuses(cell_format)
                     segments = cell_format.get("segments", []) if isinstance(cell_format, dict) else []
                     format_segment_count += len(segments) if isinstance(segments, list) else 0
                     if isinstance(cell_format, dict) and cell_format.get("dataStatus") == "insufficient":
                         insufficient_blocks += 1
             for nested in table.get("nestedTables", []) if isinstance(table.get("nestedTables", []), list) else []:
                 if isinstance(nested, dict):
-                    count_table(nested)
+                    count_table(nested, count_fact_statuses_for_scope)
 
         for block in blocks:
             facts = block.get("format", {}) if isinstance(block.get("format", {}), dict) else {}
+            if block.get("scope") == "in_scope":
+                count_fact_statuses(facts)
             segments = facts.get("segments", [])
             format_segment_count += len(segments) if isinstance(segments, list) else 0
             if facts.get("dataStatus") == "insufficient":
                 insufficient_blocks += 1
             if block.get("blockType") == "table":
                 table_cell_count += 0
-                count_table(block)
+                count_table(block, block.get("scope") == "in_scope")
             for item in block.get("unsupportedObjects", []) if isinstance(block.get("unsupportedObjects", []), list) else []:
                 if isinstance(item, dict):
                     unsupported_objects.append(deepcopy(item))
@@ -2025,8 +2069,12 @@ class DeterministicFormatReviewService:
                 "captionCount": sum(1 for block in in_scope if block["blockType"] == "caption"),
                 "tableCellCount": table_cell_count,
                 "formatSegmentCount": format_segment_count,
-                "formatDataStatus": "insufficient" if insufficient_blocks else "verified",
+                "formatDataStatus": (
+                    "insufficient" if insufficient_blocks else
+                    ("partial" if any(status != "verified" for status in format_fact_status_counts) else "verified")
+                ),
                 "formatDataInsufficientBlockCount": insufficient_blocks,
+                "formatFactStatusCounts": format_fact_status_counts,
                 "unsupportedObjectCount": unsupported_object_count,
                 "unsupportedObjectsByType": unsupported_by_type,
             }
@@ -2092,6 +2140,11 @@ class DeterministicFormatReviewService:
         for key, value in increment.items():
             if key in additive:
                 result[key] = int(result.get(key, 0) or 0) + int(value or 0)
+            elif key == "formatFactStatusCounts":
+                counts = result.get(key) if isinstance(result.get(key), dict) else {}
+                for status, count in value.items() if isinstance(value, dict) else []:
+                    counts[status] = int(counts.get(status, 0) or 0) + int(count or 0)
+                result[key] = counts
             else:
                 result[key] = deepcopy(value)
         return result
@@ -2102,6 +2155,8 @@ class DeterministicFormatReviewService:
             "snapshotId": record["snapshotId"],
             "sequence": batch["sequence"],
             "status": "uploaded",
+            "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
+            "formatFactSchemaVersion": FACT_SCHEMA_VERSION,
             "reviewCharacterCount": record.get("reviewCharacterCount", 0),
             "blockCount": record.get("blockCount", 0),
             "coverage": deepcopy(record.get("coverage", {})),
@@ -2113,6 +2168,16 @@ class DeterministicFormatReviewService:
 
     @classmethod
     def _request_from_blocks(cls, record: Dict, blocks: List[Dict], metrics: Dict) -> Dict:
+        def fact_value(facts: Dict, key: str, fallback: object = None) -> object:
+            supplied = facts.get("facts", {}).get(key) if isinstance(facts.get("facts"), dict) else None
+            if isinstance(supplied, dict):
+                if supplied.get("dataStatus") != "verified":
+                    return None
+                return deepcopy(supplied.get("normalizedValue"))
+            if facts.get("dataStatus") and facts.get("dataStatus") != "verified":
+                return None
+            return deepcopy(facts.get(key, fallback))
+
         paragraphs = []
         headings = []
         for block in blocks:
@@ -2125,15 +2190,15 @@ class DeterministicFormatReviewService:
                 "text": block.get("text", ""),
                 "styleName": facts.get("styleName"),
                 "fontName": facts.get("fontName"),
-                "fontSize": facts.get("fontSize"),
+                "fontSize": fact_value(facts, "fontSize"),
                 "alignment": facts.get("alignment"),
                 "outlineLevel": heading_level,
-                "lineSpacing": facts.get("lineSpacing"),
-                "firstLineIndent": facts.get("firstLineIndent"),
-                "spaceBefore": facts.get("spaceBefore"),
-                "spaceAfter": facts.get("spaceAfter"),
-                "leftIndent": facts.get("leftIndent"),
-                "rightIndent": facts.get("rightIndent"),
+                "lineSpacing": fact_value(facts, "lineSpacing"),
+                "firstLineIndent": fact_value(facts, "firstLineIndent"),
+                "spaceBefore": fact_value(facts, "spaceBefore"),
+                "spaceAfter": fact_value(facts, "spaceAfter"),
+                "leftIndent": fact_value(facts, "leftIndent"),
+                "rightIndent": fact_value(facts, "rightIndent"),
                 "bold": facts.get("bold"),
                 "italic": facts.get("italic"),
                 "underline": facts.get("underline"),
@@ -2147,13 +2212,28 @@ class DeterministicFormatReviewService:
                 })
         document_structure = {
             "formatSnapshotSchemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
+            "formatFactSchemaVersion": FACT_SCHEMA_VERSION,
             "formatBlocks": deepcopy(blocks),
+            "formatFacts": {
+                "schemaVersion": FACT_SCHEMA_VERSION,
+                "pageSetup": deepcopy(record.get("pageSetupFacts", {})),
+                "blocks": [
+                    {
+                        "blockId": block.get("blockId", ""),
+                        "paragraphIndex": block.get("paragraphIndex", 0),
+                        "facts": deepcopy((block.get("format") or {}).get("facts", {})),
+                        "dataStatus": (block.get("format") or {}).get("dataStatus", "verified"),
+                    }
+                    for block in blocks
+                ],
+            },
             "contentFingerprint": metrics["contentSha256"],
             "formatFingerprint": metrics["formatSha256"],
             "structureFingerprint": metrics["structureSha256"],
             "coverage": deepcopy(metrics["coverage"]),
             "scope": deepcopy(record.get("scope", {})),
             "page_setup": deepcopy(record.get("pageSetup", {})),
+            "page_setup_facts": deepcopy(record.get("pageSetupFacts", {})),
             "verification": "two_pass_verified",
         }
         return {
@@ -2209,7 +2289,7 @@ class DeterministicFormatReviewService:
                 "DETERMINISTIC_FORMAT_REVIEW_PAGE_SETUP_INVALID",
                 "格式审查页面设置事实格式无效。",
             )
-        return {key: deepcopy(value[key]) for key in value}
+        return normalize_source_page_setup(value)[0]
 
     @staticmethod
     def _table_structure_rows(rows: object) -> List[Dict]:
