@@ -26,13 +26,13 @@ assert.ok(js.includes('document.addEventListener("visibilitychange", syncScopeWa
 assert.ok(functionSource("getWordSelectionEventSource").includes("window.wps && window.wps.ApiEvent"));
 assert.ok(functionSource("switchView").includes("syncScopeWatcher()"));
 
-["runSmartWriteAction", "runSmartImitationAction", "runFormatReview"].forEach((name) => {
+["runSmartWriteAction", "runSmartImitationAction", "runDeterministicFormatReview"].forEach((name) => {
   const source = functionSource(name);
   assert.ok(source.includes("setModelTaskBusy(true)"), `${name} must pause scope reads while running`);
 });
 assert.ok(functionSource("setWritingJob").includes("setModelTaskBusy(Boolean(jobId))"));
 assert.ok(functionSource("completeWritingJob").includes('setWritingJob("", "", "")'));
-assert.ok(functionSource("runFormatReview").includes("setModelTaskBusy(false)"));
+assert.ok(functionSource("runDeterministicFormatReview").includes("setModelTaskBusy(false)"));
 assert.ok(functionSource("runDocumentReview").includes("setModelTaskBusy(true)"));
 assert.ok(functionSource("setDocumentReviewJobId").includes("setModelTaskBusy(Boolean(state.documentReviewJobId))"));
 

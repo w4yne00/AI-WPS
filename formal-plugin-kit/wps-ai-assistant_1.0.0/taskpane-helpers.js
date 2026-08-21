@@ -1806,7 +1806,12 @@
     "1": "居中",
     "2": "右对齐",
     "3": "两端对齐",
-    "4": "分散对齐"
+    "4": "分散对齐",
+    "左对齐": "左对齐",
+    "居中": "居中",
+    "右对齐": "右对齐",
+    "两端对齐": "两端对齐",
+    "分散对齐": "分散对齐"
   };
   var FORMAT_REVIEW_FONT_TEXT = {
     simsun: "宋体",
@@ -1990,6 +1995,431 @@
 
   function formatReviewTemplate(templateId) {
     return FORMAT_REVIEW_TEMPLATE_TEXT[String(templateId || "")] || "当前格式模板";
+  }
+
+  var DETERMINISTIC_FORMAT_REVIEW_STATUS_TEXT = {
+    completed: "已完成",
+    failed: "已失败",
+    cancelled: "已取消",
+    queued: "排队中",
+    running: "执行中",
+    passed: "未发现格式问题",
+    violations_found: "发现格式问题",
+    not_assessable: "无法判定",
+    complete: "已完成",
+    partial: "数据不足",
+    insufficient: "数据不足",
+    not_available: "不可用",
+    not_needed: "无需语义增强",
+    degraded: "部分生效",
+    not_ready: "未就绪"
+  };
+  var DETERMINISTIC_FORMAT_REVIEW_DATA_STATUS_TEXT = {
+    verified: "已验证",
+    mixed: "格式不一致",
+    unsupported: "当前 WPS 不支持",
+    unknown: "无法识别",
+    read_failed: "无法识别",
+    insufficient: "数据不足",
+    not_assessable: "无法判定"
+  };
+  var DETERMINISTIC_FORMAT_REVIEW_STYLE_TEXT = {
+    Normal: "正文样式",
+    Body: "正文样式",
+    body: "正文样式",
+    "heading 1": "一级标题样式",
+    "heading 2": "二级标题样式",
+    "heading 3": "三级标题样式",
+    "heading 4": "四级标题样式",
+    Caption: "图表题样式",
+    caption: "图表题样式"
+  };
+
+  function formatDeterministicFormatReviewStatus(value, fallback) {
+    return DETERMINISTIC_FORMAT_REVIEW_STATUS_TEXT[String(value || "")] || fallback || "无法判定";
+  }
+
+  function formatDeterministicFormatReviewTemplate(value) {
+    if (value === "technical-document-template-rules" || value === "technical-file-format-requirements") {
+      return "技术文档模板规则";
+    }
+    if (value === "general-office") {
+      return "通用办公文档格式";
+    }
+    return "无法识别";
+  }
+
+  function deterministicFormatReviewFact(diagnostics, issue) {
+    var keyByRule = {
+      font_name: "fontName",
+      font_size: "fontSize",
+      line_spacing: "lineSpacing",
+      first_line_indent: "firstLineIndent",
+      space_before: "spaceBefore",
+      space_after: "spaceAfter",
+      left_indent: "leftIndent",
+      right_indent: "rightIndent"
+    };
+    var paragraphIndex = Number(issue && issue.paragraphIndex);
+    var key = keyByRule[String(issue && issue.ruleId || "")];
+    var blocks = diagnostics && Array.isArray(diagnostics.blocks) ? diagnostics.blocks : [];
+    var block;
+    if (!key || !isFinite(paragraphIndex)) {
+      return null;
+    }
+    block = blocks.filter(function (candidate) {
+      return candidate && Number(candidate.paragraphIndex) === paragraphIndex;
+    })[0];
+    return block && block.facts && block.facts[key] ? block.facts[key] : null;
+  }
+
+  function formatDeterministicFormatReviewFact(fact, ruleId) {
+    var status;
+    var normalized;
+    var unit;
+    var mode;
+    var numeric;
+    var pt;
+    if (!fact || typeof fact !== "object") {
+      return "";
+    }
+    status = DETERMINISTIC_FORMAT_REVIEW_DATA_STATUS_TEXT[String(fact.dataStatus || "unknown")];
+    if (status && fact.dataStatus !== "verified") {
+      return status;
+    }
+    normalized = fact.normalizedValue;
+    if (normalized === null || typeof normalized === "undefined") {
+      return status || "无法识别";
+    }
+    unit = String(fact.normalizedUnit || "");
+    if (ruleId === "line_spacing") {
+      mode = String(fact.mode || "");
+      numeric = Number(normalized);
+      if (!isFinite(numeric)) {
+        return "无法识别";
+      }
+      if (mode === "multiple" || mode === "single" || mode === "one_point_five" || mode === "double") {
+        return String(Math.round(numeric * 100) / 100).replace(/\.0$/, "") + " 倍行距";
+      }
+      if (mode === "fixed" || mode === "minimum") {
+        pt = unit === "twip" ? Math.round(numeric / 20 * 100) / 100 : numeric;
+        return (mode === "fixed" ? "固定值 " : "最小值 ") +
+          String(pt).replace(/\.0$/, "") + " 磅";
+      }
+      return "无法识别";
+    }
+    if (ruleId === "font_size" && unit === "pt") {
+      return formatDeterministicFontSize(normalized);
+    }
+    if (ruleId === "first_line_indent" && unit === "twip") {
+      numeric = Number(normalized);
+      if (numeric === 0) {
+        return "无首行缩进";
+      }
+      if (Math.abs(numeric - 480) <= 20 || Math.abs(numeric - 640) <= 20) {
+        return "首行缩进 2 字符";
+      }
+      return "无法识别";
+    }
+    if (ruleId === "font_name" || ruleId === "alignment" || ruleId === "style_name") {
+      return formatDeterministicReadableFormatValue(ruleId, normalized, false);
+    }
+    return "无法识别";
+  }
+
+  function formatDeterministicFontSize(value) {
+    var numeric = parseFormatReviewNumber(value);
+    var key;
+    if (numeric === null || isNaN(numeric)) {
+      return "无法识别";
+    }
+    key = String(Math.round(numeric * 10) / 10).replace(/\.0$/, "");
+    return FORMAT_REVIEW_SIZE_TEXT[key]
+      ? FORMAT_REVIEW_SIZE_TEXT[key] + "（" + key + "pt）"
+      : "无法识别";
+  }
+
+  function formatDeterministicPageSetupFacts(diagnostics) {
+    var pageSetup = diagnostics && diagnostics.pageSetup;
+    var parts = [];
+    var statusLabels = DETERMINISTIC_FORMAT_REVIEW_DATA_STATUS_TEXT;
+    var fact;
+    var numeric;
+    if (!pageSetup || typeof pageSetup !== "object") {
+      return "";
+    }
+    ["paperSize", "marginTop", "marginBottom", "marginLeft", "marginRight"].some(function (key) {
+      fact = pageSetup[key];
+      if (!fact || typeof fact !== "object") {
+        return false;
+      }
+      if (fact.dataStatus && fact.dataStatus !== "verified") {
+        parts = [statusLabels[String(fact.dataStatus)] || "无法判定"];
+        return true;
+      }
+      return false;
+    });
+    if (parts.length) {
+      return parts[0];
+    }
+    fact = pageSetup.paperSize;
+    if (fact && fact.normalizedValue !== null && typeof fact.normalizedValue !== "undefined") {
+      parts.push("纸张：" + (String(fact.normalizedValue) === "A4" ? "A4" : "无法识别"));
+    }
+    [["marginTop", "上"], ["marginBottom", "下"], ["marginLeft", "左"], ["marginRight", "右"]]
+      .forEach(function (item) {
+        fact = pageSetup[item[0]];
+        if (!fact || fact.normalizedValue === null || typeof fact.normalizedValue === "undefined") {
+          return;
+        }
+        numeric = Number(fact.normalizedValue);
+        if (!isFinite(numeric)) {
+          parts.push(item[1] + "边距：无法识别");
+          return;
+        }
+        if (String(fact.normalizedUnit || "") === "twip") {
+          numeric = Math.round(numeric / 20 * 100) / 100;
+        }
+        parts.push(item[1] + "边距 " + String(numeric).replace(/\.0$/, "") + " 磅");
+      });
+    return parts.length ? parts.join("；") : Object.keys(pageSetup).length ? "无法识别" : "";
+  }
+
+  function formatDeterministicPageSetupValue(value, isExpected, diagnostics) {
+    var source = value && typeof value === "object" && !Array.isArray(value) ? value : null;
+    var raw = source ? "" : String(value === null || typeof value === "undefined" ? "" : value).trim();
+    var data = source;
+    var paper;
+    var parts = [];
+    var factText;
+    var labels = {
+      "7": "A4",
+      a4: "A4",
+      wdpapersizea4: "A4",
+      paper_a4: "A4"
+    };
+    if (isExpected) {
+      return /A4/.test(raw) && /边距/.test(raw) ? "A4 纸张及模板页边距" : "无法识别";
+    }
+    factText = formatDeterministicPageSetupFacts(diagnostics);
+    if (factText) {
+      return factText;
+    }
+    if (!data && raw.charAt(0) === "{") {
+      try {
+        data = JSON.parse(raw);
+      } catch (error) {
+        data = null;
+      }
+    }
+    if (!data || typeof data !== "object") {
+      return "无法识别";
+    }
+    paper = data.paperSize || data.PaperSize;
+    if (paper !== null && typeof paper !== "undefined") {
+      paper = labels[String(paper).trim().toLowerCase()];
+      parts.push(paper ? "纸张：" + paper : "纸张：无法识别");
+    }
+    [
+      ["marginTop", "上"], ["marginBottom", "下"],
+      ["marginLeft", "左"], ["marginRight", "右"]
+    ].forEach(function (item) {
+      var numeric = Number(data[item[0]]);
+      if (isFinite(numeric)) {
+        parts.push(item[1] + "边距 " + String(Math.round(numeric / 20 * 100) / 100).replace(/\.0$/, "") + " 磅");
+      }
+    });
+    return parts.length ? parts.join("；") : "无法识别";
+  }
+
+  function formatDeterministicFormatReviewIssueLocation(issue) {
+    var source = issue && issue.sourceAnchor && typeof issue.sourceAnchor === "object"
+      ? issue.sourceAnchor : {};
+    var parts = [];
+    var chapterPath = Array.isArray(source.chapterPath) ? source.chapterPath : [];
+    var paragraphIndex = Number(issue && issue.paragraphIndex);
+    var pageNumber = Number(source.pageNumber);
+    var snippet = String(source.textSnippet || source.text || "").replace(/[\r\n]+/g, " ").trim();
+    if (issue && issue.ruleId === "page_setup") {
+      return "页面设置（全文）";
+    }
+    if (chapterPath.length) {
+      parts.push("章节：" + chapterPath.map(function (item) { return String(item); }).join(" > "));
+    }
+    if (paragraphIndex > 0 && issue.anchorVerification === "verified") {
+      parts.push("第 " + paragraphIndex + " 段");
+    }
+    if (snippet) {
+      parts.push("原文：“" + snippet.slice(0, 80) + "”");
+    }
+    if (isFinite(pageNumber) && pageNumber > 0) {
+      parts.push("第 " + pageNumber + " 页");
+    }
+    return parts.length ? parts.join("；") : "位置待确认";
+  }
+
+  function formatDeterministicReadableFormatValue(ruleId, value, isExpected, diagnostics, issue) {
+    var rule = String(ruleId || "");
+    var raw = value === null || typeof value === "undefined" ? "" : String(value).trim();
+    var numeric;
+    var readable;
+    var fact;
+    if (rule === "page_setup") {
+      return formatDeterministicPageSetupValue(value, isExpected, diagnostics);
+    }
+    if (!isExpected) {
+      fact = deterministicFormatReviewFact(diagnostics, issue);
+      readable = formatDeterministicFormatReviewFact(fact, rule);
+      if (readable) {
+        return readable;
+      }
+    }
+    if (!raw) {
+      return "无法识别";
+    }
+    if (rule === "font_name") {
+      readable = formatReviewFontName(raw);
+      return readable && readable !== "未读取" &&
+        Object.prototype.hasOwnProperty.call(FORMAT_REVIEW_FONT_TEXT, raw.toLowerCase())
+        ? readable : "无法识别";
+    }
+    if (rule === "font_size") {
+      return formatDeterministicFontSize(raw);
+    }
+    if (rule === "style_name") {
+      readable = DETERMINISTIC_FORMAT_REVIEW_STYLE_TEXT[raw];
+      return readable && readable !== "未读取" &&
+        Object.prototype.hasOwnProperty.call(DETERMINISTIC_FORMAT_REVIEW_STYLE_TEXT, raw)
+        ? readable : "无法识别";
+    }
+    if (rule === "alignment") {
+      readable = formatReviewAlignment(raw);
+      return readable && readable !== "未读取" &&
+        Object.prototype.hasOwnProperty.call(FORMAT_REVIEW_ALIGNMENT_TEXT, raw.toLowerCase())
+        ? readable : "无法识别";
+    }
+    if (rule === "line_spacing") {
+      if (/倍/.test(raw)) {
+        numeric = parseFormatReviewNumber(raw);
+        return numeric === null || isNaN(numeric) ? "无法识别" :
+          String(Math.round(numeric * 100) / 100).replace(/\.0$/, "") + " 倍行距";
+      }
+      if (/pt|磅/i.test(raw)) {
+        numeric = parseFormatReviewNumber(raw);
+        return numeric === null || isNaN(numeric) ? "无法识别" :
+          String(Math.round(numeric * 100) / 100).replace(/\.0$/, "") + " 磅";
+      }
+      return "无法识别";
+    }
+    if (rule === "first_line_indent") {
+      if (/twip|字符|磅/.test(raw)) {
+        numeric = parseFormatReviewNumber(raw);
+        if (numeric === null || isNaN(numeric)) {
+          return "无法识别";
+        }
+        if (Math.abs(numeric) < 0.01) {
+          return "无首行缩进";
+        }
+        if (Math.abs(numeric - 480) <= 20 || Math.abs(numeric - 640) <= 20) {
+          return "首行缩进 2 字符";
+        }
+        return "无法识别";
+      }
+      return "无法识别";
+    }
+    if (rule === "structure.heading_hierarchy") {
+      numeric = Number(raw);
+      return isFinite(numeric) && numeric > 0 ? "第 " + numeric + " 级标题" : "无法识别";
+    }
+    return "无法识别";
+  }
+
+  function formatDeterministicFormatReviewIssueMessage(issue) {
+    var messages = {
+      page_setup: "页面设置不符合模板要求。",
+      style_name: "段落样式不符合模板要求。",
+      font_name: "字体不符合模板要求。",
+      font_size: "字号不符合模板要求。",
+      line_spacing: "行距不符合模板要求。",
+      alignment: "对齐方式不符合模板要求。",
+      first_line_indent: "首行缩进不符合模板要求。",
+      "structure.heading_hierarchy": "标题层级关系不符合模板要求。",
+      "structure.table_semantics": "表格结构无法满足模板要求。",
+      "structure.caption_association": "题注关联不符合模板要求。",
+      "structure.caption_placement": "题注位置不符合模板要求。",
+      "structure.role_confirmation": "段落结构角色无法可靠确认。"
+    };
+    return messages[String(issue && issue.ruleId || "")] || "格式问题，请按模板要求核对。";
+  }
+
+  function formatDeterministicFormatReviewSuggestion(issue) {
+    var suggestions = {
+      page_setup: "请按模板要求调整页面设置。",
+      style_name: "请按模板要求调整段落样式。",
+      font_name: "请按模板要求调整字体。",
+      font_size: "请按模板要求调整字号。",
+      line_spacing: "请按模板要求调整行距。",
+      alignment: "请按模板要求调整对齐方式。",
+      first_line_indent: "请按模板要求调整首行缩进。",
+      "structure.heading_hierarchy": "请按模板要求核对标题层级关系。",
+      "structure.table_semantics": "请核对表格结构证据。",
+      "structure.caption_association": "请核对题注与对象的关联。",
+      "structure.caption_placement": "请按模板要求调整题注位置。",
+      "structure.role_confirmation": "请核对段落结构角色证据。"
+    };
+    return suggestions[String(issue && issue.ruleId || "")] || "请按模板要求核对格式问题。";
+  }
+
+  function renderReadableDeterministicFormatReview(data) {
+    var source = data || {};
+    var summary = source.summary || {};
+    var issues = Array.isArray(source.issues) ? source.issues : [];
+    var diagnostics = summary.formatFactDiagnostics;
+    var total = Number(source.total || source.issueCount || issues.length);
+    var lines = [
+      "# 格式审查报告",
+      "",
+      "审查状态：" + formatDeterministicFormatReviewStatus(summary.executionStatus, "未记录"),
+      "合规状态：" + formatDeterministicFormatReviewStatus(summary.complianceStatus, "无法判定"),
+      "覆盖状态：" + formatDeterministicFormatReviewStatus(summary.coverageStatus, "无法判定"),
+      "语义增强：" + formatDeterministicFormatReviewStatus(summary.semanticStatus, "未记录"),
+      "审查依据：" + formatDeterministicFormatReviewTemplate(summary.templateId),
+      "问题数量：" + total,
+      "",
+      "以下内容仅展示可由当前格式事实确认的问题，不修改 Word 文档。",
+      ""
+    ];
+    if (!issues.length) {
+      lines.push("当前筛选范围未发现需要调整的格式问题。若覆盖状态不是“已完成”，零问题不代表文档完全合规。" );
+      return lines.join("\n");
+    }
+    lines.push("## 问题清单");
+    lines.push("");
+    lines.push("| 位置 | 问题类型 | 当前值 | 模板要求 | 建议 |");
+    lines.push("| --- | --- | --- | --- | --- |");
+    issues.forEach(function (issue) {
+      lines.push(
+        "| " + formatDeterministicFormatReviewIssueLocation(issue) +
+        " | " + formatReviewRule(issue.ruleId) +
+        " | " + formatDeterministicReadableFormatValue(issue.ruleId, issue.currentValue, false, diagnostics, issue) +
+        " | " + formatDeterministicReadableFormatValue(issue.ruleId, issue.expectedValue, true, diagnostics, issue) +
+        " | " + formatDeterministicFormatReviewSuggestion(issue) + " |"
+      );
+    });
+    lines.push("");
+    lines.push("## 详细说明");
+    lines.push("");
+    issues.forEach(function (issue) {
+      lines.push("### " + formatReviewRule(issue.ruleId) + " · " +
+        formatDeterministicFormatReviewIssueLocation(issue));
+      lines.push("- 角色：" + (formatReviewRole(issue.role) === "未识别角色" ? "无法识别" : formatReviewRole(issue.role)));
+      lines.push("- 当前值：" + formatDeterministicReadableFormatValue(issue.ruleId, issue.currentValue, false, diagnostics, issue));
+      lines.push("- 模板要求：" + formatDeterministicReadableFormatValue(issue.ruleId, issue.expectedValue, true, diagnostics, issue));
+      lines.push("- 问题说明：" + formatDeterministicFormatReviewIssueMessage(issue));
+      lines.push("- 建议：" + formatDeterministicFormatReviewSuggestion(issue));
+      lines.push("");
+    });
+    return lines.join("\n").trim();
   }
 
   function parseFormatReviewNumber(value) {
@@ -4186,8 +4616,11 @@
     formatSmartWriteResult: formatSmartWriteResult,
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
     renderReadableFormatReview: renderReadableFormatReview,
+    renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,
+    formatReviewRule: formatReviewRule,
+    formatDeterministicFormatReviewIssueLocation: formatDeterministicFormatReviewIssueLocation,
     formatReviewParagraphLabel: formatReviewParagraphLabel,
     buildDocumentReviewRecord: buildDocumentReviewRecord,
     getEffectiveSelectionText: getEffectiveSelectionText,

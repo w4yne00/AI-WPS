@@ -97,6 +97,87 @@ FORMAT_RULE_UNITS = {
     "line_spacing": "multiple",
     "first_line_indent": "twips",
 }
+FORMAT_RULE_DISPLAY_NAMES = {
+    "page_setup": "页面设置",
+    "style_name": "段落样式",
+    "font_name": "字体",
+    "font_size": "字号",
+    "line_spacing": "行距",
+    "alignment": "对齐方式",
+    "first_line_indent": "首行缩进",
+    "structure.heading_hierarchy": "标题层级",
+    "structure.table_semantics": "表格结构",
+    "structure.caption_association": "题注关联",
+    "structure.caption_placement": "题注位置",
+    "structure.role_confirmation": "段落角色",
+}
+FORMAT_TEMPLATE_DISPLAY_NAMES = {
+    "technical-file-format-requirements": "技术文档模板规则",
+    "technical-document-template-rules": "技术文档模板规则",
+    "general-office": "通用办公文档格式",
+}
+FORMAT_STATUS_DISPLAY_NAMES = {
+    "completed": "已完成",
+    "failed": "已失败",
+    "cancelled": "已取消",
+    "queued": "排队中",
+    "running": "执行中",
+    "passed": "未发现格式问题",
+    "violations_found": "发现格式问题",
+    "not_assessable": "无法判定",
+    "complete": "已完成",
+    "partial": "数据不足",
+    "insufficient": "数据不足",
+    "not_available": "不可用",
+    "not_needed": "无需语义增强",
+    "degraded": "部分生效",
+    "not_ready": "未就绪",
+}
+FORMAT_DATA_STATUS_DISPLAY_NAMES = {
+    "verified": "已验证",
+    "mixed": "格式不一致",
+    "unsupported": "当前 WPS 不支持",
+    "unknown": "无法识别",
+    "read_failed": "无法识别",
+    "insufficient": "数据不足",
+    "not_assessable": "无法判定",
+}
+FORMAT_FONT_DISPLAY_NAMES = {
+    "simsun": "宋体",
+    "songti sc": "宋体",
+    "songti": "宋体",
+    "宋体": "宋体",
+    "simhei": "黑体",
+    "黑体": "黑体",
+    "kaiti": "楷体",
+    "楷体": "楷体",
+    "fangsong": "仿宋",
+    "仿宋": "仿宋",
+}
+FORMAT_ALIGNMENT_DISPLAY_NAMES = {
+    "left": "左对齐",
+    "0": "左对齐",
+    "center": "居中",
+    "1": "居中",
+    "right": "右对齐",
+    "2": "右对齐",
+    "justify": "两端对齐",
+    "justified": "两端对齐",
+    "3": "两端对齐",
+    "distribute": "分散对齐",
+    "distributed": "分散对齐",
+    "4": "分散对齐",
+}
+FORMAT_SIZE_DISPLAY_NAMES = {
+    "22": "二号",
+    "18": "小二",
+    "16": "三号",
+    "15": "小三",
+    "14": "四号",
+    "12": "小四",
+    "10.5": "五号",
+    "9": "小五",
+}
 
 
 def _report_model_access_method(value: object) -> str:
@@ -124,16 +205,51 @@ def _report_semantic_reason(value: object) -> str:
     return labels.get(str(value or ""), "")
 
 
+def _report_chapter_path(blocks: List[Dict], block_index: int) -> List[str]:
+    headings = {}
+    for block in blocks[:block_index + 1]:
+        if not isinstance(block, dict):
+            continue
+        facts = block.get("format") if isinstance(block.get("format"), dict) else {}
+        level = block.get("headingLevel", facts.get("outlineLevel", 0))
+        try:
+            level = int(level or 0)
+        except (TypeError, ValueError):
+            level = 0
+        text = str(block.get("text") or "").strip()
+        if level <= 0 or not text:
+            continue
+        headings[level] = text[:120]
+        for child_level in list(headings):
+            if child_level > level:
+                headings.pop(child_level, None)
+    return [headings[level] for level in sorted(headings)]
+
+
 def _report_issue_position(issue: Dict) -> str:
     if issue.get("ruleId") == "page_setup":
-        return "页面"
+        return "页面设置（全文）"
+    anchor = issue.get("sourceAnchor") if isinstance(issue.get("sourceAnchor"), dict) else {}
+    parts = []
+    chapter_path = anchor.get("chapterPath")
+    if isinstance(chapter_path, list) and chapter_path:
+        parts.append("章节：" + " > ".join(str(item) for item in chapter_path if str(item).strip()))
     try:
         paragraph_index = int(issue.get("paragraphIndex"))
     except (TypeError, ValueError):
         paragraph_index = 0
     if paragraph_index > 0 and issue.get("anchorVerification") == "verified":
-        return "P{0}".format(paragraph_index)
-    return "位置待确认"
+        parts.append("第 {0} 段".format(paragraph_index))
+    snippet = str(anchor.get("textSnippet") or anchor.get("text") or "").replace("\n", " ").strip()
+    if snippet:
+        parts.append("原文：“{0}”".format(snippet[:80]))
+    try:
+        page_number = int(anchor.get("pageNumber"))
+    except (TypeError, ValueError):
+        page_number = 0
+    if page_number > 0:
+        parts.append("第 {0} 页".format(page_number))
+    return "；".join(parts) if parts else "位置待确认"
 
 
 def _report_issue_role(issue: Dict) -> str:
@@ -144,7 +260,243 @@ def _report_issue_role(issue: Dict) -> str:
         "body": "正文",
         "table": "表格",
         "page_setup": "页面设置",
-    }.get(role, role or "未标注")
+    }.get(role, "无法识别")
+
+
+def _report_status_text(value: object, fallback: str = "无法判定") -> str:
+    return FORMAT_STATUS_DISPLAY_NAMES.get(str(value or ""), fallback)
+
+
+def _report_template_text(value: object) -> str:
+    return FORMAT_TEMPLATE_DISPLAY_NAMES.get(str(value or ""), "无法识别")
+
+
+def _report_issue_title(issue: Dict) -> str:
+    titles = {
+        "page_setup": "页面设置不符合模板要求。",
+        "style_name": "段落样式不符合模板要求。",
+        "font_name": "字体不符合模板要求。",
+        "font_size": "字号不符合模板要求。",
+        "line_spacing": "行距不符合模板要求。",
+        "alignment": "对齐方式不符合模板要求。",
+        "first_line_indent": "首行缩进不符合模板要求。",
+        "structure.heading_hierarchy": "标题层级关系不符合模板要求。",
+        "structure.table_semantics": "表格结构无法满足模板要求。",
+        "structure.caption_association": "题注关联不符合模板要求。",
+        "structure.caption_placement": "题注位置不符合模板要求。",
+        "structure.role_confirmation": "段落结构角色无法可靠确认。",
+    }
+    return titles.get(str(issue.get("ruleId") or ""), "格式问题，请按模板要求核对。")
+
+
+def _report_issue_suggestion(issue: Dict) -> str:
+    suggestions = {
+        "page_setup": "请按模板要求调整页面设置。",
+        "style_name": "请按模板要求调整段落样式。",
+        "font_name": "请按模板要求调整字体。",
+        "font_size": "请按模板要求调整字号。",
+        "line_spacing": "请按模板要求调整行距。",
+        "alignment": "请按模板要求调整对齐方式。",
+        "first_line_indent": "请按模板要求调整首行缩进。",
+        "structure.heading_hierarchy": "请按模板要求核对标题层级关系。",
+        "structure.table_semantics": "请核对表格结构证据。",
+        "structure.caption_association": "请核对题注与对象的关联。",
+        "structure.caption_placement": "请按模板要求调整题注位置。",
+        "structure.role_confirmation": "请核对段落结构角色证据。",
+    }
+    return suggestions.get(str(issue.get("ruleId") or ""), "请按模板要求核对格式问题。")
+
+
+def _report_fact_for_issue(diagnostics: object, issue: Dict) -> Optional[Dict]:
+    key_by_rule = {
+        "font_name": "fontName",
+        "font_size": "fontSize",
+        "line_spacing": "lineSpacing",
+        "first_line_indent": "firstLineIndent",
+        "space_before": "spaceBefore",
+        "space_after": "spaceAfter",
+        "left_indent": "leftIndent",
+        "right_indent": "rightIndent",
+    }
+    if not isinstance(diagnostics, dict) or not isinstance(issue, dict):
+        return None
+    key = key_by_rule.get(str(issue.get("ruleId") or ""))
+    if not key:
+        return None
+    try:
+        paragraph_index = int(issue.get("paragraphIndex"))
+    except (TypeError, ValueError):
+        return None
+    for block in diagnostics.get("blocks", []) or []:
+        if not isinstance(block, dict):
+            continue
+        try:
+            block_index = int(block.get("paragraphIndex"))
+        except (TypeError, ValueError):
+            continue
+        facts = block.get("facts")
+        if block_index == paragraph_index and isinstance(facts, dict) and isinstance(facts.get(key), dict):
+            return facts[key]
+    return None
+
+
+def _report_page_setup_value(value: object, expected: bool = False, diagnostics: object = None) -> str:
+    raw = "" if value is None else str(value).strip()
+    if expected:
+        return "A4 纸张及模板页边距" if "A4" in raw and "边距" in raw else "无法识别"
+    page_setup = diagnostics.get("pageSetup") if isinstance(diagnostics, dict) else None
+    if isinstance(page_setup, dict):
+        for key in ("paperSize", "marginTop", "marginBottom", "marginLeft", "marginRight"):
+            fact = page_setup.get(key)
+            if isinstance(fact, dict) and fact.get("dataStatus") != "verified":
+                return FORMAT_DATA_STATUS_DISPLAY_NAMES.get(str(fact.get("dataStatus") or ""), "无法判定")
+        parts = []
+        paper_fact = page_setup.get("paperSize")
+        if isinstance(paper_fact, dict) and paper_fact.get("normalizedValue") is not None:
+            parts.append("纸张：{0}".format(
+                "A4" if str(paper_fact.get("normalizedValue")) == "A4" else "无法识别"
+            ))
+        for key, label in (
+            ("marginTop", "上"), ("marginBottom", "下"),
+            ("marginLeft", "左"), ("marginRight", "右"),
+        ):
+            fact = page_setup.get(key)
+            if not isinstance(fact, dict) or fact.get("normalizedValue") is None:
+                continue
+            try:
+                numeric = float(fact["normalizedValue"])
+            except (TypeError, ValueError):
+                parts.append("{0}边距：无法识别".format(label))
+                continue
+            if str(fact.get("normalizedUnit") or "") == "twip":
+                numeric /= 20.0
+            points = round(numeric, 2)
+            parts.append("{0}边距 {1} 磅".format(label, str(points).rstrip("0").rstrip(".")))
+        if parts:
+            return "；".join(parts)
+        if page_setup:
+            return "无法识别"
+    data = value if isinstance(value, dict) else None
+    if data is None and raw.startswith("{"):
+        try:
+            data = json.loads(raw)
+        except (TypeError, ValueError):
+            data = None
+    if not isinstance(data, dict):
+        return "无法识别"
+    paper = data.get("paperSize", data.get("PaperSize"))
+    paper_labels = {"7": "A4", "a4": "A4", "wdpapersizea4": "A4", "paper_a4": "A4"}
+    parts = []
+    if paper is not None:
+        parts.append("纸张：{0}".format(paper_labels.get(str(paper).strip().lower(), "无法识别")))
+    for key, label in (
+        ("marginTop", "上"), ("marginBottom", "下"),
+        ("marginLeft", "左"), ("marginRight", "右"),
+    ):
+        try:
+            numeric = float(data[key])
+        except (KeyError, TypeError, ValueError):
+            continue
+        points = round(numeric / 20.0, 2)
+        parts.append("{0}边距 {1} 磅".format(label, str(points).rstrip("0").rstrip(".")))
+    return "；".join(parts) if parts else "无法识别"
+
+
+def _report_readable_value(
+    rule_id: object,
+    value: object,
+    expected: bool = False,
+    diagnostics: object = None,
+    issue: Optional[Dict] = None,
+) -> str:
+    rule = str(rule_id or "")
+    raw = "" if value is None else str(value).strip()
+    if rule == "page_setup":
+        return _report_page_setup_value(value, expected, diagnostics)
+    fact = None if expected else _report_fact_for_issue(diagnostics, issue or {})
+    if isinstance(fact, dict):
+        data_status = str(fact.get("dataStatus") or "unknown")
+        if data_status != "verified":
+            return FORMAT_DATA_STATUS_DISPLAY_NAMES.get(data_status, "无法判定")
+        normalized = fact.get("normalizedValue")
+        if normalized is None:
+            return "无法识别"
+        unit = str(fact.get("normalizedUnit") or "")
+        if rule == "line_spacing":
+            try:
+                numeric = float(normalized)
+            except (TypeError, ValueError):
+                return "无法识别"
+            mode = str(fact.get("mode") or "")
+            if mode in {"multiple", "single", "one_point_five", "double"}:
+                return "{0} 倍行距".format(str(round(numeric, 2)).rstrip("0").rstrip("."))
+            if mode in {"fixed", "minimum"}:
+                points = numeric / 20.0 if unit == "twip" else numeric
+                label = "固定值" if mode == "fixed" else "最小值"
+                return "{0} {1} 磅".format(label, str(round(points, 2)).rstrip("0").rstrip("."))
+            return "无法识别"
+        if rule == "font_size" and unit == "pt":
+            value = normalized
+        elif rule == "first_line_indent" and unit == "twip":
+            try:
+                numeric = float(normalized)
+            except (TypeError, ValueError):
+                return "无法识别"
+            if numeric == 0:
+                return "无首行缩进"
+            if abs(numeric - 480) <= 20 or abs(numeric - 640) <= 20:
+                return "首行缩进 2 字符"
+            return "无法识别"
+        else:
+            value = normalized
+    if not raw and value in (None, ""):
+        return "无法识别"
+    if rule == "font_name":
+        return FORMAT_FONT_DISPLAY_NAMES.get(raw.lower(), "无法识别")
+    if rule == "font_size":
+        match = re.search(r"-?\d+(?:\.\d+)?", raw)
+        if not match:
+            return "无法识别"
+        numeric = float(match.group(0))
+        key = str(round(numeric, 1)).rstrip("0").rstrip(".")
+        label = FORMAT_SIZE_DISPLAY_NAMES.get(key)
+        return "{0}（{1}pt）".format(label, key) if label else "无法识别"
+    if rule == "style_name":
+        return {
+            "Normal": "正文样式",
+            "Body": "正文样式",
+            "body": "正文样式",
+            "heading 1": "一级标题样式",
+            "heading 2": "二级标题样式",
+            "heading 3": "三级标题样式",
+            "heading 4": "四级标题样式",
+            "Caption": "图表题样式",
+            "caption": "图表题样式",
+        }.get(raw, "无法识别")
+    if rule == "alignment":
+        return FORMAT_ALIGNMENT_DISPLAY_NAMES.get(raw.lower(), "无法识别")
+    if rule == "line_spacing":
+        if "倍" in raw:
+            match = re.search(r"-?\d+(?:\.\d+)?", raw)
+            return "{0} 倍行距".format(match.group(0)) if match else "无法识别"
+        if re.search(r"pt|磅", raw, re.IGNORECASE):
+            match = re.search(r"-?\d+(?:\.\d+)?", raw)
+            return "{0} 磅".format(match.group(0)) if match else "无法识别"
+        return "无法识别"
+    if rule == "first_line_indent":
+        match = re.search(r"-?\d+(?:\.\d+)?", raw)
+        if "字符" in raw:
+            return "首行缩进 {0} 字符".format(match.group(0)) if match else "无法识别"
+        if "twip" in raw.lower() and match:
+            return "无法识别"
+        return "无法识别"
+    if rule == "structure.heading_hierarchy":
+        try:
+            level = int(float(raw))
+        except (TypeError, ValueError):
+            return "无法识别"
+        return "第 {0} 级标题".format(level) if level > 0 else "无法识别"
+    return "无法识别"
 
 
 def _report_sha256(report: Dict) -> str:
@@ -1038,8 +1390,6 @@ class DeterministicFormatReviewService:
         reason_text = _report_semantic_reason(summary.get("aiFallbackReason"))
         model_lines = [
             "- 模型配置：{0}".format(summary.get("modelConfigurationName") or "未记录"),
-            "- 配置 ID：{0}".format(summary.get("modelConfigurationId") or "未记录"),
-            "- 配置修订：{0}".format(summary.get("modelConfigurationVersion") or "未记录"),
             "- 接入方式：{0}".format(_report_model_access_method(summary.get("accessMethod"))),
             "- 模型调用事实：{0}，候选 {1}、调用 {2}、接受 {3}".format(
                 attempted, candidate_count, call_count, accepted_count
@@ -1048,12 +1398,12 @@ class DeterministicFormatReviewService:
         if reason_text:
             model_lines.append("- 语义增强降级原因：{0}".format(reason_text))
         lines = [
-            "# 格式审查报告", "", "导出版本：{0}".format(FORMAT_REPORT_EXPORT_SCHEMA_VERSION),
-            "", "## 四维状态",
-            "- 执行状态：{0}".format(summary.get("executionStatus", "")),
-            "- 合规状态：{0}".format(summary.get("complianceStatus", "")),
-            "- 覆盖状态：{0}".format(summary.get("coverageStatus", "")),
-            "- 语义增强状态：{0}".format(summary.get("semanticStatus", "")),
+            "# 格式审查报告", "", "## 四维状态",
+            "- 执行状态：{0}".format(_report_status_text(summary.get("executionStatus"), "未记录")),
+            "- 合规状态：{0}".format(_report_status_text(summary.get("complianceStatus"))),
+            "- 覆盖状态：{0}".format(_report_status_text(summary.get("coverageStatus"))),
+            "- 语义增强状态：{0}".format(_report_status_text(summary.get("semanticStatus"), "未记录")),
+            "- 审查依据：{0}".format(_report_template_text(summary.get("templateId"))),
             "", "## 模型调用诊断",
             *model_lines,
             "", "## 统计",
@@ -1064,30 +1414,40 @@ class DeterministicFormatReviewService:
         ]
         for index, issue in enumerate(report.get("issues", []), 1):
             lines.extend([
-                "## {0}. {1}".format(index, issue.get("message", "格式问题")),
-                "- 问题编号：{0}".format(issue.get("issueId", "")),
-                "- 规则：{0}".format(issue.get("ruleId", "")),
+                "## {0}. {1}".format(index, _report_issue_title(issue)),
+                "- 问题类型：{0}".format(FORMAT_RULE_DISPLAY_NAMES.get(str(issue.get("ruleId") or ""), "其他格式项")),
                 "- 位置：{0}".format(_report_issue_position(issue)),
                 "- 角色：{0}".format(_report_issue_role(issue)),
-                "- 锚点：{0}".format(issue.get("anchorId", "")),
-                "- 属性路径：{0}".format(issue.get("propertyPath", "")),
-                "- 当前值：{0}".format(issue.get("currentValue", "")),
-                "- 期望值：{0}".format(issue.get("expectedValue", "")),
-                "- 证据：{0}".format(json.dumps(issue.get("evidence", []), ensure_ascii=False)),
-                "- 规则版本：{0}".format(issue.get("ruleVersion", "")),
-                "- 状态：{0}".format(issue.get("status", "open")),
-                "- 锚点验证：{0}".format(issue.get("anchorVerification", "unverified")),
-                "- 建议：{0}".format(issue.get("suggestion", "")), "",
+                "- 当前值：{0}".format(_report_readable_value(
+                    issue.get("ruleId"), issue.get("currentValue"), False,
+                    summary.get("formatFactDiagnostics"), issue,
+                )),
+                "- 期望值：{0}".format(_report_readable_value(
+                    issue.get("ruleId"), issue.get("expectedValue"), True,
+                    summary.get("formatFactDiagnostics"), issue,
+                )),
+                "- 状态：{0}".format({
+                    "open": "待处理",
+                    "processed": "已处理",
+                    "ignored": "已忽略",
+                }.get(str(issue.get("status") or "open"), "无法判定")),
+                "- 锚点验证：{0}".format(
+                    "已验证" if issue.get("anchorVerification") == "verified" else "待验证"
+                ),
+                "- 建议：{0}".format(_report_issue_suggestion(issue)), "",
             ])
             if issue.get("ruleId") == "structure.heading_hierarchy":
                 lines.insert(
                     len(lines) - 1,
-                    "- 当前标题级别：{0}".format(issue.get("currentLevel", issue.get("currentValue", ""))),
+                    "- 当前标题级别：{0}".format(_report_readable_value(
+                        "structure.heading_hierarchy", issue.get("currentLevel", issue.get("currentValue")),
+                    )),
                 )
                 lines.insert(
                     len(lines) - 1,
                     "- 前一有效标题级别：{0}".format(
-                        issue.get("previousLevel") if issue.get("previousLevel") is not None else "无"
+                        _report_readable_value("structure.heading_hierarchy", issue.get("previousLevel"), True)
+                        if issue.get("previousLevel") is not None else "无"
                     ),
                 )
         return "\n".join(lines)
@@ -1339,6 +1699,16 @@ class DeterministicFormatReviewService:
             anchor_id = hierarchy_anchor["anchorId"]
             source_anchor = hierarchy_anchor["sourceAnchor"]
             anchor_verification = hierarchy_anchor["anchorVerification"]
+        if isinstance(source_anchor, dict):
+            source_anchor["chapterPath"] = _report_chapter_path(blocks, block_index) if block_index >= 0 else []
+            source_anchor["textSnippet"] = block_text[:80]
+            page_number = range_data.get("pageNumber") if isinstance(range_data, dict) else None
+            if page_number is not None:
+                try:
+                    if int(page_number) > 0:
+                        source_anchor["pageNumber"] = int(page_number)
+                except (TypeError, ValueError):
+                    pass
         semantic_identity = {
             "snapshot": snapshot.get("contentSha256", ""),
             "ruleId": rule_id,

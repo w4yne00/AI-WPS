@@ -497,7 +497,7 @@ assert.ok(js.includes("preferSelectionTextParagraphs: true"));
 assert.ok(js.includes("collectParagraphsFromSelectionSources"));
 assert.ok(js.includes("avoidFullTextRead: true"));
 assert.ok(js.includes("avoidFallbackTextRead: true"));
-assert.ok(js.includes("正在读取格式审查范围"));
+assert.ok(js.includes("正在执行第一遍格式语义抽取"));
 assert.ok(js.includes("扫描段落"));
 assert.ok(js.includes("AI 识别段落"));
 assert.ok(helperJs.includes("buildHighlightedSmartWriteResult"));

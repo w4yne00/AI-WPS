@@ -359,7 +359,11 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertEqual(filtered["total"], 2)
         markdown = self.service.export_report(job["jobId"], "markdown")
         self.assertIn("# 格式审查报告", markdown)
-        self.assertIn(issue["issueId"], markdown)
+        self.assertIn("审查依据：技术文档模板规则", markdown)
+        self.assertIn("当前值：四号（14pt）", markdown)
+        self.assertIn("期望值：小四（12pt）", markdown)
+        self.assertNotIn("- 规则：font_size", markdown)
+        self.assertNotIn("- 执行状态：completed", markdown)
         self.assertIn("模型配置：格式审查主配置", markdown)
         self.assertIn("模型调用事实：已尝试，候选 2、调用 1、接受 0", markdown)
         self.assertIn("语义增强降级原因：模型已调用但没有接受任何结果", markdown)
@@ -421,11 +425,77 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         markdown = self.service._build_report({"issues": [issue], "summary": {}}, snapshot)
         self.service._save_report("heading-export-job", markdown)
         exported_markdown = self.service.export_report("heading-export-job", "markdown")
-        self.assertIn("位置：P2", exported_markdown)
+        self.assertIn("章节：一级标题 > 三级标题", exported_markdown)
+        self.assertIn("原文：“三级标题”", exported_markdown)
+        self.assertIn("第 2 段", exported_markdown)
         self.assertIn("角色：标题", exported_markdown)
-        self.assertIn("前一有效标题级别：1", exported_markdown)
+        self.assertIn("前一有效标题级别：第 1 级标题", exported_markdown)
         self.assertNotIn("P0", exported_markdown)
         self.assertNotIn("未识别角色", exported_markdown)
+
+    def test_markdown_does_not_expose_unmapped_machine_values(self):
+        self.service._save_report("unmapped-export-job", {
+            "summary": {
+                "executionStatus": "completed",
+                "complianceStatus": "violations_found",
+                "coverageStatus": "complete",
+                "semanticStatus": "not_needed",
+                "templateId": "technical-document-template-rules",
+            },
+            "coverage": {"reviewCharacterCount": 12},
+            "disclaimer": "覆盖完整仅表示声明范围未被静默截断。",
+            "issueCount": 2,
+            "duplicateGroupCount": 0,
+            "issues": [{
+                "ruleId": "font_name",
+                "paragraphIndex": 1,
+                "role": "body",
+                "anchorVerification": "verified",
+                "currentValue": "Unmapped Font",
+                "expectedValue": "Unknown Template Font",
+                "message": "字体不符合模板要求。",
+                "suggestion": "建议字号调整为 14.5pt。",
+            }, {
+                "ruleId": "page_setup",
+                "paragraphIndex": 0,
+                "role": "page_setup",
+                "anchorVerification": "verified",
+                "currentValue": '{"paperSize":"A4","marginTop":720}',
+                "expectedValue": "A4 页面及模板页边距",
+                "message": "页面设置不符合模板要求。",
+                "suggestion": "请按模板要求调整页面。",
+            }],
+        })
+        markdown = self.service.export_report("unmapped-export-job", "markdown")
+        self.assertIn("当前值：无法识别", markdown)
+        self.assertIn("期望值：无法识别", markdown)
+        self.assertIn("当前值：纸张：A4；上边距 36 磅", markdown)
+        self.assertIn("期望值：A4 纸张及模板页边距", markdown)
+        self.assertNotIn("Unmapped Font", markdown)
+        self.assertNotIn("Unknown Template Font", markdown)
+        self.assertNotIn("14.5pt", markdown)
+
+        self.service._save_report("mixed-page-export-job", {
+            "summary": {
+                "templateId": "technical-document-template-rules",
+                "formatFactDiagnostics": {
+                    "pageSetup": {"marginTop": {"dataStatus": "mixed"}},
+                },
+            },
+            "coverage": {},
+            "disclaimer": "",
+            "issueCount": 1,
+            "duplicateGroupCount": 0,
+            "issues": [{
+                "ruleId": "page_setup",
+                "currentValue": '{"paperSize":"A4","marginTop":720}',
+                "expectedValue": "A4 页面及模板页边距",
+                "suggestion": "建议按模板调整页面。",
+            }],
+        })
+        mixed_page_markdown = self.service.export_report("mixed-page-export-job", "markdown")
+        self.assertIn("当前值：格式不一致", mixed_page_markdown)
+        self.assertNotIn("当前值：纸张：A4", mixed_page_markdown)
 
     def test_report_expiry_and_anchor_verification_are_public_lifecycle(self):
         now = [1000.0]
