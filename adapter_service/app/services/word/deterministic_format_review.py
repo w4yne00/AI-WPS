@@ -50,6 +50,8 @@ from app.services.word.image_semantics import (
 
 
 TASK_TYPE = "word.format_review.deterministic"
+WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE = "WORD_FORMAT_REVIEW_SYNC_RETIRED"
+WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE = "旧同步格式审查接口已退役，请提交后台格式审查任务。"
 MAX_SNAPSHOT_BYTES = 512 * 1024
 FORMAT_SNAPSHOT_SCHEMA_VERSION = "word.format_review.snapshot.v2"
 FORMAT_REPORT_SCHEMA_VERSION = "word.format_review.report.v2"

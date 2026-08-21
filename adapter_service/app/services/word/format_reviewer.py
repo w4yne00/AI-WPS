@@ -1701,24 +1701,15 @@ class WordFormatReviewer:
                         continue
                     items = outcome["items"]
                     response_payload = outcome["payload"]
-                elif hasattr(self.provider_client, "format_review_roles"):
-                    diagnostics["aiCallCount"] += 1
-                    if task_auth is None:
-                        body = self.provider_client.format_review_roles(trace_id, input_data, prompt)
-                    else:
-                        body = self.provider_client.format_review_roles(
-                            trace_id, input_data, prompt, task_auth=task_auth
-                        )
-                    answer = extract_answer(body)
-                    response_payload = self._extract_semantic_payload(answer)
-                    items = response_payload.get("items")
                 else:
-                    diagnostics["aiCallCount"] += 1
-                    kwargs = {"task_auth": task_auth} if task_auth is not None else {}
-                    body = self.provider_client.post_task(task_type, trace_id, input_data, prompt, **kwargs)
-                    answer = extract_answer(body)
-                    response_payload = self._extract_semantic_payload(answer)
-                    items = response_payload.get("items")
+                    self._record_semantic_error(
+                        diagnostics,
+                        AdapterError(
+                            "FORMAT_SEMANTIC_PROTOCOL_NOT_READY",
+                            "格式语义协议尚未就绪。",
+                        ),
+                    )
+                    continue
             except AdapterError as error:
                 self._record_semantic_error(diagnostics, error)
                 continue

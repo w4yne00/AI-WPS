@@ -46,7 +46,6 @@ LOCAL_KEY_PATH = Path(__file__).resolve().parents[3] / "run" / "provider_api_key
 ROUTE_KEY_DIR = Path(__file__).resolve().parents[3] / "run" / "provider_api_keys"
 _LAST_PROVIDER_DEBUG: Dict = {}
 _LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
-FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS = 60
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
 EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
@@ -4072,26 +4071,6 @@ class ProviderClient:
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
         }
-
-    def format_review_roles(
-        self,
-        trace_id: str,
-        input_data: Dict,
-        prompt: str,
-        task_auth: Optional[Dict] = None,
-    ) -> Dict:
-        kwargs = {
-            "timeout_seconds": min(self.settings.timeout_seconds, FORMAT_REVIEW_ROLE_TIMEOUT_SECONDS),
-        }
-        if task_auth is not None:
-            kwargs["task_auth"] = task_auth
-        return self.post_task(
-            "word.format_review",
-            trace_id,
-            input_data,
-            prompt,
-            **kwargs
-        )
 
     def _prepare_format_image_files(
         self, image_files: object, auth: Dict, trace_id: str

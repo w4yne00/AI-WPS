@@ -15,7 +15,7 @@
 ## 0.1 v0.24.0-alpha 开发中能力
 
 - Issue #35 已形成默认关闭的 Word 全篇审查单分片最小闭环，开关为 `AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW=1`。关闭时 WPS 隐藏入口，全部新协议端点返回 `FULL_DOCUMENT_REVIEW_DISABLED`，且不会创建暂存目录；现有限量审查接口不变。
-- Issue #43 已形成默认关闭的确定性格式审查最小后台闭环，开关为 `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=1`。关闭时 WPS 隐藏新入口，快照/任务协议返回 `DETERMINISTIC_FORMAT_REVIEW_DISABLED`，且不会创建暂存目录；现有同步 `/word/format-review` 保持兼容。
+- Issue #43、#67 已形成默认关闭的确定性格式审查后台闭环，开关为 `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=1`。关闭时 WPS 隐藏新入口，快照/任务协议返回 `DETERMINISTIC_FORMAT_REVIEW_DISABLED`，且不会创建暂存目录；旧同步 `/word/format-review` 仅保留明确的 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` 退役响应。
 - 首个闭环只读抽取不超过 20,000 审查字符的普通正文段落，执行两遍内容哈希确认；表格内段落、页眉页脚、脚注尾注、批注修订、文本框、形状、图片、公式、图表、附件和隐藏文本均明确列为未审查区域，不写回 Word。
 - 全篇审查复用 `word.document_review` 模型配置，但仅模型直连、显式上下文容量和至少 2,048 输出 Token 的配置可启动；设置页分别披露限量审查和全篇审查就绪度。
 - 全篇审查使用独立的快照、批次、提交、任务、状态、运行中协作取消和报告协议，以及版本化分片、纠正和跨片汇总 System Prompt 与严格 JSON Schema。多分片按约 18,000 字符目标、20,000 硬上限和 800 字符上下文重叠执行，标题/段落/句子/字符优先；大型表格按行、单元格、句子和字符递归拆分，重复表头仅作为 overlap 上下文。每个分片输出摘要、受控事实、跨片核对项和问题索引；两个及以上分片再调用只接收压缩索引的全局汇总，并拒绝未知问题、事实或锚点引用。请求体按实际接收字节限制为 2 MB，快照只能原子提交一次；暂存目录在启动时无条件扫描，并由后台维护线程周期清理。格式错误固定纠正一次，再次失败则任务失败，不以原始文本或限量结果降级。
@@ -494,7 +494,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - Word/Excel/PPT 宿主配色、连接文案、设置快捷入口和纯文字主按钮均为前端展示层变化；不得借此改动 Word 回写、文档审查/智能分析/智能总结长任务恢复、模型请求或三个 Ribbon 的宿主隔离。
 - 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key，也不得覆盖写作规范数据库和应保留的备份。
 - 文档审查闭环只能管理前端处理状态和复制审查记录，不允许自动写回或自动修改正文。
-- 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
+- v0.25.1 的格式审查主入口只走 v2 快照、后台任务和 v2 报告协议；旧同步 `/word/format-review` 不再执行审查，v1 快照、缓存和报告只返回明确失效错误并要求重新审查。模板规则检查、任务级 API Key 选路和 Dify payload 仍由 v2 后台任务统一承载。
 - 智能编写和文档审查逻辑不要因格式审查预览优化被改动；对应抽取限制、等待反馈、`rawAnswer` 兜底和写回策略都要保持当前行为。
 - uvicorn 优先、standalone 兜底的 adapter 启动方式，以及旧进程版本替换逻辑。
 

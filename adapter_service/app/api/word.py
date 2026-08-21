@@ -12,6 +12,8 @@ from app.core.tracing import new_trace_id
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.deterministic_format_review import (
+    WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE,
+    WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
     deterministic_format_review_service,
 )
 from app.services.word.full_document_review import full_document_review_service
@@ -426,8 +428,8 @@ def cancel_document_review_job(job_id: str, resume: bool = False):
 @router.post("/word/format-review")
 def format_review_word() -> dict:
     raise AdapterError(
-        "WORD_FORMAT_REVIEW_SYNC_RETIRED",
-        "旧同步格式审查接口已退役，请提交后台格式审查任务。",
+        WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE,
+        WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
         status_code=410,
     )
 

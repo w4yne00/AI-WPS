@@ -1614,24 +1614,6 @@ class EnterpriseProviderTests(unittest.TestCase):
         config_file.unlink()
         tmp_dir.rmdir()
 
-    def test_format_review_roles_uses_slow_model_timeout_budget(self) -> None:
-        class CapturingProviderClient(ProviderClient):
-            def __init__(self, settings: AppSettings) -> None:
-                super().__init__(settings)
-                self.captured_timeout = None
-                self.captured_query = ""
-
-            def post_task(self, task_type, trace_id, input_data, query, timeout_seconds=None):
-                self.captured_timeout = timeout_seconds
-                return {"answer": "[]"}
-
-        settings = AppSettings(timeout_seconds=75)
-        client = CapturingProviderClient(settings)
-
-        client.format_review_roles("trace-format-timeout", {}, "请识别段落角色")
-
-        self.assertEqual(client.captured_timeout, 60)
-
     def test_document_review_uses_longer_timeout_budget(self) -> None:
         class CapturingProviderClient(ProviderClient):
             def __init__(self, settings: AppSettings) -> None:

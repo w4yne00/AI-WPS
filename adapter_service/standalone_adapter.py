@@ -72,6 +72,8 @@ from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.deterministic_format_review import (
+    WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE,
+    WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
     deterministic_format_review_service,
 )
 from app.services.word.full_document_review import full_document_review_service
@@ -1723,7 +1725,91 @@ class Handler(BaseHTTPRequestHandler):
 
         deterministic_format_job_prefix = "/word/format-review/jobs/"
         if path.startswith(deterministic_format_job_prefix):
-            job_id = unquote(path[len(deterministic_format_job_prefix):]).strip("/")
+            suffix = unquote(path[len(deterministic_format_job_prefix):]).strip("/")
+            if suffix.endswith("/issues"):
+                job_id = suffix[: -len("/issues")].strip("/")
+                query_params = parse_qs(parsed.query, keep_blank_values=True)
+                try:
+                    page_size = query_params.get("pageSize", [""])[0]
+                    data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.list_issues(
+                        job_id,
+                        page_size=int(page_size) if page_size else None,
+                        cursor=str(query_params.get("cursor", [""])[0]),
+                        rule_id=str(query_params.get("ruleId", [""])[0]),
+                        severity=str(query_params.get("severity", [""])[0]),
+                        data_status=str(query_params.get("dataStatus", [""])[0]),
+                        status=str(query_params.get("status", [""])[0]),
+                        duplicate_group_id=str(query_params.get("duplicateGroupId", [""])[0]),
+                        sort=str(query_params.get("sort", ["source"])[0]),
+                    )
+                except (AdapterError, ValueError) as error:
+                    if not isinstance(error, AdapterError):
+                        error = AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_ISSUE_PAGE_SIZE_INVALID",
+                            "问题分页大小必须是 1 到 100 之间的整数。",
+                        )
+                    self._write(
+                        error.status_code,
+                        envelope(
+                            job_id,
+                            "word.format_review.deterministic",
+                            success=False,
+                            message=error.message,
+                            errors=[{"code": error.code, "message": error.message}],
+                        ),
+                    )
+                    return
+                self._write(
+                    200,
+                    envelope(job_id, "word.format_review.deterministic", data, message="issues"),
+                )
+                return
+
+            report_requested = suffix.endswith("/report")
+            report_job_id = suffix[: -len("/report")].strip("/") if report_requested else ""
+            if report_requested:
+                job_id = report_job_id
+                output_format = str(parse_qs(parsed.query).get("format", ["summary"])[0])
+                try:
+                    if output_format == "summary":
+                        data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.get_report(job_id)
+                        message = "completed"
+                    else:
+                        data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.export_report(
+                            job_id, output_format
+                        )
+                        message = "exported"
+                except AdapterError as error:
+                    self._write(
+                        error.status_code,
+                        envelope(
+                            job_id,
+                            "word.format_review.deterministic",
+                            success=False,
+                            message=error.message,
+                            errors=[{"code": error.code, "message": error.message}],
+                        ),
+                    )
+                    return
+                if output_format == "markdown":
+                    content = str(data).encode("utf-8")
+                    self._write_bytes(
+                        200,
+                        content,
+                        {
+                            "Content-Type": "text/markdown; charset=utf-8",
+                            "Content-Length": str(len(content)),
+                            "Content-Disposition": 'attachment; filename="word-format-review.md"',
+                        },
+                    )
+                    return
+                self._write(
+                    200,
+                    envelope(job_id, "word.format_review.deterministic", data, message=message),
+                )
+                return
+
+            job_id = suffix
             try:
                 data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.get_job(job_id)
                 if data is None:
@@ -1977,6 +2063,23 @@ class Handler(BaseHTTPRequestHandler):
                 self._write_writing_policy_response(rejection)
                 return
         else:
+            if path == "/word/format-review":
+                self._write(
+                    410,
+                    envelope(
+                        "standalone-word-format-review",
+                        "word.format_review",
+                        success=False,
+                        message=WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
+                        errors=[
+                            {
+                                "code": WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE,
+                                "message": WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
+                            }
+                        ],
+                    ),
+                )
+                return
             if path.startswith("/word/document-review/full/"):
                 try:
                     raw_bytes = self._read_full_document_review_body()
@@ -2613,25 +2716,6 @@ class Handler(BaseHTTPRequestHandler):
             self._write(200, envelope(trace_id, "word.document_review", document_review_job_payload(job), message="accepted"))
             return
 
-        if path == "/word/format-review":
-            message = "旧同步格式审查接口已退役，请提交后台格式审查任务。"
-            self._write(
-                410,
-                envelope(
-                    "standalone-word-format-review",
-                    "word.format_review",
-                    success=False,
-                    message=message,
-                    errors=[
-                        {
-                            "code": "WORD_FORMAT_REVIEW_SYNC_RETIRED",
-                            "message": message,
-                        }
-                    ],
-                ),
-            )
-            return
-
         if path == "/excel/analysis":
             trace_id = new_trace_id("standalone-excel-analysis")
             status, body = sync_long_task_response(
@@ -2954,6 +3038,51 @@ class Handler(BaseHTTPRequestHandler):
         if writing_policy_response is not None:
             self._write_writing_policy_response(writing_policy_response)
             return
+        format_issue_prefix = "/word/format-review/jobs/"
+        if path.startswith(format_issue_prefix) and "/issues/" in path:
+            suffix = path[len(format_issue_prefix):]
+            job_id, issue_id = suffix.split("/issues/", 1)
+            job_id = unquote(job_id).strip("/")
+            issue_id = unquote(issue_id).strip("/")
+            try:
+                allowed_fields = {"status", "anchorVerification"}
+                if (
+                    not isinstance(payload, dict)
+                    or not set(payload)
+                    or not set(payload).issubset(allowed_fields)
+                ):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_ISSUE_REQUEST_INVALID",
+                        "格式问题更新请求格式无效。",
+                    )
+                data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.update_issue(
+                    job_id,
+                    issue_id,
+                    status=payload.get("status"),
+                    anchor_verification=payload.get("anchorVerification"),
+                )
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job_id,
+                    "word.format_review.deterministic",
+                    data,
+                    message="issue updated",
+                ),
+            )
+            return
         full_issue_prefix = "/word/document-review/full/jobs/"
         if path.startswith(full_issue_prefix) and "/issues/" in path:
             suffix = path[len(full_issue_prefix):]
@@ -3164,6 +3293,47 @@ class Handler(BaseHTTPRequestHandler):
             clear_local_api_key()
             client = ProviderClient()
             self._write(200, envelope("standalone-provider-api-key", "provider.api_key", {"configured": client.is_configured(), "authSource": client.get_auth_source()}, message="cleared"))
+            return
+
+        deterministic_format_job_prefix = "/word/format-review/jobs/"
+        if path.startswith(deterministic_format_job_prefix):
+            suffix = unquote(path[len(deterministic_format_job_prefix):]).strip("/")
+            report_requested = suffix.endswith("/report")
+            job_id = suffix[: -len("/report")].strip("/") if report_requested else suffix
+            try:
+                if report_requested:
+                    data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.delete_report(job_id)
+                    message = "deleted"
+                else:
+                    data = DETERMINISTIC_FORMAT_REVIEW_SERVICE.cancel_job(job_id)
+                    if data is None:
+                        raise AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND",
+                            "确定性格式审查后台任务不存在或已过期。",
+                            status_code=404,
+                        )
+                    message = data.get("status", "")
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "word.format_review.deterministic",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job_id,
+                    "word.format_review.deterministic",
+                    data,
+                    message=message,
+                ),
+            )
             return
 
         deterministic_snapshot_prefix = "/word/format-review/snapshots/"
