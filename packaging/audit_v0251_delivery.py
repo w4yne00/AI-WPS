@@ -29,6 +29,7 @@ class DeliveryFailure(RuntimeError):
 LEGACY_FORMAT_MARKERS = (
     "general-office",
     "technical-file-format-requirements",
+    "technical-file-structure-rules",
     "templates/company/technical-file-",
 )
 AUDIT_SCRIPT_NAMES = {

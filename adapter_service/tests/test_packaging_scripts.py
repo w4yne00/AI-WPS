@@ -1603,6 +1603,8 @@ esac
 
     def test_active_format_rule_sources_have_no_historical_runtime_fallbacks(self) -> None:
         production_files = [
+            ROOT / "config/adapter.example.json",
+            ROOT / "adapter_service/app/core/config.py",
             ROOT / "adapter_service/app/services/template_loader.py",
             ROOT / "adapter_service/standalone_adapter.py",
             ROOT / "adapter_service/app/services/word/deterministic_format_review.py",
@@ -1612,19 +1614,30 @@ esac
             ROOT / "packaging/build_v0250_format_rule_assets.sh",
             ROOT / "packaging/build_v0250_delivery_kit.sh",
             ROOT / "packaging/build_v0251_delivery_kit.sh",
+            ROOT / "packaging/build_adapter_start_kit.sh",
+            ROOT / "packaging/build_offline_bundle.sh",
+            ROOT / "packaging/install.sh",
             ROOT / "packaging/probe_runtime.sh",
             ROOT / "packaging/diagnose.sh",
         ]
-        forbidden = ("general-office", "templates/company/technical-file-")
+        forbidden = (
+            "general-office",
+            "technical-file-format-requirements",
+            "technical-file-structure-rules",
+            "templates/company/technical-file-",
+        )
 
         for path in production_files:
             content = path.read_text(encoding="utf-8")
             for marker in forbidden:
                 self.assertNotIn(marker, content, str(path))
 
-        for script in production_files[6:9]:
+        for script in production_files[8:11]:
             content = script.read_text(encoding="utf-8")
             self.assertIn("packaging/format-rule-sources/", content)
+
+        for script in production_files[11:14]:
+            self.assertNotIn("templates", script.read_text(encoding="utf-8"), str(script))
 
     def test_taskpane_settings_hides_unified_key_but_keeps_compatibility(self) -> None:
         host_dirs = [
