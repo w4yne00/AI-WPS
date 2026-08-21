@@ -99,12 +99,6 @@
               <span>标准模板</span>
               <input type="text" value="技术文件格式及书写要求" readonly />
             </label>
-            <section id="deterministic-format-review-entry" class="full-document-review-entry" hidden>
-              <strong>确定性格式审查（后台任务）</strong>
-              <p id="deterministic-format-review-readiness">当前功能尚未启用。</p>
-              <button id="btn-run-deterministic-format-review" class="secondary-action" type="button">提交只读格式审查</button>
-              <small>仅抽取小型正文快照，按本地确定性规则检查；不会修改 Word 正文、格式、批注或修订。</small>
-            </section>
           </div>
 
           <div id="document-review-options" class="mode-block" hidden>
@@ -227,6 +221,10 @@
             </details>
           </section>
           <div id="result-output" class="markdown-output">等待运行。</div>
+          <details id="deterministic-format-review-diagnostics" class="advanced-diagnostics" hidden>
+            <summary>展开诊断</summary>
+            <pre id="deterministic-format-review-diagnostics-content" class="advanced-diagnostics-content"></pre>
+          </details>
           <div id="full-document-review-issue-controls" class="full-document-review-issue-controls" hidden>
             <div id="full-review-issue-filters" class="full-review-issue-filters" aria-label="全篇审查问题筛选">
               <label>严重程度

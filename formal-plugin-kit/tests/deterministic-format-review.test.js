@@ -13,20 +13,15 @@ function functionSource(name) {
   return js.slice(start, end < 0 ? js.length : end);
 }
 
-assert.ok(html.includes('id="deterministic-format-review-entry"'));
-assert.ok(html.includes('id="btn-run-deterministic-format-review"'));
-const entryStart = html.indexOf('id="deterministic-format-review-entry"');
-assert.ok(html.slice(entryStart, entryStart + 180).includes("hidden"));
+assert.ok(html.includes('id="btn-run-primary"'));
+assert.ok(!html.includes('id="deterministic-format-review-entry"'));
+assert.ok(!html.includes('id="btn-run-deterministic-format-review"'));
+assert.ok(html.includes('id="deterministic-format-review-diagnostics"'));
 assert.ok(js.includes("deterministicFormatReviewEnabled: false"));
 
 const applyConfig = functionSource("applyProviderConfig");
 assert.ok(applyConfig.includes("deterministicFormatReviewEnabled"));
-assert.ok(applyConfig.includes("renderDeterministicFormatReviewEntry"));
-
-const renderEntry = functionSource("renderDeterministicFormatReviewEntry");
-assert.ok(renderEntry.includes("state.deterministicFormatReviewEnabled"));
-assert.ok(renderEntry.includes("entry.hidden"));
-assert.ok(renderEntry.includes("button.disabled"));
+assert.ok(applyConfig.includes("resumeDeterministicFormatReviewActiveJob"));
 
 const run = functionSource("runDeterministicFormatReview");
 [
@@ -53,13 +48,15 @@ assert.ok(cleanup.includes('method: "DELETE"'));
 const poll = functionSource("pollDeterministicFormatReviewJob");
 assert.ok(poll.includes("/word/format-review/jobs/"));
 assert.ok(poll.includes('job.status === "completed"'));
-assert.ok(poll.includes("renderGroupedFormatReview"));
 assert.ok(poll.includes("loadDeterministicFormatReviewReport"));
+assert.ok(poll.includes("DETERMINISTIC_FORMAT_REVIEW_POLL_RETRY_DELAY_MS"));
 
 const issuePage = functionSource("renderDeterministicFormatReviewIssuePage");
-["executionStatus", "complianceStatus", "coverageStatus", "semanticStatus", "formatFactDiagnostics", "issueId",
-  "propertyPath", "duplicateGroupSize", "anchorVerification"].forEach((token) => {
+["renderReadableDeterministicFormatReview", "renderDeterministicFormatReviewDiagnostics", "summary", "issues"].forEach((token) => {
   assert.ok(issuePage.includes(token), token);
+});
+["propertyPath", "formatFactDiagnostics"].forEach((token) => {
+  assert.ok(!issuePage.includes(token), token);
 });
 const locate = functionSource("locateDeterministicFormatReviewIssue");
 ["textSha256", "adjacentStructureSha256", "anchorVerification", "markDeterministicFormatReviewAnchorVerification"].forEach((token) => {
@@ -72,8 +69,128 @@ assert.ok(functionSource("downloadDeterministicFormatReviewExport").includes("wo
 assert.ok(functionSource("bindEvents").includes("format-review-filter-data-status"));
 assert.ok(functionSource("cancelDeterministicFormatReviewJob").includes('method: "DELETE"'));
 
+const primary = functionSource("runPrimaryAction");
+assert.ok(primary.includes("runDeterministicFormatReview()"));
+assert.ok(!primary.includes("runFormatReview();"));
+assert.ok(js.includes("saveDeterministicFormatReviewActiveJob"));
+assert.ok(js.includes("resumeDeterministicFormatReviewActiveJob"));
+assert.ok(js.includes("DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY"));
+
+const readable = helpers.renderReadableDeterministicFormatReview({
+  summary: {
+    templateId: "technical-document-template-rules",
+    executionStatus: "completed",
+    complianceStatus: "violations_found",
+    coverageStatus: "complete",
+    semanticStatus: "degraded"
+  },
+  issues: [{
+    issueId: "format-issue-1",
+    ruleId: "font_size",
+    role: "body",
+    paragraphIndex: 1,
+    anchorVerification: "verified",
+    sourceAnchor: {
+      chapterPath: ["第一章", "1.1 范围"],
+      textSnippet: "正文段落",
+      pageNumber: 3
+    },
+    currentValue: "14pt",
+    expectedValue: "12pt",
+    suggestion: "请调整字号。"
+  }]
+});
+assert.ok(readable.includes("技术文档模板规则"));
+assert.ok(readable.includes("四号（14pt）"));
+assert.ok(readable.includes("小四（12pt）"));
+assert.ok(readable.includes("章节：第一章 > 1.1 范围；第 1 段；原文：“正文段落”；第 3 页"));
+assert.ok(!readable.includes("font_size"));
+assert.ok(!readable.includes("violations_found"));
+
+const unmapped = helpers.renderReadableDeterministicFormatReview({
+  summary: { templateId: "technical-document-template-rules" },
+  issues: [{
+    ruleId: "font_name",
+    role: "body",
+    paragraphIndex: 1,
+    anchorVerification: "verified",
+    currentValue: "Unmapped Font",
+    expectedValue: "宋体",
+    suggestion: "建议字号调整为 14.5pt。"
+  }]
+});
+assert.ok(unmapped.includes("无法识别"));
+assert.ok(!unmapped.includes("Unmapped Font"));
+assert.ok(!unmapped.includes("14.5pt"));
+
+const localizedPageAndSpacing = helpers.renderReadableDeterministicFormatReview({
+  summary: {
+    templateId: "technical-document-template-rules",
+    formatFactDiagnostics: {
+      blocks: [{
+        paragraphIndex: 1,
+        facts: {
+          lineSpacing: {
+            dataStatus: "verified",
+            normalizedValue: 1.5,
+            normalizedUnit: "multiple",
+            mode: "one_point_five"
+          }
+        }
+      }]
+    }
+  },
+  issues: [{
+    ruleId: "page_setup",
+    role: "page_setup",
+    currentValue: JSON.stringify({ paperSize: "A4", marginTop: 720 }),
+    expectedValue: "A4 页面及模板页边距"
+  }, {
+    ruleId: "line_spacing",
+    role: "body",
+    paragraphIndex: 1,
+    anchorVerification: "verified",
+    currentValue: "1.5",
+    expectedValue: "1"
+  }, {
+    ruleId: "style_name",
+    role: "body",
+    paragraphIndex: 1,
+    anchorVerification: "verified",
+    currentValue: "Normal",
+    expectedValue: "heading 1"
+  }]
+});
+assert.ok(localizedPageAndSpacing.includes("纸张：A4"));
+assert.ok(localizedPageAndSpacing.includes("上边距 36 磅"));
+assert.ok(localizedPageAndSpacing.includes("A4 纸张及模板页边距"));
+assert.ok(localizedPageAndSpacing.includes("1.5 倍行距"));
+assert.ok(localizedPageAndSpacing.includes("正文样式"));
+assert.ok(!localizedPageAndSpacing.includes("Normal"));
+assert.ok(!localizedPageAndSpacing.includes("heading 1"));
+assert.ok(!localizedPageAndSpacing.includes('"paperSize"'));
+
+const mixedPage = helpers.renderReadableDeterministicFormatReview({
+  summary: {
+    templateId: "technical-document-template-rules",
+    formatFactDiagnostics: {
+      pageSetup: {
+        marginTop: { dataStatus: "mixed" }
+      }
+    }
+  },
+  issues: [{
+    ruleId: "page_setup",
+    currentValue: JSON.stringify({ paperSize: "A4", marginTop: 720 }),
+    expectedValue: "A4 页面及模板页边距"
+  }]
+});
+assert.ok(mixedPage.includes("当前值：格式不一致"));
+assert.ok(!mixedPage.includes("当前值：纸张：A4"));
+
 assert.ok(js.includes('configData.features && configData.features.deterministicFormatReviewEnabled'));
-assert.ok(js.includes('byId("btn-run-deterministic-format-review")'));
+assert.ok(js.includes('byId("btn-run-primary")'));
+assert.ok(!js.includes('request("/word/format-review", state.latestDocumentPayload)'));
 
 const body = helpers.buildDeterministicFormatReviewBody({
   documentId: "table.docx",
