@@ -84,7 +84,7 @@ AI-WPS 是面向公司内网办公终端的 WPS AI 助理插件。目标环境�
 - 智能编写：`POST /word/smart-write/jobs`，任务类型 `word.smart_write`。
 - 智能仿写：`POST /word/smart-imitation/jobs`，任务类型 `word.smart_imitation`。
 - 文档审查：`POST /word/document-review`，任务类型 `word.document_review`。
-- 格式审查：`POST /word/format-review`，任务类型 `word.format_review`。
+- 格式审查：先 `POST /word/format-review/snapshots` 创建 v2 快照，再 `POST /word/format-review/jobs` 提交后台任务，任务类型 `word.format_review.deterministic`。
 - 设置：四类 Word 模型配置和诊断信息；任务窗格不显示统一 URL 或统一 API Key 编辑器。
 
 Excel 侧 Ribbon 只显示：
@@ -245,7 +245,15 @@ DELETE /word/document-review/full/jobs/{jobId}/result
 
 全篇审查问题接口默认每页 20 项，`pageSize` 支持 1–100，使用不透明 `cursor` 续读；`sort` 支持 `source`（原文顺序）和 `severity`（高到低），并支持 `severity`、`category`、`location`（`body`/`chapter`/`table`）和 `status`（`open`/`processed`/`ignored`）筛选。终态任务和摘要报告不返回完整问题数组；`PATCH` 仅按稳定 `issueId` 更新独立处理状态。报告默认返回摘要，`?format=json` 导出完整版本化 JSON，`?format=markdown` 导出 Markdown；结果可由 `/result` 主动删除。
 DELETE /word/document-review/jobs/{jobId}[?resume=1]
-POST   /word/format-review
+POST   /word/format-review                         # 仅返回 410 退役响应
+POST   /word/format-review/snapshots               # v2 快照
+POST   /word/format-review/jobs                    # v2 后台任务
+GET    /word/format-review/jobs/{jobId}
+GET    /word/format-review/jobs/{jobId}/issues
+PATCH  /word/format-review/jobs/{jobId}/issues/{issueId}
+GET    /word/format-review/jobs/{jobId}/report
+DELETE /word/format-review/jobs/{jobId}
+DELETE /word/format-review/jobs/{jobId}/report
 POST   /excel/analysis
 POST   /excel/analysis/jobs
 GET    /excel/analysis/jobs/{jobId}[?resume=1]
@@ -412,14 +420,13 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - 文档审查点击后先刷新“正在读取文档审查范围”状态，再异步执行限量抽取；最多读取 80 段、每段 800 字、正文 12000 字，框选文本时直接按选中文本拆段，不同步扫描全文。
 - 文档审查请求提交后会在 8 秒和 30 秒继续刷新等待模型后台的状态，避免模型后台慢返回时任务窗格看起来无反馈。
 - 文档审查 adapter 解析 Dify 返回时新增兜底：非标准 JSON、普通 Markdown 或未包含 `issues` 的 JSON 会保留为 `rawAnswer`，前端显示“原始模型回复”，便于区分 Dify 输出格式问题和前端渲染问题。
-- 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回。
-- 格式审查保留 AI 段落角色识别能力；Dify 不可用或返回不可解析时回退本地规则。
-- 2026-05-29 排查格式审查现场报“无法连接 adapter”：根因是 AI 段落角色识别作为可选能力时，Dify 非 JSON、超时或其它 provider 边界异常可能拖住/打断 `/word/format-review`。现已将格式审查 AI 角色识别限制为短预算调用：最多前 40 段、每批 20 段、单次 Dify 请求最多 8 秒；任何 provider 边界异常都会记录摘要并回退本地格式规则，保证前台能返回格式审查结果。
+- 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回；当前入口只消费 v2 快照、后台任务和版本化报告。
+- v2 格式语义增强只接受 `format_semantics.v1`，Dify 不可用或返回不可解析时，任务明确记录降级状态和原因，不调用旧同步审查链。
+- 2026-05-29 的旧同步格式审查链已退役；`POST /word/format-review` 只返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`，不再执行审查或返回旧报告。
 - 2026-05-31 排查格式审查点击后任务窗格卡死且 Dify 无调用记录：根因是前端在发起 `fetch` 前同步扫描 WPS 全文 `Paragraphs`，大文档下会阻塞任务窗格。现已为格式审查增加专用限量抽取：最多读取 80 段、每段 800 字、正文 12000 字；框选文本时直接按选中文本构造段落，不再先扫描全文；点击后先刷新“正在读取格式审查范围”状态，再异步执行抽取和请求。
 - 文档审查结果改为按错别字、语言表达、逻辑表达、通畅性、专业性分组展示，每条问题固定展示严重程度、位置、原文片段、问题说明、修改建议和建议改写。
-- 格式审查结果改为按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展示，每条问题固定展示段落号、段落角色、当前值、模板要求和建议操作。
-- `v0.12.16-alpha` 起，格式审查结果预览改为“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”结构：优先处理清单用表格集中展示段落、问题类型、当前值、模板要求和建议，详细问题按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展开。
-- 格式审查预览层尽量中文化显示普通用户会看到的反馈：模板名显示为“技术文件格式及书写要求”，字体标准显示“宋体”，字号标准显示“小四（12pt）”，样式名、对齐、行距、首行缩进、页面设置、识别来源和 AI 兜底原因也转成中文可读表达。
+- 历史版本的格式审查结果曾按页面设置、标题层级、正文格式、段落格式、图表题/注释和其他格式项分组展示；该同步渲染链已由 v2 结构化报告替代。
+- v2 报告预览展示执行/合规/覆盖/语义状态、问题清单、已验证格式事实和诊断信息；无法由已验证事实确认的值显示为“无法识别”或“无法验证位置”，不猜测单位、不翻译旧当前值、不使用旧报告兜底。
 - 设置页新增“最近一次任务诊断”，聚合 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics` 和 `/provider/task-api-keys` 的脱敏摘要，并支持一键复制。
 - `/provider/debug-last` 增补 `providerName`、`providerType`、`taskApiKeyRef`、`taskAuthSource` 等脱敏字段，便于判断当前任务是否命中对应 Dify 应用密钥。
 - adapter 启动包新增麒麟 V10/systemd 开机自启动脚本：`scripts/install_autostart.sh` 安装 `ai-wps-adapter.service`，开机后复用现有 `scripts/start_adapter.sh 18100`；`scripts/uninstall_autostart.sh` 用于停止并移除自启动服务。
