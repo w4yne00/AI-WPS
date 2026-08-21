@@ -111,6 +111,82 @@ assert.ok(readable.includes("章节：第一章 > 1.1 范围；第 1 段；原�
 assert.ok(!readable.includes("font_size"));
 assert.ok(!readable.includes("violations_found"));
 
+const sectionReadable = helpers.renderReadableDeterministicFormatReview({
+  summary: { templateId: "technical-document-template-rules" },
+  issues: [{
+    ruleId: "section_layout",
+    role: "section",
+    sourceAnchor: {
+      locationScope: "section",
+      sectionIndex: 2,
+      sectionName: "实施范围",
+      chapterPath: ["第二章"],
+      pageRange: { start: 3, end: 5 }
+    }
+  }]
+});
+assert.ok(sectionReadable.includes("第 2 节：实施范围"));
+assert.ok(sectionReadable.includes("第 3 至第 5 页"));
+assert.ok(!sectionReadable.includes("无法验证位置"));
+
+const documentReadable = helpers.renderReadableDeterministicFormatReview({
+  summary: { templateId: "technical-document-template-rules" },
+  issues: [{ ruleId: "page_setup", role: "page_setup" }]
+});
+assert.ok(documentReadable.includes("页面设置（全文）"));
+assert.ok(!documentReadable.includes("P0"));
+
+const pageAwareParagraphs = helpers.collectParagraphs({
+  Paragraphs: {
+    Count: 1,
+    Item: function () {
+      return {
+        Text: "带位置正文",
+        Range: {
+          Text: "带位置正文",
+          Start: 101,
+          End: 106,
+          Information: function (kind) {
+            return kind === 2 ? 1 : kind === 3 ? 4 : null;
+          }
+        },
+        StyleNameLocal: "Normal",
+        Font: { NameFarEast: "宋体", Size: 12 },
+        ParagraphFormat: { OutlineLevel: 0 }
+      };
+    }
+  }
+}, { includeCharacterFormatSegments: true });
+assert.strictEqual(pageAwareParagraphs[0].range.start, 101);
+assert.strictEqual(pageAwareParagraphs[0].range.end, 106);
+assert.strictEqual(pageAwareParagraphs[0].range.pageNumber, 4);
+assert.strictEqual(pageAwareParagraphs[0].range.sectionIndex, 1);
+
+const pageUnavailableParagraphs = helpers.collectParagraphs({
+  Paragraphs: {
+    Count: 1,
+    Item: function () {
+      return {
+        Text: "无法读取页码的正文",
+        Range: {
+          Text: "无法读取页码的正文",
+          Start: 201,
+          End: 210,
+          Information: function () { return null; }
+        },
+        StyleNameLocal: "Normal",
+        Font: { NameFarEast: "宋体", Size: 12 },
+        ParagraphFormat: { OutlineLevel: 0 }
+      };
+    }
+  }
+});
+assert.ok(!Object.prototype.hasOwnProperty.call(pageUnavailableParagraphs[0].range, "pageNumber"));
+assert.ok(!Object.prototype.hasOwnProperty.call(pageUnavailableParagraphs[0].range, "sectionIndex"));
+
+const preparation = functionSource("ensureDeterministicFormatReviewPreparation");
+assert.ok(preparation.includes("检测到文档编辑或文档身份变化"));
+
 const unmapped = helpers.renderReadableDeterministicFormatReview({
   summary: { templateId: "technical-document-template-rules" },
   issues: [{

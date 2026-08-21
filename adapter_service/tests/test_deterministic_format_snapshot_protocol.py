@@ -529,6 +529,178 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertNotIn("P0", exported_markdown)
         self.assertNotIn("未识别角色", exported_markdown)
 
+    def test_report_location_preserves_repeat_text_anchors_and_verified_page(self):
+        blocks = [
+            {
+                "blockId": "format-paragraph-1",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 1,
+                "headingLevel": 1,
+                "text": "第一章 总则",
+                "format": {"outlineLevel": 1},
+            },
+            {
+                "blockId": "format-paragraph-2",
+                "blockType": "heading",
+                "scope": "in_scope",
+                "paragraphIndex": 2,
+                "headingLevel": 2,
+                "text": "1.1 范围",
+                "format": {"outlineLevel": 2},
+            },
+            {
+                "blockId": "format-paragraph-3",
+                "blockType": "paragraph",
+                "scope": "in_scope",
+                "paragraphIndex": 3,
+                "text": "重复正文",
+                "range": {"start": 101, "end": 105, "pageNumber": 4, "sectionIndex": 1},
+                "format": {"styleName": "Normal"},
+            },
+            {
+                "blockId": "format-paragraph-4",
+                "blockType": "paragraph",
+                "scope": "in_scope",
+                "paragraphIndex": 4,
+                "text": "重复正文",
+                "range": {"start": 201, "end": 205, "pageNumber": 7, "sectionIndex": 1},
+                "format": {"styleName": "Normal"},
+            },
+        ]
+        metrics = self.service._format_metrics(blocks)
+        request_data = self.service._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-document-template-rules"},
+            blocks,
+            metrics,
+        )
+        request = (
+            WordDocumentRequest.model_validate(request_data)
+            if hasattr(WordDocumentRequest, "model_validate")
+            else WordDocumentRequest.parse_obj(request_data)
+        )
+        report = self.service._build_report(
+            {
+                "issues": [
+                    {
+                        "ruleId": "font_size",
+                        "paragraphIndex": 3,
+                        "role": "body",
+                        "currentValue": "14pt",
+                        "expectedValue": "12pt",
+                        "message": "字号不符合模板要求。",
+                    },
+                    {
+                        "ruleId": "font_size",
+                        "paragraphIndex": 4,
+                        "role": "body",
+                        "currentValue": "14pt",
+                        "expectedValue": "12pt",
+                        "message": "字号不符合模板要求。",
+                    },
+                ],
+                "summary": {},
+            },
+            {
+                "request": request,
+                "contentSha256": "content-location",
+                "structureSha256": "structure-location",
+                "formatSha256": "format-location",
+            },
+        )
+
+        first, second = report["issues"]
+        self.assertNotEqual(first["anchorId"], second["anchorId"])
+        self.assertEqual(first["sourceAnchor"]["chapterPath"], ["第一章 总则", "1.1 范围"])
+        self.assertEqual(first["sourceAnchor"]["pageNumber"], 4)
+        self.assertEqual(first["sourceAnchor"]["range"], {
+            "start": 101,
+            "end": 105,
+            "pageNumber": 4,
+            "sectionIndex": 1,
+        })
+        self.assertNotEqual(first["sourceAnchor"]["textSha256"], "")
+        self.assertEqual(second["sourceAnchor"]["pageNumber"], 7)
+
+        self.service._save_report("location-report-job", report)
+        markdown = self.service.export_report("location-report-job", "markdown")
+        self.assertIn("章节：第一章 总则 > 1.1 范围；第 3 段；原文：“重复正文”；第 4 页", markdown)
+        self.assertIn("第 4 段；原文：“重复正文”；第 7 页", markdown)
+        self.assertNotIn("位置待确认", markdown)
+
+    def test_report_location_distinguishes_section_and_document_scopes(self):
+        blocks = [
+            {
+                "blockId": "format-paragraph-1",
+                "blockType": "paragraph",
+                "scope": "in_scope",
+                "paragraphIndex": 1,
+                "text": "节内正文一",
+                "range": {"pageNumber": 3, "sectionIndex": 2},
+                "format": {"styleName": "Normal"},
+            },
+            {
+                "blockId": "format-paragraph-2",
+                "blockType": "paragraph",
+                "scope": "in_scope",
+                "paragraphIndex": 2,
+                "text": "节内正文二",
+                "range": {"pageNumber": 5, "sectionIndex": 2},
+                "format": {"styleName": "Normal"},
+            },
+        ]
+        metrics = self.service._format_metrics(blocks)
+        request_data = self.service._request_from_blocks(
+            {"selectionMode": "document", "templateId": "technical-document-template-rules"},
+            blocks,
+            metrics,
+        )
+        request = (
+            WordDocumentRequest.model_validate(request_data)
+            if hasattr(WordDocumentRequest, "model_validate")
+            else WordDocumentRequest.parse_obj(request_data)
+        )
+        report = self.service._build_report(
+            {
+                "issues": [
+                    {
+                        "ruleId": "section_layout",
+                        "role": "section",
+                        "sectionIndex": 2,
+                        "sectionName": "实施范围",
+                        "message": "节级格式需要核对。",
+                    },
+                    {
+                        "ruleId": "page_setup",
+                        "role": "page_setup",
+                        "paragraphIndex": 0,
+                        "message": "页面设置不符合模板要求。",
+                        "currentValue": '{"paperSize":"A4"}',
+                        "expectedValue": "A4 页面及模板页边距",
+                    },
+                ],
+                "summary": {},
+            },
+            {
+                "request": request,
+                "contentSha256": "content-scope",
+                "structureSha256": "structure-scope",
+                "formatSha256": "format-scope",
+            },
+        )
+
+        section_issue, document_issue = report["issues"]
+        self.assertEqual(section_issue["sourceAnchor"]["locationScope"], "section")
+        self.assertEqual(section_issue["sourceAnchor"]["sectionIndex"], 2)
+        self.assertEqual(section_issue["sourceAnchor"]["pageRange"], {"start": 3, "end": 5})
+        self.assertEqual(document_issue["sourceAnchor"]["locationScope"], "document")
+
+        self.service._save_report("scope-location-report-job", report)
+        markdown = self.service.export_report("scope-location-report-job", "markdown")
+        self.assertIn("第 2 节：实施范围；第 3 至第 5 页", markdown)
+        self.assertIn("页面设置（全文）", markdown)
+        self.assertNotIn("P0", markdown)
+
     def test_markdown_does_not_expose_unmapped_machine_values(self):
         self.service._save_report("unmapped-export-job", {
             "schemaVersion": format_protocol.FORMAT_REPORT_SCHEMA_VERSION,
