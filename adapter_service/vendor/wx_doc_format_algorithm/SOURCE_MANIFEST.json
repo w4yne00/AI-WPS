@@ -3,6 +3,7 @@
   "sourceVersion": "0.12.15",
   "license": "Authorized local reuse; see THIRD_PARTY_NOTICES.md",
   "adaptedModules": {
+    "assets/wx_template.docx": "889b3f1ba873d0db5373a96c76464885c50d465f9ca6c6b6b43f1ca0efa5a2fe",
     "scripts/appendix_semantics.py": "66170aac82ad6bcf56522e18da4b50ad6f65989930ca2835c5407b10d648526b",
     "scripts/audit.py": "ac6dd020ce70c9049fe4161ea01b4fefd02d7ac95ad7a2e850c38904288548d6",
     "scripts/caption_placement.py": "354039c8255aaddfcf7174c973b56178821a08e6579ed609eec3d6bceffeea43",

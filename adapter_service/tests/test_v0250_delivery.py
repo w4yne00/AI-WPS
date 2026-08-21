@@ -104,7 +104,7 @@ def test_v0250_preparation_records_accepted_baseline(tmp_path):
     (delivery / "packages/adapter-start-kit/adapter_service/format_rule_packs").mkdir(
         parents=True
     )
-    (delivery / "packages/adapter-start-kit/adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json").write_text(
+    (delivery / "packages/adapter-start-kit/adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json").write_text(
         json.dumps({"algorithm": {}}), encoding="utf-8"
     )
     baseline_root = tmp_path / "baseline"

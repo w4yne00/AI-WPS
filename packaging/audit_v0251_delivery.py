@@ -77,11 +77,21 @@ def audit_format_assets(root: Path, manifest: Dict) -> None:
     if algorithm.get("writeBack") is not False or "defaultTemplateValues" in algorithm:
         raise DeliveryFailure("FORMAT_RULE_PACK_WRITEBACK_OR_DEFAULTS_ENABLED")
     algorithm_path = safe_path(root, algorithm.get("adapterPath", ""), "FORMAT_ALGORITHM_REFERENCE_INVALID")
+    source_template_path = algorithm_path.parent / "assets/wx_template.docx"
+    if not source_template_path.is_file():
+        raise DeliveryFailure("FORMAT_TEMPLATE_SOURCE_MISSING")
     source_manifest_path = safe_path(root, algorithm.get("sourceManifest", ""), "FORMAT_SOURCE_MANIFEST_REFERENCE_INVALID")
+    source_classification_path = safe_path(
+        root, algorithm.get("sourceClassification", ""), "FORMAT_SOURCE_CLASSIFICATION_REFERENCE_INVALID"
+    )
     if not SHA256_RE.fullmatch(str(algorithm.get("adapterSha256", ""))) or sha256(algorithm_path) != algorithm["adapterSha256"]:
         raise DeliveryFailure("FORMAT_ALGORITHM_HASH_MISMATCH")
     if not SHA256_RE.fullmatch(str(algorithm.get("sourceManifestSha256", ""))) or sha256(source_manifest_path) != algorithm["sourceManifestSha256"]:
         raise DeliveryFailure("FORMAT_SOURCE_MANIFEST_HASH_MISMATCH")
+    if not SHA256_RE.fullmatch(str(algorithm.get("sourceClassificationSha256", ""))) or sha256(source_classification_path) != algorithm["sourceClassificationSha256"]:
+        raise DeliveryFailure("FORMAT_SOURCE_CLASSIFICATION_HASH_MISMATCH")
+    if sha256(source_template_path) != rule_pack.get("template", {}).get("sourceDocumentSha256"):
+        raise DeliveryFailure("FORMAT_TEMPLATE_SOURCE_HASH_MISMATCH")
     references = manifest.get("formatReview", {}).get("referenceWorkflows", [])
     if set(references) != REFERENCE_WORKFLOWS:
         raise DeliveryFailure("FORMAT_REFERENCE_WORKFLOW_SET_INVALID")

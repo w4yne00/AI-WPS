@@ -3,7 +3,7 @@
   "product": "AI-WPS",
   "version": "0.25.0-format-rules-alpha",
   "purpose": "offline-authorized-deterministic-format-rules",
-  "rulePack": "adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json",
+  "rulePack": "adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json",
   "algorithm": {
     "sourceVersion": "0.12.15",
     "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",

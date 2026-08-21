@@ -743,8 +743,12 @@ class FormatReviewIssue(BaseModel):
 class FormatReviewSummary(BaseModel):
     scope: Literal["document", "selection"] = "document"
     template_id: str = Field(alias="templateId")
+    rule_pack_id: str = Field(default="", alias="rulePackId")
     rule_pack_version: str = Field(default="", alias="rulePackVersion")
+    rule_pack_source_name: str = Field(default="", alias="rulePackSourceName")
+    rule_pack_source_version: str = Field(default="", alias="rulePackSourceVersion")
     rule_pack_sha256: str = Field(default="", alias="rulePackSha256")
+    rule_pack_integrity: Dict[str, str] = Field(default_factory=dict, alias="rulePackIntegrity")
     authorized_algorithm_version: str = Field(default="", alias="authorizedAlgorithmVersion")
     paragraph_count: int = Field(default=0, alias="paragraphCount")
     issue_count: int = Field(default=0, alias="issueCount")

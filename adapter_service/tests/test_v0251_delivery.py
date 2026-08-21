@@ -219,7 +219,7 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
         ),
         encoding="utf-8",
     )
-    (delivery / "packages/adapter-start-kit/adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json").write_text(
+    (delivery / "packages/adapter-start-kit/adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json").write_text(
         json.dumps({"algorithm": {}}), encoding="utf-8"
     )
     (delivery / "packages/adapter-start-kit/adapter_service/vendor/THIRD_PARTY_NOTICES.md").write_text(

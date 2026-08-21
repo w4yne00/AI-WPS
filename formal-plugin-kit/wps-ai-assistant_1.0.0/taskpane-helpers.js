@@ -845,7 +845,7 @@
         expandedToSemanticUnits: source.selectionMode === "selection",
         contextOnly: contextBlocks.map(function (block) { return block.blockId; })
       },
-      templateId: source.options && source.options.templateId || "technical-file-format-requirements",
+      templateId: source.options && source.options.templateId || "technical-document-template-rules",
       blocks: blocks,
       reviewCharacterCount: reviewCharacterCount,
       contentSha256: sha256Text(sourceValues.join("\n")),
@@ -1928,7 +1928,7 @@
   }
 
   function formatDeterministicFormatReviewTemplate(value) {
-    if (value === "technical-document-template-rules" || value === "technical-file-format-requirements") {
+    if (value === "technical-document-template-rules") {
       return "技术文档模板规则";
     }
     if (value === "general-office") {
@@ -2272,6 +2272,8 @@
       "覆盖状态：" + formatDeterministicFormatReviewStatus(summary.coverageStatus, "无法判定"),
       "语义增强：" + formatDeterministicFormatReviewStatus(summary.semanticStatus, "未记录"),
       "审查依据：" + formatDeterministicFormatReviewTemplate(summary.templateId),
+      "规则版本：" + String(summary.rulePackVersion || "未记录"),
+      "来源版本：" + String(summary.rulePackSourceVersion || "未记录"),
       "问题数量：" + total,
       "",
       "以下内容仅展示可由当前格式事实确认的问题，不修改 Word 文档。",

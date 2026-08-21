@@ -1,8 +1,8 @@
 {
-  "id": "technical-file-format-requirements",
-  "name": "技术文件格式及书写要求",
-  "sourceDocument": "technical-file-format-requirements.docx",
-  "version": "2026-05-23",
+  "id": "technical-document-template-rules",
+  "name": "技术文档模板规则",
+  "sourceDocument": "wx_template.docx",
+  "version": "1.0.0",
   "page": {
     "paperSize": "A4",
     "widthTwips": 11906,

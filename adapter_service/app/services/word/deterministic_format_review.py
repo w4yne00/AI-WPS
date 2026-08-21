@@ -109,7 +109,6 @@ FORMAT_RULE_DISPLAY_NAMES = {
     "structure.role_confirmation": "段落角色",
 }
 FORMAT_TEMPLATE_DISPLAY_NAMES = {
-    "technical-file-format-requirements": "技术文档模板规则",
     "technical-document-template-rules": "技术文档模板规则",
     "general-office": "通用办公文档格式",
 }
@@ -647,7 +646,7 @@ class DeterministicFormatReviewService:
             "documentIdSha256": hashlib.sha256(document_id.encode("utf-8")).hexdigest(),
             "documentIdentity": document_identity,
             "selectionMode": selection_mode,
-            "templateId": str(payload.get("templateId") or "technical-file-format-requirements"),
+            "templateId": str(payload.get("templateId") or "technical-document-template-rules"),
             "scope": self._normalize_scope(payload.get("scope"), selection_mode),
             "pageSetup": normalized_page_setup,
             "pageSetupFacts": page_setup_facts,
@@ -1341,6 +1340,8 @@ class DeterministicFormatReviewService:
             "- 覆盖状态：{0}".format(_report_status_text(summary.get("coverageStatus"))),
             "- 语义增强状态：{0}".format(_report_status_text(summary.get("semanticStatus"), "未记录")),
             "- 审查依据：{0}".format(_report_template_text(summary.get("templateId"))),
+            "- 规则版本：{0}".format(summary.get("rulePackVersion") or "未记录"),
+            "- 来源版本：{0}".format(summary.get("rulePackSourceVersion") or "未记录"),
             "", "## 模型调用诊断",
             *model_lines,
             "", "## 统计",
@@ -2557,7 +2558,7 @@ class DeterministicFormatReviewService:
                 "headings": headings,
                 "documentStructure": document_structure,
             },
-            "options": {"templateId": record.get("templateId") or "technical-file-format-requirements"},
+            "options": {"templateId": record.get("templateId") or "technical-document-template-rules"},
         }
 
     def _verify_token(self, record: Dict, token: object) -> None:

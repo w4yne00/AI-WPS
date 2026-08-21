@@ -52,7 +52,7 @@ class _IssueReviewer:
             ],
             "summary": {
                 "provider": "local",
-                "templateId": "technical-file-format-requirements",
+                "templateId": "technical-document-template-rules",
                 "modelConfigurationName": "格式审查主配置",
                 "modelConfigurationId": "config-format-1",
                 "modelConfigurationVersion": 7,
@@ -487,7 +487,7 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         ]
         metrics = self.service._format_metrics(blocks)
         request_data = self.service._request_from_blocks(
-            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            {"selectionMode": "document", "templateId": "technical-document-template-rules"},
             blocks,
             metrics,
         )

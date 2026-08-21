@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import tempfile
@@ -25,12 +26,67 @@ from tools.compile_format_rule_pack import compile_rule_pack
 
 
 ROOT = Path(__file__).resolve().parents[2]
-TEMPLATE_DOCX = ROOT / "templates/company/technical-file-format-requirements.docx"
+TEMPLATE_DOCX = ROOT / "adapter_service/vendor/wx_doc_format_algorithm/assets/wx_template.docx"
+MANUALLY_CONFIRMED_TEMPLATE_DOCX = ROOT / "templates/company/technical-file-format-requirements.docx"
 TEMPLATE_JSON = ROOT / "templates/company/technical-file-format-requirements.json"
 STRUCTURE_RULES = ROOT / "templates/company/technical-file-structure-rules.json"
+ACTIVE_TEMPLATE_ID = "technical-document-template-rules"
 
 
 class FormatRulePackTests(unittest.TestCase):
+    def test_active_rule_pack_has_canonical_identity_and_source_classifications(self):
+        pack = FormatRulePackLoader().load(ACTIVE_TEMPLATE_ID)
+
+        self.assertEqual(pack["rulePack"]["id"], ACTIVE_TEMPLATE_ID)
+        self.assertEqual(pack["rulePack"]["displayName"], "技术文档模板规则")
+        self.assertEqual(pack["rulePack"]["version"], "1.0.0")
+        self.assertEqual(pack["rulePack"]["sourceVersion"], "wx-doc-format 0.12.15")
+        self.assertEqual(pack["algorithm"]["sourceVersion"], "0.12.15")
+        self.assertEqual(pack["template"]["id"], ACTIVE_TEMPLATE_ID)
+        self.assertEqual(pack["template"]["name"], "技术文档模板规则")
+        self.assertTrue(pack["algorithm"]["sourceClassificationSha256"])
+        self.assertTrue(all(
+            rule["classification"] in {"normative-format", "normative-structure"}
+            for rule in pack["rules"]
+        ))
+        self.assertNotIn("converter-only", {
+            rule["classification"] for rule in pack["rules"]
+        })
+
+    def test_legacy_template_identifier_does_not_fallback_to_active_pack(self):
+        with self.assertRaises(FormatRulePackError):
+            FormatRulePackLoader().load("technical-file-format-requirements")
+
+    def test_page_and_margin_variations_remain_diagnostic_only(self):
+        request = WordDocumentRequest(
+            documentId="page-diagnostic-only.docx",
+            content={
+                "paragraphs": [{
+                    "index": 1,
+                    "text": "正文",
+                    "styleName": "Normal",
+                    "fontName": "宋体",
+                    "fontSize": 12,
+                }],
+                "documentStructure": {
+                    "page_setup": {
+                        "paperSize": 7,
+                        "marginTopTwips": 1,
+                        "marginBottomTwips": 2,
+                        "marginLeftTwips": 3,
+                        "marginRightTwips": 4,
+                    }
+                },
+            },
+            options={"templateId": ACTIVE_TEMPLATE_ID},
+        )
+
+        result = WordFormatReviewer().review(request)
+
+        self.assertNotIn("page_setup", {issue["ruleId"] for issue in result["issues"]})
+        self.assertNotIn("rulePackName", result["summary"])
+        self.assertEqual(result["summary"]["rulePackSourceVersion"], "wx-doc-format 0.12.15")
+
     def test_semantic_roles_require_structural_evidence_and_use_explicit_mapping(self):
         style_only = classify_role_fact({"styleName": "heading 1"})
         self.assertEqual(style_only["role"], "unknown")
@@ -81,7 +137,7 @@ class FormatRulePackTests(unittest.TestCase):
             )
 
             self.assertEqual(pack["schemaVersion"], 1)
-            self.assertEqual(pack["template"]["id"], "technical-file-format-requirements")
+            self.assertEqual(pack["template"]["id"], ACTIVE_TEMPLATE_ID)
             self.assertEqual(
                 pack["template"]["sourceDocumentSha256"],
                 hashlib.sha256(TEMPLATE_DOCX.read_bytes()).hexdigest(),
@@ -98,6 +154,88 @@ class FormatRulePackTests(unittest.TestCase):
                 pack["integrity"],
             )
 
+    def test_fixed_wx_template_matches_manually_confirmed_template_values(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source_pack = compile_rule_pack(
+                TEMPLATE_DOCX,
+                TEMPLATE_JSON,
+                STRUCTURE_RULES,
+                Path(directory) / "source.json",
+            )
+            manual_pack = compile_rule_pack(
+                MANUALLY_CONFIRMED_TEMPLATE_DOCX,
+                TEMPLATE_JSON,
+                STRUCTURE_RULES,
+                Path(directory) / "manual.json",
+            )
+
+            self.assertEqual(source_pack["template"]["page"], manual_pack["template"]["page"])
+            self.assertEqual(source_pack["template"]["body"], manual_pack["template"]["body"])
+            self.assertEqual(source_pack["template"]["roleRules"], manual_pack["template"]["roleRules"])
+            self.assertEqual(
+                source_pack["template"]["sourceDocumentSha256"],
+                "889b3f1ba873d0db5373a96c76464885c50d465f9ca6c6b6b43f1ca0efa5a2fe",
+            )
+
+    def test_compiler_is_reproducible_and_explicit_template_values_win(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            template_json = json.loads(TEMPLATE_JSON.read_text(encoding="utf-8"))
+            template_json["body"]["fontSize"] = 13
+            custom_template = root / "template.json"
+            custom_template.write_text(
+                json.dumps(template_json, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            first_path = root / "first.json"
+            second_path = root / "second.json"
+            relative_source_classification = Path(
+                "adapter_service/vendor/wx_doc_format_algorithm/RULE_CLASSIFICATION.json"
+            )
+            first = compile_rule_pack(
+                TEMPLATE_DOCX,
+                custom_template,
+                STRUCTURE_RULES,
+                first_path,
+                source_classification_path=relative_source_classification,
+            )
+            second = compile_rule_pack(
+                TEMPLATE_DOCX,
+                custom_template,
+                STRUCTURE_RULES,
+                second_path,
+                source_classification_path=relative_source_classification,
+            )
+
+            self.assertEqual(first, second)
+            self.assertEqual(first["template"]["body"]["fontSize"], 13)
+            self.assertEqual(
+                first["algorithm"]["sourceClassification"],
+                "vendor/wx_doc_format_algorithm/RULE_CLASSIFICATION.json",
+            )
+            self.assertEqual(first_path.read_bytes(), second_path.read_bytes())
+
+    def test_compiler_rejects_converter_only_source_rule(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            structure_rules = json.loads(STRUCTURE_RULES.read_text(encoding="utf-8"))
+            structure_rules["rules"].append({
+                "id": "converter.write_back",
+                "algorithm": "write_back",
+                "source": "wx-doc-format",
+                "appliesTo": ["document"],
+                "unit": "document",
+                "tolerance": {},
+                "severity": "error",
+                "enabled": True,
+            })
+            structure_path = root / "structure.json"
+            structure_path.write_text(
+                json.dumps(structure_rules, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(ValueError, "STRUCTURE_RULE_CONVERTER_ONLY"):
+                compile_rule_pack(TEMPLATE_DOCX, TEMPLATE_JSON, structure_path)
+
     def test_loader_rejects_tampered_rule_pack(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -108,14 +246,39 @@ class FormatRulePackTests(unittest.TestCase):
             output.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
 
             with self.assertRaises(FormatRulePackError):
-                FormatRulePackLoader(root).load("technical-file-format-requirements")
+                FormatRulePackLoader(root).load(ACTIVE_TEMPLATE_ID)
+
+    def test_loader_rejects_reclassified_source_rules_even_with_recomputed_integrity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            output = root / "technical.json"
+            compile_rule_pack(TEMPLATE_DOCX, TEMPLATE_JSON, STRUCTURE_RULES, output)
+            payload = json.loads(output.read_text(encoding="utf-8"))
+            payload["sourceRules"][0]["category"] = "converter-only"
+            canonical = copy.deepcopy(payload)
+            canonical.pop("integrity", None)
+            payload["integrity"]["contentSha256"] = hashlib.sha256(
+                json.dumps(
+                    canonical,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode("utf-8")
+            ).hexdigest()
+            output.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+            with self.assertRaisesRegex(
+                FormatRulePackError,
+                "FORMAT_RULE_PACK_SOURCE_CLASSIFICATION_MISMATCH",
+            ):
+                FormatRulePackLoader(root).load(ACTIVE_TEMPLATE_ID)
 
     def test_reviewer_fails_closed_when_compiled_pack_is_missing(self):
         with tempfile.TemporaryDirectory() as directory:
             request = WordDocumentRequest(
                 documentId="missing-pack.docx",
                 content={"paragraphs": [{"index": 1, "text": "正文"}]},
-                options={"templateId": "technical-file-format-requirements"},
+                options={"templateId": ACTIVE_TEMPLATE_ID},
             )
             with self.assertRaises(FormatRulePackError):
                 WordFormatReviewer(rule_pack_loader=FormatRulePackLoader(Path(directory))).review(request)
@@ -315,12 +478,14 @@ class FormatRulePackTests(unittest.TestCase):
                     }
                 ]
             },
-            options={"templateId": "technical-file-format-requirements"},
+            options={"templateId": ACTIVE_TEMPLATE_ID},
         )
         result = WordFormatReviewer().review(request)
-        self.assertEqual(result["summary"]["rulePackVersion"], "2026-05-23.rules.1")
+        self.assertEqual(result["summary"]["rulePackVersion"], "1.0.0")
+        self.assertNotIn("templateName", result["summary"])
+        self.assertEqual(result["summary"]["rulePackSourceVersion"], "wx-doc-format 0.12.15")
         self.assertEqual(len(result["summary"]["rulePackSha256"]), 64)
-        self.assertEqual(result["issues"][0]["ruleVersion"], "2026-05-23.rules.1")
+        self.assertEqual(result["issues"][0]["ruleVersion"], "1.0.0")
         self.assertEqual(len(result["issues"][0]["templateHash"]), 64)
 
     def test_runtime_executes_authorized_heading_and_table_rules(self):
@@ -335,7 +500,7 @@ class FormatRulePackTests(unittest.TestCase):
                     }
                 },
             },
-            options={"templateId": "technical-file-format-requirements"},
+            options={"templateId": ACTIVE_TEMPLATE_ID},
         )
         result = WordFormatReviewer().review(request)
         rule_ids = {issue["ruleId"] for issue in result["issues"]}
@@ -345,7 +510,7 @@ class FormatRulePackTests(unittest.TestCase):
     def test_confirmed_role_without_mapping_does_not_fall_back_to_body_rule(self):
         import copy
 
-        source = FormatRulePackLoader().load("technical-file-format-requirements")
+        source = FormatRulePackLoader().load(ACTIVE_TEMPLATE_ID)
         source = copy.deepcopy(source)
         source["template"]["roleMappings"] = {"body": "body", "formula": "formula"}
 
@@ -363,7 +528,7 @@ class FormatRulePackTests(unittest.TestCase):
                     }
                 },
             },
-            options={"templateId": "technical-file-format-requirements"},
+            options={"templateId": ACTIVE_TEMPLATE_ID},
         )
         result = WordFormatReviewer(rule_pack_loader=FixedLoader()).review(request)
         rule_ids = {issue["ruleId"] for issue in result["issues"]}
@@ -376,7 +541,7 @@ class FormatRulePackTests(unittest.TestCase):
             content={
                 "paragraphs": [{"index": 1, "text": "正文", "styleName": "heading 1"}]
             },
-            options={"templateId": "technical-file-format-requirements"},
+            options={"templateId": ACTIVE_TEMPLATE_ID},
         )
         result = WordFormatReviewer().review(request)
         rule_ids = {issue["ruleId"] for issue in result["issues"]}
@@ -408,7 +573,7 @@ class FormatRulePackTests(unittest.TestCase):
                     }
                 },
             },
-            options={"templateId": "technical-file-format-requirements"},
+            options={"templateId": ACTIVE_TEMPLATE_ID},
         )
         result = WordFormatReviewer().review(request)
         placement_issues = [issue for issue in result["issues"] if issue["ruleId"] == "structure.caption_placement"]

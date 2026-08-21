@@ -4,13 +4,23 @@
     "adapterSha256": "6cde0f63113459613911106f83f48b0fe02ec9d638e6fdc64845b9a1cea02118",
     "adapterVersion": "ai-wps-wx-doc-format-0.12.15-adapter.1",
     "name": "wx-doc-format deterministic recognition",
+    "sourceClassification": "vendor/wx_doc_format_algorithm/RULE_CLASSIFICATION.json",
+    "sourceClassificationSha256": "f7deeb84e3261dc2dccc004974f5fd26f77ab436d66e3c173b65f1401a6efb44",
     "sourceManifest": "vendor/wx_doc_format_algorithm/SOURCE_MANIFEST.json",
-    "sourceManifestSha256": "2da499dd21f0a429950acfd1d26edca990cb0702391472d3f9858bc5fc1e09a8",
+    "sourceManifestSha256": "7058ab7775492e48e994417a9c15e2488179d7f306463e58db04cbbe795c43c1",
     "sourceVersion": "0.12.15",
     "writeBack": false
   },
   "integrity": {
-    "contentSha256": "2c251cfba848773d8020d4766aae1f0c9f674bfc0234668e8eb52876579da8fe"
+    "contentSha256": "573311d6397d62f9199cfd0d9d3be66308d92cbc0e131b525777975f80db4a9f"
+  },
+  "rulePack": {
+    "active": true,
+    "displayName": "技术文档模板规则",
+    "id": "technical-document-template-rules",
+    "sourceName": "wx-doc-format",
+    "sourceVersion": "wx-doc-format 0.12.15",
+    "version": "1.0.0"
   },
   "rules": [
     {
@@ -18,10 +28,13 @@
       "appliesTo": [
         "heading"
       ],
+      "classification": "normative-structure",
       "enabled": true,
       "id": "structure.heading_hierarchy",
       "severity": "warning",
       "source": "ai-wps-manual",
+      "sourcePath": "scripts/audit.py",
+      "sourceSha256": "ac6dd020ce70c9049fe4161ea01b4fefd02d7ac95ad7a2e850c38904288548d6",
       "tolerance": {
         "maxLevelJump": 1
       },
@@ -32,10 +45,13 @@
       "appliesTo": [
         "list_item"
       ],
+      "classification": "normative-structure",
       "enabled": true,
       "id": "structure.list_semantics",
       "severity": "warning",
       "source": "ai-wps-manual",
+      "sourcePath": "scripts/list_style_mapping.py",
+      "sourceSha256": "05a9215bdbd00fc35a6381ab54debc37cdc497ec62cd298f7023eed502c46e4c",
       "tolerance": {
         "maxLevel": 2
       },
@@ -46,10 +62,13 @@
       "appliesTo": [
         "table"
       ],
+      "classification": "normative-structure",
       "enabled": true,
       "id": "structure.table_semantics",
       "severity": "warning",
       "source": "ai-wps-manual",
+      "sourcePath": "scripts/table_semantics.py",
+      "sourceSha256": "6f28c24b36643174c8e7188b4efa18765240692ac06c457a249963512aa7af5d",
       "tolerance": {
         "minimumDataRows": 1
       },
@@ -62,10 +81,13 @@
         "figure",
         "table"
       ],
+      "classification": "normative-structure",
       "enabled": true,
       "id": "structure.caption_placement",
       "severity": "error",
       "source": "ai-wps-manual",
+      "sourcePath": "scripts/caption_placement.py",
+      "sourceSha256": "354039c8255aaddfcf7174c973b56178821a08e6579ed609eec3d6bceffeea43",
       "tolerance": {
         "maxCandidates": 1
       },
@@ -76,10 +98,13 @@
       "appliesTo": [
         "appendix"
       ],
+      "classification": "normative-structure",
       "enabled": true,
       "id": "structure.appendix_roles",
       "severity": "warning",
       "source": "ai-wps-manual",
+      "sourcePath": "scripts/appendix_semantics.py",
+      "sourceSha256": "66170aac82ad6bcf56522e18da4b50ad6f65989930ca2835c5407b10d648526b",
       "tolerance": {
         "maxHeadingLevel": 3
       },
@@ -90,10 +115,13 @@
       "appliesTo": [
         "note"
       ],
+      "classification": "normative-structure",
       "enabled": true,
       "id": "structure.note_roles",
       "severity": "warning",
       "source": "ai-wps-manual",
+      "sourcePath": "scripts/note_semantics.py",
+      "sourceSha256": "28fe922e6f4861590a76fbf961f2af88cad75948e140925f2c80af1ccdc73251",
       "tolerance": {
         "numbering": "explicit"
       },
@@ -101,16 +129,115 @@
     }
   ],
   "schemaVersion": 1,
+  "sourceRules": [
+    {
+      "category": "normative-format",
+      "id": "template.format_values",
+      "selected": true,
+      "sourcePath": "assets/wx_template.docx",
+      "sourceSha256": "889b3f1ba873d0db5373a96c76464885c50d465f9ca6c6b6b43f1ca0efa5a2fe"
+    },
+    {
+      "category": "normative-structure",
+      "id": "structure.heading_hierarchy",
+      "selected": true,
+      "sourcePath": "scripts/audit.py",
+      "sourceSha256": "ac6dd020ce70c9049fe4161ea01b4fefd02d7ac95ad7a2e850c38904288548d6"
+    },
+    {
+      "category": "normative-structure",
+      "id": "structure.list_semantics",
+      "selected": true,
+      "sourcePath": "scripts/list_style_mapping.py",
+      "sourceSha256": "05a9215bdbd00fc35a6381ab54debc37cdc497ec62cd298f7023eed502c46e4c"
+    },
+    {
+      "category": "normative-structure",
+      "id": "structure.table_semantics",
+      "selected": true,
+      "sourcePath": "scripts/table_semantics.py",
+      "sourceSha256": "6f28c24b36643174c8e7188b4efa18765240692ac06c457a249963512aa7af5d"
+    },
+    {
+      "category": "normative-structure",
+      "id": "structure.caption_placement",
+      "selected": true,
+      "sourcePath": "scripts/caption_placement.py",
+      "sourceSha256": "354039c8255aaddfcf7174c973b56178821a08e6579ed609eec3d6bceffeea43"
+    },
+    {
+      "category": "normative-structure",
+      "id": "structure.appendix_roles",
+      "selected": true,
+      "sourcePath": "scripts/appendix_semantics.py",
+      "sourceSha256": "66170aac82ad6bcf56522e18da4b50ad6f65989930ca2835c5407b10d648526b"
+    },
+    {
+      "category": "normative-structure",
+      "id": "structure.note_roles",
+      "selected": true,
+      "sourcePath": "scripts/note_semantics.py",
+      "sourceSha256": "28fe922e6f4861590a76fbf961f2af88cad75948e140925f2c80af1ccdc73251"
+    },
+    {
+      "category": "converter-only",
+      "id": "converter.remove_cover",
+      "selected": false,
+      "sourcePath": "scripts/front_matter.py",
+      "sourceSha256": "6f368769ade3241dcc478f768485b8e615b05a830a36c2289489a042e01ca3e9"
+    },
+    {
+      "category": "converter-only",
+      "id": "converter.generate_captions",
+      "selected": false,
+      "sourcePath": "scripts/caption_placement.py",
+      "sourceSha256": "354039c8255aaddfcf7174c973b56178821a08e6579ed609eec3d6bceffeea43"
+    },
+    {
+      "category": "converter-only",
+      "id": "converter.update_fields",
+      "selected": false,
+      "sourcePath": "scripts/template_finalizer.py",
+      "sourceSha256": "673d913fb96d783abe484f61dd64f8c8a16161171a4529d4157877a06f1f4614"
+    },
+    {
+      "category": "converter-only",
+      "id": "converter.idempotent_conversion",
+      "selected": false,
+      "sourcePath": "scripts/review_loop.py",
+      "sourceSha256": "17a6bd6c8b6f6c3ada5f564909dd0b26a6b13b9bba5267e76312b0666a6d651d"
+    },
+    {
+      "category": "converter-only",
+      "id": "converter.write_back",
+      "selected": false,
+      "sourcePath": "scripts/main.py",
+      "sourceSha256": "66dd8f74f6a82d26415cbf6ae797a68ae60071dec0dd34fbc6eb2fa624c11c2d"
+    },
+    {
+      "category": "converter-only",
+      "id": "converter.llm_enhancement",
+      "selected": false,
+      "sourcePath": "scripts/llm_enhancer.py",
+      "sourceSha256": "5d1969e2bb88b0bc58ef2449cf2068d54d85aa919539a5782b4b0619a5de6773"
+    }
+  ],
   "template": {
     "body": {
       "alignment": "justify",
       "asciiFontName": "Times New Roman",
+      "bold": false,
       "firstLineIndentTwips": 640,
+      "fontAliases": [
+        "宋体",
+        "SimSun"
+      ],
       "fontName": "宋体",
-      "fontSize": 12.0,
+      "fontSize": 12,
       "lineRule": "auto",
       "lineSpacing": 1.25,
       "lineSpacingTwips": 300,
+      "outlineLevel": 0,
       "role": "body",
       "styleId": "1",
       "styleName": "Normal"
@@ -129,8 +256,8 @@
         "roleRef": "heading4"
       }
     },
-    "id": "technical-file-format-requirements",
-    "name": "技术文件格式及书写要求",
+    "id": "technical-document-template-rules",
+    "name": "技术文档模板规则",
     "page": {
       "footerTwips": 992,
       "headerTwips": 851,
@@ -139,6 +266,7 @@
       "marginLeftTwips": 1800,
       "marginRightTwips": 1800,
       "marginTopTwips": 1440,
+      "paperSize": "A4",
       "widthTwips": 11906
     },
     "roleMappings": {
@@ -177,13 +305,14 @@
       "appendix_heading1": {
         "alignment": "justify",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 567,
         "leftIndentTwips": 567,
         "lineRule": "auto",
@@ -199,13 +328,14 @@
       "appendix_heading2": {
         "alignment": "justify",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 709,
         "leftIndentTwips": 709,
         "lineRule": "auto",
@@ -219,13 +349,14 @@
       "appendix_heading3": {
         "alignment": "justify",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 850,
         "leftIndentTwips": 850,
         "lineRule": "auto",
@@ -239,17 +370,18 @@
       "appendix_title": {
         "alignment": "center",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 0,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 14.0,
+        "fontSize": 14,
         "lineRule": "auto",
         "lineSpacing": 1.25,
         "lineSpacingTwips": 300,
-        "outlineLevel": 2,
+        "outlineLevel": 1,
         "role": "appendix_title",
         "spaceAfterTwips": 50,
         "spaceBeforeTwips": 50,
@@ -259,12 +391,18 @@
       "body": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
+        "fontAliases": [
+          "宋体",
+          "SimSun"
+        ],
         "fontName": "宋体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "lineRule": "auto",
         "lineSpacing": 1.25,
         "lineSpacingTwips": 300,
+        "outlineLevel": 0,
         "role": "body",
         "styleId": "1",
         "styleName": "Normal"
@@ -272,13 +410,14 @@
       "caption": {
         "alignment": "center",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 0,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "lineRule": "auto",
         "lineSpacing": 1.0,
         "lineSpacingTwips": 240,
@@ -291,18 +430,19 @@
       "document_title": {
         "alignment": "center",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 0,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 14.0,
+        "fontSize": 14,
         "leftIndentTwips": 0,
         "lineRule": "auto",
         "lineSpacing": 1.25,
         "lineSpacingTwips": 300,
-        "outlineLevel": 10,
+        "outlineLevel": 9,
         "role": "document_title",
         "styleId": "22",
         "styleName": "文档标题"
@@ -310,13 +450,14 @@
       "heading1": {
         "alignment": "justify",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 432,
         "leftIndentTwips": 432,
         "lineRule": "auto",
@@ -332,13 +473,14 @@
       "heading2": {
         "alignment": "justify",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 575,
         "leftIndentTwips": 575,
         "lineRule": "auto",
@@ -352,13 +494,14 @@
       "heading3": {
         "alignment": "justify",
         "asciiFontName": "黑体",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 720,
         "leftIndentTwips": 720,
         "lineRule": "auto",
@@ -372,13 +515,14 @@
       "heading4": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "黑体",
           "SimHei"
         ],
         "fontName": "黑体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 864,
         "leftIndentTwips": 864,
         "lineRule": "auto",
@@ -392,13 +536,14 @@
       "list1_numbered": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "宋体",
           "SimSun"
         ],
         "fontName": "宋体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "lineRule": "auto",
         "lineSpacing": 1.25,
         "lineSpacingTwips": 300,
@@ -409,13 +554,14 @@
       "list1_plain": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "宋体",
           "SimSun"
         ],
         "fontName": "宋体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 497,
         "leftIndentTwips": 998,
         "lineRule": "auto",
@@ -428,13 +574,14 @@
       "list2_numbered": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "宋体",
           "SimSun"
         ],
         "fontName": "宋体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 425,
         "leftIndentTwips": 1385,
         "lineRule": "auto",
@@ -447,13 +594,14 @@
       "list2_plain": {
         "alignment": "left",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "宋体",
           "SimSun"
         ],
         "fontName": "宋体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "hangingIndentTwips": 499,
         "leftIndentTwips": 1457,
         "lineRule": "auto",
@@ -466,6 +614,7 @@
       "note": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "宋体",
@@ -485,6 +634,7 @@
       "numbered_note": {
         "alignment": "justify",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 640,
         "fontAliases": [
           "宋体",
@@ -504,13 +654,14 @@
       "table_body": {
         "alignment": "center",
         "asciiFontName": "Times New Roman",
+        "bold": false,
         "firstLineIndentTwips": 0,
         "fontAliases": [
           "宋体",
           "SimSun"
         ],
         "fontName": "宋体",
-        "fontSize": 12.0,
+        "fontSize": 12,
         "lineRule": "atLeast",
         "lineSpacing": 0.0,
         "lineSpacingTwips": 0,
@@ -519,8 +670,8 @@
         "styleName": "表正文"
       }
     },
-    "sourceDocument": "technical-file-format-requirements.docx",
-    "sourceDocumentSha256": "0e193da0f16a80afb693382d3bbfac25b1820ccb85b7a8f0c26dc875d48b08f2",
+    "sourceDocument": "wx_template.docx",
+    "sourceDocumentSha256": "889b3f1ba873d0db5373a96c76464885c50d465f9ca6c6b6b43f1ca0efa5a2fe",
     "styles": {
       "3.1注-无编号注": {
         "roleRef": "note"
@@ -553,7 +704,7 @@
         "roleRef": "appendix_title"
       }
     },
-    "version": "2026-05-23"
+    "version": "1.0.0"
   },
-  "version": "2026-05-23.rules.1"
+  "version": "1.0.0"
 }
