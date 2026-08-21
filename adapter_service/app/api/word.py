@@ -3,8 +3,6 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.core.models import (
     DocumentReviewResponseData,
-    FormatReviewResponseData,
-    FormatReviewSummary,
     RewriteResponseData,
     WordDocumentRequest,
 )
@@ -17,13 +15,11 @@ from app.services.word.deterministic_format_review import (
     deterministic_format_review_service,
 )
 from app.services.word.full_document_review import full_document_review_service
-from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.word.rewriter import WordRewriter
 from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
 
 router = APIRouter()
-format_reviewer = WordFormatReviewer()
 rewriter = WordRewriter()
 smart_imitator = WordSmartImitator()
 document_reviewer = WordDocumentReviewer()
@@ -428,27 +424,12 @@ def cancel_document_review_job(job_id: str, resume: bool = False):
 
 
 @router.post("/word/format-review")
-def format_review_word(request: WordDocumentRequest) -> dict:
-    trace_id = new_trace_id("word-format-review")
-    review = format_reviewer.review(request, trace_id=trace_id)
-    payload = FormatReviewResponseData(
-        issues=review["issues"],
-        summary=FormatReviewSummary(**review["summary"]),
+def format_review_word() -> dict:
+    raise AdapterError(
+        "WORD_FORMAT_REVIEW_SYNC_RETIRED",
+        "旧同步格式审查接口已退役，请提交后台格式审查任务。",
+        status_code=410,
     )
-    logger.info(
-        "traceId=%s task=word.format_review templateId=%s issueCount=%s",
-        trace_id,
-        payload.summary.template_id,
-        payload.summary.issue_count,
-    )
-    return {
-        "success": True,
-        "traceId": trace_id,
-        "taskType": "word.format_review",
-        "message": "completed",
-        "data": payload.dict(by_alias=True),
-        "errors": [],
-    }
 
 
 @router.post("/word/format-review/snapshots")

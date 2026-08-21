@@ -1,8 +1,10 @@
 import os
 import importlib.util
+import json
 import tempfile
 import time
 import unittest
+from io import BytesIO
 from pathlib import Path
 
 from app.services.long_task_coordinator import LongTaskCoordinator
@@ -113,48 +115,109 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         config = self.client.get("/config")
         self.assertFalse(config.json()["data"]["features"]["deterministicFormatReviewEnabled"])
 
-    def test_enabled_protocol_runs_read_only_deterministic_rule(self) -> None:
+    def test_old_synchronous_format_review_endpoint_is_retired(self) -> None:
+        response = self.client.post("/word/format-review", json=self._payload())
+
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(
+            response.json()["errors"][0]["code"],
+            "WORD_FORMAT_REVIEW_SYNC_RETIRED",
+        )
+        self.assertIn("后台格式审查任务", response.json()["message"])
+        self.assertFalse(list(Path(self.temp_dir.name).iterdir()))
+
+    def test_enabled_protocol_rejects_the_old_snapshot_shape(self) -> None:
         os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = "1"
 
-        snapshot_response = self.client.post(
+        response = self.client.post(
             "/word/format-review/snapshots", json=self._payload()
         )
-        self.assertEqual(snapshot_response.status_code, 200)
-        snapshot = snapshot_response.json()["data"]
-        self.assertEqual(snapshot["status"], "staged")
-        self.assertEqual(snapshot["paragraphCount"], 1)
-        self.assertTrue(list(Path(self.temp_dir.name).iterdir()))
+        self.assertEqual(response.status_code, 410)
+        self.assertEqual(
+            response.json()["errors"][0]["code"],
+            "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED",
+        )
+        self.assertFalse(list(Path(self.temp_dir.name).iterdir()))
 
-        job_response = self.client.post(
-            "/word/format-review/jobs",
-            json={
-                "snapshotId": snapshot["snapshotId"],
-                "snapshotToken": snapshot["snapshotToken"],
-                "clientJobId": "format-contract-job-1",
+    def _start_v2_job(self, service, job_id: str):
+        identity = {
+            "documentIdSha256": "document-fingerprint",
+            "hostDocumentId": "host-document-1",
+        }
+        session = service.create_snapshot(
+            {
+                "documentId": "format-review-contract.docx",
+                "selectionMode": "document",
+                "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+                "formatFactSchemaVersion": "format_snapshot.v2",
+                "documentIdentity": identity,
+                "editSequence": "1",
+            }
+        )
+        blocks = service._normalize_format_blocks(
+            [
+                {
+                    "blockId": "format-paragraph-1",
+                    "blockType": "paragraph",
+                    "scope": "in_scope",
+                    "paragraphIndex": 1,
+                    "text": "正文内容",
+                    "format": {
+                        "styleName": "Normal",
+                        "fontName": "楷体",
+                        "fontSize": 14,
+                        "alignment": "left",
+                        "lineSpacing": 1.0,
+                        "firstLineIndent": 0,
+                        "dataStatus": "verified",
+                    },
+                }
+            ]
+        )
+        metrics = service._format_metrics(blocks)
+        service.upload_batch(
+            session["snapshotId"],
+            0,
+            {
+                "uploadToken": session["uploadToken"],
+                "batchId": "format-batch-0",
+                "blocks": blocks,
+                "editSequence": "1",
+                **{key: metrics[key] for key in (
+                    "characterCount", "contentSha256", "structureSha256", "formatSha256"
+                )},
             },
         )
-        self.assertEqual(job_response.status_code, 200)
-        job_id = job_response.json()["data"]["jobId"]
-
-        job = None
-        for _ in range(50):
-            job = self.client.get("/word/format-review/jobs/" + job_id).json()["data"]
-            if job["status"] in {"completed", "failed", "cancelled"}:
-                break
-            time.sleep(0.01)
-
-        self.assertIsNotNone(job)
-        self.assertEqual(job["status"], "completed")
-        self.assertEqual(job["result"]["summary"]["provider"], "local")
-        self.assertEqual(job["result"]["summary"]["executionStatus"], "completed")
-        self.assertGreaterEqual(job["result"]["summary"]["issueCount"], 1)
-        self.assertNotIn("changes", job["result"])
-        remaining_files = list(Path(self.temp_dir.name).iterdir())
-        self.assertEqual([path.name for path in remaining_files], ["report-format-contract-job-1.json"])
-        self.assertTrue(job["reportAvailable"])
-
-        config = self.client.get("/config")
-        self.assertTrue(config.json()["data"]["features"]["deterministicFormatReviewEnabled"])
+        verification = {
+            "batchCount": 1,
+            "blockCount": 1,
+            "reviewCharacterCount": metrics["characterCount"],
+            "contentSha256": metrics["contentSha256"],
+            "structureSha256": metrics["structureSha256"],
+            "formatSha256": metrics["formatSha256"],
+            "coverage": metrics["coverage"],
+            "documentIdentity": identity,
+            "editSequence": "1",
+        }
+        committed = service.commit_snapshot(
+            session["snapshotId"],
+            {
+                "uploadToken": session["uploadToken"],
+                **{key: verification[key] for key in (
+                    "batchCount", "blockCount", "reviewCharacterCount",
+                    "contentSha256", "structureSha256", "formatSha256", "coverage"
+                )},
+                "verification": verification,
+            },
+        )
+        return service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": job_id,
+            },
+            "format-auth-freeze-trace",
+        )
 
     def test_job_freezes_format_review_auth_at_submission(self) -> None:
         os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = "1"
@@ -166,24 +229,11 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         )
         word_api.deterministic_format_review_service = self.service
 
-        snapshot_response = self.client.post(
-            "/word/format-review/snapshots", json=self._payload()
-        )
-        snapshot = snapshot_response.json()["data"]
-        job_response = self.client.post(
-            "/word/format-review/jobs",
-            json={
-                "snapshotId": snapshot["snapshotId"],
-                "snapshotToken": snapshot["snapshotToken"],
-                "clientJobId": "format-auth-freeze-job",
-            },
-        )
-        self.assertEqual(job_response.status_code, 200)
+        job_response = self._start_v2_job(self.service, "format-auth-freeze-job")
+        self.assertIn(job_response["status"], {"queued", "running", "completed"})
 
         for _ in range(50):
-            job = self.client.get(
-                "/word/format-review/jobs/format-auth-freeze-job"
-            ).json()["data"]
+            job = self.service.get_job("format-auth-freeze-job")
             if job["status"] in {"completed", "failed", "cancelled"}:
                 break
             time.sleep(0.01)
@@ -201,6 +251,28 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         self.assertEqual(report["summary"]["modelConfigurationVersion"], 7)
         self.assertEqual(report["summary"]["accessMethod"], "direct_model")
         self.assertNotIn("apiKey", report["summary"])
+
+
+class StandaloneFormatReviewRetirementTests(unittest.TestCase):
+    def test_standalone_sync_format_review_returns_retirement_envelope(self) -> None:
+        import standalone_adapter
+
+        captured = {}
+        raw = json.dumps({"content": {"plainText": "旧同步正文"}}).encode("utf-8")
+        handler = object.__new__(standalone_adapter.Handler)
+        handler.path = "/word/format-review"
+        handler.headers = {"Content-Length": str(len(raw))}
+        handler.rfile = BytesIO(raw)
+        handler._write = lambda status, body: captured.update(status=status, body=body)
+
+        handler.do_POST()
+
+        self.assertEqual(captured["status"], 410)
+        self.assertEqual(
+            captured["body"]["errors"][0]["code"],
+            "WORD_FORMAT_REVIEW_SYNC_RETIRED",
+        )
+        self.assertIn("后台格式审查任务", captured["body"]["message"])
 
 
 if __name__ == "__main__":

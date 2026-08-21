@@ -1731,22 +1731,6 @@
     };
   }
 
-  var FORMAT_REVIEW_GROUP_ORDER = [
-    "page_setup",
-    "heading",
-    "body_text",
-    "paragraph",
-    "caption_note",
-    "other"
-  ];
-  var FORMAT_REVIEW_GROUP_TEXT = {
-    page_setup: "页面设置",
-    heading: "标题层级",
-    body_text: "正文格式",
-    paragraph: "段落格式",
-    caption_note: "图表题/注释",
-    other: "其他格式项"
-  };
   var FORMAT_REVIEW_ROLE_TEXT = {
     document_title: "文档标题",
     heading1: "一级标题",
@@ -1778,21 +1762,6 @@
     alignment: "对齐方式",
     first_line_indent: "首行缩进",
     "structure.heading_hierarchy": "标题层级"
-  };
-  var FORMAT_REVIEW_TEMPLATE_TEXT = {
-    "technical-file-format-requirements": "技术文件格式及书写要求",
-    "general-office": "通用办公文档格式"
-  };
-  var FORMAT_REVIEW_STYLE_TEXT = {
-    Normal: "正文样式（Normal）",
-    Body: "正文样式（Body）",
-    body: "正文样式",
-    "heading 1": "一级标题样式（heading 1）",
-    "heading 2": "二级标题样式（heading 2）",
-    "heading 3": "三级标题样式（heading 3）",
-    "heading 4": "四级标题样式（heading 4）",
-    Caption: "图表题样式（Caption）",
-    caption: "图表题样式（caption）"
   };
   var FORMAT_REVIEW_ALIGNMENT_TEXT = {
     left: "左对齐",
@@ -1835,100 +1804,6 @@
     "10.5": "五号",
     "9": "小五"
   };
-
-  function formatReviewGroupItems(items, getKey) {
-    var grouped = {};
-    (items || []).forEach(function (item) {
-      var key = getKey(item) || "other";
-      if (!grouped[key]) {
-        grouped[key] = [];
-      }
-      grouped[key].push(item);
-    });
-    return grouped;
-  }
-
-  function getFormatReviewGroup(issue) {
-    var ruleId = String((issue && issue.ruleId) || "");
-    var role = String((issue && issue.role) || "");
-    if (ruleId === "page_setup") {
-      return "page_setup";
-    }
-    if (role.indexOf("heading") >= 0 || role.indexOf("title") >= 0) {
-      return "heading";
-    }
-    if (ruleId === "style_name" || ruleId === "font_name" || ruleId === "font_size") {
-      return "body_text";
-    }
-    if (ruleId === "line_spacing" || ruleId === "alignment" || ruleId === "first_line_indent") {
-      return "paragraph";
-    }
-    if (role.indexOf("caption") >= 0 || role.indexOf("note") >= 0 || ruleId.indexOf("caption") >= 0 || ruleId.indexOf("note") >= 0) {
-      return "caption_note";
-    }
-    return "other";
-  }
-
-  function formatAiFallbackReason(reason) {
-    var reasonText = {
-      no_paragraphs: "未读取到正文段落，未调用模型后台；请确认当前文档对象能暴露正文段落或全文文本。",
-      no_candidates: "没有需要模型确认的模糊候选，未调用模型后台。",
-      provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
-      format_semantic_protocol_not_ready: "模型语义协议尚未就绪，已使用本地模板规则。",
-      model_capability_unknown: "模型能力状态未知，已使用本地模板规则。",
-      dify_response_not_role_json: "模型后台未返回段落角色 JSON，已使用本地模板规则。",
-      provider_request_failed: "模型后台请求失败，已使用本地模板规则。",
-      format_semantic_response_invalid: "模型后台响应无法解析或不符合协议，已使用本地模板规则。",
-      format_semantic_candidate_out_of_range: "模型后台返回了不在候选范围内的结果，已使用本地模板规则。",
-      format_semantic_low_confidence: "模型后台结果置信度不足，已使用本地模板规则。",
-      format_semantic_zero_accepted: "模型已调用但没有接受任何结果，已使用本地模板规则。",
-      dify_response_no_valid_roles: "模型后台返回的角色无效，已使用本地模板规则。",
-      dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。",
-      ai_budget_limited: "文档段落较多，AI 角色识别仅处理前 40 段；其余段落已使用本地模板规则。",
-      semantic_phase_timeout: "模型语义增强处理超时，已使用本地模板规则。"
-    };
-    return reasonText[reason] || (reason ? "模型语义增强未完成，已使用本地模板规则。" : "");
-  }
-
-  function formatReviewSemanticStatus(value) {
-    var labels = {
-      not_needed: "无需语义补充",
-      completed: "语义增强已完成",
-      degraded: "未完整生效",
-      partial: "部分完成",
-      not_ready: "未就绪"
-    };
-    return labels[String(value || "")] || "未记录";
-  }
-
-  function formatReviewAccessMethod(value) {
-    var labels = {
-      workflow_platform: "平台工作流",
-      direct_model: "模型直连"
-    };
-    return labels[String(value || "")] || "未记录";
-  }
-
-  function appendFormatReviewModelDiagnostics(lines, summary) {
-    var reason = formatAiFallbackReason(summary.aiFallbackReason);
-    var attempted = summary.aiAttempted
-      ? "已尝试"
-      : (summary.aiFallbackReason === "no_candidates" ? "未尝试（无候选）" : "未尝试");
-    lines.push("- 模型配置：" + (summary.modelConfigurationName || "未记录"));
-    lines.push("- 配置 ID：" + (summary.modelConfigurationId || "未记录"));
-    lines.push("- 配置修订：" + (summary.modelConfigurationVersion || "未记录"));
-    lines.push("- 接入方式：" + formatReviewAccessMethod(summary.accessMethod));
-    lines.push("- 语义增强状态：" + formatReviewSemanticStatus(summary.semanticStatus));
-    lines.push(
-      "- 模型调用事实：" + attempted +
-      "，候选 " + Number(summary.aiCandidateCount || 0) +
-      "、调用 " + Number(summary.aiCallCount || 0) +
-      "、接受 " + Number(summary.aiAcceptedCount || 0)
-    );
-    if (reason) {
-      lines.push("- 语义增强降级原因：" + reason);
-    }
-  }
 
   function formatFormatFactDiagnostic(fact) {
     if (!fact || typeof fact !== "object") {
@@ -1993,10 +1868,6 @@
     return FORMAT_REVIEW_RULE_TEXT[String(ruleId || "")] || "其他格式项";
   }
 
-  function formatReviewTemplate(templateId) {
-    return FORMAT_REVIEW_TEMPLATE_TEXT[String(templateId || "")] || "当前格式模板";
-  }
-
   var DETERMINISTIC_FORMAT_REVIEW_STATUS_TEXT = {
     completed: "已完成",
     failed: "已失败",
@@ -2034,6 +1905,23 @@
     Caption: "图表题样式",
     caption: "图表题样式"
   };
+
+  function parseFormatReviewNumber(value) {
+    var match = String(value || "").match(/-?\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : null;
+  }
+
+  function formatReviewFontName(value) {
+    var raw = String(value || "").trim();
+    var normalized = raw.toLowerCase();
+    return FORMAT_REVIEW_FONT_TEXT[normalized] || FORMAT_REVIEW_FONT_TEXT[raw] || raw || "未读取";
+  }
+
+  function formatReviewAlignment(value) {
+    var raw = String(value || "").trim();
+    var key = raw.toLowerCase();
+    return FORMAT_REVIEW_ALIGNMENT_TEXT[key] || FORMAT_REVIEW_ALIGNMENT_TEXT[raw] || raw || "未读取";
+  }
 
   function formatDeterministicFormatReviewStatus(value, fallback) {
     return DETERMINISTIC_FORMAT_REVIEW_STATUS_TEXT[String(value || "")] || fallback || "无法判定";
@@ -2255,7 +2143,7 @@
     if (isFinite(pageNumber) && pageNumber > 0) {
       parts.push("第 " + pageNumber + " 页");
     }
-    return parts.length ? parts.join("；") : "位置待确认";
+    return parts.length ? parts.join("；") : "无法验证位置";
   }
 
   function formatDeterministicReadableFormatValue(ruleId, value, isExpected, diagnostics, issue) {
@@ -2419,320 +2307,6 @@
       lines.push("- 建议：" + formatDeterministicFormatReviewSuggestion(issue));
       lines.push("");
     });
-    return lines.join("\n").trim();
-  }
-
-  function parseFormatReviewNumber(value) {
-    var match = String(value || "").match(/-?\d+(?:\.\d+)?/);
-    return match ? Number(match[0]) : null;
-  }
-
-  function formatReviewFontName(value) {
-    var raw = String(value || "").trim();
-    var normalized = raw.toLowerCase();
-    return FORMAT_REVIEW_FONT_TEXT[normalized] || FORMAT_REVIEW_FONT_TEXT[raw] || raw || "未读取";
-  }
-
-  function formatReviewFontSize(value) {
-    var numeric = parseFormatReviewNumber(value);
-    var key;
-    var label;
-    if (numeric === null || isNaN(numeric)) {
-      return String(value || "").trim() || "未读取";
-    }
-    key = String(Math.round(numeric * 10) / 10).replace(/\.0$/, "");
-    label = FORMAT_REVIEW_SIZE_TEXT[key];
-    return label ? label + "（" + key + "pt）" : key + "pt";
-  }
-
-  function formatReviewStyleName(value) {
-    var raw = String(value || "").trim();
-    return FORMAT_REVIEW_STYLE_TEXT[raw] || raw || "未读取";
-  }
-
-  function formatReviewAlignment(value) {
-    var raw = String(value || "").trim();
-    var key = raw.toLowerCase();
-    return FORMAT_REVIEW_ALIGNMENT_TEXT[key] || FORMAT_REVIEW_ALIGNMENT_TEXT[raw] || raw || "未读取";
-  }
-
-  function formatReviewLineSpacing(value) {
-    var numeric = parseFormatReviewNumber(value);
-    if (numeric === null || isNaN(numeric)) {
-      return String(value || "").trim() || "未读取";
-    }
-    if (Math.abs(numeric - 1) < 0.01) {
-      return "单倍行距（1倍）";
-    }
-    if (Math.abs(numeric - 1.5) < 0.01) {
-      return "1.5 倍行距";
-    }
-    return numeric + " 倍行距";
-  }
-
-  function formatReviewIndent(value) {
-    var numeric = parseFormatReviewNumber(value);
-    if (numeric === null || isNaN(numeric)) {
-      return String(value || "").trim() || "未读取";
-    }
-    if (Math.abs(numeric) < 0.01) {
-      return "无首行缩进";
-    }
-    if (Math.abs(numeric - 480) <= 20 || Math.abs(numeric - 640) <= 20) {
-      return "首行缩进 2 字符（约 " + numeric + " twips）";
-    }
-    return "首行缩进约 " + numeric + " twips";
-  }
-
-  function formatReviewPageSetup(value) {
-    var raw = String(value || "").trim();
-    if (!raw || raw === "{}") {
-      return "未读取";
-    }
-    if (raw.charAt(0) !== "{") {
-      return raw;
-    }
-    try {
-      var data = JSON.parse(raw);
-      var parts = [];
-      if (data.paperSize || data.PaperSize) {
-        parts.push("纸张：" + (data.paperSize || data.PaperSize));
-      }
-      if (data.marginTop || data.marginBottom || data.marginLeft || data.marginRight) {
-        parts.push(
-          "页边距：上 " + (data.marginTop || "未读") +
-          "、下 " + (data.marginBottom || "未读") +
-          "、左 " + (data.marginLeft || "未读") +
-          "、右 " + (data.marginRight || "未读")
-        );
-      }
-      return parts.length ? parts.join("；") : raw;
-    } catch (error) {
-      return raw;
-    }
-  }
-
-  function formatReviewValue(ruleId, value, isExpected) {
-    var rule = String(ruleId || "");
-    if (rule === "font_name") {
-      return isExpected ? "宋体" : formatReviewFontName(value);
-    }
-    if (rule === "font_size") {
-      return isExpected ? "小四（12pt）" : formatReviewFontSize(value);
-    }
-    if (rule === "style_name") {
-      return formatReviewStyleName(value);
-    }
-    if (rule === "alignment") {
-      return formatReviewAlignment(value);
-    }
-    if (rule === "line_spacing") {
-      return formatReviewLineSpacing(value);
-    }
-    if (rule === "first_line_indent") {
-      return formatReviewIndent(value);
-    }
-    if (rule === "page_setup") {
-      return isExpected ? "A4 页面及模板页边距" : formatReviewPageSetup(value);
-    }
-    return String(value || "").trim() || (isExpected ? "按模板要求" : "未读取");
-  }
-
-  function normalizeFormatReviewSuggestion(issue) {
-    var rule = String((issue && issue.ruleId) || "");
-    var suggestion = String((issue && issue.suggestion) || "").trim();
-    if (rule === "structure.heading_hierarchy") {
-      var currentLevel = Number(issue && (issue.currentLevel || issue.currentValue));
-      var previousLevel = Number(issue && issue.previousLevel);
-      if (isFinite(previousLevel) && previousLevel > 0 && isFinite(currentLevel) && currentLevel > 0) {
-        return "请补齐 " + (previousLevel + 1) + " 级标题，再保留当前 " + currentLevel + " 级标题。";
-      }
-      return suggestion || "请先补充一级标题，再使用当前标题级别。";
-    }
-    if (rule === "font_size") {
-      return "字号调整为小四。";
-    }
-    if (rule === "font_name") {
-      return "字体调整为宋体。";
-    }
-    if (rule === "alignment") {
-      var expected = formatReviewAlignment(issue && issue.expectedValue);
-      return "对齐方式调整为" + expected + "。";
-    }
-    if (rule === "style_name") {
-      return "按" + formatReviewRole(issue && issue.role) + "套用模板样式。";
-    }
-    if (rule === "line_spacing") {
-      var lineSpacing = parseFormatReviewNumber(issue && issue.expectedValue);
-      if (lineSpacing !== null && !isNaN(lineSpacing)) {
-        if (Math.abs(lineSpacing - 1) < 0.01) {
-          return "行距调整为单倍行距。";
-        }
-        return "行距调整为 " + lineSpacing + " 倍。";
-      }
-      return "按模板要求调整行距。";
-    }
-    if (rule === "first_line_indent") {
-      return "按模板要求调整首行缩进。";
-    }
-    if (rule === "page_setup") {
-      return suggestion.replace(/^建议/, "") || "按模板设置页面和页边距。";
-    }
-    return suggestion || "按模板要求调整。";
-  }
-
-  function formatReviewParagraphLabel(issue) {
-    var paragraphIndex;
-    if (!issue || issue.ruleId === "page_setup") {
-      return "页面";
-    }
-    paragraphIndex = Number(issue.paragraphIndex);
-    if (!isFinite(paragraphIndex) || Math.floor(paragraphIndex) !== paragraphIndex ||
-        paragraphIndex <= 0 || issue.anchorVerification !== "verified") {
-      return "位置待确认";
-    }
-    return "P" + paragraphIndex;
-  }
-
-  function formatReviewIssueTitle(issue) {
-    return formatReviewParagraphLabel(issue) + " " +
-      formatReviewRole(issue.role) + " - " +
-      (issue.message || (formatReviewRule(issue.ruleId) + "不符合模板要求。")).replace(/。$/, "");
-  }
-
-  function describeFormatReviewProvider(value) {
-    var provider = String(value || "local");
-    if (provider === "local") {
-      return "本地规则";
-    }
-    if (provider === "mock") {
-      return "模拟服务";
-    }
-    if (provider.indexOf("enterprise-dify-chat") === 0) {
-      return "AI 辅助 + 本地规则";
-    }
-    return "外部服务";
-  }
-
-  function summarizeFormatReviewDistribution(grouped) {
-    var parts = [];
-    FORMAT_REVIEW_GROUP_ORDER.forEach(function (group) {
-      var count = grouped[group] ? grouped[group].length : 0;
-      if (count) {
-        parts.push(FORMAT_REVIEW_GROUP_TEXT[group] + " " + count);
-      }
-    });
-    return parts.length ? parts.join("、") : "无";
-  }
-
-  function renderReadableFormatReview(data) {
-    var summary = data && data.summary ? data.summary : {};
-    var issues = data && data.issues ? data.issues : [];
-    var grouped = formatReviewGroupItems(issues, getFormatReviewGroup);
-    var lines = [
-      "格式审查结果",
-      "",
-      "## 审查概览",
-      "",
-      "- 检查范围：" + (summary.scope === "selection" ? "选中内容" : "全文"),
-      "- 问题总数：" + (summary.issueCount || issues.length || 0),
-      "- 扫描段落：" + (typeof summary.paragraphCount !== "undefined" ? summary.paragraphCount : "未统计"),
-      "- 问题分布：" + summarizeFormatReviewDistribution(grouped),
-      "- 识别来源：" + describeFormatReviewProvider(summary.provider),
-      "",
-      "以下仅显示需要调整的格式项，正文内容不会在检查中改写。",
-      ""
-    ];
-    var coverage = summary.coverage || {};
-    if (Object.keys(coverage).length) {
-      lines.splice(7, 0,
-        "- 容量档位：" + (summary.capacityTier || "standard"),
-        "- 格式区段：" + Number(coverage.formatSegmentCount || 0),
-        "- 表格单元格：" + Number(coverage.tableCellCount || 0),
-        "- 不支持对象：" + Number(coverage.unsupportedObjectCount || 0),
-        "- 覆盖状态：" + (summary.coverageStatus === "partial" || summary.coverageStatus === "insufficient" ? "数据不足" : "已完成")
-      );
-      if (coverage.headerFooter) {
-        ["header", "footer"].forEach(function (area) {
-          var item = coverage.headerFooter[area];
-          if (item && item.status === "unavailable") {
-            lines.push("- " + (area === "header" ? "页眉" : "页脚") + "：读取失败，已标记数据不足");
-          }
-        });
-      }
-    }
-
-    if (!issues.length) {
-      lines.push("当前范围未发现明显格式问题。");
-      lines.push("");
-      lines.push("## 诊断信息");
-      lines.push("");
-      lines.push("- 模板：" + formatReviewTemplate(summary.templateId));
-      lines.push("- 识别来源：" + describeFormatReviewProvider(summary.provider));
-      appendFormatReviewModelDiagnostics(lines, summary);
-      appendFormatFactDiagnostics(lines, summary.formatFactDiagnostics);
-      return lines.join("\n").trim();
-    }
-
-    lines.push("## 优先处理清单");
-    lines.push("");
-    lines.push("| 段落 | 问题类型 | 当前值 | 模板要求 | 建议 |");
-    lines.push("| --- | --- | --- | --- | --- |");
-    issues.slice(0, 12).forEach(function (issue) {
-      lines.push(
-        "| " + formatReviewParagraphLabel(issue) +
-        " | " + formatReviewRule(issue.ruleId) +
-        " | " + formatReviewValue(issue.ruleId, issue.currentValue, false) +
-        " | " + formatReviewValue(issue.ruleId, issue.expectedValue, true) +
-        " | " + normalizeFormatReviewSuggestion(issue) +
-        " |"
-      );
-    });
-    if (issues.length > 12) {
-      lines.push("");
-      lines.push("优先处理清单仅展示前 12 项；完整问题见下方详细分组。");
-    }
-    lines.push("");
-    lines.push("## 详细问题");
-    lines.push("");
-    FORMAT_REVIEW_GROUP_ORDER.forEach(function (group) {
-      var groupIssues = grouped[group] || [];
-      if (!groupIssues.length) {
-        return;
-      }
-      lines.push("### " + FORMAT_REVIEW_GROUP_TEXT[group] + "（" + groupIssues.length + "）");
-      lines.push("");
-      groupIssues.forEach(function (issue) {
-        lines.push("#### " + formatReviewIssueTitle(issue));
-        lines.push("- 现状：" + formatReviewValue(issue.ruleId, issue.currentValue, false));
-        lines.push("- 要求：" + formatReviewValue(issue.ruleId, issue.expectedValue, true));
-        lines.push("- 建议：" + normalizeFormatReviewSuggestion(issue));
-        lines.push("");
-      });
-    });
-
-    lines.push("## 诊断信息");
-    lines.push("");
-    lines.push("- 模板：" + formatReviewTemplate(summary.templateId));
-    lines.push("- 识别来源：" + describeFormatReviewProvider(summary.provider));
-    appendFormatReviewModelDiagnostics(lines, summary);
-    appendFormatFactDiagnostics(lines, summary.formatFactDiagnostics);
-    if (typeof summary.aiClassifiedParagraphCount !== "undefined") {
-      lines.push(
-        "- AI 识别段落：" + (summary.aiClassifiedParagraphCount || 0) +
-        "；本地兜底段落：" + (summary.localFallbackParagraphCount || 0)
-      );
-    }
-    if (summary.aiInvalidRoleCount || summary.aiOutOfBatchCount) {
-      lines.push(
-        "- AI 无效角色：" + (summary.aiInvalidRoleCount || 0) +
-        "；越界段落：" + (summary.aiOutOfBatchCount || 0)
-      );
-    }
-    var aiFallbackText = formatAiFallbackReason(summary.aiFallbackReason);
-    if (aiFallbackText) {
-      lines.push("- AI 兜底原因：" + aiFallbackText);
-    }
     return lines.join("\n").trim();
   }
 
@@ -4615,13 +4189,11 @@
     shouldUseStructuredSmartWriteResult: shouldUseStructuredSmartWriteResult,
     formatSmartWriteResult: formatSmartWriteResult,
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
-    renderReadableFormatReview: renderReadableFormatReview,
     renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,
     formatReviewRule: formatReviewRule,
     formatDeterministicFormatReviewIssueLocation: formatDeterministicFormatReviewIssueLocation,
-    formatReviewParagraphLabel: formatReviewParagraphLabel,
     buildDocumentReviewRecord: buildDocumentReviewRecord,
     getEffectiveSelectionText: getEffectiveSelectionText,
     getWritableSelection: getWritableSelection,

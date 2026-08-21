@@ -25,8 +25,6 @@ from app.core.models import (
     ExcelAnalysisResponseData,
     ExcelFormulaAssistantRequest,
     ExcelFormulaAssistantResponseData,
-    FormatReviewResponseData,
-    FormatReviewSummary,
     PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
     PptSlideAssistantResponseData,
@@ -77,7 +75,6 @@ from app.services.word.deterministic_format_review import (
     deterministic_format_review_service,
 )
 from app.services.word.full_document_review import full_document_review_service
-from app.services.word.format_reviewer import WordFormatReviewer
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
 from app.services.workflow_profiles import WorkflowProfileError
@@ -461,18 +458,6 @@ def request_validation_envelope(
             }
         ],
     )
-
-
-def format_review(payload):
-    request = parse_word_request(payload)
-    data = WordFormatReviewer().review(request, trace_id="standalone-word-format-review")
-    response = FormatReviewResponseData(
-        summary=FormatReviewSummary(**data["summary"]),
-        issues=data["issues"],
-    )
-    if hasattr(response, "model_dump"):
-        return response.model_dump(by_alias=True)
-    return response.dict(by_alias=True)
 
 
 def excel_analysis(payload):
@@ -2629,7 +2614,22 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/word/format-review":
-            self._write(200, envelope("standalone-word-format-review", "word.format_review", format_review(payload)))
+            message = "旧同步格式审查接口已退役，请提交后台格式审查任务。"
+            self._write(
+                410,
+                envelope(
+                    "standalone-word-format-review",
+                    "word.format_review",
+                    success=False,
+                    message=message,
+                    errors=[
+                        {
+                            "code": "WORD_FORMAT_REVIEW_SYNC_RETIRED",
+                            "message": message,
+                        }
+                    ],
+                ),
+            )
             return
 
         if path == "/excel/analysis":

@@ -382,10 +382,10 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/word/document-review` | 文档审查，检查错别字、语言表达、逻辑、通畅性和文档类型专业性 |
 | `POST` | `/word/document-review/jobs` | 启动后台文档审查任务，适配模型后台慢响应 |
 | `GET` | `/word/document-review/jobs/{jobId}` | 轮询后台文档审查任务状态，直到完成或失败 |
-| `POST` | `/word/format-review` | 格式审查，按标准模板输出格式合规检查意见 |
-| `POST` | `/word/format-review/snapshots` | （开关控制）创建小型只读确定性格式审查快照 |
-| `POST` | `/word/format-review/jobs` | （开关控制）提交确定性格式审查后台任务 |
-| `GET` | `/word/format-review/jobs/{jobId}` | （开关控制）轮询确定性格式审查任务状态和结构化结果 |
+| `POST` | `/word/format-review` | 已退役的兼容接口，始终返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` |
+| `POST` | `/word/format-review/snapshots` | （开关控制）创建 v2 只读确定性格式审查快照 |
+| `POST` | `/word/format-review/jobs` | （开关控制）提交 v2 确定性格式审查后台任务 |
+| `GET` | `/word/format-review/jobs/{jobId}` | （开关控制）轮询 v2 确定性格式审查任务状态和结构化结果 |
 | `DELETE` | `/word/format-review/snapshots/{snapshotId}` | （开关控制）删除未提交的确定性格式审查快照 |
 | `POST` | `/excel/analysis` | 智能分析，只读分析选区或当前工作表已用范围 |
 | `POST` | `/excel/analysis/jobs` | 提交可恢复的智能分析后台任务 |
