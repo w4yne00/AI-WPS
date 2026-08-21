@@ -3,6 +3,7 @@ from io import BytesIO
 import os
 from pathlib import Path
 import stat
+import struct
 import tempfile
 import threading
 import time
@@ -35,6 +36,10 @@ CONTENT_TYPES_XML = b'''<?xml version="1.0" encoding="UTF-8"?>
 </Types>'''
 DOCUMENT_XML = b'''<?xml version="1.0" encoding="UTF-8"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body /></w:document>'''
+STYLES_XML = b'''<?xml version="1.0" encoding="UTF-8"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="2"><w:name w:val="heading 1" /></w:style>
+</w:styles>'''
 
 
 def build_docx(*names, contents=None):
@@ -48,6 +53,49 @@ def build_docx(*names, contents=None):
         for name in names:
             archive.writestr(name, part_contents.get(name, b"<root />"))
     return output.getvalue()
+
+
+def build_docx_entries(entries):
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w") as archive:
+        for name, content in entries:
+            archive.writestr(name, content)
+    return output.getvalue()
+
+
+def mutate_central_directory_entry(content, member_name, mutator):
+    data = bytearray(content)
+    offset = 0
+    while True:
+        offset = data.find(b"PK\x01\x02", offset)
+        if offset < 0:
+            raise AssertionError("central directory member not found")
+        name_length, extra_length, comment_length = struct.unpack_from(
+            "<HHH", data, offset + 28
+        )
+        name_start = offset + 46
+        name_end = name_start + name_length
+        name = bytes(data[name_start:name_end]).decode("utf-8")
+        if name == member_name:
+            mutator(data, offset)
+            return bytes(data)
+        offset = name_end + extra_length + comment_length
+
+
+def corrupt_zip_member_crc(content, member_name):
+    return mutate_central_directory_entry(
+        content,
+        member_name,
+        lambda data, offset: struct.pack_into("<I", data, offset + 16, 0),
+    )
+
+
+def encrypt_zip_member_flag(content, member_name):
+    def set_encrypted_flag(data, offset):
+        flags = struct.unpack_from("<H", data, offset + 8)[0]
+        struct.pack_into("<H", data, offset + 8, flags | 0x1)
+
+    return mutate_central_directory_entry(content, member_name, set_encrypted_flag)
 
 
 class PptDocumentModelTests(unittest.TestCase):
@@ -249,6 +297,25 @@ class PptDocumentFileStoreTests(unittest.TestCase):
         self.assertEqual(staged.extension, "docx")
         self.assertEqual(staged.size_bytes, len(content))
 
+    def test_store_records_outline_fallback_when_styles_are_missing(self):
+        content = build_docx("[Content_Types].xml", "word/document.xml")
+
+        staged_payload = self._store("source.docx", content)
+
+        self.assertEqual(staged_payload["styleCapability"], "outline_fallback")
+
+    def test_store_records_styles_xml_capability_when_styles_are_present(self):
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            "word/styles.xml",
+            contents={"word/styles.xml": STYLES_XML},
+        )
+
+        staged_payload = self._store("source.docx", content)
+
+        self.assertEqual(staged_payload["styleCapability"], "styles_xml")
+
     def test_store_rejects_docx_with_invalid_required_xml(self):
         content = build_docx(
             "[Content_Types].xml",
@@ -260,6 +327,156 @@ class PptDocumentFileStoreTests(unittest.TestCase):
         )
 
         self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_malformed_or_entity_bearing_styles_xml(self):
+        payloads = (
+            b"not-xml",
+            b"<!DOCTYPE styles><w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" />",
+            b"<!DOCTYPE styles [<!ENTITY xxe SYSTEM \"file:///etc/passwd\">]><w:styles xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\"><w:name>&xxe;</w:name></w:styles>",
+        )
+        for styles_xml in payloads:
+            with self.subTest(styles_xml=styles_xml[:20]):
+                content = build_docx(
+                    "[Content_Types].xml",
+                    "word/document.xml",
+                    "word/styles.xml",
+                    contents={"word/styles.xml": styles_xml},
+                )
+                self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_corrupt_zip_crc_before_staging(self):
+        content = build_docx("[Content_Types].xml", "word/document.xml")
+        content = corrupt_zip_member_crc(content, "word/document.xml")
+
+        self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_store_rejects_encrypted_zip_members_before_staging(self):
+        content = build_docx("[Content_Types].xml", "word/document.xml")
+        content = encrypt_zip_member_flag(content, "word/document.xml")
+
+        self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_store_rejects_duplicate_key_parts_without_creating_staged_files(self):
+        content = build_docx_entries(
+            (
+                ("[Content_Types].xml", CONTENT_TYPES_XML),
+                ("word/document.xml", DOCUMENT_XML),
+                ("word/document.xml", DOCUMENT_XML),
+            )
+        )
+
+        self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_store_rejects_unsafe_opc_member_paths_without_creating_staged_files(self):
+        for unsafe_name in ("../outside.xml", "/absolute.xml", "C:/outside.xml", "word\\document.xml"):
+            with self.subTest(unsafe_name=unsafe_name):
+                content = build_docx(
+                    "[Content_Types].xml",
+                    "word/document.xml",
+                    unsafe_name,
+                )
+                self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+                self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_store_rejects_external_relationships(self):
+        relationships = b'''<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="external" Target="https://example.invalid/" TargetMode="External" />
+</Relationships>'''
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            "_rels/.rels",
+            contents={"_rels/.rels": relationships},
+        )
+
+        self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_accepts_internal_root_relationships(self):
+        relationships = b'''<?xml version="1.0" encoding="UTF-8"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="officeDocument" Target="word/document.xml" />
+</Relationships>'''
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            "_rels/.rels",
+            contents={"_rels/.rels": relationships},
+        )
+
+        staged_payload = self._store("source.docx", content)
+
+        self.assertEqual(staged_payload["extension"], "docx")
+
+    def test_store_rejects_styles_inheritance_cycles(self):
+        styles_xml = b'''<?xml version="1.0" encoding="UTF-8"?>
+<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:style w:type="paragraph" w:styleId="a"><w:basedOn w:val="b" /></w:style>
+  <w:style w:type="paragraph" w:styleId="b"><w:basedOn w:val="a" /></w:style>
+</w:styles>'''
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            "word/styles.xml",
+            contents={"word/styles.xml": styles_xml},
+        )
+
+        self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_xml_element_budget_overflow(self):
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            contents={"word/document.xml": DOCUMENT_XML},
+        )
+
+        with patch("app.services.ppt.document_files.PPT_DOCX_MAX_XML_ELEMENTS", 1):
+            self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_media_that_exceeds_the_shared_uncompressed_budget(self):
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            "word/media/image1.png",
+            contents={"word/media/image1.png": b"media" * 100},
+        )
+
+        with patch("app.services.ppt.document_files.PPT_DOCX_MAX_UNCOMPRESSED_BYTES", 20):
+            self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_relationship_count_over_budget(self):
+        relationships = "".join(
+            '<Relationship Id="r{0}" Type="internal" Target="word/document.xml" />'.format(index)
+            for index in range(3)
+        )
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            "_rels/.rels",
+            contents={
+                "_rels/.rels": (
+                    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{0}</Relationships>'.format(
+                        relationships
+                    )
+                ).encode("utf-8")
+            },
+        )
+
+        with patch("app.services.ppt.document_files.PPT_DOCX_MAX_RELATIONSHIPS", 2):
+            self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
+
+    def test_store_rejects_suspicious_compression_ratio(self):
+        content = build_docx(
+            "[Content_Types].xml",
+            "word/document.xml",
+            contents={"word/document.xml": b"A" * 8192},
+        )
+
+        with patch("app.services.ppt.document_files.PPT_DOCX_MAX_COMPRESSION_RATIO", 2):
+            self.assert_store_error("PPT_DOCUMENT_INVALID", "source.docx", content)
 
     def test_store_rejects_docx_over_uncompressed_budget(self):
         content = build_docx("[Content_Types].xml", "word/document.xml")

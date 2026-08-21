@@ -1,9 +1,9 @@
 import re
-import zipfile
 from pathlib import Path
 from xml.etree import ElementTree
 
 from app.core.errors import AdapterError
+from app.services.ppt.docx_security import DocxSecurityError, validate_docx_bytes
 
 
 MAX_EXTRACTED_DOCUMENT_CHARACTERS = 200000
@@ -47,16 +47,16 @@ def extract_staged_document_text(staged_document) -> str:
 
 def _extract_docx(path: Path) -> str:
     try:
-        with zipfile.ZipFile(str(path)) as archive:
-            raw = archive.read("word/document.xml")
-    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        content = path.read_bytes()
+        validated = validate_docx_bytes(content)
+    except (DocxSecurityError, OSError, ValueError) as exc:
         raise AdapterError(
             "PPT_DOCUMENT_EXTRACT_FAILED",
-            "Word 文档正文读取失败，请重新选择有效文件。",
+            "Word 文档安全校验或正文读取失败，请重新选择有效文件。",
             status_code=400,
         ) from exc
     try:
-        root = ElementTree.fromstring(raw)
+        root = ElementTree.fromstring(validated.document_xml)
     except ElementTree.ParseError as exc:
         raise AdapterError(
             "PPT_DOCUMENT_EXTRACT_FAILED",
@@ -69,7 +69,7 @@ def _extract_docx(path: Path) -> str:
     blocks = []
     for child in body:
         if child.tag == "{0}p".format(_W):
-            paragraph = _paragraph_text(child)
+            paragraph = _paragraph_text(child, validated.style_names)
             if paragraph:
                 blocks.append(paragraph)
         elif child.tag == "{0}tbl".format(_W):
@@ -79,24 +79,42 @@ def _extract_docx(path: Path) -> str:
     return "\n\n".join(blocks)
 
 
-def _paragraph_text(paragraph) -> str:
+def _paragraph_text(paragraph, style_names=None) -> str:
     text = "".join(node.text or "" for node in paragraph.iter("{0}t".format(_W))).strip()
     if not text:
         return ""
     properties = paragraph.find("{0}pPr".format(_W))
     style_value = ""
     is_numbered = False
+    outline_level = None
     if properties is not None:
         style = properties.find("{0}pStyle".format(_W))
         if style is not None:
             style_value = str(style.attrib.get("{0}val".format(_W), ""))
         is_numbered = properties.find("{0}numPr".format(_W)) is not None
-    heading_match = re.search(r"(?:Heading|标题)\s*([1-6])", style_value, re.IGNORECASE)
-    if heading_match:
-        return "{0} {1}".format("#" * int(heading_match.group(1)), text)
+        outline = properties.find("{0}outlineLvl".format(_W))
+        if outline is not None:
+            try:
+                outline_level = int(outline.attrib.get("{0}val".format(_W), ""))
+            except (TypeError, ValueError):
+                outline_level = None
+    style_name = (style_names or {}).get(style_value, "")
+    heading_level = _heading_level_from_name(style_name or style_value)
+    if heading_level is None and outline_level is not None and 0 <= outline_level <= 5:
+        heading_level = outline_level + 1
+    if heading_level is not None:
+        return "{0} {1}".format("#" * heading_level, text)
     if is_numbered:
         return "- {0}".format(text)
     return text
+
+
+def _heading_level_from_name(value: str):
+    normalized = re.sub(r"\s+", " ", str(value or "").strip())
+    match = re.match(r"^(?:Heading|标题)\s*([1-6])$", normalized, re.IGNORECASE)
+    if match is None:
+        return None
+    return int(match.group(1))
 
 
 def _table_text(table) -> str:

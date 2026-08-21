@@ -1,7 +1,6 @@
 import base64
 import binascii
 from dataclasses import dataclass
-from io import BytesIO
 import logging
 import os
 from pathlib import Path
@@ -10,18 +9,37 @@ import tempfile
 import threading
 import time
 from typing import Dict, Optional
-import zipfile
-from xml.etree import ElementTree
 
 from app.core.errors import AdapterError
+from app.services.ppt.docx_security import (
+    DOCX_COMPRESSION_RATIO_MIN_BYTES,
+    DOCX_MAX_COMPRESSION_RATIO,
+    DOCX_MAX_ENTRIES,
+    DOCX_MAX_PACKAGE_BYTES,
+    DOCX_MAX_RELATIONSHIPS,
+    DOCX_MAX_REQUIRED_PART_BYTES,
+    DOCX_MAX_UNCOMPRESSED_BYTES,
+    DOCX_MAX_XML_ELEMENTS,
+    DOCX_MAX_XML_PART_BYTES,
+    DOCX_MAX_XML_DEPTH,
+    DocxSecurityError,
+    validate_docx_bytes,
+)
 
 
 PPT_DOCUMENT_MAX_BYTES = 10 * 1024 * 1024
 PPT_DOCUMENT_EXPIRES_SECONDS = 1800
 PPT_DOCUMENT_MAX_BASE64_BYTES = ((PPT_DOCUMENT_MAX_BYTES + 2) // 3) * 4
-PPT_DOCX_MAX_ENTRIES = 5000
-PPT_DOCX_MAX_UNCOMPRESSED_BYTES = 100 * 1024 * 1024
-PPT_DOCX_MAX_REQUIRED_PART_BYTES = 20 * 1024 * 1024
+PPT_DOCX_MAX_PACKAGE_BYTES = DOCX_MAX_PACKAGE_BYTES
+PPT_DOCX_MAX_ENTRIES = DOCX_MAX_ENTRIES
+PPT_DOCX_MAX_UNCOMPRESSED_BYTES = DOCX_MAX_UNCOMPRESSED_BYTES
+PPT_DOCX_MAX_REQUIRED_PART_BYTES = DOCX_MAX_REQUIRED_PART_BYTES
+PPT_DOCX_MAX_XML_PART_BYTES = DOCX_MAX_XML_PART_BYTES
+PPT_DOCX_MAX_COMPRESSION_RATIO = DOCX_MAX_COMPRESSION_RATIO
+PPT_DOCX_COMPRESSION_RATIO_MIN_BYTES = DOCX_COMPRESSION_RATIO_MIN_BYTES
+PPT_DOCX_MAX_XML_ELEMENTS = DOCX_MAX_XML_ELEMENTS
+PPT_DOCX_MAX_XML_DEPTH = DOCX_MAX_XML_DEPTH
+PPT_DOCX_MAX_RELATIONSHIPS = DOCX_MAX_RELATIONSHIPS
 ALLOWED_EXTENSIONS = {"md", "docx"}
 logger = logging.getLogger(__name__)
 
@@ -135,7 +153,7 @@ class PptDocumentFileStore:
                 status_code=400,
             )
 
-        self._validate_content(extension, content)
+        validation = self._validate_content(extension, content)
         self.cleanup_expired()
 
         token = "pptdoc_{0}".format(secrets.token_urlsafe(24))
@@ -152,12 +170,15 @@ class PptDocumentFileStore:
         )
         with self._lock:
             self._items[token] = staged
-        return {
+        response = {
             "fileToken": token,
             "extension": extension,
             "sizeBytes": len(content),
             "expiresInSeconds": PPT_DOCUMENT_EXPIRES_SECONDS,
         }
+        if validation is not None:
+            response["styleCapability"] = validation.style_capability
+        return response
 
     def consume(self, token: str) -> StagedPptDocument:
         self.cleanup_expired()
@@ -252,7 +273,7 @@ class PptDocumentFileStore:
             return 0
 
     @staticmethod
-    def _validate_content(extension: str, content: bytes) -> None:
+    def _validate_content(extension: str, content: bytes):
         if extension == "md":
             try:
                 content.decode("utf-8-sig")
@@ -262,51 +283,25 @@ class PptDocumentFileStore:
                     "Markdown 文件必须使用 UTF-8 编码。",
                     status_code=400,
                 )
-            return
+            return None
 
         try:
-            with zipfile.ZipFile(BytesIO(content)) as archive:
-                entries = archive.infolist()
-                names = {item.filename for item in entries}
-                if len(entries) > PPT_DOCX_MAX_ENTRIES:
-                    raise ValueError("too many DOCX entries")
-                if sum(item.file_size for item in entries) > PPT_DOCX_MAX_UNCOMPRESSED_BYTES:
-                    raise ValueError("DOCX uncompressed content is too large")
-                required_names = ("[Content_Types].xml", "word/document.xml")
-                if any(name not in names for name in required_names):
-                    raise ValueError("missing required DOCX parts")
-                required_parts = []
-                for name in required_names:
-                    info = archive.getinfo(name)
-                    if info.file_size > PPT_DOCX_MAX_REQUIRED_PART_BYTES:
-                        raise ValueError("required DOCX part is too large")
-                    required_parts.append(archive.read(info))
-                if archive.testzip() is not None:
-                    raise ValueError("DOCX contains a corrupt ZIP entry")
-        except (zipfile.BadZipFile, OSError):
-            raise AdapterError(
-                "PPT_DOCUMENT_INVALID",
-                "Word 文档格式无效或文件已损坏。",
-                status_code=400,
+            return validate_docx_bytes(
+                content,
+                max_package_bytes=PPT_DOCX_MAX_PACKAGE_BYTES,
+                max_entries=PPT_DOCX_MAX_ENTRIES,
+                max_uncompressed_bytes=PPT_DOCX_MAX_UNCOMPRESSED_BYTES,
+                max_required_part_bytes=PPT_DOCX_MAX_REQUIRED_PART_BYTES,
+                max_xml_part_bytes=PPT_DOCX_MAX_XML_PART_BYTES,
+                max_compression_ratio=PPT_DOCX_MAX_COMPRESSION_RATIO,
+                compression_ratio_min_bytes=PPT_DOCX_COMPRESSION_RATIO_MIN_BYTES,
+                max_xml_elements=PPT_DOCX_MAX_XML_ELEMENTS,
+                max_xml_depth=PPT_DOCX_MAX_XML_DEPTH,
+                max_relationships=PPT_DOCX_MAX_RELATIONSHIPS,
             )
-        except (KeyError, RuntimeError, ValueError):
+        except DocxSecurityError:
             raise AdapterError(
                 "PPT_DOCUMENT_INVALID",
-                "Word 文档结构无效或文件已损坏。",
-                status_code=400,
-            )
-        try:
-            content_types_root = ElementTree.fromstring(required_parts[0])
-            document_root = ElementTree.fromstring(required_parts[1])
-        except ElementTree.ParseError:
-            raise AdapterError(
-                "PPT_DOCUMENT_INVALID",
-                "Word 文档 XML 结构无效。",
-                status_code=400,
-            )
-        if not content_types_root.tag.endswith("Types") or not document_root.tag.endswith("document"):
-            raise AdapterError(
-                "PPT_DOCUMENT_INVALID",
-                "Word 文档缺少有效的内容类型或正文结构。",
+                "Word 文档结构不安全、无效或文件已损坏。",
                 status_code=400,
             )
