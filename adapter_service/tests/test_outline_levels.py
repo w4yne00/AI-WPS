@@ -148,7 +148,7 @@ class OutlineLevelTests(unittest.TestCase):
                         ]
                     },
                 },
-                "options": {"templateId": "technical-file-format-requirements"},
+                "options": {"templateId": "technical-document-template-rules"},
             }
         )
 
@@ -235,7 +235,7 @@ class OutlineLevelTests(unittest.TestCase):
             },
         ]
         request = DeterministicFormatReviewService._request_from_blocks(
-            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            {"selectionMode": "document", "templateId": "technical-document-template-rules"},
             blocks,
             {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f", "coverage": {}},
         )
@@ -279,7 +279,7 @@ class OutlineLevelTests(unittest.TestCase):
             },
         ]
         request_data = DeterministicFormatReviewService._request_from_blocks(
-            {"selectionMode": "document", "templateId": "technical-file-format-requirements"},
+            {"selectionMode": "document", "templateId": "technical-document-template-rules"},
             blocks,
             {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f", "coverage": {}},
         )

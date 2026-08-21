@@ -27,12 +27,12 @@ mkdir -p "$OUT_DIR"
 
 PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" \
   "$ROOT_DIR/adapter_service/tools/compile_format_rule_pack.py" \
-  --template-docx "$ROOT_DIR/templates/company/technical-file-format-requirements.docx" \
+  --template-docx "$ROOT_DIR/adapter_service/vendor/wx_doc_format_algorithm/assets/wx_template.docx" \
   --template-json "$ROOT_DIR/templates/company/technical-file-format-requirements.json" \
   --structure-rules "$ROOT_DIR/templates/company/technical-file-structure-rules.json" \
   --output "$COMPILED_CHECK"
 cmp "$COMPILED_CHECK" \
-  "$ROOT_DIR/adapter_service/format_rule_packs/technical-file-format-requirements.v2026-05-23.json"
+  "$ROOT_DIR/adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json"
 
 "$PYTHON_BIN" "$ROOT_DIR/packaging/assemble_phase1_delivery.py" \
   --repo-root "$ROOT_DIR" \

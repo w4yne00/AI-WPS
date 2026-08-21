@@ -355,7 +355,7 @@ function testGetWritableSelection() {
 function testBuildDocumentStructureForProofread() {
   const structure = helpers.buildDocumentStructure({
     documentId: "安全运行方案.docx",
-    templateId: "technical-file-format-requirements",
+    templateId: "technical-document-template-rules",
     selectionMode: "document",
     plainText: "一、总体要求\n正文内容",
     paragraphs: [
@@ -384,7 +384,7 @@ function testBuildDocumentStructureForProofread() {
   });
 
   assert.strictEqual(structure.doc_name, "安全运行方案.docx");
-  assert.strictEqual(structure.template_id, "technical-file-format-requirements");
+  assert.strictEqual(structure.template_id, "technical-document-template-rules");
   assert.strictEqual(structure.paragraphs[0].style_name, "Heading 1");
   assert.strictEqual(structure.paragraphs[0].font_family, "黑体");
   assert.strictEqual(structure.paragraphs[0].first_line_indent, 0);

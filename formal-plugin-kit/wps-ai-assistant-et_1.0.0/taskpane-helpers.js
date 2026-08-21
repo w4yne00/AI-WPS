@@ -859,7 +859,7 @@
     first_line_indent: "首行缩进"
   };
   var FORMAT_REVIEW_TEMPLATE_TEXT = {
-    "technical-file-format-requirements": "技术文件格式及书写要求",
+    "technical-document-template-rules": "技术文档模板规则",
     "general-office": "通用办公文档格式"
   };
   var FORMAT_REVIEW_STYLE_TEXT = {

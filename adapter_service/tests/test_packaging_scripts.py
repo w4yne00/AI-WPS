@@ -1598,7 +1598,7 @@ esac
         js = (ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js").read_text(encoding="utf-8")
 
         self.assertIn("mergeTemplates", js)
-        self.assertIn("technical-file-format-requirements", js)
+        self.assertIn("technical-document-template-rules", js)
 
     def test_taskpane_settings_hides_unified_key_but_keeps_compatibility(self) -> None:
         host_dirs = [

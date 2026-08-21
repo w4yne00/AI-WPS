@@ -2442,7 +2442,7 @@ class EnterpriseProviderTests(unittest.TestCase):
             os.chdir(previous_cwd)
 
         self.assertIn("general-office", template_ids)
-        self.assertIn("technical-file-format-requirements", template_ids)
+        self.assertIn("technical-document-template-rules", template_ids)
 
     def test_build_rewrite_prompt_includes_user_instruction(self) -> None:
         prompt = build_rewrite_prompt(
@@ -2700,7 +2700,7 @@ class EnterpriseProviderTests(unittest.TestCase):
                     "headings": [{"level": 1, "text": "一、总体要求"}],
                     "documentStructure": {
                         "doc_name": "安全运行方案.docx",
-                        "template_id": "technical-file-format-requirements",
+                        "template_id": "technical-document-template-rules",
                         "paragraphs": [
                             {
                                 "index": 1,

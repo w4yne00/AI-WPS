@@ -33,7 +33,7 @@
 - [ ] Python 3.8 最终包运行门禁完成生产代码兼容性扫描、完整应用导入和 Uvicorn 实际启动。
 - [ ] 运行门禁通过 `/health`、`/provider/status`、`/provider/model-configurations` 和 `/writing-policies/summary` 契约检查。
 - [ ] `/templates` 返回 `general-office`。
-- [ ] `/templates` 返回 `technical-file-format-requirements`。
+- [ ] `/templates` 返回 `technical-document-template-rules`，显示名称为“技术文档模板规则”。
 - [ ] 旧版 Dify 工作流可继续读取 `inputs.query`。
 - [ ] 新版“用户输入”节点工作流在旧格式返回 HTTP 400 后可自动切换并成功返回。
 - [ ] `/provider/debug-last` 显示最终 `inputMode`，且错误摘要不包含完整提示词或 API Key。

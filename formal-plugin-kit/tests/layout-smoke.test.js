@@ -320,7 +320,7 @@ assert.ok(html.includes("仿写需求"));
 assert.ok(html.includes("参考素材"));
 assert.ok(html.includes('id="technical-document-type"'));
 assert.ok(html.includes('id="technical-review-prompt"'));
-assert.ok(html.includes('技术文件格式及书写要求'));
+assert.ok(html.includes('技术文档模板规则'));
 assert.ok(html.includes('id="btn-run-primary"'));
 assert.ok(html.indexOf('id="btn-copy-result"') < html.indexOf('结果预览'));
 assert.ok(html.includes('class="markdown-output"'));

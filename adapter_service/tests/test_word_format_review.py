@@ -220,7 +220,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                     },
                 },
             },
-            "options": {"templateId": "technical-file-format-requirements"},
+            "options": {"templateId": "technical-document-template-rules"},
         })
 
         result = WordFormatReviewer().review(request)
@@ -260,7 +260,7 @@ class WordFormatReviewerTests(unittest.TestCase):
 
     def test_format_review_summary_preserves_table_caption_diagnostics(self) -> None:
         summary = FormatReviewSummary(
-            templateId="technical-file-format-requirements",
+            templateId="technical-document-template-rules",
             tableCaptionCandidateCount=2,
             tableCaptionSuggestedCount=1,
             tableCaptionRestrictedCount=1,
@@ -309,7 +309,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                     "documentStructure": {"page_setup": {"marginTop": 72}},
                 },
                 "options": {
-                    "templateId": "technical-file-format-requirements",
+                    "templateId": "technical-document-template-rules",
                     "trackChanges": True,
                 },
             }
@@ -354,7 +354,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                 "headings": headings,
                 "documentStructure": {"formatBlocks": blocks},
             },
-            "options": {"templateId": "technical-file-format-requirements"},
+            "options": {"templateId": "technical-document-template-rules"},
         })
 
     def test_heading_jump_is_one_localized_anchored_issue(self) -> None:
@@ -407,7 +407,7 @@ class WordFormatReviewerTests(unittest.TestCase):
         )
 
         self.assertEqual(result["summary"]["scope"], "selection")
-        self.assertEqual(result["summary"]["templateId"], "technical-file-format-requirements")
+        self.assertEqual(result["summary"]["templateId"], "technical-document-template-rules")
         self.assertEqual(result["summary"]["provider"], "工作流平台")
         self.assertGreaterEqual(result["summary"]["issueCount"], 1)
         self.assertIn("issues", result)
@@ -768,7 +768,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                     },
                 },
                 "options": {
-                    "templateId": "technical-file-format-requirements",
+                    "templateId": "technical-document-template-rules",
                     "trackChanges": True,
                 },
             }
@@ -831,7 +831,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                     ],
                 },
             },
-            "options": {"templateId": "technical-file-format-requirements"},
+            "options": {"templateId": "technical-document-template-rules"},
         })
         result = WordFormatReviewer(provider_client=provider).review(
             request,
@@ -886,7 +886,7 @@ class WordFormatReviewerTests(unittest.TestCase):
                     }],
                 },
             },
-            "options": {"templateId": "technical-file-format-requirements"},
+            "options": {"templateId": "technical-document-template-rules"},
         })
 
         reviewer = WordFormatReviewer(provider_client=provider)

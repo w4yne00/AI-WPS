@@ -82,7 +82,9 @@ const readable = helpers.renderReadableDeterministicFormatReview({
     executionStatus: "completed",
     complianceStatus: "violations_found",
     coverageStatus: "complete",
-    semanticStatus: "degraded"
+    semanticStatus: "degraded",
+    rulePackVersion: "1.0.0",
+    rulePackSourceVersion: "wx-doc-format 0.12.15"
   },
   issues: [{
     issueId: "format-issue-1",
@@ -101,6 +103,8 @@ const readable = helpers.renderReadableDeterministicFormatReview({
   }]
 });
 assert.ok(readable.includes("技术文档模板规则"));
+assert.ok(readable.includes("规则版本：1.0.0"));
+assert.ok(readable.includes("来源版本：wx-doc-format 0.12.15"));
 assert.ok(readable.includes("四号（14pt）"));
 assert.ok(readable.includes("小四（12pt）"));
 assert.ok(readable.includes("章节：第一章 > 1.1 范围；第 1 段；原文：“正文段落”；第 3 页"));

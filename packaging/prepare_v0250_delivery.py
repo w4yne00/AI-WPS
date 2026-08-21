@@ -82,7 +82,7 @@ def update_format_assets_manifest(root: Path) -> None:
     manifest = json.loads(path.read_text(encoding="utf-8"))
     manifest["rulePack"] = (
         "packages/adapter-start-kit/adapter_service/format_rule_packs/"
-        "technical-file-format-requirements.v2026-05-23.json"
+        "technical-document-template-rules.v1.0.0.json"
     )
     manifest.setdefault("algorithm", {})["notice"] = (
         "packages/adapter-start-kit/adapter_service/vendor/"
@@ -104,6 +104,10 @@ def update_format_assets_manifest(root: Path) -> None:
     algorithm["sourceManifest"] = (
         "packages/adapter-start-kit/adapter_service/vendor/"
         "wx_doc_format_algorithm/SOURCE_MANIFEST.json"
+    )
+    algorithm["sourceClassification"] = (
+        "packages/adapter-start-kit/adapter_service/vendor/"
+        "wx_doc_format_algorithm/RULE_CLASSIFICATION.json"
     )
     canonical = copy.deepcopy(rule_pack)
     canonical.pop("integrity", None)

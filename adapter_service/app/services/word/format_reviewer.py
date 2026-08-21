@@ -67,7 +67,7 @@ AI_ROLE_BATCH_SIZE = 20
 AI_ROLE_MAX_PARAGRAPHS = 40
 TABLE_CAPTION_SAMPLE_HEAD_ROWS = 3
 TABLE_CAPTION_SAMPLE_TAIL_ROWS = 2
-DEFAULT_TEMPLATE_ID = "technical-file-format-requirements"
+DEFAULT_TEMPLATE_ID = "technical-document-template-rules"
 SEMANTIC_ROLE_NAMES = (
     "document_title", "heading", "body", "list_item", "note", "caption",
     "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula",
@@ -242,8 +242,12 @@ class WordFormatReviewer:
         summary = {
             "scope": request.selection_mode,
             "templateId": template["id"],
-            "rulePackVersion": template.get("_rulePackVersion", "legacy-template"),
+            "rulePackId": template.get("_rulePackId", template["id"]),
+            "rulePackVersion": template.get("_rulePackVersion", ""),
+            "rulePackSourceName": template.get("_rulePackSourceName", ""),
+            "rulePackSourceVersion": template.get("_rulePackSourceVersion", ""),
             "rulePackSha256": template.get("_rulePackSha256", ""),
+            "rulePackIntegrity": deepcopy(template.get("_rulePackIntegrity", {})),
             "authorizedAlgorithmVersion": template.get("_algorithmAdapterVersion", ""),
             "provider": provider if (ai_roles or table_caption_suggestions or figure_caption_suggestions) else "local",
             "paragraphCount": len(paragraphs),
@@ -272,8 +276,16 @@ class WordFormatReviewer:
         try:
             rule_pack = self.rule_pack_loader.load(template_id)
             template = deepcopy(rule_pack["template"])
-            template["_rulePackVersion"] = rule_pack["version"]
+            metadata = rule_pack["rulePack"]
+            template["_rulePackId"] = metadata["id"]
+            template["_rulePackVersion"] = metadata["version"]
+            template["_rulePackSourceName"] = metadata["sourceName"]
+            template["_rulePackSourceVersion"] = metadata["sourceVersion"]
             template["_rulePackSha256"] = rule_pack["integrity"]["contentSha256"]
+            template["_rulePackIntegrity"] = {
+                "contentSha256": rule_pack["integrity"]["contentSha256"],
+                "sourceClassificationSha256": rule_pack["algorithm"]["sourceClassificationSha256"],
+            }
             template["_templateHash"] = template["sourceDocumentSha256"]
             template["_algorithmAdapterVersion"] = rule_pack["algorithm"]["adapterVersion"]
             template["_rulePackRules"] = deepcopy(rule_pack["rules"])
@@ -291,11 +303,6 @@ class WordFormatReviewer:
         image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         issues: List[FormatReviewIssue] = []
-        if not self._is_v2_format_snapshot(request):
-            page_issue = self._build_page_issue(request, template)
-            if page_issue:
-                issues.append(page_issue)
-
         issues.extend(
             self._authorized_structure_issues(
                 request,
@@ -1366,29 +1373,6 @@ class WordFormatReviewer:
             else:
                 annotated.append(issue.copy(update=update))
         return annotated
-
-    def _build_page_issue(self, request: WordDocumentRequest, template: Dict) -> Optional[FormatReviewIssue]:
-        page_rule = template.get("page", {})
-        if not page_rule:
-            return None
-        current = request.content.document_structure.get("page_setup", {}) or {}
-        expected = {
-            "marginTop": page_rule.get("marginTopTwips"),
-            "marginBottom": page_rule.get("marginBottomTwips"),
-            "marginLeft": page_rule.get("marginLeftTwips"),
-            "marginRight": page_rule.get("marginRightTwips"),
-        }
-        if current and all(self._roughly_equal(current.get(key), value) for key, value in expected.items() if value is not None):
-            return None
-        return FormatReviewIssue(
-            ruleId="page_setup",
-            paragraphIndex=0,
-            role="page_setup",
-            message="页面设置不符合模板要求。",
-            currentValue=json.dumps(current, ensure_ascii=False) if current else "未读取",
-            expectedValue="A4 页面及模板页边距",
-            suggestion="建议按模板设置 A4 页面和页边距。",
-        )
 
     def _paragraph_issues(self, paragraph: Paragraph, rule: Dict, role: str) -> List[FormatReviewIssue]:
         issues: List[FormatReviewIssue] = []

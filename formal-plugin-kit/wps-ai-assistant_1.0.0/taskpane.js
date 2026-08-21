@@ -127,7 +127,7 @@
   };
   var REWRITE_OUTPUT_PROMPT = "不要原样返回待处理内容；只输出最终正文。";
   var fallbackTemplates = [
-    { id: "technical-file-format-requirements", name: "技术文件格式及书写要求" },
+    { id: "technical-document-template-rules", name: "技术文档模板规则" },
     { id: "general-office", name: "通用办公模板" }
   ];
   var TASK_API_KEY_DEFS = [
@@ -207,7 +207,7 @@
   };
   var state = {
     templates: [],
-    selectedTemplateId: "technical-file-format-requirements",
+    selectedTemplateId: "technical-document-template-rules",
     writeAction: "rewrite",
     rewriteStyle: "standard",
     focusPoint: "complete",

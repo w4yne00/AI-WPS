@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "id": "technical-file-format-requirements",
-  "version": "2026-05-23",
+  "id": "technical-document-template-rules",
+  "version": "1.0.0",
   "source": "AI-WPS 人工审定结构规则清单",
   "confirmed": true,
   "rules": [

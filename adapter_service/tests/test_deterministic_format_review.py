@@ -47,7 +47,7 @@ class RecordingFormatReviewer:
         return {
             "summary": {
                 "scope": request.selection_mode,
-                "templateId": "technical-file-format-requirements",
+                "templateId": "technical-document-template-rules",
                 "provider": "local",
                 "semanticStatus": "not_needed",
             },
@@ -100,7 +100,7 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
                 "headings": [],
                 "documentStructure": {},
             },
-            "options": {"templateId": "technical-file-format-requirements"},
+                "options": {"templateId": "technical-document-template-rules"},
         }
 
     def test_disabled_protocol_is_rejected_without_creating_staging_data(self) -> None:
