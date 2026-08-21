@@ -2123,13 +2123,60 @@
     var parts = [];
     var chapterPath = Array.isArray(source.chapterPath) ? source.chapterPath : [];
     var paragraphIndex = Number(issue && issue.paragraphIndex);
-    var pageNumber = Number(source.pageNumber);
     var snippet = String(source.textSnippet || source.text || "").replace(/[\r\n]+/g, " ").trim();
+    var scope = String(source.locationScope || issue && issue.locationScope || "").trim().toLowerCase();
+    var sectionIndex;
+    var sectionName;
+    var pageStart;
+    var pageEnd;
+
+    function positiveInteger(value) {
+      var numeric = Number(value);
+      return isFinite(numeric) && numeric > 0 && Math.floor(numeric) === numeric ? numeric : 0;
+    }
+
+    function appendPageRange() {
+      var pageRange = source.pageRange && typeof source.pageRange === "object"
+        ? source.pageRange : {};
+      pageStart = positiveInteger(pageRange.start || source.pageStart);
+      pageEnd = positiveInteger(pageRange.end || source.pageEnd);
+      if (!pageStart || !pageEnd) {
+        pageStart = positiveInteger(source.pageNumber);
+        pageEnd = pageStart;
+      }
+      if (pageStart && pageEnd && pageEnd >= pageStart) {
+        parts.push(pageStart === pageEnd
+          ? "第 " + pageStart + " 页"
+          : "第 " + pageStart + " 至第 " + pageEnd + " 页");
+      }
+    }
+
     if (issue && issue.ruleId === "page_setup") {
       return "页面设置（全文）";
     }
+    if (!scope) {
+      scope = issue && (issue.role === "section" || issue.role === "chapter")
+        ? "section" : (paragraphIndex > 0 ? "paragraph" : "document");
+    }
+    if (scope === "document") {
+      return "全文";
+    }
     if (chapterPath.length) {
       parts.push("章节：" + chapterPath.map(function (item) { return String(item); }).join(" > "));
+    }
+    if (scope === "section") {
+      sectionIndex = positiveInteger(source.sectionIndex || (issue && issue.sectionIndex));
+      sectionName = String(source.sectionName || (issue && issue.sectionName) || "")
+        .replace(/[\r\n]+/g, " ").trim();
+      if (sectionIndex && sectionName) {
+        parts.push("第 " + sectionIndex + " 节：" + sectionName.slice(0, 120));
+      } else if (sectionName) {
+        parts.push("节：" + sectionName.slice(0, 120));
+      } else if (sectionIndex) {
+        parts.push("第 " + sectionIndex + " 节");
+      }
+      appendPageRange();
+      return parts.length ? parts.join("；") : "无法验证位置";
     }
     if (paragraphIndex > 0 && issue.anchorVerification === "verified") {
       parts.push("第 " + paragraphIndex + " 段");
@@ -2137,9 +2184,7 @@
     if (snippet) {
       parts.push("原文：“" + snippet.slice(0, 80) + "”");
     }
-    if (isFinite(pageNumber) && pageNumber > 0) {
-      parts.push("第 " + pageNumber + " 页");
-    }
+    appendPageRange();
     return parts.length ? parts.join("；") : "无法验证位置";
   }
 
@@ -2645,9 +2690,51 @@
     }
   }
 
+  function safeCallWithArgs(fn, thisArg, args) {
+    if (typeof fn !== "function") {
+      return undefined;
+    }
+    try {
+      return fn.apply(thisArg, Array.isArray(args) ? args : []);
+    } catch (error) {
+      return undefined;
+    }
+  }
+
   function resolveRange(object) {
     var range = firstDefined(safeRead(object, "Range"), safeRead(object, "range"));
     return typeof range === "function" ? safeCall(range, object) : range;
+  }
+
+  function readParagraphRange(paragraph, paragraphIndex) {
+    var range = resolveRange(paragraph);
+    var result = { paragraphIndex: paragraphIndex };
+    var start = normalizeInteger(firstDefined(safeRead(range, "Start"), safeRead(range, "start")));
+    var end = normalizeInteger(firstDefined(safeRead(range, "End"), safeRead(range, "end")));
+    var information = safeRead(range, "Information") || safeRead(range, "information");
+    var pageNumber = typeof information === "function"
+      ? normalizePositiveInteger(safeCallWithArgs(information, range, [3])) : null;
+    var sectionIndex = typeof information === "function"
+      ? normalizePositiveInteger(safeCallWithArgs(information, range, [2])) : null;
+    pageNumber = pageNumber || normalizePositiveInteger(firstDefined(
+      safeRead(range, "PageNumber"), safeRead(range, "pageNumber")
+    ));
+    sectionIndex = sectionIndex || normalizePositiveInteger(firstDefined(
+      safeRead(range, "SectionNumber"), safeRead(range, "sectionNumber")
+    ));
+    if (start !== null && start >= 0) {
+      result.start = start;
+    }
+    if (end !== null && end >= 0) {
+      result.end = end;
+    }
+    if (pageNumber) {
+      result.pageNumber = pageNumber;
+    }
+    if (sectionIndex) {
+      result.sectionIndex = sectionIndex;
+    }
+    return result;
   }
 
   function normalizeParagraphText(text) {
@@ -3219,8 +3306,8 @@
       if (!paragraph) {
         continue;
       }
+      var paragraphRange = resolveRange(paragraph);
       if (collectOptions.excludeTableParagraphs) {
-        var paragraphRange = resolveRange(paragraph);
         var containingTables = firstDefined(
           safeRead(paragraphRange, "Tables"),
           safeRead(paragraph, "Tables")
@@ -3239,6 +3326,7 @@
       items.push({
         index: i,
         text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
+        range: readParagraphRange(paragraph, i),
         styleName: readStyleName(paragraph),
         fontName: toSafeString(firstDefined(safeRead(font, "NameFarEast"), safeRead(font, "Name")), ""),
         fontSize: normalizeFontSize(safeRead(font, "Size")),

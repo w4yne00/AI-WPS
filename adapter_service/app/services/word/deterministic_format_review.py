@@ -221,29 +221,91 @@ def _report_chapter_path(blocks: List[Dict], block_index: int) -> List[str]:
     return [headings[level] for level in sorted(headings)]
 
 
+def _report_positive_integer(value: object) -> int:
+    if value is None or isinstance(value, bool):
+        return 0
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return 0
+    return numeric if numeric > 0 else 0
+
+
+def _report_anchor_page_range(anchor: Dict) -> Optional[tuple]:
+    page_range = anchor.get("pageRange")
+    if isinstance(page_range, dict):
+        start = _report_positive_integer(page_range.get("start"))
+        end = _report_positive_integer(page_range.get("end"))
+        if start and end and end >= start:
+            return start, end
+    range_data = anchor.get("range") if isinstance(anchor.get("range"), dict) else {}
+    start = _report_positive_integer(
+        anchor.get("pageStart", range_data.get("pageStart"))
+    )
+    end = _report_positive_integer(
+        anchor.get("pageEnd", range_data.get("pageEnd"))
+    )
+    if start and end and end >= start:
+        return start, end
+    page_number = _report_positive_integer(
+        anchor.get("pageNumber", range_data.get("pageNumber"))
+    )
+    return (page_number, page_number) if page_number else None
+
+
 def _report_issue_position(issue: Dict) -> str:
     if issue.get("ruleId") == "page_setup":
         return "页面设置（全文）"
     anchor = issue.get("sourceAnchor") if isinstance(issue.get("sourceAnchor"), dict) else {}
+    scope = str(anchor.get("locationScope") or issue.get("locationScope") or "").strip().lower()
+    if not scope:
+        if str(issue.get("role") or "").strip().lower() in {"section", "chapter"}:
+            scope = "section"
+        elif _report_positive_integer(issue.get("paragraphIndex")):
+            scope = "paragraph"
+        else:
+            scope = "document"
+    if scope == "document":
+        return "全文"
     parts = []
     chapter_path = anchor.get("chapterPath")
     if isinstance(chapter_path, list) and chapter_path:
         parts.append("章节：" + " > ".join(str(item) for item in chapter_path if str(item).strip()))
-    try:
-        paragraph_index = int(issue.get("paragraphIndex"))
-    except (TypeError, ValueError):
-        paragraph_index = 0
+    if scope == "section":
+        section_index = _report_positive_integer(
+            anchor.get("sectionIndex", issue.get("sectionIndex"))
+        )
+        section_name = str(
+            anchor.get("sectionName", issue.get("sectionName")) or ""
+        ).replace("\n", " ").strip()
+        if section_index and section_name:
+            parts.append("第 {0} 节：{1}".format(section_index, section_name[:120]))
+        elif section_name:
+            parts.append("节：" + section_name[:120])
+        elif section_index:
+            parts.append("第 {0} 节".format(section_index))
+        page_range = _report_anchor_page_range(anchor)
+        if page_range:
+            start, end = page_range
+            parts.append(
+                "第 {0} 页".format(start)
+                if start == end else "第 {0} 至第 {1} 页".format(start, end)
+            )
+        return "；".join(parts) if parts else "无法验证位置"
+
+    paragraph_index = _report_positive_integer(issue.get("paragraphIndex"))
     if paragraph_index > 0 and issue.get("anchorVerification") == "verified":
         parts.append("第 {0} 段".format(paragraph_index))
     snippet = str(anchor.get("textSnippet") or anchor.get("text") or "").replace("\n", " ").strip()
     if snippet:
         parts.append("原文：“{0}”".format(snippet[:80]))
-    try:
-        page_number = int(anchor.get("pageNumber"))
-    except (TypeError, ValueError):
-        page_number = 0
-    if page_number > 0:
-        parts.append("第 {0} 页".format(page_number))
+    page_range = _report_anchor_page_range(anchor)
+    if page_range:
+        start, end = page_range
+        parts.append(
+            "第 {0} 页".format(start)
+            if start == end else "第 {0} 至第 {1} 页".format(start, end)
+        )
     return "；".join(parts) if parts else "无法验证位置"
 
 
@@ -254,6 +316,9 @@ def _report_issue_role(issue: Dict) -> str:
     return {
         "body": "正文",
         "table": "表格",
+        "section": "章节/节",
+        "chapter": "章节/节",
+        "document": "全文",
         "page_setup": "页面设置",
     }.get(role, "无法识别")
 
@@ -1591,7 +1656,8 @@ class DeterministicFormatReviewService:
             "currentLevel", "previousLevel",
             "templateHash", "ruleVersion", "rulePackSha256", "message", "currentValue",
             "expectedValue", "suggestion", "unit", "tolerance", "evidence", "dataStatus",
-            "status",
+            "status", "range", "locationScope", "sectionIndex", "sectionName", "sectionPath",
+            "chapterPath", "pageRange", "pageStart", "pageEnd", "sourceAnchor",
         }
         item = {key: deepcopy(value) for key, value in issue.items() if key in allowed_fields}
         rule_id = str(item.get("ruleId") or "unknown")
@@ -1605,12 +1671,91 @@ class DeterministicFormatReviewService:
         )
         block_index = blocks.index(block) if block in blocks else -1
         block_text = str((block or {}).get("text", ""))
-        anchor_id = str((block or {}).get("blockId") or "structure:{0}".format(rule_id))
-        anchor_verification = "verified" if block is not None and block_text else "unverified"
         property_path = FORMAT_RULE_PROPERTY_PATHS.get(rule_id, "format.{0}".format(rule_id))
         current_value = item.get("currentValue", "")
         expected_value = item.get("expectedValue", "")
+        supplied_source_anchor = item.get("sourceAnchor") if isinstance(item.get("sourceAnchor"), dict) else {}
         range_data = deepcopy((block or {}).get("range", {}))
+        if not range_data and isinstance(item.get("range"), dict):
+            range_data = deepcopy(item.get("range"))
+        if not range_data and isinstance(supplied_source_anchor.get("range"), dict):
+            range_data = deepcopy(supplied_source_anchor.get("range"))
+        section_index = _report_positive_integer(
+            item.get("sectionIndex", range_data.get("sectionIndex"))
+        )
+        section_blocks = [
+            candidate for candidate in blocks
+            if isinstance(candidate, dict)
+            and section_index
+            and _report_positive_integer(
+                (candidate.get("range") or {}).get("sectionIndex")
+            ) == section_index
+        ]
+        section_name = str(item.get("sectionName") or "").replace("\n", " ").strip()
+        section_path = item.get("sectionPath")
+        if not isinstance(section_path, list):
+            section_path = []
+        location_scope = str(item.get("locationScope") or "").strip().lower()
+        if not location_scope:
+            if rule_id == "page_setup" or str(item.get("role") or "").lower() in {
+                "document", "page_setup"
+            }:
+                location_scope = "document"
+            elif str(item.get("role") or "").lower() in {"section", "chapter"} or (
+                paragraph_index is None and section_index
+            ):
+                location_scope = "section"
+            elif paragraph_index is not None:
+                location_scope = "paragraph"
+            else:
+                location_scope = "document"
+        chapter_path = []
+        if block_index >= 0:
+            chapter_path = _report_chapter_path(blocks, block_index)
+        elif section_blocks:
+            section_block_index = blocks.index(section_blocks[0])
+            chapter_path = _report_chapter_path(blocks, section_block_index)
+        elif isinstance(item.get("chapterPath"), list):
+            chapter_path = [str(value)[:120] for value in item.get("chapterPath") if str(value).strip()]
+        if not section_name and section_path:
+            section_name = str(section_path[-1] or "").replace("\n", " ").strip()[:120]
+        if not section_name and section_blocks and chapter_path:
+            section_name = str(chapter_path[-1] or "").strip()[:120]
+        section_page_range = _report_anchor_page_range({
+            "pageRange": item.get("pageRange"),
+            "pageStart": item.get("pageStart"),
+            "pageEnd": item.get("pageEnd"),
+            "range": range_data,
+        })
+        if location_scope == "section" and not section_page_range:
+            section_pages = []
+            for section_block in section_blocks:
+                block_page_range = _report_anchor_page_range({
+                    "range": section_block.get("range") if isinstance(section_block.get("range"), dict) else {}
+                })
+                if block_page_range:
+                    section_pages.extend(block_page_range)
+            if section_pages:
+                section_page_range = (min(section_pages), max(section_pages))
+        if location_scope == "paragraph":
+            anchor_id = str((block or {}).get("blockId") or "structure:{0}".format(rule_id))
+            anchor_verification = "verified" if block is not None and block_text else "unverified"
+        elif location_scope == "section":
+            section_identity = {
+                "ruleId": rule_id,
+                "sectionIndex": section_index,
+                "sectionName": section_name,
+                "sectionPath": section_path,
+            }
+            anchor_id = "section:" + hashlib.sha256(
+                json.dumps(section_identity, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            ).hexdigest()[:24]
+            anchor_verification = "verified" if section_index and (
+                section_name or chapter_path or section_page_range
+            ) else "unverified"
+        else:
+            anchor_id = "document:" + rule_id
+            anchor_verification = "unverified"
         neighbor_ids = [
             str(candidate.get("blockId", ""))
             for candidate in blocks[max(0, block_index - 1):block_index + 2]
@@ -1622,30 +1767,46 @@ class DeterministicFormatReviewService:
         source_anchor = {
             "anchorId": anchor_id,
             "blockId": anchor_id,
-            "location": "table" if (block or {}).get("blockType") == "table" else "body",
+            "location": (
+                "table" if (block or {}).get("blockType") == "table" else "body"
+            ) if location_scope == "paragraph" else location_scope,
+            "locationScope": location_scope,
             "paragraphIndex": paragraph_index,
             "range": range_data,
-            "textSha256": hashlib.sha256(block_text.encode("utf-8")).hexdigest(),
-            "text": block_text[:240],
-            "adjacentBlockIds": neighbor_ids,
-            "adjacentStructureSha256": adjacent_hash,
+            "textSha256": hashlib.sha256(block_text.encode("utf-8")).hexdigest() if location_scope == "paragraph" else "",
+            "text": block_text[:240] if location_scope == "paragraph" else "",
+            "adjacentBlockIds": neighbor_ids if location_scope == "paragraph" else [],
+            "adjacentStructureSha256": adjacent_hash if location_scope == "paragraph" else "",
             "verification": anchor_verification,
         }
-        if rule_id == "structure.heading_hierarchy":
+        if location_scope == "paragraph" and rule_id == "structure.heading_hierarchy":
             hierarchy_anchor = build_format_issue_anchor(request, paragraph_index)
             anchor_id = hierarchy_anchor["anchorId"]
             source_anchor = hierarchy_anchor["sourceAnchor"]
             anchor_verification = hierarchy_anchor["anchorVerification"]
         if isinstance(source_anchor, dict):
-            source_anchor["chapterPath"] = _report_chapter_path(blocks, block_index) if block_index >= 0 else []
-            source_anchor["textSnippet"] = block_text[:80]
-            page_number = range_data.get("pageNumber") if isinstance(range_data, dict) else None
-            if page_number is not None:
-                try:
-                    if int(page_number) > 0:
-                        source_anchor["pageNumber"] = int(page_number)
-                except (TypeError, ValueError):
-                    pass
+            source_anchor["locationScope"] = location_scope
+            source_anchor["chapterPath"] = chapter_path
+            if location_scope == "paragraph":
+                source_anchor["textSnippet"] = block_text[:80]
+            if section_index:
+                source_anchor["sectionIndex"] = section_index
+            if section_name:
+                source_anchor["sectionName"] = section_name
+            if section_path:
+                source_anchor["sectionPath"] = [str(value)[:120] for value in section_path]
+            page_range = section_page_range if location_scope == "section" else _report_anchor_page_range({
+                "range": range_data,
+            })
+            if page_range:
+                start, end = page_range
+                if start == end:
+                    source_anchor["pageNumber"] = start
+                else:
+                    source_anchor["pageRange"] = {"start": start, "end": end}
+            if location_scope == "section" and section_page_range:
+                start, end = section_page_range
+                source_anchor["pageRange"] = {"start": start, "end": end}
         semantic_identity = {
             "snapshot": snapshot.get("contentSha256", ""),
             "ruleId": rule_id,
@@ -1948,7 +2109,8 @@ class DeterministicFormatReviewService:
         if value is None:
             return {}
         if not isinstance(value, dict) or set(value) - {
-            "start", "end", "area", "paragraphIndex", "tableId", "cellId"
+            "start", "end", "area", "paragraphIndex", "tableId", "cellId",
+            "pageNumber", "pageStart", "pageEnd", "sectionIndex",
         }:
             raise AdapterError(
                 "DETERMINISTIC_FORMAT_REVIEW_RANGE_INVALID",
@@ -1956,7 +2118,9 @@ class DeterministicFormatReviewService:
             )
         normalized = {}
         for key, item in value.items():
-            if key in {"start", "end", "paragraphIndex"}:
+            if key in {
+                "start", "end", "paragraphIndex", "pageNumber", "pageStart", "pageEnd", "sectionIndex"
+            }:
                 if type(item) is not int or item < 0:
                     raise AdapterError(
                         "DETERMINISTIC_FORMAT_REVIEW_RANGE_INVALID",
@@ -1974,6 +2138,11 @@ class DeterministicFormatReviewService:
             raise AdapterError(
                 "DETERMINISTIC_FORMAT_REVIEW_RANGE_INVALID",
                 "格式审查原文范围顺序无效。",
+            )
+        if "pageStart" in normalized and "pageEnd" in normalized and normalized["pageEnd"] < normalized["pageStart"]:
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_RANGE_INVALID",
+                "格式审查页码范围顺序无效。",
             )
         return normalized
 
