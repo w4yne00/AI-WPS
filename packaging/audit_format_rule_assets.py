@@ -34,6 +34,8 @@ def audit(root: Path) -> None:
     actual = set(allowlist.get("files", []))
     if actual != EXPECTED_FILES:
         raise ValueError("FORMAT_RULE_ASSET_ALLOWLIST_MISMATCH")
+    if any("general-office" in path or "technical-file-format-requirements" in path for path in actual):
+        raise ValueError("FORMAT_RULE_ASSET_HISTORICAL_REFERENCE")
     manifest = json.loads((root / "format-rule-assets-manifest.json").read_text(encoding="utf-8"))
     if manifest.get("version") != "0.25.0-format-rules-alpha":
         raise ValueError("FORMAT_RULE_ASSET_VERSION_INVALID")

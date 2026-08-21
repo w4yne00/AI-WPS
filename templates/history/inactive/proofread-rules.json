@@ -1,4 +1,6 @@
 {
+  "status": "inactive",
+  "inactiveReason": "旧通用模板规则资产，仅供历史审计。",
   "rules": [
     {
       "id": "heading_hierarchy",

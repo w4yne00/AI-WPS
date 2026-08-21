@@ -27,9 +27,9 @@ from tools.compile_format_rule_pack import compile_rule_pack
 
 ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_DOCX = ROOT / "adapter_service/vendor/wx_doc_format_algorithm/assets/wx_template.docx"
-MANUALLY_CONFIRMED_TEMPLATE_DOCX = ROOT / "templates/company/technical-file-format-requirements.docx"
-TEMPLATE_JSON = ROOT / "templates/company/technical-file-format-requirements.json"
-STRUCTURE_RULES = ROOT / "templates/company/technical-file-structure-rules.json"
+MANUALLY_CONFIRMED_TEMPLATE_DOCX = ROOT / "templates/history/inactive/technical-file-format-requirements.docx"
+TEMPLATE_JSON = ROOT / "packaging/format-rule-sources/technical-document-template-rules.v1.0.0.json"
+STRUCTURE_RULES = ROOT / "packaging/format-rule-sources/technical-document-template-rules.v1.0.0.structure.json"
 ACTIVE_TEMPLATE_ID = "technical-document-template-rules"
 
 
@@ -56,6 +56,24 @@ class FormatRulePackTests(unittest.TestCase):
     def test_legacy_template_identifier_does_not_fallback_to_active_pack(self):
         with self.assertRaises(FormatRulePackError):
             FormatRulePackLoader().load("technical-file-format-requirements")
+
+    def test_loader_does_not_scan_an_inactive_json_as_a_runtime_candidate(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            active_path = root / "technical-document-template-rules.v1.0.0.json"
+            active_path.write_text(
+                (ROOT / "adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json").read_text(
+                    encoding="utf-8"
+                ),
+                encoding="utf-8",
+            )
+            (root / "general-office.json").write_text(
+                json.dumps({"status": "inactive", "id": "general-office"}),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(FormatRulePackError, "FORMAT_RULE_PACK_INACTIVE"):
+                FormatRulePackLoader(root).list_metadata()
 
     def test_page_and_margin_variations_remain_diagnostic_only(self):
         request = WordDocumentRequest(
@@ -239,7 +257,7 @@ class FormatRulePackTests(unittest.TestCase):
     def test_loader_rejects_tampered_rule_pack(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            output = root / "technical.json"
+            output = root / "technical-document-template-rules.v1.0.0.json"
             compile_rule_pack(TEMPLATE_DOCX, TEMPLATE_JSON, STRUCTURE_RULES, output)
             payload = json.loads(output.read_text(encoding="utf-8"))
             payload["template"]["roleRules"]["body"]["fontName"] = "第三方默认字体"
@@ -251,7 +269,7 @@ class FormatRulePackTests(unittest.TestCase):
     def test_loader_rejects_reclassified_source_rules_even_with_recomputed_integrity(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            output = root / "technical.json"
+            output = root / "technical-document-template-rules.v1.0.0.json"
             compile_rule_pack(TEMPLATE_DOCX, TEMPLATE_JSON, STRUCTURE_RULES, output)
             payload = json.loads(output.read_text(encoding="utf-8"))
             payload["sourceRules"][0]["category"] = "converter-only"

@@ -277,18 +277,6 @@
       "target": "packages/adapter-start-kit/config/adapter.example.json"
     },
     {
-      "type": "tree",
-      "source": "templates",
-      "target": "packages/adapter-start-kit/templates",
-      "include": [
-        "company/README.md",
-        "company/technical-file-format-requirements.docx",
-        "company/technical-file-format-requirements.json",
-        "general/general-office.json",
-        "general/proofread-rules.json"
-      ]
-    },
-    {
       "type": "archive",
       "source": "dist-offline-deps/kylin-v10-arm-py38-pip-bootstrap-20260506.tar.gz",
       "sourceRoot": "kylin-v10-arm-py38-pip-bootstrap-20260506",

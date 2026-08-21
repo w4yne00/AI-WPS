@@ -110,7 +110,6 @@ FORMAT_RULE_DISPLAY_NAMES = {
 }
 FORMAT_TEMPLATE_DISPLAY_NAMES = {
     "technical-document-template-rules": "技术文档模板规则",
-    "general-office": "通用办公文档格式",
 }
 FORMAT_STATUS_DISPLAY_NAMES = {
     "completed": "已完成",

@@ -2441,8 +2441,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         finally:
             os.chdir(previous_cwd)
 
-        self.assertIn("general-office", template_ids)
-        self.assertIn("technical-document-template-rules", template_ids)
+        self.assertEqual(template_ids, {"technical-document-template-rules"})
 
     def test_build_rewrite_prompt_includes_user_instruction(self) -> None:
         prompt = build_rewrite_prompt(

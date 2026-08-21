@@ -26,6 +26,18 @@ class DeliveryFailure(RuntimeError):
     pass
 
 
+LEGACY_FORMAT_MARKERS = (
+    "general-office",
+    "technical-file-format-requirements",
+    "templates/company/technical-file-",
+)
+AUDIT_SCRIPT_NAMES = {
+    "audit_format_rule_assets.py",
+    "audit_v0250_delivery.py",
+    "audit_v0251_delivery.py",
+}
+
+
 def load_json(path: Path, code: str) -> Dict:
     if not path.is_file():
         raise DeliveryFailure(code)
@@ -37,6 +49,19 @@ def load_json(path: Path, code: str) -> Dict:
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def audit_no_legacy_format_references(root: Path) -> None:
+    for path in sorted(root.rglob("*")):
+        if not path.is_file() or path.suffix.lower() not in {".css", ".html", ".js", ".json", ".md", ".py", ".sh", ".txt", ".xml", ".yml"}:
+            continue
+        if path.name in AUDIT_SCRIPT_NAMES and path.parent.name == "scripts":
+            continue
+        content = path.read_text(encoding="utf-8")
+        if any(marker in content for marker in LEGACY_FORMAT_MARKERS):
+            raise DeliveryFailure("LEGACY_FORMAT_REFERENCE {0}".format(path.relative_to(root)))
+        if path.relative_to(root).as_posix().startswith("packages/adapter-start-kit/templates/"):
+            raise DeliveryFailure("HISTORICAL_TEMPLATE_ASSET_DELIVERED")
 
 
 def audit_archive_checksum(
@@ -270,6 +295,7 @@ def audit(root: Path) -> None:
     audit_format_assets(root, manifest)
     audit_visual_default(root, manifest)
     audit_target_acceptance_record(root, manifest)
+    audit_no_legacy_format_references(root)
     print("v0251_delivery_audit=passed status=candidate version={0}".format(VERSION))
 
 

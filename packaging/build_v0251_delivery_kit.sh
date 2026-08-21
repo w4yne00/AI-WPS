@@ -98,8 +98,8 @@ trap 'rm -f "$COMPILED_CHECK"; cleanup_failed_outputs' EXIT
 PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" \
   "$ROOT_DIR/adapter_service/tools/compile_format_rule_pack.py" \
   --template-docx "$ROOT_DIR/adapter_service/vendor/wx_doc_format_algorithm/assets/wx_template.docx" \
-  --template-json "$ROOT_DIR/templates/company/technical-file-format-requirements.json" \
-  --structure-rules "$ROOT_DIR/templates/company/technical-file-structure-rules.json" \
+  --template-json "$ROOT_DIR/packaging/format-rule-sources/technical-document-template-rules.v1.0.0.json" \
+  --structure-rules "$ROOT_DIR/packaging/format-rule-sources/technical-document-template-rules.v1.0.0.structure.json" \
   --output "$COMPILED_CHECK"
 cmp "$COMPILED_CHECK" \
   "$ROOT_DIR/adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json"

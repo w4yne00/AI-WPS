@@ -38,7 +38,7 @@ mkdir -p "$(dirname "$OUT_FILE")"
   for path in \
     "$TARGET_DIR/adapter_service/app/main.py" \
     "$TARGET_DIR/wps-addon/manifest.xml" \
-    "$TARGET_DIR/templates/general/general-office.json" \
+    "$TARGET_DIR/adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json" \
     "$TARGET_DIR/config/adapter.example.json"; do
     if [[ -e "$path" ]]; then
       echo "present=$path"

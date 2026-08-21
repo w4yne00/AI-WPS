@@ -1599,6 +1599,32 @@ esac
 
         self.assertIn("mergeTemplates", js)
         self.assertIn("technical-document-template-rules", js)
+        self.assertNotIn("general-office", js)
+
+    def test_active_format_rule_sources_have_no_historical_runtime_fallbacks(self) -> None:
+        production_files = [
+            ROOT / "adapter_service/app/services/template_loader.py",
+            ROOT / "adapter_service/standalone_adapter.py",
+            ROOT / "adapter_service/app/services/word/deterministic_format_review.py",
+            ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
+            ROOT / "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js",
+            ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane-helpers.js",
+            ROOT / "packaging/build_v0250_format_rule_assets.sh",
+            ROOT / "packaging/build_v0250_delivery_kit.sh",
+            ROOT / "packaging/build_v0251_delivery_kit.sh",
+            ROOT / "packaging/probe_runtime.sh",
+            ROOT / "packaging/diagnose.sh",
+        ]
+        forbidden = ("general-office", "templates/company/technical-file-")
+
+        for path in production_files:
+            content = path.read_text(encoding="utf-8")
+            for marker in forbidden:
+                self.assertNotIn(marker, content, str(path))
+
+        for script in production_files[6:9]:
+            content = script.read_text(encoding="utf-8")
+            self.assertIn("packaging/format-rule-sources/", content)
 
     def test_taskpane_settings_hides_unified_key_but_keeps_compatibility(self) -> None:
         host_dirs = [
