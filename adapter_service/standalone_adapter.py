@@ -72,6 +72,7 @@ from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.deterministic_format_review import (
+    TASK_TYPE,
     WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE,
     WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
     deterministic_format_review_service,
@@ -1752,7 +1753,7 @@ class Handler(BaseHTTPRequestHandler):
                         error.status_code,
                         envelope(
                             job_id,
-                            "word.format_review.deterministic",
+                            TASK_TYPE,
                             success=False,
                             message=error.message,
                             errors=[{"code": error.code, "message": error.message}],
@@ -1761,7 +1762,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._write(
                     200,
-                    envelope(job_id, "word.format_review.deterministic", data, message="issues"),
+                    envelope(job_id, TASK_TYPE, data, message="issues"),
                 )
                 return
 
@@ -1784,7 +1785,7 @@ class Handler(BaseHTTPRequestHandler):
                         error.status_code,
                         envelope(
                             job_id,
-                            "word.format_review.deterministic",
+                            TASK_TYPE,
                             success=False,
                             message=error.message,
                             errors=[{"code": error.code, "message": error.message}],
@@ -1805,7 +1806,7 @@ class Handler(BaseHTTPRequestHandler):
                     return
                 self._write(
                     200,
-                    envelope(job_id, "word.format_review.deterministic", data, message=message),
+                    envelope(job_id, TASK_TYPE, data, message=message),
                 )
                 return
 
@@ -1823,7 +1824,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         job_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -1834,7 +1835,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     data.get("traceId", job_id),
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message=data.get("status", ""),
                 ),
@@ -2260,7 +2261,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         trace_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -2271,7 +2272,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     trace_id,
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message="created",
                 ),
@@ -2293,7 +2294,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         trace_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -2304,7 +2305,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     trace_id,
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message="committed",
                 ),
@@ -2320,7 +2321,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         trace_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -2331,7 +2332,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     trace_id,
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message="accepted",
                 ),
@@ -3066,7 +3067,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         job_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -3077,7 +3078,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     job_id,
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message="issue updated",
                 ),
@@ -3222,7 +3223,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         "standalone-word-deterministic-format-review",
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -3235,7 +3236,7 @@ class Handler(BaseHTTPRequestHandler):
                     400,
                     envelope(
                         "standalone-word-deterministic-format-review",
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=message,
                         errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": message}],
@@ -3246,7 +3247,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     "standalone-word-deterministic-format-review",
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message="uploaded",
                 ),
@@ -3318,7 +3319,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         job_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -3329,7 +3330,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     job_id,
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message=message,
                 ),
@@ -3352,7 +3353,7 @@ class Handler(BaseHTTPRequestHandler):
                     error.status_code,
                     envelope(
                         snapshot_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message=error.message,
                         errors=[{"code": error.code, "message": error.message}],
@@ -3364,7 +3365,7 @@ class Handler(BaseHTTPRequestHandler):
                     400,
                     envelope(
                         snapshot_id,
-                        "word.format_review.deterministic",
+                        TASK_TYPE,
                         success=False,
                         message="确定性格式审查删除请求格式无效。",
                         errors=[
@@ -3380,7 +3381,7 @@ class Handler(BaseHTTPRequestHandler):
                 200,
                 envelope(
                     snapshot_id,
-                    "word.format_review.deterministic",
+                    TASK_TYPE,
                     data,
                     message="deleted",
                 ),

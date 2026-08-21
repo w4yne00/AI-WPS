@@ -12,6 +12,7 @@ from app.core.tracing import new_trace_id
 from app.services.word.document_reviewer import WordDocumentReviewer
 from app.services.word.document_review_jobs import DocumentReviewJobStore
 from app.services.word.deterministic_format_review import (
+    TASK_TYPE,
     WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE,
     WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE,
     deterministic_format_review_service,
@@ -596,7 +597,7 @@ def _deterministic_format_review_envelope(
     return {
         "success": True,
         "traceId": trace_id or str(data.get("jobId", data.get("snapshotId", ""))),
-        "taskType": "word.format_review.deterministic",
+        "taskType": TASK_TYPE,
         "message": message,
         "data": data,
         "errors": [],

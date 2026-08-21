@@ -407,6 +407,11 @@ The Smart Write Dify system prompt, structure-preserving response rules, and ver
 | `POST` | `/word/format-review/snapshots` | Feature-gated v2 read-only deterministic format snapshot |
 | `POST` | `/word/format-review/jobs` | Feature-gated v2 deterministic format review background job |
 | `GET` | `/word/format-review/jobs/{jobId}` | Poll the v2 deterministic format review job and structured result |
+| `GET` | `/word/format-review/jobs/{jobId}/issues` | Paginated v2 issue query with rule, severity, status, and source-order filters |
+| `PATCH` | `/word/format-review/jobs/{jobId}/issues/{issueId}` | Update one v2 issue's processing or anchor-verification status |
+| `GET` | `/word/format-review/jobs/{jobId}/report` | Read the v2 report summary or export `format=json|markdown` |
+| `DELETE` | `/word/format-review/jobs/{jobId}` | Cancel or clean up a v2 deterministic format review job |
+| `DELETE` | `/word/format-review/jobs/{jobId}/report` | Delete a v2 deterministic format review report |
 | `DELETE` | `/word/format-review/snapshots/{snapshotId}` | Feature-gated cleanup for an unsubmitted deterministic format snapshot |
 | `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
 | `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |

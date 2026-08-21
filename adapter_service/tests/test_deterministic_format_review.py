@@ -274,6 +274,76 @@ class StandaloneFormatReviewRetirementTests(unittest.TestCase):
         )
         self.assertIn("后台格式审查任务", captured["body"]["message"])
 
+    def test_standalone_v2_issue_report_and_lifecycle_routes_use_the_v2_service(self) -> None:
+        import standalone_adapter
+
+        class FakeService:
+            def __init__(self):
+                self.calls = []
+
+            def list_issues(self, job_id, **kwargs):
+                self.calls.append(("list_issues", job_id, kwargs))
+                return {"issues": [], "nextCursor": ""}
+
+            def get_report(self, job_id):
+                self.calls.append(("get_report", job_id))
+                return {"schemaVersion": "word.format_review.report.v2", "jobId": job_id}
+
+            def update_issue(self, job_id, issue_id, **kwargs):
+                self.calls.append(("update_issue", job_id, issue_id, kwargs))
+                return {"issueId": issue_id, "status": kwargs.get("status")}
+
+            def delete_report(self, job_id):
+                self.calls.append(("delete_report", job_id))
+                return {"jobId": job_id, "deleted": True}
+
+            def cancel_job(self, job_id):
+                self.calls.append(("cancel_job", job_id))
+                return {"jobId": job_id, "status": "cancelled"}
+
+        def invoke(method, path, body=None):
+            captured = {}
+            handler = object.__new__(standalone_adapter.Handler)
+            handler.path = path
+            raw = json.dumps(body or {}).encode("utf-8")
+            handler.headers = {"Content-Length": str(len(raw))}
+            handler.rfile = BytesIO(raw)
+            handler._write = lambda status, payload: captured.update(status=status, body=payload)
+            handler._write_bytes = lambda status, content, headers: captured.update(
+                status=status, body=content, headers=headers
+            )
+            getattr(handler, method)()
+            return captured
+
+        fake_service = FakeService()
+        previous_service = standalone_adapter.DETERMINISTIC_FORMAT_REVIEW_SERVICE
+        standalone_adapter.DETERMINISTIC_FORMAT_REVIEW_SERVICE = fake_service
+        try:
+            issues = invoke(
+                "do_GET",
+                "/word/format-review/jobs/job-1/issues?pageSize=10&status=open",
+            )
+            report = invoke("do_GET", "/word/format-review/jobs/job-1/report?format=summary")
+            updated = invoke(
+                "do_PATCH",
+                "/word/format-review/jobs/job-1/issues/issue-1",
+                {"status": "processed"},
+            )
+            deleted_report = invoke("do_DELETE", "/word/format-review/jobs/job-1/report")
+            cancelled = invoke("do_DELETE", "/word/format-review/jobs/job-1")
+        finally:
+            standalone_adapter.DETERMINISTIC_FORMAT_REVIEW_SERVICE = previous_service
+
+        self.assertEqual(issues["status"], 200)
+        self.assertEqual(report["status"], 200)
+        self.assertEqual(updated["status"], 200)
+        self.assertEqual(deleted_report["status"], 200)
+        self.assertEqual(cancelled["status"], 200)
+        self.assertEqual(
+            [call[0] for call in fake_service.calls],
+            ["list_issues", "get_report", "update_issue", "delete_report", "cancel_job"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

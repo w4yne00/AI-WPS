@@ -386,6 +386,11 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | `POST` | `/word/format-review/snapshots` | （开关控制）创建 v2 只读确定性格式审查快照 |
 | `POST` | `/word/format-review/jobs` | （开关控制）提交 v2 确定性格式审查后台任务 |
 | `GET` | `/word/format-review/jobs/{jobId}` | （开关控制）轮询 v2 确定性格式审查任务状态和结构化结果 |
+| `GET` | `/word/format-review/jobs/{jobId}/issues` | 分页查询 v2 格式问题，支持规则、严重度、状态和来源排序筛选 |
+| `PATCH` | `/word/format-review/jobs/{jobId}/issues/{issueId}` | 更新单个格式问题的处理状态或锚点验证状态 |
+| `GET` | `/word/format-review/jobs/{jobId}/report` | 获取 v2 报告摘要，或按 `format=json|markdown` 导出 |
+| `DELETE` | `/word/format-review/jobs/{jobId}` | 取消或清理 v2 格式审查任务 |
+| `DELETE` | `/word/format-review/jobs/{jobId}/report` | 删除 v2 格式审查报告 |
 | `DELETE` | `/word/format-review/snapshots/{snapshotId}` | （开关控制）删除未提交的确定性格式审查快照 |
 | `POST` | `/excel/analysis` | 智能分析，只读分析选区或当前工作表已用范围 |
 | `POST` | `/excel/analysis/jobs` | 提交可恢复的智能分析后台任务 |

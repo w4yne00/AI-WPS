@@ -1,18 +1,18 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-12
+更新时间：2026-08-21
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
 当前分支：`main`
 
-当前版本：`v0.23.1-alpha`
+当前版本：`v0.25.1-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260812`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260821`
 
 当前候选交付包已生成：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；同名 `.sha256` 校验通过，麒麟 V10/WPS 真机验收待执行。
 
-## 0.1 v0.24.0-alpha 开发中能力
+## 0.1 v0.25.1-alpha 已实现能力
 
 - Issue #35 已形成默认关闭的 Word 全篇审查单分片最小闭环，开关为 `AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW=1`。关闭时 WPS 隐藏入口，全部新协议端点返回 `FULL_DOCUMENT_REVIEW_DISABLED`，且不会创建暂存目录；现有限量审查接口不变。
 - Issue #43、#67 已形成默认关闭的确定性格式审查后台闭环，开关为 `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=1`。关闭时 WPS 隐藏新入口，快照/任务协议返回 `DETERMINISTIC_FORMAT_REVIEW_DISABLED`，且不会创建暂存目录；旧同步 `/word/format-review` 仅保留明确的 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` 退役响应。
