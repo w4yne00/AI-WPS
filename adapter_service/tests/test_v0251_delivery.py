@@ -38,6 +38,60 @@ def test_v0251_policy_keeps_phase1_baseline_and_excludes_future_work():
         assert excluded not in entries
 
 
+def test_v0251_policy_ships_issue_59_target_acceptance_record():
+    policy = json.loads(POLICY.read_text(encoding="utf-8"))
+
+    assert {
+        (entry["source"], entry["target"])
+        for entry in policy["entries"]
+        if entry.get("type") == "file"
+    } >= {
+        (
+            "packaging/v0251-target-machine-acceptance.md",
+            "docs/v0251-target-machine-acceptance.md",
+        )
+    }
+    record = (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+        encoding="utf-8"
+    )
+    for required in (
+        "Issue #59",
+        "60,000",
+        "120,000",
+        "取消",
+        "只读",
+        "图片语义",
+        "manual-pending",
+        "不写入仓库",
+        "≤ 30 秒",
+        "≤ 60 秒",
+        "两遍指纹",
+    ):
+        assert required in record
+
+
+def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):
+    audit_module = load_v0251_audit_module()
+    record = (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+        encoding="utf-8"
+    )
+    record = record.replace("| `manual-pending` |", "| `passed` |", 1)
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "v0251-target-machine-acceptance.md").write_text(
+        record, encoding="utf-8"
+    )
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING",
+    ):
+        audit_module.audit_target_acceptance_record(
+            tmp_path,
+            {"targetAcceptanceIssue": 59, "targetAcceptance": {"status": "manual-pending"}},
+        )
+
+
 def test_v0251_build_requires_candidate_baseline_and_all_delivery_gates():
     build = BUILD.read_text(encoding="utf-8")
 
