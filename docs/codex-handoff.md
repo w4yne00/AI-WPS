@@ -1,21 +1,21 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-12
+更新时间：2026-08-21
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
 当前分支：`main`
 
-当前版本：`v0.23.1-alpha`
+当前版本：`v0.25.1-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260812`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260821`
 
 当前候选交付包已生成：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；同名 `.sha256` 校验通过，麒麟 V10/WPS 真机验收待执行。
 
-## 0.1 v0.24.0-alpha 开发中能力
+## 0.1 v0.25.1-alpha 已实现能力
 
 - Issue #35 已形成默认关闭的 Word 全篇审查单分片最小闭环，开关为 `AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW=1`。关闭时 WPS 隐藏入口，全部新协议端点返回 `FULL_DOCUMENT_REVIEW_DISABLED`，且不会创建暂存目录；现有限量审查接口不变。
-- Issue #43 已形成默认关闭的确定性格式审查最小后台闭环，开关为 `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=1`。关闭时 WPS 隐藏新入口，快照/任务协议返回 `DETERMINISTIC_FORMAT_REVIEW_DISABLED`，且不会创建暂存目录；现有同步 `/word/format-review` 保持兼容。
+- Issue #43、#67 已形成默认关闭的确定性格式审查后台闭环，开关为 `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=1`。关闭时 WPS 隐藏新入口，快照/任务协议返回 `DETERMINISTIC_FORMAT_REVIEW_DISABLED`，且不会创建暂存目录；旧同步 `/word/format-review` 仅保留明确的 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` 退役响应。
 - 首个闭环只读抽取不超过 20,000 审查字符的普通正文段落，执行两遍内容哈希确认；表格内段落、页眉页脚、脚注尾注、批注修订、文本框、形状、图片、公式、图表、附件和隐藏文本均明确列为未审查区域，不写回 Word。
 - 全篇审查复用 `word.document_review` 模型配置，但仅模型直连、显式上下文容量和至少 2,048 输出 Token 的配置可启动；设置页分别披露限量审查和全篇审查就绪度。
 - 全篇审查使用独立的快照、批次、提交、任务、状态、运行中协作取消和报告协议，以及版本化分片、纠正和跨片汇总 System Prompt 与严格 JSON Schema。多分片按约 18,000 字符目标、20,000 硬上限和 800 字符上下文重叠执行，标题/段落/句子/字符优先；大型表格按行、单元格、句子和字符递归拆分，重复表头仅作为 overlap 上下文。每个分片输出摘要、受控事实、跨片核对项和问题索引；两个及以上分片再调用只接收压缩索引的全局汇总，并拒绝未知问题、事实或锚点引用。请求体按实际接收字节限制为 2 MB，快照只能原子提交一次；暂存目录在启动时无条件扫描，并由后台维护线程周期清理。格式错误固定纠正一次，再次失败则任务失败，不以原始文本或限量结果降级。
@@ -84,7 +84,7 @@ AI-WPS 是面向公司内网办公终端的 WPS AI 助理插件。目标环境�
 - 智能编写：`POST /word/smart-write/jobs`，任务类型 `word.smart_write`。
 - 智能仿写：`POST /word/smart-imitation/jobs`，任务类型 `word.smart_imitation`。
 - 文档审查：`POST /word/document-review`，任务类型 `word.document_review`。
-- 格式审查：`POST /word/format-review`，任务类型 `word.format_review`。
+- 格式审查：先 `POST /word/format-review/snapshots` 创建 v2 快照，再 `POST /word/format-review/jobs` 提交后台任务，任务类型 `word.format_review.deterministic`。
 - 设置：四类 Word 模型配置和诊断信息；任务窗格不显示统一 URL 或统一 API Key 编辑器。
 
 Excel 侧 Ribbon 只显示：
@@ -245,7 +245,15 @@ DELETE /word/document-review/full/jobs/{jobId}/result
 
 全篇审查问题接口默认每页 20 项，`pageSize` 支持 1–100，使用不透明 `cursor` 续读；`sort` 支持 `source`（原文顺序）和 `severity`（高到低），并支持 `severity`、`category`、`location`（`body`/`chapter`/`table`）和 `status`（`open`/`processed`/`ignored`）筛选。终态任务和摘要报告不返回完整问题数组；`PATCH` 仅按稳定 `issueId` 更新独立处理状态。报告默认返回摘要，`?format=json` 导出完整版本化 JSON，`?format=markdown` 导出 Markdown；结果可由 `/result` 主动删除。
 DELETE /word/document-review/jobs/{jobId}[?resume=1]
-POST   /word/format-review
+POST   /word/format-review                         # 仅返回 410 退役响应
+POST   /word/format-review/snapshots               # v2 快照
+POST   /word/format-review/jobs                    # v2 后台任务
+GET    /word/format-review/jobs/{jobId}
+GET    /word/format-review/jobs/{jobId}/issues
+PATCH  /word/format-review/jobs/{jobId}/issues/{issueId}
+GET    /word/format-review/jobs/{jobId}/report
+DELETE /word/format-review/jobs/{jobId}
+DELETE /word/format-review/jobs/{jobId}/report
 POST   /excel/analysis
 POST   /excel/analysis/jobs
 GET    /excel/analysis/jobs/{jobId}[?resume=1]
@@ -412,14 +420,13 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - 文档审查点击后先刷新“正在读取文档审查范围”状态，再异步执行限量抽取；最多读取 80 段、每段 800 字、正文 12000 字，框选文本时直接按选中文本拆段，不同步扫描全文。
 - 文档审查请求提交后会在 8 秒和 30 秒继续刷新等待模型后台的状态，避免模型后台慢返回时任务窗格看起来无反馈。
 - 文档审查 adapter 解析 Dify 返回时新增兜底：非标准 JSON、普通 Markdown 或未包含 `issues` 的 JSON 会保留为 `rawAnswer`，前端显示“原始模型回复”，便于区分 Dify 输出格式问题和前端渲染问题。
-- 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回。
-- 格式审查保留 AI 段落角色识别能力；Dify 不可用或返回不可解析时回退本地规则。
-- 2026-05-29 排查格式审查现场报“无法连接 adapter”：根因是 AI 段落角色识别作为可选能力时，Dify 非 JSON、超时或其它 provider 边界异常可能拖住/打断 `/word/format-review`。现已将格式审查 AI 角色识别限制为短预算调用：最多前 40 段、每批 20 段、单次 Dify 请求最多 8 秒；任何 provider 边界异常都会记录摘要并回退本地格式规则，保证前台能返回格式审查结果。
+- 格式审查固定使用 `technical-file-format-requirements` 模板，不再提供模板下拉，不提供“应用预览”写回；当前入口只消费 v2 快照、后台任务和版本化报告。
+- v2 格式语义增强只接受 `format_semantics.v1`，Dify 不可用或返回不可解析时，任务明确记录降级状态和原因，不调用旧同步审查链。
+- 2026-05-29 的旧同步格式审查链已退役；`POST /word/format-review` 只返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`，不再执行审查或返回旧报告。
 - 2026-05-31 排查格式审查点击后任务窗格卡死且 Dify 无调用记录：根因是前端在发起 `fetch` 前同步扫描 WPS 全文 `Paragraphs`，大文档下会阻塞任务窗格。现已为格式审查增加专用限量抽取：最多读取 80 段、每段 800 字、正文 12000 字；框选文本时直接按选中文本构造段落，不再先扫描全文；点击后先刷新“正在读取格式审查范围”状态，再异步执行抽取和请求。
 - 文档审查结果改为按错别字、语言表达、逻辑表达、通畅性、专业性分组展示，每条问题固定展示严重程度、位置、原文片段、问题说明、修改建议和建议改写。
-- 格式审查结果改为按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展示，每条问题固定展示段落号、段落角色、当前值、模板要求和建议操作。
-- `v0.12.16-alpha` 起，格式审查结果预览改为“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”结构：优先处理清单用表格集中展示段落、问题类型、当前值、模板要求和建议，详细问题按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展开。
-- 格式审查预览层尽量中文化显示普通用户会看到的反馈：模板名显示为“技术文件格式及书写要求”，字体标准显示“宋体”，字号标准显示“小四（12pt）”，样式名、对齐、行距、首行缩进、页面设置、识别来源和 AI 兜底原因也转成中文可读表达。
+- 历史版本的格式审查结果曾按页面设置、标题层级、正文格式、段落格式、图表题/注释和其他格式项分组展示；该同步渲染链已由 v2 结构化报告替代。
+- v2 报告预览展示执行/合规/覆盖/语义状态、问题清单、已验证格式事实和诊断信息；无法由已验证事实确认的值显示为“无法识别”或“无法验证位置”，不猜测单位、不翻译旧当前值、不使用旧报告兜底。
 - 设置页新增“最近一次任务诊断”，聚合 `/provider/debug-last`、`/provider/status`、`/provider/route-diagnostics` 和 `/provider/task-api-keys` 的脱敏摘要，并支持一键复制。
 - `/provider/debug-last` 增补 `providerName`、`providerType`、`taskApiKeyRef`、`taskAuthSource` 等脱敏字段，便于判断当前任务是否命中对应 Dify 应用密钥。
 - adapter 启动包新增麒麟 V10/systemd 开机自启动脚本：`scripts/install_autostart.sh` 安装 `ai-wps-adapter.service`，开机后复用现有 `scripts/start_adapter.sh 18100`；`scripts/uninstall_autostart.sh` 用于停止并移除自启动服务。
@@ -494,7 +501,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - Word/Excel/PPT 宿主配色、连接文案、设置快捷入口和纯文字主按钮均为前端展示层变化；不得借此改动 Word 回写、文档审查/智能分析/智能总结长任务恢复、模型请求或三个 Ribbon 的宿主隔离。
 - 新版本安装脚本必须继续保护目标机运行时配置：不得覆盖 `config/adapter.json`、`run/provider_api_key`、`run/provider_api_keys/` 中的现场 API URL 和 API Key，也不得覆盖写作规范数据库和应保留的备份。
 - 文档审查闭环只能管理前端处理状态和复制审查记录，不允许自动写回或自动修改正文。
-- 本轮格式审查只改前端结果预览渲染和中文展示，不改 `/word/format-review` 接口、模板规则检查、AI 段落角色识别、任务级 API Key 选路和 Dify payload。
+- v0.25.1 的格式审查主入口只走 v2 快照、后台任务和 v2 报告协议；旧同步 `/word/format-review` 不再执行审查，v1 快照、缓存和报告只返回明确失效错误并要求重新审查。模板规则检查、任务级 API Key 选路和 Dify payload 仍由 v2 后台任务统一承载。
 - 智能编写和文档审查逻辑不要因格式审查预览优化被改动；对应抽取限制、等待反馈、`rawAnswer` 兜底和写回策略都要保持当前行为。
 - uvicorn 优先、standalone 兜底的 adapter 启动方式，以及旧进程版本替换逻辑。
 

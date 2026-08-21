@@ -4688,23 +4688,6 @@
     medium: "中",
     low: "低"
   };
-  var FORMAT_REVIEW_GROUP_ORDER = [
-    "page_setup",
-    "heading",
-    "body_text",
-    "paragraph",
-    "caption_note",
-    "other"
-  ];
-  var FORMAT_REVIEW_GROUP_TEXT = {
-    page_setup: "页面设置",
-    heading: "标题层级",
-    body_text: "正文格式",
-    paragraph: "段落格式",
-    caption_note: "图表题/注释",
-    other: "其他格式项"
-  };
-
   function groupItems(items, getKey) {
     var grouped = {};
     (items || []).forEach(function (item) {
@@ -4720,123 +4703,6 @@
   function getDocumentReviewCategory(issue) {
     var category = issue && issue.category ? String(issue.category) : "";
     return DOCUMENT_REVIEW_CATEGORY_TEXT[category] ? category : "other";
-  }
-
-  function getFormatReviewGroup(issue) {
-    var ruleId = String((issue && issue.ruleId) || "");
-    var role = String((issue && issue.role) || "");
-    if (ruleId === "page_setup") {
-      return "page_setup";
-    }
-    if (role.indexOf("heading") >= 0 || role.indexOf("title") >= 0) {
-      return "heading";
-    }
-    if (ruleId === "style_name") {
-      return "body_text";
-    }
-    if (ruleId === "font_name" || ruleId === "font_size") {
-      return "body_text";
-    }
-    if (ruleId === "line_spacing" || ruleId === "alignment" || ruleId === "first_line_indent") {
-      return "paragraph";
-    }
-    if (role.indexOf("caption") >= 0 || role.indexOf("note") >= 0 || ruleId.indexOf("caption") >= 0 || ruleId.indexOf("note") >= 0) {
-      return "caption_note";
-    }
-    return "other";
-  }
-
-  function formatAiFallbackReason(reason) {
-    var reasonText = {
-      no_paragraphs: "未读取到正文段落，未调用模型后台；请确认当前文档对象能暴露正文段落或全文文本。",
-      no_candidates: "没有需要模型确认的模糊候选，未调用模型后台。",
-      provider_not_configured: "统一 API URL 或格式审查任务 API Key 未形成可用配置，已使用本地模板规则。",
-      format_semantic_protocol_not_ready: "模型语义协议尚未就绪，已使用本地模板规则。",
-      model_capability_unknown: "模型能力状态未知，已使用本地模板规则。",
-      dify_response_not_role_json: "模型后台未返回段落角色 JSON，已使用本地模板规则。",
-      provider_request_failed: "模型后台请求失败，已使用本地模板规则。",
-      format_semantic_response_invalid: "模型后台响应无法解析或不符合协议，已使用本地模板规则。",
-      format_semantic_candidate_out_of_range: "模型后台返回了不在候选范围内的结果，已使用本地模板规则。",
-      format_semantic_low_confidence: "模型后台结果置信度不足，已使用本地模板规则。",
-      format_semantic_zero_accepted: "模型已调用但没有接受任何结果，已使用本地模板规则。",
-      dify_response_no_valid_roles: "模型后台返回的角色无效，已使用本地模板规则。",
-      dify_returned_no_roles: "模型后台未返回有效段落角色，已使用本地模板规则。",
-      semantic_phase_timeout: "模型语义增强处理超时，已使用本地模板规则。"
-    };
-    return reasonText[reason] || (reason ? "模型语义增强未完成，已使用本地模板规则。" : "");
-  }
-
-  function renderGroupedFormatReview(data) {
-    if (helpers.renderReadableFormatReview) {
-      return helpers.renderReadableFormatReview(data);
-    }
-
-    var summary = data.summary || {};
-    var issues = data.issues || [];
-    var lines = [
-      "格式审查结果",
-      "",
-      "模板：" + (summary.templateId || "technical-file-format-requirements"),
-      "检查范围：" + (summary.scope === "selection" ? "选中内容" : "全文"),
-      "发现问题：" + (summary.issueCount || issues.length || 0)
-    ];
-    var hasCoverageStats = typeof summary.paragraphCount !== "undefined";
-
-    if (hasCoverageStats) {
-      lines.push("扫描段落：" + summary.paragraphCount);
-      lines.push(
-        "AI 识别段落：" + (summary.aiClassifiedParagraphCount || 0) +
-        " | 本地兜底段落：" + (summary.localFallbackParagraphCount || 0)
-      );
-    }
-    lines.push("识别来源：" + (summary.provider || "local"));
-    var aiFallbackText = formatAiFallbackReason(summary.aiFallbackReason);
-    if (aiFallbackText) {
-      lines.push("fallback 原因：" + aiFallbackText);
-    }
-    if (summary.aiInvalidRoleCount || summary.aiOutOfBatchCount) {
-      lines.push(
-        "AI 无效角色：" + (summary.aiInvalidRoleCount || 0) +
-        " | 越界段落：" + (summary.aiOutOfBatchCount || 0)
-      );
-    }
-    lines.push("");
-    lines.push("以下仅显示需要调整的格式项，正文内容不会在检查中改写。");
-    lines.push("");
-
-    if (!issues.length) {
-      lines.push("当前范围未发现明显格式问题。");
-      return lines.join("\n");
-    }
-
-    var grouped = groupItems(issues, getFormatReviewGroup);
-    FORMAT_REVIEW_GROUP_ORDER.forEach(function (group) {
-      var groupIssues = grouped[group] || [];
-      if (!groupIssues.length) {
-        return;
-      }
-      lines.push("## " + FORMAT_REVIEW_GROUP_TEXT[group] + "（" + groupIssues.length + "）");
-      lines.push("");
-      groupIssues.forEach(function (issue, index) {
-        lines.push("### " + FORMAT_REVIEW_GROUP_TEXT[group] + " #" + (index + 1));
-        lines.push("- 段落号：" + (
-          helpers.formatReviewParagraphLabel
-            ? helpers.formatReviewParagraphLabel(issue)
-            : (Number(issue.paragraphIndex) > 0 && issue.anchorVerification === "verified"
-              ? "P" + issue.paragraphIndex : "位置待确认")
-        ));
-        lines.push("- 段落角色：" + (
-          helpers.formatReviewRole ? helpers.formatReviewRole(issue.role) : (issue.role || "未标注")
-        ));
-        lines.push("- 问题说明：" + (issue.message || "格式问题"));
-        lines.push("- 当前值：" + (issue.currentValue || "未读取"));
-        lines.push("- 模板要求：" + (issue.expectedValue || "未给出"));
-        lines.push("- 建议操作：" + (issue.suggestion || "按模板调整。"));
-        lines.push("");
-      });
-    });
-
-    return lines.join("\n").trim();
   }
 
   function renderGroupedDocumentReview(data) {
@@ -6476,7 +6342,7 @@
     }
     return Number(issue && issue.paragraphIndex) > 0 && issue.anchorVerification === "verified"
       ? "第 " + issue.paragraphIndex + " 段"
-      : "位置待确认";
+      : "无法验证位置";
   }
 
   function deterministicFormatReviewIssueRole(issue) {

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import os
 import stat
 import tempfile
@@ -181,6 +182,101 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
                 "verification": expected_verification,
             },
         )
+
+    def test_v1_snapshot_request_is_rejected_before_staging(self):
+        with self.assertRaises(AdapterError) as raised:
+            self.service.create_snapshot(
+                {
+                    "documentId": "legacy-format-review.docx",
+                    "selectionMode": "document",
+                    "content": {
+                        "plainText": "旧同步审查正文",
+                        "paragraphs": [{"index": 1, "text": "旧同步审查正文"}],
+                    },
+                }
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED",
+        )
+        self.assertEqual(raised.exception.status_code, 410)
+        self.assertIn("重新提交", raised.exception.message)
+        self.assertFalse((Path(self.temp_dir.name) / "format-snapshot-legacy-format-review").exists())
+
+        with self.assertRaises(AdapterError) as legacy_session:
+            self.service.create_snapshot(
+                {
+                    "schemaVersion": "word.format_review.snapshot.v1",
+                    "documentId": "legacy-session.docx",
+                    "selectionMode": "document",
+                }
+            )
+        self.assertEqual(
+            legacy_session.exception.code,
+            "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED",
+        )
+        self.assertEqual(legacy_session.exception.status_code, 410)
+
+    def test_v1_snapshot_cache_is_rejected_at_v2_job_boundary(self):
+        snapshot_id = "format-snapshot-legacy-cache"
+        snapshot_token = "legacy-token"
+        snapshot_dir = Path(self.temp_dir.name) / snapshot_id
+        snapshot_dir.mkdir(mode=0o700)
+        (snapshot_dir / "snapshot.json").write_text(
+            json.dumps(
+                {
+                    "schemaVersion": "word.format_review.snapshot.v1",
+                    "snapshotId": snapshot_id,
+                    "snapshotTokenSha256": hashlib.sha256(
+                        snapshot_token.encode("utf-8")
+                    ).hexdigest(),
+                    "status": "committed",
+                    "request": {},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with self.assertRaises(AdapterError) as raised:
+            self.service.start_job(
+                {
+                    "snapshotId": snapshot_id,
+                    "snapshotToken": snapshot_token,
+                    "clientJobId": "legacy-cache-job",
+                },
+                "legacy-cache-trace",
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED",
+        )
+        self.assertEqual(raised.exception.status_code, 410)
+
+    def test_v1_report_cache_is_rejected_and_requires_new_review(self):
+        job_id = "legacy-report-cache"
+        report = {
+            "schemaVersion": "word.format_review.report.v1",
+            "reviewMode": "synchronous",
+            "summary": {},
+            "reportExpiresAt": self.service._wall_clock() + 3600,
+        }
+        report["reportSha256"] = format_protocol._report_sha256(report)
+        report_path = Path(self.temp_dir.name) / ("report-" + job_id + ".json")
+        report_path.write_text(json.dumps(report), encoding="utf-8")
+
+        with self.assertRaises(AdapterError) as raised:
+            self.service.get_report(job_id)
+
+        self.assertEqual(
+            raised.exception.code,
+            "DETERMINISTIC_FORMAT_REVIEW_REPORT_VERSION_UNSUPPORTED",
+        )
+        self.assertEqual(raised.exception.status_code, 410)
+        self.assertIn("重新审查", raised.exception.message)
+        self.assertTrue(report_path.exists())
 
     def test_selection_context_is_stored_but_not_reviewed(self):
         session = self._session()
@@ -435,6 +531,7 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
 
     def test_markdown_does_not_expose_unmapped_machine_values(self):
         self.service._save_report("unmapped-export-job", {
+            "schemaVersion": format_protocol.FORMAT_REPORT_SCHEMA_VERSION,
             "summary": {
                 "executionStatus": "completed",
                 "complianceStatus": "violations_found",
@@ -476,6 +573,7 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertNotIn("14.5pt", markdown)
 
         self.service._save_report("mixed-page-export-job", {
+            "schemaVersion": format_protocol.FORMAT_REPORT_SCHEMA_VERSION,
             "summary": {
                 "templateId": "technical-document-template-rules",
                 "formatFactDiagnostics": {
@@ -671,10 +769,10 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
     def test_legacy_invalid_body_uses_adapter_error_envelope(self):
         with self.assertRaises(AdapterError) as context:
             self.service.create_snapshot({"content": []})
-        self.assertEqual(context.exception.status_code, 422)
+        self.assertEqual(context.exception.status_code, 410)
         self.assertEqual(
             context.exception.code,
-            "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_INVALID",
+            "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED",
         )
 
     def test_table_cell_format_and_structure_are_fingerprinted(self):

@@ -191,6 +191,10 @@ assert.ok(!mixedPage.includes("当前值：纸张：A4"));
 assert.ok(js.includes('configData.features && configData.features.deterministicFormatReviewEnabled'));
 assert.ok(js.includes('byId("btn-run-primary")'));
 assert.ok(!js.includes('request("/word/format-review", state.latestDocumentPayload)'));
+assert.ok(!js.includes("function runFormatReview("));
+assert.ok(!js.includes("function renderGroupedFormatReview("));
+assert.ok(!js.includes("renderReadableFormatReview"));
+assert.ok(js.includes("function runDeterministicFormatReview("));
 
 const body = helpers.buildDeterministicFormatReviewBody({
   documentId: "table.docx",

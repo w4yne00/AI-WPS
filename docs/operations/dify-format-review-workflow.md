@@ -1,6 +1,6 @@
 # AI-WPS 格式审查 Dify 工作流配置手册
 
-适用版本：`v0.25.0-alpha`（兼容保留旧同步入口）
+适用版本：`v0.25.1-alpha`（旧同步入口仅保留退役响应）
 
 适用任务：`word.format_review`
 
@@ -26,9 +26,15 @@ POST /word/format-review/snapshots
 PUT  /word/format-review/snapshots/{snapshotId}/batches/{sequence}
 POST /word/format-review/snapshots/{snapshotId}/commit
 POST /word/format-review/jobs
+GET  /word/format-review/jobs/{jobId}
+GET  /word/format-review/jobs/{jobId}/issues
+PATCH /word/format-review/jobs/{jobId}/issues/{issueId}
+GET  /word/format-review/jobs/{jobId}/report
+DELETE /word/format-review/jobs/{jobId}
+DELETE /word/format-review/jobs/{jobId}/report
 ```
 
-旧的 `POST /word/format-review/snapshots` 直接提交 `WordDocumentRequest` 的兼容行为仍保留，但不支持全文分批和二遍格式指纹验证。
+旧的 `POST /word/format-review/snapshots` 直接提交 `WordDocumentRequest` 的 v1 行为已退役，返回 `410 DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED`；v1 快照缓存和报告也不会进入 v2 规则或渲染链，必须重新读取文档并提交 v2 审查。
 
 “格式审查”由原“智能排版”收敛而来。当前版本只做“根据标准文档模板进行格式检查”，不再让大模型生成全文排版结果，也不再自动写回 Word 格式。
 
@@ -36,18 +42,18 @@ POST /word/format-review/jobs
 
 `v0.25.0-alpha` 起，Dify 的 `suggest_table_caption` 只接收确定性算法同时确认“数据表、缺少表题、关联无歧义”的候选。候选证据视图固定包含多级表头、合并关系、行列数、单位、来源、表下注、所在标题和邻近上下文；完整表格超过单次输入预算时，必须显式标记 `evidenceStatus=restricted`，并只保留首三行和末两行样例。模型只能返回不超过 80 个 Unicode 字符的表题正文，不得包含表前缀、表号、Markdown、换行或解释；证据不足或引入证据外的机构、时间、地域、数值、统计口径时，adapter 拒绝该建议并返回“无法可靠建议”。所有表题建议均为只读结果，不会自动写回 Word。
 
-由于 Dify 和模型上下文窗口有限，建议用户框选局部内容进行格式审查；未选中文本时，前端仍会尝试读取全文，但长文档以本地规则为主。当前 adapter 只把最多前 40 个段落用于可选 AI 角色识别，每批最多 20 段，单次 Dify 请求最多等待 60 秒；超时、非 JSON 响应或解析失败都不会中断格式审查，会自动回退本地模板规则。
+由于 Dify 和模型上下文窗口有限，建议用户框选局部内容进行格式审查；未选中文本时，前端仍会尝试读取全文，但长文档以本地规则为主。当前 adapter 只把最多前 40 个段落用于可选 AI 角色识别，每批最多 20 段，单次 Dify 请求最多等待 60 秒；超时、不可达或协议校验失败都不会中断确定性审查，任务会记录 v2 语义降级原因并继续执行本地模板规则。
 
-`v0.12.16-alpha` 起，格式审查结果预览按“审查概览 / 优先处理清单 / 详细问题 / 诊断信息”展示。普通用户优先看“优先处理清单”和“详细问题”；技术联调时再看末尾诊断信息。预览层会尽量中文化显示段落角色、规则项、模板名、识别来源和 AI 兜底原因。
+`v0.25.1-alpha` 起，格式审查结果预览只消费 v2 结构化报告和格式事实诊断，按执行状态、合规状态、覆盖状态、问题清单和详细说明展示。无法由已验证事实确认的字体、字号、对齐、位置等值显示为“无法识别”或“无法验证位置”，不再猜测单位、翻译旧当前值或使用旧同步报告兜底。
 
-常见格式值显示规则：
+v2 格式事实显示规则：
 
 - 字体标准显示为“宋体”。
-- 字号标准显示为“小四（12pt）”；当前值会尽量显示为“四号（14pt）”“小四（12pt）”等中文字号。
+- 已验证的字号显示为“小四（12pt）”等中文字号；未映射或状态不足的值显示为“无法识别”。
 - 对齐方式显示为“左对齐、居中、右对齐、两端对齐”等中文。
 - 行距显示为“单倍行距（1倍）”“1.5 倍行距”等中文。
-- 首行缩进显示为“无首行缩进”或“首行缩进 2 字符（约 480 twips）”。
-- 样式名、页面行、模拟服务和 AI 兜底诊断会尽量显示为中文提示，避免直接暴露机器字段。
+- 首行缩进显示为“无首行缩进”或“首行缩进 2 字符”。
+- 样式名、页面事实和数据状态按 v2 格式事实协议显示；缺少锚点证据时显示“无法验证位置”，不生成泛化段落位置。
 
 `v0.13.4-alpha` 起，框选文本执行格式审查时，任务窗格会优先读取 WPS 选区 `Selection/Range` 的段落格式，再退回纯文本兜底；如果只读取到纯文本，不再伪造 `0pt` 字号或左对齐。adapter 侧也会将 WPS 对齐枚举值（例如 `3`）规范化为两端对齐后再判断。
 
@@ -101,44 +107,40 @@ adapter 请求体只依赖 Dify 官方字段：
 ```text
 你是企业 Word 文档格式审查的段落角色识别助手。
 
-你的任务不是改写正文，也不是输出排版后的全文。请只根据用户通过 sys.query 发送的段落列表，判断每个段落最可能的文档角色。
+你的任务不是改写正文，也不是输出排版后的全文。请只处理输入 JSON 中 `candidates` 列出的模糊候选，判断每个候选最可能的文档角色。
 
-可选角色只能使用：
-- heading：标题或小标题；
-- body：正文段落；
-- list：编号列表或条目列表；
-- caption：图题、表题；
-- note：注释、说明、备注；
-- appendix：附录标题或附录正文；
-- table：表格正文或表格内容说明；
-- unknown：无法判断。
+输入包含 `operation=classify_role`、当前 `snapshotBinding` 和候选对象。每个候选都有 `blockId` 与 `allowedTargets`；只能从该候选的 `allowedTargets` 选择角色及属性，不得处理确定性规则已确认的对象。
 
-输出必须是 Markdown 文本，其中只能包含一个 json 代码块，代码块内必须是合法 JSON：
+输出必须是一个符合 `format_semantics.v1` 的 JSON 对象，不要 Markdown 代码围栏、推理过程、思考标签或格式合规结论：
 
 ```json
 {
-  "paragraphs": [
+  "schemaVersion": "format_semantics.v1",
+  "operation": "classify_role",
+  "snapshotBinding": {
+    "contentSha256": "与输入完全一致",
+    "structureSha256": "与输入完全一致",
+    "formatSha256": "与输入完全一致"
+  },
+  "items": [
     {
-      "index": 1,
+      "blockId": "输入候选中的 blockId",
       "role": "heading",
-      "confidence": 0.86,
-      "reason": "该段为章节标题"
+      "level": 1,
+      "confidence": 0.95
     }
   ]
 }
 ```
 
 字段要求：
-- index 必须使用用户输入中的段落序号；
-- role 必须从上述角色中选择；
-- confidence 为 0 到 1 之间的小数；
-- reason 用一句中文说明判断依据；
-- 不要返回原文全文，不要输出格式修改建议，不要在 json 代码块外输出解释。
-```
+- `schemaVersion` 必须为 `format_semantics.v1`，`operation` 必须与输入一致；
+- `snapshotBinding` 必须逐字段复现当前输入，不能省略或改写哈希；
+- `items` 必须覆盖本批全部候选，`blockId` 不得重复或越界；
+- `role`、`level`、`ordered`、`numbered` 只能使用对应候选的 `allowedTargets`，`confidence` 为 0 到 1 之间的小数；
+- 不要返回 `paragraphs`、`candidates`、`reason`、Markdown 或其它未声明字段。
 
-如果当前 Dify 版本不能强制 JSON 输出，也可以保持普通 Markdown 输出，但必须让大模型把 JSON 放入 `json` 代码块。adapter 会从 Markdown 代码块中提取 JSON；提取失败时会自动回退本地规则。
-
-格式审查的 AI 段落角色识别是可选增强。Dify 超时、无 JSON 或未配置时，adapter 会回退本地模板规则并在诊断里显示 AI 兜底原因。
+格式审查的 AI 段落角色识别是可选增强。Dify 超时、不可达、未配置或 v1 契约校验失败时，adapter 会继续本地模板规则，并在 v2 诊断中记录语义降级原因；不会提取旧 JSON，也不会调用旧同步审查链。
 
 ## 5. 回复节点
 

@@ -1,5 +1,4 @@
 import json
-import re
 import time
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Tuple
@@ -12,7 +11,7 @@ from app.core.outline_level import (
     normalize_outline_level,
 )
 from app.services.document_normalizer import body_paragraphs
-from app.services.provider_client import ProviderClient, extract_answer
+from app.services.provider_client import ProviderClient
 from app.services.word.authorized_format_algorithm import (
     audit_format_facts,
     associate_captions,
@@ -1701,24 +1700,15 @@ class WordFormatReviewer:
                         continue
                     items = outcome["items"]
                     response_payload = outcome["payload"]
-                elif hasattr(self.provider_client, "format_review_roles"):
-                    diagnostics["aiCallCount"] += 1
-                    if task_auth is None:
-                        body = self.provider_client.format_review_roles(trace_id, input_data, prompt)
-                    else:
-                        body = self.provider_client.format_review_roles(
-                            trace_id, input_data, prompt, task_auth=task_auth
-                        )
-                    answer = extract_answer(body)
-                    response_payload = self._extract_semantic_payload(answer)
-                    items = response_payload.get("items")
                 else:
-                    diagnostics["aiCallCount"] += 1
-                    kwargs = {"task_auth": task_auth} if task_auth is not None else {}
-                    body = self.provider_client.post_task(task_type, trace_id, input_data, prompt, **kwargs)
-                    answer = extract_answer(body)
-                    response_payload = self._extract_semantic_payload(answer)
-                    items = response_payload.get("items")
+                    self._record_semantic_error(
+                        diagnostics,
+                        AdapterError(
+                            "FORMAT_SEMANTIC_PROTOCOL_NOT_READY",
+                            "格式语义协议尚未就绪。",
+                        ),
+                    )
+                    continue
             except AdapterError as error:
                 self._record_semantic_error(diagnostics, error)
                 continue
@@ -2029,78 +2019,6 @@ class WordFormatReviewer:
                 return None
             attributes["ordered"] = item["ordered"]
         return {"role": role, "attributes": attributes}
-
-    def _extract_json(self, answer: str):
-        raw = (answer or "").strip()
-        if not raw:
-            return None
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            pass
-        fence = re.search(r"```(?:json)?\s*(.*?)```", raw, re.IGNORECASE | re.DOTALL)
-        if fence:
-            try:
-                return json.loads(fence.group(1).strip())
-            except json.JSONDecodeError:
-                pass
-        start = raw.find("{")
-        end = raw.rfind("}")
-        if start >= 0 and end >= start:
-            try:
-                return json.loads(raw[start:end + 1])
-            except json.JSONDecodeError:
-                pass
-        start = raw.find("[")
-        end = raw.rfind("]")
-        if start >= 0 and end >= start:
-            try:
-                return json.loads(raw[start:end + 1])
-            except json.JSONDecodeError:
-                return None
-        return None
-
-    def _extract_role_items(self, answer: str):
-        payload = self._extract_json(answer)
-        return self._role_items_from_payload(payload)
-
-    def _extract_semantic_payload(self, answer: str) -> Dict:
-        payload = self._extract_json(answer)
-        if not isinstance(payload, dict):
-            return {"items": None, "snapshotBinding": None}
-        if isinstance(payload.get("candidates"), list):
-            return {
-                "items": payload.get("candidates"),
-                "snapshotBinding": payload.get("snapshotBinding") or payload.get("snapshot"),
-            }
-        return {"items": self._role_items_from_payload(payload), "snapshotBinding": None}
-
-    def _role_items_from_payload(self, payload: Any, depth: int = 0):
-        if depth > 4 or payload is None:
-            return None
-        if isinstance(payload, list):
-            return payload
-        if isinstance(payload, str):
-            nested = self._extract_json(payload)
-            if nested is None:
-                return None
-            return self._role_items_from_payload(nested, depth + 1)
-        if not isinstance(payload, dict):
-            return None
-
-        paragraphs = payload.get("paragraphs")
-        if isinstance(paragraphs, list):
-            return paragraphs
-        if isinstance(paragraphs, str):
-            return self._role_items_from_payload(paragraphs, depth + 1)
-
-        for key in ("result", "data", "outputs", "output", "answer", "text", "message", "content"):
-            if key not in payload:
-                continue
-            items = self._role_items_from_payload(payload[key], depth + 1)
-            if items is not None:
-                return items
-        return None
 
     def _empty_ai_diagnostics(self) -> Dict:
         return {

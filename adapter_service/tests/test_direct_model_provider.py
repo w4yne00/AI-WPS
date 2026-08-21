@@ -141,55 +141,6 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertEqual(result["answer"], "最终结果")
 
     @patch("app.services.provider_client.urllib_request.urlopen")
-    def test_format_review_roles_uses_frozen_direct_auth_snapshot(self, urlopen) -> None:
-        urlopen.return_value = FakeResponse(
-            {
-                "choices": [
-                    {
-                        "message": {
-                            "role": "assistant",
-                            "content": '{"snapshotBinding":{},"candidates":[]}',
-                        }
-                    }
-                ]
-            }
-        )
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            config_path = root / "adapter.json"
-            config_path.write_text("{}\n", encoding="utf-8")
-            store = ModelConfigurationStore(config_path, root / "provider_api_keys")
-            configuration = store.create_configuration(
-                "word.format_review",
-                "格式语义直连",
-                ACCESS_DIRECT_MODEL,
-                service_base_url="https://format-model.example/v1",
-                model_name="format-role-model",
-                max_output_tokens=1024,
-                context_window_tokens=40000,
-            )
-            store.replace_api_key(configuration["id"], "format-secret")
-            store.activate_configuration(configuration["id"])
-            client = ProviderClient(
-                AppSettings(timeout_seconds=75), model_configuration_store=store
-            )
-            frozen_auth = client.resolve_task_auth("word.format_review")
-            client.format_review_roles(
-                "trace-format-role",
-                {"operation": "classify_role"},
-                "只返回 JSON。",
-                task_auth=frozen_auth,
-            )
-
-        request = urlopen.call_args.args[0]
-        payload = json.loads(request.data.decode("utf-8"))
-        self.assertEqual(request.full_url, "https://format-model.example/v1/chat/completions")
-        self.assertEqual(request.headers["Authorization"], "Bearer format-secret")
-        self.assertEqual(payload["model"], "format-role-model")
-        self.assertEqual(payload["max_tokens"], 1024)
-        self.assertEqual(payload["messages"][1]["content"], "只返回 JSON。")
-
-    @patch("app.services.provider_client.urllib_request.urlopen")
     def test_format_semantics_caps_direct_output_and_input_budget(self, urlopen) -> None:
         urlopen.return_value = FakeResponse(
             {

@@ -15,8 +15,6 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Dict, List, Optional
 
-from pydantic import ValidationError
-
 from app.core.errors import AdapterError
 from app.core.features import deterministic_format_review_enabled
 from app.core.models import WordDocumentRequest
@@ -25,7 +23,6 @@ from app.core.outline_level import (
     normalize_outline_level,
 )
 from app.core.runtime_paths import resolve_runtime_paths
-from app.services.document_normalizer import body_paragraphs
 from app.services.long_task_coordinator import (
     LongTaskCoordinator,
     LongTaskCancelled,
@@ -53,12 +50,12 @@ from app.services.word.image_semantics import (
 
 
 TASK_TYPE = "word.format_review.deterministic"
-MAX_REVIEW_CHARACTERS = 20_000
-MAX_PARAGRAPHS = 200
+WORD_FORMAT_REVIEW_SYNC_RETIRED_CODE = "WORD_FORMAT_REVIEW_SYNC_RETIRED"
+WORD_FORMAT_REVIEW_SYNC_RETIRED_MESSAGE = "旧同步格式审查接口已退役，请提交后台格式审查任务。"
 MAX_SNAPSHOT_BYTES = 512 * 1024
 FORMAT_SNAPSHOT_SCHEMA_VERSION = "word.format_review.snapshot.v2"
-FORMAT_REPORT_SCHEMA_VERSION = "word.format_review.report.v1"
-FORMAT_REPORT_EXPORT_SCHEMA_VERSION = "word.format_review.export.v1"
+FORMAT_REPORT_SCHEMA_VERSION = "word.format_review.report.v2"
+FORMAT_REPORT_EXPORT_SCHEMA_VERSION = "word.format_review.export.v2"
 REPORT_RESULT_TTL_SECONDS = 24 * 60 * 60
 DEFAULT_ISSUE_PAGE_SIZE = 20
 MAX_ISSUE_PAGE_SIZE = 100
@@ -249,7 +246,7 @@ def _report_issue_position(issue: Dict) -> str:
         page_number = 0
     if page_number > 0:
         parts.append("第 {0} 页".format(page_number))
-    return "；".join(parts) if parts else "位置待确认"
+    return "；".join(parts) if parts else "无法验证位置"
 
 
 def _report_issue_role(issue: Dict) -> str:
@@ -536,19 +533,27 @@ def _short_report_value(value: object, limit: int = 400) -> str:
     return text[:limit]
 
 
-def _model_dump(value):
-    if hasattr(value, "model_dump"):
-        return value.model_dump(by_alias=True)
-    if hasattr(value, "dict"):
-        return value.dict(by_alias=True)
-    return deepcopy(value)
-
-
 def _disabled_error() -> AdapterError:
     return AdapterError(
         "DETERMINISTIC_FORMAT_REVIEW_DISABLED",
         "确定性格式审查功能尚未启用。",
         status_code=403,
+    )
+
+
+def _unsupported_snapshot_version_error() -> AdapterError:
+    return AdapterError(
+        "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_VERSION_UNSUPPORTED",
+        "旧版格式审查快照协议已失效，请重新读取当前文档并重新提交后台格式审查。",
+        status_code=410,
+    )
+
+
+def _unsupported_report_version_error() -> AdapterError:
+    return AdapterError(
+        "DETERMINISTIC_FORMAT_REVIEW_REPORT_VERSION_UNSUPPORTED",
+        "旧版格式审查报告已失效，请重新审查当前文档。",
+        status_code=410,
     )
 
 
@@ -591,96 +596,29 @@ class DeterministicFormatReviewService:
 
     def create_snapshot(self, request: WordDocumentRequest) -> Dict:
         self._require_enabled()
-        if not isinstance(request, WordDocumentRequest):
-            if not isinstance(request, dict):
-                raise AdapterError(
-                    "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_INVALID",
-                    "确定性格式审查快照请求格式无效。",
-                )
-            if "content" not in request:
-                return self._create_incremental_session(request)
-            if hasattr(WordDocumentRequest, "model_validate"):
-                try:
-                    request = WordDocumentRequest.model_validate(request)
-                except ValidationError as exc:
-                    raise AdapterError(
-                        "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_INVALID",
-                        "确定性格式审查正文快照请求格式无效。",
-                        status_code=422,
-                    ) from exc
-            else:
-                try:
-                    request = WordDocumentRequest.parse_obj(request)
-                except ValidationError as exc:
-                    raise AdapterError(
-                        "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_INVALID",
-                        "确定性格式审查正文快照请求格式无效。",
-                        status_code=422,
-                    ) from exc
-        return self._create_legacy_snapshot(request)
-
-    def _create_legacy_snapshot(self, request: WordDocumentRequest) -> Dict:
-        paragraphs = body_paragraphs(request)
-        if len(paragraphs) > MAX_PARAGRAPHS:
+        if isinstance(request, WordDocumentRequest):
+            raise _unsupported_snapshot_version_error()
+        if not isinstance(request, dict):
             raise AdapterError(
-                "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE",
-                "确定性格式审查首版最多读取 200 个正文段落。",
-                status_code=413,
+                "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_INVALID",
+                "确定性格式审查快照请求格式无效。",
             )
-        review_text = "\n".join(paragraph.text for paragraph in paragraphs)
-        if len(review_text) > MAX_REVIEW_CHARACTERS:
-            raise AdapterError(
-                "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE",
-                "确定性格式审查首版最多读取 20,000 个审查字符。",
-                status_code=413,
-            )
+        if "content" in request:
+            raise _unsupported_snapshot_version_error()
+        self._validate_snapshot_request_version(request)
+        return self._create_incremental_session(request)
 
-        snapshot_id = "format-snapshot-" + uuid.uuid4().hex
-        snapshot_token = secrets.token_urlsafe(24)
-        request_data = _model_dump(request)
-        content_sha256 = hashlib.sha256(review_text.encode("utf-8")).hexdigest()
-        record = {
-            "schemaVersion": FORMAT_SNAPSHOT_SCHEMA_VERSION,
-            "snapshotId": snapshot_id,
-            "snapshotTokenSha256": hashlib.sha256(snapshot_token.encode("utf-8")).hexdigest(),
-            "createdAt": self._wall_clock(),
-            "status": "staged",
-            "legacy": True,
-            "request": request_data,
-            "contentSha256": content_sha256,
-            "reviewCharacterCount": len(review_text),
-            "paragraphCount": len(paragraphs),
+    @staticmethod
+    def _validate_snapshot_request_version(payload: Dict) -> None:
+        snapshot_versions = {
+            payload.get("schemaVersion"),
+            payload.get("formatSnapshotSchemaVersion"),
         }
-        path = self._snapshot_dir(snapshot_id)
-        serialized = json.dumps(record, ensure_ascii=False, separators=(",", ":"))
-        if len(serialized.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
-            raise AdapterError(
-                "DETERMINISTIC_FORMAT_REVIEW_TOO_LARGE",
-                "确定性格式审查快照不得超过 512 KB。",
-                status_code=413,
-            )
-        self._ensure_staging_root()
-        try:
-            path.mkdir(mode=0o700)
-            self._write_private_json(path / "snapshot.json", record)
-        except OSError as exc:
-            shutil.rmtree(str(path), ignore_errors=True)
-            raise AdapterError(
-                "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_WRITE_FAILED",
-                "确定性格式审查快照暂存失败，请检查本地磁盘。",
-                status_code=503,
-            ) from exc
-
-        with self._lock:
-            self._snapshots[snapshot_id] = {"path": path, **record}
-        return {
-            "snapshotId": snapshot_id,
-            "snapshotToken": snapshot_token,
-            "status": "staged",
-            "reviewCharacterCount": record["reviewCharacterCount"],
-            "paragraphCount": record["paragraphCount"],
-            "contentSha256": content_sha256,
-        }
+        if (
+            not snapshot_versions.issubset({None, FORMAT_SNAPSHOT_SCHEMA_VERSION})
+            or payload.get("formatFactSchemaVersion") not in {None, FACT_SCHEMA_VERSION}
+        ):
+            raise _unsupported_snapshot_version_error()
 
     def _create_incremental_session(self, payload: Dict) -> Dict:
         self._require_object(payload, {"documentId", "selectionMode"})
@@ -706,7 +644,6 @@ class DeterministicFormatReviewService:
             "createdAt": now,
             "expiresAt": now + SNAPSHOT_TTL_SECONDS,
             "status": "uploading",
-            "legacy": False,
             "documentIdSha256": hashlib.sha256(document_id.encode("utf-8")).hexdigest(),
             "documentIdentity": document_identity,
             "selectionMode": selection_mode,
@@ -774,7 +711,7 @@ class DeterministicFormatReviewService:
             "contentSha256", "structureSha256", "formatSha256",
         })
         record = self._load_snapshot(snapshot_id)
-        if record.get("status") != "uploading" or record.get("legacy"):
+        if record.get("status") != "uploading":
             raise AdapterError(
                 "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_STATE_INVALID",
                 "格式快照状态不允许上传批次。",
@@ -926,7 +863,7 @@ class DeterministicFormatReviewService:
             "contentSha256", "structureSha256", "formatSha256", "verification",
         })
         record = self._load_snapshot(snapshot_id)
-        if record.get("status") != "uploading" or record.get("legacy"):
+        if record.get("status") != "uploading":
             raise AdapterError(
                 "DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_STATE_INVALID",
                 "格式审查快照状态不允许提交。",
@@ -1021,7 +958,7 @@ class DeterministicFormatReviewService:
             self._require_enabled()
             record = self._load_snapshot(snapshot_id)
             self._verify_token(record, payload.get("uploadToken") if isinstance(payload, dict) else None)
-            if record.get("status") != "committed" or record.get("legacy"):
+            if record.get("status") != "committed":
                 raise AdapterError(
                     "IMAGE_ASSET_SNAPSHOT_STATE_INVALID",
                     "图片导出组只能绑定已验证的格式审查快照。",
@@ -1071,7 +1008,7 @@ class DeterministicFormatReviewService:
             self._require_enabled()
             record = self._load_snapshot(snapshot_id)
             self._verify_token(record, payload.get("uploadToken") if isinstance(payload, dict) else None)
-            if record.get("status") != "committed" or record.get("legacy"):
+            if record.get("status") != "committed":
                 raise AdapterError(
                     "IMAGE_ASSET_SNAPSHOT_STATE_INVALID",
                     "图片导出组只能绑定已验证的格式审查快照。",
@@ -1835,6 +1772,10 @@ class DeterministicFormatReviewService:
                 report = None
         if not isinstance(report, dict):
             return None
+        if report.get("schemaVersion") != FORMAT_REPORT_SCHEMA_VERSION:
+            with self._lock:
+                self._reports.pop(job_id, None)
+            raise _unsupported_report_version_error()
         if report.get("reportSha256") != _report_sha256(report) or self._wall_clock() >= float(report.get("reportExpiresAt", 0) or 0):
             with self._lock:
                 self._reports.pop(job_id, None)
@@ -2745,6 +2686,13 @@ class DeterministicFormatReviewService:
                 "确定性格式审查快照不可读取。",
                 status_code=409,
             ) from exc
+        if (
+            record.get("schemaVersion") != FORMAT_SNAPSHOT_SCHEMA_VERSION
+            or record.get("formatFactSchemaVersion") != FACT_SCHEMA_VERSION
+            or record.get("legacy")
+        ):
+            self._remove_snapshot(snapshot_id)
+            raise _unsupported_snapshot_version_error()
         record["path"] = path
         return record
 
