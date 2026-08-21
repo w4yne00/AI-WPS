@@ -10,7 +10,6 @@ tar -czf "$OUT_DIR/wps-ai-assistant-offline.tar.gz" \
   adapter_service \
   config \
   packaging \
-  templates \
   wps-addon
 
 echo "Offline bundle created at $OUT_DIR/wps-ai-assistant-offline.tar.gz"

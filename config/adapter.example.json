@@ -7,7 +7,7 @@
   "providerChatPath": "/chat-messages",
   "providerMode": "blocking",
   "logPath": "./logs/adapter.log",
-  "templateRoot": "./templates",
+  "templateRoot": "./adapter_service/format_rule_packs",
   "timeoutSeconds": 75,
   "formatReview": {
     "imageSemantics": {

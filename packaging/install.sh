@@ -45,7 +45,6 @@ restore_runtime_config() {
 preserve_runtime_config
 cp -R "$ROOT_DIR/adapter_service" "$TARGET_DIR/"
 cp -R "$ROOT_DIR/wps-addon" "$TARGET_DIR/"
-cp -R "$ROOT_DIR/templates" "$TARGET_DIR/"
 cp -R "$ROOT_DIR/config" "$TARGET_DIR/"
 restore_runtime_config
 

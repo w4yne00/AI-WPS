@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "status": "inactive",
+  "boundary": "historical-audit-only",
+  "assets": [
+    {
+      "id": "general-office",
+      "path": "general-office.json",
+      "status": "inactive",
+      "reason": "旧通用格式模板，不再作为格式审查规则或回退模板。"
+    },
+    {
+      "id": "proofread-rules",
+      "path": "proofread-rules.json",
+      "status": "inactive",
+      "reason": "旧通用校对规则，不再由模板注册表加载。"
+    },
+    {
+      "id": "technical-file-format-requirements",
+      "path": "technical-file-format-requirements.docx",
+      "status": "inactive",
+      "reason": "旧人工审定模板；活动规则包使用 vendor/wx_template.docx 的固定输入。"
+    },
+    {
+      "id": "technical-file-format-requirements",
+      "path": "git-history:templates/company/technical-file-format-requirements.json",
+      "status": "inactive",
+      "reason": "旧规则源文件已从工作树移入活动规则源边界，旧版本保留在 Git 历史。"
+    },
+    {
+      "id": "technical-file-format-requirements",
+      "path": "git-history:templates/company/technical-file-structure-rules.json",
+      "status": "inactive",
+      "reason": "旧结构规则源文件已从工作树移入活动规则源边界，旧版本保留在 Git 历史。"
+    }
+  ]
+}

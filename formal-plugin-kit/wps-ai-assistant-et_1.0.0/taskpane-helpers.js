@@ -859,8 +859,7 @@
     first_line_indent: "首行缩进"
   };
   var FORMAT_REVIEW_TEMPLATE_TEXT = {
-    "technical-document-template-rules": "技术文档模板规则",
-    "general-office": "通用办公文档格式"
+    "technical-document-template-rules": "技术文档模板规则"
   };
   var FORMAT_REVIEW_STYLE_TEXT = {
     Normal: "正文样式（Normal）",
@@ -1796,7 +1795,7 @@
     var headings = options.headings || [];
     return {
       doc_name: options.documentId || "unnamed.docx",
-      template_id: options.templateId || "general-office",
+      template_id: options.templateId || "technical-document-template-rules",
       selection_mode: options.selectionMode || "document",
       page_setup: options.pageSetup || {},
       paragraphs: paragraphs.map(function (paragraph) {

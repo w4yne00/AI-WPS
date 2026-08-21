@@ -1931,9 +1931,6 @@
     if (value === "technical-document-template-rules") {
       return "技术文档模板规则";
     }
-    if (value === "general-office") {
-      return "通用办公文档格式";
-    }
     return "无法识别";
   }
 
@@ -3343,7 +3340,7 @@
     var headings = options.headings || [];
     return {
       doc_name: options.documentId || "unnamed.docx",
-      template_id: options.templateId || "general-office",
+      template_id: options.templateId || "technical-document-template-rules",
       selection_mode: options.selectionMode || "document",
       page_setup: options.pageSetup || {},
       page_setup_facts: options.pageSetupFacts || buildWpsPageSetupFacts(options.pageSetup || {}),

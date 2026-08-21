@@ -1,4 +1,6 @@
 {
+  "status": "inactive",
+  "inactiveReason": "已由唯一活动规则包 technical-document-template-rules 取代，仅供历史审计。",
   "id": "general-office",
   "name": "General Office",
   "page": {

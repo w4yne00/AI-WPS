@@ -16,6 +16,7 @@ ACTIVE_RULE_PACK_ID = "technical-document-template-rules"
 ACTIVE_RULE_PACK_NAME = "技术文档模板规则"
 ACTIVE_RULE_PACK_VERSION = "1.0.0"
 ACTIVE_RULE_PACK_SOURCE_VERSION = "wx-doc-format 0.12.15"
+ACTIVE_RULE_PACK_FILENAME = "technical-document-template-rules.v1.0.0.json"
 ALLOWED_CLASSIFICATIONS = {"normative-format", "normative-structure"}
 DEFAULT_RULE_PACK_ROOT = BASE_DIR / "adapter_service/format_rule_packs"
 LOCAL_VENDOR_ALGORITHM = BASE_DIR / "adapter_service/vendor/wx_doc_format_algorithm/algorithm.py"
@@ -197,46 +198,49 @@ class FormatRulePackLoader:
     def __init__(self, root: Optional[Path] = None) -> None:
         self.root = Path(root) if root is not None else DEFAULT_RULE_PACK_ROOT
 
+    @property
+    def active_path(self) -> Path:
+        return self.root / ACTIVE_RULE_PACK_FILENAME
+
+    def _assert_runtime_contents(self) -> None:
+        unexpected = sorted(
+            path.name
+            for path in self.root.glob("*.json")
+            if path.name != ACTIVE_RULE_PACK_FILENAME
+        )
+        if unexpected:
+            raise FormatRulePackError("FORMAT_RULE_PACK_INACTIVE")
+
     def load(self, template_id: str) -> Dict[str, Any]:
         if not template_id or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", template_id):
             raise FormatRulePackError("FORMAT_RULE_PACK_TEMPLATE_ID_INVALID")
         if template_id != ACTIVE_RULE_PACK_ID:
             raise FormatRulePackError("FORMAT_RULE_PACK_INACTIVE")
-        candidates = sorted(self.root.glob(template_id + ".*.json"))
-        candidates.extend(sorted(self.root.glob(template_id + ".json")))
-        candidates.extend(
-            path for path in sorted(self.root.glob("*.json")) if path not in candidates
-        )
-        for path in candidates:
-            if path.is_symlink() or not path.is_file():
-                continue
-            try:
-                payload = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError) as exc:
-                raise FormatRulePackError("FORMAT_RULE_PACK_READ_FAILED") from exc
-            validate_rule_pack(payload)
-            if payload["template"]["id"] != template_id:
-                continue
-            return copy.deepcopy(payload)
-        raise FileNotFoundError("Format rule pack not found: {0}".format(template_id))
+        self._assert_runtime_contents()
+        path = self.active_path
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError("Format rule pack not found: {0}".format(template_id))
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise FormatRulePackError("FORMAT_RULE_PACK_READ_FAILED") from exc
+        validate_rule_pack(payload)
+        if payload["template"]["id"] != template_id:
+            raise FormatRulePackError("FORMAT_RULE_PACK_TEMPLATE_INVALID")
+        return copy.deepcopy(payload)
 
     def list_metadata(self) -> List[Dict[str, Any]]:
-        metadata = []
-        for path in sorted(self.root.glob("*.json")):
-            if path.is_symlink() or not path.is_file():
-                continue
-            payload = validate_rule_pack(json.loads(path.read_text(encoding="utf-8")))
-            metadata.append(
-                {
-                    "templateId": payload["template"]["id"],
-                    "rulePackId": payload["rulePack"]["id"],
-                    "name": payload["rulePack"]["displayName"],
-                    "ruleVersion": payload["rulePack"]["version"],
-                    "sourceVersion": payload["rulePack"]["sourceVersion"],
-                    "active": payload["rulePack"]["active"],
-                    "version": payload["version"],
-                    "contentSha256": payload["integrity"]["contentSha256"],
-                    "sourceClassificationSha256": payload["algorithm"]["sourceClassificationSha256"],
-                }
-            )
-        return metadata
+        payload = self.load(ACTIVE_RULE_PACK_ID)
+        return [
+            {
+                "templateId": payload["template"]["id"],
+                "rulePackId": payload["rulePack"]["id"],
+                "name": payload["rulePack"]["displayName"],
+                "ruleVersion": payload["rulePack"]["version"],
+                "sourceVersion": payload["rulePack"]["sourceVersion"],
+                "active": payload["rulePack"]["active"],
+                "version": payload["version"],
+                "contentSha256": payload["integrity"]["contentSha256"],
+                "sourceClassificationSha256": payload["algorithm"]["sourceClassificationSha256"],
+            }
+        ]

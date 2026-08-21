@@ -16,7 +16,7 @@ check_path() {
 
 check_path "$TARGET_DIR/adapter_service/app/main.py"
 check_path "$TARGET_DIR/wps-addon/manifest.xml"
-check_path "$TARGET_DIR/templates/general/general-office.json"
+check_path "$TARGET_DIR/adapter_service/format_rule_packs/technical-document-template-rules.v1.0.0.json"
 check_path "$TARGET_DIR/config/adapter.example.json"
 
 if command -v curl >/dev/null 2>&1; then

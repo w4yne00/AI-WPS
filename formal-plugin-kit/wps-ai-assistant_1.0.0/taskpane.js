@@ -127,8 +127,7 @@
   };
   var REWRITE_OUTPUT_PROMPT = "不要原样返回待处理内容；只输出最终正文。";
   var fallbackTemplates = [
-    { id: "technical-document-template-rules", name: "技术文档模板规则" },
-    { id: "general-office", name: "通用办公模板" }
+    { id: "technical-document-template-rules", name: "技术文档模板规则" }
   ];
   var TASK_API_KEY_DEFS = [
     { taskType: "word.smart_write", label: "智能编写" },
@@ -1938,7 +1937,7 @@
     var seen = {};
 
     function add(template) {
-      if (!template || !template.id || seen[template.id]) {
+      if (!template || template.id !== "technical-document-template-rules" || seen[template.id]) {
         return;
       }
       seen[template.id] = true;
@@ -4656,10 +4655,10 @@
 
     if (!state.templates.length) {
       var fallback = document.createElement("option");
-      fallback.value = "general-office";
-      fallback.textContent = "通用办公模板";
+      fallback.value = "technical-document-template-rules";
+      fallback.textContent = "技术文档模板规则";
       select.appendChild(fallback);
-      state.selectedTemplateId = "general-office";
+      state.selectedTemplateId = "technical-document-template-rules";
       return;
     }
 

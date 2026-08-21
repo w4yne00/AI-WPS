@@ -49,7 +49,7 @@ describe("response contracts", () => {
           changes: [],
           summary: {
             changeCount: 0,
-            templateId: "general-office"
+            templateId: "technical-document-template-rules"
           }
         },
         errors: []

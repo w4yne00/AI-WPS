@@ -647,7 +647,7 @@ class WordRewriteApiTests(unittest.TestCase):
                 "headings": []
             },
             "options": {
-                "templateId": "general-office",
+                "templateId": "technical-document-template-rules",
                 "trackChanges": True,
                 "rewriteAction": "rewrite",
                 "rewriteStyle": "formal",

@@ -39,7 +39,7 @@ class AppSettings:
     dify_api_key_env: str = "DIFY_API_KEY"
     dify_workflow_id: str = "wps-word-rewrite"
     log_path: str = "./logs/adapter.log"
-    template_root: str = "./templates"
+    template_root: str = "./adapter_service/format_rule_packs"
     timeout_seconds: int = 75
     task_routes: Dict[str, TaskRoute] = field(default_factory=dict)
     task_api_key_refs: Dict[str, str] = field(default_factory=dict)
@@ -158,7 +158,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
         dify_api_key_env=payload.get("difyApiKeyEnv", "DIFY_API_KEY"),
         dify_workflow_id=payload.get("difyWorkflowId", "wps-word-rewrite"),
         log_path=log_path,
-        template_root=payload.get("templateRoot", "./templates"),
+        template_root=payload.get("templateRoot", "./adapter_service/format_rule_packs"),
         timeout_seconds=payload.get("timeoutSeconds", 75),
         task_routes=task_routes,
         task_api_key_refs=task_api_key_refs,

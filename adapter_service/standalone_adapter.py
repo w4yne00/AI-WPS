@@ -80,6 +80,7 @@ from app.services.word.deterministic_format_review import (
 from app.services.word.full_document_review import full_document_review_service
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
+from app.services.template_loader import TemplateLoader
 from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
     ModelConfigurationError,
@@ -91,7 +92,6 @@ from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJob
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-TEMPLATE_ROOT = ROOT_DIR / "templates"
 VERSION = "0.23.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
@@ -222,19 +222,8 @@ def parse_ppt_document_file_request(payload):
     return PptDocumentFileUploadRequest.parse_obj(payload)
 
 
-def iter_template_documents():
-    for pattern in ("company/*.json", "general/*.json"):
-        for path in sorted(TEMPLATE_ROOT.glob(pattern)):
-            data = json.loads(path.read_text(encoding="utf-8"))
-            if "id" in data:
-                yield path, data
-
-
 def list_templates():
-    return [
-        {"id": data["id"], "name": data.get("name", data["id"]), "path": str(path)}
-        for path, data in iter_template_documents()
-    ]
+    return TemplateLoader().list_templates()
 
 
 def smart_write(payload):
