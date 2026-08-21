@@ -30,6 +30,10 @@ from app.services.word.format_semantics import (
     FormatSemanticExecutor,
     MAX_FORMAT_SEMANTIC_CALLS,
 )
+from app.services.word.format_facts import (
+    FACT_SCHEMA_VERSION,
+    normalize_format_facts as normalize_source_format_facts,
+)
 from app.services.word.image_semantics import (
     IMAGE_TEXT_STATUS,
     collect_image_inventory,
@@ -288,9 +292,10 @@ class WordFormatReviewer:
         image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         issues: List[FormatReviewIssue] = []
-        page_issue = self._build_page_issue(request, template)
-        if page_issue:
-            issues.append(page_issue)
+        if not self._is_v2_format_snapshot(request):
+            page_issue = self._build_page_issue(request, template)
+            if page_issue:
+                issues.append(page_issue)
 
         issues.extend(
             self._authorized_structure_issues(
@@ -315,7 +320,7 @@ class WordFormatReviewer:
             if paragraph_index > 0:
                 role_facts[paragraph_index] = item
         pack = {"template": template, "rules": template.get("_rulePackRules", [])}
-        for paragraph in body_paragraphs(request):
+        for paragraph in self._paragraphs_for_review(request):
             fact = role_facts.get(paragraph.index, {"paragraphIndex": paragraph.index})
             deterministic_role = classify_role_fact(fact)
             role_result = deterministic_role
@@ -1060,6 +1065,8 @@ class WordFormatReviewer:
     def _normalize_format_block(block: Dict) -> Dict:
         normalized = deepcopy(block) if isinstance(block, dict) else {}
         format_facts = normalized.get("format") if isinstance(normalized.get("format"), dict) else {}
+        normalized["format"] = normalize_source_format_facts(format_facts)
+        format_facts = normalized["format"]
         has_outline_fact = (
             "headingLevel" in normalized
             or "outlineLevel" in normalized
@@ -1080,6 +1087,72 @@ class WordFormatReviewer:
                 normalized.pop("headingLevel", None)
             else:
                 normalized["headingLevel"] = level
+        return normalized
+
+    @staticmethod
+    def _is_v2_format_snapshot(request: WordDocumentRequest) -> bool:
+        structure = request.content.document_structure or {}
+        format_facts = structure.get("formatFacts")
+        return (
+            structure.get("formatSnapshotSchemaVersion") == "word.format_review.snapshot.v2"
+            or structure.get("formatFactSchemaVersion") == FACT_SCHEMA_VERSION
+            or (
+                isinstance(format_facts, dict)
+                and format_facts.get("schemaVersion") == FACT_SCHEMA_VERSION
+            )
+        )
+
+    def _paragraphs_for_review(self, request: WordDocumentRequest) -> List[Paragraph]:
+        paragraphs = body_paragraphs(request)
+        if not self._is_v2_format_snapshot(request):
+            return paragraphs
+        facts = self._format_structure_facts(request)
+        blocks_by_index = {}
+        for block in facts.get("blocks", []):
+            if not isinstance(block, dict):
+                continue
+            try:
+                index = int(block.get("paragraphIndex", 0) or 0)
+            except (TypeError, ValueError):
+                continue
+            if index > 0:
+                blocks_by_index[index] = block
+        normalized = []
+        numeric_fields = {
+            "fontSize": "font_size",
+            "lineSpacing": "line_spacing",
+            "firstLineIndent": "first_line_indent",
+            "spaceBefore": "space_before",
+            "spaceAfter": "space_after",
+            "leftIndent": "left_indent",
+            "rightIndent": "right_indent",
+        }
+        for paragraph in paragraphs:
+            block = blocks_by_index.get(paragraph.index)
+            format_facts = block.get("format", {}) if isinstance(block, dict) else {}
+            if (
+                not format_facts
+                and isinstance(block, dict)
+                and isinstance(block.get("facts"), dict)
+            ):
+                format_facts = block
+            updates = {}
+            supplied = format_facts.get("facts", {}) if isinstance(format_facts, dict) else {}
+            for source_key, model_key in numeric_fields.items():
+                fact = supplied.get(source_key) if isinstance(supplied, dict) else None
+                if not isinstance(fact, dict):
+                    continue
+                updates[model_key] = (
+                    fact.get("normalizedValue")
+                    if fact.get("dataStatus") == "verified"
+                    else None
+                )
+            if updates:
+                if hasattr(paragraph, "model_copy"):
+                    paragraph = paragraph.model_copy(update=updates)
+                else:
+                    paragraph = paragraph.copy(update=updates)
+            normalized.append(paragraph)
         return normalized
 
     def _authorized_structure_issues(

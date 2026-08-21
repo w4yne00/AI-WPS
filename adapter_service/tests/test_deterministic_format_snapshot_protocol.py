@@ -213,6 +213,110 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         )
         self.assertFalse(self.service.snapshot_path(session["snapshotId"]).exists())
 
+    def test_v2_consumes_source_aware_facts_and_exposes_normalized_diagnostics(self):
+        session = self.service.create_snapshot(
+            {
+                "documentId": "v2-contract.docx",
+                "selectionMode": "document",
+                "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+                "editSequence": "5",
+                "documentIdentity": {
+                    "documentIdSha256": "document-fingerprint",
+                    "hostDocumentId": "host-document-1",
+                },
+                "pageSetup": {"paperSize": 7},
+                "pageSetupFacts": {
+                    "marginTop": {"rawValue": 72, "rawUnit": "pt"},
+                    "marginBottom": {"rawValue": 90, "rawUnit": "pt"},
+                },
+            }
+        )
+        blocks = [{
+            "blockId": "format-paragraph-v2",
+            "blockType": "paragraph",
+            "scope": "in_scope",
+            "paragraphIndex": 1,
+            "text": "规范化行距正文",
+            "format": {
+                "styleName": "Normal",
+                "fontName": "宋体",
+                "fontSize": 12,
+                "facts": {
+                    "fontSize": {"rawValue": 12, "rawUnit": "pt"},
+                    "lineSpacing": {"rawValue": 15, "rawUnit": "pt"},
+                    "lineSpacingMode": "fixed",
+                },
+            },
+        }]
+        _, metrics = self._upload(session, blocks=blocks)
+        committed = self.service.commit_snapshot(
+            session["snapshotId"],
+            {
+                "uploadToken": session["uploadToken"],
+                "batchCount": 1,
+                "blockCount": 1,
+                "reviewCharacterCount": metrics["characterCount"],
+                "contentSha256": metrics["contentSha256"],
+                "structureSha256": metrics["structureSha256"],
+                "formatSha256": metrics["formatSha256"],
+                "coverage": metrics["coverage"],
+                "verification": {
+                    "batchCount": 1,
+                    "blockCount": 1,
+                    "reviewCharacterCount": metrics["characterCount"],
+                    "contentSha256": metrics["contentSha256"],
+                    "structureSha256": metrics["structureSha256"],
+                    "formatSha256": metrics["formatSha256"],
+                    "coverage": metrics["coverage"],
+                    "documentIdentity": {
+                        "documentIdSha256": "document-fingerprint",
+                        "hostDocumentId": "host-document-1",
+                    },
+                    "editSequence": "5",
+                },
+            },
+        )
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "format-v2-contract-job",
+            },
+            "format-v2-contract-trace",
+        )
+        for _ in range(50):
+            current = self.service.get_job(job["jobId"])
+            if current["status"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(current["status"], "completed")
+        request = self.reviewer.requests[0]
+        paragraph = request.content.paragraphs[0]
+        self.assertEqual(paragraph.line_spacing, 300)
+        structure = request.content.document_structure
+        self.assertEqual(structure["page_setup"]["paperSize"], "A4")
+        self.assertEqual(structure["page_setup"]["marginTop"], 1440)
+        diagnostics = structure["formatFacts"]
+        self.assertEqual(diagnostics["schemaVersion"], "format_snapshot.v2")
+        self.assertEqual(diagnostics["pageSetup"]["marginTop"]["normalizedValue"], 1440)
+        self.assertEqual(
+            diagnostics["blocks"][0]["facts"]["lineSpacing"]["normalizedUnit"],
+            "twip",
+        )
+        report = self.service.get_report(job["jobId"])
+        self.assertEqual(
+            report["summary"]["formatFactDiagnostics"]["schemaVersion"],
+            "format_snapshot.v2",
+        )
+        self.assertEqual(
+            report["summary"]["formatFactDiagnostics"]["pageSetup"]["marginTop"]["normalizedValue"],
+            1440,
+        )
+        self.assertEqual(
+            report["summary"]["formatFactDiagnostics"]["statusCounts"]["verified"],
+            2,
+        )
+
     def test_completed_report_has_stable_instances_pagination_groups_and_exports(self):
         self.service.reviewer = _IssueReviewer()
         session = self._session()

@@ -415,6 +415,177 @@
     };
   }
 
+  function formatFactValueType(value) {
+    if (typeof value === "boolean") {
+      return "boolean";
+    }
+    if (value !== null && typeof value !== "undefined" && value !== "" && !isNaN(Number(value))) {
+      return "number";
+    }
+    if (typeof value === "string") {
+      return "string";
+    }
+    return "unknown";
+  }
+
+  function isMixedWpsFactValue(value) {
+    var resolved = resolveScalarValue(value);
+    var text = String(resolved === null || typeof resolved === "undefined" ? "" : resolved).toLowerCase();
+    return resolved === 9999999 || resolved === -9999999 ||
+      text === "mixed" || text === "undefined" || text === "wdundefined";
+  }
+
+  function buildWpsFact(source, rawValue, rawUnit, normalizedValue, normalizedUnit, valueType, dataStatus, extra) {
+    var result = {
+      source: source,
+      rawValue: typeof rawValue === "undefined" ? null : rawValue,
+      rawUnit: rawUnit || "unknown",
+      normalizedValue: typeof normalizedValue === "undefined" ? null : normalizedValue,
+      normalizedUnit: normalizedUnit || "unknown",
+      valueType: valueType || formatFactValueType(rawValue),
+      dataStatus: dataStatus || "verified"
+    };
+    Object.keys(extra || {}).forEach(function (key) {
+      if (typeof extra[key] !== "undefined" && extra[key] !== null) {
+        result[key] = extra[key];
+      }
+    });
+    return result;
+  }
+
+  function normalizeWpsLineSpacingMode(value) {
+    var resolved = resolveScalarValue(value);
+    var text = String(resolved === null || typeof resolved === "undefined" ? "" : resolved)
+      .trim().toLowerCase().replace(/-/g, "_");
+    var modes = {
+      "0": "single", single: "single", wdlinespacesingle: "single",
+      "1": "one_point_five", "1.5": "one_point_five", one_point_five: "one_point_five", wdlinespace1pt5: "one_point_five",
+      "2": "double", double: "double", wdlinespacedouble: "double",
+      "3": "minimum", minimum: "minimum", at_least: "minimum", wdlinespaceatleast: "minimum",
+      "4": "fixed", fixed: "fixed", exactly: "fixed", wdlinespaceexactly: "fixed",
+      "5": "multiple", multiple: "multiple", wdlinespacemultiple: "multiple"
+    };
+    return modes[text] || "unknown";
+  }
+
+  function factInputParts(value, defaultUnit) {
+    var source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    var rawValue = Object.prototype.hasOwnProperty.call(source, "rawValue")
+      ? source.rawValue : (Object.prototype.hasOwnProperty.call(source, "value") ? source.value : value);
+    var dataStatus = source.dataStatus || (isMixedWpsFactValue(rawValue) ? "mixed" :
+      (rawValue === null || typeof rawValue === "undefined" || rawValue === "" ? "unknown" : "verified"));
+    return {
+      rawValue: resolveScalarValue(rawValue),
+      rawUnit: String(source.rawUnit || defaultUnit || "unknown"),
+      dataStatus: dataStatus,
+      valueType: source.valueType || formatFactValueType(rawValue)
+    };
+  }
+
+  function normalizeWpsNumericFact(value, source, rawUnit, normalizedUnit) {
+    var parts = factInputParts(value, rawUnit);
+    var numeric = Number(parts.rawValue);
+    var normalized = null;
+    var status = parts.dataStatus;
+    if (status === "verified" && !isNaN(numeric) && isFinite(numeric)) {
+      if (parts.rawUnit === "pt" && normalizedUnit === "twip") {
+        normalized = Math.round(numeric * 20);
+      } else if ((parts.rawUnit === "twip" || parts.rawUnit === "twips") && normalizedUnit === "twip") {
+        normalized = Math.round(numeric);
+      } else if (parts.rawUnit === "pt" && normalizedUnit === "pt") {
+        normalized = Math.round(numeric * 10000) / 10000;
+      } else if (parts.rawUnit === normalizedUnit) {
+        normalized = Math.round(numeric * 10000) / 10000;
+      } else {
+        status = "unknown";
+      }
+    } else if (status === "verified") {
+      status = "unknown";
+    }
+    return buildWpsFact(source, parts.rawValue, parts.rawUnit, normalized, normalized === null ? "unknown" : normalizedUnit,
+      parts.valueType, status, {});
+  }
+
+  function normalizeWpsPaperSizeFact(value) {
+    var parts = factInputParts(value, "enum");
+    var key = String(parts.rawValue === null || typeof parts.rawValue === "undefined" ? "" : parts.rawValue)
+      .trim().toLowerCase();
+    var normalized = (key === "7" || key === "a4" || key === "wdpapersizea4" || key === "paper_a4") ? "A4" : null;
+    return buildWpsFact("wps.word.page_setup.paper_size", parts.rawValue, parts.rawUnit, normalized,
+      normalized ? "paper" : "unknown", normalized ? "enum" : parts.valueType, normalized ? parts.dataStatus : "unknown", {});
+  }
+
+  function normalizeWpsLineSpacingFact(value, mode) {
+    var parts = factInputParts(value, normalizeWpsLineSpacingMode(mode) === "multiple" ? "multiple" : "pt");
+    var selectedMode = normalizeWpsLineSpacingMode(
+      value && typeof value === "object" && value.mode !== undefined ? value.mode : mode
+    );
+    var numeric = Number(parts.rawValue);
+    var normalized = null;
+    var normalizedUnit = "unknown";
+    var status = parts.dataStatus;
+    if (status === "verified" && !isNaN(numeric) && isFinite(numeric)) {
+      if (selectedMode === "multiple" && ["multiple", "factor", "倍"].indexOf(parts.rawUnit) >= 0) {
+        normalized = Math.round(numeric * 10000) / 10000;
+        normalizedUnit = "multiple";
+      } else if (["fixed", "minimum"].indexOf(selectedMode) >= 0 && parts.rawUnit === "pt") {
+        normalized = Math.round(numeric * 20);
+        normalizedUnit = "twip";
+      } else if (["single", "one_point_five", "double"].indexOf(selectedMode) >= 0) {
+        normalized = { single: 1, one_point_five: 1.5, double: 2 }[selectedMode];
+        normalizedUnit = "multiple";
+      } else {
+        status = "unknown";
+      }
+    } else if (status === "verified") {
+      status = "unknown";
+    }
+    return buildWpsFact("wps.word.paragraph_format.line_spacing", parts.rawValue, parts.rawUnit, normalized,
+      normalizedUnit, parts.valueType, status, { mode: selectedMode });
+  }
+
+  function buildWpsPageSetupFacts(pageSetup) {
+    var source = pageSetup || {};
+    return {
+      paperSize: normalizeWpsPaperSizeFact(source.paperSize !== undefined ? source.paperSize : source.PaperSize),
+      marginTop: normalizeWpsNumericFact(source.marginTop !== undefined ? source.marginTop : source.TopMargin,
+        "wps.word.page_setup.marginTop", "pt", "twip"),
+      marginBottom: normalizeWpsNumericFact(source.marginBottom !== undefined ? source.marginBottom : source.BottomMargin,
+        "wps.word.page_setup.marginBottom", "pt", "twip"),
+      marginLeft: normalizeWpsNumericFact(source.marginLeft !== undefined ? source.marginLeft : source.LeftMargin,
+        "wps.word.page_setup.marginLeft", "pt", "twip"),
+      marginRight: normalizeWpsNumericFact(source.marginRight !== undefined ? source.marginRight : source.RightMargin,
+        "wps.word.page_setup.marginRight", "pt", "twip")
+    };
+  }
+
+  function buildWpsFormatFacts(paragraph) {
+    var source = paragraph || {};
+    var facts = {};
+    if (source.fontSize !== undefined || source.font_size_pt !== undefined) {
+      facts.fontSize = normalizeWpsNumericFact(
+        source.fontSize !== undefined ? source.fontSize : source.font_size_pt,
+        "wps.word.font.size", "pt", "pt"
+      );
+    }
+    if (source.lineSpacing !== undefined || source.line_spacing !== undefined || source.lineSpacingMode !== undefined) {
+      facts.lineSpacing = normalizeWpsLineSpacingFact(
+        source.lineSpacing !== undefined ? source.lineSpacing : source.line_spacing,
+        source.lineSpacingMode
+      );
+    }
+    ["firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent", "rightIndent"].forEach(function (key) {
+      var snake = key.replace(/[A-Z]/g, function (letter) { return "_" + letter.toLowerCase(); });
+      if (source[key] !== undefined || source[snake] !== undefined) {
+        facts[key] = normalizeWpsNumericFact(
+          source[key] !== undefined ? source[key] : source[snake],
+          "wps.word.paragraph_format." + key, "pt", "twip"
+        );
+      }
+    });
+    return facts;
+  }
+
   function stableFormatReviewJson(value) {
     if (Array.isArray(value)) {
       return "[" + value.map(stableFormatReviewJson).join(",") + "]";
@@ -544,6 +715,7 @@
         rightIndent: paragraph.rightIndent,
         segments: Array.isArray(paragraph.formatSegments) ? paragraph.formatSegments : [],
         dataStatus: paragraph.formatDataStatus || paragraph.dataStatus || "verified",
+        facts: paragraph.formatFacts || paragraph.format_facts || buildWpsFormatFacts(paragraph),
         insufficientReason: paragraph.formatInsufficientReason || ""
       };
       pushBlock({
@@ -696,6 +868,10 @@
         headerFooter: suppliedCoverage.headerFooter || {}
       },
       pageSetup: structure.page_setup || structure.pageSetup || {},
+      pageSetupFacts: structure.page_setup_facts || structure.pageSetupFacts ||
+        buildWpsPageSetupFacts(structure.page_setup || structure.pageSetup || {}),
+      formatSnapshotSchemaVersion: "word.format_review.snapshot.v2",
+      formatFactSchemaVersion: "format_snapshot.v2",
       capacityTier: capacity.tier
     };
   }
@@ -1749,6 +1925,61 @@
     }
   }
 
+  function formatFormatFactDiagnostic(fact) {
+    if (!fact || typeof fact !== "object") {
+      return "未读取";
+    }
+    var rawValue = typeof fact.rawValue === "undefined" || fact.rawValue === null
+      ? "未读取"
+      : String(fact.rawValue);
+    var normalizedValue = typeof fact.normalizedValue === "undefined" || fact.normalizedValue === null
+      ? "未归一化"
+      : String(fact.normalizedValue);
+    var rawUnit = fact.rawUnit ? " " + fact.rawUnit : "";
+    var normalizedUnit = fact.normalizedUnit ? " " + fact.normalizedUnit : "";
+    return rawValue + rawUnit + " → " + normalizedValue + normalizedUnit +
+      "（" + (fact.dataStatus || "unknown") + "）";
+  }
+
+  function appendFormatFactDiagnostics(lines, diagnostics) {
+    if (!diagnostics || typeof diagnostics !== "object") {
+      return;
+    }
+    lines.push("- 事实契约：" + (diagnostics.schemaVersion || "format_snapshot.v2"));
+    var pageSetup = diagnostics.pageSetup || {};
+    var pageLabels = {
+      paperSize: "纸张",
+      marginTop: "上边距",
+      marginRight: "右边距",
+      marginBottom: "下边距",
+      marginLeft: "左边距"
+    };
+    Object.keys(pageLabels).forEach(function (key) {
+      if (pageSetup[key]) {
+        lines.push("- 规范页面事实·" + pageLabels[key] + "：" + formatFormatFactDiagnostic(pageSetup[key]));
+      }
+    });
+    var statusCounts = diagnostics.statusCounts || {};
+    var statusParts = Object.keys(statusCounts).map(function (status) {
+      return status + " " + Number(statusCounts[status] || 0);
+    });
+    if (statusParts.length) {
+      lines.push("- 事实状态统计：" + statusParts.join("、"));
+    }
+    var blocks = Array.isArray(diagnostics.blocks) ? diagnostics.blocks : [];
+    var examples = [];
+    blocks.some(function (block) {
+      var facts = block && block.facts ? block.facts : {};
+      if (facts.lineSpacing) {
+        examples.push("P" + Number(block.paragraphIndex || 0) + " 行距 " + formatFormatFactDiagnostic(facts.lineSpacing));
+      }
+      return examples.length >= 3;
+    });
+    if (examples.length) {
+      lines.push("- 行距事实示例：" + examples.join("；"));
+    }
+  }
+
   function formatReviewRole(role) {
     return FORMAT_REVIEW_ROLE_TEXT[String(role || "")] || "未识别角色";
   }
@@ -2009,6 +2240,7 @@
       lines.push("- 模板：" + formatReviewTemplate(summary.templateId));
       lines.push("- 识别来源：" + describeFormatReviewProvider(summary.provider));
       appendFormatReviewModelDiagnostics(lines, summary);
+      appendFormatFactDiagnostics(lines, summary.formatFactDiagnostics);
       return lines.join("\n").trim();
     }
 
@@ -2054,6 +2286,7 @@
     lines.push("- 模板：" + formatReviewTemplate(summary.templateId));
     lines.push("- 识别来源：" + describeFormatReviewProvider(summary.provider));
     appendFormatReviewModelDiagnostics(lines, summary);
+    appendFormatFactDiagnostics(lines, summary.formatFactDiagnostics);
     if (typeof summary.aiClassifiedParagraphCount !== "undefined") {
       lines.push(
         "- AI 识别段落：" + (summary.aiClassifiedParagraphCount || 0) +
@@ -2960,6 +3193,7 @@
         alignment: "",
         outlineLevel: null,
         lineSpacing: null,
+        lineSpacingMode: null,
         firstLineIndent: null,
         spaceBefore: null,
         spaceAfter: null,
@@ -3011,6 +3245,9 @@
         alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
         outlineLevel: normalizeWpsOutlineLevel(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), undefined)),
         lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
+        lineSpacingMode: normalizeWpsLineSpacingMode(firstDefined(
+          safeRead(paragraphFormat, "LineSpacingRule"), safeRead(paragraphFormat, "lineSpacingRule"), null
+        )),
         firstLineIndent: normalizeNumber(firstDefined(safeRead(paragraphFormat, "FirstLineIndent"), safeRead(paragraphFormat, "firstLineIndent"), null)),
         spaceBefore: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceBefore"), safeRead(paragraphFormat, "spaceBefore"), null)),
         spaceAfter: normalizeNumber(firstDefined(safeRead(paragraphFormat, "SpaceAfter"), safeRead(paragraphFormat, "spaceAfter"), null)),
@@ -3103,6 +3340,7 @@
       template_id: options.templateId || "general-office",
       selection_mode: options.selectionMode || "document",
       page_setup: options.pageSetup || {},
+      page_setup_facts: options.pageSetupFacts || buildWpsPageSetupFacts(options.pageSetup || {}),
       paragraphs: paragraphs.map(function (paragraph) {
         return {
           index: paragraph.index,
@@ -3116,6 +3354,7 @@
           alignment: normalizeAlignmentValue(paragraph.alignment, ""),
           outline_level: normalizeWpsOutlineLevel(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
           line_spacing: normalizeNumber(firstDefined(paragraph.lineSpacing, paragraph.line_spacing)),
+          line_spacing_mode: normalizeWpsLineSpacingMode(firstDefined(paragraph.lineSpacingMode, paragraph.line_spacing_mode)),
           first_line_indent: normalizeNumber(firstDefined(paragraph.firstLineIndent, paragraph.first_line_indent)),
           space_before: normalizeNumber(firstDefined(paragraph.spaceBefore, paragraph.space_before)),
           space_after: normalizeNumber(firstDefined(paragraph.spaceAfter, paragraph.space_after)),
@@ -3935,6 +4174,9 @@
     buildFullDocumentReviewBatches: buildFullDocumentReviewBatches,
     buildDeterministicFormatReviewBody: buildDeterministicFormatReviewBody,
     buildDeterministicFormatReviewBatches: buildDeterministicFormatReviewBatches,
+    normalizeWpsLineSpacingFact: normalizeWpsLineSpacingFact,
+    buildWpsPageSetupFacts: buildWpsPageSetupFacts,
+    buildWpsFormatFacts: buildWpsFormatFacts,
     escapeHtml: escapeHtml,
     renderMarkdown: renderMarkdown,
     buildInlineWritebackRuns: buildInlineWritebackRuns,
@@ -3944,6 +4186,7 @@
     formatSmartWriteResult: formatSmartWriteResult,
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
     renderReadableFormatReview: renderReadableFormatReview,
+    appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,
     formatReviewParagraphLabel: formatReviewParagraphLabel,
     buildDocumentReviewRecord: buildDocumentReviewRecord,
