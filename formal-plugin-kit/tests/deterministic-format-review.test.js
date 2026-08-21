@@ -57,7 +57,7 @@ assert.ok(poll.includes("renderGroupedFormatReview"));
 assert.ok(poll.includes("loadDeterministicFormatReviewReport"));
 
 const issuePage = functionSource("renderDeterministicFormatReviewIssuePage");
-["executionStatus", "complianceStatus", "coverageStatus", "semanticStatus", "issueId",
+["executionStatus", "complianceStatus", "coverageStatus", "semanticStatus", "formatFactDiagnostics", "issueId",
   "propertyPath", "duplicateGroupSize", "anchorVerification"].forEach((token) => {
   assert.ok(issuePage.includes(token), token);
 });
@@ -92,6 +92,44 @@ const body = helpers.buildDeterministicFormatReviewBody({
 assert.strictEqual(body.reviewCharacterCount, "正文".length + "表头\n单元格".length);
 assert.strictEqual(body.coverage.tableCount, 1);
 assert.deepStrictEqual(body.pageSetup, { paperSize: "A4", marginTop: 72 });
+assert.strictEqual(body.formatSnapshotSchemaVersion, "word.format_review.snapshot.v2");
+
+const fixedLineSpacing = helpers.normalizeWpsLineSpacingFact(15, "fixed");
+assert.strictEqual(fixedLineSpacing.rawUnit, "pt");
+assert.strictEqual(fixedLineSpacing.normalizedValue, 300);
+assert.strictEqual(fixedLineSpacing.normalizedUnit, "twip");
+assert.strictEqual(fixedLineSpacing.mode, "fixed");
+const multipleLineSpacing = helpers.normalizeWpsLineSpacingFact(1.25, "multiple");
+assert.strictEqual(multipleLineSpacing.normalizedValue, 1.25);
+assert.strictEqual(multipleLineSpacing.normalizedUnit, "multiple");
+const pageFacts = helpers.buildWpsPageSetupFacts({
+  paperSize: 7,
+  marginTop: 72,
+  marginBottom: 90
+});
+assert.strictEqual(pageFacts.paperSize.normalizedValue, "A4");
+assert.strictEqual(pageFacts.marginTop.normalizedValue, 1440);
+assert.strictEqual(pageFacts.marginBottom.normalizedValue, 1800);
+const paragraphFacts = helpers.buildWpsFormatFacts({
+  fontSize: 12,
+  lineSpacing: 15,
+  lineSpacingMode: "fixed"
+});
+assert.strictEqual(paragraphFacts.lineSpacing.normalizedValue, 300);
+assert.strictEqual(paragraphFacts.lineSpacing.dataStatus, "verified");
+assert.strictEqual(
+  helpers.buildWpsFormatFacts({ firstLineIndent: 32 }).firstLineIndent.normalizedValue,
+  640
+);
+const diagnosticLines = [];
+helpers.appendFormatFactDiagnostics(diagnosticLines, {
+  schemaVersion: "format_snapshot.v2",
+  pageSetup: pageFacts,
+  statusCounts: { verified: 2, mixed: 1 },
+  blocks: [{ paragraphIndex: 1, facts: { lineSpacing: paragraphFacts.lineSpacing } }]
+});
+assert.ok(diagnosticLines.join("\n").includes("15 pt → 300 twip"));
+assert.ok(diagnosticLines.join("\n").includes("mixed 1"));
 const batches = helpers.buildDeterministicFormatReviewBatches(body, 1);
 assert.ok(batches.length >= 2);
 assert.strictEqual(batches[0].characterCount, batches[0].blocks

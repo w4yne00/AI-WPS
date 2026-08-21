@@ -1487,6 +1487,7 @@
           ? helpers.normalizeWpsOutlineLevel(paragraphFormat.OutlineLevel)
           : paragraphFormat.OutlineLevel,
         lineSpacing: paragraphFormat.LineSpacing || paragraphFormat.lineSpacing || null,
+        lineSpacingMode: paragraphFormat.LineSpacingRule || paragraphFormat.lineSpacingRule || null,
         firstLineIndent: paragraphFormat.FirstLineIndent || paragraphFormat.firstLineIndent || null,
         spaceBefore: paragraphFormat.SpaceBefore || paragraphFormat.spaceBefore || null,
         spaceAfter: paragraphFormat.SpaceAfter || paragraphFormat.spaceAfter || null,
@@ -6521,6 +6522,11 @@
     if (!issues.length) {
       lines.push("当前筛选条件下没有问题实例；零问题不单独形成通过结论。");
     }
+    if (summary.formatFactDiagnostics && helpers.appendFormatFactDiagnostics) {
+      lines.push("");
+      lines.push("## 规范事实诊断");
+      helpers.appendFormatFactDiagnostics(lines, summary.formatFactDiagnostics);
+    }
     issues.forEach(function (issue) {
       lines.push("");
       lines.push("### " + (issue.issueId || "未标识问题") + " · " + (issue.ruleId || "未标识规则"));
@@ -7635,7 +7641,10 @@
         documentIdentity: firstPass.documentIdentity,
         editSequence: firstPass.editSequence,
         templateId: firstPass.templateId,
+        formatSnapshotSchemaVersion: firstPass.formatSnapshotSchemaVersion,
+        formatFactSchemaVersion: firstPass.formatFactSchemaVersion,
         pageSetup: firstPass.pageSetup,
+        pageSetupFacts: firstPass.pageSetupFacts,
         scope: firstPass.scope,
         coverage: firstPass.coverage
       }, {

@@ -88,6 +88,102 @@ class TableCaptionFormatSemanticsProvider(RecordingFormatReviewProvider):
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
 class WordFormatReviewerTests(unittest.TestCase):
+    def test_v2_normalized_line_spacing_is_consumed_and_page_setup_is_diagnostic_only(self) -> None:
+        request = parse_word_request({
+            "documentId": "format-v2.docx",
+            "scene": "word",
+            "selectionMode": "document",
+            "content": {
+                "plainText": "规范化正文",
+                "paragraphs": [{
+                    "index": 1,
+                    "text": "规范化正文",
+                    "styleName": "Normal",
+                    "fontName": "宋体",
+                    "fontSize": 12,
+                    "alignment": "justify",
+                    "lineSpacing": 300,
+                    "firstLineIndent": 0,
+                }],
+                "headings": [],
+                "documentStructure": {
+                    "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+                    "page_setup": {
+                        "paperSize": "A4",
+                        "marginTop": 1440,
+                        "marginBottom": 1800,
+                        "marginLeft": 1800,
+                        "marginRight": 1800,
+                    },
+                    "formatFacts": {
+                        "schemaVersion": "format_snapshot.v2",
+                        "pageSetup": {
+                            "paperSize": {
+                                "source": "wps.word.page_setup.paper_size",
+                                "rawValue": 7,
+                                "rawUnit": "enum",
+                                "normalizedValue": "A4",
+                                "normalizedUnit": "paper",
+                                "valueType": "enum",
+                                "dataStatus": "verified",
+                            }
+                        },
+                        "blocks": [{
+                            "blockId": "format-paragraph-1",
+                            "facts": {
+                                "lineSpacing": {
+                                    "source": "wps.word.paragraph_format.line_spacing",
+                                    "rawValue": 15,
+                                    "rawUnit": "pt",
+                                    "normalizedValue": 300,
+                                    "normalizedUnit": "twip",
+                                    "valueType": "number",
+                                    "dataStatus": "verified",
+                                    "mode": "fixed",
+                                }
+                            },
+                        }],
+                    },
+                },
+            },
+            "options": {"templateId": "technical-file-format-requirements"},
+        })
+
+        result = WordFormatReviewer().review(request)
+
+        self.assertFalse(any(issue["ruleId"] == "page_setup" for issue in result["issues"]))
+        self.assertFalse(any(issue["ruleId"] == "line_spacing" for issue in result["issues"]))
+
+    def test_v2_mixed_line_spacing_does_not_create_a_format_violation(self) -> None:
+        request = self._request("document")
+        request.content.document_structure = {
+            "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+            "formatBlocks": [{
+                "blockId": "format-paragraph-2",
+                "blockType": "paragraph",
+                "scope": "in_scope",
+                "paragraphIndex": 2,
+                "text": "混合正文",
+                "format": {
+                    "styleName": "Normal",
+                    "facts": {
+                        "lineSpacing": {
+                            "rawValue": 15,
+                            "rawUnit": "pt",
+                            "dataStatus": "mixed",
+                        },
+                        "lineSpacingMode": "fixed",
+                    },
+                },
+            }],
+        }
+
+        result = WordFormatReviewer().review(request)
+
+        self.assertFalse(any(
+            issue["ruleId"] == "line_spacing" for issue in result["issues"]
+        ))
+
     def test_format_review_summary_preserves_table_caption_diagnostics(self) -> None:
         summary = FormatReviewSummary(
             templateId="technical-file-format-requirements",
