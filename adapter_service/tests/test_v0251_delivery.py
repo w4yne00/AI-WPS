@@ -187,6 +187,7 @@ def test_v0251_build_requires_candidate_baseline_and_all_delivery_gates():
         "node --test",
         "check_python38_compatibility.py",
         "python38_delivery_lifecycle_gate.py",
+        "PYTHONDONTWRITEBYTECODE=1",
         "sha256",
     ):
         assert required in build
