@@ -2554,7 +2554,7 @@
       return null;
     }
     var numeric = Number(resolved);
-    return isNaN(numeric) ? null : numeric;
+    return isNaN(numeric) || !isFinite(numeric) ? null : numeric;
   }
 
   function normalizeFontSize(value) {
@@ -2610,7 +2610,7 @@
 
   function normalizePositiveInteger(value) {
     var numeric = Number(value);
-    if (isNaN(numeric) || numeric <= 0) {
+    if (isNaN(numeric) || !isFinite(numeric) || numeric <= 0) {
       return null;
     }
     return Math.floor(numeric);

@@ -217,6 +217,30 @@ const pageUnavailableParagraphs = helpers.collectParagraphs({
 assert.ok(!Object.prototype.hasOwnProperty.call(pageUnavailableParagraphs[0].range, "pageNumber"));
 assert.ok(!Object.prototype.hasOwnProperty.call(pageUnavailableParagraphs[0].range, "sectionIndex"));
 
+const nonFiniteRangeParagraphs = helpers.collectParagraphs({
+  Paragraphs: {
+    Count: 1,
+    Item: function () {
+      return {
+        Text: "WPS 返回不可用位置哨兵的正文",
+        Range: {
+          Text: "WPS 返回不可用位置哨兵的正文",
+          Start: Infinity,
+          End: Infinity,
+          Information: function () { return Infinity; }
+        },
+        StyleNameLocal: "Normal",
+        Font: { NameFarEast: "宋体", Size: 12 },
+        ParagraphFormat: { OutlineLevel: 0 }
+      };
+    }
+  }
+});
+assert.deepStrictEqual(
+  JSON.parse(JSON.stringify(nonFiniteRangeParagraphs[0].range)),
+  { paragraphIndex: 1 }
+);
+
 const preparation = functionSource("ensureDeterministicFormatReviewPreparation");
 assert.ok(preparation.includes("检测到文档编辑或文档身份变化"));
 

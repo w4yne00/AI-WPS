@@ -2118,6 +2118,8 @@ class DeterministicFormatReviewService:
             )
         normalized = {}
         for key, item in value.items():
+            if item is None:
+                continue
             if key in {
                 "start", "end", "paragraphIndex", "pageNumber", "pageStart", "pageEnd", "sectionIndex"
             }:
