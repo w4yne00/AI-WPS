@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822`
 
-历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz`，`afc5470` 及更早候选均已登记为 `rejected`，验证状态见第 6 节。
+历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前没有可发布的 v0.25.1 候选。`e43dc8c` 及更早候选均已登记为 `rejected`；替代修复源码基线为 `d6842468922bb7c6b060964a3d6ec3248766e827`，验证状态见第 6 节。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -551,24 +551,25 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862` 和 `20260822-afc5470` 四个旧候选登记为 `rejected`。当前候选为 `ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz`，源码记录提交为 `385a251`，SHA-256 为 `01d9f16b043ddc287b53bf76903ac601731f8dcfa6e21a567a428bb8944d994f`。`afc5470` 虽修复了图片事实采集阶段裸调用 `firstDefined` 的问题，但目标机继续复现“格式审查原文范围索引无效”：WPS 不可用的 `Start`、`End`、页码或章节位置会以非有限数值进入前端，JSON 序列化后变为 `null`，后端随后把这些可选值误判为非法索引，并在模型调用前中断。
+`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251` 和 `20260822-e43dc8c` 登记为 `rejected`。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
 
-源码提交 `672875e` 已同时修复协议两端：前端不再把非有限位置值放入请求，后端忽略可选的 `null` 位置字段；负数、字符串、布尔值、未知字段和倒序范围仍会拒绝。新候选已在麒麟 ARM/Python 3.8.10 上通过原文范围精确回归、正式插件全部 17 项测试、包内依赖安装、Adapter 导入、Uvicorn 启动、公开格式审查 API、安装升级、故障恢复和中断回滚门禁。自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。
+替代源码 `d6842468922bb7c6b060964a3d6ec3248766e827` 已修复：格式审查批次级块 ID 范围被当成数值索引；已知直连模型未填写最大输出 Token 时无法运行格式语义；直连和工作流返回空最终正文或仅推理内容时诊断不明确、全篇任务会重试或重启恢复；旧工作流档案在配置删除后被重复迁移。构建门禁同时改为记录完整 `HEAD`，并检查 245 个交付白名单、规则、构建工具和插件测试输入均为已跟踪且无未提交差异。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
-AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz \
+AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz \
 DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
 bash packaging/build_v0251_delivery_kit.sh
 ```
 
 当前可复核结果：
 
-- 当前源码 Python 全量单测：`785 passed, 95 skipped`；WPS 原文范围精确回归和恶意值拒绝回归通过。
-- 当前源码正式插件契约测试：17 项通过；`node --check` 和 `git diff --check` 通过。
-- 最近一次已拒绝候选在 Kylin V10 SP1 ARM64/Python 3.8.10 上曾取得 Python 全量 `870 passed, 4 skipped`，并通过静态兼容扫描、规则编译、allowlist、格式规则审计、交付审计和生命周期门禁；该历史结果不能替代 `672875e` 源码的新包构建与目标机复测。
+- 当前源码 Python 全量单测：`797 passed, 95 skipped`；正式插件契约测试 17 项通过；Python 3.8 静态兼容扫描 139 个文件通过；Shell 语法和 `git diff --check` 通过。
+- 独立代码复审两轴均未发现 P0–P2。
+- 当前 Mac 只有 Python 3.9.6；尝试连接文档指定的 Kylin V10 测试机执行真实 Python 3.8 构建时，外部执行因 Codex 用量限制被平台拒绝。因此本轮未生成新归档、未运行最终包生命周期门禁，也未执行目标 WPS/真实模型现场验收。
+- 最近一次已拒绝候选在 Kylin V10 SP1 ARM64/Python 3.8.10 上取得的历史结果不能替代本次修复源码的新包构建与目标机复测。
 - Kylin WPS GUI 的插件信任提示和 `Runtime Probe` Ribbon 已验证；任务窗格按钮执行及文档对象读数仍未完成，不能据此宣称 WPS 插件 API 真机验收通过。
-- `20260822-385a251` 归档已在 Kylin V10 Python `3.8.10` 上通过 Adapter 导入、Uvicorn 启动、公开格式审查 API、密钥契约、运行路径契约及升级/全新安装/故障恢复生命周期场景；门禁终态为 `candidate`。
+- `20260822-e43dc8c` 及更早归档均不得继续分发；新归档生成前不存在可发布候选。
 - Issue #59 未标记为接受；真实 WPS 任务窗格按钮、文档对象读数、模型直连和目标机人工文档验收仍须在 Issue #59 完成。
 
 ## 7. 目标机验证建议
