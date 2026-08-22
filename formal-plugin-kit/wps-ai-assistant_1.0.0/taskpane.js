@@ -2845,7 +2845,8 @@
       }).then(function (validation) {
       var message = "模型配置已保存。";
       if (validation && validation.skipped === false && !validation.validated) {
-        message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";
+        message += "格式语义协议验证未通过，当前仅运行确定性规则。" +
+          (validation.error ? "原因：" + describeFetchError(validation.error) : "");
       }
       return completeWorkflowMutation(taskType, message);
     }).catch(function (error) {
@@ -2869,7 +2870,8 @@
         return validateSavedFormatSemanticConfiguration(taskType, profileId).then(function (validation) {
           var message = "模型配置已保存。";
           if (validation && validation.skipped === false && !validation.validated) {
-            message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";
+            message += "格式语义协议验证未通过，当前仅运行确定性规则。" +
+              (validation.error ? "原因：" + describeFetchError(validation.error) : "");
           }
           return completeWorkflowMutation(taskType, message);
         });

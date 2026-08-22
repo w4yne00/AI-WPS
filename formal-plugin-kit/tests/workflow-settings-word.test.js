@@ -309,6 +309,9 @@ assert.ok(replaceKeyIndex > patchIndex, "key replacement must follow metadata PA
 const saveKeySource = functionSource("saveModelConfigurationKey");
 assert.ok(saveKeySource.includes("if (!draft.apiKey)"), "blank edit key must skip replacement");
 assert.ok(saveEditSource.includes("模型配置已保存，但 API Key 更换失败"));
+assert.ok(saveEditSource.includes("describeFetchError(validation.error)"));
+const createProfileSource = functionSource("createWorkflowProfile");
+assert.ok(createProfileSource.includes("describeFetchError(validation.error)"));
 
 const toggleSource = functionSource("toggleSettingsShortcut");
 [

@@ -691,22 +691,46 @@ def _sanitize_provider_error_body(
     return str(sanitized)[:limit]
 
 
+def _read_http_error_raw(exc: error.HTTPError) -> str:
+    try:
+        return exc.read(4096).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def _read_http_error_body(
     exc: error.HTTPError,
     query: str = "",
     api_key: str = "",
     limit: int = 480,
 ) -> str:
-    try:
-        raw = exc.read(4096).decode("utf-8", errors="replace")
-    except Exception:
-        return ""
+    raw = _read_http_error_raw(exc)
     return _sanitize_provider_error_body(
         raw,
         query=query,
         api_key=api_key,
         limit=limit,
     )
+
+
+def _response_format_is_explicitly_unsupported(raw: str) -> bool:
+    text = str(raw or "").lower()
+    names_extension = "response_format" in text or "json_schema" in text
+    rejects_extension = any(
+        marker in text
+        for marker in (
+            "not supported",
+            "unsupported",
+            "unknown field",
+            "unknown parameter",
+            "unrecognized",
+            "extra inputs are not permitted",
+            "不支持",
+            "未知字段",
+            "未知参数",
+        )
+    )
+    return names_extension and rejects_extension
 
 
 def _sanitize_provider_body(body: Dict) -> Dict:
@@ -1676,6 +1700,27 @@ def _full_document_review_chunk_response_format() -> Dict:
     }
 
 
+def _format_semantic_response_format(operation: str) -> Dict:
+    from app.services.word.format_semantics import FormatSemanticContract
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "word_format_semantics_{0}_v1".format(operation),
+            "strict": True,
+            "schema": FormatSemanticContract.response_json_schema(operation),
+        },
+    }
+
+
+def _format_semantic_prompt_with_schema(prompt: str, operation: str) -> str:
+    schema = _format_semantic_response_format(operation)["json_schema"]["schema"]
+    return "{0}\n\n允许的响应字段及类型（不得增加其它字段）：\n{1}".format(
+        str(prompt or "").strip(),
+        json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
+
+
 def _full_document_review_aggregate_response_format() -> Dict:
     finding_properties = {
         "findingId": {"type": "string", "minLength": 1, "maxLength": 96},
@@ -2402,6 +2447,7 @@ class ProviderClient:
         response_format: Optional[Dict] = None,
         input_token_limit: Optional[int] = None,
         image_files: Optional[List[Dict]] = None,
+        allow_response_format_fallback: bool = False,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -2541,6 +2587,12 @@ class ProviderClient:
                 return normalized
         except error.HTTPError as exc:
             status = int(exc.code)
+            raw_error_body = _read_http_error_raw(exc)
+            body_preview = _sanitize_provider_error_body(
+                raw_error_body,
+                query=query,
+                api_key=str(resolved_task_auth.get("apiKey", "")),
+            )
             record_provider_debug(
                 {
                     "traceId": trace_id,
@@ -2552,12 +2604,28 @@ class ProviderClient:
                         "type": "HTTPError",
                         "status": status,
                         "message": "direct model http error",
-                        "bodyPreview": _read_http_error_body(
-                            exc, query=query, api_key=str(resolved_task_auth.get("apiKey", ""))
-                        ),
+                        "bodyPreview": body_preview,
                     },
                 }
             )
+            if (
+                status == 400
+                and response_format is not None
+                and allow_response_format_fallback
+                and _response_format_is_explicitly_unsupported(raw_error_body)
+            ):
+                return self._post_direct_task(
+                    task_type,
+                    trace_id,
+                    query,
+                    resolved_task_auth,
+                    timeout,
+                    prompt_asset=prompt_asset,
+                    response_format=None,
+                    input_token_limit=input_token_limit,
+                    image_files=image_files,
+                    allow_response_format_fallback=False,
+                )
             if status in (401, 403):
                 raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
             if status == 404:
@@ -2600,6 +2668,8 @@ class ProviderClient:
         task_auth: Optional[Dict] = None,
         input_token_limit: Optional[int] = None,
         image_files: Optional[List[Dict]] = None,
+        response_format: Optional[Dict] = None,
+        allow_response_format_fallback: bool = False,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -2618,6 +2688,8 @@ class ProviderClient:
                 timeout,
                 input_token_limit=input_token_limit,
                 image_files=image_files,
+                response_format=response_format,
+                allow_response_format_fallback=allow_response_format_fallback,
             )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
@@ -3060,7 +3132,7 @@ class ProviderClient:
     def _validate_format_semantic_direct(self, trace_id: str, task_auth: Dict) -> Dict:
         from app.services.word.format_semantics import (
             FORMAT_SEMANTIC_SCHEMA_VERSION,
-            FormatSemanticContract,
+            FormatSemanticExecutor,
         )
 
         binding, fixtures = self._format_semantic_validation_fixtures()
@@ -3080,35 +3152,33 @@ class ProviderClient:
                 json.dumps(request_payload, ensure_ascii=False),
             ]
         )
-        response = self.format_semantics(
-            "classify_role",
-            trace_id,
-            {
-                "operation": "classify_role",
-                "snapshotBinding": binding,
-                "candidate_json": candidate_json,
-            },
-            prompt,
-            task_auth=task_auth,
-        )
-        payload = _extract_json_payload(str(response.get("answer", "")))
-        if payload is None:
-            raise AdapterError(
-                "FORMAT_SEMANTIC_RESPONSE_INVALID",
-                "模型返回结果不符合 format_semantics.v1 格式语义契约。",
-                status_code=502,
+        def call(query: str, output_budget: int) -> Dict:
+            return self.format_semantics(
+                "classify_role",
+                trace_id,
+                {
+                    "operation": "classify_role",
+                    "snapshotBinding": binding,
+                    "candidate_json": candidate_json,
+                },
+                query,
+                task_auth=task_auth,
+                output_token_budget=output_budget,
             )
-        FormatSemanticContract.validate_response(
+
+        validation = FormatSemanticExecutor(call, task_auth=task_auth).execute(
             "classify_role",
-            payload,
+            prompt,
             candidates,
             binding,
-            require_complete=True,
         )
+        if validation.get("error") is not None:
+            raise validation["error"]
         return {
             "success": True,
             "protocolVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
             "operations": {"classify_role": True},
+            "correctionCount": int(validation.get("correctionCount") or 0),
             "visualCapability": {
                 "validated": False,
                 "mode": "contract_only",
@@ -4188,6 +4258,8 @@ class ProviderClient:
                 auth,
                 timeout_seconds=60,
             )
+        prompt = _format_semantic_prompt_with_schema(prompt, operation)
+        FormatSemanticContract.require_input_budget(prompt)
         return self.post_task(
             "word.format_review",
             trace_id,
@@ -4197,6 +4269,8 @@ class ProviderClient:
             task_auth=auth,
             input_token_limit=MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
             image_files=input_data.get("image_files"),
+            response_format=_format_semantic_response_format(operation),
+            allow_response_format_fallback=True,
         )
 
     def _post_workflow_format_semantics(
