@@ -3,10 +3,10 @@
 
 # 项目约束
 <!-- 按本仓库实际情况填写；未填写的项沿用全局 ~/.codex/AGENTS.md 的代码基线 -->
-- 技术栈：<语言 / 框架 / 版本>
-- 测试命令：<例如 pnpm test / make test / pytest -q>
-- 构建与检查命令：<例如 pnpm lint && pnpm build>
-- 不可触碰的目录或文件：<例如 migrations/、生成代码目录>
+- 技术栈：Python 3.8/FastAPI/Pydantic Adapter，WPS JS/HTML 插件，Node.js/Vite/Vitest。
+- 测试命令：`PYTHONPATH=adapter_service /mnt/ai-wps-test-venv/bin/python -m pytest -q adapter_service/tests`；插件使用 `npm test`、`npm run build` 和 `node --test formal-plugin-kit/tests/*.test.js`。
+- 构建与检查命令：`bash packaging/build_v0251_delivery_kit.sh`；提交前执行 `git diff --check`、Python 3.8 兼容扫描和交付审计。
+- 不可触碰的目录或文件：`config/adapter.json`、`run/`、`.scratch/writing-policy-review/` 等运行态或本地审查文件不得提交。
 
 ## 测试环境
 - Kylin V10 ARM64 测试环境及 SSH 验证命令见 `docs/operations/kylin-v10-test-environment.md`。

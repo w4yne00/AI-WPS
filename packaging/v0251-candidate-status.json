@@ -10,6 +10,14 @@
       "status": "rejected",
       "recordedAt": "20260822",
       "reason": "superseded after normalized format facts, active rules, and verified issue locations were completed"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-275099e",
+      "archiveName": "ai-wps-phase1-delivery-20260822-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256",
+      "archiveSha256": "7804253812ea8177ae1fd8ba953afd83e8f411267913fce85aa7a2340c9a1680",
+      "sourceCommit": "275099e",
+      "status": "candidate"
     }
   ]
 }
