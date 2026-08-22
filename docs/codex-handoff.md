@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822`
 
-历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz`，验证状态见第 6 节。
+历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；v0.25.1 的候选归档使用日期与七位源码提交号组成唯一文件名，当前构建以归档内 `release-manifest.json` 和同名 `.sha256` 为准，验证状态见第 6 节。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -551,11 +551,11 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816` 旧候选登记为 `rejected`，并发布了使用独立日期和 `candidateBuildId` 的新候选 `20260822`；自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。新候选归档及校验文件已提交到 `dist-phase1-delivery-kit/`，SHA-256 为 `7804253812ea8177ae1fd8ba953afd83e8f411267913fce85aa7a2340c9a1680`。
+`v0.25.1-alpha` 已将 `20260816` 和 `20260822-275099e` 两个旧候选登记为 `rejected`。新候选使用日期、七位源码提交号和 `candidateBuildId` 形成独立构建身份；自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。新候选的准确归档名和 SHA-256 以本节后续交付记录、归档内 `release-manifest.json` 及同名 `.sha256` 为准。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
-AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260816-v0251.tar.gz \
+AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz \
 DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
 bash packaging/build_v0251_delivery_kit.sh
 ```

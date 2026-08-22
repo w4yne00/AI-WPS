@@ -251,11 +251,16 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0251_CANDIDATE_BUILD_ID_INVALID")
 
     superseded = evidence.get("supersedes", {})
-    current_archive_name = "ai-wps-phase1-delivery-{0}-v0251.tar.gz".format(release_date)
+    current_archive_name = (
+        "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+            release_date, str(source_commit)[:7]
+        )
+    )
     previous_archive_match = None
     if isinstance(superseded, dict):
         previous_archive_match = re.fullmatch(
-            r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})-v0251\.tar\.gz",
+            r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
+            r"(?:-(?P<source>[0-9a-f]{7}))?-v0251\.tar\.gz",
             str(superseded.get("archiveName", "")),
         )
     if (
@@ -352,8 +357,8 @@ def audit(root: Path) -> None:
     if not COMMIT_RE.fullmatch(str(evidence.get("sourceCommit", ""))):
         raise DeliveryFailure("V0251_SOURCE_COMMIT_MISSING")
     release_date = str(manifest.get("releaseDate", ""))
-    expected_checksum_name = "ai-wps-phase1-delivery-{0}-v0251.tar.gz.sha256".format(
-        release_date
+    expected_checksum_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz.sha256".format(
+        release_date, str(evidence.get("sourceCommit", ""))[:7]
     )
     if evidence.get("archiveChecksumFile") != expected_checksum_name:
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_EVIDENCE_MISSING")
@@ -373,7 +378,7 @@ def audit(root: Path) -> None:
     note_content = note.read_text(encoding="utf-8")
     for required in (
         "v0.25.1-alpha",
-        "ai-wps-phase1-delivery-<YYYYMMDD>-v0251.tar.gz",
+        "ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz",
         "Issue #59",
         "format_semantics.v1",
         "manual acceptance",

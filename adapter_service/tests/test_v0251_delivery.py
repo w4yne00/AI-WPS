@@ -106,8 +106,8 @@ def test_v0251_audit_requires_rejected_previous_candidate_lineage(tmp_path):
                 "records": [
                     {
                         "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-b7a1cf9",
-                        "archiveName": "ai-wps-phase1-delivery-20260822-v0251.tar.gz",
-                        "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256",
+                        "archiveName": "ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz",
+                        "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz.sha256",
                         "status": "candidate",
                     }
                 ],
@@ -121,7 +121,7 @@ def test_v0251_audit_requires_rejected_previous_candidate_lineage(tmp_path):
         "candidateEvidence": {
             "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-b7a1cf9",
             "sourceCommit": "b7a1cf9",
-            "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256",
+            "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz.sha256",
             "automatedResult": "candidate",
             "supersedes": {
                 "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
@@ -181,7 +181,7 @@ def test_v0251_build_requires_candidate_baseline_and_all_delivery_gates():
         "prepare_v0251_delivery.py",
         "audit_v0251_delivery.py",
         "0.25.1-alpha",
-        "ai-wps-phase1-delivery-${DATE_TAG}-v0251",
+        "ai-wps-phase1-delivery-${DATE_TAG}-${SOURCE_TAG}-v0251",
         "--acceptance-issue",
         "--previous-candidate-archive",
         "node --test",
@@ -327,8 +327,8 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
                 "version": "0.25.1-alpha",
                 "records": [
                     {
-                        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
-                        "archiveName": "ai-wps-phase1-delivery-20260816-v0251.tar.gz",
+                        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822",
+                        "archiveName": "ai-wps-phase1-delivery-20260822-v0251.tar.gz",
                         "archiveSha256": "0" * 64,
                         "status": "rejected",
                     }
@@ -379,14 +379,14 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
         json.dumps(
             {
                 "version": "0.25.1-alpha",
-                "releaseDate": "20260816",
-                "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
+                "releaseDate": "20260822",
+                "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822",
                 "deliveryPolicy": {"status": "candidate"},
             }
         ),
         encoding="utf-8",
     )
-    previous = tmp_path / "ai-wps-phase1-delivery-20260816-v0251.tar.gz"
+    previous = tmp_path / "ai-wps-phase1-delivery-20260822-v0251.tar.gz"
     with tarfile.open(previous, "w:gz") as archive:
         archive.add(previous_root, arcname="old-v0251")
     previous_digest = hashlib.sha256(previous.read_bytes()).hexdigest()
@@ -431,7 +431,11 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     assert manifest["candidateEvidence"]["candidateBuildId"].endswith("-b7a1cf9")
     assert manifest["candidateEvidence"]["supersedes"]["status"] == "rejected"
     assert manifest["candidateEvidence"]["archiveChecksumFile"].endswith(
-        "v0251.tar.gz.sha256"
+        "-b7a1cf9-v0251.tar.gz.sha256"
+    )
+    current = json.loads(status_path.read_text(encoding="utf-8"))["records"][-1]
+    assert current["archiveName"] == (
+        "ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz"
     )
     assert not (delivery / "docs/v0250-delivery.md").exists()
     assert not (delivery / "scripts/audit_v0250_delivery.py").exists()

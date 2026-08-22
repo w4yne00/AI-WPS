@@ -10,17 +10,22 @@ OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 VERSION="0.25.1-alpha"
 BASELINE_VERSION="0.25.0-alpha"
-KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-v0251"
+SOURCE_COMMIT="${AI_WPS_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse --short=7 HEAD)}"
+SOURCE_TAG="${SOURCE_COMMIT:0:7}"
+KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-${SOURCE_TAG}-v0251"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
 ARCHIVE_PATH="$OUT_DIR/$KIT_NAME.tar.gz"
 PENDING_ARCHIVE_PATH="$OUT_DIR/.$KIT_NAME.pending.tar.gz"
 PENDING_CHECKSUM_PATH="$OUT_DIR/.$KIT_NAME.pending.sha256"
 SOURCE_ALLOWLIST="$ROOT_DIR/packaging/delivery-sources-v0251.json"
-SOURCE_COMMIT="${AI_WPS_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse HEAD)}"
 PUBLISHED_ARCHIVE="0"
 
 if [[ ! "$DATE_TAG" =~ ^[0-9]{8}$ ]]; then
   echo "delivery_date_tag_invalid=$DATE_TAG"
+  exit 1
+fi
+if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{7,40}$ ]]; then
+  echo "delivery_source_commit_invalid=$SOURCE_COMMIT"
   exit 1
 fi
 if ! "$PYTHON_BIN" - "$DATE_TAG" <<'PY'

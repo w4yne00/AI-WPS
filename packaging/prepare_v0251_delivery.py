@@ -17,7 +17,10 @@ BASELINE_VERSION = "0.25.0-alpha"
 FORMAT_ASSET_VERSION = "0.25.1-format-rules-alpha"
 TEXT_SUFFIXES = {".css", ".html", ".js", ".json", ".md", ".py", ".sh", ".txt", ".xml", ".yml"}
 SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
-CANDIDATE_ARCHIVE_RE = re.compile(r"^ai-wps-phase1-delivery-(?P<date>[0-9]{8})-v0251\.tar\.gz$")
+CANDIDATE_ARCHIVE_RE = re.compile(
+    r"^ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
+    r"(?:-(?P<source>[0-9a-f]{7}))?-v0251\.tar\.gz$"
+)
 PREVIOUS_BUILD_ID_RE = re.compile(
     r"^AI-WPS-P1-WORD-EXCEL-PPT-0\.25\.1-[0-9]{8}(?:-[0-9a-f]{7,40})?$"
 )
@@ -30,6 +33,12 @@ VERSION_REWRITE_EXCLUDED_PATHS = {
     "scripts/python38_delivery_runtime_gate.py",
 }
 STATUS_RELATIVE_PATH = "docs/v0251-candidate-status.json"
+
+
+def candidate_archive_name(date_tag: str, source_commit: str) -> str:
+    return "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        date_tag, source_commit[:7]
+    )
 
 
 def candidate_files(root: Path) -> Iterable[Path]:
@@ -154,7 +163,7 @@ def record_candidate_lineage(
         raise ValueError("V0251_PREVIOUS_CANDIDATE_STATUS_INVALID")
     current_record = {
         "candidateBuildId": current_build_id,
-        "archiveName": "ai-wps-phase1-delivery-{0}-v0251.tar.gz".format(date_tag),
+        "archiveName": candidate_archive_name(date_tag, source_commit),
         "archiveChecksumFile": checksum_name,
         "sourceCommit": source_commit,
         "status": "candidate",
@@ -256,9 +265,9 @@ def prepare(
         raise ValueError("V0251_SOURCE_COMMIT_INVALID")
     baseline = baseline_metadata(baseline_archive, baseline_version)
     previous = previous_candidate_metadata(previous_candidate_archive)
-    current_archive_name = "ai-wps-phase1-delivery-{0}-v0251.tar.gz".format(date_tag)
+    current_archive_name = candidate_archive_name(date_tag, source_commit)
     if previous["archiveName"] == current_archive_name:
-        raise ValueError("V0251_PREVIOUS_CANDIDATE_DATE_REUSE")
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_BUILD_REUSE")
     rewrite_versions(root, ("0.23.1-alpha", "0.24.0-alpha", "0.25.0-alpha"))
     remove_previous_candidate_identity(root)
 
@@ -314,9 +323,7 @@ def prepare(
     manifest["candidateEvidence"] = {
         "candidateBuildId": candidate_build_id,
         "sourceCommit": source_commit,
-        "archiveChecksumFile": "ai-wps-phase1-delivery-{0}-v0251.tar.gz.sha256".format(
-            date_tag
-        ),
+        "archiveChecksumFile": current_archive_name + ".sha256",
         "automatedResult": "candidate",
         "rollbackEntry": "installer/install_phase1.sh transaction log rollback",
         "acceptanceRecord": "Issue #{0}".format(acceptance_issue),
