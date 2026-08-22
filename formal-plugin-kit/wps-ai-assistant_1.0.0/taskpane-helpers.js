@@ -4286,6 +4286,7 @@
     getWritableSelection: getWritableSelection,
     resolveRewriteScope: resolveRewriteScope,
     canApplyRewriteToSelection: canApplyRewriteToSelection,
+    firstDefined: firstDefined,
     readCollectionCount: readCollectionCount,
     getCollectionItem: getCollectionItem,
     getParagraphCollection: getParagraphCollection,

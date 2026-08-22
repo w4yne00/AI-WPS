@@ -1,5 +1,6 @@
 const assert = require("assert");
 const fs = require("fs");
+const vm = require("vm");
 
 const root = "formal-plugin-kit/wps-ai-assistant_1.0.0";
 const html = fs.readFileSync(`${root}/taskpane.html`, "utf8");
@@ -80,6 +81,33 @@ assert.ok(!primary.includes("runFormatReview();"));
 assert.ok(js.includes("saveDeterministicFormatReviewActiveJob"));
 assert.ok(js.includes("resumeDeterministicFormatReviewActiveJob"));
 assert.ok(js.includes("DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY"));
+
+const collectImages = vm.runInNewContext(
+  `(${functionSource("collectDeterministicFormatReviewImages")})`,
+  {
+    helpers,
+    readValue(target, key) {
+      return target && typeof target === "object" ? target[key] : undefined;
+    }
+  }
+);
+assert.doesNotThrow(
+  () => collectImages({}, []),
+  /firstDefined is not defined/
+);
+const collectedImages = collectImages({
+  InlineShapes: [{
+    Id: "image-1",
+    Type: 13,
+    ParagraphIndex: 1,
+    AlternativeText: "总体架构示意图"
+  }],
+  Shapes: []
+}, [{ index: 1, text: "图 1：总体架构" }]);
+assert.strictEqual(collectedImages.facts.length, 1);
+assert.strictEqual(collectedImages.facts[0].captionStatus, "present");
+assert.strictEqual(collectedImages.facts[0].altText, "总体架构示意图");
+assert.ok(collectedImages.objects[collectedImages.facts[0].imageId]);
 
 const readable = helpers.renderReadableDeterministicFormatReview({
   summary: {
