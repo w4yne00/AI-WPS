@@ -31,6 +31,11 @@ const run = functionSource("runDeterministicFormatReview");
   "snapshotToken",
   "pollDeterministicFormatReviewJob"
 ].forEach((token) => assert.ok(run.includes(token), token));
+assert.ok(run.includes("无法开始格式审查"));
+assert.ok(run.includes("请确认本地 Adapter 已升级到当前版本并重新启动"));
+assert.ok(run.includes("设置 > 高级诊断"));
+assert.ok(!run.includes("格式审查 v2 后台任务当前未启用"));
+assert.ok(!run.includes("未调用旧同步审查结果链"));
 assert.ok(run.includes("ensureDeterministicFormatReviewPreparation"));
 assert.ok(js.includes("/image-groups"));
 assert.ok(js.includes("SaveAsPicture(slotPath, 2)"));

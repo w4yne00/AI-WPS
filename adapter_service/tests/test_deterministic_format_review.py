@@ -104,6 +104,7 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         }
 
     def test_disabled_protocol_is_rejected_without_creating_staging_data(self) -> None:
+        os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = "0"
         response = self.client.post("/word/format-review/snapshots", json=self._payload())
 
         self.assertEqual(response.status_code, 403)
@@ -114,6 +115,20 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         self.assertFalse(list(Path(self.temp_dir.name).iterdir()))
         config = self.client.get("/config")
         self.assertFalse(config.json()["data"]["features"]["deterministicFormatReviewEnabled"])
+
+    def test_primary_v2_protocol_is_available_without_legacy_feature_flag(self) -> None:
+        config = self.client.get("/config")
+
+        self.assertTrue(
+            config.json()["data"]["features"]["deterministicFormatReviewEnabled"]
+        )
+        response = self.client.post(
+            "/word/format-review/snapshots", json=self._payload()
+        )
+        self.assertNotEqual(
+            response.json()["errors"][0]["code"],
+            "DETERMINISTIC_FORMAT_REVIEW_DISABLED",
+        )
 
     def test_old_synchronous_format_review_endpoint_is_retired(self) -> None:
         response = self.client.post("/word/format-review", json=self._payload())

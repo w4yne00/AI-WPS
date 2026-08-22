@@ -288,7 +288,7 @@ def prepare(
     }
     manifest["baseline"] = baseline
     manifest["formatReview"] = {
-        "enabledByDefault": False,
+        "enabledByDefault": True,
         "featureSwitch": "AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW",
         "rulePackManifest": "format-rule-assets-manifest.json",
         "referenceWorkflows": [

@@ -367,8 +367,8 @@ def audit(root: Path) -> None:
         or policy.get("candidateAuditScript") != "scripts/audit_v0251_delivery.py"
     ):
         raise DeliveryFailure("V0251_CANDIDATE_POLICY_INVALID")
-    if manifest.get("formatReview", {}).get("enabledByDefault") is not False:
-        raise DeliveryFailure("FORMAT_REVIEW_DEFAULT_MUST_BE_CLOSED")
+    if manifest.get("formatReview", {}).get("enabledByDefault") is not True:
+        raise DeliveryFailure("FORMAT_REVIEW_DEFAULT_MUST_BE_OPEN")
     note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
     note_content = note.read_text(encoding="utf-8")
     for required in (

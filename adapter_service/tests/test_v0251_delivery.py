@@ -426,6 +426,7 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     assert manifest["baseline"]["acceptedVersion"] == "0.25.0-alpha"
     assert manifest["targetAcceptanceIssue"] == 59
     assert manifest["targetAcceptance"]["status"] == "manual-pending"
+    assert manifest["formatReview"]["enabledByDefault"] is True
     assert manifest["candidateEvidence"]["sourceCommit"] == "b7a1cf9"
     assert manifest["candidateEvidence"]["candidateBuildId"].endswith("-b7a1cf9")
     assert manifest["candidateEvidence"]["supersedes"]["status"] == "rejected"

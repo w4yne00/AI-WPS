@@ -10,7 +10,7 @@ def full_document_review_enabled() -> bool:
 
 
 def deterministic_format_review_enabled() -> bool:
-    return os.environ.get(DETERMINISTIC_FORMAT_REVIEW_ENV, "").strip() == "1"
+    return os.environ.get(DETERMINISTIC_FORMAT_REVIEW_ENV, "1").strip() == "1"
 
 
 def image_semantics_enabled() -> bool:

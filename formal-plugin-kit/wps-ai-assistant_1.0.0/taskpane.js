@@ -7527,8 +7527,11 @@
     var session = null;
     // Extraction is bounded by DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS.
     if (!state.deterministicFormatReviewEnabled) {
-      setStatus("确定性格式审查功能尚未启用。");
-      setPlainResult("格式审查 v2 后台任务当前未启用，未调用旧同步审查结果链。");
+      setStatus("无法开始格式审查。");
+      setPlainResult(
+        "当前本地服务未开放格式审查。请确认本地 Adapter 已升级到当前版本并重新启动，" +
+        "然后再次尝试。如仍无法使用，请前往“设置 > 高级诊断”查看详情。"
+      );
       return;
     }
     if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {

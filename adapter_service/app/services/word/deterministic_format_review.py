@@ -599,7 +599,7 @@ def _short_report_value(value: object, limit: int = 400) -> str:
 def _disabled_error() -> AdapterError:
     return AdapterError(
         "DETERMINISTIC_FORMAT_REVIEW_DISABLED",
-        "确定性格式审查功能尚未启用。",
+        "格式审查服务当前已由管理员停用。",
         status_code=403,
     )
 

@@ -18,7 +18,7 @@ The directories have separate responsibilities:
 - `AI_WPS_STATE_DIR`: `adapter.json`, the unified and task API Key files, and `writing_policies.db`.
 - `AI_WPS_BACKUP_DIR`: reserved for validated whole-state snapshots. It is not a live configuration source.
 - `AI_WPS_VAR_DIR`: `logs/`, `run/adapter.pid`, and `transactions/`. These files are excluded from state snapshots.
-- `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=1`: enables the new read-only deterministic Word format snapshot/job protocol; unset or any other value keeps the entry and protocol disabled.
+- `AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW=0`: disables the read-only deterministic Word format snapshot/job protocol for operational containment. The protocol is enabled when the variable is unset or set to `1`.
 - `AI_WPS_FORMAT_REVIEW_DIR`: optional absolute staging directory for the deterministic format review protocol. When unset, snapshots use `AI_WPS_VAR_DIR/format-review` (or the legacy runtime `var/format-review` location).
 
 Each configured value must be an absolute path and must not contain control
