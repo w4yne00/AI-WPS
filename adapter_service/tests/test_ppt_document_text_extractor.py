@@ -92,6 +92,32 @@ class PptDocumentTextExtractorTests(unittest.TestCase):
 
         self.assertIn("## 继承标题", result)
 
+    def test_extracts_repository_template_heading_levels_without_promoting_body(self):
+        path = (
+            Path(__file__).resolve().parents[2]
+            / "templates"
+            / "history"
+            / "inactive"
+            / "technical-file-format-requirements.docx"
+        )
+
+        result = extract_staged_document_text(
+            SimpleNamespace(path=path, extension="docx")
+        )
+        lines = result.splitlines()
+
+        self.assertIn("# 技术文件格式及书写要求", lines)
+        self.assertIn("## 条小四号黑体不加粗，行间距1.25倍", lines)
+        self.assertIn("### 条小四号黑体不加粗，行间距1.25倍", lines)
+        body = "正文首行空两格，小四宋体不加粗，行间距1.25倍。"
+        self.assertIn(body, lines)
+        self.assertFalse(
+            any(
+                line.startswith("#") and line.lstrip("# ").strip() == body
+                for line in lines
+            )
+        )
+
     def test_uses_outline_level_only_for_the_allowed_range(self):
         paragraphs = "".join(
             '<w:p><w:pPr><w:outlineLvl w:val="{0}" /></w:pPr><w:r><w:t>级别{0}</w:t></w:r></w:p>'.format(value)
