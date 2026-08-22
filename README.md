@@ -94,9 +94,9 @@ format-review fixes for WPS outline levels, heading anchors, formal direct-model
 validation, runtime model-call diagnostics, rejected-request asset staging, and
 locale-independent control-character validation.
 
-The build records source commit `275099e`, candidate status, baseline archive digest,
+The build records source commit `4ff1862`, candidate status, baseline archive digest,
 archive checksum sidecar, automated gate results, and transaction-log rollback entry.
-The previous `20260816` candidate is recorded as `rejected`; the current candidate
+The previous `20260816` and `20260822-275099e` candidates are recorded as `rejected`; the current candidate
 is recorded separately in `packaging/v0251-candidate-status.json`.
 
 Automated validation marks this package as a `candidate`, never `target-accepted`.
