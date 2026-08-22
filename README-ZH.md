@@ -77,12 +77,35 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.23.1-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.23.1-20260812` |
+| 当前版本 | `v0.25.1-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 白名单组装、静态审计及 Linux ARM64/Python 3.8 生命周期门禁通过；麒麟 V10/WPS 真机验收待执行 |
-| 一期交付包 | 当前候选：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；SHA-256 由同名 `.sha256` 文件记录 |
+| 交付状态 | `candidate` 已发布；麒麟 V10 Python 3.8 自动化和生命周期门禁通过；Issue #59 继续负责目标机人工验收 |
+| 一期交付包 | [`20260822 候选归档`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256) |
+
+### v0.25.1-alpha 候选交付
+
+已发布的 `20260822` 候选沿用现有一期安装体系，包含 Word、Excel、PPT
+三宿主插件包、本地适配服务、麒麟 V10 ARM/Python 3.8 离线依赖包、安装与运维脚本、
+验收文档及发布清单。本候选覆盖 WPS 大纲级别和标题定位、模型直连验证、模型调用诊断、
+格式审查拒绝请求的资源暂存，以及与 locale 无关的控制字符校验修复。
+
+构建记录源提交 `275099e`、候选状态、基线归档摘要、归档校验文件、自动化门禁结果和事务日志回滚入口。
+旧的 `20260816` 候选已登记为 `rejected`，当前候选在 `packaging/v0251-candidate-status.json`
+中单独登记。
+
+自动化验证只将本包标记为 `candidate`，不会宣称 `target-accepted`。Issue #59 仍是目标机人工验收记录。
+
+验证摘要：
+
+| 门禁 | 结果 |
+| --- | --- |
+| 麒麟 V10 Python 3.8.10 Adapter 测试 | `870 passed, 4 skipped` |
+| 麒麟 V10 候选生命周期 | 通过；最终状态为 `candidate` |
+| 正式插件合同测试 | 17 项通过 |
+| WPS 插件测试和构建 | Vitest 12 项通过；Vite 构建通过 |
+| 目标 WPS GUI 和真实文档人工验收 | 由 Issue #59 继续进行 |
 
 版本规则格式：
 
@@ -130,6 +153,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.25.1-alpha` | 发布经麒麟 V10 验证的 `20260822` 候选；修复格式审查拒绝请求时的 `image-assets` 目录创建和 locale 相关的 `U+0085` 控制字符漏检，补齐交付白名单，并将 Issue #59 保留为独立人工验收门禁 |
 | `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`。恢复候选默认不切换，只有当前安装不就绪、安装前备份完整校验且候选存活时才允许 `--activate-recovery`；恢复模式只提供重新检测、只读备份和脱敏诊断。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
 | `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
 | `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |
