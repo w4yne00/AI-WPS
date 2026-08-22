@@ -78,27 +78,39 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Item | Value |
 | --- | --- |
 | Version | `v0.25.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-<YYYYMMDD>` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Candidate build: v0.25.0 baseline, allowlist/static/plugin/Python 3.8 gates and Issue #59 manual acceptance evidence required; Kylin V10/WPS acceptance pending |
-| Phase 1 delivery kit | Build with `AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=<previous v0.25.1-alpha archive> DATE_TAG=<YYYYMMDD> packaging/build_v0251_delivery_kit.sh`; the archive and adjacent SHA-256 file are generated in `dist-phase1-delivery-kit/` |
+| Delivery status | `candidate` published; Kylin V10 Python 3.8 automated and lifecycle gates passed; Issue #59 remains the separate manual target-machine acceptance gate |
+| Phase 1 delivery kit | [`20260822 candidate archive`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256) |
 
 ### v0.25.1-alpha Candidate Delivery
 
-This candidate keeps the existing Phase 1 installation system and packages the
+The published `20260822` candidate keeps the existing Phase 1 installation system and packages the
 unified Word, Excel, and PPT plugin package, local adapter runtime, Kylin V10
 ARM/Python 3.8 offline dependency bundle, installation and operations scripts,
 acceptance documents, and the release manifest. Its scope is limited to the
 format-review fixes for WPS outline levels, heading anchors, formal direct-model
-validation, and runtime model-call diagnostics.
+validation, runtime model-call diagnostics, rejected-request asset staging, and
+locale-independent control-character validation.
 
-The build records the source Git commit, candidate status, baseline archive digest,
+The build records source commit `275099e`, candidate status, baseline archive digest,
 archive checksum sidecar, automated gate results, and transaction-log rollback entry.
+The previous `20260816` candidate is recorded as `rejected`; the current candidate
+is recorded separately in `packaging/v0251-candidate-status.json`.
+
+Automated validation marks this package as a `candidate`, never `target-accepted`.
 Issue #59 remains the manual target-machine acceptance record.
 
-Automated validation marks this package as a `candidate`; final Kylin V10 and WPS
-acceptance remains a separate target-environment gate.
+Validation snapshot:
+
+| Gate | Result |
+| --- | --- |
+| Kylin V10 Python 3.8.10 Adapter tests | `870 passed, 4 skipped` |
+| Kylin V10 candidate lifecycle | Passed; final status `candidate` |
+| Formal plugin contract tests | 17 passed |
+| WPS add-in tests and build | Vitest 12 passed; Vite build passed |
+| Target WPS GUI and real-document acceptance | Pending in Issue #59 |
 
 Version rule format:
 
@@ -146,7 +158,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.25.1-alpha` | Packages the format-review repair candidate on the existing Phase 1 installation baseline, with WPS outline-level and heading-anchor fixes, formal direct-model validation, model-call diagnostics, explicit candidate evidence, and a separate Issue #59 manual acceptance gate |
+| `v0.25.1-alpha` | Publishes the `20260822` Kylin-verified candidate on the existing Phase 1 installation baseline; fixes rejected-request `image-assets` staging and locale-dependent `U+0085` control-character detection, completes the delivery allowlist, and keeps Issue #59 as the separate manual acceptance gate |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |
