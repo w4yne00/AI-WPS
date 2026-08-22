@@ -30,7 +30,7 @@
 POST /ppt/document-files
 ```
 
-请求体包含 `fileName`、`mimeType`、`sizeBytes` 和 `contentBase64`。adapter 校验扩展名、Base64 实际大小、Markdown UTF-8 编码或 DOCX ZIP 结构后，返回 30 分钟有效的一次性 `fileToken`。文件名和正文不会写入普通日志或诊断。
+请求体包含 `fileName`、`mimeType`、`sizeBytes` 和 `contentBase64`。adapter 校验扩展名、Base64 实际大小、Markdown UTF-8 编码或 DOCX ZIP 结构后，返回 30 分钟有效的一次性 `fileToken`。DOCX 还会在提交边界执行条目数、解压总量、关键部件大小、压缩比、CRC、加密成员、重复部件、危险路径、XML DTD/实体、关系数量和媒体资源的统一安全门禁；不会解压到暂存根或发起网络请求。包含 `styles.xml` 时返回 `styleCapability=styles_xml`，合法 DOCX 缺失该部件时返回 `styleCapability=outline_fallback`，并继续使用段落大纲级别降级抽取。文件名和正文不会写入普通日志或诊断。
 
 随后前端提交现有后台任务接口：
 
