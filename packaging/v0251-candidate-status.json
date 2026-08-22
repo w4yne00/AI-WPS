@@ -40,6 +40,14 @@
       "status": "rejected",
       "recordedAt": "20260822",
       "reason": "rejected after unavailable WPS range sentinels serialized as null indices and aborted format review before model invocation"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-385a251",
+      "archiveName": "ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz.sha256",
+      "archiveSha256": "01d9f16b043ddc287b53bf76903ac601731f8dcfa6e21a567a428bb8944d994f",
+      "sourceCommit": "385a251",
+      "status": "candidate"
     }
   ]
 }

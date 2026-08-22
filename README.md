@@ -81,8 +81,8 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | No installable acceptance candidate; `20260822-afc5470` was rejected after a blocking target-machine reproduction, and the source fix is pending a new build |
-| Phase 1 delivery kit | No current candidate; `20260822-afc5470` is retained only as a rejected historical archive and must not be used for acceptance |
+| Delivery status | `20260822-385a251` candidate published; Kylin ARM/Python 3.8.10 automation and lifecycle gates passed, while real WPS acceptance remains pending in Issue #59 |
+| Phase 1 delivery kit | [`20260822-385a251 candidate archive`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz.sha256) |
 
 ### v0.25.1-alpha Delivery Status
 
@@ -94,19 +94,21 @@ optional values before the model invocation. Source commit `672875e` drops non-f
 values in the add-in and ignores optional `null` location fields in the backend while
 still rejecting negative, string, boolean, and unknown range values.
 
-There is currently no installable acceptance candidate. Only source-level automated
-results can be reviewed until a new package is built; automation must never claim
-`target-accepted`, and Issue #59 remains the real WPS and direct-model acceptance record.
+The new candidate built from record commit `385a251` passed packaged dependency
+installation, Adapter import, Uvicorn startup, the public format-review API, installation
+and upgrade scenarios, fault recovery, and interruption rollback on Kylin ARM/Python 3.8.10.
+Automation still marks it only as `candidate`, never `target-accepted`; Issue #59 remains
+the real WPS and direct-model acceptance record.
 
 Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
 | Current-source full Adapter suite | `785 passed, 95 skipped` |
-| Exact WPS source-range protocol regressions | Frontend, backend, and malformed-value rejection cases passed |
+| Kylin ARM/Python 3.8.10 exact source-range regressions | `2 passed` |
 | Formal plugin contract tests | 17 passed |
-| Latest rejected candidate Kylin lifecycle | Previously passed automated gates; this does not create a candidate for the current source |
-| Target WPS GUI and real-document acceptance | Waiting for a new package; tracked in Issue #59 |
+| New-candidate Kylin lifecycle | Passed; final status `candidate` |
+| Target WPS GUI and real-document acceptance | Tracked in Issue #59 |
 
 Version rule format:
 
@@ -154,7 +156,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.25.1-alpha` | Enables format review v2 by default and clarifies disabled-state feedback; rejects four candidates after blocking target-machine reproductions, with the current source fixing unavailable WPS source-position sentinels while a new build and Issue #59 manual acceptance remain pending |
+| `v0.25.1-alpha` | Publishes the Kylin ARM/Python 3.8.10 lifecycle-gated `20260822-385a251` candidate; fixes format-review index failures caused by unavailable WPS source-position sentinels, while Issue #59 retains real WPS manual acceptance |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |
