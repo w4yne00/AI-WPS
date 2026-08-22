@@ -7,7 +7,7 @@
 ## D-0001｜本地文档抽取的标题识别对 styleId 型文档完全失效
 
 - **优先级**：最高
-- **状态**：已修复（Issue #74）
+- **状态**：已修复（Issue #74、#75）
 - **位置**：`adapter_service/app/services/ppt/document_text_extractor.py`，`_paragraph_text()`
 - **影响范围**：一切依赖本地文档抽取的任务。当前为 PPT 文档总结；素材编排落地后同样受影响。
 
@@ -44,7 +44,7 @@ heading_match = re.search(r"(?:Heading|标题)\s*([1-6])", style_value, re.IGNOR
 
 ### 修复结果
 
-Issue #74 已在暂存 DOCX 提交边界增加统一 ZIP/XML 安全门禁，并在抽取器中读取 `styles.xml` 建立 `styleId → 样式名` 映射；样式名无法判定时仅按 `outlineLvl=0…5` 回退。缺失 `styles.xml` 的合法最小 DOCX 返回 `outline_fallback` 能力标记，危险或畸形样式部件及恶意 DOCX 在暂存前拒绝。
+Issue #74 已在暂存 DOCX 提交边界增加统一 ZIP/XML 安全门禁；Issue #75 在此基础上读取 `styles.xml` 建立 `styleId → 样式名` 映射，并在样式名无法判定时仅按 `outlineLvl=0…5` 回退。缺失 `styles.xml` 的合法最小 DOCX 返回 `outline_fallback` 能力标记，危险或畸形样式部件及恶意 DOCX 在暂存前拒绝。
 
 ### 备注
 
