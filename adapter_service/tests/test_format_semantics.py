@@ -52,6 +52,36 @@ class FormatSemanticContractTests(unittest.TestCase):
             ),
             1200,
         )
+        self.assertEqual(
+            FormatSemanticContract.output_budget(
+                {
+                    "accessMethod": "direct_model",
+                    "modelName": "deepseek-v4-flash",
+                    "maxOutputTokens": None,
+                }
+            ),
+            4096,
+        )
+        self.assertEqual(
+            FormatSemanticContract.output_budget(
+                {
+                    "accessMethod": "direct_model",
+                    "modelName": "glm-5.2",
+                    "maxOutputTokens": None,
+                }
+            ),
+            4096,
+        )
+        self.assertEqual(
+            FormatSemanticContract.output_budget(
+                {
+                    "accessMethod": "direct_model",
+                    "modelName": "unknown-model",
+                    "maxOutputTokens": None,
+                }
+            ),
+            0,
+        )
 
     def test_response_must_match_operation_snapshot_and_candidate_range(self):
         candidates = {

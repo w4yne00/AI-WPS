@@ -34,6 +34,7 @@ KNOWN_CALL_SUFFIXES = ("/chat-messages", "/files/upload", "/chat/completions")
 _SAFE_KEY_REF = re.compile(r"^[A-Za-z0-9_.-]+$")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 _STORE_LOCK = threading.RLock()
+WORKFLOW_PROFILE_MIGRATION_VERSION = 1
 
 
 class ModelConfigurationError(ValueError):
@@ -530,47 +531,64 @@ class ModelConfigurationStore:
                 format_review["imageSemantics"] = image_semantics
                 payload["formatReview"] = format_review
                 changed = True
-        legacy_profiles = payload.get("workflowProfiles", {})
-        if isinstance(legacy_profiles, dict):
-            for legacy_id, legacy in legacy_profiles.items():
-                if not isinstance(legacy, dict):
-                    continue
-                task = str(legacy.get("taskType", "")).strip()
-                if task not in SUPPORTED_WORKFLOW_TASKS:
-                    continue
-                profile_id = str(legacy.get("id", legacy_id)).strip()
-                if not profile_id or profile_id in configurations:
-                    continue
-                api_key_ref = str(legacy.get("apiKeyRef", "")).strip()
-                if not api_key_ref or not _SAFE_KEY_REF.fullmatch(api_key_ref):
-                    continue
-                now = _utc_now()
-                configurations[profile_id] = {
-                    "id": profile_id,
-                    "host": host_for_task(task),
-                    "taskType": task,
-                    "name": str(legacy.get("name", "当前配置")).strip() or "当前配置",
-                    "note": str(legacy.get("note", "")).strip(),
-                    "accessMethod": ACCESS_WORKFLOW_PLATFORM,
-                    "serviceBaseUrl": normalize_service_base_url(
-                        str(payload.get("providerBaseUrl", ""))
-                    ),
-                    "modelName": "",
-                    "temperature": None,
-                    "maxOutputTokens": None,
-                    "contextWindowTokens": DEFAULT_CONTEXT_WINDOW_TOKENS,
-                    "apiKeyRef": api_key_ref,
-                    "configVersion": 1,
-                    "createdAt": str(legacy.get("createdAt", now)),
-                    "updatedAt": str(legacy.get("updatedAt", now)),
-                }
-                changed = True
-        legacy_active = payload.get("activeWorkflowProfiles", {})
-        if isinstance(legacy_active, dict):
-            for task, profile_id in legacy_active.items():
-                if task not in active and str(profile_id) in configurations:
-                    active[str(task)] = str(profile_id)
-                    changed = True
+        migration_state = payload.get("migrationState")
+        if not isinstance(migration_state, dict):
+            migration_state = {}
+        raw_workflow_migration_version = migration_state.get(
+            "workflowProfilesVersion"
+        )
+        workflow_migration_version = (
+            raw_workflow_migration_version
+            if type(raw_workflow_migration_version) is int
+            and raw_workflow_migration_version >= 0
+            else 0
+        )
+        if workflow_migration_version < WORKFLOW_PROFILE_MIGRATION_VERSION:
+            legacy_profiles = payload.get("workflowProfiles", {})
+            if isinstance(legacy_profiles, dict):
+                for legacy_id, legacy in legacy_profiles.items():
+                    if not isinstance(legacy, dict):
+                        continue
+                    task = str(legacy.get("taskType", "")).strip()
+                    if task not in SUPPORTED_WORKFLOW_TASKS:
+                        continue
+                    profile_id = str(legacy.get("id", legacy_id)).strip()
+                    if not profile_id or profile_id in configurations:
+                        continue
+                    api_key_ref = str(legacy.get("apiKeyRef", "")).strip()
+                    if not api_key_ref or not _SAFE_KEY_REF.fullmatch(api_key_ref):
+                        continue
+                    now = _utc_now()
+                    configurations[profile_id] = {
+                        "id": profile_id,
+                        "host": host_for_task(task),
+                        "taskType": task,
+                        "name": str(legacy.get("name", "当前配置")).strip() or "当前配置",
+                        "note": str(legacy.get("note", "")).strip(),
+                        "accessMethod": ACCESS_WORKFLOW_PLATFORM,
+                        "serviceBaseUrl": normalize_service_base_url(
+                            str(payload.get("providerBaseUrl", ""))
+                        ),
+                        "modelName": "",
+                        "temperature": None,
+                        "maxOutputTokens": None,
+                        "contextWindowTokens": DEFAULT_CONTEXT_WINDOW_TOKENS,
+                        "apiKeyRef": api_key_ref,
+                        "configVersion": 1,
+                        "createdAt": str(legacy.get("createdAt", now)),
+                        "updatedAt": str(legacy.get("updatedAt", now)),
+                    }
+            legacy_active = payload.get("activeWorkflowProfiles", {})
+            if isinstance(legacy_active, dict):
+                for task, profile_id in legacy_active.items():
+                    if task not in active and str(profile_id) in configurations:
+                        active[str(task)] = str(profile_id)
+            migration_state["workflowProfilesImported"] = True
+            migration_state["workflowProfilesVersion"] = (
+                WORKFLOW_PROFILE_MIGRATION_VERSION
+            )
+            payload["migrationState"] = migration_state
+            changed = True
         if changed or "modelConfigurations" not in payload:
             payload["modelConfigurations"] = configurations
             payload["activeModelConfigurations"] = active

@@ -153,6 +153,30 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         )})
         return self.service.upload_batch(session["snapshotId"], 0, payload), metrics
 
+    def test_legacy_frontend_batch_block_span_is_ignored(self):
+        session = self._session()
+        normalized = self.service._normalize_format_blocks(self._blocks())
+        metrics = self.service._format_metrics(normalized)
+        payload = {
+            "uploadToken": session["uploadToken"],
+            "batchId": "format-batch-0",
+            "blocks": normalized,
+            "editSequence": "5",
+            "range": {
+                "start": normalized[0]["blockId"],
+                "end": normalized[-1]["blockId"],
+            },
+        }
+        payload.update({key: metrics[key] for key in (
+            "characterCount", "contentSha256", "structureSha256", "formatSha256"
+        )})
+
+        uploaded = self.service.upload_batch(session["snapshotId"], 0, payload)
+
+        self.assertEqual(uploaded["status"], "uploaded")
+        stored = self.service._load_snapshot(session["snapshotId"])
+        self.assertNotIn("range", stored["batches"][0])
+
     def _commit(self, session, metrics, verification=None):
         expected_verification = verification or {
             "batchCount": 1,

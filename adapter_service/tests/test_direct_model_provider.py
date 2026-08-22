@@ -188,6 +188,56 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 4096)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_format_semantics_resolves_known_model_output_capability(self, urlopen) -> None:
+        urlopen.return_value = FakeResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '{"schemaVersion":"format_semantics.v1","operation":"classify_role","snapshotBinding":{},"items":[]}'
+                        },
+                    }
+                ]
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+            configuration = store.create_configuration(
+                "word.format_review",
+                "能力表直连",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="deepseek-v4-flash",
+                max_output_tokens=None,
+                context_window_tokens=40000,
+            )
+            store.replace_api_key(configuration["id"], "format-secret")
+            store.activate_configuration(configuration["id"])
+            client = ProviderClient(
+                AppSettings(timeout_seconds=75), model_configuration_store=store
+            )
+            client.format_semantics(
+                "classify_role",
+                "trace-format-capability",
+                {"candidate_json": "{}"},
+                "只返回 JSON。",
+                task_auth=client.resolve_task_auth("word.format_review"),
+            )
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(payload["max_tokens"], 4096)
+        debug = get_last_provider_debug()
+        capability = debug["validation"]["modelCapability"]
+        self.assertEqual(capability["modelName"], "deepseek-v4-flash")
+        self.assertEqual(capability["maxOutputTokens"], 384000)
+        self.assertEqual(capability["tableVersion"], "2026-08-22")
+        self.assertRegex(capability["tableSha256"], r"^[0-9a-f]{64}$")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
     def test_workflow_format_semantics_uses_fixed_inputs_and_result_json(self, urlopen) -> None:
         urlopen.return_value = FakeResponse(
             {
@@ -653,8 +703,19 @@ class DirectModelProviderTests(unittest.TestCase):
     def test_direct_request_rejects_reasoning_only_response(self, urlopen) -> None:
         urlopen.return_value = FakeResponse(
             {
+                "usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 1200,
+                    "total_tokens": 1320,
+                },
                 "choices": [
-                    {"message": {"reasoning_content": "只有推理", "content": "<think>思考"}}
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "reasoning_content": "只有推理",
+                            "content": "<think>思考",
+                        },
+                    }
                 ]
             }
         )
@@ -662,7 +723,34 @@ class DirectModelProviderTests(unittest.TestCase):
             client = self._client(Path(tmp))
             with self.assertRaises(AdapterError) as raised:
                 client.post_task("word.smart_write", "trace-no-final", {}, "改写")
+        self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_TOKEN_LIMIT")
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["response"]["finishReason"], "length")
+        self.assertEqual(debug["response"]["contentType"], "string")
+        self.assertTrue(debug["response"]["reasoningContentPresent"])
+        self.assertEqual(debug["response"]["usage"]["completionTokens"], 1200)
+        self.assertNotIn("只有推理", json.dumps(debug, ensure_ascii=False))
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_request_redacts_unrecognized_finish_reason(self, urlopen) -> None:
+        urlopen.return_value = FakeResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "secret-fragment\ncontrol",
+                        "message": {"content": None},
+                    }
+                ]
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.post_task("word.smart_write", "trace-redacted-finish", {}, "改写")
         self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_MISSING")
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["response"]["finishReason"], "other")
+        self.assertNotIn("secret-fragment", json.dumps(debug, ensure_ascii=False))
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_request_maps_mid_stream_disconnect_to_retryable_error(

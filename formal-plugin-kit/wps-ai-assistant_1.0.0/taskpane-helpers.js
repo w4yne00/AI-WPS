@@ -904,11 +904,7 @@
         contentSha256: sha256Text(current.filter(function (block) { return block.scope === "in_scope"; })
           .reduce(function (list, block) { return list.concat(formatReviewBlockTextValues(block)); }, []).join("\n")),
         structureSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewStructureProjection))),
-        formatSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewFormatProjection))),
-        range: {
-          start: current[0].blockId,
-          end: current[current.length - 1].blockId
-        }
+        formatSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewFormatProjection)))
       });
       current = [];
       currentCount = 0;

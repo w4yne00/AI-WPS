@@ -4,6 +4,7 @@ The deterministic formatter owns compliance decisions.  This module only
 defines the small, auditable contract that a model may supplement.
 """
 
+import hashlib
 import json
 import re
 import time
@@ -24,6 +25,32 @@ WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS = 2048
 MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS = 4096
 MAX_FORMAT_SEMANTIC_CALLS = 16
 MAX_FORMAT_SEMANTIC_SUGGESTION_LENGTH = 80
+FORMAT_MODEL_CAPABILITY_TABLE_VERSION = "2026-08-22"
+FORMAT_MODEL_CAPABILITY_TABLE = {
+    "deepseek-v4-flash": {
+        "maxOutputTokens": 384000,
+        "sourceDate": "2026-08-22",
+        "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
+    "deepseek-v4-pro": {
+        "maxOutputTokens": 384000,
+        "sourceDate": "2026-08-22",
+        "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
+    "glm-5.2": {
+        "maxOutputTokens": 131072,
+        "sourceDate": "2026-08-22",
+        "sourceUrl": "https://docs.bigmodel.cn/cn/guide/start/concept-param",
+    },
+}
+FORMAT_MODEL_CAPABILITY_TABLE_SHA256 = hashlib.sha256(
+    json.dumps(
+        FORMAT_MODEL_CAPABILITY_TABLE,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
 _MARKDOWN_PREFIX = re.compile(r"(^|\s)([#>*`]|[-+]\s|\d+[.)]\s)")
 _CAPTION_PREFIX = re.compile(r"^(?:图|表)\s*[0-9０-９一二三四五六七八九十]+(?:[：:.、\s]|$)")
 _SAFE_FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
@@ -41,6 +68,20 @@ _PROTECTED_EVIDENCE_PATTERNS = (
 
 def _error(code: str, message: str, status_code: int = 409) -> AdapterError:
     return AdapterError(code, message, status_code=status_code)
+
+
+def resolve_format_model_capability(model_name: str) -> Optional[Dict]:
+    entry = FORMAT_MODEL_CAPABILITY_TABLE.get(str(model_name or "").strip())
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "modelName": str(model_name).strip(),
+        "maxOutputTokens": int(entry["maxOutputTokens"]),
+        "sourceDate": str(entry["sourceDate"]),
+        "sourceUrl": str(entry["sourceUrl"]),
+        "tableVersion": FORMAT_MODEL_CAPABILITY_TABLE_VERSION,
+        "tableSha256": FORMAT_MODEL_CAPABILITY_TABLE_SHA256,
+    }
 
 
 class FormatSemanticContract:
@@ -74,6 +115,11 @@ class FormatSemanticContract:
         if str((task_auth or {}).get("accessMethod", "")) == "workflow_platform":
             return WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS
         configured = (task_auth or {}).get("maxOutputTokens")
+        if configured is None:
+            capability = resolve_format_model_capability(
+                str((task_auth or {}).get("modelName", ""))
+            )
+            configured = capability.get("maxOutputTokens") if capability else None
         if configured is None:
             return 0
         try:

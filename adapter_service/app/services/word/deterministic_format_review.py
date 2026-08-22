@@ -788,7 +788,6 @@ class DeterministicFormatReviewService:
                 "格式快照批次编号无效。",
             )
         blocks = self._normalize_format_blocks(payload.get("blocks"))
-        candidate_range = self._normalize_range(payload.get("range"))
         candidate_edit_sequence = self._optional_scalar(payload.get("editSequence"))
         batches = record.get("batches", [])
         if sequence < len(batches):
@@ -796,7 +795,6 @@ class DeterministicFormatReviewService:
             if (
                 existing.get("batchId") == batch_id
                 and existing.get("blocks") == blocks
-                and existing.get("range", {}) == candidate_range
                 and existing.get("editSequence") == candidate_edit_sequence
                 and all(
                     existing.get(key) == payload.get(key)
@@ -878,7 +876,6 @@ class DeterministicFormatReviewService:
             "contentSha256": metrics["contentSha256"],
             "structureSha256": metrics["structureSha256"],
             "formatSha256": metrics["formatSha256"],
-            "range": self._normalize_range(payload.get("range")),
             "editSequence": candidate_edit_sequence,
         }
         batch_edit_sequence = candidate_edit_sequence

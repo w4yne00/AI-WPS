@@ -50,6 +50,16 @@
       "status": "rejected",
       "recordedAt": "20260822",
       "reason": "rejected after direct-model format semantics returned undeclared fields and validation fell back to deterministic rules"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-e43dc8c",
+      "archiveName": "ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz.sha256",
+      "archiveSha256": "70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06",
+      "sourceCommit": "e43dc8c",
+      "status": "rejected",
+      "recordedAt": "20260822",
+      "reason": "rejected after deterministic format-review batches still sent block-id ranges as numeric source indices, direct format semantics required an explicit output limit, PPT reasoning-only responses lacked actionable diagnostics, legacy workflow profiles were re-imported after deletion, and the manifest recorded a full source commit that is absent from the source repository despite sharing the same seven-character prefix as HEAD"
     }
   ]
 }

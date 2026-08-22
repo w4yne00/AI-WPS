@@ -62,6 +62,60 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             self.assertTrue(item["keyConfigured"])
             self.assertEqual(key_path.read_text(encoding="utf-8").strip(), "secret")
 
+    def test_deleted_migrated_workflow_configuration_does_not_reappear(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            key_dir = root / "provider_api_keys"
+            key_dir.mkdir()
+            (key_dir / "workflow_existing").write_text("secret\n", encoding="utf-8")
+            config_path = root / "adapter.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "providerBaseUrl": "https://workflow.example/v1",
+                        "workflowProfiles": {
+                            "profile_existing": {
+                                "id": "profile_existing",
+                                "taskType": "word.smart_write",
+                                "name": "旧工作流",
+                                "apiKeyRef": "workflow_existing",
+                            }
+                        },
+                        "activeWorkflowProfiles": {
+                            "word.smart_write": "profile_existing"
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            store = ModelConfigurationStore(config_path, key_dir)
+            store.list_for_task("word.smart_write")
+            direct = store.create_configuration(
+                "word.smart_write",
+                "直连配置",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://model.example/v1",
+                model_name="glm-5.2",
+            )
+            store.replace_api_key(direct["id"], "direct-secret")
+            store.activate_configuration(direct["id"])
+
+            deleted = store.delete_configuration("profile_existing")
+            restarted = ModelConfigurationStore(config_path, key_dir).list_for_task(
+                "word.smart_write"
+            )
+            persisted = json.loads(config_path.read_text(encoding="utf-8"))
+
+            self.assertEqual(
+                [item["id"] for item in deleted["configurations"]], [direct["id"]]
+            )
+            self.assertEqual(
+                [item["id"] for item in restarted["configurations"]], [direct["id"]]
+            )
+            self.assertTrue(persisted["migrationState"]["workflowProfilesImported"])
+            self.assertFalse((key_dir / "workflow_existing").exists())
+
     def test_direct_configuration_requires_model_and_key_before_activation(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))

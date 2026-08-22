@@ -7463,7 +7463,6 @@
             contentSha256: batch.contentSha256,
             structureSha256: batch.structureSha256,
             formatSha256: batch.formatSha256,
-            range: batch.range,
             editSequence: body.editSequence
           },
           { method: "PUT", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }

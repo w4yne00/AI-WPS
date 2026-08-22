@@ -770,13 +770,101 @@ def _sanitize_provider_response(body: Dict) -> Dict:
     if isinstance(outputs, dict):
         output_answer = str(outputs.get("answer", outputs.get("result", "")) or "")
     result_answer = answer or output_answer
-    return {
+    sanitized = {
         "bodyKeys": sorted(body.keys()) if isinstance(body, dict) else [],
         "answerLength": len(result_answer),
         "answerFormat": _summarize_answer_format(result_answer),
         "conversationIdSet": bool(body.get("conversation_id")) if isinstance(body, dict) else False,
         "messageIdSet": bool(body.get("message_id") or body.get("id")) if isinstance(body, dict) else False,
     }
+    if isinstance(body, dict):
+        finish_reason = body.get("finishReason")
+        if isinstance(finish_reason, str):
+            sanitized["finishReason"] = _safe_finish_reason(finish_reason)
+        content_type = body.get("contentType")
+        if content_type in {"string", "array", "object", "null", "other"}:
+            sanitized["contentType"] = content_type
+        if isinstance(body.get("reasoningContentPresent"), bool):
+            sanitized["reasoningContentPresent"] = body["reasoningContentPresent"]
+        usage = body.get("usage")
+        if isinstance(usage, dict):
+            safe_usage = {}
+            for key in ("promptTokens", "completionTokens", "totalTokens"):
+                value = usage.get(key)
+                if type(value) is int and value >= 0:
+                    safe_usage[key] = value
+            if safe_usage:
+                sanitized["usage"] = safe_usage
+    return sanitized
+
+
+def _safe_finish_reason(value) -> str:
+    finish_reason = str(value or "").strip().lower()
+    if finish_reason in {
+        "stop",
+        "length",
+        "content_filter",
+        "tool_calls",
+        "function_call",
+    }:
+        return finish_reason
+    return "other" if finish_reason else ""
+
+
+def _direct_response_diagnostics(body: Dict, choice: Dict, message: Dict) -> Dict:
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None:
+        content_type = "null"
+    elif isinstance(content, str):
+        content_type = "string"
+    elif isinstance(content, list):
+        content_type = "array"
+    elif isinstance(content, dict):
+        content_type = "object"
+    else:
+        content_type = "other"
+    raw_usage = body.get("usage") if isinstance(body, dict) else None
+    usage = {}
+    if isinstance(raw_usage, dict):
+        for source_key, target_key in (
+            ("prompt_tokens", "promptTokens"),
+            ("completion_tokens", "completionTokens"),
+            ("total_tokens", "totalTokens"),
+        ):
+            value = raw_usage.get(source_key)
+            if type(value) is int and value >= 0:
+                usage[target_key] = value
+    return {
+        "finishReason": _safe_finish_reason(choice.get("finish_reason", ""))
+        if isinstance(choice, dict)
+        else "",
+        "contentType": content_type,
+        "reasoningContentPresent": bool(
+            isinstance(message, dict)
+            and (message.get("reasoning_content") or message.get("reasoning"))
+        ),
+        "usage": usage,
+    }
+
+
+def _missing_final_content_error(finish_reason: str) -> AdapterError:
+    if finish_reason == "length":
+        return AdapterError(
+            "MODEL_FINAL_CONTENT_TOKEN_LIMIT",
+            "模型输出 Token 预算已用尽但未返回最终结果，请检查最大输出 Token 与模型支持上限，或在模型服务中关闭深度思考后重试。",
+            status_code=502,
+        )
+    if finish_reason == "content_filter":
+        return AdapterError(
+            "MODEL_FINAL_CONTENT_FILTERED",
+            "模型最终结果被内容策略过滤，请调整输入或检查模型服务策略。",
+            status_code=502,
+        )
+    return AdapterError(
+        "MODEL_FINAL_CONTENT_MISSING",
+        "模型未返回最终结果，请检查模型推理模式和输出配置。",
+        status_code=502,
+    )
 
 
 def reset_provider_debug() -> None:
@@ -1058,7 +1146,12 @@ def parse_document_review_answer(answer: str) -> Dict:
 
 
 def strip_think_tag_content(value: str) -> str:
-    return re.sub(r"<think\b[^>]*>.*?</think\s*>", "", str(value or ""), flags=re.IGNORECASE | re.DOTALL).strip()
+    return re.sub(
+        r"<think\b[^>]*>.*?(?:</think\s*>|$)",
+        "",
+        str(value or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
 
 
 def extract_answer(body: Dict, output_key: str = "") -> str:
@@ -1089,7 +1182,11 @@ def extract_answer(body: Dict, output_key: str = "") -> str:
                 if cleaned_value:
                     return cleaned_value
 
-    raise ProviderUnavailableError("Enterprise AI response did not contain an answer.")
+    raise AdapterError(
+        "MODEL_FINAL_CONTENT_MISSING",
+        "模型未返回最终结果，请检查模型推理模式和输出配置。",
+        status_code=502,
+    )
 
 
 def _excel_text_list(value) -> List[str]:
@@ -1421,6 +1518,12 @@ def parse_ppt_structure_review_answer(answer: str) -> Dict:
     unclosed_think = re.search(r"<think\b[^>]*>", cleaned, flags=re.IGNORECASE)
     if unclosed_think:
         cleaned = cleaned[: unclosed_think.start()].strip()
+    if not cleaned:
+        raise AdapterError(
+            "MODEL_FINAL_CONTENT_MISSING",
+            "模型未返回最终结果，请检查模型推理模式和输出配置。",
+            status_code=502,
+        )
     payload = _extract_json_payload(cleaned)
     if isinstance(payload, dict):
         storyline = _ppt_document_text(
@@ -2508,6 +2611,20 @@ class ProviderClient:
             "estimatedInputTokens": estimated_input,
             "inputBudgetTokens": input_budget,
         }
+        capability = resolved_task_auth.get("formatModelCapability")
+        if isinstance(capability, dict):
+            safe_validation["modelCapability"] = {
+                key: capability[key]
+                for key in (
+                    "modelName",
+                    "maxOutputTokens",
+                    "sourceDate",
+                    "sourceUrl",
+                    "tableVersion",
+                    "tableSha256",
+                )
+                if key in capability
+            }
         record_provider_debug(
             {
                 "traceId": trace_id,
@@ -2542,31 +2659,40 @@ class ProviderClient:
                         status_code=502,
                     ) from exc
                 choices = body.get("choices") if isinstance(body, dict) else None
-                message = (
-                    choices[0].get("message", {})
+                choice = (
+                    choices[0]
                     if isinstance(choices, list)
                     and choices
                     and isinstance(choices[0], dict)
                     else {}
                 )
+                message = choice.get("message", {}) if isinstance(choice, dict) else {}
+                response_diagnostics = _direct_response_diagnostics(
+                    body if isinstance(body, dict) else {}, choice, message
+                )
                 content = _direct_content_text(
                     message.get("content") if isinstance(message, dict) else None
                 )
                 if not content:
-                    raise AdapterError(
-                        "MODEL_FINAL_CONTENT_MISSING",
-                        "模型未返回最终结果，请检查模型推理模式和输出配置。",
-                        status_code=502,
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            **debug_metadata,
+                            "validation": safe_validation,
+                            "response": {
+                                "status": getattr(response, "status", 200),
+                                "body": {"answer": "", **response_diagnostics},
+                            },
+                        }
+                    )
+                    raise _missing_final_content_error(
+                        response_diagnostics["finishReason"]
                     )
                 normalized = {
                     "answer": content,
-                    "finishReason": str(
-                        choices[0].get("finish_reason", "")
-                        if isinstance(choices, list)
-                        and choices
-                        and isinstance(choices[0], dict)
-                        else ""
-                    ),
+                    **response_diagnostics,
                     "id": str(body.get("id", "")),
                     "model": str(body.get("model", resolved_task_auth.get("modelName", ""))),
                     "promptVersion": prompt_asset["version"],
@@ -4191,6 +4317,7 @@ class ProviderClient:
             MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
             MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS,
             WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS,
+            resolve_format_model_capability,
         )
 
         if not FormatSemanticContract.is_allowed_operation(operation):
@@ -4217,11 +4344,17 @@ class ProviderClient:
             budget = min(budget or MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS, MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS)
         if str(auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
             if auth.get("maxOutputTokens") is None:
-                raise AdapterError(
-                    "FORMAT_SEMANTIC_OUTPUT_CAPABILITY_UNKNOWN",
-                    "直连模型未声明可用的最大输出 Token，无法执行格式语义操作。",
-                    status_code=409,
+                capability = resolve_format_model_capability(
+                    str(auth.get("modelName", ""))
                 )
+                if capability is None:
+                    raise AdapterError(
+                        "FORMAT_SEMANTIC_OUTPUT_CAPABILITY_UNKNOWN",
+                        "直连模型未声明可用的最大输出 Token，且离线能力表无法精确匹配该模型，无法执行格式语义操作。",
+                        status_code=409,
+                    )
+                auth["formatModelCapability"] = capability
+                auth["maxOutputTokens"] = int(capability["maxOutputTokens"])
             auth["maxOutputTokens"] = min(
                 max(int(auth["maxOutputTokens"]), 0), int(budget), 4096
             )

@@ -1918,7 +1918,10 @@ class WordFormatReviewer:
     def _direct_capability_unknown(task_auth: Optional[Dict]) -> bool:
         if not isinstance(task_auth, dict) or task_auth.get("accessMethod") != "direct_model":
             return False
-        return not str(task_auth.get("modelName", "")).strip() or task_auth.get("maxOutputTokens") is None
+        return (
+            not str(task_auth.get("modelName", "")).strip()
+            or FormatSemanticContract.output_budget(task_auth) <= 0
+        )
 
     @staticmethod
     def _snapshot_binding(request: WordDocumentRequest) -> Dict[str, str]:

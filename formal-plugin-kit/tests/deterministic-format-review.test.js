@@ -390,6 +390,7 @@ assert.ok(diagnosticLines.join("\n").includes("15 pt → 300 twip"));
 assert.ok(diagnosticLines.join("\n").includes("mixed 1"));
 const batches = helpers.buildDeterministicFormatReviewBatches(body, 1);
 assert.ok(batches.length >= 2);
+assert.ok(!Object.prototype.hasOwnProperty.call(batches[0], "range"));
 assert.strictEqual(batches[0].characterCount, batches[0].blocks
   .filter((block) => block.scope === "in_scope")
   .reduce((sum, block) => sum + String(block.text || "").length, 0));

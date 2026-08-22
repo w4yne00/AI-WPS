@@ -16,6 +16,8 @@ SOURCE_ALLOWLIST = ROOT / "packaging/delivery-sources-v0231.json"
 SOURCE_ALLOWLIST_V0240 = ROOT / "packaging/delivery-sources-v0240.json"
 LIFECYCLE_GATE = ROOT / "packaging/python38_delivery_lifecycle_gate.py"
 V0240_BUILD = ROOT / "packaging/build_v0240_delivery_kit.sh"
+V0251_BUILD = ROOT / "packaging/build_v0251_delivery_kit.sh"
+V0251_PROVENANCE = ROOT / "packaging/check_delivery_source_provenance.py"
 
 
 class DeliveryArtifactTests(unittest.TestCase):
@@ -537,7 +539,13 @@ class DeliveryArtifactTests(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(
             payload["scenarios"],
-            ["fresh_install", "upgrade_v022", "upgrade_v0231", "damaged_v0230"],
+            [
+                "fresh_install",
+                "upgrade_v022",
+                "upgrade_v0231",
+                "damaged_v0230",
+                "deleted_workflow_profile_overwrite",
+            ],
         )
         self.assertEqual(
             payload["faults"],
@@ -551,6 +559,135 @@ class DeliveryArtifactTests(unittest.TestCase):
                 "wps_not_exited",
                 "install_interruption",
             ],
+        )
+
+    def test_v0251_build_records_only_the_complete_head_commit(self) -> None:
+        build = V0251_BUILD.read_text(encoding="utf-8")
+
+        self.assertIn('HEAD_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"', build)
+        self.assertIn('SOURCE_COMMIT="${AI_WPS_SOURCE_COMMIT:-$HEAD_COMMIT}"', build)
+        self.assertIn("delivery_source_commit_not_head", build)
+        self.assertIn("check_delivery_source_provenance.py", build)
+
+    def test_v0251_source_provenance_rejects_dirty_allowlisted_input(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            repo = Path(temp_dir) / "repo"
+            packaging = repo / "packaging"
+            packaging.mkdir(parents=True)
+            build_inputs = (
+                "assemble_phase1_delivery.py",
+                "audit_phase1_delivery.py",
+                "audit_v0251_delivery.py",
+                "build_v0251_delivery_kit.sh",
+                "check_delivery_source_provenance.py",
+                "check_python38_compatibility.py",
+                "prepare_v0251_delivery.py",
+            )
+            for name in build_inputs:
+                (packaging / name).write_text(name + "\n", encoding="utf-8")
+            rule_root = packaging / "format-rule-sources"
+            rule_root.mkdir()
+            for name in (
+                "technical-document-template-rules.v1.0.0.json",
+                "technical-document-template-rules.v1.0.0.structure.json",
+            ):
+                (rule_root / name).write_text(name + "\n", encoding="utf-8")
+            node_tests = repo / "formal-plugin-kit/tests"
+            node_tests.mkdir(parents=True)
+            (node_tests / "tracked.test.js").write_text(
+                "// tracked\n", encoding="utf-8"
+            )
+            (repo / "payload.txt").write_text("committed\n", encoding="utf-8")
+            policy = packaging / "delivery-sources-v0251.json"
+            policy.write_text(
+                json.dumps(
+                    {
+                        "schemaVersion": 1,
+                        "version": "0.25.1-alpha",
+                        "generatedFiles": [],
+                        "entries": [
+                            {
+                                "type": "file",
+                                "source": "payload.txt",
+                                "target": "payload.txt",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            commands = (
+                ["git", "init", "-q"],
+                ["git", "config", "user.email", "test@example.invalid"],
+                ["git", "config", "user.name", "Delivery Test"],
+                ["git", "add", "."],
+                ["git", "commit", "-qm", "fixture"],
+            )
+            for command in commands:
+                result = subprocess.run(
+                    command, cwd=repo, check=False, capture_output=True, text=True
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            commit = subprocess.run(
+                ["git", "rev-parse", "HEAD"],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            command = [
+                sys.executable,
+                str(V0251_PROVENANCE),
+                "--repo-root",
+                str(repo),
+                "--source-allowlist",
+                str(policy),
+                "--source-commit",
+                commit,
+            ]
+
+            clean = subprocess.run(
+                command, check=False, capture_output=True, text=True
+            )
+            self.assertEqual(clean.returncode, 0, clean.stdout + clean.stderr)
+            (repo / "payload.txt").write_text("dirty\n", encoding="utf-8")
+            dirty = subprocess.run(
+                command, check=False, capture_output=True, text=True
+            )
+
+            self.assertNotEqual(dirty.returncode, 0)
+            self.assertIn("DELIVERY_SOURCE_DIRTY payload.txt", dirty.stdout)
+            (repo / "payload.txt").write_text("committed\n", encoding="utf-8")
+            rule_path = (
+                rule_root / "technical-document-template-rules.v1.0.0.json"
+            )
+            rule_path.write_text("dirty rule\n", encoding="utf-8")
+            dirty_build_input = subprocess.run(
+                command, check=False, capture_output=True, text=True
+            )
+            self.assertNotEqual(dirty_build_input.returncode, 0)
+            self.assertIn(
+                "technical-document-template-rules.v1.0.0.json",
+                dirty_build_input.stdout,
+            )
+            subprocess.run(
+                ["git", "checkout", "--", str(rule_path.relative_to(repo))],
+                cwd=repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            (node_tests / "untracked.test.js").write_text(
+                "// untracked\n", encoding="utf-8"
+            )
+            untracked_test = subprocess.run(
+                command, check=False, capture_output=True, text=True
+            )
+
+        self.assertNotEqual(untracked_test.returncode, 0)
+        self.assertIn(
+            "DELIVERY_SOURCE_NOT_TRACKED formal-plugin-kit/tests/untracked.test.js",
+            untracked_test.stdout,
         )
 
     def test_v0240_allowlist_and_build_are_explicit_candidate_inputs(self) -> None:

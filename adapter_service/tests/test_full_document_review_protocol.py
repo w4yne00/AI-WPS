@@ -260,6 +260,63 @@ class FullDocumentReviewProtocolTests(unittest.TestCase):
         self.assertNotIn('"apiKey":', json.dumps(persisted, ensure_ascii=False))
         self.assertFalse(job_path.exists())
 
+    def test_missing_final_content_is_terminal_and_not_restored_after_restart(self):
+        class MissingFinalProvider:
+            def __init__(self):
+                self.calls = 0
+
+            def resolve_task_auth(self, task_type):
+                return _auth_provider().resolve_task_auth(task_type)
+
+            def full_document_review_chunk(self, source_text, trace_id, chunk_id,
+                                           document_type, review_prompt, task_auth,
+                                           correction=False, blocks=None):
+                self.calls += 1
+                raise AdapterError(
+                    "MODEL_FINAL_CONTENT_MISSING", "模型未返回最终结果。", 502
+                )
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            root = Path(tmp) / "full-review"
+            provider = MissingFinalProvider()
+            service = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            snapshot = self._stage_public_snapshot(service, "终态正文")
+            service.start_job(
+                {
+                    "snapshotId": snapshot["snapshotId"],
+                    "snapshotToken": snapshot["snapshotToken"],
+                    "clientJobId": "missing-final-job",
+                },
+                "missing-final-trace",
+            )
+            failed = service.coordinator.wait(
+                "missing-final-job", task_type="word.document_review.full"
+            )
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(
+                failed["error"]["code"], "MODEL_FINAL_CONTENT_MISSING"
+            )
+            self.assertEqual(provider.calls, 1)
+            self.assertFalse((root / "job-missing-final-job/job.json").exists())
+
+            restarted = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            self.assertIsNone(
+                restarted.coordinator.get(
+                    "missing-final-job", task_type="word.document_review.full"
+                )
+            )
+            self.assertEqual(provider.calls, 1)
+
     def test_key_rotation_rejects_persisted_task_before_provider_call(self):
         class AuthProvider:
             def __init__(self, api_key):
@@ -853,6 +910,25 @@ class FullDocumentReviewProtocolTests(unittest.TestCase):
             with self.assertRaises(AdapterError) as context:
                 self._run_to_completion(service, self._snapshot("丙" * 20))
         self.assertEqual(context.exception.code, "PROVIDER_TIMEOUT")
+
+        for code in (
+            "MODEL_FINAL_CONTENT_TOKEN_LIMIT",
+            "MODEL_FINAL_CONTENT_FILTERED",
+            "MODEL_FINAL_CONTENT_MISSING",
+        ):
+            with TemporaryDirectory() as tmp, patch.dict(
+                os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+            ):
+                provider = Provider(AdapterError(code, "no final content", 502))
+                service = FullDocumentReviewService(
+                    staging_root=Path(tmp),
+                    provider_client=provider,
+                    coordinator=LongTaskCoordinator(),
+                )
+                with self.assertRaises(AdapterError) as context:
+                    self._run_to_completion(service, self._snapshot("丁" * 20))
+            self.assertEqual(context.exception.code, code)
+            self.assertEqual(provider.calls, 1)
         self.assertEqual(provider.calls, 1)
 
     def test_capacity_tiers_expose_confirmation_and_call_limits(self):

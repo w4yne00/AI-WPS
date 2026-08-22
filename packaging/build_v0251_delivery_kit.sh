@@ -11,7 +11,8 @@ OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 VERSION="0.25.1-alpha"
 BASELINE_VERSION="0.25.0-alpha"
-SOURCE_COMMIT="${AI_WPS_SOURCE_COMMIT:-$(git -C "$ROOT_DIR" rev-parse --short=7 HEAD)}"
+HEAD_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
+SOURCE_COMMIT="${AI_WPS_SOURCE_COMMIT:-$HEAD_COMMIT}"
 SOURCE_TAG="${SOURCE_COMMIT:0:7}"
 KIT_NAME="ai-wps-phase1-delivery-${DATE_TAG}-${SOURCE_TAG}-v0251"
 TMP_DIR="$OUT_DIR/$KIT_NAME"
@@ -29,6 +30,14 @@ if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{7,40}$ ]]; then
   echo "delivery_source_commit_invalid=$SOURCE_COMMIT"
   exit 1
 fi
+if [ "$SOURCE_COMMIT" != "$HEAD_COMMIT" ]; then
+  echo "delivery_source_commit_not_head=$SOURCE_COMMIT expected=$HEAD_COMMIT"
+  exit 1
+fi
+"$PYTHON_BIN" "$ROOT_DIR/packaging/check_delivery_source_provenance.py" \
+  --repo-root "$ROOT_DIR" \
+  --source-allowlist "$SOURCE_ALLOWLIST" \
+  --source-commit "$SOURCE_COMMIT"
 if ! "$PYTHON_BIN" - "$DATE_TAG" <<'PY'
 from datetime import datetime
 import sys
