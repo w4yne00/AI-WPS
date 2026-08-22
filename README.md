@@ -82,11 +82,11 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | `candidate` published; Kylin V10 Python 3.8 automated and lifecycle gates passed; Issue #59 remains the separate manual target-machine acceptance gate |
-| Phase 1 delivery kit | [`20260822 candidate archive`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256) |
+| Phase 1 delivery kit | [`20260822-4ff1862 candidate archive`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz.sha256) |
 
 ### v0.25.1-alpha Candidate Delivery
 
-The published `20260822` candidate keeps the existing Phase 1 installation system and packages the
+The published `20260822-4ff1862` candidate keeps the existing Phase 1 installation system and packages the
 unified Word, Excel, and PPT plugin package, local adapter runtime, Kylin V10
 ARM/Python 3.8 offline dependency bundle, installation and operations scripts,
 acceptance documents, and the release manifest. Its scope is limited to the

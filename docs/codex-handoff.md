@@ -4,13 +4,13 @@
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`codex/issue-69-v2-format-review`
+当前分支：`codex/readme-zh-sync`
 
 当前版本：`v0.25.1-alpha`
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822`
 
-历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；v0.25.1 的候选归档使用日期与七位源码提交号组成唯一文件名，当前构建以归档内 `release-manifest.json` 和同名 `.sha256` 为准，验证状态见第 6 节。
+历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz`，归档使用日期与七位源码提交号组成唯一文件名，验证状态见第 6 节。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -551,7 +551,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816` 和 `20260822-275099e` 两个旧候选登记为 `rejected`。新候选使用日期、七位源码提交号和 `candidateBuildId` 形成独立构建身份；自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。新候选的准确归档名和 SHA-256 以本节后续交付记录、归档内 `release-manifest.json` 及同名 `.sha256` 为准。
+`v0.25.1-alpha` 已将 `20260816` 和 `20260822-275099e` 两个旧候选登记为 `rejected`。当前候选为 `ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz`，源码提交为 `4ff1862`，SHA-256 为 `308c5d175de10ab12b42c4048c180a71dfd9e0a32ac42a6ff1dc2ddaede56346`。自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \

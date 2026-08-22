@@ -20,6 +20,14 @@
       "status": "rejected",
       "recordedAt": "20260822",
       "reason": "superseded after format review v2 was enabled by default and the disabled-state message was clarified"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-4ff1862",
+      "archiveName": "ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz.sha256",
+      "archiveSha256": "308c5d175de10ab12b42c4048c180a71dfd9e0a32ac42a6ff1dc2ddaede56346",
+      "sourceCommit": "4ff1862",
+      "status": "candidate"
     }
   ]
 }
