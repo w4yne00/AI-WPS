@@ -5,6 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 PYTHON38_BIN="${PYTHON38_BIN:-python3.8}"
 BASELINE_ARCHIVE="${AI_WPS_V0250_BASELINE_ARCHIVE:-}"
+PREVIOUS_CANDIDATE_ARCHIVE="${AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE:-}"
 OUT_DIR="${1:-$ROOT_DIR/dist-phase1-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 VERSION="0.25.1-alpha"
@@ -22,6 +23,19 @@ if [[ ! "$DATE_TAG" =~ ^[0-9]{8}$ ]]; then
   echo "delivery_date_tag_invalid=$DATE_TAG"
   exit 1
 fi
+if ! "$PYTHON_BIN" - "$DATE_TAG" <<'PY'
+from datetime import datetime
+import sys
+
+try:
+    datetime.strptime(sys.argv[1], "%Y%m%d")
+except ValueError:
+    raise SystemExit(1)
+PY
+then
+  echo "delivery_date_tag_invalid=$DATE_TAG"
+  exit 1
+fi
 if [ -e "$ARCHIVE_PATH" ] || [ -e "$ARCHIVE_PATH.sha256" ]; then
   echo "delivery_output_exists=$ARCHIVE_PATH"
   exit 1
@@ -32,6 +46,10 @@ if [ -e "$TMP_DIR" ] || [ -e "$PENDING_ARCHIVE_PATH" ] || [ -e "$PENDING_CHECKSU
 fi
 if [ -z "$BASELINE_ARCHIVE" ] || [ ! -f "$BASELINE_ARCHIVE" ]; then
   echo "v0250_baseline_archive_required=true"
+  exit 1
+fi
+if [ -z "$PREVIOUS_CANDIDATE_ARCHIVE" ] || [ ! -f "$PREVIOUS_CANDIDATE_ARCHIVE" ]; then
+  echo "v0251_previous_candidate_archive_required=true"
   exit 1
 fi
 
@@ -70,6 +88,7 @@ PY
   "$TMP_DIR" \
   --date "$DATE_TAG" \
   --baseline-archive "$BASELINE_ARCHIVE" \
+  --previous-candidate-archive "$PREVIOUS_CANDIDATE_ARCHIVE" \
   --baseline-version "$BASELINE_VERSION" \
   --acceptance-issue 59 \
   --source-commit "$SOURCE_COMMIT"

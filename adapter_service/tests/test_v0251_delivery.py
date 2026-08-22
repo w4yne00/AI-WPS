@@ -34,6 +34,7 @@ def test_v0251_policy_keeps_phase1_baseline_and_excludes_future_work():
     assert "v0251-delivery.md" in entries
     assert "audit_v0251_delivery.py" in entries
     assert "adapter_service/app/core/outline_level.py" in entries
+    assert "v0251-candidate-status.json" in entries
     for excluded in ("material_composer", "ADR-0116", "D-0001", "ADR-0117"):
         assert excluded not in entries
 
@@ -92,17 +93,97 @@ def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):
         )
 
 
+def test_v0251_audit_requires_rejected_previous_candidate_lineage(tmp_path):
+    audit_module = load_v0251_audit_module()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "v0251-candidate-status.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "product": "AI-WPS",
+                "version": "0.25.1-alpha",
+                "records": [
+                    {
+                        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-b7a1cf9",
+                        "archiveName": "ai-wps-phase1-delivery-20260822-v0251.tar.gz",
+                        "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256",
+                        "status": "candidate",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = {
+        "releaseDate": "20260822",
+        "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822",
+        "candidateEvidence": {
+            "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-b7a1cf9",
+            "sourceCommit": "b7a1cf9",
+            "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-v0251.tar.gz.sha256",
+            "automatedResult": "candidate",
+            "supersedes": {
+                "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
+                "archiveName": "ai-wps-phase1-delivery-20260816-v0251.tar.gz",
+                "archiveSha256": "1" * 64,
+                "status": "rejected",
+            },
+        },
+    }
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_REJECTED_CANDIDATE_RECORD_MISSING",
+    ):
+        audit_module.audit_candidate_lineage(tmp_path, manifest)
+
+    manifest["candidateEvidence"]["automatedResult"] = "target-accepted"
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_AUTOMATED_RESULT_MUST_REMAIN_CANDIDATE",
+    ):
+        audit_module.audit_candidate_lineage(tmp_path, manifest)
+
+
+def test_v0251_prepare_rejects_non_calendar_date(tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(PREPARE),
+            str(tmp_path),
+            "--date",
+            "20261399",
+            "--baseline-archive",
+            str(tmp_path / "baseline.tar.gz"),
+            "--previous-candidate-archive",
+            str(tmp_path / "previous.tar.gz"),
+            "--source-commit",
+            "b7a1cf9",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "V0251_DATE_INVALID" in result.stdout
+
+
 def test_v0251_build_requires_candidate_baseline_and_all_delivery_gates():
     build = BUILD.read_text(encoding="utf-8")
 
     for required in (
         "AI_WPS_V0250_BASELINE_ARCHIVE",
+        "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE",
         "delivery-sources-v0251.json",
         "prepare_v0251_delivery.py",
         "audit_v0251_delivery.py",
         "0.25.1-alpha",
         "ai-wps-phase1-delivery-${DATE_TAG}-v0251",
         "--acceptance-issue",
+        "--previous-candidate-archive",
         "node --test",
         "check_python38_compatibility.py",
         "python38_delivery_lifecycle_gate.py",
@@ -111,6 +192,35 @@ def test_v0251_build_requires_candidate_baseline_and_all_delivery_gates():
         assert required in build
     assert "preview" not in build.lower()
     assert "cp -R" not in build
+
+
+def test_v0251_rebuild_records_rejected_candidate_and_independent_build_identity():
+    policy = json.loads(POLICY.read_text(encoding="utf-8"))
+    entries = {
+        (entry["source"], entry["target"])
+        for entry in policy["entries"]
+        if entry.get("type") == "file"
+    }
+    assert (
+        "packaging/v0251-candidate-status.json",
+        "docs/v0251-candidate-status.json",
+    ) in entries
+
+    status = json.loads(
+        (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
+    )
+    previous = status["records"][0]
+    assert previous["status"] == "rejected"
+    assert previous["archiveName"] == "ai-wps-phase1-delivery-20260816-v0251.tar.gz"
+    assert len(previous["archiveSha256"]) == 64
+
+    build = BUILD.read_text(encoding="utf-8")
+    assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE" in build
+    assert "--previous-candidate-archive" in build
+
+    prepare = PREPARE.read_text(encoding="utf-8")
+    assert "candidateBuildId" in prepare
+    assert "rejected" in prepare
 
 
 def test_v0251_audit_requires_release_identity_plugin_cache_and_target_acceptance():
@@ -122,6 +232,9 @@ def test_v0251_audit_requires_release_identity_plugin_cache_and_target_acceptanc
         "targetAcceptanceIssue",
         "archiveChecksumFile",
         "sourceCommit",
+        "candidateBuildId",
+        "supersedes",
+        "audit_candidate_lineage",
         "wps-ai-assistant",
         "v0251_delivery_audit=passed",
     ):
@@ -206,6 +319,24 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     (delivery / "docs/v0251-delivery.md").write_text(
         "v0.25.1-alpha uses v0.25.0-alpha as its baseline.\n", encoding="utf-8"
     )
+    (delivery / "docs/v0251-candidate-status.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "product": "AI-WPS",
+                "version": "0.25.1-alpha",
+                "records": [
+                    {
+                        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
+                        "archiveName": "ai-wps-phase1-delivery-20260816-v0251.tar.gz",
+                        "archiveSha256": "0" * 64,
+                        "status": "rejected",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
     (delivery / "format-rule-assets-manifest.json").write_text(
         json.dumps(
             {
@@ -242,15 +373,39 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     with tarfile.open(baseline, "w:gz") as archive:
         archive.add(baseline_root, arcname="v0250")
 
+    previous_root = tmp_path / "previous"
+    previous_root.mkdir()
+    (previous_root / "release-manifest.json").write_text(
+        json.dumps(
+            {
+                "version": "0.25.1-alpha",
+                "releaseDate": "20260816",
+                "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
+                "deliveryPolicy": {"status": "candidate"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    previous = tmp_path / "ai-wps-phase1-delivery-20260816-v0251.tar.gz"
+    with tarfile.open(previous, "w:gz") as archive:
+        archive.add(previous_root, arcname="old-v0251")
+    previous_digest = hashlib.sha256(previous.read_bytes()).hexdigest()
+    status_path = delivery / "docs/v0251-candidate-status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status["records"][0]["archiveSha256"] = previous_digest
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
     result = subprocess.run(
         [
             sys.executable,
             str(PREPARE),
             str(delivery),
             "--date",
-            "20260816",
+            "20260822",
             "--baseline-archive",
             str(baseline),
+            "--previous-candidate-archive",
+            str(previous),
             "--baseline-version",
             "0.25.0-alpha",
             "--acceptance-issue",
@@ -272,6 +427,8 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     assert manifest["targetAcceptanceIssue"] == 59
     assert manifest["targetAcceptance"]["status"] == "manual-pending"
     assert manifest["candidateEvidence"]["sourceCommit"] == "b7a1cf9"
+    assert manifest["candidateEvidence"]["candidateBuildId"].endswith("-b7a1cf9")
+    assert manifest["candidateEvidence"]["supersedes"]["status"] == "rejected"
     assert manifest["candidateEvidence"]["archiveChecksumFile"].endswith(
         "v0251.tar.gz.sha256"
     )
@@ -293,3 +450,5 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     assets = json.loads((delivery / "format-rule-assets-manifest.json").read_text())
     assert assets["version"] == "0.25.1-format-rules-alpha"
     assert assets["deliveryVersion"] == "0.25.1-alpha"
+    lineage = json.loads(status_path.read_text(encoding="utf-8"))
+    assert [record["status"] for record in lineage["records"]] == ["rejected", "candidate"]

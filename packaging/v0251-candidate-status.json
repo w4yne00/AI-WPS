@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "product": "AI-WPS",
+  "version": "0.25.1-alpha",
+  "records": [
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816",
+      "archiveName": "ai-wps-phase1-delivery-20260816-v0251.tar.gz",
+      "archiveSha256": "9665c9614fd1cac3150ebe238f3bf08d1c6823eb3e0566ee12c695eafad05011",
+      "status": "rejected",
+      "recordedAt": "20260822",
+      "reason": "superseded after normalized format facts, active rules, and verified issue locations were completed"
+    }
+  ]
+}

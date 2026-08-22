@@ -1,16 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-21
+更新时间：2026-08-22
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`main`
+当前分支：`codex/issue-69-v2-format-review`
 
 当前版本：`v0.25.1-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260821`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822`
 
-当前候选交付包已生成：`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；同名 `.sha256` 校验通过，麒麟 V10/WPS 真机验收待执行。
+历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；新版 v0.25.1 归档尚未发布，当前验证状态见第 6 节。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -19,7 +19,7 @@
 - 首个闭环只读抽取不超过 20,000 审查字符的普通正文段落，执行两遍内容哈希确认；表格内段落、页眉页脚、脚注尾注、批注修订、文本框、形状、图片、公式、图表、附件和隐藏文本均明确列为未审查区域，不写回 Word。
 - 全篇审查复用 `word.document_review` 模型配置，但仅模型直连、显式上下文容量和至少 2,048 输出 Token 的配置可启动；设置页分别披露限量审查和全篇审查就绪度。
 - 全篇审查使用独立的快照、批次、提交、任务、状态、运行中协作取消和报告协议，以及版本化分片、纠正和跨片汇总 System Prompt 与严格 JSON Schema。多分片按约 18,000 字符目标、20,000 硬上限和 800 字符上下文重叠执行，标题/段落/句子/字符优先；大型表格按行、单元格、句子和字符递归拆分，重复表头仅作为 overlap 上下文。每个分片输出摘要、受控事实、跨片核对项和问题索引；两个及以上分片再调用只接收压缩索引的全局汇总，并拒绝未知问题、事实或锚点引用。请求体按实际接收字节限制为 2 MB，快照只能原子提交一次；暂存目录在启动时无条件扫描，并由后台维护线程周期清理。格式错误固定纠正一次，再次失败则任务失败，不以原始文本或限量结果降级。
-- 报告固定披露快照哈希、审查字符数、覆盖范围、排除区域和枚举状态，并声明覆盖完整不等于承诺检出全部问题。该闭环尚未完成麒麟 V10/WPS 真机验收，不能替代 `v0.23.1-alpha` 恢复构建的独立验收。
+- 报告固定披露快照哈希、审查字符数、覆盖范围、排除区域和枚举状态，并声明覆盖完整不等于承诺检出全部问题。该闭环尚未完成麒麟 V10/WPS 真机验收，不能替代 Issue #59 的独立目标机验收。
 
 ## 0.3 Issue #39 已实现的全篇审查恢复与生命周期
 
@@ -551,36 +551,26 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.23.1-alpha` 已执行本地自动化、静态契约和白名单交付审计，并在 Linux ARM64 容器内使用 CPython 3.8.20 完成最终归档运行与完整生命周期门禁。该结果标记候选构建，不替代麒麟 V10/WPS 真机验收。
+`v0.25.1-alpha` 已将 `20260816` 旧候选登记为 `rejected`，并要求新候选使用不同日期与 `candidateBuildId`；自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。当前 Mac 开发机未发布新的 v0.25.1 归档：构建已完成白名单组装、规则编译、审计和插件契约，但最终私有运行时门禁需要 Linux ARM64 wheel，无法在 `macosx-arm64` 上执行。
 
 ```bash
-AI_WPS_ENABLE_MOCK_PROVIDER=1 PYTHONPATH=adapter_service python3 -m unittest discover -s adapter_service/tests -v
-for test_file in formal-plugin-kit/tests/*.test.js; do node "$test_file"; done
-node --check <Word/Excel/PPT taskpane.js、taskpane-helpers.js、ribbon.js>
-npm exec --prefix wps-addon tsc -- --noEmit -p wps-addon/tsconfig.json
-bash -n packaging/build_phase1_delivery_kit.sh phase1-delivery-kit/installer/install_phase1.sh phase1-delivery-kit/scripts/phase1_smoke_test.sh
-git diff --check
-DATE_TAG=20260812 PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 bash packaging/build_phase1_delivery_kit.sh
+AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
+AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260816-v0251.tar.gz \
+DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
+bash packaging/build_v0251_delivery_kit.sh
 ```
 
-当前结果：
+当前可复核结果：
 
-- Issue #33 定向测试通过；实际构建完成 205 个源白名单文件组装，生成模板/清单后共 209 个文件，Python 3.8 静态兼容扫描 66 个生产/交付脚本文件通过，白名单、引用闭包、版本、敏感值和文件哈希审计通过。
-- Linux ARM64 / CPython 3.8.20 最终包门禁通过：真实导入、Uvicorn 启动、4 项关键接口和运行路径契约通过；全新安装、v0.22 升级、损坏 v0.23.0 共 3 个场景，以及核心状态、写作规范、导入、启动、版本、权限、WPS 未退出和安装中断共 8 个故障/补偿场景全部通过。
-- Python 全量单测：`667 tests OK (skipped=66)`；跳过项来自当前 FastAPI/条件门禁、受限本地套接字及未设置真实 Python 3.8 路径。
-- 全部 15 个正式前端测试文件通过，覆盖三宿主模型选择器节点复用、快速切换最后一次生效，以及恢复卡片、只读备份、脱敏诊断和无 HTTP 恢复/重置入口契约。
-- 当前开发机未安装 `wps-addon` 开发依赖，本轮未执行该旧脚手架的 Vitest 与 `tsc --noEmit`；该子目录不是本次三宿主正式交付包构建源。
-- Word/Excel/PPT 正式插件 JavaScript 语法检查、Issue #33 构建/安装脚本 `bash -n` 与 67 个生产/交付 Python 文件的 3.8 静态兼容扫描：通过。
-- 静态 layout smoke 已覆盖结构审查新增控件和 320 px 窄窗契约；本轮未重复执行真实 Chromium 布局验收，上一版本 420×900 和 320×700 无横向溢出结果仅作为回归基线，仍待目标机复核。
-- 安装行为测试已使用临时目录验证：首次安装创建非空、权限 `0600` 的规范数据库；再次执行初始化保持数据库字节不变；覆盖安装测试继续验证主库和全部已有备份恢复。
-- `v0.23.1-alpha` 候选归档与同名 `.sha256` 已由构建脚本原子发布到 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；包外 SHA-256 校验通过。
-
-当前 Mac 开发机无法替代麒麟 V10/WPS 真机验收。覆盖安装、WPS 三宿主 Ribbon、真实 Dify Markdown/DOCX 上传、180 秒以上慢任务、断连恢复和系统重启自启动仍须按下一节在目标机执行并填写交付包内验收记录。
+- Python 全量单测：`779 passed, 94 skipped`；本次 v0.25.1 定向测试 10 项通过。
+- 正式插件契约测试：17 项通过；构建阶段的 Python 3.8 静态兼容扫描、规则编译、allowlist、格式规则审计、交付审计与 `candidate` 生命周期前置检查通过。
+- 最终私有运行时安装未通过，原因是交付包内 `manylinux2014_aarch64` 的 `charset-normalizer` wheel 不适配当前 `macosx-arm64` 解释器；该结果不能替代 Linux ARM64/Python 3.8 目标环境验证。
+- 未生成可宣称“已验证”的新 `v0.25.1-alpha` 归档，也未把 Issue #59 标记为接受；真实 WPS 文档、Kylin V10、模型直连和安装生命周期仍须在目标机完成。
 
 ## 7. 目标机验证建议
 
-1. 先在无历史安装目录的麒麟 V10 终端安装通过生命周期门禁的 `20260812-v0231` 候选包，确认自动生成权限为 `0600` 的 `state/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
-2. 记录 API URL、统一 API Key、`state/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一候选包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.23.1-alpha` 且所有运行态数据未丢失。
+1. 在无历史安装目录的麒麟 V10 终端安装通过生命周期门禁的新版 `v0.25.1-alpha` 候选包，确认自动生成权限为 `0600` 的 `state/writing_policies.db`；创建组织自定义、组织覆盖和预置停用状态，重启 WPS/adapter 后确认持久化。
+2. 记录 API URL、统一 API Key、`state/provider_api_keys/`、规范数据库及全部已有备份摘要，再次执行同一候选包覆盖安装；关闭并重新打开 WPS，确认设置页“前端版本”为 `0.25.1-alpha` 且所有运行态数据未丢失。
 3. 设置页配置统一 API URL，例如 `https://aibot.chinasatnet.com.cn/v1`。
 4. 分别为“智能编写”“智能仿写”“文档审查”“格式审查”“智能分析”“公式助手”“智能总结”“结构审查”保存两个具名工作流档案；确认功能页下拉选择后立即激活、当前档案不可删除、编辑 Key 留空保持原密钥，并验证下一次任务命中所选档案；当前页和文档总结必须共用 `ppt.slide_assistant`，结构审查必须独立使用 `ppt.structure_review`。
 5. 在 Word 设置页进入写作规范管理，验证术语和文体规则的新增、修改、删除、任务范围筛选、CSV/XLSX 预览导入、冲突跳过、CSV 导出和数据库备份；再临时制造规范库不可用状态，确认 Word 三任务仍继续且结果显示降级提示。

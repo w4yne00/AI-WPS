@@ -21,6 +21,11 @@
     },
     {
       "type": "file",
+      "source": "packaging/v0251-candidate-status.json",
+      "target": "docs/v0251-candidate-status.json"
+    },
+    {
+      "type": "file",
       "source": "packaging/audit_v0251_delivery.py",
       "target": "scripts/audit_v0251_delivery.py"
     }

@@ -78,11 +78,11 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Item | Value |
 | --- | --- |
 | Version | `v0.25.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260816` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-<YYYYMMDD>` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Candidate build: v0.25.0 baseline, allowlist/static/plugin/Python 3.8 gates and Issue #59 manual acceptance evidence required; Kylin V10/WPS acceptance pending |
-| Phase 1 delivery kit | Build with `AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> packaging/build_v0251_delivery_kit.sh`; the archive and adjacent SHA-256 file are generated in `dist-phase1-delivery-kit/` |
+| Phase 1 delivery kit | Build with `AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=<previous v0.25.1-alpha archive> DATE_TAG=<YYYYMMDD> packaging/build_v0251_delivery_kit.sh`; the archive and adjacent SHA-256 file are generated in `dist-phase1-delivery-kit/` |
 
 ### v0.25.1-alpha Candidate Delivery
 
