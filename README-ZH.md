@@ -82,17 +82,17 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
 | 交付状态 | `candidate` 已发布；麒麟 V10 Python 3.8 自动化和生命周期门禁通过；Issue #59 继续负责目标机人工验收 |
-| 一期交付包 | [`20260822-4ff1862 候选归档`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz.sha256) |
+| 一期交付包 | [`20260822-afc5470 候选归档`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz) · [`SHA-256`](dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz.sha256) |
 
 ### v0.25.1-alpha 候选交付
 
-已发布的 `20260822-4ff1862` 候选沿用现有一期安装体系，包含 Word、Excel、PPT
+已发布的 `20260822-afc5470` 候选沿用现有一期安装体系，包含 Word、Excel、PPT
 三宿主插件包、本地适配服务、麒麟 V10 ARM/Python 3.8 离线依赖包、安装与运维脚本、
 验收文档及发布清单。本候选覆盖 WPS 大纲级别和标题定位、模型直连验证、模型调用诊断、
-格式审查拒绝请求的资源暂存，以及与 locale 无关的控制字符校验修复。
+格式审查拒绝请求的资源暂存、与 locale 无关的控制字符校验，以及图片事实采集 helper 作用域修复。
 
-构建记录源提交 `4ff1862`、候选状态、基线归档摘要、归档校验文件、自动化门禁结果和事务日志回滚入口。
-旧的 `20260816` 和 `20260822-275099e` 候选已登记为 `rejected`，当前候选在 `packaging/v0251-candidate-status.json`
+构建记录源提交 `afc5470`、候选状态、基线归档摘要、归档校验文件、自动化门禁结果和事务日志回滚入口。
+旧的 `20260816`、`20260822-275099e` 和 `20260822-4ff1862` 候选已登记为 `rejected`，当前候选在 `packaging/v0251-candidate-status.json`
 中单独登记。
 
 自动化验证只将本包标记为 `candidate`，不会宣称 `target-accepted`。Issue #59 仍是目标机人工验收记录。

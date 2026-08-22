@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822`
 
-历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz`，归档使用日期与七位源码提交号组成唯一文件名，验证状态见第 6 节。
+历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz`，归档使用日期与七位源码提交号组成唯一文件名，验证状态见第 6 节。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -551,11 +551,11 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816` 和 `20260822-275099e` 两个旧候选登记为 `rejected`。当前候选为 `ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz`，源码提交为 `4ff1862`，SHA-256 为 `308c5d175de10ab12b42c4048c180a71dfd9e0a32ac42a6ff1dc2ddaede56346`。自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。
+`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e` 和 `20260822-4ff1862` 三个旧候选登记为 `rejected`。当前候选为 `ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz`，源码提交为 `afc5470`，SHA-256 为 `94de34505f980a4470408dff3748c851fb194c6f407ffe26bf6803f972b41930`。该候选修复格式审查图片事实采集阶段裸调用 `firstDefined` 导致模型调用前中断的问题。自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
-AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-v0251.tar.gz \
+AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz \
 DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
 bash packaging/build_v0251_delivery_kit.sh
 ```

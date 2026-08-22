@@ -30,6 +30,14 @@
       "status": "rejected",
       "recordedAt": "20260822",
       "reason": "superseded after fixing the format review image collector helper scope failure"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-afc5470",
+      "archiveName": "ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz.sha256",
+      "archiveSha256": "94de34505f980a4470408dff3748c851fb194c6f407ffe26bf6803f972b41930",
+      "sourceCommit": "afc5470",
+      "status": "candidate"
     }
   ]
 }
