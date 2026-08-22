@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822`
 
-历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz`，归档使用日期与七位源码提交号组成唯一文件名，验证状态见第 6 节。
+历史候选交付包为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260812-v0231.tar.gz`；当前没有可验收的 v0.25.1 候选，`dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz` 已因目标机阻断缺陷登记为 `rejected`，验证状态见第 6 节。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -551,22 +551,24 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e` 和 `20260822-4ff1862` 三个旧候选登记为 `rejected`。当前候选为 `ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz`，源码提交为 `afc5470`，SHA-256 为 `94de34505f980a4470408dff3748c851fb194c6f407ffe26bf6803f972b41930`。该候选修复格式审查图片事实采集阶段裸调用 `firstDefined` 导致模型调用前中断的问题。自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。
+`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862` 和 `20260822-afc5470` 四个候选全部登记为 `rejected`，当前没有可安装验收的新候选。`afc5470` 虽修复了图片事实采集阶段裸调用 `firstDefined` 的问题，但目标机继续复现“格式审查原文范围索引无效”：WPS 不可用的 `Start`、`End`、页码或章节位置会以非有限数值进入前端，JSON 序列化后变为 `null`，后端随后把这些可选值误判为非法索引，并在模型调用前中断。
+
+源码提交 `672875e` 已同时修复协议两端：前端不再把非有限位置值放入请求，后端忽略可选的 `null` 位置字段；负数、字符串、布尔值、未知字段和倒序范围仍会拒绝。该修复已通过前后端精确回归、正式插件全部 17 项测试、相关后端 77 项测试以及后端全量 `785 passed, 95 skipped`，但尚未生成新交付包，也未完成真实 WPS 模型直连复测。自动门禁终态仍只能是 `candidate`，Issue #59 目标机验收保持 `manual-pending`。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
-AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz \
+AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz \
 DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
 bash packaging/build_v0251_delivery_kit.sh
 ```
 
 当前可复核结果：
 
-- Python 全量单测：`870 passed, 4 skipped`；本次 v0.25.1 定向测试和相关回归通过。
-- 正式插件契约测试：17 项通过；Kylin 构建阶段的 Python 3.8 静态兼容扫描、规则编译、allowlist、格式规则审计、交付审计和 `candidate` 生命周期门禁全部通过。
-- Kylin V10 SP1 ARM64 测试环境已安装 Python 测试依赖和 Node.js；修复格式审查拒绝路径的 `image-assets` 延迟创建及 Kylin shell 的 Unicode `U+0085` 校验后，Python 全量 pytest 为 `870 passed, 4 skipped`，WPS 插件 Node 测试和构建均通过。
+- 当前源码 Python 全量单测：`785 passed, 95 skipped`；WPS 原文范围精确回归和恶意值拒绝回归通过。
+- 当前源码正式插件契约测试：17 项通过；`node --check` 和 `git diff --check` 通过。
+- 最近一次已拒绝候选在 Kylin V10 SP1 ARM64/Python 3.8.10 上曾取得 Python 全量 `870 passed, 4 skipped`，并通过静态兼容扫描、规则编译、allowlist、格式规则审计、交付审计和生命周期门禁；该历史结果不能替代 `672875e` 源码的新包构建与目标机复测。
 - Kylin WPS GUI 的插件信任提示和 `Runtime Probe` Ribbon 已验证；任务窗格按钮执行及文档对象读数仍未完成，不能据此宣称 WPS 插件 API 真机验收通过。
-- 新归档已在 Kylin V10 Python `3.8.10` 上通过 Adapter 导入、Uvicorn 启动、公开格式审查 API、密钥契约、运行路径契约及升级/全新安装/故障恢复生命周期场景；门禁终态为 `candidate`。
+- 当前没有包含 `672875e` 修复的新归档；下一候选仍须在 Kylin V10 Python `3.8.10` 上重新通过 Adapter 导入、Uvicorn 启动、公开格式审查 API、密钥契约、运行路径契约及升级/全新安装/故障恢复生命周期场景。
 - Issue #59 未标记为接受；真实 WPS 任务窗格按钮、文档对象读数、模型直连和目标机人工文档验收仍须在 Issue #59 完成。
 
 ## 7. 目标机验证建议
