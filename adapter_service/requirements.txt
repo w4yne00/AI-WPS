@@ -3,3 +3,5 @@ uvicorn
 pydantic
 requests
 pytest
+# FastAPI/Starlette TestClient compatibility on the Python 3.8 test environment.
+httpx<0.28

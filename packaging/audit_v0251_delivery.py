@@ -2,6 +2,7 @@
 """Audit the assembled v0.25.1-alpha Phase1 candidate."""
 
 import argparse
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -15,6 +16,12 @@ BASELINE_VERSION = "0.25.0-alpha"
 FORMAT_ASSET_VERSION = "0.25.1-format-rules-alpha"
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+BUILD_ID_RE = re.compile(
+    r"^AI-WPS-P1-WORD-EXCEL-PPT-0\.25\.1-[0-9]{8}-[0-9a-f]{7,40}$"
+)
+PREVIOUS_BUILD_ID_RE = re.compile(
+    r"^AI-WPS-P1-WORD-EXCEL-PPT-0\.25\.1-[0-9]{8}(?:-[0-9a-f]{7,40})?$"
+)
 REFERENCE_WORKFLOWS = {
     "reference-workflows/format-semantics-text-v1.yml",
     "reference-workflows/format-semantics-vision-v1.yml",
@@ -208,6 +215,90 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_STATUS_INVALID")
 
 
+def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
+    status = load_json(
+        root / "docs/v0251-candidate-status.json",
+        "V0251_CANDIDATE_STATUS_MISSING",
+    )
+    if (
+        status.get("schemaVersion") != 1
+        or status.get("product") != "AI-WPS"
+        or status.get("version") != VERSION
+        or not isinstance(status.get("records"), list)
+    ):
+        raise DeliveryFailure("V0251_CANDIDATE_STATUS_INVALID")
+
+    evidence = manifest.get("candidateEvidence", {})
+    if evidence.get("automatedResult") != "candidate":
+        raise DeliveryFailure("V0251_AUTOMATED_RESULT_MUST_REMAIN_CANDIDATE")
+    current_build_id = evidence.get("candidateBuildId")
+    source_commit = evidence.get("sourceCommit")
+    version_rule = manifest.get("versionRule")
+    release_date = str(manifest.get("releaseDate", ""))
+    if not re.fullmatch(r"[0-9]{8}", release_date):
+        raise DeliveryFailure("V0251_RELEASE_DATE_INVALID")
+    try:
+        datetime.strptime(release_date, "%Y%m%d")
+    except ValueError as exc:
+        raise DeliveryFailure("V0251_RELEASE_DATE_INVALID") from exc
+    if version_rule != "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-{0}".format(release_date):
+        raise DeliveryFailure("V0251_VERSION_RULE_DATE_MISMATCH")
+    if (
+        not isinstance(current_build_id, str)
+        or not BUILD_ID_RE.fullmatch(current_build_id)
+        or current_build_id != "{0}-{1}".format(version_rule, source_commit)
+    ):
+        raise DeliveryFailure("V0251_CANDIDATE_BUILD_ID_INVALID")
+
+    superseded = evidence.get("supersedes", {})
+    current_archive_name = "ai-wps-phase1-delivery-{0}-v0251.tar.gz".format(release_date)
+    previous_archive_match = None
+    if isinstance(superseded, dict):
+        previous_archive_match = re.fullmatch(
+            r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})-v0251\.tar\.gz",
+            str(superseded.get("archiveName", "")),
+        )
+    if (
+        not isinstance(superseded, dict)
+        or superseded.get("status") != "rejected"
+        or not SHA256_RE.fullmatch(str(superseded.get("archiveSha256", "")))
+        or previous_archive_match is None
+        or not PREVIOUS_BUILD_ID_RE.fullmatch(
+            str(superseded.get("candidateBuildId", ""))
+        )
+        or superseded.get("archiveName") == current_archive_name
+        or not str(superseded.get("candidateBuildId", "")).startswith(
+            "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-{0}".format(
+                previous_archive_match.group("date")
+            )
+        )
+    ):
+        raise DeliveryFailure("V0251_SUPERSEDED_CANDIDATE_INVALID")
+
+    records = [item for item in status["records"] if isinstance(item, dict)]
+    rejected = [
+        item
+        for item in records
+        if item.get("archiveName") == superseded.get("archiveName")
+    ]
+    if len(rejected) != 1 or rejected[0].get("status") != "rejected":
+        raise DeliveryFailure("V0251_REJECTED_CANDIDATE_RECORD_MISSING")
+    if rejected[0].get("candidateBuildId") != superseded.get("candidateBuildId"):
+        raise DeliveryFailure("V0251_REJECTED_CANDIDATE_BUILD_ID_MISMATCH")
+    if rejected[0].get("archiveSha256") != superseded.get("archiveSha256"):
+        raise DeliveryFailure("V0251_REJECTED_CANDIDATE_DIGEST_MISMATCH")
+
+    current = [item for item in records if item.get("candidateBuildId") == current_build_id]
+    if len(current) != 1 or current[0].get("status") != "candidate":
+        raise DeliveryFailure("V0251_CURRENT_CANDIDATE_RECORD_INVALID")
+    if current[0].get("archiveName") != current_archive_name:
+        raise DeliveryFailure("V0251_CURRENT_CANDIDATE_ARCHIVE_NAME_INVALID")
+    if current[0].get("sourceCommit") != source_commit:
+        raise DeliveryFailure("V0251_CURRENT_CANDIDATE_SOURCE_COMMIT_INVALID")
+    if current[0].get("archiveChecksumFile") != evidence.get("archiveChecksumFile"):
+        raise DeliveryFailure("V0251_CURRENT_CANDIDATE_CHECKSUM_REFERENCE_INVALID")
+
+
 def plugin_files(root: Path) -> Iterable[Path]:
     for path in sorted(root.glob("packages/wps-ai-assistant*/*")):
         if path.is_file() and path.suffix.lower() in {".html", ".js", ".json"}:
@@ -261,13 +352,12 @@ def audit(root: Path) -> None:
     if not COMMIT_RE.fullmatch(str(evidence.get("sourceCommit", ""))):
         raise DeliveryFailure("V0251_SOURCE_COMMIT_MISSING")
     release_date = str(manifest.get("releaseDate", ""))
-    if not re.fullmatch(r"[0-9]{8}", release_date):
-        raise DeliveryFailure("V0251_RELEASE_DATE_INVALID")
     expected_checksum_name = "ai-wps-phase1-delivery-{0}-v0251.tar.gz.sha256".format(
         release_date
     )
     if evidence.get("archiveChecksumFile") != expected_checksum_name:
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_EVIDENCE_MISSING")
+    audit_candidate_lineage(root, manifest)
     if manifest.get("targetAcceptanceIssue") != 59 or manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
         raise DeliveryFailure("ISSUE_59_MANUAL_ACCEPTANCE_REQUIRED")
     policy = manifest.get("deliveryPolicy", {})

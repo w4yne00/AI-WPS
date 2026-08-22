@@ -3,6 +3,7 @@
 
 import argparse
 import copy
+from datetime import datetime
 import hashlib
 import json
 import re
@@ -16,6 +17,10 @@ BASELINE_VERSION = "0.25.0-alpha"
 FORMAT_ASSET_VERSION = "0.25.1-format-rules-alpha"
 TEXT_SUFFIXES = {".css", ".html", ".js", ".json", ".md", ".py", ".sh", ".txt", ".xml", ".yml"}
 SOURCE_COMMIT_RE = re.compile(r"^[0-9a-f]{7,40}$")
+CANDIDATE_ARCHIVE_RE = re.compile(r"^ai-wps-phase1-delivery-(?P<date>[0-9]{8})-v0251\.tar\.gz$")
+PREVIOUS_BUILD_ID_RE = re.compile(
+    r"^AI-WPS-P1-WORD-EXCEL-PPT-0\.25\.1-[0-9]{8}(?:-[0-9a-f]{7,40})?$"
+)
 VERSION_REWRITE_EXCLUDED_PATHS = {
     "README.md",
     "docs/v0251-delivery.md",
@@ -24,6 +29,7 @@ VERSION_REWRITE_EXCLUDED_PATHS = {
     "scripts/python38_delivery_lifecycle_gate.py",
     "scripts/python38_delivery_runtime_gate.py",
 }
+STATUS_RELATIVE_PATH = "docs/v0251-candidate-status.json"
 
 
 def candidate_files(root: Path) -> Iterable[Path]:
@@ -74,6 +80,94 @@ def baseline_metadata(archive: Path, expected_version: str) -> dict:
         "archiveName": archive.name,
         "sourceStatus": "candidate",
     }
+
+
+def previous_candidate_metadata(archive: Path) -> dict:
+    match = CANDIDATE_ARCHIVE_RE.fullmatch(archive.name)
+    if not archive.is_file():
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_ARCHIVE_MISSING")
+    if match is None:
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_ARCHIVE_NAME_INVALID")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    try:
+        with tarfile.open(str(archive), "r:gz") as handle:
+            member = next(
+                item
+                for item in handle.getmembers()
+                if Path(item.name).name == "release-manifest.json" and item.isfile()
+            )
+            extracted = handle.extractfile(member)
+            if extracted is None:
+                raise ValueError("V0251_PREVIOUS_CANDIDATE_MANIFEST_UNREADABLE")
+            manifest = json.loads(extracted.read().decode("utf-8"))
+    except (OSError, tarfile.TarError, StopIteration, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_ARCHIVE_INVALID") from exc
+    if manifest.get("version") != VERSION:
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_VERSION_INVALID")
+    if manifest.get("releaseDate") != match.group("date"):
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_DATE_MISMATCH")
+    if manifest.get("deliveryPolicy", {}).get("status") != "candidate":
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_NOT_CANDIDATE")
+    candidate_evidence = manifest.get("candidateEvidence", {})
+    build_id = candidate_evidence.get("candidateBuildId") or manifest.get("versionRule")
+    if not isinstance(build_id, str) or not PREVIOUS_BUILD_ID_RE.fullmatch(build_id):
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_BUILD_ID_MISSING")
+    return {
+        "candidateBuildId": build_id,
+        "archiveName": archive.name,
+        "archiveSha256": digest,
+        "status": "rejected",
+    }
+
+
+def record_candidate_lineage(
+    root: Path,
+    previous: dict,
+    date_tag: str,
+    source_commit: str,
+    current_build_id: str,
+    checksum_name: str,
+) -> None:
+    path = root / STATUS_RELATIVE_PATH
+    if not path.is_file():
+        raise ValueError("V0251_CANDIDATE_STATUS_MISSING")
+    status = json.loads(path.read_text(encoding="utf-8"))
+    if (
+        status.get("schemaVersion") != 1
+        or status.get("product") != "AI-WPS"
+        or status.get("version") != VERSION
+        or not isinstance(status.get("records"), list)
+    ):
+        raise ValueError("V0251_CANDIDATE_STATUS_INVALID")
+    previous_records = [
+        item
+        for item in status["records"]
+        if isinstance(item, dict) and item.get("archiveName") == previous["archiveName"]
+    ]
+    if len(previous_records) != 1:
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_STATUS_MISSING")
+    previous_record = previous_records[0]
+    if (
+        previous_record.get("status") != "rejected"
+        or previous_record.get("archiveSha256") != previous["archiveSha256"]
+    ):
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_STATUS_INVALID")
+    current_record = {
+        "candidateBuildId": current_build_id,
+        "archiveName": "ai-wps-phase1-delivery-{0}-v0251.tar.gz".format(date_tag),
+        "archiveChecksumFile": checksum_name,
+        "sourceCommit": source_commit,
+        "status": "candidate",
+    }
+    status["records"] = [
+        item
+        for item in status["records"]
+        if not (
+            isinstance(item, dict)
+            and item.get("candidateBuildId") == current_build_id
+        )
+    ] + [current_record]
+    path.write_text(json.dumps(status, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
 def remove_previous_candidate_identity(root: Path) -> None:
@@ -145,6 +239,7 @@ def prepare(
     root: Path,
     date_tag: str,
     baseline_archive: Path,
+    previous_candidate_archive: Path,
     source_commit: str,
     baseline_version: str = BASELINE_VERSION,
     acceptance_issue: int = 59,
@@ -153,9 +248,17 @@ def prepare(
         raise ValueError("V0250_BASELINE_VERSION_REQUIRED")
     if not date_tag or len(date_tag) != 8 or not date_tag.isdigit():
         raise ValueError("V0251_DATE_INVALID")
+    try:
+        datetime.strptime(date_tag, "%Y%m%d")
+    except ValueError as exc:
+        raise ValueError("V0251_DATE_INVALID") from exc
     if not SOURCE_COMMIT_RE.fullmatch(source_commit):
         raise ValueError("V0251_SOURCE_COMMIT_INVALID")
     baseline = baseline_metadata(baseline_archive, baseline_version)
+    previous = previous_candidate_metadata(previous_candidate_archive)
+    current_archive_name = "ai-wps-phase1-delivery-{0}-v0251.tar.gz".format(date_tag)
+    if previous["archiveName"] == current_archive_name:
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_DATE_REUSE")
     rewrite_versions(root, ("0.23.1-alpha", "0.24.0-alpha", "0.25.0-alpha"))
     remove_previous_candidate_identity(root)
 
@@ -164,6 +267,7 @@ def prepare(
     manifest["version"] = VERSION
     manifest["releaseDate"] = date_tag
     manifest["versionRule"] = "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-" + date_tag
+    candidate_build_id = manifest["versionRule"] + "-" + source_commit
     manifest["deliveryPolicy"] = {
         "status": "candidate",
         "sourceAssembly": "explicit-allowlist",
@@ -208,6 +312,7 @@ def prepare(
         "doesNotCloseIssue": True,
     }
     manifest["candidateEvidence"] = {
+        "candidateBuildId": candidate_build_id,
         "sourceCommit": source_commit,
         "archiveChecksumFile": "ai-wps-phase1-delivery-{0}-v0251.tar.gz.sha256".format(
             date_tag
@@ -215,6 +320,7 @@ def prepare(
         "automatedResult": "candidate",
         "rollbackEntry": "installer/install_phase1.sh transaction log rollback",
         "acceptanceRecord": "Issue #{0}".format(acceptance_issue),
+        "supersedes": previous,
     }
     manifest_path.write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
@@ -234,6 +340,14 @@ def prepare(
         json.dumps(prompt_manifest, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     update_format_assets_manifest(root)
+    record_candidate_lineage(
+        root,
+        previous,
+        date_tag,
+        source_commit,
+        candidate_build_id,
+        manifest["candidateEvidence"]["archiveChecksumFile"],
+    )
     print("v0251_delivery_prepared=passed version={0}".format(VERSION))
 
 
@@ -242,6 +356,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("root", type=Path)
     parser.add_argument("--date", required=True)
     parser.add_argument("--baseline-archive", required=True, type=Path)
+    parser.add_argument("--previous-candidate-archive", required=True, type=Path)
     parser.add_argument("--baseline-version", default=BASELINE_VERSION)
     parser.add_argument("--acceptance-issue", default=59, type=int)
     parser.add_argument("--source-commit", required=True)
@@ -251,6 +366,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             args.root.resolve(),
             args.date,
             args.baseline_archive.resolve(),
+            args.previous_candidate_archive.resolve(),
             args.source_commit,
             args.baseline_version,
             args.acceptance_issue,

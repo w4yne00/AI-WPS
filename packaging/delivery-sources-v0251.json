@@ -6,6 +6,16 @@
   "entries": [
     {
       "type": "file",
+      "source": "adapter_service/app/services/ppt/docx_security.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/ppt/docx_security.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/word/format_facts.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/word/format_facts.py"
+    },
+    {
+      "type": "file",
       "source": "adapter_service/app/core/outline_level.py",
       "target": "packages/adapter-start-kit/adapter_service/app/core/outline_level.py"
     },
@@ -18,6 +28,11 @@
       "type": "file",
       "source": "packaging/v0251-target-machine-acceptance.md",
       "target": "docs/v0251-target-machine-acceptance.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0251-candidate-status.json",
+      "target": "docs/v0251-candidate-status.json"
     },
     {
       "type": "file",

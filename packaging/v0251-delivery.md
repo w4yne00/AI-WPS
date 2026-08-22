@@ -13,7 +13,7 @@
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`；归档 SHA-256 记录在同名 `.sha256` 文件中。自动门禁通过只表示 `candidate`，不表示麒麟 V10、目标 WPS 或模型服务已经完成现场验收。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。`docs/v0251-candidate-status.json` 保留旧候选的 `rejected` 记录及本次候选的 `candidate` 记录，避免同一产品版本的不同构建被混淆。自动门禁通过只表示 `candidate`，不表示麒麟 V10、目标 WPS 或模型服务已经完成现场验收。
 
 ## Issue #59 现场验收步骤
 

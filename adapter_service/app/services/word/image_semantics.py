@@ -306,6 +306,8 @@ class ImageAssetStore:
             raise _error("IMAGE_ASSET_STORAGE_INVALID", "图片受控槽位必须使用绝对路径。", 500)
         self.clock = clock
         self._groups: Dict[str, Dict[str, Any]] = {}
+
+    def _ensure_root(self) -> None:
         self.root.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
             os.chmod(str(self.root), 0o700)
@@ -336,6 +338,7 @@ class ImageAssetStore:
                 "captionStatus": str(candidate.get("captionStatus") or "missing"),
             })
         group_id = "image-group-" + uuid.uuid4().hex
+        self._ensure_root()
         group_dir = self.root / group_id
         group_dir.mkdir(mode=0o700)
         assets = []
