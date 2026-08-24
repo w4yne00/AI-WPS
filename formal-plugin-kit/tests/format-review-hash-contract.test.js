@@ -9,6 +9,20 @@ const helpers = require(path.join(
   "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js"
 ));
 
+function cloneRaw(value) {
+  if (Array.isArray(value)) {
+    return value.map(cloneRaw);
+  }
+  if (value && typeof value === "object") {
+    const clone = {};
+    Object.keys(value).forEach((key) => {
+      clone[key] = cloneRaw(value[key]);
+    });
+    return clone;
+  }
+  return value;
+}
+
 const PYTHON_BRIDGE = String.raw`
 import json
 import os
@@ -325,12 +339,37 @@ function compatibilityProtocolFixtures() {
         ? Object.assign({}, compatibilityBlock.format, compatibility.format)
         : compatibility[key];
     });
-    const body = Object.assign({}, canonicalBody, {
-      blocks: [helpers.normalizeDeterministicFormatReviewBlock(compatibilityBlock)]
-    });
-    body.batches = helpers.buildDeterministicFormatReviewBatches(body, 3500);
-    return [label, body];
+    return [label, {
+      canonicalBody,
+      rawBlock: compatibilityBlock
+    }];
   });
+}
+
+function compatibilityProtocolViews(label, fixture) {
+  const rawCanonical = cloneRaw(fixture.rawBlock);
+  const jsInput = cloneRaw(rawCanonical);
+  const pythonInput = cloneRaw(rawCanonical);
+  const jsNormalized = helpers.normalizeDeterministicFormatReviewBlock(jsInput);
+  assert.deepEqual(
+    fixture.rawBlock,
+    rawCanonical,
+    `${label} raw canonical source must remain unchanged after JS normalization`
+  );
+  assert.notStrictEqual(jsInput, pythonInput, `${label} runtime inputs must be independent`);
+  assert.notStrictEqual(jsInput.format, pythonInput.format, `${label} nested runtime inputs must be independent`);
+
+  const jsBody = cloneRaw(fixture.canonicalBody);
+  jsBody.blocks = [jsNormalized];
+  jsBody.batches = helpers.buildDeterministicFormatReviewBatches(jsBody, 3500);
+
+  const pythonFirstBody = cloneRaw(jsBody);
+  pythonFirstBody.blocks = [pythonInput];
+  pythonFirstBody.batches = jsBody.batches.map((batch) => Object.assign({}, cloneRaw(batch), {
+    blocks: [cloneRaw(rawCanonical)]
+  }));
+  const pythonSecondBody = cloneRaw(pythonFirstBody);
+  return { rawCanonical, jsBody, pythonFirstBody, pythonSecondBody };
 }
 
 function protocolFixtureFamilies() {
@@ -442,17 +481,22 @@ test("real JS coverage survives snapshot, upload, commit, and job start", () => 
 });
 
 test("outline compatibility fallbacks agree on normalized facts and hashes", () => {
-  for (const [label, body] of compatibilityProtocolFixtures()) {
-    const block = body.blocks[0];
+  for (const [label, fixture] of compatibilityProtocolFixtures()) {
+    const { jsBody, pythonFirstBody } = compatibilityProtocolViews(label, fixture);
+    const block = jsBody.blocks[0];
     assert.equal(block.outlineLevel, 2, `${label} top-level outline`);
     assert.equal(block.format.outlineLevel, 2, `${label} format outline`);
     assert.equal(block.headingLevel, 2, `${label} heading level`);
-    const python = runPython({ mode: "metrics", blocks: body.blocks, sourceCoverage: body.coverage });
+    const python = runPython({
+      mode: "metrics",
+      blocks: pythonFirstBody.blocks,
+      sourceCoverage: jsBody.coverage
+    });
     for (const key of ["characterCount", "contentSha256", "structureSha256", "formatSha256"]) {
-      const jsValue = key === "characterCount" ? body.reviewCharacterCount : body[key];
+      const jsValue = key === "characterCount" ? jsBody.reviewCharacterCount : jsBody[key];
       assert.equal(python.metrics[key], jsValue, `${label} ${key}`);
     }
-    assert.deepEqual(python.metrics.coverage, body.coverage, `${label} coverage`);
+    assert.deepEqual(python.metrics.coverage, jsBody.coverage, `${label} coverage`);
   }
 });
 
@@ -501,9 +545,18 @@ test("outline normalization preserves source priority and value semantics", () =
     }
   ];
   for (const item of cases) {
-    const sourceBlock = Object.assign({ paragraphIndex: 0 }, item.block);
-    const normalized = helpers.normalizeDeterministicFormatReviewBlock(sourceBlock);
-    const python = runPython({ mode: "normalize", blocks: [sourceBlock] });
+    const rawCanonical = Object.assign({ paragraphIndex: 0 }, item.block);
+    const rawBefore = cloneRaw(rawCanonical);
+    const jsInput = cloneRaw(rawCanonical);
+    const pythonInput = cloneRaw(rawCanonical);
+    const normalized = helpers.normalizeDeterministicFormatReviewBlock(jsInput);
+    assert.deepEqual(
+      rawCanonical,
+      rawBefore,
+      `${item.label} raw canonical source must remain unchanged after JS normalization`
+    );
+    assert.notStrictEqual(jsInput, pythonInput, `${item.label} runtime inputs must be independent`);
+    const python = runPython({ mode: "normalize", blocks: [pythonInput] });
     assert.equal(python.ok, true, `${item.label} Python normalization`);
     const pythonBlock = python.normalized[0];
     const hasTopLevel = Object.prototype.hasOwnProperty.call(normalized, "outlineLevel");
@@ -518,25 +571,39 @@ test("outline normalization preserves source priority and value semantics", () =
     assert.deepEqual(pythonBlock, normalized, `${item.label} cross-runtime normalized block`);
   }
   for (const [value, expected] of [[0, 0], [10, 0], ...Array.from({ length: 9 }, (_, i) => [i + 1, i + 1])]) {
-    const normalized = helpers.normalizeDeterministicFormatReviewBlock({
+    const rawCanonical = {
       blockId: `outline-value-${value}`,
       blockType: "heading",
+      paragraphIndex: 0,
       headingLevel: value,
       text: `级别${value}`,
       format: {}
-    });
+    };
+    const rawBefore = cloneRaw(rawCanonical);
+    const jsInput = cloneRaw(rawCanonical);
+    const pythonInput = cloneRaw(rawCanonical);
+    const normalized = helpers.normalizeDeterministicFormatReviewBlock(jsInput);
+    const python = runPython({ mode: "normalize", blocks: [pythonInput] });
+    assert.equal(python.ok, true, `value ${value} Python normalization`);
+    assert.deepEqual(python.normalized[0], normalized, `value ${value} cross-runtime normalization`);
+    assert.deepEqual(rawCanonical, rawBefore, `value ${value} raw input isolation`);
     assert.equal(normalized.outlineLevel, expected, `value ${value}`);
     assert.equal(normalized.format.outlineLevel, expected, `format value ${value}`);
   }
 });
 
 test("outline compatibility fallbacks survive the full snapshot protocol", () => {
-  for (const [label, body] of compatibilityProtocolFixtures()) {
-    const python = runPython({ mode: "protocol", firstBody: body, secondBody: body });
+  for (const [label, fixture] of compatibilityProtocolFixtures()) {
+    const { jsBody, pythonFirstBody, pythonSecondBody } = compatibilityProtocolViews(label, fixture);
+    const python = runPython({
+      mode: "protocol",
+      firstBody: pythonFirstBody,
+      secondBody: pythonSecondBody
+    });
     assert.equal(python.status, "committed", `${label} commit`);
     assert.equal(python.jobStatus, "completed", `${label} job start`);
     assert.ok(python.reviewerCalls >= 1, `${label} reviewer invocation`);
-    assert.deepEqual(python.coverage, body.coverage, `${label} protocol coverage`);
+    assert.deepEqual(python.coverage, jsBody.coverage, `${label} protocol coverage`);
   }
 });
 
