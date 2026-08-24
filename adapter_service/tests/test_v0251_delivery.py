@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 import tarfile
@@ -81,6 +82,58 @@ def test_v0251_policy_ships_issue_59_target_acceptance_record():
     assert "410 WORD_FORMAT_REVIEW_SYNC_RETIRED" in delivery
     assert "word.format_review.snapshot.v2" in delivery
     assert "分别执行同步和后台格式审查" not in delivery
+
+
+def test_v0251_delivery_rejects_contradictory_sync_backend_result_claims():
+    delivery = (ROOT / "packaging/v0251-delivery.md").read_text(encoding="utf-8")
+
+    forbidden = (
+        "同步/后台入口结果一致",
+        "同步和后台入口结果一致",
+        "同步与后台入口结果一致",
+        "同步和后台格式审查结果一致",
+    )
+    for phrase in forbidden:
+        assert phrase not in delivery
+    assert re.search(
+        r"同步\s*(?:/|和|与|、)\s*后台(?:入口|格式审查)?\s*结果一致",
+        delivery,
+    ) is None
+
+
+def test_v0251_delivery_separates_sync_retirement_from_v2_hash_acceptance():
+    delivery = (ROOT / "packaging/v0251-delivery.md").read_text(encoding="utf-8")
+
+    sync_boundary = (
+        "退役同步路由 `POST /word/format-review` 固定返回 "
+        "`410 WORD_FORMAT_REVIEW_SYNC_RETIRED` 且不执行审查"
+    )
+    v2_boundary = (
+        "结构/格式哈希、OutlineLevel 和格式事实验收只通过 "
+        "`word.format_review.snapshot.v2` 的 snapshot/batch/job v2 后台路径执行"
+    )
+    lifecycle_boundary = (
+        "独立验证 `word.format_review.snapshot.v2` 的 snapshot/batch/job "
+        "取消、失败和重启生命周期"
+    )
+    assert sync_boundary in delivery
+    assert v2_boundary in delivery
+    assert lifecycle_boundary in delivery
+    assert sync_boundary not in v2_boundary
+    assert "/word/format-review/snapshots" not in sync_boundary
+
+
+def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_context():
+    handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
+
+    validation = handoff.split("## 6. 验证状态", 1)[1].split("## 7. 目标机验证建议", 1)[0]
+    rejected_line = next(
+        line
+        for line in validation.splitlines()
+        if line.startswith("`v0.25.1-alpha` 已将")
+    )
+    assert "20260824-ccad09f" in rejected_line
+    assert "rejected" in rejected_line
 
 
 def test_v0251_handoff_keeps_latest_rejected_candidate_as_previous_archive():
