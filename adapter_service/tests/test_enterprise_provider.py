@@ -17,7 +17,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from app.core.config import AppSettings, load_settings, save_provider_base_url, save_task_api_key_ref, task_routes_to_dict
-from app.core.errors import ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
+from app.core.errors import AdapterError, ProviderAuthError, ProviderTimeoutError, ProviderUnavailableError
 from app.core.models import ExcelAnalysisRequest, PptSlideAssistantRequest, WordDocumentRequest
 from app.services import provider_client
 from app.services.provider_client import (
@@ -2616,6 +2616,25 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(result, "这是最终输出。")
         self.assertNotIn("think", result.lower())
         self.assertNotIn("深度思考", result)
+
+    def test_extract_answer_classifies_think_only_as_missing_final_content(self) -> None:
+        bodies = (
+            {"answer": "<think>只有闭合推理过程</think>"},
+            {"answer": "<think>只有未闭合推理过程"},
+            {"data": {"outputs": {"result": "<think>输出推理未闭合"}}},
+            {"data": {"answer": "<think>数据推理未闭合"}},
+        )
+        for body in bodies:
+            with self.subTest(body=body):
+                with self.assertRaises(AdapterError) as raised:
+                    extract_answer(body)
+                self.assertEqual(
+                    raised.exception.code, "MODEL_FINAL_CONTENT_MISSING"
+                )
+                self.assertEqual(
+                    raised.exception.message,
+                    "模型未返回最终结果，请检查模型推理模式和输出配置。",
+                )
 
     def test_extract_answer_reads_workflow_outputs(self) -> None:
         body = {

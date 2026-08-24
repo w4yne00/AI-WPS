@@ -35,6 +35,8 @@ Adapter 继续兼容旧版 `inputs.query` 和新版顶层 `query/files` 输入�
 
 Adapter 将对应任务的版本化 System Prompt 与用户输入分别放入 `system`、`user` 消息。八类 System Prompt 位于 `adapter_service/system_prompts/`，启动和交付构建会按清单哈希校验。
 
+“最大输出 Token”保持选填。格式审查在字段留空时只按精确模型标识查询随版本离线交付的能力表；当前登记 `deepseek-v4-flash`、`deepseek-v4-pro` 和 `glm-5.2`，实际格式语义调用仍受 `4096` Token 任务上限约束。模型标识无法精确匹配时，确定性格式审查继续执行，但模型语义补充要求管理员显式填写该字段。
+
 ## 新建与验证
 
 1. 打开当前宿主的“设置”。
@@ -44,6 +46,8 @@ Adapter 将对应任务的版本化 System Prompt 与用户输入分别放入 `s
 5. 完整配置可设为当前，并可在“高级配置”中执行一次验证调用。
 
 验证调用会真实访问模型后台。失败只记录到当前配置，不会自动切换或重放到其他配置。
+
+模型直连返回空最终正文时，高级诊断只记录 `finish_reason`、`content` 类型、是否存在推理字段和 Token 用量，不记录正文或推理内容。`MODEL_FINAL_CONTENT_TOKEN_LIMIT` 表示输出预算耗尽后仍无最终正文；`MODEL_FINAL_CONTENT_FILTERED` 表示最终结果被模型内容策略过滤；其它空结果继续使用 `MODEL_FINAL_CONTENT_MISSING`。
 
 对 `word.format_review`，工作流平台验证四类 `format_semantics.v1` 操作；模型直连验证生产格式语义契约的 `classify_role` 操作。验证请求只包含合成候选和快照绑定，不包含用户文档或密钥正文。验证接口返回当前配置的名称、ID、修订号、是否为当前配置以及当前配置 ID；未激活的成功配置会明确显示“当前任务不会使用此配置”。
 
@@ -58,6 +62,8 @@ Adapter 将对应任务的版本化 System Prompt 与用户输入分别放入 `s
 ## 旧配置迁移
 
 首次启动 `v0.23.0-alpha` 时，原工作流档案会原位迁移为 `workflow_platform` 模型配置，复用原密钥引用，不移动、不覆盖、不删除密钥文件。旧 `/provider/workflow-profiles` API 保留一个版本作为兼容包装，新前端使用 `/provider/model-configurations`。
+
+迁移成功后会保存版本化完成标记，旧字段只保留用于兼容诊断和升级前整体快照恢复，不再参与新运行时补写。迁移模型配置删除后，Adapter 重启和再次覆盖安装均不得让它重新出现；主动恢复升级前整体快照时，旧配置随整份旧状态恢复。
 
 运行时不再从统一 URL 或统一 Key 回退。迁移后的配置必须具有服务地址和 Key 才能激活；不完整配置保留在设置页，便于用户补齐。
 

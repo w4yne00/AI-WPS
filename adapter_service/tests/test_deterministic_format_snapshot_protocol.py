@@ -153,6 +153,30 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         )})
         return self.service.upload_batch(session["snapshotId"], 0, payload), metrics
 
+    def test_legacy_frontend_batch_block_span_is_ignored(self):
+        session = self._session()
+        normalized = self.service._normalize_format_blocks(self._blocks())
+        metrics = self.service._format_metrics(normalized)
+        payload = {
+            "uploadToken": session["uploadToken"],
+            "batchId": "format-batch-0",
+            "blocks": normalized,
+            "editSequence": "5",
+            "range": {
+                "start": normalized[0]["blockId"],
+                "end": normalized[-1]["blockId"],
+            },
+        }
+        payload.update({key: metrics[key] for key in (
+            "characterCount", "contentSha256", "structureSha256", "formatSha256"
+        )})
+
+        uploaded = self.service.upload_batch(session["snapshotId"], 0, payload)
+
+        self.assertEqual(uploaded["status"], "uploaded")
+        stored = self.service._load_snapshot(session["snapshotId"])
+        self.assertNotIn("range", stored["batches"][0])
+
     def _commit(self, session, metrics, verification=None):
         expected_verification = verification or {
             "batchCount": 1,
@@ -969,6 +993,40 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         blocks[0]["rows"][0]["cells"][0]["rowSpan"] = 2
         structure_changed = self.service._format_metrics(blocks)
         self.assertNotEqual(format_changed["structureSha256"], structure_changed["structureSha256"])
+
+    def test_unavailable_wps_range_indices_do_not_abort_format_review(self):
+        blocks = self.service._normalize_format_blocks([{
+            "blockId": "format-paragraph-unavailable-range",
+            "blockType": "paragraph",
+            "scope": "in_scope",
+            "paragraphIndex": 1,
+            "text": "正文",
+            "range": {
+                "paragraphIndex": 1,
+                "start": None,
+                "end": None,
+                "pageNumber": None,
+                "sectionIndex": None,
+            },
+            "format": {"styleName": "Normal", "dataStatus": "verified"},
+        }])
+
+        self.assertEqual(blocks[0]["range"], {"paragraphIndex": 1})
+
+    def test_malformed_wps_range_values_remain_rejected(self):
+        for value in (
+            {"start": -1},
+            {"end": "3"},
+            {"pageNumber": True},
+            {"area": 4},
+        ):
+            with self.subTest(value=value):
+                with self.assertRaises(AdapterError) as context:
+                    self.service._normalize_range(value)
+                self.assertEqual(
+                    context.exception.code,
+                    "DETERMINISTIC_FORMAT_REVIEW_RANGE_INVALID",
+                )
 
     def test_format_metrics_count_segments_cells_and_unsupported_objects(self):
         blocks = self.service._normalize_format_blocks([{

@@ -27,7 +27,118 @@
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-4ff1862-v0251.tar.gz.sha256",
       "archiveSha256": "308c5d175de10ab12b42c4048c180a71dfd9e0a32ac42a6ff1dc2ddaede56346",
       "sourceCommit": "4ff1862",
-      "status": "candidate"
+      "status": "rejected",
+      "recordedAt": "20260822",
+      "reason": "superseded after fixing the format review image collector helper scope failure"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-afc5470",
+      "archiveName": "ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-afc5470-v0251.tar.gz.sha256",
+      "archiveSha256": "94de34505f980a4470408dff3748c851fb194c6f407ffe26bf6803f972b41930",
+      "sourceCommit": "afc5470",
+      "status": "rejected",
+      "recordedAt": "20260822",
+      "reason": "rejected after unavailable WPS range sentinels serialized as null indices and aborted format review before model invocation"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-385a251",
+      "archiveName": "ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-385a251-v0251.tar.gz.sha256",
+      "archiveSha256": "01d9f16b043ddc287b53bf76903ac601731f8dcfa6e21a567a428bb8944d994f",
+      "sourceCommit": "385a251",
+      "status": "rejected",
+      "recordedAt": "20260822",
+      "reason": "rejected after direct-model format semantics returned undeclared fields and validation fell back to deterministic rules"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735",
+      "archiveName": "ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz.sha256",
+      "archiveSha256": "70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06",
+      "sourceCommit": "e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735",
+      "status": "rejected",
+      "recordedAt": "20260822",
+      "reason": "rejected after deterministic format-review batches still sent block-id ranges as numeric source indices, direct format semantics required an explicit output limit, PPT reasoning-only responses lacked actionable diagnostics, legacy workflow profiles were re-imported after deletion, and the manifest recorded a full source commit that is absent from the source repository despite sharing the same seven-character prefix as HEAD"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-ccad09fb1d8019da3a40f14610ab3bd75de1ec23",
+      "archiveName": "ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz.sha256",
+      "archiveSha256": "2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02",
+      "sourceCommit": "ccad09fb1d8019da3a40f14610ab3bd75de1ec23",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected after cross-runtime word.format_review.snapshot.v2 JS/Python hash contract drift: structure and format projections were not identical after trust-boundary normalization; repair continues in v0.25.1-alpha source and a new candidate must be built separately"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+      "archiveName": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+      "archiveSha256": "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e",
+      "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: package delivery note was stale (包内交付说明过期) and missing outline facts were serialized as null (缺失大纲事实被写为 null); repair continues and a new candidate must be rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+      "archiveName": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
+      "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+      "archiveSha256": "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: real JS coverage differs from Adapter recomputation and commit returns DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH before job start; repair source is not yet a candidate until a new package is built"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
+      "archiveName": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256",
+      "sourceCommit": "799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
+      "archiveSha256": "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: packaged target acceptance document claimed no current candidate despite manifest/status identifying 799adf9; repair source is not yet a candidate until a new package is built"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655",
+      "archiveName": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256",
+      "sourceCommit": "afe109c27bf6bc9e663a0c107ccfd70876f95655",
+      "archiveSha256": "e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: v0.25.1 target-acceptance audit/test did not fail closed when mandatory acceptance row 8 or 9 was missing; archive is frozen and no active candidate remains until rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+      "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
+      "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+      "archiveSha256": "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
+      "archiveName": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256",
+      "sourceCommit": "10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
+      "archiveSha256": "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: packaged target acceptance document contained contradictory current-candidate and no-current-candidate narratives plus duplicate previous rejected lines; archive is frozen and no active candidate remains until rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0",
+      "archiveName": "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz.sha256",
+      "sourceCommit": "d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0",
+      "archiveSha256": "ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6",
+      "status": "candidate",
+      "recordedAt": "20260824"
     }
   ]
 }

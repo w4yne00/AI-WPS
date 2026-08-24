@@ -15,7 +15,13 @@ from typing import Dict, List, Optional, Tuple
 from urllib.request import urlopen
 
 
-SCENARIOS = ["fresh_install", "upgrade_v022", "upgrade_v0231", "damaged_v0230"]
+SCENARIOS = [
+    "fresh_install",
+    "upgrade_v022",
+    "upgrade_v0231",
+    "damaged_v0230",
+    "deleted_workflow_profile_overwrite",
+]
 FAULTS = [
     "python_import_failure",
     "candidate_start_failure",
@@ -485,6 +491,69 @@ def run_v0231_upgrade_scenario(
     print("lifecycle_scenario=upgrade_baseline version={0} passed".format(baseline_version))
 
 
+def run_deleted_workflow_profile_overwrite_scenario(
+    delivery_root: Path,
+    temp_root: Path,
+    expected_version: str,
+    reserve_port,
+) -> None:
+    root = temp_root / "deleted-workflow-profile-overwrite"
+    state_root = root / "install/state"
+    key_root = state_root / "provider_api_keys"
+    key_root.mkdir(parents=True)
+    deleted_id = "legacy-deleted-workflow"
+    (state_root / "adapter.json").write_text(
+        json.dumps(
+            {
+                "providerBaseUrl": "https://workflow.example/v1",
+                "workflowProfiles": {
+                    deleted_id: {
+                        "id": deleted_id,
+                        "taskType": "word.smart_write",
+                        "name": "已删除旧工作流",
+                        "apiKeyRef": "deleted-workflow-key",
+                    }
+                },
+                "activeWorkflowProfiles": {
+                    "word.smart_write": deleted_id,
+                },
+                "modelConfigurations": {},
+                "activeModelConfigurations": {},
+                "migrationState": {
+                    "workflowProfilesImported": True,
+                    "workflowProfilesVersion": 1,
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    result, environment = run_installer(
+        delivery_root, root, reserve_port()
+    )
+    try:
+        require(result.returncode == 0, "DELETED_WORKFLOW_OVERWRITE_FAILED")
+        verify_committed_install(root, expected_version)
+        persisted = json.loads(
+            (state_root / "adapter.json").read_text(encoding="utf-8")
+        )
+        require(
+            persisted.get("migrationState", {}).get("workflowProfilesVersion") == 1,
+            "WORKFLOW_MIGRATION_MARKER_LOST_ON_OVERWRITE",
+        )
+        require(
+            deleted_id not in persisted.get("modelConfigurations", {}),
+            "DELETED_WORKFLOW_PROFILE_REAPPEARED_ON_OVERWRITE",
+        )
+        require(
+            not (key_root / "deleted-workflow-key").exists(),
+            "DELETED_WORKFLOW_KEY_REAPPEARED_ON_OVERWRITE",
+        )
+    finally:
+        stop_installed_adapter(root, environment)
+    print("lifecycle_scenario=deleted_workflow_profile_overwrite passed")
+
+
 def run_preflight_faults(
     delivery_root: Path, temp_root: Path, reserve_port, expected_version: str
 ) -> None:
@@ -780,6 +849,12 @@ def run_gate(
         )
         run_install_scenarios(
             delivery_root, temp_root / "install-scenarios", expected_version, runtime_gate.reserve_port
+        )
+        run_deleted_workflow_profile_overwrite_scenario(
+            delivery_root,
+            temp_root / "install-scenarios",
+            expected_version,
+            runtime_gate.reserve_port,
         )
         run_preflight_faults(
             delivery_root,

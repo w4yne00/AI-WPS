@@ -4,6 +4,7 @@ The deterministic formatter owns compliance decisions.  This module only
 defines the small, auditable contract that a model may supplement.
 """
 
+import hashlib
 import json
 import re
 import time
@@ -24,8 +25,35 @@ WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS = 2048
 MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS = 4096
 MAX_FORMAT_SEMANTIC_CALLS = 16
 MAX_FORMAT_SEMANTIC_SUGGESTION_LENGTH = 80
+FORMAT_MODEL_CAPABILITY_TABLE_VERSION = "2026-08-22"
+FORMAT_MODEL_CAPABILITY_TABLE = {
+    "deepseek-v4-flash": {
+        "maxOutputTokens": 384000,
+        "sourceDate": "2026-08-22",
+        "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
+    "deepseek-v4-pro": {
+        "maxOutputTokens": 384000,
+        "sourceDate": "2026-08-22",
+        "sourceUrl": "https://api-docs.deepseek.com/quick_start/pricing",
+    },
+    "glm-5.2": {
+        "maxOutputTokens": 131072,
+        "sourceDate": "2026-08-22",
+        "sourceUrl": "https://docs.bigmodel.cn/cn/guide/start/concept-param",
+    },
+}
+FORMAT_MODEL_CAPABILITY_TABLE_SHA256 = hashlib.sha256(
+    json.dumps(
+        FORMAT_MODEL_CAPABILITY_TABLE,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+).hexdigest()
 _MARKDOWN_PREFIX = re.compile(r"(^|\s)([#>*`]|[-+]\s|\d+[.)]\s)")
 _CAPTION_PREFIX = re.compile(r"^(?:图|表)\s*[0-9０-９一二三四五六七八九十]+(?:[：:.、\s]|$)")
+_SAFE_FIELD_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_-]{0,63}$")
 _EVIDENCE_NUMBER = re.compile(r"(?<![\w])\d+(?:[.,]\d+)*(?:%|％)?")
 _EVIDENCE_CJK_NUMBER = re.compile(
     r"[零〇一二三四五六七八九十百千万亿]+(?:年|月|日|季度|期|人|家|项|类|个|%)"
@@ -40,6 +68,20 @@ _PROTECTED_EVIDENCE_PATTERNS = (
 
 def _error(code: str, message: str, status_code: int = 409) -> AdapterError:
     return AdapterError(code, message, status_code=status_code)
+
+
+def resolve_format_model_capability(model_name: str) -> Optional[Dict]:
+    entry = FORMAT_MODEL_CAPABILITY_TABLE.get(str(model_name or "").strip())
+    if not isinstance(entry, dict):
+        return None
+    return {
+        "modelName": str(model_name).strip(),
+        "maxOutputTokens": int(entry["maxOutputTokens"]),
+        "sourceDate": str(entry["sourceDate"]),
+        "sourceUrl": str(entry["sourceUrl"]),
+        "tableVersion": FORMAT_MODEL_CAPABILITY_TABLE_VERSION,
+        "tableSha256": FORMAT_MODEL_CAPABILITY_TABLE_SHA256,
+    }
 
 
 class FormatSemanticContract:
@@ -74,6 +116,11 @@ class FormatSemanticContract:
             return WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS
         configured = (task_auth or {}).get("maxOutputTokens")
         if configured is None:
+            capability = resolve_format_model_capability(
+                str((task_auth or {}).get("modelName", ""))
+            )
+            configured = capability.get("maxOutputTokens") if capability else None
+        if configured is None:
             return 0
         try:
             configured = int(configured)
@@ -100,6 +147,128 @@ class FormatSemanticContract:
         if operation == "associate_caption":
             return {"blockId", "targetBlockId", "status", "confidence"}
         return {"blockId", "suggestion", "status"}
+
+    @staticmethod
+    def _safe_field_list(fields: Any) -> str:
+        safe = sorted(
+            str(field)
+            for field in fields
+            if isinstance(field, str) and _SAFE_FIELD_NAME.fullmatch(field)
+        )
+        if not safe:
+            return "无法显示的字段名"
+        suffix = "等" if len(safe) > 5 else ""
+        return "、".join(safe[:5]) + suffix
+
+    @classmethod
+    def response_json_schema(cls, operation: str) -> Dict:
+        """Return the strict model-facing schema for one semantic operation."""
+        if not cls.is_allowed_operation(operation):
+            raise _error("FORMAT_SEMANTIC_OPERATION_NOT_ALLOWED", "格式语义操作不在白名单内。")
+        binding_schema = {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["contentSha256", "structureSha256", "formatSha256"],
+            "properties": {
+                "contentSha256": {"type": "string"},
+                "structureSha256": {"type": "string"},
+                "formatSha256": {"type": "string"},
+            },
+        }
+        if operation == "classify_role":
+            nullable_level = {
+                "anyOf": [
+                    {"type": "integer", "minimum": 1, "maximum": 9},
+                    {"type": "null"},
+                ]
+            }
+            nullable_boolean = {
+                "anyOf": [{"type": "boolean"}, {"type": "null"}]
+            }
+            item_properties = {
+                "blockId": {"type": "string", "minLength": 1, "maxLength": 128},
+                "role": {
+                    "type": "string",
+                    "enum": [
+                        "document_title", "heading", "body", "list_item", "note",
+                        "caption", "toc_title", "toc_entry", "appendix_title",
+                        "appendix_heading", "formula", "table_body", "unknown",
+                    ],
+                },
+                "level": nullable_level,
+                "headingLevel": nullable_level,
+                "ordered": nullable_boolean,
+                "numbered": nullable_boolean,
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                "attributes": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["level", "ordered", "numbered"],
+                    "properties": {
+                        "level": nullable_level,
+                        "ordered": nullable_boolean,
+                        "numbered": nullable_boolean,
+                    },
+                },
+            }
+            required = list(item_properties.keys())
+        elif operation == "associate_caption":
+            item_properties = {
+                "blockId": {"type": "string", "minLength": 1, "maxLength": 128},
+                "targetBlockId": {"type": "string", "maxLength": 128},
+                "status": {
+                    "type": "string",
+                    "enum": ["associated", "ambiguous", "unmatched"],
+                },
+                "confidence": {
+                    "anyOf": [
+                        {"type": "number", "minimum": 0, "maximum": 1},
+                        {"type": "null"},
+                    ]
+                },
+            }
+            required = list(item_properties.keys())
+        else:
+            item_properties = {
+                "blockId": {"type": "string", "minLength": 1, "maxLength": 128},
+                "suggestion": {
+                    "type": "string",
+                    "maxLength": MAX_FORMAT_SEMANTIC_SUGGESTION_LENGTH,
+                },
+                "status": {
+                    "anyOf": [
+                        {
+                            "type": "string",
+                            "enum": [
+                                "suggested", "text_evidence_only", "pixel_inspected",
+                                "not_assessable",
+                            ],
+                        },
+                        {"type": "null"},
+                    ],
+                },
+            }
+            required = list(item_properties.keys())
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "required": ["schemaVersion", "operation", "snapshotBinding", "items"],
+            "properties": {
+                "schemaVersion": {"type": "string", "const": FORMAT_SEMANTIC_SCHEMA_VERSION},
+                "operation": {"type": "string", "const": operation},
+                "snapshotBinding": binding_schema,
+                "items": {
+                    "type": "array",
+                    "maxItems": 512,
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": False,
+                        "required": required,
+                        "properties": item_properties,
+                    },
+                },
+            },
+        }
 
     @staticmethod
     def _as_bounded_confidence(value: Any) -> float:
@@ -257,8 +426,14 @@ class FormatSemanticContract:
         if not isinstance(payload, dict):
             raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义响应必须是 JSON 对象。")
         allowed_payload_keys = {"schemaVersion", "operation", "snapshotBinding", "items"}
-        if set(payload) - allowed_payload_keys:
-            raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义响应包含未声明字段。")
+        unexpected_payload_keys = set(payload) - allowed_payload_keys
+        if unexpected_payload_keys:
+            raise _error(
+                "FORMAT_SEMANTIC_RESPONSE_INVALID",
+                "模型返回了协议未定义的顶层字段：{0}。".format(
+                    cls._safe_field_list(unexpected_payload_keys)
+                ),
+            )
         if payload.get("schemaVersion") != FORMAT_SEMANTIC_SCHEMA_VERSION:
             raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义响应版本不受支持。")
         if payload.get("operation") != operation:
@@ -271,12 +446,33 @@ class FormatSemanticContract:
             raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义响应条目数量无效。")
         normalized = []
         seen = set()
-        for item in items:
+        for item_index, item in enumerate(items):
             if not isinstance(item, dict):
                 raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义响应条目格式无效。")
+            item = dict(item)
+            for optional_key in (
+                "level", "headingLevel", "ordered", "numbered", "confidence", "status"
+            ):
+                if item.get(optional_key) is None:
+                    item.pop(optional_key, None)
+            if isinstance(item.get("attributes"), dict):
+                item["attributes"] = {
+                    key: value
+                    for key, value in item["attributes"].items()
+                    if value is not None
+                }
             allowed_item_keys = cls._allowed_item_keys(operation)
-            if set(item) - allowed_item_keys:
-                raise _error("FORMAT_SEMANTIC_RESPONSE_INVALID", "格式语义条目包含未声明字段。")
+            unexpected_item_keys = set(item) - allowed_item_keys
+            if unexpected_item_keys:
+                raise _error(
+                    "FORMAT_SEMANTIC_RESPONSE_INVALID",
+                    "模型返回了协议未定义的字段：{0}。".format(
+                        "、".join(
+                            "items[{0}].{1}".format(item_index, name)
+                            for name in cls._safe_field_list(unexpected_item_keys).split("、")
+                        )
+                    ),
+                )
             block_id = str(item.get("blockId", "")).strip()
             if not block_id or block_id in seen or block_id not in candidates:
                 raise _error("FORMAT_SEMANTIC_CANDIDATE_OUT_OF_RANGE", "格式语义响应引用了未请求的候选。")

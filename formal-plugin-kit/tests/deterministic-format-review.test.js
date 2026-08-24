@@ -1,5 +1,6 @@
 const assert = require("assert");
 const fs = require("fs");
+const vm = require("vm");
 
 const root = "formal-plugin-kit/wps-ai-assistant_1.0.0";
 const html = fs.readFileSync(`${root}/taskpane.html`, "utf8");
@@ -80,6 +81,33 @@ assert.ok(!primary.includes("runFormatReview();"));
 assert.ok(js.includes("saveDeterministicFormatReviewActiveJob"));
 assert.ok(js.includes("resumeDeterministicFormatReviewActiveJob"));
 assert.ok(js.includes("DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY"));
+
+const collectImages = vm.runInNewContext(
+  `(${functionSource("collectDeterministicFormatReviewImages")})`,
+  {
+    helpers,
+    readValue(target, key) {
+      return target && typeof target === "object" ? target[key] : undefined;
+    }
+  }
+);
+assert.doesNotThrow(
+  () => collectImages({}, []),
+  /firstDefined is not defined/
+);
+const collectedImages = collectImages({
+  InlineShapes: [{
+    Id: "image-1",
+    Type: 13,
+    ParagraphIndex: 1,
+    AlternativeText: "总体架构示意图"
+  }],
+  Shapes: []
+}, [{ index: 1, text: "图 1：总体架构" }]);
+assert.strictEqual(collectedImages.facts.length, 1);
+assert.strictEqual(collectedImages.facts[0].captionStatus, "present");
+assert.strictEqual(collectedImages.facts[0].altText, "总体架构示意图");
+assert.ok(collectedImages.objects[collectedImages.facts[0].imageId]);
 
 const readable = helpers.renderReadableDeterministicFormatReview({
   summary: {
@@ -188,6 +216,30 @@ const pageUnavailableParagraphs = helpers.collectParagraphs({
 });
 assert.ok(!Object.prototype.hasOwnProperty.call(pageUnavailableParagraphs[0].range, "pageNumber"));
 assert.ok(!Object.prototype.hasOwnProperty.call(pageUnavailableParagraphs[0].range, "sectionIndex"));
+
+const nonFiniteRangeParagraphs = helpers.collectParagraphs({
+  Paragraphs: {
+    Count: 1,
+    Item: function () {
+      return {
+        Text: "WPS 返回不可用位置哨兵的正文",
+        Range: {
+          Text: "WPS 返回不可用位置哨兵的正文",
+          Start: Infinity,
+          End: Infinity,
+          Information: function () { return Infinity; }
+        },
+        StyleNameLocal: "Normal",
+        Font: { NameFarEast: "宋体", Size: 12 },
+        ParagraphFormat: { OutlineLevel: 0 }
+      };
+    }
+  }
+});
+assert.deepStrictEqual(
+  JSON.parse(JSON.stringify(nonFiniteRangeParagraphs[0].range)),
+  { paragraphIndex: 1 }
+);
 
 const preparation = functionSource("ensureDeterministicFormatReviewPreparation");
 assert.ok(preparation.includes("检测到文档编辑或文档身份变化"));
@@ -338,6 +390,7 @@ assert.ok(diagnosticLines.join("\n").includes("15 pt → 300 twip"));
 assert.ok(diagnosticLines.join("\n").includes("mixed 1"));
 const batches = helpers.buildDeterministicFormatReviewBatches(body, 1);
 assert.ok(batches.length >= 2);
+assert.ok(!Object.prototype.hasOwnProperty.call(batches[0], "range"));
 assert.strictEqual(batches[0].characterCount, batches[0].blocks
   .filter((block) => block.scope === "in_scope")
   .reduce((sum, block) => sum + String(block.text || "").length, 0));

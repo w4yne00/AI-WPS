@@ -1,9 +1,11 @@
 import json
 import unittest
 from http.client import IncompleteRead
+from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from app.core.config import AppSettings
 from app.core.errors import AdapterError
@@ -186,6 +188,56 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertEqual(payload["max_tokens"], 4096)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_format_semantics_resolves_known_model_output_capability(self, urlopen) -> None:
+        urlopen.return_value = FakeResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "stop",
+                        "message": {
+                            "content": '{"schemaVersion":"format_semantics.v1","operation":"classify_role","snapshotBinding":{},"items":[]}'
+                        },
+                    }
+                ]
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(config_path, root / "provider_api_keys")
+            configuration = store.create_configuration(
+                "word.format_review",
+                "能力表直连",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="deepseek-v4-flash",
+                max_output_tokens=None,
+                context_window_tokens=40000,
+            )
+            store.replace_api_key(configuration["id"], "format-secret")
+            store.activate_configuration(configuration["id"])
+            client = ProviderClient(
+                AppSettings(timeout_seconds=75), model_configuration_store=store
+            )
+            client.format_semantics(
+                "classify_role",
+                "trace-format-capability",
+                {"candidate_json": "{}"},
+                "只返回 JSON。",
+                task_auth=client.resolve_task_auth("word.format_review"),
+            )
+
+        payload = json.loads(urlopen.call_args.args[0].data.decode("utf-8"))
+        self.assertEqual(payload["max_tokens"], 4096)
+        debug = get_last_provider_debug()
+        capability = debug["validation"]["modelCapability"]
+        self.assertEqual(capability["modelName"], "deepseek-v4-flash")
+        self.assertEqual(capability["maxOutputTokens"], 384000)
+        self.assertEqual(capability["tableVersion"], "2026-08-22")
+        self.assertRegex(capability["tableSha256"], r"^[0-9a-f]{64}$")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
     def test_workflow_format_semantics_uses_fixed_inputs_and_result_json(self, urlopen) -> None:
         urlopen.return_value = FakeResponse(
             {
@@ -344,7 +396,34 @@ class DirectModelProviderTests(unittest.TestCase):
         user_content = payload["messages"][1]["content"]
         self.assertEqual(request.full_url, "https://format-model.example/v1/chat/completions")
         self.assertEqual(payload["model"], "format-role-model")
+        self.assertEqual(payload["response_format"]["type"], "json_schema")
+        self.assertTrue(payload["response_format"]["json_schema"]["strict"])
+        semantic_schema = payload["response_format"]["json_schema"]["schema"]
+        self.assertFalse(semantic_schema["additionalProperties"])
+        self.assertEqual(
+            semantic_schema["properties"]["schemaVersion"]["const"],
+            "format_semantics.v1",
+        )
+        self.assertEqual(
+            semantic_schema["properties"]["operation"]["const"],
+            "classify_role",
+        )
+        self.assertEqual(
+            set(semantic_schema["required"]),
+            set(semantic_schema["properties"]),
+        )
+        role_item_schema = semantic_schema["properties"]["items"]["items"]
+        self.assertEqual(
+            set(role_item_schema["required"]),
+            set(role_item_schema["properties"]),
+        )
+        attributes_schema = role_item_schema["properties"]["attributes"]
+        self.assertEqual(
+            set(attributes_schema["required"]),
+            set(attributes_schema["properties"]),
+        )
         self.assertIn("format_semantics.v1", user_content)
+        self.assertIn("允许的响应字段", user_content)
         self.assertIn("snapshotBinding", user_content)
         self.assertIn("synthetic-1", user_content)
         self.assertNotIn("项目机密正文", request_text)
@@ -359,6 +438,131 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertFalse(result["isCurrent"])
         self.assertEqual(result["currentConfigurationId"], "")
         self.assertEqual(store.list_for_task("word.format_review")["activeConfigurationId"], "")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_corrects_undeclared_fields_once(self, urlopen) -> None:
+        binding = {
+            "contentSha256": "synthetic-content",
+            "structureSha256": "synthetic-structure",
+            "formatSha256": "synthetic-format",
+        }
+        invalid = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": binding,
+            "items": [{
+                "blockId": "synthetic-1",
+                "role": "heading",
+                "level": 1,
+                "confidence": 0.95,
+            }],
+            "reason": "附加解释",
+        }
+        valid = dict(invalid)
+        valid.pop("reason")
+        urlopen.side_effect = [
+            FakeResponse({"choices": [{"message": {"content": json.dumps(invalid)}}]}),
+            FakeResponse({"choices": [{"message": {"content": json.dumps(valid)}}]}),
+        ]
+
+        with TemporaryDirectory() as tmp:
+            client, _store, configuration_id = self._direct_format_client(Path(tmp))
+            result = client.validate_model_configuration(
+                configuration_id, "trace-direct-format-correction"
+            )
+
+        self.assertTrue(result["formatSemanticValidation"]["success"])
+        self.assertEqual(urlopen.call_count, 2)
+        second_payload = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertIn("纠正要求", second_payload["messages"][1]["content"])
+        self.assertEqual(second_payload["response_format"]["type"], "json_schema")
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_falls_back_when_schema_extension_is_unsupported(
+        self, urlopen
+    ) -> None:
+        valid = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": {
+                "contentSha256": "synthetic-content",
+                "structureSha256": "synthetic-structure",
+                "formatSha256": "synthetic-format",
+            },
+            "items": [{
+                "blockId": "synthetic-1",
+                "role": "heading",
+                "level": 1,
+                "confidence": 0.95,
+            }],
+        }
+        unsupported = HTTPError(
+            "https://format-model.example/v1/chat/completions",
+            400,
+            "Bad Request",
+            {},
+            BytesIO(b'{"error":{"message":"response_format json_schema is not supported"}}'),
+        )
+        urlopen.side_effect = [
+            unsupported,
+            FakeResponse({
+                "choices": [{"message": {"content": json.dumps(valid)}}]
+            }),
+        ]
+
+        with TemporaryDirectory() as tmp:
+            client, _store, configuration_id = self._direct_format_client(Path(tmp))
+            result = client.validate_model_configuration(
+                configuration_id, "trace-direct-format-schema-fallback"
+            )
+
+        self.assertTrue(result["formatSemanticValidation"]["success"])
+        self.assertEqual(urlopen.call_count, 2)
+        first_payload = json.loads(urlopen.call_args_list[0].args[0].data.decode("utf-8"))
+        second_payload = json.loads(urlopen.call_args_list[1].args[0].data.decode("utf-8"))
+        self.assertIn("response_format", first_payload)
+        self.assertNotIn("response_format", second_payload)
+        self.assertIn("允许的响应字段", second_payload["messages"][1]["content"])
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_reports_field_after_one_failed_correction(
+        self, urlopen
+    ) -> None:
+        invalid = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": {
+                "contentSha256": "synthetic-content",
+                "structureSha256": "synthetic-structure",
+                "formatSha256": "synthetic-format",
+            },
+            "items": [{
+                "blockId": "synthetic-1",
+                "role": "heading",
+                "level": 1,
+                "confidence": 0.95,
+                "analysis": "不得泄露的解释",
+            }],
+        }
+        response = FakeResponse({
+            "choices": [{"message": {"content": json.dumps(invalid, ensure_ascii=False)}}]
+        })
+        urlopen.side_effect = [response, response]
+
+        with TemporaryDirectory() as tmp:
+            client, _store, configuration_id = self._direct_format_client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.validate_model_configuration(
+                    configuration_id, "trace-direct-format-correction-failed"
+                )
+
+        self.assertEqual(urlopen.call_count, 2)
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_RESPONSE_INVALID")
+        self.assertEqual(
+            raised.exception.message,
+            "模型返回了协议未定义的字段：items[0].analysis。",
+        )
+        self.assertNotIn("不得泄露的解释", raised.exception.message)
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_format_validation_rejects_legacy_and_invalid_contract_responses(
@@ -499,8 +703,19 @@ class DirectModelProviderTests(unittest.TestCase):
     def test_direct_request_rejects_reasoning_only_response(self, urlopen) -> None:
         urlopen.return_value = FakeResponse(
             {
+                "usage": {
+                    "prompt_tokens": 120,
+                    "completion_tokens": 1200,
+                    "total_tokens": 1320,
+                },
                 "choices": [
-                    {"message": {"reasoning_content": "只有推理", "content": "<think>思考"}}
+                    {
+                        "finish_reason": "length",
+                        "message": {
+                            "reasoning_content": "只有推理",
+                            "content": "<think>思考",
+                        },
+                    }
                 ]
             }
         )
@@ -508,7 +723,34 @@ class DirectModelProviderTests(unittest.TestCase):
             client = self._client(Path(tmp))
             with self.assertRaises(AdapterError) as raised:
                 client.post_task("word.smart_write", "trace-no-final", {}, "改写")
+        self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_TOKEN_LIMIT")
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["response"]["finishReason"], "length")
+        self.assertEqual(debug["response"]["contentType"], "string")
+        self.assertTrue(debug["response"]["reasoningContentPresent"])
+        self.assertEqual(debug["response"]["usage"]["completionTokens"], 1200)
+        self.assertNotIn("只有推理", json.dumps(debug, ensure_ascii=False))
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_request_redacts_unrecognized_finish_reason(self, urlopen) -> None:
+        urlopen.return_value = FakeResponse(
+            {
+                "choices": [
+                    {
+                        "finish_reason": "secret-fragment\ncontrol",
+                        "message": {"content": None},
+                    }
+                ]
+            }
+        )
+        with TemporaryDirectory() as tmp:
+            client = self._client(Path(tmp))
+            with self.assertRaises(AdapterError) as raised:
+                client.post_task("word.smart_write", "trace-redacted-finish", {}, "改写")
         self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_MISSING")
+        debug = get_last_provider_debug()
+        self.assertEqual(debug["response"]["finishReason"], "other")
+        self.assertNotIn("secret-fragment", json.dumps(debug, ensure_ascii=False))
 
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_request_maps_mid_stream_disconnect_to_retryable_error(

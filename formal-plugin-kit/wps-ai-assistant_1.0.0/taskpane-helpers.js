@@ -268,21 +268,34 @@
       var text = String(paragraph && paragraph.text || "")
         .replace(/[\r\u0007]+$/g, "")
         .trim();
-      var outlineLevel = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
+      var hasOutlineFact = Boolean(paragraph && (
+        (Object.prototype.hasOwnProperty.call(paragraph, "outlineLevel") &&
+          typeof paragraph.outlineLevel !== "undefined") ||
+        (Object.prototype.hasOwnProperty.call(paragraph, "outline_level") &&
+          typeof paragraph.outline_level !== "undefined")
+      ));
+      var outlineLevel = hasOutlineFact
+        ? normalizeWpsOutlineLevel(paragraph.outlineLevel !== undefined
+          ? paragraph.outlineLevel : paragraph.outline_level) : null;
       var paragraphIndex = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || pendingBlocks.length + 1;
       if (!text) {
         return;
       }
       pendingBlocks.push({
         blockId: "paragraph-" + paragraphIndex,
-        blockType: outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
-          (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph")),
+        blockType: !hasOutlineFact ? (paragraph.listLabel ? "listItem" : "paragraph") :
+          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
+            (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))),
         paragraphIndex: paragraphIndex,
-        outlineLevel: outlineLevel,
-        headingLevel: outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         text: text
       });
+      if (hasOutlineFact) {
+        pendingBlocks[pendingBlocks.length - 1].outlineLevel = outlineLevel;
+        if (outlineLevel > 0) {
+          pendingBlocks[pendingBlocks.length - 1].headingLevel = outlineLevel;
+        }
+      }
     });
     (Array.isArray(content.tables) ? content.tables : []).forEach(function (table, index) {
       var tableId = String(table && (table.tableId || table.id) || "table-" + (index + 1));
@@ -367,33 +380,224 @@
   }
 
   function formatReviewBlockTextValues(block) {
-    var values = [];
     if (!block) {
-      return values;
+      return [];
+    }
+    if (block.blockType === "table" || Array.isArray(block.rows) || Array.isArray(block.nestedTables)) {
+      var tableValues = [];
+      (block.rows || []).forEach(function (row) {
+        (row.cells || []).forEach(function (cell) {
+          if (cell.text) {
+            tableValues.push(String(cell.text));
+          }
+        });
+      });
+      (block.nestedTables || []).forEach(function (table) {
+        tableValues = tableValues.concat(formatReviewBlockTextValues(table));
+      });
+      return tableValues.length ? [tableValues.join("\n")] : [];
     }
     if (block.text) {
       return [String(block.text)];
     }
-    (block.rows || []).forEach(function (row) {
-      (row.cells || []).forEach(function (cell) {
-        if (cell.text) {
-          values.push(String(cell.text));
+    return [];
+  }
+
+  function normalizeDeterministicNumber(value) {
+    if (!isFinite(value)) {
+      throw new Error("格式审查数值表示无效。");
+    }
+    if (value === 0) {
+      return 0;
+    }
+    if (String(value).toLowerCase().indexOf("e") >= 0 ||
+        Math.abs(value) < 0.0001 || Math.abs(value) >= 1000000000000000) {
+      throw new Error("格式审查数值表示不受支持。");
+    }
+    return value;
+  }
+
+  function normalizeDeterministicJsonValue(value) {
+    if (typeof value === "number") {
+      return normalizeDeterministicNumber(value);
+    }
+    if (Array.isArray(value)) {
+      return value.map(normalizeDeterministicJsonValue);
+    }
+    if (value && typeof value === "object") {
+      var normalized = {};
+      Object.keys(value).forEach(function (key) {
+        normalized[key] = normalizeDeterministicJsonValue(value[key]);
+      });
+      return normalized;
+    }
+    return value;
+  }
+
+  function normalizeDeterministicIndex(value, fallback) {
+    return normalizeDeterministicNumber(Number(value || fallback));
+  }
+
+  function normalizeDeterministicRangeNumber(value) {
+    return normalizeDeterministicNumber(Number(value));
+  }
+
+  function normalizeDeterministicFormatFacts(value) {
+    var source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    var normalized = {};
+    var allowed = [
+      "styleName", "fontName", "fontSize", "bold", "italic", "underline",
+      "strikeThrough", "superscript", "subscript", "allCaps", "smallCaps",
+      "color", "highlight", "characterSpacing", "characterScale", "alignment",
+      "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent",
+      "rightIndent", "outlineLevel", "segments", "dataStatus", "facts", "formatFacts",
+      "lineSpacingMode"
+    ];
+    allowed.forEach(function (key) {
+      if (typeof source[key] !== "undefined") {
+        normalized[key] = normalizeDeterministicJsonValue(source[key]);
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(normalized, "dataStatus") &&
+        ["verified", "mixed", "unknown", "read_failed", "unsupported", "context_only", "insufficient"]
+          .indexOf(normalized.dataStatus) < 0) {
+      normalized.dataStatus = "insufficient";
+    }
+    if (Array.isArray(normalized.segments)) {
+      normalized.segments = normalized.segments.map(function (segment) {
+        var item = segment && typeof segment === "object" ? segment : {};
+        return {
+          start: normalizeDeterministicIndex(item.start, 0),
+          end: normalizeDeterministicIndex(item.end, 0),
+          format: normalizeDeterministicFormatFacts(item.format || {})
+        };
+      });
+    }
+    if ((!normalized.facts || !Object.keys(normalized.facts).length) &&
+        (!normalized.formatFacts || !Object.keys(normalized.formatFacts).length)) {
+      var derived = buildWpsFormatFacts(source);
+      if (Object.keys(derived).length) {
+        normalized.facts = derived;
+      }
+    }
+    var facts = normalized.facts || normalized.formatFacts || {};
+    ["fontSize", "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent", "rightIndent"]
+      .forEach(function (key) {
+        var fact = facts && facts[key];
+        if (fact && fact.dataStatus === "verified") {
+          normalized[key] = fact.normalizedValue;
+        } else if (fact && Object.prototype.hasOwnProperty.call(source, key)) {
+          normalized[key] = null;
         }
       });
+    if (facts && facts.lineSpacing && facts.lineSpacing.mode) {
+      normalized.lineSpacingMode = facts.lineSpacing.mode;
+    }
+    if (normalized.dataStatus === "insufficient" && source.insufficientReason) {
+      normalized.insufficientReason = String(source.insufficientReason).slice(0, 120);
+    } else {
+      delete normalized.insufficientReason;
+    }
+    return normalizeDeterministicJsonValue(normalized);
+  }
+
+  function normalizeDeterministicImageFacts(value) {
+    return (Array.isArray(value) ? value : []).filter(function (image) {
+      return image && image.imageId;
+    }).map(function (image) {
+      return {
+        imageId: String(image.imageId),
+        groupId: String(image.groupId || image.imageGroupId || image.imageId).slice(0, 160),
+        fingerprint: String(image.fingerprint || image.objectFingerprint || "").slice(0, 256),
+        captionStatus: String(image.captionStatus || image.figureCaptionStatus || "unknown").slice(0, 32),
+        associationStatus: String(image.associationStatus || "missing").slice(0, 32),
+        supported: image.supported !== false && image.supportedType !== false,
+        altText: String(image.altText || image.alternativeText || "").slice(0, 2000),
+        nearbyText: String(image.nearbyText || image.contextText || image.adjacentText || "").slice(0, 4000)
+      };
     });
-    (block.nestedTables || []).forEach(function (table) {
-      values = values.concat(formatReviewBlockTextValues(table));
+  }
+
+  function normalizeDeterministicRange(value) {
+    var source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    var allowed = ["start", "end", "area", "paragraphIndex", "tableId", "cellId",
+      "pageNumber", "pageStart", "pageEnd", "sectionIndex"];
+    var numeric = ["start", "end", "paragraphIndex", "pageNumber", "pageStart", "pageEnd", "sectionIndex"];
+    var normalized = {};
+    Object.keys(source).forEach(function (key) {
+      if (allowed.indexOf(key) < 0 || source[key] === null || typeof source[key] === "undefined") {
+        if (allowed.indexOf(key) < 0) {
+          throw new Error("格式审查原文范围格式无效。");
+        }
+        return;
+      }
+      if (numeric.indexOf(key) >= 0) {
+        var valueNumber = normalizeDeterministicRangeNumber(source[key]);
+        if (!isFinite(valueNumber) || Math.floor(valueNumber) !== valueNumber || valueNumber < 0) {
+          throw new Error("格式审查原文范围索引无效。");
+        }
+        normalized[key] = valueNumber;
+      } else {
+        if (typeof source[key] !== "string" || source[key].length > 160) {
+          throw new Error("格式审查原文范围标识无效。");
+        }
+        normalized[key] = source[key];
+      }
     });
-    return values;
+    if (Object.prototype.hasOwnProperty.call(normalized, "start") &&
+        Object.prototype.hasOwnProperty.call(normalized, "end") && normalized.end < normalized.start) {
+      throw new Error("格式审查原文范围顺序无效。");
+    }
+    if (Object.prototype.hasOwnProperty.call(normalized, "pageStart") &&
+        Object.prototype.hasOwnProperty.call(normalized, "pageEnd") && normalized.pageEnd < normalized.pageStart) {
+      throw new Error("格式审查页码范围顺序无效。");
+    }
+    return normalized;
+  }
+
+  function normalizeDeterministicTable(table, index, parentId) {
+    var source = table && typeof table === "object" ? table : {};
+    var tableId = String(source.tableId || source.id ||
+      (parentId ? parentId + "-nested-" + (index + 1) : "format-table-" + (index + 1)));
+    var rows = Array.isArray(source.rows) ? source.rows.map(function (row, rowPosition) {
+      var rowSource = row && typeof row === "object" ? row : {};
+      var rowIndex = normalizeDeterministicIndex(rowSource.rowIndex, rowPosition + 1);
+      var cells = Array.isArray(rowSource.cells) ? rowSource.cells.map(function (cell, columnPosition) {
+        var cellSource = cell && typeof cell === "object" ? cell : {};
+        return {
+          cellId: String(cellSource.cellId || "cell-" + rowIndex + "-" + (columnPosition + 1)),
+          rowIndex: normalizeDeterministicIndex(cellSource.rowIndex, rowIndex),
+          columnIndex: normalizeDeterministicIndex(cellSource.columnIndex, columnPosition + 1),
+          rowSpan: normalizeDeterministicIndex(cellSource.rowSpan, 1),
+          columnSpan: normalizeDeterministicIndex(cellSource.columnSpan, 1),
+          text: String(cellSource.text || ""),
+          format: normalizeDeterministicFormatFacts(cellSource.format || {})
+        };
+      }) : [];
+      cells.sort(function (left, right) { return left.columnIndex - right.columnIndex; });
+      return { rowIndex: rowIndex, cells: cells };
+    }) : [];
+    rows.sort(function (left, right) { return left.rowIndex - right.rowIndex; });
+    return {
+      tableId: tableId,
+      tableIndex: normalizeDeterministicIndex(source.tableIndex, index + 1),
+      rows: rows,
+      nestedTables: (Array.isArray(source.nestedTables) ? source.nestedTables : [])
+        .map(function (nested, nestedIndex) {
+          return normalizeDeterministicTable(nested, nestedIndex, tableId);
+        }),
+      format: normalizeDeterministicFormatFacts(source.format || {})
+    };
   }
 
   function formatReviewFormatProjection(block) {
     function tableProjection(table) {
       return {
         tableId: String(table && table.tableId || ""),
+        format: table && table.format || {},
         rows: (table && table.rows || []).map(function (row) {
           return {
-            rowIndex: Number(row && row.rowIndex || 0),
+            rowIndex: normalizeDeterministicIndex(row && row.rowIndex, 0),
             cells: (row && row.cells || []).map(function (cell) {
               return {
                 cellId: String(cell && cell.cellId || ""),
@@ -597,6 +801,9 @@
         return JSON.stringify(key) + ":" + stableFormatReviewJson(value[key]);
       }).join(",") + "}";
     }
+    if (typeof value === "number") {
+      return JSON.stringify(normalizeDeterministicNumber(value));
+    }
     return typeof value === "undefined" ? "null" : JSON.stringify(value);
   }
 
@@ -664,6 +871,238 @@
     };
   }
 
+  function normalizeDeterministicFormatReviewBlock(block) {
+    if (!block || !block.blockId) {
+      return null;
+    }
+    block.scope = block.scope === "context" ? "context" : "in_scope";
+    block.text = String(block.text || "");
+    block.range = normalizeDeterministicRange(block.range);
+    block.format = normalizeDeterministicFormatFacts(block.format || {});
+    block.images = normalizeDeterministicImageFacts(block.images);
+    if (block.blockType === "image" && block.images.length) {
+      ["imageId", "groupId", "fingerprint", "captionStatus", "associationStatus",
+        "supported", "altText", "nearbyText"].forEach(function (key) {
+        block[key] = block.images[0][key];
+      });
+    }
+    var hasTopLevelOutline = Object.prototype.hasOwnProperty.call(block, "outlineLevel") &&
+      typeof block.outlineLevel !== "undefined";
+    var hasFormatOutline = Object.prototype.hasOwnProperty.call(block.format, "outlineLevel") &&
+      typeof block.format.outlineLevel !== "undefined";
+    var hasHeadingLevel = Object.prototype.hasOwnProperty.call(block, "headingLevel") &&
+      typeof block.headingLevel !== "undefined";
+    var hasOutlineFact = hasTopLevelOutline || hasFormatOutline || hasHeadingLevel;
+    if (hasOutlineFact) {
+      var rawOutlineLevel = hasTopLevelOutline ? block.outlineLevel :
+        (hasFormatOutline ? block.format.outlineLevel : block.headingLevel);
+      block.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      block.format.outlineLevel = block.outlineLevel;
+      block.format = normalizeDeterministicFormatFacts(block.format);
+      if (block.blockType === "heading") {
+        if (block.outlineLevel === 0) {
+          block.blockType = "paragraph";
+          delete block.headingLevel;
+        } else if (block.outlineLevel === null) {
+          block.blockType = "unknown";
+          delete block.headingLevel;
+        } else {
+          block.headingLevel = block.outlineLevel;
+        }
+      }
+    }
+    if (block.blockType === "table") {
+      var normalizedTable = normalizeDeterministicTable(block, Number(block.tableIndex || 1) - 1);
+      block.tableId = normalizedTable.tableId;
+      block.tableIndex = normalizedTable.tableIndex;
+      block.rows = normalizedTable.rows;
+      block.nestedTables = normalizedTable.nestedTables;
+      block.format = normalizedTable.format;
+      block.text = formatReviewBlockTextValues(block).join("\n");
+    }
+    return JSON.parse(stableFormatReviewJson(block));
+  }
+
+  function normalizeFormatReviewCoverageUnsupportedObjects(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map(function (item) {
+      var source = item && typeof item === "object" ? item : {};
+      var count = Math.max(0, Math.floor(Number(source.count) || 0));
+      var normalized = {
+        type: String(source.type || "unknown").slice(0, 64),
+        count: count,
+        status: String(source.status || "not_supported").slice(0, 32)
+      };
+      if (source.reason) {
+        normalized.reason = String(source.reason).slice(0, 120);
+      }
+      return normalized;
+    });
+  }
+
+  function collectFormatReviewImageFacts(blocks) {
+    var images = [];
+    var seen = {};
+
+    function add(image) {
+      if (!image || typeof image !== "object") {
+        return;
+      }
+      var normalized = normalizeDeterministicImageFacts([image])[0];
+      if (!normalized || !normalized.imageId || seen[normalized.imageId]) {
+        return;
+      }
+      seen[normalized.imageId] = true;
+      images.push(normalized);
+    }
+
+    (Array.isArray(blocks) ? blocks : []).forEach(function (block) {
+      if (!block || typeof block !== "object") {
+        return;
+      }
+      if (block.blockType === "image" || block.isImage === true) {
+        add(block);
+      }
+      (Array.isArray(block.images) ? block.images : []).forEach(add);
+    });
+    return images;
+  }
+
+  function buildDeterministicFormatReviewCoverage(blocks, suppliedCoverage) {
+    var sourceCoverage = suppliedCoverage && typeof suppliedCoverage === "object"
+      ? suppliedCoverage : {};
+    var inScope = (Array.isArray(blocks) ? blocks : []).filter(function (block) {
+      return block && block.scope === "in_scope";
+    });
+    var formatFactStatusCounts = {};
+    var formatSegmentCount = 0;
+    var tableCellCount = 0;
+    var insufficientBlockCount = 0;
+    var unsupportedObjects = [];
+
+    function countFactStatuses(facts) {
+      if (!facts || typeof facts !== "object" || Array.isArray(facts)) {
+        return;
+      }
+      if (facts.dataStatus) {
+        var status = String(facts.dataStatus);
+        formatFactStatusCounts[status] = (formatFactStatusCounts[status] || 0) + 1;
+      }
+      if (facts.facts && typeof facts.facts === "object" && !Array.isArray(facts.facts)) {
+        Object.keys(facts.facts).forEach(function (key) {
+          var fact = facts.facts[key];
+          if (fact && typeof fact === "object" && fact.dataStatus) {
+            var nestedStatus = String(fact.dataStatus);
+            formatFactStatusCounts[nestedStatus] = (formatFactStatusCounts[nestedStatus] || 0) + 1;
+          }
+        });
+      }
+    }
+
+    function countTable(table, countStatuses) {
+      if (!table || typeof table !== "object") {
+        return;
+      }
+      (Array.isArray(table.rows) ? table.rows : []).forEach(function (row) {
+        (Array.isArray(row && row.cells) ? row.cells : []).forEach(function (cell) {
+          tableCellCount += 1;
+          var cellFormat = cell && cell.format && typeof cell.format === "object" ? cell.format : {};
+          if (countStatuses) {
+            countFactStatuses(cellFormat);
+          }
+          formatSegmentCount += Array.isArray(cellFormat.segments) ? cellFormat.segments.length : 0;
+          if (cellFormat.dataStatus === "insufficient") {
+            insufficientBlockCount += 1;
+          }
+        });
+      });
+      (Array.isArray(table.nestedTables) ? table.nestedTables : []).forEach(function (nested) {
+        countTable(nested, countStatuses);
+      });
+    }
+
+    (Array.isArray(blocks) ? blocks : []).forEach(function (block) {
+      if (!block || typeof block !== "object") {
+        return;
+      }
+      var format = block.format && typeof block.format === "object" ? block.format : {};
+      if (block.scope === "in_scope") {
+        countFactStatuses(format);
+      }
+      formatSegmentCount += Array.isArray(format.segments) ? format.segments.length : 0;
+      if (format.dataStatus === "insufficient") {
+        insufficientBlockCount += 1;
+      }
+      if (block.blockType === "table") {
+        countTable(block, block.scope === "in_scope");
+      }
+      if (Array.isArray(block.unsupportedObjects)) {
+        unsupportedObjects = unsupportedObjects.concat(
+          normalizeFormatReviewCoverageUnsupportedObjects(block.unsupportedObjects)
+        );
+      }
+    });
+    unsupportedObjects = unsupportedObjects.concat(
+      normalizeFormatReviewCoverageUnsupportedObjects(sourceCoverage.unsupportedObjects)
+    );
+
+    var unsupportedObjectCount = unsupportedObjects.reduce(function (total, item) {
+      return total + item.count;
+    }, 0);
+    var unsupportedObjectsByType = {};
+    unsupportedObjects.forEach(function (item) {
+      unsupportedObjectsByType[item.type] = (unsupportedObjectsByType[item.type] || 0) + item.count;
+    });
+    var imageFacts = collectFormatReviewImageFacts(blocks);
+    var missingCaption = imageFacts.filter(function (image) {
+      return ["missing", "absent", "none"].indexOf(String(image.captionStatus || "").toLowerCase()) >= 0;
+    });
+    var textEvidenceOnlyCount = missingCaption.filter(function (image) {
+      return Boolean(String(image.altText || "").trim() || String(image.nearbyText || "").trim());
+    }).length;
+    var notAssessableCount = missingCaption.length - textEvidenceOnlyCount;
+    var coverage = {
+      inScopeBlockCount: inScope.length,
+      contextBlockCount: (Array.isArray(blocks) ? blocks.length : 0) - inScope.length,
+      paragraphCount: inScope.filter(function (block) {
+        return ["paragraph", "heading", "listItem"].indexOf(block.blockType) >= 0;
+      }).length,
+      tableCount: inScope.filter(function (block) { return block.blockType === "table"; }).length,
+      captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length,
+      tableCellCount: tableCellCount,
+      formatSegmentCount: formatSegmentCount,
+      formatDataStatus: insufficientBlockCount ? "insufficient" :
+        (Object.keys(formatFactStatusCounts).some(function (status) {
+          return status !== "verified";
+        }) ? "partial" : "verified"),
+      formatDataInsufficientBlockCount: insufficientBlockCount,
+      formatFactStatusCounts: formatFactStatusCounts,
+      unsupportedObjectCount: unsupportedObjectCount,
+      unsupportedObjectsByType: unsupportedObjectsByType,
+      imageCount: imageFacts.length,
+      supportedImageCount: imageFacts.filter(function (image) { return image.supported !== false; }).length,
+      missingFigureCaptionCount: missingCaption.length,
+      textEvidenceOnlyCount: textEvidenceOnlyCount,
+      imageNotAssessableCount: notAssessableCount,
+      notAssessableCount: notAssessableCount,
+      pixelExportCount: 0,
+      pixelUploadCount: 0,
+      pixelInspectedCount: 0,
+      imageSemanticStatus: "disabled",
+      imageSemanticReason: "image_semantics_disabled"
+    };
+    if (Object.prototype.hasOwnProperty.call(sourceCoverage, "headerFooter") &&
+        sourceCoverage.headerFooter && typeof sourceCoverage.headerFooter === "object") {
+      coverage.headerFooter = sourceCoverage.headerFooter;
+    }
+    if (unsupportedObjects.length) {
+      coverage.unsupportedObjects = unsupportedObjects;
+    }
+    return JSON.parse(stableFormatReviewJson(coverage));
+  }
+
   function buildDeterministicFormatReviewBody(payload, options) {
     var source = payload || {};
     var content = source.content || {};
@@ -679,10 +1118,12 @@
       if (!block || !block.blockId || seen[block.blockId]) {
         return;
       }
-      block.scope = block.scope === "context" ? "context" : "in_scope";
-      block.text = String(block.text || "");
-      seen[block.blockId] = true;
-      blocks.push(block);
+      var normalizedBlock = normalizeDeterministicFormatReviewBlock(block);
+      if (!normalizedBlock) {
+        return;
+      }
+      seen[normalizedBlock.blockId] = true;
+      blocks.push(normalizedBlock);
     }
 
     function isCaptionParagraph(paragraph) {
@@ -694,7 +1135,20 @@
     paragraphs.forEach(function (paragraph) {
       var index = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || blocks.length + 1;
       var text = String(paragraph && paragraph.text || "").replace(/[\r\u0007]+$/g, "").trim();
-      var outlineLevel = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
+      var hasOutlineFact = Boolean(paragraph && (
+        (Object.prototype.hasOwnProperty.call(paragraph, "outlineLevel") &&
+          typeof paragraph.outlineLevel !== "undefined") ||
+        (Object.prototype.hasOwnProperty.call(paragraph, "outline_level") &&
+          typeof paragraph.outline_level !== "undefined")
+      ));
+      var outlineLevel = hasOutlineFact
+        ? normalizeWpsOutlineLevel(paragraph.outlineLevel !== undefined
+          ? paragraph.outlineLevel : paragraph.outline_level)
+        : null;
+      var blockType = isCaptionParagraph(paragraph) ? "caption" :
+        (!hasOutlineFact ? (paragraph.listLabel ? "listItem" : "paragraph") :
+          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
+            (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))));
       var format;
       if (!text) {
         return;
@@ -718,20 +1172,23 @@
         facts: paragraph.formatFacts || paragraph.format_facts || buildWpsFormatFacts(paragraph),
         insufficientReason: paragraph.formatInsufficientReason || ""
       };
-      pushBlock({
+      var paragraphBlock = {
         blockId: "format-paragraph-" + index,
-        blockType: isCaptionParagraph(paragraph) ? "caption" :
-          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") : (outlineLevel > 0
-            ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))),
+        blockType: blockType,
         paragraphIndex: index,
-        outlineLevel: outlineLevel,
-        headingLevel: outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         captionFor: paragraph.captionFor ? String(paragraph.captionFor) : undefined,
         text: text,
         format: format,
         range: paragraph.range || {}
-      });
+      };
+      if (hasOutlineFact) {
+        paragraphBlock.outlineLevel = outlineLevel;
+        if (outlineLevel > 0) {
+          paragraphBlock.headingLevel = outlineLevel;
+        }
+      }
+      pushBlock(paragraphBlock);
     });
 
     tables.forEach(function (table, index) {
@@ -793,39 +1250,9 @@
 
     var inScope = blocks.filter(function (block) { return block.scope === "in_scope"; });
     var sourceValues = [];
-    var formatSegmentCount = 0;
-    var tableCellCount = 0;
-    var formatDataInsufficientBlockCount = 0;
     inScope.forEach(function (block) {
       sourceValues = sourceValues.concat(formatReviewBlockTextValues(block));
-      formatSegmentCount += block.format && Array.isArray(block.format.segments)
-        ? block.format.segments.length : 0;
-      if (block.format && block.format.dataStatus === "insufficient") {
-        formatDataInsufficientBlockCount += 1;
-      }
-      if (block.blockType === "table") {
-        function countTable(table) {
-          (table.rows || []).forEach(function (row) {
-            (row.cells || []).forEach(function (cell) {
-              tableCellCount += 1;
-              formatSegmentCount += cell.format && Array.isArray(cell.format.segments)
-                ? cell.format.segments.length : 0;
-              if (cell.format && cell.format.dataStatus === "insufficient") {
-                formatDataInsufficientBlockCount += 1;
-              }
-            });
-          });
-          (table.nestedTables || []).forEach(countTable);
-        }
-        countTable(block);
-      }
     });
-    var suppliedCoverage = (options || {}).coverage || {};
-    var unsupportedObjects = Array.isArray(suppliedCoverage.unsupportedObjects)
-      ? suppliedCoverage.unsupportedObjects : [];
-    var unsupportedObjectCount = unsupportedObjects.reduce(function (total, item) {
-      return total + Math.max(0, Math.floor(Number(item && item.count) || 0));
-    }, 0);
     var reviewCharacterCount = sourceValues.reduce(function (total, value) {
       return total + value.length;
     }, 0);
@@ -835,6 +1262,7 @@
     }
     var structureProjection = blocks.map(formatReviewStructureProjection);
     var formatProjection = blocks.map(formatReviewFormatProjection);
+    var suppliedCoverage = (options || {}).coverage || {};
     return {
       documentId: source.documentId || "unnamed.docx",
       selectionMode: source.selectionMode || "document",
@@ -851,22 +1279,7 @@
       contentSha256: sha256Text(sourceValues.join("\n")),
       structureSha256: sha256Text(stableFormatReviewJson(structureProjection)),
       formatSha256: sha256Text(stableFormatReviewJson(formatProjection)),
-      coverage: {
-        inScopeBlockCount: inScope.length,
-        contextBlockCount: blocks.length - inScope.length,
-        paragraphCount: inScope.filter(function (block) {
-          return ["paragraph", "heading", "listItem"].indexOf(block.blockType) >= 0;
-        }).length,
-        tableCount: inScope.filter(function (block) { return block.blockType === "table"; }).length,
-        captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length,
-        tableCellCount: tableCellCount,
-        formatSegmentCount: formatSegmentCount,
-        formatDataStatus: formatDataInsufficientBlockCount ? "insufficient" : "verified",
-        formatDataInsufficientBlockCount: formatDataInsufficientBlockCount,
-        unsupportedObjectCount: unsupportedObjectCount,
-        unsupportedObjects: unsupportedObjects,
-        headerFooter: suppliedCoverage.headerFooter || {}
-      },
+      coverage: buildDeterministicFormatReviewCoverage(blocks, suppliedCoverage),
       pageSetup: structure.page_setup || structure.pageSetup || {},
       pageSetupFacts: structure.page_setup_facts || structure.pageSetupFacts ||
         buildWpsPageSetupFacts(structure.page_setup || structure.pageSetup || {}),
@@ -904,11 +1317,7 @@
         contentSha256: sha256Text(current.filter(function (block) { return block.scope === "in_scope"; })
           .reduce(function (list, block) { return list.concat(formatReviewBlockTextValues(block)); }, []).join("\n")),
         structureSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewStructureProjection))),
-        formatSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewFormatProjection))),
-        range: {
-          start: current[0].blockId,
-          end: current[current.length - 1].blockId
-        }
+        formatSha256: sha256Text(stableFormatReviewJson(current.map(formatReviewFormatProjection)))
       });
       current = [];
       currentCount = 0;
@@ -2554,7 +2963,7 @@
       return null;
     }
     var numeric = Number(resolved);
-    return isNaN(numeric) ? null : numeric;
+    return isNaN(numeric) || !isFinite(numeric) ? null : numeric;
   }
 
   function normalizeFontSize(value) {
@@ -2610,7 +3019,7 @@
 
   function normalizePositiveInteger(value) {
     var numeric = Number(value);
-    if (isNaN(numeric) || numeric <= 0) {
+    if (isNaN(numeric) || !isFinite(numeric) || numeric <= 0) {
       return null;
     }
     return Math.floor(numeric);
@@ -3281,7 +3690,6 @@
         italic: false,
         underline: null,
         alignment: "",
-        outlineLevel: null,
         lineSpacing: null,
         lineSpacingMode: null,
         firstLineIndent: null,
@@ -3323,7 +3731,11 @@
           maxSegments: collectOptions.maxFormatSegments
         })
         : null;
-      items.push({
+      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+      if (typeof rawOutlineLevel === "undefined") {
+        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      }
+      var item = {
         index: i,
         text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
         range: readParagraphRange(paragraph, i),
@@ -3334,7 +3746,6 @@
         italic: Boolean(safeRead(font, "Italic")),
         underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
         alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
-        outlineLevel: normalizeWpsOutlineLevel(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), undefined)),
         lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
         lineSpacingMode: normalizeWpsLineSpacingMode(firstDefined(
           safeRead(paragraphFormat, "LineSpacingRule"), safeRead(paragraphFormat, "lineSpacingRule"), null
@@ -3347,7 +3758,11 @@
         formatSegments: characterFormat ? characterFormat.segments : [],
         formatDataStatus: characterFormat ? characterFormat.dataStatus : "verified",
         formatInsufficientReason: characterFormat ? characterFormat.insufficientReason || "" : ""
-      });
+      };
+      if (typeof rawOutlineLevel !== "undefined") {
+        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      }
+      items.push(item);
     }
     if (items.length) {
       return items;
@@ -3385,17 +3800,22 @@
         safeRead(paragraph, "ParagraphFormat"), safeRead(range, "ParagraphFormat"), {}
       );
       listFormat = firstDefined(safeRead(paragraph, "ListFormat"), safeRead(range, "ListFormat"), {});
-      items.push({
+      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+      if (typeof rawOutlineLevel === "undefined") {
+        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      }
+      var item = {
         index: index,
         text: text,
-        outlineLevel: normalizeWpsOutlineLevel(firstDefined(
-          safeRead(paragraphFormat, "OutlineLevel"), safeRead(paragraphFormat, "outlineLevel")
-        )),
         listLabel: toSafeString(firstDefined(
           safeRead(listFormat, "ListString"), safeRead(listFormat, "listString"),
           safeRead(paragraph, "ListLabel"), safeRead(paragraph, "listLabel")
         ), "")
-      });
+      };
+      if (typeof rawOutlineLevel !== "undefined") {
+        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      }
+      items.push(item);
     }
     return items;
   }
@@ -3433,7 +3853,9 @@
       page_setup: options.pageSetup || {},
       page_setup_facts: options.pageSetupFacts || buildWpsPageSetupFacts(options.pageSetup || {}),
       paragraphs: paragraphs.map(function (paragraph) {
-        return {
+        var rawOutlineLevel = paragraph && paragraph.outlineLevel !== undefined
+          ? paragraph.outlineLevel : paragraph && paragraph.outline_level;
+        var item = {
           index: paragraph.index,
           text: paragraph.text || "",
           style_name: paragraph.styleName || paragraph.style_name || "",
@@ -3443,7 +3865,6 @@
           italic: Boolean(paragraph.italic),
           underline: paragraph.underline || null,
           alignment: normalizeAlignmentValue(paragraph.alignment, ""),
-          outline_level: normalizeWpsOutlineLevel(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
           line_spacing: normalizeNumber(firstDefined(paragraph.lineSpacing, paragraph.line_spacing)),
           line_spacing_mode: normalizeWpsLineSpacingMode(firstDefined(paragraph.lineSpacingMode, paragraph.line_spacing_mode)),
           first_line_indent: normalizeNumber(firstDefined(paragraph.firstLineIndent, paragraph.first_line_indent)),
@@ -3452,6 +3873,10 @@
           left_indent: normalizeNumber(firstDefined(paragraph.leftIndent, paragraph.left_indent)),
           right_indent: normalizeNumber(firstDefined(paragraph.rightIndent, paragraph.right_indent))
         };
+        if (typeof rawOutlineLevel !== "undefined") {
+          item.outline_level = normalizeWpsOutlineLevel(rawOutlineLevel);
+        }
+        return item;
       }),
       headings: headings.map(function (heading) {
         var level = normalizeWpsOutlineLevel(firstDefined(heading.level, heading.outlineLevel));
@@ -4264,6 +4689,7 @@
     buildFullDocumentReviewBody: buildFullDocumentReviewBody,
     buildFullDocumentReviewBatches: buildFullDocumentReviewBatches,
     buildDeterministicFormatReviewBody: buildDeterministicFormatReviewBody,
+    normalizeDeterministicFormatReviewBlock: normalizeDeterministicFormatReviewBlock,
     buildDeterministicFormatReviewBatches: buildDeterministicFormatReviewBatches,
     normalizeWpsLineSpacingFact: normalizeWpsLineSpacingFact,
     buildWpsPageSetupFacts: buildWpsPageSetupFacts,
@@ -4286,6 +4712,7 @@
     getWritableSelection: getWritableSelection,
     resolveRewriteScope: resolveRewriteScope,
     canApplyRewriteToSelection: canApplyRewriteToSelection,
+    firstDefined: firstDefined,
     readCollectionCount: readCollectionCount,
     getCollectionItem: getCollectionItem,
     getParagraphCollection: getParagraphCollection,

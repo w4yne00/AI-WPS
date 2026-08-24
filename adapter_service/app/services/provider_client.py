@@ -691,22 +691,46 @@ def _sanitize_provider_error_body(
     return str(sanitized)[:limit]
 
 
+def _read_http_error_raw(exc: error.HTTPError) -> str:
+    try:
+        return exc.read(4096).decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
 def _read_http_error_body(
     exc: error.HTTPError,
     query: str = "",
     api_key: str = "",
     limit: int = 480,
 ) -> str:
-    try:
-        raw = exc.read(4096).decode("utf-8", errors="replace")
-    except Exception:
-        return ""
+    raw = _read_http_error_raw(exc)
     return _sanitize_provider_error_body(
         raw,
         query=query,
         api_key=api_key,
         limit=limit,
     )
+
+
+def _response_format_is_explicitly_unsupported(raw: str) -> bool:
+    text = str(raw or "").lower()
+    names_extension = "response_format" in text or "json_schema" in text
+    rejects_extension = any(
+        marker in text
+        for marker in (
+            "not supported",
+            "unsupported",
+            "unknown field",
+            "unknown parameter",
+            "unrecognized",
+            "extra inputs are not permitted",
+            "不支持",
+            "未知字段",
+            "未知参数",
+        )
+    )
+    return names_extension and rejects_extension
 
 
 def _sanitize_provider_body(body: Dict) -> Dict:
@@ -746,13 +770,101 @@ def _sanitize_provider_response(body: Dict) -> Dict:
     if isinstance(outputs, dict):
         output_answer = str(outputs.get("answer", outputs.get("result", "")) or "")
     result_answer = answer or output_answer
-    return {
+    sanitized = {
         "bodyKeys": sorted(body.keys()) if isinstance(body, dict) else [],
         "answerLength": len(result_answer),
         "answerFormat": _summarize_answer_format(result_answer),
         "conversationIdSet": bool(body.get("conversation_id")) if isinstance(body, dict) else False,
         "messageIdSet": bool(body.get("message_id") or body.get("id")) if isinstance(body, dict) else False,
     }
+    if isinstance(body, dict):
+        finish_reason = body.get("finishReason")
+        if isinstance(finish_reason, str):
+            sanitized["finishReason"] = _safe_finish_reason(finish_reason)
+        content_type = body.get("contentType")
+        if content_type in {"string", "array", "object", "null", "other"}:
+            sanitized["contentType"] = content_type
+        if isinstance(body.get("reasoningContentPresent"), bool):
+            sanitized["reasoningContentPresent"] = body["reasoningContentPresent"]
+        usage = body.get("usage")
+        if isinstance(usage, dict):
+            safe_usage = {}
+            for key in ("promptTokens", "completionTokens", "totalTokens"):
+                value = usage.get(key)
+                if type(value) is int and value >= 0:
+                    safe_usage[key] = value
+            if safe_usage:
+                sanitized["usage"] = safe_usage
+    return sanitized
+
+
+def _safe_finish_reason(value) -> str:
+    finish_reason = str(value or "").strip().lower()
+    if finish_reason in {
+        "stop",
+        "length",
+        "content_filter",
+        "tool_calls",
+        "function_call",
+    }:
+        return finish_reason
+    return "other" if finish_reason else ""
+
+
+def _direct_response_diagnostics(body: Dict, choice: Dict, message: Dict) -> Dict:
+    content = message.get("content") if isinstance(message, dict) else None
+    if content is None:
+        content_type = "null"
+    elif isinstance(content, str):
+        content_type = "string"
+    elif isinstance(content, list):
+        content_type = "array"
+    elif isinstance(content, dict):
+        content_type = "object"
+    else:
+        content_type = "other"
+    raw_usage = body.get("usage") if isinstance(body, dict) else None
+    usage = {}
+    if isinstance(raw_usage, dict):
+        for source_key, target_key in (
+            ("prompt_tokens", "promptTokens"),
+            ("completion_tokens", "completionTokens"),
+            ("total_tokens", "totalTokens"),
+        ):
+            value = raw_usage.get(source_key)
+            if type(value) is int and value >= 0:
+                usage[target_key] = value
+    return {
+        "finishReason": _safe_finish_reason(choice.get("finish_reason", ""))
+        if isinstance(choice, dict)
+        else "",
+        "contentType": content_type,
+        "reasoningContentPresent": bool(
+            isinstance(message, dict)
+            and (message.get("reasoning_content") or message.get("reasoning"))
+        ),
+        "usage": usage,
+    }
+
+
+def _missing_final_content_error(finish_reason: str) -> AdapterError:
+    if finish_reason == "length":
+        return AdapterError(
+            "MODEL_FINAL_CONTENT_TOKEN_LIMIT",
+            "模型输出 Token 预算已用尽但未返回最终结果，请检查最大输出 Token 与模型支持上限，或在模型服务中关闭深度思考后重试。",
+            status_code=502,
+        )
+    if finish_reason == "content_filter":
+        return AdapterError(
+            "MODEL_FINAL_CONTENT_FILTERED",
+            "模型最终结果被内容策略过滤，请调整输入或检查模型服务策略。",
+            status_code=502,
+        )
+    return AdapterError(
+        "MODEL_FINAL_CONTENT_MISSING",
+        "模型未返回最终结果，请检查模型推理模式和输出配置。",
+        status_code=502,
+    )
 
 
 def reset_provider_debug() -> None:
@@ -1034,7 +1146,12 @@ def parse_document_review_answer(answer: str) -> Dict:
 
 
 def strip_think_tag_content(value: str) -> str:
-    return re.sub(r"<think\b[^>]*>.*?</think\s*>", "", str(value or ""), flags=re.IGNORECASE | re.DOTALL).strip()
+    return re.sub(
+        r"<think\b[^>]*>.*?(?:</think\s*>|$)",
+        "",
+        str(value or ""),
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
 
 
 def extract_answer(body: Dict, output_key: str = "") -> str:
@@ -1065,7 +1182,11 @@ def extract_answer(body: Dict, output_key: str = "") -> str:
                 if cleaned_value:
                     return cleaned_value
 
-    raise ProviderUnavailableError("Enterprise AI response did not contain an answer.")
+    raise AdapterError(
+        "MODEL_FINAL_CONTENT_MISSING",
+        "模型未返回最终结果，请检查模型推理模式和输出配置。",
+        status_code=502,
+    )
 
 
 def _excel_text_list(value) -> List[str]:
@@ -1397,6 +1518,12 @@ def parse_ppt_structure_review_answer(answer: str) -> Dict:
     unclosed_think = re.search(r"<think\b[^>]*>", cleaned, flags=re.IGNORECASE)
     if unclosed_think:
         cleaned = cleaned[: unclosed_think.start()].strip()
+    if not cleaned:
+        raise AdapterError(
+            "MODEL_FINAL_CONTENT_MISSING",
+            "模型未返回最终结果，请检查模型推理模式和输出配置。",
+            status_code=502,
+        )
     payload = _extract_json_payload(cleaned)
     if isinstance(payload, dict):
         storyline = _ppt_document_text(
@@ -1674,6 +1801,27 @@ def _full_document_review_chunk_response_format() -> Dict:
             },
         },
     }
+
+
+def _format_semantic_response_format(operation: str) -> Dict:
+    from app.services.word.format_semantics import FormatSemanticContract
+
+    return {
+        "type": "json_schema",
+        "json_schema": {
+            "name": "word_format_semantics_{0}_v1".format(operation),
+            "strict": True,
+            "schema": FormatSemanticContract.response_json_schema(operation),
+        },
+    }
+
+
+def _format_semantic_prompt_with_schema(prompt: str, operation: str) -> str:
+    schema = _format_semantic_response_format(operation)["json_schema"]["schema"]
+    return "{0}\n\n允许的响应字段及类型（不得增加其它字段）：\n{1}".format(
+        str(prompt or "").strip(),
+        json.dumps(schema, ensure_ascii=False, sort_keys=True, separators=(",", ":")),
+    )
 
 
 def _full_document_review_aggregate_response_format() -> Dict:
@@ -2402,6 +2550,7 @@ class ProviderClient:
         response_format: Optional[Dict] = None,
         input_token_limit: Optional[int] = None,
         image_files: Optional[List[Dict]] = None,
+        allow_response_format_fallback: bool = False,
     ) -> Dict:
         if prompt_asset is None:
             try:
@@ -2462,6 +2611,20 @@ class ProviderClient:
             "estimatedInputTokens": estimated_input,
             "inputBudgetTokens": input_budget,
         }
+        capability = resolved_task_auth.get("formatModelCapability")
+        if isinstance(capability, dict):
+            safe_validation["modelCapability"] = {
+                key: capability[key]
+                for key in (
+                    "modelName",
+                    "maxOutputTokens",
+                    "sourceDate",
+                    "sourceUrl",
+                    "tableVersion",
+                    "tableSha256",
+                )
+                if key in capability
+            }
         record_provider_debug(
             {
                 "traceId": trace_id,
@@ -2496,31 +2659,40 @@ class ProviderClient:
                         status_code=502,
                     ) from exc
                 choices = body.get("choices") if isinstance(body, dict) else None
-                message = (
-                    choices[0].get("message", {})
+                choice = (
+                    choices[0]
                     if isinstance(choices, list)
                     and choices
                     and isinstance(choices[0], dict)
                     else {}
                 )
+                message = choice.get("message", {}) if isinstance(choice, dict) else {}
+                response_diagnostics = _direct_response_diagnostics(
+                    body if isinstance(body, dict) else {}, choice, message
+                )
                 content = _direct_content_text(
                     message.get("content") if isinstance(message, dict) else None
                 )
                 if not content:
-                    raise AdapterError(
-                        "MODEL_FINAL_CONTENT_MISSING",
-                        "模型未返回最终结果，请检查模型推理模式和输出配置。",
-                        status_code=502,
+                    record_provider_debug(
+                        {
+                            "traceId": trace_id,
+                            "taskType": task_type,
+                            "url": url,
+                            **debug_metadata,
+                            "validation": safe_validation,
+                            "response": {
+                                "status": getattr(response, "status", 200),
+                                "body": {"answer": "", **response_diagnostics},
+                            },
+                        }
+                    )
+                    raise _missing_final_content_error(
+                        response_diagnostics["finishReason"]
                     )
                 normalized = {
                     "answer": content,
-                    "finishReason": str(
-                        choices[0].get("finish_reason", "")
-                        if isinstance(choices, list)
-                        and choices
-                        and isinstance(choices[0], dict)
-                        else ""
-                    ),
+                    **response_diagnostics,
                     "id": str(body.get("id", "")),
                     "model": str(body.get("model", resolved_task_auth.get("modelName", ""))),
                     "promptVersion": prompt_asset["version"],
@@ -2541,6 +2713,12 @@ class ProviderClient:
                 return normalized
         except error.HTTPError as exc:
             status = int(exc.code)
+            raw_error_body = _read_http_error_raw(exc)
+            body_preview = _sanitize_provider_error_body(
+                raw_error_body,
+                query=query,
+                api_key=str(resolved_task_auth.get("apiKey", "")),
+            )
             record_provider_debug(
                 {
                     "traceId": trace_id,
@@ -2552,12 +2730,28 @@ class ProviderClient:
                         "type": "HTTPError",
                         "status": status,
                         "message": "direct model http error",
-                        "bodyPreview": _read_http_error_body(
-                            exc, query=query, api_key=str(resolved_task_auth.get("apiKey", ""))
-                        ),
+                        "bodyPreview": body_preview,
                     },
                 }
             )
+            if (
+                status == 400
+                and response_format is not None
+                and allow_response_format_fallback
+                and _response_format_is_explicitly_unsupported(raw_error_body)
+            ):
+                return self._post_direct_task(
+                    task_type,
+                    trace_id,
+                    query,
+                    resolved_task_auth,
+                    timeout,
+                    prompt_asset=prompt_asset,
+                    response_format=None,
+                    input_token_limit=input_token_limit,
+                    image_files=image_files,
+                    allow_response_format_fallback=False,
+                )
             if status in (401, 403):
                 raise ProviderAuthError("模型后台认证失败，请检查当前配置的 API Key。") from exc
             if status == 404:
@@ -2600,6 +2794,8 @@ class ProviderClient:
         task_auth: Optional[Dict] = None,
         input_token_limit: Optional[int] = None,
         image_files: Optional[List[Dict]] = None,
+        response_format: Optional[Dict] = None,
+        allow_response_format_fallback: bool = False,
     ) -> Dict:
         resolved_task_auth = task_auth if task_auth is not None else self.resolve_task_auth(task_type)
         timeout = timeout_seconds or self.settings.timeout_seconds
@@ -2618,6 +2814,8 @@ class ProviderClient:
                 timeout,
                 input_token_limit=input_token_limit,
                 image_files=image_files,
+                response_format=response_format,
+                allow_response_format_fallback=allow_response_format_fallback,
             )
         provider_base_url = str(
             resolved_task_auth.get("providerBaseUrl") or self.settings.provider_base_url.rstrip("/")
@@ -3060,7 +3258,7 @@ class ProviderClient:
     def _validate_format_semantic_direct(self, trace_id: str, task_auth: Dict) -> Dict:
         from app.services.word.format_semantics import (
             FORMAT_SEMANTIC_SCHEMA_VERSION,
-            FormatSemanticContract,
+            FormatSemanticExecutor,
         )
 
         binding, fixtures = self._format_semantic_validation_fixtures()
@@ -3080,35 +3278,33 @@ class ProviderClient:
                 json.dumps(request_payload, ensure_ascii=False),
             ]
         )
-        response = self.format_semantics(
-            "classify_role",
-            trace_id,
-            {
-                "operation": "classify_role",
-                "snapshotBinding": binding,
-                "candidate_json": candidate_json,
-            },
-            prompt,
-            task_auth=task_auth,
-        )
-        payload = _extract_json_payload(str(response.get("answer", "")))
-        if payload is None:
-            raise AdapterError(
-                "FORMAT_SEMANTIC_RESPONSE_INVALID",
-                "模型返回结果不符合 format_semantics.v1 格式语义契约。",
-                status_code=502,
+        def call(query: str, output_budget: int) -> Dict:
+            return self.format_semantics(
+                "classify_role",
+                trace_id,
+                {
+                    "operation": "classify_role",
+                    "snapshotBinding": binding,
+                    "candidate_json": candidate_json,
+                },
+                query,
+                task_auth=task_auth,
+                output_token_budget=output_budget,
             )
-        FormatSemanticContract.validate_response(
+
+        validation = FormatSemanticExecutor(call, task_auth=task_auth).execute(
             "classify_role",
-            payload,
+            prompt,
             candidates,
             binding,
-            require_complete=True,
         )
+        if validation.get("error") is not None:
+            raise validation["error"]
         return {
             "success": True,
             "protocolVersion": FORMAT_SEMANTIC_SCHEMA_VERSION,
             "operations": {"classify_role": True},
+            "correctionCount": int(validation.get("correctionCount") or 0),
             "visualCapability": {
                 "validated": False,
                 "mode": "contract_only",
@@ -4121,6 +4317,7 @@ class ProviderClient:
             MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
             MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS,
             WORKFLOW_FORMAT_SEMANTIC_OUTPUT_TOKENS,
+            resolve_format_model_capability,
         )
 
         if not FormatSemanticContract.is_allowed_operation(operation):
@@ -4147,11 +4344,17 @@ class ProviderClient:
             budget = min(budget or MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS, MAX_FORMAT_SEMANTIC_OUTPUT_TOKENS)
         if str(auth.get("accessMethod", "")) == ACCESS_DIRECT_MODEL:
             if auth.get("maxOutputTokens") is None:
-                raise AdapterError(
-                    "FORMAT_SEMANTIC_OUTPUT_CAPABILITY_UNKNOWN",
-                    "直连模型未声明可用的最大输出 Token，无法执行格式语义操作。",
-                    status_code=409,
+                capability = resolve_format_model_capability(
+                    str(auth.get("modelName", ""))
                 )
+                if capability is None:
+                    raise AdapterError(
+                        "FORMAT_SEMANTIC_OUTPUT_CAPABILITY_UNKNOWN",
+                        "直连模型未声明可用的最大输出 Token，且离线能力表无法精确匹配该模型，无法执行格式语义操作。",
+                        status_code=409,
+                    )
+                auth["formatModelCapability"] = capability
+                auth["maxOutputTokens"] = int(capability["maxOutputTokens"])
             auth["maxOutputTokens"] = min(
                 max(int(auth["maxOutputTokens"]), 0), int(budget), 4096
             )
@@ -4188,6 +4391,8 @@ class ProviderClient:
                 auth,
                 timeout_seconds=60,
             )
+        prompt = _format_semantic_prompt_with_schema(prompt, operation)
+        FormatSemanticContract.require_input_budget(prompt)
         return self.post_task(
             "word.format_review",
             trace_id,
@@ -4197,6 +4402,8 @@ class ProviderClient:
             task_auth=auth,
             input_token_limit=MAX_FORMAT_SEMANTIC_INPUT_TOKENS,
             image_files=input_data.get("image_files"),
+            response_format=_format_semantic_response_format(operation),
+            allow_response_format_fallback=True,
         )
 
     def _post_workflow_format_semantics(

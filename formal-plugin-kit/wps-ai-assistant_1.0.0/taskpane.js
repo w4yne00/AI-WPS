@@ -2845,7 +2845,8 @@
       }).then(function (validation) {
       var message = "模型配置已保存。";
       if (validation && validation.skipped === false && !validation.validated) {
-        message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";
+        message += "格式语义协议验证未通过，当前仅运行确定性规则。" +
+          (validation.error ? "原因：" + describeFetchError(validation.error) : "");
       }
       return completeWorkflowMutation(taskType, message);
     }).catch(function (error) {
@@ -2869,7 +2870,8 @@
         return validateSavedFormatSemanticConfiguration(taskType, profileId).then(function (validation) {
           var message = "模型配置已保存。";
           if (validation && validation.skipped === false && !validation.validated) {
-            message += "格式语义协议验证未通过，格式审查将仅运行确定性规则。";
+            message += "格式语义协议验证未通过，当前仅运行确定性规则。" +
+              (validation.error ? "原因：" + describeFetchError(validation.error) : "");
           }
           return completeWorkflowMutation(taskType, message);
         });
@@ -7235,29 +7237,29 @@
     var images = [];
     var objects = {};
     var sources = [
-      firstDefined(readValue(document, "InlineShapes"), readValue(document, "inlineShapes")),
-      firstDefined(readValue(document, "Shapes"), readValue(document, "shapes"))
+      helpers.firstDefined(readValue(document, "InlineShapes"), readValue(document, "inlineShapes")),
+      helpers.firstDefined(readValue(document, "Shapes"), readValue(document, "shapes"))
     ];
     var paragraphList = Array.isArray(paragraphs) ? paragraphs : [];
 
     function readImageObject(item, index, sourceType) {
-      var type = firstDefined(readValue(item, "Type"), readValue(item, "type"));
+      var type = helpers.firstDefined(readValue(item, "Type"), readValue(item, "type"));
       var typeText = String(type || "").toLowerCase();
       var isFloatingPicture = sourceType !== "floating" ||
         type === 13 || type === 11 || /picture|image|inlinepicture|inline_image/.test(typeText) ||
         readValue(item, "IsPicture") === true || readValue(item, "isPicture") === true;
-      var hostId = String(firstDefined(
+      var hostId = String(helpers.firstDefined(
         readValue(item, "Id"), readValue(item, "ID"), readValue(item, "Name"), readValue(item, "name")
       ) || (sourceType + "-" + index));
       var imageId = "wps-image-" + helpers.sha256Text(sourceType + ":" + hostId + ":" + index).slice(0, 24);
-      var paragraphIndex = Number(firstDefined(
+      var paragraphIndex = Number(helpers.firstDefined(
         readValue(item, "ParagraphIndex"), readValue(item, "paragraphIndex"),
         readValue(item, "AnchorParagraphIndex"), readValue(item, "anchorParagraphIndex")
       ) || 0);
       if (!isFloatingPicture) {
         return;
       }
-      var altText = String(firstDefined(
+      var altText = String(helpers.firstDefined(
         readValue(item, "AlternativeText"), readValue(item, "AltText"), readValue(item, "altText")
       ) || "");
       var nearby = paragraphList.filter(function (paragraph) {
@@ -7269,7 +7271,7 @@
       });
       var fact = {
         imageId: imageId,
-        groupId: String(firstDefined(readValue(item, "GroupID"), readValue(item, "groupId")) || imageId),
+        groupId: String(helpers.firstDefined(readValue(item, "GroupID"), readValue(item, "groupId")) || imageId),
         fingerprint: helpers.sha256Text(sourceType + ":" + hostId + ":" + paragraphIndex),
         captionStatus: hasCaption ? "present" : "missing",
         associationStatus: "missing",
@@ -7283,9 +7285,9 @@
     }
 
     sources.forEach(function (collection, sourceIndex) {
-      var count = readCollectionCount(collection);
+      var count = helpers.readCollectionCount(collection);
       for (var index = 1; index <= count; index += 1) {
-        readImageObject(getCollectionItem(collection, index), index, sourceIndex === 0 ? "inline" : "floating");
+        readImageObject(helpers.getCollectionItem(collection, index), index, sourceIndex === 0 ? "inline" : "floating");
       }
     });
     return { facts: images, objects: objects };
@@ -7461,7 +7463,6 @@
             contentSha256: batch.contentSha256,
             structureSha256: batch.structureSha256,
             formatSha256: batch.formatSha256,
-            range: batch.range,
             editSequence: body.editSequence
           },
           { method: "PUT", timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }

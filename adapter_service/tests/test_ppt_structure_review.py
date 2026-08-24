@@ -460,12 +460,13 @@ class PptStructureReviewTests(unittest.TestCase):
         )
 
     def test_unclosed_think_content_is_not_exposed_in_fallback(self):
-        parsed = parse_ppt_structure_review_answer(
-            "<think>未闭合的内部推理不得展示"
-        )
+        with self.assertRaises(AdapterError) as raised:
+            parse_ppt_structure_review_answer(
+                "<think>未闭合的内部推理不得展示"
+            )
 
-        self.assertEqual(parsed["rawAnswer"], "")
-        self.assertNotIn("内部推理", str(parsed))
+        self.assertEqual(raised.exception.code, "MODEL_FINAL_CONTENT_MISSING")
+        self.assertNotIn("内部推理", raised.exception.message)
 
     def test_model_page_references_are_limited_to_the_reviewed_range(self):
         provider = RecordingProvider()

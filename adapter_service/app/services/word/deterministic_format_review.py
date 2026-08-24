@@ -3,6 +3,7 @@ import binascii
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -788,7 +789,6 @@ class DeterministicFormatReviewService:
                 "格式快照批次编号无效。",
             )
         blocks = self._normalize_format_blocks(payload.get("blocks"))
-        candidate_range = self._normalize_range(payload.get("range"))
         candidate_edit_sequence = self._optional_scalar(payload.get("editSequence"))
         batches = record.get("batches", [])
         if sequence < len(batches):
@@ -796,7 +796,6 @@ class DeterministicFormatReviewService:
             if (
                 existing.get("batchId") == batch_id
                 and existing.get("blocks") == blocks
-                and existing.get("range", {}) == candidate_range
                 and existing.get("editSequence") == candidate_edit_sequence
                 and all(
                     existing.get(key) == payload.get(key)
@@ -878,7 +877,6 @@ class DeterministicFormatReviewService:
             "contentSha256": metrics["contentSha256"],
             "structureSha256": metrics["structureSha256"],
             "formatSha256": metrics["formatSha256"],
-            "range": self._normalize_range(payload.get("range")),
             "editSequence": candidate_edit_sequence,
         }
         batch_edit_sequence = candidate_edit_sequence
@@ -2118,6 +2116,8 @@ class DeterministicFormatReviewService:
             )
         normalized = {}
         for key, item in value.items():
+            if item is None:
+                continue
             if key in {
                 "start", "end", "paragraphIndex", "pageNumber", "pageStart", "pageEnd", "sectionIndex"
             }:
@@ -2185,6 +2185,19 @@ class DeterministicFormatReviewService:
                     "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
                     "格式审查语义单元文本无效。",
                 )
+            has_outline_fact = (
+                "headingLevel" in item
+                or "outlineLevel" in item
+                or (
+                    isinstance(item.get("format"), dict)
+                    and "outlineLevel" in item["format"]
+                )
+            )
+            outline_level = (
+                normalize_format_block_outline_level(item)
+                if has_outline_fact
+                else None
+            )
             normalized_item = {
                 "blockId": block_id,
                 "blockType": block_type,
@@ -2201,20 +2214,25 @@ class DeterministicFormatReviewService:
                 normalized_item["unsupportedObjects"] = cls._normalize_source_coverage({
                     "unsupportedObjects": item.get("unsupportedObjects")
                 }).get("unsupportedObjects", [])
-            if "images" in item:
-                normalized_item["images"] = cls._normalize_image_facts(item.get("images"))
-            if block_type == "image":
-                normalized_item["image"] = cls._normalize_image_facts([item])[0]
+            image_values = item.get("images", [])
+            if block_type == "image" and not image_values:
+                image_values = [item]
+            normalized_item["images"] = cls._normalize_image_facts(image_values)
+            if block_type == "image" and normalized_item["images"]:
+                normalized_item.update(normalized_item["images"][0])
             if block_type == "table":
-                normalized_item["rows"] = cls._normalize_table_rows(item.get("rows", []))
-                normalized_item["nestedTables"] = item.get("nestedTables", []) if isinstance(item.get("nestedTables", []), list) else []
-            has_outline_fact = (
-                "headingLevel" in item
-                or "outlineLevel" in item
-                or "outlineLevel" in normalized_item["format"]
-            )
+                normalized_table = cls._normalize_table(
+                    item,
+                    max(0, int(item.get("tableIndex", 1) or 1) - 1),
+                )
+                normalized_item["tableId"] = normalized_table["tableId"]
+                normalized_item["tableIndex"] = normalized_table["tableIndex"]
+                normalized_item["rows"] = normalized_table["rows"]
+                normalized_item["nestedTables"] = normalized_table["nestedTables"]
+                normalized_item["format"] = normalized_table["format"]
+                canonical_text = cls._format_block_text_values(normalized_item)
+                normalized_item["text"] = canonical_text[0] if canonical_text else ""
             if has_outline_fact:
-                outline_level = normalize_format_block_outline_level(normalized_item)
                 normalized_item["outlineLevel"] = outline_level
                 normalized_item["format"]["outlineLevel"] = outline_level
                 if block_type == "heading":
@@ -2266,6 +2284,51 @@ class DeterministicFormatReviewService:
         return normalized
 
     @staticmethod
+    def _normalize_deterministic_number(value: object) -> object:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            if abs(value) >= 1000000000000000:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+                    "格式审查数值表示不受支持。",
+                    status_code=400,
+                )
+            return value
+        if not isinstance(value, float):
+            return value
+        if not math.isfinite(value):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+                "格式审查数值表示无效。",
+                status_code=400,
+            )
+        if value == 0:
+            return 0
+        if (
+            "e" in str(value).lower()
+            or abs(value) < 0.0001
+            or abs(value) >= 1000000000000000
+        ):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+                "格式审查数值表示不受支持。",
+                status_code=400,
+            )
+        return int(value) if value.is_integer() else value
+
+    @classmethod
+    def _normalize_deterministic_json_value(cls, value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                key: cls._normalize_deterministic_json_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._normalize_deterministic_json_value(item) for item in value]
+        return cls._normalize_deterministic_number(value)
+
+    @staticmethod
     def _normalize_format_facts(value: object) -> Dict:
         if not isinstance(value, dict):
             return {}
@@ -2277,7 +2340,7 @@ class DeterministicFormatReviewService:
             "rightIndent", "outlineLevel", "segments", "dataStatus", "facts", "formatFacts", "lineSpacingMode"
         }
         normalized = {
-            key: deepcopy(value[key])
+            key: DeterministicFormatReviewService._normalize_deterministic_json_value(deepcopy(value[key]))
             for key in allowed
             if key in value
         }
@@ -2289,7 +2352,9 @@ class DeterministicFormatReviewService:
             normalized["dataStatus"] = "insufficient"
         if normalized.get("dataStatus") == "insufficient" and value.get("insufficientReason"):
             normalized["insufficientReason"] = str(value["insufficientReason"])[:120]
-        return normalize_source_format_facts(normalized)
+        return DeterministicFormatReviewService._normalize_deterministic_json_value(
+            normalize_source_format_facts(normalized)
+        )
 
     @staticmethod
     def _normalize_format_segments(value: object) -> List[Dict]:
@@ -2411,7 +2476,36 @@ class DeterministicFormatReviewService:
                     "format": cls._normalize_format_facts(cell.get("format", {})),
                 })
             rows.append({"rowIndex": int(row.get("rowIndex", row_index) or row_index), "cells": cells})
+        rows.sort(key=lambda row: row["rowIndex"])
+        for row in rows:
+            row["cells"].sort(key=lambda cell: cell["columnIndex"])
         return rows
+
+    @classmethod
+    def _normalize_table(cls, value: object, index: int, parent_id: str = "") -> Dict:
+        source = value if isinstance(value, dict) else {}
+        table_id = str(
+            source.get("tableId")
+            or source.get("id")
+            or (
+                "{0}-nested-{1}".format(parent_id, index + 1)
+                if parent_id
+                else "format-table-{0}".format(index + 1)
+            )
+        )
+        nested = source.get("nestedTables", [])
+        if not isinstance(nested, list):
+            nested = []
+        return {
+            "tableId": table_id,
+            "tableIndex": int(source.get("tableIndex", index + 1) or index + 1),
+            "rows": cls._normalize_table_rows(source.get("rows", [])),
+            "nestedTables": [
+                cls._normalize_table(item, nested_index, table_id)
+                for nested_index, item in enumerate(nested)
+            ],
+            "format": cls._normalize_format_facts(source.get("format", {})),
+        }
 
     @classmethod
     def classify_capacity(cls, review_character_count: object, raise_error: bool = False) -> Dict:
@@ -2442,7 +2536,12 @@ class DeterministicFormatReviewService:
     @classmethod
     def _format_metrics(cls, blocks: List[Dict], source_coverage: Optional[Dict] = None) -> Dict:
         in_scope = [block for block in blocks if block.get("scope") == "in_scope"]
-        text_values = [block.get("text", "") for block in in_scope]
+        text_values = [
+            value
+            for block in in_scope
+            for value in cls._format_block_text_values(block)
+            if value
+        ]
         format_segment_count = 0
         table_cell_count = 0
         insufficient_blocks = 0
@@ -2523,6 +2622,20 @@ class DeterministicFormatReviewService:
                     for table in block.get("nestedTables", [])
                     if isinstance(table, dict)
                 ],
+                "images": [
+                    {
+                        "imageId": image.get("imageId", ""),
+                        "groupId": image.get("groupId", ""),
+                        "fingerprint": image.get("fingerprint", ""),
+                        "captionStatus": image.get("captionStatus", "unknown"),
+                        "associationStatus": image.get("associationStatus", "missing"),
+                        "supported": image.get("supported", True) is not False,
+                        "altText": image.get("altText", ""),
+                        "nearbyText": image.get("nearbyText", ""),
+                    }
+                    for image in block.get("images", [])
+                    if isinstance(image, dict)
+                ],
             }
             for block in blocks
         ]
@@ -2580,6 +2693,37 @@ class DeterministicFormatReviewService:
                 "unsupportedObjectCount": unsupported_object_count,
             },
         }
+
+    @classmethod
+    def _format_block_text_values(cls, block: Dict) -> List[str]:
+        if not isinstance(block, dict):
+            return []
+        if (
+            block.get("blockType") == "table"
+            or "rows" in block
+            or "nestedTables" in block
+        ):
+            values = []
+            rows = block.get("rows", [])
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict) or not isinstance(row.get("cells", []), list):
+                        continue
+                    for cell in row.get("cells", []):
+                        if not isinstance(cell, dict):
+                            continue
+                        cell_text = cell.get("text", "")
+                        if isinstance(cell_text, str) and cell_text:
+                            values.append(cell_text)
+            nested = block.get("nestedTables", [])
+            if isinstance(nested, list):
+                for table in nested:
+                    values.extend(cls._format_block_text_values(table))
+            return ["\n".join(values)] if values else []
+        text = block.get("text", "")
+        if isinstance(text, str) and text:
+            return [text]
+        return []
 
     @staticmethod
     def _enforce_complexity(metrics: Dict, snapshot_bytes: int) -> None:
@@ -2826,6 +2970,7 @@ class DeterministicFormatReviewService:
                 })
             return {
                 "tableId": table.get("tableId", ""),
+                "format": table.get("format", {}),
                 "rows": rows,
                 "nestedTables": [
                     project(item)

@@ -417,7 +417,7 @@ function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
   const structure = helpers.buildDocumentStructure({ paragraphs, headings });
   assert.deepStrictEqual(
     structure.paragraphs.map((paragraph) => paragraph.outline_level),
-    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, null, null, null, null, null, null, null, null, null, null]
+    [0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, undefined, null, null, null, null, null, null, null, null, null]
   );
   assert.deepStrictEqual(
     structure.headings.map((heading) => heading.level),
@@ -428,8 +428,9 @@ function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
   assert.deepStrictEqual(
     fullReview.blocks.map((block) => [block.blockType, block.headingLevel, block.outlineLevel]),
     paragraphs.map((paragraph) => {
-      const level = helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel);
-      return [level === null ? "unknown" : (level > 0 ? "heading" : "paragraph"), level > 0 ? level : undefined, level];
+      const hasFact = typeof paragraph.outlineLevel !== "undefined";
+      const level = hasFact ? helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel) : undefined;
+      return [!hasFact ? "paragraph" : (level === null ? "unknown" : (level > 0 ? "heading" : "paragraph")), level > 0 ? level : undefined, level];
     })
   );
 
@@ -440,8 +441,9 @@ function testWpsOutlineLevelNormalizationIsSharedAcrossReviewBodies() {
   assert.deepStrictEqual(
     deterministicReview.blocks.map((block) => [block.blockType, block.headingLevel, block.outlineLevel]),
     paragraphs.map((paragraph) => {
-      const level = helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel);
-      return [level === null ? "unknown" : (level > 0 ? "heading" : "paragraph"), level > 0 ? level : undefined, level];
+      const hasFact = typeof paragraph.outlineLevel !== "undefined";
+      const level = hasFact ? helpers.normalizeWpsOutlineLevel(paragraph.outlineLevel) : undefined;
+      return [!hasFact ? "paragraph" : (level === null ? "unknown" : (level > 0 ? "heading" : "paragraph")), level > 0 ? level : undefined, level];
     })
   );
 }

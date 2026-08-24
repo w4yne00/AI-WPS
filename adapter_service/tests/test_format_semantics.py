@@ -52,6 +52,36 @@ class FormatSemanticContractTests(unittest.TestCase):
             ),
             1200,
         )
+        self.assertEqual(
+            FormatSemanticContract.output_budget(
+                {
+                    "accessMethod": "direct_model",
+                    "modelName": "deepseek-v4-flash",
+                    "maxOutputTokens": None,
+                }
+            ),
+            4096,
+        )
+        self.assertEqual(
+            FormatSemanticContract.output_budget(
+                {
+                    "accessMethod": "direct_model",
+                    "modelName": "glm-5.2",
+                    "maxOutputTokens": None,
+                }
+            ),
+            4096,
+        )
+        self.assertEqual(
+            FormatSemanticContract.output_budget(
+                {
+                    "accessMethod": "direct_model",
+                    "modelName": "unknown-model",
+                    "maxOutputTokens": None,
+                }
+            ),
+            0,
+        )
 
     def test_response_must_match_operation_snapshot_and_candidate_range(self):
         candidates = {
@@ -124,6 +154,46 @@ class FormatSemanticContractTests(unittest.TestCase):
             FormatSemanticContract.validate_response(
                 "classify_role", role_payload, role_candidates, binding
             )
+
+    def test_undeclared_response_fields_report_a_safe_chinese_path(self):
+        binding = {"contentSha256": "c", "structureSha256": "s", "formatSha256": "f"}
+        candidates = {
+            "block-1": {"allowedTargets": [{"role": "heading", "attributes": {"level": 1}}]},
+        }
+        payload = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": binding,
+            "items": [{
+                "blockId": "block-1",
+                "role": "heading",
+                "level": 1,
+                "confidence": 0.9,
+            }],
+            "reason": "不得进入错误提示的字段值",
+        }
+        with self.assertRaises(AdapterError) as raised:
+            FormatSemanticContract.validate_response(
+                "classify_role", payload, candidates, binding
+            )
+        self.assertEqual(raised.exception.code, "FORMAT_SEMANTIC_RESPONSE_INVALID")
+        self.assertEqual(
+            raised.exception.message,
+            "模型返回了协议未定义的顶层字段：reason。",
+        )
+        self.assertNotIn("不得进入错误提示的字段值", raised.exception.message)
+
+        payload.pop("reason")
+        payload["items"][0]["analysis"] = "不得泄露"
+        with self.assertRaises(AdapterError) as item_raised:
+            FormatSemanticContract.validate_response(
+                "classify_role", payload, candidates, binding
+            )
+        self.assertEqual(
+            item_raised.exception.message,
+            "模型返回了协议未定义的字段：items[0].analysis。",
+        )
+        self.assertNotIn("不得泄露", item_raised.exception.message)
 
     def test_validation_can_require_a_complete_result_for_every_synthetic_candidate(self):
         candidates = {

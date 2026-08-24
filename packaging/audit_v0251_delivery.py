@@ -27,6 +27,147 @@ REFERENCE_WORKFLOWS = {
     "reference-workflows/format-semantics-vision-v1.yml",
 }
 FORBIDDEN_SCOPE_PARTS = {"material_composer", "adr-0116", "d-0001", "adr-0117"}
+TARGET_ACCEPTANCE_MATRIX_MARKERS = (
+    "`OutlineLevel=0`",
+    "`OutlineLevel=10`",
+    "`OutlineLevel=1..9`",
+    "`表格/嵌套表格`",
+    "`图片元数据`",
+    "`非 BMP emoji`",
+    "`dataStatus=insufficient`",
+    "其它 `dataStatus`",
+)
+CANDIDATE_CONTEXT_BEGIN = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+CANDIDATE_CONTEXT_END = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+CANONICAL_DOCUMENT_TITLE = "# v0.25.1 目标机整合验收记录"
+CANONICAL_BASIC_INFO_HEADING = "## 基本信息"
+CANONICAL_NEXT_HEADING = "## 验收结论规则"
+CANONICAL_BASIC_INFO_STATIC_LINES = (
+    "- 对应工单：[Issue #59](https://github.com/w4yne00/AI-WPS/issues/59)",
+    "- 验收版本：`v0.25.1-alpha`",
+    "- 验收范围：麒麟 V10 ARM、目标 WPS、`cloud` 用户环境",
+    "- 当前记录状态：`manual-pending`",
+)
+CANONICAL_OPERATOR_LINES = (
+    "- 验收人员：",
+    "- 验收日期：",
+    "- 交付包文件名：",
+    "- 交付包 SHA-256：",
+    "- v0.25.0 基线包 SHA-256：",
+)
+CANONICAL_BASIC_INFO_INTRO = (
+    "本记录是目标机现场填写模板。候选上下文由 `prepare_v0251_delivery.py` 在组装交付树时整体生成；"
+    "自动化门禁只能证明候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户环境中的真实操作。"
+    "所有现场原始命令输出、截图、目标机编号、账号信息、配置内容、API Key、文档正文和模型原始回复"
+    "只保留在受控验收记录中，不写入仓库。"
+)
+CANONICAL_SOURCE_CONTEXT_LINE = (
+    "- 当前源树没有活动候选；冻结归档 `10b251d` 已登记为 `rejected`，其 SHA-256 为 "
+    "`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，"
+    "原始归档和校验文件保持不可变。"
+)
+CANDIDATE_CONTEXT_STALE_PATTERNS = (
+    re.compile(r"当前源树没有活动候选"),
+    re.compile(r"当前不存在活动候选"),
+    re.compile(r"此源码仅供重新构建，不是候选"),
+    re.compile(r"当前没有(?:(?:活动)(?:的)?|自动化)?候选"),
+    re.compile(r"修复源.*(?:不属于|尚未).*(?:候选|candidate)", re.IGNORECASE),
+    re.compile(r"(?:新候选|候选).*(?:待构建|尚未构建|未形成|未生成|重建前)"),
+    re.compile(r"(?:重建|重新构建).*(?:前|后才|才能).*(?:候选|通过)"),
+    re.compile(r"\brebuild[- ]only\b", re.IGNORECASE),
+    re.compile(r"\bno\s+(?:current|active)\s+(?:automated\s+)?candidate\b", re.IGNORECASE),
+    re.compile(r"\bno\s+candidate\s+is\s+currently\s+active\b", re.IGNORECASE),
+    re.compile(r"\b(?:current\s+candidate|candidate)\s+does\s+not\s+exist\b", re.IGNORECASE),
+    re.compile(r"\brepair\s+source\s+is\s+not\s+(?:a\s+)?candidate\b", re.IGNORECASE),
+    re.compile(r"\bnew\s+candidate.*(?:pending\s+build|build\s+later)\b", re.IGNORECASE),
+)
+
+
+def _non_empty_lines(content: str) -> List[str]:
+    """Return raw non-empty lines; content lines are never normalized."""
+    return [line for line in content.splitlines() if line and not line.isspace()]
+
+
+def _basic_information_bounds(content: str) -> tuple:
+    """Return character bounds for diagnostics before the closed schema check."""
+    lines = content.splitlines(keepends=True)
+    basic_index = next(
+        (index for index, line in enumerate(lines) if line.rstrip("\r\n") == CANONICAL_BASIC_INFO_HEADING),
+        None,
+    )
+    if basic_index is None:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_SECTION_MISSING")
+    next_index = next(
+        (
+            index
+            for index in range(basic_index + 1, len(lines))
+            if lines[index].rstrip("\r\n").startswith("## ")
+            and not lines[index].rstrip("\r\n").startswith("### ")
+        ),
+        len(lines),
+    )
+    start = sum(len(line) for line in lines[:basic_index])
+    end = sum(len(line) for line in lines[:next_index])
+    return start, end
+
+
+def _basic_info_schema_lines(context_lines: List[str]) -> List[str]:
+    return [
+        CANONICAL_DOCUMENT_TITLE,
+        CANONICAL_BASIC_INFO_HEADING,
+        *CANONICAL_BASIC_INFO_STATIC_LINES,
+        CANDIDATE_CONTEXT_BEGIN,
+        *context_lines,
+        CANDIDATE_CONTEXT_END,
+        *CANONICAL_OPERATOR_LINES,
+        CANONICAL_BASIC_INFO_INTRO,
+        CANONICAL_NEXT_HEADING,
+    ]
+
+
+def _validate_basic_info_schema(content: str, context_lines: List[str]) -> None:
+    """Require the complete packaged basic-info prefix as raw non-empty lines."""
+    lines = _non_empty_lines(content)
+    expected = _basic_info_schema_lines(context_lines)
+    if lines.count(CANONICAL_DOCUMENT_TITLE) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_DOCUMENT_TITLE_CARDINALITY_INVALID")
+    if lines.count(CANONICAL_BASIC_INFO_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_HEADING_CARDINALITY_INVALID")
+    if lines.count(CANONICAL_NEXT_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_NEXT_HEADING_CARDINALITY_INVALID")
+    if lines.count(CANDIDATE_CONTEXT_BEGIN) != 1 or lines.count(CANDIDATE_CONTEXT_END) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_INVALID")
+    if len(lines) < len(expected) or lines[: len(expected)] != expected:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_SCHEMA_MISMATCH")
+
+
+def _archive_source_binding(
+    archive_name: str,
+    source_commit: object,
+    candidate_build_id: object,
+    error_code: str,
+) -> None:
+    """Bind a source-bearing archive name to its manifest source/build suffix."""
+    match = re.fullmatch(
+        r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
+        r"(?:-(?P<source>[0-9a-f]{7}))?-v0251\.tar\.gz",
+        str(archive_name),
+    )
+    if match is None or match.group("source") is None:
+        # Legacy archives without a source segment predate the binding contract.
+        return
+    source = str(source_commit)
+    build_id = str(candidate_build_id)
+    if (
+        not COMMIT_RE.fullmatch(source)
+        or not PREVIOUS_BUILD_ID_RE.fullmatch(build_id)
+        or not build_id.endswith("-" + source)
+        or not source.startswith(match.group("source"))
+        or not build_id.startswith(
+            "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-{0}-".format(match.group("date"))
+        )
+    ):
+        raise DeliveryFailure(error_code)
 
 
 class DeliveryFailure(RuntimeError):
@@ -44,6 +185,25 @@ AUDIT_SCRIPT_NAMES = {
     "audit_v0250_delivery.py",
     "audit_v0251_delivery.py",
 }
+STALE_CANDIDATE_NOTE_PATTERNS = (
+    re.compile(r"新?候选(?:待构建|尚未(?:形成|生成|构建)|未(?:形成|生成|构建))"),
+    re.compile(r"尚未构建"),
+    re.compile(r"修复中"),
+    re.compile(r"再形成新候选"),
+    re.compile(
+        r"\b(?:new\s+)?candidate\s+(?:has\s+)?not\s+yet\s+"
+        r"(?:been\s+)?(?:formed|created|generated|built)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:new\s+)?candidate\s+not\s+yet\s+"
+        r"(?:formed|created|generated|built)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"new candidate archive remains pending build", re.IGNORECASE),
+    re.compile(r"repair is in progress", re.IGNORECASE),
+    re.compile(r"build a new candidate later", re.IGNORECASE),
+)
 
 
 def load_json(path: Path, code: str) -> Dict:
@@ -168,6 +328,154 @@ def audit_visual_default(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("VISUAL_CLOSED_SIDE_EFFECT_CONTRACT_FAILED")
 
 
+def audit_candidate_note(root: Path, manifest: Dict) -> None:
+    """Require a generated note whose identity matches the package manifest."""
+    note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
+    content = note.read_text(encoding="utf-8")
+    for pattern in STALE_CANDIDATE_NOTE_PATTERNS:
+        if pattern.search(content):
+            raise DeliveryFailure("V0251_CANDIDATE_NOTE_STALE {0}".format(pattern.pattern))
+
+    evidence = manifest.get("candidateEvidence", {})
+    release_date = str(manifest.get("releaseDate", ""))
+    source_commit = str(evidence.get("sourceCommit", ""))
+    candidate_build_id = str(evidence.get("candidateBuildId", ""))
+    archive_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        release_date, source_commit[:7]
+    )
+    checksum_name = str(evidence.get("archiveChecksumFile", ""))
+    required = (
+        "v0.25.1-alpha",
+        "ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz",
+        "Issue #59",
+        "format_semantics.v1",
+        "manual acceptance",
+        "`{0}-{1}`".format(release_date, source_commit[:7]),
+        "`{0}`".format(candidate_build_id),
+        "`{0}`".format(source_commit),
+        "`{0}`".format(archive_name),
+        "`{0}`".format(checksum_name),
+        "Automated status: `candidate`",
+        "Target acceptance status: `manual-pending`",
+    )
+    for marker in required:
+        if marker not in content:
+            raise DeliveryFailure("V0251_CANDIDATE_NOTE_IDENTITY_MISSING {0}".format(marker))
+
+
+def _candidate_context(content: str) -> str:
+    lines = content.splitlines()
+    if lines.count(CANONICAL_BASIC_INFO_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_HEADING_CARDINALITY_INVALID")
+    if lines.count(CANONICAL_NEXT_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_NEXT_HEADING_CARDINALITY_INVALID")
+    begin_positions = [
+        index for index, line in enumerate(lines) if line == CANDIDATE_CONTEXT_BEGIN
+    ]
+    end_positions = [
+        index for index, line in enumerate(lines) if line == CANDIDATE_CONTEXT_END
+    ]
+    begin_count = len(begin_positions)
+    end_count = len(end_positions)
+    if begin_count == 0 or end_count == 0:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING")
+    if begin_count != 1 or end_count != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_DUPLICATE")
+    begin = begin_positions[0]
+    end = end_positions[0]
+    if begin > end:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_ORDER_INVALID")
+    section_start, section_end = _basic_information_bounds(content)
+    line_offsets = [0]
+    for line in content.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+    if (
+        line_offsets[begin] < section_start
+        or line_offsets[end + 1] > section_end
+    ):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_OUTSIDE_BASIC_INFO")
+    return "\n".join(lines[begin + 1 : end])
+
+
+def _validate_candidate_context(content: str, manifest: Dict) -> None:
+    context = _candidate_context(content)
+    section_start, section_end = _basic_information_bounds(content)
+    basic_section = content[section_start:section_end]
+    if any(pattern.search(basic_section) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE")
+    lines = _non_empty_lines(context)
+    current_lines = [line for line in lines if line.startswith("- 当前自动化候选：")]
+    if not current_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_MISSING")
+    if len(current_lines) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_DUPLICATE")
+
+    evidence = manifest.get("candidateEvidence", {})
+    source_commit = str(evidence.get("sourceCommit", ""))
+    candidate_build_id = str(evidence.get("candidateBuildId", ""))
+    release_date = str(manifest.get("releaseDate", ""))
+    archive_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        release_date, source_commit[:7]
+    )
+    checksum_name = str(evidence.get("archiveChecksumFile", ""))
+    expected_current = (
+        "- 当前自动化候选：`{short_source}`，状态为 `candidate`；"
+        "candidateBuildId：`{candidate_build_id}`；源码提交：`{source_commit}`；"
+        "归档：`{archive_name}`；校验文件：`{checksum_name}`；"
+        "目标验收：`manual-pending`（Issue #59）"
+    ).format(
+        short_source=source_commit[:7],
+        candidate_build_id=candidate_build_id,
+        source_commit=source_commit,
+        archive_name=archive_name,
+        checksum_name=checksum_name,
+    )
+    if current_lines[0] != expected_current:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
+
+    previous = evidence.get("supersedes", {})
+    expected_previous = (
+        "- 上一被拒绝归档：`{archive_name}`，SHA-256：`{archive_sha256}`；"
+        "candidateBuildId：`{candidate_build_id}`，状态为 `rejected`"
+    ).format(
+        archive_name=str(previous.get("archiveName", "")),
+        archive_sha256=str(previous.get("archiveSha256", "")),
+        candidate_build_id=str(previous.get("candidateBuildId", "")),
+    )
+    previous_lines = [
+        line
+        for line in lines
+        if line.startswith("- 上一被拒绝归档：") or line.startswith("- 被拒绝归档：")
+    ]
+    if not previous_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_SUPERSEDED_LINE_MISSING")
+    if len(previous_lines) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_SUPERSEDED_LINE_DUPLICATE")
+    if previous_lines[0] != expected_previous:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_SUPERSEDED_IDENTITY_MISMATCH")
+
+    state_lines = [line for line in lines if line.startswith("- 候选状态：")]
+    if not state_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_MISSING")
+    if len(state_lines) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_DUPLICATE")
+    expected_state = (
+        "- 候选状态：当前归档是自动化门禁产生的当前候选；"
+        "自动化门禁不等于目标机验收，Issue #59 仍为 `manual-pending`。"
+    )
+    if state_lines[0] != expected_state:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_MISMATCH")
+
+    expected_lines = [expected_current, expected_previous, expected_state]
+    if any(line not in expected_lines for line in lines):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_UNKNOWN_LINE")
+    if len(lines) != len(expected_lines):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_LINE_CARDINALITY_INVALID")
+    if lines != expected_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_ORDER_INVALID")
+    _validate_basic_info_schema(content, expected_lines)
+
+
 def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     record = safe_path(
         root,
@@ -188,18 +496,59 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     for marker in required:
         if marker not in content:
             raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_INCOMPLETE {0}".format(marker))
+    mandatory_heading = "## 必测项目"
+    matrix_heading = "### v2 后台格式审查判定矩阵"
+    if mandatory_heading not in content or matrix_heading not in content:
+        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_MANDATORY_SECTION_MISSING")
+    mandatory_section = content.split(mandatory_heading, 1)[1].split(
+        matrix_heading, 1
+    )[0]
+    numbered_rows = []
     result_rows = {}
-    for line in content.splitlines():
+    duplicate_rows = set()
+    for line in mandatory_section.splitlines():
         fields = [field.strip() for field in line.strip().strip("|").split("|")]
-        if len(fields) < 5 or not fields[0].isdigit():
+        if not fields or not fields[0].isdigit():
             continue
         index = int(fields[0])
-        if 1 <= index <= 7:
-            result_rows[index] = fields[2].strip("`")
-    if set(result_rows) != set(range(1, 8)):
-        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_RESULTS_INCOMPLETE")
-    if any(status != "manual-pending" for status in result_rows.values()):
-        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING")
+        status = fields[2].strip("`") if len(fields) >= 3 else ""
+        numbered_rows.append((index, status))
+        if index in result_rows:
+            duplicate_rows.add(index)
+        result_rows[index] = status
+    extra_rows = sorted(
+        {index for index, _status in numbered_rows if index not in set(range(1, 10))}
+    )
+    if extra_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_EXTRA {0}".format(
+                ",".join(str(index) for index in extra_rows)
+            )
+        )
+    if duplicate_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_DUPLICATE {0}".format(
+                ",".join(str(index) for index in sorted(duplicate_rows))
+            )
+        )
+    missing_rows = set(range(1, 10)) - set(result_rows)
+    if missing_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_MISSING {0}".format(
+                ",".join(str(index) for index in sorted(missing_rows))
+            )
+        )
+    non_pending_rows = [
+        index
+        for index, status in sorted(result_rows.items())
+        if status != "manual-pending"
+    ]
+    if non_pending_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING rows={0}".format(
+                ",".join(str(index) for index in non_pending_rows)
+            )
+        )
     for marker in (
         "当前记录状态：`manual-pending`",
         "记录状态：`manual-pending`",
@@ -213,6 +562,56 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("TARGET_ACCEPTANCE_ISSUE_MISMATCH")
     if manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
         raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_STATUS_INVALID")
+
+    _validate_candidate_context(content, manifest)
+
+    evidence = manifest.get("candidateEvidence", {})
+    source_commit = str(evidence.get("sourceCommit", ""))
+    candidate_build_id = str(evidence.get("candidateBuildId", ""))
+    archive_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        manifest.get("releaseDate", ""), source_commit[:7]
+    )
+    checksum_name = str(evidence.get("archiveChecksumFile", ""))
+    for marker in TARGET_ACCEPTANCE_MATRIX_MARKERS:
+        if marker not in content:
+            raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_MATRIX_MISSING {0}".format(marker))
+
+    status = load_json(
+        root / "docs/v0251-candidate-status.json",
+        "V0251_CANDIDATE_STATUS_MISSING",
+    )
+    records = [item for item in status.get("records", []) if isinstance(item, dict)]
+    current = [item for item in records if item.get("candidateBuildId") == candidate_build_id]
+    candidate_records = [item for item in records if item.get("status") == "candidate"]
+    if len(candidate_records) != 1:
+        raise DeliveryFailure(
+            "V0251_TARGET_ACCEPTANCE_STATUS_CANDIDATE_CARDINALITY_INVALID"
+        )
+    if candidate_records[0].get("candidateBuildId") != candidate_build_id:
+        raise DeliveryFailure(
+            "V0251_TARGET_ACCEPTANCE_STATUS_CANDIDATE_IDENTITY_MISMATCH"
+        )
+    if (
+        len(current) != 1
+        or current[0].get("status") != "candidate"
+        or current[0].get("sourceCommit") != source_commit
+        or current[0].get("archiveName") != archive_name
+        or current[0].get("archiveChecksumFile") != checksum_name
+    ):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
+
+    delivery_note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
+    delivery_content = delivery_note.read_text(encoding="utf-8")
+    for marker in (
+        "`{0}`".format(candidate_build_id),
+        "`{0}`".format(source_commit),
+        "`{0}`".format(archive_name),
+        "`{0}`".format(checksum_name),
+        "Automated status: `candidate`",
+        "Target acceptance status: `manual-pending`",
+    ):
+        if marker not in delivery_content:
+            raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
 
 
 def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
@@ -279,8 +678,19 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         )
     ):
         raise DeliveryFailure("V0251_SUPERSEDED_CANDIDATE_INVALID")
+    _archive_source_binding(
+        str(superseded.get("archiveName", "")),
+        superseded.get("sourceCommit", ""),
+        superseded.get("candidateBuildId", ""),
+        "V0251_SUPERSEDED_CANDIDATE_SOURCE_BINDING_INVALID",
+    )
 
     records = [item for item in status["records"] if isinstance(item, dict)]
+    candidate_records = [item for item in records if item.get("status") == "candidate"]
+    if len(candidate_records) != 1:
+        raise DeliveryFailure("V0251_CANDIDATE_STATUS_CANDIDATE_CARDINALITY_INVALID")
+    if candidate_records[0].get("candidateBuildId") != current_build_id:
+        raise DeliveryFailure("V0251_CANDIDATE_STATUS_CANDIDATE_IDENTITY_MISMATCH")
     rejected = [
         item
         for item in records
@@ -292,6 +702,11 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0251_REJECTED_CANDIDATE_BUILD_ID_MISMATCH")
     if rejected[0].get("archiveSha256") != superseded.get("archiveSha256"):
         raise DeliveryFailure("V0251_REJECTED_CANDIDATE_DIGEST_MISMATCH")
+    previous_archive_source = previous_archive_match.group("source")
+    if previous_archive_source is not None and (
+        rejected[0].get("sourceCommit") != superseded.get("sourceCommit")
+    ):
+        raise DeliveryFailure("V0251_REJECTED_CANDIDATE_SOURCE_COMMIT_MISMATCH")
 
     current = [item for item in records if item.get("candidateBuildId") == current_build_id]
     if len(current) != 1 or current[0].get("status") != "candidate":
@@ -362,7 +777,6 @@ def audit(root: Path) -> None:
     )
     if evidence.get("archiveChecksumFile") != expected_checksum_name:
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_EVIDENCE_MISSING")
-    audit_candidate_lineage(root, manifest)
     if manifest.get("targetAcceptanceIssue") != 59 or manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
         raise DeliveryFailure("ISSUE_59_MANUAL_ACCEPTANCE_REQUIRED")
     policy = manifest.get("deliveryPolicy", {})
@@ -374,23 +788,16 @@ def audit(root: Path) -> None:
         raise DeliveryFailure("V0251_CANDIDATE_POLICY_INVALID")
     if manifest.get("formatReview", {}).get("enabledByDefault") is not True:
         raise DeliveryFailure("FORMAT_REVIEW_DEFAULT_MUST_BE_OPEN")
-    note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
-    note_content = note.read_text(encoding="utf-8")
-    for required in (
-        "v0.25.1-alpha",
-        "ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz",
-        "Issue #59",
-        "format_semantics.v1",
-        "manual acceptance",
-    ):
-        if required not in note_content:
-            raise DeliveryFailure("V0251_CANDIDATE_NOTE_INCOMPLETE {0}".format(required))
+    # Validate the bounded acceptance context before lineage so malformed
+    # packaged evidence fails at its trust boundary, not in a later relation.
+    audit_target_acceptance_record(root, manifest)
+    audit_candidate_lineage(root, manifest)
+    audit_candidate_note(root, manifest)
     actual = {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
     audit_scope(actual)
     audit_plugin_cache_identity(root, VERSION)
     audit_format_assets(root, manifest)
     audit_visual_default(root, manifest)
-    audit_target_acceptance_record(root, manifest)
     audit_no_legacy_format_references(root)
     print("v0251_delivery_audit=passed status=candidate version={0}".format(VERSION))
 
