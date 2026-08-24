@@ -3,7 +3,7 @@
 本修复继续使用现有 Phase1 安装体系，后续归档名称为
 `ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz`。其中 `SOURCE_COMMIT` 为七位源码提交号，使同一天的修复重建仍具有独立、可追溯的归档身份；旧的无提交号归档名继续作为历史候选被接受。本次修复统一格式审查快照的 JS/Python 规范化、固定 structure/format 投影、UTF-16 字符计数和 Adapter 独立重算，不进入 Preview 安装基线，也不改变 Phase1 的安装入口、目录或回退事务。
 
-历史候选 `20260824-ccad09f` 已登记为 `rejected`：其 `word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format 哈希前镜像不一致。当前候选为 `20260824-2e7a3e6`，candidateBuildId `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，源码提交 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。该候选在 Kylin V10 SP1 ARM64、Python `3.8.10`、Node `v22.23.2` 环境下完成自动交付与生命周期门禁，状态为 `candidate`；目标 WPS GUI、真实模型和 Issue #59 人工验收仍为 `manual-pending`。
+历史候选 `20260824-ccad09f` 已登记为 `rejected`：其 `word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format 哈希前镜像不一致。`20260824-2e7a3e6` 也已登记为 `rejected`，candidateBuildId `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，源码提交 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。最终审查发现包内交付说明过期，且缺失大纲事实被写为 `null`；当前修复待新候选重建，不存在可分发 candidate。Issue #59 目标 WPS GUI、真实模型和人工验收仍为 `manual-pending`。
 
 ## 自动化门禁
 
@@ -15,7 +15,7 @@
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 及归档内 `docs/v0251-candidate-status.json` 保留 `20260824-ccad09f` 的 `rejected` 记录，并追加当前 `20260824-2e7a3e6` 的 `candidate` 记录。自动门禁通过只表示 `candidate`，不表示麒麟 V10 目标 WPS 或模型服务已经完成现场验收。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 及归档内 `docs/v0251-candidate-status.json` 保留 `20260824-ccad09f` 的 `rejected` 记录，并将 `20260824-2e7a3e6` 登记为 `rejected`。当前修复待新候选重建，自动门禁结果不得被写成当前可分发 candidate，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 

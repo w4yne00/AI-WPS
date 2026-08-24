@@ -77,9 +77,9 @@
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
       "archiveSha256": "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e",
       "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-      "status": "candidate",
+      "status": "rejected",
       "recordedAt": "20260824",
-      "reason": "automated delivery and Python 3.8 lifecycle gates passed; target WPS GUI, real model, and Issue #59 manual acceptance remain pending"
+      "reason": "rejected: package delivery note was stale (包内交付说明过期) and missing outline facts were serialized as null (缺失大纲事实被写为 null); repair continues and a new candidate must be rebuilt"
     }
   ]
 }

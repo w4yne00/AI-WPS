@@ -99,6 +99,14 @@ def test_v0251_policy_ships_issue_59_target_acceptance_record():
         "insufficientReason",
         "contentSha256",
         "jobId",
+        "表格/嵌套表格",
+        "图片元数据",
+        "非 BMP emoji",
+        "pixelExportCount=0",
+        "pixelUploadCount=0",
+        "四项指标 JS/Python 对拍",
+        "合法输入应无 409",
+        "合法输入应启动并记录 `jobId`",
     ):
         assert required in record
 
@@ -154,6 +162,7 @@ def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_con
     validation = handoff.split("## 6. 验证状态", 1)[1].split("## 7. 目标机验证建议", 1)[0]
     rejected_candidates = _rejected_candidates_from_validation_section(validation)
     assert "20260824-ccad09f" in rejected_candidates
+    assert "20260824-2e7a3e6" in rejected_candidates
     assert "20260822-e43dc8c" in rejected_candidates
 
     candidate_only = (
@@ -182,9 +191,9 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
         "archiveSha256": "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e",
         "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "status": "candidate",
+        "status": "rejected",
         "recordedAt": "20260824",
-        "reason": "automated delivery and Python 3.8 lifecycle gates passed; target WPS GUI, real model, and Issue #59 manual acceptance remain pending",
+        "reason": "rejected: package delivery note was stale (包内交付说明过期) and missing outline facts were serialized as null (缺失大纲事实被写为 null); repair continues and a new candidate must be rebuilt",
     }
     assert status["records"][-1] == expected
 
@@ -649,3 +658,73 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     assert assets["deliveryVersion"] == "0.25.1-alpha"
     lineage = json.loads(status_path.read_text(encoding="utf-8"))
     assert [record["status"] for record in lineage["records"]] == ["rejected", "candidate"]
+
+
+def test_v0251_prepare_rewrites_delivery_note_with_current_candidate_identity(tmp_path):
+    note = tmp_path / "docs/v0251-delivery.md"
+    note.parent.mkdir(parents=True)
+    note.write_text("新候选待构建；当前源码修复中。", encoding="utf-8")
+
+    prepare_module = importlib.util.spec_from_file_location("v0251_delivery_prepare", PREPARE)
+    assert prepare_module is not None and prepare_module.loader is not None
+    module = importlib.util.module_from_spec(prepare_module)
+    prepare_module.loader.exec_module(module)
+    module.write_candidate_delivery_note(
+        tmp_path,
+        "20260824",
+        "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+        "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
+        "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+        59,
+    )
+    generated = note.read_text(encoding="utf-8")
+    for required in (
+        "20260824-2e7a3e6",
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+        "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+        "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
+        "candidate",
+        "manual-pending",
+        "Issue #59",
+    ):
+        assert required in generated
+    for stale in ("新候选待构建", "尚未构建", "修复中", "再形成新候选"):
+        assert stale not in generated
+    audit_module = load_v0251_audit_module()
+    audit_module.audit_candidate_note(
+        tmp_path,
+        {
+            "releaseDate": "20260824",
+            "candidateEvidence": {
+                "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+                "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+                "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+            },
+        },
+    )
+
+
+def test_v0251_audit_rejects_stale_delivery_note(tmp_path):
+    audit_module = load_v0251_audit_module()
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "v0251-delivery.md").write_text(
+        "v0.25.1-alpha 新候选待构建，当前修复中。", encoding="utf-8"
+    )
+    manifest = {
+        "releaseDate": "20260824",
+        "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824",
+        "candidateEvidence": {
+            "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+            "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+            "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+        },
+        "targetAcceptanceIssue": 59,
+        "targetAcceptance": {"status": "manual-pending"},
+    }
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_CANDIDATE_NOTE_STALE",
+    ):
+        audit_module.audit_candidate_note(tmp_path, manifest)

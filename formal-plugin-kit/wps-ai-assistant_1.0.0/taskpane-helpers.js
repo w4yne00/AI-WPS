@@ -268,21 +268,34 @@
       var text = String(paragraph && paragraph.text || "")
         .replace(/[\r\u0007]+$/g, "")
         .trim();
-      var outlineLevel = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
+      var hasOutlineFact = Boolean(paragraph && (
+        (Object.prototype.hasOwnProperty.call(paragraph, "outlineLevel") &&
+          typeof paragraph.outlineLevel !== "undefined") ||
+        (Object.prototype.hasOwnProperty.call(paragraph, "outline_level") &&
+          typeof paragraph.outline_level !== "undefined")
+      ));
+      var outlineLevel = hasOutlineFact
+        ? normalizeWpsOutlineLevel(paragraph.outlineLevel !== undefined
+          ? paragraph.outlineLevel : paragraph.outline_level) : null;
       var paragraphIndex = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || pendingBlocks.length + 1;
       if (!text) {
         return;
       }
       pendingBlocks.push({
         blockId: "paragraph-" + paragraphIndex,
-        blockType: outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
-          (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph")),
+        blockType: !hasOutlineFact ? (paragraph.listLabel ? "listItem" : "paragraph") :
+          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
+            (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))),
         paragraphIndex: paragraphIndex,
-        outlineLevel: outlineLevel,
-        headingLevel: outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         text: text
       });
+      if (hasOutlineFact) {
+        pendingBlocks[pendingBlocks.length - 1].outlineLevel = outlineLevel;
+        if (outlineLevel > 0) {
+          pendingBlocks[pendingBlocks.length - 1].headingLevel = outlineLevel;
+        }
+      }
     });
     (Array.isArray(content.tables) ? content.tables : []).forEach(function (table, index) {
       var tableId = String(table && (table.tableId || table.id) || "table-" + (index + 1));
@@ -873,6 +886,10 @@
         block[key] = block.images[0][key];
       });
     }
+    if (Object.prototype.hasOwnProperty.call(block, "outlineLevel") &&
+        typeof block.outlineLevel === "undefined") {
+      delete block.outlineLevel;
+    }
     if (Object.prototype.hasOwnProperty.call(block, "outlineLevel")) {
       block.outlineLevel = normalizeWpsOutlineLevel(block.outlineLevel);
       block.format.outlineLevel = block.outlineLevel;
@@ -934,8 +951,10 @@
       var index = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || blocks.length + 1;
       var text = String(paragraph && paragraph.text || "").replace(/[\r\u0007]+$/g, "").trim();
       var hasOutlineFact = Boolean(paragraph && (
-        Object.prototype.hasOwnProperty.call(paragraph, "outlineLevel") ||
-        Object.prototype.hasOwnProperty.call(paragraph, "outline_level")
+        (Object.prototype.hasOwnProperty.call(paragraph, "outlineLevel") &&
+          typeof paragraph.outlineLevel !== "undefined") ||
+        (Object.prototype.hasOwnProperty.call(paragraph, "outline_level") &&
+          typeof paragraph.outline_level !== "undefined")
       ));
       var outlineLevel = hasOutlineFact
         ? normalizeWpsOutlineLevel(paragraph.outlineLevel !== undefined
@@ -968,18 +987,23 @@
         facts: paragraph.formatFacts || paragraph.format_facts || buildWpsFormatFacts(paragraph),
         insufficientReason: paragraph.formatInsufficientReason || ""
       };
-      pushBlock({
+      var paragraphBlock = {
         blockId: "format-paragraph-" + index,
         blockType: blockType,
         paragraphIndex: index,
-        outlineLevel: hasOutlineFact ? outlineLevel : undefined,
-        headingLevel: hasOutlineFact && outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         captionFor: paragraph.captionFor ? String(paragraph.captionFor) : undefined,
         text: text,
         format: format,
         range: paragraph.range || {}
-      });
+      };
+      if (hasOutlineFact) {
+        paragraphBlock.outlineLevel = outlineLevel;
+        if (outlineLevel > 0) {
+          paragraphBlock.headingLevel = outlineLevel;
+        }
+      }
+      pushBlock(paragraphBlock);
     });
 
     tables.forEach(function (table, index) {
@@ -3525,7 +3549,6 @@
         italic: false,
         underline: null,
         alignment: "",
-        outlineLevel: null,
         lineSpacing: null,
         lineSpacingMode: null,
         firstLineIndent: null,
@@ -3567,7 +3590,11 @@
           maxSegments: collectOptions.maxFormatSegments
         })
         : null;
-      items.push({
+      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+      if (typeof rawOutlineLevel === "undefined") {
+        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      }
+      var item = {
         index: i,
         text: limitTextLength(readText(paragraph), collectOptions.maxParagraphTextLength),
         range: readParagraphRange(paragraph, i),
@@ -3578,7 +3605,6 @@
         italic: Boolean(safeRead(font, "Italic")),
         underline: normalizeInteger(firstDefined(safeRead(font, "Underline"), null)),
         alignment: normalizeAlignmentValue(safeRead(paragraphFormat, "Alignment"), ""),
-        outlineLevel: normalizeWpsOutlineLevel(firstDefined(safeRead(paragraphFormat, "OutlineLevel"), undefined)),
         lineSpacing: normalizeNumber(firstDefined(safeRead(paragraphFormat, "LineSpacing"), safeRead(paragraphFormat, "lineSpacing"), null)),
         lineSpacingMode: normalizeWpsLineSpacingMode(firstDefined(
           safeRead(paragraphFormat, "LineSpacingRule"), safeRead(paragraphFormat, "lineSpacingRule"), null
@@ -3591,7 +3617,11 @@
         formatSegments: characterFormat ? characterFormat.segments : [],
         formatDataStatus: characterFormat ? characterFormat.dataStatus : "verified",
         formatInsufficientReason: characterFormat ? characterFormat.insufficientReason || "" : ""
-      });
+      };
+      if (typeof rawOutlineLevel !== "undefined") {
+        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      }
+      items.push(item);
     }
     if (items.length) {
       return items;
@@ -3629,17 +3659,22 @@
         safeRead(paragraph, "ParagraphFormat"), safeRead(range, "ParagraphFormat"), {}
       );
       listFormat = firstDefined(safeRead(paragraph, "ListFormat"), safeRead(range, "ListFormat"), {});
-      items.push({
+      var rawOutlineLevel = safeRead(paragraphFormat, "OutlineLevel");
+      if (typeof rawOutlineLevel === "undefined") {
+        rawOutlineLevel = safeRead(paragraphFormat, "outlineLevel");
+      }
+      var item = {
         index: index,
         text: text,
-        outlineLevel: normalizeWpsOutlineLevel(firstDefined(
-          safeRead(paragraphFormat, "OutlineLevel"), safeRead(paragraphFormat, "outlineLevel")
-        )),
         listLabel: toSafeString(firstDefined(
           safeRead(listFormat, "ListString"), safeRead(listFormat, "listString"),
           safeRead(paragraph, "ListLabel"), safeRead(paragraph, "listLabel")
         ), "")
-      });
+      };
+      if (typeof rawOutlineLevel !== "undefined") {
+        item.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
+      }
+      items.push(item);
     }
     return items;
   }
@@ -3677,7 +3712,9 @@
       page_setup: options.pageSetup || {},
       page_setup_facts: options.pageSetupFacts || buildWpsPageSetupFacts(options.pageSetup || {}),
       paragraphs: paragraphs.map(function (paragraph) {
-        return {
+        var rawOutlineLevel = paragraph && paragraph.outlineLevel !== undefined
+          ? paragraph.outlineLevel : paragraph && paragraph.outline_level;
+        var item = {
           index: paragraph.index,
           text: paragraph.text || "",
           style_name: paragraph.styleName || paragraph.style_name || "",
@@ -3687,7 +3724,6 @@
           italic: Boolean(paragraph.italic),
           underline: paragraph.underline || null,
           alignment: normalizeAlignmentValue(paragraph.alignment, ""),
-          outline_level: normalizeWpsOutlineLevel(firstDefined(paragraph.outlineLevel, paragraph.outline_level)),
           line_spacing: normalizeNumber(firstDefined(paragraph.lineSpacing, paragraph.line_spacing)),
           line_spacing_mode: normalizeWpsLineSpacingMode(firstDefined(paragraph.lineSpacingMode, paragraph.line_spacing_mode)),
           first_line_indent: normalizeNumber(firstDefined(paragraph.firstLineIndent, paragraph.first_line_indent)),
@@ -3696,6 +3732,10 @@
           left_indent: normalizeNumber(firstDefined(paragraph.leftIndent, paragraph.left_indent)),
           right_indent: normalizeNumber(firstDefined(paragraph.rightIndent, paragraph.right_indent))
         };
+        if (typeof rawOutlineLevel !== "undefined") {
+          item.outline_level = normalizeWpsOutlineLevel(rawOutlineLevel);
+        }
+        return item;
       }),
       headings: headings.map(function (heading) {
         var level = normalizeWpsOutlineLevel(firstDefined(heading.level, heading.outlineLevel));

@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824`
 
-当前候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，源码提交为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`，自动化状态为 `candidate`。构建环境为 Kylin V10 SP1 ARM64、Python `3.8.10`、Node `v22.23.2`；自动门禁已通过，但 Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
+原候选 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f` 已登记为 `rejected`；源码提交为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。包内交付说明过期且缺失大纲事实被写为 `null`，当前修复待新候选重建；Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`，当前无可分发 candidate。
 
 历史候选 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz`（SHA-256：`2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02`，源码提交：`ccad09fb1d8019da3a40f14610ab3bd75de1ec23`）已确认存在 `word.format_review.snapshot.v2` JS/Python structure/format 哈希契约漂移，登记为 `rejected`，不得继续分发。`e43dc8c` 及更早候选均为 `rejected`。修复报告见 `.superpowers/sdd/2026-08-24-v0251-format-review-hash-contract-fix/task-1-report.md`。
 
@@ -18,7 +18,7 @@
 
 - JavaScript 上传前与 Python Adapter 信任边界现在按同一固定投影、UTF-16 字符计数、紧凑稳定 JSON 和 UTF-8 SHA-256 计算；Python 继续独立重算四项指标并 fail closed。
 - 新增真实 Node→Python 子进程对拍测试，覆盖正文/标题、递归表格与 cell format、图片元数据、空/非空 insufficient reason、WPS 大纲级别及 `😀/🚀/𠮷`；structure/format 篡改均要求 409 且不启动 reviewer/provider。
-- `20260824-ccad09f` 已在 `packaging/v0251-candidate-status.json` 登记为 `rejected`；`20260824-2e7a3e6` 已登记为新的 `candidate`，其自动门禁通过，但不替代 Issue #59 目标机验收。
+- `20260824-ccad09f` 与 `20260824-2e7a3e6` 均已在 `packaging/v0251-candidate-status.json` 登记为 `rejected`；当前修复待新候选重建，不替代 Issue #59 目标机验收。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -559,9 +559,9 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251`、`20260822-e43dc8c` 和 `20260824-ccad09f` 登记为 `rejected`，当前候选为 `20260824-2e7a3e6`。当前候选的完整 sourceCommit 为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，candidateBuildId 为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
+`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251`、`20260822-e43dc8c`、`20260824-ccad09f` 和 `20260824-2e7a3e6` 登记为 `rejected`。`2e7a3e6` 的完整 sourceCommit 为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，candidateBuildId 为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`；当前修复待新候选重建，当前无可分发 candidate。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
 
-历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾修复格式审查批次级块 ID 范围、直连模型输出能力、空最终正文诊断、旧工作流重复迁移及运行时快照误判，但其跨运行时 structure/format 哈希契约仍存在阻断缺陷，因此归档已拒绝。当前候选采用同一规范化入口语义并增加真实 Node→Python 对拍，已完成 Kylin V10/Python 3.8 构建与生命周期门禁。
+历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾修复格式审查批次级块 ID 范围、直连模型输出能力、空最终正文诊断、旧工作流重复迁移及运行时快照误判，但其跨运行时 structure/format 哈希契约仍存在阻断缺陷，因此归档已拒绝。上一候选采用同一规范化入口语义并增加真实 Node→Python 对拍，但现已拒绝；当前修复待新候选重建。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
@@ -572,9 +572,9 @@ bash packaging/build_v0251_delivery_kit.sh
 
 当前可复核结果：
 
-- 历史 `20260824-ccad09f` 归档已登记 `rejected`，当前 `20260824-2e7a3e6` 归档已登记 `candidate`，不得分发旧归档。
-- 本地当前源码 Adapter 测试为 `800 passed, 95 skipped`，v0.25.1 交付断言为 `23 passed`，正式插件契约为 `22/22`，Python 3.8 静态兼容扫描为 `82` 个文件；麒麟构建来源为 `246` 个文件，交付、v0.25.1 和最终归档审计均通过。
-- 麒麟 V10 SP1 ARM64 / Python `3.8.10` 生命周期门禁中，原始故障复现、Adapter import、Uvicorn、公开格式审查 API、4 项 key contract、runtime path、v0.25.0 基线升级、全新安装、v0.22 升级、损坏 v0.23.0、核心/规范故障、已删除工作流覆盖安装、Python import、候选启动、健康版本、权限、WPS 未退出、安装中断全部通过；终态只能为 `candidate`。Node 为 `v22.23.2`。
+- 历史 `20260824-ccad09f` 与 `20260824-2e7a3e6` 归档均已登记 `rejected`，不得分发；当前修复待新候选重建。
+- 上一候选的本地 Adapter 测试为 `800 passed, 95 skipped`，v0.25.1 交付断言为 `23 passed`，正式插件契约为 `22/22`，Python 3.8 静态兼容扫描为 `82` 个文件；这些记录不构成当前可分发 candidate。
+- 麒麟 V10 SP1 ARM64 / Python `3.8.10` 生命周期门禁的上一候选记录为通过；终态记录已改为 `rejected`，当前修复待新候选重建。Node 为 `v22.23.2`。
 - 本地归档 SHA-256 与 `.sha256` 一致；Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
 
 ## 7. 目标机验证建议

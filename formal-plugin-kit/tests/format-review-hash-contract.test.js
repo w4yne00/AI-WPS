@@ -284,6 +284,112 @@ test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
   }
 });
 
+test("outline facts preserve absent, undefined, null, body, and heading semantics", () => {
+  const cases = [
+    { label: "absent", paragraph: { index: 1, text: "缺失" }, expected: undefined },
+    { label: "undefined", paragraph: { index: 2, text: "未定义", outlineLevel: undefined }, expected: undefined },
+    { label: "null", paragraph: { index: 3, text: "显式空值", outlineLevel: null }, expected: null },
+    { label: "zero", paragraph: { index: 4, text: "正文零级", outlineLevel: 0 }, expected: 0 },
+    { label: "ten", paragraph: { index: 5, text: "正文十级", outlineLevel: 10 }, expected: 0 },
+    ...Array.from({ length: 9 }, (_, index) => ({
+      label: String(index + 1),
+      paragraph: { index: 6 + index, text: `标题${index + 1}`, outlineLevel: index + 1 },
+      expected: index + 1
+    }))
+  ];
+
+  for (const item of cases) {
+    const body = helpers.buildDeterministicFormatReviewBody({
+      documentId: `outline-${item.label}.docx`,
+      selectionMode: "document",
+      content: { paragraphs: [item.paragraph] }
+    });
+    const block = body.blocks[0];
+    const hasOutline = Object.prototype.hasOwnProperty.call(block, "outlineLevel");
+    const hasFormatOutline = Object.prototype.hasOwnProperty.call(block.format, "outlineLevel");
+    assert.equal(hasOutline, item.expected !== undefined, `${item.label} top-level fact presence`);
+    assert.equal(hasFormatOutline, item.expected !== undefined, `${item.label} format fact presence`);
+    if (item.expected !== undefined) {
+      assert.equal(block.outlineLevel, item.expected, `${item.label} top-level value`);
+      assert.equal(block.format.outlineLevel, item.expected, `${item.label} format value`);
+    }
+
+    const renormalized = helpers.normalizeDeterministicFormatReviewBlock(
+      JSON.parse(JSON.stringify(block))
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(renormalized, "outlineLevel"),
+      item.expected !== undefined,
+      `${item.label} second normalization top-level fact presence`
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(renormalized.format, "outlineLevel"),
+      item.expected !== undefined,
+      `${item.label} second normalization format fact presence`
+    );
+    const python = runPython({ mode: "normalize", blocks: [renormalized] });
+    assert.equal(python.ok, true, `${item.label} Python normalization`);
+    const pythonBlock = python.normalized[0];
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(pythonBlock, "outlineLevel"),
+      item.expected !== undefined,
+      `${item.label} cross-runtime top-level fact presence`
+    );
+    assert.equal(
+      Object.prototype.hasOwnProperty.call(pythonBlock.format, "outlineLevel"),
+      item.expected !== undefined,
+      `${item.label} cross-runtime format fact presence`
+    );
+    if (item.expected !== undefined) {
+      assert.equal(pythonBlock.outlineLevel, item.expected, `${item.label} cross-runtime value`);
+      assert.equal(pythonBlock.format.outlineLevel, item.expected, `${item.label} cross-runtime format value`);
+    }
+  }
+});
+
+test("same image block metadata changes are structure-sensitive", () => {
+  const build = (overrides) => helpers.buildDeterministicFormatReviewBody(fixture(), {
+    imageFacts: [{
+      imageId: "image-1",
+      groupId: "group-1",
+      fingerprint: "fp-1",
+      captionStatus: "missing",
+      associationStatus: "missing",
+      supported: true,
+      altText: "示意图",
+      nearbyText: "图示",
+      ...overrides
+    }]
+  });
+  const baseline = build({});
+  const baselineIds = baseline.blocks.map((block) => block.blockId);
+  const baselineTypes = baseline.blocks.map((block) => block.blockType);
+
+  for (const change of [
+    { fingerprint: "fp-2" },
+    { altText: "更新后的示意图" },
+    { nearbyText: "更新后的图示" },
+    { associationStatus: "captioned" }
+  ]) {
+    const changed = build(change);
+    assert.deepEqual(changed.blocks.map((block) => block.blockId), baselineIds);
+    assert.deepEqual(changed.blocks.map((block) => block.blockType), baselineTypes);
+    assert.notEqual(changed.structureSha256, baseline.structureSha256, JSON.stringify(change));
+    const pythonBaseline = runPython({ mode: "metrics", blocks: baseline.blocks });
+    const pythonChanged = runPython({ mode: "metrics", blocks: changed.blocks });
+    assert.notEqual(
+      pythonChanged.metrics.structureSha256,
+      pythonBaseline.metrics.structureSha256,
+      `Python ${JSON.stringify(change)}`
+    );
+    assert.equal(
+      pythonChanged.metrics.structureSha256,
+      changed.structureSha256,
+      `cross-runtime ${JSON.stringify(change)}`
+    );
+  }
+});
+
 test("JS upload normalization is idempotent for canonical blocks", () => {
   const body = helpers.buildDeterministicFormatReviewBody(fixture(), {
     imageFacts: [{

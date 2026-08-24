@@ -44,6 +44,16 @@ AUDIT_SCRIPT_NAMES = {
     "audit_v0250_delivery.py",
     "audit_v0251_delivery.py",
 }
+STALE_CANDIDATE_NOTE_MARKERS = (
+    "新候选待构建",
+    "尚未构建",
+    "修复中",
+    "再形成新候选",
+    "new candidate archive remains pending build",
+    "not yet built",
+    "repair is in progress",
+    "build a new candidate later",
+)
 
 
 def load_json(path: Path, code: str) -> Dict:
@@ -166,6 +176,42 @@ def audit_visual_default(root: Path, manifest: Dict) -> None:
     inventory = collect_image_inventory({"images": [{"imageId": "fixture", "captionStatus": "missing"}]})
     if policy.get("allowed") is not False or inventory.get("pixelExportCount") != 0 or inventory.get("pixelUploadCount") != 0:
         raise DeliveryFailure("VISUAL_CLOSED_SIDE_EFFECT_CONTRACT_FAILED")
+
+
+def audit_candidate_note(root: Path, manifest: Dict) -> None:
+    """Require a generated note whose identity matches the package manifest."""
+    note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
+    content = note.read_text(encoding="utf-8")
+    lower_content = content.lower()
+    for marker in STALE_CANDIDATE_NOTE_MARKERS:
+        if marker.lower() in lower_content:
+            raise DeliveryFailure("V0251_CANDIDATE_NOTE_STALE {0}".format(marker))
+
+    evidence = manifest.get("candidateEvidence", {})
+    release_date = str(manifest.get("releaseDate", ""))
+    source_commit = str(evidence.get("sourceCommit", ""))
+    candidate_build_id = str(evidence.get("candidateBuildId", ""))
+    archive_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        release_date, source_commit[:7]
+    )
+    checksum_name = str(evidence.get("archiveChecksumFile", ""))
+    required = (
+        "v0.25.1-alpha",
+        "ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz",
+        "Issue #59",
+        "format_semantics.v1",
+        "manual acceptance",
+        "`{0}-{1}`".format(release_date, source_commit[:7]),
+        "`{0}`".format(candidate_build_id),
+        "`{0}`".format(source_commit),
+        "`{0}`".format(archive_name),
+        "`{0}`".format(checksum_name),
+        "Automated status: `candidate`",
+        "Target acceptance status: `manual-pending`",
+    )
+    for marker in required:
+        if marker not in content:
+            raise DeliveryFailure("V0251_CANDIDATE_NOTE_IDENTITY_MISSING {0}".format(marker))
 
 
 def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
@@ -374,17 +420,7 @@ def audit(root: Path) -> None:
         raise DeliveryFailure("V0251_CANDIDATE_POLICY_INVALID")
     if manifest.get("formatReview", {}).get("enabledByDefault") is not True:
         raise DeliveryFailure("FORMAT_REVIEW_DEFAULT_MUST_BE_OPEN")
-    note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
-    note_content = note.read_text(encoding="utf-8")
-    for required in (
-        "v0.25.1-alpha",
-        "ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz",
-        "Issue #59",
-        "format_semantics.v1",
-        "manual acceptance",
-    ):
-        if required not in note_content:
-            raise DeliveryFailure("V0251_CANDIDATE_NOTE_INCOMPLETE {0}".format(required))
+    audit_candidate_note(root, manifest)
     actual = {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
     audit_scope(actual)
     audit_plugin_cache_identity(root, VERSION)
