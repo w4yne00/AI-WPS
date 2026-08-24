@@ -164,6 +164,7 @@ def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_con
     assert "20260824-ccad09f" in rejected_candidates
     assert "20260824-2e7a3e6" in rejected_candidates
     assert "20260824-5318d4b" in rejected_candidates
+    assert "20260824-799adf9" in rejected_candidates
     assert "20260822-e43dc8c" in rejected_candidates
 
     candidate_only = (
@@ -177,7 +178,7 @@ def test_v0251_handoff_uses_current_candidate_as_previous_archive_example():
 
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
-        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz"
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz"
     ) in handoff
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
@@ -192,11 +193,12 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256",
         "sourceCommit": "799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
         "archiveSha256": "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
-        "status": "candidate",
+        "status": "rejected",
         "recordedAt": "20260824",
+        "reason": "rejected: packaged target acceptance document claimed no current candidate despite manifest/status identifying 799adf9; repair source is not yet a candidate until a new package is built",
     }
     assert status["records"][-1] == expected
-    assert [record for record in status["records"] if record.get("status") == "candidate"] == [expected]
+    assert not [record for record in status["records"] if record.get("status") == "candidate"]
 
     previous = next(
         record
@@ -266,15 +268,15 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`39 passed`" in line for line in delivery_lines)
-        assert all("`25 passed`" not in line for line in delivery_lines)
+        assert any("`41 passed`" in line for line in delivery_lines)
+        assert all("`39 passed`" not in line for line in delivery_lines)
         assert any("`25/25`" in line for line in plugin_lines)
         assert all("`24/24`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `826 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `828 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `39 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `41 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -308,6 +310,35 @@ def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):
     with pytest.raises(
         audit_module.DeliveryFailure,
         match="TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING",
+    ):
+        audit_module.audit_target_acceptance_record(
+            tmp_path,
+            {"targetAcceptanceIssue": 59, "targetAcceptance": {"status": "manual-pending"}},
+        )
+
+
+def test_v0251_audit_rejects_packaged_acceptance_candidate_identity_mismatch(tmp_path):
+    """The frozen 799adf9 package exposes the stale acceptance identity regression."""
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz"
+    with tarfile.open(archive, "r:gz") as handle:
+        handle.extractall(tmp_path)
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-799adf9-v0251"
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_missing_packaged_acceptance_document(tmp_path):
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="TARGET_ACCEPTANCE_RECORD_MISSING",
     ):
         audit_module.audit_target_acceptance_record(
             tmp_path,
@@ -557,6 +588,12 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     (delivery / "docs/v0251-delivery.md").write_text(
         "v0.25.1-alpha uses v0.25.0-alpha as its baseline.\n", encoding="utf-8"
     )
+    (delivery / "docs/v0251-target-machine-acceptance.md").write_text(
+        (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
     (delivery / "docs/v0251-candidate-status.json").write_text(
         json.dumps(
             {
@@ -675,6 +712,22 @@ def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tm
     assert current["archiveName"] == (
         "ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz"
     )
+    acceptance = (delivery / "docs/v0251-target-machine-acceptance.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        "- 当前自动化候选：`b7a1cf9`，状态为 `candidate`；"
+        "candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822-b7a1cf9`；"
+        "源码提交：`b7a1cf9`；归档：`ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz`；"
+        "校验文件：`ai-wps-phase1-delivery-20260822-b7a1cf9-v0251.tar.gz.sha256`；"
+        "目标验收：`manual-pending`（Issue #59）"
+    ) in acceptance
+    assert "`OutlineLevel=0`" in acceptance
+    assert "`OutlineLevel=10`" in acceptance
+    assert "`OutlineLevel=1..9`" in acceptance
+    assert "`表格/嵌套表格`" in acceptance
+    assert "`图片元数据`" in acceptance
+    assert "`非 BMP emoji`" in acceptance
     assert not (delivery / "docs/v0250-delivery.md").exists()
     assert not (delivery / "scripts/audit_v0250_delivery.py").exists()
     assert "BASELINE_VERSION = \"0.25.0-alpha\"" in (

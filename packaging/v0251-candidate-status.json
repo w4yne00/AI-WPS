@@ -97,8 +97,9 @@
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256",
       "sourceCommit": "799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
       "archiveSha256": "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
-      "status": "candidate",
-      "recordedAt": "20260824"
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: packaged target acceptance document claimed no current candidate despite manifest/status identifying 799adf9; repair source is not yet a candidate until a new package is built"
     }
   ]
 }

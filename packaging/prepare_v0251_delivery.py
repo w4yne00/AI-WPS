@@ -33,6 +33,17 @@ VERSION_REWRITE_EXCLUDED_PATHS = {
     "scripts/python38_delivery_runtime_gate.py",
 }
 STATUS_RELATIVE_PATH = "docs/v0251-candidate-status.json"
+TARGET_ACCEPTANCE_RELATIVE_PATH = "docs/v0251-target-machine-acceptance.md"
+TARGET_ACCEPTANCE_MATRIX_MARKERS = (
+    "`OutlineLevel=0`",
+    "`OutlineLevel=10`",
+    "`OutlineLevel=1..9`",
+    "`表格/嵌套表格`",
+    "`图片元数据`",
+    "`非 BMP emoji`",
+    "`dataStatus=insufficient`",
+    "其它 `dataStatus`",
+)
 
 
 def candidate_archive_name(date_tag: str, source_commit: str) -> str:
@@ -304,6 +315,62 @@ delivery, static audit, and lifecycle gates cannot close Issue #{acceptance_issu
     note_path.write_text(note, encoding="utf-8")
 
 
+def write_target_machine_acceptance_record(
+    root: Path,
+    source_commit: str,
+    candidate_build_id: str,
+    archive_name: str,
+    checksum_name: str,
+    previous: dict,
+    acceptance_issue: int,
+) -> None:
+    """Bind the assembled acceptance template to the finalized candidate identity."""
+    record_path = root / TARGET_ACCEPTANCE_RELATIVE_PATH
+    if not record_path.is_file():
+        raise ValueError("V0251_TARGET_ACCEPTANCE_RECORD_MISSING")
+    content = record_path.read_text(encoding="utf-8")
+    for marker in TARGET_ACCEPTANCE_MATRIX_MARKERS:
+        if marker not in content:
+            raise ValueError("V0251_TARGET_ACCEPTANCE_MATRIX_MISSING {0}".format(marker))
+
+    current_line = (
+        "- 当前自动化候选：`{short_source}`，状态为 `candidate`；"
+        "candidateBuildId：`{candidate_build_id}`；源码提交：`{source_commit}`；"
+        "归档：`{archive_name}`；校验文件：`{checksum_name}`；"
+        "目标验收：`manual-pending`（Issue #{acceptance_issue}）"
+    ).format(
+        short_source=source_commit[:7],
+        candidate_build_id=candidate_build_id,
+        source_commit=source_commit,
+        archive_name=archive_name,
+        checksum_name=checksum_name,
+        acceptance_issue=acceptance_issue,
+    )
+    previous_line = (
+        "- 上一被拒绝归档：`{archive_name}`，SHA-256：`{archive_sha256}`；"
+        "candidateBuildId：`{candidate_build_id}`，状态为 `rejected`"
+    ).format(
+        archive_name=previous["archiveName"],
+        archive_sha256=previous["archiveSha256"],
+        candidate_build_id=previous["candidateBuildId"],
+    )
+    updated = []
+    replaced_current = False
+    replaced_previous = False
+    for line in content.splitlines():
+        if line.startswith("- 当前自动化候选："):
+            updated.append(current_line)
+            replaced_current = True
+        elif line.startswith("- 上一被拒绝归档：") or line.startswith("- 被拒绝归档："):
+            updated.append(previous_line)
+            replaced_previous = True
+        else:
+            updated.append(line)
+    if not replaced_current or not replaced_previous:
+        raise ValueError("V0251_TARGET_ACCEPTANCE_IDENTITY_MARKER_MISSING")
+    record_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+
+
 def prepare(
     root: Path,
     date_tag: str,
@@ -414,6 +481,15 @@ def prepare(
         source_commit,
         candidate_build_id,
         manifest["candidateEvidence"]["archiveChecksumFile"],
+    )
+    write_target_machine_acceptance_record(
+        root,
+        source_commit,
+        candidate_build_id,
+        current_archive_name,
+        manifest["candidateEvidence"]["archiveChecksumFile"],
+        previous,
+        acceptance_issue,
     )
     write_candidate_delivery_note(
         root,

@@ -27,6 +27,16 @@ REFERENCE_WORKFLOWS = {
     "reference-workflows/format-semantics-vision-v1.yml",
 }
 FORBIDDEN_SCOPE_PARTS = {"material_composer", "adr-0116", "d-0001", "adr-0117"}
+TARGET_ACCEPTANCE_MATRIX_MARKERS = (
+    "`OutlineLevel=0`",
+    "`OutlineLevel=10`",
+    "`OutlineLevel=1..9`",
+    "`表格/嵌套表格`",
+    "`图片元数据`",
+    "`非 BMP emoji`",
+    "`dataStatus=insufficient`",
+    "其它 `dataStatus`",
+)
 
 
 class DeliveryFailure(RuntimeError):
@@ -267,6 +277,59 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("TARGET_ACCEPTANCE_ISSUE_MISMATCH")
     if manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
         raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_STATUS_INVALID")
+
+    evidence = manifest.get("candidateEvidence", {})
+    source_commit = str(evidence.get("sourceCommit", ""))
+    candidate_build_id = str(evidence.get("candidateBuildId", ""))
+    archive_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        manifest.get("releaseDate", ""), source_commit[:7]
+    )
+    checksum_name = str(evidence.get("archiveChecksumFile", ""))
+    expected_identity = (
+        "- 当前自动化候选：`{short_source}`，状态为 `candidate`；"
+        "candidateBuildId：`{candidate_build_id}`；源码提交：`{source_commit}`；"
+        "归档：`{archive_name}`；校验文件：`{checksum_name}`；"
+        "目标验收：`manual-pending`（Issue #59）"
+    ).format(
+        short_source=source_commit[:7],
+        candidate_build_id=candidate_build_id,
+        source_commit=source_commit,
+        archive_name=archive_name,
+        checksum_name=checksum_name,
+    )
+    if expected_identity not in content:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
+    for marker in TARGET_ACCEPTANCE_MATRIX_MARKERS:
+        if marker not in content:
+            raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_MATRIX_MISSING {0}".format(marker))
+
+    status = load_json(
+        root / "docs/v0251-candidate-status.json",
+        "V0251_CANDIDATE_STATUS_MISSING",
+    )
+    records = [item for item in status.get("records", []) if isinstance(item, dict)]
+    current = [item for item in records if item.get("candidateBuildId") == candidate_build_id]
+    if (
+        len(current) != 1
+        or current[0].get("status") != "candidate"
+        or current[0].get("sourceCommit") != source_commit
+        or current[0].get("archiveName") != archive_name
+        or current[0].get("archiveChecksumFile") != checksum_name
+    ):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
+
+    delivery_note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
+    delivery_content = delivery_note.read_text(encoding="utf-8")
+    for marker in (
+        "`{0}`".format(candidate_build_id),
+        "`{0}`".format(source_commit),
+        "`{0}`".format(archive_name),
+        "`{0}`".format(checksum_name),
+        "Automated status: `candidate`",
+        "Target acceptance status: `manual-pending`",
+    ):
+        if marker not in delivery_content:
+            raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
 
 
 def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
