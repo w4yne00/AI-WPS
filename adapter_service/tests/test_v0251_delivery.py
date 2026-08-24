@@ -67,8 +67,31 @@ def test_v0251_policy_ships_issue_59_target_acceptance_record():
         "≤ 30 秒",
         "≤ 60 秒",
         "两遍指纹",
+        "OutlineLevel=0",
+        "OutlineLevel=10",
+        "OutlineLevel=1..9",
+        "insufficientReason",
+        "contentSha256",
+        "jobId",
     ):
         assert required in record
+
+    delivery = (ROOT / "packaging/v0251-delivery.md").read_text(encoding="utf-8")
+    assert "POST /word/format-review" in delivery
+    assert "410 WORD_FORMAT_REVIEW_SYNC_RETIRED" in delivery
+    assert "word.format_review.snapshot.v2" in delivery
+    assert "分别执行同步和后台格式审查" not in delivery
+
+
+def test_v0251_handoff_keeps_latest_rejected_candidate_as_previous_archive():
+    handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
+
+    assert "20260824-ccad09f" in handoff
+    assert (
+        "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz"
+    ) in handoff
+    assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
 
 def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):

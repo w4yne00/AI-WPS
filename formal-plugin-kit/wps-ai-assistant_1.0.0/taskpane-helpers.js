@@ -858,6 +858,49 @@
     };
   }
 
+  function normalizeDeterministicFormatReviewBlock(block) {
+    if (!block || !block.blockId) {
+      return null;
+    }
+    block.scope = block.scope === "context" ? "context" : "in_scope";
+    block.text = String(block.text || "");
+    block.range = normalizeDeterministicRange(block.range);
+    block.format = normalizeDeterministicFormatFacts(block.format || {});
+    block.images = normalizeDeterministicImageFacts(block.images);
+    if (block.blockType === "image" && block.images.length) {
+      ["imageId", "groupId", "fingerprint", "captionStatus", "associationStatus",
+        "supported", "altText", "nearbyText"].forEach(function (key) {
+        block[key] = block.images[0][key];
+      });
+    }
+    if (Object.prototype.hasOwnProperty.call(block, "outlineLevel")) {
+      block.outlineLevel = normalizeWpsOutlineLevel(block.outlineLevel);
+      block.format.outlineLevel = block.outlineLevel;
+      block.format = normalizeDeterministicFormatFacts(block.format);
+      if (block.blockType === "heading") {
+        if (block.outlineLevel === 0) {
+          block.blockType = "paragraph";
+          delete block.headingLevel;
+        } else if (block.outlineLevel === null) {
+          block.blockType = "unknown";
+          delete block.headingLevel;
+        } else {
+          block.headingLevel = block.outlineLevel;
+        }
+      }
+    }
+    if (block.blockType === "table") {
+      var normalizedTable = normalizeDeterministicTable(block, Number(block.tableIndex || 1) - 1);
+      block.tableId = normalizedTable.tableId;
+      block.tableIndex = normalizedTable.tableIndex;
+      block.rows = normalizedTable.rows;
+      block.nestedTables = normalizedTable.nestedTables;
+      block.format = normalizedTable.format;
+      block.text = formatReviewBlockTextValues(block).join("\n");
+    }
+    return JSON.parse(stableFormatReviewJson(block));
+  }
+
   function buildDeterministicFormatReviewBody(payload, options) {
     var source = payload || {};
     var content = source.content || {};
@@ -873,43 +916,12 @@
       if (!block || !block.blockId || seen[block.blockId]) {
         return;
       }
-      block.scope = block.scope === "context" ? "context" : "in_scope";
-      block.text = String(block.text || "");
-      block.range = normalizeDeterministicRange(block.range);
-      block.format = normalizeDeterministicFormatFacts(block.format || {});
-      block.images = normalizeDeterministicImageFacts(block.images);
-      if (block.blockType === "image" && block.images.length) {
-        ["imageId", "groupId", "fingerprint", "captionStatus", "associationStatus",
-          "supported", "altText", "nearbyText"].forEach(function (key) {
-          block[key] = block.images[0][key];
-        });
+      var normalizedBlock = normalizeDeterministicFormatReviewBlock(block);
+      if (!normalizedBlock) {
+        return;
       }
-      if (Object.prototype.hasOwnProperty.call(block, "outlineLevel")) {
-        block.outlineLevel = normalizeWpsOutlineLevel(block.outlineLevel);
-        block.format.outlineLevel = block.outlineLevel;
-        if (block.blockType === "heading") {
-          if (block.outlineLevel === 0) {
-            block.blockType = "paragraph";
-            delete block.headingLevel;
-          } else if (block.outlineLevel === null) {
-            block.blockType = "unknown";
-            delete block.headingLevel;
-          } else {
-            block.headingLevel = block.outlineLevel;
-          }
-        }
-      }
-      if (block.blockType === "table") {
-        var normalizedTable = normalizeDeterministicTable(block, Number(block.tableIndex || 1) - 1);
-        block.tableId = normalizedTable.tableId;
-        block.tableIndex = normalizedTable.tableIndex;
-        block.rows = normalizedTable.rows;
-        block.nestedTables = normalizedTable.nestedTables;
-        block.format = normalizedTable.format;
-        block.text = formatReviewBlockTextValues(block).join("\n");
-      }
-      seen[block.blockId] = true;
-      blocks.push(block);
+      seen[normalizedBlock.blockId] = true;
+      blocks.push(normalizedBlock);
     }
 
     function isCaptionParagraph(paragraph) {
@@ -4496,6 +4508,7 @@
     buildFullDocumentReviewBody: buildFullDocumentReviewBody,
     buildFullDocumentReviewBatches: buildFullDocumentReviewBatches,
     buildDeterministicFormatReviewBody: buildDeterministicFormatReviewBody,
+    normalizeDeterministicFormatReviewBlock: normalizeDeterministicFormatReviewBlock,
     buildDeterministicFormatReviewBatches: buildDeterministicFormatReviewBatches,
     normalizeWpsLineSpacingFact: normalizeWpsLineSpacingFact,
     buildWpsPageSetupFacts: buildWpsPageSetupFacts,

@@ -284,6 +284,26 @@ test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
   }
 });
 
+test("JS upload normalization is idempotent for canonical blocks", () => {
+  const body = helpers.buildDeterministicFormatReviewBody(fixture(), {
+    imageFacts: [{
+      imageId: "image-1",
+      groupId: "group-1",
+      fingerprint: "fp-1",
+      captionStatus: "missing",
+      associationStatus: "missing",
+      supported: true,
+      altText: "示意图",
+      nearbyText: "图示"
+    }]
+  });
+  const canonicalBlocks = JSON.parse(JSON.stringify(body.blocks));
+  const renormalizedBlocks = canonicalBlocks.map((block) =>
+    helpers.normalizeDeterministicFormatReviewBlock(block)
+  );
+  assert.equal(JSON.stringify(renormalizedBlocks), JSON.stringify(body.blocks));
+});
+
 test("Python rejects structure and format tampering before reviewer execution", () => {
   const body = helpers.buildDeterministicFormatReviewBody(fixture());
   const result = runPython({ mode: "negative", blocks: body.blocks });

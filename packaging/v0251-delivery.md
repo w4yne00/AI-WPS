@@ -22,7 +22,7 @@
 以下步骤交给 Issue #59 执行，作为 manual acceptance gate，不能由本地自动化结论替代：
 
 - 在麒麟 V10 ARM、Python 3.8、目标 WPS 12.1.2 上安装该 Phase1 候选，核对 `/health`、Adapter、Word/Excel/PPT 插件和缓存版本均为 `0.25.1-alpha`。
-- 使用包含 WPS `OutlineLevel=10` 正文、`OutlineLevel=0` 正文和 1–9 级标题的只读 Word 样本文档，分别执行同步和后台格式审查；正文不生成标题跳级，一级后三级只生成一条可定位问题。
+- 验证退役同步路由 `POST /word/format-review` 固定返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` 且不执行审查；哈希、OutlineLevel 和格式事实验收只通过 `word.format_review.snapshot.v2` v2 后台批次，使用包含 `OutlineLevel=10` 正文、`OutlineLevel=0` 正文和 1–9 级标题的只读 Word 样本文档，正文不生成标题跳级，一级后三级只生成一条可定位问题。
 - 核对标题问题显示真实 `P<n>` 或“位置待确认”，不出现 `P0 未识别角色`；审查前后正文、格式和结构摘要一致，未写回 Word。
 - 在 `word.format_review` 中配置模型直连，使用合成 `format_semantics.v1` `classify_role` 验证调用；核对验证显示配置名称、ID、修订和当前任务关系，验证不会自动激活，正式审查不上传用户文档或 API Key。
 - 分别验证无候选、调用失败、协议/解析失败、越界、低置信度、零接受和正常接受场景；报告将“识别来源”和“模型执行诊断”分开显示，并披露调用数、候选数、尝试数和接受数。

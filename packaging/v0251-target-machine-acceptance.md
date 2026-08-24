@@ -36,6 +36,27 @@
 | 8 | 真实 WPS 批次同时核对 `characterCount`、`contentSha256`、`structureSha256`、`formatSha256`；普通块含 `images: []`，表格/嵌套表格、cell format、图片元数据和非 BMP 字符均参与对拍 | `manual-pending` |  | 任一 structure/format 漂移或 `DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` 均不得进入后台任务 |
 | 9 | 只篡改 structure 或 format 声明时均返回 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH`，且不启动 reviewer/provider；图片项确认 `pixelExportCount=0`、`pixelUploadCount=0` | `manual-pending` |  |  |
 
+### v2 后台格式审查判定矩阵
+
+以下每一行必须独立执行并记录现场证据；所有合法场景只走
+`word.format_review.snapshot.v2` 后台批次，不调用退役同步路由。四项指标对拍必须同时记录
+`characterCount`、`contentSha256`、`structureSha256`、`formatSha256` 的 JS/Python 值及是否一致；
+`409` 栏记录 HTTP 状态与 Adapter code；后台任务栏记录是否创建/启动 `jobId`，不得以“未报错”代替。
+
+| 用例 | 输入与独立预期 | 四项指标 JS/Python 对拍记录 | 409 记录 | 后台任务记录 |
+| --- | --- | --- | --- | --- |
+| `OutlineLevel=0` | 段落保留为正文块，规范化 `outlineLevel=0`，不得生成 heading | 四项值：；一致： | 合法输入应无 409；篡改对应 structure/format 声明时记录 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` | 合法输入应启动并记录 `jobId`；篡改输入不得启动 reviewer/provider |
+| `OutlineLevel=10` | 按规则归一为 `0`，保留正文语义，不得生成 heading | 四项值：；一致： | 合法输入应无 409；篡改对应 structure/format 声明时记录 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` | 合法输入应启动并记录 `jobId`；篡改输入不得启动 reviewer/provider |
+| `OutlineLevel=1..9` | 分别执行 1 至 9 级；每级规范化值与输入相等并生成对应 heading level | 四项值：；一致： | 合法输入应无 409；逐级篡改对应 structure/format 声明时记录 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` | 每级合法输入均应启动并记录 `jobId`；篡改输入不得启动 reviewer/provider |
+| `dataStatus=insufficient` 且 reason 非空 | 非空 `insufficientReason` 保留（按协议上限截断），并在格式事实/诊断中可见 | 四项值：；一致： | 合法输入应无 409；篡改 reason/format 后保留原声明时记录 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` | 合法输入应启动并记录 `jobId`；篡改输入不得启动 reviewer/provider |
+| 其它 `dataStatus` | 对 `verified`、`mixed`、`unknown`、`read_failed`、`unsupported`、`context_only` 分别执行；`insufficientReason` 必须为空/缺失 | 四项值：；一致： | 合法输入应无 409；篡改 reason/format 后保留原声明时记录 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` | 合法输入应启动并记录 `jobId`；篡改输入不得启动 reviewer/provider |
+
+现场证据引用（脱敏）：
+
+- JS/Python 四项指标对拍：
+- 409 响应与 Adapter code：
+- 后台 `jobId`、终态和 reviewer/provider 调用计数：
+
 ## 现场执行摘要
 
 ### 升级、回退和数据保持

@@ -557,13 +557,13 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251` 和 `20260822-e43dc8c` 登记为 `rejected`。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
+`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251`、`20260822-e43dc8c` 和 `20260824-ccad09f` 登记为 `rejected`。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
 
 历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾修复格式审查批次级块 ID 范围、直连模型输出能力、空最终正文诊断、旧工作流重复迁移及运行时快照误判，但其跨运行时 structure/format 哈希契约仍存在阻断缺陷，因此归档已拒绝。当前修复采用同一规范化入口语义并增加真实 Node→Python 对拍；构建门禁和新候选身份待后续完整验证后生成。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
-AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz \
+AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz \
 DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
 bash packaging/build_v0251_delivery_kit.sh
 ```
