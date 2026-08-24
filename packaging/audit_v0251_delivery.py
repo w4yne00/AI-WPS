@@ -259,17 +259,28 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     mandatory_section = content.split(mandatory_heading, 1)[1].split(
         matrix_heading, 1
     )[0]
+    numbered_rows = []
     result_rows = {}
     duplicate_rows = set()
     for line in mandatory_section.splitlines():
         fields = [field.strip() for field in line.strip().strip("|").split("|")]
-        if len(fields) < 5 or not fields[0].isdigit():
+        if not fields or not fields[0].isdigit():
             continue
         index = int(fields[0])
-        if 1 <= index <= 9:
-            if index in result_rows:
-                duplicate_rows.add(index)
-            result_rows[index] = fields[2].strip("`")
+        status = fields[2].strip("`") if len(fields) >= 3 else ""
+        numbered_rows.append((index, status))
+        if index in result_rows:
+            duplicate_rows.add(index)
+        result_rows[index] = status
+    extra_rows = sorted(
+        {index for index, _status in numbered_rows if index not in set(range(1, 10))}
+    )
+    if extra_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_EXTRA {0}".format(
+                ",".join(str(index) for index in extra_rows)
+            )
+        )
     if duplicate_rows:
         raise DeliveryFailure(
             "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_DUPLICATE {0}".format(

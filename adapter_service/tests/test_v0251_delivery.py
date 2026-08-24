@@ -285,17 +285,18 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`45 passed`" in line for line in delivery_lines)
+        assert any("`46 passed`" in line for line in delivery_lines)
+        assert all("`45 passed`" not in line for line in delivery_lines)
         assert all("`42 passed`" not in line for line in delivery_lines)
         assert all("`41 passed`" not in line for line in delivery_lines)
-        assert any("`81 passed`" in line for line in aggregate_lines)
+        assert any("`82 passed`" in line for line in aggregate_lines)
         assert any("`25/25`" in line for line in plugin_lines)
         assert all("`24/24`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `832 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `833 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `45 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `46 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -375,6 +376,26 @@ def test_v0251_audit_rejects_duplicate_mandatory_acceptance_row(tmp_path):
         audit_module.audit_target_acceptance_record(delivery, manifest)
 
 
+def test_v0251_audit_rejects_extra_mandatory_acceptance_row(tmp_path):
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    with tarfile.open(archive, "r:gz") as handle:
+        handle.extractall(tmp_path)
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-afe109c-v0251"
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    marker = "### v2 后台格式审查判定矩阵"
+    extra_row = "| 10 | Extra mandatory row | `manual-pending` | RED fixture |  |\n"
+    record.write_text(content.replace(marker, extra_row + marker, 1), encoding="utf-8")
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_EXTRA 10",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
 def test_v0251_audit_rejects_packaged_acceptance_candidate_identity_mismatch(tmp_path):
     """The frozen 799adf9 package exposes the stale acceptance identity regression."""
     archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz"
@@ -436,13 +457,16 @@ def test_v0251_current_archive_binds_acceptance_status_and_delivery_identity(tmp
         .split("## 必测项目", 1)[1]
         .split("### v2 后台格式审查判定矩阵", 1)[0]
     )
-    mandatory_rows = {}
+    mandatory_row_numbers = []
+    mandatory_statuses = []
     for line in mandatory_section.splitlines():
         fields = [field.strip() for field in line.strip().strip("|").split("|")]
-        if len(fields) >= 5 and fields[0].isdigit() and 1 <= int(fields[0]) <= 9:
-            mandatory_rows[int(fields[0])] = fields[2].strip("`")
-    assert set(mandatory_rows) == set(range(1, 10))
-    assert set(mandatory_rows.values()) == {"manual-pending"}
+        if fields and fields[0].isdigit():
+            mandatory_row_numbers.append(int(fields[0]))
+            mandatory_statuses.append(fields[2].strip("`") if len(fields) >= 3 else "")
+    assert sorted(mandatory_row_numbers) == list(range(1, 10))
+    assert len(mandatory_row_numbers) == 9
+    assert set(mandatory_statuses) == {"manual-pending"}
     audit_module.audit_candidate_note(delivery, manifest)
     audit_module.audit_target_acceptance_record(delivery, manifest)
 

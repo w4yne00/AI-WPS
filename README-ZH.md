@@ -105,9 +105,9 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 门禁 | 结果 |
 | --- | --- |
-| 当前源码 Adapter 全量测试 | `832 passed, 95 skipped` |
-| v0.25.1 交付/prepare/audit focused | `45 passed`（`test_v0251_delivery.py`） |
-| 协议/交付 focused 合计 | `81 passed` |
+| 当前源码 Adapter 全量测试 | `833 passed, 95 skipped` |
+| v0.25.1 交付/prepare/audit focused | `46 passed`（`test_v0251_delivery.py`） |
+| 协议/交付 focused 合计 | `82 passed` |
 | 正式插件合同测试 | `25/25` |
 | Python 3.8 兼容扫描 | `82` 个生产文件 |
 | 麒麟构建来源与审计 | 冻结的 `afe109c` 麒麟证据保留，但因目标机验收审计/测试对缺失必测第 8 或第 9 行未 fail closed 而拒绝；当前没有活动候选 |

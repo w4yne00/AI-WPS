@@ -119,9 +119,9 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `832 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `45 passed` (`test_v0251_delivery.py`) |
-| Focused protocol/delivery aggregate | `81 passed` |
+| Current-source full Adapter suite | `833 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `46 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `82 passed` |
 | Formal plugin contract tests | `25/25` |
 | Python 3.8 compatibility scan | `82` production files |
 | Kylin build provenance and audits | Frozen `afe109c` Kylin evidence is preserved, but the candidate is rejected because the target-acceptance audit/test did not fail closed for missing mandatory row 8 or 9; no active candidate remains |
