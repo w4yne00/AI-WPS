@@ -44,15 +44,24 @@ AUDIT_SCRIPT_NAMES = {
     "audit_v0250_delivery.py",
     "audit_v0251_delivery.py",
 }
-STALE_CANDIDATE_NOTE_MARKERS = (
-    "新候选待构建",
-    "尚未构建",
-    "修复中",
-    "再形成新候选",
-    "new candidate archive remains pending build",
-    "not yet built",
-    "repair is in progress",
-    "build a new candidate later",
+STALE_CANDIDATE_NOTE_PATTERNS = (
+    re.compile(r"新?候选(?:待构建|尚未(?:形成|生成|构建)|未(?:形成|生成|构建))"),
+    re.compile(r"尚未构建"),
+    re.compile(r"修复中"),
+    re.compile(r"再形成新候选"),
+    re.compile(
+        r"\b(?:new\s+)?candidate\s+(?:has\s+)?not\s+yet\s+"
+        r"(?:been\s+)?(?:formed|created|generated|built)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:new\s+)?candidate\s+not\s+yet\s+"
+        r"(?:formed|created|generated|built)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(r"new candidate archive remains pending build", re.IGNORECASE),
+    re.compile(r"repair is in progress", re.IGNORECASE),
+    re.compile(r"build a new candidate later", re.IGNORECASE),
 )
 
 
@@ -182,10 +191,9 @@ def audit_candidate_note(root: Path, manifest: Dict) -> None:
     """Require a generated note whose identity matches the package manifest."""
     note = safe_path(root, "docs/v0251-delivery.md", "V0251_CANDIDATE_NOTE_MISSING")
     content = note.read_text(encoding="utf-8")
-    lower_content = content.lower()
-    for marker in STALE_CANDIDATE_NOTE_MARKERS:
-        if marker.lower() in lower_content:
-            raise DeliveryFailure("V0251_CANDIDATE_NOTE_STALE {0}".format(marker))
+    for pattern in STALE_CANDIDATE_NOTE_PATTERNS:
+        if pattern.search(content):
+            raise DeliveryFailure("V0251_CANDIDATE_NOTE_STALE {0}".format(pattern.pattern))
 
     evidence = manifest.get("candidateEvidence", {})
     release_date = str(manifest.get("releaseDate", ""))

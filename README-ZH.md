@@ -103,9 +103,9 @@ Issue #59 人工验收仍为 `manual-pending`。
 
 | 门禁 | 结果 |
 | --- | --- |
-| 当前源码 Adapter 全量测试 | `800 passed, 95 skipped` |
-| v0.25.1 交付断言 | `23 passed` |
-| 正式插件合同测试 | `22/22` |
+| 当前源码 Adapter 全量测试 | `812 passed, 95 skipped` |
+| v0.25.1 交付/prepare/audit focused | `25 passed` |
+| 正式插件合同测试 | `24/24` |
 | Python 3.8 兼容扫描 | `82` 个生产文件 |
 | 麒麟构建来源与审计 | 来源 `246` 个文件；交付、v0.25.1 和最终归档审计均通过 |
 | Python 3.8 生命周期门禁 | 已拒绝包在麒麟 V10 SP1 ARM64 / Python `3.8.10` 通过；不得据此分发 |

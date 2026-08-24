@@ -221,13 +221,18 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
         for value in identity:
             assert value in text, "{} missing {}".format(path, value)
 
-    validation_documents = documents[:3]
+    validation_documents = documents[:2]
     for path in validation_documents:
         text = path.read_text(encoding="utf-8")
         delivery_lines = [
             line
             for line in text.splitlines()
-            if "delivery assertions" in line or "交付断言" in line
+            if (
+                "delivery assertions" in line
+                or "交付断言" in line
+                or "delivery/prepare/audit focused" in line
+                or "交付/prepare/audit focused" in line
+            )
         ]
         plugin_lines = [
             line
@@ -236,10 +241,17 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`23 passed`" in line for line in delivery_lines)
-        assert all("`22 passed`" not in line for line in delivery_lines)
-        assert any("`22/22`" in line for line in plugin_lines)
-        assert all("`22 passed`" not in line for line in plugin_lines)
+        assert any("`25 passed`" in line for line in delivery_lines)
+        assert all("`23 passed`" not in line for line in delivery_lines)
+        assert any("`24/24`" in line for line in plugin_lines)
+        assert all("`22/22`" not in line for line in plugin_lines)
+
+    assert "上一候选的本地 Adapter 测试为 `800 passed, 95 skipped`" in (
+        ROOT / "docs/codex-handoff.md"
+    ).read_text(encoding="utf-8")
+    assert "v0.25.1 交付断言为 `23 passed`" in (
+        ROOT / "docs/codex-handoff.md"
+    ).read_text(encoding="utf-8")
 
     for stale in (
         "No new archive has been built",
@@ -705,12 +717,32 @@ def test_v0251_prepare_rewrites_delivery_note_with_current_candidate_identity(tm
     )
 
 
-def test_v0251_audit_rejects_stale_delivery_note(tmp_path):
+@pytest.mark.parametrize(
+    "stale_text",
+    (
+        "新候选待构建",
+        "新候选尚未形成",
+        "候选尚未形成",
+        "新候选尚未生成",
+        "候选尚未生成",
+        "新候选尚未构建",
+        "候选尚未构建",
+        "candidate has not yet been formed",
+        "candidate has not yet been created",
+        "candidate has not yet been generated",
+        "candidate has not yet been built",
+        "candidate not yet built",
+        "candidate not yet created",
+        "candidate not yet formed",
+        "candidate not yet generated",
+    ),
+)
+def test_v0251_audit_rejects_stale_delivery_note(tmp_path, stale_text):
     audit_module = load_v0251_audit_module()
     docs = tmp_path / "docs"
     docs.mkdir()
     (docs / "v0251-delivery.md").write_text(
-        "v0.25.1-alpha 新候选待构建，当前修复中。", encoding="utf-8"
+        "v0.25.1-alpha {0}，记录待验证。".format(stale_text), encoding="utf-8"
     )
     manifest = {
         "releaseDate": "20260824",

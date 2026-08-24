@@ -115,9 +115,9 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `800 passed, 95 skipped` |
-| v0.25.1 delivery assertions | `23 passed` |
-| Formal plugin contract tests | `22/22` |
+| Current-source full Adapter suite | `812 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `25 passed` |
+| Formal plugin contract tests | `24/24` |
 | Python 3.8 compatibility scan | `82` production files |
 | Kylin build provenance and audits | `246` source files; delivery, v0.25.1, and final archive audits passed |
 | Python 3.8 lifecycle gate | The rejected package passed on Kylin V10 SP1 ARM64 / Python `3.8.10`; it is not a distributable candidate |
