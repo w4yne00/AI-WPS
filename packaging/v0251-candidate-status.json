@@ -110,6 +110,13 @@
       "status": "rejected",
       "recordedAt": "20260824",
       "reason": "rejected: v0.25.1 target-acceptance audit/test did not fail closed when mandatory acceptance row 8 or 9 was missing; archive is frozen and no active candidate remains until rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+      "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
+      "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+      "status": "candidate"
     }
   ]
 }

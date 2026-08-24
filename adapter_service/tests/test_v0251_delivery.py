@@ -174,21 +174,21 @@ def test_v0251_handoff_rejected_list_contains_previous_candidates_in_validation_
     assert _rejected_candidates_from_validation_section(candidate_only) == set()
 
 
-def test_v0251_handoff_uses_current_candidate_as_previous_archive_example():
+def test_v0251_handoff_uses_superseded_candidate_as_previous_archive_example():
     handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
 
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
-        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz"
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
     ) in handoff
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
 
-def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
+def test_v0251_candidate_identity_is_consistent_across_release_docs():
     status = json.loads(
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
-    expected = {
+    expected_rejected = {
         "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655",
         "archiveName": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz",
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256",
@@ -198,8 +198,16 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
         "recordedAt": "20260824",
         "reason": "rejected: v0.25.1 target-acceptance audit/test did not fail closed when mandatory acceptance row 8 or 9 was missing; archive is frozen and no active candidate remains until rebuilt",
     }
-    assert status["records"][-1] == expected
-    assert [record for record in status["records"] if record.get("status") == "candidate"] == []
+    assert status["records"][-2] == expected_rejected
+    expected_current = {
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+        "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
+        "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+        "status": "candidate",
+    }
+    assert status["records"][-1] == expected_current
+    assert [record for record in status["records"] if record.get("status") == "candidate"] == [expected_current]
 
     previous_current = next(
         record
@@ -241,11 +249,11 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
     assert old_rejected["status"] == "rejected"
 
     identity = (
-        "20260824-afe109c",
-        expected["candidateBuildId"],
-        expected["sourceCommit"],
-        expected["archiveName"],
-        "e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b",
+        "20260824-f953c58",
+        expected_current["candidateBuildId"],
+        expected_current["sourceCommit"],
+        expected_current["archiveName"],
+        "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
         "Issue #59",
     )
     documents = (
@@ -339,10 +347,10 @@ def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):
 
 @pytest.mark.parametrize("missing_row", (8, 9))
 def test_v0251_audit_rejects_missing_mandatory_acceptance_row(tmp_path, missing_row):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
-    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-afe109c-v0251"
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
     record = delivery / "docs/v0251-target-machine-acceptance.md"
     content = record.read_text(encoding="utf-8")
     content = re.sub(r"^\| {0} \|.*\n".format(missing_row), "", content, flags=re.MULTILINE)
@@ -358,10 +366,10 @@ def test_v0251_audit_rejects_missing_mandatory_acceptance_row(tmp_path, missing_
 
 
 def test_v0251_audit_rejects_duplicate_mandatory_acceptance_row(tmp_path):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
-    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-afe109c-v0251"
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
     record = delivery / "docs/v0251-target-machine-acceptance.md"
     content = record.read_text(encoding="utf-8")
     row = next(line for line in content.splitlines(True) if line.startswith("| 8 |"))
@@ -377,10 +385,10 @@ def test_v0251_audit_rejects_duplicate_mandatory_acceptance_row(tmp_path):
 
 
 def test_v0251_audit_rejects_extra_mandatory_acceptance_row(tmp_path):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
-    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-afe109c-v0251"
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
     record = delivery / "docs/v0251-target-machine-acceptance.md"
     content = record.read_text(encoding="utf-8")
     marker = "### v2 后台格式审查判定矩阵"
@@ -413,18 +421,18 @@ def test_v0251_audit_rejects_packaged_acceptance_candidate_identity_mismatch(tmp
 
 
 def test_v0251_current_archive_binds_acceptance_status_and_delivery_identity(tmp_path):
-    """The distributed afe109c archive must bind all packaged evidence together."""
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    """The distributed f953c58 archive must bind all packaged evidence together."""
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
-    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-afe109c-v0251"
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
     manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
     status = json.loads((delivery / "docs/v0251-candidate-status.json").read_text(encoding="utf-8"))
     audit_module = load_v0251_audit_module()
 
-    expected_build_id = "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655"
-    expected_source = "afe109c27bf6bc9e663a0c107ccfd70876f95655"
-    expected_archive = "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    expected_build_id = "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53"
+    expected_source = "f953c58312c8d3d42d3dccea402fccf55a3c7d53"
+    expected_archive = "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
     expected_checksum = expected_archive + ".sha256"
     evidence = manifest["candidateEvidence"]
     assert evidence["candidateBuildId"] == expected_build_id
@@ -448,12 +456,32 @@ def test_v0251_current_archive_binds_acceptance_status_and_delivery_identity(tmp
         }
     ]
     assert evidence["supersedes"]["candidateBuildId"].endswith(
-        "-799adf93cc1e594a82b6d2bc88abcf08b3f3c252"
+        "-afe109c27bf6bc9e663a0c107ccfd70876f95655"
     )
     assert evidence["supersedes"]["status"] == "rejected"
+    checksum_path = archive.with_name(archive.name + ".sha256")
+    checksum_parts = checksum_path.read_text(encoding="utf-8").split()
+    assert checksum_parts == [
+        "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
+        archive.name,
+    ]
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == checksum_parts[0]
+    acceptance_content = (delivery / "docs/v0251-target-machine-acceptance.md").read_text(
+        encoding="utf-8"
+    )
+    for matrix_marker in (
+        "`OutlineLevel=0`",
+        "`OutlineLevel=10`",
+        "`OutlineLevel=1..9`",
+        "`表格/嵌套表格`",
+        "`图片元数据`",
+        "`非 BMP emoji`",
+        "`dataStatus=insufficient` 且 reason 非空",
+        "其它 `dataStatus`",
+    ):
+        assert matrix_marker in acceptance_content
     mandatory_section = (
-        (delivery / "docs/v0251-target-machine-acceptance.md")
-        .read_text(encoding="utf-8")
+        acceptance_content
         .split("## 必测项目", 1)[1]
         .split("### v2 后台格式审查判定矩阵", 1)[0]
     )
