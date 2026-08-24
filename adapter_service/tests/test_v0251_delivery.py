@@ -162,14 +162,65 @@ def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_con
     assert _rejected_candidates_from_validation_section(candidate_only) == set()
 
 
-def test_v0251_handoff_keeps_latest_rejected_candidate_as_previous_archive():
+def test_v0251_handoff_uses_current_candidate_as_previous_archive_example():
     handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
 
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
-        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz"
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz"
     ) in handoff
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
+
+
+def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
+    status = json.loads(
+        (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
+    )
+    expected = {
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+        "archiveName": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+        "archiveSha256": "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e",
+        "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+        "status": "candidate",
+        "recordedAt": "20260824",
+        "reason": "automated delivery and Python 3.8 lifecycle gates passed; target WPS GUI, real model, and Issue #59 manual acceptance remain pending",
+    }
+    assert status["records"][-1] == expected
+
+    rejected = status["records"][-2]
+    assert rejected["candidateBuildId"].endswith("-ccad09fb1d8019da3a40f14610ab3bd75de1ec23")
+    assert rejected["archiveSha256"] == "2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02"
+    assert rejected["status"] == "rejected"
+
+    identity = (
+        "20260824-2e7a3e6",
+        expected["candidateBuildId"],
+        expected["sourceCommit"],
+        expected["archiveName"],
+        expected["archiveSha256"],
+        "Issue #59",
+    )
+    documents = (
+        ROOT / "README.md",
+        ROOT / "README-ZH.md",
+        ROOT / "docs/codex-handoff.md",
+        ROOT / "packaging/v0251-delivery.md",
+    )
+    for path in documents:
+        text = path.read_text(encoding="utf-8")
+        for value in identity:
+            assert value in text, "{} missing {}".format(path, value)
+
+    for stale in (
+        "No new archive has been built",
+        "尚未构建新归档",
+        "new candidate archive remains pending build",
+        "新候选待构建",
+        "新候选尚未构建",
+    ):
+        for path in documents:
+            assert stale not in path.read_text(encoding="utf-8")
 
 
 def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):

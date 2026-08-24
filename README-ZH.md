@@ -81,12 +81,19 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 历史候选 `20260824-ccad09f` 因 JS/Python `word.format_review.snapshot.v2` structure/format 哈希漂移已登记为 `rejected`；当前源码正在修复，新的 `v0.25.1-alpha` 候选待构建 |
-| 一期交付包 | 尚未构建新归档；不得继续分发已拒绝的 `20260824-ccad09f` 归档 |
+| 交付状态 | 当前候选 `20260824-2e7a3e6` 基于源码提交 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f` 构建，自动化状态为 `candidate`；其替代已拒绝的 `20260824-ccad09f` |
+| 一期交付包 | `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`；不得继续分发已拒绝的 `20260824-ccad09f` 归档 |
 
 ### v0.25.1-alpha 交付状态
 
-`20260824-ccad09f` 归档因 WPS JavaScript 上传投影与 Python 信任边界规范化没有产生相同的 structure/format 哈希而被拒绝。本次修复继续使用 `v0.25.1-alpha`，新增真实跨运行时 Node→Python 门禁；代码审查和完整验证完成前不构建新候选。Issue #59 仍单独负责真实 WPS 与模型人工验收。
+当前候选为 `20260824-2e7a3e6`，candidate build ID 为
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，
+源码提交为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为
+`ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为
+`576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。本候选包含
+针对已拒绝 `20260824-ccad09f` 契约的跨运行时 Node→Python 规范化和 fail-closed 哈希门禁修复。
+交付和 Python 3.8 生命周期自动门禁均已通过，但状态仍为 `candidate`；目标 WPS GUI、真实模型和
+Issue #59 人工验收尚未通过或接受。
 
 用户复测确认 `20260822-e43dc8c` 仍存在格式审查批次索引、直连格式语义输出能力、PPT 空最终正文及旧工作流配置删除后复活问题，该归档已登记为 `rejected`。其清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前源码仓库；实际 `HEAD` 为 `e43dc8c464a7957089b944db628090df83db6863`，二者仅前七位相同。
 
@@ -96,12 +103,14 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 门禁 | 结果 |
 | --- | --- |
-| 当前源码 Adapter 全量测试 | 本次修复最终核验待完成 |
-| 跨运行时格式审查哈希门禁 | 重点证据已写入任务报告；候选完整门禁待执行 |
-| Python 3.8 交付兼容扫描 | 本次修复最终核验待完成 |
-| 正式插件合同测试 | 本次修复最终核验待完成 |
-| 新候选麒麟生命周期 | 未执行；尚未构建新候选归档 |
-| 目标 WPS GUI 和真实文档人工验收 | 由 Issue #59 继续记录 |
+| 当前源码 Adapter 全量测试 | `800 passed, 95 skipped` |
+| v0.25.1 交付断言 | `22 passed` |
+| 正式插件合同测试 | `22/22` |
+| Python 3.8 兼容扫描 | `82` 个生产文件 |
+| 麒麟构建来源与审计 | 来源 `246` 个文件；交付、v0.25.1 和最终归档审计均通过 |
+| Python 3.8 生命周期门禁 | 麒麟 V10 SP1 ARM64 / Python `3.8.10` 通过；终态为 `candidate` |
+| 归档校验 | 本地 SHA-256 与 `.sha256` 文件一致；交付审计通过 |
+| 目标 WPS GUI 和真实文档人工验收 | Issue #59 为 `manual-pending`；尚未通过或接受 |
 
 版本规则格式：
 
@@ -149,7 +158,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
-| `v0.25.1-alpha` | 历史候选 `20260824-ccad09f` 因格式审查跨运行时 structure/format 哈希漂移被拒绝；源码修复统一 JS/Python 规范化契约并加入 fail-closed 门禁，新候选待构建，Issue #59 仍负责真实 WPS 人工验收 |
+| `v0.25.1-alpha` | 发布候选 `20260824-2e7a3e6`，修复历史候选 `20260824-ccad09f` 的格式审查跨运行时 structure/format 哈希漂移，统一 JS/Python 规范化契约并加入 fail-closed 门禁；自动门禁通过，Issue #59 仍负责真实 WPS 与模型人工验收 |
 | `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`。恢复候选默认不切换，只有当前安装不就绪、安装前备份完整校验且候选存活时才允许 `--activate-recovery`；恢复模式只提供重新检测、只读备份和脱敏诊断。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
 | `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
 | `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |

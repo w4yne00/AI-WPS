@@ -70,6 +70,16 @@
       "status": "rejected",
       "recordedAt": "20260824",
       "reason": "rejected after cross-runtime word.format_review.snapshot.v2 JS/Python hash contract drift: structure and format projections were not identical after trust-boundary normalization; repair continues in v0.25.1-alpha source and a new candidate must be built separately"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+      "archiveName": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+      "archiveSha256": "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e",
+      "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
+      "status": "candidate",
+      "recordedAt": "20260824",
+      "reason": "automated delivery and Python 3.8 lifecycle gates passed; target WPS GUI, real model, and Issue #59 manual acceptance remain pending"
     }
   ]
 }
