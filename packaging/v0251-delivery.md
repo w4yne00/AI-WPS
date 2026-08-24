@@ -2,12 +2,12 @@
 
 ## 候选身份
 
-- Candidate label: `20260824-f953c58`
-- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53`
-- Source commit: `f953c58312c8d3d42d3dccea402fccf55a3c7d53`
-- Archive name: `ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`
-- Archive checksum file: `ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256`
-- Archive SHA-256: `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`
+- Candidate label: `20260824-10b251d`
+- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`
+- Source commit: `10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`
+- Archive name: `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`
+- Archive checksum file: `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256`
+- Archive SHA-256: `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`
 - Automated status: `rejected`
 - Target acceptance status: `manual-pending` (Issue #59)
 
@@ -17,15 +17,16 @@ allowlist assembly. The v2 deterministic format-review contract is
 `characterCount`, `contentSha256`, `structureSha256`, and `formatSha256`.
 The contract uses `format_semantics.v1` rule assets, UTF-16 character counts,
 stable compact JSON, and fail-closed trust-boundary checks. This archive is
-rejected because heading-only and format-outline-only compatibility inputs
-reproduced outline fallback JS/Python hash drift. It is not a current candidate
+rejected because the packaged target-acceptance record contained contradictory
+current-candidate/no-current-candidate narratives and duplicate previous-rejected
+lines. It is not a current candidate
 and must not be distributed; no active candidate exists until a rebuilt archive
 passes the complete gate. Automated success would record only `candidate`; it
 is not manual acceptance.
 
-`20260824-afe109c` is the superseded rejected candidate. Its archive
-`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz` has SHA-256
-`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b` and remains
+`20260824-f953c58` is the superseded rejected candidate. Its archive
+`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz` has SHA-256
+`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7` and remains
 byte-frozen. The previous `20260824-799adf9`, `20260824-5318d4b`,
 `20260824-2e7a3e6`, and `20260824-ccad09f` records remain `rejected` with their
 original identities and archive digests.
@@ -40,7 +41,7 @@ original identities and archive digests.
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 已将冻结的 `f953c58` 登记为 `rejected`，原因是 heading-only 与 format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移；当前没有自动化候选，必须在修复后重新构建，Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 已将冻结的 `10b251d` 登记为 `rejected`，原因是包内目标机验收候选上下文叙述矛盾；当前没有自动化候选，必须在修复后重新构建，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 

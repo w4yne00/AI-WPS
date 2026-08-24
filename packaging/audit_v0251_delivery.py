@@ -37,6 +37,19 @@ TARGET_ACCEPTANCE_MATRIX_MARKERS = (
     "`dataStatus=insufficient`",
     "其它 `dataStatus`",
 )
+CANDIDATE_CONTEXT_BEGIN = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+CANDIDATE_CONTEXT_END = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+CANDIDATE_CONTEXT_STALE_PATTERNS = (
+    re.compile(r"当前没有(?:活动的)?(?:自动化)?候选"),
+    re.compile(r"修复源.*(?:不属于|尚未).*(?:候选|candidate)", re.IGNORECASE),
+    re.compile(r"(?:新候选|候选).*(?:待构建|尚未构建|未形成|未生成|重建前)"),
+    re.compile(r"(?:重建|重新构建).*(?:前|后才|才能).*(?:候选|通过)"),
+    re.compile(r"\brebuild[- ]only\b", re.IGNORECASE),
+    re.compile(r"\bno\s+(?:current|active)\s+(?:automated\s+)?candidate\b", re.IGNORECASE),
+    re.compile(r"\b(?:current\s+candidate|candidate)\s+does\s+not\s+exist\b", re.IGNORECASE),
+    re.compile(r"\brepair\s+source\s+is\s+not\s+(?:a\s+)?candidate\b", re.IGNORECASE),
+    re.compile(r"\bnew\s+candidate.*(?:pending\s+build|build\s+later)\b", re.IGNORECASE),
+)
 
 
 class DeliveryFailure(RuntimeError):
@@ -232,6 +245,89 @@ def audit_candidate_note(root: Path, manifest: Dict) -> None:
             raise DeliveryFailure("V0251_CANDIDATE_NOTE_IDENTITY_MISSING {0}".format(marker))
 
 
+def _candidate_context(content: str) -> str:
+    begin_count = content.count(CANDIDATE_CONTEXT_BEGIN)
+    end_count = content.count(CANDIDATE_CONTEXT_END)
+    if begin_count == 0 or end_count == 0:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING")
+    if begin_count != 1 or end_count != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_DUPLICATE")
+    begin = content.index(CANDIDATE_CONTEXT_BEGIN)
+    end = content.index(CANDIDATE_CONTEXT_END)
+    if begin > end:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_ORDER_INVALID")
+    context = content[begin + len(CANDIDATE_CONTEXT_BEGIN) : end]
+    if any(pattern.search(context) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE")
+    return context
+
+
+def _validate_candidate_context(content: str, manifest: Dict) -> None:
+    context = _candidate_context(content)
+    lines = [line.strip() for line in context.splitlines() if line.strip()]
+    current_lines = [line for line in lines if line.startswith("- 当前自动化候选：")]
+    if not current_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_MISSING")
+    if len(current_lines) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_DUPLICATE")
+
+    evidence = manifest.get("candidateEvidence", {})
+    source_commit = str(evidence.get("sourceCommit", ""))
+    candidate_build_id = str(evidence.get("candidateBuildId", ""))
+    release_date = str(manifest.get("releaseDate", ""))
+    archive_name = "ai-wps-phase1-delivery-{0}-{1}-v0251.tar.gz".format(
+        release_date, source_commit[:7]
+    )
+    checksum_name = str(evidence.get("archiveChecksumFile", ""))
+    expected_current = (
+        "- 当前自动化候选：`{short_source}`，状态为 `candidate`；"
+        "candidateBuildId：`{candidate_build_id}`；源码提交：`{source_commit}`；"
+        "归档：`{archive_name}`；校验文件：`{checksum_name}`；"
+        "目标验收：`manual-pending`（Issue #59）"
+    ).format(
+        short_source=source_commit[:7],
+        candidate_build_id=candidate_build_id,
+        source_commit=source_commit,
+        archive_name=archive_name,
+        checksum_name=checksum_name,
+    )
+    if current_lines[0] != expected_current:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
+
+    previous = evidence.get("supersedes", {})
+    expected_previous = (
+        "- 上一被拒绝归档：`{archive_name}`，SHA-256：`{archive_sha256}`；"
+        "candidateBuildId：`{candidate_build_id}`，状态为 `rejected`"
+    ).format(
+        archive_name=str(previous.get("archiveName", "")),
+        archive_sha256=str(previous.get("archiveSha256", "")),
+        candidate_build_id=str(previous.get("candidateBuildId", "")),
+    )
+    previous_lines = [
+        line
+        for line in lines
+        if line.startswith("- 上一被拒绝归档：") or line.startswith("- 被拒绝归档：")
+    ]
+    if not previous_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_SUPERSEDED_LINE_MISSING")
+    if len(previous_lines) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_SUPERSEDED_LINE_DUPLICATE")
+    if previous_lines[0] != expected_previous:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_SUPERSEDED_IDENTITY_MISMATCH")
+
+    state_lines = [line for line in lines if line.startswith("- 候选状态：")]
+    if not state_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_MISSING")
+    if len(state_lines) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_DUPLICATE")
+    expected_state = (
+        "- 候选状态：当前归档是自动化门禁产生的当前候选；"
+        "自动化门禁不等于目标机验收，Issue #59 仍为 `manual-pending`。"
+    )
+    if state_lines[0] != expected_state:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_MISMATCH")
+
+
 def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     record = safe_path(
         root,
@@ -319,6 +415,8 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     if manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
         raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_STATUS_INVALID")
 
+    _validate_candidate_context(content, manifest)
+
     evidence = manifest.get("candidateEvidence", {})
     source_commit = str(evidence.get("sourceCommit", ""))
     candidate_build_id = str(evidence.get("candidateBuildId", ""))
@@ -326,20 +424,6 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
         manifest.get("releaseDate", ""), source_commit[:7]
     )
     checksum_name = str(evidence.get("archiveChecksumFile", ""))
-    expected_identity = (
-        "- 当前自动化候选：`{short_source}`，状态为 `candidate`；"
-        "candidateBuildId：`{candidate_build_id}`；源码提交：`{source_commit}`；"
-        "归档：`{archive_name}`；校验文件：`{checksum_name}`；"
-        "目标验收：`manual-pending`（Issue #59）"
-    ).format(
-        short_source=source_commit[:7],
-        candidate_build_id=candidate_build_id,
-        source_commit=source_commit,
-        archive_name=archive_name,
-        checksum_name=checksum_name,
-    )
-    if expected_identity not in content:
-        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH")
     for marker in TARGET_ACCEPTANCE_MATRIX_MARKERS:
         if marker not in content:
             raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_MATRIX_MISSING {0}".format(marker))
@@ -350,6 +434,15 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     )
     records = [item for item in status.get("records", []) if isinstance(item, dict)]
     current = [item for item in records if item.get("candidateBuildId") == candidate_build_id]
+    candidate_records = [item for item in records if item.get("status") == "candidate"]
+    if len(candidate_records) != 1:
+        raise DeliveryFailure(
+            "V0251_TARGET_ACCEPTANCE_STATUS_CANDIDATE_CARDINALITY_INVALID"
+        )
+    if candidate_records[0].get("candidateBuildId") != candidate_build_id:
+        raise DeliveryFailure(
+            "V0251_TARGET_ACCEPTANCE_STATUS_CANDIDATE_IDENTITY_MISMATCH"
+        )
     if (
         len(current) != 1
         or current[0].get("status") != "candidate"
@@ -439,6 +532,11 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0251_SUPERSEDED_CANDIDATE_INVALID")
 
     records = [item for item in status["records"] if isinstance(item, dict)]
+    candidate_records = [item for item in records if item.get("status") == "candidate"]
+    if len(candidate_records) != 1:
+        raise DeliveryFailure("V0251_CANDIDATE_STATUS_CANDIDATE_CARDINALITY_INVALID")
+    if candidate_records[0].get("candidateBuildId") != current_build_id:
+        raise DeliveryFailure("V0251_CANDIDATE_STATUS_CANDIDATE_IDENTITY_MISMATCH")
     rejected = [
         item
         for item in records

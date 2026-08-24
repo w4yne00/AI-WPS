@@ -81,19 +81,18 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 当前没有自动化候选；冻结的 `20260824-f953c58` 已为 `rejected`，待修复后重建；目标验收仍为 `manual-pending`（Issue #59） |
-| 一期交付包 | 冻结的 rejected 归档 `ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`，SHA-256：`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`；源码提交：`f953c58312c8d3d42d3dccea402fccf55a3c7d53` |
+| 交付状态 | 当前没有自动化候选；冻结的 `20260824-10b251d` 已为 `rejected`，待修复后重建；目标验收仍为 `manual-pending`（Issue #59） |
+| 一期交付包 | 冻结的 rejected 归档 `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`，SHA-256：`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`；源码提交：`10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5` |
 
 ### v0.25.1-alpha 交付状态
 
-当前没有自动化候选。冻结的 `20260824-f953c58` 因 heading-only 与
-format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移，已登记为
+当前没有自动化候选。冻结的 `20260824-10b251d` 因包内目标机验收记录同时出现当前候选、无当前候选和重复上一被拒绝归档叙述，已登记为
 `rejected`；修复源重新构建前不得分发。其 candidate build ID 为
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53`，
-源码提交为 `f953c58312c8d3d42d3dccea402fccf55a3c7d53`，归档为
-`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`，校验文件为
-`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256`，SHA-256 为
-`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`，自动化状态为
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`，
+源码提交为 `10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`，归档为
+`ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`，校验文件为
+`ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256`，SHA-256 为
+`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，自动化状态为
 `rejected`。目标 WPS GUI、真实模型和 Issue #59 人工验收仍为 `manual-pending`。
 被其替代的 `20260824-afe109c` 归档保持不可变并登记为 `rejected`，原因是目标机验收
 审计/测试在缺失必测第 8 或第 9 行时未 fail closed；其 SHA-256 为
@@ -109,14 +108,14 @@ format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移�
 
 | 门禁 | 结果 |
 | --- | --- |
-| 当前源码 Adapter 全量测试 | `834 passed, 95 skipped` |
-| v0.25.1 交付/prepare/audit focused | `47 passed`（`test_v0251_delivery.py`） |
-| 协议/交付 focused 合计 | `83 passed` |
+| 当前源码 Adapter 全量测试 | `851 passed, 95 skipped` |
+| v0.25.1 交付/prepare/audit focused | `64 passed`（`test_v0251_delivery.py`） |
+| 协议/交付 focused 合计 | `100 passed` |
 | 正式插件合同测试 | `28/28` |
 | Python 3.8 兼容扫描 | `82` 个生产文件 |
-| 麒麟构建来源与审计 | 冻结的 `f953c58` 麒麟 Python 3.8.10 来源、白名单、规则/插件/审计/运行时/生命周期证据已保留，但因 outline fallback JS/Python 哈希漂移登记为 `rejected`；当前没有自动化候选 |
-| Python 3.8 生命周期门禁 | 冻结的 `f953c58` 生命周期证据已保留但终态为 `rejected`；重建候选必须重新通过，目标机验收仍独立待完成 |
-| 归档校验 | 冻结 rejected `f953c58` SHA-256 为 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`；被拒绝 `afe109c` 归档保持原字节，SHA-256 为 `e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b` |
+| 麒麟构建来源与审计 | 冻结的 `10b251d` 来源与既有门禁证据已保留，但因包内候选上下文叙述矛盾登记为 `rejected`；当前没有自动化候选 |
+| Python 3.8 生命周期门禁 | 冻结的 `10b251d` 生命周期证据已保留但终态为 `rejected`；重建候选必须重新通过，目标机验收仍独立待完成 |
+| 归档校验 | 冻结 rejected `10b251d` SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`；被拒绝 `f953c58` 归档保持原字节，SHA-256 为 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7` |
 | 目标 WPS GUI 和真实文档人工验收 | Issue #59 为 `manual-pending`；尚未通过或接受 |
 
 版本规则格式：
@@ -165,7 +164,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
-| `v0.25.1-alpha` | 冻结 `20260824-f953c58` 为 `rejected`，原因是 heading-only/format-outline-only outline fallback JS/Python 哈希漂移；重建前没有自动化候选，Issue #59 仍为 `manual-pending` |
+| `v0.25.1-alpha` | 冻结 `20260824-10b251d` 为 `rejected`，原因是包内目标机验收候选上下文叙述矛盾；重建前没有自动化候选，Issue #59 仍为 `manual-pending` |
 | `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`。恢复候选默认不切换，只有当前安装不就绪、安装前备份完整校验且候选存活时才允许 `--activate-recovery`；恢复模式只提供重新检测、只读备份和脱敏诊断。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
 | `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
 | `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |

@@ -120,6 +120,16 @@
       "status": "rejected",
       "recordedAt": "20260824",
       "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
+      "archiveName": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256",
+      "sourceCommit": "10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
+      "archiveSha256": "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: packaged target acceptance document contained contradictory current-candidate and no-current-candidate narratives plus duplicate previous rejected lines; archive is frozen and no active candidate remains until rebuilt"
     }
   ]
 }

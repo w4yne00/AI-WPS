@@ -6,16 +6,19 @@
 - 验收版本：`v0.25.1-alpha`
 - 验收范围：麒麟 V10 ARM、目标 WPS、`cloud` 用户环境
 - 当前记录状态：`manual-pending`
-- 当前自动化候选：无。冻结归档 `f953c58` 已登记为 `rejected`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53`；源码提交：`f953c58312c8d3d42d3dccea402fccf55a3c7d53`；归档：`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`；校验文件：`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256`；SHA-256：`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`；拒绝原因：heading-only 与 format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移；目标验收：`manual-pending`（Issue #59）
-- 上一被拒绝归档：`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`，SHA-256：`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655`，状态为 `rejected`
-- 上一被拒绝归档：`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`，SHA-256：`5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，状态为 `rejected`
+<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->
+- 当前源树没有活动候选；冻结归档 `10b251d` 已登记为 `rejected`，其原始归档和校验文件保持不可变。
+- 当前没有活动的自动化候选；冻结归档 `10b251d` 已登记为 `rejected`。
+- 上一被拒绝归档：`ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`，SHA-256：`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`，状态为 `rejected`
+- 候选状态：当前源树没有活动自动化候选；自动化门禁不等于目标机验收，Issue #59 仍为 `manual-pending`。
+<!-- V0251-CANDIDATE-CONTEXT:END -->
 - 验收人员：
 - 验收日期：
 - 交付包文件名：
 - 交付包 SHA-256：
 - v0.25.0 基线包 SHA-256：
 
-本记录是目标机现场填写模板。当前没有自动化候选；修复源在重新构建归档前不属于候选，冻结的 `f953c58` 归档不得分发。新候选包的自动化门禁只能证明候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户环境中的真实操作。所有现场原始命令输出、截图、目标机编号、账号信息、配置内容、API Key、文档正文和模型原始回复只保留在受控验收记录中，不写入仓库。
+本记录是目标机现场填写模板。候选上下文由 `prepare_v0251_delivery.py` 在组装交付树时整体生成；自动化门禁只能证明候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户环境中的真实操作。所有现场原始命令输出、截图、目标机编号、账号信息、配置内容、API Key、文档正文和模型原始回复只保留在受控验收记录中，不写入仓库。
 
 ## 验收结论规则
 

@@ -81,20 +81,20 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | No active automated candidate; frozen `20260824-f953c58` is `rejected` pending rebuild; target acceptance remains `manual-pending` (Issue #59) |
-| Phase 1 delivery kit | Frozen rejected archive `ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`, SHA-256 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`; source `f953c58312c8d3d42d3dccea402fccf55a3c7d53` |
+| Delivery status | No active automated candidate; frozen `20260824-10b251d` is `rejected` pending rebuild; target acceptance remains `manual-pending` (Issue #59) |
+| Phase 1 delivery kit | Frozen rejected archive `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`, SHA-256 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`; source `10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5` |
 
 ### v0.25.1-alpha Delivery Status
 
-There is no active automated candidate. The frozen `20260824-f953c58` record is
-rejected because heading-only and format-outline-only compatibility inputs
-reproduced outline fallback JS/Python hash drift; it must not be distributed until
-the source is rebuilt. Its candidate build ID is
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53`,
-source commit `f953c58312c8d3d42d3dccea402fccf55a3c7d53`, archive
-`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`, checksum file
-`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256`, and SHA-256
-`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`. Its
+There is no active automated candidate. The frozen `20260824-10b251d` record is
+rejected because the packaged target-acceptance record contained contradictory
+current-candidate/no-current-candidate narratives and duplicate previous-rejected
+lines; it must not be distributed until the source is rebuilt. Its candidate build ID is
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`,
+source commit `10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`, archive
+`ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`, checksum file
+`ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256`, and SHA-256
+`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`. Its
 automated status is `rejected`; target WPS GUI, real-model, and Issue #59 manual
 acceptance remain `manual-pending`.
 The superseded `20260824-afe109c` archive remains immutable and `rejected` because
@@ -123,14 +123,14 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `834 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `47 passed` (`test_v0251_delivery.py`) |
-| Focused protocol/delivery aggregate | `83 passed` |
+| Current-source full Adapter suite | `851 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `64 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `100 passed` |
 | Formal plugin contract tests | `28/28` |
 | Python 3.8 compatibility scan | `82` production files |
-| Kylin build provenance and audits | Frozen `f953c58` Kylin Python 3.8.10 provenance, allowlist, rule/plugin/audit/runtime/lifecycle evidence is retained but rejected for outline fallback JS/Python hash drift; no active candidate remains |
-| Python 3.8 lifecycle gate | Frozen `f953c58` lifecycle evidence is retained with rejected status; a rebuilt candidate must pass again; target-machine acceptance remains separate and pending |
-| Archive checksum | Frozen rejected `f953c58` SHA-256 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`; rejected `afe109c` remains byte-identical with SHA-256 `e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b` |
+| Kylin build provenance and audits | Frozen `10b251d` provenance and prior audit evidence are retained but rejected for contradictory candidate-context narratives; no active candidate remains |
+| Python 3.8 lifecycle gate | Frozen `10b251d` lifecycle evidence is retained with rejected status; a rebuilt candidate must pass again; target-machine acceptance remains separate and pending |
+| Archive checksum | Frozen rejected `10b251d` SHA-256 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`; rejected `f953c58` remains byte-identical with SHA-256 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7` |
 | Target WPS GUI and real-document acceptance | Manual-pending in Issue #59; not passed or accepted |
 
 Version rule format:
@@ -179,7 +179,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.25.1-alpha` | Freezes `20260824-f953c58` as `rejected` after heading-only/format-outline-only outline fallback JS/Python hash drift; no active candidate remains until rebuild, and Issue #59 remains `manual-pending` |
+| `v0.25.1-alpha` | Freezes `20260824-10b251d` as `rejected` after contradictory packaged candidate-context narratives; no active candidate remains until rebuild, and Issue #59 remains `manual-pending` |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |

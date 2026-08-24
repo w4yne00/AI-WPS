@@ -34,6 +34,8 @@ VERSION_REWRITE_EXCLUDED_PATHS = {
 }
 STATUS_RELATIVE_PATH = "docs/v0251-candidate-status.json"
 TARGET_ACCEPTANCE_RELATIVE_PATH = "docs/v0251-target-machine-acceptance.md"
+CANDIDATE_CONTEXT_BEGIN = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+CANDIDATE_CONTEXT_END = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
 TARGET_ACCEPTANCE_MATRIX_MARKERS = (
     "`OutlineLevel=0`",
     "`OutlineLevel=10`",
@@ -354,25 +356,32 @@ def write_target_machine_acceptance_record(
         archive_sha256=previous["archiveSha256"],
         candidate_build_id=previous["candidateBuildId"],
     )
-    updated = []
-    replaced_current = False
-    replaced_previous = False
-    for line in content.splitlines():
-        if line.startswith("- 当前自动化候选：") or line.startswith(
-            "- 当前没有活动的自动化候选。"
-        ):
-            updated.append(current_line)
-            replaced_current = True
-        elif not replaced_previous and (
-            line.startswith("- 上一被拒绝归档：") or line.startswith("- 被拒绝归档：")
-        ):
-            updated.append(previous_line)
-            replaced_previous = True
-        else:
-            updated.append(line)
-    if not replaced_current or not replaced_previous:
-        raise ValueError("V0251_TARGET_ACCEPTANCE_IDENTITY_MARKER_MISSING")
-    record_path.write_text("\n".join(updated) + "\n", encoding="utf-8")
+    begin_count = content.count(CANDIDATE_CONTEXT_BEGIN)
+    end_count = content.count(CANDIDATE_CONTEXT_END)
+    if begin_count != 1 or end_count != 1:
+        raise ValueError("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_INVALID")
+    begin = content.index(CANDIDATE_CONTEXT_BEGIN)
+    end = content.index(CANDIDATE_CONTEXT_END)
+    if begin > end:
+        raise ValueError("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_ORDER_INVALID")
+
+    candidate_state = (
+        "- 候选状态：当前归档是自动化门禁产生的当前候选；"
+        "自动化门禁不等于目标机验收，Issue #{acceptance_issue} 仍为 `manual-pending`。"
+    ).format(acceptance_issue=acceptance_issue)
+    generated_block = "\n".join(
+        (
+            CANDIDATE_CONTEXT_BEGIN,
+            current_line,
+            previous_line,
+            candidate_state,
+            CANDIDATE_CONTEXT_END,
+        )
+    )
+    record_path.write_text(
+        content[:begin] + generated_block + content[end + len(CANDIDATE_CONTEXT_END) :],
+        encoding="utf-8",
+    )
 
 
 def prepare(

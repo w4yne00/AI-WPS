@@ -51,6 +51,46 @@ def load_v0251_audit_module():
     return module
 
 
+def prepare_acceptance_sample(tmp_path, source_commit="1234567"):
+    prepare_spec = importlib.util.spec_from_file_location(
+        "v0251_prepare_sample", PREPARE
+    )
+    assert prepare_spec is not None and prepare_spec.loader is not None
+    prepare_module = importlib.util.module_from_spec(prepare_spec)
+    prepare_spec.loader.exec_module(prepare_module)
+    archive = ROOT / (
+        "dist-phase1-delivery-kit/"
+        "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    )
+    baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
+    with tarfile.open(archive, "r:gz") as handle:
+        handle.extractall(tmp_path)
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-10b251d-v0251"
+    (delivery / "docs/v0251-target-machine-acceptance.md").write_text(
+        (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
+    status_path = delivery / "docs/v0251-candidate-status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    frozen = next(
+        record for record in status["records"] if record.get("archiveName") == archive.name
+    )
+    frozen["status"] = "rejected"
+    frozen["archiveSha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    prepare_module.prepare(
+        delivery,
+        "20260824",
+        baseline,
+        archive,
+        source_commit,
+    )
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    return delivery, manifest, archive
+
+
 def test_v0251_policy_keeps_phase1_baseline_and_excludes_future_work():
     policy = json.loads(POLICY.read_text(encoding="utf-8"))
 
@@ -109,6 +149,11 @@ def test_v0251_policy_ships_issue_59_target_acceptance_record():
         "合法输入应启动并记录 `jobId`",
     ):
         assert required in record
+    assert record.count("<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->") == 1
+    assert record.count("<!-- V0251-CANDIDATE-CONTEXT:END -->") == 1
+    assert "当前源树没有活动候选" in record
+    assert "10b251d" in record and "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120" in record
+    assert "- 当前自动化候选：" not in record
 
     delivery = (ROOT / "packaging/v0251-delivery.md").read_text(encoding="utf-8")
     assert "POST /word/format-review" in delivery
@@ -167,6 +212,7 @@ def test_v0251_handoff_rejected_list_contains_previous_candidates_in_validation_
     assert "20260824-799adf9" in rejected_candidates
     assert "20260824-afe109c" in rejected_candidates
     assert "20260824-f953c58" in rejected_candidates
+    assert "20260824-10b251d" in rejected_candidates
     assert "20260822-e43dc8c" in rejected_candidates
 
     candidate_only = (
@@ -180,9 +226,9 @@ def test_v0251_handoff_uses_superseded_candidate_as_previous_archive_example():
 
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
-        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
     ) in handoff
-    assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz" not in handoff
+    assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz" not in handoff
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
 
@@ -191,17 +237,6 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
     expected_rejected = {
-        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655",
-        "archiveName": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz",
-        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256",
-        "sourceCommit": "afe109c27bf6bc9e663a0c107ccfd70876f95655",
-        "archiveSha256": "e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b",
-        "status": "rejected",
-        "recordedAt": "20260824",
-        "reason": "rejected: v0.25.1 target-acceptance audit/test did not fail closed when mandatory acceptance row 8 or 9 was missing; archive is frozen and no active candidate remains until rebuilt",
-    }
-    assert status["records"][-2] == expected_rejected
-    expected_current = {
         "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53",
         "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
@@ -210,6 +245,17 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         "status": "rejected",
         "recordedAt": "20260824",
         "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt",
+    }
+    assert status["records"][-2] == expected_rejected
+    expected_current = {
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
+        "archiveName": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256",
+        "sourceCommit": "10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
+        "archiveSha256": "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120",
+        "status": "rejected",
+        "recordedAt": "20260824",
+        "reason": "rejected: packaged target acceptance document contained contradictory current-candidate and no-current-candidate narratives plus duplicate previous rejected lines; archive is frozen and no active candidate remains until rebuilt",
     }
     assert status["records"][-1] == expected_current
     assert [record for record in status["records"] if record.get("status") == "candidate"] == []
@@ -253,11 +299,11 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
     assert old_rejected["status"] == "rejected"
 
     identity = (
-        "20260824-f953c58",
+        "20260824-10b251d",
         expected_current["candidateBuildId"],
         expected_current["sourceCommit"],
         expected_current["archiveName"],
-        "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
+        "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120",
         "Issue #59",
     )
     documents = (
@@ -297,18 +343,18 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`47 passed`" in line for line in delivery_lines)
+        assert any("`64 passed`" in line for line in delivery_lines)
+        assert all("`47 passed`" not in line for line in delivery_lines)
         assert all("`45 passed`" not in line for line in delivery_lines)
         assert all("`42 passed`" not in line for line in delivery_lines)
-        assert all("`41 passed`" not in line for line in delivery_lines)
-        assert any("`83 passed`" in line for line in aggregate_lines)
+        assert any("`100 passed`" in line for line in aggregate_lines)
         assert any("`28/28`" in line for line in plugin_lines)
         assert all("`25/25`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `834 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `851 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `47 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `64 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -333,11 +379,17 @@ def test_v0251_prepare_accepts_frozen_previous_digest_and_rejects_mismatch(tmp_p
     prepare_module = importlib.util.module_from_spec(prepare_spec)
     prepare_spec.loader.exec_module(prepare_module)
 
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
     baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
-    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-10b251d-v0251"
+    (delivery / "docs/v0251-target-machine-acceptance.md").write_text(
+        (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
+    )
     status_path = delivery / "docs/v0251-candidate-status.json"
     status = json.loads(status_path.read_text(encoding="utf-8"))
     frozen = next(
@@ -353,7 +405,7 @@ def test_v0251_prepare_accepts_frozen_previous_digest_and_rejects_mismatch(tmp_p
     manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
     assert manifest["candidateEvidence"]["supersedes"]["status"] == "rejected"
     assert manifest["candidateEvidence"]["supersedes"]["archiveSha256"] == (
-        "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7"
+        "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120"
     )
 
     status = json.loads(status_path.read_text(encoding="utf-8"))
@@ -466,88 +518,220 @@ def test_v0251_audit_rejects_packaged_acceptance_candidate_identity_mismatch(tmp
 
     with pytest.raises(
         audit_module.DeliveryFailure,
-        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH",
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING",
     ):
         audit_module.audit_target_acceptance_record(delivery, manifest)
 
 
-def test_v0251_current_archive_binds_acceptance_status_and_delivery_identity(tmp_path):
-    """The distributed f953c58 archive must bind all packaged evidence together."""
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+def test_v0251_prepare_generated_tree_is_the_positive_acceptance_sample(tmp_path):
+    """Only a freshly generated context block is a positive acceptance sample."""
+    prepare_spec = importlib.util.spec_from_file_location("v0251_prepare_positive", PREPARE)
+    assert prepare_spec is not None and prepare_spec.loader is not None
+    prepare_module = importlib.util.module_from_spec(prepare_spec)
+    prepare_spec.loader.exec_module(prepare_module)
+
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
-    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
-    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
-    status = json.loads((delivery / "docs/v0251-candidate-status.json").read_text(encoding="utf-8"))
-    audit_module = load_v0251_audit_module()
-
-    expected_build_id = "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53"
-    expected_source = "f953c58312c8d3d42d3dccea402fccf55a3c7d53"
-    expected_archive = "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
-    expected_checksum = expected_archive + ".sha256"
-    evidence = manifest["candidateEvidence"]
-    assert evidence["candidateBuildId"] == expected_build_id
-    assert evidence["sourceCommit"] == expected_source
-    assert evidence["archiveChecksumFile"] == expected_checksum
-    assert evidence["automatedResult"] == "candidate"
-    assert manifest["targetAcceptance"] == {
-        "status": "manual-pending",
-        "required": True,
-        "scope": "kylin-v10-wps-model-direct-and-read-only-format-review",
-        "doesNotCloseIssue": True,
-    }
-    current = [record for record in status["records"] if record.get("candidateBuildId") == expected_build_id]
-    assert current == [
-        {
-            "candidateBuildId": expected_build_id,
-            "archiveName": expected_archive,
-            "archiveChecksumFile": expected_checksum,
-            "sourceCommit": expected_source,
-            "status": "candidate",
-        }
-    ]
-    assert evidence["supersedes"]["candidateBuildId"].endswith(
-        "-afe109c27bf6bc9e663a0c107ccfd70876f95655"
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-10b251d-v0251"
+    (delivery / "docs/v0251-target-machine-acceptance.md").write_text(
+        (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+            encoding="utf-8"
+        ),
+        encoding="utf-8",
     )
-    assert evidence["supersedes"]["status"] == "rejected"
-    checksum_path = archive.with_name(archive.name + ".sha256")
-    checksum_parts = checksum_path.read_text(encoding="utf-8").split()
-    assert checksum_parts == [
-        "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
-        archive.name,
-    ]
-    assert hashlib.sha256(archive.read_bytes()).hexdigest() == checksum_parts[0]
+    status_path = delivery / "docs/v0251-candidate-status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    status["records"][-1]["status"] = "rejected"
+    status["records"][-1]["archiveSha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    prepare_module.prepare(
+        delivery,
+        "20260824",
+        baseline,
+        archive,
+        "1234567",
+    )
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    audit_module = load_v0251_audit_module()
     acceptance_content = (delivery / "docs/v0251-target-machine-acceptance.md").read_text(
         encoding="utf-8"
     )
-    for matrix_marker in (
-        "`OutlineLevel=0`",
-        "`OutlineLevel=10`",
-        "`OutlineLevel=1..9`",
-        "`表格/嵌套表格`",
-        "`图片元数据`",
-        "`非 BMP emoji`",
-        "`dataStatus=insufficient` 且 reason 非空",
-        "其它 `dataStatus`",
-    ):
-        assert matrix_marker in acceptance_content
-    mandatory_section = (
-        acceptance_content
-        .split("## 必测项目", 1)[1]
-        .split("### v2 后台格式审查判定矩阵", 1)[0]
-    )
-    mandatory_row_numbers = []
-    mandatory_statuses = []
-    for line in mandatory_section.splitlines():
-        fields = [field.strip() for field in line.strip().strip("|").split("|")]
-        if fields and fields[0].isdigit():
-            mandatory_row_numbers.append(int(fields[0]))
-            mandatory_statuses.append(fields[2].strip("`") if len(fields) >= 3 else "")
-    assert sorted(mandatory_row_numbers) == list(range(1, 10))
-    assert len(mandatory_row_numbers) == 9
-    assert set(mandatory_statuses) == {"manual-pending"}
-    audit_module.audit_candidate_note(delivery, manifest)
+    context = acceptance_content.split(
+        "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->", 1
+    )[1].split("<!-- V0251-CANDIDATE-CONTEXT:END -->", 1)[0]
+    assert context.count("- 当前自动化候选：") == 1
+    assert context.count("- 上一被拒绝归档：") == 1
+    assert context.count("- 候选状态：") == 1
+    assert "当前没有活动" not in context
+    assert "修复源" not in context
     audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_frozen_10b_archive_is_rejected_by_candidate_context_audit(tmp_path):
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    with tarfile.open(archive, "r:gz") as handle:
+        handle.extractall(tmp_path)
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-10b251d-v0251"
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING",
+    ):
+        audit_module.audit(delivery)
+
+
+@pytest.mark.parametrize(
+    "injection",
+    (
+        "- 当前没有活动的自动化候选；修复源在重新构建归档前不属于候选。",
+        "- 新候选待构建；修复源尚未形成候选。",
+        "- no active automated candidate; repair source is not a candidate.",
+    ),
+)
+def test_v0251_audit_rejects_stale_candidate_context_narratives(tmp_path, injection):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    marker = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    record.write_text(content.replace(marker, marker + "\n" + injection, 1), encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "mutation,expected",
+    (
+        (
+            lambda context, current, previous, state: context.replace(
+                previous, previous + "\n" + previous, 1
+            ),
+            "V0251_TARGET_ACCEPTANCE_SUPERSEDED_LINE_DUPLICATE",
+        ),
+        (
+            lambda context, current, previous, state: context.replace(
+                "10b251d-v0251.tar.gz", "799adf9-v0251.tar.gz", 1
+            ),
+            "V0251_TARGET_ACCEPTANCE_SUPERSEDED_IDENTITY_MISMATCH",
+        ),
+        (
+            lambda context, current, previous, state: context.replace(
+                current, current + "\n" + current, 1
+            ),
+            "V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_DUPLICATE",
+        ),
+        (
+            lambda context, current, previous, state: context.replace(
+                "1234567", "7654321", 1
+            ),
+            "V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH",
+        ),
+    ),
+)
+def test_v0251_audit_rejects_candidate_context_identity_cardinality(
+    tmp_path, mutation, expected
+):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    begin = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    end = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+    context = content.split(begin, 1)[1].split(end, 1)[0]
+    lines = [line for line in context.splitlines() if line.strip()]
+    current = next(line for line in lines if line.startswith("- 当前自动化候选："))
+    previous = next(line for line in lines if line.startswith("- 上一被拒绝归档："))
+    state = next(line for line in lines if line.startswith("- 候选状态："))
+    mutated = mutation(context, current, previous, state)
+    record.write_text(
+        content.replace(begin + context + end, begin + mutated + end, 1),
+        encoding="utf-8",
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(audit_module.DeliveryFailure, match=expected):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "which,operation,expected",
+    (
+        ("begin", "remove", "V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING"),
+        ("end", "remove", "V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING"),
+        ("begin", "duplicate", "V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_DUPLICATE"),
+        ("end", "duplicate", "V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_DUPLICATE"),
+    ),
+)
+def test_v0251_audit_rejects_candidate_context_delimiter_cardinality(
+    tmp_path, which, operation, expected
+):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    marker = (
+        "<!-- V0251-CANDIDATE-CONTEXT:{0} -->".format(which.upper())
+    )
+    replacement = "" if operation == "remove" else marker + "\n" + marker
+    record.write_text(content.replace(marker, replacement, 1), encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(audit_module.DeliveryFailure, match=expected):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "operation,expected",
+    (
+        ("remove", "V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_MISSING"),
+        ("duplicate", "V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_DUPLICATE"),
+    ),
+)
+def test_v0251_audit_rejects_candidate_state_cardinality(tmp_path, operation, expected):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    begin = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    end = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+    context = content.split(begin, 1)[1].split(end, 1)[0]
+    state = next(line for line in context.splitlines() if line.startswith("- 候选状态："))
+    if operation == "remove":
+        mutated = context.replace(state + "\n", "", 1)
+    else:
+        mutated = context.replace(state, state + "\n" + state, 1)
+    record.write_text(
+        content.replace(begin + context + end, begin + mutated + end, 1),
+        encoding="utf-8",
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(audit_module.DeliveryFailure, match=expected):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_second_status_candidate(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    status_path = delivery / "docs/v0251-candidate-status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    current = next(record for record in status["records"] if record.get("status") == "candidate")
+    duplicate = dict(current)
+    duplicate["candidateBuildId"] = duplicate["candidateBuildId"].replace("1234567", "7654321")
+    status["records"].append(duplicate)
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_STATUS_CANDIDATE_CARDINALITY_INVALID",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
 
 
 def test_v0251_audit_rejects_missing_packaged_acceptance_document(tmp_path):
@@ -749,6 +933,30 @@ def test_v0251_archive_checksum_verification_checks_name_and_digest(tmp_path):
     checksum.write_text("0" * 64 + "  " + archive.name + "\n", encoding="utf-8")
     with pytest.raises(audit_module.DeliveryFailure, match="CHECKSUM_MISMATCH"):
         audit_module.audit_archive_checksum(archive, checksum)
+
+
+@pytest.mark.parametrize(
+    "archive_name,expected_digest",
+    (
+        (
+            "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
+            "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
+        ),
+        (
+            "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz",
+            "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120",
+        ),
+    ),
+)
+def test_v0251_frozen_archive_checksums_remain_exact(archive_name, expected_digest):
+    archive = ROOT / "dist-phase1-delivery-kit" / archive_name
+    checksum = archive.with_name(archive.name + ".sha256")
+    assert archive.is_file()
+    assert checksum.is_file()
+    audit_module = load_v0251_audit_module()
+    audit_module.audit_archive_checksum(archive, checksum, archive.name)
+    assert hashlib.sha256(archive.read_bytes()).hexdigest() == expected_digest
+    assert checksum.read_text(encoding="utf-8").split() == [expected_digest, archive.name]
 
 
 def test_v0251_preparation_records_baseline_evidence_and_removes_old_identity(tmp_path):
