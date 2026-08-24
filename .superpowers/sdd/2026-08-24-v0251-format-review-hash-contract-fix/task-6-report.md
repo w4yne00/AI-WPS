@@ -110,4 +110,4 @@ JS body/batches → Python snapshot → batch upload → commit → job start，
 - 工作区缺少 `/mnt/ai-wps-test-venv/bin/python`，因此简报要求的真实 Python 3.8 focused/full/lifecycle 命令无法执行；已用当前 Python 运行完整 Adapter、兼容性扫描和所有 focused 测试，不能替代目标 Python 3.8/WPS 真机验收。
 - Issue #59 目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`；旧归档不得分发，本轮未构建、推送或发布新归档。
 
-提交哈希：待最终提交后回填。
+修复实现提交：`c53ec3b`；本报告随后作为独立报告提交收录。
