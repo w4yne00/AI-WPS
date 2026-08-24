@@ -39,29 +39,106 @@ TARGET_ACCEPTANCE_MATRIX_MARKERS = (
 )
 CANDIDATE_CONTEXT_BEGIN = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
 CANDIDATE_CONTEXT_END = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
-LEVEL2_HEADING_RE = re.compile(r"(?m)^## [^#].*$")
+CANONICAL_DOCUMENT_TITLE = "# v0.25.1 目标机整合验收记录"
+CANONICAL_BASIC_INFO_HEADING = "## 基本信息"
+CANONICAL_NEXT_HEADING = "## 验收结论规则"
+CANONICAL_BASIC_INFO_STATIC_LINES = (
+    "- 对应工单：[Issue #59](https://github.com/w4yne00/AI-WPS/issues/59)",
+    "- 验收版本：`v0.25.1-alpha`",
+    "- 验收范围：麒麟 V10 ARM、目标 WPS、`cloud` 用户环境",
+    "- 当前记录状态：`manual-pending`",
+)
+CANONICAL_OPERATOR_LINES = (
+    "- 验收人员：",
+    "- 验收日期：",
+    "- 交付包文件名：",
+    "- 交付包 SHA-256：",
+    "- v0.25.0 基线包 SHA-256：",
+)
+CANONICAL_BASIC_INFO_INTRO = (
+    "本记录是目标机现场填写模板。候选上下文由 `prepare_v0251_delivery.py` 在组装交付树时整体生成；"
+    "自动化门禁只能证明候选构建，不能替代麒麟 V10、目标 WPS 和 `cloud` 用户环境中的真实操作。"
+    "所有现场原始命令输出、截图、目标机编号、账号信息、配置内容、API Key、文档正文和模型原始回复"
+    "只保留在受控验收记录中，不写入仓库。"
+)
+CANONICAL_SOURCE_CONTEXT_LINE = (
+    "- 当前源树没有活动候选；冻结归档 `10b251d` 已登记为 `rejected`，其 SHA-256 为 "
+    "`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，"
+    "原始归档和校验文件保持不可变。"
+)
 CANDIDATE_CONTEXT_STALE_PATTERNS = (
     re.compile(r"当前源树没有活动候选"),
+    re.compile(r"当前不存在活动候选"),
+    re.compile(r"此源码仅供重新构建，不是候选"),
     re.compile(r"当前没有(?:(?:活动)(?:的)?|自动化)?候选"),
     re.compile(r"修复源.*(?:不属于|尚未).*(?:候选|candidate)", re.IGNORECASE),
     re.compile(r"(?:新候选|候选).*(?:待构建|尚未构建|未形成|未生成|重建前)"),
     re.compile(r"(?:重建|重新构建).*(?:前|后才|才能).*(?:候选|通过)"),
     re.compile(r"\brebuild[- ]only\b", re.IGNORECASE),
     re.compile(r"\bno\s+(?:current|active)\s+(?:automated\s+)?candidate\b", re.IGNORECASE),
+    re.compile(r"\bno\s+candidate\s+is\s+currently\s+active\b", re.IGNORECASE),
     re.compile(r"\b(?:current\s+candidate|candidate)\s+does\s+not\s+exist\b", re.IGNORECASE),
     re.compile(r"\brepair\s+source\s+is\s+not\s+(?:a\s+)?candidate\b", re.IGNORECASE),
     re.compile(r"\bnew\s+candidate.*(?:pending\s+build|build\s+later)\b", re.IGNORECASE),
 )
 
 
+def _non_empty_lines(content: str) -> List[str]:
+    """Return raw non-empty lines; content lines are never normalized."""
+    return [line for line in content.splitlines() if line and not line.isspace()]
+
+
 def _basic_information_bounds(content: str) -> tuple:
-    """Return the bounded ``## 基本信息`` section in the acceptance record."""
-    heading = re.search(r"(?m)^## 基本信息\s*$", content)
-    if heading is None:
+    """Return character bounds for diagnostics before the closed schema check."""
+    lines = content.splitlines(keepends=True)
+    basic_index = next(
+        (index for index, line in enumerate(lines) if line.rstrip("\r\n") == CANONICAL_BASIC_INFO_HEADING),
+        None,
+    )
+    if basic_index is None:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_SECTION_MISSING")
-    next_heading = LEVEL2_HEADING_RE.search(content, heading.end())
-    end = next_heading.start() if next_heading is not None else len(content)
-    return heading.start(), end
+    next_index = next(
+        (
+            index
+            for index in range(basic_index + 1, len(lines))
+            if lines[index].rstrip("\r\n").startswith("## ")
+            and not lines[index].rstrip("\r\n").startswith("### ")
+        ),
+        len(lines),
+    )
+    start = sum(len(line) for line in lines[:basic_index])
+    end = sum(len(line) for line in lines[:next_index])
+    return start, end
+
+
+def _basic_info_schema_lines(context_lines: List[str]) -> List[str]:
+    return [
+        CANONICAL_DOCUMENT_TITLE,
+        CANONICAL_BASIC_INFO_HEADING,
+        *CANONICAL_BASIC_INFO_STATIC_LINES,
+        CANDIDATE_CONTEXT_BEGIN,
+        *context_lines,
+        CANDIDATE_CONTEXT_END,
+        *CANONICAL_OPERATOR_LINES,
+        CANONICAL_BASIC_INFO_INTRO,
+        CANONICAL_NEXT_HEADING,
+    ]
+
+
+def _validate_basic_info_schema(content: str, context_lines: List[str]) -> None:
+    """Require the complete packaged basic-info prefix as raw non-empty lines."""
+    lines = _non_empty_lines(content)
+    expected = _basic_info_schema_lines(context_lines)
+    if lines.count(CANONICAL_DOCUMENT_TITLE) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_DOCUMENT_TITLE_CARDINALITY_INVALID")
+    if lines.count(CANONICAL_BASIC_INFO_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_HEADING_CARDINALITY_INVALID")
+    if lines.count(CANONICAL_NEXT_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_NEXT_HEADING_CARDINALITY_INVALID")
+    if lines.count(CANDIDATE_CONTEXT_BEGIN) != 1 or lines.count(CANDIDATE_CONTEXT_END) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_INVALID")
+    if len(lines) < len(expected) or lines[: len(expected)] != expected:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_SCHEMA_MISMATCH")
 
 
 def _archive_source_binding(
@@ -287,31 +364,46 @@ def audit_candidate_note(root: Path, manifest: Dict) -> None:
 
 
 def _candidate_context(content: str) -> str:
-    _section_start, section_end = _basic_information_bounds(content)
-    begin_count = content.count(CANDIDATE_CONTEXT_BEGIN)
-    end_count = content.count(CANDIDATE_CONTEXT_END)
+    lines = content.splitlines()
+    if lines.count(CANONICAL_BASIC_INFO_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_HEADING_CARDINALITY_INVALID")
+    if lines.count(CANONICAL_NEXT_HEADING) != 1:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_NEXT_HEADING_CARDINALITY_INVALID")
+    begin_positions = [
+        index for index, line in enumerate(lines) if line == CANDIDATE_CONTEXT_BEGIN
+    ]
+    end_positions = [
+        index for index, line in enumerate(lines) if line == CANDIDATE_CONTEXT_END
+    ]
+    begin_count = len(begin_positions)
+    end_count = len(end_positions)
     if begin_count == 0 or end_count == 0:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_MISSING")
     if begin_count != 1 or end_count != 1:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_DUPLICATE")
-    begin = content.index(CANDIDATE_CONTEXT_BEGIN)
-    end = content.index(CANDIDATE_CONTEXT_END)
+    begin = begin_positions[0]
+    end = end_positions[0]
     if begin > end:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_ORDER_INVALID")
-    if begin < _section_start or end + len(CANDIDATE_CONTEXT_END) > section_end:
+    section_start, section_end = _basic_information_bounds(content)
+    line_offsets = [0]
+    for line in content.splitlines(keepends=True):
+        line_offsets.append(line_offsets[-1] + len(line))
+    if (
+        line_offsets[begin] < section_start
+        or line_offsets[end + 1] > section_end
+    ):
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_OUTSIDE_BASIC_INFO")
-    context = content[begin + len(CANDIDATE_CONTEXT_BEGIN) : end]
-    basic_section = content[_section_start:section_end]
-    if any(pattern.search(basic_section) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
-        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE")
-    return context
+    return "\n".join(lines[begin + 1 : end])
 
 
 def _validate_candidate_context(content: str, manifest: Dict) -> None:
     context = _candidate_context(content)
-    lines = [line.strip() for line in context.splitlines() if line.strip()]
-    if any(pattern.search(context) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
+    section_start, section_end = _basic_information_bounds(content)
+    basic_section = content[section_start:section_end]
+    if any(pattern.search(basic_section) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE")
+    lines = _non_empty_lines(context)
     current_lines = [line for line in lines if line.startswith("- 当前自动化候选：")]
     if not current_lines:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_MISSING")
@@ -381,6 +473,7 @@ def _validate_candidate_context(content: str, manifest: Dict) -> None:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_LINE_CARDINALITY_INVALID")
     if lines != expected_lines:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_ORDER_INVALID")
+    _validate_basic_info_schema(content, expected_lines)
 
 
 def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:

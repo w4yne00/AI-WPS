@@ -125,9 +125,9 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `859 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `72 passed` (`test_v0251_delivery.py`) |
-| Focused protocol/delivery aggregate | `122 passed, 5 skipped` |
+| Current-source full Adapter suite | `874 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `87 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `137 passed, 5 skipped` |
 | Formal plugin contract tests | `28/28` |
 | Python 3.8 compatibility scan | `82` production files |
 | Kylin build provenance and audits | Frozen `10b251d` provenance and prior audit evidence are retained but rejected for contradictory candidate-context narratives; no active candidate remains |

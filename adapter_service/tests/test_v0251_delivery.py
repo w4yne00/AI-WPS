@@ -351,18 +351,18 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`72 passed`" in line for line in delivery_lines)
+        assert any("`87 passed`" in line for line in delivery_lines)
         assert all("`47 passed`" not in line for line in delivery_lines)
         assert all("`45 passed`" not in line for line in delivery_lines)
         assert all("`42 passed`" not in line for line in delivery_lines)
-        assert any("`122 passed, 5 skipped`" in line for line in aggregate_lines)
+        assert any("`137 passed, 5 skipped`" in line for line in aggregate_lines)
         assert any("`28/28`" in line for line in plugin_lines)
         assert all("`25/25`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `859 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `874 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `72 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `87 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -583,6 +583,46 @@ def test_v0251_prepare_generated_tree_is_the_positive_acceptance_sample(tmp_path
     audit_module.audit_target_acceptance_record(delivery, manifest)
 
 
+def test_v0251_prepare_rejects_noncanonical_source_basic_info_shell(tmp_path):
+    prepare_spec = importlib.util.spec_from_file_location(
+        "v0251_prepare_source_shell", PREPARE
+    )
+    assert prepare_spec is not None and prepare_spec.loader is not None
+    prepare_module = importlib.util.module_from_spec(prepare_spec)
+    prepare_spec.loader.exec_module(prepare_module)
+    docs = tmp_path / "docs"
+    docs.mkdir(parents=True)
+    record = docs / "v0251-target-machine-acceptance.md"
+    content = (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+        encoding="utf-8"
+    )
+    record.write_text(
+        content.replace(
+            "## 基本信息\n",
+            "## 基本信息\n- 源模板不允许出现额外基本信息行。\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ValueError, match="V0251_TARGET_ACCEPTANCE_BASIC_INFO_SCHEMA_MISMATCH"
+    ):
+        prepare_module.write_target_machine_acceptance_record(
+            tmp_path,
+            "1234567",
+            "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-1234567",
+            "ai-wps-phase1-delivery-20260824-1234567-v0251.tar.gz",
+            "ai-wps-phase1-delivery-20260824-1234567-v0251.tar.gz.sha256",
+            {
+                "archiveName": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz",
+                "archiveSha256": "6" * 64,
+                "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251d",
+            },
+            59,
+        )
+
+
 def test_v0251_frozen_10b_archive_is_rejected_by_candidate_context_audit(tmp_path):
     archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
@@ -711,6 +751,154 @@ def test_v0251_audit_rejects_basic_information_stale_text_outside_context(tmp_pa
         audit_module.DeliveryFailure,
         match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE",
     ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize("spaces", (1, 2, 3))
+def test_v0251_audit_rejects_indented_next_heading_with_context_after_it(tmp_path, spaces):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    begin = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    end = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+    block = begin + content.split(begin, 1)[1].split(end, 1)[0] + end
+    mutated = content.replace(block, "", 1).replace(
+        "## 验收结论规则\n",
+        " " * spaces + "## 验收结论规则\n" + block + "\n",
+        1,
+    )
+    record.write_text(mutated, encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_NEXT_HEADING_CARDINALITY_INVALID",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_fenced_fake_basic_information_heading(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    begin = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    end = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+    block = begin + content.split(begin, 1)[1].split(end, 1)[0] + end
+    mutated = (
+        "```markdown\n## 基本信息\n"
+        + block
+        + "\n```\n"
+        + content.replace(block, "", 1)
+    )
+    record.write_text(mutated, encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_BASIC_INFO_HEADING_CARDINALITY_INVALID",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "stale",
+    (
+        "当前不存在活动候选",
+        "此源码仅供重新构建，不是候选",
+        "no candidate is currently active",
+    ),
+)
+def test_v0251_audit_rejects_stale_synonyms_outside_context(tmp_path, stale):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    record.write_text(
+        content.replace("## 基本信息\n", "## 基本信息\n- " + stale + "。\n", 1),
+        encoding="utf-8",
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "prefix,suffix,expected",
+    (
+        (" ", "", "V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_MISSING"),
+        ("    ", "", "V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_MISSING"),
+        ("", " ", "V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH"),
+    ),
+)
+def test_v0251_audit_rejects_identity_whitespace_variants(
+    tmp_path, prefix, suffix, expected
+):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    current = next(
+        line for line in content.splitlines() if line.startswith("- 当前自动化候选：")
+    )
+    record.write_text(
+        content.replace(current, prefix + current + suffix, 1), encoding="utf-8"
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(audit_module.DeliveryFailure, match=expected):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_arbitrary_extra_basic_information_line(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    record.write_text(
+        content.replace(
+            "## 基本信息\n",
+            "## 基本信息\n- 不属于封闭基本信息 schema 的额外行。\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_BASIC_INFO_SCHEMA_MISMATCH",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "insertion,expected",
+    (
+        (
+            "# v0.25.1 目标机整合验收记录\n",
+            "V0251_TARGET_ACCEPTANCE_DOCUMENT_TITLE_CARDINALITY_INVALID",
+        ),
+        (
+            "## 基本信息\n",
+            "V0251_TARGET_ACCEPTANCE_BASIC_INFO_HEADING_CARDINALITY_INVALID",
+        ),
+        (
+            "## 验收结论规则\n",
+            "V0251_TARGET_ACCEPTANCE_NEXT_HEADING_CARDINALITY_INVALID",
+        ),
+    ),
+)
+def test_v0251_audit_rejects_duplicate_canonical_headings(tmp_path, insertion, expected):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    record.write_text(
+        content.replace(insertion, insertion + insertion, 1), encoding="utf-8"
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(audit_module.DeliveryFailure, match=expected):
         audit_module.audit_target_acceptance_record(delivery, manifest)
 
 
