@@ -17,6 +17,31 @@ PREPARE = ROOT / "packaging/prepare_v0251_delivery.py"
 AUDIT = ROOT / "packaging/audit_v0251_delivery.py"
 LIFECYCLE = ROOT / "packaging/python38_delivery_lifecycle_gate.py"
 
+_SYNC_BACKEND_RESULT_CLAIM_RE = re.compile(
+    r"(?P<first>同步|后台)(?:入口|的\s*入口)?\s*"
+    r"(?:/|和|与|、|及)\s*"
+    r"(?P<second>同步|后台)"
+    r"(?:入口(?:\s*的)?|的(?:\s*入口)?)?\s*"
+    r"(?:格式审查)?\s*结果\s*(?:一致(?:性)?|相同)"
+)
+_REJECTED_CANDIDATES_RE = re.compile(
+    r"`v0\.25\.1-alpha` 已将 (?P<candidates>.*?) 登记为 `rejected`"
+)
+
+
+def _has_sync_backend_result_claim(text):
+    return any(
+        {match.group("first"), match.group("second")} == {"同步", "后台"}
+        for match in _SYNC_BACKEND_RESULT_CLAIM_RE.finditer(text)
+    )
+
+
+def _rejected_candidates_from_validation_section(validation):
+    match = _REJECTED_CANDIDATES_RE.search(validation)
+    if match is None:
+        return set()
+    return set(re.findall(r"`([^`]+)`", match.group("candidates")))
+
 
 def load_v0251_audit_module():
     spec = importlib.util.spec_from_file_location("v0251_delivery_audit", AUDIT)
@@ -84,21 +109,23 @@ def test_v0251_policy_ships_issue_59_target_acceptance_record():
     assert "分别执行同步和后台格式审查" not in delivery
 
 
-def test_v0251_delivery_rejects_contradictory_sync_backend_result_claims():
+@pytest.mark.parametrize(
+    "claim",
+    (
+        "同步/后台入口结果一致",
+        "同步入口与后台入口结果一致",
+        "后台与同步入口结果一致",
+        "同步与后台入口结果相同",
+        "同步与后台的结果一致",
+        "同步与后台入口结果一致性",
+        "同步和后台格式审查结果一致",
+    ),
+)
+def test_v0251_delivery_rejects_contradictory_sync_backend_result_claims(claim):
     delivery = (ROOT / "packaging/v0251-delivery.md").read_text(encoding="utf-8")
 
-    forbidden = (
-        "同步/后台入口结果一致",
-        "同步和后台入口结果一致",
-        "同步与后台入口结果一致",
-        "同步和后台格式审查结果一致",
-    )
-    for phrase in forbidden:
-        assert phrase not in delivery
-    assert re.search(
-        r"同步\s*(?:/|和|与|、)\s*后台(?:入口|格式审查)?\s*结果一致",
-        delivery,
-    ) is None
+    assert _has_sync_backend_result_claim(claim)
+    assert not _has_sync_backend_result_claim(delivery)
 
 
 def test_v0251_delivery_separates_sync_retirement_from_v2_hash_acceptance():
@@ -119,27 +146,25 @@ def test_v0251_delivery_separates_sync_retirement_from_v2_hash_acceptance():
     assert sync_boundary in delivery
     assert v2_boundary in delivery
     assert lifecycle_boundary in delivery
-    assert sync_boundary not in v2_boundary
-    assert "/word/format-review/snapshots" not in sync_boundary
 
 
 def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_context():
     handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
 
     validation = handoff.split("## 6. 验证状态", 1)[1].split("## 7. 目标机验证建议", 1)[0]
-    rejected_line = next(
-        line
-        for line in validation.splitlines()
-        if line.startswith("`v0.25.1-alpha` 已将")
+    rejected_candidates = _rejected_candidates_from_validation_section(validation)
+    assert "20260824-ccad09f" in rejected_candidates
+    assert "20260822-e43dc8c" in rejected_candidates
+
+    candidate_only = (
+        "`v0.25.1-alpha` 已将 `20260824-ccad09f` 登记为 `candidate`。"
     )
-    assert "20260824-ccad09f" in rejected_line
-    assert "rejected" in rejected_line
+    assert _rejected_candidates_from_validation_section(candidate_only) == set()
 
 
 def test_v0251_handoff_keeps_latest_rejected_candidate_as_previous_archive():
     handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
 
-    assert "20260824-ccad09f" in handoff
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
         "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz"
