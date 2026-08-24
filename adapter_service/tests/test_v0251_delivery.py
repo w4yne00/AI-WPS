@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tarfile
+import shutil
 from pathlib import Path
 
 import pytest
@@ -317,6 +318,13 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         for value in identity:
             assert value in text, "{} missing {}".format(path, value)
 
+    readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_zh = (ROOT / "README-ZH.md").read_text(encoding="utf-8")
+    assert "direct predecessor `20260824-f953c58`" in readme_en
+    assert "direct predecessor `20260824-afe109c`" in readme_en
+    assert "其直接前任 `20260824-f953c58`" in readme_zh
+    assert "`20260824-f953c58` 的直接前任 `20260824-afe109c`" in readme_zh
+
     validation_documents = documents[:2]
     for path in validation_documents:
         text = path.read_text(encoding="utf-8")
@@ -343,18 +351,18 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`64 passed`" in line for line in delivery_lines)
+        assert any("`72 passed`" in line for line in delivery_lines)
         assert all("`47 passed`" not in line for line in delivery_lines)
         assert all("`45 passed`" not in line for line in delivery_lines)
         assert all("`42 passed`" not in line for line in delivery_lines)
-        assert any("`100 passed`" in line for line in aggregate_lines)
+        assert any("`122 passed, 5 skipped`" in line for line in aggregate_lines)
         assert any("`28/28`" in line for line in plugin_lines)
         assert all("`25/25`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `851 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `859 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `64 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `72 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -562,9 +570,14 @@ def test_v0251_prepare_generated_tree_is_the_positive_acceptance_sample(tmp_path
     context = acceptance_content.split(
         "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->", 1
     )[1].split("<!-- V0251-CANDIDATE-CONTEXT:END -->", 1)[0]
-    assert context.count("- 当前自动化候选：") == 1
-    assert context.count("- 上一被拒绝归档：") == 1
-    assert context.count("- 候选状态：") == 1
+    context_lines = [line.strip() for line in context.splitlines() if line.strip()]
+    assert len(context_lines) == 3
+    assert context_lines[0].startswith("- 当前自动化候选：")
+    assert context_lines[1].startswith("- 上一被拒绝归档：")
+    assert context_lines[2].startswith("- 候选状态：")
+    assert manifest["candidateEvidence"]["supersedes"]["sourceCommit"].startswith(
+        "10b251d"
+    )
     assert "当前没有活动" not in context
     assert "修复源" not in context
     audit_module.audit_target_acceptance_record(delivery, manifest)
@@ -606,6 +619,157 @@ def test_v0251_audit_rejects_stale_candidate_context_narratives(tmp_path, inject
         match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE",
     ):
         audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+@pytest.mark.parametrize(
+    "injection,expected",
+    (
+        (
+            "- 当前源树没有活动候选。",
+            "V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE",
+        ),
+        (
+            "- 额外候选上下文行不属于三行闭合语法。",
+            "V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_UNKNOWN_LINE",
+        ),
+    ),
+)
+def test_v0251_audit_rejects_candidate_context_extra_lines(tmp_path, injection, expected):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    marker = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    record.write_text(
+        content.replace(marker, marker + "\n" + injection, 1), encoding="utf-8"
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(audit_module.DeliveryFailure, match=expected):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_reordered_candidate_context_lines(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    begin = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    end = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+    context = content.split(begin, 1)[1].split(end, 1)[0]
+    lines = [line for line in context.splitlines() if line.strip()]
+    mutated = "\n".join((lines[2], lines[0], lines[1]))
+    record.write_text(content.replace(begin + context + end, begin + "\n" + mutated + "\n" + end, 1), encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_ORDER_INVALID",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_candidate_context_outside_basic_information(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    begin = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
+    end = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+    context = content.split(begin, 1)[1].split(end, 1)[0]
+    mutated = content.replace(
+        begin + context + end,
+        "## 候选附录\n" + begin + context + end,
+        1,
+    ).replace(
+        "## 基本信息\n",
+        "## 基本信息\n- 当前源树没有活动候选。\n",
+        1,
+    )
+    record.write_text(mutated, encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_OUTSIDE_BASIC_INFO",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_basic_information_stale_text_outside_context(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    record.write_text(
+        content.replace(
+            "## 基本信息\n",
+            "## 基本信息\n- 当前源树没有活动候选。\n",
+            1,
+        ),
+        encoding="utf-8",
+    )
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE",
+    ):
+        audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_audit_rejects_predecessor_deadbee_binding(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    evidence = manifest["candidateEvidence"]["supersedes"]
+    old_build_id = evidence["candidateBuildId"]
+    evidence["candidateBuildId"] = (
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-deadbee"
+    )
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    record.write_text(content.replace(old_build_id, evidence["candidateBuildId"], 1), encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_SUPERSEDED_CANDIDATE_SOURCE_BINDING_INVALID",
+    ):
+        audit_module.audit_candidate_lineage(delivery, manifest)
+
+
+def test_v0251_audit_rejects_predecessor_build_id_archive_short_mismatch(tmp_path):
+    delivery, manifest, _archive = prepare_acceptance_sample(tmp_path)
+    evidence = manifest["candidateEvidence"]["supersedes"]
+    old_build_id = evidence["candidateBuildId"]
+    mismatched_source = "deadbeef" * 5
+    evidence["candidateBuildId"] = (
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-" + mismatched_source
+    )
+    evidence["sourceCommit"] = mismatched_source
+    record = delivery / "docs/v0251-target-machine-acceptance.md"
+    content = record.read_text(encoding="utf-8")
+    record.write_text(content.replace(old_build_id, evidence["candidateBuildId"], 1), encoding="utf-8")
+    audit_module = load_v0251_audit_module()
+
+    with pytest.raises(
+        audit_module.DeliveryFailure,
+        match="V0251_SUPERSEDED_CANDIDATE_SOURCE_BINDING_INVALID",
+    ):
+        audit_module.audit_candidate_lineage(delivery, manifest)
+
+
+def test_v0251_prepare_rejects_previous_archive_source_binding_mismatch(tmp_path):
+    prepare_spec = importlib.util.spec_from_file_location(
+        "v0251_prepare_binding", PREPARE
+    )
+    assert prepare_spec is not None and prepare_spec.loader is not None
+    prepare_module = importlib.util.module_from_spec(prepare_spec)
+    prepare_spec.loader.exec_module(prepare_module)
+    frozen = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    mismatched = tmp_path / "ai-wps-phase1-delivery-20260824-deadbee-v0251.tar.gz"
+    shutil.copyfile(frozen, mismatched)
+
+    with pytest.raises(
+        ValueError,
+        match="V0251_PREVIOUS_CANDIDATE_SOURCE_BINDING_INVALID",
+    ):
+        prepare_module.previous_candidate_metadata(mismatched)
 
 
 @pytest.mark.parametrize(

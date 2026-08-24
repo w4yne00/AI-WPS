@@ -573,7 +573,7 @@ bash packaging/build_v0251_delivery_kit.sh
 当前可复核结果：
 
 - `20260824-10b251d` 的 Kylin Python `3.8.10` 来源、白名单、规则/插件/审计/运行时/生命周期门禁证据已保留，但因包内目标机验收候选上下文叙述矛盾，终态登记为 `rejected`；当前没有自动化候选，历史归档不得分发。
-- 当前源码 Adapter 全量测试为 `851 passed, 95 skipped`，v0.25.1 交付/prepare/audit focused 为 `64 passed`（`test_v0251_delivery.py`），三项协议/交付 focused 合计 `100 passed`，正式插件契约为 `28/28`；这些自动化证据仍不替代目标机验收。
+- 当前源码 Adapter 全量测试为 `859 passed, 95 skipped`，v0.25.1 交付/prepare/audit focused 为 `72 passed`（`test_v0251_delivery.py`），协议/交付 focused 合计 `122 passed, 5 skipped`，正式插件契约为 `28/28`；这些自动化证据仍不替代目标机验收。
 - `20260824-10b251d` 归档保持原始字节，SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`；新审计拒绝其缺少稳定候选上下文区块，包内 contradictory narrative 不再作为正样本；`f953c58` 归档也保持原始字节，不得作为候选分发。
 - Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
 

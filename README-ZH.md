@@ -94,9 +94,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256`，SHA-256 为
 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，自动化状态为
 `rejected`。目标 WPS GUI、真实模型和 Issue #59 人工验收仍为 `manual-pending`。
-被其替代的 `20260824-afe109c` 归档保持不可变并登记为 `rejected`，原因是目标机验收
+其直接前任 `20260824-f953c58` 归档保持不可变并登记为 `rejected`，原因是
+heading-only 与 format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移；
+其 SHA-256 为 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`。
+`20260824-f953c58` 的直接前任 `20260824-afe109c` 仍为 `rejected`，原因是目标机验收
 审计/测试在缺失必测第 8 或第 9 行时未 fail closed；其 SHA-256 为
-`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`。上一
+`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`。更早的
 `20260824-799adf9`、`20260824-5318d4b`、`20260824-2e7a3e6` 和 `20260824-ccad09f`
 归档均保持原始身份、SHA-256 和 `rejected` 原因。
 
@@ -108,9 +111,9 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 门禁 | 结果 |
 | --- | --- |
-| 当前源码 Adapter 全量测试 | `851 passed, 95 skipped` |
-| v0.25.1 交付/prepare/audit focused | `64 passed`（`test_v0251_delivery.py`） |
-| 协议/交付 focused 合计 | `100 passed` |
+| 当前源码 Adapter 全量测试 | `859 passed, 95 skipped` |
+| v0.25.1 交付/prepare/audit focused | `72 passed`（`test_v0251_delivery.py`） |
+| 协议/交付 focused 合计 | `122 passed, 5 skipped` |
 | 正式插件合同测试 | `28/28` |
 | Python 3.8 兼容扫描 | `82` 个生产文件 |
 | 麒麟构建来源与审计 | 冻结的 `10b251d` 来源与既有门禁证据已保留，但因包内候选上下文叙述矛盾登记为 `rejected`；当前没有自动化候选 |

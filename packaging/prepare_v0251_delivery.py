@@ -36,6 +36,7 @@ STATUS_RELATIVE_PATH = "docs/v0251-candidate-status.json"
 TARGET_ACCEPTANCE_RELATIVE_PATH = "docs/v0251-target-machine-acceptance.md"
 CANDIDATE_CONTEXT_BEGIN = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
 CANDIDATE_CONTEXT_END = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+LEVEL2_HEADING_RE = re.compile(r"(?m)^## [^#].*$")
 TARGET_ACCEPTANCE_MATRIX_MARKERS = (
     "`OutlineLevel=0`",
     "`OutlineLevel=10`",
@@ -46,6 +47,41 @@ TARGET_ACCEPTANCE_MATRIX_MARKERS = (
     "`dataStatus=insufficient`",
     "其它 `dataStatus`",
 )
+
+
+def _basic_information_bounds(content: str) -> Tuple[int, int]:
+    heading = re.search(r"(?m)^## 基本信息\s*$", content)
+    if heading is None:
+        raise ValueError("V0251_TARGET_ACCEPTANCE_BASIC_INFO_SECTION_MISSING")
+    next_heading = LEVEL2_HEADING_RE.search(content, heading.end())
+    end = next_heading.start() if next_heading is not None else len(content)
+    return heading.start(), end
+
+
+def _validate_archive_source_binding(
+    archive_name: str,
+    source_commit: object,
+    candidate_build_id: object,
+) -> None:
+    match = re.fullmatch(
+        r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
+        r"(?:-(?P<source>[0-9a-f]{7}))?-v0251\.tar\.gz",
+        archive_name,
+    )
+    if match is None or match.group("source") is None:
+        return
+    source = str(source_commit)
+    build_id = str(candidate_build_id)
+    if (
+        not SOURCE_COMMIT_RE.fullmatch(source)
+        or not PREVIOUS_BUILD_ID_RE.fullmatch(build_id)
+        or not build_id.endswith("-" + source)
+        or not source.startswith(match.group("source"))
+        or not build_id.startswith(
+            "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-{0}-".format(match.group("date"))
+        )
+    ):
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_SOURCE_BINDING_INVALID")
 
 
 def candidate_archive_name(date_tag: str, source_commit: str) -> str:
@@ -134,10 +170,13 @@ def previous_candidate_metadata(archive: Path) -> dict:
     build_id = candidate_evidence.get("candidateBuildId") or manifest.get("versionRule")
     if not isinstance(build_id, str) or not PREVIOUS_BUILD_ID_RE.fullmatch(build_id):
         raise ValueError("V0251_PREVIOUS_CANDIDATE_BUILD_ID_MISSING")
+    source_commit = candidate_evidence.get("sourceCommit", "")
+    _validate_archive_source_binding(archive.name, source_commit, build_id)
     return {
         "candidateBuildId": build_id,
         "archiveName": archive.name,
         "archiveSha256": digest,
+        "sourceCommit": source_commit,
         "status": "rejected",
     }
 
@@ -174,6 +213,10 @@ def record_candidate_lineage(
         or previous_record.get("archiveSha256") != previous["archiveSha256"]
     ):
         raise ValueError("V0251_PREVIOUS_CANDIDATE_STATUS_INVALID")
+    if previous.get("sourceCommit") and (
+        previous_record.get("sourceCommit") != previous["sourceCommit"]
+    ):
+        raise ValueError("V0251_PREVIOUS_CANDIDATE_STATUS_SOURCE_COMMIT_INVALID")
     current_record = {
         "candidateBuildId": current_build_id,
         "archiveName": candidate_archive_name(date_tag, source_commit),
@@ -364,6 +407,9 @@ def write_target_machine_acceptance_record(
     end = content.index(CANDIDATE_CONTEXT_END)
     if begin > end:
         raise ValueError("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_ORDER_INVALID")
+    section_start, section_end = _basic_information_bounds(content)
+    if begin < section_start or end + len(CANDIDATE_CONTEXT_END) > section_end:
+        raise ValueError("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_OUTSIDE_BASIC_INFO")
 
     candidate_state = (
         "- 候选状态：当前归档是自动化门禁产生的当前候选；"

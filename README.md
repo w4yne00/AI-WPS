@@ -97,13 +97,15 @@ source commit `10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`, archive
 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`. Its
 automated status is `rejected`; target WPS GUI, real-model, and Issue #59 manual
 acceptance remain `manual-pending`.
-The superseded `20260824-afe109c` archive remains immutable and `rejected` because
-the target-acceptance audit/test did not fail closed when mandatory row 8 or 9 was
-missing; its SHA-256 is
-`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`. The previous
-`20260824-799adf9`, `20260824-5318d4b`, `20260824-2e7a3e6`, and `20260824-ccad09f`
-archives remain rejected with their recorded identities, archive digests, and
-reasons.
+The direct predecessor `20260824-f953c58` archive remains immutable and `rejected`
+because the outline fallback JS/Python hash contract drifted for compatibility
+inputs; its SHA-256 is
+`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`. Its direct predecessor `20260824-afe109c` remains rejected because the target-acceptance
+audit/test did not fail closed when mandatory row 8 or 9 was missing; its SHA-256
+is `e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`. The
+previous `20260824-799adf9`, `20260824-5318d4b`, `20260824-2e7a3e6`, and
+`20260824-ccad09f` archives remain rejected with their recorded identities,
+archive digests, and reasons.
 
 The `20260822-afc5470` package reproduced the blocking “invalid source range index”
 failure during target-machine format review and is now recorded as `rejected` together
@@ -123,9 +125,9 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `851 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `64 passed` (`test_v0251_delivery.py`) |
-| Focused protocol/delivery aggregate | `100 passed` |
+| Current-source full Adapter suite | `859 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `72 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `122 passed, 5 skipped` |
 | Formal plugin contract tests | `28/28` |
 | Python 3.8 compatibility scan | `82` production files |
 | Kylin build provenance and audits | Frozen `10b251d` provenance and prior audit evidence are retained but rejected for contradictory candidate-context narratives; no active candidate remains |

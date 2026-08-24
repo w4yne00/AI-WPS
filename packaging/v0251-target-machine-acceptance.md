@@ -7,10 +7,7 @@
 - 验收范围：麒麟 V10 ARM、目标 WPS、`cloud` 用户环境
 - 当前记录状态：`manual-pending`
 <!-- V0251-CANDIDATE-CONTEXT:BEGIN -->
-- 当前源树没有活动候选；冻结归档 `10b251d` 已登记为 `rejected`，其原始归档和校验文件保持不可变。
-- 当前没有活动的自动化候选；冻结归档 `10b251d` 已登记为 `rejected`。
-- 上一被拒绝归档：`ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`，SHA-256：`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`，状态为 `rejected`
-- 候选状态：当前源树没有活动自动化候选；自动化门禁不等于目标机验收，Issue #59 仍为 `manual-pending`。
+- 当前源树没有活动候选；冻结归档 `10b251d` 已登记为 `rejected`，其 SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，原始归档和校验文件保持不可变。
 <!-- V0251-CANDIDATE-CONTEXT:END -->
 - 验收人员：
 - 验收日期：

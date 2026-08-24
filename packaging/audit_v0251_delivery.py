@@ -39,8 +39,10 @@ TARGET_ACCEPTANCE_MATRIX_MARKERS = (
 )
 CANDIDATE_CONTEXT_BEGIN = "<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->"
 CANDIDATE_CONTEXT_END = "<!-- V0251-CANDIDATE-CONTEXT:END -->"
+LEVEL2_HEADING_RE = re.compile(r"(?m)^## [^#].*$")
 CANDIDATE_CONTEXT_STALE_PATTERNS = (
-    re.compile(r"当前没有(?:活动的)?(?:自动化)?候选"),
+    re.compile(r"当前源树没有活动候选"),
+    re.compile(r"当前没有(?:(?:活动)(?:的)?|自动化)?候选"),
     re.compile(r"修复源.*(?:不属于|尚未).*(?:候选|candidate)", re.IGNORECASE),
     re.compile(r"(?:新候选|候选).*(?:待构建|尚未构建|未形成|未生成|重建前)"),
     re.compile(r"(?:重建|重新构建).*(?:前|后才|才能).*(?:候选|通过)"),
@@ -50,6 +52,45 @@ CANDIDATE_CONTEXT_STALE_PATTERNS = (
     re.compile(r"\brepair\s+source\s+is\s+not\s+(?:a\s+)?candidate\b", re.IGNORECASE),
     re.compile(r"\bnew\s+candidate.*(?:pending\s+build|build\s+later)\b", re.IGNORECASE),
 )
+
+
+def _basic_information_bounds(content: str) -> tuple:
+    """Return the bounded ``## 基本信息`` section in the acceptance record."""
+    heading = re.search(r"(?m)^## 基本信息\s*$", content)
+    if heading is None:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_BASIC_INFO_SECTION_MISSING")
+    next_heading = LEVEL2_HEADING_RE.search(content, heading.end())
+    end = next_heading.start() if next_heading is not None else len(content)
+    return heading.start(), end
+
+
+def _archive_source_binding(
+    archive_name: str,
+    source_commit: object,
+    candidate_build_id: object,
+    error_code: str,
+) -> None:
+    """Bind a source-bearing archive name to its manifest source/build suffix."""
+    match = re.fullmatch(
+        r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
+        r"(?:-(?P<source>[0-9a-f]{7}))?-v0251\.tar\.gz",
+        str(archive_name),
+    )
+    if match is None or match.group("source") is None:
+        # Legacy archives without a source segment predate the binding contract.
+        return
+    source = str(source_commit)
+    build_id = str(candidate_build_id)
+    if (
+        not COMMIT_RE.fullmatch(source)
+        or not PREVIOUS_BUILD_ID_RE.fullmatch(build_id)
+        or not build_id.endswith("-" + source)
+        or not source.startswith(match.group("source"))
+        or not build_id.startswith(
+            "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-{0}-".format(match.group("date"))
+        )
+    ):
+        raise DeliveryFailure(error_code)
 
 
 class DeliveryFailure(RuntimeError):
@@ -246,6 +287,7 @@ def audit_candidate_note(root: Path, manifest: Dict) -> None:
 
 
 def _candidate_context(content: str) -> str:
+    _section_start, section_end = _basic_information_bounds(content)
     begin_count = content.count(CANDIDATE_CONTEXT_BEGIN)
     end_count = content.count(CANDIDATE_CONTEXT_END)
     if begin_count == 0 or end_count == 0:
@@ -256,8 +298,11 @@ def _candidate_context(content: str) -> str:
     end = content.index(CANDIDATE_CONTEXT_END)
     if begin > end:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_DELIMITER_ORDER_INVALID")
+    if begin < _section_start or end + len(CANDIDATE_CONTEXT_END) > section_end:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_OUTSIDE_BASIC_INFO")
     context = content[begin + len(CANDIDATE_CONTEXT_BEGIN) : end]
-    if any(pattern.search(context) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
+    basic_section = content[_section_start:section_end]
+    if any(pattern.search(basic_section) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE")
     return context
 
@@ -265,6 +310,8 @@ def _candidate_context(content: str) -> str:
 def _validate_candidate_context(content: str, manifest: Dict) -> None:
     context = _candidate_context(content)
     lines = [line.strip() for line in context.splitlines() if line.strip()]
+    if any(pattern.search(context) for pattern in CANDIDATE_CONTEXT_STALE_PATTERNS):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_STALE_NARRATIVE")
     current_lines = [line for line in lines if line.startswith("- 当前自动化候选：")]
     if not current_lines:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CURRENT_CANDIDATE_LINE_MISSING")
@@ -326,6 +373,14 @@ def _validate_candidate_context(content: str, manifest: Dict) -> None:
     )
     if state_lines[0] != expected_state:
         raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_STATE_MISMATCH")
+
+    expected_lines = [expected_current, expected_previous, expected_state]
+    if any(line not in expected_lines for line in lines):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_UNKNOWN_LINE")
+    if len(lines) != len(expected_lines):
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_LINE_CARDINALITY_INVALID")
+    if lines != expected_lines:
+        raise DeliveryFailure("V0251_TARGET_ACCEPTANCE_CANDIDATE_CONTEXT_ORDER_INVALID")
 
 
 def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
@@ -530,6 +585,12 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         )
     ):
         raise DeliveryFailure("V0251_SUPERSEDED_CANDIDATE_INVALID")
+    _archive_source_binding(
+        str(superseded.get("archiveName", "")),
+        superseded.get("sourceCommit", ""),
+        superseded.get("candidateBuildId", ""),
+        "V0251_SUPERSEDED_CANDIDATE_SOURCE_BINDING_INVALID",
+    )
 
     records = [item for item in status["records"] if isinstance(item, dict)]
     candidate_records = [item for item in records if item.get("status") == "candidate"]
@@ -548,6 +609,11 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0251_REJECTED_CANDIDATE_BUILD_ID_MISMATCH")
     if rejected[0].get("archiveSha256") != superseded.get("archiveSha256"):
         raise DeliveryFailure("V0251_REJECTED_CANDIDATE_DIGEST_MISMATCH")
+    previous_archive_source = previous_archive_match.group("source")
+    if previous_archive_source is not None and (
+        rejected[0].get("sourceCommit") != superseded.get("sourceCommit")
+    ):
+        raise DeliveryFailure("V0251_REJECTED_CANDIDATE_SOURCE_COMMIT_MISMATCH")
 
     current = [item for item in records if item.get("candidateBuildId") == current_build_id]
     if len(current) != 1 or current[0].get("status") != "candidate":
@@ -618,7 +684,6 @@ def audit(root: Path) -> None:
     )
     if evidence.get("archiveChecksumFile") != expected_checksum_name:
         raise DeliveryFailure("V0251_ARCHIVE_CHECKSUM_EVIDENCE_MISSING")
-    audit_candidate_lineage(root, manifest)
     if manifest.get("targetAcceptanceIssue") != 59 or manifest.get("targetAcceptance", {}).get("status") != "manual-pending":
         raise DeliveryFailure("ISSUE_59_MANUAL_ACCEPTANCE_REQUIRED")
     policy = manifest.get("deliveryPolicy", {})
@@ -630,13 +695,16 @@ def audit(root: Path) -> None:
         raise DeliveryFailure("V0251_CANDIDATE_POLICY_INVALID")
     if manifest.get("formatReview", {}).get("enabledByDefault") is not True:
         raise DeliveryFailure("FORMAT_REVIEW_DEFAULT_MUST_BE_OPEN")
+    # Validate the bounded acceptance context before lineage so malformed
+    # packaged evidence fails at its trust boundary, not in a later relation.
+    audit_target_acceptance_record(root, manifest)
+    audit_candidate_lineage(root, manifest)
     audit_candidate_note(root, manifest)
     actual = {path.relative_to(root).as_posix() for path in root.rglob("*") if path.is_file()}
     audit_scope(actual)
     audit_plugin_cache_identity(root, VERSION)
     audit_format_assets(root, manifest)
     audit_visual_default(root, manifest)
-    audit_target_acceptance_record(root, manifest)
     audit_no_legacy_format_references(root)
     print("v0251_delivery_audit=passed status=candidate version={0}".format(VERSION))
 
