@@ -2217,6 +2217,8 @@ class DeterministicFormatReviewService:
                 normalized_item["rows"] = normalized_table["rows"]
                 normalized_item["nestedTables"] = normalized_table["nestedTables"]
                 normalized_item["format"] = normalized_table["format"]
+                canonical_text = cls._format_block_text_values(normalized_item)
+                normalized_item["text"] = canonical_text[0] if canonical_text else ""
             has_outline_fact = (
                 "headingLevel" in item
                 or "outlineLevel" in item

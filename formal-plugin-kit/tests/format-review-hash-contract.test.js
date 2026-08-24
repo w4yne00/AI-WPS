@@ -15,6 +15,7 @@ import os
 import sys
 import tempfile
 import copy
+import time
 from pathlib import Path
 
 from app.core.errors import AdapterError
@@ -25,9 +26,11 @@ from app.services.word.deterministic_format_review import DeterministicFormatRev
 class Reviewer:
     def __init__(self):
         self.calls = 0
+        self.requests = []
 
     def review(self, request, trace_id=""):
         self.calls += 1
+        self.requests.append(request)
         return {"issues": [], "summary": {}}
 
 
@@ -82,6 +85,70 @@ with tempfile.TemporaryDirectory() as directory:
             except AdapterError as error:
                 results.append({"key": key, "code": error.code, "status": error.status_code})
         print(json.dumps({"results": results, "reviewerCalls": reviewer.calls}, ensure_ascii=False, sort_keys=True))
+    elif payload.get("mode") == "canonicalText":
+        normalized = service._normalize_format_blocks(payload["blocks"])
+        metrics = service._format_metrics(normalized)
+        tampered_blocks = copy.deepcopy(normalized)
+        tampered_table = next(block for block in tampered_blocks if block.get("blockType") == "table")
+        tampered_table["text"] = "客户端篡改的冗余表格正文"
+        session = service.create_snapshot({"documentId": "contract.docx", "selectionMode": "document"})
+        upload_payload = {
+            "uploadToken": session["uploadToken"],
+            "batchId": "format-batch-0",
+            "blocks": tampered_blocks,
+            "characterCount": metrics["characterCount"],
+            "contentSha256": metrics["contentSha256"],
+            "structureSha256": metrics["structureSha256"],
+            "formatSha256": metrics["formatSha256"],
+            "editSequence": None,
+        }
+        service.upload_batch(session["snapshotId"], 0, upload_payload)
+        stored = service._load_snapshot(session["snapshotId"])
+        stored_table = next(
+            block for block in stored["batches"][0]["blocks"] if block.get("blockType") == "table"
+        )
+        committed_metrics = service._format_metrics(
+            stored["batches"][0]["blocks"], stored.get("sourceCoverage")
+        )
+        verification = {
+            "batchCount": 1,
+            "blockCount": len(tampered_blocks),
+            "reviewCharacterCount": committed_metrics["characterCount"],
+            "contentSha256": committed_metrics["contentSha256"],
+            "structureSha256": committed_metrics["structureSha256"],
+            "formatSha256": committed_metrics["formatSha256"],
+            "coverage": committed_metrics["coverage"],
+            "documentIdentity": service._load_snapshot(session["snapshotId"])["documentIdentity"],
+            "editSequence": None,
+        }
+        service.commit_snapshot(session["snapshotId"], {
+            "uploadToken": session["uploadToken"],
+            "batchCount": 1,
+            "blockCount": len(tampered_blocks),
+            "reviewCharacterCount": committed_metrics["characterCount"],
+            "contentSha256": committed_metrics["contentSha256"],
+            "structureSha256": committed_metrics["structureSha256"],
+            "formatSha256": committed_metrics["formatSha256"],
+            "verification": verification,
+        })
+        job = service.start_job(
+            {"snapshotId": session["snapshotId"], "snapshotToken": session["snapshotToken"]},
+            "format-job-canonical",
+        )
+        for _ in range(100):
+            current = service.get_job(job["jobId"])
+            if current and current.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        request_blocks = reviewer.requests[-1].content.document_structure["formatBlocks"]
+        request_table = next(block for block in request_blocks if block.get("blockType") == "table")
+        print(json.dumps({
+            "acceptedText": stored_table["text"],
+            "requestText": request_table["text"],
+            "tamperedText": "客户端篡改的冗余表格正文",
+            "reviewerCalls": reviewer.calls,
+            "jobStatus": current.get("status") if current else None,
+        }, ensure_ascii=False, sort_keys=True))
     else:
         raise SystemExit("unknown mode")
 `;
@@ -226,6 +293,18 @@ test("Python rejects structure and format tampering before reviewer execution", 
     { key: "tableStructure", code: "DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH", status: 409 }
   ]);
   assert.equal(result.reviewerCalls, 0);
+});
+
+test("Adapter replaces a tampered table block text before provider request", () => {
+  const body = helpers.buildDeterministicFormatReviewBody(fixture());
+  const result = runPython({ mode: "canonicalText", blocks: body.blocks });
+  const canonicalText = "表格😀\n单元格🚀\n嵌套𠮷";
+  assert.equal(result.acceptedText, canonicalText);
+  assert.equal(result.requestText, canonicalText);
+  assert.notEqual(result.acceptedText, result.tamperedText);
+  assert.notEqual(result.requestText, result.tamperedText);
+  assert.equal(result.reviewerCalls, 1);
+  assert.equal(result.jobStatus, "completed");
 });
 
 test("numeric format boundaries are cross-runtime stable or rejected", () => {

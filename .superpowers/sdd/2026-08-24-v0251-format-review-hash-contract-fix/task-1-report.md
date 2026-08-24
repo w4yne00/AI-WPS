@@ -187,3 +187,100 @@ git diff --check
 - Adapter 的四项校验及服务端独立重算未关闭或放宽；table 文本绕过、嵌套 format 绕过和真实结构篡改均在 reviewer/provider 前阻断。
 - 数值规范是保守拒绝策略，避免 JS `JSON.stringify` 与 Python `json.dumps` 在指数边界漂移；代价是极小/极大非零格式数值被拒绝，需要上游改用安全小数范围。
 - 本轮未构建交付包、未 push/发布；仍只有本机 Python 3.9.6 与 Node v26.7.0，Python 3.8 仅完成静态兼容扫描，真实 Python 3.8、WPS、模型服务和 Issue #59 人工验收仍是后续风险。
+
+## Fix round 2（基准 `9224e99`）
+
+### 修改
+
+- 修复服务端 `_normalize_format_blocks()` 的 table 信任边界：在 rows/nestedTables/format 完成规范化后，始终通过递归规范文本投影覆盖 table 顶层 `text`，不再保留客户端传入的冗余正文。
+- `_request_from_blocks()` 继续只接收规范化 blocks，因此 Reviewer/provider 请求中的 table `text` 与存储快照均使用同一 canonical rows/nestedTables 文本；四项指标仍由服务端独立重算并逐项校验。
+- 扩展 `formal-plugin-kit/tests/format-review-hash-contract.test.js` 的真实 Node→Python bridge：上传 table 顶层 `text` 篡改但保留原四项指标声明，走 `upload_batch → commit_snapshot → start_job → Reviewer.review`，同时断言存储规范块和 provider request 均不含篡改文本；既有 cell text 篡改 409 负向覆盖保持不变。
+
+### TDD RED/GREEN
+
+新增真实 provider 链路测试后、未修改服务端生产代码时运行：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js
+```
+
+真实关键输出：
+
+```text
+✖ Adapter replaces a tampered table block text before provider request
+AssertionError: '客户端篡改的冗余表格正文' == '表格😀\\n单元格🚀\\n嵌套𠮷'
+ℹ tests 4
+ℹ pass 3
+ℹ fail 1
+```
+
+实现服务端 canonical text 覆盖后运行同一命令：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js
+```
+
+```text
+ℹ tests 4
+ℹ pass 4
+ℹ fail 0
+```
+
+新增测试实际确认：仅改 table 顶层 `block.text` 时 Adapter 接受上传，但存储规范块和 provider request 均为 `表格😀\\n单元格🚀\\n嵌套𠮷`，`reviewerCalls=1`、job `completed`；改 cell text、保留旧顶层 text 与原四项声明时仍返回 409 且 `reviewerCalls=0`。
+
+### 覆盖测试文件、命令与真实输出
+
+本轮覆盖测试文件：
+
+- `formal-plugin-kit/tests/format-review-hash-contract.test.js`
+- `formal-plugin-kit/tests/deterministic-format-review.test.js`
+- `adapter_service/tests/test_deterministic_format_snapshot_protocol.py`
+- `adapter_service/tests/test_outline_levels.py`
+- `adapter_service/tests/test_v0251_delivery.py`
+
+Focused：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js
+tests 4 / pass 4 / fail 0
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONWARNINGS=ignore PYTHONPATH=adapter_service python3 -m pytest -q adapter_service/tests/test_deterministic_format_snapshot_protocol.py adapter_service/tests/test_outline_levels.py adapter_service/tests/test_v0251_delivery.py
+48 passed in 0.55s
+```
+
+Focused 合并与静态检查：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js formal-plugin-kit/tests/deterministic-format-review.test.js
+tests 5 / pass 5 / fail 0
+
+node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js
+node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js
+PYTHONDONTWRITEBYTECODE=1 python3 packaging/check_python38_compatibility.py adapter_service/app packaging
+python38_compatibility_scan=passed files=82
+bash -n packaging/build_v0251_delivery_kit.sh
+git diff --check
+```
+
+完整回归：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/*.test.js
+tests 21 / pass 21 / fail 0
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONWARNINGS=ignore PYTHONPATH=adapter_service python3 -m pytest -q adapter_service/tests
+799 passed, 95 skipped in 51.14s
+```
+
+### 文件清单
+
+- `adapter_service/app/services/word/deterministic_format_review.py`
+- `formal-plugin-kit/tests/format-review-hash-contract.test.js`
+- 本报告
+
+### 自审与风险
+
+- 已确认服务端没有关闭或放宽四项校验：上传仍以原声明触发独立重算，cell text/structure/format 篡改仍在 Reviewer/provider 前返回 409；本轮只修复不参与哈希的 table 冗余 `text` 下游信任问题。
+- 已确认 table canonical text 由规范化 rows/nestedTables 递归生成，存储快照与 provider request 使用相同内容，不会把客户端篡改的顶层 `block.text` 传给 Reviewer/provider。
+- 已确认只修改本轮允许的两个代码/测试文件及报告；未构建候选包、未 push/发布；`.scratch/writing-policy-review/`、`config/adapter.json`、`run/` 等受保护未跟踪路径未改动。
+- 风险：本机仍是 Python 3.9.6、Node v26.7.0；Python 3.8 仅完成静态扫描，未运行真实 Python 3.8/WPS/模型服务验收。完整 Adapter 测试的 95 个 skip 为既有环境依赖现状。
