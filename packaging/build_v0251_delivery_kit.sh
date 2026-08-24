@@ -152,7 +152,7 @@ if ! command -v node >/dev/null 2>&1; then
   echo "plugin_contract_runtime_required=node"
   exit 1
 fi
-node --test "$ROOT_DIR"/formal-plugin-kit/tests/*.test.js
+AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" node --test "$ROOT_DIR"/formal-plugin-kit/tests/*.test.js
 echo "plugin_contract=passed"
 
 find "$TMP_DIR" -type f -name '*.sh' -exec chmod 755 {} \;

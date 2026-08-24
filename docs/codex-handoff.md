@@ -10,7 +10,13 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824`
 
-当前 v0.25.1 候选为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz`，SHA-256 为 `2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02`，源码提交为 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23`。该包已通过麒麟 V10/Python 3.8 自动化构建与生命周期门禁，仍须完成 Issue #59 的目标 WPS GUI 和真实模型人工验收。`e43dc8c` 及更早候选均为 `rejected`。
+历史候选 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz`（SHA-256：`2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02`，源码提交：`ccad09fb1d8019da3a40f14610ab3bd75de1ec23`）已确认存在 `word.format_review.snapshot.v2` JS/Python structure/format 哈希契约漂移，登记为 `rejected`，不得继续分发。当前修复继续使用 `v0.25.1-alpha`，新候选尚未构建；修复报告见 `.superpowers/sdd/2026-08-24-v0251-format-review-hash-contract-fix/task-1-report.md`。`e43dc8c` 及更早候选均为 `rejected`。
+
+## 当前修复状态：跨运行时格式审查哈希契约
+
+- JavaScript 上传前与 Python Adapter 信任边界现在按同一固定投影、UTF-16 字符计数、紧凑稳定 JSON 和 UTF-8 SHA-256 计算；Python 继续独立重算四项指标并 fail closed。
+- 新增真实 Node→Python 子进程对拍测试，覆盖正文/标题、递归表格与 cell format、图片元数据、空/非空 insufficient reason、WPS 大纲级别及 `😀/🚀/𠮷`；structure/format 篡改均要求 409 且不启动 reviewer/provider。
+- `20260824-ccad09f` 已在 `packaging/v0251-candidate-status.json` 登记为 `rejected`；代码修复、focused/完整回归、代码审查完成前不得构建或宣称新归档。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -553,7 +559,7 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 `v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251` 和 `20260822-e43dc8c` 登记为 `rejected`。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
 
-候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 已修复：格式审查批次级块 ID 范围被当成数值索引；已知直连模型未填写最大输出 Token 时无法运行格式语义；直连和工作流返回空最终正文或仅推理内容时诊断不明确、全篇任务会重试或重启恢复；旧工作流档案在配置删除后被重复迁移；运行时快照仍把已完成迁移、已删除密钥的陈旧工作流字段视为有效配置。构建门禁记录完整 `HEAD`，并检查 245 个交付白名单、规则、构建工具和插件测试输入均为已跟踪且无未提交差异。
+历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾修复格式审查批次级块 ID 范围、直连模型输出能力、空最终正文诊断、旧工作流重复迁移及运行时快照误判，但其跨运行时 structure/format 哈希契约仍存在阻断缺陷，因此归档已拒绝。当前修复采用同一规范化入口语义并增加真实 Node→Python 对拍；构建门禁和新候选身份待后续完整验证后生成。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
@@ -564,12 +570,8 @@ bash packaging/build_v0251_delivery_kit.sh
 
 当前可复核结果：
 
-- 当前源码 Python 全量单测：`798 passed, 95 skipped`；麒麟 V10/Python 3.8 针对性测试 `41 passed`；正式插件契约测试 17 项通过；Python 3.8 交付兼容扫描 82 个文件通过；Shell 语法和 `git diff --check` 通过。
-- 独立代码复审两轴均未发现 P0–P2。
-- `20260824-ccad09f` 已在 Kylin V10 SP1、Python 3.8.10、Node v22.23.2 环境完成构建；基线升级、全新安装、v0.22 升级、损坏 v0.23.0、已删除工作流覆盖安装、Python 导入故障、候选启动失败、健康版本不一致、权限错误、WPS 未退出和安装中断场景均通过。
-- 新归档已在目标机与本地分别核对 SHA-256，本地独立执行 `audit_v0251_delivery.py` 通过；清单状态保持 `candidate`，不等同于现场接受。
-- Kylin WPS GUI 的插件信任提示和 `Runtime Probe` Ribbon 已验证；任务窗格按钮执行及文档对象读数仍未完成，不能据此宣称 WPS 插件 API 真机验收通过。
-- `20260822-e43dc8c` 及更早归档均不得继续分发；仅使用 `20260824-ccad09f` 作为当前待人工验收候选。
+- 历史 `20260824-ccad09f` 归档已登记 `rejected`，不得继续分发；当前源码修复尚未形成新候选归档。
+- 跨运行时 focused 对拍、Python focused 回归和后续完整测试的真实输出统一记录在任务报告；在完整验证结束前不宣称新候选构建、Python 3.8 或目标机通过。
 - Issue #59 未标记为接受；真实 WPS 任务窗格按钮、文档对象读数、模型直连和目标机人工文档验收仍须在 Issue #59 完成。
 
 ## 7. 目标机验证建议

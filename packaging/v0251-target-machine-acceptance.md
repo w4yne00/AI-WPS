@@ -33,6 +33,8 @@
 | 5 | 验证 Word 设置页、三宿主任务配置标签及 Excel/PPT Ribbon 图标在常规、窄窗和高 DPI 下可用 | `manual-pending` |  |  |
 | 6 | 图片语义总开关保持关闭；现场不导出或外发像素。真实 `SaveAsPicture` 视觉保真度留待未来启用前专项验收，不作为本记录的通过依据 | `manual-pending` |  |  |
 | 7 | 日志、诊断和报告不包含正文、图片像素、模型原始回复、API Key 或敏感本地路径 | `manual-pending` |  |  |
+| 8 | 真实 WPS 批次同时核对 `characterCount`、`contentSha256`、`structureSha256`、`formatSha256`；普通块含 `images: []`，表格/嵌套表格、cell format、图片元数据和非 BMP 字符均参与对拍 | `manual-pending` |  | 任一 structure/format 漂移或 `DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH` 均不得进入后台任务 |
+| 9 | 只篡改 structure 或 format 声明时均返回 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH`，且不启动 reviewer/provider；图片项确认 `pixelExportCount=0`、`pixelUploadCount=0` | `manual-pending` |  |  |
 
 ## 现场执行摘要
 

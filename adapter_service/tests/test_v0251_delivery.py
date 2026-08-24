@@ -189,10 +189,21 @@ def test_v0251_build_requires_candidate_baseline_and_all_delivery_gates():
         "python38_delivery_lifecycle_gate.py",
         "PYTHONDONTWRITEBYTECODE=1",
         "sha256",
+        'AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" node --test',
     ):
         assert required in build
     assert "preview" not in build.lower()
     assert "cp -R" not in build
+
+
+def test_v0251_hash_contract_gate_is_fail_closed_and_discovered_by_provenance():
+    build = BUILD.read_text(encoding="utf-8")
+    contract_test = ROOT / "formal-plugin-kit/tests/format-review-hash-contract.test.js"
+
+    assert contract_test.is_file()
+    assert 'AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" node --test' in build
+    assert "skip" not in contract_test.read_text(encoding="utf-8").lower()
+    assert "AI_WPS_HASH_CONTRACT_PYTHON" in contract_test.read_text(encoding="utf-8")
 
 
 def test_v0251_rebuild_records_rejected_candidate_and_independent_build_identity():

@@ -1,7 +1,9 @@
 # v0.25.1-alpha 格式审查修复候选交付说明
 
-本候选继续使用现有 Phase1 安装体系，归档名称为
-`ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz`。其中 `SOURCE_COMMIT` 为七位源码提交号，使同一天的修复重建仍具有独立、可追溯的归档身份；旧的无提交号归档名继续作为历史候选被接受。它只收敛格式审查的正文大纲级别、标题定位、正式模型直连验证、运行时调用诊断，以及图片事实采集阶段的 helper 作用域错误，不进入 Preview 安装基线，也不改变 Phase1 的安装入口、目录或回退事务。
+本修复继续使用现有 Phase1 安装体系，后续归档名称为
+`ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz`。其中 `SOURCE_COMMIT` 为七位源码提交号，使同一天的修复重建仍具有独立、可追溯的归档身份；旧的无提交号归档名继续作为历史候选被接受。本次修复统一格式审查快照的 JS/Python 规范化、固定 structure/format 投影、UTF-16 字符计数和 Adapter 独立重算，不进入 Preview 安装基线，也不改变 Phase1 的安装入口、目录或回退事务。
+
+历史候选 `20260824-ccad09f` 已登记为 `rejected`：其 `word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format 哈希前镜像不一致。当前源码正在修复该跨运行时契约，**新候选待代码审查和测试完成后单独构建**；本文件不预填新归档名、SHA-256 或通过状态。
 
 ## 自动化门禁
 
@@ -9,11 +11,11 @@
 
 1. 显式白名单组装和发布文件 SHA-256 清单；
 2. 格式规则包编译后逐字节一致性检查；
-3. Python 3.8 静态兼容性、正式插件契约和 Adapter 导入/公开接口检查；
+3. Python 3.8 静态兼容性、正式插件契约（含 `AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN"` 跨运行时对拍）和 Adapter 导入/公开接口检查；
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。`docs/v0251-candidate-status.json` 保留旧候选的 `rejected` 记录及本次候选的 `candidate` 记录，避免同一产品版本的不同构建被混淆。自动门禁通过只表示 `candidate`，不表示麒麟 V10、目标 WPS 或模型服务已经完成现场验收。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。`docs/v0251-candidate-status.json` 保留 `20260824-ccad09f` 的 `rejected` 记录；新候选构建后才可追加新的 `candidate` 记录。自动门禁通过只表示 `candidate`，不表示麒麟 V10、目标 WPS 或模型服务已经完成现场验收。
 
 ## Issue #59 现场验收步骤
 

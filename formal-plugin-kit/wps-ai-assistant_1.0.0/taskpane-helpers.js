@@ -387,6 +387,154 @@
     return values;
   }
 
+  function normalizeDeterministicFormatFacts(value) {
+    var source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    var normalized = {};
+    var allowed = [
+      "styleName", "fontName", "fontSize", "bold", "italic", "underline",
+      "strikeThrough", "superscript", "subscript", "allCaps", "smallCaps",
+      "color", "highlight", "characterSpacing", "characterScale", "alignment",
+      "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent",
+      "rightIndent", "outlineLevel", "segments", "dataStatus", "facts", "formatFacts",
+      "lineSpacingMode"
+    ];
+    allowed.forEach(function (key) {
+      if (typeof source[key] !== "undefined") {
+        normalized[key] = source[key];
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(normalized, "dataStatus") &&
+        ["verified", "mixed", "unknown", "read_failed", "unsupported", "context_only", "insufficient"]
+          .indexOf(normalized.dataStatus) < 0) {
+      normalized.dataStatus = "insufficient";
+    }
+    if (Array.isArray(normalized.segments)) {
+      normalized.segments = normalized.segments.map(function (segment) {
+        var item = segment && typeof segment === "object" ? segment : {};
+        return {
+          start: Number(item.start || 0),
+          end: Number(item.end || 0),
+          format: normalizeDeterministicFormatFacts(item.format || {})
+        };
+      });
+    }
+    if ((!normalized.facts || !Object.keys(normalized.facts).length) &&
+        (!normalized.formatFacts || !Object.keys(normalized.formatFacts).length)) {
+      var derived = buildWpsFormatFacts(source);
+      if (Object.keys(derived).length) {
+        normalized.facts = derived;
+      }
+    }
+    var facts = normalized.facts || normalized.formatFacts || {};
+    ["fontSize", "lineSpacing", "firstLineIndent", "spaceBefore", "spaceAfter", "leftIndent", "rightIndent"]
+      .forEach(function (key) {
+        var fact = facts && facts[key];
+        if (fact && fact.dataStatus === "verified") {
+          normalized[key] = fact.normalizedValue;
+        } else if (fact && Object.prototype.hasOwnProperty.call(source, key)) {
+          normalized[key] = null;
+        }
+      });
+    if (facts && facts.lineSpacing && facts.lineSpacing.mode) {
+      normalized.lineSpacingMode = facts.lineSpacing.mode;
+    }
+    if (normalized.dataStatus === "insufficient" && source.insufficientReason) {
+      normalized.insufficientReason = String(source.insufficientReason).slice(0, 120);
+    } else {
+      delete normalized.insufficientReason;
+    }
+    return normalized;
+  }
+
+  function normalizeDeterministicImageFacts(value) {
+    return (Array.isArray(value) ? value : []).filter(function (image) {
+      return image && image.imageId;
+    }).map(function (image) {
+      return {
+        imageId: String(image.imageId),
+        groupId: String(image.groupId || image.imageGroupId || image.imageId).slice(0, 160),
+        fingerprint: String(image.fingerprint || image.objectFingerprint || "").slice(0, 256),
+        captionStatus: String(image.captionStatus || image.figureCaptionStatus || "unknown").slice(0, 32),
+        associationStatus: String(image.associationStatus || "missing").slice(0, 32),
+        supported: image.supported !== false && image.supportedType !== false,
+        altText: String(image.altText || image.alternativeText || "").slice(0, 2000),
+        nearbyText: String(image.nearbyText || image.contextText || image.adjacentText || "").slice(0, 4000)
+      };
+    });
+  }
+
+  function normalizeDeterministicRange(value) {
+    var source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+    var allowed = ["start", "end", "area", "paragraphIndex", "tableId", "cellId",
+      "pageNumber", "pageStart", "pageEnd", "sectionIndex"];
+    var numeric = ["start", "end", "paragraphIndex", "pageNumber", "pageStart", "pageEnd", "sectionIndex"];
+    var normalized = {};
+    Object.keys(source).forEach(function (key) {
+      if (allowed.indexOf(key) < 0 || source[key] === null || typeof source[key] === "undefined") {
+        if (allowed.indexOf(key) < 0) {
+          throw new Error("格式审查原文范围格式无效。");
+        }
+        return;
+      }
+      if (numeric.indexOf(key) >= 0) {
+        var valueNumber = Number(source[key]);
+        if (!isFinite(valueNumber) || Math.floor(valueNumber) !== valueNumber || valueNumber < 0) {
+          throw new Error("格式审查原文范围索引无效。");
+        }
+        normalized[key] = valueNumber;
+      } else {
+        if (typeof source[key] !== "string" || source[key].length > 160) {
+          throw new Error("格式审查原文范围标识无效。");
+        }
+        normalized[key] = source[key];
+      }
+    });
+    if (Object.prototype.hasOwnProperty.call(normalized, "start") &&
+        Object.prototype.hasOwnProperty.call(normalized, "end") && normalized.end < normalized.start) {
+      throw new Error("格式审查原文范围顺序无效。");
+    }
+    if (Object.prototype.hasOwnProperty.call(normalized, "pageStart") &&
+        Object.prototype.hasOwnProperty.call(normalized, "pageEnd") && normalized.pageEnd < normalized.pageStart) {
+      throw new Error("格式审查页码范围顺序无效。");
+    }
+    return normalized;
+  }
+
+  function normalizeDeterministicTable(table, index, parentId) {
+    var source = table && typeof table === "object" ? table : {};
+    var tableId = String(source.tableId || source.id ||
+      (parentId ? parentId + "-nested-" + (index + 1) : "format-table-" + (index + 1)));
+    var rows = Array.isArray(source.rows) ? source.rows.map(function (row, rowPosition) {
+      var rowSource = row && typeof row === "object" ? row : {};
+      var rowIndex = Number(rowSource.rowIndex || rowPosition + 1);
+      var cells = Array.isArray(rowSource.cells) ? rowSource.cells.map(function (cell, columnPosition) {
+        var cellSource = cell && typeof cell === "object" ? cell : {};
+        return {
+          cellId: String(cellSource.cellId || "cell-" + rowIndex + "-" + (columnPosition + 1)),
+          rowIndex: Number(cellSource.rowIndex || rowIndex),
+          columnIndex: Number(cellSource.columnIndex || columnPosition + 1),
+          rowSpan: Number(cellSource.rowSpan || 1),
+          columnSpan: Number(cellSource.columnSpan || 1),
+          text: String(cellSource.text || ""),
+          format: normalizeDeterministicFormatFacts(cellSource.format || {})
+        };
+      }) : [];
+      cells.sort(function (left, right) { return left.columnIndex - right.columnIndex; });
+      return { rowIndex: rowIndex, cells: cells };
+    }) : [];
+    rows.sort(function (left, right) { return left.rowIndex - right.rowIndex; });
+    return {
+      tableId: tableId,
+      tableIndex: Number(source.tableIndex || index + 1),
+      rows: rows,
+      nestedTables: (Array.isArray(source.nestedTables) ? source.nestedTables : [])
+        .map(function (nested, nestedIndex) {
+          return normalizeDeterministicTable(nested, nestedIndex, tableId);
+        }),
+      format: normalizeDeterministicFormatFacts(source.format || {})
+    };
+  }
+
   function formatReviewFormatProjection(block) {
     function tableProjection(table) {
       return {
@@ -681,6 +829,39 @@
       }
       block.scope = block.scope === "context" ? "context" : "in_scope";
       block.text = String(block.text || "");
+      block.range = normalizeDeterministicRange(block.range);
+      block.format = normalizeDeterministicFormatFacts(block.format || {});
+      block.images = normalizeDeterministicImageFacts(block.images);
+      if (block.blockType === "image" && block.images.length) {
+        ["imageId", "groupId", "fingerprint", "captionStatus", "associationStatus",
+          "supported", "altText", "nearbyText"].forEach(function (key) {
+          block[key] = block.images[0][key];
+        });
+      }
+      if (Object.prototype.hasOwnProperty.call(block, "outlineLevel")) {
+        block.outlineLevel = normalizeWpsOutlineLevel(block.outlineLevel);
+        block.format.outlineLevel = block.outlineLevel;
+        if (block.blockType === "heading") {
+          if (block.outlineLevel === 0) {
+            block.blockType = "paragraph";
+            delete block.headingLevel;
+          } else if (block.outlineLevel === null) {
+            block.blockType = "unknown";
+            delete block.headingLevel;
+          } else {
+            block.headingLevel = block.outlineLevel;
+          }
+        }
+      }
+      if (block.blockType === "table") {
+        var normalizedTable = normalizeDeterministicTable(block, Number(block.tableIndex || 1) - 1);
+        block.tableId = normalizedTable.tableId;
+        block.tableIndex = normalizedTable.tableIndex;
+        block.rows = normalizedTable.rows;
+        block.nestedTables = normalizedTable.nestedTables;
+        block.format = normalizedTable.format;
+        block.text = formatReviewBlockTextValues(block).join("\n");
+      }
       seen[block.blockId] = true;
       blocks.push(block);
     }
@@ -694,7 +875,18 @@
     paragraphs.forEach(function (paragraph) {
       var index = Number(paragraph && (paragraph.index || paragraph.paragraphIndex)) || blocks.length + 1;
       var text = String(paragraph && paragraph.text || "").replace(/[\r\u0007]+$/g, "").trim();
-      var outlineLevel = normalizeWpsOutlineLevel(paragraph && paragraph.outlineLevel);
+      var hasOutlineFact = Boolean(paragraph && (
+        Object.prototype.hasOwnProperty.call(paragraph, "outlineLevel") ||
+        Object.prototype.hasOwnProperty.call(paragraph, "outline_level")
+      ));
+      var outlineLevel = hasOutlineFact
+        ? normalizeWpsOutlineLevel(paragraph.outlineLevel !== undefined
+          ? paragraph.outlineLevel : paragraph.outline_level)
+        : null;
+      var blockType = isCaptionParagraph(paragraph) ? "caption" :
+        (!hasOutlineFact ? (paragraph.listLabel ? "listItem" : "paragraph") :
+          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") :
+            (outlineLevel > 0 ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))));
       var format;
       if (!text) {
         return;
@@ -720,12 +912,10 @@
       };
       pushBlock({
         blockId: "format-paragraph-" + index,
-        blockType: isCaptionParagraph(paragraph) ? "caption" :
-          (outlineLevel === null ? (paragraph.listLabel ? "listItem" : "unknown") : (outlineLevel > 0
-            ? "heading" : (paragraph.listLabel ? "listItem" : "paragraph"))),
+        blockType: blockType,
         paragraphIndex: index,
-        outlineLevel: outlineLevel,
-        headingLevel: outlineLevel > 0 ? outlineLevel : undefined,
+        outlineLevel: hasOutlineFact ? outlineLevel : undefined,
+        headingLevel: hasOutlineFact && outlineLevel > 0 ? outlineLevel : undefined,
         listLabel: paragraph.listLabel ? String(paragraph.listLabel) : undefined,
         captionFor: paragraph.captionFor ? String(paragraph.captionFor) : undefined,
         text: text,

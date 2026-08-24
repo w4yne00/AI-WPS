@@ -2200,13 +2200,22 @@ class DeterministicFormatReviewService:
                 normalized_item["unsupportedObjects"] = cls._normalize_source_coverage({
                     "unsupportedObjects": item.get("unsupportedObjects")
                 }).get("unsupportedObjects", [])
-            if "images" in item:
-                normalized_item["images"] = cls._normalize_image_facts(item.get("images"))
-            if block_type == "image":
-                normalized_item["image"] = cls._normalize_image_facts([item])[0]
+            image_values = item.get("images", [])
+            if block_type == "image" and not image_values:
+                image_values = [item]
+            normalized_item["images"] = cls._normalize_image_facts(image_values)
+            if block_type == "image" and normalized_item["images"]:
+                normalized_item.update(normalized_item["images"][0])
             if block_type == "table":
-                normalized_item["rows"] = cls._normalize_table_rows(item.get("rows", []))
-                normalized_item["nestedTables"] = item.get("nestedTables", []) if isinstance(item.get("nestedTables", []), list) else []
+                normalized_table = cls._normalize_table(
+                    item,
+                    max(0, int(item.get("tableIndex", 1) or 1) - 1),
+                )
+                normalized_item["tableId"] = normalized_table["tableId"]
+                normalized_item["tableIndex"] = normalized_table["tableIndex"]
+                normalized_item["rows"] = normalized_table["rows"]
+                normalized_item["nestedTables"] = normalized_table["nestedTables"]
+                normalized_item["format"] = normalized_table["format"]
             has_outline_fact = (
                 "headingLevel" in item
                 or "outlineLevel" in item
@@ -2410,7 +2419,36 @@ class DeterministicFormatReviewService:
                     "format": cls._normalize_format_facts(cell.get("format", {})),
                 })
             rows.append({"rowIndex": int(row.get("rowIndex", row_index) or row_index), "cells": cells})
+        rows.sort(key=lambda row: row["rowIndex"])
+        for row in rows:
+            row["cells"].sort(key=lambda cell: cell["columnIndex"])
         return rows
+
+    @classmethod
+    def _normalize_table(cls, value: object, index: int, parent_id: str = "") -> Dict:
+        source = value if isinstance(value, dict) else {}
+        table_id = str(
+            source.get("tableId")
+            or source.get("id")
+            or (
+                "{0}-nested-{1}".format(parent_id, index + 1)
+                if parent_id
+                else "format-table-{0}".format(index + 1)
+            )
+        )
+        nested = source.get("nestedTables", [])
+        if not isinstance(nested, list):
+            nested = []
+        return {
+            "tableId": table_id,
+            "tableIndex": int(source.get("tableIndex", index + 1) or index + 1),
+            "rows": cls._normalize_table_rows(source.get("rows", [])),
+            "nestedTables": [
+                cls._normalize_table(item, nested_index, table_id)
+                for nested_index, item in enumerate(nested)
+            ],
+            "format": cls._normalize_format_facts(source.get("format", {})),
+        }
 
     @classmethod
     def classify_capacity(cls, review_character_count: object, raise_error: bool = False) -> Dict:
@@ -2441,7 +2479,12 @@ class DeterministicFormatReviewService:
     @classmethod
     def _format_metrics(cls, blocks: List[Dict], source_coverage: Optional[Dict] = None) -> Dict:
         in_scope = [block for block in blocks if block.get("scope") == "in_scope"]
-        text_values = [block.get("text", "") for block in in_scope]
+        text_values = [
+            value
+            for block in in_scope
+            for value in cls._format_block_text_values(block)
+            if value
+        ]
         format_segment_count = 0
         table_cell_count = 0
         insufficient_blocks = 0
@@ -2522,6 +2565,20 @@ class DeterministicFormatReviewService:
                     for table in block.get("nestedTables", [])
                     if isinstance(table, dict)
                 ],
+                "images": [
+                    {
+                        "imageId": image.get("imageId", ""),
+                        "groupId": image.get("groupId", ""),
+                        "fingerprint": image.get("fingerprint", ""),
+                        "captionStatus": image.get("captionStatus", "unknown"),
+                        "associationStatus": image.get("associationStatus", "missing"),
+                        "supported": image.get("supported", True) is not False,
+                        "altText": image.get("altText", ""),
+                        "nearbyText": image.get("nearbyText", ""),
+                    }
+                    for image in block.get("images", [])
+                    if isinstance(image, dict)
+                ],
             }
             for block in blocks
         ]
@@ -2579,6 +2636,31 @@ class DeterministicFormatReviewService:
                 "unsupportedObjectCount": unsupported_object_count,
             },
         }
+
+    @classmethod
+    def _format_block_text_values(cls, block: Dict) -> List[str]:
+        if not isinstance(block, dict):
+            return []
+        text = block.get("text", "")
+        if isinstance(text, str) and text:
+            return [text]
+        values = []
+        rows = block.get("rows", [])
+        if isinstance(rows, list):
+            for row in rows:
+                if not isinstance(row, dict) or not isinstance(row.get("cells", []), list):
+                    continue
+                for cell in row.get("cells", []):
+                    if not isinstance(cell, dict):
+                        continue
+                    cell_text = cell.get("text", "")
+                    if isinstance(cell_text, str) and cell_text:
+                        values.append(cell_text)
+        nested = block.get("nestedTables", [])
+        if isinstance(nested, list):
+            for table in nested:
+                values.extend(cls._format_block_text_values(table))
+        return values
 
     @staticmethod
     def _enforce_complexity(metrics: Dict, snapshot_bytes: int) -> None:

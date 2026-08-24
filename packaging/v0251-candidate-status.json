@@ -60,6 +60,16 @@
       "status": "rejected",
       "recordedAt": "20260822",
       "reason": "rejected after deterministic format-review batches still sent block-id ranges as numeric source indices, direct format semantics required an explicit output limit, PPT reasoning-only responses lacked actionable diagnostics, legacy workflow profiles were re-imported after deletion, and the manifest recorded a full source commit that is absent from the source repository despite sharing the same seven-character prefix as HEAD"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-ccad09fb1d8019da3a40f14610ab3bd75de1ec23",
+      "archiveName": "ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz.sha256",
+      "archiveSha256": "2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02",
+      "sourceCommit": "ccad09fb1d8019da3a40f14610ab3bd75de1ec23",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected after cross-runtime word.format_review.snapshot.v2 JS/Python hash contract drift: structure and format projections were not identical after trust-boundary normalization; repair continues in v0.25.1-alpha source and a new candidate must be built separately"
     }
   ]
 }
