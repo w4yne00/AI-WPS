@@ -177,7 +177,7 @@ def test_v0251_handoff_uses_current_candidate_as_previous_archive_example():
 
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
-        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz"
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz"
     ) in handoff
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
@@ -187,17 +187,26 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
     expected = {
-        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
-        "archiveName": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz",
-        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
-        "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
-        "archiveSha256": "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320",
-        "status": "rejected",
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
+        "archiveName": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256",
+        "sourceCommit": "799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
+        "archiveSha256": "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
+        "status": "candidate",
         "recordedAt": "20260824",
-        "reason": "rejected: real JS coverage differs from Adapter recomputation and commit returns DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH before job start; repair source is not yet a candidate until a new package is built",
     }
     assert status["records"][-1] == expected
-    assert not [record for record in status["records"] if record.get("status") == "candidate"]
+    assert [record for record in status["records"] if record.get("status") == "candidate"] == [expected]
+
+    previous = next(
+        record
+        for record in status["records"]
+        if record.get("candidateBuildId", "").endswith(
+            "-5318d4b496d272a5f34bd270c714216f5b6c2e43"
+        )
+    )
+    assert previous["archiveSha256"] == "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320"
+    assert previous["status"] == "rejected"
 
     rejected = next(
         record
@@ -219,11 +228,11 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
     assert old_rejected["status"] == "rejected"
 
     identity = (
-        "20260824-5318d4b",
+        "20260824-799adf9",
         expected["candidateBuildId"],
         expected["sourceCommit"],
         expected["archiveName"],
-        expected["archiveSha256"],
+        "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
         "Issue #59",
     )
     documents = (

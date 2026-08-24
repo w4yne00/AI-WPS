@@ -1,13 +1,19 @@
 # v0.25.1-alpha candidate delivery note
 
-当前没有活动的自动化候选。归档记录 `20260824-5318d4b` 的 candidateBuildId 为
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43`，
-源码提交 `5318d4b496d272a5f34bd270c714216f5b6c2e43`，归档
-`ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`，校验文件
-`ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256`，SHA-256
-`2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`；该归档已
-`rejected`，因为真实 JS coverage 与 Adapter 重算不一致，commit 在后台任务启动前返回
-`DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH`。修复源在重新构建归档前不属于候选。
+当前唯一自动化候选为 `20260824-799adf9`，candidateBuildId
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，
+源码提交 `799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，归档
+`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`，校验文件
+`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256`，SHA-256
+`5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`，自动化状态为
+`candidate`。本说明与归档内交付说明、`release-manifest.json` 和
+`docs/v0251-candidate-status.json` 绑定上述候选身份；目标验收保持 `manual-pending`
+（Issue #59），并以被拒绝的 `20260824-5318d4b` 为 superseded 记录。
+
+上一候选 `20260824-5318d4b` 的归档和 SHA-256 保持不可变，已登记为 `rejected`：真实 JS
+coverage 与 Adapter 重算不一致，commit 在后台任务启动前返回
+`DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH`。更早的 `20260824-2e7a3e6` 也已登记为
+`rejected`，原因是包内交付说明过期且缺失大纲事实被写为 `null`。
 
 历史候选 `20260824-ccad09f` 已登记为 `rejected`：其
 `word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format
@@ -29,7 +35,7 @@
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 及归档内 `docs/v0251-candidate-status.json` 保留历史拒绝记录，并将 `20260824-5318d4b` 登记为 `rejected`。本修复源尚未形成新候选；自动门禁结果仍不等于目标机接受，Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 及归档内 `docs/v0251-candidate-status.json` 保留历史拒绝记录，并将 `20260824-799adf9` 登记为唯一 `candidate`。自动门禁结果仍不等于目标机接受，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 
