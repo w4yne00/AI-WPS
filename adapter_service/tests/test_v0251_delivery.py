@@ -152,6 +152,7 @@ def test_v0251_policy_ships_issue_59_target_acceptance_record():
         assert required in record
     assert record.count("<!-- V0251-CANDIDATE-CONTEXT:BEGIN -->") == 1
     assert record.count("<!-- V0251-CANDIDATE-CONTEXT:END -->") == 1
+    assert "本记录是目标机现场填写模板" in record
     assert "当前源树没有活动候选" in record
     assert "10b251d" in record and "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120" in record
     assert "- 当前自动化候选：" not in record
@@ -238,17 +239,6 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
     expected_rejected = {
-        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-f953c58312c8d3d42d3dccea402fccf55a3c7d53",
-        "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
-        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
-        "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
-        "archiveSha256": "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
-        "status": "rejected",
-        "recordedAt": "20260824",
-        "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt",
-    }
-    assert status["records"][-2] == expected_rejected
-    expected_current = {
         "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5",
         "archiveName": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz",
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256",
@@ -258,8 +248,18 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         "recordedAt": "20260824",
         "reason": "rejected: packaged target acceptance document contained contradictory current-candidate and no-current-candidate narratives plus duplicate previous rejected lines; archive is frozen and no active candidate remains until rebuilt",
     }
+    assert status["records"][-2] == expected_rejected
+    expected_current = {
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0",
+        "archiveName": "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz.sha256",
+        "sourceCommit": "d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0",
+        "archiveSha256": "ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6",
+        "status": "candidate",
+        "recordedAt": "20260824",
+    }
     assert status["records"][-1] == expected_current
-    assert [record for record in status["records"] if record.get("status") == "candidate"] == []
+    assert [record for record in status["records"] if record.get("status") == "candidate"] == [expected_current]
     previous_current = next(
         record
         for record in status["records"]
@@ -300,11 +300,11 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
     assert old_rejected["status"] == "rejected"
 
     identity = (
-        "20260824-10b251d",
+        "20260824-d7a1dd8",
         expected_current["candidateBuildId"],
         expected_current["sourceCommit"],
         expected_current["archiveName"],
-        "6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120",
+        "ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6",
         "Issue #59",
     )
     documents = (
@@ -320,9 +320,9 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
 
     readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
     readme_zh = (ROOT / "README-ZH.md").read_text(encoding="utf-8")
-    assert "direct predecessor `20260824-f953c58`" in readme_en
+    assert "direct predecessor `20260824-10b251d`" in readme_en
     assert "direct predecessor `20260824-afe109c`" in readme_en
-    assert "其直接前任 `20260824-f953c58`" in readme_zh
+    assert "其直接前任 `20260824-10b251d`" in readme_zh
     assert "`20260824-f953c58` 的直接前任 `20260824-afe109c`" in readme_zh
 
     validation_documents = documents[:2]
@@ -365,6 +365,28 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
     assert "v0.25.1 交付/prepare/audit focused 为 `87 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
+
+    candidate_archive = ROOT / (
+        "dist-phase1-delivery-kit/"
+        "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz"
+    )
+    candidate_checksum = candidate_archive.with_name(candidate_archive.name + ".sha256")
+    assert hashlib.sha256(candidate_archive.read_bytes()).hexdigest() == expected_current["archiveSha256"]
+    assert candidate_checksum.read_text(encoding="utf-8").split() == [
+        expected_current["archiveSha256"],
+        candidate_archive.name,
+    ]
+    with tarfile.open(candidate_archive, "r:gz") as handle:
+        packaged_acceptance = handle.extractfile(
+            "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251/docs/v0251-target-machine-acceptance.md"
+        ).read().decode("utf-8")
+    assert "- 当前自动化候选：`d7a1dd8`" in packaged_acceptance
+    assert "candidateBuildId：`{0}`".format(expected_current["candidateBuildId"]) in packaged_acceptance
+    source_template = (ROOT / "packaging/v0251-target-machine-acceptance.md").read_text(
+        encoding="utf-8"
+    )
+    assert "当前源树没有活动候选" in source_template
+    assert "- 当前自动化候选：" not in source_template
 
     for stale in (
         "No new archive has been built",

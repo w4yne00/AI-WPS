@@ -2,34 +2,38 @@
 
 ## 候选身份
 
-- Candidate label: `20260824-10b251d`
-- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`
-- Source commit: `10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5`
-- Archive name: `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz`
-- Archive checksum file: `ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz.sha256`
-- Archive SHA-256: `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`
-- Automated status: `rejected`
+- Candidate label: `20260824-d7a1dd8`
+- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`
+- Source commit: `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`
+- Archive name: `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`
+- Archive checksum file: `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz.sha256`
+- Archive SHA-256: `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`
+- Automated status: `candidate`
 - Target acceptance status: `manual-pending` (Issue #59)
 
-The frozen package uses the accepted `v0.25.0-alpha` Phase1 baseline and explicit
+The candidate uses the accepted `v0.25.0-alpha` Phase1 baseline and explicit
 allowlist assembly. The v2 deterministic format-review contract is
 `word.format_review.snapshot.v2`; JavaScript and Python independently verify
 `characterCount`, `contentSha256`, `structureSha256`, and `formatSha256`.
 The contract uses `format_semantics.v1` rule assets, UTF-16 character counts,
-stable compact JSON, and fail-closed trust-boundary checks. This archive is
-rejected because the packaged target-acceptance record contained contradictory
-current-candidate/no-current-candidate narratives and duplicate previous-rejected
-lines. It is not a current candidate
-and must not be distributed; no active candidate exists until a rebuilt archive
-passes the complete gate. Automated success would record only `candidate`; it
-is not manual acceptance.
+stable compact JSON, and fail-closed trust-boundary checks. The direct
+predecessor `20260824-10b251d` is frozen and rejected because its packaged
+target-acceptance record contained contradictory current-candidate/
+no-current-candidate narratives and duplicate previous-rejected lines; its
+SHA-256 is
+`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`.
 
-`20260824-f953c58` is the superseded rejected candidate. Its archive
-`ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz` has SHA-256
-`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7` and remains
-byte-frozen. The previous `20260824-799adf9`, `20260824-5318d4b`,
-`20260824-2e7a3e6`, and `20260824-ccad09f` records remain `rejected` with their
-original identities and archive digests.
+The assembled archive contains a generated target-acceptance context bound to
+d7a1dd8. The source
+`packaging/v0251-target-machine-acceptance.md` remains the pre-build generator
+template and intentionally has no bound current candidate; it is not a claim
+about the assembled archive. Automated status `candidate` is not manual
+acceptance. Issue #59 remains `manual-pending` until real Kylin V10, target WPS,
+and model evidence is recorded.
+
+The earlier `20260824-f953c58`, `20260824-afe109c`, `20260824-799adf9`,
+`20260824-5318d4b`, `20260824-2e7a3e6`, and `20260824-ccad09f` records remain
+`rejected` with their original identities and archive digests.
 
 ## 自动化门禁
 
@@ -41,7 +45,17 @@ original identities and archive digests.
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 已将冻结的 `10b251d` 登记为 `rejected`，原因是包内目标机验收候选上下文叙述矛盾；当前没有自动化候选，必须在修复后重新构建，Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 只保留一个 `candidate` 记录，即 d7a1dd8；直接前任 `10b251d` 保持 `rejected`，Issue #59 仍为 `manual-pending`。
+
+本次可复核的自动化证据为：Sol/high 核心结论 `CLEAN FOR BUILD`；核心 focused
+`199 passed, 1 skipped`；Adapter `874 passed, 95 skipped`；正式插件
+`28/28`；交付 focused `87 passed`，协议/交付 aggregate `137 passed, 5 skipped`；
+Kylin Node `v22.23.2`、Python `3.8.10`；source provenance `246`、Python 3.8
+扫描 `82`；公开 format-review API、`characterCount`/`contentSha256`/
+`structureSha256`/`formatSha256` 四个哈希键，以及 runtime/lifecycle/install/
+upgrade/rollback/deleted-workflow-profile gates 均通过；本地 checksum 与最终
+candidate audit 均通过。以上结果只证明自动化 candidate，不证明 Issue #59 的真实
+WPS、模型或目标机验收。
 
 ## Issue #59 现场验收步骤
 
