@@ -166,52 +166,65 @@ class OutlineLevelTests(unittest.TestCase):
         )
 
     def test_background_snapshot_normalizes_outline_levels_at_ingress(self):
-        blocks = DeterministicFormatReviewService._normalize_format_blocks([
-            {
-                "blockId": "body-ten-1",
-                "blockType": "heading",
-                "scope": "in_scope",
-                "paragraphIndex": 1,
-                "headingLevel": 10,
-                "text": "正文",
-                "format": {"outlineLevel": 10},
-            },
-            {
-                "blockId": "heading-one",
-                "blockType": "heading",
-                "scope": "in_scope",
-                "paragraphIndex": 2,
-                "headingLevel": 1,
-                "text": "标题",
-                "format": {"outlineLevel": 1},
-            },
-        ])
-
-        self.assertEqual(
-            [(block["blockType"], block["outlineLevel"], block.get("headingLevel")) for block in blocks],
-            [("paragraph", 0, None), ("heading", 1, 1)],
-        )
-
-        conflicting = DeterministicFormatReviewService._normalize_format_blocks([
-            {
-                "blockId": "body-ten-conflict",
-                "blockType": "heading",
-                "scope": "in_scope",
-                "paragraphIndex": 3,
-                "headingLevel": 1,
-                "outlineLevel": 10,
-                "text": "正文",
-                "format": {"outlineLevel": 10},
-            }
-        ])
-        self.assertEqual(
+        cases = [
             (
-                conflicting[0]["blockType"],
-                conflicting[0]["outlineLevel"],
-                conflicting[0].get("headingLevel"),
+                "top-level-only",
+                {"outlineLevel": 2},
+                ("heading", 2, 2, 2),
             ),
-            ("paragraph", 0, None),
-        )
+            (
+                "format-only",
+                {"format": {"outlineLevel": 2}},
+                ("heading", 2, 2, 2),
+            ),
+            (
+                "heading-only",
+                {"headingLevel": 2},
+                ("heading", 2, 2, 2),
+            ),
+            (
+                "top-level-zero-wins",
+                {"outlineLevel": 0, "headingLevel": 3, "format": {"outlineLevel": 2}},
+                ("paragraph", 0, None, 0),
+            ),
+            (
+                "explicit-null-wins",
+                {"outlineLevel": None, "headingLevel": 3, "format": {"outlineLevel": 2}},
+                ("unknown", None, None, None),
+            ),
+            (
+                "all-absent",
+                {},
+                ("paragraph", "absent", "absent", "absent"),
+            ),
+            (
+                "body-ten",
+                {"outlineLevel": 10, "headingLevel": 1, "format": {"outlineLevel": 10}},
+                ("paragraph", 0, None, 0),
+            ),
+        ]
+        for index, (label, facts, expected) in enumerate(cases, 1):
+            block = {
+                "blockId": "outline-case-{0:02d}".format(index),
+                "blockType": "heading" if label != "all-absent" else "paragraph",
+                "scope": "in_scope",
+                "paragraphIndex": index,
+                "text": label,
+                "format": {},
+            }
+            block.update(facts)
+            normalized = DeterministicFormatReviewService._normalize_format_blocks([block])[0]
+            if expected[1] == "absent":
+                self.assertNotIn("outlineLevel", normalized, label)
+                self.assertNotIn("outlineLevel", normalized["format"], label)
+                self.assertNotIn("headingLevel", normalized, label)
+            else:
+                self.assertEqual(
+                    (normalized["blockType"], normalized["outlineLevel"],
+                     normalized.get("headingLevel"), normalized["format"]["outlineLevel"]),
+                    expected,
+                    label,
+                )
 
     def test_background_format_facts_derive_headings_from_verified_blocks(self):
         blocks = [

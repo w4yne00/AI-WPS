@@ -109,9 +109,9 @@ format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移�
 
 | 门禁 | 结果 |
 | --- | --- |
-| 当前源码 Adapter 全量测试 | `833 passed, 95 skipped` |
-| v0.25.1 交付/prepare/audit focused | `46 passed`（`test_v0251_delivery.py`） |
-| 协议/交付 focused 合计 | `82 passed` |
+| 当前源码 Adapter 全量测试 | `834 passed, 95 skipped` |
+| v0.25.1 交付/prepare/audit focused | `47 passed`（`test_v0251_delivery.py`） |
+| 协议/交付 focused 合计 | `83 passed` |
 | 正式插件合同测试 | `28/28` |
 | Python 3.8 兼容扫描 | `82` 个生产文件 |
 | 麒麟构建来源与审计 | 冻结的 `f953c58` 麒麟 Python 3.8.10 来源、白名单、规则/插件/审计/运行时/生命周期证据已保留，但因 outline fallback JS/Python 哈希漂移登记为 `rejected`；当前没有自动化候选 |

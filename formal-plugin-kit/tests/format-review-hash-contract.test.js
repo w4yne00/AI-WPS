@@ -503,6 +503,9 @@ test("outline normalization preserves source priority and value semantics", () =
   for (const item of cases) {
     const sourceBlock = Object.assign({ paragraphIndex: 0 }, item.block);
     const normalized = helpers.normalizeDeterministicFormatReviewBlock(sourceBlock);
+    const python = runPython({ mode: "normalize", blocks: [sourceBlock] });
+    assert.equal(python.ok, true, `${item.label} Python normalization`);
+    const pythonBlock = python.normalized[0];
     const hasTopLevel = Object.prototype.hasOwnProperty.call(normalized, "outlineLevel");
     const hasFormat = Object.prototype.hasOwnProperty.call(normalized.format, "outlineLevel");
     assert.equal(hasTopLevel, item.expected !== undefined, `${item.label} top-level presence`);
@@ -512,9 +515,7 @@ test("outline normalization preserves source priority and value semantics", () =
       assert.equal(normalized.format.outlineLevel, item.expected, `${item.label} format value`);
     }
     assert.equal(normalized.blockType, item.expectedType, `${item.label} block type`);
-    const python = runPython({ mode: "normalize", blocks: [normalized] });
-    assert.equal(python.ok, true, `${item.label} Python normalization`);
-    assert.deepEqual(python.normalized[0], normalized, `${item.label} cross-runtime normalized block`);
+    assert.deepEqual(pythonBlock, normalized, `${item.label} cross-runtime normalized block`);
   }
   for (const [value, expected] of [[0, 0], [10, 0], ...Array.from({ length: 9 }, (_, i) => [i + 1, i + 1])]) {
     const normalized = helpers.normalizeDeterministicFormatReviewBlock({

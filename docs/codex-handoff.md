@@ -573,7 +573,7 @@ bash packaging/build_v0251_delivery_kit.sh
 当前可复核结果：
 
 - `20260824-f953c58` 的 Kylin Python `3.8.10` 来源、白名单、规则/插件/审计/运行时/生命周期门禁证据已保留，但因 heading-only 与 format-outline-only 兼容输入的 outline fallback JS/Python 哈希漂移，终态登记为 `rejected`；当前没有自动化候选，历史归档不得分发。
-- 当前源码 Adapter 全量测试为 `833 passed, 95 skipped`，v0.25.1 交付/prepare/audit focused 为 `46 passed`（`test_v0251_delivery.py`），三项协议/交付 focused 合计 `82 passed`，正式插件契约为 `28/28`；这些自动化证据仍不替代目标机验收。
+- 当前源码 Adapter 全量测试为 `834 passed, 95 skipped`，v0.25.1 交付/prepare/audit focused 为 `47 passed`（`test_v0251_delivery.py`），三项协议/交付 focused 合计 `83 passed`，正式插件契约为 `28/28`；这些自动化证据仍不替代目标机验收。
 - `20260824-f953c58` 归档保持原始字节，SHA-256 为 `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`；包内 manifest/status/delivery note/target-acceptance identity、精确 1..9 行及九项 `manual-pending` 状态可复核，但不得作为候选分发。
 - Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
 

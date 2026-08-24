@@ -206,13 +206,13 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
         "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
+        "archiveSha256": "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7",
         "status": "rejected",
         "recordedAt": "20260824",
         "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt",
     }
     assert status["records"][-1] == expected_current
     assert [record for record in status["records"] if record.get("status") == "candidate"] == []
-
     previous_current = next(
         record
         for record in status["records"]
@@ -297,18 +297,18 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`46 passed`" in line for line in delivery_lines)
+        assert any("`47 passed`" in line for line in delivery_lines)
         assert all("`45 passed`" not in line for line in delivery_lines)
         assert all("`42 passed`" not in line for line in delivery_lines)
         assert all("`41 passed`" not in line for line in delivery_lines)
-        assert any("`82 passed`" in line for line in aggregate_lines)
+        assert any("`83 passed`" in line for line in aggregate_lines)
         assert any("`28/28`" in line for line in plugin_lines)
         assert all("`25/25`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `833 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `834 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `46 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `47 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -325,6 +325,53 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
     ):
         for path in documents:
             assert stale not in path.read_text(encoding="utf-8")
+
+
+def test_v0251_prepare_accepts_frozen_previous_digest_and_rejects_mismatch(tmp_path):
+    prepare_spec = importlib.util.spec_from_file_location("v0251_prepare", PREPARE)
+    assert prepare_spec is not None and prepare_spec.loader is not None
+    prepare_module = importlib.util.module_from_spec(prepare_spec)
+    prepare_spec.loader.exec_module(prepare_module)
+
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
+    with tarfile.open(archive, "r:gz") as handle:
+        handle.extractall(tmp_path)
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
+    status_path = delivery / "docs/v0251-candidate-status.json"
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    frozen = next(
+        record
+        for record in status["records"]
+        if record.get("archiveName") == archive.name
+    )
+    frozen["status"] = "rejected"
+    frozen["archiveSha256"] = hashlib.sha256(archive.read_bytes()).hexdigest()
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+
+    prepare_module.prepare(delivery, "20260824", baseline, archive, "eb4c2b5")
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["candidateEvidence"]["supersedes"]["status"] == "rejected"
+    assert manifest["candidateEvidence"]["supersedes"]["archiveSha256"] == (
+        "833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7"
+    )
+
+    status = json.loads(status_path.read_text(encoding="utf-8"))
+    frozen = next(
+        record
+        for record in status["records"]
+        if record.get("archiveName") == archive.name
+    )
+    frozen["archiveSha256"] = "0" * 64
+    status_path.write_text(json.dumps(status), encoding="utf-8")
+    with pytest.raises(ValueError, match="V0251_PREVIOUS_CANDIDATE_STATUS_INVALID"):
+        prepare_module.prepare(
+            delivery,
+            "20260824",
+            baseline,
+            archive,
+            "ec4c2b5",
+        )
 
 
 def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):

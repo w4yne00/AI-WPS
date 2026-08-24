@@ -123,9 +123,9 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `833 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `46 passed` (`test_v0251_delivery.py`) |
-| Focused protocol/delivery aggregate | `82 passed` |
+| Current-source full Adapter suite | `834 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `47 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `83 passed` |
 | Formal plugin contract tests | `28/28` |
 | Python 3.8 compatibility scan | `82` production files |
 | Kylin build provenance and audits | Frozen `f953c58` Kylin Python 3.8.10 provenance, allowlist, rule/plugin/audit/runtime/lifecycle evidence is retained but rejected for outline fallback JS/Python hash drift; no active candidate remains |

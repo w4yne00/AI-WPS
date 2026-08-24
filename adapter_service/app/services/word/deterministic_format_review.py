@@ -2185,6 +2185,19 @@ class DeterministicFormatReviewService:
                     "DETERMINISTIC_FORMAT_REVIEW_BLOCK_INVALID",
                     "格式审查语义单元文本无效。",
                 )
+            has_outline_fact = (
+                "headingLevel" in item
+                or "outlineLevel" in item
+                or (
+                    isinstance(item.get("format"), dict)
+                    and "outlineLevel" in item["format"]
+                )
+            )
+            outline_level = (
+                normalize_format_block_outline_level(item)
+                if has_outline_fact
+                else None
+            )
             normalized_item = {
                 "blockId": block_id,
                 "blockType": block_type,
@@ -2219,13 +2232,7 @@ class DeterministicFormatReviewService:
                 normalized_item["format"] = normalized_table["format"]
                 canonical_text = cls._format_block_text_values(normalized_item)
                 normalized_item["text"] = canonical_text[0] if canonical_text else ""
-            has_outline_fact = (
-                "headingLevel" in item
-                or "outlineLevel" in item
-                or "outlineLevel" in normalized_item["format"]
-            )
             if has_outline_fact:
-                outline_level = normalize_format_block_outline_level(normalized_item)
                 normalized_item["outlineLevel"] = outline_level
                 normalized_item["format"]["outlineLevel"] = outline_level
                 if block_type == "heading":
