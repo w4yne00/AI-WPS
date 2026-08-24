@@ -159,6 +159,54 @@ class RuntimeStateManagerTests(unittest.TestCase):
             self.assertEqual(payload["modelConfigurations"], {})
             self.assertNotIn("taskApiKeyRefs", payload)
 
+    def test_snapshot_ignores_deleted_legacy_workflow_after_migration(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            state_dir = root / "state"
+            state_dir.mkdir()
+            (state_dir / "adapter.json").write_text(
+                json.dumps(
+                    {
+                        "providerBaseUrl": "https://workflow.example/v1",
+                        "workflowProfiles": {
+                            "legacy-deleted-workflow": {
+                                "id": "legacy-deleted-workflow",
+                                "taskType": "word.smart_write",
+                                "apiKeyRef": "deleted-workflow-key",
+                            }
+                        },
+                        "activeWorkflowProfiles": {
+                            "word.smart_write": "legacy-deleted-workflow"
+                        },
+                        "modelConfigurations": {},
+                        "activeModelConfigurations": {},
+                        "migrationState": {
+                            "workflowProfilesImported": True,
+                            "workflowProfilesVersion": 1,
+                        },
+                    },
+                    ensure_ascii=False,
+                ),
+                encoding="utf-8",
+            )
+            WritingPolicyStore(state_dir / "writing_policies.db")
+            manager = RuntimeStateManager(
+                state_dir, root / "backups", "0.25.1-alpha"
+            )
+
+            result = manager.create_snapshot("pre_install")
+
+            self.assertEqual(result["status"], "ready")
+            manifest = json.loads(
+                (
+                    root / "backups" / result["snapshotId"] / "manifest.json"
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                manifest["inventory"]["modelConfigurations"]["totalCount"], 0
+            )
+            self.assertEqual(manifest["inventory"]["activeRelationships"], [])
+
     def test_delivery_contract_installs_shared_state_operator_workflow(self) -> None:
         root = Path(__file__).resolve().parents[2]
         installer = (root / "phase1-delivery-kit/installer/install_phase1.sh").read_text(

@@ -14,6 +14,7 @@ from typing import Dict, List, Optional, Tuple
 
 from app.services.model_configurations import (
     ModelConfigurationStore,
+    WORKFLOW_PROFILE_MIGRATION_VERSION,
     normalize_service_base_url,
 )
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
@@ -113,6 +114,19 @@ _POLICY_INTEGER_COLUMNS = {
         "error_count",
     },
 }
+
+
+def _legacy_workflow_fields_are_active(payload: dict) -> bool:
+    migration_state = payload.get("migrationState")
+    if not isinstance(migration_state, dict):
+        return True
+    migration_version = migration_state.get("workflowProfilesVersion")
+    return not (
+        type(migration_version) is int
+        and migration_version >= WORKFLOW_PROFILE_MIGRATION_VERSION
+    )
+
+
 _POLICY_REQUIRED_INDEXES = {
     "writing_policy_terms": {
         "idx_writing_policy_terms_scope": (False, ("scope",)),
@@ -711,7 +725,11 @@ class RuntimeStateManager:
                 raise ValueError("duplicate configuration identity")
             result[item["id"]] = item
 
-        legacy = payload.get("workflowProfiles", {})
+        legacy = (
+            payload.get("workflowProfiles", {})
+            if _legacy_workflow_fields_are_active(payload)
+            else {}
+        )
         if legacy is None:
             legacy = {}
         if not isinstance(legacy, dict):
@@ -759,7 +777,11 @@ class RuntimeStateManager:
         payload: dict, configurations: Dict[str, dict]
     ) -> Dict[str, str]:
         current = payload.get("activeModelConfigurations", {})
-        legacy = payload.get("activeWorkflowProfiles", {})
+        legacy = (
+            payload.get("activeWorkflowProfiles", {})
+            if _legacy_workflow_fields_are_active(payload)
+            else {}
+        )
         if current is None:
             current = {}
         if legacy is None:
