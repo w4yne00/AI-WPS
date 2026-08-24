@@ -14,6 +14,7 @@ import json
 import os
 import sys
 import tempfile
+import copy
 from pathlib import Path
 
 from app.core.errors import AdapterError
@@ -42,22 +43,38 @@ with tempfile.TemporaryDirectory() as directory:
         normalized = service._normalize_format_blocks(payload["blocks"])
         metrics = service._format_metrics(normalized)
         print(json.dumps({"normalized": normalized, "metrics": metrics}, ensure_ascii=False, sort_keys=True))
+    elif payload.get("mode") == "normalize":
+        try:
+            normalized = service._normalize_format_blocks(payload["blocks"])
+        except AdapterError as error:
+            print(json.dumps({"ok": False, "code": error.code, "status": error.status_code}, ensure_ascii=False, sort_keys=True))
+        else:
+            print(json.dumps({"ok": True, "normalized": normalized}, ensure_ascii=False, sort_keys=True))
     elif payload.get("mode") == "negative":
         normalized = service._normalize_format_blocks(payload["blocks"])
         metrics = service._format_metrics(normalized)
-        session = service.create_snapshot({"documentId": "contract.docx", "selectionMode": "document"})
         results = []
-        for key in ("structureSha256", "formatSha256"):
-            bad = dict(metrics)
-            bad[key] = "0" * 64
+        nested_format_blocks = copy.deepcopy(normalized)
+        next(block for block in nested_format_blocks if block.get("blockType") == "table")["nestedTables"][0]["format"]["styleName"] = "TamperedNestedTable"
+        cell_text_blocks = copy.deepcopy(normalized)
+        next(block for block in cell_text_blocks if block.get("blockType") == "table")["rows"][0]["cells"][0]["text"] = "篡改后的表格正文"
+        table_structure_blocks = copy.deepcopy(normalized)
+        next(block for block in table_structure_blocks if block.get("blockType") == "table")["rows"][0]["cells"][0]["rowSpan"] = 3
+        cases = [
+            ("nestedTableFormat", nested_format_blocks),
+            ("tableCellText", cell_text_blocks),
+            ("tableStructure", table_structure_blocks),
+        ]
+        for key, tampered_blocks in cases:
+            session = service.create_snapshot({"documentId": "contract.docx", "selectionMode": "document"})
             body = {
                 "uploadToken": session["uploadToken"],
                 "batchId": "format-batch-0",
-                "blocks": normalized,
+                "blocks": tampered_blocks,
                 "characterCount": metrics["characterCount"],
                 "contentSha256": metrics["contentSha256"],
-                "structureSha256": bad["structureSha256"],
-                "formatSha256": bad["formatSha256"],
+                "structureSha256": metrics["structureSha256"],
+                "formatSha256": metrics["formatSha256"],
                 "editSequence": None,
             }
             try:
@@ -149,7 +166,7 @@ function fixture() {
 }
 
 test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
-  const body = helpers.buildDeterministicFormatReviewBody(fixture(), {
+  const imageOptions = {
     imageFacts: [{
       imageId: "image-1",
       groupId: "group-1",
@@ -160,7 +177,8 @@ test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
       altText: "示意图",
       nearbyText: "图示"
     }]
-  });
+  };
+  const body = helpers.buildDeterministicFormatReviewBody(fixture(), imageOptions);
   const python = runPython({ mode: "metrics", blocks: body.blocks });
   const keys = ["characterCount", "contentSha256", "structureSha256", "formatSha256"];
   for (const key of keys) {
@@ -178,11 +196,14 @@ test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
   assert.notEqual(body.structureSha256, withoutImage.structureSha256);
   const changedReasonFixture = fixture();
   changedReasonFixture.content.paragraphs[9].formatInsufficientReason = "changed_reason";
-  const changedReason = helpers.buildDeterministicFormatReviewBody(changedReasonFixture);
+  const changedReason = helpers.buildDeterministicFormatReviewBody(changedReasonFixture, imageOptions);
+  const reasonNeutral = JSON.parse(JSON.stringify(changedReason));
+  reasonNeutral.blocks.find((block) => block.blockId === "format-paragraph-10")
+    .format.insufficientReason = body.blocks.find((block) => block.blockId === "format-paragraph-10")
+    .format.insufficientReason;
+  assert.deepEqual(reasonNeutral.blocks, JSON.parse(JSON.stringify(body.blocks)));
   assert.notEqual(body.formatSha256, changedReason.formatSha256);
-  assert.equal(python.metrics.characterCount,
-    body.blocks.filter((block) => block.scope === "in_scope")
-      .reduce((sum, block) => sum + String(block.text || "").length, 0));
+  assert.equal(python.metrics.characterCount, body.reviewCharacterCount);
   assert.equal(python.metrics.coverage.imageCount, 1);
   assert.equal(python.metrics.coverage.pixelExportCount, 0);
   assert.equal(python.metrics.coverage.pixelUploadCount, 0);
@@ -200,8 +221,39 @@ test("Python rejects structure and format tampering before reviewer execution", 
   const body = helpers.buildDeterministicFormatReviewBody(fixture());
   const result = runPython({ mode: "negative", blocks: body.blocks });
   assert.deepEqual(result.results, [
-    { key: "structureSha256", code: "DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH", status: 409 },
-    { key: "formatSha256", code: "DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH", status: 409 }
+    { key: "nestedTableFormat", code: "DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH", status: 409 },
+    { key: "tableCellText", code: "DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH", status: 409 },
+    { key: "tableStructure", code: "DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH", status: 409 }
   ]);
   assert.equal(result.reviewerCalls, 0);
+});
+
+test("numeric format boundaries are cross-runtime stable or rejected", () => {
+  const decimalFixture = fixture();
+  decimalFixture.content.paragraphs[0].fontSize = -0;
+  decimalFixture.content.paragraphs[0].lineSpacing = 1.25;
+  decimalFixture.content.paragraphs[0].lineSpacingMode = "multiple";
+  const decimalBody = helpers.buildDeterministicFormatReviewBody(decimalFixture);
+  const decimalPython = runPython({ mode: "metrics", blocks: decimalBody.blocks });
+  for (const key of ["contentSha256", "structureSha256", "formatSha256"]) {
+    assert.equal(decimalPython.metrics[key], decimalBody[key], key);
+  }
+  assert.equal(decimalBody.blocks[0].format.fontSize, 0);
+  assert.equal(decimalBody.blocks[0].format.lineSpacing, 1.25);
+
+  for (const exponentValue of [1e-7, 1e-5]) {
+    const exponentFixture = fixture();
+    exponentFixture.content.paragraphs[0].fontSize = exponentValue;
+    assert.throws(
+      () => helpers.buildDeterministicFormatReviewBody(exponentFixture),
+      /数值表示/
+    );
+    const exponentBody = helpers.buildDeterministicFormatReviewBody(fixture());
+    exponentBody.blocks[0].format.fontSize = exponentValue;
+    assert.deepEqual(runPython({ mode: "normalize", blocks: exponentBody.blocks }), {
+      code: "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+      ok: false,
+      status: 400
+    });
+  }
 });

@@ -3,6 +3,7 @@ import binascii
 import hashlib
 import inspect
 import json
+import math
 import os
 import re
 import secrets
@@ -2274,6 +2275,51 @@ class DeterministicFormatReviewService:
         return normalized
 
     @staticmethod
+    def _normalize_deterministic_number(value: object) -> object:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            if abs(value) >= 1000000000000000:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+                    "格式审查数值表示不受支持。",
+                    status_code=400,
+                )
+            return value
+        if not isinstance(value, float):
+            return value
+        if not math.isfinite(value):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+                "格式审查数值表示无效。",
+                status_code=400,
+            )
+        if value == 0:
+            return 0
+        if (
+            "e" in str(value).lower()
+            or abs(value) < 0.0001
+            or abs(value) >= 1000000000000000
+        ):
+            raise AdapterError(
+                "DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID",
+                "格式审查数值表示不受支持。",
+                status_code=400,
+            )
+        return int(value) if value.is_integer() else value
+
+    @classmethod
+    def _normalize_deterministic_json_value(cls, value: object) -> object:
+        if isinstance(value, dict):
+            return {
+                key: cls._normalize_deterministic_json_value(item)
+                for key, item in value.items()
+            }
+        if isinstance(value, list):
+            return [cls._normalize_deterministic_json_value(item) for item in value]
+        return cls._normalize_deterministic_number(value)
+
+    @staticmethod
     def _normalize_format_facts(value: object) -> Dict:
         if not isinstance(value, dict):
             return {}
@@ -2285,7 +2331,7 @@ class DeterministicFormatReviewService:
             "rightIndent", "outlineLevel", "segments", "dataStatus", "facts", "formatFacts", "lineSpacingMode"
         }
         normalized = {
-            key: deepcopy(value[key])
+            key: DeterministicFormatReviewService._normalize_deterministic_json_value(deepcopy(value[key]))
             for key in allowed
             if key in value
         }
@@ -2297,7 +2343,9 @@ class DeterministicFormatReviewService:
             normalized["dataStatus"] = "insufficient"
         if normalized.get("dataStatus") == "insufficient" and value.get("insufficientReason"):
             normalized["insufficientReason"] = str(value["insufficientReason"])[:120]
-        return normalize_source_format_facts(normalized)
+        return DeterministicFormatReviewService._normalize_deterministic_json_value(
+            normalize_source_format_facts(normalized)
+        )
 
     @staticmethod
     def _normalize_format_segments(value: object) -> List[Dict]:
@@ -2641,26 +2689,32 @@ class DeterministicFormatReviewService:
     def _format_block_text_values(cls, block: Dict) -> List[str]:
         if not isinstance(block, dict):
             return []
+        if (
+            block.get("blockType") == "table"
+            or "rows" in block
+            or "nestedTables" in block
+        ):
+            values = []
+            rows = block.get("rows", [])
+            if isinstance(rows, list):
+                for row in rows:
+                    if not isinstance(row, dict) or not isinstance(row.get("cells", []), list):
+                        continue
+                    for cell in row.get("cells", []):
+                        if not isinstance(cell, dict):
+                            continue
+                        cell_text = cell.get("text", "")
+                        if isinstance(cell_text, str) and cell_text:
+                            values.append(cell_text)
+            nested = block.get("nestedTables", [])
+            if isinstance(nested, list):
+                for table in nested:
+                    values.extend(cls._format_block_text_values(table))
+            return ["\n".join(values)] if values else []
         text = block.get("text", "")
         if isinstance(text, str) and text:
             return [text]
-        values = []
-        rows = block.get("rows", [])
-        if isinstance(rows, list):
-            for row in rows:
-                if not isinstance(row, dict) or not isinstance(row.get("cells", []), list):
-                    continue
-                for cell in row.get("cells", []):
-                    if not isinstance(cell, dict):
-                        continue
-                    cell_text = cell.get("text", "")
-                    if isinstance(cell_text, str) and cell_text:
-                        values.append(cell_text)
-        nested = block.get("nestedTables", [])
-        if isinstance(nested, list):
-            for table in nested:
-                values.extend(cls._format_block_text_values(table))
-        return values
+        return []
 
     @staticmethod
     def _enforce_complexity(metrics: Dict, snapshot_bytes: int) -> None:
@@ -2907,6 +2961,7 @@ class DeterministicFormatReviewService:
                 })
             return {
                 "tableId": table.get("tableId", ""),
+                "format": table.get("format", {}),
                 "rows": rows,
                 "nestedTables": [
                     project(item)

@@ -78,7 +78,7 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Item | Value |
 | --- | --- |
 | Version | `v0.25.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260822` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
 | Delivery status | Historical `20260824-ccad09f` candidate is `rejected` after JS/Python `word.format_review.snapshot.v2` structure/format hash drift; source repair is in progress and a new `v0.25.1-alpha` candidate is pending build |

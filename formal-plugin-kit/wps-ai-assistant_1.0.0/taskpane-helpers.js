@@ -367,24 +367,66 @@
   }
 
   function formatReviewBlockTextValues(block) {
-    var values = [];
     if (!block) {
-      return values;
+      return [];
+    }
+    if (block.blockType === "table" || Array.isArray(block.rows) || Array.isArray(block.nestedTables)) {
+      var tableValues = [];
+      (block.rows || []).forEach(function (row) {
+        (row.cells || []).forEach(function (cell) {
+          if (cell.text) {
+            tableValues.push(String(cell.text));
+          }
+        });
+      });
+      (block.nestedTables || []).forEach(function (table) {
+        tableValues = tableValues.concat(formatReviewBlockTextValues(table));
+      });
+      return tableValues.length ? [tableValues.join("\n")] : [];
     }
     if (block.text) {
       return [String(block.text)];
     }
-    (block.rows || []).forEach(function (row) {
-      (row.cells || []).forEach(function (cell) {
-        if (cell.text) {
-          values.push(String(cell.text));
-        }
+    return [];
+  }
+
+  function normalizeDeterministicNumber(value) {
+    if (!isFinite(value)) {
+      throw new Error("格式审查数值表示无效。");
+    }
+    if (value === 0) {
+      return 0;
+    }
+    if (String(value).toLowerCase().indexOf("e") >= 0 ||
+        Math.abs(value) < 0.0001 || Math.abs(value) >= 1000000000000000) {
+      throw new Error("格式审查数值表示不受支持。");
+    }
+    return value;
+  }
+
+  function normalizeDeterministicJsonValue(value) {
+    if (typeof value === "number") {
+      return normalizeDeterministicNumber(value);
+    }
+    if (Array.isArray(value)) {
+      return value.map(normalizeDeterministicJsonValue);
+    }
+    if (value && typeof value === "object") {
+      var normalized = {};
+      Object.keys(value).forEach(function (key) {
+        normalized[key] = normalizeDeterministicJsonValue(value[key]);
       });
-    });
-    (block.nestedTables || []).forEach(function (table) {
-      values = values.concat(formatReviewBlockTextValues(table));
-    });
-    return values;
+      return normalized;
+    }
+    return value;
+  }
+
+  function normalizeDeterministicIndex(value, fallback) {
+    return normalizeDeterministicNumber(Number(value || fallback));
+  }
+
+  function normalizeDeterministicRangeNumber(value) {
+    return normalizeDeterministicNumber(Number(value));
   }
 
   function normalizeDeterministicFormatFacts(value) {
@@ -400,7 +442,7 @@
     ];
     allowed.forEach(function (key) {
       if (typeof source[key] !== "undefined") {
-        normalized[key] = source[key];
+        normalized[key] = normalizeDeterministicJsonValue(source[key]);
       }
     });
     if (Object.prototype.hasOwnProperty.call(normalized, "dataStatus") &&
@@ -412,8 +454,8 @@
       normalized.segments = normalized.segments.map(function (segment) {
         var item = segment && typeof segment === "object" ? segment : {};
         return {
-          start: Number(item.start || 0),
-          end: Number(item.end || 0),
+          start: normalizeDeterministicIndex(item.start, 0),
+          end: normalizeDeterministicIndex(item.end, 0),
           format: normalizeDeterministicFormatFacts(item.format || {})
         };
       });
@@ -443,7 +485,7 @@
     } else {
       delete normalized.insufficientReason;
     }
-    return normalized;
+    return normalizeDeterministicJsonValue(normalized);
   }
 
   function normalizeDeterministicImageFacts(value) {
@@ -477,7 +519,7 @@
         return;
       }
       if (numeric.indexOf(key) >= 0) {
-        var valueNumber = Number(source[key]);
+        var valueNumber = normalizeDeterministicRangeNumber(source[key]);
         if (!isFinite(valueNumber) || Math.floor(valueNumber) !== valueNumber || valueNumber < 0) {
           throw new Error("格式审查原文范围索引无效。");
         }
@@ -506,15 +548,15 @@
       (parentId ? parentId + "-nested-" + (index + 1) : "format-table-" + (index + 1)));
     var rows = Array.isArray(source.rows) ? source.rows.map(function (row, rowPosition) {
       var rowSource = row && typeof row === "object" ? row : {};
-      var rowIndex = Number(rowSource.rowIndex || rowPosition + 1);
+      var rowIndex = normalizeDeterministicIndex(rowSource.rowIndex, rowPosition + 1);
       var cells = Array.isArray(rowSource.cells) ? rowSource.cells.map(function (cell, columnPosition) {
         var cellSource = cell && typeof cell === "object" ? cell : {};
         return {
           cellId: String(cellSource.cellId || "cell-" + rowIndex + "-" + (columnPosition + 1)),
-          rowIndex: Number(cellSource.rowIndex || rowIndex),
-          columnIndex: Number(cellSource.columnIndex || columnPosition + 1),
-          rowSpan: Number(cellSource.rowSpan || 1),
-          columnSpan: Number(cellSource.columnSpan || 1),
+          rowIndex: normalizeDeterministicIndex(cellSource.rowIndex, rowIndex),
+          columnIndex: normalizeDeterministicIndex(cellSource.columnIndex, columnPosition + 1),
+          rowSpan: normalizeDeterministicIndex(cellSource.rowSpan, 1),
+          columnSpan: normalizeDeterministicIndex(cellSource.columnSpan, 1),
           text: String(cellSource.text || ""),
           format: normalizeDeterministicFormatFacts(cellSource.format || {})
         };
@@ -525,7 +567,7 @@
     rows.sort(function (left, right) { return left.rowIndex - right.rowIndex; });
     return {
       tableId: tableId,
-      tableIndex: Number(source.tableIndex || index + 1),
+      tableIndex: normalizeDeterministicIndex(source.tableIndex, index + 1),
       rows: rows,
       nestedTables: (Array.isArray(source.nestedTables) ? source.nestedTables : [])
         .map(function (nested, nestedIndex) {
@@ -539,9 +581,10 @@
     function tableProjection(table) {
       return {
         tableId: String(table && table.tableId || ""),
+        format: table && table.format || {},
         rows: (table && table.rows || []).map(function (row) {
           return {
-            rowIndex: Number(row && row.rowIndex || 0),
+            rowIndex: normalizeDeterministicIndex(row && row.rowIndex, 0),
             cells: (row && row.cells || []).map(function (cell) {
               return {
                 cellId: String(cell && cell.cellId || ""),
@@ -744,6 +787,9 @@
       }).sort().map(function (key) {
         return JSON.stringify(key) + ":" + stableFormatReviewJson(value[key]);
       }).join(",") + "}";
+    }
+    if (typeof value === "number") {
+      return JSON.stringify(normalizeDeterministicNumber(value));
     }
     return typeof value === "undefined" ? "null" : JSON.stringify(value);
   }

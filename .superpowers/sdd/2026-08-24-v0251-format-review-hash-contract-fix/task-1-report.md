@@ -104,3 +104,86 @@ candidate_status_json=valid
 - 已确认普通图片空文本不进入内容镜像，图片元数据进入 structure，图片 inventory 只计一次且 `pixelExportCount/pixelUploadCount` 均为 0。
 - 已确认受保护的 `.scratch/writing-policy-review/`、`config/adapter.json`、`run/` 和旧历史归档未改动、未纳入提交。
 - 风险：本地没有真实 Python 3.8、麒麟 V10/WPS 真机和真实模型服务；这些仍需后续候选构建与 Issue #59 人工验收。完整 Adapter 测试的 95 个 skip 为既有测试环境依赖现状，不是跨运行时哈希门禁的 skip。
+
+## Fix round 1（基准 `85b6aa0`）
+
+### 修改
+
+- JS/Python 的递归 table format projection 现在同时包含每层表格自身 `format`，因此嵌套表格格式参与 `formatSha256`。
+- JS/Python 对 table block 和 nested table 只从规范化 `rows/nestedTables` 递归生成唯一文本镜像；保留的旧顶层 `block.text` 不再被信任。表格文本仍以规范化换行镜像计数，保持既有 `reviewCharacterCount` 契约。
+- 两端新增无依赖数值规则：负零统一为 `0`；有限、非指数安全范围内的小数使用原数值；可能导致运行时 JSON 指数差异的数值（包括 `1e-7`、`1e-5` 及非有限值）统一以 `DETERMINISTIC_FORMAT_REVIEW_NUMBER_INVALID`/JS `Error` fail-closed 拒绝。Python 保持 Python 3.8 语法。
+- README.md 版本规则日期由 `20260822` 同步为 `20260824`。
+
+### TDD RED/GREEN
+
+新增断言后、未修改生产代码时运行：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js
+tests 3 / pass 1 / fail 2
+失败项：nestedTableFormat 与 tableCellText 未被旧 Adapter 哈希校验拒绝；负零仍为 -0。
+```
+
+实现后 focused GREEN：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js
+tests 3 / pass 3 / fail 0
+```
+
+负向覆盖使用真实规范化 blocks，保留原 `characterCount/contentSha256/structureSha256/formatSha256`，分别篡改 nested table `format`、cell `text`（顶层旧 `block.text` 保留）和 cell `rowSpan`；三项均返回 `409 DETERMINISTIC_FORMAT_REVIEW_BATCH_HASH_MISMATCH`，`reviewerCalls=0`。reason 测试只改变 reason，其余 JSON 输入完全一致。
+
+### 覆盖文件、命令与真实输出
+
+本轮覆盖测试文件：
+
+- `formal-plugin-kit/tests/format-review-hash-contract.test.js`
+- `formal-plugin-kit/tests/deterministic-format-review.test.js`
+- `adapter_service/tests/test_deterministic_format_snapshot_protocol.py`
+- `adapter_service/tests/test_outline_levels.py`
+- `adapter_service/tests/test_v0251_delivery.py`
+
+Focused：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/format-review-hash-contract.test.js formal-plugin-kit/tests/deterministic-format-review.test.js
+tests 4 / pass 4 / fail 0
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=adapter_service python3 -m pytest -q adapter_service/tests/test_deterministic_format_snapshot_protocol.py adapter_service/tests/test_outline_levels.py adapter_service/tests/test_v0251_delivery.py
+48 passed, 99 warnings in 0.49s
+```
+
+完整测试（数值安全范围最终调整后）：
+
+```text
+AI_WPS_HASH_CONTRACT_PYTHON=python3 node --test formal-plugin-kit/tests/*.test.js
+tests 20 / pass 20 / fail 0
+
+PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=adapter_service python3 -m pytest -q adapter_service/tests
+799 passed, 95 skipped, 110 warnings in 50.20s
+```
+
+静态检查：
+
+```text
+node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js
+node --check formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js
+python3 packaging/check_python38_compatibility.py adapter_service/app packaging
+python38_compatibility_scan=passed files=82
+bash -n packaging/build_v0251_delivery_kit.sh
+git diff --check
+```
+
+### 本轮文件清单
+
+- `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js`
+- `adapter_service/app/services/word/deterministic_format_review.py`
+- `formal-plugin-kit/tests/format-review-hash-contract.test.js`
+- `README.md`
+- 本报告
+
+### 自审与风险
+
+- Adapter 的四项校验及服务端独立重算未关闭或放宽；table 文本绕过、嵌套 format 绕过和真实结构篡改均在 reviewer/provider 前阻断。
+- 数值规范是保守拒绝策略，避免 JS `JSON.stringify` 与 Python `json.dumps` 在指数边界漂移；代价是极小/极大非零格式数值被拒绝，需要上游改用安全小数范围。
+- 本轮未构建交付包、未 push/发布；仍只有本机 Python 3.9.6 与 Node v26.7.0，Python 3.8 仅完成静态兼容扫描，真实 Python 3.8、WPS、模型服务和 Issue #59 人工验收仍是后续风险。
