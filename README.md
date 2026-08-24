@@ -115,7 +115,7 @@ Validation snapshot:
 | Gate | Result |
 | --- | --- |
 | Current-source full Adapter suite | `800 passed, 95 skipped` |
-| v0.25.1 delivery assertions | `22 passed` |
+| v0.25.1 delivery assertions | `23 passed` |
 | Formal plugin contract tests | `22/22` |
 | Python 3.8 compatibility scan | `82` production files |
 | Kylin build provenance and audits | `246` source files; delivery, v0.25.1, and final archive audits passed |

@@ -212,12 +212,36 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
         for value in identity:
             assert value in text, "{} missing {}".format(path, value)
 
+    validation_documents = documents[:3]
+    for path in validation_documents:
+        text = path.read_text(encoding="utf-8")
+        delivery_lines = [
+            line
+            for line in text.splitlines()
+            if "delivery assertions" in line or "交付断言" in line
+        ]
+        plugin_lines = [
+            line
+            for line in text.splitlines()
+            if "Formal plugin contract tests" in line
+            or "正式插件合同测试" in line
+            or "正式插件契约" in line
+        ]
+        assert any("`23 passed`" in line for line in delivery_lines)
+        assert all("`22 passed`" not in line for line in delivery_lines)
+        assert any("`22/22`" in line for line in plugin_lines)
+        assert all("`22 passed`" not in line for line in plugin_lines)
+
     for stale in (
         "No new archive has been built",
         "尚未构建新归档",
         "new candidate archive remains pending build",
         "新候选待构建",
         "新候选尚未构建",
+        "完成核验后再形成新候选",
+        "当前修复构建只接受完整 `HEAD`",
+        "当前源码正在修复",
+        "source repair is in progress",
     ):
         for path in documents:
             assert stale not in path.read_text(encoding="utf-8")

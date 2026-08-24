@@ -573,7 +573,7 @@ bash packaging/build_v0251_delivery_kit.sh
 当前可复核结果：
 
 - 历史 `20260824-ccad09f` 归档已登记 `rejected`，当前 `20260824-2e7a3e6` 归档已登记 `candidate`，不得分发旧归档。
-- 本地当前源码 Adapter 测试为 `800 passed, 95 skipped`，v0.25.1 交付断言为 `22 passed`，正式插件契约为 `22/22`，Python 3.8 静态兼容扫描为 `82` 个文件；麒麟构建来源为 `246` 个文件，交付、v0.25.1 和最终归档审计均通过。
+- 本地当前源码 Adapter 测试为 `800 passed, 95 skipped`，v0.25.1 交付断言为 `23 passed`，正式插件契约为 `22/22`，Python 3.8 静态兼容扫描为 `82` 个文件；麒麟构建来源为 `246` 个文件，交付、v0.25.1 和最终归档审计均通过。
 - 麒麟 V10 SP1 ARM64 / Python `3.8.10` 生命周期门禁中，原始故障复现、Adapter import、Uvicorn、公开格式审查 API、4 项 key contract、runtime path、v0.25.0 基线升级、全新安装、v0.22 升级、损坏 v0.23.0、核心/规范故障、已删除工作流覆盖安装、Python import、候选启动、健康版本、权限、WPS 未退出、安装中断全部通过；终态只能为 `candidate`。Node 为 `v22.23.2`。
 - 本地归档 SHA-256 与 `.sha256` 一致；Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
 
