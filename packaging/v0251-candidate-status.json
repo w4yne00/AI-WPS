@@ -116,7 +116,9 @@
       "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
       "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
-      "status": "candidate"
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt"
     }
   ]
 }

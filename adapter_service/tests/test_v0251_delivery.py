@@ -166,6 +166,7 @@ def test_v0251_handoff_rejected_list_contains_previous_candidates_in_validation_
     assert "20260824-5318d4b" in rejected_candidates
     assert "20260824-799adf9" in rejected_candidates
     assert "20260824-afe109c" in rejected_candidates
+    assert "20260824-f953c58" in rejected_candidates
     assert "20260822-e43dc8c" in rejected_candidates
 
     candidate_only = (
@@ -179,8 +180,9 @@ def test_v0251_handoff_uses_superseded_candidate_as_previous_archive_example():
 
     assert (
         "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE="
-        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+        "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
     ) in handoff
+    assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz" not in handoff
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
 
@@ -204,10 +206,12 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         "archiveName": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz",
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256",
         "sourceCommit": "f953c58312c8d3d42d3dccea402fccf55a3c7d53",
-        "status": "candidate",
+        "status": "rejected",
+        "recordedAt": "20260824",
+        "reason": "rejected: outline fallback JS/Python hash drift for heading-only and format-outline-only compatibility inputs; archive is frozen and no active candidate remains until rebuilt",
     }
     assert status["records"][-1] == expected_current
-    assert [record for record in status["records"] if record.get("status") == "candidate"] == [expected_current]
+    assert [record for record in status["records"] if record.get("status") == "candidate"] == []
 
     previous_current = next(
         record
@@ -298,8 +302,8 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         assert all("`42 passed`" not in line for line in delivery_lines)
         assert all("`41 passed`" not in line for line in delivery_lines)
         assert any("`82 passed`" in line for line in aggregate_lines)
-        assert any("`25/25`" in line for line in plugin_lines)
-        assert all("`24/24`" not in line for line in plugin_lines)
+        assert any("`28/28`" in line for line in plugin_lines)
+        assert all("`25/25`" not in line for line in plugin_lines)
 
     assert "当前源码 Adapter 全量测试为 `833 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"

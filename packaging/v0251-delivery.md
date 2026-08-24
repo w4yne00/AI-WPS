@@ -1,4 +1,4 @@
-# v0.25.1-alpha candidate delivery note
+# v0.25.1-alpha delivery note
 
 ## 候选身份
 
@@ -8,16 +8,20 @@
 - Archive name: `ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz`
 - Archive checksum file: `ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz.sha256`
 - Archive SHA-256: `833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`
-- Automated status: `candidate`
+- Automated status: `rejected`
 - Target acceptance status: `manual-pending` (Issue #59)
 
-The package uses the accepted `v0.25.0-alpha` Phase1 baseline and explicit
+The frozen package uses the accepted `v0.25.0-alpha` Phase1 baseline and explicit
 allowlist assembly. The v2 deterministic format-review contract is
 `word.format_review.snapshot.v2`; JavaScript and Python independently verify
 `characterCount`, `contentSha256`, `structureSha256`, and `formatSha256`.
 The contract uses `format_semantics.v1` rule assets, UTF-16 character counts,
-stable compact JSON, and fail-closed trust-boundary checks. A successful
-automated gate records only `candidate`; it is not manual acceptance.
+stable compact JSON, and fail-closed trust-boundary checks. This archive is
+rejected because heading-only and format-outline-only compatibility inputs
+reproduced outline fallback JS/Python hash drift. It is not a current candidate
+and must not be distributed; no active candidate exists until a rebuilt archive
+passes the complete gate. Automated success would record only `candidate`; it
+is not manual acceptance.
 
 `20260824-afe109c` is the superseded rejected candidate. Its archive
 `ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz` has SHA-256
@@ -36,7 +40,7 @@ original identities and archive digests.
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 将 `f953c58` 作为唯一 `candidate`，并将 `afe109c`、`799adf9`、`5318d4b`、`2e7a3e6`、`ccad09f` 及更早历史记录保持为 `rejected`；Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 已将冻结的 `f953c58` 登记为 `rejected`，原因是 heading-only 与 format-outline-only 兼容输入存在 outline fallback JS/Python 哈希漂移；当前没有自动化候选，必须在修复后重新构建，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 

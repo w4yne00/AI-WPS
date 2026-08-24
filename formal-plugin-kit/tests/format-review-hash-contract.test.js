@@ -301,6 +301,38 @@ function buildProtocolBody(payload, options) {
   return body;
 }
 
+function compatibilityProtocolFixtures() {
+  const cases = [
+    ["heading-only", { headingLevel: 2 }],
+    ["format-outline-only", { format: { outlineLevel: 2 } }]
+  ];
+  return cases.map(([label, compatibility]) => {
+    const payload = {
+      documentId: `contract-outline-${label}.docx`,
+      selectionMode: "document",
+      content: {
+        paragraphs: [{ index: 1, text: "兼容标题", outlineLevel: 2 }],
+        documentStructure: {}
+      }
+    };
+    const canonicalBody = buildProtocolBody(payload);
+    const compatibilityBlock = JSON.parse(JSON.stringify(canonicalBody.blocks[0]));
+    delete compatibilityBlock.outlineLevel;
+    delete compatibilityBlock.headingLevel;
+    delete compatibilityBlock.format.outlineLevel;
+    Object.keys(compatibility).forEach((key) => {
+      compatibilityBlock[key] = key === "format"
+        ? Object.assign({}, compatibilityBlock.format, compatibility.format)
+        : compatibility[key];
+    });
+    const body = Object.assign({}, canonicalBody, {
+      blocks: [helpers.normalizeDeterministicFormatReviewBlock(compatibilityBlock)]
+    });
+    body.batches = helpers.buildDeterministicFormatReviewBatches(body, 3500);
+    return [label, body];
+  });
+}
+
 function protocolFixtureFamilies() {
   const source = fixture();
   const paragraph = {
@@ -407,6 +439,104 @@ test("real JS coverage survives snapshot, upload, commit, and job start", () => 
   assert.equal(results.find((item) => item.label === "image-metadata").imageCount, 1);
   assert.equal(results.find((item) => item.label === "insufficient-reason").formatDataStatus, "insufficient");
   assert.equal(results.find((item) => item.label === "emoji-nonbmp").characterCount, 13);
+});
+
+test("outline compatibility fallbacks agree on normalized facts and hashes", () => {
+  for (const [label, body] of compatibilityProtocolFixtures()) {
+    const block = body.blocks[0];
+    assert.equal(block.outlineLevel, 2, `${label} top-level outline`);
+    assert.equal(block.format.outlineLevel, 2, `${label} format outline`);
+    assert.equal(block.headingLevel, 2, `${label} heading level`);
+    const python = runPython({ mode: "metrics", blocks: body.blocks, sourceCoverage: body.coverage });
+    for (const key of ["characterCount", "contentSha256", "structureSha256", "formatSha256"]) {
+      const jsValue = key === "characterCount" ? body.reviewCharacterCount : body[key];
+      assert.equal(python.metrics[key], jsValue, `${label} ${key}`);
+    }
+    assert.deepEqual(python.metrics.coverage, body.coverage, `${label} coverage`);
+  }
+});
+
+test("outline normalization preserves source priority and value semantics", () => {
+  const cases = [
+    {
+      label: "top-level-wins",
+      block: { blockId: "outline-priority-top", blockType: "heading", headingLevel: 3,
+        outlineLevel: 0, text: "正文", format: { outlineLevel: 2 } },
+      expected: 0,
+      expectedType: "paragraph"
+    },
+    {
+      label: "format-fallback",
+      block: { blockId: "outline-priority-format", blockType: "heading", headingLevel: 3,
+        text: "二级标题", format: { outlineLevel: 2 } },
+      expected: 2,
+      expectedType: "heading"
+    },
+    {
+      label: "heading-fallback",
+      block: { blockId: "outline-priority-heading", blockType: "heading", headingLevel: 3,
+        text: "三级标题", format: {} },
+      expected: 3,
+      expectedType: "heading"
+    },
+    {
+      label: "explicit-null",
+      block: { blockId: "outline-priority-null", blockType: "heading", headingLevel: 3,
+        outlineLevel: null, text: "未知层级", format: { outlineLevel: 2 } },
+      expected: null,
+      expectedType: "unknown"
+    },
+    {
+      label: "undefined-falls-through",
+      block: { blockId: "outline-priority-undefined", blockType: "heading", headingLevel: 3,
+        outlineLevel: undefined, text: "二级标题", format: { outlineLevel: 2 } },
+      expected: 2,
+      expectedType: "heading"
+    },
+    {
+      label: "all-absent",
+      block: { blockId: "outline-priority-absent", blockType: "paragraph", text: "正文", format: {} },
+      expected: undefined,
+      expectedType: "paragraph"
+    }
+  ];
+  for (const item of cases) {
+    const sourceBlock = Object.assign({ paragraphIndex: 0 }, item.block);
+    const normalized = helpers.normalizeDeterministicFormatReviewBlock(sourceBlock);
+    const hasTopLevel = Object.prototype.hasOwnProperty.call(normalized, "outlineLevel");
+    const hasFormat = Object.prototype.hasOwnProperty.call(normalized.format, "outlineLevel");
+    assert.equal(hasTopLevel, item.expected !== undefined, `${item.label} top-level presence`);
+    assert.equal(hasFormat, item.expected !== undefined, `${item.label} format presence`);
+    if (item.expected !== undefined) {
+      assert.equal(normalized.outlineLevel, item.expected, `${item.label} value`);
+      assert.equal(normalized.format.outlineLevel, item.expected, `${item.label} format value`);
+    }
+    assert.equal(normalized.blockType, item.expectedType, `${item.label} block type`);
+    const python = runPython({ mode: "normalize", blocks: [normalized] });
+    assert.equal(python.ok, true, `${item.label} Python normalization`);
+    assert.deepEqual(python.normalized[0], normalized, `${item.label} cross-runtime normalized block`);
+  }
+  for (const [value, expected] of [[0, 0], [10, 0], ...Array.from({ length: 9 }, (_, i) => [i + 1, i + 1])]) {
+    const normalized = helpers.normalizeDeterministicFormatReviewBlock({
+      blockId: `outline-value-${value}`,
+      blockType: "heading",
+      headingLevel: value,
+      text: `级别${value}`,
+      format: {}
+    });
+    assert.equal(normalized.outlineLevel, expected, `value ${value}`);
+    assert.equal(normalized.format.outlineLevel, expected, `format value ${value}`);
+  }
+});
+
+test("outline compatibility fallbacks survive the full snapshot protocol", () => {
+  for (const [label, body] of compatibilityProtocolFixtures()) {
+    const python = runPython({ mode: "protocol", firstBody: body, secondBody: body });
+    assert.equal(python.status, "committed", `${label} commit`);
+    assert.equal(python.jobStatus, "completed", `${label} job start`);
+    assert.ok(python.reviewerCalls >= 1, `${label} reviewer invocation`);
+    assert.deepEqual(python.coverage, body.coverage, `${label} protocol coverage`);
+  }
 });
 
 test("JS and Python agree on v2 format snapshot hashes and metrics", () => {

@@ -886,12 +886,17 @@
         block[key] = block.images[0][key];
       });
     }
-    if (Object.prototype.hasOwnProperty.call(block, "outlineLevel") &&
-        typeof block.outlineLevel === "undefined") {
-      delete block.outlineLevel;
-    }
-    if (Object.prototype.hasOwnProperty.call(block, "outlineLevel")) {
-      block.outlineLevel = normalizeWpsOutlineLevel(block.outlineLevel);
+    var hasTopLevelOutline = Object.prototype.hasOwnProperty.call(block, "outlineLevel") &&
+      typeof block.outlineLevel !== "undefined";
+    var hasFormatOutline = Object.prototype.hasOwnProperty.call(block.format, "outlineLevel") &&
+      typeof block.format.outlineLevel !== "undefined";
+    var hasHeadingLevel = Object.prototype.hasOwnProperty.call(block, "headingLevel") &&
+      typeof block.headingLevel !== "undefined";
+    var hasOutlineFact = hasTopLevelOutline || hasFormatOutline || hasHeadingLevel;
+    if (hasOutlineFact) {
+      var rawOutlineLevel = hasTopLevelOutline ? block.outlineLevel :
+        (hasFormatOutline ? block.format.outlineLevel : block.headingLevel);
+      block.outlineLevel = normalizeWpsOutlineLevel(rawOutlineLevel);
       block.format.outlineLevel = block.outlineLevel;
       block.format = normalizeDeterministicFormatFacts(block.format);
       if (block.blockType === "heading") {
