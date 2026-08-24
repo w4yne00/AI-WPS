@@ -1,11 +1,15 @@
 # ADR-0120：格式审查使用统一跨运行时哈希契约
 
-状态：已接受（代码修复中；新候选待构建）
+状态：已接受（决策生效）
 日期：2026-08-24
+
+候选状态不由本 ADR 固定：以 [`packaging/v0251-candidate-status.json`](../../packaging/v0251-candidate-status.json)
+和 [`docs/codex-handoff.md`](../codex-handoff.md) 的当前记录为准。ADR 只记录长期有效的跨运行时
+哈希决策，不嵌入某个归档的交付状态。
 
 ## 背景
 
-`word.format_review.snapshot.v2` 由 WPS JavaScript 生成批次，Adapter Python 在信任边界再次规范化并重算指标。历史候选 `20260824-ccad09f` 在两端使用了不同的哈希前镜像：普通块的 `images`、空 `insufficientReason`、WPS 大纲级别、图片空文本和递归表格默认值存在漂移，导致相同用户文档可能在结构或格式校验阶段返回批次哈希不一致。该候选已登记为 `rejected`；产品版本仍保持 `v0.25.1-alpha`，修复后再单独构建新候选。
+`word.format_review.snapshot.v2` 由 WPS JavaScript 生成批次，Adapter Python 在信任边界再次规范化并重算指标。历史候选 `20260824-ccad09f` 在两端使用了不同的哈希前镜像：普通块的 `images`、空 `insufficientReason`、WPS 大纲级别、图片空文本和递归表格默认值存在漂移，导致相同用户文档可能在结构或格式校验阶段返回批次哈希不一致。该候选已登记为 `rejected`；产品版本仍保持 `v0.25.1-alpha`，具体候选状态以仓库状态记录为准。
 
 ## 决策
 

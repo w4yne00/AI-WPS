@@ -81,18 +81,20 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | `20260824-5318d4b` is the unique automated `candidate`; target acceptance remains `manual-pending` in Issue #59 |
-| Phase 1 delivery kit | Candidate archive `ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`, SHA-256 `2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320` |
+| Delivery status | No automated candidate is active; `20260824-5318d4b` is rejected after the real JS coverage mismatch; Issue #59 remains `manual-pending` |
+| Phase 1 delivery kit | The rejected archive `ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz` remains immutable (SHA-256 `2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`); repair source is not a candidate |
 
 ### v0.25.1-alpha Delivery Status
 
-The current candidate is `20260824-5318d4b`, with candidate build ID
+There is no active automated candidate. The archived `20260824-5318d4b` record has
+candidate build ID
 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43`,
 source commit `5318d4b496d272a5f34bd270c714216f5b6c2e43`, archive
 `ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`, and SHA-256
-`2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`.
-Automated status is `candidate`; the package-internal delivery note binds the
-same source, archive, and build ID and contains no stale “waiting to build” wording.
+`2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`; it is
+`rejected` because real JS coverage differs from Adapter recomputation and commit
+returns `DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH` before job start. The repair
+source is not a candidate until a new package is built.
 The previous `20260824-2e7a3e6` candidate remains `rejected`: its package delivery
 note was stale and missing outline facts were serialized as `null`. Target WPS GUI,
 real-model, and Issue #59 manual acceptance remain `manual-pending`.
@@ -115,13 +117,13 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `812 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `25 passed` |
-| Formal plugin contract tests | `24/24` |
+| Current-source full Adapter suite | `826 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `39 passed` (`test_v0251_delivery.py`) |
+| Formal plugin contract tests | `25/25` |
 | Python 3.8 compatibility scan | `82` production files |
-| Kylin build provenance and audits | `246` source files; delivery, v0.25.1, and final archive audits passed |
-| Python 3.8 lifecycle gate | Candidate automated status is `candidate`; target-machine acceptance remains separate and pending |
-| Archive checksum | `shasum -a 256 -c` passed; local SHA-256 matches the `.sha256` file |
+| Kylin build provenance and audits | No new archive was built in this repair wave; the rejected archive remains unchanged and its recorded SHA-256 is retained |
+| Python 3.8 lifecycle gate | No active candidate; a new package must be built and gated after this source repair; target-machine acceptance remains separate and pending |
+| Archive checksum | The rejected `20260824-5318d4b` archive remains byte-identical with recorded SHA-256 `2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320` |
 | Target WPS GUI and real-document acceptance | Manual-pending in Issue #59; not passed or accepted |
 
 Version rule format:
@@ -170,7 +172,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.25.1-alpha` | Publishes the `20260824-5318d4b` automated candidate after repairing the cross-runtime format-review hash contract; `20260824-2e7a3e6` remains rejected, and Issue #59 remains `manual-pending` |
+| `v0.25.1-alpha` | Repairs the cross-runtime format-review coverage/hash contract in source; the prior `20260824-5318d4b` archive is rejected for the real JS coverage mismatch, no new candidate has been built, and Issue #59 remains `manual-pending` |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |

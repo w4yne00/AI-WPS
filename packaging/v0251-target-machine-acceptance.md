@@ -6,10 +6,8 @@
 - 验收版本：`v0.25.1-alpha`
 - 验收范围：麒麟 V10 ARM、目标 WPS、`cloud` 用户环境
 - 当前记录状态：`manual-pending`
-- 当前自动化候选 build ID：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43`
-- 当前自动化候选源码提交：`5318d4b496d272a5f34bd270c714216f5b6c2e43`
-- 当前自动化候选归档：`ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`
-- 当前自动化候选 SHA-256：`2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`
+- 当前自动化候选：暂无；`20260824-5318d4b` 已因真实 JS coverage 与 Adapter 重算不一致而拒绝
+- 被拒绝归档：`ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`，SHA-256：`2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`
 - 验收人员：
 - 验收日期：
 - 交付包文件名：

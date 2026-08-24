@@ -163,6 +163,7 @@ def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_con
     rejected_candidates = _rejected_candidates_from_validation_section(validation)
     assert "20260824-ccad09f" in rejected_candidates
     assert "20260824-2e7a3e6" in rejected_candidates
+    assert "20260824-5318d4b" in rejected_candidates
     assert "20260822-e43dc8c" in rejected_candidates
 
     candidate_only = (
@@ -181,7 +182,7 @@ def test_v0251_handoff_uses_current_candidate_as_previous_archive_example():
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
 
-def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
+def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
     status = json.loads(
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
@@ -191,9 +192,12 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
         "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
         "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
         "archiveSha256": "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320",
-        "status": "candidate",
+        "status": "rejected",
+        "recordedAt": "20260824",
+        "reason": "rejected: real JS coverage differs from Adapter recomputation and commit returns DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH before job start; repair source is not yet a candidate until a new package is built",
     }
     assert status["records"][-1] == expected
+    assert not [record for record in status["records"] if record.get("status") == "candidate"]
 
     rejected = next(
         record
@@ -253,15 +257,15 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`25 passed`" in line for line in delivery_lines)
-        assert all("`23 passed`" not in line for line in delivery_lines)
-        assert any("`24/24`" in line for line in plugin_lines)
-        assert all("`22/22`" not in line for line in plugin_lines)
+        assert any("`39 passed`" in line for line in delivery_lines)
+        assert all("`25 passed`" not in line for line in delivery_lines)
+        assert any("`25/25`" in line for line in plugin_lines)
+        assert all("`24/24`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `812 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `826 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `25 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `39 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 

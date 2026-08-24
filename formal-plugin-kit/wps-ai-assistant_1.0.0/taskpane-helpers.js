@@ -918,6 +918,186 @@
     return JSON.parse(stableFormatReviewJson(block));
   }
 
+  function normalizeFormatReviewCoverageUnsupportedObjects(value) {
+    if (!Array.isArray(value)) {
+      return [];
+    }
+    return value.map(function (item) {
+      var source = item && typeof item === "object" ? item : {};
+      var count = Math.max(0, Math.floor(Number(source.count) || 0));
+      var normalized = {
+        type: String(source.type || "unknown").slice(0, 64),
+        count: count,
+        status: String(source.status || "not_supported").slice(0, 32)
+      };
+      if (source.reason) {
+        normalized.reason = String(source.reason).slice(0, 120);
+      }
+      return normalized;
+    });
+  }
+
+  function collectFormatReviewImageFacts(blocks) {
+    var images = [];
+    var seen = {};
+
+    function add(image) {
+      if (!image || typeof image !== "object") {
+        return;
+      }
+      var normalized = normalizeDeterministicImageFacts([image])[0];
+      if (!normalized || !normalized.imageId || seen[normalized.imageId]) {
+        return;
+      }
+      seen[normalized.imageId] = true;
+      images.push(normalized);
+    }
+
+    (Array.isArray(blocks) ? blocks : []).forEach(function (block) {
+      if (!block || typeof block !== "object") {
+        return;
+      }
+      if (block.blockType === "image" || block.isImage === true) {
+        add(block);
+      }
+      (Array.isArray(block.images) ? block.images : []).forEach(add);
+    });
+    return images;
+  }
+
+  function buildDeterministicFormatReviewCoverage(blocks, suppliedCoverage) {
+    var sourceCoverage = suppliedCoverage && typeof suppliedCoverage === "object"
+      ? suppliedCoverage : {};
+    var inScope = (Array.isArray(blocks) ? blocks : []).filter(function (block) {
+      return block && block.scope === "in_scope";
+    });
+    var formatFactStatusCounts = {};
+    var formatSegmentCount = 0;
+    var tableCellCount = 0;
+    var insufficientBlockCount = 0;
+    var unsupportedObjects = [];
+
+    function countFactStatuses(facts) {
+      if (!facts || typeof facts !== "object" || Array.isArray(facts)) {
+        return;
+      }
+      if (facts.dataStatus) {
+        var status = String(facts.dataStatus);
+        formatFactStatusCounts[status] = (formatFactStatusCounts[status] || 0) + 1;
+      }
+      if (facts.facts && typeof facts.facts === "object" && !Array.isArray(facts.facts)) {
+        Object.keys(facts.facts).forEach(function (key) {
+          var fact = facts.facts[key];
+          if (fact && typeof fact === "object" && fact.dataStatus) {
+            var nestedStatus = String(fact.dataStatus);
+            formatFactStatusCounts[nestedStatus] = (formatFactStatusCounts[nestedStatus] || 0) + 1;
+          }
+        });
+      }
+    }
+
+    function countTable(table, countStatuses) {
+      if (!table || typeof table !== "object") {
+        return;
+      }
+      (Array.isArray(table.rows) ? table.rows : []).forEach(function (row) {
+        (Array.isArray(row && row.cells) ? row.cells : []).forEach(function (cell) {
+          tableCellCount += 1;
+          var cellFormat = cell && cell.format && typeof cell.format === "object" ? cell.format : {};
+          if (countStatuses) {
+            countFactStatuses(cellFormat);
+          }
+          formatSegmentCount += Array.isArray(cellFormat.segments) ? cellFormat.segments.length : 0;
+          if (cellFormat.dataStatus === "insufficient") {
+            insufficientBlockCount += 1;
+          }
+        });
+      });
+      (Array.isArray(table.nestedTables) ? table.nestedTables : []).forEach(function (nested) {
+        countTable(nested, countStatuses);
+      });
+    }
+
+    (Array.isArray(blocks) ? blocks : []).forEach(function (block) {
+      if (!block || typeof block !== "object") {
+        return;
+      }
+      var format = block.format && typeof block.format === "object" ? block.format : {};
+      if (block.scope === "in_scope") {
+        countFactStatuses(format);
+      }
+      formatSegmentCount += Array.isArray(format.segments) ? format.segments.length : 0;
+      if (format.dataStatus === "insufficient") {
+        insufficientBlockCount += 1;
+      }
+      if (block.blockType === "table") {
+        countTable(block, block.scope === "in_scope");
+      }
+      if (Array.isArray(block.unsupportedObjects)) {
+        unsupportedObjects = unsupportedObjects.concat(
+          normalizeFormatReviewCoverageUnsupportedObjects(block.unsupportedObjects)
+        );
+      }
+    });
+    unsupportedObjects = unsupportedObjects.concat(
+      normalizeFormatReviewCoverageUnsupportedObjects(sourceCoverage.unsupportedObjects)
+    );
+
+    var unsupportedObjectCount = unsupportedObjects.reduce(function (total, item) {
+      return total + item.count;
+    }, 0);
+    var unsupportedObjectsByType = {};
+    unsupportedObjects.forEach(function (item) {
+      unsupportedObjectsByType[item.type] = (unsupportedObjectsByType[item.type] || 0) + item.count;
+    });
+    var imageFacts = collectFormatReviewImageFacts(blocks);
+    var missingCaption = imageFacts.filter(function (image) {
+      return ["missing", "absent", "none"].indexOf(String(image.captionStatus || "").toLowerCase()) >= 0;
+    });
+    var textEvidenceOnlyCount = missingCaption.filter(function (image) {
+      return Boolean(String(image.altText || "").trim() || String(image.nearbyText || "").trim());
+    }).length;
+    var notAssessableCount = missingCaption.length - textEvidenceOnlyCount;
+    var coverage = {
+      inScopeBlockCount: inScope.length,
+      contextBlockCount: (Array.isArray(blocks) ? blocks.length : 0) - inScope.length,
+      paragraphCount: inScope.filter(function (block) {
+        return ["paragraph", "heading", "listItem"].indexOf(block.blockType) >= 0;
+      }).length,
+      tableCount: inScope.filter(function (block) { return block.blockType === "table"; }).length,
+      captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length,
+      tableCellCount: tableCellCount,
+      formatSegmentCount: formatSegmentCount,
+      formatDataStatus: insufficientBlockCount ? "insufficient" :
+        (Object.keys(formatFactStatusCounts).some(function (status) {
+          return status !== "verified";
+        }) ? "partial" : "verified"),
+      formatDataInsufficientBlockCount: insufficientBlockCount,
+      formatFactStatusCounts: formatFactStatusCounts,
+      unsupportedObjectCount: unsupportedObjectCount,
+      unsupportedObjectsByType: unsupportedObjectsByType,
+      imageCount: imageFacts.length,
+      supportedImageCount: imageFacts.filter(function (image) { return image.supported !== false; }).length,
+      missingFigureCaptionCount: missingCaption.length,
+      textEvidenceOnlyCount: textEvidenceOnlyCount,
+      imageNotAssessableCount: notAssessableCount,
+      notAssessableCount: notAssessableCount,
+      pixelExportCount: 0,
+      pixelUploadCount: 0,
+      pixelInspectedCount: 0,
+      imageSemanticStatus: "disabled",
+      imageSemanticReason: "image_semantics_disabled"
+    };
+    if (Object.prototype.hasOwnProperty.call(sourceCoverage, "headerFooter") &&
+        sourceCoverage.headerFooter && typeof sourceCoverage.headerFooter === "object") {
+      coverage.headerFooter = sourceCoverage.headerFooter;
+    }
+    if (unsupportedObjects.length) {
+      coverage.unsupportedObjects = unsupportedObjects;
+    }
+    return JSON.parse(stableFormatReviewJson(coverage));
+  }
+
   function buildDeterministicFormatReviewBody(payload, options) {
     var source = payload || {};
     var content = source.content || {};
@@ -1065,39 +1245,9 @@
 
     var inScope = blocks.filter(function (block) { return block.scope === "in_scope"; });
     var sourceValues = [];
-    var formatSegmentCount = 0;
-    var tableCellCount = 0;
-    var formatDataInsufficientBlockCount = 0;
     inScope.forEach(function (block) {
       sourceValues = sourceValues.concat(formatReviewBlockTextValues(block));
-      formatSegmentCount += block.format && Array.isArray(block.format.segments)
-        ? block.format.segments.length : 0;
-      if (block.format && block.format.dataStatus === "insufficient") {
-        formatDataInsufficientBlockCount += 1;
-      }
-      if (block.blockType === "table") {
-        function countTable(table) {
-          (table.rows || []).forEach(function (row) {
-            (row.cells || []).forEach(function (cell) {
-              tableCellCount += 1;
-              formatSegmentCount += cell.format && Array.isArray(cell.format.segments)
-                ? cell.format.segments.length : 0;
-              if (cell.format && cell.format.dataStatus === "insufficient") {
-                formatDataInsufficientBlockCount += 1;
-              }
-            });
-          });
-          (table.nestedTables || []).forEach(countTable);
-        }
-        countTable(block);
-      }
     });
-    var suppliedCoverage = (options || {}).coverage || {};
-    var unsupportedObjects = Array.isArray(suppliedCoverage.unsupportedObjects)
-      ? suppliedCoverage.unsupportedObjects : [];
-    var unsupportedObjectCount = unsupportedObjects.reduce(function (total, item) {
-      return total + Math.max(0, Math.floor(Number(item && item.count) || 0));
-    }, 0);
     var reviewCharacterCount = sourceValues.reduce(function (total, value) {
       return total + value.length;
     }, 0);
@@ -1107,6 +1257,7 @@
     }
     var structureProjection = blocks.map(formatReviewStructureProjection);
     var formatProjection = blocks.map(formatReviewFormatProjection);
+    var suppliedCoverage = (options || {}).coverage || {};
     return {
       documentId: source.documentId || "unnamed.docx",
       selectionMode: source.selectionMode || "document",
@@ -1123,22 +1274,7 @@
       contentSha256: sha256Text(sourceValues.join("\n")),
       structureSha256: sha256Text(stableFormatReviewJson(structureProjection)),
       formatSha256: sha256Text(stableFormatReviewJson(formatProjection)),
-      coverage: {
-        inScopeBlockCount: inScope.length,
-        contextBlockCount: blocks.length - inScope.length,
-        paragraphCount: inScope.filter(function (block) {
-          return ["paragraph", "heading", "listItem"].indexOf(block.blockType) >= 0;
-        }).length,
-        tableCount: inScope.filter(function (block) { return block.blockType === "table"; }).length,
-        captionCount: inScope.filter(function (block) { return block.blockType === "caption"; }).length,
-        tableCellCount: tableCellCount,
-        formatSegmentCount: formatSegmentCount,
-        formatDataStatus: formatDataInsufficientBlockCount ? "insufficient" : "verified",
-        formatDataInsufficientBlockCount: formatDataInsufficientBlockCount,
-        unsupportedObjectCount: unsupportedObjectCount,
-        unsupportedObjects: unsupportedObjects,
-        headerFooter: suppliedCoverage.headerFooter || {}
-      },
+      coverage: buildDeterministicFormatReviewCoverage(blocks, suppliedCoverage),
       pageSetup: structure.page_setup || structure.pageSetup || {},
       pageSetupFacts: structure.page_setup_facts || structure.pageSetupFacts ||
         buildWpsPageSetupFacts(structure.page_setup || structure.pageSetup || {}),

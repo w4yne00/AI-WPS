@@ -44,8 +44,68 @@ with tempfile.TemporaryDirectory() as directory:
     )
     if payload.get("mode") == "metrics":
         normalized = service._normalize_format_blocks(payload["blocks"])
-        metrics = service._format_metrics(normalized)
+        metrics = service._format_metrics(normalized, payload.get("sourceCoverage"))
         print(json.dumps({"normalized": normalized, "metrics": metrics}, ensure_ascii=False, sort_keys=True))
+    elif payload.get("mode") == "protocol":
+        first = payload["firstBody"]
+        second = payload.get("secondBody", first)
+        session = service.create_snapshot({
+            "documentId": first["documentId"],
+            "selectionMode": first.get("selectionMode", "document"),
+            "documentIdentity": first.get("documentIdentity", {}),
+            "editSequence": first.get("editSequence"),
+            "coverage": first.get("coverage", {}),
+        })
+        for batch in first["batches"]:
+            service.upload_batch(session["snapshotId"], batch["sequence"], {
+                "uploadToken": session["uploadToken"],
+                "batchId": batch["batchId"],
+                "blocks": batch["blocks"],
+                "characterCount": batch["characterCount"],
+                "contentSha256": batch["contentSha256"],
+                "structureSha256": batch["structureSha256"],
+                "formatSha256": batch["formatSha256"],
+                "editSequence": first.get("editSequence"),
+            })
+        commit_payload = {
+            "uploadToken": session["uploadToken"],
+            "batchCount": len(first["batches"]),
+            "blockCount": len(first["blocks"]),
+            "reviewCharacterCount": first["reviewCharacterCount"],
+            "contentSha256": first["contentSha256"],
+            "structureSha256": first["structureSha256"],
+            "formatSha256": first["formatSha256"],
+            "coverage": first["coverage"],
+            "verification": {
+                "batchCount": len(second["batches"]),
+                "blockCount": len(second["blocks"]),
+                "reviewCharacterCount": second["reviewCharacterCount"],
+                "contentSha256": second["contentSha256"],
+                "structureSha256": second["structureSha256"],
+                "formatSha256": second["formatSha256"],
+                "coverage": second["coverage"],
+                "documentIdentity": second.get("documentIdentity", {}),
+                "editSequence": second.get("editSequence"),
+            },
+        }
+        committed = service.commit_snapshot(session["snapshotId"], commit_payload)
+        job = service.start_job({
+            "snapshotId": session["snapshotId"],
+            "snapshotToken": committed["snapshotToken"],
+            "clientJobId": "format-job-contract-" + str(first["documentId"]).replace(".", "-")[:60],
+        }, "format-trace-contract")
+        current = None
+        for _ in range(200):
+            current = service.get_job(job["jobId"])
+            if current and current.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        print(json.dumps({
+            "status": committed["status"],
+            "jobStatus": current.get("status") if current else None,
+            "reviewerCalls": reviewer.calls,
+            "coverage": committed["coverage"],
+        }, ensure_ascii=False, sort_keys=True))
     elif payload.get("mode") == "normalize":
         try:
             normalized = service._normalize_format_blocks(payload["blocks"])
@@ -232,8 +292,127 @@ function fixture() {
   };
 }
 
+function buildProtocolBody(payload, options) {
+  const body = helpers.buildDeterministicFormatReviewBody(payload, Object.assign({
+    coverage: helpers.collectFormatReviewCoverage({}),
+    documentIdentity: { hostDocumentId: payload.documentId }
+  }, options || {}));
+  body.batches = helpers.buildDeterministicFormatReviewBatches(body, 3500);
+  return body;
+}
+
+function protocolFixtureFamilies() {
+  const source = fixture();
+  const paragraph = {
+    documentId: "contract-paragraph.docx",
+    selectionMode: "document",
+    content: {
+      paragraphs: [source.content.paragraphs[0]],
+      documentStructure: {}
+    }
+  };
+  const outline = {
+    documentId: "contract-outline.docx",
+    selectionMode: "document",
+    content: {
+      paragraphs: source.content.paragraphs.slice(1, 3),
+      documentStructure: {}
+    }
+  };
+  const tableNested = {
+    documentId: "contract-table-nested.docx",
+    selectionMode: "document",
+    content: {
+      paragraphs: [{ index: 1, text: "表格前言", outlineLevel: 0 }],
+      documentStructure: source.content.documentStructure
+    }
+  };
+  const imageMetadata = {
+    documentId: "contract-image-metadata.docx",
+    selectionMode: "document",
+    content: {
+      paragraphs: [{ index: 1, text: "图片说明", outlineLevel: 0 }],
+      documentStructure: {}
+    }
+  };
+  const insufficient = {
+    documentId: "contract-insufficient.docx",
+    selectionMode: "document",
+    content: {
+      paragraphs: [{
+        index: 1,
+        text: "格式数据不足",
+        outlineLevel: 0,
+        formatDataStatus: "insufficient",
+        formatInsufficientReason: "format_fragmentation_limit"
+      }],
+      documentStructure: {}
+    }
+  };
+  const emoji = {
+    documentId: "contract-emoji-nonbmp.docx",
+    selectionMode: "document",
+    content: {
+      paragraphs: [{ index: 1, text: "😀🚀𠮷", outlineLevel: 0 }],
+      documentStructure: {
+        tables: [{
+          tableId: "emoji-table",
+          tableIndex: 1,
+          rows: [{ cells: [{ text: "单元格😀𠮷", format: { dataStatus: "verified" } }] }],
+          nestedTables: []
+        }]
+      }
+    }
+  };
+  return [
+    ["paragraph", paragraph, {}],
+    ["outline", outline, {}],
+    ["table-nested", tableNested, {}],
+    ["image-metadata", imageMetadata, {
+      imageFacts: [{
+        imageId: "image-contract-1",
+        groupId: "group-contract-1",
+        fingerprint: "fingerprint-contract-1",
+        captionStatus: "missing",
+        associationStatus: "missing",
+        supported: true,
+        altText: "示意图",
+        nearbyText: "图片说明"
+      }]
+    }],
+    ["insufficient-reason", insufficient, {}],
+    ["emoji-nonbmp", emoji, {}]
+  ];
+}
+
+test("real JS coverage survives snapshot, upload, commit, and job start", () => {
+  const results = protocolFixtureFamilies().map(([label, payload, options]) => {
+    const firstBody = buildProtocolBody(payload, options);
+    const secondBody = buildProtocolBody(payload, options);
+    const python = runPython({ mode: "protocol", firstBody, secondBody });
+    assert.equal(python.status, "committed", `${label} commit`);
+    assert.equal(python.jobStatus, "completed", `${label} job start`);
+    assert.ok(python.reviewerCalls >= 1, `${label} reviewer invocation`);
+    assert.deepEqual(python.coverage, firstBody.coverage, `${label} coverage equality`);
+    return {
+      label,
+      characterCount: firstBody.reviewCharacterCount,
+      imageCount: firstBody.coverage.imageCount,
+      formatDataStatus: firstBody.coverage.formatDataStatus
+    };
+  });
+  assert.deepEqual(results.map((item) => item.label), [
+    "paragraph", "outline", "table-nested", "image-metadata", "insufficient-reason", "emoji-nonbmp"
+  ]);
+  assert.equal(results.find((item) => item.label === "image-metadata").imageCount, 1);
+  assert.equal(results.find((item) => item.label === "insufficient-reason").formatDataStatus, "insufficient");
+  assert.equal(results.find((item) => item.label === "emoji-nonbmp").characterCount, 13);
+});
+
 test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
+  const sourceCoverage = helpers.collectFormatReviewCoverage({});
   const imageOptions = {
+    coverage: sourceCoverage,
     imageFacts: [{
       imageId: "image-1",
       groupId: "group-1",
@@ -246,7 +425,11 @@ test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
     }]
   };
   const body = helpers.buildDeterministicFormatReviewBody(fixture(), imageOptions);
-  const python = runPython({ mode: "metrics", blocks: body.blocks });
+  const python = runPython({
+    mode: "metrics",
+    blocks: body.blocks,
+    sourceCoverage
+  });
   const keys = ["characterCount", "contentSha256", "structureSha256", "formatSha256"];
   for (const key of keys) {
     assert.equal(python.metrics[key], body[key === "characterCount" ? "reviewCharacterCount" : key], key);
@@ -274,9 +457,19 @@ test("JS and Python agree on v2 format snapshot hashes and metrics", () => {
   assert.equal(python.metrics.coverage.imageCount, 1);
   assert.equal(python.metrics.coverage.pixelExportCount, 0);
   assert.equal(python.metrics.coverage.pixelUploadCount, 0);
+  assert.deepEqual(body.coverage, python.metrics.coverage, "coverage projection");
+  for (const key of [
+    "formatFactStatusCounts", "unsupportedObjectsByType", "imageCount",
+    "supportedImageCount", "missingFigureCaptionCount", "textEvidenceOnlyCount",
+    "imageNotAssessableCount", "notAssessableCount", "pixelExportCount",
+    "pixelUploadCount", "pixelInspectedCount", "imageSemanticStatus", "imageSemanticReason"
+  ]) {
+    assert.ok(Object.prototype.hasOwnProperty.call(body.coverage, key), `coverage field ${key}`);
+  }
+  assert.equal(Object.prototype.hasOwnProperty.call(body.coverage, "unsupportedObjects"), false);
 
   for (const batch of helpers.buildDeterministicFormatReviewBatches(body, 20)) {
-    const batchPython = runPython({ mode: "metrics", blocks: batch.blocks });
+    const batchPython = runPython({ mode: "metrics", blocks: batch.blocks, sourceCoverage });
     for (const key of keys) {
       assert.equal(batchPython.metrics[key], batch[key === "characterCount" ? "characterCount" : key],
         `batch ${batch.sequence} ${key}`);

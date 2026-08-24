@@ -87,7 +87,9 @@
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
       "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
       "archiveSha256": "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320",
-      "status": "candidate"
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: real JS coverage differs from Adapter recomputation and commit returns DETERMINISTIC_FORMAT_REVIEW_SNAPSHOT_MISMATCH before job start; repair source is not yet a candidate until a new package is built"
     }
   ]
 }
