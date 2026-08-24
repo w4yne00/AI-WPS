@@ -214,6 +214,10 @@ def test_v0251_rebuild_records_rejected_candidate_and_independent_build_identity
     assert previous["status"] == "rejected"
     assert previous["archiveName"] == "ai-wps-phase1-delivery-20260816-v0251.tar.gz"
     assert len(previous["archiveSha256"]) == 64
+    for record in status["records"]:
+        source_commit = record.get("sourceCommit")
+        if source_commit:
+            assert record["candidateBuildId"].endswith("-" + source_commit)
 
     build = BUILD.read_text(encoding="utf-8")
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE" in build
