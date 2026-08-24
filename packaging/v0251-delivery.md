@@ -1,14 +1,11 @@
 # v0.25.1-alpha candidate delivery note
 
-当前自动化候选为 `20260824-afe109c`，candidateBuildId 为
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655`，
-源码提交 `afe109c27bf6bc9e663a0c107ccfd70876f95655`，归档
-`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`，校验文件
-`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256`，SHA-256
-`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`，状态为
-`candidate`。目标 WPS GUI、真实模型和人工验收仍为 `manual-pending`（Issue #59）。
+当前没有活动的自动化候选。`20260824-afe109c` 已登记为 `rejected`：目标机验收审计/测试在缺失必测第 8 或第 9 行时未 fail closed；归档保持不可变，重建前不形成新候选。目标 WPS GUI、真实模型和人工验收仍为 `manual-pending`（Issue #59）。
 
-上一被拒绝归档 `20260824-799adf9` 的 candidateBuildId 为
+被拒绝归档 `20260824-afe109c` 的 candidateBuildId 为
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655`，
+归档 `ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`，SHA-256 为 `e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`；
+拒绝后保持原始字节。上一被拒绝归档 `20260824-799adf9` 的 candidateBuildId 为
 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，
 归档 SHA-256 为 `5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`；
 拒绝原因为包内目标机验收文档与 manifest/status 候选身份不一致。更早候选仍保持原
@@ -34,7 +31,7 @@
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 保留 `afe109c` 当前 `candidate` 及 `20260824-799adf9`、所有更早历史 `rejected` 记录，Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 将冻结的 `afe109c` 登记为 `rejected`，在重建完成前没有活动候选；`20260824-799adf9` 及所有更早历史记录也为 `rejected`，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 

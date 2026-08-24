@@ -358,10 +358,14 @@ def write_target_machine_acceptance_record(
     replaced_current = False
     replaced_previous = False
     for line in content.splitlines():
-        if line.startswith("- 当前自动化候选："):
+        if line.startswith("- 当前自动化候选：") or line.startswith(
+            "- 当前没有活动的自动化候选。"
+        ):
             updated.append(current_line)
             replaced_current = True
-        elif line.startswith("- 上一被拒绝归档：") or line.startswith("- 被拒绝归档："):
+        elif not replaced_previous and (
+            line.startswith("- 上一被拒绝归档：") or line.startswith("- 被拒绝归档：")
+        ):
             updated.append(previous_line)
             replaced_previous = True
         else:

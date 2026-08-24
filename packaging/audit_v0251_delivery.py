@@ -252,18 +252,48 @@ def audit_target_acceptance_record(root: Path, manifest: Dict) -> None:
     for marker in required:
         if marker not in content:
             raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_INCOMPLETE {0}".format(marker))
+    mandatory_heading = "## 必测项目"
+    matrix_heading = "### v2 后台格式审查判定矩阵"
+    if mandatory_heading not in content or matrix_heading not in content:
+        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_MANDATORY_SECTION_MISSING")
+    mandatory_section = content.split(mandatory_heading, 1)[1].split(
+        matrix_heading, 1
+    )[0]
     result_rows = {}
-    for line in content.splitlines():
+    duplicate_rows = set()
+    for line in mandatory_section.splitlines():
         fields = [field.strip() for field in line.strip().strip("|").split("|")]
         if len(fields) < 5 or not fields[0].isdigit():
             continue
         index = int(fields[0])
-        if 1 <= index <= 7:
+        if 1 <= index <= 9:
+            if index in result_rows:
+                duplicate_rows.add(index)
             result_rows[index] = fields[2].strip("`")
-    if set(result_rows) != set(range(1, 8)):
-        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_RESULTS_INCOMPLETE")
-    if any(status != "manual-pending" for status in result_rows.values()):
-        raise DeliveryFailure("TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING")
+    if duplicate_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_DUPLICATE {0}".format(
+                ",".join(str(index) for index in sorted(duplicate_rows))
+            )
+        )
+    missing_rows = set(range(1, 10)) - set(result_rows)
+    if missing_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_MANDATORY_ROWS_MISSING {0}".format(
+                ",".join(str(index) for index in sorted(missing_rows))
+            )
+        )
+    non_pending_rows = [
+        index
+        for index, status in sorted(result_rows.items())
+        if status != "manual-pending"
+    ]
+    if non_pending_rows:
+        raise DeliveryFailure(
+            "TARGET_ACCEPTANCE_RECORD_RESULTS_MUST_REMAIN_PENDING rows={0}".format(
+                ",".join(str(index) for index in non_pending_rows)
+            )
+        )
     for marker in (
         "当前记录状态：`manual-pending`",
         "记录状态：`manual-pending`",

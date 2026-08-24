@@ -106,7 +106,10 @@
       "archiveName": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz",
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256",
       "sourceCommit": "afe109c27bf6bc9e663a0c107ccfd70876f95655",
-      "status": "candidate"
+      "archiveSha256": "e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b",
+      "status": "rejected",
+      "recordedAt": "20260824",
+      "reason": "rejected: v0.25.1 target-acceptance audit/test did not fail closed when mandatory acceptance row 8 or 9 was missing; archive is frozen and no active candidate remains until rebuilt"
     }
   ]
 }
