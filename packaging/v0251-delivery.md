@@ -1,9 +1,23 @@
-# v0.25.1-alpha 格式审查修复候选交付说明
+# v0.25.1-alpha candidate delivery note
 
-本修复继续使用现有 Phase1 安装体系，后续归档名称为
-`ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0251.tar.gz`。其中 `SOURCE_COMMIT` 为七位源码提交号，使同一天的修复重建仍具有独立、可追溯的归档身份；旧的无提交号归档名继续作为历史候选被接受。本次修复统一格式审查快照的 JS/Python 规范化、固定 structure/format 投影、UTF-16 字符计数和 Adapter 独立重算，不进入 Preview 安装基线，也不改变 Phase1 的安装入口、目录或回退事务。
+当前唯一自动化候选为 `20260824-5318d4b`，candidateBuildId
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43`，
+源码提交 `5318d4b496d272a5f34bd270c714216f5b6c2e43`，归档
+`ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`，校验文件
+`ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256`，SHA-256
+`2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`，自动化状态为
+`candidate`。本说明与归档内 `docs/v0251-delivery.md` 均绑定上述源码、归档和 build ID，
+不含“待构建”或“修复中”等过期状态。
 
-历史候选 `20260824-ccad09f` 已登记为 `rejected`：其 `word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format 哈希前镜像不一致。`20260824-2e7a3e6` 也已登记为 `rejected`，candidateBuildId `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，源码提交 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。最终审查发现包内交付说明过期，且缺失大纲事实被写为 `null`；当前修复待新候选重建，不存在可分发 candidate。Issue #59 目标 WPS GUI、真实模型和人工验收仍为 `manual-pending`。
+历史候选 `20260824-ccad09f` 已登记为 `rejected`：其
+`word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format
+哈希前镜像不一致。`20260824-2e7a3e6` 也已登记为 `rejected`，candidateBuildId
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，
+源码提交 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档
+`ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256
+`576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。其拒绝原因是包内交付
+说明过期且缺失大纲事实被写为 `null`。Issue #59 目标 WPS GUI、真实模型和人工验收仍为
+`manual-pending`。
 
 ## 自动化门禁
 
@@ -15,7 +29,7 @@
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 及归档内 `docs/v0251-candidate-status.json` 保留 `20260824-ccad09f` 的 `rejected` 记录，并将 `20260824-2e7a3e6` 登记为 `rejected`。当前修复待新候选重建，自动门禁结果不得被写成当前可分发 candidate，Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 及归档内 `docs/v0251-candidate-status.json` 保留 `20260824-ccad09f` 和 `20260824-2e7a3e6` 的 `rejected` 记录，并将 `20260824-5318d4b` 登记为唯一 `candidate`。自动门禁结果仍不等于目标机接受，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 

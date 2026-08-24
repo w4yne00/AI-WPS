@@ -80,6 +80,14 @@
       "status": "rejected",
       "recordedAt": "20260824",
       "reason": "rejected: package delivery note was stale (包内交付说明过期) and missing outline facts were serialized as null (缺失大纲事实被写为 null); repair continues and a new candidate must be rebuilt"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+      "archiveName": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
+      "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+      "archiveSha256": "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320",
+      "status": "candidate"
     }
   ]
 }

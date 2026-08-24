@@ -186,24 +186,36 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
     expected = {
-        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "archiveName": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
-        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
-        "archiveSha256": "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e",
-        "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "status": "rejected",
-        "recordedAt": "20260824",
-        "reason": "rejected: package delivery note was stale (包内交付说明过期) and missing outline facts were serialized as null (缺失大纲事实被写为 null); repair continues and a new candidate must be rebuilt",
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+        "archiveName": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
+        "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+        "archiveSha256": "2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320",
+        "status": "candidate",
     }
     assert status["records"][-1] == expected
 
-    rejected = status["records"][-2]
-    assert rejected["candidateBuildId"].endswith("-ccad09fb1d8019da3a40f14610ab3bd75de1ec23")
-    assert rejected["archiveSha256"] == "2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02"
+    rejected = next(
+        record
+        for record in status["records"]
+        if record.get("candidateBuildId", "").endswith(
+            "-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f"
+        )
+    )
+    assert rejected["archiveSha256"] == "576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e"
     assert rejected["status"] == "rejected"
+    old_rejected = next(
+        record
+        for record in status["records"]
+        if record.get("candidateBuildId", "").endswith(
+            "-ccad09fb1d8019da3a40f14610ab3bd75de1ec23"
+        )
+    )
+    assert old_rejected["archiveSha256"] == "2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02"
+    assert old_rejected["status"] == "rejected"
 
     identity = (
-        "20260824-2e7a3e6",
+        "20260824-5318d4b",
         expected["candidateBuildId"],
         expected["sourceCommit"],
         expected["archiveName"],
@@ -246,10 +258,10 @@ def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
         assert any("`24/24`" in line for line in plugin_lines)
         assert all("`22/22`" not in line for line in plugin_lines)
 
-    assert "上一候选的本地 Adapter 测试为 `800 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `812 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付断言为 `23 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `25 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -684,18 +696,18 @@ def test_v0251_prepare_rewrites_delivery_note_with_current_candidate_identity(tm
     module.write_candidate_delivery_note(
         tmp_path,
         "20260824",
-        "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
-        "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+        "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+        "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz",
+        "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
         59,
     )
     generated = note.read_text(encoding="utf-8")
     for required in (
-        "20260824-2e7a3e6",
-        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-        "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz",
+        "20260824-5318d4b",
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+        "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+        "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz",
         "candidate",
         "manual-pending",
         "Issue #59",
@@ -709,9 +721,9 @@ def test_v0251_prepare_rewrites_delivery_note_with_current_candidate_identity(tm
         {
             "releaseDate": "20260824",
             "candidateEvidence": {
-                "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-                "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-                "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+                "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+                "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+                "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
             },
         },
     )
@@ -748,9 +760,9 @@ def test_v0251_audit_rejects_stale_delivery_note(tmp_path, stale_text):
         "releaseDate": "20260824",
         "versionRule": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824",
         "candidateEvidence": {
-            "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-            "sourceCommit": "2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f",
-            "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz.sha256",
+            "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43",
+            "sourceCommit": "5318d4b496d272a5f34bd270c714216f5b6c2e43",
+            "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz.sha256",
         },
         "targetAcceptanceIssue": 59,
         "targetAcceptance": {"status": "manual-pending"},

@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824`
 
-原候选 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f` 已登记为 `rejected`；源码提交为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`。包内交付说明过期且缺失大纲事实被写为 `null`，当前修复待新候选重建；Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`，当前无可分发 candidate。
+当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43`；源码提交为 `5318d4b496d272a5f34bd270c714216f5b6c2e43`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`，SHA-256 为 `2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`，自动化状态为 `candidate`。包内交付说明绑定同一源码、归档和 build ID，且不含“待构建”过期表述。上一候选 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f` 已登记为 `rejected`；其归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`，原因是包内交付说明过期且缺失大纲事实被写为 `null`。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
 
 历史候选 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz`（SHA-256：`2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02`，源码提交：`ccad09fb1d8019da3a40f14610ab3bd75de1ec23`）已确认存在 `word.format_review.snapshot.v2` JS/Python structure/format 哈希契约漂移，登记为 `rejected`，不得继续分发。`e43dc8c` 及更早候选均为 `rejected`。修复报告见 `.superpowers/sdd/2026-08-24-v0251-format-review-hash-contract-fix/task-1-report.md`。
 
@@ -18,7 +18,7 @@
 
 - JavaScript 上传前与 Python Adapter 信任边界现在按同一固定投影、UTF-16 字符计数、紧凑稳定 JSON 和 UTF-8 SHA-256 计算；Python 继续独立重算四项指标并 fail closed。
 - 新增真实 Node→Python 子进程对拍测试，覆盖正文/标题、递归表格与 cell format、图片元数据、空/非空 insufficient reason、WPS 大纲级别及 `😀/🚀/𠮷`；structure/format 篡改均要求 409 且不启动 reviewer/provider。
-- `20260824-ccad09f` 与 `20260824-2e7a3e6` 均已在 `packaging/v0251-candidate-status.json` 登记为 `rejected`；当前修复待新候选重建，不替代 Issue #59 目标机验收。
+- `20260824-ccad09f` 与 `20260824-2e7a3e6` 均已在 `packaging/v0251-candidate-status.json` 登记为 `rejected`；当前唯一自动化候选为 `20260824-5318d4b`，不替代 Issue #59 目标机验收。
 
 ## 0.1 v0.25.1-alpha 已实现能力
 
@@ -559,23 +559,23 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 
 ## 6. 验证状态
 
-`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251`、`20260822-e43dc8c`、`20260824-ccad09f` 和 `20260824-2e7a3e6` 登记为 `rejected`。`2e7a3e6` 的完整 sourceCommit 为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，candidateBuildId 为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`；当前修复待新候选重建，当前无可分发 candidate。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
+`v0.25.1-alpha` 已将 `20260816`、`20260822-275099e`、`20260822-4ff1862`、`20260822-afc5470`、`20260822-385a251`、`20260822-e43dc8c`、`20260824-ccad09f` 和 `20260824-2e7a3e6` 登记为 `rejected`。其中 `2e7a3e6` 的完整 sourceCommit 为 `2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，candidateBuildId 为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-2e7a3e6b18aa5d297edd8c66b1475c53b3f4b06f`，归档为 `ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz`，SHA-256 为 `576ad6580fc261e486adb3bac784d2e2a7f47c4f62209686bb1e2e58b5599c1e`；拒绝原因是包内交付说明过期且缺失大纲事实被写为 `null`。当前唯一自动化候选为 `20260824-5318d4b`，sourceCommit 为 `5318d4b496d272a5f34bd270c714216f5b6c2e43`，candidateBuildId 为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-5318d4b496d272a5f34bd270c714216f5b6c2e43`，归档为 `ai-wps-phase1-delivery-20260824-5318d4b-v0251.tar.gz`，SHA-256 为 `2b5b48b7728c729016a97744af88d80a44fac63a2df7aa5eaf6ee32b50bf4320`，自动化状态为 `candidate`。用户提供的 `e43dc8c` 归档 SHA-256 为 `70252b99fdca489706e9a8ff128daeebe58032c247e593e3849ea1b98b9a0d06`；归档清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前仓库，实际同前缀提交为 `e43dc8c464a7957089b944db628090df83db6863`。
 
-历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾修复格式审查批次级块 ID 范围、直连模型输出能力、空最终正文诊断、旧工作流重复迁移及运行时快照误判，但其跨运行时 structure/format 哈希契约仍存在阻断缺陷，因此归档已拒绝。上一候选采用同一规范化入口语义并增加真实 Node→Python 对拍，但现已拒绝；当前修复待新候选重建。
+历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾修复格式审查批次级块 ID 范围、直连模型输出能力、空最终正文诊断、旧工作流重复迁移及运行时快照误判，但其跨运行时 structure/format 哈希契约仍存在阻断缺陷，因此归档已拒绝。当前候选使用修复后的同一规范化入口语义并增加真实 Node→Python 对拍，包内交付说明已绑定新候选身份。
 
 ```bash
 AI_WPS_V0250_BASELINE_ARCHIVE=<v0.25.0-alpha archive> \
 AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-2e7a3e6-v0251.tar.gz \
-DATE_TAG=<YYYYMMDD> PYTHON_BIN=python3 PYTHON38_BIN=/真实/Python3.8 \
+DATE_TAG=20260824 PYTHON_BIN=/mnt/ai-wps-test-venv/bin/python PYTHON38_BIN=/mnt/ai-wps-test-venv/bin/python \
 bash packaging/build_v0251_delivery_kit.sh
 ```
 
 当前可复核结果：
 
-- 历史 `20260824-ccad09f` 与 `20260824-2e7a3e6` 归档均已登记 `rejected`，不得分发；当前修复待新候选重建。
-- 上一候选的本地 Adapter 测试为 `800 passed, 95 skipped`，v0.25.1 交付断言为 `23 passed`，正式插件契约为 `22/22`，Python 3.8 静态兼容扫描为 `82` 个文件；这些记录不构成当前可分发 candidate。
-- 麒麟 V10 SP1 ARM64 / Python `3.8.10` 生命周期门禁的上一候选记录为通过；终态记录已改为 `rejected`，当前修复待新候选重建。Node 为 `v22.23.2`。
-- 本地归档 SHA-256 与 `.sha256` 一致；Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
+- 历史 `20260824-ccad09f` 与 `20260824-2e7a3e6` 归档均已登记 `rejected`，不得分发；当前唯一自动化候选为 `20260824-5318d4b`。
+- 当前源码 Adapter 全量测试为 `812 passed, 95 skipped`，v0.25.1 交付/prepare/audit focused 为 `25 passed`，正式插件契约为 `24/24`；这些自动化证据仍不替代目标机验收。
+- 当前候选归档为 Kylin 构建的不可变证据；独立 `shasum -a 256 -c` 与 `packaging/audit_v0251_delivery.py` 均通过，包内交付说明绑定 source/archive/build ID。
+- Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
 
 ## 7. 目标机验证建议
 
