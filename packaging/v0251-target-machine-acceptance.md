@@ -6,8 +6,8 @@
 - 验收版本：`v0.25.1-alpha`
 - 验收范围：麒麟 V10 ARM、目标 WPS、`cloud` 用户环境
 - 当前记录状态：`manual-pending`
-- 当前自动化候选：暂无；`20260824-799adf9` 已登记为 `rejected`，原因是包内目标机验收文档仍声称“暂无候选”，与 manifest/status 的候选身份不一致；修复源在重新构建归档前不属于候选
-- 被拒绝归档：`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`，SHA-256：`5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`
+- 当前自动化候选：`afe109c`，状态为 `candidate`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655`；源码提交：`afe109c27bf6bc9e663a0c107ccfd70876f95655`；归档：`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`；校验文件：`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256`；目标验收：`manual-pending`（Issue #59）
+- 上一被拒绝归档：`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`，SHA-256：`5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`；candidateBuildId：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，状态为 `rejected`
 - 验收人员：
 - 验收日期：
 - 交付包文件名：

@@ -100,6 +100,13 @@
       "status": "rejected",
       "recordedAt": "20260824",
       "reason": "rejected: packaged target acceptance document claimed no current candidate despite manifest/status identifying 799adf9; repair source is not yet a candidate until a new package is built"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655",
+      "archiveName": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256",
+      "sourceCommit": "afe109c27bf6bc9e663a0c107ccfd70876f95655",
+      "status": "candidate"
     }
   ]
 }

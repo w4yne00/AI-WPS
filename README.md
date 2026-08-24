@@ -81,23 +81,23 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | No automated candidate is active; `20260824-799adf9` is rejected for the packaged target-acceptance identity mismatch; Issue #59 remains `manual-pending` |
-| Phase 1 delivery kit | Rejected archive `ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`, SHA-256 `5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`; repair source is not a candidate until rebuilt |
+| Delivery status | Current automated candidate is `20260824-afe109c` with status `candidate`; Issue #59 remains `manual-pending` |
+| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`, SHA-256 `e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b` |
 
 ### v0.25.1-alpha Delivery Status
 
-There is no active automated candidate. The `20260824-799adf9` record has candidate build ID
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252`,
-source commit `799adf93cc1e594a82b6d2bc88abcf08b3f3c252`, archive
-`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`, and SHA-256
-`5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`; it is
-`rejected` because the packaged target-acceptance document claimed no current
-candidate while the package manifest and candidate status identified `799adf9`.
-The repair source is not a candidate until a new package is built. The previous
-`20260824-5318d4b` archive remains immutable and rejected for the real JS coverage
-mismatch; the earlier `20260824-2e7a3e6` candidate remains rejected for its stale
-package delivery note and missing outline facts serialized as `null`. Target WPS GUI,
-real-model, and Issue #59 manual acceptance remain `manual-pending`.
+The current automated candidate is `20260824-afe109c` with candidate build ID
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655`,
+source commit `afe109c27bf6bc9e663a0c107ccfd70876f95655`, archive
+`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`, and SHA-256
+`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`. Its automated
+status is `candidate`; target WPS GUI, real-model, and Issue #59 manual acceptance
+remain `manual-pending`.
+The previous `20260824-799adf9` archive remains immutable and `rejected` because its
+packaged target-acceptance document claimed no current candidate while the package
+manifest and candidate status identified `799adf9`. The earlier `20260824-5318d4b`,
+`20260824-2e7a3e6`, and `20260824-ccad09f` archives remain rejected for their recorded
+coverage, delivery-note, outline-fact, or cross-runtime hash-contract defects.
 
 The `20260822-afc5470` package reproduced the blocking “invalid source range index”
 failure during target-machine format review and is now recorded as `rejected` together
@@ -117,13 +117,14 @@ Validation snapshot:
 
 | Gate | Result |
 | --- | --- |
-| Current-source full Adapter suite | `828 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `41 passed` (`test_v0251_delivery.py`) |
+| Current-source full Adapter suite | `829 passed, 95 skipped` |
+| v0.25.1 delivery/prepare/audit focused | `42 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `78 passed` |
 | Formal plugin contract tests | `25/25` |
 | Python 3.8 compatibility scan | `82` production files |
-| Kylin build provenance and audits | The frozen `799adf9` package reached the recorded gates but is rejected for its packaged acceptance identity mismatch; no active candidate remains |
-| Python 3.8 lifecycle gate | The frozen package's recorded Kylin V10 ARM64 / Python `3.8.10` gate is preserved as rejected evidence; target-machine acceptance remains separate and pending |
-| Archive checksum | Rejected `799adf9` archive remains byte-identical with SHA-256 `5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c` |
+| Kylin build provenance and audits | `afe109c` Kylin V10 ARM64 / Python `3.8.10` provenance, allowlist, rule compile, plugin, delivery/v0.25.1 audits, runtime and lifecycle gates all pass; terminal status is `candidate` |
+| Python 3.8 lifecycle gate | `afe109c` lifecycle gate passes; target-machine acceptance remains separate and pending |
+| Archive checksum | `afe109c` archive SHA-256 `e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`; previous `799adf9` remains byte-identical and rejected with SHA-256 `5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c` |
 | Target WPS GUI and real-document acceptance | Manual-pending in Issue #59; not passed or accepted |
 
 Version rule format:
@@ -172,7 +173,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
-| `v0.25.1-alpha` | Rejects frozen `20260824-799adf9` because its packaged target-acceptance document contradicted the manifest/status candidate identity; repair source is not yet built into a new candidate, and Issue #59 remains `manual-pending` |
+| `v0.25.1-alpha` | Publishes `20260824-afe109c` as the unique automated `candidate`; it supersedes rejected `20260824-799adf9` after fixing the packaged target-acceptance identity mismatch, while Issue #59 remains `manual-pending` |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |

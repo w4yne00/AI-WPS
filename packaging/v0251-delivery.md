@@ -1,14 +1,18 @@
 # v0.25.1-alpha candidate delivery note
 
-当前没有活动的自动化候选。归档记录 `20260824-799adf9` 的 candidateBuildId 为
+当前自动化候选为 `20260824-afe109c`，candidateBuildId 为
+`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655`，
+源码提交 `afe109c27bf6bc9e663a0c107ccfd70876f95655`，归档
+`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz`，校验文件
+`ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256`，SHA-256
+`e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b`，状态为
+`candidate`。目标 WPS GUI、真实模型和人工验收仍为 `manual-pending`（Issue #59）。
+
+上一被拒绝归档 `20260824-799adf9` 的 candidateBuildId 为
 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，
-源码提交 `799adf93cc1e594a82b6d2bc88abcf08b3f3c252`，归档
-`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz`，校验文件
-`ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256`，SHA-256
-`5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`；该归档已登记为
-`rejected`：包内目标机验收文档仍声称“暂无候选”，与 manifest/status 的候选身份不一致。
-修复源在重新构建归档前不属于候选。上一候选 `20260824-5318d4b` 及更早归档仍保持原
-`rejected` 记录，Issue #59 目标 WPS GUI、真实模型和人工验收仍为 `manual-pending`。
+归档 SHA-256 为 `5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c`；
+拒绝原因为包内目标机验收文档与 manifest/status 候选身份不一致。更早候选仍保持原
+`rejected` 记录。
 
 历史候选 `20260824-ccad09f` 已登记为 `rejected`：其
 `word.format_review.snapshot.v2` 在 WPS JavaScript 与 Python Adapter 的 structure/format
@@ -30,7 +34,7 @@
 4. v0.25.1 专用版本、插件缓存身份、格式规则资产和安全范围审计；
 5. 真实 Python 3.8 生命周期门禁，包括全新安装、v0.25.0 基线升级、故障注入和事务回退。
 
-候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 保留 `20260824-799adf9` 及所有历史 `rejected` 记录；修复源尚未形成新的候选，Issue #59 仍为 `manual-pending`。
+候选的源提交记录在 `release-manifest.json` 的 `candidateEvidence.sourceCommit`，独立构建标识记录在 `candidateEvidence.candidateBuildId`；归档 SHA-256 记录在同名 `.sha256` 文件中。源码 `packaging/v0251-candidate-status.json` 保留 `afe109c` 当前 `candidate` 及 `20260824-799adf9`、所有更早历史 `rejected` 记录，Issue #59 仍为 `manual-pending`。
 
 ## Issue #59 现场验收步骤
 

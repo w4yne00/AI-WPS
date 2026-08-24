@@ -156,7 +156,7 @@ def test_v0251_delivery_separates_sync_retirement_from_v2_hash_acceptance():
     assert lifecycle_boundary in delivery
 
 
-def test_v0251_handoff_rejected_list_contains_latest_candidate_in_validation_context():
+def test_v0251_handoff_rejected_list_contains_previous_candidates_in_validation_context():
     handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
 
     validation = handoff.split("## 6. 验证状态", 1)[1].split("## 7. 目标机验证建议", 1)[0]
@@ -183,22 +183,29 @@ def test_v0251_handoff_uses_current_candidate_as_previous_archive_example():
     assert "AI_WPS_V0251_PREVIOUS_CANDIDATE_ARCHIVE=dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260822-e43dc8c-v0251.tar.gz" not in handoff
 
 
-def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
+def test_v0251_current_candidate_identity_is_consistent_across_release_docs():
     status = json.loads(
         (ROOT / "packaging/v0251-candidate-status.json").read_text(encoding="utf-8")
     )
     expected = {
-        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
-        "archiveName": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz",
-        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz.sha256",
-        "sourceCommit": "799adf93cc1e594a82b6d2bc88abcf08b3f3c252",
-        "archiveSha256": "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
-        "status": "rejected",
-        "recordedAt": "20260824",
-        "reason": "rejected: packaged target acceptance document claimed no current candidate despite manifest/status identifying 799adf9; repair source is not yet a candidate until a new package is built",
+        "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655",
+        "archiveName": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz",
+        "archiveChecksumFile": "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz.sha256",
+        "sourceCommit": "afe109c27bf6bc9e663a0c107ccfd70876f95655",
+        "status": "candidate",
     }
     assert status["records"][-1] == expected
-    assert not [record for record in status["records"] if record.get("status") == "candidate"]
+    assert [record for record in status["records"] if record.get("status") == "candidate"] == [expected]
+
+    previous_current = next(
+        record
+        for record in status["records"]
+        if record.get("candidateBuildId", "").endswith(
+            "-799adf93cc1e594a82b6d2bc88abcf08b3f3c252"
+        )
+    )
+    assert previous_current["archiveSha256"] == "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c"
+    assert previous_current["status"] == "rejected"
 
     previous = next(
         record
@@ -230,11 +237,11 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
     assert old_rejected["status"] == "rejected"
 
     identity = (
-        "20260824-799adf9",
+        "20260824-afe109c",
         expected["candidateBuildId"],
         expected["sourceCommit"],
         expected["archiveName"],
-        "5f15e385358dcaea987e62f43cd2db1b943696372a7867449a986cdfc403f67c",
+        "e3d4da0d1d8e1edc619d2101f45afb104ef8e3a6e5197e4b8e59b46513f78c6b",
         "Issue #59",
     )
     documents = (
@@ -261,6 +268,12 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
                 or "交付/prepare/audit focused" in line
             )
         ]
+        aggregate_lines = [
+            line
+            for line in text.splitlines()
+            if "Focused protocol/delivery aggregate" in line
+            or "协议/交付 focused 合计" in line
+        ]
         plugin_lines = [
             line
             for line in text.splitlines()
@@ -268,15 +281,17 @@ def test_v0251_rejected_candidate_identity_is_consistent_across_release_docs():
             or "正式插件合同测试" in line
             or "正式插件契约" in line
         ]
-        assert any("`41 passed`" in line for line in delivery_lines)
+        assert any("`42 passed`" in line for line in delivery_lines)
+        assert all("`41 passed`" not in line for line in delivery_lines)
         assert all("`39 passed`" not in line for line in delivery_lines)
+        assert any("`78 passed`" in line for line in aggregate_lines)
         assert any("`25/25`" in line for line in plugin_lines)
         assert all("`24/24`" not in line for line in plugin_lines)
 
-    assert "当前源码 Adapter 全量测试为 `828 passed, 95 skipped`" in (
+    assert "当前源码 Adapter 全量测试为 `829 passed, 95 skipped`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
-    assert "v0.25.1 交付/prepare/audit focused 为 `41 passed`" in (
+    assert "v0.25.1 交付/prepare/audit focused 为 `42 passed`" in (
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
@@ -331,6 +346,49 @@ def test_v0251_audit_rejects_packaged_acceptance_candidate_identity_mismatch(tmp
         match="V0251_TARGET_ACCEPTANCE_CANDIDATE_IDENTITY_MISMATCH",
     ):
         audit_module.audit_target_acceptance_record(delivery, manifest)
+
+
+def test_v0251_current_archive_binds_acceptance_status_and_delivery_identity(tmp_path):
+    """The distributed afe109c archive must bind all packaged evidence together."""
+    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    with tarfile.open(archive, "r:gz") as handle:
+        handle.extractall(tmp_path)
+    delivery = tmp_path / "ai-wps-phase1-delivery-20260824-afe109c-v0251"
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    status = json.loads((delivery / "docs/v0251-candidate-status.json").read_text(encoding="utf-8"))
+    audit_module = load_v0251_audit_module()
+
+    expected_build_id = "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-afe109c27bf6bc9e663a0c107ccfd70876f95655"
+    expected_source = "afe109c27bf6bc9e663a0c107ccfd70876f95655"
+    expected_archive = "ai-wps-phase1-delivery-20260824-afe109c-v0251.tar.gz"
+    expected_checksum = expected_archive + ".sha256"
+    evidence = manifest["candidateEvidence"]
+    assert evidence["candidateBuildId"] == expected_build_id
+    assert evidence["sourceCommit"] == expected_source
+    assert evidence["archiveChecksumFile"] == expected_checksum
+    assert evidence["automatedResult"] == "candidate"
+    assert manifest["targetAcceptance"] == {
+        "status": "manual-pending",
+        "required": True,
+        "scope": "kylin-v10-wps-model-direct-and-read-only-format-review",
+        "doesNotCloseIssue": True,
+    }
+    current = [record for record in status["records"] if record.get("candidateBuildId") == expected_build_id]
+    assert current == [
+        {
+            "candidateBuildId": expected_build_id,
+            "archiveName": expected_archive,
+            "archiveChecksumFile": expected_checksum,
+            "sourceCommit": expected_source,
+            "status": "candidate",
+        }
+    ]
+    assert evidence["supersedes"]["candidateBuildId"].endswith(
+        "-799adf93cc1e594a82b6d2bc88abcf08b3f3c252"
+    )
+    assert evidence["supersedes"]["status"] == "rejected"
+    audit_module.audit_candidate_note(delivery, manifest)
+    audit_module.audit_target_acceptance_record(delivery, manifest)
 
 
 def test_v0251_audit_rejects_missing_packaged_acceptance_document(tmp_path):
