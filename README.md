@@ -81,8 +81,8 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Unique 0.25.2 automated candidate `20260825-0f50456` (`candidate`); frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
-| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`, SHA-256 `7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`; source `0f504569e4bc90ffc968674aa62059dd54da9d2f` |
+| Delivery status | Unique 0.25.2 automated candidate `20260825-dacd1e9` (`candidate`); `20260825-0f50456` is `rejected`; frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
+| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz`, SHA-256 `c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871`; source `dacd1e9d0df9b18ca8103d3270f8bf979931cb87` |
 
 ### v0.25.2-alpha Delivery Status
 
@@ -90,9 +90,11 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 default-on direct-model path: new installs open the master switch, overlay
 upgrades migrate existing format-review direct configs, and visual-capability
 failure is 视觉关闭降级. The unique 0.25.2 automated candidate is
-`20260825-0f50456` (`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f`),
-archive `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`, SHA-256
-`7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`. Automated
+`20260825-dacd1e9` (`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-dacd1e9d0df9b18ca8103d3270f8bf979931cb87`),
+archive `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz`, SHA-256
+`c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871`. get-pip
+uses `-sS` so Kylin apt dist-packages are not scanned. `20260825-0f50456`
+is `rejected` and keeps its original bytes. Automated
 gates still yield only `candidate`. Issue #59 remains `manual-pending`. The
 frozen 0.25.1 candidate `20260824-d7a1dd8` keeps its original bytes
 (`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`) and is

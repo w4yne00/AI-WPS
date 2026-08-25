@@ -99,7 +99,7 @@ if ! PYTHONNOUSERSITE=1 PYTHONPATH="" "$PYTHON_BIN" -s -m pip --version >/dev/nu
   [ -f "$PIP_BOOTSTRAP_DIR/get-pip.py" ] || fail "pip_bootstrap_missing"
   PIP_MODULE_PATH="$PRIVATE_RUNTIME_DIR/.pip-bootstrap"
   mkdir -p "$PIP_MODULE_PATH"
-  PYTHONNOUSERSITE=1 PYTHONPATH="" "$PYTHON_BIN" -s \
+  PYTHONNOUSERSITE=1 PYTHONPATH="" "$PYTHON_BIN" -sS \
     "$PIP_BOOTSTRAP_DIR/get-pip.py" \
     --no-index \
     --find-links "$PIP_BOOTSTRAP_DIR/wheels" \

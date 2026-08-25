@@ -2,12 +2,12 @@
 
 ## 候选身份
 
-- Candidate label: `20260825-0f50456`
-- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f`
-- Source commit: `0f504569e4bc90ffc968674aa62059dd54da9d2f`
-- Archive name: `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`
-- Archive checksum file: `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz.sha256`
-- Archive SHA-256: `7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`
+- Candidate label: `20260825-dacd1e9`
+- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-dacd1e9d0df9b18ca8103d3270f8bf979931cb87`
+- Source commit: `dacd1e9d0df9b18ca8103d3270f8bf979931cb87`
+- Archive name: `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz`
+- Archive checksum file: `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz.sha256`
+- Archive SHA-256: `c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871`
 - Archive naming template: `ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0252.tar.gz`
 - Automated status: `candidate`
 - Target acceptance status: `manual-pending` (Issue #59)
@@ -38,7 +38,7 @@ allowlist assembly. The v2 deterministic format-review contract remains
 
 构建必须使用已冻结的 `v0.25.1-alpha` 候选归档作为基线，并依次完成显式白名单组装、格式规则包编译一致性、Python 3.8 静态兼容、正式插件契约、v0.25.2 专用身份审计和真实 Python 3.8 生命周期门禁。自动化通过只得到 `candidate`。
 
-麒麟 V10 ARM64 / Python 3.8.10 已对 `0f50456` 执行生命周期门禁，终态为 `candidate`。该结论不等于 Issue #59 目标机验收。
+麒麟 V10 ARM64 / Python 3.8.10 已对 `dacd1e9` 执行生命周期门禁，终态为 `candidate`。该结论不等于 Issue #59 目标机验收。系统 Python 无 pip 时，get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`，因此不再打印 `distro-info`/`python-apt` 非法版本或 `launchpadlib`/`testresources` 冲突。前任 `20260825-0f50456` 已登记为 `rejected`，保持原字节。
 
 ## 明确边界
 
