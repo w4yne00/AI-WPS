@@ -91,8 +91,9 @@ assert.ok(
   "resume must peek job status before locking the start button"
 );
 assert.ok(!resume.includes("本次格式审查后台任务失败，旧结果不会复用"));
-assert.ok(run.includes("state.deterministicFormatReviewJobId && state.modelTaskBusy"));
-assert.ok(!run.includes("state.deterministicFormatReviewJobId || state.modelTaskBusy"));
+assert.ok(resume.includes("state.modelTaskBusy"));
+assert.ok(run.includes("state.deterministicFormatReviewJobId || state.modelTaskBusy"));
+assert.ok(!run.includes("state.deterministicFormatReviewJobId && state.modelTaskBusy"));
 
 const collectImages = vm.runInNewContext(
   `(${functionSource("collectDeterministicFormatReviewImages")})`,

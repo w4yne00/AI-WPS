@@ -7099,7 +7099,9 @@
       timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
     }).then(function (body) {
       var job = body.data || {};
-      if (state.currentMode !== "formatReview" || state.deterministicFormatReviewJobId) {
+      if (state.currentMode !== "formatReview" ||
+          state.deterministicFormatReviewJobId ||
+          state.modelTaskBusy) {
         return;
       }
       if (job.status === "completed") {
@@ -7123,7 +7125,7 @@
       setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
       pollDeterministicFormatReviewJob(jobId);
     }).catch(function (error) {
-      if (state.deterministicFormatReviewJobId) {
+      if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {
         return;
       }
       if (error && error.adapterCode === "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND") {
@@ -7573,12 +7575,9 @@
       );
       return;
     }
-    if (state.deterministicFormatReviewJobId && state.modelTaskBusy) {
+    if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {
       setStatus("已有格式审查任务正在执行，请等待当前任务完成。");
       return;
-    }
-    if (state.modelTaskBusy && !state.deterministicFormatReviewJobId) {
-      setModelTaskBusy(false);
     }
     scope = resolveSelectionScope(false);
     if (!scope.ok) {
