@@ -2,12 +2,12 @@
 
 ## 候选身份
 
-- Candidate label: `20260825-dacd1e9`
-- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-dacd1e9d0df9b18ca8103d3270f8bf979931cb87`
-- Source commit: `dacd1e9d0df9b18ca8103d3270f8bf979931cb87`
-- Archive name: `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz`
-- Archive checksum file: `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz.sha256`
-- Archive SHA-256: `c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871`
+- Candidate label: `20260825-850871c`
+- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`
+- Source commit: `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`
+- Archive name: `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`
+- Archive checksum file: `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz.sha256`
+- Archive SHA-256: `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`
 - Archive naming template: `ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0252.tar.gz`
 - Automated status: `candidate`
 - Target acceptance status: `manual-pending` (Issue #59)
@@ -34,11 +34,13 @@ allowlist assembly. The v2 deterministic format-review contract remains
 
 退役同步路由 `POST /word/format-review` 固定返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` 且不执行审查；结构/格式哈希、OutlineLevel 和格式事实验收只通过 `word.format_review.snapshot.v2` 的 snapshot/batch/job v2 后台路径执行。独立验证 `word.format_review.snapshot.v2` 的 snapshot/batch/job 取消、失败和重启生命周期。
 
+本候选另包含 PPT 结构审查对中文模板形状名「标题 1 / 标题 3」和色条副标题的识别；空的 `Shapes.Title` 与母版提示词不挡住真实标题。普通文本框仍不得升格为主标题。
+
 ## 自动化门禁
 
 构建必须使用已冻结的 `v0.25.1-alpha` 候选归档作为基线，并依次完成显式白名单组装、格式规则包编译一致性、Python 3.8 静态兼容、正式插件契约、v0.25.2 专用身份审计和真实 Python 3.8 生命周期门禁。自动化通过只得到 `candidate`。
 
-麒麟 V10 ARM64 / Python 3.8.10 已对 `dacd1e9` 执行生命周期门禁，终态为 `candidate`。该结论不等于 Issue #59 目标机验收。系统 Python 无 pip 时，get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`，因此不再打印 `distro-info`/`python-apt` 非法版本或 `launchpadlib`/`testresources` 冲突。前任 `20260825-0f50456` 已登记为 `rejected`，保持原字节。
+麒麟 V10 ARM64 / Python 3.8.10 已对 `850871c` 执行生命周期门禁，终态为 `candidate`。该结论不等于 Issue #59 目标机验收。系统 Python 无 pip 时，get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`，因此不再打印 `distro-info`/`python-apt` 非法版本或 `launchpadlib`/`testresources` 冲突。前任 `20260825-dacd1e9` 与 `20260825-0f50456` 已登记为 `rejected`，保持原字节。
 
 ## 明确边界
 

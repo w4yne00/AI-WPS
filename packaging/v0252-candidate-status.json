@@ -19,6 +19,16 @@
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz.sha256",
       "sourceCommit": "dacd1e9d0df9b18ca8103d3270f8bf979931cb87",
       "archiveSha256": "c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871",
+      "status": "rejected",
+      "recordedAt": "20260825",
+      "reason": "rejected: PPT structure review could not read Chinese template titles (标题 1/标题 3) or the section subtitle bar; rebuild includes that extractor fix"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9",
+      "archiveName": "ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz.sha256",
+      "sourceCommit": "850871c10a17f03c8a58abd02ca58c2f3fc70fc9",
+      "archiveSha256": "c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92",
       "status": "candidate",
       "recordedAt": "20260825"
     }
