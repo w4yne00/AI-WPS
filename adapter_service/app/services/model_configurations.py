@@ -391,6 +391,7 @@ class ModelConfigurationStore:
             source_key = self._read_key(str(source.get("apiKeyRef", "")))
             if source_key:
                 self._write_key(copied["apiKeyRef"], source_key)
+            self._sync_image_egress_binding(copied)
             configurations[copied["id"]] = copied
             payload["modelConfigurations"] = configurations
             save_config_payload(payload, self.config_path)
@@ -675,13 +676,13 @@ class ModelConfigurationStore:
             image_readiness = {
                 "code": "disabled",
                 "ready": False,
-                "label": "图片语义默认关闭。",
+                "label": "图片输入已禁用。",
             }
         elif image_policy["reason"] == "image_external_authorization_required":
             image_readiness = {
                 "code": "authorization_required",
                 "ready": False,
-                "label": "请明确授权将图片发送至当前模型服务。",
+                "label": "请再次保存配置以绑定当前模型服务。",
             }
         elif image_policy["reason"] == "image_capability_validation_required":
             image_readiness = {

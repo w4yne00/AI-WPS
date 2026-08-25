@@ -942,9 +942,6 @@ class WordFormatReviewer:
         )
         image_inventory["pixelExportCount"] = image_inventory["pixelInspectedCount"]
         image_inventory["pixelUploadCount"] = image_inventory["pixelInspectedCount"]
-        image_inventory["imageSemanticStatus"] = diagnostics.get("imageSemanticStatus", "disabled")
-        image_inventory["imageSemanticReason"] = diagnostics.get("imageSemanticReason", "")
-        image_inventory["imageTargetHost"] = diagnostics.get("imageTargetHost", "")
 
     def _build_figure_caption_prompt(self, request: WordDocumentRequest, candidates: List[Dict]) -> str:
         safe_candidates = []

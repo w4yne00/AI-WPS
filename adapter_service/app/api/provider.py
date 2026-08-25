@@ -357,15 +357,6 @@ def validate_model_configuration(configuration_id: str) -> dict:
             pass
         raise
     duration_ms = int((time.monotonic() - started) * 1000)
-    current = store.get_configuration(configuration_id)
-    if current.get("imageInputMode", "disabled") != "disabled":
-        store.record_image_semantic_validation(
-            configuration_id,
-            {
-                "validated": False,
-                "errorCode": "IMAGE_CAPABILITY_PROBE_REQUIRED",
-            },
-        )
     if isinstance(result.get("formatSemanticValidation"), dict):
         store.record_format_semantic_validation(
             configuration_id,

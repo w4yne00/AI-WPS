@@ -480,7 +480,7 @@ class ImageSemanticConfigStore:
             "updatedAt": str(image_semantics.get("updatedAt") or ""),
         }
 
-    def set_enabled(self, enabled: bool, wps_acceptance_confirmed: bool = False) -> Dict[str, Any]:
+    def set_enabled(self, enabled: bool) -> Dict[str, Any]:
         payload = load_config_payload(self.config_path)
         format_review = payload.get("formatReview")
         if not isinstance(format_review, dict):

@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.core.config import default_config_path, load_settings
 from app.core.features import (
@@ -15,9 +15,6 @@ router = APIRouter()
 
 class ImageSemanticSettingsRequest(BaseModel):
     enabled: bool
-    wps_acceptance_confirmed: bool = Field(
-        default=False, alias="wpsAcceptanceConfirmed"
-    )
 
 
 @router.get("/config")

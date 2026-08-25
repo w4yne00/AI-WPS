@@ -306,6 +306,26 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
             activated = store.activate_configuration(failed["id"])
             self.assertEqual(activated["activeConfigurationId"], failed["id"])
 
+    def test_copying_usable_format_review_direct_writes_egress_binding(self):
+        # Break: copy drops authorization even when the copy is already usable.
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            created = store.create_configuration(
+                "word.format_review",
+                "直连格式审查",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://vision.example/v1",
+                model_name="vision-1",
+            )
+            store.replace_api_key(created["id"], "secret")
+            copied = store.copy_configuration(created["id"], name="直连副本")
+            authorization = copied["imageExternalAuthorization"]
+            self.assertEqual(copied["imageInputMode"], "openai_image_url")
+            self.assertTrue(authorization["authorized"])
+            self.assertFalse(authorization.get("stale", False))
+            self.assertEqual(authorization["serviceHost"], "vision.example")
+            self.assertTrue(copied["complete"])
+
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
 class FormatReviewImageReportTests(unittest.TestCase):
@@ -375,7 +395,7 @@ class FormatReviewImageReportTests(unittest.TestCase):
                 ],
             )
             self.assertGreaterEqual(result["summary"]["issueCount"], 1)
-            self.assertNotEqual(result["summary"].get("pixelInspectedCount"), 1)
+            self.assertEqual(result["summary"].get("pixelInspectedCount"), 0)
             self.assertEqual(result["summary"]["pixelUploadCount"], 0)
             statuses = [
                 issue.get("dataStatus")
