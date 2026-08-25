@@ -81,17 +81,22 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Product identity is `v0.25.2-alpha`; frozen 0.25.1 candidate remains `20260824-d7a1dd8` (`candidate`); Issue #59 remains `manual-pending` |
-| Phase 1 delivery kit | Frozen 0.25.1 archive `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`, SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`; source `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0` |
+| Delivery status | Unique 0.25.2 automated candidate `20260825-0f50456` (`candidate`); frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
+| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`, SHA-256 `7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`; source `0f504569e4bc90ffc968674aa62059dd54da9d2f` |
 
 ### v0.25.2-alpha Delivery Status
 
 `v0.25.2-alpha` keeps the Phase1 installer and publishes 图像语义补充 as the
 default-on direct-model path: new installs open the master switch, overlay
 upgrades migrate existing format-review direct configs, and visual-capability
-failure is 视觉关闭降级. Automated gates still yield only `candidate`. Issue
-#59 remains `manual-pending`. The frozen 0.25.1 candidate `20260824-d7a1dd8`
-keeps its original bytes and is not the current 0.25.2 candidate.
+failure is 视觉关闭降级. The unique 0.25.2 automated candidate is
+`20260825-0f50456` (`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f`),
+archive `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`, SHA-256
+`7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`. Automated
+gates still yield only `candidate`. Issue #59 remains `manual-pending`. The
+frozen 0.25.1 candidate `20260824-d7a1dd8` keeps its original bytes
+(`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`) and is
+not the current 0.25.2 candidate.
 
 ### v0.25.1-alpha Delivery Status
 
