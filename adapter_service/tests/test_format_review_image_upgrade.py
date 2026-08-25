@@ -17,19 +17,25 @@ from adapter_service.tests.test_format_review_image_defaults import (
     HAS_PYDANTIC,
     FigureCaptionProvider,
     _figure_request,
+    _ready_task_auth,
 )
 
 if HAS_PYDANTIC:
     from app.services.word.format_reviewer import WordFormatReviewer
 
 
-def _write_v0251_runtime(root, with_acceptance=True, format_review_image_mode="disabled"):
+def _write_v0251_runtime(
+    root,
+    with_acceptance=True,
+    format_review_image_mode="disabled",
+    image_config_version=1,
+):
     key_dir = root / "provider_api_keys"
     key_dir.mkdir()
     (key_dir / "legacy-key").write_text("secret\n", encoding="utf-8")
     (key_dir / "workflow-key").write_text("wf-secret\n", encoding="utf-8")
     (key_dir / "write-key").write_text("write-secret\n", encoding="utf-8")
-    image = {"enabled": False, "configVersion": 1}
+    image = {"enabled": False, "configVersion": image_config_version}
     if with_acceptance:
         image["wpsAcceptanceConfirmed"] = True
     format_review = {
@@ -106,6 +112,49 @@ class OverlayUpgradeImageSemanticTests(unittest.TestCase):
             settings = ImageSemanticConfigStore(config_path).get()
             self.assertTrue(settings["enabled"])
             self.assertNotIn("wpsAcceptanceConfirmed", settings)
+
+    def test_overlay_upgrade_still_runs_after_switch_was_saved_in_0251(self):
+        # Break: set_enabled already bumped configVersion to >=2, overlay is skipped.
+        with TemporaryDirectory() as tmp:
+            config_path, key_dir = _write_v0251_runtime(
+                Path(tmp), image_config_version=3
+            )
+            _store, listed, _writing = _upgrade(config_path, key_dir)
+            settings = ImageSemanticConfigStore(config_path).get()
+            legacy = _config_by_id(listed, "legacy")
+            self.assertTrue(settings["enabled"])
+            self.assertEqual(legacy["imageInputMode"], "openai_image_url")
+            self.assertTrue(legacy["imageExternalAuthorization"]["authorized"])
+            self.assertEqual(
+                legacy["imageExternalAuthorization"]["serviceHost"], "vision.example"
+            )
+
+    def test_switch_store_get_runs_overlay_without_listing_configs_first(self):
+        # Break: settings GET leaves the dormant 0.25.1 switch in place.
+        with TemporaryDirectory() as tmp:
+            config_path, key_dir = _write_v0251_runtime(Path(tmp))
+            settings = ImageSemanticConfigStore(config_path).get()
+            self.assertTrue(settings["enabled"])
+            self.assertNotIn("wpsAcceptanceConfirmed", settings)
+            listed = ModelConfigurationStore(config_path, key_dir).list_for_task(
+                "word.format_review"
+            )
+            legacy = _config_by_id(listed, "legacy")
+            self.assertEqual(legacy["imageInputMode"], "openai_image_url")
+            self.assertTrue(legacy["imageExternalAuthorization"]["authorized"])
+
+    def test_switch_store_set_enabled_still_migrates_direct_configs(self):
+        # Break: first PUT on the switch skips format-review mode/binding migration.
+        with TemporaryDirectory() as tmp:
+            config_path, key_dir = _write_v0251_runtime(Path(tmp))
+            settings = ImageSemanticConfigStore(config_path).set_enabled(False)
+            self.assertFalse(settings["enabled"])
+            listed = ModelConfigurationStore(config_path, key_dir).list_for_task(
+                "word.format_review"
+            )
+            legacy = _config_by_id(listed, "legacy")
+            self.assertEqual(legacy["imageInputMode"], "openai_image_url")
+            self.assertTrue(legacy["imageExternalAuthorization"]["authorized"])
 
     def test_overlay_upgrade_migrates_format_review_direct_and_writes_binding(self):
         # Break: old direct format-review stays disabled, or upgrade skips the binding.
@@ -212,6 +261,12 @@ class OverlayUpgradeFormatReviewResultTests(unittest.TestCase):
             self.assertEqual(legacy["imageInputMode"], "openai_image_url")
             self.assertTrue(legacy["imageExternalAuthorization"]["authorized"])
             self.assertIsNone(legacy["imageSemanticValidation"])
+            task_auth = _ready_task_auth(validated=False)
+            task_auth["imageSemantics"] = settings
+            task_auth["modelConfiguration"]["imageInputMode"] = legacy["imageInputMode"]
+            task_auth["modelConfiguration"]["imageExternalAuthorization"] = legacy[
+                "imageExternalAuthorization"
+            ]
             provider = FigureCaptionProvider()
             result = WordFormatReviewer(provider_client=provider).review(
                 _figure_request(
@@ -223,19 +278,7 @@ class OverlayUpgradeFormatReviewResultTests(unittest.TestCase):
                     }
                 ),
                 trace_id="trace-upgrade",
-                task_auth={
-                    "accessMethod": ACCESS_DIRECT_MODEL,
-                    "modelName": "vision-1",
-                    "imageSemantics": settings,
-                    "modelConfiguration": {
-                        "serviceBaseUrl": "https://vision.example/v1",
-                        "accessMethod": ACCESS_DIRECT_MODEL,
-                        "modelName": "vision-1",
-                        "imageInputMode": legacy["imageInputMode"],
-                        "imageExternalAuthorization": legacy["imageExternalAuthorization"],
-                        "imageSemanticValidation": legacy["imageSemanticValidation"],
-                    },
-                },
+                task_auth=task_auth,
                 image_assets=[
                     {
                         "imageId": "figure-1",
@@ -257,6 +300,8 @@ class OverlayUpgradeFormatReviewResultTests(unittest.TestCase):
         with TemporaryDirectory() as tmp:
             config_path, key_dir = _write_v0251_runtime(Path(tmp))
             frozen = {
+                "providerBaseUrl": "https://vision.example/v1",
+                "apiKey": "frozen-secret",
                 "accessMethod": ACCESS_DIRECT_MODEL,
                 "modelName": "vision-1",
                 "imageSemantics": {"enabled": False},

@@ -464,7 +464,23 @@ class ImageSemanticConfigStore:
     def __init__(self, config_path: Path):
         self.config_path = Path(config_path)
 
+    def _key_dir(self) -> Path:
+        sibling = self.config_path.parent / "provider_api_keys"
+        if sibling.exists():
+            return sibling
+        from app.core.runtime_paths import resolve_runtime_paths
+
+        return resolve_runtime_paths().api_key_dir
+
+    def _ensure_outbound_overlay(self) -> None:
+        from app.services.model_configurations import ModelConfigurationStore
+
+        ModelConfigurationStore(self.config_path, self._key_dir()).list_for_task(
+            "word.format_review"
+        )
+
     def get(self) -> Dict[str, Any]:
+        self._ensure_outbound_overlay()
         payload = load_config_payload(self.config_path)
         format_review = payload.get("formatReview") if isinstance(payload.get("formatReview"), dict) else {}
         image_semantics = format_review.get("imageSemantics")
@@ -481,6 +497,7 @@ class ImageSemanticConfigStore:
         }
 
     def set_enabled(self, enabled: bool) -> Dict[str, Any]:
+        self._ensure_outbound_overlay()
         payload = load_config_payload(self.config_path)
         format_review = payload.get("formatReview")
         if not isinstance(format_review, dict):
