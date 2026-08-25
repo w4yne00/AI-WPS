@@ -25,6 +25,11 @@ FROZEN_0251_SHA = "ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1ad
 FROZEN_0251_BUILD_ID = (
     "AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0"
 )
+REJECTED_DACD1E9 = "ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz"
+REJECTED_DACD1E9_SHA = "c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871"
+REJECTED_DACD1E9_BUILD_ID = (
+    "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-dacd1e9d0df9b18ca8103d3270f8bf979931cb87"
+)
 FORBIDDEN_CLAIMS = (
     "图片审查已可用",
     "目标机已验收",
@@ -150,6 +155,36 @@ def test_v0252_status_does_not_register_d7a1dd8_as_current_candidate():
         assert record.get("archiveName") != FROZEN_0251.name
         assert record.get("candidateBuildId") != FROZEN_0251_BUILD_ID
         assert "0.25.2" in str(record.get("candidateBuildId", ""))
+
+
+def test_v0252_status_keeps_dacd1e9_rejected_with_frozen_digest():
+    # Break: leaving dacd1e9 as the current 0.25.2 candidate after the title-fix rebuild.
+    assert STATUS.is_file()
+    status = json.loads(STATUS.read_text(encoding="utf-8"))
+    records = [
+        record
+        for record in status.get("records", [])
+        if record.get("archiveName") == REJECTED_DACD1E9
+    ]
+    assert records == [
+        {
+            "candidateBuildId": REJECTED_DACD1E9_BUILD_ID,
+            "archiveName": REJECTED_DACD1E9,
+            "archiveChecksumFile": REJECTED_DACD1E9 + ".sha256",
+            "sourceCommit": "dacd1e9d0df9b18ca8103d3270f8bf979931cb87",
+            "archiveSha256": REJECTED_DACD1E9_SHA,
+            "status": "rejected",
+            "recordedAt": "20260825",
+            "reason": (
+                "rejected: PPT structure review could not read Chinese template "
+                "titles (标题 1/标题 3) or the section subtitle bar; rebuild "
+                "includes that extractor fix"
+            ),
+        }
+    ]
+    current = [record for record in status.get("records", []) if record.get("status") == "candidate"]
+    for record in current:
+        assert record.get("archiveName") != REJECTED_DACD1E9
 
 
 def test_v0252_docs_describe_defaults_upgrade_and_visual_off_without_overclaim():
