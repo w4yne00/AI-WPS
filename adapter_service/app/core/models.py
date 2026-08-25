@@ -795,6 +795,7 @@ class FormatReviewSummary(BaseModel):
     figure_caption_semantic_status: str = Field(default="not_needed", alias="figureCaptionSemanticStatus")
     image_semantic_status: str = Field(default="disabled", alias="imageSemanticStatus")
     image_semantic_reason: str = Field(default="image_semantics_disabled", alias="imageSemanticReason")
+    image_target_host: str = Field(default="", alias="imageTargetHost")
     semantic_status: str = Field(default="not_needed", alias="semanticStatus")
     model_configuration_name: str = Field(default="", alias="modelConfigurationName")
     model_configuration_id: str = Field(default="", alias="modelConfigurationId")

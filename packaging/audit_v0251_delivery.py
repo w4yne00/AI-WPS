@@ -306,21 +306,23 @@ def audit_format_assets(root: Path, manifest: Dict) -> None:
 
 def audit_visual_default(root: Path, manifest: Dict) -> None:
     visual = manifest.get("visualPolicy", {})
-    if visual.get("enabledByDefault") is not False:
-        raise DeliveryFailure("VISUAL_DEFAULT_MUST_BE_CLOSED")
+    if visual.get("enabledByDefault") is not True:
+        raise DeliveryFailure("VISUAL_DEFAULT_MUST_BE_OPEN")
+    if visual.get("requiresWpsAcceptance") is not False:
+        raise DeliveryFailure("VISUAL_MUST_NOT_REQUIRE_WPS_ACCEPTANCE")
     for key in ("pixelExportWhenDisabled", "pixelUploadWhenDisabled", "imageSlotAllocationWhenDisabled"):
         if visual.get(key) is not False:
             raise DeliveryFailure("VISUAL_SIDE_EFFECT_DEFAULT_MUST_BE_CLOSED {0}".format(key))
     config = load_json(root / "packages/adapter-start-kit/config/adapter.example.json", "ADAPTER_EXAMPLE_CONFIG_MISSING")
     image = config.get("formatReview", {}).get("imageSemantics", {})
-    if image.get("enabled") is not False or image.get("wpsAcceptanceConfirmed") is not False:
-        raise DeliveryFailure("IMAGE_SEMANTICS_EXAMPLE_NOT_CLOSED")
+    if image.get("enabled") is not True or "wpsAcceptanceConfirmed" in image:
+        raise DeliveryFailure("IMAGE_SEMANTICS_EXAMPLE_NOT_OPEN")
     adapter_root = root / "packages/adapter-start-kit/adapter_service"
     sys.path.insert(0, str(adapter_root))
     from app.services.word.image_semantics import collect_image_inventory, image_pixel_policy
 
     policy = image_pixel_policy(
-        {"enabled": False, "wpsAcceptanceConfirmed": False},
+        {"enabled": False},
         {"imageInputMode": "openai_image_url", "serviceBaseUrl": "https://example.invalid/v1"},
     )
     inventory = collect_image_inventory({"images": [{"imageId": "fixture", "captionStatus": "missing"}]})

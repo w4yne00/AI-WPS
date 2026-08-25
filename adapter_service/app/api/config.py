@@ -66,8 +66,5 @@ def get_image_semantic_settings() -> dict:
 @router.put("/config/image-semantics")
 def update_image_semantic_settings(request: ImageSemanticSettingsRequest) -> dict:
     store = ImageSemanticConfigStore(default_config_path())
-    data = store.set_enabled(
-        request.enabled,
-        wps_acceptance_confirmed=request.wps_acceptance_confirmed,
-    )
+    data = store.set_enabled(request.enabled)
     return {"success": True, "message": "saved", "data": data}

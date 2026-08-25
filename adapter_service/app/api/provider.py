@@ -69,7 +69,7 @@ class ModelConfigurationCreateRequest(BaseModel):
     context_window_tokens: Optional[int] = Field(
         default=None, alias="contextWindowTokens"
     )
-    image_input_mode: str = Field(default="disabled", alias="imageInputMode")
+    image_input_mode: Optional[str] = Field(default=None, alias="imageInputMode")
 
 
 class ModelConfigurationUpdateRequest(BaseModel):

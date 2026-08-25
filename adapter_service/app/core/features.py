@@ -19,4 +19,4 @@ def image_semantics_enabled() -> bool:
     from app.services.word.image_semantics import ImageSemanticConfigStore
 
     settings = ImageSemanticConfigStore(default_config_path()).get()
-    return bool(settings.get("enabled") and settings.get("wpsAcceptanceConfirmed"))
+    return bool(settings.get("enabled"))

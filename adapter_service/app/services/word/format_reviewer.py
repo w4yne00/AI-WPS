@@ -784,6 +784,7 @@ class WordFormatReviewer:
             "figureCaptionSemanticStatus": "not_needed" if not candidates else "not_run",
             "imageSemanticStatus": "disabled" if not policy["allowed"] else "ready",
             "imageSemanticReason": policy["reason"],
+            "imageTargetHost": str(policy.get("targetHost") or ""),
         }
         if not candidates:
             return {}, diagnostics
@@ -931,6 +932,9 @@ class WordFormatReviewer:
     def _apply_figure_image_diagnostics(
         image_inventory: Dict[str, Any], suggestions: Dict[str, Dict], diagnostics: Dict[str, Any]
     ) -> None:
+        image_inventory["imageSemanticStatus"] = diagnostics.get("imageSemanticStatus", "disabled")
+        image_inventory["imageSemanticReason"] = diagnostics.get("imageSemanticReason", "")
+        image_inventory["imageTargetHost"] = diagnostics.get("imageTargetHost", "")
         if not suggestions:
             return
         image_inventory["pixelInspectedCount"] = sum(
@@ -940,6 +944,7 @@ class WordFormatReviewer:
         image_inventory["pixelUploadCount"] = image_inventory["pixelInspectedCount"]
         image_inventory["imageSemanticStatus"] = diagnostics.get("imageSemanticStatus", "disabled")
         image_inventory["imageSemanticReason"] = diagnostics.get("imageSemanticReason", "")
+        image_inventory["imageTargetHost"] = diagnostics.get("imageTargetHost", "")
 
     def _build_figure_caption_prompt(self, request: WordDocumentRequest, candidates: List[Dict]) -> str:
         safe_candidates = []

@@ -35,6 +35,16 @@ _SAFE_KEY_REF = re.compile(r"^[A-Za-z0-9_.-]+$")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 _STORE_LOCK = threading.RLock()
 WORKFLOW_PROFILE_MIGRATION_VERSION = 1
+_IMAGE_BIND_FIELDS = ("serviceBaseUrl", "imageInputMode", "modelName")
+
+
+def default_image_input_mode(task_type: str, access_method: str) -> str:
+    if (
+        str(task_type or "") == "word.format_review"
+        and str(access_method or "") == ACCESS_DIRECT_MODEL
+    ):
+        return "openai_image_url"
+    return "disabled"
 
 
 class ModelConfigurationError(ValueError):
@@ -129,9 +139,11 @@ class ModelConfigurationStore:
         temperature=None,
         max_output_tokens=None,
         context_window_tokens=None,
-        image_input_mode="disabled",
+        image_input_mode=None,
     ) -> dict:
         task = self._validate_task_type(task_type)
+        if image_input_mode in (None, ""):
+            image_input_mode = default_image_input_mode(task, access_method)
         clean = self._validated_fields(
             name=name,
             note=note,
@@ -167,6 +179,7 @@ class ModelConfigurationStore:
                 "imageSemanticValidation": None,
                 **clean,
             }
+            self._sync_image_egress_binding(configuration)
             configurations[configuration["id"]] = configuration
             payload["modelConfigurations"] = configurations
             save_config_payload(payload, self.config_path)
@@ -211,6 +224,12 @@ class ModelConfigurationStore:
                 and item.get("id") != configuration["id"]
             ]
             self._ensure_unique_name(same_task, clean["name"])
+            previous = {
+                "serviceBaseUrl": configuration.get("serviceBaseUrl"),
+                "imageInputMode": configuration.get("imageInputMode"),
+                "modelName": configuration.get("modelName"),
+                "imageExternalAuthorization": configuration.get("imageExternalAuthorization"),
+            }
             old_method = configuration.get("accessMethod")
             old_ref = ""
             if old_method and old_method != clean["accessMethod"]:
@@ -224,6 +243,7 @@ class ModelConfigurationStore:
                     clean["modelName"] = ""
             configuration.update(clean)
             self._touch(configuration)
+            self._sync_image_egress_binding(configuration, previous)
             configurations[configuration["id"]] = configuration
             payload["modelConfigurations"] = configurations
             self._deactivate_if_incomplete(payload, configuration)
@@ -240,6 +260,7 @@ class ModelConfigurationStore:
             configuration = self._require_configuration(configurations, configuration_id)
             self._write_key(configuration["apiKeyRef"], clean_key)
             self._touch(configuration)
+            self._sync_image_egress_binding(configuration, configuration)
             configurations[configuration["id"]] = configuration
             payload["modelConfigurations"] = configurations
             save_config_payload(payload, self.config_path)
@@ -362,7 +383,7 @@ class ModelConfigurationStore:
                     "configVersion": 1,
                     "createdAt": now,
                     "updatedAt": now,
-                    "imageInputMode": "disabled",
+                    "imageInputMode": default_image_input_mode(target_task, source.get("accessMethod", "")),
                     "imageExternalAuthorization": None,
                     "imageSemanticValidation": None,
                 }
@@ -503,9 +524,8 @@ class ModelConfigurationStore:
         image_semantics = format_review.get("imageSemantics")
         if not isinstance(image_semantics, dict):
             format_review["imageSemantics"] = {
-                "enabled": False,
-                "wpsAcceptanceConfirmed": False,
-                "configVersion": 1,
+                "enabled": True,
+                "configVersion": IMAGE_SEMANTICS_CONFIG_VERSION,
             }
             payload["formatReview"] = format_review
             changed = True
@@ -514,15 +534,10 @@ class ModelConfigurationStore:
             image_version = int(image_semantics.get("configVersion") or 0)
             image_changed = False
             if not isinstance(image_semantics.get("enabled"), bool):
-                image_semantics["enabled"] = False
+                image_semantics["enabled"] = True
                 image_changed = True
-            elif image_version <= IMAGE_SEMANTICS_CONFIG_VERSION:
-                if image_semantics["enabled"]:
-                    image_semantics["enabled"] = False
-                    image_semantics["wpsAcceptanceConfirmed"] = False
-                    image_changed = True
-            if not isinstance(image_semantics.get("wpsAcceptanceConfirmed"), bool):
-                image_semantics["wpsAcceptanceConfirmed"] = False
+            if "wpsAcceptanceConfirmed" in image_semantics:
+                image_semantics.pop("wpsAcceptanceConfirmed", None)
                 image_changed = True
             if image_version < IMAGE_SEMANTICS_CONFIG_VERSION:
                 image_semantics["configVersion"] = IMAGE_SEMANTICS_CONFIG_VERSION
@@ -642,7 +657,7 @@ class ModelConfigurationStore:
         else:
             image_validation = {**image_validation, "stale": False}
         image_policy = image_pixel_policy(
-            {"enabled": True, "wpsAcceptanceConfirmed": True},
+            {"enabled": True},
             {
                 **configuration,
                 "imageInputMode": image_input_mode,
@@ -788,6 +803,33 @@ class ModelConfigurationStore:
             "imageSemanticReadiness": image_readiness,
             "createdAt": str(configuration.get("createdAt", "")),
             "updatedAt": str(configuration.get("updatedAt", "")),
+        }
+
+    def _sync_image_egress_binding(self, configuration: dict, previous=None) -> None:
+        task = str(configuration.get("taskType") or "")
+        method = str(configuration.get("accessMethod") or "")
+        mode = str(configuration.get("imageInputMode") or "disabled")
+        if mode == "disabled":
+            configuration["imageExternalAuthorization"] = None
+            return
+        if task != "word.format_review" or method != ACCESS_DIRECT_MODEL:
+            return
+        if not self._key_exists(str(configuration.get("apiKeyRef") or "")):
+            return
+        if not str(configuration.get("serviceBaseUrl") or "").strip():
+            return
+        if not str(configuration.get("modelName") or "").strip():
+            return
+        if previous is not None:
+            changed = any(
+                str(configuration.get(field) or "") != str(previous.get(field) or "")
+                for field in _IMAGE_BIND_FIELDS
+            )
+            if changed:
+                return
+        configuration["imageExternalAuthorization"] = {
+            "authorized": True,
+            **_image_binding(configuration),
         }
 
     def _validated_fields(
