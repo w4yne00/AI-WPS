@@ -376,6 +376,116 @@ exit 0
                 (runtime / "requirements-lock.txt").read_text(encoding="utf-8"),
             )
 
+    def test_private_runtime_get_pip_disables_site_to_ignore_kylin_dist_packages(
+        self,
+    ) -> None:
+        # Break: get-pip.py runs with site.py enabled, so pip 24 scans apt
+        # dist-packages and prints launchpadlib/testresources plus invalid
+        # Kylin versions for distro-info/python-apt.
+        script = ROOT / "phase1-delivery-kit/installer/install_private_runtime.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            runtime = root / "runtime"
+            bootstrap = root / "bootstrap"
+            target = root / "release" / "python-runtime"
+            runtime_wheels = runtime / "wheels"
+            bootstrap_wheels = bootstrap / "wheels"
+            runtime_wheels.mkdir(parents=True)
+            bootstrap_wheels.mkdir(parents=True)
+            runtime_wheel = runtime_wheels / "demo-1.0-py3-none-any.whl"
+            bootstrap_wheel = bootstrap_wheels / "pip-24.0-py3-none-any.whl"
+            runtime_wheel.write_bytes(b"runtime-wheel")
+            bootstrap_wheel.write_bytes(b"bootstrap-wheel")
+            runtime_hash = hashlib.sha256(runtime_wheel.read_bytes()).hexdigest()
+            bootstrap_hash = hashlib.sha256(bootstrap_wheel.read_bytes()).hexdigest()
+            (runtime / "requirements-lock.txt").write_text(
+                "demo==1.0 --hash=sha256:{0}\n".format(runtime_hash),
+                encoding="utf-8",
+            )
+            (runtime / "SHA256SUMS").write_text(
+                "{0}  wheels/{1}\n".format(runtime_hash, runtime_wheel.name)
+                + "{0}  requirements-lock.txt\n".format(
+                    hashlib.sha256(
+                        (runtime / "requirements-lock.txt").read_bytes()
+                    ).hexdigest()
+                ),
+                encoding="utf-8",
+            )
+            (bootstrap / "get-pip.py").write_text("# stub get-pip\n", encoding="utf-8")
+            (bootstrap / "SHA256SUMS").write_text(
+                "{0}  wheels/{1}\n".format(bootstrap_hash, bootstrap_wheel.name)
+                + "{0}  get-pip.py\n".format(
+                    hashlib.sha256((bootstrap / "get-pip.py").read_bytes()).hexdigest()
+                ),
+                encoding="utf-8",
+            )
+            python_log = root / "python.log"
+            python_stub = root / "python"
+            python_stub.write_text(
+                """#!/usr/bin/env bash
+printf 'PYTHONNOUSERSITE=%s PYTHONPATH=%s ARGS=%s\\n' "${PYTHONNOUSERSITE:-}" "${PYTHONPATH:-}" "$*" >> "$PYTHON_STUB_LOG"
+if [[ " $* " == *" -m pip --version"* ]]; then
+  exit 1
+fi
+if [[ " $* " == *" -s - "* ]] || [[ " $* " == *" -sS - "* ]]; then
+  exec "$REAL_PYTHON" "$@"
+fi
+if [[ " $* " == *"get-pip.py"* ]]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--target" ]; then
+      mkdir -p "$2"
+      printf '%s\\n' bootstrapped > "$2/pip-bootstrapped.txt"
+      break
+    fi
+    shift
+  done
+  exit 0
+fi
+if [[ " $* " == *" --target "* ]]; then
+  while [ "$#" -gt 0 ]; do
+    if [ "$1" = "--target" ]; then
+      mkdir -p "$2"
+      printf '%s\\n' installed > "$2/demo-installed.txt"
+      break
+    fi
+    shift
+  done
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment["PYTHON_STUB_LOG"] = str(python_log)
+            environment["REAL_PYTHON"] = sys.executable
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    str(python_stub),
+                    str(runtime),
+                    str(bootstrap),
+                    str(target),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            invocations = python_log.read_text(encoding="utf-8")
+            get_pip_lines = [
+                line for line in invocations.splitlines() if "get-pip.py" in line
+            ]
+            self.assertEqual(len(get_pip_lines), 1, invocations)
+            self.assertRegex(get_pip_lines[0], r"ARGS=-sS ")
+            self.assertIn("--target", get_pip_lines[0])
+            self.assertNotIn(" --user ", get_pip_lines[0])
+            self.assertTrue((target / "demo-installed.txt").is_file())
+
     def test_private_runtime_rejects_corrupt_wheel_before_target_write(self) -> None:
         script = ROOT / "phase1-delivery-kit/installer/install_private_runtime.sh"
         with tempfile.TemporaryDirectory() as temp_dir:

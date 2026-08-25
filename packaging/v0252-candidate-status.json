@@ -9,6 +9,16 @@
       "archiveChecksumFile": "ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz.sha256",
       "sourceCommit": "0f504569e4bc90ffc968674aa62059dd54da9d2f",
       "archiveSha256": "7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc",
+      "status": "rejected",
+      "recordedAt": "20260825",
+      "reason": "rejected: get-pip bootstrap scanned Kylin dist-packages and printed launchpadlib/testresources plus invalid distro-info/python-apt versions; installer now runs get-pip with -sS"
+    },
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-dacd1e9d0df9b18ca8103d3270f8bf979931cb87",
+      "archiveName": "ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz.sha256",
+      "sourceCommit": "dacd1e9d0df9b18ca8103d3270f8bf979931cb87",
+      "archiveSha256": "c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871",
       "status": "candidate",
       "recordedAt": "20260825"
     }
