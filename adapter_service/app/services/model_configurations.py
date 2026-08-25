@@ -503,6 +503,20 @@ class ModelConfigurationStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize(configuration)
 
+    def _overlay_v0251_format_review_image_semantics(self, configurations: dict, image_semantics: dict) -> None:
+        image_semantics["enabled"] = True
+        image_semantics.pop("wpsAcceptanceConfirmed", None)
+        image_semantics["configVersion"] = IMAGE_SEMANTICS_CONFIG_VERSION
+        for configuration in configurations.values():
+            if str(configuration.get("taskType") or "") != "word.format_review":
+                continue
+            if str(configuration.get("accessMethod") or "") != ACCESS_DIRECT_MODEL:
+                continue
+            mode = str(configuration.get("imageInputMode") or "disabled")
+            if mode == "disabled":
+                configuration["imageInputMode"] = "openai_image_url"
+            self._sync_image_egress_binding(configuration)
+
     def _load_and_migrate(self) -> dict:
         payload = load_config_payload(self.config_path)
         configurations = self._configuration_map(payload)
@@ -534,14 +548,16 @@ class ModelConfigurationStore:
             image_semantics = dict(image_semantics)
             image_version = int(image_semantics.get("configVersion") or 0)
             image_changed = False
-            if not isinstance(image_semantics.get("enabled"), bool):
-                image_semantics["enabled"] = True
-                image_changed = True
             if "wpsAcceptanceConfirmed" in image_semantics:
                 image_semantics.pop("wpsAcceptanceConfirmed", None)
                 image_changed = True
             if image_version < IMAGE_SEMANTICS_CONFIG_VERSION:
-                image_semantics["configVersion"] = IMAGE_SEMANTICS_CONFIG_VERSION
+                self._overlay_v0251_format_review_image_semantics(
+                    configurations, image_semantics
+                )
+                image_changed = True
+            elif not isinstance(image_semantics.get("enabled"), bool):
+                image_semantics["enabled"] = True
                 image_changed = True
             if image_changed:
                 format_review["imageSemantics"] = image_semantics

@@ -300,7 +300,7 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 "authorization_required",
             )
 
-    def test_image_semantics_migration_keeps_explicit_off_and_drops_acceptance(self) -> None:
+    def test_image_semantics_overlay_upgrade_enables_direct_format_review(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
             config_path = root / "adapter.json"
@@ -335,19 +335,14 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             )
             migrated = json.loads(config_path.read_text(encoding="utf-8"))
 
-            self.assertFalse(migrated["formatReview"]["imageSemantics"]["enabled"])
+            self.assertTrue(migrated["formatReview"]["imageSemantics"]["enabled"])
             self.assertNotIn(
                 "wpsAcceptanceConfirmed",
                 migrated["formatReview"]["imageSemantics"],
             )
             self.assertEqual(
                 migrated["modelConfigurations"]["legacy"]["imageInputMode"],
-                "disabled",
-            )
-            self.assertIsNone(
-                migrated["modelConfigurations"]["legacy"][
-                    "imageExternalAuthorization"
-                ]
+                "openai_image_url",
             )
             self.assertIsNone(
                 migrated["modelConfigurations"]["legacy"]["imageSemanticValidation"]
