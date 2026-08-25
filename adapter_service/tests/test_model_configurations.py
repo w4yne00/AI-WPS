@@ -300,59 +300,6 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 "authorization_required",
             )
 
-    def test_image_semantics_migration_keeps_explicit_off_and_drops_acceptance(self) -> None:
-        with TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            config_path = root / "adapter.json"
-            config_path.write_text(
-                json.dumps(
-                    {
-                        "formatReview": {
-                            "imageSemantics": {
-                                "enabled": False,
-                                "wpsAcceptanceConfirmed": True,
-                                "configVersion": 1,
-                            }
-                        },
-                        "modelConfigurations": {
-                            "legacy": {
-                                "id": "legacy",
-                                "taskType": "word.format_review",
-                                "accessMethod": ACCESS_DIRECT_MODEL,
-                                "serviceBaseUrl": "https://vision.example/v1",
-                                "modelName": "vision-1",
-                                "apiKeyRef": "legacy-key",
-                                "configVersion": 1,
-                            }
-                        },
-                    }
-                ),
-                encoding="utf-8",
-            )
-
-            ModelConfigurationStore(config_path, root / "provider_api_keys").list_for_task(
-                "word.format_review"
-            )
-            migrated = json.loads(config_path.read_text(encoding="utf-8"))
-
-            self.assertFalse(migrated["formatReview"]["imageSemantics"]["enabled"])
-            self.assertNotIn(
-                "wpsAcceptanceConfirmed",
-                migrated["formatReview"]["imageSemantics"],
-            )
-            self.assertEqual(
-                migrated["modelConfigurations"]["legacy"]["imageInputMode"],
-                "disabled",
-            )
-            self.assertIsNone(
-                migrated["modelConfigurations"]["legacy"][
-                    "imageExternalAuthorization"
-                ]
-            )
-            self.assertIsNone(
-                migrated["modelConfigurations"]["legacy"]["imageSemanticValidation"]
-            )
-
     def test_legacy_workflow_facade_writes_the_new_configuration_store(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

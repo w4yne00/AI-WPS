@@ -35,6 +35,7 @@ _SAFE_KEY_REF = re.compile(r"^[A-Za-z0-9_.-]+$")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
 _STORE_LOCK = threading.RLock()
 WORKFLOW_PROFILE_MIGRATION_VERSION = 1
+FORMAT_REVIEW_IMAGE_OUTBOUND_MIGRATION_VERSION = 1
 _IMAGE_BIND_FIELDS = ("serviceBaseUrl", "imageInputMode", "modelName")
 
 
@@ -503,6 +504,40 @@ class ModelConfigurationStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize(configuration)
 
+    def _overlay_v0251_format_review_image_semantics(self, configurations: dict, image_semantics: dict) -> None:
+        image_semantics["enabled"] = True
+        image_semantics.pop("wpsAcceptanceConfirmed", None)
+        image_semantics["configVersion"] = IMAGE_SEMANTICS_CONFIG_VERSION
+        for configuration in configurations.values():
+            if str(configuration.get("taskType") or "") != "word.format_review":
+                continue
+            if str(configuration.get("accessMethod") or "") != ACCESS_DIRECT_MODEL:
+                continue
+            mode = str(configuration.get("imageInputMode") or "disabled")
+            if mode == "disabled":
+                configuration["imageInputMode"] = "openai_image_url"
+            self._sync_image_egress_binding(configuration)
+
+    @staticmethod
+    def _image_outbound_overlay_version(payload: dict) -> int:
+        migration_state = payload.get("migrationState")
+        if not isinstance(migration_state, dict):
+            return 0
+        raw = migration_state.get("formatReviewImageOutboundVersion")
+        if type(raw) is int and raw >= 0:
+            return raw
+        return 0
+
+    @staticmethod
+    def _mark_image_outbound_overlay(payload: dict) -> None:
+        migration_state = payload.get("migrationState")
+        if not isinstance(migration_state, dict):
+            migration_state = {}
+        migration_state["formatReviewImageOutboundVersion"] = (
+            FORMAT_REVIEW_IMAGE_OUTBOUND_MIGRATION_VERSION
+        )
+        payload["migrationState"] = migration_state
+
     def _load_and_migrate(self) -> dict:
         payload = load_config_payload(self.config_path)
         configurations = self._configuration_map(payload)
@@ -522,26 +557,39 @@ class ModelConfigurationStore:
         if not isinstance(format_review, dict):
             format_review = {}
             changed = True
+        overlay_needed = (
+            self._image_outbound_overlay_version(payload)
+            < FORMAT_REVIEW_IMAGE_OUTBOUND_MIGRATION_VERSION
+        )
         image_semantics = format_review.get("imageSemantics")
         if not isinstance(image_semantics, dict):
-            format_review["imageSemantics"] = {
+            image_semantics = {
                 "enabled": True,
                 "configVersion": IMAGE_SEMANTICS_CONFIG_VERSION,
             }
+            format_review["imageSemantics"] = image_semantics
             payload["formatReview"] = format_review
             changed = True
+            if overlay_needed:
+                self._overlay_v0251_format_review_image_semantics(
+                    configurations, image_semantics
+                )
+                format_review["imageSemantics"] = image_semantics
+                self._mark_image_outbound_overlay(payload)
         else:
             image_semantics = dict(image_semantics)
-            image_version = int(image_semantics.get("configVersion") or 0)
             image_changed = False
-            if not isinstance(image_semantics.get("enabled"), bool):
-                image_semantics["enabled"] = True
-                image_changed = True
             if "wpsAcceptanceConfirmed" in image_semantics:
                 image_semantics.pop("wpsAcceptanceConfirmed", None)
                 image_changed = True
-            if image_version < IMAGE_SEMANTICS_CONFIG_VERSION:
-                image_semantics["configVersion"] = IMAGE_SEMANTICS_CONFIG_VERSION
+            if overlay_needed:
+                self._overlay_v0251_format_review_image_semantics(
+                    configurations, image_semantics
+                )
+                self._mark_image_outbound_overlay(payload)
+                image_changed = True
+            elif not isinstance(image_semantics.get("enabled"), bool):
+                image_semantics["enabled"] = True
                 image_changed = True
             if image_changed:
                 format_review["imageSemantics"] = image_semantics
