@@ -1,5 +1,5 @@
 from fastapi import APIRouter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 from app.core.config import default_config_path, load_settings
 from app.core.features import (
@@ -15,9 +15,6 @@ router = APIRouter()
 
 class ImageSemanticSettingsRequest(BaseModel):
     enabled: bool
-    wps_acceptance_confirmed: bool = Field(
-        default=False, alias="wpsAcceptanceConfirmed"
-    )
 
 
 @router.get("/config")
@@ -66,8 +63,5 @@ def get_image_semantic_settings() -> dict:
 @router.put("/config/image-semantics")
 def update_image_semantic_settings(request: ImageSemanticSettingsRequest) -> dict:
     store = ImageSemanticConfigStore(default_config_path())
-    data = store.set_enabled(
-        request.enabled,
-        wps_acceptance_confirmed=request.wps_acceptance_confirmed,
-    )
+    data = store.set_enabled(request.enabled)
     return {"success": True, "message": "saved", "data": data}

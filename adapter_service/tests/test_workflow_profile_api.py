@@ -121,6 +121,7 @@ class WorkflowProfileApiTests(unittest.TestCase):
             )
             self.assertTrue(data["configuration"]["lastValidation"]["success"])
             self.assertTrue(data["configuration"]["formatSemanticValidation"]["success"])
+            self.assertIsNone(data["configuration"]["imageSemanticValidation"])
 
     def test_direct_format_validation_persists_safe_contract_failure(self) -> None:
         with TemporaryDirectory() as tmp:

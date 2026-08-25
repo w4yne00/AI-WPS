@@ -12,7 +12,6 @@ HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.uti
 if HAS_API_DEPS:
     from fastapi.testclient import TestClient
     from app.main import app
-    from app.core.errors import AdapterError
     from app.api.config import (
         ImageSemanticSettingsRequest,
         get_image_semantic_settings,
@@ -55,26 +54,32 @@ class ConfigSettingsTests(unittest.TestCase):
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
 class ConfigApiTests(unittest.TestCase):
-    def test_image_semantics_api_is_closed_until_wps_acceptance(self) -> None:
+    def test_image_semantics_api_defaults_on_without_wps_acceptance(self) -> None:
         with tempfile.TemporaryDirectory() as tmp_dir:
             config_path = Path(tmp_dir) / "adapter.json"
             with patch(
                 "app.api.config.default_config_path", return_value=config_path
             ):
-                self.assertFalse(get_image_semantic_settings()["data"]["enabled"])
-                with self.assertRaises(AdapterError):
-                    update_image_semantic_settings(
-                        ImageSemanticSettingsRequest(enabled=True)
-                    )
+                self.assertTrue(get_image_semantic_settings()["data"]["enabled"])
+                self.assertNotIn(
+                    "wpsAcceptanceConfirmed",
+                    get_image_semantic_settings()["data"],
+                )
+                disabled = update_image_semantic_settings(
+                    ImageSemanticSettingsRequest(enabled=False)
+                )
                 enabled = update_image_semantic_settings(
-                    ImageSemanticSettingsRequest(
-                        enabled=True, wpsAcceptanceConfirmed=True
-                    )
+                    ImageSemanticSettingsRequest(enabled=True)
                 )
 
+            self.assertFalse(disabled["data"]["enabled"])
             self.assertTrue(enabled["data"]["enabled"])
             persisted = json.loads(config_path.read_text(encoding="utf-8"))
             self.assertTrue(persisted["formatReview"]["imageSemantics"]["enabled"])
+            self.assertNotIn(
+                "wpsAcceptanceConfirmed",
+                persisted["formatReview"]["imageSemantics"],
+            )
 
     def test_config_exposes_unified_provider_status_and_empty_routes(self) -> None:
         client = TestClient(app)

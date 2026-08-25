@@ -571,9 +571,9 @@ def prepare(
         ],
     }
     manifest["visualPolicy"] = {
-        "enabledByDefault": False,
+        "enabledByDefault": True,
         "runtimeMasterSwitch": "formatReview.imageSemantics.enabled",
-        "requiresWpsAcceptance": True,
+        "requiresWpsAcceptance": False,
         "pixelExportWhenDisabled": False,
         "pixelUploadWhenDisabled": False,
         "imageSlotAllocationWhenDisabled": False,

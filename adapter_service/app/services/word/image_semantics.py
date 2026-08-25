@@ -1,8 +1,7 @@
-"""Safety policy for the dormant Word image-semantics capability.
+"""Safety policy for Word image-semantics supplementation.
 
-This module deliberately owns the gate only.  WPS image export and provider
-upload are implemented by the follow-up image pipeline; until then, the
-closed policy must be observable and must not call either side effect.
+The product switch defaults on for new installs. Closing it remains an
+operations stop: no export slots, no PNG, no pixel upload.
 """
 
 import hashlib
@@ -24,8 +23,8 @@ from app.core.errors import AdapterError
 
 
 IMAGE_INPUT_MODES = ("disabled", "openai_image_url", "dify_file")
-IMAGE_SEMANTICS_DEFAULT_ENABLED = False
-IMAGE_SEMANTICS_CONFIG_VERSION = 1
+IMAGE_SEMANTICS_DEFAULT_ENABLED = True
+IMAGE_SEMANTICS_CONFIG_VERSION = 2
 IMAGE_PIXEL_STATUS = "pixel_inspected"
 IMAGE_TEXT_STATUS = "text_evidence_only"
 IMAGE_NOT_ASSESSABLE_STATUS = "not_assessable"
@@ -86,7 +85,7 @@ def image_pixel_policy(
     binding = _image_binding(configuration)
     authorization = configuration.get("imageExternalAuthorization")
     validation = configuration.get("imageSemanticValidation")
-    enabled = runtime.get("enabled") is True and runtime.get("wpsAcceptanceConfirmed") is True
+    enabled = runtime.get("enabled") is True
     allowed = (
         enabled
         and mode in IMAGE_INPUT_MODES[1:]
@@ -97,8 +96,6 @@ def image_pixel_policy(
     )
     if runtime.get("enabled") is not True:
         reason = "image_semantics_disabled"
-    elif runtime.get("wpsAcceptanceConfirmed") is not True:
-        reason = "image_semantics_wps_acceptance_required"
     elif mode == "disabled":
         reason = "image_input_mode_disabled"
     elif not _binding_matches(authorization, binding) or not bool((authorization or {}).get("authorized")):
@@ -462,7 +459,7 @@ class ImageAssetStore:
 
 
 class ImageSemanticConfigStore:
-    """Persist the product-level image semantic switch without implicit opt-in."""
+    """Persist the product-level image semantic switch. Missing data defaults on."""
 
     def __init__(self, config_path: Path):
         self.config_path = Path(config_path)
@@ -473,19 +470,17 @@ class ImageSemanticConfigStore:
         image_semantics = format_review.get("imageSemantics")
         if not isinstance(image_semantics, dict):
             image_semantics = {}
+        if "enabled" not in image_semantics:
+            enabled = IMAGE_SEMANTICS_DEFAULT_ENABLED
+        else:
+            enabled = image_semantics.get("enabled") is True
         return {
-            "enabled": image_semantics.get("enabled") is True,
-            "wpsAcceptanceConfirmed": image_semantics.get("wpsAcceptanceConfirmed") is True,
+            "enabled": enabled,
             "configVersion": int(image_semantics.get("configVersion") or IMAGE_SEMANTICS_CONFIG_VERSION),
             "updatedAt": str(image_semantics.get("updatedAt") or ""),
         }
 
-    def set_enabled(self, enabled: bool, wps_acceptance_confirmed: bool = False) -> Dict[str, Any]:
-        if enabled and not wps_acceptance_confirmed and not self.get()["wpsAcceptanceConfirmed"]:
-            raise _error(
-                "IMAGE_SEMANTICS_WPS_ACCEPTANCE_REQUIRED",
-                "开启图片语义前必须确认目标 WPS 图片导出验收已完成。",
-            )
+    def set_enabled(self, enabled: bool) -> Dict[str, Any]:
         payload = load_config_payload(self.config_path)
         format_review = payload.get("formatReview")
         if not isinstance(format_review, dict):
@@ -495,9 +490,6 @@ class ImageSemanticConfigStore:
             current = {}
         next_config = {
             "enabled": bool(enabled),
-            "wpsAcceptanceConfirmed": bool(
-                wps_acceptance_confirmed or current.get("wpsAcceptanceConfirmed") is True
-            ),
             "configVersion": int(current.get("configVersion") or 0) + 1,
         }
         format_review["imageSemantics"] = next_config

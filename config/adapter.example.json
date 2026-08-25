@@ -11,9 +11,8 @@
   "timeoutSeconds": 75,
   "formatReview": {
     "imageSemantics": {
-      "enabled": false,
-      "wpsAcceptanceConfirmed": false,
-      "configVersion": 1
+      "enabled": true,
+      "configVersion": 2
     }
   },
   "taskApiKeyRefs": {

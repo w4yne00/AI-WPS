@@ -36,21 +36,23 @@ class ImageSemanticSafetyTests(unittest.TestCase):
             + chunk(b"IEND", b"")
         )
 
-    def test_missing_runtime_setting_is_closed_and_can_be_enabled_only_after_acceptance(self):
+    def test_missing_runtime_setting_defaults_on_and_can_be_disabled(self):
         with TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "adapter.json"
             config_path.write_text("{}\n", encoding="utf-8")
             store = ImageSemanticConfigStore(config_path)
 
-            self.assertFalse(store.get()["enabled"])
-            with self.assertRaises(AdapterError) as raised:
-                store.set_enabled(True, wps_acceptance_confirmed=False)
-            self.assertEqual(raised.exception.code, "IMAGE_SEMANTICS_WPS_ACCEPTANCE_REQUIRED")
+            self.assertTrue(store.get()["enabled"])
+            self.assertNotIn("wpsAcceptanceConfirmed", store.get())
 
-            enabled = store.set_enabled(True, wps_acceptance_confirmed=True)
-            self.assertTrue(enabled["enabled"])
+            disabled = store.set_enabled(False)
+            self.assertFalse(disabled["enabled"])
             persisted = json.loads(config_path.read_text(encoding="utf-8"))
-            self.assertTrue(persisted["formatReview"]["imageSemantics"]["enabled"])
+            self.assertFalse(persisted["formatReview"]["imageSemantics"]["enabled"])
+            self.assertNotIn(
+                "wpsAcceptanceConfirmed",
+                persisted["formatReview"]["imageSemantics"],
+            )
 
     def test_closed_runtime_never_allocates_exports_or_uploads_pixels(self):
         calls = []
@@ -86,7 +88,7 @@ class ImageSemanticSafetyTests(unittest.TestCase):
         }
         self.assertFalse(
             image_pixel_policy(
-                {"enabled": True, "wpsAcceptanceConfirmed": True}, base
+                {"enabled": True}, base
             )["allowed"]
         )
 
@@ -109,14 +111,14 @@ class ImageSemanticSafetyTests(unittest.TestCase):
         }
         self.assertTrue(
             image_pixel_policy(
-                {"enabled": True, "wpsAcceptanceConfirmed": True}, authorized
+                {"enabled": True}, authorized
             )["allowed"]
         )
 
         changed = dict(authorized, modelName="text-only-1")
         self.assertFalse(
             image_pixel_policy(
-                {"enabled": True, "wpsAcceptanceConfirmed": True}, changed
+                {"enabled": True}, changed
             )["allowed"]
         )
 
