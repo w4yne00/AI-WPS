@@ -77,12 +77,16 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.25.1-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
+| 当前版本 | `v0.25.2-alpha` |
+| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 唯一自动化候选为 `20260824-d7a1dd8`（`candidate`）；目标验收仍为 `manual-pending`（Issue #59） |
-| 一期交付包 | `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256：`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`；源码提交：`d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0` |
+| 交付状态 | 产品身份为 `v0.25.2-alpha`；冻结的 0.25.1 候选仍为 `20260824-d7a1dd8`（`candidate`）；Issue #59 仍为 `manual-pending` |
+| 一期交付包 | 冻结的 0.25.1 归档 `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256：`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`；源码提交：`d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0` |
+
+### v0.25.2-alpha 交付状态
+
+`v0.25.2-alpha` 仍走 Phase1 安装体系，把**图像语义补充**作为格式审查直连的默认可外发路径：新安装打开总开关，覆盖升级迁移已有直连配置，探针未过或总开关关闭时走**视觉关闭降级**。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。冻结的 0.25.1 候选 `20260824-d7a1dd8` 保持原字节，不是 0.25.2 当前候选。
 
 ### v0.25.1-alpha 交付状态
 
@@ -172,6 +176,7 @@ AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
 
 | 版本 | 更新点 |
 | --- | --- |
+| `v0.25.2-alpha` | Phase1 身份：新装默认开图像语义补充、升级迁移、视觉关闭降级；冻结 `20260824-d7a1dd8` 仍是 0.25.1 候选；Issue #59 仍为 `manual-pending` |
 | `v0.25.1-alpha` | 发布唯一自动化候选 `20260824-d7a1dd8` 及绑定归档证据；`10b251d` 保持 `rejected`，Issue #59 目标验收仍为 `manual-pending` |
 | `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`。恢复候选默认不切换，只有当前安装不就绪、安装前备份完整校验且候选存活时才允许 `--activate-recovery`；恢复模式只提供重新检测、只读备份和脱敏诊断。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
 | `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
