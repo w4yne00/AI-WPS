@@ -188,10 +188,62 @@
     return isNaN(numeric) || numeric < 0 ? null : numeric;
   }
 
+  function getPlaceholderFormat(shape) {
+    return resolveValue(safeRead(shape, "PlaceholderFormat"), shape) ||
+      resolveValue(safeRead(shape, "placeholderFormat"), shape) ||
+      null;
+  }
+
   function getPlaceholderType(shape) {
-    var format = resolveValue(safeRead(shape, "PlaceholderFormat"), shape) ||
-      resolveValue(safeRead(shape, "placeholderFormat"), shape);
+    var format = getPlaceholderFormat(shape);
     return readNumber(format && (safeRead(format, "Type") || safeRead(format, "type")));
+  }
+
+  function getPlaceholderTypeToken(shape) {
+    var format = getPlaceholderFormat(shape);
+    return safeText(
+      format && (safeRead(format, "Type") || safeRead(format, "type") ||
+        safeRead(format, "Name") || safeRead(format, "name"))
+    ).toLowerCase();
+  }
+
+  function isSubtitleShapeName(name) {
+    return Boolean(name && /(副标题|副標題|subtitle)/i.test(name));
+  }
+
+  function isTitleShapeName(name) {
+    return Boolean(name && /标题/.test(name) && !isSubtitleShapeName(name)) ||
+      Boolean(name && /\btitle\b/i.test(name) && !isSubtitleShapeName(name));
+  }
+
+  function isTitlePlaceholder(shape) {
+    var typeNumber = getPlaceholderType(shape);
+    var token = getPlaceholderTypeToken(shape);
+    if (typeNumber === 1 || typeNumber === 3 || typeNumber === 5) {
+      return true;
+    }
+    if (!token || /sub/.test(token)) {
+      return false;
+    }
+    return token === "title" ||
+      /ctrtitle|centertitle|verticaltitle|placeholdertitle/.test(token);
+  }
+
+  function isPlaceholderPromptText(text) {
+    var value = String(text || "").replace(/\s+/g, "");
+    if (!value) {
+      return false;
+    }
+    return /^(单击此处|點擊此處|点击此处|請在此|请在此)/.test(value) ||
+      /^clickto(add|edit)/i.test(value);
+  }
+
+  function usableShapeText(shape) {
+    var text = readShapeText(shape);
+    if (!text || isPlaceholderPromptText(text)) {
+      return "";
+    }
+    return text;
   }
 
   function shapesMatch(left, right) {
@@ -250,38 +302,56 @@
     return { text: "", shape: null, index: 0 };
   }
 
+  function findShapeIndex(shapes, target) {
+    var count = getCollectionCount(shapes);
+    var index;
+    var candidate;
+    if (!target) {
+      return 0;
+    }
+    for (index = 1; index <= count; index += 1) {
+      candidate = getCollectionItem(shapes, index);
+      if (shapesMatch(candidate, target)) {
+        return index;
+      }
+    }
+    return 0;
+  }
+
   function readStructureTitleInfo(slide) {
     var shapes = getSlideShapes(slide);
     var explicitTitle = getExplicitTitleShape(shapes);
-    var explicitTitleText;
-    var count;
+    var explicitTitleText = usableShapeText(explicitTitle);
+    var count = getCollectionCount(shapes);
+    var passes = ["placeholder", "name"];
+    var passIndex;
     var index;
     var candidate;
+    var candidateText;
     var name;
-    var placeholderType;
-    if (explicitTitle) {
-      explicitTitleText = readShapeText(explicitTitle);
-      count = getCollectionCount(shapes);
+    if (explicitTitleText) {
+      index = findShapeIndex(shapes, explicitTitle);
+      return {
+        text: explicitTitleText,
+        shape: index ? getCollectionItem(shapes, index) : explicitTitle,
+        index: index
+      };
+    }
+    for (passIndex = 0; passIndex < passes.length; passIndex += 1) {
       for (index = 1; index <= count; index += 1) {
         candidate = getCollectionItem(shapes, index);
-        if (shapesMatch(candidate, explicitTitle)) {
-          return { text: explicitTitleText, shape: candidate, index: index };
+        name = getShapeName(candidate);
+        if (passes[passIndex] === "placeholder") {
+          if (!isTitlePlaceholder(candidate)) {
+            continue;
+          }
+        } else if (!isTitleShapeName(name)) {
+          continue;
         }
-      }
-      return { text: explicitTitleText, shape: explicitTitle, index: 0 };
-    }
-    count = getCollectionCount(shapes);
-    for (index = 1; index <= count; index += 1) {
-      candidate = getCollectionItem(shapes, index);
-      placeholderType = getPlaceholderType(candidate);
-      name = getShapeName(candidate);
-      if (placeholderType === 1 || placeholderType === 3 ||
-          (name && /(主标题|主標題|title)/i.test(name) && !/(副标题|副標題|subtitle)/i.test(name))) {
-        return {
-          text: readShapeText(candidate),
-          shape: candidate,
-          index: index
-        };
+        candidateText = usableShapeText(candidate);
+        if (candidateText) {
+          return { text: candidateText, shape: candidate, index: index };
+        }
       }
     }
     return { text: "", shape: null, index: 0 };
@@ -321,7 +391,7 @@
       }
       shape = getCollectionItem(shapes, index);
       name = getShapeName(shape);
-      if (name && /(副标题|副標題|subtitle)/i.test(name)) {
+      if (name && isSubtitleShapeName(name)) {
         info = buildSubtitleInfo(shape, index, maxLength);
         if (info.text) {
           return info;
@@ -395,8 +465,31 @@
 
   function readStructureSubtitleInfo(slide, titleInfo, maxLength) {
     var shapes = getSlideShapes(slide);
-    return readExplicitSubtitleInfo(shapes, titleInfo.index, maxLength) ||
-      { text: "", shape: null, index: 0, truncated: false };
+    var explicitInfo = readExplicitSubtitleInfo(shapes, titleInfo.index, maxLength);
+    var count;
+    var index;
+    var shape;
+    var info;
+    var name;
+    if (explicitInfo) {
+      return explicitInfo;
+    }
+    count = getCollectionCount(shapes);
+    for (index = 1; index <= count; index += 1) {
+      if (index === titleInfo.index) {
+        continue;
+      }
+      shape = getCollectionItem(shapes, index);
+      name = getShapeName(shape);
+      if (!isTitleShapeName(name) || !usableShapeText(shape)) {
+        continue;
+      }
+      info = buildSubtitleInfo(shape, index, maxLength);
+      if (info.text) {
+        return info;
+      }
+    }
+    return { text: "", shape: null, index: 0, truncated: false };
   }
 
   function getSlideIndex(slide, slides) {

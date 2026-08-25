@@ -254,6 +254,25 @@ function slide(index, title, bodyShapes, options) {
   };
 }
 
+function slideFromShapes(index, shapes, options) {
+  const shapeCollection = collection(shapes);
+  if (options && Object.prototype.hasOwnProperty.call(options, "title")) {
+    shapeCollection.Title = options.title;
+  }
+  return {
+    SlideIndex: index,
+    Shapes: shapeCollection
+  };
+}
+
+const structureLimits = {
+  maxSlides: 60,
+  maxTitleLength: 200,
+  maxSubtitleLength: 300,
+  maxFallbackLength: 120,
+  maxFallbackSlides: 10
+};
+
 function applicationFor(slides, activeIndex, name) {
   return {
     ActivePresentation: {
@@ -521,6 +540,145 @@ assert.strictEqual(
 }
 
 {
+  // 央企模板封面：WPS 常不提供 Shapes.Title / PlaceholderFormat，
+  // 形状名是「标题 1」「副标题 2」，不是「主标题」。
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slideFromShapes(1, [
+        textFrameShape("XXXXXXXXXXX中期验收汇报", { name: "标题 1", top: 147, height: 172 }),
+        textFrameShape("XXXX系统研究院有限公司2023年10月", { name: "副标题 2", placeholderType: 4, top: 392, height: 108 })
+      ])
+    ], 1),
+    1,
+    1,
+    structureLimits
+  );
+
+  assert.strictEqual(result.slides[0].title, "XXXXXXXXXXX中期验收汇报");
+  assert.strictEqual(result.slides[0].subtitle, "XXXX系统研究院有限公司2023年10月");
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+}
+
+{
+  // 空的 Shapes.Title 不得挡住页上真实的「标题 3」占位符。
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slideFromShapes(1, [
+        textFrameShape("一、主标题", { name: "标题 3", placeholderType: 1 }),
+        textFrameShape("（一）副标题", { name: "标题 1", top: 72, height: 43 }),
+        textFrameShape("围绕 AI 智能体在安全运营场景中的规模化应用需求。")
+      ], { title: textFrameShape("") })
+    ], 1),
+    1,
+    1,
+    structureLimits
+  );
+
+  assert.strictEqual(result.slides[0].title, "一、主标题");
+  assert.strictEqual(result.slides[0].subtitle, "（一）副标题");
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+}
+
+{
+  // 内容页：官方标题占位符 + 色条「标题 1」作副标题；无 Title API、无 Type。
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slideFromShapes(1, [
+        textFrameShape("一、主标题", { name: "标题 3" }),
+        textFrameShape("（一）副标题", { name: "标题 1", top: 72, height: 43 }),
+        textFrameShape("围绕 AI 智能体在安全运营场景中的规模化应用需求。")
+      ])
+    ], 1),
+    1,
+    1,
+    structureLimits
+  );
+
+  assert.strictEqual(result.slides[0].title, "一、主标题");
+  assert.strictEqual(result.slides[0].subtitle, "（一）副标题");
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+}
+
+{
+  // 母版提示词不能当主标题；此时色条上的短标题才是主标题。
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slideFromShapes(1, [
+        textFrameShape("单击此处编辑母版标题样式", { name: "标题 3", placeholderType: 1 }),
+        textFrameShape("建设目标", { name: "标题 1", top: 72, height: 43 }),
+        textFrameShape("本页正文不得升格为主标题")
+      ])
+    ], 1),
+    1,
+    1,
+    structureLimits
+  );
+
+  assert.strictEqual(result.slides[0].title, "建设目标");
+  assert.strictEqual(result.slides[0].subtitle, "");
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+}
+
+{
+  // 结束页只有普通文本框，不得把致谢文案升格为主标题。
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slideFromShapes(1, [
+        textFrameShape("汇报结束，请批评指正！", { name: "文本框 1", top: 192, height: 153 })
+      ])
+    ], 1),
+    1,
+    1,
+    structureLimits
+  );
+
+  assert.strictEqual(result.slides[0].title, "");
+  assert.strictEqual(result.slides[0].bodyFallback, "汇报结束，请批评指正！");
+}
+
+{
+  // 用户模板四页链：封面 / 目录 / 内容 / 结束页。无 Title API、无 Type。
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slideFromShapes(1, [
+        textFrameShape("XXXXXXXXXXX中期验收汇报", { name: "标题 1" }),
+        textFrameShape("XXXX系统研究院有限公司2023年10月", { name: "副标题 2" })
+      ]),
+      slideFromShapes(2, [
+        textFrameShape("目录二", { name: "矩形 12" }),
+        textFrameShape("二", { name: "矩形 15" }),
+        textFrameShape("目录一", { name: "矩形 20" }),
+        textFrameShape("三", { name: "矩形 4" }),
+        textFrameShape("目录三", { name: "矩形 5" }),
+        textFrameShape("一", { name: "矩形 19" })
+      ]),
+      slideFromShapes(3, [
+        textFrameShape("一、主标题", { name: "标题 3" }),
+        textFrameShape("（一）副标题", { name: "标题 1" }),
+        textFrameShape("围绕 AI 智能体在安全运营场景中的规模化应用需求。")
+      ]),
+      slideFromShapes(4, [
+        textFrameShape("汇报结束，请批评指正！", { name: "文本框 1" })
+      ])
+    ], 1),
+    1,
+    4,
+    structureLimits
+  );
+
+  assert.strictEqual(result.slides[0].title, "XXXXXXXXXXX中期验收汇报");
+  assert.strictEqual(result.slides[0].subtitle, "XXXX系统研究院有限公司2023年10月");
+  assert.strictEqual(result.slides[1].title, "");
+  assert.ok(result.slides[1].bodyFallback.indexOf("目录") !== -1);
+  assert.strictEqual(result.slides[2].title, "一、主标题");
+  assert.strictEqual(result.slides[2].subtitle, "（一）副标题");
+  assert.strictEqual(result.slides[2].bodyFallback, "");
+  assert.strictEqual(result.slides[3].title, "");
+  assert.strictEqual(result.slides[3].bodyFallback, "汇报结束，请批评指正！");
+}
+
+{
+
   const slides = Array.from({ length: 61 }, function (_, index) {
     return slide(index + 1, "第 " + (index + 1) + " 页", []);
   });
