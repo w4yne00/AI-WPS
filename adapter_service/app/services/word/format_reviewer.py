@@ -882,7 +882,10 @@ class WordFormatReviewer:
             }
             if callable(image_asset_cleanup):
                 for asset_group_id in asset_group_ids:
-                    image_asset_cleanup(asset_group_id)
+                    try:
+                        image_asset_cleanup(asset_group_id)
+                    except Exception:
+                        pass
             diagnostics["figureCaptionCallCount"] += outcome["usedCalls"] - current_calls
             diagnostics["aiCallCount"] = outcome["usedCalls"]
             diagnostics["aiRetryCount"] = diagnostics.get("aiRetryCount", 0) + outcome["retryCount"]

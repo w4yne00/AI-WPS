@@ -7079,6 +7079,7 @@
   function resumeDeterministicFormatReviewActiveJob() {
     var active;
     var startedAt;
+    var jobId;
     if (state.currentMode !== "formatReview" ||
         !state.deterministicFormatReviewEnabled ||
         state.deterministicFormatReviewJobId) {
@@ -7090,17 +7091,54 @@
     }
     startedAt = Number(active.startedAt) || Date.now();
     if (Date.now() - startedAt >= DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS) {
-      expireDeterministicFormatReviewJob(active.jobId, "格式审查任务恢复窗口已过期，请重新审查。");
+      clearDeterministicFormatReviewActiveJob(active.jobId);
       return false;
     }
-    state.deterministicFormatReviewJobId = String(active.jobId);
-    state.deterministicFormatReviewPollStartedAt = startedAt;
-    state.deterministicFormatReviewPollErrorCount = 0;
-    setModelTaskBusy(true);
-    setDocumentReviewCancelVisible(true, false);
-    setStatus("正在恢复格式审查后台任务...");
-    setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + active.jobId);
-    pollDeterministicFormatReviewJob(active.jobId);
+    jobId = String(active.jobId);
+    request("/word/format-review/jobs/" + encodeURIComponent(jobId), null, {
+      timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var job = body.data || {};
+      if (state.currentMode !== "formatReview" || state.deterministicFormatReviewJobId) {
+        return;
+      }
+      if (job.status === "completed") {
+        loadDeterministicFormatReviewReport(jobId).then(function () {
+          clearDeterministicFormatReviewActiveJob(jobId);
+        }).catch(function () {
+          clearDeterministicFormatReviewActiveJob(jobId);
+        });
+        return;
+      }
+      if (job.status === "failed" || job.status === "cancelled") {
+        clearDeterministicFormatReviewActiveJob(jobId);
+        return;
+      }
+      state.deterministicFormatReviewJobId = jobId;
+      state.deterministicFormatReviewPollStartedAt = startedAt;
+      state.deterministicFormatReviewPollErrorCount = 0;
+      setModelTaskBusy(true);
+      setDocumentReviewCancelVisible(true, false);
+      setStatus("正在恢复格式审查后台任务...");
+      setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
+      pollDeterministicFormatReviewJob(jobId);
+    }).catch(function (error) {
+      if (state.deterministicFormatReviewJobId) {
+        return;
+      }
+      if (error && error.adapterCode === "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND") {
+        clearDeterministicFormatReviewActiveJob(jobId);
+        return;
+      }
+      state.deterministicFormatReviewJobId = jobId;
+      state.deterministicFormatReviewPollStartedAt = startedAt;
+      state.deterministicFormatReviewPollErrorCount = 0;
+      setModelTaskBusy(true);
+      setDocumentReviewCancelVisible(true, false);
+      setStatus("正在恢复格式审查后台任务...");
+      setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
+      pollDeterministicFormatReviewJob(jobId);
+    });
     return true;
   }
 
@@ -7535,9 +7573,12 @@
       );
       return;
     }
-    if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {
+    if (state.deterministicFormatReviewJobId && state.modelTaskBusy) {
       setStatus("已有格式审查任务正在执行，请等待当前任务完成。");
       return;
+    }
+    if (state.modelTaskBusy && !state.deterministicFormatReviewJobId) {
+      setModelTaskBusy(false);
     }
     scope = resolveSelectionScope(false);
     if (!scope.ok) {

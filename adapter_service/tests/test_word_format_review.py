@@ -488,6 +488,24 @@ class WordFormatReviewerTests(unittest.TestCase):
         self.assertEqual(result["summary"]["aiFallbackReason"], "provider_request_failed")
         self.assertGreaterEqual(result["summary"]["issueCount"], 1)
 
+    def test_format_review_keeps_deterministic_result_when_provider_returns_502(self) -> None:
+        from app.core.errors import ProviderUnavailableError
+
+        class UnavailableProvider(RecordingFormatReviewProvider):
+            def format_semantics(self, operation, trace_id, input_data, prompt, task_auth=None, output_token_budget=None):
+                self.calls.append({"operation": operation, "traceId": trace_id})
+                raise ProviderUnavailableError("模型后台暂时不可用，HTTP 状态码 502。")
+
+        result = WordFormatReviewer(provider_client=UnavailableProvider()).review(
+            self._request("selection", first_outline_level=None),
+            trace_id="trace-format-provider-502",
+        )
+
+        self.assertGreaterEqual(result["summary"]["issueCount"], 1)
+        self.assertEqual(result["summary"]["aiAttempted"], True)
+        self.assertEqual(result["summary"]["aiFallbackReason"], "provider_request_failed")
+        self.assertNotEqual(result["summary"].get("executionStatus"), "failed")
+
     def test_format_review_ignores_think_tag_before_role_json(self) -> None:
         provider = RecordingFormatReviewProvider(
             answer='<think>{"draft": true, "reason": "内部分析"}</think>\n{"paragraphs":[{"paragraphIndex":1,"role":"heading1","confidence":0.95}]}'
