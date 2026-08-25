@@ -81,12 +81,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 0.25.2 唯一自动化候选为 `20260825-0f50456`（`candidate`）；冻结的 0.25.1 候选仍为 `20260824-d7a1dd8`；Issue #59 仍为 `manual-pending` |
-| 一期交付包 | `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`，SHA-256：`7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`；源码提交：`0f504569e4bc90ffc968674aa62059dd54da9d2f` |
+| 交付状态 | 0.25.2 唯一自动化候选为 `20260825-dacd1e9`（`candidate`）；`20260825-0f50456` 为 `rejected`；冻结的 0.25.1 候选仍为 `20260824-d7a1dd8`；Issue #59 仍为 `manual-pending` |
+| 一期交付包 | `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz`，SHA-256：`c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871`；源码提交：`dacd1e9d0df9b18ca8103d3270f8bf979931cb87` |
 
 ### v0.25.2-alpha 交付状态
 
-`v0.25.2-alpha` 仍走 Phase1 安装体系，把**图像语义补充**作为格式审查直连的默认可外发路径：新安装打开总开关，覆盖升级迁移已有直连配置，探针未过或总开关关闭时走**视觉关闭降级**。0.25.2 唯一自动化候选为 `20260825-0f50456`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f`），归档 `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`，SHA-256 `7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。冻结的 0.25.1 候选 `20260824-d7a1dd8` 保持原字节（`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`），不是 0.25.2 当前候选。
+`v0.25.2-alpha` 仍走 Phase1 安装体系，把**图像语义补充**作为格式审查直连的默认可外发路径：新安装打开总开关，覆盖升级迁移已有直连配置，探针未过或总开关关闭时走**视觉关闭降级**。0.25.2 唯一自动化候选为 `20260825-dacd1e9`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-dacd1e9d0df9b18ca8103d3270f8bf979931cb87`），归档 `ai-wps-phase1-delivery-20260825-dacd1e9-v0252.tar.gz`，SHA-256 `c1dfc64fb099c21a8fa05fb64fad4f98d8b7ac5500de052a3f03c3fa8f075871`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不扫描麒麟 apt 包。`20260825-0f50456` 已登记为 `rejected` 并保持原字节。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。冻结的 0.25.1 候选 `20260824-d7a1dd8` 保持原字节（`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`），不是 0.25.2 当前候选。
 
 ### v0.25.1-alpha 交付状态
 
