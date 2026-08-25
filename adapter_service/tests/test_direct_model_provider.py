@@ -524,6 +524,105 @@ class DirectModelProviderTests(unittest.TestCase):
         self.assertNotIn("response_format", second_payload)
         self.assertIn("允许的响应字段", second_payload["messages"][1]["content"])
 
+    def _reject_json_schema_with_502(self, urlopen, valid_payload):
+        def fake_urlopen(req, timeout=None):
+            payload = json.loads(req.data.decode("utf-8"))
+            if "response_format" in payload:
+                raise HTTPError(
+                    req.full_url,
+                    502,
+                    "Bad Gateway",
+                    {},
+                    BytesIO(b"<html>Bad Gateway</html>"),
+                )
+            return FakeResponse({
+                "choices": [{"message": {"content": json.dumps(valid_payload)}}]
+            })
+
+        urlopen.side_effect = fake_urlopen
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_falls_back_when_schema_extension_returns_502(
+        self, urlopen
+    ) -> None:
+        valid = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": {
+                "contentSha256": "synthetic-content",
+                "structureSha256": "synthetic-structure",
+                "formatSha256": "synthetic-format",
+            },
+            "items": [{
+                "blockId": "synthetic-1",
+                "role": "heading",
+                "level": 1,
+                "confidence": 0.95,
+            }],
+        }
+        self._reject_json_schema_with_502(urlopen, valid)
+
+        with TemporaryDirectory() as tmp:
+            client, _store, configuration_id = self._direct_format_client(Path(tmp))
+            result = client.validate_model_configuration(
+                configuration_id, "trace-direct-format-schema-502"
+            )
+
+        self.assertTrue(result["formatSemanticValidation"]["success"])
+        payloads = [
+            json.loads(call.args[0].data.decode("utf-8"))
+            for call in urlopen.call_args_list
+        ]
+        self.assertGreaterEqual(len(payloads), 2)
+        self.assertTrue(any("response_format" in payload for payload in payloads))
+        self.assertTrue(any("response_format" not in payload for payload in payloads))
+
+    @patch("app.services.provider_client.urllib_request.urlopen")
+    def test_direct_format_validation_falls_back_when_cleared_advanced_options_still_502(
+        self, urlopen
+    ) -> None:
+        valid = {
+            "schemaVersion": "format_semantics.v1",
+            "operation": "classify_role",
+            "snapshotBinding": {
+                "contentSha256": "synthetic-content",
+                "structureSha256": "synthetic-structure",
+                "formatSha256": "synthetic-format",
+            },
+            "items": [{
+                "blockId": "synthetic-1",
+                "role": "heading",
+                "level": 1,
+                "confidence": 0.95,
+            }],
+        }
+        self._reject_json_schema_with_502(urlopen, valid)
+
+        with TemporaryDirectory() as tmp:
+            client, store, configuration_id = self._direct_format_client(Path(tmp))
+            store.update_configuration(
+                configuration_id,
+                name="格式语义直连",
+                access_method=ACCESS_DIRECT_MODEL,
+                service_base_url="https://format-model.example/v1",
+                model_name="glm-5.2",
+                temperature=None,
+                max_output_tokens=None,
+                context_window_tokens=40000,
+            )
+            result = client.validate_model_configuration(
+                configuration_id, "trace-direct-format-cleared-advanced"
+            )
+
+        self.assertTrue(result["formatSemanticValidation"]["success"])
+        payloads = [
+            json.loads(call.args[0].data.decode("utf-8"))
+            for call in urlopen.call_args_list
+        ]
+        self.assertTrue(all("temperature" not in payload for payload in payloads))
+        self.assertTrue(any("response_format" in payload for payload in payloads))
+        self.assertTrue(any("response_format" not in payload for payload in payloads))
+
     @patch("app.services.provider_client.urllib_request.urlopen")
     def test_direct_format_validation_reports_field_after_one_failed_correction(
         self, urlopen

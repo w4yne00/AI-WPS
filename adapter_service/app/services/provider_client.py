@@ -733,6 +733,19 @@ def _response_format_is_explicitly_unsupported(raw: str) -> bool:
     return names_extension and rejects_extension
 
 
+def _should_retry_without_response_format(
+    status: int,
+    response_format: Optional[Dict],
+    allow_fallback: bool,
+    raw_error_body: str,
+) -> bool:
+    if response_format is None or not allow_fallback:
+        return False
+    if status in (502, 503):
+        return True
+    return status == 400 and _response_format_is_explicitly_unsupported(raw_error_body)
+
+
 def _sanitize_provider_body(body: Dict) -> Dict:
     inputs = body.get("inputs") if isinstance(body.get("inputs"), dict) else {}
     query = str(body.get("query", "") or "")
@@ -2734,11 +2747,11 @@ class ProviderClient:
                     },
                 }
             )
-            if (
-                status == 400
-                and response_format is not None
-                and allow_response_format_fallback
-                and _response_format_is_explicitly_unsupported(raw_error_body)
+            if _should_retry_without_response_format(
+                status,
+                response_format,
+                allow_response_format_fallback,
+                raw_error_body,
             ):
                 return self._post_direct_task(
                     task_type,
