@@ -77,12 +77,26 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.25.1-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824` |
+| Version | `v0.25.2-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Unique automated candidate `20260824-d7a1dd8` (`candidate`); target acceptance remains `manual-pending` (Issue #59) |
-| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`, SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`; source `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0` |
+| Delivery status | Unique 0.25.2 automated candidate `20260825-0f50456` (`candidate`); frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
+| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`, SHA-256 `7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`; source `0f504569e4bc90ffc968674aa62059dd54da9d2f` |
+
+### v0.25.2-alpha Delivery Status
+
+`v0.25.2-alpha` keeps the Phase1 installer and publishes 图像语义补充 as the
+default-on direct-model path: new installs open the master switch, overlay
+upgrades migrate existing format-review direct configs, and visual-capability
+failure is 视觉关闭降级. The unique 0.25.2 automated candidate is
+`20260825-0f50456` (`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f`),
+archive `ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`, SHA-256
+`7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`. Automated
+gates still yield only `candidate`. Issue #59 remains `manual-pending`. The
+frozen 0.25.1 candidate `20260824-d7a1dd8` keeps its original bytes
+(`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`) and is
+not the current 0.25.2 candidate.
 
 ### v0.25.1-alpha Delivery Status
 
@@ -186,6 +200,7 @@ Rules:
 
 | Version | Update |
 | --- | --- |
+| `v0.25.2-alpha` | Phase1 identity for default-on 图像语义补充, overlay upgrade migration, and 视觉关闭降级; frozen `20260824-d7a1dd8` stays the 0.25.1 candidate; Issue #59 remains `manual-pending` |
 | `v0.25.1-alpha` | Publishes the unique automated candidate `20260824-d7a1dd8` with bound archive evidence; `10b251d` remains rejected, and Issue #59 target acceptance remains `manual-pending` |
 | `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
 | `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |

@@ -1,16 +1,18 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-24
+更新时间：2026-08-25
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`codex/readme-zh-sync`
+当前分支：`agent/issue-93-v0252-candidate`
 
-当前版本：`v0.25.1-alpha`
+当前版本：`v0.25.2-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2`
 
-当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，源码提交为 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256 为 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`，自动化状态为 `candidate`。其直接前任 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5` 已登记为 `rejected`，SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，拒绝原因是包内目标机验收记录同时出现当前候选、无当前候选和重复上一被拒绝归档叙述；两份归档均保持原字节。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
+`v0.25.2-alpha` 沿用 Phase1 安装体系，把格式审查直连下的图像语义补充改为新装默认开、覆盖升级迁移，并在探针未过或总开关关闭时走视觉关闭降级。当前 0.25.2 唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f`，源码提交为 `0f504569e4bc90ffc968674aa62059dd54da9d2f`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz`，SHA-256 为 `7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc`，自动化状态为 `candidate`。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
+
+冻结的 `v0.25.1-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，源码提交为 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256 为 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`，自动化状态为 `candidate`。其直接前任 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5` 已登记为 `rejected`，SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，拒绝原因是包内目标机验收记录同时出现当前候选、无当前候选和重复上一被拒绝归档叙述；两份归档均保持原字节。d7a1dd8 不再登记为 0.25.2 的当前候选。
 
 组装 d7a1dd8 归档内的 `docs/v0251-target-machine-acceptance.md` 包含绑定当前候选的生成上下文；源码 `packaging/v0251-target-machine-acceptance.md` 仍是构建前生成器输入模板，保留“当前源树没有活动候选”是其闭合模板契约，不代表组装归档状态。自动化 `candidate` 仍不等于真实 WPS、模型或 Issue #59 目标验收。
 

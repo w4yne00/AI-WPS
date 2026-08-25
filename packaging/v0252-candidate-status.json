@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "product": "AI-WPS",
+  "version": "0.25.2-alpha",
+  "records": [
+    {
+      "candidateBuildId": "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-0f504569e4bc90ffc968674aa62059dd54da9d2f",
+      "archiveName": "ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz",
+      "archiveChecksumFile": "ai-wps-phase1-delivery-20260825-0f50456-v0252.tar.gz.sha256",
+      "sourceCommit": "0f504569e4bc90ffc968674aa62059dd54da9d2f",
+      "archiveSha256": "7d7c2b404e22bf67d94ca5c61d864b3747741bef3bf92bf5360130c649c9eebc",
+      "status": "candidate",
+      "recordedAt": "20260825"
+    }
+  ]
+}
