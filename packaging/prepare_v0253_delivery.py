@@ -433,6 +433,12 @@ outbound default. Visual capability failure or a closed master switch is
 视觉关闭降级: deterministic format review still completes. Pixel export,
 upload and slot allocation remain forbidden when the switch is closed.
 
+This candidate also ships Issue #101 结果预览, 格式问题 cards, 题注关联结论,
+and 幻灯片页角色. Word/Excel/PPT previews render the bounded Markdown grammar;
+Excel keeps 分析报告 / 汇报段落 names. Format-review issues use cards, not a
+preview Markdown table. Structure review classifies page roles before local
+findings and shows the page-role list.
+
 The retired synchronous route `POST /word/format-review` must return
 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` without running a review. Format/hash,
 OutlineLevel, table/nested-table, cell-format, image metadata and non-BMP

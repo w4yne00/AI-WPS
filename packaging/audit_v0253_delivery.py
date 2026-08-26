@@ -362,6 +362,10 @@ def audit_candidate_note(root: Path, manifest: Dict) -> None:
         "`{0}`".format(checksum_name),
         "Automated status: `candidate`",
         "Target acceptance status: `manual-pending`",
+        "结果预览",
+        "格式问题",
+        "题注关联结论",
+        "幻灯片页角色",
     )
     for marker in required:
         if marker not in content:
@@ -767,10 +771,15 @@ def audit_plugin_cache_identity(root: Path, expected_version: str) -> None:
     seen_version = False
     for path in plugin_files(root):
         content = path.read_text(encoding="utf-8")
-        if "0.23.1-alpha" in content or "0.25.0-alpha" in content or "0.25.1-alpha" in content:
-            raise DeliveryFailure("PLUGIN_CACHE_OLD_VERSION {0}".format(path.name))
         if expected_version in content:
             seen_version = True
+        if (
+            "0.23.1-alpha" in content
+            or "0.25.0-alpha" in content
+            or "0.25.1-alpha" in content
+            or "0.25.2-alpha" in content
+        ):
+            raise DeliveryFailure("PLUGIN_CACHE_OLD_VERSION {0}".format(path.name))
     if not seen_version:
         raise DeliveryFailure("PLUGIN_CACHE_VERSION_MISSING")
 

@@ -178,9 +178,11 @@ def test_v0253_audit_pins_identity_candidate_and_issue_59_pending():
         "题注关联结论",
         "幻灯片页角色",
         "AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-",
+        "0.25.2-alpha",
     ):
         assert required in audit
     assert "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-{0}" not in audit
+    assert 'or "0.25.2-alpha" in content' in audit
     assert "target-accepted" not in audit
     assert "requiresWpsAcceptance\") is not False" in audit or (
         "requiresWpsAcceptance" in audit and "False" in audit
@@ -423,6 +425,11 @@ def test_v0253_prepare_rewrites_host_and_adapter_identity_from_0252_predecessor(
     ).read_text(encoding="utf-8")
     audit_module = _load_module(AUDIT, "v0253_delivery_audit")
     audit_module.audit_target_acceptance_record(delivery, manifest)
+    audit_module.audit_candidate_lineage(delivery, manifest)
+    audit_module.audit_candidate_note(delivery, manifest)
+    generated_note = (delivery / "docs/v0253-delivery.md").read_text(encoding="utf-8")
+    for required in ("结果预览", "格式问题", "题注关联结论", "幻灯片页角色"):
+        assert required in generated_note
 
 
 def test_v0253_audit_rejects_stale_0252_packaged_identity(tmp_path):
