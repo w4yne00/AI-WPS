@@ -150,7 +150,7 @@ def _archive_source_binding(
     """Bind a source-bearing archive name to its manifest source/build suffix."""
     match = re.fullmatch(
         r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
-        r"(?:-(?P<source>[0-9a-f]{7}))?-v025(?P<series>[12])\.tar\.gz",
+        r"(?:-(?P<source>[0-9a-f]{7}))?-v025(?P<series>[123])\.tar\.gz",
         str(archive_name),
     )
     if match is None or match.group("source") is None:
@@ -349,6 +349,7 @@ def audit_candidate_note(root: Path, manifest: Dict) -> None:
     )
     checksum_name = str(evidence.get("archiveChecksumFile", ""))
     required = (
+        "v0.25.3-alpha",
         "v0.25.2-alpha",
         "ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0253.tar.gz",
         "Issue #59",
@@ -659,7 +660,7 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         datetime.strptime(release_date, "%Y%m%d")
     except ValueError as exc:
         raise DeliveryFailure("V0253_RELEASE_DATE_INVALID") from exc
-    if version_rule != "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-{0}".format(release_date):
+    if version_rule != "AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-{0}".format(release_date):
         raise DeliveryFailure("V0253_VERSION_RULE_DATE_MISMATCH")
     if (
         not isinstance(current_build_id, str)
@@ -678,11 +679,11 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
     if isinstance(superseded, dict):
         previous_archive_match = re.fullmatch(
             r"ai-wps-phase1-delivery-(?P<date>[0-9]{8})"
-            r"(?:-(?P<source>[0-9a-f]{7}))?-v025(?P<series>[12])\.tar\.gz",
+            r"(?:-(?P<source>[0-9a-f]{7}))?-v025(?P<series>[123])\.tar\.gz",
             str(superseded.get("archiveName", "")),
         )
     previous_series = previous_archive_match.group("series") if previous_archive_match else ""
-    expected_previous_status = "candidate" if previous_series == "1" else "rejected"
+    expected_previous_status = "candidate" if previous_series == "2" else "rejected"
     if (
         not isinstance(superseded, dict)
         or superseded.get("status") != expected_previous_status
@@ -717,7 +718,7 @@ def audit_candidate_lineage(root: Path, manifest: Dict) -> None:
         for item in records
         if item.get("archiveName") == superseded.get("archiveName")
     ]
-    if previous_series == "1":
+    if previous_series == "2":
         if rejected:
             raise DeliveryFailure("V0253_PREVIOUS_PRODUCT_CANDIDATE_MUST_NOT_ENTER_STATUS")
     else:

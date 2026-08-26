@@ -162,8 +162,10 @@ def test_v0253_audit_pins_identity_candidate_and_issue_59_pending():
         "结果预览",
         "题注关联结论",
         "幻灯片页角色",
+        "AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-",
     ):
         assert required in audit
+    assert "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-{0}" not in audit
     assert "target-accepted" not in audit
     assert "requiresWpsAcceptance\") is not False" in audit or (
         "requiresWpsAcceptance" in audit and "False" in audit
