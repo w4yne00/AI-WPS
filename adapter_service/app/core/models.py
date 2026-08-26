@@ -571,6 +571,7 @@ class PptStructureReviewSlide(BaseModel):
     subtitle: str = ""
     body_fallback: str = Field(default="", alias="bodyFallback")
     body_fallback_omitted: bool = Field(default=False, alias="bodyFallbackOmitted")
+    shape_names: List[str] = Field(default_factory=list, alias="shapeNames")
 
     @validator("index", pre=True, always=True)
     def coerce_structure_slide_index(cls, value):
@@ -583,6 +584,17 @@ class PptStructureReviewSlide(BaseModel):
     @validator("body_fallback_omitted", pre=True, always=True)
     def coerce_structure_fallback_omitted(cls, value):
         return bool(_safe_bool(value))
+
+    @validator("shape_names", pre=True, always=True)
+    def coerce_structure_shape_names(cls, value):
+        if not isinstance(value, list):
+            return []
+        names = []
+        for item in value:
+            text = _safe_str(item).strip()
+            if text and text not in names:
+                names.append(text)
+        return names
 
 
 class PptStructureReviewRequest(BaseModel):
@@ -620,6 +632,7 @@ class PptStructureReviewResponseData(BaseModel):
     review_conclusion: str = Field(default="", alias="reviewConclusion")
     outline_text: str = Field(default="", alias="outlineText")
     plain_text: str = Field(default="", alias="plainText")
+    page_roles: List[Dict[str, Any]] = Field(default_factory=list, alias="pageRoles")
     raw_answer: Optional[str] = Field(default=None, alias="rawAnswer")
     parse_fallback_reason: Optional[str] = Field(default=None, alias="parseFallbackReason")
     provider: str = "mock"

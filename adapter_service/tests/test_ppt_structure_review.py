@@ -130,6 +130,34 @@ class RecordingProvider:
         }
 
 
+class UnconfiguredProvider:
+    def ppt_structure_review(self, request, trace_id, task_auth=None, progress_callback=None):
+        raise AdapterError(
+            "MODEL_CONFIG_INCOMPLETE",
+            "结构审查尚未配置可用的模型配置，请先前往设置完成配置。",
+            status_code=400,
+        )
+
+
+def findings_with_code(result, code):
+    return [
+        item
+        for item in result["highPriorityIssues"] + result["generalSuggestions"]
+        if item["code"] == code
+    ]
+
+
+def pages_with_code(result, code):
+    pages = []
+    for item in findings_with_code(result, code):
+        pages.extend(item["slideNumbers"])
+    return pages
+
+
+def roles_by_page(result):
+    return {item["slideNumber"]: item["role"] for item in result["pageRoles"]}
+
+
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required")
 class PptStructureReviewTests(unittest.TestCase):
     def test_full_deck_over_sixty_slides_is_rejected_before_provider_call(self):
@@ -530,6 +558,288 @@ class PptStructureReviewTests(unittest.TestCase):
             captured["body"]["errors"][0]["code"],
             "REQUEST_VALIDATION_FAILED",
         )
+
+
+@unittest.skipUnless(HAS_PYDANTIC, "pydantic is required")
+class PptStructurePageRoleTests(unittest.TestCase):
+    def _review(self, slides, total_slides=None, start_slide=None, end_slide=None, provider=None):
+        last = slides[-1]["index"]
+        first = slides[0]["index"]
+        return PptStructureReviewer(
+            provider_client=provider or RecordingProvider()
+        ).review(
+            parse_request(
+                request_payload(
+                    slides=slides,
+                    total_slides=total_slides if total_slides is not None else last,
+                    start_slide=start_slide if start_slide is not None else first,
+                    end_slide=end_slide if end_slide is not None else last,
+                )
+            ),
+            trace_id="trace-page-roles",
+        )
+
+    def test_toc_and_ending_empty_titles_do_not_report_missing_title(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报", "subtitle": "2026年度"},
+                {
+                    "index": 2,
+                    "title": "",
+                    "bodyFallback": "一、建设背景\n二、总体目标\n三、实施计划",
+                },
+                {"index": 3, "title": "一、建设背景"},
+                {"index": 4, "title": "（一）政策依据"},
+                {"index": 5, "title": "二、总体目标"},
+                {"index": 6, "title": "", "bodyFallback": "汇报结束，请批评指正！"},
+            ]
+        )
+
+        roles = roles_by_page(result)
+        self.assertEqual(roles[1], "封面页")
+        self.assertEqual(roles[2], "目录页")
+        self.assertEqual(roles[6], "结束页")
+        self.assertNotIn(2, pages_with_code(result, "missing_title"))
+        self.assertNotIn(6, pages_with_code(result, "missing_title"))
+        self.assertTrue(all(item.get("reason") for item in result["pageRoles"]))
+
+    def test_cover_without_title_still_reports_missing_title(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "", "bodyFallback": "密级：内部"},
+                {"index": 2, "title": "一、建设背景"},
+                {"index": 3, "title": "二、总体目标"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[1], "封面页")
+        self.assertIn(1, pages_with_code(result, "missing_title"))
+
+    def test_single_empty_slide_is_cover_not_ending(self):
+        result = self._review(
+            [{"index": 1, "title": "", "bodyFallback": "密级：内部"}]
+        )
+
+        self.assertEqual(roles_by_page(result)[1], "封面页")
+        self.assertIn(1, pages_with_code(result, "missing_title"))
+
+    def test_first_page_directory_is_toc_not_cover(self):
+        result = self._review(
+            [
+                {
+                    "index": 1,
+                    "title": "",
+                    "bodyFallback": "目录\n一、建设背景\n二、总体目标",
+                },
+                {"index": 2, "title": "一、建设背景"},
+                {"index": 3, "title": "二、总体目标"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[1], "目录页")
+        self.assertNotIn(1, pages_with_code(result, "missing_title"))
+
+    def test_transition_from_chapter_title_and_following_subsection_still_reports_duplicate_title(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、实施计划"},
+                {"index": 3, "title": "（一）阶段一"},
+                {"index": 4, "title": "一、实施计划"},
+                {"index": 5, "title": "（一）阶段二"},
+            ]
+        )
+
+        roles = roles_by_page(result)
+        self.assertEqual(roles[2], "过渡页")
+        self.assertEqual(roles[4], "过渡页")
+        duplicate_pages = pages_with_code(result, "duplicate_title")
+        self.assertIn(2, duplicate_pages)
+        self.assertIn(4, duplicate_pages)
+
+    def test_partial_range_does_not_promote_first_or_last_page_to_cover_or_ending(self):
+        result = self._review(
+            [
+                {"index": 8, "title": ""},
+                {"index": 9, "title": "一、实施计划"},
+                {"index": 10, "title": "（一）阶段安排"},
+                {"index": 11, "title": "二、保障措施"},
+                {"index": 12, "title": "三、进度安排"},
+                {"index": 13, "title": "四、风险清单"},
+                {"index": 14, "title": "五、下一步工作"},
+                {"index": 15, "title": ""},
+            ],
+            total_slides=20,
+            start_slide=8,
+            end_slide=15,
+        )
+
+        roles = roles_by_page(result)
+        self.assertNotIn("封面页", roles.values())
+        self.assertNotIn("结束页", roles.values())
+        self.assertEqual(roles[8], "未确认页角色")
+        self.assertEqual(roles[15], "未确认页角色")
+        self.assertEqual(roles[9], "过渡页")
+        self.assertIn(8, pages_with_code(result, "missing_title"))
+        self.assertIn(15, pages_with_code(result, "missing_title"))
+
+    def test_unconfirmed_role_follows_body_rules_and_is_not_exempted(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、建设背景"},
+                {"index": 3, "title": ""},
+                {"index": 4, "title": "二、总体目标"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[3], "未确认页角色")
+        self.assertIn(3, pages_with_code(result, "missing_title"))
+
+    def test_unconfigured_model_still_returns_page_roles_and_local_rules(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {
+                    "index": 2,
+                    "title": "",
+                    "bodyFallback": "一、建设背景\n二、总体目标",
+                },
+                {"index": 3, "title": "一、建设背景"},
+                {"index": 4, "title": "二、总体目标"},
+                {"index": 5, "title": ""},
+                {"index": 6, "title": "", "bodyFallback": "汇报结束，请批评指正！"},
+            ],
+            provider=UnconfiguredProvider(),
+        )
+
+        roles = roles_by_page(result)
+        self.assertEqual(roles[1], "封面页")
+        self.assertEqual(roles[2], "目录页")
+        self.assertEqual(roles[6], "结束页")
+        self.assertEqual(roles[5], "未确认页角色")
+        self.assertNotIn(2, pages_with_code(result, "missing_title"))
+        self.assertNotIn(6, pages_with_code(result, "missing_title"))
+        self.assertIn(5, pages_with_code(result, "missing_title"))
+
+    def test_model_cannot_override_determined_roles_or_reintroduce_exempted_missing_title(self):
+        provider = RecordingProvider()
+        original_review = provider.ppt_structure_review
+
+        def review_with_role_override(*args, **kwargs):
+            result = original_review(*args, **kwargs)
+            result["pageRoles"] = [
+                {"slideNumber": 1, "role": "目录页", "reason": "模型口述不得覆盖"},
+                {"slideNumber": 2, "role": "封面页", "reason": "模型口述不得覆盖"},
+            ]
+            result["highPriorityIssues"].append(
+                {
+                    "code": "missing_title",
+                    "message": "第 2 页缺少主标题。",
+                    "slideNumbers": [2],
+                }
+            )
+            return result
+
+        provider.ppt_structure_review = review_with_role_override
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {
+                    "index": 2,
+                    "title": "",
+                    "bodyFallback": "一、建设背景\n二、总体目标",
+                },
+                {"index": 3, "title": "一、建设背景"},
+                {"index": 4, "title": "二、总体目标"},
+                {"index": 5, "title": "", "bodyFallback": "汇报结束，请批评指正！"},
+            ],
+            provider=provider,
+        )
+
+        roles = roles_by_page(result)
+        self.assertEqual(roles[1], "封面页")
+        self.assertEqual(roles[2], "目录页")
+        self.assertEqual(roles[5], "结束页")
+        self.assertNotIn(2, pages_with_code(result, "missing_title"))
+
+    def test_shape_names_identify_mid_deck_toc_without_reading_titled_body(self):
+        result = self._review(
+            [
+                {"index": 8, "title": "七、组织保障"},
+                {
+                    "index": 9,
+                    "title": "",
+                    "bodyFallback": "",
+                    "shapeNames": ["目录", "文本框 2"],
+                },
+                {"index": 10, "title": "八、进度安排"},
+                {"index": 11, "title": "（一）里程碑"},
+            ],
+            total_slides=20,
+            start_slide=8,
+            end_slide=11,
+        )
+
+        self.assertEqual(roles_by_page(result)[9], "目录页")
+        self.assertNotIn(9, pages_with_code(result, "missing_title"))
+        self.assertEqual(roles_by_page(result)[10], "过渡页")
+
+    def test_body_empty_title_still_reports_missing_title(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、建设背景"},
+                {"index": 3, "title": "（一）政策依据"},
+                {"index": 4, "title": ""},
+                {"index": 5, "title": "二、总体目标"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[4], "未确认页角色")
+        self.assertIn(4, pages_with_code(result, "missing_title"))
+        self.assertNotIn(1, pages_with_code(result, "missing_title"))
+
+    def test_untitled_numbered_body_is_unconfirmed_not_toc(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、建设背景"},
+                {
+                    "index": 3,
+                    "title": "",
+                    "bodyFallback": "（一）政策依据\n（二）工作要求",
+                },
+                {"index": 4, "title": "二、总体目标"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[3], "未确认页角色")
+        self.assertIn(3, pages_with_code(result, "missing_title"))
+
+    def test_last_empty_slide_without_ending_phrase_is_not_ending(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、建设背景"},
+                {"index": 3, "title": "", "bodyFallback": "密级：内部"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[3], "未确认页角色")
+        self.assertIn(3, pages_with_code(result, "missing_title"))
+
+    def test_chapter_title_containing_toc_word_is_transition_not_toc(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、目录体系建设"},
+                {"index": 3, "title": "（一）编制说明"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[2], "过渡页")
+        self.assertNotEqual(roles_by_page(result)[2], "目录页")
 
 
 @unittest.skipUnless(HAS_PYDANTIC and HAS_FASTAPI, "fastapi is required")

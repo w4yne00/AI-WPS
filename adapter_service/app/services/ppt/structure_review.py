@@ -12,6 +12,37 @@ PPT_STRUCTURE_BODY_FALLBACK_MAX_CHARS = 120
 PPT_STRUCTURE_BODY_FALLBACK_MAX_SLIDES = 10
 PPT_STRUCTURE_LONG_TITLE_CHARS = 30
 _NUMBERED_TITLE = re.compile(r"^\s*(\d{1,3})(?:[.、．)）\s]|$)")
+_TOC_HINT = re.compile(r"(目录|议程|contents)", re.IGNORECASE)
+_ENDING_HINT = re.compile(
+    r"(汇报结束|请批评指正|谢谢收看|谢谢各位|谢谢大家|致谢|thank\s*you)",
+    re.IGNORECASE,
+)
+_TOC_LABELS = {"目录", "议程", "contents", "toc", "目录页", "会议议程"}
+_THANKS_LABELS = {"谢谢", "thankyou", "thanks"}
+_CN_DIGITS = {
+    "零": 0,
+    "〇": 0,
+    "一": 1,
+    "二": 2,
+    "两": 2,
+    "三": 3,
+    "四": 4,
+    "五": 5,
+    "六": 6,
+    "七": 7,
+    "八": 8,
+    "九": 9,
+}
+ROLE_COVER = "封面页"
+ROLE_TOC = "目录页"
+ROLE_TRANSITION = "过渡页"
+ROLE_BODY = "正文页"
+ROLE_ENDING = "结束页"
+ROLE_UNCONFIRMED = "未确认页角色"
+EXEMPT_MISSING_TITLE = {ROLE_TOC, ROLE_ENDING}
+EXEMPT_INSUFFICIENT = {ROLE_COVER, ROLE_TOC, ROLE_TRANSITION, ROLE_ENDING}
+EXEMPT_DUPLICATE_OR_LONG = {ROLE_TOC, ROLE_ENDING}
+NUMBERING_ROLES = {ROLE_TRANSITION, ROLE_BODY, ROLE_UNCONFIRMED}
 
 
 def _copy_request(request: PptStructureReviewRequest) -> PptStructureReviewRequest:
@@ -83,15 +114,224 @@ def normalize_structure_request(
     return normalized
 
 
-def inspect_structure_titles(request: PptStructureReviewRequest) -> Dict[str, List[Dict]]:
+def _parse_cn_int(text: str) -> Optional[int]:
+    if not text:
+        return None
+    if text.isdigit():
+        return int(text)
+    if text == "十":
+        return 10
+    if text.startswith("十") and len(text) == 2:
+        ones = _CN_DIGITS.get(text[1])
+        return None if ones is None else 10 + ones
+    if text.endswith("十") and len(text) == 2:
+        tens = _CN_DIGITS.get(text[0])
+        return None if tens is None else tens * 10
+    if "十" in text and len(text) == 3:
+        tens = _CN_DIGITS.get(text[0])
+        ones = _CN_DIGITS.get(text[2])
+        if tens is None or ones is None:
+            return None
+        return tens * 10 + ones
+    return _CN_DIGITS.get(text)
+
+
+def _parse_chapter_heading(title: str) -> Optional[Tuple[str, int, Optional[int], int]]:
+    text = (title or "").strip()
+    if not text:
+        return None
+    match = re.match(r"^第([一二三四五六七八九十百零两\d]+)[章节篇部分]", text)
+    if match:
+        major = _parse_cn_int(match.group(1))
+        if major:
+            return ("chapter", major, None, 1)
+    match = re.match(r"^(\d{1,3})[.．、](\d{1,3})\b", text)
+    if match:
+        return ("arabic_minor", int(match.group(1)), int(match.group(2)), 2)
+    match = re.match(r"^([一二三四五六七八九十百两]+)[、．.]", text)
+    if match:
+        major = _parse_cn_int(match.group(1))
+        if major:
+            return ("cn_dot", major, None, 1)
+    match = re.match(r"^[（(]([一二三四五六七八九十百两\d]+)[）)]", text)
+    if match:
+        major = _parse_cn_int(match.group(1))
+        if major:
+            return ("cn_paren", major, None, 2)
+    match = re.match(r"^(\d{1,3})(?:[.、．)）\s]|$)", text)
+    if match:
+        return ("arabic", int(match.group(1)), None, 1)
+    return None
+
+
+def _is_subsection(
+    parent: Optional[Tuple[str, int, Optional[int], int]],
+    child: Optional[Tuple[str, int, Optional[int], int]],
+) -> bool:
+    if not parent or not child or parent[3] >= child[3]:
+        return False
+    parent_kind, parent_major = parent[0], parent[1]
+    child_kind, child_major = child[0], child[1]
+    if parent_kind in {"arabic", "chapter"} and child_kind == "arabic_minor":
+        return child_major == parent_major
+    if parent_kind == "cn_dot" and child_kind == "cn_paren":
+        return True
+    if parent_kind == "chapter" and child_kind == "cn_paren":
+        return True
+    if parent_kind == "cn_dot" and child_kind == "arabic_minor":
+        return child_major == parent_major
+    return False
+
+
+def _slide_shape_text(slide) -> str:
+    names = getattr(slide, "shape_names", None) or []
+    return " ".join(str(name) for name in names if name)
+
+
+def _normalize_label(text: str) -> str:
+    return re.sub(r"[\s\-_:：·•、.。!！?？]+", "", (text or "")).casefold()
+
+
+def _is_toc_label(text: str) -> bool:
+    normalized = re.sub(r"\d+$", "", _normalize_label(text))
+    return normalized in _TOC_LABELS
+
+
+def _is_thanks_label(text: str) -> bool:
+    return _normalize_label(text) in _THANKS_LABELS
+
+
+def _toc_reason(slide, other_titles: List[str]) -> Optional[str]:
+    title = slide.title.strip()
+    if title:
+        if _is_toc_label(title):
+            return "主标题为目录或议程。"
+        return None
+    for name in getattr(slide, "shape_names", None) or []:
+        if _is_toc_label(str(name)):
+            return "形状名呈现目录。"
+    body = slide.body_fallback.strip()
+    if not body:
+        return None
+    if _TOC_HINT.search(body):
+        return "无主标题正文含目录或议程。"
+    hits = sum(1 for other in other_titles if other and other in body)
+    if hits >= 2:
+        return "无主标题正文命中已抽取标题链。"
+    return None
+
+
+def _ending_reason(slide, total_slides: int) -> Optional[str]:
+    if slide.index != total_slides or slide.index == 1:
+        return None
+    parts = [
+        slide.title.strip(),
+        slide.body_fallback.strip(),
+        _slide_shape_text(slide),
+    ]
+    text = " ".join(part for part in parts if part)
+    if not text:
+        return None
+    if _ENDING_HINT.search(text) or any(_is_thanks_label(part) for part in parts if part):
+        return "整套文稿末页命中结束语。"
+    return None
+
+
+def classify_slide_page_roles(request: PptStructureReviewRequest) -> List[Dict]:
+    slides = list(request.slides)
+    total_slides = request.scope.total_slides
+    titles = [slide.title.strip() for slide in slides]
+    assigned = {}
+    reasons = {}
+
+    for slide in slides:
+        toc_reason = _toc_reason(
+            slide, [title for title in titles if title != slide.title.strip()]
+        )
+        if toc_reason:
+            assigned[slide.index] = ROLE_TOC
+            reasons[slide.index] = toc_reason
+
+    for slide in slides:
+        if slide.index in assigned:
+            continue
+        ending_reason = _ending_reason(slide, total_slides)
+        if ending_reason:
+            assigned[slide.index] = ROLE_ENDING
+            reasons[slide.index] = ending_reason
+
+    by_index = {slide.index: slide for slide in slides}
+    indexes = [slide.index for slide in slides]
+    for position, slide in enumerate(slides):
+        if slide.index in assigned:
+            continue
+        title = slide.title.strip()
+        if not title:
+            continue
+        current = _parse_chapter_heading(title)
+        next_slide = None
+        if position + 1 < len(indexes):
+            next_slide = by_index.get(indexes[position + 1])
+        following = _parse_chapter_heading(
+            next_slide.title.strip() if next_slide is not None else ""
+        )
+        if _is_subsection(current, following):
+            assigned[slide.index] = ROLE_TRANSITION
+            reasons[slide.index] = "章节形态标题，且后页为同编号子节。"
+
+    for slide in slides:
+        if slide.index in assigned:
+            continue
+        if slide.index == 1:
+            assigned[slide.index] = ROLE_COVER
+            reasons[slide.index] = "整套文稿第 1 页，未识别为目录或过渡。"
+
+    for slide in slides:
+        if slide.index in assigned:
+            continue
+        if slide.title.strip():
+            assigned[slide.index] = ROLE_BODY
+            reasons[slide.index] = "已抽取主标题，且不满足封面、目录、过渡或结束证据。"
+        else:
+            assigned[slide.index] = ROLE_UNCONFIRMED
+            reasons[slide.index] = "证据不足，按正文页执行规则。"
+
+    return [
+        {
+            "slideNumber": slide.index,
+            "role": assigned[slide.index],
+            "reason": reasons[slide.index],
+        }
+        for slide in slides
+    ]
+
+
+def _role_by_page(page_roles: Optional[List[Dict]]) -> Dict[int, str]:
+    mapping = {}
+    for item in page_roles or []:
+        try:
+            mapping[int(item.get("slideNumber"))] = str(item.get("role") or "")
+        except (TypeError, ValueError):
+            continue
+    return mapping
+
+
+def inspect_structure_titles(
+    request: PptStructureReviewRequest,
+    page_roles: Optional[List[Dict]] = None,
+) -> Dict[str, List[Dict]]:
     high_priority = []
     general = []
     titles: Dict[str, List[int]] = {}
     numbered: List[Tuple[int, int]] = []
+    roles = _role_by_page(page_roles)
     for slide in request.slides:
         title = slide.title.strip()
+        role = roles.get(slide.index, ROLE_UNCONFIRMED)
         if not title:
-            if slide.body_fallback_omitted:
+            if role in EXEMPT_MISSING_TITLE:
+                continue
+            if slide.body_fallback_omitted and role not in EXEMPT_INSUFFICIENT:
                 high_priority.append(
                     {
                         "source": "local",
@@ -114,7 +354,10 @@ def inspect_structure_titles(request: PptStructureReviewRequest) -> Dict[str, Li
             )
             continue
         titles.setdefault(title.casefold(), []).append(slide.index)
-        if len(title) > PPT_STRUCTURE_LONG_TITLE_CHARS:
+        if (
+            len(title) > PPT_STRUCTURE_LONG_TITLE_CHARS
+            and role not in EXEMPT_DUPLICATE_OR_LONG
+        ):
             general.append(
                 {
                     "source": "local",
@@ -126,19 +369,22 @@ def inspect_structure_titles(request: PptStructureReviewRequest) -> Dict[str, Li
                 }
             )
         match = _NUMBERED_TITLE.match(title)
-        if match:
+        if match and role in NUMBERING_ROLES:
             numbered.append((slide.index, int(match.group(1))))
 
     for title, pages in titles.items():
-        if len(pages) > 1:
+        participating = [
+            page for page in pages if roles.get(page, ROLE_UNCONFIRMED) not in EXEMPT_DUPLICATE_OR_LONG
+        ]
+        if len(participating) > 1:
             high_priority.append(
                 {
                     "source": "local",
                     "code": "duplicate_title",
                     "message": "第 {0} 页主标题完全重复：{1}。".format(
-                        "、".join(str(page) for page in pages), title
+                        "、".join(str(page) for page in participating), title
                     ),
-                    "slideNumbers": pages,
+                    "slideNumbers": participating,
                 }
             )
 
@@ -371,6 +617,53 @@ def _build_outline_text(outline: List[Dict]) -> str:
     return "\n".join(lines)
 
 
+def _unconfigured_model_result() -> Dict:
+    return {
+        "overallStoryline": "",
+        "inferredChapters": [],
+        "highPriorityIssues": [],
+        "generalSuggestions": [],
+        "slideRecommendations": [],
+        "recommendedOutline": [],
+        "rawAnswer": None,
+        "parseFallbackReason": None,
+        "provider": "unconfigured",
+    }
+
+
+def _filter_findings_by_page_roles(
+    findings: List[Dict],
+    page_roles: List[Dict],
+) -> List[Dict]:
+    roles = _role_by_page(page_roles)
+    filtered = []
+    for item in findings:
+        raw_code = str(item.get("code", "") or "")
+        code = _finding_semantic_key(item)
+        pages = list(item.get("slideNumbers") or [])
+        if raw_code == "missing_title_information_insufficient":
+            kept = [page for page in pages if roles.get(page) not in EXEMPT_INSUFFICIENT]
+        elif code == "missing_title":
+            kept = [page for page in pages if roles.get(page) not in EXEMPT_MISSING_TITLE]
+        elif code == "missing_title_information_insufficient":
+            kept = [page for page in pages if roles.get(page) not in EXEMPT_INSUFFICIENT]
+        elif code in {"duplicate_title", "long_title"}:
+            kept = [
+                page for page in pages if roles.get(page) not in EXEMPT_DUPLICATE_OR_LONG
+            ]
+        elif code == "numbering_gap":
+            kept = [page for page in pages if roles.get(page) in NUMBERING_ROLES]
+        else:
+            kept = pages
+        if pages and not kept:
+            continue
+        if pages:
+            filtered.append({**item, "slideNumbers": kept})
+        else:
+            filtered.append(item)
+    return filtered
+
+
 class PptStructureReviewer:
     def __init__(self, provider_client: Optional[ProviderClient] = None) -> None:
         self.provider_client = provider_client or ProviderClient()
@@ -398,7 +691,8 @@ class PptStructureReviewer:
         if progress_callback:
             progress_callback("preparing")
         normalized = normalize_structure_request(request)
-        local = inspect_structure_titles(normalized)
+        page_roles = classify_slide_page_roles(normalized)
+        local = inspect_structure_titles(normalized, page_roles=page_roles)
         if progress_callback:
             progress_callback("provider_processing")
         kwargs = {}
@@ -406,11 +700,16 @@ class PptStructureReviewer:
             kwargs["task_auth"] = task_auth
         if progress_callback is not None:
             kwargs["progress_callback"] = progress_callback
-        model = self.provider_client.ppt_structure_review(
-            normalized,
-            trace_id=trace_id,
-            **kwargs
-        )
+        try:
+            model = self.provider_client.ppt_structure_review(
+                normalized,
+                trace_id=trace_id,
+                **kwargs
+            )
+        except AdapterError as exc:
+            if getattr(exc, "code", "") != "MODEL_CONFIG_INCOMPLETE":
+                raise
+            model = _unconfigured_model_result()
         scope = normalized.scope
         omitted_pages = {
             slide.index
@@ -423,19 +722,25 @@ class PptStructureReviewer:
             "totalSlides": scope.total_slides,
             "isFullDeck": scope.start_slide == 1 and scope.end_slide == scope.total_slides,
         }
-        high = _merge_findings(
-            local["highPriorityIssues"],
-            model.get("highPriorityIssues", []),
-            scope.start_slide,
-            scope.end_slide,
-            model_excluded_pages=omitted_pages,
+        high = _filter_findings_by_page_roles(
+            _merge_findings(
+                local["highPriorityIssues"],
+                model.get("highPriorityIssues", []),
+                scope.start_slide,
+                scope.end_slide,
+                model_excluded_pages=omitted_pages,
+            ),
+            page_roles,
         )
-        general = _merge_findings(
-            local["generalSuggestions"],
-            model.get("generalSuggestions", []),
-            scope.start_slide,
-            scope.end_slide,
-            model_excluded_pages=omitted_pages,
+        general = _filter_findings_by_page_roles(
+            _merge_findings(
+                local["generalSuggestions"],
+                model.get("generalSuggestions", []),
+                scope.start_slide,
+                scope.end_slide,
+                model_excluded_pages=omitted_pages,
+            ),
+            page_roles,
         )
         high_keys = {_finding_dedup_key(item) for item in high}
         general = [
@@ -487,6 +792,7 @@ class PptStructureReviewer:
             "reviewConclusion": review_conclusion,
             "outlineText": outline_text,
             "plainText": plain_text,
+            "pageRoles": page_roles,
             "rawAnswer": model.get("rawAnswer"),
             "parseFallbackReason": model.get("parseFallbackReason"),
             "provider": model.get("provider", "mock"),
