@@ -1450,6 +1450,77 @@
     return safeText(data.plainText) || safeText(data.rawAnswer);
   }
 
+  function resolvePptStructurePageRole(pageRoles, slideNumber) {
+    var items = Array.isArray(pageRoles) ? pageRoles : [];
+    var index;
+    var item;
+    var page;
+    for (index = 0; index < items.length; index += 1) {
+      item = items[index] || {};
+      page = Number(item.slideNumber);
+      if (page === slideNumber) {
+        return safeText(item.role) || "未确认页角色";
+      }
+    }
+    return "未确认页角色";
+  }
+
+  function formatPptStructurePageRoleLine(item) {
+    var page = Number(item && item.slideNumber);
+    var role = safeText(item && item.role) || "未确认页角色";
+    var reason = safeText(item && item.reason);
+    return "第 " + (isFinite(page) && page > 0 ? page : "-") + " 页｜" + role + "：" + reason;
+  }
+
+  function formatPptStructureRecommendationLine(item, role) {
+    var page = Number(item && item.slideNumber);
+    return "第 " + (isFinite(page) && page > 0 ? page : "-") + " 页（" +
+      (safeText(role) || "未确认页角色") + "）：" + safeText(item && item.suggestion);
+  }
+
+  function presentPptStructureReviewResultView(input) {
+    var source = input || {};
+    var data = source.result || source;
+    var pageRoles = Array.isArray(data.pageRoles) ? data.pageRoles : [];
+    var recommendations = Array.isArray(data.slideRecommendations) ? data.slideRecommendations : [];
+    var listLines = pageRoles.map(function (item) {
+      return formatPptStructurePageRoleLine(item);
+    });
+    var recommendationLines = recommendations.map(function (item) {
+      return formatPptStructureRecommendationLine(
+        item,
+        resolvePptStructurePageRole(pageRoles, Number(item && item.slideNumber))
+      );
+    });
+    var sections = [];
+    if (listLines.length) {
+      sections.push(
+        '<section class="structure-review-section"><h3>页角色清单</h3><ul>' +
+          listLines.map(function (line) {
+            return "<li>" + escapeHtml(line) + "</li>";
+          }).join("") +
+          "</ul></section>"
+      );
+    }
+    if (recommendationLines.length) {
+      sections.push(
+        '<section class="structure-review-section"><h3>逐页调整意见</h3><ul>' +
+          recommendationLines.map(function (line) {
+            return "<li>" + escapeHtml(line) + "</li>";
+          }).join("") +
+          "</ul></section>"
+      );
+    }
+    return {
+      html: sections.join(""),
+      copyConclusionText: [
+        safeText(data.reviewConclusion || data.plainText),
+        listLines.length ? "页角色清单\n" + listLines.join("\n") : ""
+      ].filter(Boolean).join("\n\n"),
+      copyOutlineText: safeText(data.outlineText)
+    };
+  }
+
   function presentPptSummaryResultView(input) {
     var source = input || {};
     var previewSource = buildPptSummaryPreviewSource(source.result || {});
@@ -1534,6 +1605,7 @@
     buildPptDocumentPlainText: buildPptDocumentPlainText,
     buildPptDocumentOutline: buildPptDocumentOutline,
     buildPptDocumentSlidePlainText: buildPptDocumentSlidePlainText,
+    presentPptStructureReviewResultView: presentPptStructureReviewResultView,
     presentPptSummaryResultView: presentPptSummaryResultView,
     describePptJobProgress: describePptJobProgress
   };

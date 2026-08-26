@@ -33,6 +33,7 @@
   var state = {
     result: null,
     structureResult: null,
+    structureResultView: null,
     taskMode: "pptSlideAssistant",
     workflowTaskType: PPT_WORKFLOW_TASK_TYPE,
     resultMode: "preview",
@@ -1052,13 +1053,23 @@
     var output = byId("structure-result-output");
     var data = result || {};
     var range = data.reviewedRange || {};
+    var view = helpers.presentPptStructureReviewResultView
+      ? helpers.presentPptStructureReviewResultView({ result: data })
+      : null;
+    var presented;
     state.structureResult = data;
+    state.structureResultView = view;
     output.innerHTML = "";
     output.appendChild(createTextElement(
       "p",
       "document-summary-meta",
       helpers.formatPptStructureRange(range)
     ));
+    if (view && view.html) {
+      presented = document.createElement("div");
+      presented.innerHTML = view.html;
+      output.appendChild(presented);
+    }
     if (data.rawAnswer) {
       output.appendChild(createTextElement(
         "div",
@@ -1083,15 +1094,21 @@
       appendStructureList(output, "一般建议", data.generalSuggestions, function (item) {
         return safeText(item.message);
       }, false);
-      appendStructureList(output, "逐页调整意见", data.slideRecommendations, function (item) {
-        return "第 " + (item.slideNumber || "-") + " 页：" + safeText(item.suggestion);
-      }, false);
+      if (!view) {
+        appendStructureList(output, "逐页调整意见", data.slideRecommendations, function (item) {
+          return "第 " + (item.slideNumber || "-") + " 页：" + safeText(item.suggestion);
+        }, false);
+      }
       appendStructureList(output, "推荐目录", data.recommendedOutline, function (item) {
         return safeText(item.title);
       }, true);
     }
-    byId("btn-copy-review-conclusion").disabled = !safeText(data.reviewConclusion || data.plainText);
-    byId("btn-copy-recommended-outline").disabled = !safeText(data.outlineText);
+    byId("btn-copy-review-conclusion").disabled = !safeText(
+      view && view.copyConclusionText || data.reviewConclusion || data.plainText
+    );
+    byId("btn-copy-recommended-outline").disabled = !safeText(
+      view && view.copyOutlineText || data.outlineText
+    );
   }
 
   function describeStructureProgress(job, jobId) {
@@ -2602,7 +2619,8 @@
     });
     byId("btn-copy-review-conclusion").addEventListener("click", function () {
       copyText(
-        state.structureResult && (state.structureResult.reviewConclusion || state.structureResult.plainText),
+        state.structureResultView && state.structureResultView.copyConclusionText ||
+          (state.structureResult && (state.structureResult.reviewConclusion || state.structureResult.plainText)),
         "审查结论已复制。"
       );
     });
