@@ -77,12 +77,25 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.25.2-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2` |
+| Version | `v0.25.3-alpha` |
+| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Unique 0.25.2 automated candidate `20260825-850871c` (`candidate`); `20260825-dacd1e9` and `20260825-0f50456` are `rejected`; frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
-| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`, SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`; source `850871c10a17f03c8a58abd02ca58c2f3fc70fc9` |
+| Delivery status | 0.25.3 source identity is published; unique 0.25.3 automated candidate is not bound yet; unique 0.25.2 automated candidate remains `20260825-850871c` (`candidate`); `20260825-dacd1e9` and `20260825-0f50456` are `rejected`; frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
+| Phase 1 delivery kit | last published kit `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`, SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`; source `850871c10a17f03c8a58abd02ca58c2f3fc70fc9` |
+
+### v0.25.3-alpha Delivery Status
+
+`v0.25.3-alpha` keeps the Phase1 installer and adds Issue #101 结果预览,
+格式问题 cards, 题注关联结论, and 幻灯片页角色. This source tree does not
+yet bind a unique 0.25.3 automated candidate. The frozen 0.25.2 unique
+candidate remains `20260825-850871c`
+(`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`),
+archive `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`, SHA-256
+`c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`. get-pip
+uses `-sS` so Kylin apt dist-packages are not scanned. 图像语义补充 default-on
+and 视觉关闭降级 stay as published in 0.25.2. Automated gates still yield only
+`candidate`. Issue #59 remains `manual-pending`.
 
 ### v0.25.2-alpha Delivery Status
 

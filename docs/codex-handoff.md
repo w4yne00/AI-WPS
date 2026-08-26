@@ -1,16 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-25
+更新时间：2026-08-26
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`fix/v0252-rebuild-ppt-title`
+当前分支：`agent/issue-101-v0253-delivery`
 
-当前版本：`v0.25.2-alpha`
+当前版本：`v0.25.3-alpha`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2`
+版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.3`
 
-`v0.25.2-alpha` 沿用 Phase1 安装体系，把格式审查直连下的图像语义补充改为新装默认开、覆盖升级迁移，并在探针未过或总开关关闭时走视觉关闭降级。当前 0.25.2 唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`。前任 `20260825-dacd1e9` 与 `20260825-0f50456` 已登记为 `rejected`。本候选含 PPT 结构审查对中文模板「标题 1 / 标题 3」的识别。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
+`v0.25.3-alpha` 沿用 Phase1 安装体系，落实 Issue #101 的结果预览、格式问题卡片、题注关联结论和幻灯片页角色。源树尚未登记 0.25.3 唯一自动化候选，不得把 `850871c` 写成 0.25.3 当前候选。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`。0.25.2 前任 `20260825-dacd1e9` 与 `20260825-0f50456` 已登记为 `rejected`。图像语义补充默认开启与视觉关闭降级保持不变。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
 
 冻结的 `v0.25.1-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，源码提交为 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256 为 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`，自动化状态为 `candidate`。其直接前任 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5` 已登记为 `rejected`，SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，拒绝原因是包内目标机验收记录同时出现当前候选、无当前候选和重复上一被拒绝归档叙述；两份归档均保持原字节。d7a1dd8 不再登记为 0.25.2 的当前候选。
 
