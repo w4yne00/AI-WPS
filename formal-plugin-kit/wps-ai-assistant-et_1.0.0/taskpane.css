@@ -704,35 +704,33 @@ body[data-task-mode="smartWrite"] #result-output {
 
 .markdown-output .markdown-table-wrap {
   max-width: 100%;
-  overflow-x: auto;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-panel);
   background: rgba(250, 250, 252, 0.92);
 }
 
-.markdown-output table {
-  width: 100%;
-  min-width: 320px;
-  border-collapse: collapse;
-  font-size: 13px;
-  line-height: 1.5;
-}
-
-.markdown-output th,
-.markdown-output td {
-  padding: 8px 9px;
+.markdown-output .markdown-table-block {
+  padding: 8px 10px;
   border-bottom: 1px solid var(--hairline);
-  vertical-align: top;
-  text-align: left;
 }
 
-.markdown-output th {
-  font-weight: 760;
-  background: rgba(35, 122, 75, 0.08);
-}
-
-.markdown-output tbody tr:last-child td {
+.markdown-output .markdown-table-block:last-child {
   border-bottom: 0;
+}
+
+.markdown-output .markdown-table-field + .markdown-table-field {
+  margin-top: 6px;
+}
+
+.markdown-output .markdown-table-label {
+  display: block;
+  font-weight: 760;
+  color: #2f5a40;
+  margin-bottom: 2px;
+}
+
+.markdown-output .markdown-table-value {
+  display: block;
 }
 
 .markdown-output code {

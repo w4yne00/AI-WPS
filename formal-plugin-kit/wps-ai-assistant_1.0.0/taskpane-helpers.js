@@ -1368,16 +1368,8 @@
       return storeToken("<code>" + escapeHtml(code) + "</code>");
     });
 
-    text = text.replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, imagePrefix, label, url) {
-      var safeUrl = imagePrefix ? "" : sanitizeMarkdownUrl(url);
-      if (!safeUrl) {
-        return escapeHtml(label || match);
-      }
-      return storeToken(
-        '<a href="' + escapeHtml(safeUrl) + '" target="_blank" rel="noopener noreferrer">' +
-        escapeHtml(label) +
-        "</a>"
-      );
+    text = text.replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, _imagePrefix, label) {
+      return storeToken(escapeHtml(label || match));
     });
 
     text = escapeHtml(text)
@@ -1453,19 +1445,22 @@
       closeList();
       var headers = splitTableRow(tableRows[0]);
       var bodyRows = tableRows.slice(2);
-      html.push('<div class="markdown-table-wrap"><table><thead><tr>');
-      headers.forEach(function (cell) {
-        html.push("<th>" + renderInlineMarkdown(cell) + "</th>");
-      });
-      html.push("</tr></thead><tbody>");
+      html.push('<div class="markdown-table-wrap">');
       bodyRows.forEach(function (row) {
-        html.push("<tr>");
-        splitTableRow(row).forEach(function (cell) {
-          html.push("<td>" + renderInlineMarkdown(cell) + "</td>");
+        var cells = splitTableRow(row);
+        html.push('<div class="markdown-table-block">');
+        headers.forEach(function (header, index) {
+          html.push(
+            '<div class="markdown-table-field"><span class="markdown-table-label">' +
+            renderInlineMarkdown(header) +
+            '</span><span class="markdown-table-value">' +
+            renderInlineMarkdown(cells[index] || "") +
+            "</span></div>"
+          );
         });
-        html.push("</tr>");
+        html.push("</div>");
       });
-      html.push("</tbody></table></div>");
+      html.push("</div>");
       tableRows = [];
     }
 
@@ -2132,11 +2127,56 @@
     }
 
     return {
+      originalText: originalText,
       previewMarkdown: rewrittenText,
       plainText: rewrittenText,
       comparisonMarkdown: comparisonMarkdown,
       hasOriginal: hasOriginal,
       hasStructuredResult: shouldUseStructuredSmartWriteResult(originalText, rewrittenText)
+    };
+  }
+
+  function presentWordResultView(input) {
+    var source = input || {};
+    var rewriteMode = source.rewriteMode === "imitate" ? "imitate" : "rewrite";
+    var model = buildSmartWritePreviewModel({
+      originalText: source.originalText || "",
+      rewrittenText: source.rewrittenText || "",
+      rewriteMode: rewriteMode
+    });
+    var view = source.view || "preview";
+    var resultText = model.plainText || "";
+    var compareAvailable = rewriteMode !== "imitate";
+    var presentation = "source";
+    var displayMarkdown = resultText;
+
+    if (!compareAvailable && view === "compare") {
+      view = "preview";
+    }
+    if (view === "plain") {
+      presentation = "source";
+      displayMarkdown = model.plainText || "";
+    } else if (view === "compare") {
+      presentation = "rendered";
+      displayMarkdown = model.comparisonMarkdown || model.previewMarkdown || "";
+    } else {
+      presentation = "rendered";
+      displayMarkdown = model.previewMarkdown || "";
+    }
+
+    return {
+      presentation: presentation,
+      displayMarkdown: displayMarkdown,
+      html: presentation === "rendered" ? renderMarkdown(displayMarkdown) : "",
+      sourceText: presentation === "source" ? displayMarkdown : "",
+      copyText: resultText,
+      writebackText: resultText,
+      compareAvailable: compareAvailable,
+      viewLabels: {
+        preview: "预览",
+        compare: "对照",
+        plain: "纯文本"
+      }
     };
   }
 
@@ -4702,6 +4742,7 @@
     shouldUseStructuredSmartWriteResult: shouldUseStructuredSmartWriteResult,
     formatSmartWriteResult: formatSmartWriteResult,
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
+    presentWordResultView: presentWordResultView,
     renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,

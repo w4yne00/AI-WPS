@@ -1072,8 +1072,23 @@
     var copyText = state.rewriteResult && state.rewriteResult.rewrittenText
       ? state.rewriteResult.rewrittenText
       : (model.plainText || "");
+    var presented;
 
     updateResultViewButtons();
+    if (helpers.presentWordResultView) {
+      presented = helpers.presentWordResultView({
+        originalText: model.originalText || getLatestOriginalText(),
+        rewrittenText: copyText,
+        view: state.resultViewMode,
+        rewriteMode: state.currentMode === "smartImitation" ? "imitate" : "rewrite"
+      });
+      if (presented.presentation === "source") {
+        setPlainResult(presented.sourceText || "", presented.copyText);
+      } else {
+        setResult(presented.displayMarkdown || "", presented.copyText);
+      }
+      return;
+    }
     if (state.resultViewMode === "plain") {
       setPlainResult(model.plainText || "", copyText);
       return;
@@ -1082,11 +1097,7 @@
       setResult(model.comparisonMarkdown || model.previewMarkdown || "", copyText);
       return;
     }
-    if (model.hasStructuredResult) {
-      setResult(model.previewMarkdown || "", copyText);
-      return;
-    }
-    setPlainResult(model.previewMarkdown || "", copyText);
+    setResult(model.previewMarkdown || "", copyText);
   }
 
   function setResultViewMode(mode) {
