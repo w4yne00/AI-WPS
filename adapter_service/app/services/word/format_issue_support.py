@@ -18,6 +18,58 @@ _ANCHOR_PARAGRAPH_BLOCK_TYPES = {
 }
 
 
+def _positive_section_index(value: Any) -> Optional[int]:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        numeric = int(value)
+    except (TypeError, ValueError):
+        return None
+    return numeric if numeric > 0 else None
+
+
+def apply_format_block_story_identity(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach section and body-story identity from the extraction contract."""
+    if not isinstance(block, dict):
+        return block
+    range_data = block.get("range") if isinstance(block.get("range"), dict) else {}
+    section_id = str(block.get("sectionId") or block.get("section") or "").strip()
+    if not section_id:
+        section_index = _positive_section_index(range_data.get("sectionIndex"))
+        if section_index:
+            section_id = "section-{0}".format(section_index)
+    story_id = str(block.get("storyId") or block.get("story") or "").strip()
+    if not story_id and str(block.get("scope") or "in_scope") != "context":
+        story_id = "body"
+    if section_id:
+        block["sectionId"] = section_id
+    if story_id:
+        block["storyId"] = story_id
+    return block
+
+
+def fill_format_blocks_story_identity(blocks: Any) -> None:
+    """Fill missing table/image identity from the previous in-scope block."""
+    if not isinstance(blocks, list):
+        return
+    last_section = ""
+    last_story = ""
+    for block in blocks:
+        if not isinstance(block, dict):
+            continue
+        apply_format_block_story_identity(block)
+        if str(block.get("scope") or "in_scope") == "context":
+            continue
+        if block.get("sectionId"):
+            last_section = str(block["sectionId"])
+        elif last_section:
+            block["sectionId"] = last_section
+        if block.get("storyId"):
+            last_story = str(block["storyId"])
+        elif last_story:
+            block["storyId"] = last_story
+
+
 def normalize_paragraph_index(value: Any) -> Optional[int]:
     """Return a positive paragraph index, or ``None`` when it is not verified."""
     if value is None or isinstance(value, bool):

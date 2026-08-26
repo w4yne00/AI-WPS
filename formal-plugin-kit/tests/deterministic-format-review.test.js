@@ -480,3 +480,106 @@ const coveredBody = helpers.buildDeterministicFormatReviewBody({
 assert.strictEqual(coveredBody.coverage.formatSegmentCount, 3);
 assert.strictEqual(coveredBody.coverage.unsupportedObjectCount, 2);
 assert.strictEqual(coveredBody.coverage.headerFooter.header.status, "unavailable");
+
+const identityBody = helpers.buildDeterministicFormatReviewBody({
+  selectionMode: "document",
+  content: {
+    paragraphs: [{
+      index: 3,
+      text: "表 1：测试",
+      styleName: "Caption",
+      range: { start: 10, end: 18, sectionIndex: 2 }
+    }],
+    documentStructure: {}
+  }
+});
+assert.strictEqual(identityBody.blocks[0].blockType, "caption");
+assert.strictEqual(identityBody.blocks[0].sectionId, "section-2");
+assert.strictEqual(identityBody.blocks[0].storyId, "body");
+
+const tablesWithSection = helpers.collectFullDocumentReviewTables({
+  Tables: [{
+    Id: "table-section",
+    Range: {
+      Information: function (kind) { return kind === 2 ? 5 : 1; }
+    },
+    Rows: [{
+      Index: 1,
+      Cells: [{
+        Id: "cell-1",
+        RowIndex: 1,
+        ColumnIndex: 1,
+        RowSpan: 1,
+        ColumnSpan: 1,
+        Text: "单元格"
+      }]
+    }]
+  }]
+});
+assert.strictEqual(tablesWithSection[0].range.sectionIndex, 5);
+
+const filledBody = helpers.buildDeterministicFormatReviewBody({
+  selectionMode: "document",
+  content: {
+    paragraphs: [{
+      index: 2,
+      text: "上一节正文。",
+      range: { start: 1, end: 8, sectionIndex: 4 }
+    }],
+    documentStructure: {
+      tables: [{
+        tableId: "t-no-range",
+        tableIndex: 1,
+        paragraphIndex: 3,
+        rows: [{
+          rowIndex: 0,
+          cells: [
+            { cellId: "c1", text: "字段", rowIndex: 0, columnIndex: 0, isHeader: true },
+            { cellId: "c2", text: "值", rowIndex: 0, columnIndex: 1, isHeader: true }
+          ]
+        }]
+      }]
+    }
+  }
+});
+const tableBlock = filledBody.blocks.filter(function (block) {
+  return block.blockType === "table";
+})[0];
+assert.ok(tableBlock);
+assert.strictEqual(tableBlock.sectionId, "section-4");
+assert.strictEqual(tableBlock.storyId, "body");
+
+const associationMarkdown = helpers.renderReadableDeterministicFormatReview({
+  summary: {
+    executionStatus: "completed",
+    complianceStatus: "violations_found",
+    coverageStatus: "complete",
+    semanticStatus: "not_needed",
+    templateId: "technical-document-template-rules"
+  },
+  issues: [
+    {
+      ruleId: "structure.caption_association",
+      role: "caption",
+      paragraphIndex: 20,
+      anchorVerification: "verified",
+      currentValue: "orphaned",
+      expectedValue: "associated",
+      sourceAnchor: { textSnippet: "表 9：跨节孤立" }
+    },
+    {
+      ruleId: "font_name",
+      role: "body",
+      paragraphIndex: 1,
+      anchorVerification: "verified",
+      currentValue: "Unmapped Font",
+      expectedValue: "Unknown Template Font"
+    }
+  ]
+});
+assert.ok(associationMarkdown.includes("当前值：孤立"));
+assert.ok(associationMarkdown.includes("模板要求：已关联"));
+assert.ok(associationMarkdown.includes("题注关联"));
+assert.ok(associationMarkdown.includes("当前值：无法识别"));
+assert.ok(!associationMarkdown.includes("Unmapped Font"));
+assert.ok(!associationMarkdown.includes("{\"status\""));

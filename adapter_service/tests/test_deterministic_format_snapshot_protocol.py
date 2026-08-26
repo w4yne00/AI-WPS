@@ -1119,6 +1119,82 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertEqual(segment_format["color"], "red")
         self.assertEqual(segment_format["characterScale"], 90)
 
+    def test_normalize_derives_section_and_body_story_identity(self):
+        # Break: Python whitelist drops story identity, so later association
+        # cannot see the extraction contract's sectionIndex.
+        blocks = self.service._normalize_format_blocks([{
+            "blockId": "format-paragraph-3",
+            "blockType": "caption",
+            "paragraphIndex": 3,
+            "text": "表 1：测试",
+            "range": {"sectionIndex": 2},
+            "format": {"dataStatus": "verified"},
+        }])
+        self.assertEqual(blocks[0].get("sectionId"), "section-2")
+        self.assertEqual(blocks[0].get("storyId"), "body")
+
+    def test_caption_association_export_shows_conclusions_not_unrecognized(self):
+        # Break: association JSON/currentValue has no display mapping, so
+        # markdown writes 无法识别 and may invent font size or alignment.
+        self.service._save_report("caption-association-export-job", {
+            "schemaVersion": format_protocol.FORMAT_REPORT_SCHEMA_VERSION,
+            "summary": {
+                "executionStatus": "completed",
+                "complianceStatus": "violations_found",
+                "coverageStatus": "complete",
+                "semanticStatus": "not_needed",
+                "templateId": "technical-document-template-rules",
+            },
+            "coverage": {"reviewCharacterCount": 12},
+            "disclaimer": "覆盖完整仅表示声明范围未被静默截断。",
+            "issueCount": 3,
+            "duplicateGroupCount": 0,
+            "issues": [{
+                "ruleId": "structure.caption_association",
+                "paragraphIndex": 20,
+                "role": "caption",
+                "anchorVerification": "verified",
+                "currentValue": "orphaned",
+                "expectedValue": "associated",
+                "associationStatus": "orphaned",
+                "message": "题注未能与唯一兼容对象建立可追溯关联。",
+                "suggestion": "请核对题注与对象的关联。",
+                "sourceAnchor": {"text": "表 9：跨节孤立", "textSnippet": "表 9：跨节孤立"},
+            }, {
+                "ruleId": "structure.caption_association",
+                "paragraphIndex": 21,
+                "role": "table",
+                "anchorVerification": "verified",
+                "currentValue": "missing",
+                "expectedValue": "associated",
+                "associationStatus": "missing",
+                "message": "题注未能与唯一兼容对象建立可追溯关联。",
+                "suggestion": "请核对题注与对象的关联。",
+            }, {
+                "ruleId": "structure.caption_association",
+                "paragraphIndex": 32,
+                "role": "caption",
+                "anchorVerification": "verified",
+                "currentValue": "ambiguous",
+                "expectedValue": "associated",
+                "associationStatus": "ambiguous",
+                "message": "题注未能与唯一兼容对象建立可追溯关联。",
+                "suggestion": "请核对题注与对象的关联。",
+            }],
+        })
+        markdown = self.service.export_report("caption-association-export-job", "markdown")
+        exported = self.service.export_report("caption-association-export-job", "json")
+        self.assertIn("当前值：孤立", markdown)
+        self.assertIn("当前值：缺失", markdown)
+        self.assertIn("当前值：歧义", markdown)
+        self.assertIn("期望值：已关联", markdown)
+        self.assertNotIn("当前值：无法识别", markdown)
+        self.assertNotIn("字号", markdown)
+        self.assertNotIn("对齐", markdown)
+        machine_values = [issue["currentValue"] for issue in exported["issues"]]
+        self.assertEqual(sorted(machine_values), ["ambiguous", "missing", "orphaned"])
+        self.assertTrue(all("孤立" not in str(issue.get("issueId") or "") for issue in exported["issues"]))
+
 
 if __name__ == "__main__":
     unittest.main()

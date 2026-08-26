@@ -841,6 +841,8 @@
       headingLevel: Number(block.headingLevel || 0),
       listLabel: block.listLabel || "",
       captionFor: block.captionFor || "",
+      sectionId: block.sectionId || "",
+      storyId: block.storyId || "",
       rows: (block.rows || []).map(function (row) {
         return {
           rowIndex: Number(row && row.rowIndex || 0),
@@ -869,6 +871,52 @@
         };
       })
     };
+  }
+
+  function applyFormatBlockStoryIdentity(block) {
+    if (!block || typeof block !== "object") {
+      return block;
+    }
+    var range = block.range && typeof block.range === "object" ? block.range : {};
+    var sectionId = String(block.sectionId || block.section || "").trim();
+    if (!sectionId && Number(range.sectionIndex) > 0) {
+      sectionId = "section-" + Number(range.sectionIndex);
+    }
+    var storyId = String(block.storyId || block.story || "").trim();
+    if (!storyId && block.scope !== "context") {
+      storyId = "body";
+    }
+    if (sectionId) {
+      block.sectionId = sectionId;
+    }
+    if (storyId) {
+      block.storyId = storyId;
+    }
+    return block;
+  }
+
+  function fillFormatBlocksStoryIdentity(blocks) {
+    var lastSectionId = "";
+    var lastStoryId = "";
+    (Array.isArray(blocks) ? blocks : []).forEach(function (block) {
+      if (!block || typeof block !== "object") {
+        return;
+      }
+      applyFormatBlockStoryIdentity(block);
+      if (block.scope === "context") {
+        return;
+      }
+      if (block.sectionId) {
+        lastSectionId = String(block.sectionId);
+      } else if (lastSectionId) {
+        block.sectionId = lastSectionId;
+      }
+      if (block.storyId) {
+        lastStoryId = String(block.storyId);
+      } else if (lastStoryId) {
+        block.storyId = lastStoryId;
+      }
+    });
   }
 
   function normalizeDeterministicFormatReviewBlock(block) {
@@ -920,6 +968,7 @@
       block.format = normalizedTable.format;
       block.text = formatReviewBlockTextValues(block).join("\n");
     }
+    applyFormatBlockStoryIdentity(block);
     return JSON.parse(stableFormatReviewJson(block));
   }
 
@@ -1244,6 +1293,7 @@
     blocks.sort(function (left, right) {
       return Number(left.paragraphIndex || 0) - Number(right.paragraphIndex || 0);
     });
+    fillFormatBlocksStoryIdentity(blocks);
     if (!blocks.some(function (block) { return block.scope === "in_scope"; })) {
       throw new Error("未读取到可审查的格式语义单元。");
     }
@@ -2210,7 +2260,9 @@
     line_spacing: "行距",
     alignment: "对齐方式",
     first_line_indent: "首行缩进",
-    "structure.heading_hierarchy": "标题层级"
+    "structure.heading_hierarchy": "标题层级",
+    "structure.caption_association": "题注关联",
+    "structure.caption_placement": "题注位置"
   };
   var FORMAT_REVIEW_ALIGNMENT_TEXT = {
     left: "左对齐",
@@ -2709,6 +2761,20 @@
     if (rule === "structure.heading_hierarchy") {
       numeric = Number(raw);
       return isFinite(numeric) && numeric > 0 ? "第 " + numeric + " 级标题" : "无法识别";
+    }
+    if (rule === "structure.caption_association") {
+      return ({
+        associated: "已关联",
+        orphaned: "孤立",
+        missing: "缺失",
+        ambiguous: "歧义"
+      })[raw] || "无法判定";
+    }
+    if (rule === "structure.caption_placement") {
+      return ({
+        before: "对象前",
+        after: "对象后"
+      })[raw] || "无法判定";
     }
     return "无法识别";
   }
@@ -3578,16 +3644,18 @@
         rows.push({ rowIndex: rowIndex, cells: cells });
       }
     }
+    var paragraphIndex = normalizePositiveInteger(firstDefined(
+      safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
+    ));
     return {
       tableId: tableId,
       tableIndex: Number(tableIndex) || 0,
       tablePath: currentTablePath,
-      paragraphIndex: normalizePositiveInteger(firstDefined(
-        safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
-      )),
+      paragraphIndex: paragraphIndex,
       parentCellId: parentCellId || "",
       rows: rows,
-      nestedTables: nestedTables
+      nestedTables: nestedTables,
+      range: readParagraphRange(table, paragraphIndex || Number(tableIndex) || 0)
     };
   }
 

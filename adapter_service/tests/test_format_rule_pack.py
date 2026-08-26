@@ -599,6 +599,272 @@ class FormatRulePackTests(unittest.TestCase):
         self.assertEqual(len(placement_issues), 1)
         self.assertEqual(association_issues, [])
 
+    def test_production_format_blocks_distinguish_caption_association_outcomes(self):
+        # Break: production snapshots without handwritten sectionId/storyId
+        # mark every caption orphaned and every table missing.
+        result = WordFormatReviewer().review(self._production_caption_request())
+        association = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_association"
+        ]
+        placement = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_placement"
+        ]
+        statuses = sorted(str(issue["currentValue"]) for issue in association)
+        self.assertEqual(statuses, ["ambiguous", "missing", "orphaned"])
+        self.assertEqual(len(placement), 1)
+        self.assertEqual(placement[0]["currentValue"], "after")
+        self.assertEqual(placement[0]["expectedValue"], "before")
+        for issue in association + placement:
+            self.assertNotIn("{", str(issue["currentValue"]))
+            self.assertNotIn("孤立", str(issue["issueId"]))
+            self.assertNotIn("缺失", str(issue["issueId"]))
+            self.assertNotIn("歧义", str(issue["issueId"]))
+
+    def test_caption_issue_anchors_to_caption_block_not_array_index(self):
+        # Break: captionIndex (blocks subscript) is copied into paragraphIndex,
+        # so "整改建议" is labelled as a figure caption.
+        result = WordFormatReviewer().review(self._production_caption_request())
+        caption_issues = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] in {
+                "structure.caption_association",
+                "structure.caption_placement",
+            }
+            and issue.get("paragraphIndex") is not None
+        ]
+        self.assertTrue(caption_issues)
+        for issue in caption_issues:
+            self.assertNotEqual(issue["paragraphIndex"], 5)
+            self.assertNotEqual(issue["paragraphIndex"], 4)
+        placement = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_placement"
+        ]
+        self.assertEqual(len(placement), 1)
+        self.assertEqual(placement[0]["paragraphIndex"], 20)
+        self.assertEqual(placement[0]["role"], "caption")
+        by_status = {
+            str(issue["currentValue"]): issue
+            for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_association"
+        }
+        self.assertEqual(by_status["orphaned"]["paragraphIndex"], 40)
+        self.assertEqual(by_status["missing"]["paragraphIndex"], 26)
+        self.assertEqual(by_status["ambiguous"]["paragraphIndex"], 32)
+
+    def test_figure_image_block_associates_in_same_section_story(self):
+        # Break: production image blocks are ignored because the algorithm
+        # only accepts type=figure from handwritten fixtures.
+        result = WordFormatReviewer().review(self._production_figure_request())
+        association = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_association"
+        ]
+        placement = [
+            issue for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_placement"
+        ]
+        self.assertEqual(association, [])
+        self.assertEqual(placement, [])
+
+    @staticmethod
+    def _data_table_rows():
+        return [
+            {
+                "rowIndex": 0,
+                "cells": [
+                    {
+                        "cellId": "c00",
+                        "text": "字段",
+                        "rowIndex": 0,
+                        "columnIndex": 0,
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                        "isHeader": True,
+                    },
+                    {
+                        "cellId": "c01",
+                        "text": "值",
+                        "rowIndex": 0,
+                        "columnIndex": 1,
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                        "isHeader": True,
+                    },
+                ],
+            },
+            {
+                "rowIndex": 1,
+                "cells": [
+                    {
+                        "cellId": "c10",
+                        "text": "版本",
+                        "rowIndex": 1,
+                        "columnIndex": 0,
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                    },
+                    {
+                        "cellId": "c11",
+                        "text": "1",
+                        "rowIndex": 1,
+                        "columnIndex": 1,
+                        "rowSpan": 1,
+                        "columnSpan": 1,
+                    },
+                ],
+            },
+        ]
+
+    def _production_table_block(self, table_id, paragraph_index):
+        return {
+            "blockId": "format-table-" + table_id,
+            "blockType": "table",
+            "tableId": table_id,
+            "tableIndex": paragraph_index,
+            "paragraphIndex": paragraph_index,
+            "text": "字段\n值\n版本\n1",
+            "rows": self._data_table_rows(),
+            "nestedTables": [],
+            "format": {"dataStatus": "verified"},
+        }
+
+    def _production_caption_request(self):
+        fillers = [
+            {
+                "blockId": "format-paragraph-{0}".format(index),
+                "blockType": "heading" if index == 5 else "paragraph",
+                "paragraphIndex": index,
+                "text": "整改建议" if index == 5 else "正文{0}".format(index),
+                "format": {"styleName": "Normal", "dataStatus": "verified"},
+                "range": {"sectionIndex": 1},
+            }
+            for index in range(1, 6)
+        ]
+        blocks = fillers + [
+            self._production_table_block("t-associated", 6),
+            {
+                "blockId": "format-paragraph-20",
+                "blockType": "caption",
+                "paragraphIndex": 20,
+                "text": "表 1：系统架构",
+                "format": {"styleName": "Caption", "dataStatus": "verified"},
+                "range": {"sectionIndex": 1},
+            },
+        ]
+        for index in range(22, 26):
+            blocks.append({
+                "blockId": "format-paragraph-{0}".format(index),
+                "blockType": "paragraph",
+                "paragraphIndex": index,
+                "text": "间隔正文{0}".format(index),
+                "format": {"styleName": "Normal", "dataStatus": "verified"},
+                "range": {"sectionIndex": 1},
+            })
+        blocks.extend([
+            self._production_table_block("t-missing", 26),
+            {
+                "blockId": "format-paragraph-29",
+                "blockType": "paragraph",
+                "paragraphIndex": 29,
+                "text": "第二节正文",
+                "format": {"styleName": "Normal", "dataStatus": "verified"},
+                "range": {"sectionIndex": 2},
+            },
+            self._production_table_block("t-a", 30),
+            self._production_table_block("t-b", 31),
+            {
+                "blockId": "format-paragraph-32",
+                "blockType": "caption",
+                "paragraphIndex": 32,
+                "text": "表 2：歧义候选",
+                "format": {"styleName": "Caption", "dataStatus": "verified"},
+                "range": {"sectionIndex": 2},
+            },
+            {
+                "blockId": "format-paragraph-40",
+                "blockType": "caption",
+                "paragraphIndex": 40,
+                "text": "表 9：跨节孤立",
+                "format": {"styleName": "Caption", "dataStatus": "verified"},
+                "range": {"sectionIndex": 3},
+            },
+        ])
+        paragraphs = [
+            {
+                "index": block["paragraphIndex"],
+                "text": block["text"],
+                "styleName": "Caption" if block["blockType"] == "caption" else "Normal",
+            }
+            for block in blocks
+            if block["blockType"] != "table"
+        ]
+        return WordDocumentRequest(
+            documentId="production-caption.docx",
+            content={
+                "paragraphs": paragraphs,
+                "documentStructure": {
+                    "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+                    "formatBlocks": blocks,
+                },
+            },
+            options={"templateId": ACTIVE_TEMPLATE_ID},
+        )
+
+    def _production_figure_request(self):
+        blocks = [
+            {
+                "blockId": "format-paragraph-7",
+                "blockType": "paragraph",
+                "paragraphIndex": 7,
+                "text": "图前正文",
+                "format": {"styleName": "Normal", "dataStatus": "verified"},
+                "range": {"sectionIndex": 1},
+            },
+            {
+                "blockId": "format-image-f1",
+                "blockType": "image",
+                "paragraphIndex": 8,
+                "text": "",
+                "format": {"dataStatus": "verified"},
+                "images": [{
+                    "imageId": "f1",
+                    "groupId": "f1",
+                    "fingerprint": "fp-f1",
+                    "captionStatus": "present",
+                    "associationStatus": "missing",
+                    "supported": True,
+                    "altText": "",
+                    "nearbyText": "图 1：系统架构",
+                }],
+            },
+            {
+                "blockId": "format-paragraph-9",
+                "blockType": "caption",
+                "paragraphIndex": 9,
+                "text": "图 1：系统架构",
+                "format": {"styleName": "Caption", "dataStatus": "verified"},
+                "range": {"sectionIndex": 1},
+            },
+        ]
+        return WordDocumentRequest(
+            documentId="production-figure.docx",
+            content={
+                "paragraphs": [{
+                    "index": 9,
+                    "text": "图 1：系统架构",
+                    "styleName": "Caption",
+                }],
+                "documentStructure": {
+                    "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+                    "formatBlocks": blocks,
+                },
+            },
+            options={"templateId": ACTIVE_TEMPLATE_ID},
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
