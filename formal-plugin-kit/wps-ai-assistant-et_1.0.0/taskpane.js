@@ -979,6 +979,9 @@
   }
 
   function buildExcelAnalysisMarkdown(data) {
+    if (helpers.buildExcelAnalysisMarkdown) {
+      return helpers.buildExcelAnalysisMarkdown(data);
+    }
     var report = (data && data.structuredReport) || {};
     var findings = normalizeReportList(report.findings);
     var risks = normalizeReportList(report.risks);
@@ -1012,13 +1015,22 @@
     });
   }
 
+  function setExcelResultViewSwitchForMode(mode) {
+    var node = byId("result-view-switch");
+    if (!node) {
+      return;
+    }
+    if (helpers.shouldShowExcelResultViewSwitch) {
+      node.hidden = !helpers.shouldShowExcelResultViewSwitch(mode);
+      return;
+    }
+    node.hidden = mode !== "excelAnalysis";
+  }
+
   function renderExcelAnalysisResult(data) {
-    var markdown = buildExcelAnalysisMarkdown(data || {});
     state.analysisResult = data || {};
-    state.resultViewMode = "preview";
-    byId("result-view-switch").hidden = false;
-    updateResultViewButtons();
-    setResult(markdown, markdown);
+    setExcelResultViewSwitchForMode("excelAnalysis");
+    setResultViewMode("preview");
   }
 
   function buildExcelFormulaMarkdown(data) {
@@ -1096,7 +1108,7 @@
     var alternativePanel = byId("excel-formula-alternative");
     var hasCopyText = Boolean(String(result.copyText || result.primaryFormula || "").trim());
     state.formulaResult = result;
-    byId("result-view-switch").hidden = true;
+    setExcelResultViewSwitchForMode("excelFormulaAssistant");
     byId("btn-copy-formula").hidden = !hasCopyText;
     byId("btn-copy-formula").textContent = result.parseDiagnostic ? "复制原始结果" : "复制公式";
     byId("btn-copy-formula").setAttribute("title", result.parseDiagnostic ? "复制原始最终结果" : "复制主公式");
@@ -1407,10 +1419,23 @@
   }
 
   function setResultViewMode(mode) {
+    var presented;
     var plainText;
     state.resultViewMode = mode === "plain" ? "plain" : "preview";
     updateResultViewButtons();
     if (!state.analysisResult) {
+      return;
+    }
+    if (helpers.presentExcelAnalysisResultView) {
+      presented = helpers.presentExcelAnalysisResultView({
+        result: state.analysisResult,
+        view: state.resultViewMode
+      });
+      if (presented.presentation === "source") {
+        setPlainResult(presented.sourceText || "模型后台未返回汇报段落。", presented.copyText);
+      } else {
+        setResult(presented.displayMarkdown, presented.copyText);
+      }
       return;
     }
     if (state.resultViewMode === "plain") {
@@ -3124,9 +3149,9 @@
       : "生成分析报告";
     byId("btn-copy-formula").hidden = !formulaMode || !String((state.formulaResult && (state.formulaResult.copyText || state.formulaResult.primaryFormula)) || "").trim();
     if (formulaMode) {
-      byId("result-view-switch").hidden = true;
+      setExcelResultViewSwitchForMode("excelFormulaAssistant");
     } else if (!settingsMode && state.analysisResult) {
-      byId("result-view-switch").hidden = false;
+      setExcelResultViewSwitchForMode("excelAnalysis");
     }
     if (settingsMode) {
       byId("diagnostics-disclosure").open = false;

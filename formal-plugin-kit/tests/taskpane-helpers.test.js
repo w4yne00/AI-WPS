@@ -780,8 +780,10 @@ function testRenderMarkdownFormatsCommonBlocks() {
   assert.ok(html.includes("<hr>"));
   assert.ok(html.includes("<blockquote>"));
   assert.ok(html.includes('<div class="markdown-table-wrap">'));
-  assert.ok(html.includes("<th>项目</th>"));
-  assert.ok(html.includes("<td>已完成</td>"));
+  assert.ok(html.includes("项目"));
+  assert.ok(html.includes("已完成"));
+  assert.ok(!/<table\b/i.test(html));
+  assert.ok(!/<th\b/i.test(html));
   assert.ok(html.includes('<pre><code class="language-json">'));
   assert.ok(html.includes("{&quot;ok&quot;: true}"));
 }
@@ -805,7 +807,9 @@ function testRenderMarkdownEscapesUnsafeHtmlAndLinks() {
   assert.ok(!html.includes("<img"));
   assert.ok(!html.includes("javascript:"));
   assert.ok(!html.includes('href="javascript:'));
-  assert.ok(html.includes('href="https://example.com?a=1&amp;b=2"'));
+  assert.ok(html.includes("官网"));
+  assert.ok(!/href\s*=/i.test(html));
+  assert.ok(!/<a\b/i.test(html));
 }
 
 function testBuildMarkdownWritebackBlocksPreservesSupportedStructure() {

@@ -40,16 +40,8 @@
       return storeToken("<code>" + escapeHtml(code) + "</code>");
     });
 
-    text = text.replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, imagePrefix, label, url) {
-      var safeUrl = imagePrefix ? "" : sanitizeMarkdownUrl(url);
-      if (!safeUrl) {
-        return escapeHtml(label || match);
-      }
-      return storeToken(
-        '<a href="' + escapeHtml(safeUrl) + '" target="_blank" rel="noopener noreferrer">' +
-        escapeHtml(label) +
-        "</a>"
-      );
+    text = text.replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, _imagePrefix, label) {
+      return storeToken(escapeHtml(label || match));
     });
 
     text = escapeHtml(text)
@@ -125,19 +117,22 @@
       closeList();
       var headers = splitTableRow(tableRows[0]);
       var bodyRows = tableRows.slice(2);
-      html.push('<div class="markdown-table-wrap"><table><thead><tr>');
-      headers.forEach(function (cell) {
-        html.push("<th>" + renderInlineMarkdown(cell) + "</th>");
-      });
-      html.push("</tr></thead><tbody>");
+      html.push('<div class="markdown-table-wrap">');
       bodyRows.forEach(function (row) {
-        html.push("<tr>");
-        splitTableRow(row).forEach(function (cell) {
-          html.push("<td>" + renderInlineMarkdown(cell) + "</td>");
+        var cells = splitTableRow(row);
+        html.push('<div class="markdown-table-block">');
+        headers.forEach(function (header, index) {
+          html.push(
+            '<div class="markdown-table-field"><span class="markdown-table-label">' +
+            renderInlineMarkdown(header) +
+            '</span><span class="markdown-table-value">' +
+            renderInlineMarkdown(cells[index] || "") +
+            "</span></div>"
+          );
         });
-        html.push("</tr>");
+        html.push("</div>");
       });
-      html.push("</tbody></table></div>");
+      html.push("</div>");
       tableRows = [];
     }
 
@@ -2349,10 +2344,75 @@
     return Number(profileCount || 0) === 0 || Boolean(requested);
   }
 
+  function normalizeExcelReportList(value) {
+    if (Array.isArray(value)) {
+      return value.map(function (item) {
+        return String(item || "").trim();
+      }).filter(Boolean);
+    }
+    if (typeof value === "string" && value.trim()) {
+      return [value.trim()];
+    }
+    return [];
+  }
+
+  function buildExcelAnalysisMarkdown(data) {
+    var report = (data && data.structuredReport) || {};
+    var findings = normalizeExcelReportList(report.findings);
+    var risks = normalizeExcelReportList(report.risks);
+    var actions = normalizeExcelReportList(report.actions);
+    return [
+      "## 数据概览",
+      report.overview || "未返回数据概览。",
+      "",
+      "## 关键发现",
+      findings.length ? findings.map(function (item) { return "- " + item; }).join("\n") : "- 未返回关键发现。",
+      "",
+      "## 风险异常",
+      risks.length ? risks.map(function (item) { return "- " + item; }).join("\n") : "- 未返回风险异常。",
+      "",
+      "## 建议动作",
+      actions.length ? actions.map(function (item) { return "- " + item; }).join("\n") : "- 未返回建议动作。"
+    ].join("\n");
+  }
+
+  function presentExcelAnalysisResultView(input) {
+    var source = input || {};
+    var result = source.result || {};
+    var view = source.view === "plain" ? "plain" : "preview";
+    var reportMarkdown = buildExcelAnalysisMarkdown(result);
+    var plainText = result.plainText || "";
+    if (view === "plain") {
+      return {
+        presentation: "source",
+        displayMarkdown: plainText,
+        html: "",
+        sourceText: plainText,
+        copyText: plainText,
+        viewLabels: { preview: "分析报告", plain: "汇报段落" }
+      };
+    }
+    return {
+      presentation: "rendered",
+      displayMarkdown: reportMarkdown,
+      html: renderMarkdown(reportMarkdown),
+      sourceText: "",
+      copyText: reportMarkdown,
+      viewLabels: { preview: "分析报告", plain: "汇报段落" }
+    };
+  }
+
+  function shouldShowExcelResultViewSwitch(mode) {
+    return mode === "excelAnalysis";
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
     renderMarkdown: renderMarkdown,
+    buildExcelAnalysisMarkdown: buildExcelAnalysisMarkdown,
+    presentExcelAnalysisResultView: presentExcelAnalysisResultView,
+    shouldShowExcelResultViewSwitch: shouldShowExcelResultViewSwitch,
     buildInlineWritebackRuns: buildInlineWritebackRuns,
     buildMarkdownWritebackBlocks: buildMarkdownWritebackBlocks,
     hasStructuredSmartWriteContent: hasStructuredSmartWriteContent,

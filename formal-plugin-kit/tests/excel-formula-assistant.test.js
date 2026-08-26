@@ -330,9 +330,14 @@ function testStructuredResultKeepsFullExplanationCopyContract() {
   const state = { formulaResult: null };
   let copiedText = "";
   const render = buildFunction(
-    ["renderExcelFormulaResult"],
+    ["setExcelResultViewSwitchForMode", "renderExcelFormulaResult"],
     {
       state,
+      helpers: {
+        shouldShowExcelResultViewSwitch: function (mode) {
+          return mode === "excelAnalysis";
+        }
+      },
       byId(id) { return nodes[id]; },
       buildExcelFormulaMarkdown() { return "完整公式解释"; },
       setResult(markdown, copyText) { copiedText = copyText; }
@@ -343,6 +348,7 @@ function testStructuredResultKeepsFullExplanationCopyContract() {
   render({ primaryFormula: "=SUM(B2:B3)", copyText: "=SUM(B2:B3)" });
   assert.strictEqual(copiedText, "完整公式解释");
   assert.strictEqual(nodes["btn-copy-formula"].hidden, false);
+  assert.strictEqual(nodes["result-view-switch"].hidden, true);
 
   render({ parseDiagnostic: "解析失败", rawFinalResult: "原始结果", copyText: "原始结果" });
   assert.strictEqual(copiedText, "原始结果");
