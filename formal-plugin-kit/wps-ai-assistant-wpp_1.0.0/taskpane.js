@@ -454,8 +454,25 @@
 
   function setPlainResult(text) {
     var output = byId("result-output");
+    output.classList.add("plain-output");
+    output.classList.remove("markdown-output");
     output.innerHTML = "";
     output.textContent = text || "";
+  }
+
+  function applyPptSummaryResultView() {
+    var presented = helpers.presentPptSummaryResultView({
+      result: state.result,
+      view: state.resultMode
+    });
+    var output = byId("result-output");
+    if (presented.presentation === "source") {
+      setPlainResult(presented.sourceText || "");
+      return;
+    }
+    output.classList.remove("plain-output");
+    output.classList.add("markdown-output");
+    output.innerHTML = presented.html || "";
   }
 
   function createTextElement(tagName, className, text) {
@@ -495,9 +512,15 @@
     var header;
     var slidesContainer;
     if (!hasStructuredDocumentResult(result)) {
-      setPlainResult(result.plainText || result.rawAnswer || "模型后台未返回可显示的文档总结结果。");
+      if (!(result.plainText || result.rawAnswer)) {
+        setPlainResult("模型后台未返回可显示的文档总结结果。");
+        return;
+      }
+      applyPptSummaryResultView();
       return;
     }
+    output.classList.remove("plain-output");
+    output.classList.remove("markdown-output");
     output.innerHTML = "";
     header = document.createElement("section");
     header.className = "document-summary-header";
@@ -586,7 +609,6 @@
   }
 
   function renderResult(result) {
-    var raw;
     if (result && result.resultType === "document") {
       state.result = helpers.normalizePptDocumentResult(result);
     } else {
@@ -594,18 +616,16 @@
     }
     state.resultMode = "preview";
     byId("result-view-switch").hidden = false;
-    raw = safeText(state.result.rawAnswer);
-    if (state.result.resultType === "document") {
+    if (state.result.resultType === "document" && hasStructuredDocumentResult(state.result)) {
       renderDocumentPreview();
       updateCopyButtons(false);
-    } else if (raw) {
-      setPlainResult(raw);
-      updateCopyButtons(true);
     } else {
-      byId("result-output").innerHTML = helpers.renderMarkdown(
-        helpers.buildPptSlideMarkdown(state.result)
-      );
-      updateCopyButtons(false);
+      applyPptSummaryResultView();
+      updateCopyButtons(state.result.resultType === "document" || !(
+        state.result.suggestedTitle ||
+        (state.result.bullets && state.result.bullets.length) ||
+        state.result.conclusion
+      ));
     }
     updateViewButtons();
   }
@@ -620,24 +640,18 @@
   }
 
   function setResultMode(mode) {
-    var raw;
     if (!state.result) {
       return;
     }
     state.resultMode = mode === "plain" ? "plain" : "preview";
-    raw = safeText(state.result.rawAnswer);
-    if (state.result.resultType === "document") {
+    if (state.result.resultType === "document" && hasStructuredDocumentResult(state.result)) {
       if (state.resultMode === "plain") {
         setPlainResult(helpers.buildPptDocumentPlainText(state.result));
       } else {
         renderDocumentPreview();
       }
-    } else if (state.resultMode === "plain" || raw) {
-      setPlainResult(raw || state.result.plainText || helpers.buildPptSlidePlainText(state.result));
     } else {
-      byId("result-output").innerHTML = helpers.renderMarkdown(
-        helpers.buildPptSlideMarkdown(state.result)
-      );
+      applyPptSummaryResultView();
     }
     updateViewButtons();
   }

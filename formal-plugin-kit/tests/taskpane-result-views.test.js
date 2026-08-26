@@ -1,11 +1,19 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 
 const helpers = require("../wps-ai-assistant_1.0.0/taskpane-helpers.js");
 const excelHelpers = require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js");
 
 const ROOT = path.resolve(__dirname, "..");
+const pptContext = { window: {} };
+vm.createContext(pptContext);
+vm.runInContext(
+  fs.readFileSync(path.join(ROOT, "wps-ai-assistant-wpp_1.0.0", "taskpane-helpers.js"), "utf8"),
+  pptContext
+);
+const pptHelpers = pptContext.window.WpsAiPptHelpers;
 
 function presentWord(input) {
   assert.strictEqual(typeof helpers.presentWordResultView, "function");
@@ -15,6 +23,11 @@ function presentWord(input) {
 function presentExcel(input) {
   assert.strictEqual(typeof excelHelpers.presentExcelAnalysisResultView, "function");
   return excelHelpers.presentExcelAnalysisResultView(input);
+}
+
+function presentPpt(input) {
+  assert.strictEqual(typeof pptHelpers.presentPptSummaryResultView, "function");
+  return pptHelpers.presentPptSummaryResultView(input);
 }
 
 function testWordPreviewRendersStructuredMarkdown() {
@@ -278,6 +291,186 @@ function testHostMarkupKeepsExcelSwitchNames() {
   assert.ok(wordHtml.includes(">纯文本</button>"));
 }
 
+function samplePptRawAnswer() {
+  return [
+    "# 结论",
+    "",
+    "- **通过**",
+    "",
+    "| 项目 | 状态 |",
+    "| --- | --- |",
+    "| 任务 | 已完成 |",
+    "| 风险 | 已关闭 |"
+  ].join("\n");
+}
+
+function testPptPreviewRendersStructuredSlideMarkdown() {
+  // Break: structured slide preview stays source (`## 建议标题`, `- **通过**`).
+  const view = presentPpt({
+    result: {
+      suggestedTitle: "本页建议标题",
+      bullets: ["**通过**", "下一步联调"],
+      conclusion: "保持当前节奏。"
+    },
+    view: "preview"
+  });
+
+  assert.strictEqual(view.presentation, "rendered");
+  assert.ok(view.html.includes("<h2>"));
+  assert.ok(view.html.includes("本页建议标题"));
+  assert.ok(view.html.includes("<ul>"));
+  assert.ok(view.html.includes("<strong>通过</strong>"));
+  assert.ok(!view.html.includes("## 建议标题"));
+}
+
+function testPptPreviewRendersUnstructuredRawAnswer() {
+  // Break: rawAnswer-only preview is forced to source (`# 结论` visible).
+  const view = presentPpt({
+    result: {
+      rawAnswer: samplePptRawAnswer()
+    },
+    view: "preview"
+  });
+
+  assert.strictEqual(view.presentation, "rendered");
+  assert.ok(view.html.includes("<h1>结论</h1>"));
+  assert.ok(view.html.includes("<ul>"));
+  assert.ok(view.html.includes("<strong>通过</strong>"));
+  assert.ok(view.html.includes("项目"));
+  assert.ok(view.html.includes("已完成"));
+  assert.ok(!view.html.includes("# 结论"));
+  assert.ok(!view.sourceText);
+}
+
+function testPptPreviewIgnoresRawAnswerWhenStructuredSlideExists() {
+  // Break: any rawAnswer hijacks preview to plaintext even if structured fields exist.
+  const view = presentPpt({
+    result: {
+      suggestedTitle: "结构化标题",
+      bullets: ["要点一"],
+      conclusion: "结构化结论",
+      rawAnswer: "# 这段源码不应成为预览"
+    },
+    view: "preview"
+  });
+
+  assert.strictEqual(view.presentation, "rendered");
+  assert.ok(view.html.includes("结构化标题"));
+  assert.ok(view.html.includes("<ul>"));
+  assert.ok(!view.html.includes("# 这段源码不应成为预览"));
+}
+
+function testPptDocumentFallbackStillRenders() {
+  // Break: document parse fallback uses setPlainResult / presentation === source.
+  const view = presentPpt({
+    result: {
+      resultType: "document",
+      parseFallbackReason: "unstructured",
+      rawAnswer: samplePptRawAnswer()
+    },
+    view: "preview"
+  });
+
+  assert.strictEqual(view.presentation, "rendered");
+  assert.ok(view.html.includes("<h1>结论</h1>"));
+  assert.ok(view.html.includes("<strong>通过</strong>"));
+  assert.ok(!view.html.includes("# 结论"));
+}
+
+function testPptPlainViewIsUnrenderedSource() {
+  // Break: plain view is rendered HTML instead of source.
+  const raw = samplePptRawAnswer();
+  const view = presentPpt({
+    result: { rawAnswer: raw },
+    view: "plain"
+  });
+
+  assert.strictEqual(view.presentation, "source");
+  assert.strictEqual(view.sourceText, raw);
+  assert.strictEqual(view.html, "");
+}
+
+function testPptCopyIgnoresCurrentView() {
+  // Break: copy reads rendered HTML.
+  const raw = samplePptRawAnswer();
+  const preview = presentPpt({ result: { rawAnswer: raw }, view: "preview" });
+  const plain = presentPpt({ result: { rawAnswer: raw }, view: "plain" });
+
+  assert.strictEqual(preview.copyText, raw);
+  assert.strictEqual(plain.copyText, raw);
+  assert.ok(!preview.copyText.includes("<h1>"));
+}
+
+function testPptPreviewRejectsHtmlScriptsImagesAndLinkNavigation() {
+  // Break: preview emits raw HTML, <script>, <img>, or clickable href.
+  const view = presentPpt({
+    result: {
+      rawAnswer: [
+        "<script>alert(1)</script>",
+        '<img src="https://cdn.example.com/x.png" onerror="alert(1)">',
+        "![示意图](https://cdn.example.com/diagram.png)",
+        "[官网](https://example.com/path?a=1&b=2)",
+        "[危险](javascript:alert(1))"
+      ].join("\n")
+    },
+    view: "preview"
+  });
+
+  assert.strictEqual(view.presentation, "rendered");
+  assert.ok(view.html.includes("&lt;script&gt;") || view.html.includes("&lt;script"));
+  assert.ok(!/<script\b/i.test(view.html));
+  assert.ok(!/<img\b/i.test(view.html));
+  assert.ok(!/src\s*=\s*["']https:\/\/cdn\.example\.com/i.test(view.html));
+  assert.ok(view.html.includes("官网"));
+  assert.ok(view.html.includes("危险"));
+  assert.ok(!/href\s*=/i.test(view.html));
+  assert.ok(!/<a\b/i.test(view.html));
+  assert.ok(!view.html.includes("javascript:"));
+}
+
+function testPptPreviewTablesAreReadableBlocks() {
+  // Break: table is only a wide <table> whose header text appears once.
+  const view = presentPpt({
+    result: {
+      rawAnswer: [
+        "| 字段甲 | 字段乙 |",
+        "| --- | --- |",
+        "| 值一 | 值二 |",
+        "| 值三 | 值四 |"
+      ].join("\n")
+    },
+    view: "preview"
+  });
+
+  assert.strictEqual(view.presentation, "rendered");
+  assert.ok((view.html.match(/字段甲/g) || []).length >= 2);
+  assert.ok(view.html.includes("值一"));
+  assert.ok(view.html.includes("值三"));
+  assert.ok(!/<table\b/i.test(view.html));
+}
+
+function testPptStructureReviewAreaStaysSeparate() {
+  // Break: structure review result is folded into 预览/纯文本.
+  const html = fs.readFileSync(
+    path.join(ROOT, "wps-ai-assistant-wpp_1.0.0", "taskpane.html"),
+    "utf8"
+  );
+  const structureStart = html.indexOf('id="structure-result-section"');
+  const summaryStart = html.indexOf('id="summary-result-section"');
+  assert.ok(structureStart > 0);
+  assert.ok(summaryStart > 0);
+  const structureChunk = html.slice(structureStart, structureStart + 800);
+  const summaryChunk = html.slice(summaryStart, html.indexOf('id="structure-review-controls"'));
+
+  assert.ok(summaryChunk.includes(">预览</button>"));
+  assert.ok(summaryChunk.includes(">纯文本</button>"));
+  assert.ok(summaryChunk.includes('id="result-output"'));
+  assert.ok(structureChunk.includes('id="structure-result-output"'));
+  assert.ok(!structureChunk.includes(">预览</button>"));
+  assert.ok(!structureChunk.includes(">纯文本</button>"));
+  assert.ok(!structureChunk.includes('id="result-view-switch"'));
+}
+
 testWordPreviewRendersStructuredMarkdown();
 testWordPreviewRendersUnstructuredParagraph();
 testWordCompareStaysRenderedWithInsertHighlight();
@@ -291,5 +484,14 @@ testExcelReportParagraphStaysUnrendered();
 testExcelPreviewRejectsLinkNavigationAndOnlineImages();
 testExcelFormulaAssistantHasNoAnalysisSwitch();
 testHostMarkupKeepsExcelSwitchNames();
+testPptPreviewRendersStructuredSlideMarkdown();
+testPptPreviewRendersUnstructuredRawAnswer();
+testPptPreviewIgnoresRawAnswerWhenStructuredSlideExists();
+testPptDocumentFallbackStillRenders();
+testPptPlainViewIsUnrenderedSource();
+testPptCopyIgnoresCurrentView();
+testPptPreviewRejectsHtmlScriptsImagesAndLinkNavigation();
+testPptPreviewTablesAreReadableBlocks();
+testPptStructureReviewAreaStaysSeparate();
 
 console.log("taskpane result view tests passed");
