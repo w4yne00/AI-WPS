@@ -2932,11 +2932,11 @@
         var lines = [
           '<article class="review-issue-card">',
           '<div class="review-action-row">',
-          '<button type="button" data-format-review-action="locate" data-issue-id="' +
+          '<button type="button" class="ghost-action" data-format-review-action="locate" data-issue-id="' +
             escapeHtml(card.issueId) + '"' + (card.locateEnabled ? "" : ' disabled="disabled"') + ">定位原文</button>",
-          '<button type="button" data-format-review-action="processed" data-issue-id="' +
+          '<button type="button" class="ghost-action" data-format-review-action="processed" data-issue-id="' +
             escapeHtml(card.issueId) + '"' + (card.processedEnabled ? "" : ' disabled="disabled"') + ">标记已处理</button>",
-          '<button type="button" data-format-review-action="ignored" data-issue-id="' +
+          '<button type="button" class="ghost-action" data-format-review-action="ignored" data-issue-id="' +
             escapeHtml(card.issueId) + '"' + (card.ignoredEnabled ? "" : ' disabled="disabled"') + ">标记已忽略</button>",
           "</div>",
           "<p>位置：" + escapeHtml(card.location) + "</p>",
