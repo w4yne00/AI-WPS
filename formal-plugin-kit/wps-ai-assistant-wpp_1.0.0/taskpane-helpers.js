@@ -804,17 +804,236 @@
       .replace(/'/g, "&#39;");
   }
 
+  function renderInlineMarkdown(value) {
+    var tokens = [];
+    var text = String(value || "");
+
+    function storeToken(html) {
+      var token = "\u0000MDTOKEN" + tokens.length + "\u0000";
+      tokens.push({ token: token, html: html });
+      return token;
+    }
+
+    text = text.replace(/`([^`]+)`/g, function (_match, code) {
+      return storeToken("<code>" + escapeHtml(code) + "</code>");
+    });
+
+    text = text.replace(/(!?)\[([^\]]+)\]\(([^)\s]+)\)/g, function (match, _imagePrefix, label) {
+      return storeToken(escapeHtml(label || match));
+    });
+
+    text = escapeHtml(text)
+      .replace(/==([^=\n]+)==/g, '<mark class="smart-diff-highlight">$1</mark>')
+      .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*([^*]+)\*/g, "<em>$1</em>");
+
+    tokens.forEach(function (entry) {
+      text = text.split(escapeHtml(entry.token)).join(entry.html);
+    });
+    return text;
+  }
+
   function renderMarkdown(markdown) {
-    return String(markdown || "")
-      .split(/\n{2,}/)
-      .map(function (block) {
-        var escaped = escapeHtml(block).replace(/\n/g, "<br>");
-        if (/^##\s+/.test(block)) {
-          return "<h3>" + escaped.replace(/^##\s+/, "") + "</h3>";
+    var lines = String(markdown || "").replace(/\r/g, "").split("\n");
+    var html = [];
+    var paragraph = [];
+    var listType = "";
+    var inCode = false;
+    var codeLang = "";
+    var codeLines = [];
+    var tableRows = [];
+
+    function closeList() {
+      if (listType) {
+        html.push("</" + listType + ">");
+        listType = "";
+      }
+    }
+
+    function flushParagraph() {
+      if (paragraph.length) {
+        closeList();
+        html.push("<p>" + paragraph.map(renderInlineMarkdown).join("<br>") + "</p>");
+        paragraph = [];
+      }
+    }
+
+    function splitTableRow(line) {
+      var value = String(line || "").trim();
+      if (value.charAt(0) === "|") {
+        value = value.slice(1);
+      }
+      if (value.charAt(value.length - 1) === "|") {
+        value = value.slice(0, -1);
+      }
+      return value.split("|").map(function (cell) {
+        return cell.trim();
+      });
+    }
+
+    function isTableSeparator(line) {
+      var cells = splitTableRow(line);
+      return cells.length > 0 && cells.every(function (cell) {
+        return /^:?-{3,}:?$/.test(cell);
+      });
+    }
+
+    function isTableLine(line) {
+      return /\|/.test(line || "");
+    }
+
+    function flushTable() {
+      if (tableRows.length < 2 || !isTableSeparator(tableRows[1])) {
+        tableRows.forEach(function (row) {
+          paragraph.push(row.trim());
+        });
+        tableRows = [];
+        return;
+      }
+
+      flushParagraph();
+      closeList();
+      var headers = splitTableRow(tableRows[0]);
+      var bodyRows = tableRows.slice(2);
+      html.push('<div class="markdown-table-wrap">');
+      bodyRows.forEach(function (row) {
+        var cells = splitTableRow(row);
+        html.push('<div class="markdown-table-block">');
+        headers.forEach(function (header, index) {
+          html.push(
+            '<div class="markdown-table-field"><span class="markdown-table-label">' +
+            renderInlineMarkdown(header) +
+            '</span><span class="markdown-table-value">' +
+            renderInlineMarkdown(cells[index] || "") +
+            "</span></div>"
+          );
+        });
+        html.push("</div>");
+      });
+      html.push("</div>");
+      tableRows = [];
+    }
+
+    function openList(nextType) {
+      flushParagraph();
+      if (listType !== nextType) {
+        closeList();
+        html.push("<" + nextType + ">");
+        listType = nextType;
+      }
+    }
+
+    lines.forEach(function (line) {
+      var codeFence = line.match(/^```([A-Za-z0-9_-]*)\s*$/);
+      var heading = line.match(/^(#{1,6})\s+(.+)$/);
+      var unordered = line.match(/^\s*[-*+]\s+(.+)$/);
+      var ordered = line.match(/^\s*\d+\.\s+(.+)$/);
+      var quote = line.match(/^>\s?(.+)$/);
+      var divider = /^\s{0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line);
+
+      if (inCode) {
+        if (codeFence) {
+          html.push(
+            "<pre><code" +
+            (codeLang ? ' class="language-' + escapeHtml(codeLang) + '"' : "") +
+            ">" +
+            escapeHtml(codeLines.join("\n")) +
+            "</code></pre>"
+          );
+          inCode = false;
+          codeLang = "";
+          codeLines = [];
+          return;
         }
-        return "<p>" + escaped + "</p>";
-      })
-      .join("");
+        codeLines.push(line);
+        return;
+      }
+
+      if (tableRows.length && !isTableLine(line)) {
+        flushTable();
+      }
+
+      if (codeFence) {
+        flushTable();
+        flushParagraph();
+        closeList();
+        inCode = true;
+        codeLang = codeFence[1] || "";
+        codeLines = [];
+        return;
+      }
+
+      if (!line.trim()) {
+        flushTable();
+        flushParagraph();
+        closeList();
+        return;
+      }
+
+      if (isTableLine(line)) {
+        tableRows.push(line);
+        return;
+      }
+
+      if (heading) {
+        flushTable();
+        flushParagraph();
+        closeList();
+        html.push(
+          "<h" + heading[1].length + ">" +
+          renderInlineMarkdown(heading[2]) +
+          "</h" + heading[1].length + ">"
+        );
+        return;
+      }
+
+      if (divider) {
+        flushTable();
+        flushParagraph();
+        closeList();
+        html.push("<hr>");
+        return;
+      }
+
+      if (unordered) {
+        flushTable();
+        openList("ul");
+        html.push("<li>" + renderInlineMarkdown(unordered[1]) + "</li>");
+        return;
+      }
+
+      if (ordered) {
+        flushTable();
+        openList("ol");
+        html.push("<li>" + renderInlineMarkdown(ordered[1]) + "</li>");
+        return;
+      }
+
+      if (quote) {
+        flushTable();
+        flushParagraph();
+        closeList();
+        html.push("<blockquote>" + renderInlineMarkdown(quote[1]) + "</blockquote>");
+        return;
+      }
+
+      paragraph.push(line.trim());
+    });
+
+    if (inCode) {
+      html.push(
+        "<pre><code" +
+        (codeLang ? ' class="language-' + escapeHtml(codeLang) + '"' : "") +
+        ">" +
+        escapeHtml(codeLines.join("\n")) +
+        "</code></pre>"
+      );
+    }
+    flushTable();
+    flushParagraph();
+    closeList();
+
+    return html.join("\n");
   }
 
   function normalizeWorkflowProfiles(value) {
@@ -1182,6 +1401,61 @@
     return sections.join("\n\n");
   }
 
+  function hasStructuredSlideSummary(result) {
+    var data = result || {};
+    if (data.resultType === "document") {
+      return false;
+    }
+    return Boolean(
+      safeText(data.suggestedTitle) ||
+      (Array.isArray(data.bullets) && data.bullets.some(function (item) {
+        return Boolean(safeText(item));
+      })) ||
+      safeText(data.conclusion)
+    );
+  }
+
+  function buildPptSummaryPreviewSource(result) {
+    var data = result || {};
+    var documentResult;
+    if (data.resultType === "document") {
+      documentResult = normalizePptDocumentResult(data);
+      if (hasStructuredPptDocumentResult(documentResult)) {
+        return buildPptDocumentPlainText(documentResult);
+      }
+      return documentResult.plainText || documentResult.rawAnswer || "";
+    }
+    if (hasStructuredSlideSummary(data)) {
+      return buildPptSlideMarkdown(data);
+    }
+    return safeText(data.plainText) || safeText(data.rawAnswer);
+  }
+
+  function presentPptSummaryResultView(input) {
+    var source = input || {};
+    var previewSource = buildPptSummaryPreviewSource(source.result || {});
+    var view = source.view === "plain" ? "plain" : "preview";
+    var labels = { preview: "预览", plain: "纯文本" };
+    if (view === "plain") {
+      return {
+        presentation: "source",
+        displayMarkdown: previewSource,
+        html: "",
+        sourceText: previewSource,
+        copyText: previewSource,
+        viewLabels: labels
+      };
+    }
+    return {
+      presentation: "rendered",
+      displayMarkdown: previewSource,
+      html: renderMarkdown(previewSource),
+      sourceText: "",
+      copyText: previewSource,
+      viewLabels: labels
+    };
+  }
+
   function describePptJobProgress(job, sourceMode, jobId) {
     var data = job || {};
     var phase = safeText(data.phase) || (data.status === "queued" ? "queued" : "provider_processing");
@@ -1241,6 +1515,7 @@
     buildPptDocumentPlainText: buildPptDocumentPlainText,
     buildPptDocumentOutline: buildPptDocumentOutline,
     buildPptDocumentSlidePlainText: buildPptDocumentSlidePlainText,
+    presentPptSummaryResultView: presentPptSummaryResultView,
     describePptJobProgress: describePptJobProgress
   };
 }(window));
