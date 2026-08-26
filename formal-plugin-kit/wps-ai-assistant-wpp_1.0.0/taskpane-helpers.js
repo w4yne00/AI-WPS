@@ -1492,27 +1492,23 @@
         resolvePptStructurePageRole(pageRoles, Number(item && item.slideNumber))
       );
     });
-    var sections = [];
-    if (listLines.length) {
-      sections.push(
-        '<section class="structure-review-section"><h3>页角色清单</h3><ul>' +
-          listLines.map(function (line) {
-            return "<li>" + escapeHtml(line) + "</li>";
-          }).join("") +
-          "</ul></section>"
-      );
-    }
-    if (recommendationLines.length) {
-      sections.push(
-        '<section class="structure-review-section"><h3>逐页调整意见</h3><ul>' +
-          recommendationLines.map(function (line) {
-            return "<li>" + escapeHtml(line) + "</li>";
-          }).join("") +
-          "</ul></section>"
-      );
-    }
+    var listHtml = listLines.length
+      ? '<section class="structure-review-section"><h3>页角色清单</h3><ul>' +
+        listLines.map(function (line) {
+          return "<li>" + escapeHtml(line) + "</li>";
+        }).join("") +
+        "</ul></section>"
+      : "";
+    var recommendationHtml = recommendationLines.length
+      ? '<section class="structure-review-section"><h3>逐页调整意见</h3><ul>' +
+        recommendationLines.map(function (line) {
+          return "<li>" + escapeHtml(line) + "</li>";
+        }).join("") +
+        "</ul></section>"
+      : "";
     return {
-      html: sections.join(""),
+      listHtml: listHtml,
+      recommendationHtml: recommendationHtml,
       copyConclusionText: [
         safeText(data.reviewConclusion || data.plainText),
         listLines.length ? "页角色清单\n" + listLines.join("\n") : ""
