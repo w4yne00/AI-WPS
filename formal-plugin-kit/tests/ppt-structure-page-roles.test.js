@@ -53,24 +53,26 @@ function sampleResult(overrides) {
 function testListShowsPageRoleReasonSeparately() {
   // Break: structure review HTML still has no dedicated 页角色清单.
   const view = present(sampleResult());
-  const html = view.html;
+  const list = view.listHtml;
 
-  assert.ok(html.includes("页角色清单"));
-  assert.ok(html.indexOf("页角色清单") < html.indexOf("逐页调整意见"));
-  assert.ok(html.includes("第 1 页｜封面页：整套文稿第 1 页，未识别为目录或过渡。"));
-  assert.ok(html.includes("第 2 页｜目录页：标题命中目录。"));
+  assert.ok(list.includes("页角色清单"));
+  assert.ok(!list.includes("逐页调整意见"));
+  assert.ok(list.includes("第 1 页｜封面页：整套文稿第 1 页，未识别为目录或过渡。"));
+  assert.ok(list.includes("第 2 页｜目录页：标题命中目录。"));
 }
 
 function testRecommendationsUseReturnedPageRolesNotFreeRoles() {
   // Break: labels come from slideRecommendations.role / slides.role (智能总结自由角色).
   const view = present(sampleResult());
-  const html = view.html;
+  const recs = view.recommendationHtml;
 
-  assert.ok(html.includes("第 1 页（封面页）：封面主标题再缩短。"));
-  assert.ok(html.includes("第 3 页（未确认页角色）：补充本页主标题。"));
-  assert.ok(!html.includes("章节概述"));
-  assert.ok(!html.includes("内容页"));
-  assert.ok(!html.includes("开场白"));
+  assert.ok(recs.includes("逐页调整意见"));
+  assert.ok(!recs.includes("页角色清单"));
+  assert.ok(recs.includes("第 1 页（封面页）：封面主标题再缩短。"));
+  assert.ok(recs.includes("第 3 页（未确认页角色）：补充本页主标题。"));
+  assert.ok(!recs.includes("章节概述"));
+  assert.ok(!recs.includes("内容页"));
+  assert.ok(!recs.includes("开场白"));
 }
 
 function testUnconfirmedRoleStaysVisibleAndIsNotBody() {
@@ -86,14 +88,13 @@ function testUnconfirmedRoleStaysVisibleAndIsNotBody() {
     ]
   }));
 
-  const html = view.html;
-  assert.ok(html.includes("第 8 页｜未确认页角色：证据不足，按正文页执行规则。"));
-  assert.ok(html.includes("第 9 页｜未确认页角色：证据不足，按正文页执行规则。"));
-  assert.ok(html.includes("第 8 页（未确认页角色）：补标题。"));
-  assert.ok(html.includes("第 9 页（未确认页角色）：核对要点。"));
-  assert.ok(!html.includes("第 8 页（正文页）"));
-  assert.ok(!html.includes("第 9 页（正文页）"));
-  assert.ok(!html.includes("第 8 页：补标题。"));
+  assert.ok(view.listHtml.includes("第 8 页｜未确认页角色：证据不足，按正文页执行规则。"));
+  assert.ok(view.listHtml.includes("第 9 页｜未确认页角色：证据不足，按正文页执行规则。"));
+  assert.ok(view.recommendationHtml.includes("第 8 页（未确认页角色）：补标题。"));
+  assert.ok(view.recommendationHtml.includes("第 9 页（未确认页角色）：核对要点。"));
+  assert.ok(!view.recommendationHtml.includes("第 8 页（正文页）"));
+  assert.ok(!view.recommendationHtml.includes("第 9 页（正文页）"));
+  assert.ok(!view.recommendationHtml.includes("第 8 页：补标题。"));
 }
 
 function testCopyConclusionKeepsPageRoles() {
@@ -114,22 +115,32 @@ function testRawAnswerFallbackStillShowsPageRoles() {
     rawAnswer: "模型自由发挥：这一页像开场白。"
   }));
 
-  assert.ok(view.html.includes("页角色清单"));
-  assert.ok(view.html.includes("封面页"));
-  assert.ok(view.html.includes("未确认页角色"));
+  assert.ok(view.listHtml.includes("页角色清单"));
+  assert.ok(view.listHtml.includes("封面页"));
+  assert.ok(view.listHtml.includes("未确认页角色"));
+  assert.ok(!view.listHtml.includes("开场白"));
   assert.ok(view.copyConclusionText.includes("未确认页角色"));
 }
 
-function testRenderUsesPresenterAndDoesNotReadSummaryRoles() {
-  // Break: renderStructureResult still formats recommendations in place
-  // and never calls the presenter.
+function testRenderKeepsListFirstAndRecommendationsInOriginalSlot() {
+  // Break: list+recs are dumped as one html blob before 整体主线.
   const render = functionSource(pptJs, "renderStructureResult");
   const copyHandler = pptJs.slice(
     pptJs.indexOf('byId("btn-copy-review-conclusion").addEventListener'),
     pptJs.indexOf('byId("btn-copy-recommended-outline").addEventListener')
   );
+  const listAt = render.indexOf("listHtml");
+  const recAt = render.indexOf("recommendationHtml");
+  const storylineAt = render.indexOf("整体主线");
+  const outlineAt = render.indexOf("推荐目录");
 
   assert.ok(render.includes("presentPptStructureReviewResultView"));
+  assert.ok(listAt >= 0);
+  assert.ok(recAt >= 0);
+  assert.ok(listAt < storylineAt);
+  assert.ok(storylineAt < recAt);
+  assert.ok(recAt < outlineAt);
+  assert.ok(!render.includes("view.html"));
   assert.ok(!render.includes("item.role"));
   assert.ok(!render.includes("slides["));
   assert.ok(copyHandler.includes("copyConclusionText"));
@@ -140,6 +151,6 @@ testRecommendationsUseReturnedPageRolesNotFreeRoles();
 testUnconfirmedRoleStaysVisibleAndIsNotBody();
 testCopyConclusionKeepsPageRoles();
 testRawAnswerFallbackStillShowsPageRoles();
-testRenderUsesPresenterAndDoesNotReadSummaryRoles();
+testRenderKeepsListFirstAndRecommendationsInOriginalSlot();
 
 console.log("ppt structure page role tests passed");

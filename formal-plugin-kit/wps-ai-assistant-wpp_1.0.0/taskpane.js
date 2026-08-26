@@ -1049,6 +1049,21 @@
     parent.appendChild(section);
   }
 
+  function appendPresentedHtml(parent, html) {
+    var holder;
+    var node;
+    if (!html) {
+      return;
+    }
+    holder = document.createElement("div");
+    holder.innerHTML = html;
+    node = holder.firstChild;
+    while (node) {
+      parent.appendChild(node);
+      node = holder.firstChild;
+    }
+  }
+
   function renderStructureResult(result) {
     var output = byId("structure-result-output");
     var data = result || {};
@@ -1056,7 +1071,6 @@
     var view = helpers.presentPptStructureReviewResultView
       ? helpers.presentPptStructureReviewResultView({ result: data })
       : null;
-    var presented;
     state.structureResult = data;
     state.structureResultView = view;
     output.innerHTML = "";
@@ -1065,11 +1079,7 @@
       "document-summary-meta",
       helpers.formatPptStructureRange(range)
     ));
-    if (view && view.html) {
-      presented = document.createElement("div");
-      presented.innerHTML = view.html;
-      output.appendChild(presented);
-    }
+    appendPresentedHtml(output, view && view.listHtml);
     if (data.rawAnswer) {
       output.appendChild(createTextElement(
         "div",
@@ -1094,7 +1104,9 @@
       appendStructureList(output, "一般建议", data.generalSuggestions, function (item) {
         return safeText(item.message);
       }, false);
-      if (!view) {
+      if (view && view.recommendationHtml) {
+        appendPresentedHtml(output, view.recommendationHtml);
+      } else if (!view) {
         appendStructureList(output, "逐页调整意见", data.slideRecommendations, function (item) {
           return "第 " + (item.slideNumber || "-") + " 页：" + safeText(item.suggestion);
         }, false);
@@ -2626,7 +2638,8 @@
     });
     byId("btn-copy-recommended-outline").addEventListener("click", function () {
       copyText(
-        state.structureResult && state.structureResult.outlineText,
+        state.structureResultView && state.structureResultView.copyOutlineText ||
+          (state.structureResult && state.structureResult.outlineText),
         "推荐目录已复制。"
       );
     });
