@@ -2869,6 +2869,90 @@
     return lines.join("\n").trim();
   }
 
+  function formatDeterministicFormatReviewIssueCardValue(issue, diagnostics) {
+    var rule = String(issue && issue.ruleId || "");
+    var mapped;
+    if (rule === "structure.caption_association") {
+      mapped = ({
+        associated: "已关联",
+        orphaned: "孤立",
+        missing: "缺失",
+        ambiguous: "歧义"
+      })[String(issue && issue.currentValue == null ? "" : issue.currentValue).trim()];
+      if (!mapped) {
+        return null;
+      }
+      return { label: "题注关联结论", text: mapped };
+    }
+    return {
+      label: "当前值",
+      text: formatDeterministicReadableFormatValue(rule, issue && issue.currentValue, false, diagnostics, issue)
+    };
+  }
+
+  function formatDeterministicFormatReviewIssueCardRole(issue) {
+    var role = formatReviewRole(issue && issue.role);
+    return role === "未识别角色" ? "无法识别" : role;
+  }
+
+  function presentDeterministicFormatReviewIssueView(input) {
+    var source = input || {};
+    var summary = source.summary || {};
+    var issues = Array.isArray(source.issues) ? source.issues : [];
+    var diagnostics = summary.formatFactDiagnostics;
+    var total = Number(source.total || source.issueCount || issues.length);
+    var cards;
+    if (!isFinite(total) || total < 0) {
+      total = issues.length;
+    }
+    cards = issues.map(function (issue) {
+      var value = formatDeterministicFormatReviewIssueCardValue(issue, diagnostics);
+      var status = String(issue && issue.status || "open");
+      return {
+        issueId: String(issue && issue.issueId || ""),
+        location: formatDeterministicFormatReviewIssueLocation(issue),
+        role: formatDeterministicFormatReviewIssueCardRole(issue),
+        valueLabel: value && value.label,
+        valueText: value && value.text,
+        message: formatDeterministicFormatReviewIssueMessage(issue),
+        suggestion: formatDeterministicFormatReviewSuggestion(issue),
+        locateEnabled: String(issue && issue.anchorVerification || "") === "verified",
+        processedEnabled: status !== "processed",
+        ignoredEnabled: status !== "ignored",
+        status: status
+      };
+    });
+    return {
+      previewText: [
+        "覆盖状态：" + formatDeterministicFormatReviewStatus(summary.coverageStatus, "无法判定"),
+        "问题数量：" + total
+      ].join("\n"),
+      cards: cards,
+      html: cards.map(function (card) {
+        var lines = [
+          '<article class="review-issue-card">',
+          '<div class="review-action-row">',
+          '<button type="button" class="ghost-action" data-format-review-action="locate" data-issue-id="' +
+            escapeHtml(card.issueId) + '"' + (card.locateEnabled ? "" : ' disabled="disabled"') + ">定位原文</button>",
+          '<button type="button" class="ghost-action" data-format-review-action="processed" data-issue-id="' +
+            escapeHtml(card.issueId) + '"' + (card.processedEnabled ? "" : ' disabled="disabled"') + ">标记已处理</button>",
+          '<button type="button" class="ghost-action" data-format-review-action="ignored" data-issue-id="' +
+            escapeHtml(card.issueId) + '"' + (card.ignoredEnabled ? "" : ' disabled="disabled"') + ">标记已忽略</button>",
+          "</div>",
+          "<p>位置：" + escapeHtml(card.location) + "</p>",
+          "<p>角色：" + escapeHtml(card.role) + "</p>"
+        ];
+        if (card.valueLabel && card.valueText) {
+          lines.push("<p>" + escapeHtml(card.valueLabel) + "：" + escapeHtml(card.valueText) + "</p>");
+        }
+        lines.push("<p>问题说明：" + escapeHtml(card.message) + "</p>");
+        lines.push("<p>建议：" + escapeHtml(card.suggestion) + "</p>");
+        lines.push("</article>");
+        return lines.join("");
+      }).join("")
+    };
+  }
+
   var DOCUMENT_REVIEW_CATEGORY_TEXT = {
     typo: "错别字",
     expression: "语言表达",
@@ -4811,6 +4895,7 @@
     formatSmartWriteResult: formatSmartWriteResult,
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
     presentWordResultView: presentWordResultView,
+    presentDeterministicFormatReviewIssueView: presentDeterministicFormatReviewIssueView,
     renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,

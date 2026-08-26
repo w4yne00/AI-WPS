@@ -6345,38 +6345,21 @@
     }
   }
 
-  function deterministicFormatReviewIssuePosition(issue) {
-    if (helpers.formatDeterministicFormatReviewIssueLocation) {
-      return helpers.formatDeterministicFormatReviewIssueLocation(issue);
-    }
-    if (issue && issue.ruleId === "page_setup") {
-      return "页面";
-    }
-    return Number(issue && issue.paragraphIndex) > 0 && issue.anchorVerification === "verified"
-      ? "第 " + issue.paragraphIndex + " 段"
-      : "无法验证位置";
-  }
-
-  function deterministicFormatReviewIssueRole(issue) {
-    var role;
-    if (helpers.formatReviewRole) {
-      role = helpers.formatReviewRole(issue && issue.role);
-      return role === "未识别角色" ? "无法识别" : role;
-    }
-    return issue && issue.role === "heading" ? "标题" : "无法识别";
-  }
-
   function renderDeterministicFormatReviewIssuePage(report, pageData, jobId) {
     var summary = report && report.summary || {};
     var issues = pageData && Array.isArray(pageData.items) ? pageData.items : [];
-    var readable = helpers.renderReadableDeterministicFormatReview
-      ? helpers.renderReadableDeterministicFormatReview({
+    var view = helpers.presentDeterministicFormatReviewIssueView
+      ? helpers.presentDeterministicFormatReviewIssueView({
         summary: summary,
         issues: issues,
         total: Number(pageData && pageData.total || report && report.issueCount || issues.length)
       })
-      : "# 格式审查报告\n\n当前版本无法生成中文报告，请重新审查。";
-    setResult(readable, readable);
+      : null;
+    if (view) {
+      setResult(view.previewText, view.previewText);
+    } else {
+      setResult("# 格式审查报告\n\n当前版本无法生成中文报告，请重新审查。");
+    }
     renderDeterministicFormatReviewDiagnostics(report, issues);
     setStatus("确定性格式审查只读报告已生成。");
     var controls = byId("deterministic-format-review-issue-controls");
@@ -6414,38 +6397,36 @@
       loadDeterministicFormatReviewIssuePage(jobId, report, pageData.nextCursor);
     };
     actions.textContent = "";
-    issues.forEach(function (issue) {
-      var row = document.createElement("div");
-      var locate = document.createElement("button");
-      var processed = document.createElement("button");
-      var ignored = document.createElement("button");
-      var issueType = helpers.formatReviewRule
-        ? helpers.formatReviewRule(issue.ruleId)
-        : "格式问题";
-      row.className = "full-review-issue-row";
-      row.textContent = deterministicFormatReviewIssuePosition(issue) + " " +
-        deterministicFormatReviewIssueRole(issue) + " · " + issueType +
-        (issue.anchorVerification === "verified" ? "" : "（锚点未验证）");
-      locate.type = "button";
-      locate.textContent = "定位原文";
-      processed.type = "button";
-      processed.textContent = "标记已处理";
-      ignored.type = "button";
-      ignored.textContent = "标记已忽略";
-      locate.addEventListener("click", function () { locateDeterministicFormatReviewIssue(issue, jobId); });
-      processed.disabled = issue.status === "processed";
-      ignored.disabled = issue.status === "ignored";
-      processed.addEventListener("click", function () {
-        updateDeterministicFormatReviewIssueStatus(jobId, issue.issueId, "processed");
+    if (view && view.html) {
+      actions.innerHTML = view.html;
+      Array.prototype.forEach.call(actions.querySelectorAll("[data-format-review-action]"), function (button) {
+        var action = button.getAttribute("data-format-review-action");
+        var issueId = button.getAttribute("data-issue-id");
+        var issue = issues.filter(function (item) {
+          return String(item && item.issueId || "") === String(issueId || "");
+        })[0];
+        if (!issue) {
+          return;
+        }
+        if (action === "locate") {
+          button.addEventListener("click", function () {
+            locateDeterministicFormatReviewIssue(issue, jobId);
+          });
+          return;
+        }
+        if (action === "processed") {
+          button.addEventListener("click", function () {
+            updateDeterministicFormatReviewIssueStatus(jobId, issue.issueId, "processed");
+          });
+          return;
+        }
+        if (action === "ignored") {
+          button.addEventListener("click", function () {
+            updateDeterministicFormatReviewIssueStatus(jobId, issue.issueId, "ignored");
+          });
+        }
       });
-      ignored.addEventListener("click", function () {
-        updateDeterministicFormatReviewIssueStatus(jobId, issue.issueId, "ignored");
-      });
-      row.appendChild(locate);
-      row.appendChild(processed);
-      row.appendChild(ignored);
-      actions.appendChild(row);
-    });
+    }
   }
 
   function loadDeterministicFormatReviewIssuePage(jobId, report, cursor) {

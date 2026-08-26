@@ -58,7 +58,7 @@ assert.ok(poll.includes("loadDeterministicFormatReviewReport"));
 assert.ok(poll.includes("DETERMINISTIC_FORMAT_REVIEW_POLL_RETRY_DELAY_MS"));
 
 const issuePage = functionSource("renderDeterministicFormatReviewIssuePage");
-["renderReadableDeterministicFormatReview", "renderDeterministicFormatReviewDiagnostics", "summary", "issues"].forEach((token) => {
+["presentDeterministicFormatReviewIssueView", "renderDeterministicFormatReviewDiagnostics", "summary", "issues"].forEach((token) => {
   assert.ok(issuePage.includes(token), token);
 });
 ["propertyPath", "formatFactDiagnostics"].forEach((token) => {

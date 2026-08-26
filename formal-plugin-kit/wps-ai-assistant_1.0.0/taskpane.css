@@ -904,6 +904,11 @@ body[data-task-mode="smartWrite"] #result-output {
   padding: 12px;
 }
 
+#format-review-issue-actions {
+  display: grid;
+  gap: 8px;
+}
+
 .review-issue-meta,
 .review-status-row,
 .review-action-row {
