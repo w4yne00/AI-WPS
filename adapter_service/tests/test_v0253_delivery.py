@@ -31,6 +31,11 @@ FROZEN_0252_SHA = "c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285
 FROZEN_0252_BUILD_ID = (
     "AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9"
 )
+CURRENT_0253 = "ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"
+CURRENT_0253_SHA = "120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7"
+CURRENT_0253_BUILD_ID = (
+    "AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050"
+)
 FORBIDDEN_CLAIMS = (
     "图片审查已可用",
     "目标机已验收",
@@ -44,6 +49,16 @@ def _load_module(path, name):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def test_v0253_d1a346b_archive_and_sidecar_bytes_match_registered_digest():
+    # Break: committing a different tarball than the registered 0.25.3 candidate.
+    archive = ROOT / "dist-phase1-delivery-kit" / CURRENT_0253
+    assert archive.is_file()
+    checksum = archive.with_name(archive.name + ".sha256")
+    digest = hashlib.sha256(archive.read_bytes()).hexdigest()
+    assert digest == CURRENT_0253_SHA
+    assert checksum.read_text(encoding="utf-8").split() == [CURRENT_0253_SHA, CURRENT_0253]
 
 
 def test_v0252_850871c_archive_and_sidecar_bytes_stay_frozen():
@@ -184,6 +199,24 @@ def test_v0253_status_does_not_register_850871c_as_current_candidate():
         assert "0.25.3" in str(record.get("candidateBuildId", ""))
 
 
+def test_v0253_status_registers_d1a346b_as_its_only_candidate():
+    # Break: leaving 0.25.3 without a unique candidate after the Kylin gate.
+    assert STATUS.is_file()
+    status = json.loads(STATUS.read_text(encoding="utf-8"))
+    current = [record for record in status.get("records", []) if record.get("status") == "candidate"]
+    assert current == [
+        {
+            "candidateBuildId": CURRENT_0253_BUILD_ID,
+            "archiveName": CURRENT_0253,
+            "archiveChecksumFile": CURRENT_0253 + ".sha256",
+            "sourceCommit": "d1a346b0d7e1301f74b37e692664fd31085ee050",
+            "archiveSha256": CURRENT_0253_SHA,
+            "status": "candidate",
+            "recordedAt": "20260826",
+        }
+    ]
+
+
 def test_v0253_docs_describe_preview_cards_and_page_roles_without_overclaim():
     # Break: 0.25.3 docs omit #101 capabilities or claim acceptance.
     for path in (NOTE, ACCEPTANCE):
@@ -217,6 +250,8 @@ def test_current_product_docs_use_v0253_identity_and_keep_frozen_0252_evidence()
         assert "v0.25.3-alpha" in text
         assert FROZEN_0252_SHA in text
         assert "20260825-850871c" in text
+        assert CURRENT_0253_SHA in text
+        assert "20260826-d1a346b" in text
         assert FROZEN_0251_SHA in text
         assert "20260824-d7a1dd8" in text
         assert "manual-pending" in text

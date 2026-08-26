@@ -81,12 +81,12 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 0.25.3 源码身份已发布，尚未绑定唯一自动化候选；0.25.2 唯一自动化候选仍为 `20260825-850871c`（`candidate`）；`20260825-dacd1e9` 与 `20260825-0f50456` 为 `rejected`；冻结的 0.25.1 候选仍为 `20260824-d7a1dd8`；Issue #59 仍为 `manual-pending` |
-| 一期交付包 | 最近已发布包 `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256：`c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`；源码提交：`850871c10a17f03c8a58abd02ca58c2f3fc70fc9` |
+| 交付状态 | 0.25.3 唯一自动化候选为 `20260826-d1a346b`（`candidate`）；冻结的 0.25.2 唯一候选仍为 `20260825-850871c`（`candidate`）；`20260825-dacd1e9` 与 `20260825-0f50456` 为 `rejected`；冻结的 0.25.1 候选仍为 `20260824-d7a1dd8`；Issue #59 仍为 `manual-pending` |
+| 一期交付包 | `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256：`120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`；源码提交：`d1a346b0d7e1301f74b37e692664fd31085ee050` |
 
 ### v0.25.3-alpha 交付状态
 
-`v0.25.3-alpha` 仍走 Phase1 安装体系，落实 Issue #101 的**结果预览**、**格式问题**卡片、**题注关联结论**和**幻灯片页角色**。本源树尚未绑定 0.25.3 唯一自动化候选。冻结的 0.25.2 唯一自动化候选仍为 `20260825-850871c`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`），归档 `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不扫描麒麟 apt 包。**图像语义补充**默认开启与**视觉关闭降级**保持 0.25.2 已发布行为。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。
+`v0.25.3-alpha` 仍走 Phase1 安装体系，落实 Issue #101 的**结果预览**、**格式问题**卡片、**题注关联结论**和**幻灯片页角色**。0.25.3 唯一自动化候选为 `20260826-d1a346b`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`），归档 `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不扫描麒麟 apt 包。冻结的 0.25.2 唯一自动化候选仍为 `20260825-850871c`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`），归档 `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`。**图像语义补充**默认开启与**视觉关闭降级**保持 0.25.2 已发布行为。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。
 
 ### v0.25.2-alpha 交付状态
 

@@ -2,14 +2,14 @@
 
 ## 候选身份
 
-- Candidate label: not yet bound
-- Candidate build ID: not yet bound
-- Source commit: not yet bound
-- Archive name: `ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0253.tar.gz`
-- Archive checksum file: not yet bound
-- Archive SHA-256: not yet bound
+- Candidate label: `20260826-d1a346b`
+- Candidate build ID: `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`
+- Source commit: `d1a346b0d7e1301f74b37e692664fd31085ee050`
+- Archive name: `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`
+- Archive checksum file: `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz.sha256`
+- Archive SHA-256: `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`
 - Archive naming template: `ai-wps-phase1-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0253.tar.gz`
-- Automated status: no unique 0.25.3 `candidate` in this source tree
+- Automated status: `candidate`
 - Target acceptance status: `manual-pending` (Issue #59)
 
 `v0.25.3-alpha` 沿用 Phase1 安装体系，不进入 Preview 安装断代。自动化门禁只产生 `candidate`。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`。
@@ -41,7 +41,7 @@ explicit allowlist assembly. The v2 deterministic format-review contract remains
 
 构建必须使用已冻结的 `v0.25.2-alpha` 候选归档作为基线，并依次完成显式白名单组装、格式规则包编译一致性、Python 3.8 静态兼容、正式插件契约、v0.25.3 专用身份审计和真实 Python 3.8 生命周期门禁。自动化通过只得到 `candidate`。
 
-源树在登记归档之前不得把 850871c 写成 0.25.3 当前候选。Issue #59 仍为 `manual-pending`。
+麒麟 V10 ARM64 / Python 3.8.10 已对 `d1a346b` 执行生命周期门禁，终态为 `candidate`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`。该结论不等于 Issue #59 目标机验收。冻结的 `20260825-850871c` 保持原字节，不是 0.25.3 当前候选。
 
 ## 明确边界
 
