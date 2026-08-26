@@ -497,6 +497,58 @@ assert.strictEqual(identityBody.blocks[0].blockType, "caption");
 assert.strictEqual(identityBody.blocks[0].sectionId, "section-2");
 assert.strictEqual(identityBody.blocks[0].storyId, "body");
 
+const tablesWithSection = helpers.collectFullDocumentReviewTables({
+  Tables: [{
+    Id: "table-section",
+    Range: {
+      Information: function (kind) { return kind === 2 ? 5 : 1; }
+    },
+    Rows: [{
+      Index: 1,
+      Cells: [{
+        Id: "cell-1",
+        RowIndex: 1,
+        ColumnIndex: 1,
+        RowSpan: 1,
+        ColumnSpan: 1,
+        Text: "单元格"
+      }]
+    }]
+  }]
+});
+assert.strictEqual(tablesWithSection[0].range.sectionIndex, 5);
+
+const filledBody = helpers.buildDeterministicFormatReviewBody({
+  selectionMode: "document",
+  content: {
+    paragraphs: [{
+      index: 2,
+      text: "上一节正文。",
+      range: { start: 1, end: 8, sectionIndex: 4 }
+    }],
+    documentStructure: {
+      tables: [{
+        tableId: "t-no-range",
+        tableIndex: 1,
+        paragraphIndex: 3,
+        rows: [{
+          rowIndex: 0,
+          cells: [
+            { cellId: "c1", text: "字段", rowIndex: 0, columnIndex: 0, isHeader: true },
+            { cellId: "c2", text: "值", rowIndex: 0, columnIndex: 1, isHeader: true }
+          ]
+        }]
+      }]
+    }
+  }
+});
+const tableBlock = filledBody.blocks.filter(function (block) {
+  return block.blockType === "table";
+})[0];
+assert.ok(tableBlock);
+assert.strictEqual(tableBlock.sectionId, "section-4");
+assert.strictEqual(tableBlock.storyId, "body");
+
 const associationMarkdown = helpers.renderReadableDeterministicFormatReview({
   summary: {
     executionStatus: "completed",

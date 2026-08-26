@@ -645,6 +645,14 @@ class FormatRulePackTests(unittest.TestCase):
         self.assertEqual(len(placement), 1)
         self.assertEqual(placement[0]["paragraphIndex"], 20)
         self.assertEqual(placement[0]["role"], "caption")
+        by_status = {
+            str(issue["currentValue"]): issue
+            for issue in result["issues"]
+            if issue["ruleId"] == "structure.caption_association"
+        }
+        self.assertEqual(by_status["orphaned"]["paragraphIndex"], 40)
+        self.assertEqual(by_status["missing"]["paragraphIndex"], 26)
+        self.assertEqual(by_status["ambiguous"]["paragraphIndex"], 32)
 
     def test_figure_image_block_associates_in_same_section_story(self):
         # Break: production image blocks are ignored because the algorithm
@@ -710,7 +718,7 @@ class FormatRulePackTests(unittest.TestCase):
             },
         ]
 
-    def _production_table_block(self, table_id, paragraph_index, section_index):
+    def _production_table_block(self, table_id, paragraph_index):
         return {
             "blockId": "format-table-" + table_id,
             "blockType": "table",
@@ -721,7 +729,6 @@ class FormatRulePackTests(unittest.TestCase):
             "rows": self._data_table_rows(),
             "nestedTables": [],
             "format": {"dataStatus": "verified"},
-            "range": {"sectionIndex": section_index},
         }
 
     def _production_caption_request(self):
@@ -737,7 +744,7 @@ class FormatRulePackTests(unittest.TestCase):
             for index in range(1, 6)
         ]
         blocks = fillers + [
-            self._production_table_block("t-associated", 6, 1),
+            self._production_table_block("t-associated", 6),
             {
                 "blockId": "format-paragraph-20",
                 "blockType": "caption",
@@ -757,9 +764,17 @@ class FormatRulePackTests(unittest.TestCase):
                 "range": {"sectionIndex": 1},
             })
         blocks.extend([
-            self._production_table_block("t-missing", 26, 1),
-            self._production_table_block("t-a", 30, 2),
-            self._production_table_block("t-b", 31, 2),
+            self._production_table_block("t-missing", 26),
+            {
+                "blockId": "format-paragraph-29",
+                "blockType": "paragraph",
+                "paragraphIndex": 29,
+                "text": "第二节正文",
+                "format": {"styleName": "Normal", "dataStatus": "verified"},
+                "range": {"sectionIndex": 2},
+            },
+            self._production_table_block("t-a", 30),
+            self._production_table_block("t-b", 31),
             {
                 "blockId": "format-paragraph-32",
                 "blockType": "caption",
@@ -801,12 +816,19 @@ class FormatRulePackTests(unittest.TestCase):
     def _production_figure_request(self):
         blocks = [
             {
+                "blockId": "format-paragraph-7",
+                "blockType": "paragraph",
+                "paragraphIndex": 7,
+                "text": "图前正文",
+                "format": {"styleName": "Normal", "dataStatus": "verified"},
+                "range": {"sectionIndex": 1},
+            },
+            {
                 "blockId": "format-image-f1",
                 "blockType": "image",
                 "paragraphIndex": 8,
                 "text": "",
                 "format": {"dataStatus": "verified"},
-                "range": {"sectionIndex": 1},
                 "images": [{
                     "imageId": "f1",
                     "groupId": "f1",

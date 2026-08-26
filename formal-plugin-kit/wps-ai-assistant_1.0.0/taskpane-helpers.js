@@ -895,6 +895,30 @@
     return block;
   }
 
+  function fillFormatBlocksStoryIdentity(blocks) {
+    var lastSectionId = "";
+    var lastStoryId = "";
+    (Array.isArray(blocks) ? blocks : []).forEach(function (block) {
+      if (!block || typeof block !== "object") {
+        return;
+      }
+      applyFormatBlockStoryIdentity(block);
+      if (block.scope === "context") {
+        return;
+      }
+      if (block.sectionId) {
+        lastSectionId = String(block.sectionId);
+      } else if (lastSectionId) {
+        block.sectionId = lastSectionId;
+      }
+      if (block.storyId) {
+        lastStoryId = String(block.storyId);
+      } else if (lastStoryId) {
+        block.storyId = lastStoryId;
+      }
+    });
+  }
+
   function normalizeDeterministicFormatReviewBlock(block) {
     if (!block || !block.blockId) {
       return null;
@@ -1269,6 +1293,7 @@
     blocks.sort(function (left, right) {
       return Number(left.paragraphIndex || 0) - Number(right.paragraphIndex || 0);
     });
+    fillFormatBlocksStoryIdentity(blocks);
     if (!blocks.some(function (block) { return block.scope === "in_scope"; })) {
       throw new Error("未读取到可审查的格式语义单元。");
     }
@@ -2745,6 +2770,12 @@
         ambiguous: "歧义"
       })[raw] || "无法判定";
     }
+    if (rule === "structure.caption_placement") {
+      return ({
+        before: "对象前",
+        after: "对象后"
+      })[raw] || "无法判定";
+    }
     return "无法识别";
   }
 
@@ -3613,16 +3644,18 @@
         rows.push({ rowIndex: rowIndex, cells: cells });
       }
     }
+    var paragraphIndex = normalizePositiveInteger(firstDefined(
+      safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
+    ));
     return {
       tableId: tableId,
       tableIndex: Number(tableIndex) || 0,
       tablePath: currentTablePath,
-      paragraphIndex: normalizePositiveInteger(firstDefined(
-        safeRead(table, "ParagraphIndex"), safeRead(table, "paragraphIndex")
-      )),
+      paragraphIndex: paragraphIndex,
       parentCellId: parentCellId || "",
       rows: rows,
-      nestedTables: nestedTables
+      nestedTables: nestedTables,
+      range: readParagraphRange(table, paragraphIndex || Number(tableIndex) || 0)
     };
   }
 

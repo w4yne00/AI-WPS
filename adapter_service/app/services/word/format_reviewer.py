@@ -22,6 +22,7 @@ from app.services.word.authorized_format_algorithm import (
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
 from app.services.word.format_issue_support import (
     apply_format_block_story_identity,
+    fill_format_blocks_story_identity,
     build_format_issue_anchor,
     normalize_paragraph_index,
 )
@@ -1071,11 +1072,23 @@ class WordFormatReviewer:
                 continue
             append_heading(level, paragraph.get("text", ""), paragraph.get("paragraphIndex"))
         facts["headings"] = headings
-        for block in facts.get("blocks", []) if isinstance(facts.get("blocks"), list) else []:
-            if isinstance(block, dict):
-                apply_format_block_story_identity(block)
-                if str(block.get("blockType") or "") == "image" and not block.get("type"):
-                    block["type"] = "figure"
+        ordered_blocks = [
+            block for block in facts.get("blocks", [])
+            if isinstance(block, dict)
+        ] if isinstance(facts.get("blocks"), list) else []
+        ordered_blocks.sort(key=lambda block: int(block.get("paragraphIndex") or 0))
+        fill_format_blocks_story_identity(ordered_blocks)
+        for block in ordered_blocks:
+            if str(block.get("blockType") or "") != "image" or block.get("type"):
+                continue
+            caption_status = str(block.get("captionStatus") or "")
+            if not caption_status and isinstance(block.get("images"), list) and block["images"]:
+                first_image = block["images"][0]
+                if isinstance(first_image, dict):
+                    caption_status = str(first_image.get("captionStatus") or "")
+            if caption_status == "present":
+                block["type"] = "figure"
+        facts["blocks"] = ordered_blocks
         return facts
 
     @staticmethod

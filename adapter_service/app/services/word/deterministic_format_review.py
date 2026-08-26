@@ -35,6 +35,7 @@ from app.services.word.format_reviewer import (
 )
 from app.services.word.format_issue_support import (
     apply_format_block_story_identity,
+    fill_format_blocks_story_identity,
     build_format_issue_anchor,
     normalize_paragraph_index,
 )
@@ -566,6 +567,11 @@ def _report_readable_value(
             "orphaned": "孤立",
             "missing": "缺失",
             "ambiguous": "歧义",
+        }.get(raw, "无法判定")
+    if rule == "structure.caption_placement":
+        return {
+            "before": "对象前",
+            "after": "对象后",
         }.get(raw, "无法判定")
     return "无法识别"
 
@@ -2258,6 +2264,7 @@ class DeterministicFormatReviewService:
             apply_format_block_story_identity(normalized_item)
             seen.add(block_id)
             normalized.append(normalized_item)
+        fill_format_blocks_story_identity(normalized)
         return normalized
 
     @staticmethod

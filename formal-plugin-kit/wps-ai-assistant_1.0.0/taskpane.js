@@ -7313,13 +7313,17 @@
       var altText = String(helpers.firstDefined(
         readValue(item, "AlternativeText"), readValue(item, "AltText"), readValue(item, "altText")
       ) || "");
-      var nearby = paragraphList.filter(function (paragraph) {
+      var nearbyParas = paragraphList.filter(function (paragraph) {
         var indexValue = Number(paragraph && paragraph.index || 0);
         return paragraphIndex > 0 && Math.abs(indexValue - paragraphIndex) <= 1 && paragraph.text;
-      }).map(function (paragraph) { return String(paragraph.text || ""); });
+      });
+      var nearby = nearbyParas.map(function (paragraph) { return String(paragraph.text || ""); });
       var hasCaption = nearby.some(function (text) {
         return /^(图|figure)\s*[0-9０-９一二三四五六七八九十]+[：:.、\s]/i.test(text.trim());
       });
+      var rangeSource = paragraphList.filter(function (paragraph) {
+        return Number(paragraph && paragraph.index || 0) === paragraphIndex;
+      })[0] || nearbyParas[0] || {};
       var fact = {
         imageId: imageId,
         groupId: String(helpers.firstDefined(readValue(item, "GroupID"), readValue(item, "groupId")) || imageId),
@@ -7329,7 +7333,8 @@
         supported: true,
         altText: altText.slice(0, 2000),
         nearbyText: nearby.join(" ").slice(0, 4000),
-        paragraphIndex: paragraphIndex
+        paragraphIndex: paragraphIndex,
+        range: rangeSource.range || {}
       };
       images.push(fact);
       objects[imageId] = item;

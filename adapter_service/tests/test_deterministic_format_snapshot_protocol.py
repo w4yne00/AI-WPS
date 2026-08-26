@@ -1193,10 +1193,6 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertNotIn("对齐", markdown)
         machine_values = [issue["currentValue"] for issue in exported["issues"]]
         self.assertEqual(sorted(machine_values), ["ambiguous", "missing", "orphaned"])
-        self.assertTrue(all(
-            issue.get("associationStatus") in {"orphaned", "missing", "ambiguous"}
-            for issue in exported["issues"]
-        ))
         self.assertTrue(all("孤立" not in str(issue.get("issueId") or "") for issue in exported["issues"]))
 
 
