@@ -14,9 +14,11 @@ PPT_STRUCTURE_LONG_TITLE_CHARS = 30
 _NUMBERED_TITLE = re.compile(r"^\s*(\d{1,3})(?:[.、．)）\s]|$)")
 _TOC_HINT = re.compile(r"(目录|议程|contents)", re.IGNORECASE)
 _ENDING_HINT = re.compile(
-    r"(汇报结束|请批评指正|谢谢收看|谢谢|致谢|thank\s*you)",
+    r"(汇报结束|请批评指正|谢谢收看|谢谢各位|谢谢大家|致谢|thank\s*you)",
     re.IGNORECASE,
 )
+_TOC_LABELS = {"目录", "议程", "contents", "toc", "目录页", "会议议程"}
+_THANKS_LABELS = {"谢谢", "thankyou", "thanks"}
 _CN_DIGITS = {
     "零": 0,
     "〇": 0,
@@ -186,41 +188,53 @@ def _slide_shape_text(slide) -> str:
     return " ".join(str(name) for name in names if name)
 
 
-def _looks_like_toc(slide, other_titles: List[str]) -> bool:
+def _normalize_label(text: str) -> str:
+    return re.sub(r"[\s\-_:：·•、.。!！?？]+", "", (text or "")).casefold()
+
+
+def _is_toc_label(text: str) -> bool:
+    normalized = re.sub(r"\d+$", "", _normalize_label(text))
+    return normalized in _TOC_LABELS
+
+
+def _is_thanks_label(text: str) -> bool:
+    return _normalize_label(text) in _THANKS_LABELS
+
+
+def _toc_reason(slide, other_titles: List[str]) -> Optional[str]:
     title = slide.title.strip()
-    shapes = _slide_shape_text(slide)
-    if _TOC_HINT.search(title) or _TOC_HINT.search(shapes):
-        return True
     if title:
-        return False
+        if _is_toc_label(title):
+            return "主标题为目录或议程。"
+        return None
+    for name in getattr(slide, "shape_names", None) or []:
+        if _is_toc_label(str(name)):
+            return "形状名呈现目录。"
     body = slide.body_fallback.strip()
     if not body:
-        return False
+        return None
     if _TOC_HINT.search(body):
-        return True
+        return "无主标题正文含目录或议程。"
     hits = sum(1 for other in other_titles if other and other in body)
     if hits >= 2:
-        return True
-    numbered = [
-        line
-        for line in body.splitlines()
-        if _parse_chapter_heading(line.strip())
-    ]
-    return len(numbered) >= 2
+        return "无主标题正文命中已抽取标题链。"
+    return None
 
 
-def _looks_like_ending(slide, total_slides: int) -> bool:
+def _ending_reason(slide, total_slides: int) -> Optional[str]:
     if slide.index != total_slides or slide.index == 1:
-        return False
-    title = slide.title.strip()
-    text = " ".join(
-        part
-        for part in (title, slide.body_fallback.strip(), _slide_shape_text(slide))
-        if part
-    )
-    if _ENDING_HINT.search(text):
-        return True
-    return not title
+        return None
+    parts = [
+        slide.title.strip(),
+        slide.body_fallback.strip(),
+        _slide_shape_text(slide),
+    ]
+    text = " ".join(part for part in parts if part)
+    if not text:
+        return None
+    if _ENDING_HINT.search(text) or any(_is_thanks_label(part) for part in parts if part):
+        return "整套文稿末页命中结束语。"
+    return None
 
 
 def classify_slide_page_roles(request: PptStructureReviewRequest) -> List[Dict]:
@@ -231,16 +245,20 @@ def classify_slide_page_roles(request: PptStructureReviewRequest) -> List[Dict]:
     reasons = {}
 
     for slide in slides:
-        if _looks_like_toc(slide, [title for title in titles if title != slide.title.strip()]):
+        toc_reason = _toc_reason(
+            slide, [title for title in titles if title != slide.title.strip()]
+        )
+        if toc_reason:
             assigned[slide.index] = ROLE_TOC
-            reasons[slide.index] = "标题链、无主标题正文或形状名呈现目录。"
+            reasons[slide.index] = toc_reason
 
     for slide in slides:
         if slide.index in assigned:
             continue
-        if _looks_like_ending(slide, total_slides):
+        ending_reason = _ending_reason(slide, total_slides)
+        if ending_reason:
             assigned[slide.index] = ROLE_ENDING
-            reasons[slide.index] = "整套文稿末页，主标题为空或为结束语。"
+            reasons[slide.index] = ending_reason
 
     by_index = {slide.index: slide for slide in slides}
     indexes = [slide.index for slide in slides]
@@ -620,9 +638,12 @@ def _filter_findings_by_page_roles(
     roles = _role_by_page(page_roles)
     filtered = []
     for item in findings:
+        raw_code = str(item.get("code", "") or "")
         code = _finding_semantic_key(item)
         pages = list(item.get("slideNumbers") or [])
-        if code == "missing_title":
+        if raw_code == "missing_title_information_insufficient":
+            kept = [page for page in pages if roles.get(page) not in EXEMPT_INSUFFICIENT]
+        elif code == "missing_title":
             kept = [page for page in pages if roles.get(page) not in EXEMPT_MISSING_TITLE]
         elif code == "missing_title_information_insufficient":
             kept = [page for page in pages if roles.get(page) not in EXEMPT_INSUFFICIENT]

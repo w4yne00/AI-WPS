@@ -571,6 +571,24 @@
     };
   }
 
+  function collectShapeNames(slide) {
+    var shapes = getSlideShapes(slide);
+    var count = getCollectionCount(shapes);
+    var names = [];
+    var index;
+    var name;
+    for (index = 1; index <= count; index += 1) {
+      name = getShapeName(getCollectionItem(shapes, index));
+      if (name && names.indexOf(name) === -1) {
+        names.push(name);
+      }
+      if (names.length >= 20) {
+        break;
+      }
+    }
+    return names;
+  }
+
   function extractPresentationSlide(app, options) {
     var limits = {
       maxTitleLength: readNumber(options && options.maxTitleLength) || 200,
@@ -769,7 +787,8 @@
         title: truncateText(titleInfo.text, limits.maxTitleLength),
         subtitle: subtitleInfo.text,
         bodyFallback: body,
-        bodyFallbackOmitted: bodyFallbackOmitted
+        bodyFallbackOmitted: bodyFallbackOmitted,
+        shapeNames: collectShapeNames(currentSlide)
       });
     }
     return {

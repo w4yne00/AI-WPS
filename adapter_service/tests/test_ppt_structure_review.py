@@ -337,7 +337,7 @@ class PptStructureReviewTests(unittest.TestCase):
             parse_request(
                 request_payload(
                     slides=slides,
-                    total_slides=20,
+                    total_slides=11,
                     end_slide=11,
                 )
             ),
@@ -393,7 +393,7 @@ class PptStructureReviewTests(unittest.TestCase):
             parse_request(
                 request_payload(
                     slides=slides,
-                    total_slides=20,
+                    total_slides=11,
                     end_slide=11,
                 )
             ),
@@ -796,9 +796,50 @@ class PptStructurePageRoleTests(unittest.TestCase):
             ]
         )
 
-        self.assertIn(roles_by_page(result)[4], {"正文页", "未确认页角色"})
+        self.assertEqual(roles_by_page(result)[4], "未确认页角色")
         self.assertIn(4, pages_with_code(result, "missing_title"))
         self.assertNotIn(1, pages_with_code(result, "missing_title"))
+
+    def test_untitled_numbered_body_is_unconfirmed_not_toc(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、建设背景"},
+                {
+                    "index": 3,
+                    "title": "",
+                    "bodyFallback": "（一）政策依据\n（二）工作要求",
+                },
+                {"index": 4, "title": "二、总体目标"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[3], "未确认页角色")
+        self.assertIn(3, pages_with_code(result, "missing_title"))
+
+    def test_last_empty_slide_without_ending_phrase_is_not_ending(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、建设背景"},
+                {"index": 3, "title": "", "bodyFallback": "密级：内部"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[3], "未确认页角色")
+        self.assertIn(3, pages_with_code(result, "missing_title"))
+
+    def test_chapter_title_containing_toc_word_is_transition_not_toc(self):
+        result = self._review(
+            [
+                {"index": 1, "title": "零信任体系建设汇报"},
+                {"index": 2, "title": "一、目录体系建设"},
+                {"index": 3, "title": "（一）编制说明"},
+            ]
+        )
+
+        self.assertEqual(roles_by_page(result)[2], "过渡页")
+        self.assertNotEqual(roles_by_page(result)[2], "目录页")
 
 
 @unittest.skipUnless(HAS_PYDANTIC and HAS_FASTAPI, "fastapi is required")

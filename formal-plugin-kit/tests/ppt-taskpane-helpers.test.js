@@ -481,6 +481,28 @@ assert.strictEqual(
 }
 
 {
+  const result = helpers.extractPresentationStructure(
+    applicationFor([
+      slide(1, "1. 项目背景", [
+        textFrameShape("建设依据", { name: "Subtitle 1", placeholderType: 4 }),
+        textFrameShape("有标题页正文不得读取", { name: "文本框 3" })
+      ]),
+      slide(2, "", [
+        textFrameShape("目录条目", { name: "目录" }),
+        textFrameShape("普通条目", { name: "文本框 2" })
+      ], { noTitle: true })
+    ], 1),
+    1,
+    2,
+    { maxSlides: 60, maxFallbackLength: 120, maxFallbackSlides: 10 }
+  );
+
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.slides[0].shapeNames)), ["Subtitle 1", "文本框 3"]);
+  assert.deepStrictEqual(JSON.parse(JSON.stringify(result.slides[1].shapeNames)), ["目录", "文本框 2"]);
+  assert.strictEqual(result.slides[0].bodyFallback, "");
+}
+
+{
   let bodyReadCount = 0;
   const bodyShape = textFrameShape("");
   Object.defineProperty(bodyShape.TextFrame.TextRange, "Text", {
