@@ -21,6 +21,7 @@ from app.services.word.authorized_format_algorithm import (
 )
 from app.services.word.format_rule_pack import FormatRulePackError, FormatRulePackLoader
 from app.services.word.format_issue_support import (
+    apply_format_block_story_identity,
     build_format_issue_anchor,
     normalize_paragraph_index,
 )
@@ -1070,6 +1071,11 @@ class WordFormatReviewer:
                 continue
             append_heading(level, paragraph.get("text", ""), paragraph.get("paragraphIndex"))
         facts["headings"] = headings
+        for block in facts.get("blocks", []) if isinstance(facts.get("blocks"), list) else []:
+            if isinstance(block, dict):
+                apply_format_block_story_identity(block)
+                if str(block.get("blockType") or "") == "image" and not block.get("type"):
+                    block["type"] = "figure"
         return facts
 
     @staticmethod
@@ -1084,7 +1090,7 @@ class WordFormatReviewer:
             or "outlineLevel" in format_facts
         )
         if not has_outline_fact:
-            return normalized
+            return apply_format_block_story_identity(normalized)
         level = normalize_format_block_outline_level(normalized)
         format_facts["outlineLevel"] = level
         normalized["format"] = format_facts
@@ -1098,7 +1104,24 @@ class WordFormatReviewer:
                 normalized.pop("headingLevel", None)
             else:
                 normalized["headingLevel"] = level
-        return normalized
+        return apply_format_block_story_identity(normalized)
+
+    @staticmethod
+    def _caption_issue_fields(result: Dict, blocks: List) -> Tuple[Optional[int], str, str]:
+        index = result.get("captionIndex")
+        if index is None:
+            index = result.get("objectIndex")
+        block = None
+        if type(index) is int and 0 <= index < len(blocks) and isinstance(blocks[index], dict):
+            block = blocks[index]
+        paragraph_index = normalize_paragraph_index((block or {}).get("paragraphIndex"))
+        if result.get("captionIndex") is not None:
+            role = "caption"
+        else:
+            caption_type = str(result.get("captionType") or "table")
+            role = "figure" if caption_type == "figure" else caption_type
+        status = str(result.get("associationStatus") or result.get("status") or "")
+        return paragraph_index, role, status
 
     @staticmethod
     def _is_v2_format_snapshot(request: WordDocumentRequest) -> bool:
@@ -1286,23 +1309,29 @@ class WordFormatReviewer:
                     )
                     continue
             if status in {"orphaned", "missing", "ambiguous"}:
+                paragraph_index, role, association_status = self._caption_issue_fields(
+                    result, facts.get("blocks") or []
+                )
                 issues.append(
                     FormatReviewIssue(
                         ruleId="structure.caption_association",
-                        paragraphIndex=result.get("captionIndex"),
-                        role="caption" if result.get("captionIndex") is not None else result.get("captionType", "table"),
+                        paragraphIndex=paragraph_index,
+                        role=role,
                         message="题注未能与唯一兼容对象建立可追溯关联。",
-                        currentValue=json.dumps(result, ensure_ascii=False),
-                        expectedValue="唯一且同节同正文故事的兼容对象",
+                        currentValue=association_status,
+                        expectedValue="associated",
                         suggestion="请核对题注类型、所在节和相邻对象关系。",
                     )
                 )
             elif status == "associated" and result.get("placementStatus") in {"violation", "non_adjacent"}:
+                paragraph_index, role, _association_status = self._caption_issue_fields(
+                    result, facts.get("blocks") or []
+                )
                 issues.append(
                     FormatReviewIssue(
                         ruleId="structure.caption_placement",
-                        paragraphIndex=result.get("captionIndex"),
-                        role="caption",
+                        paragraphIndex=paragraph_index,
+                        role=role,
                         message="题注已关联，但位置不符合模板要求。",
                         currentValue=result.get("placement", "unknown"),
                         expectedValue=result.get("expectedPlacement", "相邻位置"),

@@ -480,3 +480,54 @@ const coveredBody = helpers.buildDeterministicFormatReviewBody({
 assert.strictEqual(coveredBody.coverage.formatSegmentCount, 3);
 assert.strictEqual(coveredBody.coverage.unsupportedObjectCount, 2);
 assert.strictEqual(coveredBody.coverage.headerFooter.header.status, "unavailable");
+
+const identityBody = helpers.buildDeterministicFormatReviewBody({
+  selectionMode: "document",
+  content: {
+    paragraphs: [{
+      index: 3,
+      text: "表 1：测试",
+      styleName: "Caption",
+      range: { start: 10, end: 18, sectionIndex: 2 }
+    }],
+    documentStructure: {}
+  }
+});
+assert.strictEqual(identityBody.blocks[0].blockType, "caption");
+assert.strictEqual(identityBody.blocks[0].sectionId, "section-2");
+assert.strictEqual(identityBody.blocks[0].storyId, "body");
+
+const associationMarkdown = helpers.renderReadableDeterministicFormatReview({
+  summary: {
+    executionStatus: "completed",
+    complianceStatus: "violations_found",
+    coverageStatus: "complete",
+    semanticStatus: "not_needed",
+    templateId: "technical-document-template-rules"
+  },
+  issues: [
+    {
+      ruleId: "structure.caption_association",
+      role: "caption",
+      paragraphIndex: 20,
+      anchorVerification: "verified",
+      currentValue: "orphaned",
+      expectedValue: "associated",
+      sourceAnchor: { textSnippet: "表 9：跨节孤立" }
+    },
+    {
+      ruleId: "font_name",
+      role: "body",
+      paragraphIndex: 1,
+      anchorVerification: "verified",
+      currentValue: "Unmapped Font",
+      expectedValue: "Unknown Template Font"
+    }
+  ]
+});
+assert.ok(associationMarkdown.includes("当前值：孤立"));
+assert.ok(associationMarkdown.includes("模板要求：已关联"));
+assert.ok(associationMarkdown.includes("题注关联"));
+assert.ok(associationMarkdown.includes("当前值：无法识别"));
+assert.ok(!associationMarkdown.includes("Unmapped Font"));
+assert.ok(!associationMarkdown.includes("{\"status\""));

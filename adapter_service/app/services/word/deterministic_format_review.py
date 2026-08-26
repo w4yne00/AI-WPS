@@ -34,6 +34,7 @@ from app.services.word.format_reviewer import (
     build_format_review_model_identity,
 )
 from app.services.word.format_issue_support import (
+    apply_format_block_story_identity,
     build_format_issue_anchor,
     normalize_paragraph_index,
 )
@@ -315,6 +316,8 @@ def _report_issue_role(issue: Dict) -> str:
     if issue.get("ruleId") == "structure.heading_hierarchy" or role == "heading":
         return "标题"
     return {
+        "caption": "图表题",
+        "figure": "图表题",
         "body": "正文",
         "table": "表格",
         "section": "章节/节",
@@ -557,6 +560,13 @@ def _report_readable_value(
         except (TypeError, ValueError):
             return "无法识别"
         return "第 {0} 级标题".format(level) if level > 0 else "无法识别"
+    if rule == "structure.caption_association":
+        return {
+            "associated": "已关联",
+            "orphaned": "孤立",
+            "missing": "缺失",
+            "ambiguous": "歧义",
+        }.get(raw, "无法判定")
     return "无法识别"
 
 
@@ -1656,6 +1666,7 @@ class DeterministicFormatReviewService:
             "expectedValue", "suggestion", "unit", "tolerance", "evidence", "dataStatus",
             "status", "range", "locationScope", "sectionIndex", "sectionName", "sectionPath",
             "chapterPath", "pageRange", "pageStart", "pageEnd", "sourceAnchor",
+            "associationStatus",
         }
         item = {key: deepcopy(value) for key, value in issue.items() if key in allowed_fields}
         rule_id = str(item.get("ruleId") or "unknown")
@@ -2207,7 +2218,7 @@ class DeterministicFormatReviewService:
                 "range": cls._normalize_range(item.get("range", item.get("sourceRange"))),
                 "format": cls._normalize_format_facts(item.get("format", item)),
             }
-            for key in ("headingLevel", "listLabel", "tableId", "tableIndex", "captionFor"):
+            for key in ("headingLevel", "listLabel", "tableId", "tableIndex", "captionFor", "sectionId", "storyId"):
                 if key in item:
                     normalized_item[key] = item[key]
             if "unsupportedObjects" in item:
@@ -2244,6 +2255,7 @@ class DeterministicFormatReviewService:
                         normalized_item.pop("headingLevel", None)
                     else:
                         normalized_item["headingLevel"] = outline_level
+            apply_format_block_story_identity(normalized_item)
             seen.add(block_id)
             normalized.append(normalized_item)
         return normalized
@@ -2616,6 +2628,8 @@ class DeterministicFormatReviewService:
                 "headingLevel": block.get("headingLevel", 0),
                 "listLabel": block.get("listLabel", ""),
                 "captionFor": block.get("captionFor", ""),
+                "sectionId": block.get("sectionId", ""),
+                "storyId": block.get("storyId", ""),
                 "rows": cls._table_structure_rows(block.get("rows", [])),
                 "nestedTables": [
                     cls._table_structure_projection(table)

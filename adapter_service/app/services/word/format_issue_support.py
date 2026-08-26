@@ -18,6 +18,26 @@ _ANCHOR_PARAGRAPH_BLOCK_TYPES = {
 }
 
 
+def apply_format_block_story_identity(block: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach section and body-story identity from the extraction contract."""
+    if not isinstance(block, dict):
+        return block
+    range_data = block.get("range") if isinstance(block.get("range"), dict) else {}
+    section_id = str(block.get("sectionId") or block.get("section") or "").strip()
+    if not section_id:
+        section_index = range_data.get("sectionIndex")
+        if type(section_index) is int and section_index > 0:
+            section_id = "section-{0}".format(section_index)
+    story_id = str(block.get("storyId") or block.get("story") or "").strip()
+    if not story_id and str(block.get("scope") or "in_scope") != "context":
+        story_id = "body"
+    if section_id:
+        block["sectionId"] = section_id
+    if story_id:
+        block["storyId"] = story_id
+    return block
+
+
 def normalize_paragraph_index(value: Any) -> Optional[int]:
     """Return a positive paragraph index, or ``None`` when it is not verified."""
     if value is None or isinstance(value, bool):
