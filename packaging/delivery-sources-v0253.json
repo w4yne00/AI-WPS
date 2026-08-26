@@ -1,0 +1,28 @@
+{
+  "schemaVersion": 1,
+  "version": "0.25.3-alpha",
+  "basePolicy": "delivery-sources-v0252.json",
+  "generatedFiles": [],
+  "entries": [
+    {
+      "type": "file",
+      "source": "packaging/v0253-delivery.md",
+      "target": "docs/v0253-delivery.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0253-target-machine-acceptance.md",
+      "target": "docs/v0253-target-machine-acceptance.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0253-candidate-status.json",
+      "target": "docs/v0253-candidate-status.json"
+    },
+    {
+      "type": "file",
+      "source": "packaging/audit_v0253_delivery.py",
+      "target": "scripts/audit_v0253_delivery.py"
+    }
+  ]
+}

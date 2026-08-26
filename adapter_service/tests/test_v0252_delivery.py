@@ -213,8 +213,8 @@ def test_v0252_docs_describe_defaults_upgrade_and_visual_off_without_overclaim()
     assert "图片语义总开关保持关闭" not in acceptance
 
 
-def test_current_product_docs_use_v0252_identity_and_keep_frozen_0251_evidence():
-    # Break: current-version docs stay on 0.25.1 or drop frozen d7a1dd8 evidence.
+def test_current_product_docs_keep_frozen_0252_and_0251_evidence():
+    # Break: dropping frozen 850871c / d7a1dd8 evidence after the 0.25.3 lineage starts.
     documents = (
         ROOT / "README.md",
         ROOT / "README-ZH.md",
@@ -223,19 +223,14 @@ def test_current_product_docs_use_v0252_identity_and_keep_frozen_0251_evidence()
     for path in documents:
         text = path.read_text(encoding="utf-8")
         assert "v0.25.2-alpha" in text
+        assert "c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92" in text
+        assert "20260825-850871c" in text
         assert FROZEN_0251_SHA in text
         assert "20260824-d7a1dd8" in text
         assert "manual-pending" in text
         for forbidden in FORBIDDEN_CLAIMS:
             assert forbidden not in text
         assert "图像语义补充" in text
-
-    handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
-    assert "当前版本：`v0.25.2-alpha`" in handoff
-    readme_zh = (ROOT / "README-ZH.md").read_text(encoding="utf-8")
-    assert "| 当前版本 | `v0.25.2-alpha` |" in readme_zh
-    readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "| Version | `v0.25.2-alpha` |" in readme_en
 
 
 def test_v0252_prepare_rewrites_host_and_adapter_identity_from_0251_predecessor(tmp_path):
