@@ -318,14 +318,13 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         for value in identity:
             assert value in text, "{} missing {}".format(path, value)
 
-    readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
-    readme_zh = (ROOT / "README-ZH.md").read_text(encoding="utf-8")
-    assert "direct predecessor `20260824-10b251d`" in readme_en
-    assert "direct predecessor `20260824-afe109c`" in readme_en
-    assert "其直接前任 `20260824-10b251d`" in readme_zh
-    assert "`20260824-f953c58` 的直接前任 `20260824-afe109c`" in readme_zh
+    lineage = (ROOT / "packaging/v0251-delivery.md").read_text(encoding="utf-8")
+    assert "direct predecessor `20260824-10b251d`" in lineage
+    assert "direct predecessor `20260824-afe109c`" in lineage
+    assert "其直接前任 `20260824-10b251d`" in lineage
+    assert "`20260824-f953c58` 的直接前任 `20260824-afe109c`" in lineage
 
-    validation_documents = documents[:2]
+    validation_documents = (ROOT / "packaging/v0251-delivery.md",)
     for path in validation_documents:
         text = path.read_text(encoding="utf-8")
         delivery_lines = [

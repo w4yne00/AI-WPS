@@ -1,77 +1,10 @@
-<h1 align="center">AI-WPS</h1>
+# AI-WPS
 
-<p align="center">
-  <strong>面向内网办公终端的 WPS AI 助手</strong>
-  <br />
-  基于 WPS 原生插件、本地适配服务、企业 AI 接口与离线交付工具链构建。
-</p>
+面向内网办公终端的 WPS AI 助手。架构是 **WPS 原生 JS/HTML 插件 + 本地 Python 适配服务 + 企业内网 AI 接口**：插件负责界面、读文档、预览和写回，规则、模板、配置、日志、诊断和模型调用放在本机 Adapter。
 
-<p align="center">
-  <a href="./README.md">English</a>
-  <span> | </span>
-  <a href="./README-ZH.md">中文</a>
-</p>
+当前范围是 **Phase 1：平台底座 + Word / Excel / PPT**，运行目标为麒麟 V10 ARM、Python 3.8、离线部署。
 
-<p align="center">
-  <img alt="阶段" src="https://img.shields.io/badge/Phase-1%20Word%20Foundation-2F6FED?style=for-the-badge" />
-  <img alt="WPS 插件" src="https://img.shields.io/badge/WPS-Native%20Add--in-C62828?style=for-the-badge" />
-  <img alt="本地适配服务" src="https://img.shields.io/badge/Local%20Adapter-FastAPI%20%4018100-009688?style=for-the-badge" />
-  <img alt="离线交付" src="https://img.shields.io/badge/Offline-Ready-455A64?style=for-the-badge" />
-</p>
-
-<p align="center">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript%20%2B%20Vite-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-  <img alt="Python" src="https://img.shields.io/badge/Python%20%2B%20FastAPI-3776AB?style=flat-square&logo=python&logoColor=white" />
-  <img alt="Kylin V10 ARM" src="https://img.shields.io/badge/Kylin%20V10-ARM-B71C1C?style=flat-square" />
-  <img alt="企业 AI" src="https://img.shields.io/badge/Enterprise-AI%20Provider-6A1B9A?style=flat-square" />
-</p>
-
-<p align="center">
-  <code>智能编写</code>
-  <code>智能仿写</code>
-  <code>文档审查</code>
-  <code>格式审查</code>
-  <code>智能分析</code>
-  <code>智能总结</code>
-  <code>模板化规则</code>
-  <code>运行时探测</code>
-  <code>离线交付</code>
-</p>
-
-<br />
-
-<table align="center">
-  <tr>
-    <td align="center" width="190">
-      <strong>WPS 原生插件</strong>
-      <br />
-      <sub>轻量 task pane 与文档桥接</sub>
-    </td>
-    <td align="center" width="190">
-      <strong>本地适配服务</strong>
-      <br />
-      <sub>规则、模板、日志与诊断控制面</sub>
-    </td>
-    <td align="center" width="190">
-      <strong>企业 AI 接入</strong>
-      <br />
-      <sub>内网 provider 接入与 mock 回退</sub>
-    </td>
-    <td align="center" width="190">
-      <strong>离线交付</strong>
-      <br />
-      <sub>安装、启动、探测、验收一体化</sub>
-    </td>
-  </tr>
-</table>
-
----
-
-## 项目简介
-
-AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WPS 原生 JS/HTML 插件 + 本地 Python 适配服务 + 企业内网 AI 接口** 的架构，让插件侧保持轻量，把规则、模板、配置、日志、诊断和 AI 调用统一放在本地服务层处理。
-
-当前阶段聚焦 **Phase 1: 平台基础能力 + Word/Excel/PPT 场景**，目标是在 Kylin V10 ARM、离线部署、内网可用的环境中提供可演示、可验收、可继续扩展的基础版本。
+[English](./README.md) | [中文](./README-ZH.md)
 
 ## 当前版本
 
@@ -81,179 +14,32 @@ AI-WPS 是一个面向内网办公终端的 WPS AI 助手项目。它采用 **WP
 | 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 0.25.3 唯一自动化候选为 `20260826-d1a346b`（`candidate`）；冻结的 0.25.2 唯一候选仍为 `20260825-850871c`（`candidate`）；`20260825-dacd1e9` 与 `20260825-0f50456` 为 `rejected`；冻结的 0.25.1 候选仍为 `20260824-d7a1dd8`；Issue #59 仍为 `manual-pending` |
+| 交付状态 | 0.25.3 自动化候选 `20260826-d1a346b`（`candidate`）；Issue #59 仍为 `manual-pending` |
 | 一期交付包 | `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256：`120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`；源码提交：`d1a346b0d7e1301f74b37e692664fd31085ee050` |
 
-### v0.25.3-alpha 交付状态
+`v0.25.3-alpha` 继续走 Phase1 安装器，并带上结果预览、格式问题卡片、题注关联结论和幻灯片页角色。图像语义补充默认开启；探针未过或总开关关闭时走视觉关闭降级。自动化门禁只得到 `candidate`，不能当成目标机已通过。
 
-`v0.25.3-alpha` 仍走 Phase1 安装体系，落实 Issue #101 的**结果预览**、**格式问题**卡片、**题注关联结论**和**幻灯片页角色**。0.25.3 唯一自动化候选为 `20260826-d1a346b`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`），归档 `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不扫描麒麟 apt 包。冻结的 0.25.2 唯一自动化候选仍为 `20260825-850871c`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`），归档 `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`。**图像语义补充**默认开启与**视觉关闭降级**保持 0.25.2 已发布行为。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。
+冻结包：`v0.25.2-alpha` 候选 `20260825-850871c`（SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`）；`v0.25.1-alpha` 候选 `20260824-d7a1dd8`（build `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，源码 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档 `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`）。前任拒绝记录、门禁数字和构建血缘见 [packaging/v0251-delivery.md](./packaging/v0251-delivery.md)、[packaging/v0252-delivery.md](./packaging/v0252-delivery.md)、[packaging/v0253-delivery.md](./packaging/v0253-delivery.md)。
 
-### v0.25.2-alpha 交付状态
+版本规则：`AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{yyyymmdd}`。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
 
-`v0.25.2-alpha` 仍走 Phase1 安装体系，把**图像语义补充**作为格式审查直连的默认可外发路径：新安装打开总开关，覆盖升级迁移已有直连配置，探针未过或总开关关闭时走**视觉关闭降级**。0.25.2 唯一自动化候选为 `20260825-850871c`（`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`），归档 `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不扫描麒麟 apt 包。`20260825-dacd1e9` 与 `20260825-0f50456` 已登记为 `rejected` 并保持原字节。自动化门禁只得到 `candidate`。Issue #59 仍为 `manual-pending`。冻结的 0.25.1 候选 `20260824-d7a1dd8` 保持原字节（`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`），不是 0.25.2 当前候选。
+## 能做什么
 
-### v0.25.1-alpha 交付状态
+Word、Excel、PPT 使用独立插件，Ribbon 互不串门。模型结果先预览，用户确认后才写回；审查类和分析类任务默认只读。
 
-当前唯一自动化候选为 `20260824-d7a1dd8`。其 candidate build ID 为
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，
-源码提交为 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档为
-`ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，校验文件为
-`ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz.sha256`，SHA-256 为
-`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`，自动化状态为
-`candidate`。其直接前任 `20260824-10b251d` 保持原字节并登记为 `rejected`，原因是包内目标机
-验收记录同时出现当前候选、无当前候选和重复上一被拒绝归档叙述；其 SHA-256 为
-`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`。
-组装归档内的验收文档包含绑定 d7a1dd8 的自动化候选上下文；源文件
-`packaging/v0251-target-machine-acceptance.md` 仍是构建前生成器模板，故意不绑定当前候选。
-自动化状态 `candidate` 不等于真实 WPS GUI、真实模型或目标机验收，Issue #59 仍为
-`manual-pending`。
+| 宿主 | 入口 | 说明 |
+| --- | --- | --- |
+| Word | 智能编写 | 改写、续写、提炼、自定义编写；预览 / 对照 / 纯文本后写回 |
+| Word | 智能仿写 | 按模板仿写；预览、纯文本、复制，不写回 |
+| Word | 文档审查 | 错别字、表达、逻辑、通畅性、专业性；选区或限量全文 |
+| Word | 格式审查 | 对照《技术文件格式及书写要求》；格式问题卡片、题注关联结论、图像语义补充；不写回排版 |
+| Word | 写作规范 | 四个预置包 + 本机组织规范库；编写 / 仿写 / 审查可选用 |
+| Excel | 智能分析 | 选区或已用范围；结构化报告和汇报段落，不写回单元格 |
+| Excel | 公式助手 | 明确选区（最多 30×20）；生成或解释排错，只复制 |
+| PPT | 智能总结 | 当前页，或上传单个 `.md` / `.docx`（≤10 MB）生成整套页建议；只预览和复制 |
+| PPT | 结构审查 | 最多 60 页；幻灯片页角色清单；只读 |
 
-更早的 `20260824-f953c58`、`20260824-afe109c`、`20260824-799adf9`、`20260824-5318d4b`、
-`20260824-2e7a3e6` 和 `20260824-ccad09f` 归档均保持原始身份、SHA-256 和 `rejected` 原因。
-`20260824-f953c58` 的直接前任归档保持原字节，SHA-256 为
-`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`；
-`20260824-f953c58` 的直接前任 `20260824-afe109c` 仍为 `rejected`。
-
-用户复测确认 `20260822-e43dc8c` 仍存在格式审查批次索引、直连格式语义输出能力、PPT 空最终正文及旧工作流配置删除后复活问题，该归档已登记为 `rejected`。其清单记录的完整提交 `e43dc8cfcbf6515b5c0d05b4e7d1994b9ac96735` 不存在于当前源码仓库；实际 `HEAD` 为 `e43dc8c464a7957089b944db628090df83db6863`，二者仅前七位相同。
-
-历史候选源码 `ccad09fb1d8019da3a40f14610ab3bd75de1ec23` 曾删除批次级伪范围、加入精确模型能力表、脱敏空正文诊断和不可重试边界，并将旧工作流档案改为版本化一次迁移；但其跨运行时哈希契约仍有阻断缺陷，归档已拒绝。`f953c58` 又在 heading-only 与 format-outline-only 兼容输入中复现 outline fallback JS/Python 哈希漂移，修复后已由 d7a1dd8 重新构建为当前唯一自动化候选，目标 WPS、真实模型和 Issue #59 人工验收仍为 `manual-pending`。
-
-验证摘要：
-
-| 门禁 | 结果 |
-| --- | --- |
-| 当前源码 Adapter 全量测试 | `874 passed, 95 skipped` |
-| v0.25.1 交付/prepare/audit focused | `87 passed`（`test_v0251_delivery.py`） |
-| 协议/交付 focused 合计 | `137 passed, 5 skipped` |
-| 正式插件合同测试 | `28/28` |
-| Python 3.8 兼容扫描 | `82` 个生产文件 |
-| Sol/high 核心结论 | `CLEAN FOR BUILD` |
-| 麒麟构建来源与审计 | d7a1dd8 来源可追溯文件 `246`；最终候选审计通过；自动化结果为 `candidate` |
-| Python 3.8 兼容扫描与构建环境 | `82` 个生产文件；麒麟运行时 Node `v22.23.2`、Python `3.8.10` |
-| 公开格式审查 API 与哈希契约 | 公开 API、四个哈希键以及 runtime/lifecycle/install/upgrade/rollback/deleted-workflow-profile 门禁均通过 |
-| 归档校验 | d7a1dd8 候选 SHA-256 为 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`；直接前任 `10b251d` 保持原字节，SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120` |
-| 目标 WPS GUI 和真实文档人工验收 | Issue #59 为 `manual-pending`；尚未通过或接受 |
-
-版本规则格式：
-
-```text
-AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{日期}
-```
-
-规则说明：
-
-- `阶段`：项目阶段，例如 `P1`、`P2`。
-- `范围`：当前主要交付范围，例如 `WORD`、`EXCEL`、`PPT`、`DELIVERY`。
-- `主版本`：架构或兼容性边界变化。
-- `次版本`：用户可感知的新能力。
-- `修订号`：问题修复、界面优化、打包更新和文档更新。
-- `日期`：构建或里程碑日期，格式为 `yyyymmdd`。
-
-## 核心能力
-
-| 能力 | 说明 |
-| --- | --- |
-| WPS 原生任务窗格 | 支持麒麟/WPS 目标终端已验证的 `jsaddons` 手工导入结构 |
-| 宿主区分入口 | Word 只显示智能编写、智能仿写、文档审查、格式审查和设置；Excel 只显示“智能分析”“公式助手”和设置；PPT 只显示“智能总结”“结构审查”和设置 |
-| 独立任务窗格模式 | Word、Excel 和 PPT 使用独立宿主插件，避免按钮互相交叉显示 |
-| 文档审查 | 面向选中文本或限量全文抽取，独立 `word.document_review` Dify 工作流检查错别字、语言表达、逻辑、通畅性和对应文档类型专业性；模型后台返回较慢时任务窗格会持续显示等待反馈 |
-| 格式审查 | 按《技术文件格式及书写要求》模板检查选中文本或全文格式合规；可保留 AI 段落角色识别，但只输出检查意见，不再写回排版；预览结果按概览、优先处理清单、分组详情和诊断信息展示，便于排查 |
-| Word 智能编写 | 合并改写润色、续写扩展、提炼总结和自定义编写，统一走 Dify Chatflow；adapter 通过顶层 `query` 发送完整提示词，并自动兼容旧工作流的 `inputs.query` |
-| 智能仿写 | 独立 `word.smart_imitation` 模型工作流支持选中文本或手动粘贴仿写模板、必填仿写需求、选填参考素材，并可独立记忆规范场景；结果显示规范摘要及非阻断的“需要核对/表达建议”，仍只提供预览、纯文本和复制，不提供对照和写回 |
-| Word 写作规范 | 随包提供 G企技术写作基础、技术文件文体、网络安全术语和党政公文文体四个可追溯预置包；智能编写、智能仿写和文档审查可分别选择明确场景或保守自动匹配。文档审查把术语、文体和模板化表达偏差合并为既有只读审查问题与记录，仍只调用一次模型；本地组织规范继续支持新增、修改、删除、CSV/XLSX 导入预览、冲突跳过、CSV 导出和数据库备份，规范库不可用时任务降级继续，不改变既有写回路径 |
-| 智能分析 | 只读 `excel.analysis` 模型工作流，优先分析选中区域，无有效选区时分析当前工作表已用范围；长任务使用后台任务和可恢复轮询，结果提供结构化分析报告和汇报段落，不写回单元格 |
-| 公式助手 | 独立 `excel.formula_assistant` 工作流仅读取用户明确选区（最多 30 行、20 列），由用户选择“生成公式 / 解释排错”；返回原公式说明、一个主公式和有差异时折叠显示的一个备选公式，并执行不试算的基础语法、引用和兼容风险检查；支持共享队列、恢复轮询和复制，不写回工作簿 |
-| 智能总结 | 同一个 `ppt.slide_assistant` 工作流档案支持“当前页总结 / 文档总结”双模式。当前页模式读取主标题、可选副标题、正文和相邻页标题；文档模式接受单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，并生成整套 5/8/10/12/15 页建议，默认 10 页。两种模式都只预览和复制，绝不写回 PPT |
-| 结构审查 | 独立 `ppt.structure_review` 工作流审查用户指定的最多 60 页：正常页只读取页码、主标题和可选副标题，无标题页正文兜底限制为每页 120 字符且最多尝试 10 页，超过后不读取正文并只报告信息不足；结果固定披露“本次审查第 X–Y 页”，本地与模型问题按页码和语义去重，不显示数值总分，不修改幻灯片 |
-| 结果预览 | 智能编写会先对选中多段文本的模型输出恢复段落换行，再按内容结构选择朴素或结构化回显：普通段落不额外套排版，标题、列表、序号、表格、加粗等结构尽量正常展示；文档审查、格式审查和诊断信息继续使用安全 Markdown 渲染 |
-| 三宿主统一视觉 | Word、Excel、PPT 统一采用浅灰、白色、雾蓝和状态色视觉系统，同时保持宿主隔离和既有业务行为 |
-| 模板化规则 | 已接入 `技术文件格式及书写要求.docx` 及其抽取后的 JSON 规则配置 |
-| 本地适配服务 | FastAPI 服务优先走 `uvicorn`，缺依赖时自动降级到 `standalone`；生产环境默认禁止静默模拟结果，仅开发显式开关可启用 |
-| 模型配置 | 八类任务均使用按宿主、按任务隔离的模型配置；每个配置可选择“工作流平台”或“模型直连”，并独立保存服务地址、API Key 及适用的模型参数 |
-| 直连提示词 | 随 Adapter 提供八份版本化 System Prompt Markdown，并按 SHA-256 清单校验；直连请求分别发送 `system` 与 `user` 消息 |
-| 设置与联调状态 | 设置页使用同页下钻的紧凑模型配置编辑器；任务页只显示完整配置，运行时不再回退统一 URL 或统一 Key。三宿主明确区分已连接、增强降级、恢复模式和未连接；恢复模式禁止配置变更与新模型任务 |
-| Adapter 运维诊断 | 启动包脚本统一管理 uvicorn adapter，分别检查进程存活、业务就绪和聚合子系统状态；聚合健康仅返回稳定错误码、阶段和允许动作，不返回密钥、配置正文或敏感绝对路径 |
-| 离线交付 | 提供正式插件包、adapter 启动包、麒麟 V10 ARM Python 3.8 离线依赖包、pip 离线引导包和运维脚本 |
-| 一期交付总包 | 一个压缩包和一个安装脚本同时部署 Word、Excel、PPT 三个宿主插件；首次安装初始化空的组织规范数据库，覆盖安装保留原数据库、全部已有备份、API URL、统一 API Key 和工作流档案密钥。发布清单核对四个经审阅规范包、来源许可、导入模板、验收文档和运行态排除项 |
-
-## 最近更新
-
-| 版本 | 更新点 |
-| --- | --- |
-| `v0.25.2-alpha` | Phase1 身份：新装默认开图像语义补充、升级迁移、视觉关闭降级；冻结 `20260824-d7a1dd8` 仍是 0.25.1 候选；Issue #59 仍为 `manual-pending` |
-| `v0.25.1-alpha` | 发布唯一自动化候选 `20260824-d7a1dd8` 及绑定归档证据；`10b251d` 保持 `rejected`，Issue #59 目标验收仍为 `manual-pending` |
-| `v0.23.1-alpha` | 修复运行时求值内置容器泛型注解导致的 Python 3.8 Adapter 导入失败；新增 `/health/live`、`/health/ready` 与聚合 `/health`，区分 `ready`、`degraded`、`recovery`。恢复候选默认不切换，只有当前安装不就绪、安装前备份完整校验且候选存活时才允许 `--activate-recovery`；恢复模式只提供重新检测、只读备份和脱敏诊断。最终 tar 包仍由真实 Python 3.8 运行门禁验证，自动化通过只标记候选构建 |
-| `v0.23.0-alpha` | 八类 Word/Excel/PPT 任务新增双接入：工作流平台 `/chat-messages` 与 OpenAI 兼容模型直连 `/chat/completions`。旧工作流档案原位迁移，随包提供八份可校验 System Prompt；生产模拟结果改为显式启用；智能编写和智能仿写切换到 600 秒预算的可恢复后台任务，并在共享队列中使用交互优先级。三宿主设置页统一为紧凑模型配置编辑器，既有结果展示和回写边界保持不变 |
-| `v0.22.0-alpha` | 新增 PPT“结构审查”最小闭环：独立 Ribbon、工作流档案和 API Key；显式页段最多 60 页；主标题/副标题分离和无标题页有限正文兜底；本地标题检查与一次模型语义审查合并去重；结果提供分级问题、逐页建议、推荐目录和分类复制，全程只读 |
-| `v0.21.0-alpha` | 将独立 Excel“公式助手”正式收敛进统一三宿主交付包：支持生成公式和解释排错、严格明确选区与 30×20 上限、由 `HasFormula` 保护的 `Formula`/`FormulaLocal`/`FormulaR1C1` 只读降级、共享长任务排队与恢复、不执行公式的本地检查和纯复制结果；包内同时提供 Dify 操作手册和提示词模板，Word/PPT 业务行为不变 |
-| `v0.20.1-alpha` | 在不增加业务入口的前提下稳定交付三宿主共享长任务队列和 Word/Excel 选区监听优化：文档审查、智能分析、智能总结共用 2 个运行槽位与 8 个 FIFO 排队位置，冻结提交时配置，展示真实队列/阶段/耗时，仅允许取消排队任务，并明确提示 Adapter 重启中断；Word/Excel 优先使用宿主选区事件，以可见页面低频读取兜底，在页面隐藏、设置页或任务运行时暂停宿主读取。既有工作流、结果、写回边界和覆盖安装保护保持不变 |
-| `v0.20.0-alpha` | 将经审阅的写作规范基线正式纳入三宿主统一交付包：首次安装初始化组织规范数据库，覆盖升级持续保留组织覆盖、组织自定义规范、预置停用状态、备份和模型配置；构建过程生成并校验发布清单，拒绝携带现场数据库、密钥、日志、导入内容或未确认草稿。格式审查、智能分析、智能总结、工作流档案、写回、超时和轮询行为不变 |
-| `v0.19.1-alpha` | 在不改变业务工作流的前提下统一优化 Word、Excel、PPT 任务窗格体验：宿主配色的紧凑任务页与设置页、按各宿主 API URL 和工作流档案实时计算的模型接口就绪状态、可扩展任务选项卡、选填备注、悬浮帮助和默认折叠的高级诊断。设置探测采用独立 8 秒预算、单飞刷新、迟到响应废弃和编辑期间暂停，不能覆盖任务状态、结果、长任务编号或未保存设置 |
-| `v0.19.0-alpha` | 新增 Word 写作规范库，作用于智能编写、智能仿写和文档审查；支持按任务范围新增、修改、删除，CSV/XLSX 导入预览和冲突跳过，CSV 导出、数据库备份及结果命中摘要。规范库故障时任务降级继续，不影响 Excel/PPT，也不改变任何既有写回链路；覆盖安装保留写作规范数据库和最多三份已有备份 |
-| `v0.18.1-alpha` | 统一优化 Word、Excel、PPT 工作流设置交互：任务窗格移除统一 Key 控件，改为宿主隔离的紧凑工作流列表和全宽新建/编辑页；功能页下拉选择后立即激活，当前工作流不可删除，编辑时 Key 留空保持原密钥；adapter 统一 Key 回退及覆盖安装配置保护保持不变 |
-| `v0.18.0-alpha` | Excel 当前入口更名为“智能分析”，PPT 升级为“智能总结”当前页/文档双模式；新增单个 UTF-8 Markdown 或有效 DOCX 安全上传、整套 5/8/10/12/15 页建议、1800 秒可恢复轮询、三宿主统一视觉、Excel/PPT Markdown 提示词模板，以及覆盖安装时保留 API URL 和全部 API Key 的单一正式交付包 |
-| `v0.17.0-alpha` | 新增只读 PPT 单页助手：识别当前页主标题、可选副标题、正文文本和相邻页标题，支持生成/优化、长任务恢复轮询、预览/纯文本及分类复制；Word、Excel、PPT Ribbon 严格隔离，并由同一个正式交付包覆盖安装，继续保护目标机已有 API URL 和全部 API Key |
-| `v0.16.0-alpha` | 新增工作流配置档案：五个任务均可预存多个自定义名称和 API Key，在功能页通过下拉菜单明确切换，设置页支持新增、重命名、单独更换密钥和删除备用档案；旧任务级密钥自动迁移为“当前配置”，安装升级继续保留 API URL 和全部历史密钥，Word/Excel 仍严格分离 |
-| `v0.15.2-alpha` | 兼容新旧 Dify Chatflow 用户输入：旧工作流继续使用 `inputs.query`；新版“用户输入”节点通过顶层 `query` 和 `files` 接收内容。adapter 首次请求收到 HTTP 400 时自动切换格式并缓存成功模式，不改业务提示词、超时、结果解析和前端功能 |
-| `v0.15.1-alpha` | Excel 智能分析改为与文档审查一致的后台长任务模式：前端使用 10 秒短请求提交和查询状态，任务编号本地保存，连接抖动后持续恢复轮询；adapter 模型等待预算提高到 1800 秒，避免慢模型使任务窗格提前显示连接超时 |
-| `v0.15.0-alpha` | 新增首个 Excel 工作流“Excel 智能分析”：Excel 使用独立 `et` 插件入口，只读分析选区或当前工作表已用范围，adapter 新增独立 `excel.analysis` 模型任务，结果提供结构化分析报告和汇报段落；同一个安装包同时部署 Word/Excel 插件并保留目标机运行时配置 |
-| `v0.13.8-alpha` | 增强 180 秒附近长耗时文档审查的连接恢复：任务窗口提交可恢复的本地任务编号，保存未完成任务，状态查询使用 10 秒短请求，任务窗格重开后可继续查询，短暂 adapter 连接失败时低频恢复轮询而不丢弃任务 |
-| `v0.13.7-alpha` | 优化文档审查记录预览切换：点击“预览审查记录”后显示审查记录预览，再次点击同一按钮可返回初始文档审查结果卡片视图，并保留本地问题处理状态 |
-| `v0.13.6-alpha` | 继续增强 think 模式慢模型文档审查等待：文档审查 provider 等待预算提高到 1800 秒；任务窗格状态轮询最多容忍 240 次短暂失败、总等待 60 分钟；轮询阶段遇到 adapter 短暂不可达时改为提示“状态查询暂时未连上本地 adapter”，继续等待后台任务，避免用户把慢模型处理误判为连接失败 |
-| `v0.13.5-alpha` | 增强慢模型文档审查等待：文档审查 provider 等待预算提高到 600 秒；任务窗格状态轮询最多容忍 120 次短暂失败、总等待 30 分钟；最终失败提示改为“状态查询多次失败”并引导查看最近一次任务诊断，避免模型仍在处理时误判为连接失败 |
-| `v0.13.4-alpha` | 修复格式审查框选文本时的格式识别问题：任务窗格会优先读取选区 `Selection/Range` 段落格式，再退回纯文本；支持解包 WPS COM 返回的字号、对齐等标量值；adapter 侧将 `0pt` 视为未读取到字号，并把 WPS 对齐枚举值如 `3` 规范化为“两端对齐”后再判断 |
-| `v0.13.3-alpha` | 优化长文本文档审查的 think 模式稳定性：文档审查 provider 等待预算提高到 240 秒；任务窗格轮询状态时遇到短暂查询失败会继续保留后台任务并自动重试，不再一次查询失败就清空任务并提示 adapter 连接失败 |
-| `v0.13.2-alpha` | 稳定安装与慢模型适配：新版交付包安装时保留目标机已有 API URL、统一 API Key 和任务级 API Key；智能编写保持 75 秒默认超时，文档审查改为提交后台任务并轮询完成状态，同时使用更长的 150 秒 provider 预算，格式审查模型角色识别上限为 60 秒；任务窗口前台反馈统一使用“模型后台”等中文说法 |
-| `v0.13.1-alpha` | 修复结果体验测试问题：智能编写“对照”视图将改动后文字以黄色高亮显示，并尽量保持标题、列表、表格等结构；文档审查在模型后台超时、不可达或返回后渲染异常时改为给出可读兜底结果和诊断提示，避免任务窗格空白或误报 adapter 无反馈 |
-| `v0.13.0-alpha` | 结果可视化体验增强版：集成麒麟 V10 adapter systemd 开机自启动；智能编写结果新增只读“预览 / 对照 / 纯文本”显示切换，提升标题、列表、段落等结果预览体验且不改写回逻辑；文档审查新增问题处理状态、复制建议/改写、生成并复制审查记录 |
-| `v0.12.16-alpha` | 优化格式审查结果可读性：新增审查概览、优先处理清单、分组详情和诊断信息；段落角色、规则项、模板名、识别来源、AI 兜底原因等反馈尽量中文化显示；字体、字号、样式名、对齐、行距、缩进等值也转为中文表达，例如字体标准显示“宋体”、字号标准显示“小四（12pt）”；启动包新增麒麟 V10 systemd 开机自启动安装/卸载脚本 |
-| `v0.12.15-alpha` | 稳定文档审查现场体验：点击“审查”后立即显示读取、提交和等待 Dify 的进度反馈；文档审查改为异步限量抽取，避免同步全文扫描卡住任务窗格；Dify 返回非标准 JSON 或普通 Markdown 时，adapter 会保留原始模型回复并在前台展示 |
-| `v0.12.14-alpha` | 修复智能编写框选连续两个段落后模型输出被压成一行的问题：任务窗格会先对模型结果自动排版，再进入结果预览和写回；已存在换行会保留，未换行的多段输出会按句意边界恢复分段，内联中文序号/标题也会自动拆行 |
-| `v0.12.13-alpha` | 优化智能编写结构化内容处理：框选文本或模型结果包含标题、列表、序号、表格、加粗等结构时，结果区自动使用结构化回显并在写回时尽量保留对应格式；普通段落仍保持朴素回显和原文段落形态写回，避免冗余排版 |
-| `v0.12.12-alpha` | 修复智能编写选区场景的两类问题：点击生成时只轻量读取选中文本并异步发起请求，避免同步扫描全文导致任务窗格卡顿；智能编写结果改为朴素文本回显并保留换行，写回时优先按原文段落形态替换选区，同时提示词要求保持原文段落结构、不要额外添加 Markdown 标题/列表/表格 |
-| `v0.12.11-alpha` | 文档审查结果按错别字、语言表达、逻辑表达、通畅性、专业性分组展示；格式审查结果按页面设置、标题层级、正文格式、段落格式、图表题/注释、其他格式项分组展示；设置页新增“最近一次任务诊断”，可查看并复制脱敏的 adapter/provider/Dify 请求摘要；不改变智能编写、文档审查、格式审查的接口路径和任务级 API Key 选路逻辑 |
-| `v0.12.10-alpha` | 修复格式审查在发起 adapter 请求前卡死的问题：格式审查前端改为限量读取 WPS 段落，框选文本时不再扫描全文，先刷新“正在读取”状态再异步抽取文档，并同步提升前端缓存版本确保目标机加载新资源 |
-| `v0.12.9-alpha` | 合并审查类入口：原格式校对与技术文档审查合并为“文档审查”并使用 `word.document_review`；原智能排版改为只检查不写回的“格式审查”并使用 `word.format_review`；清理旧 Word 路由，保持智能编写和任务级 API Key 选路逻辑不变 |
-| `v0.12.8-alpha` | 重构格式校对：保留本地确定性格式检测，并新增小批量 AI 文档质量审校，覆盖错别字、语病、表述、逻辑和通畅性；`word.proofread` 继续使用独立任务 API Key 和独立 Dify 工作流 |
-| `v0.12.7-alpha` | 修复目标机智能编写、智能排版 HTTP 422：前端发送前清洗 WPS 宿主对象属性，后端对缺失 `documentId/plainText`、对象形态字号/样式和 WPS 下划线枚举做容错；请求校验失败时 `/provider/debug-last` 会记录 `request_validation_failed` |
-| `v0.12.6-alpha` | 继续修复智能排版现场段落采集和诊断：支持 `Paragraph.Range.Text`、`Content.Paragraphs`、`Range().Paragraphs` 和全文文本拆段兜底；无段落、未配置任务密钥、Dify 返回不可解析时都会在结果预览和 `/provider/debug-last` 给出明确原因 |
-| `v0.12.5-alpha` | 修复 WPS COM 集合形态下智能排版读取到 0 个段落的问题：任务窗口支持 `Paragraphs.Count`/`Item()` 段落集合，应用预览也使用同一集合适配，并将智能排版固定为全文排版预览 |
-| `v0.12.4-alpha` | 加固智能排版 Dify 角色识别解析：兼容 `result`、`data`、`outputs` 等包裹层和 JSON 数组返回；AI 解析失败会在任务窗口显示明确提示，并继续使用本地模板规则兜底 |
-| `v0.12.3-alpha` | 优化智能编写任务窗口：压缩设置区并扩大 Markdown 结果预览；表达风格、侧重点、篇幅菜单按国企技术方案/汇报材料场景重新合并命名；adapter 提示词映射保留旧值兼容 |
-| `v0.12.2-alpha` | 修复长文档智能排版仅将前 120 个非空段落送入 AI 角色识别的问题：adapter 按批次覆盖全文并显示覆盖统计；任务窗口及 Ribbon 图标同步更新为明亮的雾蓝银白配色 |
-| `v0.12.1-alpha` | 修复现场任务窗格可能继续加载旧纯文本资源的问题：Ribbon 打开任务窗格和页面静态资源均附加构建版本参数，设置诊断区显示前端版本；`/provider/debug-last` 新增脱敏 Markdown 特征摘要，用于区分 Dify 返回内容和前端渲染问题 |
-| `v0.12.0-alpha` | 智能排版按上传的《技术文件格式及书写要求》模板重建规则：输出带 `targetProperties` 的排版预览，支持页面设置、标题、正文、图表题、注、列项、附录和表正文；设置页新增任务级 API Key，智能排版可使用独立 Dify key，未配置时回退统一 key |
-| `v0.11.8-alpha` | 增强任务窗口 Markdown 成品预览：保留正文分段和单换行，补充分隔线与表格渲染，结果区更接近 Dify 的排版层次 |
-| `v0.11.7-alpha` | 修复 uvicorn Word 路由缓存启动时 provider settings 的问题；设置页保存 API URL 后，智能编写会在配置判定和转发前重新读取最新配置，不再出现 health 已配置但任务仍走 mock |
-| `v0.11.6-alpha` | adapter 启动包运维脚本统一收敛到 uvicorn，状态/健康/日志脚本暴露 provider 配置和转发诊断；mock 回退也写入 `/provider/debug-last`，可直接看到未真实转发原因 |
-| `v0.11.5-alpha` | 任务窗口结果预览支持安全 Markdown 渲染，Dify 返回的标题、列表、引用、代码块和链接会按格式显示；复制和写回仍使用原始模型文本 |
-| `v0.11.4-alpha` | 重新对齐 Dify 官方 `/chat-messages`：顶层 `query` 供 `sys.query` 使用，同时把同一份完整提示词写入 `inputs.query` 供开始节点自定义 `query` 使用；新增脱敏的 `/provider/debug-last` 诊断接口 |
-| `v0.11.1-alpha` | 收紧任务路由密钥选择，命名工作流任务只使用自己的 `apiKeyRef`；旧目标机配置自动补齐默认任务路由；设置页摘要移除全局密钥状态；新增路由诊断信息；同步更新 adapter 版本检查 |
-| `v0.11.0-alpha` | 将智能改写和智能续写合并为智能编写，智能编写改为 Dify Workflow `/workflows/run` 严格输入变量（`source_text`、`write_action`、`style`、`focus`、`length`、`user_prompt`、`selection_mode`、`trace_id`），设置页移除全局 API Key 和运行探针，仅保留全局 URL + 每任务 Key；同步刷新 Ribbon 图标，并新增正式设计文档作为非 bug 改动的开发准绳 |
-| `v0.10.3-alpha` | 优化任务窗格提示词展示：仅智能改写/续写显示提示词拆解卡片，格式校对、智能排版、技术文档审查恢复简洁视图，并将补充输入占位文案改为“补充要求” |
-| `v0.10.2-alpha` | 修复智能改写/续写 Dify Chat 入参：按 `/chat-messages` 标准发送顶层 `query`，并在 `inputs` 中同步 `text`、`mode`、`query`、`prompt`，避免工作流节点读不到原文和任务模式导致原样返回 |
-| `v0.10.1-alpha` | 优化智能改写/续写任务窗格，显性展示“风格、侧重点、篇幅、输出约束”对应提示词，将“补充要求”调整为改写/续写提示词区域，并保留用户补充输入 |
-| `v0.10.0-alpha` | 将 provider 路线升级为“单 providerBaseUrl + taskRoutes + 每任务 path/apiKeyRef/payloadStyle”，adapter 按任务直接调用对应 Dify 应用或工作流，设置页新增任务接口密钥维护区域，并补充多任务 Dify 路由部署手册 |
-| `v0.9.1-alpha` | 修复目标机旧 uvicorn adapter 占用 `18100` 导致插件命中旧接口的问题，启动脚本会按版本替换旧进程；模板下拉合并后端模板与本地兜底模板；技术文档审查收敛为技术方案、合同验收文档、测试大纲和细则三类，并按文档类型自动切换审查提示词 |
-| `v0.8.0-alpha` | 新增第六个 Ribbon 工作流“技术文档审查”，支持文档类型选择和透明可编辑审查提示词，用于检查功能描述准确性、术语专业性、设计合理性和要求明确性；同时增强结构化审校能力，WPS 插件抽取 `documentStructure`，adapter 将文档结构和本地规则发现传给企业 Dify User Input |
-| `v0.7.1-alpha` | 修正一期交付总包默认 WPS `jsaddons` 安装路径为 `/home/cloud/.local/share/Kingsoft/wps/jsaddons`，并同步交接文档和重新打包 |
-| `v0.7.0-alpha` | 新增一期交付总包，提供一键安装、pip/运行依赖离线安装、WPS `jsaddons` 自动部署、`publish.xml` 写入、一键联调和验收模板 |
-| `v0.6.9-alpha` | 修复 uvicorn 从 `adapter_service/` 目录启动时模板路径解析错误的问题，恢复 `/templates`、格式校对和智能排版对启动包模板文件的访问 |
-| `v0.6.8-alpha` | 修复模型配置清空逻辑：空的大模型 API URL 可以保存，模型提供商名称会随 URL 一起保存，并且只有 API URL 与 API Key 同时存在时才显示已配置 |
-| `v0.6.7-alpha` | 修复旧 standalone adapter 占用 `18100` 导致 uvicorn 未真正启动的问题，健康检查增加运行模式提示，将裸露的 `Failed to fetch` 改为可执行诊断信息，并稳定单一模型供应商 URL/API Key 保存反馈 |
-| `v0.6.6-alpha` | 修复 Python 3.8 离线依赖缺少 `exceptiongroup` 的安装问题，新增 uvicorn 一键启动说明，模板下拉增加本地兜底，并将设置页回退为单一模型供应商配置 |
-| `v0.6.5-alpha` | 修复 Ribbon 图标显示为问号的问题，模型提供商名称改为可配置，并支持从后台多个 provider 中选择当前激活接口 |
-| `v0.6.4-alpha` | 新增模型提供商卡片与编辑下钻，优化 adapter 未启动时的 mock 提示，增加 Ribbon 图标回调兜底，并提供无 pip 目标机的 Python 3.8 离线 pip 引导包 |
-| `v0.6.3-alpha` | 移除任务窗格冗余标题和状态文字，放大结果预览复制按钮，并新增企业大模型 API URL 可配置能力 |
-| `v0.6.2-alpha` | 将任务窗格统一精修为苹果式简约视觉体系，使用轻玻璃卡片、细分割线、一致按钮和结果优先布局 |
-| `v0.6.1-alpha` | 简化设置页文字与布局，并确保每次点击 Ribbon 入口时先隐藏上一个任务窗格再打开新任务窗格 |
-| `v0.6.0-alpha` | 将 WPS AI 助理选项卡改为五个任务入口，任务窗格拆分为独立 Word 工作流，统一中文标题，并将模板选择放入格式校对和智能排版 |
-| `v0.5.1-alpha` | 增加简约 Ribbon 按钮图标，并将模板选择迁移到设置页，让首页聚焦高频文档操作 |
-| `v0.5.0-alpha` | 接入公司 Word 标准模板，支持模板驱动格式审校、排版预览和 AI 错别字检查 |
-| `v0.4.x-alpha` | 增加麒麟 V10 ARM / Python 3.8 离线运行依赖包，支持 `uvicorn` 正式模式 |
-| `v0.3.x-alpha` | 优化任务窗格交互：首页紧凑化、设置/诊断分区、当前范围自动识别、复制结果 |
-| `v0.2.x-alpha` | 增加 API Key 界面导入、选区改写/续写、企业 provider mock 回退 |
-| `v0.1.x-alpha` | 完成 adapter 基线 API、格式校对、排版预览、改写、探针包和启动脚本 |
+本机 Adapter（默认 `127.0.0.1:18100`）承接八类任务的模型配置：工作流平台走 `/chat-messages`，模型直连走 OpenAI 兼容 `/chat/completions`。运行时不回退统一 URL 或统一 Key。生产环境默认关闭模拟结果。
 
 ## 架构
 
@@ -262,40 +48,37 @@ flowchart LR
   User[WPS 用户] --> Addin[WPS JS/HTML 插件]
   Addin --> Bridge[文档桥接层]
   Bridge --> Adapter[本地适配服务<br/>127.0.0.1:18100]
-  Adapter --> Rules[Word 规则<br/>审校 / 格式化]
-  Adapter --> Templates[模板配置]
+  Adapter --> Rules[规则与模板]
   Adapter --> Provider[企业 AI 接口]
   Adapter --> Logs[日志与诊断]
-  Rules --> Adapter
-  Templates --> Adapter
-  Provider --> Adapter
   Adapter --> Addin
   Addin --> Preview[预览与确认]
-  Preview --> WPS[写回 Word]
+  Preview --> WPS[写回文档]
 ```
 
-核心原则：
-
-- AI 或格式化结果不会直接写回文档，必须先展示预览并由用户确认。
-- WPS 插件只负责 UI、文档读取、预览和写回；复杂规则与 AI 编排放在本地适配服务。
-- 文档内容以结构化 payload 传递，保留段落、标题、字体、字号、对齐、层级等信息。
+- 插件只做 UI、抽取、预览、写回。
+- 文档按结构化 payload 传递，保留段落、标题、字体、字号、对齐和大纲级别。
+- 健康状态分为存活、就绪、增强降级和恢复模式；恢复模式禁止改配置和发新模型任务。
 
 ## 仓库结构
 
 | 路径 | 作用 |
 | --- | --- |
-| `wps-addon/` | WPS 插件源码，使用 Vite + TypeScript 构建 task pane |
-| `adapter_service/` | Python 本地适配服务，包含 FastAPI API、规则服务、provider client 与测试 |
-| `templates/` | 办公模板与审校规则配置 |
-| `config/` | 适配服务运行配置示例 |
-| `packaging/` | 离线安装、启动、诊断、卸载和交付包构建脚本 |
-| `formal-plugin-kit/` | 正式 WPS 插件手工导入包 |
-| `probe-kit/` | 目标机器运行时探测包 |
-| `adapter-start-kit/` | 本地适配服务手工启动包 |
-| `docs/` | 设计、部署、验收与运维说明 |
-| `jsaddons/` | WPS 插件导入/发布相关产物与现场验证材料 |
+| `wps-addon/` | 插件源码（Vite + TypeScript） |
+| `adapter_service/` | 本地 Adapter（FastAPI、规则、provider、测试） |
+| `formal-plugin-kit/` | 正式 WPS 手工导入包 |
+| `templates/` | 办公模板和审校规则 |
+| `config/` | 运行配置示例 |
+| `packaging/` | 离线安装、诊断、交付包构建 |
+| `phase1-delivery-kit/` | 一期安装器与验收材料 |
+| `adapter-start-kit/` | Adapter 手工启动包 |
+| `probe-kit/` | 目标机运行时探测 |
+| `docs/` | 设计、运维、验收说明 |
+| `jsaddons/` | WPS 导入 / 发布相关材料 |
 
 ## 快速开始
+
+开发联调可以先起 Adapter、再装插件。内网目标机请用下面的[离线交付](#离线交付)。
 
 ### 1. 启动本地适配服务
 
@@ -303,16 +86,6 @@ flowchart LR
 cd adapter_service
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 18100
-```
-
-Windows PowerShell 可使用：
-
-```powershell
-cd adapter_service
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 18100
 ```
@@ -325,141 +98,48 @@ curl -i http://127.0.0.1:18100/health/ready
 curl http://127.0.0.1:18100/health
 ```
 
-`/health/live` 只验证进程和基础 Web 应用并始终不读取业务数据；`/health/ready` 在 `ready` 或仅增强能力降级时返回 200，在核心数据进入 `recovery` 时返回 503；聚合 `/health` 始终返回 200，并给出脱敏的子系统状态和操作策略。
+`/health/live` 不读业务数据。`/health/ready` 在核心数据进入恢复模式时返回 503。聚合 `/health` 始终 200，只返回脱敏子系统状态。缺 FastAPI 依赖时可 `python adapter_service/standalone_adapter.py 18100`。恢复模式操作见 [运行数据恢复手册](./docs/operations/runtime-state-recovery.md)。
 
-候选只能进入恢复模式时，普通安装会在切换前停止并保留当前安装、候选与已校验备份。只有当前安装已不就绪时，运维人员才能用 `bash installer/install_phase1.sh --activate-recovery` 显式激活。恢复模式下可调用 `POST /recovery/backups` 创建只读故障现场备份，或调用 `GET /recovery/diagnostics` 导出脱敏诊断；整体恢复仍必须通过带快照 ID 和二次确认的命令行完成。详见 [运行数据恢复手册](./docs/operations/runtime-state-recovery.md)。
-
-如果目标环境不方便安装 FastAPI 依赖，也可以使用仓库内置的轻量 standalone 服务：
-
-```bash
-python adapter_service/standalone_adapter.py 18100
-```
-
-### 2. 构建 WPS 插件前端
+### 2. 构建或导入插件
 
 ```bash
 cd wps-addon
 npm install
-npm run test
+npm test
 npm run build
 ```
 
-构建产物会输出到 `wps-addon/dist/`。正式内网终端可优先使用 `formal-plugin-kit/` 中已经整理好的手工导入结构。
+产物在 `wps-addon/dist/`。正式终端优先导入 `formal-plugin-kit/`。
 
 ### 3. 配置企业 AI 接口
 
-复制示例配置：
-
 ```bash
 cp config/adapter.example.json config/adapter.json
-```
-
-关键配置项：
-
-```json
-{
-  "servicePort": 18100,
-  "providerName": "企业大模型接口",
-  "providerType": "enterprise-dify-chat",
-  "providerBaseUrl": "",
-  "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
-  "providerChatPath": "/chat-messages",
-  "providerMode": "blocking",
-  "logPath": "./logs/adapter.log",
-  "templateRoot": "./templates",
-  "timeoutSeconds": 75,
-  "taskApiKeyRefs": {
-    "word.smart_write": "word_smart_write",
-    "word.smart_imitation": "word_smart_imitation",
-    "word.document_review": "word_document_review",
-    "word.format_review": "word_format_review",
-    "excel.analysis": "excel_analysis",
-    "excel.formula_assistant": "excel_formula_assistant",
-    "ppt.slide_assistant": "ppt_slide_assistant",
-    "ppt.structure_review": "ppt_structure_review"
-  }
-}
-```
-
-推荐通过环境变量提供密钥：
-
-```bash
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-模型配置的 API Key 保存到 `run/provider_api_keys/<ref>`，`adapter.json` 只记录接入方式、服务地址、模型参数和密钥引用。每项任务可保存多个配置，切换仅影响下一次新任务，运行中任务继续使用提交时快照。工作流平台走 `/chat-messages`；模型直连走 OpenAI 兼容 `/chat/completions` 并加载 `adapter_service/system_prompts/` 中对应任务提示词。运行时不回退统一 URL 或统一 Key。详细操作见 [模型配置管理手册](./docs/operations/workflow-profile-management.md)。
+`adapter.json` 只保存接入方式、地址、模型参数和密钥引用；API Key 落在 `run/provider_api_keys/<ref>`。字段说明见 `config/adapter.example.json`，操作见 [模型配置管理手册](./docs/operations/workflow-profile-management.md)。
 
-智能编写对应的 Dify SYSTEM 提示词、结构保留输出规则和联调方式见 [AI-WPS 智能编写 Dify 工作流配置手册](./docs/operations/dify-smart-write-workflow.md)。智能仿写对应配置见 [AI-WPS 智能仿写 Dify 工作流配置手册](./docs/operations/dify-smart-imitation-workflow.md)。文档审查对应的配置见 [AI-WPS 文档审查 Dify 工作流配置手册](./docs/operations/dify-document-review-workflow.md)。格式审查对应的配置见 [AI-WPS 格式审查 Dify 工作流配置手册](./docs/operations/dify-format-review-workflow.md)。Word 企业术语和文体规则的维护、导入、导出、备份、降级和恢复见 [写作规范管理手册](./docs/operations/writing-policy-library.md)。智能分析对应配置见 [Excel 智能分析 Dify 工作流配置手册](./docs/operations/dify-excel-analysis-workflow.md)，公式助手对应配置见 [Excel 公式助手 Dify 工作流配置手册](./docs/operations/dify-excel-formula-assistant-workflow.md)，智能总结双模式配置见 [PPT 智能总结 Dify 工作流配置手册](./docs/operations/dify-ppt-slide-assistant-workflow.md)，结构审查配置和只读验收见 [PPT 结构审查 Dify 工作流配置手册](./docs/operations/dify-ppt-structure-review-workflow.md)。可部署的 Excel/PPT 提示词模板位于 [`docs/prompt-templates/`](./docs/prompt-templates/)。
+## 文档
 
-## API 一览
+| 文档 | 内容 |
+| --- | --- |
+| [模型配置](./docs/operations/workflow-profile-management.md) | 工作流平台 / 模型直连、密钥和激活 |
+| [写作规范](./docs/operations/writing-policy-library.md) | 预置包、导入导出、备份和降级 |
+| [智能编写](./docs/operations/dify-smart-write-workflow.md) | Word 编写工作流 |
+| [智能仿写](./docs/operations/dify-smart-imitation-workflow.md) | Word 仿写工作流 |
+| [文档审查](./docs/operations/dify-document-review-workflow.md) | Word 文档审查 |
+| [格式审查](./docs/operations/dify-format-review-workflow.md) | Word 格式审查 |
+| [智能分析](./docs/operations/dify-excel-analysis-workflow.md) | Excel 分析 |
+| [公式助手](./docs/operations/dify-excel-formula-assistant-workflow.md) | Excel 公式 |
+| [智能总结](./docs/operations/dify-ppt-slide-assistant-workflow.md) | PPT 当前页 / 文档总结 |
+| [结构审查](./docs/operations/dify-ppt-structure-review-workflow.md) | PPT 结构审查 |
+| [提示词模板](./docs/prompt-templates/) | 可部署的 Excel / PPT 模板 |
+| [麒麟测试环境](./docs/operations/kylin-v10-test-environment.md) | 目标机与 SSH |
 
-| 方法 | 路径 | 用途 |
-| --- | --- | --- |
-| `GET` | `/health/live` | 只检查 Adapter 进程与基础 Web 应用是否存活，不读取业务数据 |
-| `GET` | `/health/ready` | 检查核心业务是否就绪；恢复模式返回 HTTP 503 |
-| `GET` | `/health` | 以 HTTP 200 返回 `ready`、`degraded` 或 `recovery` 及脱敏子系统状态 |
-| `POST` | `/recovery/backups` | 仅在恢复模式下创建只读运行数据备份 |
-| `GET` | `/recovery/diagnostics` | 导出不含配置正文、密钥、文档和敏感路径的诊断摘要 |
-| `GET` | `/config` | 查看当前运行配置摘要 |
-| `GET` | `/templates` | 获取可用模板列表 |
-| `GET` | `/provider/status` | 查看企业 AI provider 认证状态 |
-| `GET` | `/provider/task-api-keys` | 查看任务级 API Key 配置摘要 |
-| `GET` / `POST` | `/provider/model-configurations` | 按任务查看或新建模型配置 |
-| `PATCH` / `DELETE` | `/provider/model-configurations/{configurationId}` | 修改或删除非当前模型配置 |
-| `POST` | `/provider/model-configurations/{configurationId}/api-key` | 单独更换配置 API Key |
-| `POST` | `/provider/model-configurations/{configurationId}/activate` | 激活完整模型配置 |
-| `POST` | `/provider/model-configurations/{configurationId}/copy` | 创建不含密钥正文的配置副本 |
-| `POST` | `/provider/model-configurations/{configurationId}/validate` | 对指定配置执行真实验证调用；返回配置身份和当前路由关系，不自动激活 |
-| `GET` / `POST` | `/provider/workflow-profiles` | 旧版工作流档案兼容包装，保留一个版本 |
-| `POST` | `/provider/api-key` | 保存统一 Dify Chat API Key |
-| `DELETE` | `/provider/api-key` | 清除统一 Dify Chat API Key |
-| `POST` | `/provider/task-api-key` | 保存某个任务的独立 Dify API Key |
-| `DELETE` | `/provider/task-api-key/{taskType}` | 清除某个任务的独立 Dify API Key |
-| `GET` | `/writing-policies/summary` | 查看 Word 写作规范数量和可用状态 |
-| `GET` | `/writing-policies/packs` | 只读查看预置规范包的来源、版本、提交和许可证 |
-| `GET` / `POST` | `/writing-policies/items` | 浏览预置条目或查询、新增组织术语与写作规则 |
-| `PATCH` / `DELETE` | `/writing-policies/items/{itemId}` | 修改或删除一条写作规范 |
-| `GET` | `/writing-policies/import-template.csv` | 下载 CSV 导入模板 |
-| `GET` | `/writing-policies/import-template.xlsx` | 下载 XLSX 导入模板 |
-| `POST` | `/writing-policies/imports/preview` | 校验导入文件并生成短期预览令牌 |
-| `POST` | `/writing-policies/imports/apply` | 应用一次未使用的导入预览并跳过冲突项 |
-| `GET` | `/writing-policies/export.csv` | 按筛选条件导出 CSV |
-| `GET` | `/writing-policies/backup` | 下载一致性的 SQLite 数据库备份 |
-| `GET` | `/writing-policies/diagnostics` | 查看脱敏的规范库健康诊断 |
-| `POST` | `/word/smart-write/jobs` | 提交可恢复的智能编写后台任务 |
-| `GET` / `DELETE` | `/word/smart-write/jobs/{jobId}` | 查询或取消排队中的智能编写任务 |
-| `POST` | `/word/smart-imitation/jobs` | 提交可恢复的智能仿写后台任务 |
-| `GET` / `DELETE` | `/word/smart-imitation/jobs/{jobId}` | 查询或取消排队中的智能仿写任务 |
-| `POST` | `/word/smart-write`、`/word/smart-imitation` | 由同一任务协调器承载的同步兼容接口 |
-| `POST` | `/word/document-review` | 文档审查，检查错别字、语言表达、逻辑、通畅性和文档类型专业性 |
-| `POST` | `/word/document-review/jobs` | 启动后台文档审查任务，适配模型后台慢响应 |
-| `GET` | `/word/document-review/jobs/{jobId}` | 轮询后台文档审查任务状态，直到完成或失败 |
-| `POST` | `/word/format-review` | 已退役的兼容接口，始终返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` |
-| `POST` | `/word/format-review/snapshots` | （开关控制）创建 v2 只读确定性格式审查快照 |
-| `POST` | `/word/format-review/jobs` | （开关控制）提交 v2 确定性格式审查后台任务 |
-| `GET` | `/word/format-review/jobs/{jobId}` | （开关控制）轮询 v2 确定性格式审查任务状态和结构化结果 |
-| `GET` | `/word/format-review/jobs/{jobId}/issues` | 分页查询 v2 格式问题，支持规则、严重度、状态和来源排序筛选 |
-| `PATCH` | `/word/format-review/jobs/{jobId}/issues/{issueId}` | 更新单个格式问题的处理状态或锚点验证状态 |
-| `GET` | `/word/format-review/jobs/{jobId}/report` | 获取 v2 报告摘要，或按 `format=json|markdown` 导出 |
-| `DELETE` | `/word/format-review/jobs/{jobId}` | 取消或清理 v2 格式审查任务 |
-| `DELETE` | `/word/format-review/jobs/{jobId}/report` | 删除 v2 格式审查报告 |
-| `DELETE` | `/word/format-review/snapshots/{snapshotId}` | （开关控制）删除未提交的确定性格式审查快照 |
-| `POST` | `/excel/analysis` | 智能分析，只读分析选区或当前工作表已用范围 |
-| `POST` | `/excel/analysis/jobs` | 提交可恢复的智能分析后台任务 |
-| `GET` | `/excel/analysis/jobs/{jobId}` | 查询智能分析后台任务状态 |
-| `DELETE` | `/excel/analysis/jobs/{jobId}` | 取消排队中的智能分析任务；运行中的阻塞式模型请求不可取消 |
-| `POST` | `/excel/formula-assistant/jobs` | 用明确选区提交只读公式生成或解释排错任务 |
-| `GET` | `/excel/formula-assistant/jobs/{jobId}` | 查询或恢复公式助手任务状态 |
-| `DELETE` | `/excel/formula-assistant/jobs/{jobId}` | 取消排队中的公式生成任务；运行中的阻塞式模型请求不可取消 |
-| `POST` | `/ppt/document-files` | 校验并暂存单个 UTF-8 `.md` 或有效 `.docx` 文件，大小不超过 10 MB，返回一次性令牌 |
-| `POST` | `/ppt/slide-assistant/jobs` | 提交当前页或文档智能总结后台任务 |
-| `GET` | `/ppt/slide-assistant/jobs/{jobId}` | 查询或恢复智能总结后台任务 |
-| `DELETE` | `/ppt/slide-assistant/jobs/{jobId}` | 取消排队中的智能总结任务；运行中的阻塞式模型请求不可取消 |
-| `POST` | `/ppt/structure-review/jobs` | 提交最多 60 页的只读结构审查后台任务 |
-| `GET` | `/ppt/structure-review/jobs/{jobId}` | 查询或恢复结构审查后台任务 |
-| `DELETE` | `/ppt/structure-review/jobs/{jobId}` | 取消排队中的结构审查任务；运行中的阻塞式模型请求不可取消 |
+## API 摘要
 
-统一响应结构：
+统一响应：
 
 ```json
 {
@@ -472,85 +152,57 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 }
 ```
 
+| 分组 | 路径 |
+| --- | --- |
+| 健康 | `GET /health/live`、`/health/ready`、`/health` |
+| 恢复 | `POST /recovery/backups`、`GET /recovery/diagnostics` |
+| 配置 | `GET /config`、`GET /templates`、`GET /provider/status` |
+| 模型配置 | `/provider/model-configurations` 及激活、换钥、校验、复制 |
+| 写作规范 | `/writing-policies/*`（条目、导入预览、导出、备份） |
+| Word | `/word/smart-write/jobs`、`/word/smart-imitation/jobs`、`/word/document-review/jobs`、`/word/format-review/jobs`（v2 快照 / 任务 / 问题 / 报告） |
+| Excel | `/excel/analysis/jobs`、`/excel/formula-assistant/jobs` |
+| PPT | `/ppt/document-files`、`/ppt/slide-assistant/jobs`、`/ppt/structure-review/jobs` |
+
+`POST /word/format-review` 已退役，固定返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`。长任务一般是提交 jobs、短请求轮询、排队中可取消；运行中的阻塞式模型请求不可取消。
+
 ## 离线交付
 
-一期正式版本只提供一个 Word/Excel/PPT 统一交付包和一个安装脚本。覆盖安装继续保留目标机已有 `config/adapter.json`、统一 API Key、`run/provider_api_keys/`、Word 写作规范数据库和全部已有规范库备份；包内同时提供 Excel/PPT Markdown 提示词模板及自动生成的写作规范 CSV/XLSX 导入模板。
-
-生成完整离线包：
+一期正式版本是一个 Word / Excel / PPT 统一包加一个安装脚本。覆盖安装保留已有 `config/adapter.json`、API Key、写作规范库和已有备份。
 
 ```bash
 bash packaging/build_offline_bundle.sh
-```
-
-默认产物：
-
-```text
-dist-offline/wps-ai-assistant-offline.tar.gz
-```
-
-安装到目标目录：
-
-```bash
 bash packaging/install.sh "$HOME/.wps-ai-assistant"
-```
-
-启动适配服务：
-
-```bash
 bash packaging/start_adapter.sh "$HOME/.wps-ai-assistant" 18100
-```
-
-诊断：
-
-```bash
 bash packaging/diagnose.sh "$HOME/.wps-ai-assistant"
-```
-
-卸载：
-
-```bash
 bash packaging/uninstall.sh "$HOME/.wps-ai-assistant"
 ```
 
-其他交付包：
+默认产物：`dist-offline/wps-ai-assistant-offline.tar.gz`。
 
-| 命令 | 产物用途 |
+| 命令 | 用途 |
 | --- | --- |
-| `bash packaging/build_formal_plugin_kit.sh` | 生成正式 WPS 插件手工导入包 |
-| `bash packaging/build_probe_kit.sh` | 生成目标机器运行时探测包 |
-| `bash packaging/build_adapter_start_kit.sh` | 生成适配服务手工启动包 |
+| `bash packaging/build_formal_plugin_kit.sh` | 正式插件手工导入包 |
+| `bash packaging/build_probe_kit.sh` | 目标机探测包 |
+| `bash packaging/build_adapter_start_kit.sh` | Adapter 手工启动包 |
+
+系统 Python 无 pip 时，安装器对 get-pip 使用 `-sS`，不扫描麒麟 apt 的 `dist-packages`。
 
 ## 测试
-
-后端测试：
 
 ```bash
 cd adapter_service
 pytest
 ```
 
-前端测试：
-
 ```bash
 cd wps-addon
-npm run test
+npm test
 ```
 
-## 当前阶段与路线图
+目标机回归使用麒麟 V10 ARM64 上的 Python 3.8（见 [测试环境](./docs/operations/kylin-v10-test-environment.md)）。交付审计脚本在 `packaging/`。
 
-当前实现覆盖 Phase 1 的基础闭环：
+## 路线图
 
-- WPS 插件 task pane 与按钮入口
-- 文档/选区结构化读取
-- 本地适配服务健康检查、配置、模板、provider 状态
-- 智能编写、文档审查、格式审查接口
-- 只读智能分析、当前页/文档双模式智能总结和 PPT 结构审查
-- 预览后写回 Word 的基础能力
-- 运行时探测与离线交付脚本
+Phase 1 已覆盖：三宿主任务窗格、结构化抽取、Adapter 健康与配置、八类任务、预览后写回 Word、运行时探测和离线安装。
 
-后续 Phase 2 可在同一适配层之上扩展：
-
-- 更丰富的 Excel 报告生成与多表流程
-- Excel 多表/多文件比对
-- 在当前只预览/复制边界之外受控扩展 PPT 生成流程
-- 更完整的企业模板、审计、权限和规范库治理能力
+后续可以在同一 Adapter 上扩展 Excel 多表流程、多文件比对、受控 PPT 生成，以及更完整的模板、审计和规范库治理。

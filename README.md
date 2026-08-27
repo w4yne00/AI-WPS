@@ -1,77 +1,10 @@
-<h1 align="center">AI-WPS</h1>
+# AI-WPS
 
-<p align="center">
-  <strong>WPS AI Assistant for Secure Intranet Office Workflows</strong>
-  <br />
-  A native WPS add-in backed by a local adapter service, enterprise AI providers, and offline delivery tooling.
-</p>
+A WPS AI assistant for intranet office terminals. Architecture: **native WPS JS/HTML add-in + local Python adapter + enterprise AI API**. The add-in owns UI, document extraction, preview, and write-back. Rules, templates, configuration, logs, diagnostics, and model calls stay in the local adapter.
 
-<p align="center">
-  <a href="./README.md">English</a>
-  <span> | </span>
-  <a href="./README-ZH.md">Chinese</a>
-</p>
+Current scope is **Phase 1: platform foundation + Word / Excel / PPT**, targeting Kylin V10 ARM, Python 3.8, and offline install.
 
-<p align="center">
-  <img alt="Phase" src="https://img.shields.io/badge/Phase-1%20Word%20Foundation-2F6FED?style=for-the-badge" />
-  <img alt="WPS Add-in" src="https://img.shields.io/badge/WPS-Native%20Add--in-C62828?style=for-the-badge" />
-  <img alt="Local Adapter" src="https://img.shields.io/badge/Local%20Adapter-FastAPI%20%4018100-009688?style=for-the-badge" />
-  <img alt="Offline Ready" src="https://img.shields.io/badge/Offline-Ready-455A64?style=for-the-badge" />
-</p>
-
-<p align="center">
-  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript%20%2B%20Vite-3178C6?style=flat-square&logo=typescript&logoColor=white" />
-  <img alt="Python" src="https://img.shields.io/badge/Python%20%2B%20FastAPI-3776AB?style=flat-square&logo=python&logoColor=white" />
-  <img alt="Kylin V10 ARM" src="https://img.shields.io/badge/Kylin%20V10-ARM-B71C1C?style=flat-square" />
-  <img alt="Enterprise AI" src="https://img.shields.io/badge/Enterprise-AI%20Provider-6A1B9A?style=flat-square" />
-</p>
-
-<p align="center">
-  <code>Smart Write</code>
-  <code>Smart Imitation</code>
-  <code>Document Review</code>
-  <code>Format Review</code>
-  <code>Excel Analysis</code>
-  <code>PPT Smart Summary</code>
-  <code>Template Rules</code>
-  <code>Runtime Probe</code>
-  <code>Offline Delivery</code>
-</p>
-
-<br />
-
-<table align="center">
-  <tr>
-    <td align="center" width="190">
-      <strong>WPS Native Add-in</strong>
-      <br />
-      <sub>Lightweight task pane and document bridge</sub>
-    </td>
-    <td align="center" width="190">
-      <strong>Local Adapter</strong>
-      <br />
-      <sub>Rules, templates, logs, and diagnostics</sub>
-    </td>
-    <td align="center" width="190">
-      <strong>Enterprise AI</strong>
-      <br />
-      <sub>Intranet provider integration with mock fallback</sub>
-    </td>
-    <td align="center" width="190">
-      <strong>Offline Delivery</strong>
-      <br />
-      <sub>Install, start, probe, and acceptance tooling</sub>
-    </td>
-  </tr>
-</table>
-
----
-
-## Overview
-
-AI-WPS is a WPS AI assistant for intranet office terminals. It uses a **WPS native JS/HTML add-in + local Python adapter service + enterprise AI API** architecture. The add-in stays lightweight, while rules, templates, configuration, logging, diagnostics, and AI orchestration live in the local adapter layer.
-
-The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workflows**, designed for Kylin V10 ARM, offline deployment, and intranet-only environments.
+[English](./README.md) | [Chinese](./README-ZH.md)
 
 ## Current Version
 
@@ -81,218 +14,32 @@ The current scope is **Phase 1: platform foundation + Word, Excel, and PPT workf
 | Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | Unique 0.25.3 automated candidate `20260826-d1a346b` (`candidate`); frozen 0.25.2 unique candidate remains `20260825-850871c` (`candidate`); `20260825-dacd1e9` and `20260825-0f50456` are `rejected`; frozen 0.25.1 candidate remains `20260824-d7a1dd8`; Issue #59 remains `manual-pending` |
+| Delivery status | 0.25.3 automated candidate `20260826-d1a346b` (`candidate`); Issue #59 remains `manual-pending` |
 | Phase 1 delivery kit | `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`, SHA-256 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`; source `d1a346b0d7e1301f74b37e692664fd31085ee050` |
 
-### v0.25.3-alpha Delivery Status
+`v0.25.3-alpha` keeps the Phase1 installer and adds 结果预览, 格式问题 cards, 题注关联结论, and 幻灯片页角色. 图像语义补充 stays default-on; probe failure or a closed master switch is 视觉关闭降级. Automated gates still yield only `candidate`.
 
-`v0.25.3-alpha` keeps the Phase1 installer and adds Issue #101 结果预览,
-格式问题 cards, 题注关联结论, and 幻灯片页角色. The unique 0.25.3 automated
-candidate is `20260826-d1a346b`
-(`AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`),
-archive `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`, SHA-256
-`120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`. get-pip
-uses `-sS` so Kylin apt dist-packages are not scanned. The frozen 0.25.2 unique
-candidate remains `20260825-850871c`
-(`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`),
-archive `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`, SHA-256
-`c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`. 图像语义补充
-default-on and 视觉关闭降级 stay as published in 0.25.2. Automated gates still
-yield only `candidate`. Issue #59 remains `manual-pending`.
+Frozen kits: `v0.25.2-alpha` candidate `20260825-850871c` (SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`); `v0.25.1-alpha` candidate `20260824-d7a1dd8` (build `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`, source `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`, archive `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`, SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`). Rejected predecessors, gate numbers, and lineage live in [packaging/v0251-delivery.md](./packaging/v0251-delivery.md), [packaging/v0252-delivery.md](./packaging/v0252-delivery.md), and [packaging/v0253-delivery.md](./packaging/v0253-delivery.md).
 
-### v0.25.2-alpha Delivery Status
+Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
-`v0.25.2-alpha` keeps the Phase1 installer and publishes 图像语义补充 as the
-default-on direct-model path: new installs open the master switch, overlay
-upgrades migrate existing format-review direct configs, and visual-capability
-failure is 视觉关闭降级. The unique 0.25.2 automated candidate is
-`20260825-850871c` (`AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`),
-archive `ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`, SHA-256
-`c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`. get-pip
-uses `-sS` so Kylin apt dist-packages are not scanned. `20260825-dacd1e9`
-and `20260825-0f50456` are `rejected` and keep their original bytes. Automated
-gates still yield only `candidate`. Issue #59 remains `manual-pending`. The
-frozen 0.25.1 candidate `20260824-d7a1dd8` keeps its original bytes
-(`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`) and is
-not the current 0.25.2 candidate.
+## Features
 
-### v0.25.1-alpha Delivery Status
+Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-display. Model output is previewed before any write-back. Review and analysis tasks are read-only by default.
 
-The unique automated candidate is `20260824-d7a1dd8`. Its candidate build ID is
-`AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`,
-source commit `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`, archive
-`ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`, checksum file
-`ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz.sha256`, and SHA-256
-`ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`. Its
-automated status is `candidate`. The direct predecessor `20260824-10b251d`
-remains byte-frozen and `rejected` because its packaged target-acceptance record
-contained contradictory current-candidate/no-current-candidate narratives and
-duplicate previous-rejected lines; its SHA-256 is
-`6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`. The
-assembled archive contains a generated acceptance context bound to d7a1dd8;
-the source `packaging/v0251-target-machine-acceptance.md` remains the pre-build
-generator template and intentionally has no bound current candidate. Automated
-`candidate` status does not mean real WPS GUI, model, or target-machine
-acceptance: Issue #59 remains `manual-pending`.
+| Host | Entry | Notes |
+| --- | --- | --- |
+| Word | Smart Write | Rewrite, continue, summarize, custom write; preview / compare / plain text, then write-back |
+| Word | Smart Imitation | Template-based imitation; preview, plain text, copy; no write-back |
+| Word | Document Review | Typos, expression, logic, fluency, professionalism; selection or limited full document |
+| Word | Format Review | Against `技术文件格式及书写要求`; 格式问题 cards, 题注关联结论, 图像语义补充; no format write-back |
+| Word | Writing policy | Four preset packs plus a local organization library |
+| Excel | 智能分析 | Selected or used range; structured report and briefing paragraph; no cell writes |
+| Excel | 公式助手 | Explicit selection (max 30×20); generate or explain; copy only |
+| PPT | 智能总结 | Current slide, or one `.md` / `.docx` (≤10 MB) for a full-deck outline; preview and copy only |
+| PPT | 结构审查 | Up to 60 slides; 幻灯片页角色 list; read-only |
 
-The earlier `20260824-f953c58`, `20260824-afe109c`, `20260824-799adf9`,
-`20260824-5318d4b`, `20260824-2e7a3e6`, and `20260824-ccad09f` archives remain
-rejected with their recorded identities, archive digests, and reasons. The
-`20260824-f953c58` direct predecessor remains byte-identical with SHA-256
-`833e71fcf5a6e2172c93e44cc3502d46e1ea89c5dc4abb77f658ac8c5ee77ee7`; its
-direct predecessor `20260824-afe109c` remains rejected with its recorded
-identity and digest.
-
-The `20260822-afc5470` package reproduced the blocking “invalid source range index”
-failure during target-machine format review and is now recorded as `rejected` together
-with `20260816`, `20260822-275099e`, and `20260822-4ff1862`. WPS unavailable-position
-sentinels were serialized as JSON `null`, and the backend incorrectly rejected these
-optional values before the model invocation. Source commit `672875e` drops non-finite
-values in the add-in and ignores optional `null` location fields in the backend while
-still rejecting negative, string, boolean, and unknown range values.
-
-An earlier candidate built from record commit `385a251` passed packaged dependency
-installation, Adapter import, Uvicorn startup, the public format-review API, installation
-and upgrade scenarios, fault recovery, and interruption rollback on Kylin ARM/Python 3.8.10.
-That evidence belongs to a rejected package and is never `target-accepted`; Issue #59
-remains the real WPS and direct-model acceptance record.
-
-Validation snapshot:
-
-| Gate | Result |
-| --- | --- |
-| Current-source full Adapter suite | `874 passed, 95 skipped` |
-| v0.25.1 delivery/prepare/audit focused | `87 passed` (`test_v0251_delivery.py`) |
-| Focused protocol/delivery aggregate | `137 passed, 5 skipped` |
-| Formal plugin contract tests | `28/28` |
-| Sol/high core verdict | `CLEAN FOR BUILD` |
-| Kylin build provenance and audits | Candidate d7a1dd8 source provenance `246`; final candidate audit passed; automated result is `candidate` |
-| Python 3.8 compatibility scan | `82` production files; Kylin runtime Node `v22.23.2`, Python `3.8.10` |
-| Public format-review API and hash contract | Public API, all four hash keys, runtime/lifecycle/install/upgrade/rollback/deleted-workflow-profile gates passed |
-| Archive checksum | Candidate d7a1dd8 SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`; direct predecessor `10b251d` remains byte-identical with SHA-256 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120` |
-| Target WPS GUI and real-document acceptance | Manual-pending in Issue #59; not passed or accepted |
-
-Version rule format:
-
-```text
-AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}
-```
-
-Rules:
-
-- `phase`: project phase, such as `P1` or `P2`.
-- `scope`: main delivery scope, such as `WORD`, `EXCEL`, `PPT`, or `DELIVERY`.
-- `major`: architecture or compatibility boundary changes.
-- `minor`: user-visible capability additions.
-- `patch`: bug fixes, UI polish, packaging updates, and documentation updates.
-- `yyyymmdd`: build or milestone date.
-
-## Highlights
-
-| Capability | Description |
-| --- | --- |
-| WPS native task pane | Manual-import `jsaddons` compatible plugin layout for Kylin/WPS target terminals |
-| Host-specific Ribbon entries | Word exposes Smart Write, Smart Imitation, Document Review, Format Review, and Settings; Excel exposes only “智能分析”, “公式助手”, and Settings; PPT exposes only “智能总结”, “结构审查”, and Settings |
-| Mode-specific task pane | Word, Excel, and PPT use separate host add-ins so their buttons do not cross-display |
-| Document review | Uses selected text or a limited full-document extraction path and a dedicated `word.document_review` Dify app to check typos, expression quality, logic, fluency, and document-type professionalism; long-running model-backend requests keep visible task-pane feedback |
-| Format review | Checks selected text or the whole document against the standard `技术文件格式及书写要求` template; AI may classify paragraph roles, but the task only reports format issues and does not apply formatting; preview results are grouped, prioritized, and localized for easier troubleshooting |
-| Word smart write | Combines rewrite, continue, summarize, and custom writing into one Dify Chatflow task; the adapter sends the full prompt through top-level `query` and automatically supports legacy `inputs.query` workflows |
-| Smart imitation | Adds an independent `word.smart_imitation` model workflow for template-based imitation writing with selected-text or pasted templates, required imitation requirements, optional reference material, and preview/plain-text/copy-only results without comparison or writeback |
-| Word writing policy library | Ships four traceable preset packs for G-enterprise technical writing, technical-document style, cybersecurity terminology, and official-document style; Smart Write supports explicit scenes or conservative auto matching plus nonblocking review/expression hints, while local organization policies retain drill-down CRUD, CSV/XLSX import preview, conflict handling, export, backup, and fail-open behavior without changing writeback |
-| Excel “智能分析” | Provides a read-only `excel.analysis` model workflow for selected range or active used range analysis; long tasks use background jobs with recoverable polling, with structured report and plain paragraph views and no cell writeback |
-| Excel “公式助手” | Uses an independent `excel.formula_assistant` workflow and only an explicit selection (up to 30 rows by 20 columns), with an explicit Generate or Explain/Debug mode; returns an original-formula explanation, one primary formula, one collapsed alternative only when materially different, and non-executing syntax/reference/compatibility checks, with copy-only output and no workbook writes |
-| PPT “智能总结” | Uses one `ppt.slide_assistant` workflow profile for two modes. Current-slide summary reads the title, optional subtitle, body text, and adjacent titles. Document summary accepts one UTF-8 `.md` or valid `.docx` file up to 10 MB and produces a complete 5/8/10/12/15-slide recommendation, defaulting to 10 slides. Both modes are preview/copy only and never write to the presentation |
-| PPT “结构审查” | Uses an independent `ppt.structure_review` workflow to review an explicit range of at most 60 slides. Titled slides expose only slide numbers, titles, and optional subtitles; untitled-slide body fallback is capped at 120 characters and 10 attempted pages, after which body text is not read and only insufficient-information feedback is retained. Every result discloses the exact reviewed range, and local/model findings are deduplicated by pages and issue semantics without a numeric score or presentation writes |
-| Result preview | Smart Write first restores paragraph breaks for selected multi-paragraph rewrites, then chooses plain or structured preview based on content: ordinary paragraphs avoid extra formatting, while headings, lists, numbering, tables, and bold text are displayed as structure when present; Document Review, Format Review, and diagnostics continue to use safe Markdown rendering |
-| Unified three-host UI | Word, Excel, and PPT share the same restrained light-gray, white, mist-blue, and status-color visual system while preserving host isolation and existing task behavior |
-| Template-driven rules | Includes the company template `技术文件格式及书写要求.docx` and its extracted JSON rule profile |
-| Local adapter service | FastAPI service with `uvicorn` preferred mode and `standalone` fallback mode; production mock output is disabled unless explicitly enabled for development |
-| Model configurations | All eight tasks use host-isolated, per-task model configurations. Each configuration selects either a workflow-platform Chat API or an OpenAI-compatible direct-model API and independently stores its service URL, key, and applicable model parameters |
-| Direct-model prompts | Eight versioned Markdown System Prompts are bundled and SHA-256 verified; direct-model requests send task instructions as `system` and document/user content as `user` |
-| Provider settings | Settings uses a same-page drill-down editor for model configurations. Task selectors expose only complete configurations; there is no runtime fallback to a global URL or key |
-| Adapter operations | Start-kit scripts manage the uvicorn adapter and expose provider configuration, route diagnostics, and last-forwarding diagnostics from health/status/log checks; Kylin V10 targets can install a systemd autostart service |
-| Offline delivery | Includes formal plugin kit, adapter start kit, Kylin V10 ARM Python 3.8 wheel bundle, pip bootstrap bundle, and operational scripts |
-| Phase 1 delivery kit | One package and one installer deploy the Word, Excel, and PPT add-ins together; first install initializes an empty organization writing-policy database, while overwrite installation preserves that database, every existing backup, the API URL, unified API key, and workflow-profile keys. A release manifest audits the four reviewed preset packs, source/license notices, import templates, acceptance documents, and runtime-state exclusions |
-
-## Latest Updates
-
-| Version | Update |
-| --- | --- |
-| `v0.25.2-alpha` | Phase1 identity for default-on 图像语义补充, overlay upgrade migration, and 视觉关闭降级; frozen `20260824-d7a1dd8` stays the 0.25.1 candidate; Issue #59 remains `manual-pending` |
-| `v0.25.1-alpha` | Publishes the unique automated candidate `20260824-d7a1dd8` with bound archive evidence; `10b251d` remains rejected, and Issue #59 target acceptance remains `manual-pending` |
-| `v0.25.0-alpha` | Packages the complete Phase 1 Word/Excel/PPT delivery candidate with explicit allowlist assembly, release-manifest and SHA-256 audit, Python 3.8 lifecycle validation, format-rule asset verification, and offline installation/upgrade/fault-injection checks. Automated validation marks a candidate build only; Kylin V10/WPS acceptance remains separate |
-| `v0.23.1-alpha` | Fixes the Python 3.8 Adapter import failure caused by a runtime-evaluated built-in generic annotation. Recovery-only candidates now stop before switching by default and require explicit `--activate-recovery` under guarded conditions. Recovery mode exposes only retry, read-only backup, and sanitized diagnostics. Automated success marks a candidate build only; Kylin V10/WPS acceptance remains separate |
-| `v0.23.0-alpha` | Adds per-task dual model access for all eight Word/Excel/PPT tasks: workflow-platform `/chat-messages` and OpenAI-compatible direct-model `/chat/completions`. Existing workflow profiles migrate in place, eight verified Markdown System Prompts ship with the adapter, mock output is opt-in only, and Smart Write/Smart Imitation now use recoverable background jobs with a 600-second provider budget and interactive queue priority. The three host settings panes share a compact model-configuration editor while preserving host colors and all existing result/writeback boundaries |
-| `v0.22.0-alpha` | Adds the PPT Structure Review minimum loop with an independent Ribbon entry, workflow profile, and API key; explicit ranges up to 60 slides; separated title/subtitle extraction and bounded untitled-slide fallback; merged local and single-call semantic review findings; prioritized/page-specific results, recommended outline, and copy-only read-only behavior |
-| `v0.21.0-alpha` | Formally packages the independent Excel Formula Assistant with Generate and Explain/Debug modes, selection-only 30×20 extraction, `Formula`/`FormulaLocal`/`FormulaR1C1` read fallback guarded by `HasFormula`, shared long-task queuing and recovery, local non-executing checks, and copy-only results. The unified package includes its Dify operations guide and prompt template; Word and PPT business behavior remains unchanged |
-| `v0.20.1-alpha` | Stabilizes the existing three-host long-task queue and Word/Excel selection watchers without adding business entries. Document Review, Excel Analysis, and PPT Summary share two running slots plus eight FIFO queue positions, preserve submission-time configuration, expose truthful queue/phase/timing and queued cancellation, and report Adapter-restart interruption explicitly. Word and Excel prefer host selection events with a visible-page low-frequency fallback and pause host reads while hidden, in settings, or busy. Existing workflows, results, writeback boundaries, and overwrite-install protection remain unchanged |
-| `v0.20.0-alpha` | Formally packages the reviewed writing-policy baseline in the unified three-host delivery kit. First install initializes the organization database; overwrite upgrades preserve organization overrides, custom rules, preset-disable state, backups, and model configuration. The build now emits and verifies a release manifest and rejects databases, keys, logs, imported content, or unapproved drafts, without changing Format Review, Excel Analysis, PPT Summary, workflow profiles, writeback, timeout, or polling behavior |
-| `v0.19.1-alpha` | Refines the shared Word, Excel, and PPT task-pane experience without changing business workflows: compact host-colored task and settings views, live model-interface readiness derived from each host's URL and workflow profiles, scalable task tabs, optional workflow notes, contextual help, and collapsed advanced diagnostics. Settings probes now use an isolated 8-second budget, single-flight refresh, stale-response protection, and edit-aware pausing so they cannot overwrite task status, results, long-running job state, or unsaved settings |
-| `v0.19.0-alpha` | Adds Word enterprise terminology and writing-rule knowledge for Smart Write, Smart Imitation, and Document Review. The local SQLite-backed manager supports scoped CRUD, CSV/XLSX import preview with conflict skipping, CSV export, database backup, result usage summaries, and fail-open degraded feedback. Excel/PPT behavior and all existing writeback paths remain unchanged; overwrite installation preserves the writing policy database and up to three existing backups |
-| `v0.18.1-alpha` | Streamlines workflow settings across Word, Excel, and PPT: removes unified-key controls from the task pane, keeps a compact host-isolated workflow list with full-width create/edit views, activates task-page selections immediately, protects active profiles from deletion, preserves existing keys when edits leave the key blank, and keeps adapter fallback and overwrite-install compatibility unchanged |
-| `v0.18.0-alpha` | Renames the current Excel entry to “智能分析” and upgrades PPT to the dual-mode “智能总结”; adds secure single-file UTF-8 Markdown/DOCX upload, complete-deck 5/8/10/12/15-slide recommendations, 1800-second recoverable polling, a unified three-host visual system, Excel/PPT Markdown prompt templates, and one combined overwrite-install package that preserves the API URL and API keys |
-| `v0.17.0-alpha` | Adds the read-only PPT Slide Assistant with current-slide title, optional subtitle, body text, and adjacent-title extraction; generate/optimize modes, recoverable long-task polling, preview/plain-text and categorized copy actions; strict Word/Excel/PPT Ribbon isolation; and one combined upgrade package that preserves the target machine's API URL and API keys |
-| `v0.16.0-alpha` | Adds named workflow profiles for all five tasks. Users can pre-save multiple Dify API keys, explicitly switch the active profile from each task pane, and manage names, notes, replacement keys, and inactive profiles in Settings. Existing task keys migrate to a reusable “Current configuration” profile, upgrades preserve all profile keys, and Word/Excel host isolation remains unchanged |
-| `v0.15.2-alpha` | Supports both legacy and current Dify Chatflow user inputs: legacy apps keep `inputs.query`, while User Input node apps receive top-level `query` and `files`. When the first request returns HTTP 400, the adapter retries once with the alternate shape and caches the successful mode without changing task prompts, timeouts, parsers, or frontend behavior |
-| `v0.15.1-alpha` | Moves Excel Analysis to the same long-running background-job pattern as Document Review: the task pane uses 10-second submit/status requests, persists the client job ID, recovers polling after connection interruptions, and the adapter allows up to 1800 seconds for the model backend |
-| `v0.15.0-alpha` | Adds the first Excel workflow, Excel 智能分析, with an Excel-only `et` add-in entry, read-only selected-range or used-range analysis, independent `excel.analysis` model task, structured report and plain paragraph views, and one installer that deploys both Word and Excel add-ins while preserving runtime configuration |
-| `v0.13.8-alpha` | Hardens long-running Document Review when model think mode or local connections cross the 180-second range: the task pane now submits a recoverable client job ID, persists the active job locally, uses short status-query timeouts, resumes unfinished jobs after task-pane reload, and keeps low-frequency polling instead of discarding the job after transient adapter connection failures |
-| `v0.13.7-alpha` | Improves the Document Review record preview toggle: clicking “Preview review record” now switches to the generated review record, and clicking the same button again returns to the original Document Review result cards while preserving local issue states |
-| `v0.13.6-alpha` | Further hardens slow Document Review in model think mode: raises the provider wait budget to 1800 seconds, expands transient status-poll failure tolerance to 240 retries over 60 minutes, and softens polling-stage adapter fetch failures so the task pane keeps waiting instead of presenting a premature connection-failure interpretation |
-| `v0.13.5-alpha` | Hardens slow Document Review model-backend waits: raises the Document Review provider budget to 600 seconds, lets task-pane status polling tolerate up to 120 transient query failures over 30 minutes, and changes final feedback to point users to recent task diagnostics instead of reporting an immediate adapter/model connection failure |
-| `v0.13.4-alpha` | Fixes Format Review recognition for selected text: the task pane now reads selected `Selection/Range` paragraph formatting before falling back to plain text, unwraps WPS COM scalar values for font size and paragraph alignment, and the adapter treats `0pt` as unknown while normalizing WPS alignment values such as `3` to justified alignment |
-| `v0.13.3-alpha` | Improves long-text Document Review in model think mode: the Document Review provider budget is raised to 240 seconds, and task-pane polling now retries transient status-query failures instead of immediately clearing the background job and reporting an adapter connection failure |
-| `v0.13.2-alpha` | Stabilizes upgrades and slow model calls: the delivery installer preserves existing target-machine API URL, unified API key, and task-level API keys; Smart Write keeps the 75-second default timeout, Document Review submits a background job and polls for completion while using a longer 150-second provider budget, and Format Review role classification is capped at 60 seconds; task-pane feedback uses user-facing “model backend” wording |
-| `v0.13.1-alpha` | Fixes result-experience test issues: Smart Write comparison now highlights changed result text in yellow while preserving headings, lists, tables, and other structure where possible; Document Review now returns readable fallback diagnostics when the model backend times out, is unreachable, or the rich result renderer fails, avoiding blank task-pane results or misleading adapter feedback |
-| `v0.13.0-alpha` | Result experience release: integrates Kylin V10 systemd adapter autostart; adds read-only Smart Write result view switching for preview, original/result comparison, and plain text without changing writeback; adds Document Review issue states, copy actions, and generated review records |
-| `v0.12.16-alpha` | Improves Format Review result readability: adds a review overview, priority checklist, grouped detail sections, Chinese labels for roles/rules/template/provider/AI fallback diagnostics, and localized values such as font `宋体`, size `小四（12pt）`, style names, alignment, line spacing, and indentation; adds Kylin V10 systemd autostart install/uninstall scripts to the adapter start kit |
-| `v0.12.15-alpha` | Stabilizes Document Review in WPS: clicking Review now shows immediate read/submission/wait feedback, uses limited asynchronous extraction instead of blocking full-document scans, and displays raw Dify output when the model returns non-standard JSON or Markdown that cannot be parsed into the normal issue list |
-| `v0.12.14-alpha` | Fixes Smart Write output that collapsed two selected paragraphs into one line: the task pane now formats model output before preview and writeback, preserving existing line breaks, restoring likely paragraph breaks from sentence boundaries, and splitting inline Chinese numbering/headings when needed |
-| `v0.12.13-alpha` | Improves Smart Write handling for structured selections and structured model output: headings, lists, numbering, tables, and bold text now trigger structured preview and best-effort formatted writeback, while ordinary paragraphs still use plain preview and paragraph-shaped writeback to avoid redundant formatting |
-| `v0.12.12-alpha` | Fixes two Smart Write issues in selected-paragraph workflows: the task pane now reads selected text with a lightweight extraction path and defers adapter submission so it no longer scans the whole document before the request; Smart Write previews plain text with preserved line breaks and writes back using the original paragraph shape, while the prompt asks the model to preserve paragraph structure and avoid extra Markdown headings, lists, or tables |
-| `v0.12.11-alpha` | Groups Document Review results by typo, expression, logic, fluency, and professionalism; groups Format Review results by page setup, heading, body text, paragraph, caption/note, and other format items; adds a settings-page “recent task diagnostics” panel with sanitized adapter/provider/Dify request summaries; keeps Smart Write, Document Review, Format Review endpoints and task-level API key routing unchanged |
-| `v0.12.10-alpha` | Fixed Format Review task-pane freezes before adapter forwarding by limiting WPS paragraph extraction, processing selected text without scanning the whole document, deferring extraction until the status UI renders, and bumping frontend cache tokens for target-machine reloads |
-| `v0.12.9-alpha` | Consolidated review modes: replaced Proofread and Technical Review with Document Review (`word.document_review`), changed Smart Format into read-only Format Review (`word.format_review`), removed obsolete word routes, and kept Smart Write plus task-level Dify API key routing intact |
-| `v0.12.8-alpha` | Redesigned Word proofreading around local deterministic format checks plus small-batch AI quality review for typo, grammar, expression, logic, and fluency issues; `word.proofread` keeps its independent task API key and Dify workflow |
-| `v0.12.7-alpha` | Fixed target-machine HTTP 422 in Smart Write and Smart Format: task pane payloads now sanitize WPS host-object properties before JSON serialization, backend request models tolerate missing `documentId/plainText`, object-shaped style/size values, and WPS underline enums, and validation failures record `request_validation_failed` in `/provider/debug-last` |
-| `v0.12.6-alpha` | Continued Smart Format field hardening: paragraph extraction reads `Paragraph.Range.Text`, `Content.Paragraphs`, `Range().Paragraphs`, and full-text fallback splits; no-paragraph, unconfigured-task-key, and unparseable-Dify-output cases are surfaced in the preview and `/provider/debug-last` |
-| `v0.12.5-alpha` | Fixed Smart Format reading zero paragraphs in WPS COM-style documents: the task pane supports `Paragraphs.Count`/`Item()` collections, applies format changes through the same collection adapter, and forces Smart Format preview to the whole document scope |
-| `v0.12.4-alpha` | Hardened Smart Format Dify role parsing: wrapped `result`/`data`/`outputs` JSON and JSON-array replies are accepted, failed AI role parsing is surfaced in the task pane, and local template fallback remains deterministic |
-| `v0.12.3-alpha` | Refined Smart Write for state-owned-enterprise technical solution/reporting use: compact task-pane controls enlarge the Markdown result preview, style/focus/length menus are consolidated, and legacy option values remain compatible in the adapter prompt builder |
-| `v0.12.2-alpha` | Fixed Smart Format for long documents by processing every non-empty paragraph in bounded AI-classification batches and reporting coverage statistics; refreshed the task pane and Ribbon artwork with the bright frosted-azure palette |
-| `v0.12.1-alpha` | Fixed target panes potentially continuing to load stale plain-text resources: task-pane and static-resource URLs now carry a build token, the diagnostics view exposes the loaded frontend version, and `/provider/debug-last` reports sanitized Markdown feature flags to distinguish Dify output from frontend rendering |
-| `v0.12.0-alpha` | Rebuilt Smart Format around the uploaded `技术文件格式及书写要求` Word template: format preview now carries `targetProperties` for page setup, headings, body text, captions, notes, lists, appendices, and table body; settings now support task-level API keys so Smart Format can use its own Dify key while falling back to the unified key when absent |
-| `v0.11.8-alpha` | Enhanced the rendered Markdown result preview with preserved paragraphs and single line breaks plus horizontal rules and responsive tables so task-pane output has clearer Dify-like structure |
-| `v0.11.7-alpha` | Fixed uvicorn Word routes caching provider settings from adapter startup; after the settings pane saves the API URL, smart write reloads configuration before readiness checks and forwarding instead of continuing to use stale mock-only settings |
-| `v0.11.6-alpha` | Adapter start-kit operations now converge on uvicorn; health/status/log scripts expose provider readiness and forwarding diagnostics, and mock fallback records a `/provider/debug-last` skip reason |
-| `v0.11.5-alpha` | The task-pane result preview now safely renders Markdown from Dify responses, including headings, lists, quotes, code blocks, and links; copy/apply actions still use the raw model text |
-| `v0.11.4-alpha` | Re-aligned `/chat-messages` with official Dify docs: the adapter sends top-level `query` for `sys.query` and mirrors the same prompt into `inputs.query` for a custom Start-node `query`; added sanitized `/provider/debug-last` diagnostics |
-| `v0.11.1-alpha` | Tightened task-route key selection so named workflow tasks only use their own `apiKeyRef`, merged default task routes into old target-machine configs, removed the global key status from the settings summary, added route diagnostics, and updated adapter version checks |
-| `v0.11.0-alpha` | Replaced separate Rewrite and Continue entries with Smart Write, switched Smart Write to Dify Workflow `/workflows/run` with strict Start variables (`source_text`, `write_action`, `style`, `focus`, `length`, `user_prompt`, `selection_mode`, `trace_id`), removed global API key/probe controls from settings, refreshed Ribbon icons, and added the formal design document as the source of truth for non-bug changes |
-| `v0.10.3-alpha` | Refined task-pane prompt visibility: only Rewrite and Continue show prompt-fragment cards, Proofread, Format Preview, and Technical Review return to a cleaner view, and the supplemental input placeholder now starts with “补充要求” |
-| `v0.10.2-alpha` | Fixed rewrite/continue Dify Chat inputs: standard `/chat-messages` payload now sends top-level `query` and mirrors `text`, `mode`, `query`, and `prompt` inside `inputs`, preventing workflows from missing the source text or task mode and returning the original text unchanged |
-| `v0.10.1-alpha` | Refined the rewrite/continue task pane to expose the exact prompt fragments for style, focus, length, and output constraints; the supplemental input is now presented as a rewrite/continue prompt area while retaining the original free-form placeholder |
-| `v0.10.0-alpha` | Upgraded provider routing to one `providerBaseUrl` plus per-task `taskRoutes` with `path`, `apiKeyRef`, and `payloadStyle`; the adapter now routes each Word task directly to its Dify app or workflow, the settings page exposes task key management, and the Dify multi-route deployment guide was added |
-| `v0.9.1-alpha` | Fixed stale uvicorn adapters on target machines by replacing old port `18100` processes when the running version does not match the package; merged backend templates with local fallback templates; reduced Technical Document Review to solution, contract acceptance, and test outline document types with type-specific default prompts |
-| `v0.8.0-alpha` | Added the sixth Ribbon workflow, Technical Document Review, with document-type selection and a transparent editable review prompt for functional accuracy, terminology, design rationality, and requirement clarity; also enhanced structured proofreading by extracting `documentStructure` and sending document data plus local findings to enterprise Dify User Input |
-| `v0.7.1-alpha` | Corrected the Phase 1 delivery package default WPS `jsaddons` install path to `/home/cloud/.local/share/Kingsoft/wps/jsaddons`, updated handoff docs, and rebuilt the delivery package |
-| `v0.7.0-alpha` | Added the Phase 1 delivery package with one-click install, pip/runtime offline dependency installation, WPS `jsaddons` deployment, `publish.xml`, one-click smoke test, and acceptance templates |
-| `v0.6.9-alpha` | Fixed uvicorn template loading when the adapter starts from `adapter_service/`, restoring `/templates`, Word proofreading, and format preview access to packaged template files |
-| `v0.6.8-alpha` | Fixed provider settings clearing: empty model API URLs can now be saved, provider names are saved together with URLs, and provider status is only configured when both API URL and API key are present |
-| `v0.6.7-alpha` | Fixed uvicorn startup when an old standalone adapter still owns port `18100`, improved health-check mode hints, replaced raw `Failed to fetch` output with actionable adapter diagnostics, and stabilized single provider URL/API key save feedback |
-| `v0.6.6-alpha` | Fixed the Python 3.8 offline dependency bundle by adding `exceptiongroup`, added a uvicorn-only one-click startup guide, added local template dropdown fallback, and reverted settings to a single provider profile |
-| `v0.6.5-alpha` | Fixed Ribbon icon fallback rendering, made provider names configurable, and allowed switching the active provider from backend-defined provider profiles |
-| `v0.6.4-alpha` | Added provider-card settings with edit drill-down, clarified adapter-not-started mock hints, added Ribbon icon callback fallback, and packaged offline pip bootstrap for Python 3.8 targets without pip |
-| `v0.6.3-alpha` | Removed redundant task-pane labels and status text, enlarged the copy action beside result preview, and added configurable enterprise model API URL settings |
-| `v0.6.2-alpha` | Refined the task pane into a unified Apple-like clean visual system with light glass cards, subtle hairlines, consistent actions, and result-first spacing |
-| `v0.6.1-alpha` | Simplified the settings page and ensured each ribbon action hides the previous task pane before opening the next one |
-| `v0.6.0-alpha` | Reworked the WPS AI tab into five task entries, split the task pane into mode-specific Word workflows, localized visible titles, and moved template selection into proofreading and formatting |
-| `v0.5.1-alpha` | Added a simple ribbon button icon and moved template selection into settings to keep the home task pane focused |
-| `v0.5.0-alpha` | Added company Word template driven proofreading and format preview; added AI typo detection via enterprise provider |
-| `v0.4.x-alpha` | Added Kylin V10 ARM offline Python runtime wheel bundle for `uvicorn` mode |
-| `v0.3.x-alpha` | Improved task pane interaction: compact home view, settings/diagnostics split, auto scope detection, copy result |
-| `v0.2.x-alpha` | Added provider API key UI, selection-only rewrite/continue, and provider mock fallback |
-| `v0.1.x-alpha` | Built baseline adapter APIs, proofread, format preview, rewrite, probe kit, and startup scripts |
+The local adapter (default `127.0.0.1:18100`) stores per-task model configurations. Workflow-platform access uses `/chat-messages`; direct-model access uses OpenAI-compatible `/chat/completions`. Runtime requests do not fall back to a unified URL or key. Production mock output stays off unless explicitly enabled.
 
 ## Architecture
 
@@ -301,40 +48,37 @@ flowchart LR
   User[User in WPS] --> Addin[WPS JS/HTML Add-in]
   Addin --> Bridge[Document Bridge]
   Bridge --> Adapter[Local Adapter<br/>127.0.0.1:18100]
-  Adapter --> Rules[Word Rules<br/>Proofread / Format]
-  Adapter --> Templates[Templates]
+  Adapter --> Rules[Rules and templates]
   Adapter --> Provider[Enterprise AI API]
-  Adapter --> Logs[Logs & Diagnostics]
-  Rules --> Adapter
-  Templates --> Adapter
-  Provider --> Adapter
+  Adapter --> Logs[Logs and diagnostics]
   Adapter --> Addin
-  Addin --> Preview[Preview & Confirm]
-  Preview --> WPS[Write Back to Word]
+  Addin --> Preview[Preview and confirm]
+  Preview --> WPS[Write back]
 ```
 
-Design rules:
-
-- AI and formatting results are never written back directly; the user must preview and confirm first.
-- The WPS add-in handles UI, document extraction, preview, and write-back. Complex rules and AI orchestration stay in the adapter service.
-- Documents are sent as structured payloads, preserving paragraphs, headings, font names, font sizes, alignment, and outline levels.
+- The add-in handles UI, extraction, preview, and write-back.
+- Documents travel as structured payloads (paragraphs, headings, fonts, sizes, alignment, outline levels).
+- Health distinguishes live, ready, degraded, and recovery. Recovery blocks config changes and new model jobs.
 
 ## Repository Map
 
 | Path | Purpose |
 | --- | --- |
-| `wps-addon/` | WPS add-in source, built with Vite and TypeScript |
-| `adapter_service/` | Local Python adapter service with FastAPI APIs, Word services, provider client, and tests |
-| `templates/` | Office templates and proofreading rule configuration |
-| `config/` | Runtime adapter configuration examples |
-| `packaging/` | Offline install, start, diagnose, uninstall, and package build scripts |
-| `formal-plugin-kit/` | Manual import kit for the formal WPS add-in |
-| `probe-kit/` | Runtime probe kit for target machines |
-| `adapter-start-kit/` | Operator-friendly adapter startup kit |
-| `docs/` | Design, deployment, acceptance, and operation notes |
-| `jsaddons/` | WPS add-in import/publish artifacts and validation materials |
+| `wps-addon/` | Add-in source (Vite + TypeScript) |
+| `adapter_service/` | Local adapter (FastAPI, rules, provider, tests) |
+| `formal-plugin-kit/` | Formal WPS manual-import kit |
+| `templates/` | Office templates and review rules |
+| `config/` | Runtime config examples |
+| `packaging/` | Offline install, diagnostics, kit build |
+| `phase1-delivery-kit/` | Phase 1 installer and acceptance materials |
+| `adapter-start-kit/` | Manual adapter startup kit |
+| `probe-kit/` | Target-machine runtime probe |
+| `docs/` | Design, operations, acceptance |
+| `jsaddons/` | WPS import / publish materials |
 
 ## Quick Start
+
+For local development, start the adapter then load the add-in. For intranet terminals use [Offline Delivery](#offline-delivery).
 
 ### 1. Start the local adapter
 
@@ -342,16 +86,6 @@ Design rules:
 cd adapter_service
 python -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn app.main:app --host 127.0.0.1 --port 18100
-```
-
-For Windows PowerShell:
-
-```powershell
-cd adapter_service
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --host 127.0.0.1 --port 18100
 ```
@@ -364,144 +98,48 @@ curl -i http://127.0.0.1:18100/health/ready
 curl http://127.0.0.1:18100/health
 ```
 
-When a candidate can only enter recovery mode, a normal install stops before switching and preserves the current installation, candidate, and verified backup. An operator may use `bash installer/install_phase1.sh --activate-recovery` only when the current installation is not ready and the recovery candidate is live. Recovery mode offers `POST /recovery/backups` for a read-only incident snapshot and `GET /recovery/diagnostics` for a sanitized diagnostic export. Whole-state restore remains a CLI-only operation requiring a snapshot ID and explicit confirmation. See the [runtime-state recovery guide](./docs/operations/runtime-state-recovery.md).
+`/health/live` does not read business data. `/health/ready` returns 503 in recovery. Aggregate `/health` always returns 200 with sanitized subsystem status. Without FastAPI deps: `python adapter_service/standalone_adapter.py 18100`. Recovery operations: [runtime-state recovery guide](./docs/operations/runtime-state-recovery.md).
 
-If FastAPI dependencies are inconvenient in the target environment, use the built-in lightweight standalone server:
-
-```bash
-python adapter_service/standalone_adapter.py 18100
-```
-
-### 2. Build the WPS add-in frontend
+### 2. Build or import the add-in
 
 ```bash
 cd wps-addon
 npm install
-npm run test
+npm test
 npm run build
 ```
 
-The frontend build output goes to `wps-addon/dist/`. For formal intranet terminals, prefer the curated manual import layout under `formal-plugin-kit/`.
+Output is `wps-addon/dist/`. Formal terminals should import `formal-plugin-kit/`.
 
 ### 3. Configure the enterprise AI provider
 
-Copy the example config:
-
 ```bash
 cp config/adapter.example.json config/adapter.json
-```
-
-Important fields:
-
-```json
-{
-  "servicePort": 18100,
-  "providerName": "Enterprise Model API",
-  "providerType": "enterprise-dify-chat",
-  "providerBaseUrl": "",
-  "providerApiKeyEnv": "ENTERPRISE_AI_API_KEY",
-  "providerChatPath": "/chat-messages",
-  "providerMode": "blocking",
-  "logPath": "./logs/adapter.log",
-  "templateRoot": "./templates",
-  "timeoutSeconds": 75,
-  "taskApiKeyRefs": {
-    "word.smart_write": "word_smart_write",
-    "word.smart_imitation": "word_smart_imitation",
-    "word.document_review": "word_document_review",
-    "word.format_review": "word_format_review",
-    "excel.analysis": "excel_analysis",
-    "excel.formula_assistant": "excel_formula_assistant",
-    "ppt.slide_assistant": "ppt_slide_assistant",
-    "ppt.structure_review": "ppt_structure_review"
-  }
-}
-```
-
-Use an environment variable for the API key:
-
-```bash
 export ENTERPRISE_AI_API_KEY="your-api-key"
 ```
 
-Model-configuration API keys are stored under `run/provider_api_keys/<ref>` while `adapter.json` keeps access method, service URL, model parameters, and key references. Each task can keep multiple configurations; activation affects only the next new task and running jobs retain their submission snapshot. Workflow-platform access uses `/chat-messages`; direct-model access uses OpenAI-compatible `/chat/completions` with the task prompt under `adapter_service/system_prompts/`. Runtime requests do not fall back to a unified URL or key. See the [model configuration operations guide](./docs/operations/workflow-profile-management.md).
+`adapter.json` stores access method, URL, model parameters, and key references. Keys live under `run/provider_api_keys/<ref>`. See `config/adapter.example.json` and the [model configuration guide](./docs/operations/workflow-profile-management.md).
 
-The Smart Write Dify system prompt, structure-preserving response rules, and verification flow are documented in the [Smart Write Dify workflow guide](./docs/operations/dify-smart-write-workflow.md). Smart Imitation setup is documented in the [Smart Imitation Dify workflow guide](./docs/operations/dify-smart-imitation-workflow.md). Document Review setup is documented in the [Document Review Dify workflow guide](./docs/operations/dify-document-review-workflow.md). Format Review setup is documented in the [Format Review Dify workflow guide](./docs/operations/dify-format-review-workflow.md). Word terminology/rule maintenance, imports, exports, backup, degraded behavior, and recovery are documented in the [writing policy library operations guide](./docs/operations/writing-policy-library.md). “智能分析” setup is documented in the [Excel analysis Dify workflow guide](./docs/operations/dify-excel-analysis-workflow.md), “公式助手” in the [Excel formula assistant Dify workflow guide](./docs/operations/dify-excel-formula-assistant-workflow.md), the two PPT “智能总结” modes in the [PPT smart summary Dify workflow guide](./docs/operations/dify-ppt-slide-assistant-workflow.md), and Structure Review setup plus read-only acceptance in the [PPT structure review Dify workflow guide](./docs/operations/dify-ppt-structure-review-workflow.md). Deployable prompt templates are available under [`docs/prompt-templates/`](./docs/prompt-templates/).
+## Docs
 
-## API Surface
+| Doc | Topic |
+| --- | --- |
+| [Model configuration](./docs/operations/workflow-profile-management.md) | Workflow platform / direct model, keys, activation |
+| [Writing policy](./docs/operations/writing-policy-library.md) | Preset packs, import/export, backup, degrade |
+| [Smart Write](./docs/operations/dify-smart-write-workflow.md) | Word writing workflow |
+| [Smart Imitation](./docs/operations/dify-smart-imitation-workflow.md) | Word imitation workflow |
+| [Document Review](./docs/operations/dify-document-review-workflow.md) | Word document review |
+| [Format Review](./docs/operations/dify-format-review-workflow.md) | Word format review |
+| [智能分析](./docs/operations/dify-excel-analysis-workflow.md) | Excel analysis |
+| [公式助手](./docs/operations/dify-excel-formula-assistant-workflow.md) | Excel formula assistant |
+| [智能总结](./docs/operations/dify-ppt-slide-assistant-workflow.md) | PPT current-slide / document summary |
+| [结构审查](./docs/operations/dify-ppt-structure-review-workflow.md) | PPT structure review |
+| [Prompt templates](./docs/prompt-templates/) | Deployable Excel / PPT templates |
+| [Kylin test host](./docs/operations/kylin-v10-test-environment.md) | Target machine and SSH |
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/health/live` | Process and basic web-application liveness without business-data reads |
-| `GET` | `/health/ready` | Core business readiness; returns HTTP 503 in recovery mode |
-| `GET` | `/health` | Adapter health, version, and sanitized subsystem status |
-| `POST` | `/recovery/backups` | Create a read-only runtime-state backup in recovery mode |
-| `GET` | `/recovery/diagnostics` | Export sanitized health, backup, and audit summaries |
-| `GET` | `/config` | Current runtime configuration summary |
-| `GET` | `/templates` | Available template list |
-| `GET` | `/provider/status` | Enterprise AI provider authentication status |
-| `GET` | `/provider/task-api-keys` | Task-level API key status summary |
-| `GET` / `POST` | `/provider/model-configurations` | List or create per-task model configurations |
-| `PATCH` / `DELETE` | `/provider/model-configurations/{configurationId}` | Update or delete an inactive configuration |
-| `POST` | `/provider/model-configurations/{configurationId}/api-key` | Replace one configuration API key |
-| `POST` | `/provider/model-configurations/{configurationId}/activate` | Activate a complete configuration |
-| `POST` | `/provider/model-configurations/{configurationId}/copy` | Create a copy without copying key material |
-| `POST` | `/provider/model-configurations/{configurationId}/validate` | Validate the selected configuration, return identity/current-route state, and never activate it automatically |
-| `GET` / `POST` | `/provider/workflow-profiles` | One-version compatibility wrapper for legacy clients |
-| `POST` | `/provider/api-key` | Save the unified Dify Chat API key |
-| `DELETE` | `/provider/api-key` | Clear the unified Dify Chat API key |
-| `POST` | `/provider/task-api-key` | Save a dedicated Dify API key for one task |
-| `DELETE` | `/provider/task-api-key/{taskType}` | Clear a dedicated Dify API key for one task |
-| `GET` | `/writing-policies/summary` | Knowledge counts and availability for the Word manager |
-| `GET` | `/writing-policies/packs` | List read-only preset packs with source, version, commit, and license |
-| `GET` / `POST` | `/writing-policies/items` | Browse preset items or list/create organization terminology and writing rules |
-| `PATCH` / `DELETE` | `/writing-policies/items/{itemId}` | Update or delete one knowledge item |
-| `GET` | `/writing-policies/import-template.csv` | Download the CSV import template |
-| `GET` | `/writing-policies/import-template.xlsx` | Download the XLSX import template |
-| `POST` | `/writing-policies/imports/preview` | Validate an import and issue a short-lived preview token |
-| `POST` | `/writing-policies/imports/apply` | Apply one unused import preview with conflict skipping |
-| `GET` | `/writing-policies/export.csv` | Export filtered knowledge items as CSV |
-| `GET` | `/writing-policies/backup` | Download a consistent SQLite database backup |
-| `GET` | `/writing-policies/diagnostics` | Sanitized knowledge-store health diagnostics |
-| `POST` | `/word/smart-write/jobs` | Start a recoverable Smart Write background job |
-| `GET` / `DELETE` | `/word/smart-write/jobs/{jobId}` | Poll or cancel a queued Smart Write job |
-| `POST` | `/word/smart-imitation/jobs` | Start a recoverable Smart Imitation background job |
-| `GET` / `DELETE` | `/word/smart-imitation/jobs/{jobId}` | Poll or cancel a queued Smart Imitation job |
-| `POST` | `/word/smart-write`, `/word/smart-imitation` | Synchronous compatibility endpoints backed by the same job coordinator |
-| `POST` | `/word/document-review` | Document review for typos, expression, logic, fluency, and document-type professionalism |
-| `POST` | `/word/document-review/jobs` | Start a background Document Review job for slow model-backend responses |
-| `GET` | `/word/document-review/jobs/{jobId}` | Poll a background Document Review job until it completes or fails; add `?resume=1` only when recovering a previously persisted active job |
-| `DELETE` | `/word/document-review/jobs/{jobId}` | Cancel a queued Document Review job; running blocking provider requests are not cancellable; recovery calls may add `?resume=1` |
-| `GET` / `POST` / `PUT` / `DELETE` | `/word/document-review/full/...` | Full-document review snapshot, batch, job, and cleanup protocol |
-| `GET` | `/word/document-review/full/jobs/{jobId}/issues` | Read the terminal issues page (20 by default) with severity, category, body/chapter/table location, status, and source/severity sorting filters |
-| `PATCH` | `/word/document-review/full/jobs/{jobId}/issues/{issueId}` | Update one stable issue instance: `status` (`open`/`processed`/`ignored`) and/or `anchorVerification` (`verified`/`unverified`), without sharing state with its duplicate group |
-| `GET` | `/word/document-review/full/jobs/{jobId}/report?format=json|markdown` | Export a versioned, sanitized JSON or Markdown report without the full snapshot, model response, credentials, or local staging paths |
-| `POST` | `/word/format-review` | Retired compatibility endpoint; always returns `410 WORD_FORMAT_REVIEW_SYNC_RETIRED` |
-| `POST` | `/word/format-review/snapshots` | Feature-gated v2 read-only deterministic format snapshot |
-| `POST` | `/word/format-review/jobs` | Feature-gated v2 deterministic format review background job |
-| `GET` | `/word/format-review/jobs/{jobId}` | Poll the v2 deterministic format review job and structured result |
-| `GET` | `/word/format-review/jobs/{jobId}/issues` | Paginated v2 issue query with rule, severity, status, and source-order filters |
-| `PATCH` | `/word/format-review/jobs/{jobId}/issues/{issueId}` | Update one v2 issue's processing or anchor-verification status |
-| `GET` | `/word/format-review/jobs/{jobId}/report` | Read the v2 report summary or export `format=json|markdown` |
-| `DELETE` | `/word/format-review/jobs/{jobId}` | Cancel or clean up a v2 deterministic format review job |
-| `DELETE` | `/word/format-review/jobs/{jobId}/report` | Delete a v2 deterministic format review report |
-| `DELETE` | `/word/format-review/snapshots/{snapshotId}` | Feature-gated cleanup for an unsubmitted deterministic format snapshot |
-| `POST` | `/excel/analysis` | Read-only analysis of the selected range or active worksheet used range |
-| `POST` | `/excel/analysis/jobs` | Start a recoverable background “智能分析” job |
-| `GET` | `/excel/analysis/jobs/{jobId}` | Poll a background “智能分析” job |
-| `DELETE` | `/excel/analysis/jobs/{jobId}` | Cancel a queued “智能分析” job; running blocking provider requests are not cancellable |
-| `POST` | `/excel/formula-assistant/jobs` | Submit a read-only Generate or Explain/Debug formula task with an explicit range |
-| `GET` | `/excel/formula-assistant/jobs/{jobId}` | Poll or resume a Formula Assistant job |
-| `DELETE` | `/excel/formula-assistant/jobs/{jobId}` | Cancel a queued formula job; running blocking provider requests are not cancellable |
-| `POST` | `/ppt/document-files` | Validate and stage one UTF-8 `.md` or valid `.docx` source file up to 10 MB behind a one-time token |
-| `POST` | `/ppt/slide-assistant/jobs` | Start a current-slide or document “智能总结” background job |
-| `GET` | `/ppt/slide-assistant/jobs/{jobId}` | Poll or resume a background “智能总结” job |
-| `DELETE` | `/ppt/slide-assistant/jobs/{jobId}` | Cancel a queued summary job; running blocking provider requests are not cancellable |
-| `POST` | `/ppt/structure-review/jobs` | Start a read-only Structure Review job for an explicit range of at most 60 slides |
-| `GET` | `/ppt/structure-review/jobs/{jobId}` | Poll or resume a Structure Review job |
-| `DELETE` | `/ppt/structure-review/jobs/{jobId}` | Cancel a queued Structure Review job; running blocking provider requests are not cancellable |
+## API Summary
 
-Unified response envelope:
+Envelope:
 
 ```json
 {
@@ -514,85 +152,57 @@ Unified response envelope:
 }
 ```
 
+| Group | Paths |
+| --- | --- |
+| Health | `GET /health/live`, `/health/ready`, `/health` |
+| Recovery | `POST /recovery/backups`, `GET /recovery/diagnostics` |
+| Config | `GET /config`, `GET /templates`, `GET /provider/status` |
+| Model configs | `/provider/model-configurations` plus activate, rotate key, validate, copy |
+| Writing policy | `/writing-policies/*` (items, import preview, export, backup) |
+| Word | `/word/smart-write/jobs`, `/word/smart-imitation/jobs`, `/word/document-review/jobs`, `/word/format-review/jobs` (v2 snapshot / job / issues / report) |
+| Excel | `/excel/analysis/jobs`, `/excel/formula-assistant/jobs` |
+| PPT | `/ppt/document-files`, `/ppt/slide-assistant/jobs`, `/ppt/structure-review/jobs` |
+
+`POST /word/format-review` is retired and always returns `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`. Long tasks submit a job, poll with short requests, and allow cancel only while queued.
+
 ## Offline Delivery
 
-The formal Phase 1 release is a single combined Word/Excel/PPT package with one installer. An overwrite installation keeps the target machine's existing `config/adapter.json`, unified API key, `run/provider_api_keys/`, Word enterprise writing policy database, and every existing writing policy backup; the package also carries the Excel/PPT Markdown prompt templates and generated writing-policies CSV/XLSX import templates.
-
-Build the full offline bundle:
+The formal Phase 1 release is one Word / Excel / PPT package and one installer. Overwrite installs keep `config/adapter.json`, API keys, the writing-policy database, and existing backups.
 
 ```bash
 bash packaging/build_offline_bundle.sh
-```
-
-Default output:
-
-```text
-dist-offline/wps-ai-assistant-offline.tar.gz
-```
-
-Install to a target directory:
-
-```bash
 bash packaging/install.sh "$HOME/.wps-ai-assistant"
-```
-
-Start the adapter:
-
-```bash
 bash packaging/start_adapter.sh "$HOME/.wps-ai-assistant" 18100
-```
-
-Diagnose:
-
-```bash
 bash packaging/diagnose.sh "$HOME/.wps-ai-assistant"
-```
-
-Uninstall:
-
-```bash
 bash packaging/uninstall.sh "$HOME/.wps-ai-assistant"
 ```
 
-Additional delivery kits:
+Default output: `dist-offline/wps-ai-assistant-offline.tar.gz`.
 
-| Command | Output Purpose |
+| Command | Purpose |
 | --- | --- |
-| `bash packaging/build_formal_plugin_kit.sh` | Formal WPS add-in manual import kit |
-| `bash packaging/build_probe_kit.sh` | Runtime probe kit for target machines |
-| `bash packaging/build_adapter_start_kit.sh` | Manual adapter startup kit |
+| `bash packaging/build_formal_plugin_kit.sh` | Formal add-in import kit |
+| `bash packaging/build_probe_kit.sh` | Target-machine probe kit |
+| `bash packaging/build_adapter_start_kit.sh` | Manual adapter start kit |
+
+When system Python has no pip, get-pip runs with `-sS` so Kylin apt `dist-packages` are not scanned.
 
 ## Tests
-
-Backend:
 
 ```bash
 cd adapter_service
 pytest
 ```
 
-Frontend:
-
 ```bash
 cd wps-addon
-npm run test
+npm test
 ```
 
-## Status & Roadmap
+Target-machine regression uses Python 3.8 on Kylin V10 ARM64 ([test host](./docs/operations/kylin-v10-test-environment.md)). Delivery audit scripts live under `packaging/`.
 
-The current implementation covers the Phase 1 baseline:
+## Roadmap
 
-- WPS task pane and action buttons
-- Structured document/selection extraction
-- Local adapter health, config, templates, and provider status
-- Smart Write, Document Review, and Format Review APIs
-- Read-only Excel “智能分析”, dual-mode PPT “智能总结”, and PPT “结构审查”
-- Preview-first Word write-back
-- Runtime probing and offline delivery scripts
+Phase 1 covers the three-host task pane, structured extraction, adapter health and config, eight tasks, preview-then-write-back for Word, runtime probe, and offline install.
 
-Phase 2 can extend the same adapter foundation with:
-
-- Richer Excel report generation and multi-sheet workflows
-- Excel multi-sheet and multi-file comparison
-- Governed PPT generation workflows beyond the current preview/copy-only summary boundary
-- Richer enterprise templates, audit, permissions, and knowledge-base governance
+Later work on the same adapter can add multi-sheet Excel flows, multi-file compare, governed PPT generation, and richer template / audit / policy governance.
