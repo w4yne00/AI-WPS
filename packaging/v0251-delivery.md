@@ -33,7 +33,11 @@ and model evidence is recorded.
 
 The earlier `20260824-f953c58`, `20260824-afe109c`, `20260824-799adf9`,
 `20260824-5318d4b`, `20260824-2e7a3e6`, and `20260824-ccad09f` records remain
-`rejected` with their original identities and archive digests.
+`rejected` with their original identities and archive digests. The
+direct predecessor `20260824-10b251d` remains byte-frozen. The
+direct predecessor `20260824-afe109c` remains rejected. 其直接前任 `20260824-10b251d`
+保持原字节并登记为 `rejected`。`20260824-f953c58` 的直接前任 `20260824-afe109c`
+仍为 `rejected`。
 
 ## 自动化门禁
 
@@ -49,7 +53,18 @@ The earlier `20260824-f953c58`, `20260824-afe109c`, `20260824-799adf9`,
 
 本次可复核的自动化证据为：Sol/high 核心结论 `CLEAN FOR BUILD`；核心 focused
 `199 passed, 1 skipped`；Adapter `874 passed, 95 skipped`；正式插件
-`28/28`；交付 focused `87 passed`，协议/交付 aggregate `137 passed, 5 skipped`；
+`28/28`；交付 focused `87 passed`，协议/交付 aggregate `137 passed, 5 skipped`。
+
+| 门禁 | 结果 |
+| --- | --- |
+| v0.25.1 交付/prepare/audit focused | `87 passed`（`test_v0251_delivery.py`） |
+| 协议/交付 focused 合计 | `137 passed, 5 skipped` |
+| 正式插件合同测试 | `28/28` |
+| v0.25.1 delivery/prepare/audit focused | `87 passed` (`test_v0251_delivery.py`) |
+| Focused protocol/delivery aggregate | `137 passed, 5 skipped` |
+| Formal plugin contract tests | `28/28` |
+
+以上数字与当时候选构建一致：
 Kylin Node `v22.23.2`、Python `3.8.10`；source provenance `246`、Python 3.8
 扫描 `82`；公开 format-review API、`characterCount`/`contentSha256`/
 `structureSha256`/`formatSha256` 四个哈希键，以及 runtime/lifecycle/install/
