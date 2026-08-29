@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI-WPS · 内网办公终端上的 WPS AI 助手</title>
+    <meta
+      name="description"
+      content="AI-WPS：WPS 原生 JS/HTML 插件 + 本地 Python Adapter + 企业内网 AI 接口。Phase 1 覆盖 Word / Excel / PPT，面向麒麟 V10 ARM、Python 3.8、离线安装。"
+    />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <link rel="alternate" hreflang="zh-CN" href="index.html" />
+    <link rel="alternate" hreflang="en" href="en.html" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">跳到正文</a>
+    <header class="nav">
+      <a class="wordmark" href="#overview">
+        <span class="mark" aria-hidden="true">AI</span>
+        AI-WPS
+      </a>
+      <nav class="nav-links" aria-label="页面">
+        <a href="#overview">概览</a>
+        <a href="#features">功能</a>
+        <a href="#architecture">架构</a>
+        <a href="#releases">版本</a>
+        <a href="#install">安装</a>
+        <a href="#develop">开发</a>
+      </nav>
+      <div class="nav-end">
+        <div class="lang" role="group" aria-label="语言">
+          <a class="is-active" href="index.html" lang="zh-CN" aria-current="page">中文</a>
+          <a href="en.html" lang="en">EN</a>
+        </div>
+        <a class="btn btn-small" href="https://github.com/w4yne00/AI-WPS">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero wrap" id="overview">
+        <p class="kicker reveal">
+          <span class="dot" aria-hidden="true"></span>
+          Phase 1 · Word / Excel / PPT
+        </p>
+        <h1 class="reveal d1">写在 WPS 里的内网 AI 助手</h1>
+        <p class="lede reveal d2">
+          原生插件负责界面、读文档、预览和写回。规则、模板、配置、日志、诊断和模型调用留在本机 Adapter。当前范围是平台底座加三宿主，运行目标为麒麟 V10 ARM、Python 3.8、离线部署。
+        </p>
+        <div class="hero-actions reveal d3">
+          <a class="btn" href="#install">开始安装</a>
+          <a class="btn btn-ghost" href="../README-ZH.md">查看 README</a>
+        </div>
+        <div class="pills reveal d4">
+          <span class="pill">v0.25.3-alpha</span>
+          <span class="pill">candidate</span>
+          <span class="pill">Issue #59 仍为 manual-pending</span>
+        </div>
+        <div class="stats reveal d4">
+          <div class="stat">
+            <b>3</b>
+            <span>独立宿主插件，Ribbon 互不串门</span>
+          </div>
+          <div class="stat">
+            <b>8</b>
+            <span>编写、审查、分析、总结任务</span>
+          </div>
+          <div class="stat">
+            <b>127.0.0.1</b>
+            <span>本机 Adapter，默认端口 18100</span>
+          </div>
+          <div class="stat">
+            <b>3.8</b>
+            <span>目标 Python，离线安装器</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="block wrap" id="features">
+        <div class="section-head">
+          <h2>能做什么</h2>
+          <p>
+            模型结果先预览，确认后才写回。审查类和分析类任务默认只读。工作流平台走
+            <code>/chat-messages</code>，模型直连走 OpenAI 兼容
+            <code>/chat/completions</code>。运行时不回退统一 URL 或统一 Key。
+          </p>
+        </div>
+        <div class="hosts">
+          <article class="host">
+            <header>
+              <h3>Word</h3>
+              <span class="count">5 个入口</span>
+            </header>
+            <div class="feature">
+              <h4>智能编写</h4>
+              <p>改写、续写、提炼、自定义编写。预览 / 对照 / 纯文本后写回。</p>
+            </div>
+            <div class="feature">
+              <h4>智能仿写</h4>
+              <p>按模板仿写。预览、纯文本、复制，不写回。</p>
+            </div>
+            <div class="feature">
+              <h4>文档审查</h4>
+              <p>错别字、表达、逻辑、通畅性、专业性。选区或限量全文。</p>
+            </div>
+            <div class="feature">
+              <h4>格式审查</h4>
+              <p>对照《技术文件格式及书写要求》。格式问题卡片、题注关联结论、图像语义补充。不写回排版。</p>
+              <span class="tag">只读 · 视觉关闭可降级</span>
+            </div>
+            <div class="feature">
+              <h4>写作规范</h4>
+              <p>四个预置包 + 本机组织规范库。编写 / 仿写 / 审查可选用。</p>
+            </div>
+          </article>
+          <article class="host">
+            <header>
+              <h3>Excel</h3>
+              <span class="count">2 个入口</span>
+            </header>
+            <div class="feature">
+              <h4>智能分析</h4>
+              <p>选区或已用范围。结构化报告和汇报段落，不写回单元格。</p>
+              <span class="tag">只读</span>
+            </div>
+            <div class="feature">
+              <h4>公式助手</h4>
+              <p>明确选区，最多 30×20。生成或解释排错，只复制。</p>
+              <span class="tag">只复制</span>
+            </div>
+          </article>
+          <article class="host">
+            <header>
+              <h3>PPT</h3>
+              <span class="count">2 个入口</span>
+            </header>
+            <div class="feature">
+              <h4>智能总结</h4>
+              <p>当前页，或上传单个 <code>.md</code> / <code>.docx</code>（≤10 MB）生成整套页建议。只预览和复制。</p>
+              <span class="tag">只预览 / 复制</span>
+            </div>
+            <div class="feature">
+              <h4>结构审查</h4>
+              <p>最多 60 页。先判定幻灯片页角色，再执行规则豁免。只读。</p>
+              <span class="tag">只读</span>
+            </div>
+          </article>
+        </div>
+        <p class="note">
+          生产环境默认关闭模拟结果。图像语义补充默认开启；探针未过或总开关关闭时走视觉关闭降级，不得声称已看图。自动化门禁只得到
+          <code>candidate</code>，不能当成目标机已通过。
+        </p>
+      </section>
+
+      <section class="block wrap" id="architecture">
+        <div class="section-head">
+          <h2>技术架构</h2>
+          <p>三层各管各的。文档按结构化 payload 传递，健康状态决定能不能改配置、能不能发新任务。</p>
+        </div>
+        <ol class="pipeline">
+          <li class="pipe">
+            <span class="n">01</span>
+            <strong>WPS 用户</strong>
+            <p>在 Word / Excel / PPT 里点入口，不离开办公文档。</p>
+          </li>
+          <li class="pipe">
+            <span class="n">02</span>
+            <strong>JS/HTML 插件</strong>
+            <p>界面、抽取、预览、写回。三宿主独立包，避免 Ribbon 串显示。</p>
+          </li>
+          <li class="pipe">
+            <span class="n">03</span>
+            <strong>文档桥接</strong>
+            <p>段落、标题、字体、字号、对齐、大纲级别随 payload 走。</p>
+          </li>
+          <li class="pipe">
+            <span class="n">04</span>
+            <strong>本机 Adapter</strong>
+            <p><code>127.0.0.1:18100</code>。规则、模板、配置、日志、模型调用。</p>
+          </li>
+          <li class="pipe">
+            <span class="n">05</span>
+            <strong>企业 AI 接口</strong>
+            <p>工作流平台或模型直连。密钥落在本机引用文件，不进配置正文。</p>
+          </li>
+        </ol>
+        <div class="principles">
+          <div class="principle">
+            <strong>预览后写回</strong>
+            <p>Word 编写类任务先预览再确认。审查、分析、总结默认不改原文。</p>
+          </div>
+          <div class="principle">
+            <strong>健康分四态</strong>
+            <p>存活、就绪、增强降级、恢复模式。恢复模式禁止改配置和发新模型任务。</p>
+          </div>
+          <div class="principle">
+            <strong>任务配置隔离</strong>
+            <p>八类任务各自保存接入方式和密钥引用。运行时不回退统一地址。</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="block wrap" id="releases">
+        <div class="section-head">
+          <h2>版本摘要</h2>
+          <p>
+            当前 <code>v0.25.3-alpha</code>。版本规则
+            <code>AI-WPS-P{阶段}-{范围}-{主.次.修订}-{yyyymmdd}</code>。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
+          </p>
+        </div>
+        <ol class="timeline">
+          <li class="release current">
+            <div class="meta">
+              <span class="ver">v0.25.3-alpha</span>
+              <time datetime="2026-08-26">2026-08-26</time>
+              <span class="status">candidate · d1a346b</span>
+            </div>
+            <ul>
+              <li>结果预览：受限 Markdown 渲染标题、列表、表格和加粗</li>
+              <li>格式问题改为卡片和独立操作条；题注关联结论分已关联 / 孤立 / 缺失 / 歧义</li>
+              <li>结构审查增加幻灯片页角色（封面、目录、过渡、正文、结束、未确认）</li>
+              <li>继续走 Phase 1 安装器，不进入 Preview 安装断代</li>
+            </ul>
+          </li>
+          <li class="release">
+            <div class="meta">
+              <span class="ver">v0.25.2-alpha</span>
+              <time datetime="2026-08-25">2026-08-25</time>
+              <span class="status">冻结 candidate · 850871c</span>
+            </div>
+            <ul>
+              <li>图像语义补充默认开启；覆盖升级后补写直连绑定</li>
+              <li>探针未过、导出失败或总开关关闭时走视觉关闭降级</li>
+              <li>PPT 结构审查识别中文模板形状名「标题 1 / 标题 3」和色条副标题</li>
+            </ul>
+          </li>
+          <li class="release">
+            <div class="meta">
+              <span class="ver">v0.25.1-alpha</span>
+              <time datetime="2026-08-24">2026-08-24</time>
+              <span class="status">冻结 candidate · d7a1dd8</span>
+            </div>
+            <ul>
+              <li>格式审查 v2 跨运行时哈希契约（JS 与 Python 独立重算）</li>
+              <li>白名单组装、Python 3.8 生命周期门禁</li>
+            </ul>
+          </li>
+          <li class="release">
+            <div class="meta">
+              <span class="ver">v0.25.0-alpha</span>
+              <span class="status">Phase 1 能力基线</span>
+            </div>
+            <ul>
+              <li>确定性优先格式审查、受限语义参考 DSL、三宿主统一包</li>
+              <li>图像语义随包休眠交付，总开关默认关闭</li>
+            </ul>
+          </li>
+        </ol>
+        <p class="identity">
+          当前交付包
+          <code>ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz</code>
+          · SHA-256
+          <code>120a2cfd…258cb7</code>
+          。前任拒绝记录、门禁数字和构建血缘见
+          <a href="../packaging/v0253-delivery.md">v0253</a>、
+          <a href="../packaging/v0252-delivery.md">v0252</a>、
+          <a href="../packaging/v0251-delivery.md">v0251</a>。
+        </p>
+      </section>
+
+      <section class="block wrap" id="install">
+        <div class="section-head">
+          <h2>安装方法</h2>
+          <p>开发联调先起 Adapter、再装插件。内网目标机用离线交付包。覆盖安装保留已有配置、密钥、写作规范库和备份。</p>
+        </div>
+        <div data-tabs>
+          <div class="tabs" role="tablist" aria-label="安装方式">
+            <button type="button" role="tab" aria-selected="true" aria-controls="tab-dev" id="tabbtn-dev">
+              开发联调
+            </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="tab-offline" id="tabbtn-offline">
+              离线交付
+            </button>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-dev" aria-labelledby="tabbtn-dev">
+            <div class="steps">
+              <article class="step">
+                <span class="n">01</span>
+                <h3>启动本地 Adapter</h3>
+                <p><code>/health/live</code> 不读业务数据。<code>/health/ready</code> 在恢复模式返回 503。缺 FastAPI 依赖时可 <code>python adapter_service/standalone_adapter.py 18100</code>。</p>
+                <pre>cd adapter_service
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 18100</pre>
+              </article>
+              <article class="step">
+                <span class="n">02</span>
+                <h3>构建或导入插件</h3>
+                <p>产物在 <code>wps-addon/dist/</code>。正式终端优先导入 <code>formal-plugin-kit/</code>。</p>
+                <pre>cd wps-addon
+npm install
+npm test
+npm run build</pre>
+              </article>
+              <article class="step">
+                <span class="n">03</span>
+                <h3>配置企业 AI 接口</h3>
+                <p><code>adapter.json</code> 只保存接入方式、地址、模型参数和密钥引用。API Key 落在 <code>run/provider_api_keys/&lt;ref&gt;</code>。</p>
+                <pre>cp config/adapter.example.json config/adapter.json
+export ENTERPRISE_AI_API_KEY="your-api-key"</pre>
+              </article>
+            </div>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-offline" aria-labelledby="tabbtn-offline" hidden>
+            <div class="steps">
+              <article class="step">
+                <span class="n">PHASE 1</span>
+                <h3>一个三宿主包，一个安装脚本</h3>
+                <p>默认产物 <code>dist-offline/wps-ai-assistant-offline.tar.gz</code>。系统 Python 无 pip 时，安装器对 get-pip 使用 <code>-sS</code>，不扫描麒麟 apt 的 <code>dist-packages</code>。</p>
+                <pre>bash packaging/build_offline_bundle.sh
+bash packaging/install.sh "$HOME/.wps-ai-assistant"
+bash packaging/start_adapter.sh "$HOME/.wps-ai-assistant" 18100
+bash packaging/diagnose.sh "$HOME/.wps-ai-assistant"</pre>
+                <table class="cmd-table">
+                  <thead>
+                    <tr>
+                      <th>命令</th>
+                      <th>用途</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>bash packaging/build_formal_plugin_kit.sh</code></td>
+                      <td>正式插件手工导入包</td>
+                    </tr>
+                    <tr>
+                      <td><code>bash packaging/build_probe_kit.sh</code></td>
+                      <td>目标机探测包</td>
+                    </tr>
+                    <tr>
+                      <td><code>bash packaging/build_adapter_start_kit.sh</code></td>
+                      <td>Adapter 手工启动包</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block wrap" id="develop">
+        <div class="section-head">
+          <h2>给开发者</h2>
+          <p>源码、测试和运维文档按目录分家。改代码前先读仓库手递。</p>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h3>仓库结构</h3>
+            <ul class="map">
+              <li><code>wps-addon/</code><span>插件源码（Vite + TypeScript）</span></li>
+              <li><code>adapter_service/</code><span>本地 Adapter（FastAPI、规则、provider、测试）</span></li>
+              <li><code>formal-plugin-kit/</code><span>正式 WPS 手工导入包</span></li>
+              <li><code>templates/</code><span>办公模板和审校规则</span></li>
+              <li><code>packaging/</code><span>离线安装、诊断、交付包构建</span></li>
+              <li><code>phase1-delivery-kit/</code><span>一期安装器与验收材料</span></li>
+              <li><code>docs/</code><span>设计、运维、验收说明</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>常用文档</h3>
+            <div class="docs">
+              <a href="../docs/operations/workflow-profile-management.md">模型配置 <small>工作流 / 直连</small></a>
+              <a href="../docs/operations/writing-policy-library.md">写作规范 <small>预置包与降级</small></a>
+              <a href="../docs/operations/dify-smart-write-workflow.md">智能编写</a>
+              <a href="../docs/operations/dify-document-review-workflow.md">文档审查</a>
+              <a href="../docs/operations/dify-format-review-workflow.md">格式审查</a>
+              <a href="../docs/operations/dify-excel-analysis-workflow.md">智能分析</a>
+              <a href="../docs/operations/dify-ppt-structure-review-workflow.md">结构审查</a>
+              <a href="../docs/operations/kylin-v10-test-environment.md">麒麟测试环境</a>
+            </div>
+          </div>
+        </div>
+        <p class="note">
+          测试：<code>cd adapter_service && pytest</code>；<code>cd wps-addon && npm test</code>。目标机回归用麒麟 V10 ARM64 上的 Python 3.8。后续可在同一 Adapter 上扩展多表 Excel、多文件对照、受控 PPT 生成和更完整的规范治理，不在当前 Phase 1 范围。
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <p>
+          AI-WPS · v0.25.3-alpha · 自动化状态 candidate，不等于麒麟 V10 / 目标 WPS / 真实模型现场验收（Issue #59）。
+        </p>
+        <p>
+          <a href="https://github.com/w4yne00/AI-WPS">github.com/w4yne00/AI-WPS</a>
+          ·
+          <a href="../README-ZH.md">README</a>
+        </p>
+      </div>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>

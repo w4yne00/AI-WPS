@@ -6,6 +6,8 @@
 
 [English](./README.md) | [中文](./README-ZH.md)
 
+产品介绍页：[中文](./site/index.html) · [English](./site/en.html)
+
 ## 当前版本
 
 | 项目 | 内容 |
@@ -19,9 +21,18 @@
 
 `v0.25.3-alpha` 继续走 Phase1 安装器，并带上结果预览、格式问题卡片、题注关联结论和幻灯片页角色。图像语义补充默认开启；探针未过或总开关关闭时走视觉关闭降级。自动化门禁只得到 `candidate`，不能当成目标机已通过。
 
-冻结包：`v0.25.2-alpha` 候选 `20260825-850871c`（SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`）；`v0.25.1-alpha` 候选 `20260824-d7a1dd8`（build `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，源码 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档 `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`）。前任拒绝记录、门禁数字和构建血缘见 [packaging/v0251-delivery.md](./packaging/v0251-delivery.md)、[packaging/v0252-delivery.md](./packaging/v0252-delivery.md)、[packaging/v0253-delivery.md](./packaging/v0253-delivery.md)。
-
 版本规则：`AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{yyyymmdd}`。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
+
+## 版本摘要
+
+| 版本 | 用户可见变化 |
+| --- | --- |
+| `v0.25.3-alpha` | 结果预览、格式问题卡片、题注关联结论、幻灯片页角色 |
+| `v0.25.2-alpha` | 图像语义补充默认开启，视觉关闭降级；PPT 中文模板标题识别 |
+| `v0.25.1-alpha` | 格式审查 v2 跨运行时哈希契约、白名单组装、Python 3.8 生命周期门禁 |
+| `v0.25.0-alpha` | 确定性格式审查与受限语义 DSL；图像语义休眠交付 |
+
+冻结包：`v0.25.2-alpha` 候选 `20260825-850871c`（SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`）；`v0.25.1-alpha` 候选 `20260824-d7a1dd8`（SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`）。前任拒绝记录、门禁数字和构建血缘见 [packaging/v0253-delivery.md](./packaging/v0253-delivery.md)、[packaging/v0252-delivery.md](./packaging/v0252-delivery.md)、[packaging/v0251-delivery.md](./packaging/v0251-delivery.md)。
 
 ## 能做什么
 
