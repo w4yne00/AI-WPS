@@ -6,6 +6,8 @@ Current scope is **Phase 1: platform foundation + Word / Excel / PPT**, targetin
 
 [English](./README.md) | [Chinese](./README-ZH.md)
 
+Product page: [English](./site/en.html) · [中文](./site/index.html)
+
 ## Current Version
 
 | Item | Value |
@@ -19,9 +21,18 @@ Current scope is **Phase 1: platform foundation + Word / Excel / PPT**, targetin
 
 `v0.25.3-alpha` keeps the Phase1 installer and adds 结果预览, 格式问题 cards, 题注关联结论, and 幻灯片页角色. 图像语义补充 stays default-on; probe failure or a closed master switch is 视觉关闭降级. Automated gates still yield only `candidate`.
 
-Frozen kits: `v0.25.2-alpha` candidate `20260825-850871c` (SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`); `v0.25.1-alpha` candidate `20260824-d7a1dd8` (build `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`, source `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`, archive `ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`, SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`). Rejected predecessors, gate numbers, and lineage live in [packaging/v0251-delivery.md](./packaging/v0251-delivery.md), [packaging/v0252-delivery.md](./packaging/v0252-delivery.md), and [packaging/v0253-delivery.md](./packaging/v0253-delivery.md).
-
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
+
+## What's new
+
+| Version | Summary |
+| --- | --- |
+| `v0.25.3-alpha` | Result preview; format-issue cards; caption-association conclusions; slide page roles |
+| `v0.25.2-alpha` | Image-semantics supplement default-on with visual-off degrade; PPT Chinese template title recognition |
+| `v0.25.1-alpha` | Format-review v2 JS/Python hash contract; allowlist assembly; Python 3.8 lifecycle gate |
+| `v0.25.0-alpha` | Deterministic format review and restricted semantics DSL; image semantics shipped dormant |
+
+Frozen kits: `v0.25.2-alpha` candidate `20260825-850871c` (SHA-256 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`); `v0.25.1-alpha` candidate `20260824-d7a1dd8` (SHA-256 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`). Rejected predecessors, gate numbers, and lineage live in [packaging/v0253-delivery.md](./packaging/v0253-delivery.md), [packaging/v0252-delivery.md](./packaging/v0252-delivery.md), and [packaging/v0251-delivery.md](./packaging/v0251-delivery.md).
 
 ## Features
 

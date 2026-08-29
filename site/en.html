@@ -1,0 +1,406 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI-WPS · A WPS AI assistant for intranet office terminals</title>
+    <meta
+      name="description"
+      content="AI-WPS: native WPS JS/HTML add-in + local Python adapter + enterprise AI API. Phase 1 covers Word / Excel / PPT on Kylin V10 ARM, Python 3.8, offline install."
+    />
+    <meta name="theme-color" content="#f5f5f7" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)" />
+    <link rel="alternate" hreflang="zh-CN" href="index.html" />
+    <link rel="alternate" hreflang="en" href="en.html" />
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <a class="skip" href="#main">Skip to content</a>
+    <header class="nav">
+      <a class="wordmark" href="#overview">
+        <span class="mark" aria-hidden="true">AI</span>
+        AI-WPS
+      </a>
+      <nav class="nav-links" aria-label="Page">
+        <a href="#overview">Overview</a>
+        <a href="#features">Features</a>
+        <a href="#architecture">Architecture</a>
+        <a href="#releases">Releases</a>
+        <a href="#install">Install</a>
+        <a href="#develop">Develop</a>
+      </nav>
+      <div class="nav-end">
+        <div class="lang" role="group" aria-label="Language">
+          <a href="index.html" lang="zh-CN">中文</a>
+          <a class="is-active" href="en.html" lang="en" aria-current="page">EN</a>
+        </div>
+        <a class="btn btn-small" href="https://github.com/w4yne00/AI-WPS">GitHub</a>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero wrap" id="overview">
+        <p class="kicker reveal">
+          <span class="dot" aria-hidden="true"></span>
+          Phase 1 · Word / Excel / PPT
+        </p>
+        <h1 class="reveal d1">An intranet AI assistant that lives in WPS</h1>
+        <p class="lede reveal d2">
+          The native add-in owns UI, document extraction, preview, and write-back. Rules, templates, configuration, logs, diagnostics, and model calls stay in the local adapter. Current scope is the platform foundation plus three hosts, targeting Kylin V10 ARM, Python 3.8, and offline install.
+        </p>
+        <div class="hero-actions reveal d3">
+          <a class="btn" href="#install">Get started</a>
+          <a class="btn btn-ghost" href="../README.md">Read the README</a>
+        </div>
+        <div class="pills reveal d4">
+          <span class="pill">v0.25.3-alpha</span>
+          <span class="pill">candidate</span>
+          <span class="pill">Issue #59 remains manual-pending</span>
+        </div>
+        <div class="stats reveal d4">
+          <div class="stat">
+            <b>3</b>
+            <span>Separate host add-ins; Ribbon never cross-displays</span>
+          </div>
+          <div class="stat">
+            <b>8</b>
+            <span>Write, review, analysis, and summary tasks</span>
+          </div>
+          <div class="stat">
+            <b>127.0.0.1</b>
+            <span>Local adapter, default port 18100</span>
+          </div>
+          <div class="stat">
+            <b>3.8</b>
+            <span>Target Python, offline installer</span>
+          </div>
+        </div>
+      </section>
+
+      <section class="block wrap" id="features">
+        <div class="section-head">
+          <h2>Features</h2>
+          <p>
+            Model output is previewed before any write-back. Review and analysis tasks are read-only by default. Workflow-platform access uses
+            <code>/chat-messages</code>; direct-model access uses OpenAI-compatible
+            <code>/chat/completions</code>. Runtime requests do not fall back to a unified URL or key.
+          </p>
+        </div>
+        <div class="hosts">
+          <article class="host">
+            <header>
+              <h3>Word</h3>
+              <span class="count">5 entries</span>
+            </header>
+            <div class="feature">
+              <h4>Smart Write</h4>
+              <p>Rewrite, continue, summarize, custom write. Preview / compare / plain text, then write-back.</p>
+            </div>
+            <div class="feature">
+              <h4>Smart Imitation</h4>
+              <p>Template-based imitation. Preview, plain text, copy; no write-back.</p>
+            </div>
+            <div class="feature">
+              <h4>Document Review</h4>
+              <p>Typos, expression, logic, fluency, professionalism. Selection or limited full document.</p>
+            </div>
+            <div class="feature">
+              <h4>Format Review</h4>
+              <p>Against the technical-document format rules. Format-issue cards, caption-association conclusions, image-semantics supplement. No format write-back.</p>
+              <span class="tag">Read-only · visual-off degrade</span>
+            </div>
+            <div class="feature">
+              <h4>Writing policy</h4>
+              <p>Four preset packs plus a local organization library. Available to write / imitate / review.</p>
+            </div>
+          </article>
+          <article class="host">
+            <header>
+              <h3>Excel</h3>
+              <span class="count">2 entries</span>
+            </header>
+            <div class="feature">
+              <h4>Smart Analysis</h4>
+              <p>Selected or used range. Structured report and briefing paragraph; no cell writes.</p>
+              <span class="tag">Read-only</span>
+            </div>
+            <div class="feature">
+              <h4>Formula Assistant</h4>
+              <p>Explicit selection, max 30×20. Generate or explain; copy only.</p>
+              <span class="tag">Copy only</span>
+            </div>
+          </article>
+          <article class="host">
+            <header>
+              <h3>PPT</h3>
+              <span class="count">2 entries</span>
+            </header>
+            <div class="feature">
+              <h4>Smart Summary</h4>
+              <p>Current slide, or one <code>.md</code> / <code>.docx</code> (≤10 MB) for a full-deck outline. Preview and copy only.</p>
+              <span class="tag">Preview / copy only</span>
+            </div>
+            <div class="feature">
+              <h4>Structure Review</h4>
+              <p>Up to 60 slides. Page-role list first, then rule exemptions. Read-only.</p>
+              <span class="tag">Read-only</span>
+            </div>
+          </article>
+        </div>
+        <p class="note">
+          Production mock output stays off unless explicitly enabled. Image-semantics supplement is default-on; probe failure or a closed master switch is visual-off degrade — never claim the model saw the picture. Automated gates still yield only
+          <code>candidate</code>.
+        </p>
+      </section>
+
+      <section class="block wrap" id="architecture">
+        <div class="section-head">
+          <h2>Architecture</h2>
+          <p>Each layer has one job. Documents travel as structured payloads. Health state decides whether config changes and new model jobs are allowed.</p>
+        </div>
+        <ol class="pipeline">
+          <li class="pipe">
+            <span class="n">01</span>
+            <strong>User in WPS</strong>
+            <p>Works from Word / Excel / PPT without leaving the document.</p>
+          </li>
+          <li class="pipe">
+            <span class="n">02</span>
+            <strong>JS/HTML add-in</strong>
+            <p>UI, extraction, preview, write-back. Separate packages so Ribbon buttons never cross-display.</p>
+          </li>
+          <li class="pipe">
+            <span class="n">03</span>
+            <strong>Document bridge</strong>
+            <p>Paragraphs, headings, fonts, sizes, alignment, outline levels stay on the payload.</p>
+          </li>
+          <li class="pipe">
+            <span class="n">04</span>
+            <strong>Local adapter</strong>
+            <p><code>127.0.0.1:18100</code>. Rules, templates, config, logs, model calls.</p>
+          </li>
+          <li class="pipe">
+            <span class="n">05</span>
+            <strong>Enterprise AI API</strong>
+            <p>Workflow platform or direct model. Keys live in local reference files, not in config text.</p>
+          </li>
+        </ol>
+        <div class="principles">
+          <div class="principle">
+            <strong>Preview, then write</strong>
+            <p>Word writing tasks preview first. Review, analysis, and summary do not change the source by default.</p>
+          </div>
+          <div class="principle">
+            <strong>Four health states</strong>
+            <p>Live, ready, degraded, recovery. Recovery blocks config changes and new model jobs.</p>
+          </div>
+          <div class="principle">
+            <strong>Per-task config</strong>
+            <p>Eight tasks keep their own access method and key references. No unified URL fallback at runtime.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="block wrap" id="releases">
+        <div class="section-head">
+          <h2>Release notes</h2>
+          <p>
+            Current <code>v0.25.3-alpha</code>. Version rule
+            <code>AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}</code>. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
+          </p>
+        </div>
+        <ol class="timeline">
+          <li class="release current">
+            <div class="meta">
+              <span class="ver">v0.25.3-alpha</span>
+              <time datetime="2026-08-26">2026-08-26</time>
+              <span class="status">candidate · d1a346b</span>
+            </div>
+            <ul>
+              <li>Result preview: restricted Markdown for headings, lists, tables, and bold</li>
+              <li>Format issues become cards with a separate action bar; caption association is linked / orphan / missing / ambiguous</li>
+              <li>Structure review adds slide page roles (cover, TOC, transition, body, end, unconfirmed)</li>
+              <li>Keeps the Phase 1 installer; does not enter a Preview install generation</li>
+            </ul>
+          </li>
+          <li class="release">
+            <div class="meta">
+              <span class="ver">v0.25.2-alpha</span>
+              <time datetime="2026-08-25">2026-08-25</time>
+              <span class="status">frozen candidate · 850871c</span>
+            </div>
+            <ul>
+              <li>Image-semantics supplement default-on; overlay upgrade rewrites direct-model bindings</li>
+              <li>Probe failure, export failure, or a closed master switch is visual-off degrade</li>
+              <li>PPT structure review recognizes Chinese template shape names “标题 1 / 标题 3” and color-bar subtitles</li>
+            </ul>
+          </li>
+          <li class="release">
+            <div class="meta">
+              <span class="ver">v0.25.1-alpha</span>
+              <time datetime="2026-08-24">2026-08-24</time>
+              <span class="status">frozen candidate · d7a1dd8</span>
+            </div>
+            <ul>
+              <li>Format-review v2 cross-runtime hash contract (JS and Python recompute independently)</li>
+              <li>Allowlist assembly and Python 3.8 lifecycle gate</li>
+            </ul>
+          </li>
+          <li class="release">
+            <div class="meta">
+              <span class="ver">v0.25.0-alpha</span>
+              <span class="status">Phase 1 capability baseline</span>
+            </div>
+            <ul>
+              <li>Deterministic-first format review, restricted semantics DSL, unified three-host package</li>
+              <li>Image semantics shipped dormant; master switch default-off</li>
+            </ul>
+          </li>
+        </ol>
+        <p class="identity">
+          Current kit
+          <code>ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz</code>
+          · SHA-256
+          <code>120a2cfd…258cb7</code>.
+          Rejected predecessors, gate numbers, and lineage live in
+          <a href="../packaging/v0253-delivery.md">v0253</a>,
+          <a href="../packaging/v0252-delivery.md">v0252</a>,
+          <a href="../packaging/v0251-delivery.md">v0251</a>.
+        </p>
+      </section>
+
+      <section class="block wrap" id="install">
+        <div class="section-head">
+          <h2>Install</h2>
+          <p>For local development, start the adapter then load the add-in. Intranet terminals use the offline kit. Overwrite installs keep existing config, keys, the writing-policy database, and backups.</p>
+        </div>
+        <div data-tabs>
+          <div class="tabs" role="tablist" aria-label="Install method">
+            <button type="button" role="tab" aria-selected="true" aria-controls="tab-dev" id="tabbtn-dev">
+              Development
+            </button>
+            <button type="button" role="tab" aria-selected="false" aria-controls="tab-offline" id="tabbtn-offline">
+              Offline delivery
+            </button>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-dev" aria-labelledby="tabbtn-dev">
+            <div class="steps">
+              <article class="step">
+                <span class="n">01</span>
+                <h3>Start the local adapter</h3>
+                <p><code>/health/live</code> does not read business data. <code>/health/ready</code> returns 503 in recovery. Without FastAPI deps: <code>python adapter_service/standalone_adapter.py 18100</code>.</p>
+                <pre>cd adapter_service
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 127.0.0.1 --port 18100</pre>
+              </article>
+              <article class="step">
+                <span class="n">02</span>
+                <h3>Build or import the add-in</h3>
+                <p>Output is <code>wps-addon/dist/</code>. Formal terminals should import <code>formal-plugin-kit/</code>.</p>
+                <pre>cd wps-addon
+npm install
+npm test
+npm run build</pre>
+              </article>
+              <article class="step">
+                <span class="n">03</span>
+                <h3>Configure the enterprise AI provider</h3>
+                <p><code>adapter.json</code> stores access method, URL, model parameters, and key references. Keys live under <code>run/provider_api_keys/&lt;ref&gt;</code>.</p>
+                <pre>cp config/adapter.example.json config/adapter.json
+export ENTERPRISE_AI_API_KEY="your-api-key"</pre>
+              </article>
+            </div>
+          </div>
+          <div class="panel" role="tabpanel" id="tab-offline" aria-labelledby="tabbtn-offline" hidden>
+            <div class="steps">
+              <article class="step">
+                <span class="n">PHASE 1</span>
+                <h3>One three-host package, one installer</h3>
+                <p>Default output <code>dist-offline/wps-ai-assistant-offline.tar.gz</code>. When system Python has no pip, get-pip runs with <code>-sS</code> so Kylin apt <code>dist-packages</code> are not scanned.</p>
+                <pre>bash packaging/build_offline_bundle.sh
+bash packaging/install.sh "$HOME/.wps-ai-assistant"
+bash packaging/start_adapter.sh "$HOME/.wps-ai-assistant" 18100
+bash packaging/diagnose.sh "$HOME/.wps-ai-assistant"</pre>
+                <table class="cmd-table">
+                  <thead>
+                    <tr>
+                      <th>Command</th>
+                      <th>Purpose</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <tr>
+                      <td><code>bash packaging/build_formal_plugin_kit.sh</code></td>
+                      <td>Formal add-in import kit</td>
+                    </tr>
+                    <tr>
+                      <td><code>bash packaging/build_probe_kit.sh</code></td>
+                      <td>Target-machine probe kit</td>
+                    </tr>
+                    <tr>
+                      <td><code>bash packaging/build_adapter_start_kit.sh</code></td>
+                      <td>Manual adapter start kit</td>
+                    </tr>
+                  </tbody>
+                </table>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="block wrap" id="develop">
+        <div class="section-head">
+          <h2>For developers</h2>
+          <p>Source, tests, and operations docs stay in separate trees. Read the repo handoff before changing code.</p>
+        </div>
+        <div class="split">
+          <div class="card">
+            <h3>Repository map</h3>
+            <ul class="map">
+              <li><code>wps-addon/</code><span>Add-in source (Vite + TypeScript)</span></li>
+              <li><code>adapter_service/</code><span>Local adapter (FastAPI, rules, provider, tests)</span></li>
+              <li><code>formal-plugin-kit/</code><span>Formal WPS manual-import kit</span></li>
+              <li><code>templates/</code><span>Office templates and review rules</span></li>
+              <li><code>packaging/</code><span>Offline install, diagnostics, kit build</span></li>
+              <li><code>phase1-delivery-kit/</code><span>Phase 1 installer and acceptance materials</span></li>
+              <li><code>docs/</code><span>Design, operations, acceptance</span></li>
+            </ul>
+          </div>
+          <div class="card">
+            <h3>Docs</h3>
+            <div class="docs">
+              <a href="../docs/operations/workflow-profile-management.md">Model configuration <small>workflow / direct</small></a>
+              <a href="../docs/operations/writing-policy-library.md">Writing policy <small>presets and degrade</small></a>
+              <a href="../docs/operations/dify-smart-write-workflow.md">Smart Write</a>
+              <a href="../docs/operations/dify-document-review-workflow.md">Document Review</a>
+              <a href="../docs/operations/dify-format-review-workflow.md">Format Review</a>
+              <a href="../docs/operations/dify-excel-analysis-workflow.md">Smart Analysis</a>
+              <a href="../docs/operations/dify-ppt-structure-review-workflow.md">Structure Review</a>
+              <a href="../docs/operations/kylin-v10-test-environment.md">Kylin test host</a>
+            </div>
+          </div>
+        </div>
+        <p class="note">
+          Tests: <code>cd adapter_service && pytest</code>; <code>cd wps-addon && npm test</code>. Target-machine regression uses Python 3.8 on Kylin V10 ARM64. Later work on the same adapter can add multi-sheet Excel flows, multi-file compare, governed PPT generation, and richer policy governance — outside current Phase 1.
+        </p>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <p>
+          AI-WPS · v0.25.3-alpha · automated status candidate, not Kylin V10 / target WPS / live-model field acceptance (Issue #59).
+        </p>
+        <p>
+          <a href="https://github.com/w4yne00/AI-WPS">github.com/w4yne00/AI-WPS</a>
+          ·
+          <a href="../README.md">README</a>
+        </p>
+      </div>
+    </footer>
+    <script src="app.js"></script>
+  </body>
+</html>
