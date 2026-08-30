@@ -127,6 +127,7 @@
     smartFillWorkbookId: "",
     smartFillInstruction: "",
     smartFillResult: null,
+    smartFillPreview: null,
     smartFillDraftItems: [],
     smartFillRetryItemId: "",
     smartFillRetryBaseResult: null,
@@ -1237,43 +1238,28 @@
   }
 
   function buildSmartFillDefaultSource(sheet, target) {
-    var firstItem = target && target.items && target.items[0];
-    var startColumn;
-    var endColumn;
-    var headers = [];
-    var rows = [];
-    var rowValues;
-    var column;
-    var rowIndex;
-    if (!firstItem) {
-      return { sheetName: target.sheetName, address: "", headers: [], rows: [], rowCount: 0, columnCount: 0, truncated: false };
+    if (!helpers.buildExcelSmartFillDefaultSource) {
+      throw new Error("智能填写默认来源组件不可用，请重新打开任务窗格。");
     }
-    startColumn = Math.max(1, firstItem.column - 24);
-    endColumn = Math.min(16384, startColumn + EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceColumns - 1);
-    for (column = startColumn; column <= endColumn; column += 1) {
-      headers.push(readSmartFillDisplayedValue(getSmartFillSheetCell(sheet, Math.max(firstItem.row - 1, 1), column)));
-    }
-    target.items.forEach(function (item) {
-      rowValues = [];
-      for (column = startColumn; column <= endColumn; column += 1) {
-        rowIndex = item.row;
-        rowValues.push(column === item.column ? "" : readSmartFillDisplayedValue(getSmartFillSheetCell(sheet, rowIndex, column)));
+    return helpers.buildExcelSmartFillDefaultSource(target, function (row, column) {
+      var cell = getSmartFillSheetCell(sheet, row, column);
+      var formulaState;
+      var hasFormula;
+      if (!cell) {
+        return { text: "", hidden: false, hasFormula: false, formula: "", comment: "" };
       }
-      rows.push(rowValues);
+      hasFormula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
+      formulaState = readSmartFillPropertyState(cell, [
+        "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
+      ]);
+      return {
+        text: readSmartFillDisplayedValue(cell) || String(safeText(resolveScalarValue(safeRead(cell, "Text") || safeRead(cell, "Value2")), "")),
+        hidden: isSmartFillHostCellHidden(cell),
+        hasFormula: hasFormula.value === true,
+        formula: String(formulaState.value || ""),
+        comment: ""
+      };
     });
-    target.columnHeader = headers[firstItem.column - startColumn] || "";
-    target.rowContext = rows[0] || [];
-    var source = {
-      sheetName: target.sheetName,
-      address: "",
-      headers: headers,
-      rows: rows,
-      rowCount: rows.length,
-      columnCount: headers.length,
-      truncated: false
-    };
-    source.snapshotHash = makeSmartFillSourceSnapshotHash(source);
-    return source;
   }
 
   function summarizeSmartFillTarget(target) {
@@ -1318,6 +1304,7 @@
       state.smartFillWorkbookId = payload.workbookId || state.smartFillWorkbookId;
       state.smartFillSource = context;
       state.smartFillResult = null;
+      state.smartFillPreview = null;
       state.smartFillDraftItems = [];
       byId("btn-write-smart-fill").hidden = true;
       renderSmartFillCaptureState();
@@ -1337,6 +1324,7 @@
       state.smartFillSource = payload.source;
       state.smartFillWorkbookId = state.smartFillWorkbookId || payload.workbookId || "";
       state.smartFillResult = null;
+      state.smartFillPreview = null;
       state.smartFillDraftItems = [];
       byId("btn-write-smart-fill").hidden = true;
       renderSmartFillCaptureState();
@@ -1753,7 +1741,11 @@
     markdown = buildExcelSmartFillMarkdown(state.smartFillResult);
     setResult(markdown, markdown);
     output = byId("result-output");
-    output.innerHTML = buildSmartFillPreviewEditor(state.smartFillResult);
+    state.smartFillPreview = helpers.createExcelSmartFillPreview(state.smartFillResult);
+    output.innerHTML = helpers.buildExcelSmartFillReadonlyPreview(
+      state.smartFillResult,
+      state.smartFillTarget && state.smartFillTarget.items || []
+    );
     setSmartFillWriteButtonState();
   }
 
@@ -1935,7 +1927,9 @@
       }
       assertSmartFillPreflight();
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell);
+      helpers.consumeExcelSmartFillPreview(state.smartFillPreview || helpers.createExcelSmartFillPreview(state.smartFillResult));
       state.smartFillResult = null;
+      state.smartFillPreview = null;
       state.smartFillDraftItems = [];
       byId("btn-write-smart-fill").hidden = true;
       setPlainResult([

@@ -342,6 +342,103 @@ function testSmartFillExtractionFailsClosedOnUnreadableHostFlags() {
   assert.throws(() => helpers.validateExcelSmartFillTarget(payload.target), /隐藏/);
 }
 
+function makeDefaultSourceCell(text, extra) {
+  return Object.assign({
+    text: text,
+    hidden: false,
+    hasFormula: false,
+    formula: "",
+    comment: ""
+  }, extra || {});
+}
+
+function testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly() {
+  assert.strictEqual(typeof helpers.buildExcelSmartFillDefaultSource, "function");
+  const cells = {
+    "1,1": makeDefaultSourceCell("名称"),
+    "1,2": makeDefaultSourceCell("部门"),
+    "1,3": makeDefaultSourceCell("说明"),
+    "1,4": makeDefaultSourceCell("摘要"),
+    "2,1": makeDefaultSourceCell("甲", { comment: "内部批注不得外发" }),
+    "2,2": makeDefaultSourceCell("研发", { hidden: true }),
+    "2,3": makeDefaultSourceCell("=A2", { hasFormula: true, formula: "=A2" }),
+    "2,4": makeDefaultSourceCell("旧摘要"),
+    "3,1": makeDefaultSourceCell("乙"),
+    "3,2": makeDefaultSourceCell("销售"),
+    "3,3": makeDefaultSourceCell("第二项"),
+    "3,4": makeDefaultSourceCell("不应进入默认来源")
+  };
+  const target = {
+    sheetName: "目标表",
+    address: "$D$2",
+    items: [{
+      itemId: "target-1",
+      address: "$D$2",
+      row: 2,
+      column: 4,
+      originalValue: "",
+      originalValueType: "blank",
+      originalFormula: "",
+      isFormula: false,
+      isMerged: false,
+      isProtected: false,
+      isHidden: false
+    }]
+  };
+  const source = helpers.buildExcelSmartFillDefaultSource(target, (row, column) => (
+    cells[`${row},${column}`] || makeDefaultSourceCell("")
+  ));
+
+  assert.strictEqual(target.columnHeader, "摘要");
+  assert.deepStrictEqual(source.headers, ["名称", "部门", "说明", "摘要"]);
+  assert.strictEqual(source.rowCount, 1);
+  assert.strictEqual(source.columnCount, 4);
+  assert.deepStrictEqual(source.rows, [["甲", "", "", ""]]);
+  assert.ok(!JSON.stringify(source).includes("内部批注不得外发"));
+  assert.ok(!JSON.stringify(source).includes("=A2"));
+  assert.ok(!JSON.stringify(source).includes("不应进入默认来源"));
+  assert.ok(!JSON.stringify(source).includes("旧摘要"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(source, "comments"));
+}
+
+function testSmartFillReadonlyPreviewOmitsEditingAndUndo() {
+  assert.strictEqual(typeof helpers.buildExcelSmartFillReadonlyPreview, "function");
+  const html = helpers.buildExcelSmartFillReadonlyPreview({
+    items: [
+      { itemId: "target-1", status: "completed", valueType: "text", value: "甲类" },
+      { itemId: "target-2", status: "insufficient_information", valueType: "text", value: "" }
+    ]
+  }, [
+    { itemId: "target-1", address: "$D$2" },
+    { itemId: "target-2", address: "$D$3" }
+  ]);
+  assert.ok(html.includes("智能填写预览"));
+  assert.ok(html.includes("$D$2"));
+  assert.ok(html.includes("甲类"));
+  assert.ok(html.includes("信息不足"));
+  assert.ok(!html.includes("<input"));
+  assert.ok(!html.includes("textarea"));
+  assert.ok(!html.includes("撤销"));
+  assert.ok(!/undo/i.test(html));
+  assert.ok(!html.includes("可编辑"));
+}
+
+function testSmartFillPreviewCannotBeSubmittedTwice() {
+  assert.strictEqual(typeof helpers.createExcelSmartFillPreview, "function");
+  assert.strictEqual(typeof helpers.consumeExcelSmartFillPreview, "function");
+  const preview = helpers.createExcelSmartFillPreview({
+    schemaVersion: "excel.smart_fill.v1",
+    items: [{ itemId: "target-1", status: "completed", valueType: "text", value: "甲类" }]
+  });
+  helpers.consumeExcelSmartFillPreview(preview);
+  assert.strictEqual(preview.consumed, true);
+  assert.strictEqual(preview.result, null);
+  assert.throws(
+    () => helpers.consumeExcelSmartFillPreview(preview),
+    /重复/
+  );
+}
+
 function testSmartFillUiContract() {
   [
     'id="excel-smart-fill-options"',
@@ -362,6 +459,10 @@ function testSmartFillUiContract() {
   assert.ok(js.includes("smartFillRetryBaseDraftItems"));
   assert.ok(js.includes("retryExcelSmartFillItem"));
   assert.ok(js.includes("window.confirm"));
+  assert.ok(!html.includes("撤销"));
+  assert.ok(js.includes("buildExcelSmartFillReadonlyPreview"));
+  assert.ok(js.includes("consumeExcelSmartFillPreview"));
+  assert.ok(js.includes("buildExcelSmartFillDefaultSource"));
   [
     "EXCEL_SMART_FILL_TARGET_SHAPE_INVALID",
     "EXCEL_SMART_FILL_CROSS_SHEET",
@@ -370,6 +471,9 @@ function testSmartFillUiContract() {
   assert.ok(!/\.Formula\s*=/.test(js), "smart fill taskpane must never write Formula");
 }
 
+testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly();
+testSmartFillReadonlyPreviewOmitsEditingAndUndo();
+testSmartFillPreviewCannotBeSubmittedTwice();
 testSmartFillPayloadCapturesFrozenSnapshots();
 testSmartFillWritebackGuardsSnapshotAndFormulaSafety();
 testSmartFillWritesFormulaLikeTextAsLiteralAndReportsRollbackAddresses();
