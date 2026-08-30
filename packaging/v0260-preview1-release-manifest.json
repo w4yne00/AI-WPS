@@ -1,0 +1,184 @@
+{
+  "schemaVersion": 1,
+  "product": "AI-WPS",
+  "productChannel": "preview",
+  "version": "0.26.0-preview.1",
+  "releaseDate": "",
+  "versionRule": "",
+  "hosts": [
+    {
+      "name": "Word",
+      "plugin": "wps-ai-assistant_1.0.0",
+      "ribbonType": "wps"
+    },
+    {
+      "name": "Excel",
+      "plugin": "wps-ai-assistant-et_1.0.0",
+      "ribbonType": "et"
+    },
+    {
+      "name": "PPT",
+      "plugin": "wps-ai-assistant-wpp_1.0.0",
+      "ribbonType": "wpp"
+    }
+  ],
+  "adapter": {
+    "name": "wps-ai-adapter",
+    "version": "0.26.0-preview.1",
+    "accessMethods": [
+      "workflow_platform",
+      "direct_model"
+    ],
+    "systemPromptManifest": "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
+    "systemPromptCount": 8,
+    "pythonRuntimeGate": "scripts/python38_delivery_runtime_gate.py",
+    "lifecycleGate": "scripts/python38_delivery_lifecycle_gate.py",
+    "minimumPython": "3.8",
+    "privateRuntime": {
+      "path": "python-runtime/",
+      "lock": "packages/kylin-v10-arm-py38/requirements-lock.txt",
+      "hashManifest": "packages/kylin-v10-arm-py38/SHA256SUMS",
+      "disableUserSite": true
+    }
+  },
+  "deliveryPolicy": {
+    "status": "candidate",
+    "sourceAssembly": "explicit-allowlist",
+    "allowlist": "release-allowlist.json",
+    "fileHashes": "release-file-hashes.json",
+    "auditScript": "scripts/audit_delivery.py",
+    "candidateAuditScript": "scripts/audit_v0260_preview1_delivery.py",
+    "lifecycleGate": "scripts/python38_delivery_lifecycle_gate.py",
+    "targetAcceptanceRequired": true,
+      "automatedGates": [
+        "allowlist",
+        "python38-compatibility",
+        "plugin-contract",
+        "format-rule-compile",
+        "preview-identity-audit",
+        "python38-lifecycle"
+      ]
+  },
+  "installationPolicy": {
+    "installer": "installer/install_ai_wps.sh",
+    "defaultInstallRoot": "$TARGET_HOME/ai-wps",
+    "legacyInstallRoot": "$TARGET_HOME/ai-wps-phase1",
+    "legacyHandling": "read-only-detect-manual-reinstall-reconfigure",
+    "migratesLegacyRuntimeData": false,
+    "deletesLegacyInstall": false
+  },
+  "excelFormulaAssistantAssets": {
+    "operationsGuide": "docs/operations/dify-excel-formula-assistant-workflow.md",
+    "promptTemplate": "docs/prompt-templates/excel-formula-assistant-prompt-template.md"
+  },
+  "pptStructureReviewAssets": {
+    "operationsGuide": "docs/operations/dify-ppt-structure-review-workflow.md",
+    "promptTemplate": "docs/prompt-templates/ppt-structure-review-prompt-template.md"
+  },
+  "ribbonAssets": {
+    "notices": "docs/third-party-notices.md"
+  },
+  "writingPolicyPacks": [
+    "yangqi-tech-writing-base",
+    "technical-document-style",
+    "official-document-style",
+    "cybersecurity-terminology"
+  ],
+  "writingPolicyAssets": {
+    "schema": "packages/adapter-start-kit/adapter_service/writing_policy_packs/schema-v1.json",
+    "sources": "docs/writing-policy-sources.md",
+    "notices": "packages/adapter-start-kit/adapter_service/writing_policy_packs/THIRD_PARTY_NOTICES.md",
+    "csvTemplate": "docs/import-templates/writing-policies-import-template.csv",
+    "xlsxTemplate": "docs/import-templates/writing-policies-import-template.xlsx"
+  },
+  "baseline": {
+    "requiredProductVersion": "0.25.3-alpha",
+    "archiveName": "",
+    "archiveSha256": "",
+    "sourceStatus": "candidate"
+  },
+  "targetAcceptance": {
+    "status": "manual-pending",
+    "required": true,
+    "doesNotCloseIssue": true
+  },
+  "candidateEvidence": {
+    "candidateBuildId": "",
+    "sourceCommit": "",
+    "archiveName": "",
+    "archiveChecksumFile": "",
+    "automatedResult": "candidate",
+    "acceptanceRecord": ""
+  },
+  "runtimeStatePolicy": {
+    "sharedStateEnv": "AI_WPS_STATE_DIR",
+    "backupEnv": "AI_WPS_BACKUP_DIR",
+    "runtimeVarEnv": "AI_WPS_VAR_DIR",
+    "legacyLayoutFallback": false,
+    "snapshotRoot": "state/",
+    "snapshotExcluded": [
+      "backups/",
+      "var/logs/",
+      "var/run/",
+      "var/transactions/"
+    ],
+    "firstInstall": "initialize-empty-organization-database",
+    "upgrade": "copy-on-write-migration-with-consistent-snapshot",
+    "snapshotManifestSchemaVersion": 1,
+    "copyVerificationField": "copyVerified",
+    "minimumValidSnapshots": 3,
+    "wholeStateRestoreOnly": true,
+    "recoveryActivation": {
+      "automaticSwitch": false,
+      "explicitFlag": "--activate-recovery",
+      "terminalStatus": "recovery_activated"
+    },
+    "recoveryApi": {
+      "createReadOnlyBackup": "POST /recovery/backups",
+      "sanitizedDiagnostics": "GET /recovery/diagnostics",
+      "restoreEndpoint": null
+    },
+    "excluded": [
+      "writing_policies.db",
+      "writing_policies.db.backup-*",
+      "provider_api_key",
+      "provider_api_keys/",
+      "adapter.json",
+      "logs/",
+      "imported-user-content",
+      "unapproved-review-drafts"
+    ]
+  },
+  "releaseGenerationPolicy": {
+    "releaseRoot": "releases/<version>/",
+    "currentPointer": "current",
+    "transactionLogRoot": "var/transactions/",
+    "switchStrategy": "durable-compensating-rename",
+    "components": [
+      "adapter_release",
+      "word_plugin",
+      "excel_plugin",
+      "ppt_plugin",
+      "publish_manifest",
+      "runtime_state_snapshot",
+      "current_pointer"
+    ]
+  },
+  "formatReview": {
+    "enabledByDefault": true,
+    "featureSwitch": "AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW",
+    "rulePackManifest": "format-rule-assets-manifest.json",
+    "referenceWorkflows": [
+      "reference-workflows/format-semantics-text-v1.yml",
+      "reference-workflows/format-semantics-vision-v1.yml"
+    ]
+  },
+  "visualPolicy": {
+    "enabledByDefault": true,
+    "runtimeMasterSwitch": "formatReview.imageSemantics.enabled",
+    "requiresWpsAcceptance": false,
+    "pixelExportWhenDisabled": false,
+    "pixelUploadWhenDisabled": false,
+    "imageSlotAllocationWhenDisabled": false
+  }
+}

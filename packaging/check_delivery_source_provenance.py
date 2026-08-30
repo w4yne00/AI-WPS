@@ -25,6 +25,13 @@ BUILD_INPUTS = (
     "packaging/prepare_v0251_delivery.py",
 )
 
+PREVIEW_BUILD_INPUTS = (
+    "packaging/build_v0260_preview1_delivery_kit.sh",
+    "packaging/prepare_v0260_preview1_delivery.py",
+    "packaging/audit_v0260_preview1_delivery.py",
+    "packaging/python38_preview1_delivery_lifecycle_gate.py",
+)
+
 
 def _relative_path(repo_root: Path, path: Path) -> str:
     try:
@@ -109,9 +116,17 @@ def verify(repo_root: Path, source_allowlist: Path, source_commit: str) -> int:
         for path in (repo_root / "formal-plugin-kit/tests").glob("*.test.js")
         if path.is_file()
     }
+    policy_sources = set(_policy_sources(repo_root, source_allowlist, set()))
+    try:
+        root_policy = json.loads(source_allowlist.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProvenanceFailure("DELIVERY_SOURCE_POLICY_INVALID") from exc
+    build_inputs = set(BUILD_INPUTS)
+    if root_policy.get("version") == "0.26.0-preview.1":
+        build_inputs.update(PREVIEW_BUILD_INPUTS)
     sources = sorted(
-        set(_policy_sources(repo_root, source_allowlist, set()))
-        | set(BUILD_INPUTS)
+        policy_sources
+        | build_inputs
         | set(tracked_node_tests.stdout.splitlines())
         | working_node_tests
     )

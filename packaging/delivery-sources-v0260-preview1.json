@@ -1,0 +1,55 @@
+{
+  "schemaVersion": 1,
+  "version": "0.26.0-preview.1",
+  "basePolicy": "delivery-sources-v0253.json",
+  "generatedFiles": [
+    "docs/import-templates/writing-policies-import-template.csv",
+    "docs/import-templates/writing-policies-import-template.xlsx",
+    "release-file-hashes.json"
+  ],
+  "entries": [
+    {
+      "type": "file",
+      "source": "packaging/v0260-preview1-delivery.md",
+      "target": "README.md",
+      "replace": true
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0260-preview1-release-manifest.json",
+      "target": "release-manifest.json",
+      "replace": true
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0260-preview1-target-machine-acceptance.md",
+      "target": "docs/v0260-preview1-target-machine-acceptance.md"
+    },
+    {
+      "type": "file",
+      "source": "packaging/v0260-preview1-candidate-status.json",
+      "target": "docs/v0260-preview1-candidate-status.json"
+    },
+    {
+      "type": "file",
+      "source": "packaging/audit_v0260_preview1_delivery.py",
+      "target": "scripts/audit_v0260_preview1_delivery.py"
+    },
+    {
+      "type": "file",
+      "source": "phase1-delivery-kit/installer/install_phase1.sh",
+      "target": "installer/install_ai_wps.sh"
+    },
+    {
+      "type": "file",
+      "source": "packaging/ai_wps_smoke_test.sh",
+      "target": "scripts/ai_wps_smoke_test.sh"
+    },
+    {
+      "type": "file",
+      "source": "packaging/python38_preview1_delivery_lifecycle_gate.py",
+      "target": "scripts/python38_delivery_lifecycle_gate.py",
+      "replace": true
+    }
+  ]
+}

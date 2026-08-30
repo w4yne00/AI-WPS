@@ -2,6 +2,7 @@ import hashlib
 import json
 import ast
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -569,6 +570,7 @@ class DeliveryArtifactTests(unittest.TestCase):
         self.assertIn("delivery_source_commit_not_head", build)
         self.assertIn("check_delivery_source_provenance.py", build)
 
+    @unittest.skipUnless(shutil.which("git"), "git is required for provenance fixtures")
     def test_v0251_source_provenance_rejects_dirty_allowlisted_input(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             repo = Path(temp_dir) / "repo"
