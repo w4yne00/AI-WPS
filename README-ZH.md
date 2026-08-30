@@ -6,7 +6,7 @@
 
 [English](./README.md) | [中文](./README-ZH.md)
 
-产品介绍页：[中文](./site/index.html) · [English](./site/en.html)
+产品介绍页：[中文](https://w4yne00.github.io/AI-WPS/) · [English](https://w4yne00.github.io/AI-WPS/en.html)
 
 ## 当前版本
 
