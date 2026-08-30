@@ -35,6 +35,7 @@ REQUIRED_OUTPUTS = {
     "scripts/python38_delivery_lifecycle_gate.py",
     "docs/v0260-preview1-target-machine-acceptance.md",
     "docs/v0260-preview1-candidate-status.json",
+    "release-file-hashes.json",
 }
 
 
@@ -251,7 +252,7 @@ def audit_installer(root: Path) -> None:
     content = installer.read_text(encoding="utf-8")
     required_markers = (
         'INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$TARGET_HOME/ai-wps}"',
-        'LEGACY_PHASE1_INSTALL_ROOT="${AI_WPS_LEGACY_INSTALL_ROOT:-$TARGET_HOME/ai-wps-phase1}"',
+        'LEGACY_PHASE1_INSTALL_ROOT="$TARGET_HOME/ai-wps-phase1"',
         "legacy_phase1_install_detected=true",
         "legacy_phase1_action=read_only",
         "manual_reinstall_required=true",
@@ -260,6 +261,9 @@ def audit_installer(root: Path) -> None:
         "legacy_install_deleted=false",
         "ai_wps_install_start=true",
         "ai_wps_install_done=true",
+        "preview_path_conflicts_with_legacy",
+        "preview_existing_install_manifest_required",
+        "preview_existing_install_identity_invalid",
     )
     for marker in required_markers:
         if marker not in content:
@@ -334,7 +338,7 @@ def audit_status(root: Path, manifest: Dict) -> None:
 def audit_hashes(root: Path) -> None:
     path = root / "release-file-hashes.json"
     if not path.is_file():
-        return
+        raise DeliveryFailure("V0260_FILE_HASH_MANIFEST_MISSING")
     hashes = load_json(path, "V0260_FILE_HASH_MANIFEST_INVALID")
     if hashes.get("version") != VERSION or hashes.get("algorithm") != "sha256":
         raise DeliveryFailure("V0260_FILE_HASH_MANIFEST_INVALID")

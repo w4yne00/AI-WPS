@@ -212,9 +212,106 @@ def test_preview_installer_only_reports_legacy_phase1_and_preserves_its_data(tmp
     } == before
 
 
+def test_preview_installer_rejects_runtime_path_overlapping_legacy_install(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    legacy = target_home / "ai-wps-phase1"
+    legacy_state = legacy / "state"
+    legacy_state.mkdir(parents=True)
+    sentinel = legacy_state / "adapter.json"
+    sentinel.write_text('{"legacy":true}\n', encoding="utf-8")
+    before = sentinel.read_bytes()
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
+            "AI_WPS_STATE_DIR": str(legacy_state),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": "/usr/bin/false",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_path_conflicts_with_legacy name=state_dir" in result.stdout
+    assert sentinel.read_bytes() == before
+
+
+def test_preview_installer_rejects_legacy_install_root_override(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    legacy = target_home / "ai-wps-phase1"
+    legacy.mkdir(parents=True)
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(legacy),
+            "AI_WPS_LEGACY_INSTALL_ROOT": str(tmp_path / "decoy-legacy"),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": "/usr/bin/false",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_path_conflicts_with_legacy name=install_root" in result.stdout
+
+
+def test_preview_installer_rejects_existing_non_preview_install_root(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    existing_root = target_home / "previous-install"
+    existing_state = existing_root / "state"
+    existing_state.mkdir(parents=True)
+    sentinel = existing_state / "adapter.json"
+    sentinel.write_text('{"legacy":true}\n', encoding="utf-8")
+    before = sentinel.read_bytes()
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(existing_root),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": sys.executable,
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_existing_install_manifest_required" in result.stdout
+    assert sentinel.read_bytes() == before
+
+
 def test_preview_audit_accepts_neutral_tree_and_rejects_phase1_release_identity(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
     accepted = subprocess.run(
         [sys.executable, str(audit), str(delivery)],
         cwd=ROOT,
@@ -245,6 +342,19 @@ def test_preview_audit_accepts_neutral_tree_and_rejects_phase1_release_identity(
 def test_preview_audit_rejects_phase1_lifecycle_identity(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
     lifecycle_path = delivery / "scripts/python38_delivery_lifecycle_gate.py"
     lifecycle_path.write_text(
         lifecycle_path.read_text(encoding="utf-8")
@@ -328,6 +438,39 @@ def test_preview_tree_passes_generic_audit_and_writes_verifiable_hash_manifest(t
     assert checked_archive.returncode == 0, (
         checked_archive.stdout + checked_archive.stderr
     )
+
+
+def test_preview_audit_rejects_missing_hash_manifest(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    generic_audit = ROOT / "packaging/audit_phase1_delivery.py"
+    candidate_audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    generated = subprocess.run(
+        [sys.executable, str(generic_audit), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+    (delivery / "release-file-hashes.json").unlink()
+
+    rejected = subprocess.run(
+        [sys.executable, str(candidate_audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_REQUIRED_OUTPUT_MISSING release-file-hashes.json" in rejected.stdout
+
+
+def test_preview_build_and_prepare_scripts_are_provenance_inputs():
+    provenance = (ROOT / "packaging/check_delivery_source_provenance.py").read_text(
+        encoding="utf-8"
+    )
+    assert '"packaging/build_v0260_preview1_delivery_kit.sh"' in provenance
+    assert '"packaging/prepare_v0260_preview1_delivery.py"' in provenance
 
 
 def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):

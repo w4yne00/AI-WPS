@@ -248,15 +248,60 @@ def neutralize_installer(root: Path) -> None:
     content = content.replace(
         install_root_line,
         install_root_line
-        + '  LEGACY_PHASE1_INSTALL_ROOT="${AI_WPS_LEGACY_INSTALL_ROOT:-$TARGET_HOME/ai-wps-phase1}"\n',
+        + '  LEGACY_PHASE1_INSTALL_ROOT="$TARGET_HOME/ai-wps-phase1"\n',
         1,
     )
 
     legacy_function = '''
-detect_legacy_phase1_install() {
-  if [ "$LEGACY_PHASE1_INSTALL_ROOT" = "$INSTALL_ROOT" ]; then
-    fail "preview_install_root_conflicts_with_legacy"
+preview_canonical_path() {
+  local path="$1" parent base
+  path="${path%/}"
+  [ -n "$path" ] || path="/"
+  case "$path" in
+    /*) ;;
+    *) fail "preview_path_must_be_absolute value=$path" ;;
+  esac
+  if [ "$path" = "/" ]; then
+    printf '%s\\n' "/"
+    return 0
   fi
+  if [ -d "$path" ]; then
+    (cd -P "$path" && pwd -P) || fail "preview_path_canonicalize_failed value=$path"
+    return 0
+  fi
+  parent="$(dirname "$path")"
+  base="$(basename "$path")"
+  parent="$(preview_canonical_path "$parent")"
+  printf '%s/%s\\n' "${parent%/}" "$base"
+}
+
+preview_paths_overlap() {
+  local left="${1%/}" right="${2%/}"
+  [ -n "$left" ] || left="/"
+  [ -n "$right" ] || right="/"
+  case "$left/" in
+    "$right/"*) return 0 ;;
+  esac
+  case "$right/" in
+    "$left/"*) return 0 ;;
+  esac
+  return 1
+}
+
+preview_reject_legacy_path() {
+  local label="$1" path="$2" canonical_path canonical_legacy
+  canonical_path="$(preview_canonical_path "$path")"
+  canonical_legacy="$(preview_canonical_path "$LEGACY_PHASE1_INSTALL_ROOT")"
+  if preview_paths_overlap "$canonical_path" "$canonical_legacy"; then
+    fail "preview_path_conflicts_with_legacy name=$label path=$path"
+  fi
+}
+
+detect_legacy_phase1_install() {
+  preview_reject_legacy_path "install_root" "$INSTALL_ROOT"
+  preview_reject_legacy_path "state_dir" "${AI_WPS_STATE_DIR:-$INSTALL_ROOT/state}"
+  preview_reject_legacy_path "backup_dir" "${AI_WPS_BACKUP_DIR:-$INSTALL_ROOT/backups}"
+  preview_reject_legacy_path "var_dir" "${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"
   if [ -e "$LEGACY_PHASE1_INSTALL_ROOT" ] || [ -L "$LEGACY_PHASE1_INSTALL_ROOT" ]; then
     log "legacy_phase1_install_detected=true path=$LEGACY_PHASE1_INSTALL_ROOT"
     log "legacy_phase1_action=read_only"
@@ -294,6 +339,51 @@ detect_legacy_phase1_install() {
     content = content.replace(
         call_marker,
         "resolve_installation_principal\ndetect_legacy_phase1_install\nresolve_python_binary",
+        1,
+    )
+    state_assignment = 'VAR_DIR="${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"\n'
+    if state_assignment not in content:
+        raise ValueError("V0260_RUNTIME_PATH_ASSIGNMENT_MISSING")
+    existing_install_guard = '''
+preview_install_layout_exists() {
+  local relative
+  for relative in current releases state backups var config run adapter-start-kit; do
+    if [ -e "$INSTALL_ROOT/$relative" ] || [ -L "$INSTALL_ROOT/$relative" ]; then
+      return 0
+    fi
+  done
+  for configured_path in "$STATE_DIR" "$BACKUP_DIR" "$VAR_DIR"; do
+    if [ -e "$configured_path" ] || [ -L "$configured_path" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+validate_existing_preview_install() {
+  local manifest product channel version
+  preview_install_layout_exists || return 0
+  manifest="$INSTALL_ROOT/current/release-manifest.json"
+  [ -f "$manifest" ] || fail "preview_existing_install_manifest_required"
+  product="$(json_field product < "$manifest" 2>/dev/null || true)"
+  channel="$(json_field productChannel < "$manifest" 2>/dev/null || true)"
+  version="$(json_field version < "$manifest" 2>/dev/null || true)"
+  if [ "$product" != "AI-WPS" ] || [ "$channel" != "preview" ] || [ "$version" != "$RELEASE_VERSION" ]; then
+    fail "preview_existing_install_identity_invalid"
+  fi
+}
+'''
+    content = content.replace(
+        state_assignment,
+        state_assignment + existing_install_guard,
+        1,
+    )
+    validate_marker = 'validate_target_path "var_dir" "$VAR_DIR"\n'
+    if validate_marker not in content:
+        raise ValueError("V0260_RUNTIME_PATH_VALIDATION_MISSING")
+    content = content.replace(
+        validate_marker,
+        validate_marker + "validate_existing_preview_install\n",
         1,
     )
     path.write_text(content, encoding="utf-8")

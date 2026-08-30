@@ -23,6 +23,10 @@ BUILD_INPUTS = (
     "packaging/check_delivery_source_provenance.py",
     "packaging/check_python38_compatibility.py",
     "packaging/prepare_v0251_delivery.py",
+    "packaging/build_v0260_preview1_delivery_kit.sh",
+    "packaging/prepare_v0260_preview1_delivery.py",
+    "packaging/audit_v0260_preview1_delivery.py",
+    "packaging/python38_preview1_delivery_lifecycle_gate.py",
 )
 
 
