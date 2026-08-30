@@ -649,6 +649,44 @@ def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(t
     assert '"--target-home"' not in lifecycle_path.read_text(encoding="utf-8")
 
 
+def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_config(
+    tmp_path, monkeypatch
+):
+    lifecycle_path = ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    spec = importlib.util.spec_from_file_location("preview_lifecycle_upgrade", lifecycle_path)
+    assert spec is not None and spec.loader is not None
+    lifecycle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lifecycle)
+
+    calls = []
+
+    def fake_run_installer(delivery_root, environment, expected_returncode=0, updates=None):
+        del delivery_root, expected_returncode, updates
+        state_root = Path(environment["AI_WPS_INSTALL_ROOT"]) / "state"
+        state_root.mkdir(parents=True, exist_ok=True)
+        calls.append(len(calls) + 1)
+        if len(calls) == 2:
+            payload = json.loads((state_root / "adapter.json").read_text(encoding="utf-8"))
+            payload["migrationState"] = {"workflowProfilesVersion": 1}
+            (state_root / "adapter.json").write_text(
+                json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+                encoding="utf-8",
+            )
+        return subprocess.CompletedProcess(
+            args=["fake-installer"],
+            returncode=0,
+            stdout="ai_wps_install_done=true\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(lifecycle, "run_installer", fake_run_installer)
+    monkeypatch.setattr(lifecycle, "stop_adapter", lambda environment: None)
+    monkeypatch.setattr(lifecycle, "verify_install", lambda environment: None)
+
+    lifecycle.run_preview_upgrade(tmp_path / "delivery", tmp_path, lambda: 18101)
+    assert calls == [1, 2]
+
+
 def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):
     build = ROOT / "packaging/build_v0260_preview1_delivery_kit.sh"
     output = tmp_path / "dist"
@@ -669,3 +707,12 @@ def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):
     assert result.returncode != 0
     assert "v0253_baseline_archive_required=true" in result.stdout
     assert not output.exists()
+
+
+def test_preview_build_uses_preview_lifecycle_gate():
+    build = (ROOT / "packaging/build_v0260_preview1_delivery_kit.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert "packaging/python38_preview1_delivery_lifecycle_gate.py" in build
+    assert "packaging/python38_delivery_lifecycle_gate.py" not in build

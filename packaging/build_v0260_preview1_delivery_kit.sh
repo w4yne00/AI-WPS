@@ -142,7 +142,7 @@ find "$TMP_DIR/packages/adapter-start-kit/adapter_service" -type f -name '*.py' 
 "$PYTHON_BIN" "$TMP_DIR/scripts/audit_v0260_preview1_delivery.py" "$TMP_DIR"
 
 COPYFILE_DISABLE=1 tar -czf "$PENDING_ARCHIVE_PATH" -C "$OUT_DIR" "$KIT_NAME"
-"$PYTHON38_BIN" "$ROOT_DIR/packaging/python38_delivery_lifecycle_gate.py" \
+"$PYTHON38_BIN" "$ROOT_DIR/packaging/python38_preview1_delivery_lifecycle_gate.py" \
   "$PENDING_ARCHIVE_PATH" \
   --expected-version "$VERSION" \
   --baseline-archive "$BASELINE_ARCHIVE" \

@@ -265,7 +265,17 @@ def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> N
     try:
         verify_install(environment)
         require("ai_wps_install_done=true" in result.stdout, "PREVIEW_UPGRADE_NOT_DONE")
-        require(adapter_path.read_bytes() == adapter_content, "PREVIEW_CONFIG_NOT_PRESERVED")
+        preserved_config = json.loads(adapter_path.read_text(encoding="utf-8"))
+        expected_config = json.loads(adapter_content.decode("utf-8"))
+        require(
+            isinstance(preserved_config, dict)
+            and isinstance(expected_config, dict)
+            and all(
+                key in preserved_config and preserved_config[key] == value
+                for key, value in expected_config.items()
+            ),
+            "PREVIEW_CONFIG_NOT_PRESERVED",
+        )
         require(key_path.read_bytes() == key_content, "PREVIEW_KEY_NOT_PRESERVED")
     finally:
         stop_adapter(environment)
