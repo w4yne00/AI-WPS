@@ -250,8 +250,8 @@ def test_v0253_docs_describe_preview_cards_and_page_roles_without_overclaim():
         assert "WPS 验收确认" not in text
 
 
-def test_current_product_docs_use_v0253_identity_and_keep_frozen_0252_evidence():
-    # Break: current-version docs stay on 0.25.2 or drop frozen 850871c evidence.
+def test_current_product_docs_use_v0260_identity_and_keep_v0253_evidence():
+    # Break: current-version docs regress to an older release or lose the accepted baseline.
     documents = (
         ROOT / "README.md",
         ROOT / "README-ZH.md",
@@ -259,13 +259,12 @@ def test_current_product_docs_use_v0253_identity_and_keep_frozen_0252_evidence()
     )
     for path in documents:
         text = path.read_text(encoding="utf-8")
+        assert "v0.26.0-preview.1" in text
         assert "v0.25.3-alpha" in text
         assert FROZEN_0252_SHA in text
         assert "20260825-850871c" in text
-        assert CURRENT_0253_SHA in text
-        assert "20260826-d1a346b" in text
-        assert FROZEN_0251_SHA in text
-        assert "20260824-d7a1dd8" in text
+        assert "target-accepted" in text
+        assert "Issue #59" in text
         assert "manual-pending" in text
         for forbidden in FORBIDDEN_CLAIMS:
             assert forbidden not in text
@@ -273,11 +272,11 @@ def test_current_product_docs_use_v0253_identity_and_keep_frozen_0252_evidence()
         assert "结果预览" in text or "页角色" in text
 
     handoff = (ROOT / "docs/codex-handoff.md").read_text(encoding="utf-8")
-    assert "当前版本：`v0.25.3-alpha`" in handoff
+    assert "当前版本：`v0.26.0-preview.1`" in handoff
     readme_zh = (ROOT / "README-ZH.md").read_text(encoding="utf-8")
-    assert "| 当前版本 | `v0.25.3-alpha` |" in readme_zh
+    assert "| 当前版本 | `v0.26.0-preview.1` |" in readme_zh
     readme_en = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "| Version | `v0.25.3-alpha` |" in readme_en
+    assert "| Version | `v0.26.0-preview.1` |" in readme_en
 
 
 def test_v0253_prepare_rewrites_host_and_adapter_identity_from_0252_predecessor(tmp_path):

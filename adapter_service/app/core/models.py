@@ -1,6 +1,14 @@
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, Field, validator
+from pydantic import (
+    BaseModel,
+    Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
+    root_validator,
+    validator,
+)
 
 from app.core.outline_level import normalize_heading_level, normalize_outline_level
 
@@ -412,6 +420,181 @@ class ExcelFormulaAssistantResult(BaseModel):
 
 class ExcelFormulaAssistantResponseData(ExcelFormulaAssistantResult):
     pass
+
+
+class _StrictExcelSmartFillModel(BaseModel):
+    class Config:
+        allow_population_by_field_name = True
+        extra = "forbid"
+
+
+class ExcelSmartFillTargetItem(_StrictExcelSmartFillModel):
+    item_id: StrictStr = Field(alias="itemId", min_length=1, max_length=128)
+    address: StrictStr = Field(min_length=1, max_length=128)
+    row: StrictInt = Field(ge=1, le=1048576)
+    column: StrictInt = Field(ge=1, le=16384)
+    original_value: StrictStr = Field(default="", alias="originalValue", max_length=2000)
+    original_value_type: Literal[
+        "blank", "text", "number", "boolean", "error", "formula", "unknown"
+    ] = Field(default="blank", alias="originalValueType")
+    original_formula: StrictStr = Field(default="", alias="originalFormula", max_length=2000)
+    is_formula: StrictBool = Field(default=False, alias="isFormula")
+    is_merged: StrictBool = Field(default=False, alias="isMerged")
+    is_protected: StrictBool = Field(default=False, alias="isProtected")
+    is_hidden: StrictBool = Field(default=False, alias="isHidden")
+    snapshot_hash: StrictStr = Field(default="", alias="snapshotHash", max_length=64)
+
+    @validator("item_id", "address", pre=True)
+    def validate_target_item_text(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("target item text must be a non-empty string")
+        return value.strip()
+
+    @validator("snapshot_hash", pre=True)
+    def validate_snapshot_hash(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("snapshot hash must be a string")
+        normalized = value.strip().lower()
+        if normalized and not all(char in "0123456789abcdef" for char in normalized):
+            raise ValueError("snapshot hash must be hexadecimal")
+        return normalized
+
+
+class ExcelSmartFillTarget(_StrictExcelSmartFillModel):
+    sheet_name: StrictStr = Field(alias="sheetName", min_length=1, max_length=255)
+    address: StrictStr = Field(min_length=1, max_length=128)
+    column_header: StrictStr = Field(default="", alias="columnHeader", max_length=2000)
+    row_context: List[StrictStr] = Field(
+        default_factory=list, alias="rowContext", max_items=50
+    )
+    items: List[ExcelSmartFillTargetItem] = Field(
+        min_items=1, max_items=500
+    )
+
+    @validator("sheet_name", "address", pre=True)
+    def validate_target_text(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("target text must be a non-empty string")
+        return value.strip()
+
+    @validator("column_header", pre=True)
+    def validate_target_column_header(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("target column header must be a string")
+        return value.strip()
+
+    @validator("row_context", pre=True)
+    def validate_target_row_context(cls, value):
+        if not isinstance(value, list) or any(not isinstance(item, str) for item in value):
+            raise ValueError("target row context must contain strings")
+        return value
+
+    @validator("items")
+    def validate_unique_target_items(cls, value):
+        item_ids = [item.item_id for item in value]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("target item ids must be unique")
+        return value
+
+
+class ExcelSmartFillSource(_StrictExcelSmartFillModel):
+    sheet_name: StrictStr = Field(alias="sheetName", min_length=1, max_length=255)
+    address: StrictStr = Field(default="", max_length=128)
+    snapshot_hash: StrictStr = Field(default="", alias="snapshotHash", max_length=64)
+    headers: List[StrictStr] = Field(default_factory=list, max_items=50)
+    rows: List[List[StrictStr]] = Field(default_factory=list, max_items=500)
+    row_count: StrictInt = Field(default=0, alias="rowCount", ge=0, le=1048576)
+    column_count: StrictInt = Field(default=0, alias="columnCount", ge=0, le=16384)
+    truncated: StrictBool = False
+
+    @validator("sheet_name", pre=True)
+    def validate_source_sheet_name(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("source sheet name must be a non-empty string")
+        return value.strip()
+
+    @validator("address", pre=True)
+    def validate_source_address(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("source address must be a string")
+        return value.strip()
+
+    @validator("snapshot_hash", pre=True)
+    def validate_source_snapshot_hash(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("source snapshot hash must be a string")
+        normalized = value.strip().lower()
+        if normalized and not all(char in "0123456789abcdef" for char in normalized):
+            raise ValueError("source snapshot hash must be hexadecimal")
+        return normalized
+
+    @validator("headers", pre=True)
+    def validate_source_headers(cls, value):
+        if not isinstance(value, list):
+            raise ValueError("source headers must be a list")
+        if any(not isinstance(item, str) for item in value):
+            raise ValueError("source headers must contain strings")
+        return value
+
+    @validator("rows", pre=True)
+    def validate_source_rows(cls, value):
+        if not isinstance(value, list):
+            raise ValueError("source rows must be a list")
+        if any(
+            not isinstance(row, list) or any(not isinstance(cell, str) for cell in row)
+            for row in value
+        ):
+            raise ValueError("source rows must contain string arrays")
+        if any(len(row) > 50 for row in value):
+            raise ValueError("source rows may contain at most 50 columns")
+        return value
+
+
+class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
+    workbook_id: StrictStr = Field(
+        default="active-workbook", alias="workbookId", min_length=1, max_length=128
+    )
+    scene: Literal["excel"] = "excel"
+    client_job_id: StrictStr = Field(default="", alias="clientJobId", max_length=128)
+    target: ExcelSmartFillTarget
+    source: ExcelSmartFillSource
+    user_instruction: StrictStr = Field(
+        default="", alias="userInstruction", max_length=4000
+    )
+
+    @validator("workbook_id", pre=True)
+    def validate_smart_fill_workbook_id(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("workbook id must be a non-empty string")
+        return value.strip()
+
+    @validator("client_job_id", "user_instruction", pre=True)
+    def validate_smart_fill_optional_text(cls, value):
+        if not isinstance(value, str):
+            raise ValueError("smart fill text fields must be strings")
+        return value
+
+    @root_validator(skip_on_failure=True)
+    def validate_smart_fill_text_budget(cls, values):
+        source = values.get("source")
+        target = values.get("target")
+        user_instruction = values.get("user_instruction", "")
+        total_text_length = len(user_instruction)
+        if source is not None:
+            total_text_length += sum(len(item) for item in source.headers)
+            total_text_length += sum(
+                len(cell) for row in source.rows for cell in row
+            )
+        if target is not None:
+            total_text_length += len(target.column_header)
+            total_text_length += sum(len(item) for item in target.row_context)
+            total_text_length += sum(
+                len(item.original_value) + len(item.original_formula)
+                for item in target.items
+            )
+        if total_text_length > 200000:
+            raise ValueError("smart fill text exceeds 200000 characters")
+        return values
 
 
 class PptSlideInput(BaseModel):

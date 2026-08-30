@@ -338,7 +338,10 @@ class RuntimeStateManagerTests(unittest.TestCase):
             )
             manifest = json.loads(manifest_text)
             self.assertTrue(manifest["valid"])
-            self.assertEqual(manifest["inventory"]["modelConfigurations"]["taskCount"], 8)
+            self.assertEqual(
+                manifest["inventory"]["modelConfigurations"]["taskCount"],
+                len(SUPPORTED_WORKFLOW_TASKS),
+            )
             self.assertEqual(
                 manifest["inventory"]["writingPolicies"]["totalCount"], 1
             )

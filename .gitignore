@@ -11,3 +11,9 @@ dist-phase1-delivery-kit/*
 .DS_Store
 ._*
 logs/
+
+# Local adapter runtime/config and frontend build outputs.
+/config/adapter.json
+/run/
+/wps-addon/node_modules/
+/wps-addon/dist/

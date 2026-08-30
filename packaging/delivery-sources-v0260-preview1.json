@@ -10,6 +10,39 @@
   "entries": [
     {
       "type": "file",
+      "source": "adapter_service/app/services/excel/smart_fill.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/app/services/excel/smart_fill_jobs.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill_jobs.py"
+    },
+    {
+      "type": "file",
+      "source": "adapter_service/system_prompts/excel-smart-fill.md",
+      "target": "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
+    },
+    {
+      "type": "file",
+      "source": "docs/operations/model-excel-smart-fill-contract.md",
+      "target": "docs/operations/model-excel-smart-fill-contract.md"
+    },
+    {
+      "type": "file",
+      "source": "docs/operations/workflow-platform-excel-smart-fill.md",
+      "target": "docs/operations/workflow-platform-excel-smart-fill.md"
+    },
+    {
+      "type": "tree",
+      "source": "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
+      "target": "packages/wps-ai-assistant-et_1.0.0",
+      "include": [
+        "assets/icon-excel-smart-fill.png"
+      ]
+    },
+    {
+      "type": "file",
       "source": "packaging/v0260-preview1-delivery.md",
       "target": "README.md",
       "replace": true

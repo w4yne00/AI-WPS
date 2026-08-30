@@ -1,16 +1,18 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-26
+更新时间：2026-08-30
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`agent/issue-101-v0253-delivery`
+当前分支：`codex/issue-120-smart-fill`
 
-当前版本：`v0.25.3-alpha`
+当前版本：`v0.26.0-preview.1`
 
-版本规则号：`AI-WPS-P1-WORD-EXCEL-PPT-0.25.3`
+版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.25.3-alpha` 沿用 Phase1 安装体系，落实 Issue #101 的结果预览、格式问题卡片、题注关联结论和幻灯片页角色。当前 0.25.3 唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，自动化状态为 `candidate`。系统 Python 无 pip 时 get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`，不是 0.25.3 当前候选。0.25.2 前任 `20260825-dacd1e9` 与 `20260825-0f50456` 已登记为 `rejected`。图像语义补充默认开启与视觉关闭降级保持不变。Issue #59 的目标 WPS GUI、真实模型和人工文档验收仍为 `manual-pending`，不得写为 `passed` 或 `accepted`。
+`v0.26.0-preview.1` 当前实现 Issue #120 的 Excel“智能填写”第九任务，并沿用中性 Preview 交付边界；代码和合成数据验证已完成首轮，Issue #120 对应的目标机验收仍为 `manual-pending`。作为阻塞工单的 Issue #119 实现已完成并关闭，但不等同于本版本目标机验收完成。系统 Python 无 pip 时 get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`。
+
+`v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
 冻结的 `v0.25.1-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，源码提交为 `d7a1dd8ef4bd595c0e8611fdfffcf696eebe57f0`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz`，SHA-256 为 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`，自动化状态为 `candidate`。其直接前任 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.1-20260824-10b251dd52ea6b6c2d60faa9cf0ab37b3ccdc2a5` 已登记为 `rejected`，SHA-256 为 `6949e76f929e092f6c4658a9498f9fd4a483260bee5d62d91e72b18009309120`，拒绝原因是包内目标机验收记录同时出现当前候选、无当前候选和重复上一被拒绝归档叙述；两份归档均保持原字节。d7a1dd8 不再登记为 0.25.2 的当前候选。
 
@@ -59,7 +61,7 @@
 - FastAPI 与 standalone 新增 `POST /recovery/backups` 和 `GET /recovery/diagnostics`。诊断只输出健康子系统、操作策略、备份摘要和受控审计字段，不包含配置内容、文档正文、API Key、模型原始响应、异常原文或敏感绝对路径。
 - 快照清单新增 `copyVerified`：完整复制校验与业务有效性分开记录。整体恢复仍要求有效快照 ID 和 `RESTORE_WHOLE_STATE` 二次确认，并在全文件复验后原子切换；三宿主只显示最近有效/已校验备份状态。
 - Issue #29 已实现旧布局运行数据的写时复制迁移和一致性快照：安装器先停止旧 Adapter 并确认端口释放；快照对配置、Key、数据库及 WAL/SHM 做前后稳定性校验，只在同文件系统副本上迁移，并以 Linux/macOS 原生目录交换整体切换。核心失败保持正式状态不变并返回 `recovery`，仅写作规范失败保留原数据库字节并返回 `degraded`。
-- 快照清单记录版本、八类任务配置数量、Key 引用/不可逆 SHA-256 指纹、激活关系、规范条目数量/启用状态、数据库完整性和文件校验值，不记录 Key 明文或服务地址正文；状态、快照目录为 `0700`，文件为 `0600`。
+- 快照清单记录版本、九类任务配置数量、Key 引用/不可逆 SHA-256 指纹、激活关系、规范条目数量/启用状态、数据库完整性和文件校验值，不记录 Key 明文或服务地址正文；状态、快照目录为 `0700`，文件为 `0600`。
 - 运行数据恢复只支持带快照 ID 和 `RESTORE_WHOLE_STATE` 二次确认的整体恢复；恢复前再创建 `pre_restore` 快照。默认保留最近三个有效快照，并保护标记为上一已验收版本最后有效快照的快照。
 - Issue #28 已将健康契约拆为 `/health/live`、`/health/ready` 和兼容聚合 `/health`：存活检查不读取业务数据；核心配置与任务路由可用时业务就绪，写作规范单项失败为 `degraded`，核心数据失败为 `recovery`。
 - 聚合健康在三种状态下均返回 HTTP 200；业务就绪接口在 `recovery` 返回 503。子系统仅披露稳定错误码、阶段和允许动作，不返回配置正文、API Key、异常原文或敏感绝对路径。
@@ -103,11 +105,14 @@ Excel 侧 Ribbon 只显示：
 
 - 智能分析：`POST /excel/analysis/jobs` 提交后台任务并轮询状态，兼容保留 `POST /excel/analysis`，任务类型 `excel.analysis`。
 - 公式助手：`POST /excel/formula-assistant/jobs` 提交后台任务并轮询状态，任务类型 `excel.formula_assistant`；用户明确选择“生成公式 / 解释排错”，最多读取 30 行、20 列，返回一个主公式和仅在确有差异时折叠显示的一个备选公式。
-- 设置：智能分析与公式助手分别使用独立模型配置和 API Key。
+- 智能填写：`POST /excel/smart-fill/jobs` 提交后台任务并轮询状态，兼容保留 `POST /excel/smart-fill`，任务类型 `excel.smart_fill`；目标限定为同一工作表单列连续区域，最多 500 项，结果先预览，可逐项编辑、排除和重试，再经确认写回。
+- 设置：智能分析、公式助手与智能填写分别使用独立模型配置和 API Key。
 
 智能分析是只读分析能力：优先读取 Excel 当前选区，无有效选区时回退当前工作表已用范围；前端只提供分析报告预览、汇报段落和复制，不写回单元格，不新增工作表，不生成公式。
 
 公式助手同样只读，但不会回退 `UsedRange`。它采集选区地址、表头、显示文本、有限值类型、已有公式和截断状态；解释模式返回原公式、组件说明、引用范围、发现问题和有依据的修正公式。本地只做不执行的基础语法、引用与兼容风险检查，不设置 `Formula`、不试算、不填充范围、不新建工作表、不修改计算模式，也不提供伪造的写回撤销。
+
+智能填写只读取显式授权的目标列和可见行上下文；模型只接收稳定条目 ID、授权值和上下文，不接收地址、工作簿标识或公式。结果严格限定为 `excel.smart_fill.v1`，前端提供预览编辑、逐项排除/重试、快照校验和危险前缀保护；写回不提供撤销，也不保存磁盘历史。
 
 PPT 侧 Ribbon 只显示：
 
@@ -273,6 +278,10 @@ DELETE /excel/analysis/jobs/{jobId}[?resume=1]
 POST   /excel/formula-assistant/jobs
 GET    /excel/formula-assistant/jobs/{jobId}[?resume=1]
 DELETE /excel/formula-assistant/jobs/{jobId}[?resume=1]
+POST   /excel/smart-fill
+POST   /excel/smart-fill/jobs
+GET    /excel/smart-fill/jobs/{jobId}
+DELETE /excel/smart-fill/jobs/{jobId}
 POST   /ppt/document-files
 POST   /ppt/slide-assistant/jobs
 GET    /ppt/slide-assistant/jobs/{jobId}[?resume=1]
@@ -523,12 +532,13 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - `adapter_service/app/api/writing_policies.py`：写作规范 CRUD、模板、导入预览/应用、导出、备份和诊断接口。
 - `adapter_service/app/services/writing_policy/`：SQLite 存储、匹配、导入解析、预览令牌、备份和 fail-open 服务边界。
 - `adapter_service/app/api/word.py`：当前 Word 四任务路由。
-- `adapter_service/app/api/excel.py`：智能分析路由。
+- `adapter_service/app/api/excel.py`：智能分析、公式助手和智能填写路由。
 - `adapter_service/app/api/ppt.py`：PPT 文档文件、智能总结和结构审查后台任务路由。
 - `adapter_service/app/services/provider_client.py`：统一 Dify Chat payload、任务级 API Key、脱敏 provider 调试记录，以及 Word/Excel/PPT provider 调用。
 - `adapter_service/app/services/excel/analyzer.py`：Excel 表格可用性校验和 provider 调用封装。
 - `adapter_service/app/services/excel/formula_checks.py`：公式字符串的只读基础语法、引用和兼容风险检查。
 - `adapter_service/app/services/excel/analysis_jobs.py`：智能分析幂等后台任务、运行状态和耗时诊断。
+- `adapter_service/app/services/excel/smart_fill.py`、`adapter_service/app/services/excel/smart_fill_jobs.py`：智能填写严格协议、输入预算、Provider 调用、分批任务和取消/部分结果语义。
 - `adapter_service/app/services/ppt/document_files.py`：PPT Markdown/DOCX 校验、一次性暂存、过期和安全清理。
 - `adapter_service/app/services/ppt/slide_assistant.py`：PPT 单页输入预算、生成/优化模式和 provider 调用封装。
 - `adapter_service/app/services/ppt/slide_assistant_jobs.py`：PPT 当前页/文档智能总结幂等后台任务、阶段状态和耗时诊断。
@@ -541,16 +551,17 @@ issue #19 已完成 Excel 公式生成最小闭环，并随 `v0.21.0-alpha` 统�
 - `adapter_service/standalone_adapter.py`：standalone 模式，与 FastAPI 当前输出保持一致。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html`、`taskpane.js`、`taskpane.css`、`taskpane-helpers.js`：当前任务窗格、设置页、Markdown 渲染和 WPS 读取逻辑。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml`、`ribbon.js`：当前 Ribbon 入口和图标映射。
-- `formal-plugin-kit/wps-ai-assistant-et_1.0.0/`：Excel 专用插件包，包含“智能分析”Ribbon、任务窗格、图标和 manifest。
+- `formal-plugin-kit/wps-ai-assistant-et_1.0.0/`：Excel 专用插件包，包含“智能分析”“公式助手”“智能填写”Ribbon、任务窗格、图标和 manifest。
 - `formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/`：PPT 专用只读插件包，包含“智能总结”“结构审查”Ribbon、任务窗格、图标和 manifest。
 - `formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png`：智能仿写 Ribbon 图标。
 - `adapter-start-kit/scripts/install_autostart.sh`、`adapter-start-kit/scripts/uninstall_autostart.sh`、`adapter-start-kit/docs/autostart-guide.md`：麒麟 V10 目标机 systemd 开机自启动安装、卸载和运维说明。
-- `config/adapter.example.json`：默认 `enterprise-dify-chat`、`/chat-messages`、四个 Word 任务、一个 Excel 任务和一个 PPT 任务的 `taskApiKeyRefs`。
+- `config/adapter.example.json`：默认 `enterprise-dify-chat`、`/chat-messages`、四个 Word 任务、三个 Excel 任务和两个 PPT 任务的 `taskApiKeyRefs`。
 - `docs/operations/dify-smart-write-workflow.md`：智能编写 Dify 配置手册。
 - `docs/operations/dify-smart-imitation-workflow.md`：智能仿写 Dify 配置手册。
 - `docs/operations/dify-document-review-workflow.md`：文档审查 Dify 配置手册。
 - `docs/operations/dify-format-review-workflow.md`：格式审查 Dify 配置手册。
 - `docs/operations/dify-excel-analysis-workflow.md`：Excel“智能分析”Dify 配置手册。
+- `docs/operations/model-excel-smart-fill-contract.md`、`docs/operations/workflow-platform-excel-smart-fill.md`：Excel“智能填写”模型协议、工作流配置和写回边界。
 - `docs/operations/dify-ppt-slide-assistant-workflow.md`：PPT“智能总结”双模式 Dify 配置手册。
 - `docs/operations/dify-ppt-structure-review-workflow.md`：PPT“结构审查”Dify 配置、页段边界与只读验收手册。
 - `docs/operations/workflow-profile-management.md`：Word/Excel/PPT 工作流档案、切换和密钥保护手册。
@@ -582,7 +593,7 @@ bash packaging/build_v0251_delivery_kit.sh
 - Kylin 构建运行时为 Node `v22.23.2`、Python `3.8.10`；source provenance 为 `246`，Python 3.8 兼容扫描为 `82` 个生产文件。
 - 公开 format-review API、`characterCount`、`contentSha256`、`structureSha256`、`formatSha256` 四个哈希键，以及 runtime/lifecycle/install/upgrade/rollback/deleted-workflow-profile gates 均通过；本地 checksum 与最终 candidate audit 均通过。
 - d7a1dd8 归档保持原始字节，SHA-256 为 `ec318db4ffbda499c24aa6fb50958628cc4eaa030b22389bbf29cd783b1adbf6`；`10b251d` 和 `f953c58` 归档也保持原始字节，不得替代当前 candidate 或改写历史。
-- Issue #59 未标记为接受，真实 WPS GUI、模型直连和目标机人工文档验收仍为 `manual-pending`。
+- 上述 v0.25.1 验证记录属于历史候选状态；后续 `v0.25.3-alpha` 已完成 Issue #59 目标机验收，状态为 `target-accepted`。当前 `v0.26.0-preview.1` 仍须单独完成目标机验收。
 
 ## 7. 目标机验证建议
 

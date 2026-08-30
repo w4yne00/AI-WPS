@@ -239,6 +239,7 @@ def _provider_metadata(payload: dict) -> dict:
         "word.format_review": "格式审查",
         "excel.analysis": "智能分析",
         "excel.formula_assistant": "公式助手",
+        "excel.smart_fill": "智能填写",
         "ppt.slide_assistant": "智能总结",
         "ppt.structure_review": "结构审查",
     }

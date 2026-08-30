@@ -324,6 +324,39 @@ class LongTaskCoordinatorTests(unittest.TestCase):
         self.assertEqual(runner.calls, ["first"])
         runner.release.set()
 
+    def test_running_cancel_race_does_not_discard_completed_runner_result(self):
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
+        started = threading.Event()
+        release = threading.Event()
+
+        def runner(_snapshot, _progress):
+            started.set()
+            self.assertTrue(release.wait(timeout=1))
+            return {"value": "completed-before-cancel-observed"}
+
+        accepted = coordinator.submit(
+            job_id="client-cancel-race",
+            trace_id="trace-cancel-race",
+            task_type="excel.smart_fill",
+            runner=runner,
+            snapshot={},
+            failure_code="SMART_FILL_FAILED",
+            failure_message="智能填写失败。",
+            allow_running_cancel=True,
+        )
+        self.assertTrue(started.wait(timeout=1))
+        requested = coordinator.request_cancel(
+            accepted["jobId"], task_type="excel.smart_fill"
+        )
+        self.assertTrue(requested["cancelRequested"])
+        release.set()
+
+        terminal = coordinator.wait(accepted["jobId"], task_type="excel.smart_fill")
+        self.assertEqual(terminal["status"], "completed")
+        self.assertEqual(
+            terminal["result"]["value"], "completed-before-cancel-observed"
+        )
+
     def test_only_queued_job_can_be_cancelled(self):
         coordinator = LongTaskCoordinator(max_running=1, max_queued=1)
         running_runner = BlockingRunner()

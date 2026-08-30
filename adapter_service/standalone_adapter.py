@@ -25,6 +25,7 @@ from app.core.models import (
     ExcelAnalysisResponseData,
     ExcelFormulaAssistantRequest,
     ExcelFormulaAssistantResponseData,
+    ExcelSmartFillRequest,
     PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
     PptSlideAssistantResponseData,
@@ -44,6 +45,7 @@ from app.services.provider_client import (
 from app.services.excel.analyzer import ExcelAnalyzer
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
 from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
+from app.services.excel.smart_fill_jobs import ExcelSmartFillJobStore
 from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.health import get_health_snapshot, get_operation_block
 from app.services.recovery import RecoveryOperationError, get_recovery_operations
@@ -96,6 +98,7 @@ VERSION = "0.23.1-alpha"
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES = 2 * 1024 * 1024
+SMART_FILL_REQUEST_MAX_BYTES = 2 * 1024 * 1024
 # CRUD and apply payloads are small JSON documents; keep a separate hard ceiling.
 WRITING_POLICY_JSON_REQUEST_MAX_BYTES = 1 * 1024 * 1024
 WRITING_POLICY_BODY_READ_TIMEOUT_SECONDS = 5.0
@@ -172,6 +175,7 @@ SMART_WRITE_JOB_STORE = SmartWriteJobStore()
 SMART_IMITATION_JOB_STORE = SmartImitationJobStore()
 EXCEL_ANALYSIS_JOB_STORE = ExcelAnalysisJobStore()
 EXCEL_FORMULA_ASSISTANT_JOB_STORE = ExcelFormulaAssistantJobStore()
+EXCEL_SMART_FILL_JOB_STORE = ExcelSmartFillJobStore()
 PPT_DOCUMENT_FILE_STORE = PptDocumentFileStore(cleanup_interval_seconds=60)
 PPT_SLIDE_ASSISTANT_JOB_STORE = PptSlideAssistantJobStore(
     PptSlideAssistant(document_file_store=PPT_DOCUMENT_FILE_STORE)
@@ -202,6 +206,12 @@ def parse_excel_formula_request(payload):
     if hasattr(ExcelFormulaAssistantRequest, "model_validate"):
         return ExcelFormulaAssistantRequest.model_validate(payload)
     return ExcelFormulaAssistantRequest.parse_obj(payload)
+
+
+def parse_excel_smart_fill_request(payload):
+    if hasattr(ExcelSmartFillRequest, "model_validate"):
+        return ExcelSmartFillRequest.model_validate(payload)
+    return ExcelSmartFillRequest.parse_obj(payload)
 
 
 def parse_ppt_request(payload):
@@ -383,6 +393,31 @@ def excel_formula_missing_envelope(job_id, interrupted=False):
     )
 
 
+def excel_smart_fill_missing_envelope(job_id, interrupted=False):
+    if interrupted:
+        message = "智能填写任务不存在，可能因 adapter 重启而中断，请重新提交。"
+        data = {
+            "jobId": job_id,
+            "status": "failed",
+            "phase": "failed",
+            "queuePosition": None,
+            "canCancel": False,
+        }
+        code = "EXCEL_SMART_FILL_JOB_INTERRUPTED"
+    else:
+        message = "智能填写后台任务不存在或已过期。"
+        data = {"jobId": job_id, "status": "not_found"}
+        code = "EXCEL_SMART_FILL_JOB_NOT_FOUND"
+    return envelope(
+        job_id,
+        "excel.smart_fill",
+        data,
+        success=False,
+        message=message,
+        errors=[{"code": code, "message": message}],
+    )
+
+
 def ppt_slide_job_missing_envelope(job_id, interrupted=False):
     if interrupted:
         message = "智能总结任务不存在，可能因 adapter 重启而中断，请重新提交总结。"
@@ -484,6 +519,10 @@ def excel_formula_job_payload(job):
             ).dict(by_alias=True)
         data["result"] = result
     return data
+
+
+def excel_smart_fill_job_payload(job):
+    return dict(job)
 
 
 def ppt_slide_assistant_job_payload(job):
@@ -1978,6 +2017,32 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path.startswith("/excel/smart-fill/jobs/"):
+            job_id = unquote(path.rsplit("/", 1)[-1])
+            job = EXCEL_SMART_FILL_JOB_STORE.get(job_id)
+            if not job:
+                self._write(
+                    404,
+                    excel_smart_fill_missing_envelope(
+                        job_id,
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "excel.smart_fill",
+                    excel_smart_fill_job_payload(job),
+                    message=job["status"],
+                ),
+            )
+            return
+
         if path.startswith("/ppt/slide-assistant/jobs/"):
             job_id = unquote(path.rsplit("/", 1)[-1])
             job = PPT_SLIDE_ASSISTANT_JOB_STORE.get(job_id)
@@ -2082,6 +2147,28 @@ class Handler(BaseHTTPRequestHandler):
                     length = int(self.headers.get("Content-Length", "0"))
                 except (TypeError, ValueError):
                     length = 0
+            if (
+                path == "/excel/smart-fill"
+                or path == "/excel/smart-fill/jobs"
+            ) and length > SMART_FILL_REQUEST_MAX_BYTES:
+                self.close_connection = True
+                message = "智能填写请求超过 2 MiB 限制。"
+                self._write(
+                    413,
+                    envelope(
+                        new_trace_id("standalone-excel-smart-fill"),
+                        "excel.smart_fill",
+                        success=False,
+                        message=message,
+                        errors=[
+                            {
+                                "code": "EXCEL_SMART_FILL_REQUEST_TOO_LARGE",
+                                "message": message,
+                            }
+                        ],
+                    ),
+                )
+                return
             if path == "/ppt/document-files" and (
                 length <= 0 or self.headers.get("Transfer-Encoding")
             ):
@@ -2808,6 +2895,67 @@ class Handler(BaseHTTPRequestHandler):
                     trace_id,
                     "excel.formula_assistant",
                     excel_formula_job_payload(job),
+                    message="accepted",
+                ),
+            )
+            return
+
+        if path == "/excel/smart-fill":
+            trace_id = new_trace_id("standalone-excel-smart-fill")
+            status, body = sync_long_task_response(
+                payload,
+                trace_id,
+                "excel.smart_fill",
+                parse_excel_smart_fill_request,
+                EXCEL_SMART_FILL_JOB_STORE,
+                excel_smart_fill_job_payload,
+            )
+            self._write(status, body)
+            return
+
+        if path == "/excel/smart-fill/jobs":
+            trace_id = new_trace_id("standalone-excel-smart-fill")
+            try:
+                request = parse_excel_smart_fill_request(payload)
+                job = EXCEL_SMART_FILL_JOB_STORE.start(request, trace_id=trace_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "excel.smart_fill",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                raw_errors = error.errors() if hasattr(error, "errors") else []
+                validation_errors = [
+                    {
+                        "loc": ".".join(str(part) for part in item.get("loc", [])),
+                        "type": str(item.get("type", "")),
+                        "message": str(item.get("msg", ""))[:160],
+                    }
+                    for item in raw_errors[:8]
+                ]
+                self._write(
+                    422,
+                    request_validation_envelope(
+                        trace_id,
+                        "excel.smart_fill",
+                        validation_errors,
+                        error_count=len(raw_errors),
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "excel.smart_fill",
+                    excel_smart_fill_job_payload(job),
                     message="accepted",
                 ),
             )
@@ -3582,6 +3730,46 @@ class Handler(BaseHTTPRequestHandler):
                     job.get("traceId", job_id),
                     "excel.formula_assistant",
                     excel_formula_job_payload(job),
+                    message="cancelled",
+                ),
+            )
+            return
+
+        excel_smart_fill_prefix = "/excel/smart-fill/jobs/"
+        if path.startswith(excel_smart_fill_prefix):
+            job_id = unquote(path[len(excel_smart_fill_prefix):]).strip("/")
+            try:
+                job = EXCEL_SMART_FILL_JOB_STORE.cancel(job_id)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        job_id,
+                        "excel.smart_fill",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            if not job:
+                self._write(
+                    404,
+                    excel_smart_fill_missing_envelope(
+                        job_id,
+                        interrupted=str(
+                            parse_qs(parsed.query).get("resume", [""])[0]
+                        ).lower()
+                        in {"1", "true", "yes"},
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    job.get("traceId", job_id),
+                    "excel.smart_fill",
+                    excel_smart_fill_job_payload(job),
                     message="cancelled",
                 ),
             )

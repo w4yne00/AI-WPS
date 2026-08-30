@@ -34,6 +34,15 @@ AI-WPS vendors the following two Fluent System Icons as local, offline Ribbon PN
 - Derived PNG SHA-256: `7059d8f4f61d4c5f29503c8e89f8f4f4e355bacc1052994266f8cc92500ae70b`
 - Local transformation: rasterized the pinned 32×32 upstream vector asset at 72 DPI, removed the rasterizer's white background by deriving alpha from the grayscale coverage, and recolored the antialiased glyph to the existing PPT accent `#386EA8`; no runtime dependency was added.
 
+## Excel smart fill
+
+- Asset: `icon-excel-smart-fill.png`
+- Source: `assets-src/icon-excel-smart-fill.svg`
+- Source SVG SHA-256: `9cfe4044752ec6257d5537b4a4038eaa70b165cfcc55d73512d6d4b5d62aa437`
+- Distributed asset: `packages/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png`
+- Derived PNG SHA-256: `a6529a760417f9c50296d14ed27b155698ab2dadbb889824e855a44601ee0996`
+- Provenance: original AI-WPS vector asset, rasterized locally to a transparent 32×32 RGBA PNG; no third-party artwork or runtime asset dependency is used.
+
 The upstream MIT notice is reproduced here for the distributed substantial portions:
 
 > MIT License

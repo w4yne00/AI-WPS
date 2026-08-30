@@ -25,6 +25,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "word.format_review",
                 "excel.analysis",
                 "excel.formula_assistant",
+                "excel.smart_fill",
                 "ppt.slide_assistant",
                 "ppt.structure_review",
             ],
@@ -37,6 +38,10 @@ class ReviewModeContractTests(unittest.TestCase):
         self.assertEqual(
             status["excel.formula_assistant"]["apiKeyRef"],
             "excel_formula_assistant",
+        )
+        self.assertEqual(
+            status["excel.smart_fill"]["apiKeyRef"],
+            "excel_smart_fill",
         )
         self.assertEqual(status["ppt.slide_assistant"]["apiKeyRef"], "ppt_slide_assistant")
         self.assertEqual(
@@ -79,6 +84,7 @@ class ReviewModeContractTests(unittest.TestCase):
                 "word.format_review",
                 "excel.analysis",
                 "excel.formula_assistant",
+                "excel.smart_fill",
                 "ppt.slide_assistant",
                 "ppt.structure_review",
             ],

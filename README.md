@@ -12,14 +12,14 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 
 | Item | Value |
 | --- | --- |
-| Version | `v0.25.3-alpha` |
-| Version rule number | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3` |
+| Version | `v0.26.0-preview.1` |
+| Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | 0.25.3 automated candidate `20260826-d1a346b` (`candidate`); Issue #59 remains `manual-pending` |
-| Phase 1 delivery kit | `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`, SHA-256 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`; source `d1a346b0d7e1301f74b37e692664fd31085ee050` |
+| Delivery status | `v0.26.0-preview.1` automated status `candidate` after build; Issue #120 target-machine acceptance remains `manual-pending`; blocking Issue #119 implementation is completed and closed |
+| Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.25.3-alpha` keeps the Phase1 installer and adds 结果预览, 格式问题 cards, 题注关联结论, and 幻灯片页角色. 图像语义补充 stays default-on; probe failure or a closed master switch is 视觉关闭降级. Automated gates still yield only `candidate`.
+`v0.26.0-preview.1` establishes the neutral Preview delivery boundary and adds Excel Smart Fill as the ninth independently configured task. The feature is synthetic-data validated and still requires target-machine acceptance; the package does not claim WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
@@ -27,6 +27,7 @@ Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is
 
 | Version | Summary |
 | --- | --- |
+| `v0.26.0-preview.1` | Excel Smart Fill as an independently configured ninth task; guarded preview and write-back |
 | `v0.25.3-alpha` | Result preview; format-issue cards; caption-association conclusions; slide page roles |
 | `v0.25.2-alpha` | Image-semantics supplement default-on with visual-off degrade; PPT Chinese template title recognition |
 | `v0.25.1-alpha` | Format-review v2 JS/Python hash contract; allowlist assembly; Python 3.8 lifecycle gate |
@@ -47,10 +48,11 @@ Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-disp
 | Word | Writing policy | Four preset packs plus a local organization library |
 | Excel | 智能分析 | Selected or used range; structured report and briefing paragraph; no cell writes |
 | Excel | 公式助手 | Explicit selection (max 30×20); generate or explain; copy only |
+| Excel | 智能填写 | One contiguous single-column target (max 500); preview, edit/exclude/retry, then guarded write-back; no undo |
 | PPT | 智能总结 | Current slide, or one `.md` / `.docx` (≤10 MB) for a full-deck outline; preview and copy only |
 | PPT | 结构审查 | Up to 60 slides; 幻灯片页角色 list; read-only |
 
-The local adapter (default `127.0.0.1:18100`) stores per-task model configurations. Workflow-platform access uses `/chat-messages`; direct-model access uses OpenAI-compatible `/chat/completions`. Runtime requests do not fall back to a unified URL or key. Production mock output stays off unless explicitly enabled.
+The local adapter (default `127.0.0.1:18100`) stores per-task model configurations for nine tasks. Workflow-platform access uses `/chat-messages`; direct-model access uses OpenAI-compatible `/chat/completions`. Runtime requests do not fall back to a unified URL or key. Production mock output stays off unless explicitly enabled.
 
 ## Architecture
 
@@ -143,6 +145,8 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | [Format Review](./docs/operations/dify-format-review-workflow.md) | Word format review |
 | [智能分析](./docs/operations/dify-excel-analysis-workflow.md) | Excel analysis |
 | [公式助手](./docs/operations/dify-excel-formula-assistant-workflow.md) | Excel formula assistant |
+| [Excel Smart Fill contract](./docs/operations/model-excel-smart-fill-contract.md) | Smart Fill input/output, limits, and write-back boundary |
+| [Excel Smart Fill workflow](./docs/operations/workflow-platform-excel-smart-fill.md) | Workflow-platform configuration and validation |
 | [智能总结](./docs/operations/dify-ppt-slide-assistant-workflow.md) | PPT current-slide / document summary |
 | [结构审查](./docs/operations/dify-ppt-structure-review-workflow.md) | PPT structure review |
 | [Prompt templates](./docs/prompt-templates/) | Deployable Excel / PPT templates |
@@ -171,7 +175,7 @@ Envelope:
 | Model configs | `/provider/model-configurations` plus activate, rotate key, validate, copy |
 | Writing policy | `/writing-policies/*` (items, import preview, export, backup) |
 | Word | `/word/smart-write/jobs`, `/word/smart-imitation/jobs`, `/word/document-review/jobs`, `/word/format-review/jobs` (v2 snapshot / job / issues / report) |
-| Excel | `/excel/analysis/jobs`, `/excel/formula-assistant/jobs` |
+| Excel | `/excel/analysis/jobs`, `/excel/formula-assistant/jobs`, `/excel/smart-fill/jobs`; preview compatibility route `/excel/smart-fill` |
 | PPT | `/ppt/document-files`, `/ppt/slide-assistant/jobs`, `/ppt/structure-review/jobs` |
 
 `POST /word/format-review` is retired and always returns `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`. Long tasks submit a job, poll with short requests, and allow cancel only while queued.
@@ -214,6 +218,6 @@ Target-machine regression uses Python 3.8 on Kylin V10 ARM64 ([test host](./docs
 
 ## Roadmap
 
-Phase 1 covers the three-host task pane, structured extraction, adapter health and config, eight tasks, preview-then-write-back for Word, runtime probe, and offline install.
+Phase 1 covers the three-host task pane, structured extraction, adapter health and config, nine tasks, guarded preview-then-write-back for Word and Excel Smart Fill, runtime probe, and offline install. The current neutral Preview package remains target-machine `manual-pending`.
 
 Later work on the same adapter can add multi-sheet Excel flows, multi-file compare, governed PPT generation, and richer template / audit / policy governance.

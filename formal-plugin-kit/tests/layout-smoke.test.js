@@ -101,10 +101,23 @@ assert.ok(excelRibbonJs.includes('btnAiExcelFormulaAssistant: "excelFormulaAssis
 assert.ok(excelRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysis.png"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png"'));
+assert.ok(excelRibbonJs.includes('btnAiExcelSmartFill: "assets/icon-excel-smart-fill.png"'));
 assert.ok(!excelRibbonJs.includes('btnAiExcelFormulaAssistant: "assets/icon-excel-analysis.png"'));
 assert.ok(excelRibbonJs.includes('build=0.23.1-alpha'));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
 assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png"));
+assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"));
+const excelAnalysisIcon = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"
+);
+const excelFormulaIcon = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png"
+);
+const excelSmartFillIcon = fs.readFileSync(
+  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"
+);
+assert.ok(!excelSmartFillIcon.equals(excelAnalysisIcon));
+assert.ok(!excelSmartFillIcon.equals(excelFormulaIcon));
 assert.ok(pptManifest.includes('"name": "wps-ai-assistant-wpp"'));
 assert.ok(pptManifest.includes('"version": "0.23.1-alpha"'));
 assert.ok(pptManifestXml.includes("<wps:AppId>wps-ai-assistant-wpp</wps:AppId>"));

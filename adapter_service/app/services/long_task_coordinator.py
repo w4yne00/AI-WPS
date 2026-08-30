@@ -38,6 +38,10 @@ JobKey = Tuple[str, str]
 class LongTaskCancelled(Exception):
     """Signals cooperative cancellation after an in-flight call returns."""
 
+    def __init__(self, partial_result: Optional[Dict] = None) -> None:
+        super().__init__()
+        self.partial_result = deepcopy(partial_result) if partial_result is not None else None
+
 
 class LongTaskContinuation:
     """Requests that a running task yield its slot and resume with new state."""
@@ -97,6 +101,9 @@ class LongTaskCoordinator:
         safe_failure_codes: Optional[Set[str]] = None,
         priority_class: str = PRIORITY_REGULAR,
         allow_running_cancel: bool = False,
+        request_fingerprint: Optional[str] = None,
+        request_conflict_code: str = "LONG_TASK_JOB_ID_CONFLICT",
+        request_conflict_message: str = "相同任务编号已绑定其他请求，请使用新的任务编号。",
     ) -> Dict:
         worker_job_key: Optional[JobKey] = None
         now_mono = self._monotonic()
@@ -111,6 +118,17 @@ class LongTaskCoordinator:
             self._cleanup_locked(now_mono)
             existing = self._jobs.get(job_key)
             if existing is not None:
+                stored_fingerprint = existing.get("_requestFingerprint")
+                if (
+                    request_fingerprint
+                    and stored_fingerprint
+                    and stored_fingerprint != request_fingerprint
+                ):
+                    raise AdapterError(
+                        request_conflict_code,
+                        request_conflict_message,
+                        status_code=409,
+                    )
                 return self._public_job_locked(existing, now_mono)
             if self._running_count >= self.max_running and len(self._queue) >= self.max_queued:
                 self._rejected_count += 1
@@ -142,6 +160,7 @@ class LongTaskCoordinator:
                 "_safeFailureCodes": set(safe_failure_codes or set()),
                 "_publicMetadata": deepcopy(public_metadata or {}),
                 "_priorityClass": normalized_priority,
+                "_requestFingerprint": request_fingerprint or "",
                 "_allowRunningCancel": bool(allow_running_cancel),
                 "_cancelRequested": False,
                 "_occupiesSlot": status == "running",
@@ -168,6 +187,19 @@ class LongTaskCoordinator:
             job_key = self._find_job_key_locked(job_id, task_type)
             job = self._jobs.get(job_key) if job_key is not None else None
             return self._public_job_locked(job, now_mono) if job else None
+
+    def get_request_fingerprint(
+        self, job_id: str, task_type: Optional[str] = None
+    ) -> Optional[str]:
+        """Return an internal idempotency fingerprint without exposing job data."""
+        now_mono = self._monotonic()
+        with self._lock:
+            self._cleanup_locked(now_mono)
+            job_key = self._find_job_key_locked(job_id, task_type)
+            job = self._jobs.get(job_key) if job_key is not None else None
+            if job is None:
+                return None
+            return str(job.get("_requestFingerprint") or "") or None
 
     def wait(self, job_id: str, task_type: Optional[str] = None) -> Optional[Dict]:
         """Wait for one accepted job without bypassing the shared capacity boundary."""
@@ -376,17 +408,20 @@ class LongTaskCoordinator:
         result = None
         error = None
         cancelled = False
+        cancelled_result = None
         continuation = None
         try:
             result = runner(snapshot, progress)
             if isinstance(result, LongTaskContinuation):
                 continuation = result
-        except LongTaskCancelled:
+        except LongTaskCancelled as exc:
             cancelled = True
+            cancelled_result = exc.partial_result
         except Exception as exc:
             diagnostic_error_code = (
                 exc.code if isinstance(exc, AdapterError) else ""
             )
+            partial_result = getattr(exc, "partial_result", None)
             if (
                 isinstance(exc, AdapterError)
                 and exc.code in job.get("_safeFailureCodes", set())
@@ -397,6 +432,8 @@ class LongTaskCoordinator:
                     "code": str(job.get("_failureCode") or "LONG_TASK_FAILED"),
                     "message": str(job.get("_failureMessage") or "后台任务执行失败。"),
                 }
+            if partial_result is not None:
+                error["_partialResult"] = deepcopy(partial_result)
             if diagnostic_error_code:
                 error["_diagnosticCode"] = diagnostic_error_code
         finally:
@@ -408,8 +445,22 @@ class LongTaskCoordinator:
             job = self._jobs.get(job_key)
             if job is None or job["status"] != "running":
                 return
-            if cancelled or job.get("_cancelRequested"):
-                job["result"] = None
+            cancel_requested = bool(job.get("_cancelRequested"))
+            if (
+                not cancelled
+                and cancel_requested
+                and continuation is None
+                and error is None
+                and result is not None
+            ):
+                # The runner completed before the cancellation request was
+                # observed at commit time. Keep the completed result instead
+                # of converting it into a cancelled job with no payload.
+                job["result"] = result
+                self._finish_locked(job, "completed", now_mono)
+                self._running_count = max(self._running_count - 1, 0)
+            elif cancelled or cancel_requested:
+                job["result"] = cancelled_result
                 self._finish_locked(job, "cancelled", now_mono)
                 self._cancelled_count += 1
                 self._running_count = max(self._running_count - 1, 0)
@@ -426,6 +477,9 @@ class LongTaskCoordinator:
                 self._running_count = max(self._running_count - 1, 0)
             else:
                 diagnostic_error_code = str(error.pop("_diagnosticCode", ""))
+                partial_result = error.pop("_partialResult", None)
+                if partial_result is not None:
+                    job["result"] = partial_result
                 job["error"] = error
                 job["_diagnosticErrorCode"] = diagnostic_error_code
                 if "TIMEOUT" in diagnostic_error_code.upper():

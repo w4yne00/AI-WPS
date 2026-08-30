@@ -32,10 +32,10 @@ class FakeResponse:
 
 
 class DirectModelProviderTests(unittest.TestCase):
-    def test_system_prompt_manifest_exposes_all_eight_verified_tasks(self) -> None:
+    def test_system_prompt_manifest_exposes_all_nine_verified_tasks(self) -> None:
         metadata = SystemPromptStore().list_metadata()
 
-        self.assertEqual(len(metadata), 8)
+        self.assertEqual(len(metadata), 9)
         self.assertEqual(
             {item["taskType"] for item in metadata},
             {
@@ -45,6 +45,7 @@ class DirectModelProviderTests(unittest.TestCase):
                 "word.format_review",
                 "excel.analysis",
                 "excel.formula_assistant",
+                "excel.smart_fill",
                 "ppt.slide_assistant",
                 "ppt.structure_review",
             },
