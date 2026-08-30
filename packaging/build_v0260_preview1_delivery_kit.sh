@@ -88,7 +88,7 @@ PY
   --date "$DATE_TAG" \
   --baseline-archive "$BASELINE_ARCHIVE" \
   --baseline-version "$BASELINE_VERSION" \
-  --acceptance-issue 119 \
+  --acceptance-issue 120 \
   --source-commit "$SOURCE_COMMIT"
 
 PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" \

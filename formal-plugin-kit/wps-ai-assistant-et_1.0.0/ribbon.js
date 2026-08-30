@@ -14,6 +14,7 @@ function resolveMode(controlId) {
   var modeMap = {
     btnAiExcelAnalysis: "excelAnalysis",
     btnAiExcelFormulaAssistant: "excelFormulaAssistant",
+    btnAiExcelSmartFill: "excelSmartFill",
     btnAiSettings: "settings"
   };
   return modeMap[controlId] || "excelAnalysis";
@@ -22,6 +23,7 @@ function resolveMode(controlId) {
 var ribbonIconMap = {
   btnAiExcelAnalysis: "assets/icon-excel-analysis.png",
   btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png",
+  btnAiExcelSmartFill: "assets/icon-excel-smart-fill.png",
   btnAiSettings: "assets/icon-settings.png"
 };
 

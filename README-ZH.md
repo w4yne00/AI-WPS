@@ -12,14 +12,14 @@
 
 | 项目 | 内容 |
 | --- | --- |
-| 当前版本 | `v0.25.3-alpha` |
-| 版本规则号 | `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3` |
+| 当前版本 | `v0.26.0-preview.1` |
+| 版本规则号 | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | 当前阶段 | `P1` 平台底座 + Word + Excel + PPT |
 | 运行目标 | 麒麟 V10 ARM、Python 3.8、WPS 原生 JS 插件 |
-| 交付状态 | 0.25.3 自动化候选 `20260826-d1a346b`（`candidate`）；Issue #59 仍为 `manual-pending` |
-| 一期交付包 | `ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256：`120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`；源码提交：`d1a346b0d7e1301f74b37e692664fd31085ee050` |
+| 交付状态 | `v0.26.0-preview.1` 构建后自动化状态为 `candidate`；Issue #120 目标机验收仍为 `manual-pending`；阻塞工单 Issue #119 实现已完成并关闭 |
+| 基线状态 | `v0.25.3-alpha` 已依据 Issue #59 完成目标机验收，状态为 `target-accepted` |
 
-`v0.25.3-alpha` 继续走 Phase1 安装器，并带上结果预览、格式问题卡片、题注关联结论和幻灯片页角色。图像语义补充默认开启；探针未过或总开关关闭时走视觉关闭降级。自动化门禁只得到 `candidate`，不能当成目标机已通过。
+`v0.26.0-preview.1` 建立中性的 Preview 交付边界，并新增独立配置的第九任务 Excel“智能填写”。该能力已完成合成数据验证，但仍须目标机验收；当前包不宣称已通过真实 WPS 或模型验收。`v0.25.3-alpha` 的 `target-accepted` 基线仍按 Issue #59 保留记录。
 
 版本规则：`AI-WPS-P{阶段}-{范围}-{主版本.次版本.修订号}-{yyyymmdd}`。主版本改兼容边界，次版本加用户可见能力，修订号覆盖缺陷、界面、打包和文档。
 
@@ -27,6 +27,7 @@
 
 | 版本 | 用户可见变化 |
 | --- | --- |
+| `v0.26.0-preview.1` | Excel“智能填写”作为独立配置的第九任务；受保护的预览和写回 |
 | `v0.25.3-alpha` | 结果预览、格式问题卡片、题注关联结论、幻灯片页角色 |
 | `v0.25.2-alpha` | 图像语义补充默认开启，视觉关闭降级；PPT 中文模板标题识别 |
 | `v0.25.1-alpha` | 格式审查 v2 跨运行时哈希契约、白名单组装、Python 3.8 生命周期门禁 |
@@ -47,10 +48,11 @@ Word、Excel、PPT 使用独立插件，Ribbon 互不串门。模型结果先预
 | Word | 写作规范 | 四个预置包 + 本机组织规范库；编写 / 仿写 / 审查可选用 |
 | Excel | 智能分析 | 选区或已用范围；结构化报告和汇报段落，不写回单元格 |
 | Excel | 公式助手 | 明确选区（最多 30×20）；生成或解释排错，只复制 |
+| Excel | 智能填写 | 单列连续目标（最多 500 项）；预览、编辑/排除/重试后受保护写回；不提供撤销 |
 | PPT | 智能总结 | 当前页，或上传单个 `.md` / `.docx`（≤10 MB）生成整套页建议；只预览和复制 |
 | PPT | 结构审查 | 最多 60 页；幻灯片页角色清单；只读 |
 
-本机 Adapter（默认 `127.0.0.1:18100`）承接八类任务的模型配置：工作流平台走 `/chat-messages`，模型直连走 OpenAI 兼容 `/chat/completions`。运行时不回退统一 URL 或统一 Key。生产环境默认关闭模拟结果。
+本机 Adapter（默认 `127.0.0.1:18100`）承接九类任务的独立模型配置：工作流平台走 `/chat-messages`，模型直连走 OpenAI 兼容 `/chat/completions`。运行时不回退统一 URL 或统一 Key。生产环境默认关闭模拟结果。
 
 ## 架构
 
@@ -143,6 +145,8 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | [格式审查](./docs/operations/dify-format-review-workflow.md) | Word 格式审查 |
 | [智能分析](./docs/operations/dify-excel-analysis-workflow.md) | Excel 分析 |
 | [公式助手](./docs/operations/dify-excel-formula-assistant-workflow.md) | Excel 公式 |
+| [Excel“智能填写”契约](./docs/operations/model-excel-smart-fill-contract.md) | 智能填写输入输出、限制和写回边界 |
+| [Excel“智能填写”工作流](./docs/operations/workflow-platform-excel-smart-fill.md) | 工作流平台配置和验证 |
 | [智能总结](./docs/operations/dify-ppt-slide-assistant-workflow.md) | PPT 当前页 / 文档总结 |
 | [结构审查](./docs/operations/dify-ppt-structure-review-workflow.md) | PPT 结构审查 |
 | [提示词模板](./docs/prompt-templates/) | 可部署的 Excel / PPT 模板 |
@@ -171,7 +175,7 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 | 模型配置 | `/provider/model-configurations` 及激活、换钥、校验、复制 |
 | 写作规范 | `/writing-policies/*`（条目、导入预览、导出、备份） |
 | Word | `/word/smart-write/jobs`、`/word/smart-imitation/jobs`、`/word/document-review/jobs`、`/word/format-review/jobs`（v2 快照 / 任务 / 问题 / 报告） |
-| Excel | `/excel/analysis/jobs`、`/excel/formula-assistant/jobs` |
+| Excel | `/excel/analysis/jobs`、`/excel/formula-assistant/jobs`、`/excel/smart-fill/jobs`；兼容预览路径 `/excel/smart-fill` |
 | PPT | `/ppt/document-files`、`/ppt/slide-assistant/jobs`、`/ppt/structure-review/jobs` |
 
 `POST /word/format-review` 已退役，固定返回 `410 WORD_FORMAT_REVIEW_SYNC_RETIRED`。长任务一般是提交 jobs、短请求轮询、排队中可取消；运行中的阻塞式模型请求不可取消。
@@ -214,6 +218,6 @@ npm test
 
 ## 路线图
 
-Phase 1 已覆盖：三宿主任务窗格、结构化抽取、Adapter 健康与配置、八类任务、预览后写回 Word、运行时探测和离线安装。
+Phase 1 已覆盖：三宿主任务窗格、结构化抽取、Adapter 健康与配置、九类任务、Word 与 Excel“智能填写”的受保护预览后写回、运行时探测和离线安装。当前中性 Preview 包的目标机状态仍为 `manual-pending`。
 
 后续可以在同一 Adapter 上扩展 Excel 多表流程、多文件比对、受控 PPT 生成，以及更完整的模板、审计和规范库治理。

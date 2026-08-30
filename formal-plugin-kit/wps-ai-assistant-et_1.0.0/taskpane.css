@@ -1223,6 +1223,7 @@ button.danger-action:not(:disabled) {
 
   .rewrite-grid,
   .button-cluster,
+  .smart-fill-capture-grid,
   .diag-grid,
   .diagnostics-actions,
   .inline-picker,
@@ -1378,6 +1379,147 @@ button.danger-action:not(:disabled) {
   resize: vertical;
 }
 
+.smart-fill-capture-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.smart-fill-capture-card {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-panel);
+  background: var(--surface-soft);
+}
+
+.smart-fill-capture-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.smart-fill-capture-heading strong {
+  font-size: 13px;
+}
+
+.smart-fill-capture-heading .mini-button {
+  flex-shrink: 0;
+  min-width: 0;
+  padding-inline: 8px;
+  font-size: 12px;
+}
+
+.smart-fill-capture-card .excel-range-summary {
+  margin: 0;
+  background: var(--surface);
+}
+
+#smart-fill-validation-line {
+  margin: 0;
+}
+
+.smart-fill-preview-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.smart-fill-preview-head strong {
+  color: var(--accent);
+  font-size: 15px;
+}
+
+.smart-fill-result-list {
+  display: grid;
+  gap: 8px;
+}
+
+.smart-fill-result-item {
+  padding: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-control);
+  background: var(--surface-soft);
+}
+
+.smart-fill-result-meta,
+.smart-fill-result-edit,
+.smart-fill-result-select {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.smart-fill-result-meta,
+.smart-fill-result-edit {
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.smart-fill-result-select {
+  gap: 7px;
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.smart-fill-result-select input {
+  width: auto;
+  min-height: 0;
+  accent-color: var(--accent);
+}
+
+.smart-fill-result-select span {
+  overflow-wrap: anywhere;
+}
+
+.smart-fill-result-status {
+  flex-shrink: 0;
+  padding: 3px 7px;
+  border-radius: var(--radius-control);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.smart-fill-result-status.is-complete {
+  color: var(--color-success);
+  background: #edf7f2;
+}
+
+.smart-fill-result-status.is-insufficient {
+  color: var(--color-warning);
+  background: #fff7e8;
+}
+
+.smart-fill-result-edit {
+  margin-top: 8px;
+}
+
+.smart-fill-result-value {
+  min-height: 34px;
+  padding: 7px 9px;
+}
+
+.smart-fill-result-edit .mini-button {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+#smart-fill-write-summary {
+  align-self: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  justify-content: flex-start;
+  color: var(--muted);
+}
+
 @media (max-width: 420px) {
   .formula-mode-segment {
     width: 100%;
@@ -1385,6 +1527,16 @@ button.danger-action:not(:disabled) {
 
   .formula-mode-segment button {
     padding-inline: 6px;
+  }
+
+  .smart-fill-preview-head,
+  .smart-fill-result-edit {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .smart-fill-result-edit .mini-button {
+    width: 100%;
   }
 }
 

@@ -126,7 +126,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0260_RELEASE_DATE_INVALID")
 
     adapter = manifest.get("adapter", {})
-    if adapter.get("version") != VERSION or adapter.get("systemPromptCount") != 8:
+    if adapter.get("version") != VERSION or adapter.get("systemPromptCount") != 9:
         raise DeliveryFailure("V0260_ADAPTER_IDENTITY_INVALID")
     if adapter.get("systemPromptManifest") != (
         "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
@@ -187,7 +187,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
 
     target_acceptance = manifest.get("targetAcceptance", {})
     if (
-        manifest.get("targetAcceptanceIssue") != 119
+        manifest.get("targetAcceptanceIssue") != 120
         or target_acceptance.get("status") != "manual-pending"
         or target_acceptance.get("required") is not True
         or target_acceptance.get("doesNotCloseIssue") is not True
@@ -215,7 +215,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0260_ARCHIVE_IDENTITY_INVALID")
     if evidence.get("archiveChecksumFile") != expected_archive_name + ".sha256":
         raise DeliveryFailure("V0260_ARCHIVE_CHECKSUM_EVIDENCE_INVALID")
-    if evidence.get("acceptanceRecord") != "Issue #119":
+    if evidence.get("acceptanceRecord") != "Issue #120":
         raise DeliveryFailure("V0260_ACCEPTANCE_EVIDENCE_INVALID")
     baseline = manifest.get("baseline", {})
     if (
@@ -242,7 +242,7 @@ def audit_prompt_manifest(root: Path, manifest: Dict) -> None:
     if prompt_manifest.get("release") != VERSION:
         raise DeliveryFailure("V0260_PROMPT_RELEASE_INVALID")
     tasks = prompt_manifest.get("tasks", {})
-    if not isinstance(tasks, dict) or len(tasks) != 8:
+    if not isinstance(tasks, dict) or len(tasks) != 9:
         raise DeliveryFailure("V0260_PROMPT_TASK_COUNT_INVALID")
     for name, item in tasks.items():
         if not isinstance(item, dict):

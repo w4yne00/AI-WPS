@@ -58,12 +58,41 @@
             </label>
           </div>
 
+          <div id="excel-smart-fill-options" class="mode-block smart-fill-options" hidden>
+            <p class="field-note">智能填写只使用目标区域和来源上下文；来源区域可选，未捕获时使用目标行的可见上下文和表头。生成预览后会再次核对目标单元格未被改动。</p>
+            <div class="smart-fill-capture-grid">
+              <section class="smart-fill-capture-card">
+                <div class="smart-fill-capture-heading">
+                  <strong>目标区域</strong>
+                  <button id="btn-capture-smart-fill-target" class="ghost-action mini-button" type="button">捕获当前选区</button>
+                </div>
+                <p id="smart-fill-target-summary" class="excel-range-summary">尚未捕获目标区域。</p>
+              </section>
+              <section class="smart-fill-capture-card">
+                <div class="smart-fill-capture-heading">
+                  <strong>来源区域</strong>
+                  <button id="btn-capture-smart-fill-source" class="ghost-action mini-button" type="button">捕获当前选区</button>
+                </div>
+                <p id="smart-fill-source-summary" class="excel-range-summary">尚未捕获来源区域。</p>
+              </section>
+            </div>
+            <label class="field" for="excel-smart-fill-instruction">
+              <span>填写规则</span>
+              <textarea id="excel-smart-fill-instruction" rows="4" maxlength="4000" placeholder="例如：根据来源表的姓名和部门，为目标区域补充统一格式的标签。"></textarea>
+            </label>
+            <p id="smart-fill-validation-line" class="field-hint" aria-live="polite">请先捕获目标区域；来源区域可选。</p>
+          </div>
+
           <div class="button-cluster action-bar">
             <button id="btn-run-primary" type="button">生成分析报告</button>
+            <button id="btn-write-smart-fill" class="secondary-action" type="button" hidden disabled>写入内容</button>
+            <span id="smart-fill-write-summary" class="field-hint" aria-live="polite">尚无可写入的智能填写预览。</span>
             <button id="btn-cancel-excel-analysis-job" class="secondary-action" type="button" hidden>取消排队任务</button>
             <button id="btn-cancel-excel-formula-job" class="secondary-action" type="button" hidden>取消排队任务</button>
+            <button id="btn-cancel-excel-smart-fill-job" class="secondary-action" type="button" hidden>取消任务</button>
             <button id="btn-resubmit-interrupted-job" class="secondary-action" type="button" hidden>重新提交分析</button>
             <button id="btn-resubmit-interrupted-formula-job" class="secondary-action" type="button" hidden>重新提交公式需求</button>
+            <button id="btn-resubmit-interrupted-smart-fill-job" class="secondary-action" type="button" hidden>重新提交智能填写</button>
           </div>
           <div id="status-line" class="sr-only">等待操作。</div>
         </section>
@@ -138,6 +167,7 @@
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务">
                 <button type="button" role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>
                 <button type="button" role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>
+                <button type="button" role="tab" data-workflow-task-tab="excel.smart_fill" aria-selected="false">智能填写</button>
               </div>
               <section id="workflow-settings-home">
                 <div class="workflow-manager-head">

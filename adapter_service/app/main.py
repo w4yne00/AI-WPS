@@ -33,6 +33,7 @@ logger = get_logger(__name__)
 PPT_DOCUMENT_UPLOAD_REQUEST_MAX_BYTES = 15 * 1024 * 1024
 WRITING_POLICY_IMPORT_PREVIEW_REQUEST_MAX_BYTES = 7 * 1024 * 1024
 FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES = 2 * 1024 * 1024
+SMART_FILL_REQUEST_MAX_BYTES = 2 * 1024 * 1024
 
 
 class FullDocumentReviewBodyLimitMiddleware:
@@ -119,6 +120,43 @@ class FullDocumentReviewBodyLimitMiddleware:
     @staticmethod
     async def _empty_receive():
         return {"type": "http.request", "body": b"", "more_body": False}
+
+
+class SmartFillBodyLimitMiddleware(FullDocumentReviewBodyLimitMiddleware):
+    @staticmethod
+    def _is_full_review_mutation(scope) -> bool:
+        return bool(
+            scope.get("type") == "http"
+            and scope.get("method") in {"POST", "PUT", "DELETE"}
+            and (
+                str(scope.get("path", "")) == "/excel/smart-fill"
+                or str(scope.get("path", "")).startswith("/excel/smart-fill/jobs")
+            )
+        )
+
+    async def _reject(self, scope, send, received: int) -> None:
+        trace_id = WritingPolicyImportBodyLimitMiddleware._trace_id(scope)
+        message = "智能填写请求超过 2 MiB 限制。"
+        response = JSONResponse(
+            status_code=413,
+            content={
+                "success": False,
+                "traceId": trace_id,
+                "taskType": "excel.smart_fill",
+                "message": message,
+                "data": {},
+                "errors": [{
+                    "code": "EXCEL_SMART_FILL_REQUEST_TOO_LARGE",
+                    "message": message,
+                }],
+            },
+        )
+        response.headers["X-Trace-Id"] = trace_id
+        logger.warning(
+            "traceId=%s method=%s path=%s status=413 receivedBytes=%s",
+            trace_id, scope.get("method", ""), scope.get("path", ""), received,
+        )
+        await response(scope, self._empty_receive, send)
 
 
 class WritingPolicyImportBodyLimitMiddleware:
@@ -387,6 +425,10 @@ app.add_middleware(
     max_bytes=FULL_DOCUMENT_REVIEW_REQUEST_MAX_BYTES,
 )
 app.add_middleware(
+    SmartFillBodyLimitMiddleware,
+    max_bytes=SMART_FILL_REQUEST_MAX_BYTES,
+)
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
@@ -438,6 +480,8 @@ def _task_type_from_path(path: str) -> str:
         return "excel.analysis"
     if path.startswith("/excel/formula-assistant/jobs/"):
         return "excel.formula_assistant"
+    if path.startswith("/excel/smart-fill/jobs/"):
+        return "excel.smart_fill"
     if path.startswith("/ppt/structure-review/jobs/"):
         return "ppt.structure_review"
     return {
@@ -453,6 +497,8 @@ def _task_type_from_path(path: str) -> str:
         "/excel/analysis": "excel.analysis",
         "/excel/analysis/jobs": "excel.analysis",
         "/excel/formula-assistant/jobs": "excel.formula_assistant",
+        "/excel/smart-fill": "excel.smart_fill",
+        "/excel/smart-fill/jobs": "excel.smart_fill",
         "/ppt/slide-assistant/jobs": "ppt.slide_assistant",
         "/ppt/document-files": "ppt.slide_assistant",
         "/ppt/structure-review/jobs": "ppt.structure_review",

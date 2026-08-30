@@ -73,7 +73,7 @@ def _prepare_delivery(tmp_path, source_commit="e94c561"):
             "--baseline-version",
             "0.25.3-alpha",
             "--acceptance-issue",
-            "119",
+            "120",
             "--source-commit",
             source_commit,
         ],

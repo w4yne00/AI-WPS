@@ -13,6 +13,7 @@
 - 冒烟入口：`scripts/ai_wps_smoke_test.sh`
 - 交付状态：自动化门禁只能记录 `candidate`
 - 目标机状态：首次 Preview 验收前保持 `manual-pending`
+- Issue #119：作为本票阻塞工单的实现范围已完成并关闭；本版本目标机验收记录绑定 Issue #120，仍未完成
 
 `release-manifest.json`、`release-allowlist.json` 和 `release-file-hashes.json` 是同一候选的身份、白名单和完整性边界。发布脚本只从显式白名单组装文件，不把仓库测试、缓存、历史归档或运行数据带入交付包。
 
@@ -35,4 +36,4 @@ bash scripts/ai_wps_smoke_test.sh
 
 ## Scope
 
-This package keeps the existing Word, Excel, and PPT behavior unchanged while establishing the neutral Preview delivery boundary. The `v0.26.0-preview.1` baseline is a one-time manual reinstall and reconfiguration boundary. It does not automatically migrate or delete the legacy `ai-wps-phase1` installation.
+This package keeps the existing Word, Excel, and PPT behavior unchanged while establishing the neutral Preview delivery boundary and adding Excel Smart Fill as the ninth independently configured task. Smart Fill is limited to one contiguous single-column target, uses synthetic-data validation, and requires preview confirmation before guarded write-back. The `v0.26.0-preview.1` baseline is a one-time manual reinstall and reconfiguration boundary. It does not automatically migrate or delete the legacy `ai-wps-phase1` installation.

@@ -25,7 +25,14 @@ from app.core.logging import get_logger
 from app.core.models import (
     ExcelAnalysisRequest,
     ExcelFormulaAssistantRequest,
+    ExcelSmartFillRequest,
     PptStructureReviewRequest,
+)
+from app.services.excel.smart_fill import (
+    build_excel_smart_fill_prompt,
+    excel_smart_fill_response_format,
+    parse_excel_smart_fill_answer,
+    validate_smart_fill_result_limits,
 )
 from app.services.workflow_profiles import WorkflowProfileError, WorkflowProfileStore
 from app.services.model_configurations import (
@@ -49,6 +56,7 @@ _LAST_PROVIDER_DEBUG_LOCK = threading.Lock()
 DOCUMENT_REVIEW_TIMEOUT_SECONDS = 1800
 EXCEL_ANALYSIS_TIMEOUT_SECONDS = DOCUMENT_REVIEW_TIMEOUT_SECONDS
 EXCEL_FORMULA_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
+EXCEL_SMART_FILL_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS = EXCEL_ANALYSIS_TIMEOUT_SECONDS
 PPT_DOCUMENT_SLIDE_COUNTS = (5, 8, 10, 12, 15)
@@ -1686,6 +1694,11 @@ _VALIDATION_PROBES = {
         '"alternativeFormula":"","suggestedTarget":"C1","explanation":"求和",'
         '"components":[],"referenceRanges":["A1:B1"],"issues":[],"assumptions":[],"compatibilityNotes":[]}'
     ),
+    "excel.smart_fill": (
+        '根据来源“已完成”为 item-0001 生成填写值。只返回 JSON：'
+        '{"schemaVersion":"excel.smart_fill.v1","items":[{"itemId":"item-0001",'
+        '"status":"completed","valueType":"text","value":"已填写"}]}'
+    ),
     "ppt.slide_assistant": (
         'sourceMode=currentSlide。标题“项目进展”，正文“已完成部署”。只返回 JSON：'
         '{"suggestedTitle":"项目进展","summary":"已完成部署","keyPoints":[],"layoutAdvice":[],"plainText":"已完成部署"}'
@@ -1706,6 +1719,9 @@ def _validate_probe_answer(task_type: str, answer: str) -> None:
         "word.document_review": parse_document_review_answer,
         "excel.analysis": parse_excel_analysis_answer,
         "excel.formula_assistant": parse_excel_formula_answer,
+        "excel.smart_fill": lambda value: parse_excel_smart_fill_answer(
+            value, expected_item_ids=["item-0001"]
+        ),
         "ppt.slide_assistant": parse_ppt_slide_answer,
         "ppt.structure_review": parse_ppt_structure_review_answer,
     }
@@ -2219,6 +2235,7 @@ class ProviderClient:
             ("word.format_review", "格式审查"),
             ("excel.analysis", "智能分析"),
             ("excel.formula_assistant", "公式助手"),
+            ("excel.smart_fill", "智能填写"),
             ("ppt.slide_assistant", "智能总结"),
             ("ppt.structure_review", "结构审查"),
         ]
@@ -3651,6 +3668,122 @@ class ProviderClient:
             "prompt": prompt,
             "conversationId": body.get("conversation_id", ""),
             "messageId": body.get("message_id", ""),
+        }
+
+    def excel_smart_fill(
+        self,
+        request: ExcelSmartFillRequest,
+        trace_id: str,
+        task_auth: Optional[Dict] = None,
+        progress_callback=None,
+    ) -> Dict:
+        from app.services.excel.smart_fill import validate_smart_fill_request_limits
+
+        validate_smart_fill_request_limits(request)
+        prompt = build_excel_smart_fill_prompt(request)
+        task_type = "excel.smart_fill"
+        expected_item_ids = [item.item_id for item in request.target.items]
+        has_auth_snapshot = task_auth is not None
+        resolved_task_auth = task_auth or {}
+        configured = (
+            bool(
+                str(resolved_task_auth.get("providerBaseUrl", "")).strip()
+                and str(resolved_task_auth.get("apiKey", "")).strip()
+            )
+            if has_auth_snapshot
+            else self.is_task_configured(task_type)
+        )
+        if not configured:
+            if not _mock_provider_enabled():
+                raise AdapterError(
+                    "MODEL_CONFIG_INCOMPLETE",
+                    "智能填写尚未配置可用的模型配置，请先前往设置完成配置。",
+                    status_code=400,
+                )
+            if progress_callback:
+                progress_callback("parsing")
+            return {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [
+                    {
+                        "itemId": item_id,
+                        "status": "insufficient_information",
+                        "valueType": "text",
+                        "value": "",
+                    }
+                    for item_id in expected_item_ids
+                ],
+                "provider": "mock",
+            }
+
+        if progress_callback:
+            progress_callback("provider_processing")
+        post_kwargs = {
+            "timeout_seconds": max(
+                self.settings.timeout_seconds,
+                EXCEL_SMART_FILL_TIMEOUT_SECONDS,
+            ),
+            "response_format": excel_smart_fill_response_format(),
+            "allow_response_format_fallback": True,
+        }
+        if has_auth_snapshot:
+            post_kwargs["task_auth"] = resolved_task_auth
+        input_data = {
+            "scene": "excel",
+            "itemCount": len(expected_item_ids),
+            "batchLimit": 50,
+            "sourceRowCount": request.source.row_count,
+            "sourceColumnCount": request.source.column_count,
+            "sourceTruncated": request.source.truncated,
+        }
+
+        def post_smart_fill(query, metadata):
+            return self.post_task(
+                task_type,
+                trace_id,
+                metadata,
+                query,
+                **post_kwargs
+            )
+
+        body = post_smart_fill(
+            prompt,
+            input_data,
+        )
+        result_body = body
+        if progress_callback:
+            progress_callback("parsing")
+        try:
+            parsed = parse_excel_smart_fill_answer(
+                extract_answer(body), expected_item_ids=expected_item_ids
+            )
+        except AdapterError as first_error:
+            if first_error.code != "MODEL_RESULT_INVALID":
+                raise
+            if progress_callback:
+                progress_callback("retrying")
+            correction_query = prompt + "\n结构纠正：上一次输出未通过严格契约校验。请重新输出完整 JSON；不得输出 Markdown、解释文字或任何额外字段。"
+            corrected_body = post_smart_fill(
+                correction_query,
+                {**input_data, "correctionAttempt": 1},
+            )
+            parsed = parse_excel_smart_fill_answer(
+                extract_answer(corrected_body), expected_item_ids=expected_item_ids
+            )
+            result_body = corrected_body
+        validate_smart_fill_result_limits(parsed)
+        logger.info(
+            "traceId=%s provider=enterprise-dify-chat task=excel.smart_fill items=%s",
+            trace_id,
+            len(expected_item_ids),
+        )
+        return {
+            **parsed,
+            "provider": self.build_provider_source(
+                task_type, resolved_task_auth if has_auth_snapshot else None
+            ),
+            "conversationId": result_body.get("conversation_id", ""),
+            "messageId": result_body.get("message_id", ""),
         }
 
     def ppt_slide_assistant(

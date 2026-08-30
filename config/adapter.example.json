@@ -22,6 +22,7 @@
     "word.format_review": "word_format_review",
     "excel.analysis": "excel_analysis",
     "excel.formula_assistant": "excel_formula_assistant",
+    "excel.smart_fill": "excel_smart_fill",
     "ppt.slide_assistant": "ppt_slide_assistant",
     "ppt.structure_review": "ppt_structure_review"
   },

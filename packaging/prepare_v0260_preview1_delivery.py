@@ -506,7 +506,7 @@ require(adapter.get("version") == expected)
 require(adapter.get("systemPromptManifest") == (
     "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
 ))
-require(adapter.get("systemPromptCount") == 8)
+require(adapter.get("systemPromptCount") == 9)
 delivery = manifest.get("deliveryPolicy", {})
 require(delivery.get("status") == "candidate")
 require(delivery.get("sourceAssembly") == "explicit-allowlist")
@@ -755,7 +755,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--date", required=True)
     parser.add_argument("--baseline-archive", required=True, type=Path)
     parser.add_argument("--baseline-version", default=BASELINE_VERSION)
-    parser.add_argument("--acceptance-issue", default=119, type=int)
+    parser.add_argument("--acceptance-issue", default=120, type=int)
     parser.add_argument("--source-commit", required=True)
     args = parser.parse_args(argv)
     try:

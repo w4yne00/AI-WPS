@@ -30,7 +30,7 @@
       "direct_model"
     ],
     "systemPromptManifest": "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json",
-    "systemPromptCount": 8,
+    "systemPromptCount": 9,
     "pythonRuntimeGate": "scripts/python38_delivery_runtime_gate.py",
     "lifecycleGate": "scripts/python38_delivery_lifecycle_gate.py",
     "minimumPython": "3.8",
@@ -70,6 +70,11 @@
   "excelFormulaAssistantAssets": {
     "operationsGuide": "docs/operations/dify-excel-formula-assistant-workflow.md",
     "promptTemplate": "docs/prompt-templates/excel-formula-assistant-prompt-template.md"
+  },
+  "excelSmartFillAssets": {
+    "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
+    "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
+    "systemPrompt": "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
   },
   "pptStructureReviewAssets": {
     "operationsGuide": "docs/operations/dify-ppt-structure-review-workflow.md",

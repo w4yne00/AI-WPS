@@ -62,7 +62,8 @@ function assertCompactMarkupContract() {
   assert.ok(html.includes('id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务"'));
   assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.analysis" aria-selected="true">智能分析</button>'));
   assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.formula_assistant" aria-selected="false">公式助手</button>'));
-  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 2, "Excel must expose two task tabs");
+  assert.ok(html.includes('role="tab" data-workflow-task-tab="excel.smart_fill" aria-selected="false">智能填写</button>'));
+  assert.strictEqual((html.match(/data-workflow-task-tab=/g) || []).length, 3, "Excel must expose three task tabs");
   ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review", "ppt.slide_assistant"]
     .forEach((task) => assert.ok(!html.includes(`data-workflow-task-tab="${task}"`), `Excel exposes ${task}`));
 
@@ -290,7 +291,8 @@ function assertExcelAnalysisPreservationContract() {
   assert.ok(poll.includes("renderExcelAnalysisJobProgress(job, jobId)"));
   assert.ok(poll.includes('job.status === "cancelled"'));
   const switchMode = functionSource("switchMode");
-  assert.ok(switchMode.includes('state.currentMode = settingsMode ? "settings" : (formulaMode ? "excelFormulaAssistant" : "excelAnalysis")'));
+  assert.ok(switchMode.includes("state.currentMode = settingsMode"));
+  assert.ok(switchMode.includes('"excelSmartFill"'));
   assert.ok(switchMode.includes("resumeExcelAnalysisActiveJob()"));
   assert.ok(switchMode.includes("resumeExcelFormulaActiveJob()"));
   [
