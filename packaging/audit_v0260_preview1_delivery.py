@@ -252,6 +252,38 @@ def audit_prompt_manifest(root: Path, manifest: Dict) -> None:
             raise DeliveryFailure("V0260_PROMPT_HASH_INVALID {0}".format(name))
 
 
+def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
+    plugin = Path(plugin_root) if plugin_root is not None else (
+        Path(root) / "packages/wps-ai-assistant-et_1.0.0"
+    )
+    prompt = Path(prompt_path) if prompt_path is not None else (
+        Path(root)
+        / "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
+    )
+    try:
+        html = (plugin / "taskpane.html").read_text(encoding="utf-8")
+        js = (plugin / "taskpane.js").read_text(encoding="utf-8")
+        ribbon = (plugin / "ribbon.xml").read_text(encoding="utf-8")
+        prompt_text = prompt.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING") from exc
+    if 'id="btnAiExcelSmartFill"' not in ribbon or "智能填写" not in ribbon:
+        raise DeliveryFailure("V0260_SMART_FILL_RIBBON_MISSING")
+    if "写入内容" not in html or "生成预览" not in html:
+        raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
+    if "撤销" in html or "OnUndo" in js:
+        raise DeliveryFailure("V0260_SMART_FILL_UNDO_PROMISE")
+    if "excel.smart_fill.v1" not in prompt_text:
+        raise DeliveryFailure("V0260_SMART_FILL_SCHEMA_MISSING")
+    if (
+        "buildExcelSmartFillReadonlyPreview" not in js
+        or "finalizeExcelSmartFillWriteSuccess" not in js
+        or "buildExcelSmartFillDefaultSource" not in js
+        or "describeExcelSmartFillHostCell" not in js
+    ):
+        raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
+
+
 def audit_installer(root: Path) -> None:
     installer = root / "installer/install_ai_wps.sh"
     content = installer.read_text(encoding="utf-8")
@@ -381,6 +413,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_inventory(root, actual, allowlist)
     audit_manifest(root, manifest)
     audit_prompt_manifest(root, manifest)
+    audit_smart_fill_write_contract(root)
     audit_installer(root)
     audit_lifecycle(root)
     audit_current_identity_references(root)

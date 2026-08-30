@@ -32,6 +32,55 @@ function testFormulaLikeValuesRemainLiteral() {
   });
 }
 
+function testBlankCellWritesNumberWithoutChangingNumberFormat() {
+  const item = {
+    itemId: "target-1",
+    address: "$D$2",
+    originalValue: "",
+    originalValueType: "blank",
+    originalFormula: "",
+    isFormula: false,
+    isMerged: false,
+    isProtected: false,
+    isHidden: false
+  };
+  const cell = makeCell("");
+  cell.NumberFormat = "0.00";
+  cell.Style = { Name: "常规" };
+  const result = helpers.writeExcelSmartFillCells(
+    [item],
+    [{ itemId: "target-1", status: "completed", valueType: "number", value: 12.5 }],
+    () => cell
+  );
+  assert.deepStrictEqual(result, { writtenCount: 1, skippedCount: 0 });
+  assert.strictEqual(cell.Value2, 12.5);
+  assert.strictEqual(typeof cell.Value2, "number");
+  assert.strictEqual(cell.NumberFormat, "0.00");
+  assert.strictEqual(cell.Style.Name, "常规");
+  assert.ok(!Object.prototype.hasOwnProperty.call(cell, "Formula") || cell.Formula === "");
+}
+
+function testBlankCellWritesFormulaLikeTextAsLiteral() {
+  const item = {
+    itemId: "target-1",
+    address: "$D$2",
+    originalValue: "",
+    originalValueType: "blank",
+    originalFormula: "",
+    isFormula: false,
+    isMerged: false,
+    isProtected: false,
+    isHidden: false
+  };
+  const cell = makeCell("");
+  helpers.writeExcelSmartFillCells(
+    [item],
+    [{ itemId: "target-1", status: "completed", valueType: "text", value: "=SUM(A1:A2)" }],
+    () => cell
+  );
+  assert.strictEqual(cell.Value2, "'=SUM(A1:A2)");
+}
+
 function testInsufficientItemsAreSkippedWithoutWriting() {
   const item = {
     itemId: "target-1", address: "$C$2", originalValue: "原值", originalValueType: "text",
@@ -48,6 +97,8 @@ function testInsufficientItemsAreSkippedWithoutWriting() {
 }
 
 testFormulaLikeValuesRemainLiteral();
+testBlankCellWritesNumberWithoutChangingNumberFormat();
+testBlankCellWritesFormulaLikeTextAsLiteral();
 testInsufficientItemsAreSkippedWithoutWriting();
 
 console.log("Excel smart fill writeback tests passed");

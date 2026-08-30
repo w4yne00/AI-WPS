@@ -127,6 +127,7 @@
     smartFillWorkbookId: "",
     smartFillInstruction: "",
     smartFillResult: null,
+    smartFillPreview: null,
     smartFillDraftItems: [],
     smartFillRetryItemId: "",
     smartFillRetryBaseResult: null,
@@ -1237,43 +1238,26 @@
   }
 
   function buildSmartFillDefaultSource(sheet, target) {
-    var firstItem = target && target.items && target.items[0];
-    var startColumn;
-    var endColumn;
-    var headers = [];
-    var rows = [];
-    var rowValues;
-    var column;
-    var rowIndex;
-    if (!firstItem) {
-      return { sheetName: target.sheetName, address: "", headers: [], rows: [], rowCount: 0, columnCount: 0, truncated: false };
+    if (!helpers.buildExcelSmartFillDefaultSource) {
+      throw new Error("智能填写默认来源组件不可用，请重新打开任务窗格。");
     }
-    startColumn = Math.max(1, firstItem.column - 24);
-    endColumn = Math.min(16384, startColumn + EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceColumns - 1);
-    for (column = startColumn; column <= endColumn; column += 1) {
-      headers.push(readSmartFillDisplayedValue(getSmartFillSheetCell(sheet, Math.max(firstItem.row - 1, 1), column)));
-    }
-    target.items.forEach(function (item) {
-      rowValues = [];
-      for (column = startColumn; column <= endColumn; column += 1) {
-        rowIndex = item.row;
-        rowValues.push(column === item.column ? "" : readSmartFillDisplayedValue(getSmartFillSheetCell(sheet, rowIndex, column)));
+    return helpers.buildExcelSmartFillDefaultSource(target, function (row, column) {
+      var cell = getSmartFillSheetCell(sheet, row, column);
+      var formulaState;
+      var hasFormula;
+      if (!cell) {
+        return { text: "", hidden: false, hasFormula: false, formula: "", comment: "" };
       }
-      rows.push(rowValues);
+      hasFormula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
+      formulaState = readSmartFillPropertyState(cell, [
+        "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
+      ]);
+      return helpers.describeExcelSmartFillHostCell(readSmartFillDisplayedValue(cell), {
+        hidden: isSmartFillHostCellHidden(cell),
+        hasFormula: hasFormula.value === true,
+        formula: String(formulaState.value || "")
+      });
     });
-    target.columnHeader = headers[firstItem.column - startColumn] || "";
-    target.rowContext = rows[0] || [];
-    var source = {
-      sheetName: target.sheetName,
-      address: "",
-      headers: headers,
-      rows: rows,
-      rowCount: rows.length,
-      columnCount: headers.length,
-      truncated: false
-    };
-    source.snapshotHash = makeSmartFillSourceSnapshotHash(source);
-    return source;
   }
 
   function summarizeSmartFillTarget(target) {
@@ -1318,6 +1302,7 @@
       state.smartFillWorkbookId = payload.workbookId || state.smartFillWorkbookId;
       state.smartFillSource = context;
       state.smartFillResult = null;
+      state.smartFillPreview = null;
       state.smartFillDraftItems = [];
       byId("btn-write-smart-fill").hidden = true;
       renderSmartFillCaptureState();
@@ -1337,6 +1322,7 @@
       state.smartFillSource = payload.source;
       state.smartFillWorkbookId = state.smartFillWorkbookId || payload.workbookId || "";
       state.smartFillResult = null;
+      state.smartFillPreview = null;
       state.smartFillDraftItems = [];
       byId("btn-write-smart-fill").hidden = true;
       renderSmartFillCaptureState();
@@ -1753,7 +1739,11 @@
     markdown = buildExcelSmartFillMarkdown(state.smartFillResult);
     setResult(markdown, markdown);
     output = byId("result-output");
-    output.innerHTML = buildSmartFillPreviewEditor(state.smartFillResult);
+    state.smartFillPreview = helpers.createExcelSmartFillPreview(state.smartFillResult);
+    output.innerHTML = helpers.buildExcelSmartFillReadonlyPreview(
+      state.smartFillResult,
+      state.smartFillTarget && state.smartFillTarget.items || []
+    );
     setSmartFillWriteButtonState();
   }
 
@@ -1935,20 +1925,26 @@
       }
       assertSmartFillPreflight();
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell);
-      state.smartFillResult = null;
-      state.smartFillDraftItems = [];
-      byId("btn-write-smart-fill").hidden = true;
-      setPlainResult([
-        "智能填写内容已写入工作簿。",
-        "写入单元格：" + writeResult.writtenCount,
-        "信息不足而跳过：" + writeResult.skippedCount,
-        "未写入公式；如需再次生成，请重新捕获目标和来源区域。"
-      ].join("\n"));
-      setStatus("智能填写已写入 " + writeResult.writtenCount + " 个单元格。" );
     } catch (error) {
       setStatus("智能填写未写入：" + error.message);
       setPlainResult("为避免覆盖用户修改，本次写回已停止。\n" + error.message);
+      setSmartFillWriteButtonState();
+      return;
     }
+    helpers.finalizeExcelSmartFillWriteSuccess(
+      state.smartFillPreview || helpers.createExcelSmartFillPreview(state.smartFillResult)
+    );
+    state.smartFillResult = null;
+    state.smartFillPreview = null;
+    state.smartFillDraftItems = [];
+    byId("btn-write-smart-fill").hidden = true;
+    setPlainResult([
+      "智能填写内容已写入工作簿。",
+      "写入单元格：" + writeResult.writtenCount,
+      "信息不足而跳过：" + writeResult.skippedCount,
+      "未写入公式；如需再次生成，请重新捕获目标和来源区域。"
+    ].join("\n"));
+    setStatus("智能填写已写入 " + writeResult.writtenCount + " 个单元格。");
     setSmartFillWriteButtonState();
   }
 

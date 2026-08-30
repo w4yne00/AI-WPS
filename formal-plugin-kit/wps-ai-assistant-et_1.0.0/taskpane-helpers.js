@@ -2540,6 +2540,162 @@
     return result;
   }
 
+  function readExcelSmartFillDisplayCell(cell) {
+    if (!cell) {
+      return "";
+    }
+    if (cell.hidden || cell.hasFormula || String(cell.formula || "").charAt(0) === "=") {
+      return "";
+    }
+    return String(cell.text == null ? "" : cell.text);
+  }
+
+  function buildExcelSmartFillDefaultSource(target, readCell) {
+    var items = target && Array.isArray(target.items) ? target.items : [];
+    var first = items[0];
+    var columnCount;
+    var column;
+    var headers = [];
+    var rowValues = [];
+    var source;
+    if (!first) {
+      return {
+        sheetName: target && target.sheetName || "",
+        address: "",
+        headers: [],
+        rows: [],
+        rowCount: 0,
+        columnCount: 0,
+        truncated: false
+      };
+    }
+    columnCount = 1;
+    items.forEach(function (item) {
+      var itemColumn = Number(item.column) || 1;
+      if (itemColumn > columnCount) {
+        columnCount = itemColumn;
+      }
+    });
+    for (column = 1; column <= columnCount; column += 1) {
+      headers.push(readExcelSmartFillDisplayCell(
+        typeof readCell === "function" ? readCell(1, column) : null
+      ));
+    }
+    items.forEach(function (item) {
+      var itemRow = Number(item.row) || 1;
+      var itemColumn = Number(item.column);
+      var currentRow = [];
+      for (column = 1; column <= columnCount; column += 1) {
+        currentRow.push(column === itemColumn
+          ? ""
+          : readExcelSmartFillDisplayCell(
+            typeof readCell === "function" ? readCell(itemRow, column) : null
+          ));
+      }
+      rowValues.push(currentRow);
+    });
+    if (target) {
+      target.columnHeader = headers[Number(first.column) - 1] || "";
+      target.rowContext = (rowValues[0] || []).slice();
+    }
+    source = {
+      sheetName: target.sheetName || "",
+      address: "",
+      headers: headers,
+      rows: rowValues,
+      rowCount: rowValues.length,
+      columnCount: columnCount,
+      truncated: false
+    };
+    source.snapshotHash = makeTextHash(JSON.stringify({
+      sheetName: source.sheetName,
+      address: source.address,
+      headers: source.headers,
+      rows: source.rows
+    }));
+    return source;
+  }
+
+  function buildExcelSmartFillReadonlyPreview(data, targets) {
+    var items = data && Array.isArray(data.items) ? data.items : [];
+    var targetList = Array.isArray(targets) ? targets : [];
+    var html = [
+      '<div class="smart-fill-preview-head">',
+      "<strong>智能填写预览</strong>",
+      '<span class="field-hint">写入前请核对生成结果；本页为只读预览。</span>',
+      "</div>"
+    ];
+    function targetAddress(itemId) {
+      var index;
+      for (index = 0; index < targetList.length; index += 1) {
+        if (targetList[index] && targetList[index].itemId === itemId) {
+          return targetList[index].address || itemId;
+        }
+      }
+      return itemId;
+    }
+    if (!items.length) {
+      html.push('<p class="field-hint">未返回可展示的目标结果。</p>');
+      return html.join("");
+    }
+    html.push('<div class="smart-fill-result-list">');
+    items.forEach(function (item) {
+      var completed = item && item.status === "completed";
+      var value = completed ? String(item.value == null ? "" : item.value) : "";
+      html.push(
+        '<article class="smart-fill-result-item">',
+        '<div class="smart-fill-result-meta">',
+        "<span>" + escapeHtml(targetAddress(item.itemId)) + "</span>",
+        '<span class="smart-fill-result-status ' + (completed ? "is-complete" : "is-insufficient") + '">' +
+          (completed ? "可写入" : "信息不足") + "</span>",
+        "</div>",
+        '<p class="smart-fill-result-value">' + escapeHtml(completed ? value : "信息不足") + "</p>",
+        "</article>"
+      );
+    });
+    html.push("</div>");
+    return html.join("");
+  }
+
+  function createExcelSmartFillPreview(result) {
+    return {
+      result: result || null,
+      consumed: false
+    };
+  }
+
+  function consumeExcelSmartFillPreview(preview) {
+    if (!preview || preview.consumed || !preview.result) {
+      throw new Error("同一预览不能重复提交写入。");
+    }
+    preview.consumed = true;
+    preview.result = null;
+    return preview;
+  }
+
+  function describeExcelSmartFillHostCell(displayedText, flags) {
+    var options = flags || {};
+    return {
+      text: displayedText == null ? "" : String(displayedText),
+      hidden: options.hidden === true,
+      hasFormula: options.hasFormula === true,
+      formula: String(options.formula || ""),
+      comment: ""
+    };
+  }
+
+  function finalizeExcelSmartFillWriteSuccess(preview) {
+    try {
+      consumeExcelSmartFillPreview(preview);
+    } catch (error) {
+      if (preview) {
+        preview.consumed = true;
+        preview.result = null;
+      }
+    }
+    return preview;
+  }
+
   function validateExcelSmartFillTarget(target) {
     var items = target && Array.isArray(target.items) ? target.items : [];
     var firstRow;
@@ -3168,6 +3324,12 @@
     createSettingsRefreshController: createSettingsRefreshController,
     extractExcelFormulaSelection: extractExcelFormulaSelection,
     extractExcelSmartFillPayload: extractExcelSmartFillPayload,
+    buildExcelSmartFillDefaultSource: buildExcelSmartFillDefaultSource,
+    buildExcelSmartFillReadonlyPreview: buildExcelSmartFillReadonlyPreview,
+    createExcelSmartFillPreview: createExcelSmartFillPreview,
+    consumeExcelSmartFillPreview: consumeExcelSmartFillPreview,
+    describeExcelSmartFillHostCell: describeExcelSmartFillHostCell,
+    finalizeExcelSmartFillWriteSuccess: finalizeExcelSmartFillWriteSuccess,
     validateExcelSmartFillTarget: validateExcelSmartFillTarget,
     writeExcelSmartFillCells: writeExcelSmartFillCells,
     createExcelSelectionWatcher: createExcelSelectionWatcher,
