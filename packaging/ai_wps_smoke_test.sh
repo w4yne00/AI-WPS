@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PYTHON_BIN="${PYTHON_BIN:-python3}"
+PORT="${PORT:-18100}"
+EXPECTED_VERSION="${EXPECTED_VERSION:-0.26.0-preview.1}"
+WPS_JSADDONS_DIR="${WPS_JSADDONS_DIR:-$HOME/.local/share/Kingsoft/wps/jsaddons}"
+INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$HOME/ai-wps}"
+PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant_1.0.0"
+EXCEL_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-et_1.0.0"
+PPT_PLUGIN_DIR="$WPS_JSADDONS_DIR/wps-ai-assistant-wpp_1.0.0"
+ADAPTER_DIR="$INSTALL_ROOT/current"
+PRIVATE_RUNTIME_DIR="$ADAPTER_DIR/python-runtime"
+STATE_DIR="${AI_WPS_STATE_DIR:-$INSTALL_ROOT/state}"
+WRITING_POLICY_DB="$STATE_DIR/writing_policies.db"
+
+http_get() {
+  local url="$1"
+  if command -v curl >/dev/null 2>&1; then
+    curl -fsS "$url"
+  else
+    PYTHONNOUSERSITE=1 PYTHONPATH="$PRIVATE_RUNTIME_DIR" \
+      "$PYTHON_BIN" -s - "$url" <<'PY'
+import sys
+from urllib.request import urlopen
+
+print(urlopen(sys.argv[1], timeout=5).read().decode("utf-8"))
+PY
+  fi
+}
+
+echo "ai_wps_smoke_start=true"
+echo "python=$($PYTHON_BIN --version 2>&1)"
+
+for pair in \
+  "wps_plugin_dir=$PLUGIN_DIR" \
+  "et_plugin_dir=$EXCEL_PLUGIN_DIR" \
+  "wpp_plugin_dir=$PPT_PLUGIN_DIR"; do
+  label="${pair%%=*}"
+  path="${pair#*=}"
+  if [ -d "$path" ]; then
+    echo "${label}=ok path=$path"
+  else
+    echo "${label}=missing path=$path"
+    exit 1
+  fi
+done
+
+if [ -f "$WPS_JSADDONS_DIR/publish.xml" ] \
+  && grep -q 'name="wps-ai-assistant"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'type="wps"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'name="wps-ai-assistant-et"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'type="et"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'name="wps-ai-assistant-wpp"' "$WPS_JSADDONS_DIR/publish.xml" \
+  && grep -q 'type="wpp"' "$WPS_JSADDONS_DIR/publish.xml"; then
+  echo "publish_xml=ok path=$WPS_JSADDONS_DIR/publish.xml"
+else
+  echo "publish_xml=missing_or_invalid path=$WPS_JSADDONS_DIR/publish.xml"
+  exit 1
+fi
+
+if [ ! -s "$PRIVATE_RUNTIME_DIR/requirements-lock.txt" ]; then
+  echo "private_runtime=missing_or_unlocked path=$PRIVATE_RUNTIME_DIR"
+  exit 1
+fi
+PYTHONNOUSERSITE=1 PYTHONPATH="$PRIVATE_RUNTIME_DIR" "$PYTHON_BIN" -s -c \
+  "import fastapi, pydantic, requests, uvicorn; print('private_runtime_deps_ok')"
+
+if [ -s "$WRITING_POLICY_DB" ]; then
+  echo "writing_policy_database=ok path=$WRITING_POLICY_DB"
+else
+  echo "writing_policy_database=missing_or_empty path=$WRITING_POLICY_DB"
+  exit 1
+fi
+
+if [ -x "$ADAPTER_DIR/scripts/check_health.sh" ]; then
+  bash "$ADAPTER_DIR/scripts/check_health.sh" "$PORT"
+else
+  echo "adapter_check_script=missing path=$ADAPTER_DIR/scripts/check_health.sh"
+  exit 1
+fi
+
+HEALTH_RESPONSE="$(http_get "http://127.0.0.1:${PORT}/health")"
+case "$HEALTH_RESPONSE" in
+  *'"version":"'"$EXPECTED_VERSION"'"'*|*'"version": "'"$EXPECTED_VERSION"'"'* )
+    echo "adapter_version=ok value=$EXPECTED_VERSION"
+    ;;
+  *)
+    echo "adapter_version=unexpected expected=$EXPECTED_VERSION response=$HEALTH_RESPONSE"
+    exit 1
+    ;;
+esac
+
+echo "templates_response_begin"
+http_get "http://127.0.0.1:${PORT}/templates"
+echo
+echo "templates_response_end"
+echo "ai_wps_smoke_done=true"
