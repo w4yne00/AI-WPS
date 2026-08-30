@@ -242,6 +242,36 @@ def test_preview_installer_rejects_runtime_path_overlapping_legacy_install(tmp_p
     assert sentinel.read_bytes() == before
 
 
+def test_preview_installer_rejects_lexically_normalized_legacy_path(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    legacy = target_home / "ai-wps-phase1"
+    legacy_state = legacy / "state"
+    legacy_state.mkdir(parents=True)
+    sentinel = legacy_state / "adapter.json"
+    sentinel.write_text('{"legacy":true}\n', encoding="utf-8")
+    escaped_path = target_home / "missing" / ".." / "ai-wps-phase1" / "state"
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
+            "AI_WPS_STATE_DIR": str(escaped_path),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": "/usr/bin/false",
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_path_conflicts_with_legacy name=state_dir" in result.stdout
+    assert sentinel.read_bytes() == b'{"legacy":true}\n'
+
+
 def test_preview_installer_rejects_legacy_install_root_override(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     target_home = tmp_path / "target-home"
@@ -294,6 +324,47 @@ def test_preview_installer_rejects_existing_non_preview_install_root(tmp_path):
     assert result.returncode != 0
     assert "preview_existing_install_manifest_required" in result.stdout
     assert sentinel.read_bytes() == before
+
+
+def test_preview_installer_rejects_incomplete_preview_install_manifest(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    existing_root = target_home / "previous-preview"
+    current = existing_root / "current"
+    state = existing_root / "state"
+    current.mkdir(parents=True)
+    state.mkdir()
+    sentinel = state / "adapter.json"
+    sentinel.write_text('{"preserve":true}\n', encoding="utf-8")
+    (current / "release-manifest.json").write_text(
+        json.dumps(
+            {
+                "schemaVersion": 1,
+                "product": "AI-WPS",
+                "productChannel": "preview",
+                "version": "0.26.0-preview.1",
+            }
+        ),
+        encoding="utf-8",
+    )
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(existing_root),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": sys.executable,
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_existing_install_manifest_invalid" in result.stdout
+    assert sentinel.read_bytes() == b'{"preserve":true}\n'
 
 
 def test_preview_audit_accepts_neutral_tree_and_rejects_phase1_release_identity(tmp_path):
@@ -471,6 +542,14 @@ def test_preview_build_and_prepare_scripts_are_provenance_inputs():
     )
     assert '"packaging/build_v0260_preview1_delivery_kit.sh"' in provenance
     assert '"packaging/prepare_v0260_preview1_delivery.py"' in provenance
+
+
+def test_preview_lifecycle_uses_explicit_isolated_target_identity():
+    lifecycle = (
+        ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    ).read_text(encoding="utf-8")
+    assert '"--target-user"' in lifecycle
+    assert '"--target-home"' in lifecycle
 
 
 def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):

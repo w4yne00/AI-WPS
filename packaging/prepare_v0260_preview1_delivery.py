@@ -242,6 +242,21 @@ def neutralize_installer(root: Path) -> None:
     for old, new in replacements:
         content = content.replace(old, new)
 
+    home_path_line = '  local home_path=""\n'
+    if home_path_line not in content:
+        raise ValueError("V0260_TARGET_HOME_RESOLUTION_MISSING")
+    content = content.replace(
+        home_path_line,
+        home_path_line
+        + '  if [ -n "$TARGET_HOME_ARG" ]; then\n'
+        + '    case "$TARGET_HOME_ARG" in\n'
+        + '      /*) printf \'%s\\n\' "$TARGET_HOME_ARG"; return 0 ;;\n'
+        + '      *) fail "target_home_must_be_absolute" ;;\n'
+        + '    esac\n'
+        + '  fi\n',
+        1,
+    )
+
     install_root_line = '  INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$TARGET_HOME/ai-wps}"\n'
     if install_root_line not in content:
         raise ValueError("V0260_INSTALL_ROOT_ASSIGNMENT_MISSING")
@@ -254,25 +269,56 @@ def neutralize_installer(root: Path) -> None:
 
     legacy_function = '''
 preview_canonical_path() {
-  local path="$1" parent base
+  local path="$1" probe base canonical_root candidate component
+  local -a suffix=()
   path="${path%/}"
   [ -n "$path" ] || path="/"
   case "$path" in
     /*) ;;
     *) fail "preview_path_must_be_absolute value=$path" ;;
   esac
-  if [ "$path" = "/" ]; then
-    printf '%s\\n' "/"
-    return 0
-  fi
-  if [ -d "$path" ]; then
-    (cd -P "$path" && pwd -P) || fail "preview_path_canonicalize_failed value=$path"
-    return 0
-  fi
-  parent="$(dirname "$path")"
-  base="$(basename "$path")"
-  parent="$(preview_canonical_path "$parent")"
-  printf '%s/%s\\n' "${parent%/}" "$base"
+
+  probe="$path"
+  while [ ! -e "$probe" ] && [ ! -L "$probe" ]; do
+    [ "$probe" != "/" ] || break
+    base="${probe##*/}"
+    if [ "${#suffix[@]}" -eq 0 ]; then
+      suffix=("$base")
+    else
+      suffix=("$base" "${suffix[@]}")
+    fi
+    probe="${probe%/*}"
+    [ -n "$probe" ] || probe="/"
+  done
+  [ -d "$probe" ] || fail "preview_path_canonicalize_failed value=$path"
+  canonical_root="$(cd -P "$probe" && pwd -P)" \
+    || fail "preview_path_canonicalize_failed value=$path"
+
+  for component in "${suffix[@]-}"; do
+    case "$component" in
+      ''|.) ;;
+      ..)
+        [ "$canonical_root" != "/" ] || continue
+        canonical_root="${canonical_root%/*}"
+        [ -n "$canonical_root" ] || canonical_root="/"
+        ;;
+      *)
+        if [ "$canonical_root" = "/" ]; then
+          candidate="/$component"
+        else
+          candidate="$canonical_root/$component"
+        fi
+        if [ -e "$candidate" ] || [ -L "$candidate" ]; then
+          [ -d "$candidate" ] || fail "preview_path_canonicalize_failed value=$path"
+          canonical_root="$(cd -P "$candidate" && pwd -P)" \
+            || fail "preview_path_canonicalize_failed value=$path"
+        else
+          canonical_root="$candidate"
+        fi
+        ;;
+    esac
+  done
+  printf '%s\\n' "$canonical_root"
 }
 
 preview_paths_overlap() {
@@ -361,15 +407,55 @@ preview_install_layout_exists() {
 }
 
 validate_existing_preview_install() {
-  local manifest product channel version
+  local manifest
   preview_install_layout_exists || return 0
   manifest="$INSTALL_ROOT/current/release-manifest.json"
   [ -f "$manifest" ] || fail "preview_existing_install_manifest_required"
-  product="$(json_field product < "$manifest" 2>/dev/null || true)"
-  channel="$(json_field productChannel < "$manifest" 2>/dev/null || true)"
-  version="$(json_field version < "$manifest" 2>/dev/null || true)"
-  if [ "$product" != "AI-WPS" ] || [ "$channel" != "preview" ] || [ "$version" != "$RELEASE_VERSION" ]; then
-    fail "preview_existing_install_identity_invalid"
+  if ! "$PYTHON_BIN" - "$manifest" "$RELEASE_VERSION" <<'PY' >/dev/null 2>&1
+import json
+from pathlib import Path
+import sys
+
+manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+expected = sys.argv[2]
+assert manifest.get("schemaVersion") == 1
+assert manifest.get("product") == "AI-WPS"
+assert manifest.get("productChannel") == "preview"
+assert manifest.get("version") == expected
+adapter = manifest.get("adapter", {})
+assert adapter.get("version") == expected
+assert adapter.get("systemPromptManifest") == (
+    "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
+)
+assert adapter.get("systemPromptCount") == 8
+delivery = manifest.get("deliveryPolicy", {})
+assert delivery.get("status") == "candidate"
+assert delivery.get("sourceAssembly") == "explicit-allowlist"
+assert delivery.get("allowlist") == "release-allowlist.json"
+assert delivery.get("fileHashes") == "release-file-hashes.json"
+generation = manifest.get("releaseGenerationPolicy", {})
+assert generation.get("switchStrategy") == "durable-compensating-rename"
+assert generation.get("currentPointer") == "current"
+assert generation.get("components") == [
+    "adapter_release",
+    "word_plugin",
+    "excel_plugin",
+    "ppt_plugin",
+    "publish_manifest",
+    "runtime_state_snapshot",
+    "current_pointer",
+]
+assert manifest.get("installationPolicy") == {
+    "installer": "installer/install_ai_wps.sh",
+    "defaultInstallRoot": "$TARGET_HOME/ai-wps",
+    "legacyInstallRoot": "$TARGET_HOME/ai-wps-phase1",
+    "legacyHandling": "read-only-detect-manual-reinstall-reconfigure",
+    "migratesLegacyRuntimeData": False,
+    "deletesLegacyInstall": False,
+}
+PY
+  then
+    fail "preview_existing_install_manifest_invalid"
   fi
 }
 '''

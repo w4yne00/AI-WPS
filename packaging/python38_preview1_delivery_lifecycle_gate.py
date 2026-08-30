@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import pwd
 from pathlib import Path
 import subprocess
 import sys
@@ -90,6 +91,7 @@ def install_environment(root: Path, port: int) -> Dict[str, str]:
     environment.update(
         {
             "HOME": str(home),
+            "AI_WPS_TARGET_USER": pwd.getpwuid(os.getuid()).pw_name,
             "AI_WPS_INSTALL_ROOT": str(install_root),
             "WPS_JSADDONS_DIR": str(jsaddons),
             "AI_WPS_SYSTEMD_SERVICE_FILE": str(root / "no-systemd/ai-wps.service"),
@@ -111,8 +113,16 @@ def run_installer(
     child_environment = dict(environment)
     if updates:
         child_environment.update(updates)
+    installer_command = [
+        "bash",
+        str(delivery_root / "installer/install_ai_wps.sh"),
+        "--target-user",
+        child_environment["AI_WPS_TARGET_USER"],
+        "--target-home",
+        child_environment["HOME"],
+    ]
     result = subprocess.run(
-        ["bash", str(delivery_root / "installer/install_ai_wps.sh")],
+        installer_command,
         env=child_environment,
         check=False,
         capture_output=True,
