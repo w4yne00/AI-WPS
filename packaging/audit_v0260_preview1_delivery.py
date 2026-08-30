@@ -204,7 +204,12 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
     )
     if evidence.get("candidateBuildId") != version_rule:
         raise DeliveryFailure("V0260_CANDIDATE_BUILD_ID_INVALID")
-    if evidence.get("sourceCommit") != version_rule_match.group("source"):
+    source_commit = str(evidence.get("sourceCommit", ""))
+    source_prefix = version_rule_match.group("source")
+    if (
+        re.fullmatch(r"[0-9a-f]{7,40}", source_commit) is None
+        or not source_commit.startswith(source_prefix)
+    ):
         raise DeliveryFailure("V0260_SOURCE_COMMIT_INVALID")
     if evidence.get("archiveName") != expected_archive_name:
         raise DeliveryFailure("V0260_ARCHIVE_IDENTITY_INVALID")

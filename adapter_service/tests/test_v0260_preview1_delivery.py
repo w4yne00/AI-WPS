@@ -18,7 +18,7 @@ BASELINE = ROOT / (
 )
 
 
-def _prepare_delivery(tmp_path):
+def _prepare_delivery(tmp_path, source_commit="e94c561"):
     delivery = tmp_path / "delivery"
     assembled = subprocess.run(
         [
@@ -52,7 +52,7 @@ def _prepare_delivery(tmp_path):
             "--acceptance-issue",
             "119",
             "--source-commit",
-            "e94c561",
+            source_commit,
         ],
         cwd=ROOT,
         check=False,
@@ -565,6 +565,32 @@ def test_preview_tree_passes_generic_audit_and_writes_verifiable_hash_manifest(t
     assert checked_archive.returncode == 0, (
         checked_archive.stdout + checked_archive.stderr
     )
+
+
+def test_preview_audit_accepts_full_source_commit_with_short_version_rule(tmp_path):
+    delivery = _prepare_delivery(
+        tmp_path,
+        "3e64066d5794b3348d60535f35a9ade238b3a891",
+    )
+    generic_audit = ROOT / "packaging/audit_phase1_delivery.py"
+    candidate_audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    generated = subprocess.run(
+        [sys.executable, str(generic_audit), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    verified = subprocess.run(
+        [sys.executable, str(candidate_audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert verified.returncode == 0, verified.stdout + verified.stderr
 
 
 def test_preview_audit_rejects_missing_hash_manifest(tmp_path):
