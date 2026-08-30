@@ -242,21 +242,6 @@ def neutralize_installer(root: Path) -> None:
     for old, new in replacements:
         content = content.replace(old, new)
 
-    home_path_line = '  local home_path=""\n'
-    if home_path_line not in content:
-        raise ValueError("V0260_TARGET_HOME_RESOLUTION_MISSING")
-    content = content.replace(
-        home_path_line,
-        home_path_line
-        + '  if [ -n "$TARGET_HOME_ARG" ]; then\n'
-        + '    case "$TARGET_HOME_ARG" in\n'
-        + '      /*) printf \'%s\\n\' "$TARGET_HOME_ARG"; return 0 ;;\n'
-        + '      *) fail "target_home_must_be_absolute" ;;\n'
-        + '    esac\n'
-        + '  fi\n',
-        1,
-    )
-
     install_root_line = '  INSTALL_ROOT="${AI_WPS_INSTALL_ROOT:-$TARGET_HOME/ai-wps}"\n'
     if install_root_line not in content:
         raise ValueError("V0260_INSTALL_ROOT_ASSIGNMENT_MISSING")
@@ -334,6 +319,57 @@ preview_paths_overlap() {
   return 1
 }
 
+preview_reject_symlink_components() {
+  local label="$1" path="$2" current component
+  local -a components=()
+  path="${path%/}"
+  [ -n "$path" ] || path="/"
+  IFS='/' read -r -a components <<< "$path"
+  current="/"
+  for component in "${components[@]-}"; do
+    case "$component" in
+      ''|.) ;;
+      ..)
+        [ "$current" != "/" ] || continue
+        current="${current%/*}"
+        [ -n "$current" ] || current="/"
+        ;;
+      *)
+        if [ "$current" = "/" ]; then
+          current="/$component"
+        else
+          current="$current/$component"
+        fi
+        if [ -L "$current" ]; then
+          case "$TARGET_HOME/" in
+            "$current/"*) ;;
+            *) fail "preview_symlink_path_component name=$label path=$current" ;;
+          esac
+        fi
+        ;;
+    esac
+  done
+}
+
+preview_restrict_to_target_home() {
+  local label="$1" path="$2" canonical_path canonical_home
+  canonical_path="$(preview_canonical_path "$path")"
+  canonical_home="$(preview_canonical_path "$TARGET_HOME")"
+  case "$canonical_path/" in
+    "$canonical_home/"*) ;;
+    *) fail "preview_path_outside_target_home name=$label path=$path" ;;
+  esac
+  [ "$canonical_path" != "$canonical_home" ] \
+    || fail "preview_path_equals_target_home name=$label path=$path"
+}
+
+preview_validate_managed_path() {
+  local label="$1" path="$2"
+  preview_reject_symlink_components "$label" "$path"
+  preview_restrict_to_target_home "$label" "$path"
+  preview_reject_legacy_path "$label" "$path"
+}
+
 preview_reject_legacy_path() {
   local label="$1" path="$2" canonical_path canonical_legacy
   canonical_path="$(preview_canonical_path "$path")"
@@ -343,11 +379,16 @@ preview_reject_legacy_path() {
   fi
 }
 
+preview_validate_path_boundaries() {
+  preview_validate_managed_path "install_root" "$INSTALL_ROOT"
+  preview_validate_managed_path "wps_jsaddons_dir" "$WPS_JSADDONS_DIR"
+  preview_validate_managed_path "state_dir" "${AI_WPS_STATE_DIR:-$INSTALL_ROOT/state}"
+  preview_validate_managed_path "backup_dir" "${AI_WPS_BACKUP_DIR:-$INSTALL_ROOT/backups}"
+  preview_validate_managed_path "var_dir" "${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"
+}
+
 detect_legacy_phase1_install() {
-  preview_reject_legacy_path "install_root" "$INSTALL_ROOT"
-  preview_reject_legacy_path "state_dir" "${AI_WPS_STATE_DIR:-$INSTALL_ROOT/state}"
-  preview_reject_legacy_path "backup_dir" "${AI_WPS_BACKUP_DIR:-$INSTALL_ROOT/backups}"
-  preview_reject_legacy_path "var_dir" "${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"
+  preview_validate_path_boundaries
   if [ -e "$LEGACY_PHASE1_INSTALL_ROOT" ] || [ -L "$LEGACY_PHASE1_INSTALL_ROOT" ]; then
     log "legacy_phase1_install_detected=true path=$LEGACY_PHASE1_INSTALL_ROOT"
     log "legacy_phase1_action=read_only"
@@ -382,11 +423,6 @@ detect_legacy_phase1_install() {
     call_marker = "resolve_installation_principal\nresolve_python_binary"
     if call_marker not in content:
         raise ValueError("V0260_INSTALLER_SETUP_SEQUENCE_MISSING")
-    content = content.replace(
-        call_marker,
-        "resolve_installation_principal\ndetect_legacy_phase1_install\nresolve_python_binary",
-        1,
-    )
     state_assignment = 'VAR_DIR="${AI_WPS_VAR_DIR:-$INSTALL_ROOT/var}"\n'
     if state_assignment not in content:
         raise ValueError("V0260_RUNTIME_PATH_ASSIGNMENT_MISSING")
@@ -407,36 +443,47 @@ preview_install_layout_exists() {
 }
 
 validate_existing_preview_install() {
-  local manifest
+  local manifest current_link release_root
   preview_install_layout_exists || return 0
   manifest="$INSTALL_ROOT/current/release-manifest.json"
   [ -f "$manifest" ] || fail "preview_existing_install_manifest_required"
-  if ! "$PYTHON_BIN" - "$manifest" "$RELEASE_VERSION" <<'PY' >/dev/null 2>&1
+  current_link="$INSTALL_ROOT/current"
+  release_root="$INSTALL_ROOT/releases/$RELEASE_VERSION"
+  [ -L "$current_link" ] || fail "preview_existing_install_current_pointer_required"
+  [ -d "$release_root" ] || fail "preview_existing_install_release_required"
+  if ! "$PYTHON_BIN" - "$manifest" "$RELEASE_VERSION" "$current_link" "$release_root" "$INSTALL_ROOT" <<'PY' >/dev/null 2>&1
 import json
+import hashlib
 from pathlib import Path
 import sys
 
 manifest = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 expected = sys.argv[2]
-assert manifest.get("schemaVersion") == 1
-assert manifest.get("product") == "AI-WPS"
-assert manifest.get("productChannel") == "preview"
-assert manifest.get("version") == expected
-adapter = manifest.get("adapter", {})
-assert adapter.get("version") == expected
-assert adapter.get("systemPromptManifest") == (
-    "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
-)
-assert adapter.get("systemPromptCount") == 8
-delivery = manifest.get("deliveryPolicy", {})
-assert delivery.get("status") == "candidate"
-assert delivery.get("sourceAssembly") == "explicit-allowlist"
-assert delivery.get("allowlist") == "release-allowlist.json"
-assert delivery.get("fileHashes") == "release-file-hashes.json"
-generation = manifest.get("releaseGenerationPolicy", {})
-assert generation.get("switchStrategy") == "durable-compensating-rename"
-assert generation.get("currentPointer") == "current"
-assert generation.get("components") == [
+current_link = Path(sys.argv[3])
+release_root = Path(sys.argv[4])
+install_root = Path(sys.argv[5])
+if not current_link.is_symlink():
+    raise SystemExit(1)
+if current_link.resolve() != release_root.resolve():
+    raise SystemExit(1)
+if release_root.is_symlink() or (install_root / "releases").is_symlink():
+    raise SystemExit(1)
+release_manifest = release_root / "release-manifest.json"
+generation_path = release_root / "release-generation.json"
+if not release_manifest.is_file() or not generation_path.is_file():
+    raise SystemExit(1)
+if release_manifest.resolve() != Path(sys.argv[1]).resolve():
+    raise SystemExit(1)
+generation = json.loads(generation_path.read_text(encoding="utf-8"))
+if generation.get("schemaVersion") != 1:
+    raise SystemExit(1)
+if generation.get("releaseVersion") != expected:
+    raise SystemExit(1)
+if generation.get("releaseManifestSha256") != hashlib.sha256(
+    release_manifest.read_bytes()
+).hexdigest():
+    raise SystemExit(1)
+if generation.get("components") != [
     "adapter_release",
     "word_plugin",
     "excel_plugin",
@@ -444,15 +491,47 @@ assert generation.get("components") == [
     "publish_manifest",
     "runtime_state_snapshot",
     "current_pointer",
-]
-assert manifest.get("installationPolicy") == {
+]:
+    raise SystemExit(1)
+def require(condition):
+    if not condition:
+        raise SystemExit(1)
+
+require(manifest.get("schemaVersion") == 1)
+require(manifest.get("product") == "AI-WPS")
+require(manifest.get("productChannel") == "preview")
+require(manifest.get("version") == expected)
+adapter = manifest.get("adapter", {})
+require(adapter.get("version") == expected)
+require(adapter.get("systemPromptManifest") == (
+    "packages/adapter-start-kit/adapter_service/system_prompts/manifest.json"
+))
+require(adapter.get("systemPromptCount") == 8)
+delivery = manifest.get("deliveryPolicy", {})
+require(delivery.get("status") == "candidate")
+require(delivery.get("sourceAssembly") == "explicit-allowlist")
+require(delivery.get("allowlist") == "release-allowlist.json")
+require(delivery.get("fileHashes") == "release-file-hashes.json")
+generation = manifest.get("releaseGenerationPolicy", {})
+require(generation.get("switchStrategy") == "durable-compensating-rename")
+require(generation.get("currentPointer") == "current")
+require(generation.get("components") == [
+    "adapter_release",
+    "word_plugin",
+    "excel_plugin",
+    "ppt_plugin",
+    "publish_manifest",
+    "runtime_state_snapshot",
+    "current_pointer",
+])
+require(manifest.get("installationPolicy") == {
     "installer": "installer/install_ai_wps.sh",
     "defaultInstallRoot": "$TARGET_HOME/ai-wps",
     "legacyInstallRoot": "$TARGET_HOME/ai-wps-phase1",
     "legacyHandling": "read-only-detect-manual-reinstall-reconfigure",
     "migratesLegacyRuntimeData": False,
     "deletesLegacyInstall": False,
-}
+})
 PY
   then
     fail "preview_existing_install_manifest_invalid"
@@ -469,7 +548,9 @@ PY
         raise ValueError("V0260_RUNTIME_PATH_VALIDATION_MISSING")
     content = content.replace(
         validate_marker,
-        validate_marker + "validate_existing_preview_install\n",
+        validate_marker
+        + "detect_legacy_phase1_install\n"
+        + "validate_existing_preview_install\n",
         1,
     )
     path.write_text(content, encoding="utf-8")

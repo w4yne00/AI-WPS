@@ -1,4 +1,5 @@
 import hashlib
+import importlib.util
 import json
 import os
 import subprocess
@@ -272,6 +273,34 @@ def test_preview_installer_rejects_lexically_normalized_legacy_path(tmp_path):
     assert sentinel.read_bytes() == b'{"legacy":true}\n'
 
 
+def test_preview_installer_rejects_symlinked_managed_path_component(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    outside = tmp_path / "outside"
+    linked = target_home / "linked"
+    target_home.mkdir()
+    outside.mkdir()
+    linked.symlink_to(outside, target_is_directory=True)
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
+            "AI_WPS_STATE_DIR": str(linked / "state"),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": sys.executable,
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_symlink_path_component name=state_dir" in result.stdout
+
+
 def test_preview_installer_rejects_legacy_install_root_override(tmp_path):
     delivery = _prepare_delivery(tmp_path)
     target_home = tmp_path / "target-home"
@@ -295,6 +324,31 @@ def test_preview_installer_rejects_legacy_install_root_override(tmp_path):
 
     assert result.returncode != 0
     assert "preview_path_conflicts_with_legacy name=install_root" in result.stdout
+
+
+def test_preview_installer_rejects_managed_path_outside_target_home(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "target-home"
+    outside_root = tmp_path / "sibling-root"
+    target_home.mkdir()
+    outside_root.mkdir()
+    result = subprocess.run(
+        ["bash", str(delivery / "installer/install_ai_wps.sh")],
+        cwd=delivery,
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(target_home),
+            "AI_WPS_INSTALL_ROOT": str(outside_root / "ai-wps"),
+            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
+            "PYTHON_BIN": sys.executable,
+        },
+    )
+
+    assert result.returncode != 0
+    assert "preview_path_outside_target_home name=install_root" in result.stdout
 
 
 def test_preview_installer_rejects_existing_non_preview_install_root(tmp_path):
@@ -330,13 +384,15 @@ def test_preview_installer_rejects_incomplete_preview_install_manifest(tmp_path)
     delivery = _prepare_delivery(tmp_path)
     target_home = tmp_path / "target-home"
     existing_root = target_home / "previous-preview"
+    release = existing_root / "releases" / "0.26.0-preview.1"
     current = existing_root / "current"
     state = existing_root / "state"
-    current.mkdir(parents=True)
+    release.mkdir(parents=True)
+    current.symlink_to(Path("releases") / "0.26.0-preview.1")
     state.mkdir()
     sentinel = state / "adapter.json"
     sentinel.write_text('{"preserve":true}\n', encoding="utf-8")
-    (current / "release-manifest.json").write_text(
+    (release / "release-manifest.json").write_text(
         json.dumps(
             {
                 "schemaVersion": 1,
@@ -544,12 +600,27 @@ def test_preview_build_and_prepare_scripts_are_provenance_inputs():
     assert '"packaging/prepare_v0260_preview1_delivery.py"' in provenance
 
 
-def test_preview_lifecycle_uses_explicit_isolated_target_identity():
-    lifecycle = (
-        ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
-    ).read_text(encoding="utf-8")
-    assert '"--target-user"' in lifecycle
-    assert '"--target-home"' in lifecycle
+def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(tmp_path):
+    lifecycle_path = ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    spec = importlib.util.spec_from_file_location("preview_lifecycle", lifecycle_path)
+    assert spec is not None and spec.loader is not None
+    lifecycle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lifecycle)
+
+    environment = lifecycle.install_environment(tmp_path / "lifecycle", 18101)
+    lookup = Path(environment["PATH"].split(os.pathsep, 1)[0]) / "getent"
+    resolved = subprocess.run(
+        [str(lookup), "passwd", environment["AI_WPS_TARGET_USER"]],
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert resolved.returncode == 0
+    assert resolved.stdout.strip().split(":")[5] == environment["HOME"]
+    assert '"--target-user"' in lifecycle_path.read_text(encoding="utf-8")
+    assert '"--target-home"' not in lifecycle_path.read_text(encoding="utf-8")
 
 
 def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):

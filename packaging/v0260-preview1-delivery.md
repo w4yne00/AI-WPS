@@ -8,6 +8,7 @@
 - 产品通道：`preview`
 - 归档命名：`ai-wps-delivery-<YYYYMMDD>-<SOURCE_COMMIT>-v0260-preview1.tar.gz`
 - 默认安装根：`$TARGET_HOME/ai-wps`
+- 管理路径边界：安装根、共享状态、备份、运行变量及 WPS 插件目录必须位于 `$TARGET_HOME` 下，且不接受符号链接路径组件
 - 安装入口：`installer/install_ai_wps.sh`
 - 冒烟入口：`scripts/ai_wps_smoke_test.sh`
 - 交付状态：自动化门禁只能记录 `candidate`

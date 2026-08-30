@@ -73,11 +73,24 @@ def audit_delivery(delivery_root: Path) -> None:
 
 def install_environment(root: Path, port: int) -> Dict[str, str]:
     home = root / "home"
-    install_root = root / "ai-wps"
-    jsaddons = root / "jsaddons"
+    install_root = home / "ai-wps"
+    jsaddons = home / "jsaddons"
+    target_tools = root / "target-tools"
     home.mkdir(parents=True, exist_ok=True)
     install_root.mkdir(parents=True, exist_ok=True)
     jsaddons.mkdir(parents=True, exist_ok=True)
+    target_tools.mkdir(parents=True, exist_ok=True)
+    target_home_lookup = target_tools / "getent"
+    target_home_lookup.write_text(
+        "#!/bin/sh\n"
+        'if [ "${1:-}" = "passwd" ] && [ "${2:-}" = "${AI_WPS_TARGET_USER:-}" ]; then\n'
+        '  printf \'%s:x:%s:%s::%s:/bin/sh\\n\' "$AI_WPS_TARGET_USER" "$(id -u)" "$(id -g)" "$HOME"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    target_home_lookup.chmod(0o755)
     environment = dict(os.environ)
     for variable in (
         "SUDO_USER",
@@ -94,6 +107,9 @@ def install_environment(root: Path, port: int) -> Dict[str, str]:
             "AI_WPS_TARGET_USER": pwd.getpwuid(os.getuid()).pw_name,
             "AI_WPS_INSTALL_ROOT": str(install_root),
             "WPS_JSADDONS_DIR": str(jsaddons),
+            "PATH": os.pathsep.join(
+                (str(target_tools), environment.get("PATH", ""))
+            ),
             "AI_WPS_SYSTEMD_SERVICE_FILE": str(root / "no-systemd/ai-wps.service"),
             "AI_WPS_CANDIDATE_PORT": str(port + 1),
             "PORT": str(port),
@@ -118,8 +134,6 @@ def run_installer(
         str(delivery_root / "installer/install_ai_wps.sh"),
         "--target-user",
         child_environment["AI_WPS_TARGET_USER"],
-        "--target-home",
-        child_environment["HOME"],
     ]
     result = subprocess.run(
         installer_command,

@@ -263,6 +263,8 @@ def audit_installer(root: Path) -> None:
         "ai_wps_install_done=true",
         "preview_path_conflicts_with_legacy",
         "preview_existing_install_manifest_required",
+        "preview_existing_install_current_pointer_required",
+        "preview_existing_install_release_required",
         "preview_existing_install_manifest_invalid",
     )
     for marker in required_markers:
