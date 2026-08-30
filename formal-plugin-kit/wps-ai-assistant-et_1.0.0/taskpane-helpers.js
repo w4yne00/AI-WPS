@@ -2569,29 +2569,41 @@
         truncated: false
       };
     }
-    columnCount = Number(first.column) || 1;
+    columnCount = 1;
+    items.forEach(function (item) {
+      var itemColumn = Number(item.column) || 1;
+      if (itemColumn > columnCount) {
+        columnCount = itemColumn;
+      }
+    });
     for (column = 1; column <= columnCount; column += 1) {
       headers.push(readExcelSmartFillDisplayCell(
         typeof readCell === "function" ? readCell(1, column) : null
       ));
     }
-    for (column = 1; column <= columnCount; column += 1) {
-      rowValues.push(column === Number(first.column)
-        ? ""
-        : readExcelSmartFillDisplayCell(
-          typeof readCell === "function" ? readCell(Number(first.row) || 1, column) : null
-        ));
-    }
+    items.forEach(function (item) {
+      var itemRow = Number(item.row) || 1;
+      var itemColumn = Number(item.column);
+      var currentRow = [];
+      for (column = 1; column <= columnCount; column += 1) {
+        currentRow.push(column === itemColumn
+          ? ""
+          : readExcelSmartFillDisplayCell(
+            typeof readCell === "function" ? readCell(itemRow, column) : null
+          ));
+      }
+      rowValues.push(currentRow);
+    });
     if (target) {
       target.columnHeader = headers[Number(first.column) - 1] || "";
-      target.rowContext = rowValues.slice();
+      target.rowContext = (rowValues[0] || []).slice();
     }
     source = {
       sheetName: target.sheetName || "",
       address: "",
       headers: headers,
-      rows: [rowValues],
-      rowCount: 1,
+      rows: rowValues,
+      rowCount: rowValues.length,
       columnCount: columnCount,
       truncated: false
     };
@@ -2658,6 +2670,29 @@
     }
     preview.consumed = true;
     preview.result = null;
+    return preview;
+  }
+
+  function describeExcelSmartFillHostCell(displayedText, flags) {
+    var options = flags || {};
+    return {
+      text: displayedText == null ? "" : String(displayedText),
+      hidden: options.hidden === true,
+      hasFormula: options.hasFormula === true,
+      formula: String(options.formula || ""),
+      comment: ""
+    };
+  }
+
+  function finalizeExcelSmartFillWriteSuccess(preview) {
+    try {
+      consumeExcelSmartFillPreview(preview);
+    } catch (error) {
+      if (preview) {
+        preview.consumed = true;
+        preview.result = null;
+      }
+    }
     return preview;
   }
 
@@ -3293,6 +3328,8 @@
     buildExcelSmartFillReadonlyPreview: buildExcelSmartFillReadonlyPreview,
     createExcelSmartFillPreview: createExcelSmartFillPreview,
     consumeExcelSmartFillPreview: consumeExcelSmartFillPreview,
+    describeExcelSmartFillHostCell: describeExcelSmartFillHostCell,
+    finalizeExcelSmartFillWriteSuccess: finalizeExcelSmartFillWriteSuccess,
     validateExcelSmartFillTarget: validateExcelSmartFillTarget,
     writeExcelSmartFillCells: writeExcelSmartFillCells,
     createExcelSelectionWatcher: createExcelSelectionWatcher,

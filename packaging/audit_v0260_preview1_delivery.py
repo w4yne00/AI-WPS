@@ -277,8 +277,9 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_SCHEMA_MISSING")
     if (
         "buildExcelSmartFillReadonlyPreview" not in js
-        or "consumeExcelSmartFillPreview" not in js
+        or "finalizeExcelSmartFillWriteSuccess" not in js
         or "buildExcelSmartFillDefaultSource" not in js
+        or "describeExcelSmartFillHostCell" not in js
     ):
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
 

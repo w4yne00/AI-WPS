@@ -1252,13 +1252,11 @@
       formulaState = readSmartFillPropertyState(cell, [
         "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
       ]);
-      return {
-        text: readSmartFillDisplayedValue(cell) || String(safeText(resolveScalarValue(safeRead(cell, "Text") || safeRead(cell, "Value2")), "")),
+      return helpers.describeExcelSmartFillHostCell(readSmartFillDisplayedValue(cell), {
         hidden: isSmartFillHostCellHidden(cell),
         hasFormula: hasFormula.value === true,
-        formula: String(formulaState.value || ""),
-        comment: ""
-      };
+        formula: String(formulaState.value || "")
+      });
     });
   }
 
@@ -1927,22 +1925,26 @@
       }
       assertSmartFillPreflight();
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell);
-      helpers.consumeExcelSmartFillPreview(state.smartFillPreview || helpers.createExcelSmartFillPreview(state.smartFillResult));
-      state.smartFillResult = null;
-      state.smartFillPreview = null;
-      state.smartFillDraftItems = [];
-      byId("btn-write-smart-fill").hidden = true;
-      setPlainResult([
-        "智能填写内容已写入工作簿。",
-        "写入单元格：" + writeResult.writtenCount,
-        "信息不足而跳过：" + writeResult.skippedCount,
-        "未写入公式；如需再次生成，请重新捕获目标和来源区域。"
-      ].join("\n"));
-      setStatus("智能填写已写入 " + writeResult.writtenCount + " 个单元格。" );
     } catch (error) {
       setStatus("智能填写未写入：" + error.message);
       setPlainResult("为避免覆盖用户修改，本次写回已停止。\n" + error.message);
+      setSmartFillWriteButtonState();
+      return;
     }
+    helpers.finalizeExcelSmartFillWriteSuccess(
+      state.smartFillPreview || helpers.createExcelSmartFillPreview(state.smartFillResult)
+    );
+    state.smartFillResult = null;
+    state.smartFillPreview = null;
+    state.smartFillDraftItems = [];
+    byId("btn-write-smart-fill").hidden = true;
+    setPlainResult([
+      "智能填写内容已写入工作簿。",
+      "写入单元格：" + writeResult.writtenCount,
+      "信息不足而跳过：" + writeResult.skippedCount,
+      "未写入公式；如需再次生成，请重新捕获目标和来源区域。"
+    ].join("\n"));
+    setStatus("智能填写已写入 " + writeResult.writtenCount + " 个单元格。");
     setSmartFillWriteButtonState();
   }
 

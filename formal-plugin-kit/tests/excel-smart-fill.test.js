@@ -401,6 +401,71 @@ function testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly() {
   assert.ok(!Object.prototype.hasOwnProperty.call(source, "comments"));
 }
 
+function testSmartFillDefaultSourceKeepsARowForEachTargetItem() {
+  const cells = {
+    "1,1": makeDefaultSourceCell("名称"),
+    "1,4": makeDefaultSourceCell("摘要"),
+    "2,1": makeDefaultSourceCell("甲"),
+    "2,4": makeDefaultSourceCell("旧D2"),
+    "3,1": makeDefaultSourceCell("乙"),
+    "3,4": makeDefaultSourceCell("旧D3"),
+    "4,1": makeDefaultSourceCell("丙")
+  };
+  const target = {
+    sheetName: "目标表",
+    address: "$D$2:$D$3",
+    items: [
+      {
+        itemId: "target-1", address: "$D$2", row: 2, column: 4,
+        originalValue: "", originalValueType: "blank", originalFormula: "",
+        isFormula: false, isMerged: false, isProtected: false, isHidden: false
+      },
+      {
+        itemId: "target-2", address: "$D$3", row: 3, column: 4,
+        originalValue: "", originalValueType: "blank", originalFormula: "",
+        isFormula: false, isMerged: false, isProtected: false, isHidden: false
+      }
+    ]
+  };
+  const source = helpers.buildExcelSmartFillDefaultSource(target, (row, column) => (
+    cells[`${row},${column}`] || makeDefaultSourceCell("")
+  ));
+  assert.strictEqual(source.rowCount, 2);
+  assert.deepStrictEqual(source.rows, [
+    ["甲", "", "", ""],
+    ["乙", "", "", ""]
+  ]);
+  assert.ok(!JSON.stringify(source).includes("丙"));
+  assert.ok(!JSON.stringify(source).includes("旧D2"));
+  assert.ok(!JSON.stringify(source).includes("旧D3"));
+}
+
+function testHostDisplayedEmptyDoesNotFallBackToRawValue() {
+  assert.strictEqual(typeof helpers.describeExcelSmartFillHostCell, "function");
+  const cell = helpers.describeExcelSmartFillHostCell("", {
+    hasFormula: true,
+    formula: "=A1",
+    rawText: "12"
+  });
+  assert.strictEqual(cell.text, "");
+  assert.strictEqual(cell.hasFormula, true);
+  assert.ok(!JSON.stringify(cell).includes("12"));
+}
+
+function testSuccessfulWriteStillConsumesPreviewIfConsumeWouldThrow() {
+  assert.strictEqual(typeof helpers.finalizeExcelSmartFillWriteSuccess, "function");
+  const preview = { consumed: false, result: null };
+  helpers.finalizeExcelSmartFillWriteSuccess(preview);
+  assert.strictEqual(preview.consumed, true);
+  assert.strictEqual(preview.result, null);
+  const ok = helpers.createExcelSmartFillPreview({
+    schemaVersion: "excel.smart_fill.v1",
+    items: [{ itemId: "target-1", status: "completed", valueType: "text", value: "甲类" }]
+  });
+  helpers.finalizeExcelSmartFillWriteSuccess(ok);
+  assert.throws(() => helpers.consumeExcelSmartFillPreview(ok), /重复/);
+}
+
 function testSmartFillReadonlyPreviewOmitsEditingAndUndo() {
   assert.strictEqual(typeof helpers.buildExcelSmartFillReadonlyPreview, "function");
   const html = helpers.buildExcelSmartFillReadonlyPreview({
@@ -461,8 +526,9 @@ function testSmartFillUiContract() {
   assert.ok(js.includes("window.confirm"));
   assert.ok(!html.includes("撤销"));
   assert.ok(js.includes("buildExcelSmartFillReadonlyPreview"));
-  assert.ok(js.includes("consumeExcelSmartFillPreview"));
+  assert.ok(js.includes("finalizeExcelSmartFillWriteSuccess"));
   assert.ok(js.includes("buildExcelSmartFillDefaultSource"));
+  assert.ok(js.includes("describeExcelSmartFillHostCell"));
   [
     "EXCEL_SMART_FILL_TARGET_SHAPE_INVALID",
     "EXCEL_SMART_FILL_CROSS_SHEET",
@@ -472,6 +538,9 @@ function testSmartFillUiContract() {
 }
 
 testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly();
+testSmartFillDefaultSourceKeepsARowForEachTargetItem();
+testHostDisplayedEmptyDoesNotFallBackToRawValue();
+testSuccessfulWriteStillConsumesPreviewIfConsumeWouldThrow();
 testSmartFillReadonlyPreviewOmitsEditingAndUndo();
 testSmartFillPreviewCannotBeSubmittedTwice();
 testSmartFillPayloadCapturesFrozenSnapshots();
