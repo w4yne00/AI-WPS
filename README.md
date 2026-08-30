@@ -6,7 +6,7 @@ Current scope is **Phase 1: platform foundation + Word / Excel / PPT**, targetin
 
 [English](./README.md) | [Chinese](./README-ZH.md)
 
-Product page: [English](./site/en.html) · [中文](./site/index.html)
+Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](https://w4yne00.github.io/AI-WPS/)
 
 ## Current Version
 
