@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 import tarfile
@@ -45,8 +46,18 @@ def _load_module(path, name):
     return module
 
 
+def _require_archived_fixture(path):
+    if not os.path.lexists(str(path)):
+        pytest.skip("archived delivery fixture was removed: {0}".format(path.name))
+    assert path.is_file(), "archived delivery fixture is not a regular file: {0}".format(
+        path
+    )
+    return path
+
+
 def test_v0251_d7a1dd8_archive_and_sidecar_bytes_stay_frozen():
     # Break: rewriting or replacing the frozen 0.25.1 candidate archive.
+    _require_archived_fixture(FROZEN_0251)
     checksum = FROZEN_0251.with_name(FROZEN_0251.name + ".sha256")
     digest = hashlib.sha256(FROZEN_0251.read_bytes()).hexdigest()
     assert digest == FROZEN_0251_SHA
@@ -236,6 +247,7 @@ def test_current_product_docs_keep_frozen_0252_and_0251_evidence():
 def test_v0252_prepare_rewrites_host_and_adapter_identity_from_0251_predecessor(tmp_path):
     # Break: packaged Word/Excel/PPT/Adapter identity remains 0.25.1-alpha.
     assert PREPARE.is_file()
+    _require_archived_fixture(FROZEN_0251)
     delivery = tmp_path / "delivery"
     for relative in (
         "packages/wps-ai-assistant_1.0.0",

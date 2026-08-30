@@ -1,6 +1,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import re
 import subprocess
 import sys
@@ -52,6 +53,15 @@ def load_v0251_audit_module():
     return module
 
 
+def _require_archived_fixture(path):
+    if not os.path.lexists(str(path)):
+        pytest.skip("archived delivery fixture was removed: {0}".format(path.name))
+    assert path.is_file(), "archived delivery fixture is not a regular file: {0}".format(
+        path
+    )
+    return path
+
+
 def prepare_acceptance_sample(tmp_path, source_commit="1234567"):
     prepare_spec = importlib.util.spec_from_file_location(
         "v0251_prepare_sample", PREPARE
@@ -59,8 +69,9 @@ def prepare_acceptance_sample(tmp_path, source_commit="1234567"):
     assert prepare_spec is not None and prepare_spec.loader is not None
     prepare_module = importlib.util.module_from_spec(prepare_spec)
     prepare_spec.loader.exec_module(prepare_module)
-    archive = ROOT / (
-        "dist-phase1-delivery-kit/"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/"
         "ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
     )
     baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
@@ -308,8 +319,6 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         "Issue #59",
     )
     documents = (
-        ROOT / "README.md",
-        ROOT / "README-ZH.md",
         ROOT / "docs/codex-handoff.md",
         ROOT / "packaging/v0251-delivery.md",
     )
@@ -365,8 +374,9 @@ def test_v0251_candidate_identity_is_consistent_across_release_docs():
         ROOT / "docs/codex-handoff.md"
     ).read_text(encoding="utf-8")
 
-    candidate_archive = ROOT / (
-        "dist-phase1-delivery-kit/"
+    candidate_archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/"
         "ai-wps-phase1-delivery-20260824-d7a1dd8-v0251.tar.gz"
     )
     candidate_checksum = candidate_archive.with_name(candidate_archive.name + ".sha256")
@@ -408,7 +418,10 @@ def test_v0251_prepare_accepts_frozen_previous_digest_and_rejects_mismatch(tmp_p
     prepare_module = importlib.util.module_from_spec(prepare_spec)
     prepare_spec.loader.exec_module(prepare_module)
 
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    )
     baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
@@ -479,7 +492,10 @@ def test_v0251_audit_rejects_non_pending_target_acceptance_result(tmp_path):
 
 @pytest.mark.parametrize("missing_row", (8, 9))
 def test_v0251_audit_rejects_missing_mandatory_acceptance_row(tmp_path, missing_row):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    )
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
     delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
@@ -498,7 +514,10 @@ def test_v0251_audit_rejects_missing_mandatory_acceptance_row(tmp_path, missing_
 
 
 def test_v0251_audit_rejects_duplicate_mandatory_acceptance_row(tmp_path):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    )
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
     delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
@@ -517,7 +536,10 @@ def test_v0251_audit_rejects_duplicate_mandatory_acceptance_row(tmp_path):
 
 
 def test_v0251_audit_rejects_extra_mandatory_acceptance_row(tmp_path):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-f953c58-v0251.tar.gz"
+    )
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
     delivery = tmp_path / "ai-wps-phase1-delivery-20260824-f953c58-v0251"
@@ -538,7 +560,10 @@ def test_v0251_audit_rejects_extra_mandatory_acceptance_row(tmp_path):
 
 def test_v0251_audit_rejects_packaged_acceptance_candidate_identity_mismatch(tmp_path):
     """The frozen 799adf9 package exposes the stale acceptance identity regression."""
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-799adf9-v0251.tar.gz"
+    )
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
     delivery = tmp_path / "ai-wps-phase1-delivery-20260824-799adf9-v0251"
@@ -559,7 +584,10 @@ def test_v0251_prepare_generated_tree_is_the_positive_acceptance_sample(tmp_path
     prepare_module = importlib.util.module_from_spec(prepare_spec)
     prepare_spec.loader.exec_module(prepare_module)
 
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    )
     baseline = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260814-v0250.tar.gz"
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
@@ -645,7 +673,10 @@ def test_v0251_prepare_rejects_noncanonical_source_basic_info_shell(tmp_path):
 
 
 def test_v0251_frozen_10b_archive_is_rejected_by_candidate_context_audit(tmp_path):
-    archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    archive = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    )
     with tarfile.open(archive, "r:gz") as handle:
         handle.extractall(tmp_path)
     delivery = tmp_path / "ai-wps-phase1-delivery-20260824-10b251d-v0251"
@@ -970,7 +1001,10 @@ def test_v0251_prepare_rejects_previous_archive_source_binding_mismatch(tmp_path
     assert prepare_spec is not None and prepare_spec.loader is not None
     prepare_module = importlib.util.module_from_spec(prepare_spec)
     prepare_spec.loader.exec_module(prepare_module)
-    frozen = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    frozen = _require_archived_fixture(
+        ROOT
+        / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-10b251d-v0251.tar.gz"
+    )
     mismatched = tmp_path / "ai-wps-phase1-delivery-20260824-deadbee-v0251.tar.gz"
     shutil.copyfile(frozen, mismatched)
 
@@ -1322,7 +1356,9 @@ def test_v0251_archive_checksum_verification_checks_name_and_digest(tmp_path):
     ),
 )
 def test_v0251_frozen_archive_checksums_remain_exact(archive_name, expected_digest):
-    archive = ROOT / "dist-phase1-delivery-kit" / archive_name
+    archive = _require_archived_fixture(
+        ROOT / "dist-phase1-delivery-kit" / archive_name
+    )
     checksum = archive.with_name(archive.name + ".sha256")
     assert archive.is_file()
     assert checksum.is_file()

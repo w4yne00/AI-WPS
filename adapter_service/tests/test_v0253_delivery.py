@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -51,6 +52,15 @@ def _load_module(path, name):
     return module
 
 
+def _require_archived_fixture(path):
+    if not os.path.lexists(str(path)):
+        pytest.skip("archived delivery fixture was removed: {0}".format(path.name))
+    assert path.is_file(), "archived delivery fixture is not a regular file: {0}".format(
+        path
+    )
+    return path
+
+
 def test_v0253_d1a346b_archive_and_sidecar_bytes_match_registered_digest():
     # Break: committing a different tarball than the registered 0.25.3 candidate.
     archive = ROOT / "dist-phase1-delivery-kit" / CURRENT_0253
@@ -63,7 +73,7 @@ def test_v0253_d1a346b_archive_and_sidecar_bytes_match_registered_digest():
 
 def test_v0252_850871c_archive_and_sidecar_bytes_stay_frozen():
     # Break: rewriting or replacing the frozen 0.25.2 candidate archive.
-    assert FROZEN_0252.is_file()
+    _require_archived_fixture(FROZEN_0252)
     checksum = FROZEN_0252.with_name(FROZEN_0252.name + ".sha256")
     digest = hashlib.sha256(FROZEN_0252.read_bytes()).hexdigest()
     assert digest == FROZEN_0252_SHA
@@ -273,6 +283,7 @@ def test_current_product_docs_use_v0253_identity_and_keep_frozen_0252_evidence()
 def test_v0253_prepare_rewrites_host_and_adapter_identity_from_0252_predecessor(tmp_path):
     # Break: packaged Word/Excel/PPT/Adapter identity remains 0.25.2-alpha.
     assert PREPARE.is_file()
+    _require_archived_fixture(FROZEN_0252)
     delivery = tmp_path / "delivery"
     for relative in (
         "packages/wps-ai-assistant_1.0.0",

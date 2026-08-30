@@ -10,6 +10,17 @@ OUT_DIR="${1:-$ROOT_DIR/dist-preview-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 VERSION="0.26.0-preview.1"
 BASELINE_VERSION="0.25.3-alpha"
+SOURCE_ALLOWLIST="$ROOT_DIR/packaging/delivery-sources-v0260-preview1.json"
+PUBLISHED_ARCHIVE="0"
+
+if [[ ! "$DATE_TAG" =~ ^[0-9]{8}$ ]]; then
+  echo "delivery_date_tag_invalid=$DATE_TAG"
+  exit 1
+fi
+if [ -z "$BASELINE_ARCHIVE" ] || [ ! -f "$BASELINE_ARCHIVE" ]; then
+  echo "v0253_baseline_archive_required=true"
+  exit 1
+fi
 HEAD_COMMIT="$(git -C "$ROOT_DIR" rev-parse HEAD)"
 SOURCE_COMMIT="${AI_WPS_SOURCE_COMMIT:-$HEAD_COMMIT}"
 SOURCE_TAG="${SOURCE_COMMIT:0:7}"
@@ -18,19 +29,8 @@ TMP_DIR="$OUT_DIR/$KIT_NAME"
 ARCHIVE_PATH="$OUT_DIR/$KIT_NAME.tar.gz"
 PENDING_ARCHIVE_PATH="$OUT_DIR/.$KIT_NAME.pending.tar.gz"
 PENDING_CHECKSUM_PATH="$OUT_DIR/.$KIT_NAME.pending.sha256"
-SOURCE_ALLOWLIST="$ROOT_DIR/packaging/delivery-sources-v0260-preview1.json"
-PUBLISHED_ARCHIVE="0"
-
-if [[ ! "$DATE_TAG" =~ ^[0-9]{8}$ ]]; then
-  echo "delivery_date_tag_invalid=$DATE_TAG"
-  exit 1
-fi
 if [[ ! "$SOURCE_COMMIT" =~ ^[0-9a-f]{7,40}$ ]]; then
   echo "delivery_source_commit_invalid=$SOURCE_COMMIT"
-  exit 1
-fi
-if [ -z "$BASELINE_ARCHIVE" ] || [ ! -f "$BASELINE_ARCHIVE" ]; then
-  echo "v0253_baseline_archive_required=true"
   exit 1
 fi
 if [ "$SOURCE_COMMIT" != "$HEAD_COMMIT" ]; then

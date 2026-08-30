@@ -18,6 +18,29 @@ BASELINE = ROOT / (
 )
 
 
+def _installer_environment(target_home, **updates):
+    target_tools = target_home.parent / "target-tools"
+    target_tools.mkdir(exist_ok=True)
+    getent = target_tools / "getent"
+    getent.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "${1:-}" = "passwd" ]; then\n'
+        '  printf \'%s:x:%s:%s::%s:/bin/sh\\n\' "$2" "$(id -u)" "$(id -g)" "$HOME"\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    getent.chmod(0o755)
+    environment = {
+        **os.environ,
+        "HOME": str(target_home),
+        "PATH": str(target_tools) + os.pathsep + os.environ.get("PATH", ""),
+    }
+    environment.update(updates)
+    return environment
+
+
 def _prepare_delivery(tmp_path, source_commit="e94c561"):
     delivery = tmp_path / "delivery"
     assembled = subprocess.run(
@@ -190,14 +213,13 @@ def test_preview_installer_only_reports_legacy_phase1_and_preserves_its_data(tmp
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
-            "AI_WPS_LEGACY_INSTALL_ROOT": str(legacy),
-            "WPS_JSADDONS_DIR": str(jsaddons),
-            "PYTHON_BIN": "/usr/bin/false",
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(target_home / "ai-wps"),
+            AI_WPS_LEGACY_INSTALL_ROOT=str(legacy),
+            WPS_JSADDONS_DIR=str(jsaddons),
+            PYTHON_BIN="/usr/bin/false",
+        ),
     )
 
     assert "legacy_phase1_install_detected=true" in result.stdout
@@ -228,14 +250,13 @@ def test_preview_installer_rejects_runtime_path_overlapping_legacy_install(tmp_p
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
-            "AI_WPS_STATE_DIR": str(legacy_state),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": "/usr/bin/false",
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(target_home / "ai-wps"),
+            AI_WPS_STATE_DIR=str(legacy_state),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN="/usr/bin/false",
+        ),
     )
 
     assert result.returncode != 0
@@ -258,14 +279,13 @@ def test_preview_installer_rejects_lexically_normalized_legacy_path(tmp_path):
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
-            "AI_WPS_STATE_DIR": str(escaped_path),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": "/usr/bin/false",
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(target_home / "ai-wps"),
+            AI_WPS_STATE_DIR=str(escaped_path),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN="/usr/bin/false",
+        ),
     )
 
     assert result.returncode != 0
@@ -287,14 +307,13 @@ def test_preview_installer_rejects_symlinked_managed_path_component(tmp_path):
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(target_home / "ai-wps"),
-            "AI_WPS_STATE_DIR": str(linked / "state"),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": sys.executable,
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(target_home / "ai-wps"),
+            AI_WPS_STATE_DIR=str(linked / "state"),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN=sys.executable,
+        ),
     )
 
     assert result.returncode != 0
@@ -312,14 +331,13 @@ def test_preview_installer_rejects_legacy_install_root_override(tmp_path):
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(legacy),
-            "AI_WPS_LEGACY_INSTALL_ROOT": str(tmp_path / "decoy-legacy"),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": "/usr/bin/false",
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(legacy),
+            AI_WPS_LEGACY_INSTALL_ROOT=str(tmp_path / "decoy-legacy"),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN="/usr/bin/false",
+        ),
     )
 
     assert result.returncode != 0
@@ -338,13 +356,12 @@ def test_preview_installer_rejects_managed_path_outside_target_home(tmp_path):
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(outside_root / "ai-wps"),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": sys.executable,
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(outside_root / "ai-wps"),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN=sys.executable,
+        ),
     )
 
     assert result.returncode != 0
@@ -366,13 +383,12 @@ def test_preview_installer_rejects_existing_non_preview_install_root(tmp_path):
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(existing_root),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": sys.executable,
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(existing_root),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN=sys.executable,
+        ),
     )
 
     assert result.returncode != 0
@@ -409,13 +425,12 @@ def test_preview_installer_rejects_incomplete_preview_install_manifest(tmp_path)
         check=False,
         capture_output=True,
         text=True,
-        env={
-            **os.environ,
-            "HOME": str(target_home),
-            "AI_WPS_INSTALL_ROOT": str(existing_root),
-            "WPS_JSADDONS_DIR": str(target_home / "jsaddons"),
-            "PYTHON_BIN": sys.executable,
-        },
+        env=_installer_environment(
+            target_home,
+            AI_WPS_INSTALL_ROOT=str(existing_root),
+            WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+            PYTHON_BIN=sys.executable,
+        ),
     )
 
     assert result.returncode != 0
@@ -691,6 +706,17 @@ def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):
     build = ROOT / "packaging/build_v0260_preview1_delivery_kit.sh"
     output = tmp_path / "dist"
     missing_baseline = tmp_path / "missing-v0253.tar.gz"
+    git_sentinel = tmp_path / "git-called"
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    fake_git = tools / "git"
+    fake_git.write_text(
+        "#!/usr/bin/env bash\n"
+        ': > "${AI_WPS_GIT_SENTINEL:?}"\n'
+        "exit 97\n",
+        encoding="utf-8",
+    )
+    fake_git.chmod(0o755)
     result = subprocess.run(
         ["bash", str(build), str(output)],
         cwd=ROOT,
@@ -701,11 +727,14 @@ def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):
             **os.environ,
             "DATE_TAG": "20260830",
             "AI_WPS_V0253_BASELINE_ARCHIVE": str(missing_baseline),
+            "AI_WPS_GIT_SENTINEL": str(git_sentinel),
+            "PATH": str(tools) + os.pathsep + os.environ.get("PATH", ""),
         },
     )
 
     assert result.returncode != 0
     assert "v0253_baseline_archive_required=true" in result.stdout
+    assert not git_sentinel.exists()
     assert not output.exists()
 
 
