@@ -2448,7 +2448,7 @@
       return text;
     }
 
-    function classifyCell(text, formula, rawValue) {
+    function classifyCell(text, formula, rawValue, cell) {
       if (formula) {
         return "formula";
       }
@@ -2457,6 +2457,9 @@
       }
       if (typeof rawValue === "boolean") {
         return "boolean";
+      }
+      if (isDateCell(cell, rawValue)) {
+        return "date";
       }
       if (typeof rawValue === "number") {
         return "number";
@@ -2536,7 +2539,7 @@
           row: normalizeInteger(firstDefined(readOwned(targetCell, ["Row", "row"]), targetRow)) || targetRow,
           column: normalizeInteger(firstDefined(readOwned(targetCell, ["Column", "column"]), targetColumn)) || targetColumn,
           originalValue: targetText,
-          originalValueType: classifyCell(targetText, targetFormula, targetRawValue),
+          originalValueType: classifyCell(targetText, targetFormula, targetRawValue, targetCell),
           originalFormula: targetFormula,
           isFormula: readSafetyBoolean(targetCell, ["HasFormula", "hasFormula"]) || targetFormulaRaw === null || Boolean(targetFormula),
           isMerged: readSafetyBoolean(targetCell, ["MergeCells", "mergeCells", "Merged", "merged"]),
@@ -2807,7 +2810,7 @@
         throw new Error("智能填写目标必须是连续的单列区域。");
       }
       if (item.isFormula || item.isMerged || item.isProtected || item.isHidden ||
-          ["blank", "text", "number"].indexOf(item.originalValueType || "blank") === -1) {
+          ["blank", "text", "number", "boolean", "date"].indexOf(item.originalValueType || "blank") === -1) {
         throw new Error("目标区域包含公式、合并、受保护或隐藏单元格，无法执行智能填写。");
       }
     });
@@ -2847,6 +2850,31 @@
       return { known: true, present: true, value: value };
     }
     return { known: true, present: false, value: undefined };
+  }
+
+  function isDateNumberFormat(fmt) {
+    var cleaned;
+    if (typeof fmt !== "string") {
+      return false;
+    }
+    cleaned = fmt.replace(/"[^"]*"/g, "");
+    return /[yYmMdDhHsS]/.test(cleaned) && !/^\s*0(?:\.0+)?%?\s*$/.test(cleaned);
+  }
+
+  function isDateCell(cell, rawValue) {
+    var formatState;
+    if (rawValue instanceof Date) {
+      return true;
+    }
+    if (typeof rawValue === "number" && cell) {
+      formatState = readSmartFillPropertyState(cell, [
+        "NumberFormat", "numberFormat", "NumberFormatLocal", "numberFormatLocal"
+      ], false);
+      if (formatState && formatState.present && isDateNumberFormat(formatState.value)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function readSmartFillBooleanState(owner, keys) {
@@ -2936,7 +2964,7 @@
     };
   }
 
-  function classifySmartFillSnapshotValue(text, formula, rawValue) {
+  function classifySmartFillSnapshotValue(text, formula, rawValue, cell) {
     if (formula) {
       return "formula";
     }
@@ -2945,6 +2973,9 @@
     }
     if (typeof rawValue === "boolean") {
       return "boolean";
+    }
+    if (isDateCell(cell, rawValue)) {
+      return "date";
     }
     if (typeof rawValue === "number") {
       return "number";
@@ -2980,7 +3011,7 @@
       isProtected: protectedState.value === true,
       isHidden: hiddenState.value === true,
       rawValue: rawValue,
-      valueType: classifySmartFillSnapshotValue(text, formulaState.value, rawValue)
+      valueType: classifySmartFillSnapshotValue(text, formulaState.value, rawValue, cell)
     };
   }
 
@@ -3001,6 +3032,11 @@
         isNaN(expected.rawValue) && isNaN(current.rawValue)) {
       rawValuesEqual = true;
     }
+    if (expected && current && !rawValuesEqual &&
+        expected.rawValue instanceof Date && current.rawValue instanceof Date &&
+        expected.rawValue.getTime() === current.rawValue.getTime()) {
+      rawValuesEqual = true;
+    }
     return Boolean(expected && current && current.readable && rawValuesEqual &&
       expected.text === current.text &&
       expected.formula === current.formula &&
@@ -3018,13 +3054,25 @@
     return current.text === String(value) || current.text === "'" + String(value);
   }
 
-  function detectExcelSmartFillConflicts(targetItems, getCell) {
+  function detectExcelSmartFillConflicts(targetItems, getCell, candidateItemIds) {
     var items = Array.isArray(targetItems) ? targetItems : [];
     var conflicts = [];
+    var filterActive = Array.isArray(candidateItemIds);
+    var candidateIdMap = {};
     if (typeof getCell !== "function") {
       return { hasConflict: false, conflicts: [] };
     }
+    if (filterActive) {
+      candidateItemIds.forEach(function (id) {
+        if (id) {
+          candidateIdMap[id] = true;
+        }
+      });
+    }
     items.forEach(function (item) {
+      if (filterActive && !candidateIdMap[item.itemId]) {
+        return;
+      }
       var cell = getCell(item);
       var current;
       if (!cell) {
@@ -3212,7 +3260,7 @@
         writableCount += 1;
         totalCodePoints += validation.codePoints || 0;
         target = targetById[draft.itemId];
-        if (target && (target.originalValueType === "text" || target.originalValueType === "number") &&
+        if (target && ["text", "number", "boolean", "date"].indexOf(target.originalValueType) >= 0 &&
             String(target.originalValue || "").trim()) {
           overwriteCount += 1;
         }
@@ -3252,13 +3300,18 @@
     for (index = 0; index < items.length; index += 1) {
       var item = items[index];
       var result = resultById[item.itemId];
-      var cell = getCell(item);
+      var cell;
       var current;
       var strVal;
       var codePoints;
       if (!result) {
         throw new Error("智能填写结果缺少目标单元格。");
       }
+      if (result.status === "insufficient_information") {
+        plans.push({ item: item, cell: null, result: result, current: null, skip: true });
+        continue;
+      }
+      cell = getCell(item);
       if (!cell) {
         throw new Error("目标单元格不可用，已停止写回。");
       }
@@ -3273,10 +3326,6 @@
       }
       if (!sameSmartFillSnapshot(item, current)) {
         throw new Error("目标单元格内容已变化，请重新生成预览后再写入。");
-      }
-      if (result.status === "insufficient_information") {
-        plans.push({ item: item, cell: cell, result: result, current: current, skip: true });
-        continue;
       }
       if (result.status !== "completed" || (result.valueType !== "text" && result.valueType !== "number")) {
         throw new Error("智能填写结果不完整，已停止写回。");

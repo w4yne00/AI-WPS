@@ -1759,13 +1759,35 @@
     );
   }
 
-  function renderExcelSmartFillResult(data) {
+  function renderExcelSmartFillResult(data, preservedDrafts, focusItemId) {
     var markdown;
     var output;
     var items;
+    var preservedMap = {};
+    if (Array.isArray(preservedDrafts)) {
+      preservedDrafts.forEach(function (draft) {
+        if (draft && draft.itemId) {
+          preservedMap[draft.itemId] = draft;
+        }
+      });
+    }
     state.smartFillResult = data || {};
     items = Array.isArray(state.smartFillResult.items) ? state.smartFillResult.items : [];
     state.smartFillDraftItems = items.map(function (item) {
+      var preserved = preservedMap[item.itemId];
+      if (preserved) {
+        return {
+          itemId: item.itemId,
+          status: typeof preserved.status !== "undefined" ? preserved.status : item.status,
+          valueType: (preserved.valueType || item.valueType) === "number" ? "number" : "text",
+          value: typeof preserved.value !== "undefined"
+            ? preserved.value
+            : (item.status === "completed" ? item.value : ""),
+          selected: typeof preserved.selected !== "undefined"
+            ? Boolean(preserved.selected)
+            : item.status === "completed"
+        };
+      }
       return {
         itemId: item.itemId,
         status: item.status,
@@ -1795,6 +1817,17 @@
       output.innerHTML = buildSmartFillPreviewEditor(state.smartFillResult);
     }
     setSmartFillWriteButtonState();
+    if (focusItemId && typeof document !== "undefined") {
+      try {
+        var focusInput = document.querySelector('[data-smart-fill-value-input="' + focusItemId + '"]') ||
+          document.querySelector('[data-smart-fill-retry="' + focusItemId + '"]');
+        if (focusInput && typeof focusInput.focus === "function") {
+          focusInput.focus();
+        }
+      } catch (focusError) {
+        // Focus restoration is best-effort.
+      }
+    }
   }
 
   function buildExcelSmartFillWriteResults() {
@@ -1918,27 +1951,44 @@
     return readSmartFillWorkbookId(getActiveWorkbook(getEtApplication()));
   }
 
-  function assertSmartFillPreflight() {
+  function checkSmartFillPreflight() {
     var source;
     var sourceHash;
     if (state.smartFillWorkbookId &&
         getSmartFillActiveWorkbookId() !== state.smartFillWorkbookId) {
-      throw new Error("当前工作簿已变化，请重新捕获目标和来源区域。");
+      return {
+        ok: false,
+        reason: "workbook_changed",
+        message: "当前工作簿已变化，请重新捕获目标和来源区域。"
+      };
     }
     if (!getSmartFillTargetSheet(state.smartFillTarget && state.smartFillTarget.sheetName)) {
-      throw new Error("目标工作表不可用，请重新捕获目标区域。");
+      return {
+        ok: false,
+        reason: "sheet_unavailable",
+        message: "目标工作表不可用，请重新捕获目标区域。"
+      };
     }
     if (!state.smartFillSource || !state.smartFillSource.snapshotHash) {
-      return;
+      return { ok: true };
     }
     source = getSmartFillCurrentSource();
     if (!source) {
-      throw new Error("来源区域不可用，请重新捕获来源区域。");
+      return {
+        ok: false,
+        reason: "source_unavailable",
+        message: "来源区域不可用，请重新捕获来源区域。"
+      };
     }
     sourceHash = makeSmartFillSourceSnapshotHash(source);
     if (sourceHash !== state.smartFillSource.snapshotHash) {
-      throw new Error("来源区域内容已变化，请重新生成预览后再写入。");
+      return {
+        ok: false,
+        reason: "source_changed",
+        message: "来源区域内容已变化，请重新生成预览后再写入。"
+      };
     }
+    return { ok: true };
   }
 
   function writeExcelSmartFillResult() {
@@ -1949,6 +1999,8 @@
     var conflictReport;
     var conflictItemIds;
     var output;
+    var preflight;
+    var writableItemIds;
     if (state.busy || state.workflowProfileMutationBusy || !state.smartFillResult) {
       return;
     }
@@ -1961,9 +2013,39 @@
       return;
     }
     try {
-      assertSmartFillPreflight();
+      preflight = checkSmartFillPreflight();
+      if (!preflight.ok) {
+        state.smartFillDraftItems.forEach(function (draft) {
+          draft.status = "write_conflict";
+          draft.selected = false;
+        });
+        output = byId("result-output");
+        if (output && helpers.buildExcelSmartFillEditorPreview) {
+          output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
+            state.smartFillResult,
+            state.smartFillTarget && state.smartFillTarget.items || [],
+            state.smartFillDraftItems
+          );
+        }
+        setSmartFillWriteButtonState();
+        setStatus("检测到写入冲突：" + preflight.message);
+        return;
+      }
+
+      results = buildExcelSmartFillWriteResults();
+      writableItemIds = results.filter(function (r) {
+        return r.status === "completed";
+      }).map(function (r) {
+        return r.itemId;
+      });
+
+      if (!writableItemIds.length) {
+        setStatus("未选择任何可写入的有效项。");
+        return;
+      }
+
       if (helpers.detectExcelSmartFillConflicts) {
-        conflictReport = helpers.detectExcelSmartFillConflicts(items, getSmartFillTargetCell);
+        conflictReport = helpers.detectExcelSmartFillConflicts(items, getSmartFillTargetCell, writableItemIds);
         if (conflictReport && conflictReport.hasConflict) {
           conflictItemIds = conflictReport.conflicts.map(function (c) { return c.itemId; });
           state.smartFillDraftItems.forEach(function (draft) {
@@ -1982,17 +2064,16 @@
           }
           setSmartFillWriteButtonState();
           setStatus("部分目标单元格已变化，变化项已标记为写入冲突；未冲突项可重新确认写入。");
-          setPlainResult("检测到部分目标单元格在生成后已被修改，已标记为写入冲突。\n未冲突的合格勾选项可重新点击“写入内容”继续写入。");
           return;
         }
       }
-      results = buildExcelSmartFillWriteResults();
+
       overwriteCount = results.filter(function (result) {
         var item = items.filter(function (candidate) {
           return candidate.itemId === result.itemId;
         })[0] || {};
         return result.status === "completed" &&
-          (item.originalValueType === "text" || item.originalValueType === "number") &&
+          ["text", "number", "boolean", "date"].indexOf(item.originalValueType) >= 0 &&
           String(item.originalValue || "").trim();
       }).length;
       if (overwriteCount) {
@@ -2059,17 +2140,14 @@
   }
 
   function restoreSmartFillRetryResult() {
+    var retryItemId = state.smartFillRetryItemId;
     var base = state.smartFillRetryBaseResult;
     var baseDraftItems = state.smartFillRetryBaseDraftItems;
     state.smartFillRetryItemId = "";
     state.smartFillRetryBaseResult = null;
     state.smartFillRetryBaseDraftItems = null;
     if (base) {
-      renderExcelSmartFillResult(base);
-      if (baseDraftItems) {
-        state.smartFillDraftItems = baseDraftItems;
-        setSmartFillWriteButtonState();
-      }
+      renderExcelSmartFillResult(base, baseDraftItems, retryItemId);
     }
   }
   function tryRebindSmartFillTarget(result) {
@@ -2111,6 +2189,7 @@
     var baseDraftItems = state.smartFillRetryBaseDraftItems;
     var replacement;
     var merged;
+    var nextPreservedDrafts = null;
     tryRebindSmartFillTarget(data || {});
     if (!retryItemId || !base) {
       state.smartFillRetryItemId = "";
@@ -2129,21 +2208,15 @@
       merged.partial = Boolean(data.partial);
       merged.stopReason = data.stopReason || "";
     }
+    if (baseDraftItems) {
+      nextPreservedDrafts = baseDraftItems.filter(function (draft) {
+        return draft.itemId !== retryItemId;
+      });
+    }
     state.smartFillRetryItemId = "";
     state.smartFillRetryBaseResult = null;
     state.smartFillRetryBaseDraftItems = null;
-    renderExcelSmartFillResult(merged);
-    if (baseDraftItems) {
-      state.smartFillDraftItems = state.smartFillDraftItems.map(function (draft) {
-        var originalDraft = baseDraftItems.filter(function (candidate) {
-          return candidate.itemId === draft.itemId;
-        })[0];
-        return draft.itemId === retryItemId || !originalDraft
-          ? draft
-          : JSON.parse(JSON.stringify(originalDraft));
-      });
-      setSmartFillWriteButtonState();
-    }
+    renderExcelSmartFillResult(merged, nextPreservedDrafts, retryItemId);
   }
 
   function retryExcelSmartFillItem(itemId) {
