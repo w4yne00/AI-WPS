@@ -10,6 +10,7 @@ from app.services.excel.smart_fill import (
     MAX_ITEMS_PER_TASK,
     ExcelSmartFill,
     calculate_smart_fill_batch_size,
+    slice_smart_fill_batch,
     smart_fill_request_fingerprint,
     validate_smart_fill_result_limits,
     validate_smart_fill_request_limits,
@@ -35,9 +36,12 @@ SAFE_ERROR_STATUSES = {
     "EXCEL_SMART_FILL_BATCH_TOO_LARGE": 400,
     "EXCEL_SMART_FILL_ITEMS_TOO_MANY": 400,
     "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG": 400,
+    "EXCEL_SMART_FILL_SOURCE_TRUNCATED": 400,
+    "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID": 400,
     "EXCEL_SMART_FILL_CELL_TEXT_TOO_LONG": 400,
     "EXCEL_SMART_FILL_TEXT_TOO_LARGE": 400,
     "EXCEL_SMART_FILL_REQUEST_TOO_LARGE": 413,
+    "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE": 400,
     "EXCEL_SMART_FILL_JOB_ID_CONFLICT": 409,
     "EXCEL_SMART_FILL_RESULT_TOO_LARGE": 502,
     "EXCEL_SMART_FILL_DEADLINE_EXCEEDED": 504,
@@ -152,12 +156,12 @@ class ExcelSmartFillJobStore:
             )
         request = snapshot["request"]
         start = int(snapshot.get("nextIndex", 0))
-        batch = request.copy(deep=True)
-        batch_size = min(
-            MAX_ITEMS_PER_BATCH,
-            calculate_smart_fill_batch_size(request, start_index=start),
+        batch_size = calculate_smart_fill_batch_size(
+            request,
+            start_index=start,
+            task_auth=snapshot.get("taskAuth"),
         )
-        batch.target.items = request.target.items[start : start + batch_size]
+        batch = slice_smart_fill_batch(request, start, batch_size)
         if not batch.target.items:
             raise AdapterError(
                 "EXCEL_SMART_FILL_JOB_FAILED",
@@ -185,7 +189,10 @@ class ExcelSmartFillJobStore:
         try:
             validate_smart_fill_result_limits({"items": combined})
         except AdapterError as error:
-            error.partial_result = self._partial_result(snapshot, combined, "failed")
+            if error.code != "EXCEL_SMART_FILL_RESULT_TOO_LARGE":
+                error.partial_result = self._partial_result(
+                    snapshot, combined, "failed"
+                )
             raise
         next_index = start + len(batch.target.items)
         batch_count = int(snapshot.get("batchCount", 0)) + 1
