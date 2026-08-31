@@ -1004,3 +1004,232 @@ def test_result_overflow_fails_closed_without_writable_partial():
         if item.get("status") == "completed" and item.get("value")
     ]
     assert completed == []
+
+
+def test_workflow_platform_smart_fill_single_and_batch_item_contracts():
+    class WorkflowSmartFillProvider:
+        def __init__(self, response_items):
+            self.response_items = response_items
+            self.calls = []
+
+        def post_task(self, task_type, trace_id, input_data, query, **kwargs):
+            self.calls.append({"task_type": task_type, "input_data": input_data, "query": query})
+            return {
+                "answer": json.dumps(
+                    {
+                        "schemaVersion": "excel.smart_fill.v1",
+                        "items": self.response_items,
+                    },
+                    ensure_ascii=False,
+                ),
+                "conversation_id": "conv-wf-001",
+                "message_id": "msg-wf-001",
+            }
+
+    client = ProviderClient()
+    client.post_task = WorkflowSmartFillProvider(
+        [{"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "分类A"}]
+    ).post_task
+    payload = _request_payload()
+    payload["target"]["items"] = [payload["target"]["items"][0]]
+    payload["target"]["address"] = "D2"
+    request = models.ExcelSmartFillRequest(**payload)
+    result = client.excel_smart_fill(
+        request,
+        trace_id="trace-wf-single-text",
+        task_auth={
+            "providerBaseUrl": "https://dify.example/v1",
+            "apiKey": "key-wf",
+            "accessMethod": "workflow_platform",
+            "modelConfigurationName": "工作流智能填写",
+        },
+    )
+    assert result["schemaVersion"] == "excel.smart_fill.v1"
+    assert len(result["items"]) == 1
+    assert result["items"][0]["itemId"] == "r2c4"
+    assert result["items"][0]["status"] == "completed"
+    assert result["items"][0]["valueType"] == "text"
+    assert result["items"][0]["value"] == "分类A"
+    assert "工作流平台" in result["provider"]
+    assert result["conversationId"] == "conv-wf-001"
+
+    batch_payload = _aligned_default_payload(3, "smart-fill-wf-batch")
+    batch_request = models.ExcelSmartFillRequest(**batch_payload)
+    client.post_task = WorkflowSmartFillProvider(
+        [
+            {"itemId": "item-000", "status": "completed", "valueType": "text", "value": "文本项"},
+            {"itemId": "item-001", "status": "completed", "valueType": "number", "value": 123.45},
+            {"itemId": "item-002", "status": "insufficient_information", "valueType": "text", "value": ""},
+        ]
+    ).post_task
+    batch_result = client.excel_smart_fill(
+        batch_request,
+        trace_id="trace-wf-batch",
+        task_auth={
+            "providerBaseUrl": "https://dify.example/v1",
+            "apiKey": "key-wf",
+            "accessMethod": "workflow_platform",
+            "modelConfigurationName": "工作流智能填写",
+        },
+    )
+    assert batch_result["schemaVersion"] == "excel.smart_fill.v1"
+    assert len(batch_result["items"]) == 3
+    assert batch_result["items"][0]["value"] == "文本项"
+    assert batch_result["items"][1]["value"] == 123.45
+    assert batch_result["items"][2]["status"] == "insufficient_information"
+    assert batch_result["items"][2]["value"] == ""
+
+
+def test_workflow_platform_rejects_free_text_without_fallback():
+    class RawTextProvider:
+        def post_task(self, task_type, trace_id, input_data, query, **kwargs):
+            return {
+                "answer": "好的，根据来源已为您填写为：分类A",
+                "conversation_id": "conv-wf-002",
+                "message_id": "msg-wf-002",
+            }
+
+    client = ProviderClient()
+    client.post_task = RawTextProvider().post_task
+    request = models.ExcelSmartFillRequest(**_request_payload())
+    with pytest.raises(AdapterError) as error_info:
+        client.excel_smart_fill(
+            request,
+            trace_id="trace-wf-raw-text",
+            task_auth={
+                "providerBaseUrl": "https://dify.example/v1",
+                "apiKey": "key-wf",
+                "accessMethod": "workflow_platform",
+            },
+        )
+    assert error_info.value.code == "MODEL_RESULT_INVALID"
+
+
+def test_workflow_platform_rejects_insufficient_information_with_non_empty_value_and_invalid_types():
+    invalid_cases = [
+        [
+            {"itemId": "r2c4", "status": "insufficient_information", "valueType": "text", "value": "未知"},
+            {"itemId": "r3c4", "status": "completed", "valueType": "text", "value": "有效"},
+        ],
+        [
+            {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效"},
+            {"itemId": "unexpected_item", "status": "completed", "valueType": "text", "value": "有效"},
+        ],
+        [
+            {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效"},
+            {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效"},
+        ],
+        [
+            {"itemId": "r2c4", "status": "completed", "valueType": "number", "value": True},
+            {"itemId": "r3c4", "status": "completed", "valueType": "text", "value": "有效"},
+        ],
+        [
+            {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效", "address": "D2"},
+            {"itemId": "r3c4", "status": "completed", "valueType": "text", "value": "有效"},
+        ],
+    ]
+    for case_items in invalid_cases:
+        class CaseProvider:
+            def post_task(self, task_type, trace_id, input_data, query, **kwargs):
+                return {
+                    "answer": json.dumps({"schemaVersion": "excel.smart_fill.v1", "items": case_items}),
+                    "conversation_id": "c",
+                    "message_id": "m",
+                }
+
+        client = ProviderClient()
+        client.post_task = CaseProvider().post_task
+        request = models.ExcelSmartFillRequest(**_request_payload())
+        with pytest.raises(AdapterError) as error_info:
+            client.excel_smart_fill(
+                request,
+                trace_id="trace-invalid-case",
+                task_auth={
+                    "providerBaseUrl": "https://dify.example/v1",
+                    "apiKey": "key-wf",
+                    "accessMethod": "workflow_platform",
+                },
+            )
+        assert error_info.value.code == "MODEL_RESULT_INVALID"
+
+
+def test_workflow_platform_model_configuration_validation_probe():
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from app.services.model_configurations import (
+        ACCESS_WORKFLOW_PLATFORM,
+        ModelConfigurationStore,
+    )
+
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        key_dir = root / "provider_api_keys"
+        key_dir.mkdir()
+        (key_dir / "excel_smart_fill").write_text("test-key\n", encoding="utf-8")
+        config_path = root / "adapter.json"
+        config_path.write_text("{}", encoding="utf-8")
+        store = ModelConfigurationStore(config_path, key_dir)
+
+        config = store.create_configuration(
+            task_type="excel.smart_fill",
+            name="生产工作流填写",
+            access_method=ACCESS_WORKFLOW_PLATFORM,
+            service_base_url="https://dify.example/v1",
+        )
+        store.replace_api_key(config["id"], "test-key")
+
+        class ValidProbeClient(ProviderClient):
+            def __init__(self):
+                super().__init__()
+                self.model_configuration_store = store
+                self.probe_calls = []
+
+            def post_task(self, task_type, trace_id, input_data, query, **kwargs):
+                self.probe_calls.append(
+                    {
+                        "task_type": task_type,
+                        "input_data": input_data,
+                        "query": query,
+                        "kwargs": kwargs,
+                    }
+                )
+                return {
+                    "answer": json.dumps(
+                        {
+                            "schemaVersion": "excel.smart_fill.v1",
+                            "items": [
+                                {
+                                    "itemId": "item-0001",
+                                    "status": "completed",
+                                    "valueType": "text",
+                                    "value": "已填写",
+                                }
+                            ],
+                        }
+                    ),
+                    "conversation_id": "probe-conv",
+                    "message_id": "probe-msg",
+                }
+
+        client = ValidProbeClient()
+        val_result = client.validate_model_configuration(config["id"], "trace-probe-val")
+        assert val_result["success"] is True
+        assert val_result["taskType"] == "excel.smart_fill"
+        assert val_result["accessMethod"] == "workflow_platform"
+        assert len(client.probe_calls) == 1
+        query = client.probe_calls[0]["query"]
+        assert "item-0001" in query
+        assert "已完成" in query
+
+        class InvalidProbeClient(ProviderClient):
+            def __init__(self):
+                super().__init__()
+                self.model_configuration_store = store
+
+            def post_task(self, task_type, trace_id, input_data, query, **kwargs):
+                return {"answer": "自由文本回答"}
+
+        bad_client = InvalidProbeClient()
+        with pytest.raises(AdapterError) as err:
+            bad_client.validate_model_configuration(config["id"], "trace-probe-bad")
+        assert err.value.code == "MODEL_RESULT_INVALID"
