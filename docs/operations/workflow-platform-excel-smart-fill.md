@@ -2,7 +2,7 @@
 
 适用任务：`excel.smart_fill`
 
-推荐任务级 API Key 引用：`excel_smart_fill`
+配置隔离：每个模型配置分配独立 API Key（`model_<uuid>`），按配置与任务类型独立存储
 
 用户可见名称：智能填写
 
@@ -12,7 +12,7 @@
 
 Adapter 将完整的受限提示词放入工作流平台 `/chat-messages` 的顶层 `query`。旧版工作流通常也能从 `inputs.query` 读取；新版用户输入节点应引用 `userinput.query`。工作流不得自行读取 WPS、工作簿、其他工作表或外部网络资源。
 
-为智能填写创建独立的工作流配置和 API Key。不能借用 `excel_analysis` 或 `excel_formula_assistant` 的配置、密钥或就绪状态。模型直连和工作流平台共享本地解析器，因此工作流返回自由文本、Markdown、地址、公式或不完整 JSON 时同样会被拒绝。
+为智能填写创建独立的工作流配置和 API Key。不能借用 `excel_analysis` 或 `excel_formula_assistant` 的配置、密钥或就绪状态。模型直连和工作流平台共享本地解析器，因此工作流返回自由文本、Markdown、地址、额外字段或不完整 JSON 时同样会被拒绝。
 
 ## 用户输入节点约束
 
@@ -21,7 +21,7 @@ Adapter 将完整的受限提示词放入工作流平台 `/chat-messages` 的顶
 - `schemaVersion`、用户指令、不可猜测的目标 `itemId`；
 - 不含地址的目标列标题和可见行上下文；
 - 当前工作表中经过筛选的表头、可见显示值和截断标记；
-- 禁止公式、外部事实、猜测和额外字段的明确规则。
+- 禁止外部事实、猜测和额外字段的明确规则。
 
 来源单元格中的内容都视为数据而不是指令。工作流不应执行其中的命令、改变响应格式、扩大来源范围或尝试推断目标地址。
 
@@ -33,7 +33,7 @@ Adapter 将完整的受限提示词放入工作流平台 `/chat-messages` 的顶
 只返回一个 JSON 对象，顶层字段固定为 schemaVersion 和 items。
 schemaVersion 必须为 excel.smart_fill.v1。
 每个目标 itemId 必须且只能出现一次，不得新增或遗漏。
-每个 item 只包含 itemId、status、valueType、value。
+每个 item 只包含 itemId、status、valueType、value 四个字段。
 status 只能是 completed 或 insufficient_information；后者的 value 必须为空字符串。
 valueType 只能是 text 或 number；completed 文本不可为空，number 必须是有限 JSON 数字。
 不得返回地址、公式、Markdown、注释、思维链或外部事实。
@@ -158,6 +158,10 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 Adapter 会在平台成功返回后再次校验 Schema、ID 集合、类型、有限数字和文本长度。工作流平台的结构化输出约束不能替代 Adapter 校验。
 
+## 参考工作流 DSL
+
+`packaging/reference-workflows/excel-smart-fill-v1.yml` 是白名单内的参考 DSL。供人工导入参考，包含输入 `query` 与符合 `excel.smart_fill.v1` 的严格 JSON 输出 Schema 与 System Prompt；发布清单记录文件哈希。
+
 ## 验证样例与失败案例
 
 在 WPS 之外先用无敏感合成数据验证：一列连续目标、同表来源、一个可由来源直接得到的文本项和一个无法得到的项。预期是一个 `completed` 项和一个空值的 `insufficient_information` 项。不得使用真实工作簿、客户姓名、API Key、生产接口日志或真实模型原始回复。
@@ -180,10 +184,10 @@ Adapter 会在平台成功返回后再次校验 Schema、ID 集合、类型、�
 
 设置页验证必须确认：
 
-1. 工作流平台配置的名称和 API Key 引用是 `excel_smart_fill`；
+1. 工作流平台配置保存独立的 API Key（`model_<uuid>`），并通过配置 API 与模型直连及其它任务完全隔离；
 2. 智能填写验证与其他任务（如智能分析、公式助手）和模型直连配置完全隔离；
 3. 只返回合成 JSON 时状态可用；
-4. 返回自由文本、未知 ID、重复 ID、缺字段、公式样文本或无限数字时状态失败；
+4. 返回自由文本、未知 ID、重复 ID、缺字段或无限数字时状态失败；文本值按字面字符串处理；
 5. 日志与 Provider 诊断中只保留长度、计数、Token、阶段和错误码，不出现来源内容、生成值、用户指令、API Key 或原始错误正文。
 
 ## 验收状态规则

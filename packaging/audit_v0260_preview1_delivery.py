@@ -147,6 +147,14 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
         }
     ):
         raise DeliveryFailure("V0260_FORMAT_REVIEW_POLICY_INVALID")
+    smart_fill_assets = manifest.get("excelSmartFillAssets", {})
+    if (
+        smart_fill_assets.get("operationsGuide") != "docs/operations/model-excel-smart-fill-contract.md"
+        or smart_fill_assets.get("workflowGuide") != "docs/operations/workflow-platform-excel-smart-fill.md"
+        or smart_fill_assets.get("referenceWorkflow") != "reference-workflows/excel-smart-fill-v1.yml"
+        or smart_fill_assets.get("systemPrompt") != "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
+    ):
+        raise DeliveryFailure("V0260_SMART_FILL_ASSETS_INVALID")
     visual_policy = manifest.get("visualPolicy", {})
     if (
         visual_policy.get("enabledByDefault") is not True
@@ -297,6 +305,18 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_COMPENSATION_CONTRACT_MISSING")
 
 
+def audit_smart_fill_reference_workflow(root: Path) -> None:
+    ref_workflow = Path(root) / "reference-workflows/excel-smart-fill-v1.yml"
+    if not ref_workflow.is_file():
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_MISSING")
+    try:
+        ref_text = ref_workflow.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_MISSING") from exc
+    if "excel.smart_fill.v1" not in ref_text:
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID")
+
+
 def audit_installer(root: Path) -> None:
     installer = root / "installer/install_ai_wps.sh"
     content = installer.read_text(encoding="utf-8")
@@ -427,6 +447,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_manifest(root, manifest)
     audit_prompt_manifest(root, manifest)
     audit_smart_fill_write_contract(root)
+    audit_smart_fill_reference_workflow(root)
     audit_installer(root)
     audit_lifecycle(root)
     audit_current_identity_references(root)

@@ -34,6 +34,11 @@
       "target": "docs/operations/workflow-platform-excel-smart-fill.md"
     },
     {
+      "type": "file",
+      "source": "packaging/reference-workflows/excel-smart-fill-v1.yml",
+      "target": "reference-workflows/excel-smart-fill-v1.yml"
+    },
+    {
       "type": "tree",
       "source": "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
       "target": "packages/wps-ai-assistant-et_1.0.0",

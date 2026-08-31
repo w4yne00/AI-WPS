@@ -74,6 +74,7 @@
   "excelSmartFillAssets": {
     "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
     "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
+    "referenceWorkflow": "reference-workflows/excel-smart-fill-v1.yml",
     "systemPrompt": "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
   },
   "pptStructureReviewAssets": {
