@@ -635,6 +635,41 @@ function testSmartFillSanitizeHelperBlanksOverlappingTargetColumn() {
   assert.notStrictEqual(sanitized.snapshotHash, "deadbeef");
 }
 
+function testSmartFillSanitizeFailsClosedOnUnparseableCustomSourceAddress() {
+  assert.throws(
+    () => helpers.sanitizeExcelSmartFillSource({
+      sheetName: "目标表",
+      address: "$D:$D",
+      headers: ["摘要"],
+      rows: [["旧D2"]],
+      rowCount: 1,
+      columnCount: 1,
+      truncated: false
+    }, {
+      sheetName: "目标表",
+      items: [{ row: 2, column: 4 }]
+    }),
+    /来源/
+  );
+}
+
+function testSmartFillSanitizeBlanksDefaultSourceWhenAddressIsEmpty() {
+  const sanitized = helpers.sanitizeExcelSmartFillSource({
+    sheetName: "目标表",
+    address: "",
+    headers: ["名称", "部门", "说明", "摘要"],
+    rows: [["甲", "研发", "第一项", "旧D2"]],
+    rowCount: 1,
+    columnCount: 4,
+    truncated: false
+  }, {
+    sheetName: "目标表",
+    items: [{ row: 2, column: 4 }]
+  });
+  assert.strictEqual(sanitized.rows[0][3], "");
+  assert.ok(!JSON.stringify(sanitized.rows).includes("旧D2"));
+}
+
 function testSmartFillUiContract() {
   [
     'id="excel-smart-fill-options"',
@@ -662,11 +697,15 @@ function testSmartFillUiContract() {
   assert.ok(js.includes("describeExcelSmartFillHostCell"));
   assert.ok(js.includes("validateExcelSmartFillInstruction"));
   assert.ok(js.includes("sanitizeExcelSmartFillSource"));
+  assert.ok(js.includes("智能填写来源校验组件不可用"));
+  assert.ok(js.includes("EXCEL_SMART_FILL_SOURCE_TRUNCATED"));
   [
     "EXCEL_SMART_FILL_TARGET_SHAPE_INVALID",
     "EXCEL_SMART_FILL_CROSS_SHEET",
     "EXCEL_SMART_FILL_INSTRUCTION_REQUIRED",
-    "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG"
+    "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG",
+    "EXCEL_SMART_FILL_SOURCE_TRUNCATED",
+    "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID"
   ].forEach((code) => assert.ok(js.includes(code), `missing smart fill fatal error code: ${code}`));
   assert.ok(!/\.Formula\s*=/.test(js), "smart fill taskpane must never write Formula");
 }
@@ -690,6 +729,8 @@ testSmartFillInstructionRejectsMoreThan4000CodePoints();
 testSmartFillPreviewKeepsFailedInsufficientAndCompletedStatuses();
 testSmartFillRejectsNonContiguousSourceAreas();
 testSmartFillSanitizeHelperBlanksOverlappingTargetColumn();
+testSmartFillSanitizeFailsClosedOnUnparseableCustomSourceAddress();
+testSmartFillSanitizeBlanksDefaultSourceWhenAddressIsEmpty();
 testSmartFillUiContract();
 
 console.log("Excel smart fill tests passed");

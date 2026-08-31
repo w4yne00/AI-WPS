@@ -56,11 +56,20 @@
   }
 
   function sanitizeExcelSmartFillSource(source, target) {
-    var origin = parseExcelA1Cell(String(source && source.address || "").split(":")[0]);
+    var address = String(source && source.address || "").trim();
+    var origin;
     var blocked = {};
     var items = target && Array.isArray(target.items) ? target.items : [];
-    if (!source || !origin) {
+    if (!source) {
       return source;
+    }
+    if (!address) {
+      origin = { row: 1, column: 1 };
+    } else {
+      origin = parseExcelA1Cell(address.split(":")[0]);
+      if (!origin) {
+        throw new Error("智能填写来源必须是可解析的连续区域，不能使用整列或无法定位的地址。");
+      }
     }
     items.forEach(function (item) {
       blocked[Number(item.row) + "," + Number(item.column)] = true;

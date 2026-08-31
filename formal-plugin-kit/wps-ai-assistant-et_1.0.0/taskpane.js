@@ -1321,9 +1321,10 @@
       if (state.smartFillTarget && state.smartFillTarget.sheetName !== payload.source.sheetName) {
         throw new Error("来源区域必须与目标区域位于同一工作表。" );
       }
-      state.smartFillSource = helpers.sanitizeExcelSmartFillSource
-        ? helpers.sanitizeExcelSmartFillSource(payload.source, state.smartFillTarget)
-        : payload.source;
+      if (!helpers.sanitizeExcelSmartFillSource) {
+        throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
+      }
+      state.smartFillSource = helpers.sanitizeExcelSmartFillSource(payload.source, state.smartFillTarget);
       state.smartFillWorkbookId = state.smartFillWorkbookId || payload.workbookId || "";
       state.smartFillResult = null;
       state.smartFillPreview = null;
@@ -2867,6 +2868,7 @@
       error.adapterCode === "EXCEL_SMART_FILL_BATCH_TOO_LARGE" ||
       error.adapterCode === "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG" ||
       error.adapterCode === "EXCEL_SMART_FILL_SOURCE_TRUNCATED" ||
+      error.adapterCode === "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID" ||
       error.adapterCode === "EXCEL_SMART_FILL_CELL_TEXT_TOO_LONG" ||
       error.adapterCode === "EXCEL_SMART_FILL_TEXT_TOO_LARGE" ||
       error.adapterCode === "EXCEL_SMART_FILL_REQUEST_TOO_LARGE" ||

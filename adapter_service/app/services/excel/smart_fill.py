@@ -1,8 +1,9 @@
 import hashlib
 import json
 import math
+import re
 from copy import deepcopy
-from typing import Callable, Dict, Iterable, List, Optional
+from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import ExcelSmartFillRequest
@@ -447,3 +448,56 @@ def _validate_smart_fill_semantics(request: ExcelSmartFillRequest) -> None:
             "目标列标题不足以确定填写意图，请补充用户指令。",
             status_code=400,
         )
+    _blank_target_current_values(request)
+
+
+_A1_ORIGIN = re.compile(r"^\$?([A-Za-z]+)\$?([0-9]+)$")
+
+
+def _parse_a1_origin(address):
+    # type: (str) -> Optional[Tuple[int, int]]
+    raw = str(address or "").strip()
+    if "!" in raw:
+        raw = raw.split("!")[-1]
+    first = raw.split(":")[0].strip()
+    if not first:
+        return (1, 1)
+    match = _A1_ORIGIN.match(first)
+    if not match:
+        return None
+    column = 0
+    for char in match.group(1).upper():
+        column = column * 26 + (ord(char) - 64)
+    return (int(match.group(2)), column)
+
+
+def _blank_target_current_values(request):
+    # type: (ExcelSmartFillRequest) -> None
+    source = request.source
+    items = request.target.items
+    origin = _parse_a1_origin(source.address)
+    if origin is None:
+        raise AdapterError(
+            "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID",
+            "智能填写来源必须是可解析的连续区域，不能使用整列或无法定位的地址。",
+            status_code=400,
+        )
+    origin_row, origin_column = origin
+    blocked = set((item.row, item.column) for item in items)
+
+    def blank_at(sheet_row, sheet_column, value):
+        if (sheet_row, sheet_column) in blocked:
+            return ""
+        return value
+
+    source.headers = [
+        blank_at(origin_row, origin_column + index, value)
+        for index, value in enumerate(source.headers)
+    ]
+    source.rows = [
+        [
+            blank_at(origin_row + 1 + row_index, origin_column + column_index, value)
+            for column_index, value in enumerate(row)
+        ]
+        for row_index, row in enumerate(source.rows)
+    ]
