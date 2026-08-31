@@ -16,6 +16,19 @@ BASELINE = ROOT / (
     "dist-phase1-delivery-kit/"
     "ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"
 )
+EXPECTED_TASKS = frozenset(
+    {
+        "word.smart_write",
+        "word.smart_imitation",
+        "word.document_review",
+        "word.format_review",
+        "excel.analysis",
+        "excel.formula_assistant",
+        "excel.smart_fill",
+        "ppt.slide_assistant",
+        "ppt.structure_review",
+    }
+)
 
 
 def _installer_environment(target_home, **updates):
@@ -763,7 +776,7 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
     prompt_manifest = json.loads(prompt_manifest_path.read_text(encoding="utf-8"))
     assert prompt_manifest["release"] == "0.26.0-preview.1"
     assert len(prompt_manifest["tasks"]) == 9
-    assert "excel.smart_fill" in prompt_manifest["tasks"]
+    assert set(prompt_manifest["tasks"].keys()) == EXPECTED_TASKS
 
     smart_fill_prompt = prompt_manifest_path.parent / prompt_manifest["tasks"]["excel.smart_fill"]["file"]
     assert smart_fill_prompt.is_file()
@@ -782,6 +795,143 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
 
     assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill.py").is_file()
     assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill_jobs.py").is_file()
+
+
+def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    release_manifest_path = delivery / "release-manifest.json"
+    original_release_manifest_text = release_manifest_path.read_text(encoding="utf-8")
+    manifest = json.loads(original_release_manifest_text)
+    prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
+    original_manifest_text = prompt_manifest_path.read_text(encoding="utf-8")
+
+    # Tamper 1: Replace word.smart_write with unrelated.task (maintaining count=9, rewrite hashes)
+    tampered_data = json.loads(original_manifest_text)
+    item = tampered_data["tasks"].pop("word.smart_write")
+    tampered_data["tasks"]["word.unrelated_task"] = item
+    prompt_manifest_path.write_text(json.dumps(tampered_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=True,
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PROMPT_TASKS_MISMATCH" in rejected.stdout
+
+    # Tamper 2: Delete word.smart_write in prompt manifest only (count becomes 8)
+    tampered_data = json.loads(original_manifest_text)
+    del tampered_data["tasks"]["word.smart_write"]
+    prompt_manifest_path.write_text(json.dumps(tampered_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PROMPT_TASK_COUNT_INVALID" in rejected.stdout
+
+    # Tamper 3: Delete word.smart_write and adjust release manifest count to 8 (so phase1 passes, but preview audit fails)
+    tampered_manifest = json.loads(original_release_manifest_text)
+    tampered_manifest["adapter"]["systemPromptCount"] = 8
+    release_manifest_path.write_text(json.dumps(tampered_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=True,
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_ADAPTER_IDENTITY_INVALID" in rejected.stdout
+
+    prompt_manifest_path.write_text(original_manifest_text, encoding="utf-8")
+    release_manifest_path.write_text(original_release_manifest_text, encoding="utf-8")
+
+
+def test_preview_audit_rejects_corrupted_plugin_js_syntax(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    target_js = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane.js"
+    original_content = target_js.read_text(encoding="utf-8")
+
+    target_js.write_text(original_content + "\nfunction ( {\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=True,
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PLUGIN_JS_SYNTAX_INVALID packages/wps-ai-assistant-et_1.0.0/taskpane.js" in rejected.stdout
+
+    target_js.write_text(original_content, encoding="utf-8")
+
+
+def test_preview_assembled_plugins_pass_node_contract_suite(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    env = {
+        **os.environ,
+        "AI_WPS_HASH_CONTRACT_PYTHON": sys.executable,
+        "AI_WPS_WORD_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant_1.0.0"),
+        "AI_WPS_ET_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-et_1.0.0"),
+        "AI_WPS_PPT_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-wpp_1.0.0"),
+        "AI_WPS_DELIVERY_ROOT": str(delivery),
+    }
+    result = subprocess.run(
+        ["node", "--test"] + [str(p) for p in sorted((ROOT / "formal-plugin-kit/tests").glob("*.test.js"))],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_preview_assembled_plugins_fail_node_contract_when_corrupted(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_helpers = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane-helpers.js"
+    original = target_helpers.read_text(encoding="utf-8")
+    target_helpers.write_text('throw new Error("delivery plugin corrupted");\n' + original, encoding="utf-8")
+    env = {
+        **os.environ,
+        "AI_WPS_HASH_CONTRACT_PYTHON": sys.executable,
+        "AI_WPS_WORD_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant_1.0.0"),
+        "AI_WPS_ET_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-et_1.0.0"),
+        "AI_WPS_PPT_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-wpp_1.0.0"),
+        "AI_WPS_DELIVERY_ROOT": str(delivery),
+    }
+    result = subprocess.run(
+        ["node", "--test", str(ROOT / "formal-plugin-kit/tests/excel-smart-fill.test.js")],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "delivery plugin corrupted" in result.stderr or "delivery plugin corrupted" in result.stdout
 
 
 def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
@@ -864,4 +1014,3 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     assert "九类任务" in acceptance or "九任务" in acceptance
     assert "单列连续区域" in acceptance or "单列" in acceptance
     assert "失败补偿" in acceptance
-

@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -19,6 +20,19 @@ BASELINE_ARCHIVE_RE = re.compile(
     r"^ai-wps-phase1-delivery-[0-9]{8}(?:-[0-9a-f]{7,40})?-v0253\.tar\.gz$"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_TASKS = frozenset(
+    {
+        "word.smart_write",
+        "word.smart_imitation",
+        "word.document_review",
+        "word.format_review",
+        "excel.analysis",
+        "excel.formula_assistant",
+        "excel.smart_fill",
+        "ppt.slide_assistant",
+        "ppt.structure_review",
+    }
+)
 FORBIDDEN_OUTPUT_PATHS = {
     "installer/install_phase1.sh",
     "scripts/phase1_smoke_test.sh",
@@ -252,12 +266,36 @@ def audit_prompt_manifest(root: Path, manifest: Dict) -> None:
     tasks = prompt_manifest.get("tasks", {})
     if not isinstance(tasks, dict) or len(tasks) != 9:
         raise DeliveryFailure("V0260_PROMPT_TASK_COUNT_INVALID")
+    if set(tasks.keys()) != EXPECTED_TASKS:
+        raise DeliveryFailure("V0260_PROMPT_TASKS_MISMATCH")
     for name, item in tasks.items():
         if not isinstance(item, dict):
             raise DeliveryFailure("V0260_PROMPT_ENTRY_INVALID {0}".format(name))
         prompt_path = path.parent / str(item.get("file", ""))
         if not prompt_path.is_file() or sha256(prompt_path) != item.get("sha256"):
             raise DeliveryFailure("V0260_PROMPT_HASH_INVALID {0}".format(name))
+
+
+def audit_plugin_javascript(root: Path) -> None:
+    js_files = sorted(root.glob("packages/**/*.js"))
+    if not js_files:
+        raise DeliveryFailure("V0260_PLUGIN_JS_MISSING")
+    for js_path in js_files:
+        try:
+            result = subprocess.run(
+                ["node", "--check", str(js_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise DeliveryFailure("V0260_NODE_CHECK_UNAVAILABLE") from exc
+        if result.returncode != 0:
+            raise DeliveryFailure(
+                "V0260_PLUGIN_JS_SYNTAX_INVALID {0}".format(
+                    js_path.relative_to(root).as_posix()
+                )
+            )
 
 
 def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
@@ -453,6 +491,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_current_identity_references(root)
     audit_status(root, manifest)
     audit_hashes(root)
+    audit_plugin_javascript(root)
     if archive is not None or checksum_file is not None:
         if archive is None or checksum_file is None:
             raise DeliveryFailure("V0260_ARCHIVE_CHECKSUM_PAIR_REQUIRED")

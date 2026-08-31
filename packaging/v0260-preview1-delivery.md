@@ -45,4 +45,3 @@ bash scripts/ai_wps_smoke_test.sh
 - **写入失败补偿**：写入过程发生宿主错误时，逆序恢复本次已改动单元格并校验恢复结果；补偿失败准确列出人工核对地址；不提供撤销（Undo/OnUndo），成功后销毁临时快照并锁定预览。
 - **一次性安装断代**：默认安装根为 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据。
 - **验收状态边界**：自动化门禁通过后仅记录 `candidate`，目标机验收保持 `manual-pending`（绑定 Issue #120），不提前宣称通过真实 WPS 或现场工作流验收。
-

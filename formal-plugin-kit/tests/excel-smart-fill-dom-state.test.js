@@ -1,6 +1,8 @@
 const assert = require("assert");
+const path = require("path");
 
-const helpers = require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js");
+const etRoot = process.env.AI_WPS_ET_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0");
+const helpers = require(path.join(etRoot, "taskpane-helpers.js"));
 
 function testDraftMergingBeforeRenderEnsuresDomMemorySync() {
   const initialResult = {

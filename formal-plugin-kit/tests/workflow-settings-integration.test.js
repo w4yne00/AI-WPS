@@ -7,17 +7,17 @@ const ROOT = path.resolve(__dirname, "..");
 const hosts = [
   {
     name: "Word",
-    dir: "wps-ai-assistant_1.0.0",
+    dir: process.env.AI_WPS_WORD_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant_1.0.0"),
     tasks: ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review"]
   },
   {
     name: "Excel",
-    dir: "wps-ai-assistant-et_1.0.0",
+    dir: process.env.AI_WPS_ET_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-et_1.0.0"),
     tasks: ["excel.analysis", "excel.formula_assistant"]
   },
   {
     name: "PPT",
-    dir: "wps-ai-assistant-wpp_1.0.0",
+    dir: process.env.AI_WPS_PPT_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-wpp_1.0.0"),
     tasks: ["ppt.slide_assistant", "ppt.structure_review"]
   }
 ];
@@ -54,7 +54,7 @@ function loadWorkflowHelpers(hostRoot) {
 }
 
 hosts.forEach((host) => {
-  const hostRoot = path.join(ROOT, host.dir);
+  const hostRoot = path.resolve(host.dir);
   const html = fs.readFileSync(path.join(hostRoot, "taskpane.html"), "utf8");
   const css = fs.readFileSync(path.join(hostRoot, "taskpane.css"), "utf8");
   const js = fs.readFileSync(path.join(hostRoot, "taskpane.js"), "utf8");
@@ -121,7 +121,7 @@ hosts.forEach((host) => {
   });
 });
 
-const wordRoot = path.join(ROOT, hosts[0].dir);
+const wordRoot = path.resolve(hosts[0].dir);
 const wordHtml = fs.readFileSync(path.join(wordRoot, "taskpane.html"), "utf8");
 const wordCss = fs.readFileSync(path.join(wordRoot, "taskpane.css"), "utf8");
 const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
@@ -144,7 +144,7 @@ assert.ok(wordCss.includes(".workflow-settings-subpage"), "Word missing dynamic 
 assert.ok(wordCss.includes(".workflow-profile-empty"), "Word missing empty profile state");
 
 hosts.slice(1).forEach((host) => {
-  const hostRoot = path.join(ROOT, host.dir);
+  const hostRoot = path.resolve(host.dir);
   const html = fs.readFileSync(path.join(hostRoot, "taskpane.html"), "utf8");
   const css = fs.readFileSync(path.join(hostRoot, "taskpane.css"), "utf8");
   [
@@ -167,7 +167,7 @@ hosts.slice(1).forEach((host) => {
 });
 
 const excelHtml = fs.readFileSync(
-  path.join(ROOT, "wps-ai-assistant-et_1.0.0", "taskpane.html"),
+  path.join(path.resolve(hosts[1].dir), "taskpane.html"),
   "utf8"
 );
 assert.ok(excelHtml.includes('id="workflow-delete-dialog"'), "Excel must use an explicit delete dialog");

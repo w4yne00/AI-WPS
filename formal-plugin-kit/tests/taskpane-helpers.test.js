@@ -1,6 +1,10 @@
 const assert = require("assert");
-const helpers = require("../wps-ai-assistant_1.0.0/taskpane-helpers.js");
-const excelHelpers = require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js");
+const path = require("path");
+
+const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant_1.0.0");
+const etRoot = process.env.AI_WPS_ET_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0");
+const helpers = require(path.join(wordRoot, "taskpane-helpers.js"));
+const excelHelpers = require(path.join(etRoot, "taskpane-helpers.js"));
 
 function assertSettingsStateContract(targetHelpers) {
   const baseInput = {

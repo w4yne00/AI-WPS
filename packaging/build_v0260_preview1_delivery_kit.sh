@@ -132,7 +132,13 @@ if ! command -v node >/dev/null 2>&1; then
   echo "plugin_contract_runtime_required=node"
   exit 1
 fi
-AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" node --test "$ROOT_DIR"/formal-plugin-kit/tests/*.test.js
+find "$TMP_DIR/packages" -type f -name '*.js' -exec node --check {} \;
+AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" \
+AI_WPS_WORD_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant_1.0.0" \
+AI_WPS_ET_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant-et_1.0.0" \
+AI_WPS_PPT_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant-wpp_1.0.0" \
+AI_WPS_DELIVERY_ROOT="$TMP_DIR" \
+node --test "$ROOT_DIR"/formal-plugin-kit/tests/*.test.js
 echo "plugin_contract=passed"
 
 find "$TMP_DIR" -type f -name '*.sh' -exec chmod 755 {} \;

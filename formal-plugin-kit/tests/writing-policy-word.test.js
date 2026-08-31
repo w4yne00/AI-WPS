@@ -1,15 +1,16 @@
 const assert = require("assert");
 const fs = require("fs");
+const path = require("path");
 
-const wordRoot = "formal-plugin-kit/wps-ai-assistant_1.0.0";
-const excelRoot = "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
-const pptRoot = "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
-const wordHtml = fs.readFileSync(`${wordRoot}/taskpane.html`, "utf8");
-const wordCss = fs.readFileSync(`${wordRoot}/taskpane.css`, "utf8");
-const wordJs = fs.readFileSync(`${wordRoot}/taskpane.js`, "utf8");
-const excelHtml = fs.readFileSync(`${excelRoot}/taskpane.html`, "utf8");
-const pptHtml = fs.readFileSync(`${pptRoot}/taskpane.html`, "utf8");
-const helpers = require(`../wps-ai-assistant_1.0.0/taskpane-helpers.js`);
+const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant_1.0.0");
+const excelRoot = process.env.AI_WPS_ET_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0");
+const pptRoot = process.env.AI_WPS_PPT_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-wpp_1.0.0");
+const wordHtml = fs.readFileSync(path.join(wordRoot, "taskpane.html"), "utf8");
+const wordCss = fs.readFileSync(path.join(wordRoot, "taskpane.css"), "utf8");
+const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
+const excelHtml = fs.readFileSync(path.join(excelRoot, "taskpane.html"), "utf8");
+const pptHtml = fs.readFileSync(path.join(pptRoot, "taskpane.html"), "utf8");
+const helpers = require(path.join(wordRoot, "taskpane-helpers.js"));
 
 function functionSource(name) {
   const start = wordJs.indexOf(`function ${name}(`);

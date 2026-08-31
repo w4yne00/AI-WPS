@@ -1,5 +1,6 @@
 const assert = require("assert");
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
 
 function functionSource(source, name) {
@@ -102,11 +103,15 @@ const commonContext = {
   }
 };
 
+const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant_1.0.0";
+const etRoot = process.env.AI_WPS_ET_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
+const pptRoot = process.env.AI_WPS_PPT_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
+
 [
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.js"
-].forEach((path) => {
-  const source = fs.readFileSync(path, "utf8");
+  path.join(wordRoot, "taskpane.js"),
+  path.join(etRoot, "taskpane.js")
+].forEach((filePath) => {
+  const source = fs.readFileSync(filePath, "utf8");
   const render = vm.runInNewContext(
     `(${functionSource(source, "renderProviderDiagnostics")})`,
     commonContext
@@ -115,7 +120,7 @@ const commonContext = {
 });
 
 const pptSource = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/taskpane.js",
+  path.join(pptRoot, "taskpane.js"),
   "utf8"
 );
 const renderPpt = vm.runInNewContext(

@@ -1,13 +1,15 @@
 const assert = require("assert");
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
 
+const root = process.env.AI_WPS_PPT_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-wpp_1.0.0");
 const source = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js",
+  path.join(root, "taskpane-helpers.js"),
   "utf8"
 );
 const taskpaneSource = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/taskpane.js",
+  path.join(root, "taskpane.js"),
   "utf8"
 );
 const context = { window: {} };

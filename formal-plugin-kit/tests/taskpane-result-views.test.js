@@ -3,14 +3,16 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const helpers = require("../wps-ai-assistant_1.0.0/taskpane-helpers.js");
-const excelHelpers = require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js");
+const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant_1.0.0");
+const etRoot = process.env.AI_WPS_ET_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0");
+const pptRoot = process.env.AI_WPS_PPT_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-wpp_1.0.0");
+const helpers = require(path.join(wordRoot, "taskpane-helpers.js"));
+const excelHelpers = require(path.join(etRoot, "taskpane-helpers.js"));
 
-const ROOT = path.resolve(__dirname, "..");
 const pptContext = { window: {} };
 vm.createContext(pptContext);
 vm.runInContext(
-  fs.readFileSync(path.join(ROOT, "wps-ai-assistant-wpp_1.0.0", "taskpane-helpers.js"), "utf8"),
+  fs.readFileSync(path.join(pptRoot, "taskpane-helpers.js"), "utf8"),
   pptContext
 );
 const pptHelpers = pptContext.window.WpsAiPptHelpers;
@@ -274,11 +276,11 @@ function testExcelFormulaAssistantHasNoAnalysisSwitch() {
 function testHostMarkupKeepsExcelSwitchNames() {
   // Break: Excel HTML buttons renamed to 预览/纯文本.
   const excelHtml = fs.readFileSync(
-    path.join(ROOT, "wps-ai-assistant-et_1.0.0", "taskpane.html"),
+    path.join(etRoot, "taskpane.html"),
     "utf8"
   );
   const wordHtml = fs.readFileSync(
-    path.join(ROOT, "wps-ai-assistant_1.0.0", "taskpane.html"),
+    path.join(wordRoot, "taskpane.html"),
     "utf8"
   );
 
@@ -452,7 +454,7 @@ function testPptPreviewTablesAreReadableBlocks() {
 function testPptStructureReviewAreaStaysSeparate() {
   // Break: structure review result is folded into 预览/纯文本.
   const html = fs.readFileSync(
-    path.join(ROOT, "wps-ai-assistant-wpp_1.0.0", "taskpane.html"),
+    path.join(pptRoot, "taskpane.html"),
     "utf8"
   );
   const structureStart = html.indexOf('id="structure-result-section"');

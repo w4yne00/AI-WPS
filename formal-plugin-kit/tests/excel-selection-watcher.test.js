@@ -1,11 +1,12 @@
 const assert = require("assert");
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
 
-const root = "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
-const html = fs.readFileSync(`${root}/taskpane.html`, "utf8");
-const js = fs.readFileSync(`${root}/taskpane.js`, "utf8");
-const helpers = require(`../wps-ai-assistant-et_1.0.0/taskpane-helpers.js`);
+const root = process.env.AI_WPS_ET_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0");
+const html = fs.readFileSync(path.join(root, "taskpane.html"), "utf8");
+const js = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");
+const helpers = require(path.join(root, "taskpane-helpers.js"));
 
 function functionSource(name) {
   const start = js.indexOf(`function ${name}(`);

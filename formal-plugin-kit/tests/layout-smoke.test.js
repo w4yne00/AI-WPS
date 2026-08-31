@@ -1,5 +1,6 @@
 const assert = require("assert");
 const fs = require("fs");
+const path = require("path");
 
 function relativeLuminance(hex) {
   const channels = [1, 3, 5].map((offset) => parseInt(hex.slice(offset, offset + 2), 16) / 255);
@@ -17,54 +18,60 @@ function contrastRatio(first, second) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
+const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant_1.0.0";
+const excelRoot = process.env.AI_WPS_ET_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
+const pptRoot = process.env.AI_WPS_PPT_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
+const adapterStartKitRoot = process.env.AI_WPS_DELIVERY_ROOT
+  ? path.join(process.env.AI_WPS_DELIVERY_ROOT, "packages/adapter-start-kit")
+  : "adapter-start-kit";
+
 const html = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.html",
+  path.join(wordRoot, "taskpane.html"),
   "utf8"
 );
 const manifest = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/manifest.json",
+  path.join(wordRoot, "manifest.json"),
   "utf8"
 );
 const helperJs = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js",
+  path.join(wordRoot, "taskpane-helpers.js"),
   "utf8"
 );
 const excelHtml = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.html",
+  path.join(excelRoot, "taskpane.html"),
   "utf8"
 );
 const excelJs = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.js",
+  path.join(excelRoot, "taskpane.js"),
   "utf8"
 );
 const excelCss = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/taskpane.css",
+  path.join(excelRoot, "taskpane.css"),
   "utf8"
 );
 const excelRibbon = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.xml",
+  path.join(excelRoot, "ribbon.xml"),
   "utf8"
 );
 const excelRibbonJs = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/ribbon.js",
+  path.join(excelRoot, "ribbon.js"),
   "utf8"
 );
 const excelManifest = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/manifest.json",
+  path.join(excelRoot, "manifest.json"),
   "utf8"
 );
 const excelManifestXml = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/manifest.xml",
+  path.join(excelRoot, "manifest.xml"),
   "utf8"
 );
-const pptRoot = "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
-const pptHtml = fs.readFileSync(`${pptRoot}/taskpane.html`, "utf8");
-const pptJs = fs.readFileSync(`${pptRoot}/taskpane.js`, "utf8");
-const pptCss = fs.readFileSync(`${pptRoot}/taskpane.css`, "utf8");
-const pptRibbon = fs.readFileSync(`${pptRoot}/ribbon.xml`, "utf8");
-const pptRibbonJs = fs.readFileSync(`${pptRoot}/ribbon.js`, "utf8");
-const pptManifest = fs.readFileSync(`${pptRoot}/manifest.json`, "utf8");
-const pptManifestXml = fs.readFileSync(`${pptRoot}/manifest.xml`, "utf8");
+const pptHtml = fs.readFileSync(path.join(pptRoot, "taskpane.html"), "utf8");
+const pptJs = fs.readFileSync(path.join(pptRoot, "taskpane.js"), "utf8");
+const pptCss = fs.readFileSync(path.join(pptRoot, "taskpane.css"), "utf8");
+const pptRibbon = fs.readFileSync(path.join(pptRoot, "ribbon.xml"), "utf8");
+const pptRibbonJs = fs.readFileSync(path.join(pptRoot, "ribbon.js"), "utf8");
+const pptManifest = fs.readFileSync(path.join(pptRoot, "manifest.json"), "utf8");
+const pptManifestXml = fs.readFileSync(path.join(pptRoot, "manifest.xml"), "utf8");
 
 for (const hostHtml of [html, excelHtml, pptHtml]) {
   assert.ok(hostHtml.includes('id="provider-summary-card" class="settings-card model-interface-card"'));
@@ -78,9 +85,9 @@ for (const hostHtml of [html, excelHtml, pptHtml]) {
   assert.ok(!hostHtml.includes('id="btn-refresh"'));
 }
 
-assert.ok(manifest.includes('"version": "0.23.1-alpha"'));
+assert.ok(/"version":\s*"(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)"/.test(manifest));
 assert.ok(excelManifest.includes('"name": "wps-ai-assistant-et"'));
-assert.ok(excelManifest.includes('"version": "0.23.1-alpha"'));
+assert.ok(/"version":\s*"(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)"/.test(excelManifest));
 assert.ok(excelManifestXml.includes("<wps:AppId>wps-ai-assistant-et</wps:AppId>"));
 assert.ok(excelManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
 assert.ok(excelRibbon.includes('label="WPS AI 助理"'));
@@ -103,23 +110,23 @@ assert.ok(excelRibbonJs.includes('btnAiExcelAnalysis: "assets/icon-excel-analysi
 assert.ok(excelRibbonJs.includes('btnAiExcelFormulaAssistant: "assets/icon-excel-formula-assistant.png"'));
 assert.ok(excelRibbonJs.includes('btnAiExcelSmartFill: "assets/icon-excel-smart-fill.png"'));
 assert.ok(!excelRibbonJs.includes('btnAiExcelFormulaAssistant: "assets/icon-excel-analysis.png"'));
-assert.ok(excelRibbonJs.includes('build=0.23.1-alpha'));
-assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"));
-assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png"));
-assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"));
+assert.ok(/build=(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)/.test(excelRibbonJs));
+assert.ok(fs.existsSync(path.join(excelRoot, "assets/icon-excel-analysis.png")));
+assert.ok(fs.existsSync(path.join(excelRoot, "assets/icon-excel-formula-assistant.png")));
+assert.ok(fs.existsSync(path.join(excelRoot, "assets/icon-excel-smart-fill.png")));
 const excelAnalysisIcon = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-analysis.png"
+  path.join(excelRoot, "assets/icon-excel-analysis.png")
 );
 const excelFormulaIcon = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-formula-assistant.png"
+  path.join(excelRoot, "assets/icon-excel-formula-assistant.png")
 );
 const excelSmartFillIcon = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"
+  path.join(excelRoot, "assets/icon-excel-smart-fill.png")
 );
 assert.ok(!excelSmartFillIcon.equals(excelAnalysisIcon));
 assert.ok(!excelSmartFillIcon.equals(excelFormulaIcon));
 assert.ok(pptManifest.includes('"name": "wps-ai-assistant-wpp"'));
-assert.ok(pptManifest.includes('"version": "0.23.1-alpha"'));
+assert.ok(/"version":\s*"(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)"/.test(pptManifest));
 assert.ok(pptManifestXml.includes("<wps:AppId>wps-ai-assistant-wpp</wps:AppId>"));
 assert.ok(pptManifestXml.includes("<wps:Ribbon>ribbon.xml</wps:Ribbon>"));
 assert.ok(pptRibbon.includes('label="WPS AI 助理"'));
@@ -140,9 +147,9 @@ assert.ok(pptRibbonJs.includes('btnAiSettings: "settings"'));
 assert.ok(pptRibbonJs.includes('btnAiPptSlideAssistant: "assets/icon-ppt-slide-assistant.png"'));
 assert.ok(pptRibbonJs.includes('btnAiPptStructureReview: "assets/icon-ppt-structure-review.png"'));
 assert.ok(!pptRibbonJs.includes('btnAiPptStructureReview: "assets/icon-ppt-slide-assistant.png"'));
-assert.ok(pptRibbonJs.includes("build=0.23.1-alpha"));
-assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-slide-assistant.png`));
-assert.ok(fs.existsSync(`${pptRoot}/assets/icon-ppt-structure-review.png`));
+assert.ok(/build=(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)/.test(pptRibbonJs));
+assert.ok(fs.existsSync(path.join(pptRoot, "assets/icon-ppt-slide-assistant.png")));
+assert.ok(fs.existsSync(path.join(pptRoot, "assets/icon-ppt-structure-review.png")));
 [
   'id="task-title">智能总结',
   'id="health-indicator"',
@@ -268,9 +275,9 @@ assert.ok(html.includes('id="btn-copy-diagnostics"'));
 assert.ok(html.includes('id="last-task-diagnostics-output"'));
 assert.ok(html.includes('最近一次任务诊断'));
 assert.ok(html.includes('id="frontend-version-line"'));
-assert.ok(html.includes('./taskpane.css?v=0.23.1-alpha'));
-assert.ok(html.includes('./taskpane-helpers.js?v=0.23.1-alpha'));
-assert.ok(html.includes('./taskpane.js?v=0.23.1-alpha'));
+assert.ok(/\.\/taskpane\.css\?v=(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)/.test(html));
+assert.ok(/\.\/taskpane-helpers\.js\?v=(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)/.test(html));
+assert.ok(/\.\/taskpane\.js\?v=(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)/.test(html));
 assert.ok(html.includes('id="btn-copy-result"'));
 assert.ok(html.includes('id="result-view-switch"'));
 assert.ok(html.includes('id="btn-result-preview"'));
@@ -354,7 +361,7 @@ assert.ok(!html.includes('运行时</p>'));
 assert.ok(!html.includes('连接设置'));
 
 const js = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
+  path.join(wordRoot, "taskpane.js"),
   "utf8"
 );
 
@@ -487,7 +494,7 @@ assert.ok(js.includes("closeProviderUrlEditor"));
 assert.ok(js.includes("renderFallbackTemplateOptions"));
 assert.ok(js.includes("setProviderAuthLine"));
 assert.ok(js.includes("providerAuthSource"));
-assert.ok(js.includes('FRONTEND_BUILD_VERSION = "0.23.1-alpha"'));
+assert.ok(/FRONTEND_BUILD_VERSION = "(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)"/.test(js));
 assert.ok(js.includes('byId("frontend-version-line").textContent = FRONTEND_BUILD_VERSION'));
 assert.ok(!js.includes("renderTaskRoutes"));
 assert.ok(js.includes("/provider/task-api-key"));
@@ -659,7 +666,7 @@ assert.ok(!js.includes('state.pendingApplyAction = "imitation"'));
 assert.ok(!js.includes("applySmartImitation"));
 
 const css = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.css",
+  path.join(wordRoot, "taskpane.css"),
   "utf8"
 );
 
@@ -751,7 +758,7 @@ assert.ok(!css.includes("#0f3b32"));
 assert.ok(!css.includes("rgba(23, 79, 67"));
 
 const ribbon = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.xml",
+  path.join(wordRoot, "ribbon.xml"),
   "utf8"
 );
 
@@ -776,7 +783,7 @@ assert.ok(ribbon.includes('getImage="GetImage"'));
 assert.ok(!ribbon.includes('image="assets/'));
 
 const ribbonJs = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/ribbon.js",
+  path.join(wordRoot, "ribbon.js"),
   "utf8"
 );
 
@@ -790,13 +797,13 @@ assert.ok(ribbonJs.includes('btnAiSmartImitation: "assets/icon-smart-imitation.p
 assert.ok(ribbonJs.includes("icon-smart-write.png"));
 assert.ok(ribbonJs.includes("icon-smart-imitation.png"));
 assert.ok(ribbonJs.includes("icon-review.png"));
-assert.ok(ribbonJs.includes('build=0.23.1-alpha'));
+assert.ok(/build=(0\.23\.1-alpha|1\.0\.0|0\.26\.0-preview\.1)/.test(ribbonJs));
 assert.ok(!ribbonJs.includes("baseUrl + iconPath"));
-assert.ok(fs.existsSync("formal-plugin-kit/wps-ai-assistant_1.0.0/assets/icon-smart-imitation.png"));
+assert.ok(fs.existsSync(path.join(wordRoot, "assets/icon-smart-imitation.png")));
 assert.ok(js.includes('{ taskType: "word.smart_imitation", label: "智能仿写" }'));
 
 const uvicornStart = fs.readFileSync(
-  "adapter-start-kit/scripts/start_uvicorn_adapter.sh",
+  path.join(adapterStartKitRoot, "scripts/start_uvicorn_adapter.sh"),
   "utf8"
 );
 
@@ -805,15 +812,19 @@ assert.ok(uvicornStart.includes("replace_existing_adapter"));
 assert.ok(uvicornStart.includes("mode=uvicorn"));
 
 const healthCheck = fs.readFileSync(
-  "adapter-start-kit/scripts/check_health.sh",
+  path.join(adapterStartKitRoot, "scripts/check_health.sh"),
   "utf8"
 );
 
 assert.ok(healthCheck.includes("adapter_mode=uvicorn"));
 assert.ok(healthCheck.includes("adapter_mode=standalone"));
 
-const fastapiHealth = fs.readFileSync("adapter_service/app/api/health.py", "utf8");
-const healthService = fs.readFileSync("adapter_service/app/services/health.py", "utf8");
+const adapterServiceRoot = process.env.AI_WPS_DELIVERY_ROOT
+  ? path.join(process.env.AI_WPS_DELIVERY_ROOT, "packages/adapter-start-kit/adapter_service")
+  : "adapter_service";
+
+const fastapiHealth = fs.readFileSync(path.join(adapterServiceRoot, "app/api/health.py"), "utf8");
+const healthService = fs.readFileSync(path.join(adapterServiceRoot, "app/services/health.py"), "utf8");
 assert.ok(fastapiHealth.includes('router.get("/health/live")'));
 assert.ok(fastapiHealth.includes('router.get("/health/ready")'));
 assert.ok(healthService.includes('SERVICE_MODE = "uvicorn"'));

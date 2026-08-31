@@ -4,10 +4,8 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "../..");
-const helpers = require(path.join(
-  ROOT,
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js"
-));
+const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || path.join(ROOT, "formal-plugin-kit/wps-ai-assistant_1.0.0");
+const helpers = require(path.join(path.resolve(wordRoot), "taskpane-helpers.js"));
 
 function cloneRaw(value) {
   if (Array.isArray(value)) {
