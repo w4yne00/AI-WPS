@@ -670,6 +670,70 @@ function testSmartFillSanitizeBlanksDefaultSourceWhenAddressIsEmpty() {
   assert.ok(!JSON.stringify(sanitized.rows).includes("旧D2"));
 }
 
+function testSmartFillSourceTextDoesNotFallBackToRawValue() {
+  const target = buildRange("$D$2:$D$2", [["待填写"]]);
+  const source = buildRange("$A$1:$A$2", [["说明"], ["显示值"]]);
+  Object.defineProperties(source.Cells.Item(2, 1), {
+    Text: {
+      configurable: true,
+      get() { throw new Error("Text unavailable"); }
+    },
+    Value2: {
+      configurable: true,
+      get() { return 44927; }
+    }
+  });
+  const payload = helpers.extractExcelSmartFillPayload(target, source, {
+    targetSheetName: "目标表",
+    sourceSheetName: "目标表"
+  });
+  assert.strictEqual(payload.source.rows[0][0], "");
+  assert.ok(!JSON.stringify(payload.source).includes("44927"));
+}
+
+function testSmartFillSourceTextMissingDoesNotUseValue2() {
+  const target = buildRange("$D$2:$D$2", [["待填写"]]);
+  const source = buildRange("$A$1:$A$2", [["说明"], ["显示值"]]);
+  const cell = source.Cells.Item(2, 1);
+  delete cell.Text;
+  cell.Value2 = 44927;
+  const payload = helpers.extractExcelSmartFillPayload(target, source, {
+    targetSheetName: "目标表",
+    sourceSheetName: "目标表"
+  });
+  assert.strictEqual(payload.source.rows[0][0], "");
+  assert.ok(!JSON.stringify(payload.source).includes("44927"));
+}
+
+function testWritePreflightHashMatchesSanitizedCapture() {
+  const target = buildRange("$D$2:$D$3", [["旧D2"], ["旧D3"]]);
+  const source = buildRange("$A$1:$D$3", [
+    ["名称", "部门", "说明", "摘要"],
+    ["甲", "研发", "第一项", "旧D2"],
+    ["乙", "销售", "第二项", "旧D3"]
+  ]);
+  target.Cells.Item(1, 1).Row = 2;
+  target.Cells.Item(1, 1).Column = 4;
+  target.Cells.Item(2, 1).Row = 3;
+  target.Cells.Item(2, 1).Column = 4;
+  source.Cells.Item(2, 4).Row = 2;
+  source.Cells.Item(2, 4).Column = 4;
+  source.Cells.Item(3, 4).Row = 3;
+  source.Cells.Item(3, 4).Column = 4;
+  const captured = helpers.extractExcelSmartFillPayload(target, source, {
+    targetSheetName: "目标表",
+    sourceSheetName: "目标表"
+  });
+  const reread = helpers.extractExcelSmartFillPayload(null, source, {
+    sourceOnly: true,
+    sourceSheetName: "目标表"
+  });
+  const unsanitizedHash = reread.source.snapshotHash;
+  const sanitizedReread = helpers.sanitizeExcelSmartFillSource(reread.source, captured.target);
+  assert.strictEqual(sanitizedReread.snapshotHash, captured.source.snapshotHash);
+  assert.notStrictEqual(unsanitizedHash, captured.source.snapshotHash);
+}
+
 function testSmartFillUiContract() {
   [
     'id="excel-smart-fill-options"',
@@ -697,7 +761,10 @@ function testSmartFillUiContract() {
   assert.ok(js.includes("describeExcelSmartFillHostCell"));
   assert.ok(js.includes("validateExcelSmartFillInstruction"));
   assert.ok(js.includes("sanitizeExcelSmartFillSource"));
+  assert.ok(js.includes("sanitizeExcelSmartFillSource(payload.source, target)"));
+  assert.ok(js.includes("EXCEL_SMART_FILL_RESULT_TOO_LARGE"));
   assert.ok(js.includes("智能填写来源校验组件不可用"));
+  assert.ok(!/readSmartFillPropertyState\(cell, \[\s*"Text", "text", "Value2"/.test(js));
   assert.ok(js.includes("EXCEL_SMART_FILL_SOURCE_TRUNCATED"));
   [
     "EXCEL_SMART_FILL_TARGET_SHAPE_INVALID",
@@ -705,7 +772,9 @@ function testSmartFillUiContract() {
     "EXCEL_SMART_FILL_INSTRUCTION_REQUIRED",
     "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG",
     "EXCEL_SMART_FILL_SOURCE_TRUNCATED",
-    "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID"
+    "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID",
+    "EXCEL_SMART_FILL_RESULT_TOO_LARGE",
+    "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE"
   ].forEach((code) => assert.ok(js.includes(code), `missing smart fill fatal error code: ${code}`));
   assert.ok(!/\.Formula\s*=/.test(js), "smart fill taskpane must never write Formula");
 }
@@ -731,6 +800,9 @@ testSmartFillRejectsNonContiguousSourceAreas();
 testSmartFillSanitizeHelperBlanksOverlappingTargetColumn();
 testSmartFillSanitizeFailsClosedOnUnparseableCustomSourceAddress();
 testSmartFillSanitizeBlanksDefaultSourceWhenAddressIsEmpty();
+testSmartFillSourceTextDoesNotFallBackToRawValue();
+testSmartFillSourceTextMissingDoesNotUseValue2();
+testWritePreflightHashMatchesSanitizedCapture();
 testSmartFillUiContract();
 
 console.log("Excel smart fill tests passed");

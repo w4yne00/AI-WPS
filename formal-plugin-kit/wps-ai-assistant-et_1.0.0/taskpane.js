@@ -1208,7 +1208,7 @@
       return "";
     }
     valueState = readSmartFillPropertyState(cell, [
-      "Text", "text", "Value2", "value2", "Value", "value"
+      "Text", "text"
     ]);
     if (!valueState.known) {
       return "";
@@ -1842,7 +1842,10 @@
       maxCellTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength,
       maxTotalTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxTotalTextLength
     });
-    return payload.source;
+    if (!helpers.sanitizeExcelSmartFillSource) {
+      throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
+    }
+    return helpers.sanitizeExcelSmartFillSource(payload.source, target);
   }
 
   function readSmartFillWorkbookId(workbook) {
@@ -2872,6 +2875,8 @@
       error.adapterCode === "EXCEL_SMART_FILL_CELL_TEXT_TOO_LONG" ||
       error.adapterCode === "EXCEL_SMART_FILL_TEXT_TOO_LARGE" ||
       error.adapterCode === "EXCEL_SMART_FILL_REQUEST_TOO_LARGE" ||
+      error.adapterCode === "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE" ||
+      error.adapterCode === "EXCEL_SMART_FILL_RESULT_TOO_LARGE" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED"
     );
   }
@@ -2982,7 +2987,11 @@
         state.excelSmartFillResumeExpected = false;
         setExcelSmartFillCancelVisible(false);
         stopWaiting();
-        if (job.result && Array.isArray(job.result.items) && job.result.items.length) {
+        var overflowFailed = job.error && (
+          job.error.code === "EXCEL_SMART_FILL_RESULT_TOO_LARGE" ||
+          job.error.code === "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE"
+        );
+        if (!overflowFailed && job.result && Array.isArray(job.result.items) && job.result.items.length) {
           finalizeExcelSmartFillResult(job.result);
           setStatus("智能填写任务失败，已保留部分预览；未完成项不会写入。" );
         } else {

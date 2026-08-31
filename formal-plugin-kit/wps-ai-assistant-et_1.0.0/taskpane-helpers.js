@@ -2427,6 +2427,14 @@
       ), "").replace(/\r/g, "");
     }
 
+    function readDisplayedSourceText(cell) {
+      var text = readOwned(cell, ["Text", "text"]);
+      if (typeof text === "undefined" || text === null) {
+        return "";
+      }
+      return toSafeString(text, "").replace(/\r/g, "");
+    }
+
     function bounded(value) {
       var text = String(value || "");
       var length = countUnicodeCodePoints(text);
@@ -2562,7 +2570,7 @@
         var sourceHasFormula = readSafetyBoolean(sourceCell, ["HasFormula", "hasFormula"]);
         sourceRowValues.push(sourceHidden || sourceHasFormula || sourceFormula === null || sourceFormula
           ? ""
-          : bounded(readCellText(sourceCell, sourceRawValue)));
+          : bounded(readDisplayedSourceText(sourceCell)));
       }
       if (sourceRow === 1) {
         sourceHeaders = sourceRowValues;
