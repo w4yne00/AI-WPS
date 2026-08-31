@@ -2995,12 +2995,12 @@
     var hiddenState = readSmartFillHiddenState(cell);
     var rawValue;
     var text;
-    if (!rawState.known || !rawState.present || !textState.known ||
+    if (!rawState.known || !textState.known ||
         !formulaState.known || !mergedState.known || !protectedState.known ||
         !hiddenState.known) {
       return { readable: false };
     }
-    rawValue = rawState.value;
+    rawValue = rawState.present ? rawState.value : undefined;
     text = scalarText(textState.present ? textState.value : rawValue);
     return {
       readable: true,
@@ -3026,7 +3026,12 @@
   }
 
   function sameSmartFillSnapshotState(expected, current) {
-    var rawValuesEqual = expected && current && expected.rawValue === current.rawValue;
+    var rawValuesEqual = Boolean(
+      expected && current && (
+        expected.rawValue === current.rawValue ||
+        (expected.valueType === "blank" && current.valueType === "blank")
+      )
+    );
     if (expected && current && !rawValuesEqual &&
         typeof expected.rawValue === "number" && typeof current.rawValue === "number" &&
         isNaN(expected.rawValue) && isNaN(current.rawValue)) {
@@ -3380,7 +3385,11 @@
       var rollbackFailures = [];
       written.slice().reverse().forEach(function (entry) {
         try {
-          entry.cell.Value2 = entry.previousValue;
+          var restoreValue = entry.previousValue;
+          if (typeof restoreValue === "undefined" || restoreValue === null) {
+            restoreValue = "";
+          }
+          entry.cell.Value2 = restoreValue;
           if (!sameSmartFillSnapshotState(entry.previousSnapshot, readSmartFillCellSnapshot(entry.cell))) {
             rollbackFailures.push(entry.address || "未知地址");
           }
