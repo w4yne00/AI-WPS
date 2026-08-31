@@ -1,12 +1,13 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const { wordRoot, etRoot, pptRoot } = require("./support/plugin-roots");
 
 const ROOT = path.resolve(__dirname, "..");
 const hosts = [
   {
     name: "Word",
-    dir: process.env.AI_WPS_WORD_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant_1.0.0"),
+    dir: wordRoot,
     task: "word.smart_write",
     label: "智能编写",
     tabsLabel: "Word 任务",
@@ -15,7 +16,7 @@ const hosts = [
   },
   {
     name: "Excel",
-    dir: process.env.AI_WPS_ET_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-et_1.0.0"),
+    dir: etRoot,
     task: "excel.analysis",
     label: "智能分析",
     tabsLabel: "Excel 任务",
@@ -24,7 +25,7 @@ const hosts = [
   },
   {
     name: "PPT",
-    dir: process.env.AI_WPS_PPT_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-wpp_1.0.0"),
+    dir: pptRoot,
     task: "ppt.slide_assistant",
     label: "智能总结",
     tabsLabel: "PPT 任务",

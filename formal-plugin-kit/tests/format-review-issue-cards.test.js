@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant_1.0.0");
+const { wordRoot } = require("./support/plugin-roots");
 const helpers = require(path.join(wordRoot, "taskpane-helpers.js"));
 const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
 

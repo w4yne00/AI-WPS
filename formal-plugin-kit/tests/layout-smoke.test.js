@@ -18,12 +18,7 @@ function contrastRatio(first, second) {
   return (lighter + 0.05) / (darker + 0.05);
 }
 
-const wordRoot = process.env.AI_WPS_WORD_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant_1.0.0";
-const excelRoot = process.env.AI_WPS_ET_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant-et_1.0.0";
-const pptRoot = process.env.AI_WPS_PPT_PLUGIN_DIR || "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0";
-const adapterStartKitRoot = process.env.AI_WPS_DELIVERY_ROOT
-  ? path.join(process.env.AI_WPS_DELIVERY_ROOT, "packages/adapter-start-kit")
-  : "adapter-start-kit";
+const { wordRoot, etRoot: excelRoot, pptRoot, adapterStartKitRoot } = require("./support/plugin-roots");
 
 const html = fs.readFileSync(
   path.join(wordRoot, "taskpane.html"),

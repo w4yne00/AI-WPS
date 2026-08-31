@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -652,6 +653,61 @@ def test_preview_build_and_prepare_scripts_are_provenance_inputs():
     )
     assert '"packaging/build_v0260_preview1_delivery_kit.sh"' in provenance
     assert '"packaging/prepare_v0260_preview1_delivery.py"' in provenance
+    assert '"formal-plugin-kit/tests/support/*.js"' in provenance or '"formal-plugin-kit/tests/support"' in provenance
+
+
+def test_preview_provenance_validates_baseline_archive(tmp_path, monkeypatch):
+    import importlib.util
+    provenance_path = ROOT / "packaging/check_delivery_source_provenance.py"
+    spec = importlib.util.spec_from_file_location("provenance_module", provenance_path)
+    prov = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prov)
+
+    allowlist = ROOT / "packaging/delivery-sources-v0260-preview1.json"
+
+    def make_fake_git(untracked_file=None, dirty_file=None):
+        def fake_git(repo_root, args):
+            if args == ["rev-parse", "HEAD"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="testcommit\n", stderr="")
+            if args[0] == "ls-files" and args[1] == "--":
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="formal-plugin-kit/tests/layout-smoke.test.js\n", stderr="")
+            if args[0] == "ls-files" and args[1] == "--error-unmatch":
+                target = args[3]
+                if untracked_file and target == untracked_file:
+                    return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="error")
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            if args[0] == "status":
+                if dirty_file:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=f" M {dirty_file}\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return fake_git
+
+    monkeypatch.setattr(prov, "_git", make_fake_git())
+
+    # 1. Missing baseline archive argument
+    with pytest.raises(prov.ProvenanceFailure) as exc_info:
+        prov.verify(ROOT, allowlist, "testcommit", baseline_archive=None)
+    assert "DELIVERY_SOURCE_BASELINE_ARCHIVE_REQUIRED" in str(exc_info.value)
+
+    # 2. Baseline archive outside repo
+    outside_archive = tmp_path / "outside-v0253.tar.gz"
+    outside_archive.write_bytes(b"dummy")
+    with pytest.raises(prov.ProvenanceFailure) as exc_info:
+        prov.verify(ROOT, allowlist, "testcommit", baseline_archive=outside_archive)
+    assert "DELIVERY_SOURCE_PATH_OUTSIDE_REPOSITORY" in str(exc_info.value)
+
+    # 3. Untracked archive failure
+    monkeypatch.setattr(prov, "_git", make_fake_git(untracked_file="dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"))
+    valid_archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"
+    with pytest.raises(prov.ProvenanceFailure) as exc_info:
+        prov.verify(ROOT, allowlist, "testcommit", baseline_archive=valid_archive)
+    assert "DELIVERY_SOURCE_NOT_TRACKED" in str(exc_info.value)
+
+    # 4. Valid tracked baseline archive
+    monkeypatch.setattr(prov, "_git", make_fake_git())
+    count = prov.verify(ROOT, allowlist, "testcommit", baseline_archive=valid_archive)
+    assert count > 0
 
 
 def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(tmp_path):
@@ -888,9 +944,8 @@ def test_preview_audit_rejects_corrupted_plugin_js_syntax(tmp_path):
     target_js.write_text(original_content, encoding="utf-8")
 
 
-def test_preview_assembled_plugins_pass_node_contract_suite(tmp_path):
-    delivery = _prepare_delivery(tmp_path)
-    env = {
+def _assembled_plugin_env(delivery: Path) -> dict:
+    return {
         **os.environ,
         "AI_WPS_HASH_CONTRACT_PYTHON": sys.executable,
         "AI_WPS_WORD_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant_1.0.0"),
@@ -898,6 +953,11 @@ def test_preview_assembled_plugins_pass_node_contract_suite(tmp_path):
         "AI_WPS_PPT_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-wpp_1.0.0"),
         "AI_WPS_DELIVERY_ROOT": str(delivery),
     }
+
+
+def test_preview_assembled_plugins_pass_node_contract_suite(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    env = _assembled_plugin_env(delivery)
     result = subprocess.run(
         ["node", "--test"] + [str(p) for p in sorted((ROOT / "formal-plugin-kit/tests").glob("*.test.js"))],
         cwd=ROOT,
@@ -914,14 +974,7 @@ def test_preview_assembled_plugins_fail_node_contract_when_corrupted(tmp_path):
     target_helpers = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane-helpers.js"
     original = target_helpers.read_text(encoding="utf-8")
     target_helpers.write_text('throw new Error("delivery plugin corrupted");\n' + original, encoding="utf-8")
-    env = {
-        **os.environ,
-        "AI_WPS_HASH_CONTRACT_PYTHON": sys.executable,
-        "AI_WPS_WORD_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant_1.0.0"),
-        "AI_WPS_ET_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-et_1.0.0"),
-        "AI_WPS_PPT_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-wpp_1.0.0"),
-        "AI_WPS_DELIVERY_ROOT": str(delivery),
-    }
+    env = _assembled_plugin_env(delivery)
     result = subprocess.run(
         ["node", "--test", str(ROOT / "formal-plugin-kit/tests/excel-smart-fill.test.js")],
         cwd=ROOT,
@@ -999,6 +1052,22 @@ def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
     assert rejected.returncode != 0
     assert "V0260_SMART_FILL_UNDO_PROMISE" in rejected.stdout
     taskpane_file.write_text(original_taskpane, encoding="utf-8")
+
+    # Tamper with reference workflow (corrupt contract version)
+    workflow_file = delivery / "reference-workflows/excel-smart-fill-v1.yml"
+    original_workflow = workflow_file.read_text(encoding="utf-8")
+    workflow_file.write_text(original_workflow.replace("excel.smart_fill.v1", "excel.smart_fill.v2"), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID" in rejected.stdout
+    workflow_file.write_text(original_workflow, encoding="utf-8")
 
 
 def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_path):

@@ -2,22 +2,23 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
+const { wordRoot, etRoot, pptRoot } = require("./support/plugin-roots");
 
 const ROOT = path.resolve(__dirname, "..");
 const hosts = [
   {
     name: "Word",
-    dir: process.env.AI_WPS_WORD_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant_1.0.0"),
+    dir: wordRoot,
     tasks: ["word.smart_write", "word.smart_imitation", "word.document_review", "word.format_review"]
   },
   {
     name: "Excel",
-    dir: process.env.AI_WPS_ET_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-et_1.0.0"),
+    dir: etRoot,
     tasks: ["excel.analysis", "excel.formula_assistant"]
   },
   {
     name: "PPT",
-    dir: process.env.AI_WPS_PPT_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-wpp_1.0.0"),
+    dir: pptRoot,
     tasks: ["ppt.slide_assistant", "ppt.structure_review"]
   }
 ];
@@ -121,7 +122,6 @@ hosts.forEach((host) => {
   });
 });
 
-const wordRoot = path.resolve(hosts[0].dir);
 const wordHtml = fs.readFileSync(path.join(wordRoot, "taskpane.html"), "utf8");
 const wordCss = fs.readFileSync(path.join(wordRoot, "taskpane.css"), "utf8");
 const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");

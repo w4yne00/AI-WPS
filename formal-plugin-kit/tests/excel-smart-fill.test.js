@@ -2,7 +2,7 @@ const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
 
-const root = process.env.AI_WPS_ET_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0");
+const { etRoot: root } = require("./support/plugin-roots");
 const html = fs.readFileSync(path.join(root, "taskpane.html"), "utf8");
 const js = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");
 const ribbon = fs.readFileSync(path.join(root, "ribbon.xml"), "utf8");

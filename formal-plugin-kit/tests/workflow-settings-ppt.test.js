@@ -3,7 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
 
-const root = process.env.AI_WPS_PPT_PLUGIN_DIR || path.resolve(__dirname, "../wps-ai-assistant-wpp_1.0.0");
+const { pptRoot: root } = require("./support/plugin-roots");
 const html = fs.readFileSync(path.join(root, "taskpane.html"), "utf8");
 const css = fs.readFileSync(path.join(root, "taskpane.css"), "utf8");
 const js = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");

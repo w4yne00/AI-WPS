@@ -4,7 +4,7 @@ const path = require("path");
 const vm = require("vm");
 
 const ROOT = path.resolve(__dirname, "..");
-const pptRoot = process.env.AI_WPS_PPT_PLUGIN_DIR || path.join(ROOT, "wps-ai-assistant-wpp_1.0.0");
+const { pptRoot } = require("./support/plugin-roots");
 const pptJs = fs.readFileSync(path.join(pptRoot, "taskpane.js"), "utf8");
 const context = { window: {} };
 vm.createContext(context);
