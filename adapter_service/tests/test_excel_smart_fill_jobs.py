@@ -206,3 +206,155 @@ def test_expired_terminal_jobs_are_not_resumable():
     now[0] = 11.0
 
     assert store.get(accepted["jobId"]) is None
+
+
+def test_queued_job_cancellation_is_immediate_and_does_not_call_provider():
+    provider = _BatchProvider(block=True)
+    coordinator = LongTaskCoordinator(max_running=1, max_queued=2)
+    store = ExcelSmartFillJobStore(provider, coordinator)
+
+    first_req = models.ExcelSmartFillRequest(
+        **_request_payload(item_count=2, client_job_id="smart-fill-slot-occupant")
+    )
+    first_job = store.start(first_req, trace_id="trace-occupant")
+    assert provider.started.wait(1)
+
+    second_req = models.ExcelSmartFillRequest(
+        **_request_payload(item_count=2, client_job_id="smart-fill-queued-cancel")
+    )
+    second_job = store.start(second_req, trace_id="trace-queued")
+    assert second_job["status"] == "queued"
+
+    # Cancel queued job immediately
+    cancelled = store.cancel(second_job["jobId"])
+    assert cancelled["status"] == "cancelled"
+    assert cancelled["canCancel"] is False
+    assert cancelled["cancelRequested"] is False
+
+    # Release first job
+    provider.release.set()
+    _wait_terminal(store, first_job["jobId"])
+
+    # Verify second job terminal state without provider calls
+    second_term = store.get(second_job["jobId"])
+    assert second_term["status"] == "cancelled"
+    assert len(provider.calls) == 1
+    assert provider.calls[0].client_job_id == "smart-fill-slot-occupant"
+
+
+def test_multi_batch_cancellation_preserves_completed_batches_and_marks_remaining_unprocessed():
+    calls = []
+    second_batch_started = threading.Event()
+    release_second_batch = threading.Event()
+
+    class MultiBatchCancellingProvider:
+        def snapshot_task_auth(self):
+            return {"contextWindowTokens": 128000, "maxOutputTokens": 128000}
+
+        def fill_batch(self, request, trace_id, task_auth=None, progress_callback=None):
+            calls.append(request)
+            if len(calls) == 2:
+                second_batch_started.set()
+                if not release_second_batch.wait(2):
+                    raise RuntimeError("test provider release timeout")
+            return {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [
+                    {
+                        "itemId": item.item_id,
+                        "status": "completed",
+                        "valueType": "text",
+                        "value": "批次生成-{0}".format(item.item_id),
+                    }
+                    for item in request.target.items
+                ],
+                "provider": "test-multibatch",
+            }
+
+    provider = MultiBatchCancellingProvider()
+    store = ExcelSmartFillJobStore(
+        provider, LongTaskCoordinator(max_running=1, max_queued=2)
+    )
+    request = models.ExcelSmartFillRequest(
+        **_request_payload(item_count=101, client_job_id="smart-fill-mb-cancel")
+    )
+    accepted = store.start(request, trace_id="trace-mb-cancel")
+    assert second_batch_started.wait(1)
+
+    # Cancel while second batch is running
+    requested = store.cancel(accepted["jobId"])
+    assert requested["cancelRequested"] is True
+
+    release_second_batch.set()
+    terminal = _wait_terminal(store, accepted["jobId"])
+    assert terminal["status"] == "cancelled"
+    assert terminal["result"]["partial"] is True
+    assert terminal["result"]["stopReason"] == "cancelled"
+    assert len(calls) == 2  # Batch 1 (50 items) and Batch 2 (50 items) were processed; Batch 3 (1 item) was cancelled before start
+    items = terminal["result"]["items"]
+    assert len(items) == 101
+    assert items[0]["status"] == "completed"
+    assert items[0]["value"] == "批次生成-item-000"
+    assert items[99]["status"] == "completed"
+    assert items[99]["value"] == "批次生成-item-099"
+    assert items[100]["status"] == "insufficient_information"
+    assert items[100]["value"] == ""
+
+
+def test_multi_batch_deadline_exceeded_preserves_completed_batches_and_marks_remaining_unprocessed():
+    now = [0.0]
+
+    def clock():
+        return now[0]
+
+    class SteppingClockProvider:
+        def __init__(self):
+            self.calls = []
+
+        def snapshot_task_auth(self):
+            return {"contextWindowTokens": 128000, "maxOutputTokens": 128000}
+
+        def fill_batch(self, request, trace_id, task_auth=None, progress_callback=None):
+            self.calls.append(request)
+            # Advance clock by 3601 seconds on first batch completion
+            now[0] += 3601.0
+            return {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [
+                    {
+                        "itemId": item.item_id,
+                        "status": "completed",
+                        "valueType": "text",
+                        "value": "超时前完成-{0}".format(item.item_id),
+                    }
+                    for item in request.target.items
+                ],
+                "provider": "test-stepping",
+            }
+
+    provider = SteppingClockProvider()
+    coordinator = LongTaskCoordinator(
+        max_running=1,
+        max_queued=2,
+        monotonic_clock=clock,
+        wall_clock=clock,
+    )
+    store = ExcelSmartFillJobStore(provider, coordinator, clock=clock)
+    request = models.ExcelSmartFillRequest(
+        **_request_payload(item_count=101, client_job_id="smart-fill-mb-timeout")
+    )
+    accepted = store.start(request, trace_id="trace-mb-timeout")
+    terminal = _wait_terminal(store, accepted["jobId"])
+
+    assert terminal["status"] == "failed"
+    assert terminal["error"]["code"] == "EXCEL_SMART_FILL_DEADLINE_EXCEEDED"
+    assert terminal["result"]["partial"] is True
+    assert terminal["result"]["stopReason"] == "timeout"
+    assert len(provider.calls) == 1
+    items = terminal["result"]["items"]
+    assert len(items) == 101
+    assert items[0]["status"] == "completed"
+    assert items[0]["value"] == "超时前完成-item-000"
+    assert items[49]["status"] == "completed"
+    assert items[50]["status"] == "insufficient_information"
+    assert items[100]["status"] == "insufficient_information"
