@@ -880,6 +880,128 @@ function testSmartFillCancellationCooperativeNotice() {
   );
 }
 
+function testSmartFillEditorPreviewRendersEditableFieldsCheckboxesAndRetryButtons() {
+  assert.strictEqual(typeof helpers.buildExcelSmartFillEditorPreview, "function");
+  const data = {
+    schemaVersion: "excel.smart_fill.v1",
+    items: [
+      { itemId: "target-1", status: "completed", valueType: "text", value: "甲类" },
+      { itemId: "target-2", status: "insufficient_information", valueType: "text", value: "" },
+      { itemId: "target-3", status: "failed", valueType: "text", value: "" },
+      { itemId: "target-4", status: "unprocessed", valueType: "text", value: "" },
+      { itemId: "target-5", status: "write_conflict", valueType: "text", value: "旧值" }
+    ]
+  };
+  const targets = [
+    { itemId: "target-1", address: "$D$2" },
+    { itemId: "target-2", address: "$D$3" },
+    { itemId: "target-3", address: "$D$4" },
+    { itemId: "target-4", address: "$D$5" },
+    { itemId: "target-5", address: "$D$6" }
+  ];
+  const drafts = [
+    { itemId: "target-1", status: "completed", valueType: "text", value: "已编辑甲类", selected: true },
+    { itemId: "target-2", status: "insufficient_information", valueType: "text", value: "", selected: false },
+    { itemId: "target-3", status: "failed", valueType: "text", value: "", selected: false },
+    { itemId: "target-4", status: "unprocessed", valueType: "text", value: "", selected: false },
+    { itemId: "target-5", status: "write_conflict", valueType: "text", value: "冲突值", selected: false }
+  ];
+  const html = helpers.buildExcelSmartFillEditorPreview(data, targets, drafts);
+
+  assert.ok(html.includes("智能填写预览"));
+  assert.ok(html.includes("可编辑、取消勾选或逐项重试"));
+
+  // Check inputs and checkboxes
+  assert.ok(html.includes('data-smart-fill-select="target-1"'));
+  assert.ok(html.includes('data-smart-fill-value-input="target-1"'));
+  assert.ok(html.includes('value="已编辑甲类"'));
+  assert.ok(html.includes('aria-label="选择 $D$2"'));
+  assert.ok(html.includes('aria-label="编辑 $D$2"'));
+
+  // Check status badges
+  assert.ok(html.includes("is-complete") && html.includes("可写入"));
+  assert.ok(html.includes("is-insufficient") && html.includes("信息不足"));
+  assert.ok(html.includes("is-failed") && html.includes("失败"));
+  assert.ok(html.includes("is-unprocessed") && html.includes("未处理"));
+  assert.ok(html.includes("is-conflict") && html.includes("写入冲突"));
+
+  // Check retry buttons
+  assert.ok(html.includes('data-smart-fill-retry="target-1"'));
+  assert.ok(html.includes('data-smart-fill-retry="target-2"'));
+  assert.ok(html.includes('data-smart-fill-retry="target-3"'));
+  assert.ok(html.includes('data-smart-fill-retry="target-4"'));
+  assert.ok(html.includes('data-smart-fill-retry="target-5"'));
+  assert.ok(html.includes("重新生成此项"));
+}
+
+function testSmartFillDraftValidationAndCapacityConstraints() {
+  assert.strictEqual(typeof helpers.validateExcelSmartFillDraft, "function");
+
+  // Valid text
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "正常文本", valueType: "text"
+  }).isWriteable, true);
+
+  // Valid number
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "123.45", valueType: "number"
+  }).isWriteable, true);
+
+  // Invalid number
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "abc", valueType: "number"
+  }).isWriteable, false);
+
+  // Unselected draft
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: false, value: "正常文本", valueType: "text"
+  }).isWriteable, false);
+
+  // Empty string
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "   ", valueType: "text"
+  }).isWriteable, false);
+
+  // Exceeding 2000 code points per cell
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "a".repeat(2001), valueType: "text"
+  }).isWriteable, false);
+
+  // Emoji code point counting
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "😀".repeat(2000), valueType: "text"
+  }).isWriteable, true);
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "😀".repeat(2001), valueType: "text"
+  }).isWriteable, false);
+
+  // Formula-like text is valid text
+  assert.strictEqual(helpers.validateExcelSmartFillDraft({
+    itemId: "target-1", selected: true, value: "=SUM(A1:A2)", valueType: "text"
+  }).isWriteable, true);
+}
+
+function testSmartFillDraftsSummaryCalculation() {
+  assert.strictEqual(typeof helpers.calculateExcelSmartFillDraftsSummary, "function");
+  const drafts = [
+    { itemId: "target-1", selected: true, value: "文本1", valueType: "text" },
+    { itemId: "target-2", selected: true, value: "100", valueType: "number" },
+    { itemId: "target-3", selected: false, value: "文本3", valueType: "text" },
+    { itemId: "target-4", selected: true, value: "", valueType: "text" }
+  ];
+  const targetItems = [
+    { itemId: "target-1", originalValue: "旧值1", originalValueType: "text" },
+    { itemId: "target-2", originalValue: "", originalValueType: "blank" },
+    { itemId: "target-3", originalValue: "旧值3", originalValueType: "text" },
+    { itemId: "target-4", originalValue: "", originalValueType: "blank" }
+  ];
+  const summary = helpers.calculateExcelSmartFillDraftsSummary(drafts, targetItems);
+  assert.strictEqual(summary.writableCount, 2);
+  assert.strictEqual(summary.overwriteCount, 1);
+  assert.strictEqual(summary.canWrite, true);
+  assert.strictEqual(summary.summaryText, "将写入 2 个单元格；未勾选或信息不足项不会写入。");
+}
+
 testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly();
 testSmartFillDefaultSourceKeepsARowForEachTargetItem();
 testHostDisplayedEmptyDoesNotFallBackToRawValue();
@@ -910,4 +1032,7 @@ testSmartFillPartialPreviewContract();
 testSmartFillUnprocessedReadonlyPreview();
 testSmartFillProgressBatchDisplay();
 testSmartFillCancellationCooperativeNotice();
+testSmartFillEditorPreviewRendersEditableFieldsCheckboxesAndRetryButtons();
+testSmartFillDraftValidationAndCapacityConstraints();
+testSmartFillDraftsSummaryCalculation();
 console.log("Excel smart fill tests passed");

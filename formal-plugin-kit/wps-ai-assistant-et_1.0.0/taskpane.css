@@ -1496,6 +1496,17 @@ button.danger-action:not(:disabled) {
   background: #fff7e8;
 }
 
+.smart-fill-result-status.is-failed,
+.smart-fill-result-status.is-conflict {
+  color: var(--color-danger);
+  background: #fdeeed;
+}
+
+.smart-fill-result-status.is-unprocessed {
+  color: var(--muted);
+  background: #f2f4f7;
+}
+
 .smart-fill-result-edit {
   margin-top: 8px;
 }
