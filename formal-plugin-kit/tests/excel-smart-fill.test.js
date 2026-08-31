@@ -779,6 +779,107 @@ function testSmartFillUiContract() {
   assert.ok(!/\.Formula\s*=/.test(js), "smart fill taskpane must never write Formula");
 }
 
+function testSmartFillJobLifecycleAndCancellationContract() {
+  assert.ok(html.includes('id="btn-cancel-excel-smart-fill-job"'), "HTML must include cancel button for smart fill");
+  assert.ok(html.includes('id="btn-resubmit-interrupted-smart-fill-job"'), "HTML must include resubmit button for interrupted smart fill");
+  assert.ok(js.includes("cancelExcelSmartFillJob"), "taskpane.js must define cancelExcelSmartFillJob");
+  assert.ok(js.includes("finishCancelledExcelSmartFill"), "taskpane.js must define finishCancelledExcelSmartFill");
+  assert.ok(js.includes("setExcelSmartFillCancelVisible"), "taskpane.js must control cancel button visibility");
+  assert.ok(js.includes("renderExcelSmartFillJobProgress"), "taskpane.js must render job progress without text leaks");
+  assert.ok(js.includes("pollExcelSmartFillJob"), "taskpane.js must support background job polling");
+  assert.ok(js.includes("resumeExcelSmartFillActiveJob"), "taskpane.js must resume active jobs on reopen");
+  assert.ok(js.includes("saveExcelSmartFillActiveJob"), "taskpane.js must persist active job metadata");
+  assert.ok(js.includes("loadExcelSmartFillActiveJob"), "taskpane.js must load active job metadata");
+  assert.ok(js.includes("clearExcelSmartFillActiveJob"), "taskpane.js must clear active job metadata on terminal");
+  assert.ok(js.includes("EXCEL_SMART_FILL_JOB_INTERRUPTED"), "taskpane.js must handle adapter restart interruption");
+  assert.ok(js.includes("EXCEL_SMART_FILL_JOB_NOT_FOUND"), "taskpane.js must handle job not found");
+  assert.ok(js.includes("ai-wps-excel-smart-fill-active-job-v1"), "localStorage key must be ai-wps-excel-smart-fill-active-job-v1");
+
+  // Verify that progress rendering only shows stage, timing, and IDs, without leaking payload content
+  const progressMatch = js.match(/function renderExcelSmartFillJobProgress\([^)]*\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(progressMatch, "renderExcelSmartFillJobProgress function body must be extractable");
+  const progressBody = progressMatch[1];
+  assert.ok(progressBody.includes("job.status === \"queued\""), "must differentiate queued status");
+  assert.ok(progressBody.includes("job.queuePosition"), "must display queue position when queued");
+  assert.ok(progressBody.includes("总耗时："), "must display total elapsed time");
+  assert.ok(progressBody.includes("本阶段耗时："), "must display phase elapsed time");
+  assert.ok(progressBody.includes("adapter 等待预算："), "must display provider timeout budget");
+  assert.ok(progressBody.includes("任务编号："), "must display job ID");
+  assert.ok(!progressBody.includes("rows"), "progress rendering must not reference source rows");
+  assert.ok(!progressBody.includes("userInstruction"), "progress rendering must not reference user instruction");
+  assert.ok(!progressBody.includes("items"), "progress rendering must not reference item contents");
+}
+
+function testSmartFillPartialPreviewContract() {
+  assert.ok(js.includes("stopReason"), "taskpane.js must recognize stopReason in job results");
+  assert.ok(js.includes("partial"), "taskpane.js must recognize partial flag in job results");
+  assert.ok(js.includes("智能填写任务已取消，已保留部分预览；未完成项不会写入。"), "must inform user on cancellation with partial preview");
+  assert.ok(js.includes("智能填写任务失败，已保留部分预览；未完成项不会写入。"), "must inform user on timeout/failure with partial preview");
+
+  // Test that helper formats partial preview correctly
+  const fullResult = {
+    schemaVersion: "excel.smart_fill.v1",
+    items: [
+      { itemId: "target-1", status: "completed", valueType: "text", value: "已生成标签" },
+      { itemId: "target-2", status: "insufficient_information", valueType: "text", value: "" }
+    ],
+    partial: true,
+    stopReason: "cancelled"
+  };
+  const targets = [
+    { itemId: "target-1", address: "$B$2" },
+    { itemId: "target-2", address: "$B$3" }
+  ];
+  const previewHtml = helpers.buildExcelSmartFillReadonlyPreview(fullResult, targets);
+  assert.ok(previewHtml.includes("已生成标签"), "must render completed item value");
+  assert.ok(previewHtml.includes("可写入"), "must render completed status as 可写入");
+  assert.ok(previewHtml.includes("信息不足"), "must render insufficient item status as 信息不足");
+  assert.ok(previewHtml.includes("$B$2"), "must include item 1 address");
+  assert.ok(previewHtml.includes("$B$3"), "must include item 2 address");
+}
+
+function testSmartFillUnprocessedReadonlyPreview() {
+  const partialResult = {
+    schemaVersion: "excel.smart_fill.v1",
+    items: [
+      { itemId: "target-1", status: "completed", valueType: "text", value: "已生成标签" },
+      { itemId: "target-2", status: "unprocessed", valueType: "text", value: "" }
+    ],
+    partial: true,
+    stopReason: "cancelled"
+  };
+  const targets = [
+    { itemId: "target-1", address: "$B$2" },
+    { itemId: "target-2", address: "$B$3" }
+  ];
+  const previewHtml = helpers.buildExcelSmartFillReadonlyPreview(partialResult, targets);
+  assert.ok(previewHtml.includes("已生成标签"), "must render completed item value");
+  assert.ok(previewHtml.includes("可写入"), "must render completed status as 可写入");
+  assert.ok(previewHtml.includes("未处理"), "must render unprocessed item status as 未处理");
+  assert.ok(previewHtml.includes("is-unprocessed"), "must apply is-unprocessed class to unprocessed item");
+  assert.ok(!previewHtml.includes("信息不足"), "unprocessed item must NOT be rendered as 信息不足");
+}
+
+function testSmartFillProgressBatchDisplay() {
+  const progressMatch = js.match(/function renderExcelSmartFillJobProgress\([^)]*\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(progressMatch, "renderExcelSmartFillJobProgress function body must be extractable");
+  const progressBody = progressMatch[1];
+  assert.ok(progressBody.includes("job.totalBatches"), "must check totalBatches for multi-batch progress");
+  assert.ok(progressBody.includes("批次进度：第 "), "must format batch progress line");
+  assert.ok(progressBody.includes(" 批 / 共 "), "must format total batch count");
+}
+
+function testSmartFillCancellationCooperativeNotice() {
+  assert.ok(
+    js.includes("智能填写正在停止，当前批次完成后将保留部分预览。"),
+    "taskpane.js must inform user when cancellation is requested on a running job"
+  );
+  assert.ok(
+    js.includes("cancelRequested"),
+    "taskpane.js must check cancelRequested property"
+  );
+}
+
 testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly();
 testSmartFillDefaultSourceKeepsARowForEachTargetItem();
 testHostDisplayedEmptyDoesNotFallBackToRawValue();
@@ -804,5 +905,9 @@ testSmartFillSourceTextDoesNotFallBackToRawValue();
 testSmartFillSourceTextMissingDoesNotUseValue2();
 testWritePreflightHashMatchesSanitizedCapture();
 testSmartFillUiContract();
-
+testSmartFillJobLifecycleAndCancellationContract();
+testSmartFillPartialPreviewContract();
+testSmartFillUnprocessedReadonlyPreview();
+testSmartFillProgressBatchDisplay();
+testSmartFillCancellationCooperativeNotice();
 console.log("Excel smart fill tests passed");

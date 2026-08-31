@@ -4,6 +4,7 @@ import os
 import re
 import socket
 import threading
+import time
 import uuid
 from copy import deepcopy
 from http.client import IncompleteRead, RemoteDisconnected
@@ -3676,6 +3677,9 @@ class ProviderClient:
         trace_id: str,
         task_auth: Optional[Dict] = None,
         progress_callback=None,
+        timeout_seconds: Optional[float] = None,
+        deadline_monotonic: Optional[float] = None,
+        clock=time.monotonic,
     ) -> Dict:
         from app.services.excel.smart_fill import validate_smart_fill_request_limits
 
@@ -3716,13 +3720,35 @@ class ProviderClient:
                 "provider": "mock",
             }
 
+        now_mono = clock()
+        if deadline_monotonic is not None and now_mono >= deadline_monotonic:
+            raise AdapterError(
+                "PROVIDER_TIMEOUT",
+                "智能填写模型请求超时，请稍后重试。",
+                status_code=504,
+            )
+
+        effective_timeout = EXCEL_SMART_FILL_TIMEOUT_SECONDS
+        if timeout_seconds is not None:
+            effective_timeout = min(effective_timeout, max(0.0, float(timeout_seconds)))
+        elif self.settings.timeout_seconds:
+            effective_timeout = min(effective_timeout, max(0.0, float(self.settings.timeout_seconds)))
+
+        if deadline_monotonic is not None:
+            remaining_total = max(0.0, deadline_monotonic - now_mono)
+            effective_timeout = min(effective_timeout, remaining_total)
+
+        if effective_timeout <= 0:
+            raise AdapterError(
+                "PROVIDER_TIMEOUT",
+                "智能填写模型请求超时，请稍后重试。",
+                status_code=504,
+            )
+
         if progress_callback:
             progress_callback("provider_processing")
         post_kwargs = {
-            "timeout_seconds": max(
-                self.settings.timeout_seconds,
-                EXCEL_SMART_FILL_TIMEOUT_SECONDS,
-            ),
+            "timeout_seconds": effective_timeout,
             "response_format": excel_smart_fill_response_format(),
             "allow_response_format_fallback": True,
         }
@@ -3737,13 +3763,16 @@ class ProviderClient:
             "sourceTruncated": request.source.truncated,
         }
 
-        def post_smart_fill(query, metadata):
+        def post_smart_fill(query, metadata, call_timeout=None):
+            kwargs = dict(post_kwargs)
+            if call_timeout is not None:
+                kwargs["timeout_seconds"] = call_timeout
             return self.post_task(
                 task_type,
                 trace_id,
                 metadata,
                 query,
-                **post_kwargs
+                **kwargs
             )
 
         body = post_smart_fill(
@@ -3760,12 +3789,31 @@ class ProviderClient:
         except AdapterError as first_error:
             if first_error.code != "MODEL_RESULT_INVALID":
                 raise
+            now_mono = clock()
+            if deadline_monotonic is not None and now_mono >= deadline_monotonic:
+                raise AdapterError(
+                    "PROVIDER_TIMEOUT",
+                    "智能填写模型请求超时，请稍后重试。",
+                    status_code=504,
+                )
+            if deadline_monotonic is not None:
+                remaining_total = max(0.0, deadline_monotonic - now_mono)
+                retry_timeout = min(effective_timeout, remaining_total)
+            else:
+                retry_timeout = effective_timeout
+            if retry_timeout <= 0:
+                raise AdapterError(
+                    "PROVIDER_TIMEOUT",
+                    "智能填写模型请求超时，请稍后重试。",
+                    status_code=504,
+                )
             if progress_callback:
                 progress_callback("retrying")
             correction_query = prompt + "\n结构纠正：上一次输出未通过严格契约校验。请重新输出完整 JSON；不得输出 Markdown、解释文字或任何额外字段。"
             corrected_body = post_smart_fill(
                 correction_query,
                 {**input_data, "correctionAttempt": 1},
+                call_timeout=retry_timeout,
             )
             parsed = parse_excel_smart_fill_answer(
                 extract_answer(corrected_body), expected_item_ids=expected_item_ids

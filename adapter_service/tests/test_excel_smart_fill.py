@@ -1,6 +1,9 @@
-import pytest
+import importlib.util
 import json
+import pytest
 from pydantic import ValidationError
+
+HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
 
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 from app.core import models
@@ -387,7 +390,7 @@ class _RecordingSmartFillServiceProvider:
     def resolve_task_auth(self, task_type):
         return dict(self._task_auth)
 
-    def excel_smart_fill(self, request, trace_id, task_auth=None, progress_callback=None):
+    def excel_smart_fill(self, request, trace_id, task_auth=None, progress_callback=None, **kwargs):
         self.calls.append(request)
         if progress_callback:
             progress_callback("provider_processing")
@@ -452,6 +455,7 @@ def test_smart_fill_job_splits_500_item_task_into_batches_of_50():
     assert [len(item.target.items) for item in provider.calls] == [50, 1]
 
 
+@pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi required")
 def test_fastapi_exposes_smart_fill_preview_and_job_routes():
     from app.main import app
 
@@ -519,6 +523,7 @@ def test_model_configuration_validation_uses_the_smart_fill_contract():
     )
 
 
+@pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi required")
 def test_fastapi_smart_fill_job_returns_strict_result_envelope():
     from fastapi.testclient import TestClient
 

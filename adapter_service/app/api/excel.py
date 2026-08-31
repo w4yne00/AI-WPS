@@ -317,11 +317,13 @@ def cancel_excel_smart_fill_job(job_id: str, resume: bool = False):
     job = excel_smart_fill_jobs.cancel(job_id)
     if not job:
         return _missing_excel_smart_fill_response(job_id, interrupted=resume)
+    is_running = job.get("status") == "running" and job.get("cancelRequested")
+    message = "cancel_requested" if is_running else "cancelled"
     return {
         "success": True,
         "traceId": job.get("traceId", job_id),
         "taskType": "excel.smart_fill",
-        "message": "cancelled",
+        "message": message,
         "data": job,
         "errors": [],
     }

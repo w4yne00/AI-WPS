@@ -1,3 +1,4 @@
+import math
 import re
 import time
 from copy import deepcopy
@@ -95,6 +96,14 @@ class ExcelSmartFillJobStore:
             return existing
         snapshot_task_auth = getattr(self.smart_fill, "snapshot_task_auth", None)
         task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
+        total_items = len(request.target.items)
+        initial_batch_size = calculate_smart_fill_batch_size(
+            request,
+            start_index=0,
+            task_auth=task_auth,
+        )
+        total_batches = max(1, math.ceil(total_items / max(1, initial_batch_size)))
+        retention_seconds = getattr(self.coordinator, "terminal_ttl_seconds", RESULT_RETENTION_SECONDS)
         return self.coordinator.submit(
             job_id=job_id,
             trace_id=trace_id,
@@ -108,6 +117,8 @@ class ExcelSmartFillJobStore:
                 "nextIndex": 0,
                 "results": [],
                 "batchCount": 0,
+                "currentBatch": 1,
+                "totalBatches": total_batches,
                 "startedAtMonotonic": self.clock(),
             },
             failure_code="EXCEL_SMART_FILL_JOB_FAILED",
@@ -116,9 +127,12 @@ class ExcelSmartFillJobStore:
                 "runningMessage": RUNNING_MESSAGE,
                 "providerTimeoutSeconds": EXCEL_SMART_FILL_TIMEOUT_SECONDS,
                 "totalTimeoutSeconds": TOTAL_TIMEOUT_SECONDS,
-                "resultRetentionSeconds": RESULT_RETENTION_SECONDS,
+                "resultRetentionSeconds": retention_seconds,
                 "maxItems": MAX_ITEMS_PER_TASK,
                 "batchSize": MAX_ITEMS_PER_BATCH,
+                "currentBatch": 1,
+                "totalBatches": total_batches,
+                "completedBatchCount": 0,
             },
             safe_failure_codes=set(SAFE_ERROR_STATUSES),
             request_fingerprint=request_fingerprint,
@@ -170,15 +184,76 @@ class ExcelSmartFillJobStore:
             )
         if progress:
             progress("chunking")
-        provider_kwargs = {}
+
+        started = float(snapshot.get("startedAtMonotonic", self.clock()))
+        now_mono = self.clock()
+        remaining_total = max(0.0, TOTAL_TIMEOUT_SECONDS - (now_mono - started))
+        if remaining_total <= 0:
+            error = AdapterError(
+                "EXCEL_SMART_FILL_DEADLINE_EXCEEDED",
+                "智能填写任务超过 60 分钟总处理时限。",
+                status_code=504,
+            )
+            error.partial_result = self._partial_result(
+                snapshot, snapshot.get("results", []), "timeout"
+            )
+            raise error
+
+        provider_timeout = min(EXCEL_SMART_FILL_TIMEOUT_SECONDS, remaining_total)
+        if provider_timeout <= 0:
+            error = AdapterError(
+                "EXCEL_SMART_FILL_DEADLINE_EXCEEDED",
+                "智能填写任务超过 60 分钟总处理时限。",
+                status_code=504,
+            )
+            error.partial_result = self._partial_result(
+                snapshot, snapshot.get("results", []), "timeout"
+            )
+            raise error
+
+        provider_kwargs = {
+            "timeout_seconds": provider_timeout,
+            "deadline_monotonic": started + TOTAL_TIMEOUT_SECONDS,
+            "clock": self.clock,
+        }
         if snapshot.get("taskAuth") is not None:
             provider_kwargs["task_auth"] = snapshot["taskAuth"]
-        result = self.smart_fill.fill_batch(
-            batch,
-            trace_id=snapshot.get("traceId", "") or "",
-            progress_callback=progress,
-            **provider_kwargs
-        )
+
+        try:
+            try:
+                result = self.smart_fill.fill_batch(
+                    batch,
+                    trace_id=snapshot.get("traceId", "") or "",
+                    progress_callback=progress,
+                    **provider_kwargs
+                )
+            except TypeError as err:
+                if "unexpected keyword argument" in str(err):
+                    safe_kwargs = {
+                        k: v for k, v in provider_kwargs.items()
+                        if k in {"task_auth", "progress_callback"}
+                    }
+                    result = self.smart_fill.fill_batch(
+                        batch,
+                        trace_id=snapshot.get("traceId", "") or "",
+                        progress_callback=progress,
+                        **safe_kwargs
+                    )
+                else:
+                    raise
+        except Exception as error:
+            if isinstance(error, AdapterError) and getattr(error, "partial_result", None) is None:
+                stop_reason = (
+                    "timeout"
+                    if "TIMEOUT" in getattr(error, "code", "").upper()
+                    or getattr(error, "status_code", None) == 504
+                    else "failed"
+                )
+                error.partial_result = self._partial_result(
+                    snapshot, snapshot.get("results", []), stop_reason
+                )
+            raise
+
         combined = list(snapshot.get("results", [])) + list(result["items"])
         if self.coordinator.is_cancel_requested(
             snapshot["jobId"], task_type="excel.smart_fill"
@@ -196,12 +271,16 @@ class ExcelSmartFillJobStore:
             raise
         next_index = start + len(batch.target.items)
         batch_count = int(snapshot.get("batchCount", 0)) + 1
-        if next_index < len(request.target.items):
+        total_items = len(request.target.items)
+        total_batches = max(batch_count + 1, math.ceil(total_items / max(1, batch_size)))
+        if next_index < total_items:
             continuation = {
                 **snapshot,
                 "nextIndex": next_index,
                 "results": combined,
                 "batchCount": batch_count,
+                "currentBatch": batch_count + 1,
+                "totalBatches": total_batches,
                 "provider": result.get("provider", ""),
             }
             return LongTaskContinuation(continuation, phase="chunking")
@@ -214,6 +293,7 @@ class ExcelSmartFillJobStore:
             "provider": result.get("provider", ""),
             "processedItemCount": len(combined),
             "batchCount": batch_count,
+            "totalBatches": batch_count,
         }
 
     def _raise_if_deadline_exceeded(self, snapshot: Dict) -> None:
@@ -245,7 +325,7 @@ class ExcelSmartFillJobStore:
                 existing.append(
                     {
                         "itemId": item.item_id,
-                        "status": "insufficient_information",
+                        "status": "unprocessed",
                         "valueType": "text",
                         "value": "",
                     }

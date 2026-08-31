@@ -460,13 +460,38 @@ class LongTaskCoordinator:
                 self._finish_locked(job, "completed", now_mono)
                 self._running_count = max(self._running_count - 1, 0)
             elif cancelled or cancel_requested:
-                job["result"] = cancelled_result
+                final_result = cancelled_result
+                if final_result is None:
+                    if continuation is not None and isinstance(continuation.snapshot, dict):
+                        raw_results = continuation.snapshot.get("results")
+                        if raw_results is not None:
+                            final_result = {
+                                "schemaVersion": "excel.smart_fill.v1",
+                                "items": raw_results,
+                                "provider": str(continuation.snapshot.get("provider", "")),
+                                "processedItemCount": len(raw_results),
+                                "batchCount": int(continuation.snapshot.get("batchCount", 0)),
+                                "partial": True,
+                                "stopReason": "cancelled",
+                            }
+                    elif job.get("result") is not None:
+                        final_result = job.get("result")
+                job["result"] = final_result
                 self._finish_locked(job, "cancelled", now_mono)
                 self._cancelled_count += 1
                 self._running_count = max(self._running_count - 1, 0)
             elif continuation is not None:
                 job["_snapshot"] = continuation.snapshot
                 job["_occupiesSlot"] = False
+                if isinstance(continuation.snapshot, dict):
+                    pub = job.get("_publicMetadata")
+                    if isinstance(pub, dict):
+                        if "currentBatch" in continuation.snapshot:
+                            pub["currentBatch"] = continuation.snapshot["currentBatch"]
+                        if "totalBatches" in continuation.snapshot:
+                            pub["totalBatches"] = continuation.snapshot["totalBatches"]
+                        if "batchCount" in continuation.snapshot:
+                            pub["completedBatchCount"] = continuation.snapshot["batchCount"]
                 self._transition_phase_locked(job, continuation.phase, now_mono)
                 self._running_count = max(self._running_count - 1, 0)
                 self._deferred.append(job_key)
@@ -531,7 +556,7 @@ class LongTaskCoordinator:
     def _ordered_queue_locked(self):
         pending = [
             job_key
-            for job_key in list(self._deferred) + list(self._queue)
+            for job_key in list(self._queue) + list(self._deferred)
             if (
                 self._jobs.get(job_key, {}).get("status") == "queued"
                 or (
