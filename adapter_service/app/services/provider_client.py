@@ -894,7 +894,101 @@ def reset_provider_debug() -> None:
         _LAST_PROVIDER_DEBUG.clear()
 
 
+def _project_smart_fill_debug(event: Dict) -> Dict:
+    debug = {
+        "traceId": event.get("traceId", ""),
+        "taskType": "excel.smart_fill",
+    }
+    stage = event.get("stage")
+    if isinstance(stage, str) and _PROVIDER_DEBUG_STAGE_RE.fullmatch(stage):
+        debug["stage"] = stage
+    if "attemptCount" in event:
+        debug["attemptCount"] = event["attemptCount"]
+    if "compatibilityFallback" in event:
+        debug["compatibilityFallback"] = event["compatibilityFallback"]
+
+    request_info = event.get("request", {})
+    if isinstance(request_info, dict):
+        body = request_info.get("body", {})
+        if isinstance(body, dict):
+            req_sanitized = {}
+            if "query" in body:
+                req_sanitized["queryLength"] = len(str(body.get("query", "") or ""))
+            elif "messages" in body and isinstance(body.get("messages"), list):
+                user_msg = next(
+                    (
+                        m.get("content")
+                        for m in body.get("messages", [])
+                        if isinstance(m, dict) and m.get("role") == "user"
+                    ),
+                    "",
+                )
+                req_sanitized["queryLength"] = len(str(user_msg or ""))
+            if "response_mode" in body or "mode" in body:
+                req_sanitized["responseMode"] = body.get("response_mode", body.get("mode", ""))
+            debug["request"] = req_sanitized
+
+    response_info = event.get("response", {})
+    if isinstance(response_info, dict) and response_info:
+        res_body = response_info.get("body", {})
+        res_sanitized = {
+            "status": response_info.get("status", 200),
+        }
+        if isinstance(res_body, dict):
+            answer = str(res_body.get("answer", "") or "")
+            data = res_body.get("data", {})
+            if isinstance(data, dict):
+                outputs = data.get("outputs", {})
+                if isinstance(outputs, dict):
+                    answer = answer or str(outputs.get("answer", outputs.get("result", "")) or "")
+            if not answer and "choices" in res_body and isinstance(res_body.get("choices"), list):
+                choices = res_body.get("choices")
+                if choices and isinstance(choices[0], dict):
+                    msg = choices[0].get("message", {})
+                    if isinstance(msg, dict):
+                        answer = str(msg.get("content", "") or "")
+            res_sanitized["answerLength"] = len(answer)
+            usage = res_body.get("usage")
+            if isinstance(usage, dict):
+                safe_usage = {}
+                for key in ("promptTokens", "completionTokens", "totalTokens", "prompt_tokens", "completion_tokens", "total_tokens"):
+                    v = usage.get(key)
+                    if type(v) is int and v >= 0:
+                        norm_key = key
+                        if key == "prompt_tokens":
+                            norm_key = "promptTokens"
+                        elif key == "completion_tokens":
+                            norm_key = "completionTokens"
+                        elif key == "total_tokens":
+                            norm_key = "totalTokens"
+                        safe_usage[norm_key] = v
+                if safe_usage:
+                    res_sanitized["usage"] = safe_usage
+        debug["response"] = res_sanitized
+
+    error_info = event.get("error", {})
+    if isinstance(error_info, dict) and error_info:
+        debug["error"] = {
+            "type": str(error_info.get("type", "")),
+            "status": error_info.get("status", ""),
+        }
+        if "code" in error_info:
+            debug["error"]["code"] = str(error_info.get("code", ""))
+
+    validation_info = event.get("validation", {})
+    if isinstance(validation_info, dict) and validation_info:
+        debug["validation"] = validation_info
+
+    return debug
+
+
 def record_provider_debug(event: Dict) -> None:
+    if event.get("taskType") == "excel.smart_fill":
+        debug = _project_smart_fill_debug(event)
+        with _LAST_PROVIDER_DEBUG_LOCK:
+            _LAST_PROVIDER_DEBUG.clear()
+            _LAST_PROVIDER_DEBUG.update(debug)
+        return
     debug = {
         "traceId": event.get("traceId", ""),
         "taskType": event.get("taskType", ""),
@@ -2886,15 +2980,24 @@ class ProviderClient:
             else DIFY_INPUT_MODE_LEGACY
         )
         attempt_modes = (preferred_mode, alternate_mode)
-        logger.info(
-            "traceId=%s task=%s url=%s authSource=%s payloadStyle=chat queryLength=%s inputKeysIgnored=%s",
-            trace_id,
-            task_type,
-            url,
-            str(resolved_task_auth.get("authSource", "none")),
-            len(query or ""),
-            sorted((input_data or {}).keys()),
-        )
+        if task_type == "excel.smart_fill":
+            logger.info(
+                "traceId=%s task=%s payloadStyle=chat queryLength=%s itemCount=%s",
+                trace_id,
+                task_type,
+                len(query or ""),
+                (input_data or {}).get("itemCount", 0),
+            )
+        else:
+            logger.info(
+                "traceId=%s task=%s url=%s authSource=%s payloadStyle=chat queryLength=%s inputKeysIgnored=%s",
+                trace_id,
+                task_type,
+                url,
+                str(resolved_task_auth.get("authSource", "none")),
+                len(query or ""),
+                sorted((input_data or {}).keys()),
+            )
         compatibility_error = None
         for attempt_index, input_mode in enumerate(attempt_modes, start=1):
             attempt_metadata = {

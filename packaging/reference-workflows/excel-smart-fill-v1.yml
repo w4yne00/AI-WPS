@@ -1,0 +1,66 @@
+kind: app
+version: 0.1.5
+
+app:
+  mode: workflow
+  name: AI-WPS Excel smart fill v1
+  description: Reference workflow for versioned Excel smart fill contract (excel.smart_fill.v1).
+
+workflow:
+  contract_version: excel.smart_fill.v1
+  inputs:
+    - name: query
+      type: paragraph
+      required: true
+      description: JSON payload containing schemaVersion, userInstruction, targetItems, targetContext, and source.
+  output:
+    variable: answer
+    type: json
+    required: true
+    description: Strict JSON string conforming to excel.smart_fill.v1 output schema.
+  schema:
+    type: object
+    required:
+      - schemaVersion
+      - items
+    properties:
+      schemaVersion:
+        type: string
+        enum:
+          - excel.smart_fill.v1
+      items:
+        type: array
+        items:
+          type: object
+          required:
+            - itemId
+            - status
+            - valueType
+            - value
+          properties:
+            itemId:
+              type: string
+            status:
+              type: string
+              enum:
+                - completed
+                - insufficient_information
+            valueType:
+              type: string
+              enum:
+                - text
+                - number
+            value:
+              type:
+                - string
+                - number
+  system_prompt: |
+    你是 AI-WPS Excel 智能填写工作流。
+    只返回一个 JSON 对象，顶层字段固定为 schemaVersion 和 items。
+    schemaVersion 必须为 excel.smart_fill.v1。
+    每个目标 itemId 必须且只能出现一次，不得新增或遗漏。
+    每个 item 只包含 itemId、status、valueType、value 四个字段。
+    status 只能是 completed 或 insufficient_information；后者的 value 必须为空字符串 ""。
+    valueType 只能是 text 或 number；completed 文本不可为空，number 必须是有限数字。
+    不得返回地址、公式、Markdown 代码块、注释、思维链或外部未提供的事实。
+    无法从输入来源上下文可靠得到时，返回 insufficient_information，不得猜测。

@@ -1,5 +1,6 @@
 import importlib.util
 import json
+from unittest.mock import patch
 import pytest
 from pydantic import ValidationError
 
@@ -1004,3 +1005,457 @@ def test_result_overflow_fails_closed_without_writable_partial():
         if item.get("status") == "completed" and item.get("value")
     ]
     assert completed == []
+
+
+class FakeHTTPResponse:
+    def __init__(self, body: bytes, status: int = 200, headers=None):
+        self._body = body
+        self.status = status
+        self.headers = headers or {}
+
+    def read(self) -> bytes:
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        pass
+
+
+@patch("app.services.provider_client.urllib_request.urlopen")
+def test_workflow_platform_smart_fill_single_and_batch_item_contracts(mock_urlopen):
+    # 1. Single item test with workflow_platform
+    single_response_payload = {
+        "answer": json.dumps(
+            {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [
+                    {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "分类A"}
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        "conversation_id": "conv-wf-001",
+        "message_id": "msg-wf-001",
+    }
+    mock_urlopen.return_value = FakeHTTPResponse(
+        json.dumps(single_response_payload).encode("utf-8")
+    )
+
+    client = ProviderClient()
+    payload = _request_payload()
+    payload["target"]["items"] = [payload["target"]["items"][0]]
+    payload["target"]["address"] = "D2"
+    request = models.ExcelSmartFillRequest(**payload)
+    result = client.excel_smart_fill(
+        request,
+        trace_id="trace-wf-single-text",
+        task_auth={
+            "providerBaseUrl": "https://dify.example/v1",
+            "apiKey": "key-wf",
+            "accessMethod": "workflow_platform",
+            "modelConfigurationName": "工作流智能填写",
+        },
+    )
+    assert result["schemaVersion"] == "excel.smart_fill.v1"
+    assert len(result["items"]) == 1
+    assert result["items"][0]["itemId"] == "r2c4"
+    assert result["items"][0]["status"] == "completed"
+    assert result["items"][0]["valueType"] == "text"
+    assert result["items"][0]["value"] == "分类A"
+    assert "工作流平台" in result["provider"]
+    assert result["conversationId"] == "conv-wf-001"
+
+    # Assert HTTP request sent to urlopen
+    assert mock_urlopen.call_count == 1
+    http_req = mock_urlopen.call_args[0][0]
+    assert http_req.full_url == "https://dify.example/v1/chat-messages"
+    assert http_req.headers["Authorization"] == "Bearer key-wf"
+    assert http_req.headers["Content-type"] == "application/json"
+    assert http_req.headers["X-trace-id"] == "trace-wf-single-text"
+    req_body = json.loads(http_req.data.decode("utf-8"))
+    assert req_body["response_mode"] == "blocking"
+    assert "excel.smart_fill.v1" in req_body["query"]
+    assert "r2c4" in req_body["query"]
+
+    # 2. Batch item test with workflow_platform
+    batch_response_payload = {
+        "answer": json.dumps(
+            {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [
+                    {"itemId": "item-000", "status": "completed", "valueType": "text", "value": "文本项"},
+                    {"itemId": "item-001", "status": "completed", "valueType": "number", "value": 123.45},
+                    {"itemId": "item-002", "status": "insufficient_information", "valueType": "text", "value": ""},
+                ],
+            },
+            ensure_ascii=False,
+        ),
+        "conversation_id": "conv-wf-002",
+        "message_id": "msg-wf-002",
+    }
+    mock_urlopen.return_value = FakeHTTPResponse(
+        json.dumps(batch_response_payload).encode("utf-8")
+    )
+
+    batch_payload = _aligned_default_payload(3, "smart-fill-wf-batch")
+    batch_request = models.ExcelSmartFillRequest(**batch_payload)
+    batch_result = client.excel_smart_fill(
+        batch_request,
+        trace_id="trace-wf-batch",
+        task_auth={
+            "providerBaseUrl": "https://dify.example/v1",
+            "apiKey": "key-wf",
+            "accessMethod": "workflow_platform",
+            "modelConfigurationName": "工作流智能填写",
+        },
+    )
+    assert batch_result["schemaVersion"] == "excel.smart_fill.v1"
+    assert len(batch_result["items"]) == 3
+    assert batch_result["items"][0]["value"] == "文本项"
+    assert batch_result["items"][1]["value"] == 123.45
+    assert batch_result["items"][2]["status"] == "insufficient_information"
+    assert batch_result["items"][2]["value"] == ""
+
+    # 3. Direct model equivalent matrix test
+    direct_response_payload = {
+        "id": "direct-msg-001",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "schemaVersion": "excel.smart_fill.v1",
+                            "items": [
+                                {"itemId": "item-000", "status": "completed", "valueType": "text", "value": "文本项"},
+                                {"itemId": "item-001", "status": "completed", "valueType": "number", "value": 123.45},
+                                {"itemId": "item-002", "status": "insufficient_information", "valueType": "text", "value": ""},
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+                "finish_reason": "stop",
+            }
+        ],
+    }
+    mock_urlopen.return_value = FakeHTTPResponse(
+        json.dumps(direct_response_payload).encode("utf-8")
+    )
+    direct_result = client.excel_smart_fill(
+        batch_request,
+        trace_id="trace-direct-batch",
+        task_auth={
+            "providerBaseUrl": "https://direct.example/v1",
+            "apiKey": "key-direct",
+            "accessMethod": "direct_model",
+            "modelName": "qwen-max",
+            "modelConfigurationName": "直连智能填写",
+        },
+    )
+    assert direct_result["schemaVersion"] == batch_result["schemaVersion"]
+    assert direct_result["items"] == batch_result["items"]
+    assert "直连" in direct_result["provider"]
+
+
+@patch("app.services.provider_client.urllib_request.urlopen")
+def test_workflow_platform_rejects_free_text_without_fallback(mock_urlopen):
+    mock_urlopen.return_value = FakeHTTPResponse(
+        json.dumps(
+            {
+                "answer": "好的，根据来源已为您填写为：分类A",
+                "conversation_id": "conv-wf-002",
+                "message_id": "msg-wf-002",
+            },
+            ensure_ascii=False,
+        ).encode("utf-8")
+    )
+
+    client = ProviderClient()
+    request = models.ExcelSmartFillRequest(**_request_payload())
+    with pytest.raises(AdapterError) as error_info:
+        client.excel_smart_fill(
+            request,
+            trace_id="trace-wf-raw-text",
+            task_auth={
+                "providerBaseUrl": "https://dify.example/v1",
+                "apiKey": "key-wf",
+                "accessMethod": "workflow_platform",
+            },
+        )
+    assert error_info.value.code == "MODEL_RESULT_INVALID"
+
+
+@pytest.mark.parametrize(
+    "case_id,case_items",
+    [
+        (
+            "insufficient_with_text",
+            [
+                {"itemId": "r2c4", "status": "insufficient_information", "valueType": "text", "value": "未知"},
+                {"itemId": "r3c4", "status": "completed", "valueType": "text", "value": "有效"},
+            ],
+        ),
+        (
+            "unexpected_item_id",
+            [
+                {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效"},
+                {"itemId": "unexpected_item", "status": "completed", "valueType": "text", "value": "有效"},
+            ],
+        ),
+        (
+            "duplicate_item_id",
+            [
+                {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效"},
+                {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效"},
+            ],
+        ),
+        (
+            "boolean_number_value",
+            [
+                {"itemId": "r2c4", "status": "completed", "valueType": "number", "value": True},
+                {"itemId": "r3c4", "status": "completed", "valueType": "text", "value": "有效"},
+            ],
+        ),
+        (
+            "extra_address_field",
+            [
+                {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": "有效", "address": "D2"},
+                {"itemId": "r3c4", "status": "completed", "valueType": "text", "value": "有效"},
+            ],
+        ),
+    ],
+    ids=[
+        "insufficient_with_text",
+        "unexpected_item_id",
+        "duplicate_item_id",
+        "boolean_number_value",
+        "extra_address_field",
+    ],
+)
+@patch("app.services.provider_client.urllib_request.urlopen")
+def test_workflow_platform_rejects_invalid_contract_items(mock_urlopen, case_id, case_items):
+    mock_urlopen.return_value = FakeHTTPResponse(
+        json.dumps(
+            {
+                "answer": json.dumps({"schemaVersion": "excel.smart_fill.v1", "items": case_items}),
+                "conversation_id": "c",
+                "message_id": "m",
+            }
+        ).encode("utf-8")
+    )
+    client = ProviderClient()
+    request = models.ExcelSmartFillRequest(**_request_payload())
+    with pytest.raises(AdapterError) as error_info:
+        client.excel_smart_fill(
+            request,
+            trace_id=f"trace-invalid-{case_id}",
+            task_auth={
+                "providerBaseUrl": "https://dify.example/v1",
+                "apiKey": "key-wf",
+                "accessMethod": "workflow_platform",
+            },
+        )
+    assert error_info.value.code == "MODEL_RESULT_INVALID"
+
+
+@patch("app.services.provider_client.urllib_request.urlopen")
+def test_workflow_platform_model_configuration_validation_probe(mock_urlopen):
+    from pathlib import Path
+    from tempfile import TemporaryDirectory
+    from app.services.model_configurations import (
+        ACCESS_WORKFLOW_PLATFORM,
+        ModelConfigurationStore,
+    )
+
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        key_dir = root / "provider_api_keys"
+        key_dir.mkdir()
+        config_path = root / "adapter.json"
+        config_path.write_text("{}", encoding="utf-8")
+        store = ModelConfigurationStore(config_path, key_dir)
+
+        config = store.create_configuration(
+            task_type="excel.smart_fill",
+            name="生产工作流填写",
+            access_method=ACCESS_WORKFLOW_PLATFORM,
+            service_base_url="https://dify.example/v1",
+        )
+        store.replace_api_key(config["id"], "test-key-probe")
+
+        # Verify key was written to isolated model_<uuid> file, NOT static excel_smart_fill
+        assert not (key_dir / "excel_smart_fill").exists()
+        assert (key_dir / config["apiKeyRef"]).read_text(encoding="utf-8").strip() == "test-key-probe"
+
+        mock_urlopen.return_value = FakeHTTPResponse(
+            json.dumps(
+                {
+                    "answer": json.dumps(
+                        {
+                            "schemaVersion": "excel.smart_fill.v1",
+                            "items": [
+                                {
+                                    "itemId": "item-0001",
+                                    "status": "completed",
+                                    "valueType": "text",
+                                    "value": "已填写",
+                                }
+                            ],
+                        },
+                        ensure_ascii=False,
+                    ),
+                    "conversation_id": "probe-conv",
+                    "message_id": "probe-msg",
+                }
+            ).encode("utf-8")
+        )
+
+        client = ProviderClient()
+        client.model_configuration_store = store
+        val_result = client.validate_model_configuration(config["id"], "trace-probe-val")
+        assert val_result["success"] is True
+        assert val_result["taskType"] == "excel.smart_fill"
+        assert val_result["accessMethod"] == "workflow_platform"
+
+        # Verify HTTP request
+        http_req = mock_urlopen.call_args[0][0]
+        assert http_req.full_url == "https://dify.example/v1/chat-messages"
+        assert http_req.headers["Authorization"] == "Bearer test-key-probe"
+        req_body = json.loads(http_req.data.decode("utf-8"))
+        assert "item-0001" in req_body["query"]
+
+        # Failure case with non-JSON answer
+        mock_urlopen.return_value = FakeHTTPResponse(
+            json.dumps({"answer": "自由文本回答"}).encode("utf-8")
+        )
+        with pytest.raises(AdapterError) as err:
+            client.validate_model_configuration(config["id"], "trace-probe-bad")
+        assert err.value.code == "MODEL_RESULT_INVALID"
+
+
+@patch("app.services.provider_client.urllib_request.urlopen")
+def test_smart_fill_diagnostics_and_logs_minimal_whitelisted_sentinels(mock_urlopen):
+    from app.services.provider_client import _LAST_PROVIDER_DEBUG, reset_provider_debug
+
+    reset_provider_debug()
+    sentinel_prompt = "SECRET_SENTINEL_PROMPT_98765"
+    sentinel_cell = "SECRET_SENTINEL_CELL_VALUE_54321"
+    sentinel_key = "SECRET_SENTINEL_API_KEY_00000"
+
+    mock_urlopen.return_value = FakeHTTPResponse(
+        json.dumps(
+            {
+                "answer": json.dumps(
+                    {
+                        "schemaVersion": "excel.smart_fill.v1",
+                        "items": [
+                            {"itemId": "r2c4", "status": "completed", "valueType": "text", "value": sentinel_cell}
+                        ],
+                    },
+                    ensure_ascii=False,
+                ),
+                "conversation_id": "c1",
+                "message_id": "m1",
+                "usage": {"promptTokens": 10, "completionTokens": 20, "totalTokens": 30},
+            }
+        ).encode("utf-8")
+    )
+
+    client = ProviderClient()
+    payload = _request_payload()
+    payload["target"]["items"] = [payload["target"]["items"][0]]
+    payload["userInstruction"] = sentinel_prompt
+    request = models.ExcelSmartFillRequest(**payload)
+    result = client.excel_smart_fill(
+        request,
+        trace_id="trace-sentinel-test",
+        task_auth={
+            "providerBaseUrl": "https://dify.example/v1",
+            "apiKey": sentinel_key,
+            "accessMethod": "workflow_platform",
+            "modelConfigurationName": "SECRET_CONFIG_NAME",
+            "apiKeyRef": "SECRET_KEY_REF",
+        },
+    )
+    assert result["schemaVersion"] == "excel.smart_fill.v1"
+
+    debug_str = json.dumps(_LAST_PROVIDER_DEBUG, ensure_ascii=False)
+    assert sentinel_prompt not in debug_str
+    assert sentinel_cell not in debug_str
+    assert sentinel_key not in debug_str
+    assert "SECRET_CONFIG_NAME" not in debug_str
+    assert "SECRET_KEY_REF" not in debug_str
+    assert "https://dify.example/v1" not in debug_str
+
+    assert _LAST_PROVIDER_DEBUG["taskType"] == "excel.smart_fill"
+    assert _LAST_PROVIDER_DEBUG["traceId"] == "trace-sentinel-test"
+    assert "queryLength" in _LAST_PROVIDER_DEBUG["request"]
+    assert "answerLength" in _LAST_PROVIDER_DEBUG["response"]
+    assert _LAST_PROVIDER_DEBUG["response"]["usage"] == {
+        "promptTokens": 10,
+        "completionTokens": 20,
+        "totalTokens": 30,
+    }
+
+
+def test_reference_workflow_dsl_and_example_fixtures_validation():
+    from pathlib import Path
+    ref_path = Path(__file__).resolve().parents[2] / "packaging/reference-workflows/excel-smart-fill-v1.yml"
+    assert ref_path.is_file(), f"Missing reference workflow at {ref_path}"
+    content = ref_path.read_text(encoding="utf-8")
+
+    assert "kind: app" in content
+    assert "version: 0.1.5" in content
+    assert "name: AI-WPS Excel smart fill v1" in content
+    assert "contract_version: excel.smart_fill.v1" in content
+    assert "schemaVersion" in content
+    assert "insufficient_information" in content
+
+    # Test that all canonical example fixtures validate through parse_excel_smart_fill_answer
+    fixtures = [
+        # Single text
+        (
+            ["item-001"],
+            {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [{"itemId": "item-001", "status": "completed", "valueType": "text", "value": "A类"}],
+            },
+        ),
+        # Single number
+        (
+            ["item-002"],
+            {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [{"itemId": "item-002", "status": "completed", "valueType": "number", "value": 200.5}],
+            },
+        ),
+        # Insufficient info
+        (
+            ["item-003"],
+            {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [{"itemId": "item-003", "status": "insufficient_information", "valueType": "text", "value": ""}],
+            },
+        ),
+        # Batch mixed
+        (
+            ["item-001", "item-002", "item-003"],
+            {
+                "schemaVersion": "excel.smart_fill.v1",
+                "items": [
+                    {"itemId": "item-001", "status": "completed", "valueType": "text", "value": "A类"},
+                    {"itemId": "item-002", "status": "completed", "valueType": "number", "value": 200.5},
+                    {"itemId": "item-003", "status": "insufficient_information", "valueType": "text", "value": ""},
+                ],
+            },
+        ),
+    ]
+
+    for expected_ids, fixture in fixtures:
+        raw_json = json.dumps(fixture, ensure_ascii=False)
+        parsed = parse_excel_smart_fill_answer(raw_json, expected_item_ids=expected_ids)
+        assert parsed["schemaVersion"] == "excel.smart_fill.v1"
+        assert len(parsed["items"]) == len(expected_ids)
