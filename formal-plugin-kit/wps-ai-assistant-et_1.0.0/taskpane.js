@@ -1192,6 +1192,7 @@
     var formulaState;
     var hasFormula;
     var valueState;
+    var displayed;
     if (!cell || isSmartFillHostCellHidden(cell)) {
       return "";
     }
@@ -1212,10 +1213,11 @@
     if (!valueState.known) {
       return "";
     }
-    return truncateText(
-      valueState.present ? safeText(valueState.value) : "",
-      EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength
-    );
+    displayed = valueState.present ? safeText(valueState.value) : "";
+    if (Array.from(String(displayed)).length > EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength) {
+      throw new Error("智能填写单元格文本最多 2000 个字符，不能静默截断。");
+    }
+    return displayed;
   }
 
   function makeSmartFillTextHash(value) {
@@ -1319,7 +1321,9 @@
       if (state.smartFillTarget && state.smartFillTarget.sheetName !== payload.source.sheetName) {
         throw new Error("来源区域必须与目标区域位于同一工作表。" );
       }
-      state.smartFillSource = payload.source;
+      state.smartFillSource = helpers.sanitizeExcelSmartFillSource
+        ? helpers.sanitizeExcelSmartFillSource(payload.source, state.smartFillTarget)
+        : payload.source;
       state.smartFillWorkbookId = state.smartFillWorkbookId || payload.workbookId || "";
       state.smartFillResult = null;
       state.smartFillPreview = null;
@@ -1363,7 +1367,9 @@
       clientJobId: clientJobId || "",
       target: requestTarget,
       source: JSON.parse(JSON.stringify(source)),
-      userInstruction: safeText(byId("excel-smart-fill-instruction").value)
+      userInstruction: helpers.validateExcelSmartFillInstruction
+        ? helpers.validateExcelSmartFillInstruction(safeText(byId("excel-smart-fill-instruction").value))
+        : safeText(byId("excel-smart-fill-instruction").value)
     };
   }
 
@@ -2860,6 +2866,7 @@
       error.adapterCode === "EXCEL_SMART_FILL_ITEMS_TOO_MANY" ||
       error.adapterCode === "EXCEL_SMART_FILL_BATCH_TOO_LARGE" ||
       error.adapterCode === "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG" ||
+      error.adapterCode === "EXCEL_SMART_FILL_SOURCE_TRUNCATED" ||
       error.adapterCode === "EXCEL_SMART_FILL_CELL_TEXT_TOO_LONG" ||
       error.adapterCode === "EXCEL_SMART_FILL_TEXT_TOO_LARGE" ||
       error.adapterCode === "EXCEL_SMART_FILL_REQUEST_TOO_LARGE" ||

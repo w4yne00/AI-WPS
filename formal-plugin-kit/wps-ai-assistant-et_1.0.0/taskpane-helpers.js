@@ -28,6 +28,64 @@
     return ("00000000" + hash.toString(16)).slice(-8);
   }
 
+  function countUnicodeCodePoints(text) {
+    return Array.from(String(text == null ? "" : text)).length;
+  }
+
+  function validateExcelSmartFillInstruction(value) {
+    var text = String(value == null ? "" : value);
+    if (countUnicodeCodePoints(text) > 4000) {
+      throw new Error("智能填写说明最多 4000 个字符。");
+    }
+    return text;
+  }
+
+  function parseExcelA1Cell(address) {
+    var match = String(address || "").replace(/^.*!/, "").match(/\$?([A-Za-z]+)\$?([0-9]+)/);
+    var letters;
+    var column = 0;
+    var index;
+    if (!match) {
+      return null;
+    }
+    letters = match[1].toUpperCase();
+    for (index = 0; index < letters.length; index += 1) {
+      column = column * 26 + (letters.charCodeAt(index) - 64);
+    }
+    return { row: Number(match[2]), column: column };
+  }
+
+  function sanitizeExcelSmartFillSource(source, target) {
+    var origin = parseExcelA1Cell(String(source && source.address || "").split(":")[0]);
+    var blocked = {};
+    var items = target && Array.isArray(target.items) ? target.items : [];
+    if (!source || !origin) {
+      return source;
+    }
+    items.forEach(function (item) {
+      blocked[Number(item.row) + "," + Number(item.column)] = true;
+    });
+    function blankAt(sheetRow, sheetColumn, value) {
+      return blocked[sheetRow + "," + sheetColumn] ? "" : value;
+    }
+    source.headers = (source.headers || []).map(function (value, columnIndex) {
+      return blankAt(origin.row, origin.column + columnIndex, value);
+    });
+    source.rows = (source.rows || []).map(function (row, rowIndex) {
+      return (row || []).map(function (value, columnIndex) {
+        return blankAt(origin.row + 1 + rowIndex, origin.column + columnIndex, value);
+      });
+    });
+    source.truncated = false;
+    source.snapshotHash = makeTextHash(JSON.stringify({
+      sheetName: source.sheetName,
+      address: source.address,
+      headers: source.headers,
+      rows: source.rows
+    }));
+    return source;
+  }
+
   function sanitizeMarkdownUrl(value) {
     var url = String(value || "").trim();
     if (/^(https?:\/\/|mailto:)/i.test(url)) {
@@ -2191,7 +2249,6 @@
     var targetOnly = Boolean(settings.targetOnly);
     var sourceOnly = Boolean(settings.sourceOnly);
     var totalLength = 0;
-    var truncated = false;
 
     function readOwned(owner, keys) {
       var index;
@@ -2363,16 +2420,14 @@
 
     function bounded(value) {
       var text = String(value || "");
-      var remaining = Math.max(maxTotalTextLength - totalLength, 0);
-      if (text.length > maxCellTextLength) {
-        text = text.slice(0, maxCellTextLength);
-        truncated = true;
+      var length = countUnicodeCodePoints(text);
+      if (length > maxCellTextLength) {
+        throw new Error("智能填写单元格文本最多 " + maxCellTextLength + " 个字符，不能静默截断。");
       }
-      if (text.length > remaining) {
-        text = text.slice(0, remaining);
-        truncated = true;
+      if (totalLength + length > maxTotalTextLength) {
+        throw new Error("智能填写上下文文本总量超过 " + maxTotalTextLength + " 个字符，不能静默截断。");
       }
-      totalLength += text.length;
+      totalLength += length;
       return text;
     }
 
@@ -2476,9 +2531,14 @@
       }
     }
 
-    var capturedSourceRows = Math.min(sourceDimensions.rows, maxSourceRows);
-    var capturedSourceColumns = Math.min(sourceDimensions.columns, maxSourceColumns);
-    truncated = truncated || sourceDimensions.rows > maxSourceRows || sourceDimensions.columns > maxSourceColumns;
+    if (!targetOnly && sourceDimensions.rows > maxSourceRows) {
+      throw new Error("智能填写来源最多支持 " + maxSourceRows + " 行，不能静默截断。");
+    }
+    if (!targetOnly && sourceDimensions.columns > maxSourceColumns) {
+      throw new Error("智能填写来源最多支持 " + maxSourceColumns + " 列，不能静默截断。");
+    }
+    var capturedSourceRows = sourceDimensions.rows;
+    var capturedSourceColumns = sourceDimensions.columns;
     for (sourceRow = 1; !targetOnly && sourceRow <= capturedSourceRows; sourceRow += 1) {
       var sourceRowValues = [];
       for (sourceColumn = 1; sourceColumn <= capturedSourceColumns; sourceColumn += 1) {
@@ -2511,10 +2571,10 @@
       result.target = {
         sheetName: readSheetName(targetRange, "target"),
         address: targetAddress || "target",
-        columnHeader: toSafeString(settings.targetColumnHeader, "").slice(0, maxCellTextLength),
+        columnHeader: bounded(toSafeString(settings.targetColumnHeader, "")),
         rowContext: Array.isArray(settings.targetRowContext)
-          ? settings.targetRowContext.slice(0, maxSourceColumns).map(function (value) {
-            return String(value || "").slice(0, maxCellTextLength);
+          ? settings.targetRowContext.map(function (value) {
+            return bounded(String(value || ""));
           })
           : [],
         items: targetItems
@@ -2528,8 +2588,11 @@
         rows: sourceRows,
         rowCount: sourceRows.length,
         columnCount: capturedSourceColumns,
-        truncated: truncated
+        truncated: false
       };
+      if (result.target) {
+        sanitizeExcelSmartFillSource(result.source, result.target);
+      }
       result.source.snapshotHash = makeTextHash(JSON.stringify({
         sheetName: result.source.sheetName,
         address: result.source.address,
@@ -2541,13 +2604,18 @@
   }
 
   function readExcelSmartFillDisplayCell(cell) {
+    var text;
     if (!cell) {
       return "";
     }
     if (cell.hidden || cell.hasFormula || String(cell.formula || "").charAt(0) === "=") {
       return "";
     }
-    return String(cell.text == null ? "" : cell.text);
+    text = String(cell.text == null ? "" : cell.text);
+    if (countUnicodeCodePoints(text) > 2000) {
+      throw new Error("智能填写单元格文本最多 2000 个字符，不能静默截断。");
+    }
+    return text;
   }
 
   function buildExcelSmartFillDefaultSource(target, readCell) {
@@ -2641,15 +2709,18 @@
     html.push('<div class="smart-fill-result-list">');
     items.forEach(function (item) {
       var completed = item && item.status === "completed";
+      var failed = item && item.status === "failed";
       var value = completed ? String(item.value == null ? "" : item.value) : "";
+      var statusLabel = completed ? "可写入" : (failed ? "失败" : "信息不足");
       html.push(
         '<article class="smart-fill-result-item">',
         '<div class="smart-fill-result-meta">',
         "<span>" + escapeHtml(targetAddress(item.itemId)) + "</span>",
-        '<span class="smart-fill-result-status ' + (completed ? "is-complete" : "is-insufficient") + '">' +
-          (completed ? "可写入" : "信息不足") + "</span>",
+        '<span class="smart-fill-result-status ' +
+          (completed ? "is-complete" : (failed ? "is-failed" : "is-insufficient")) + '">' +
+          statusLabel + "</span>",
         "</div>",
-        '<p class="smart-fill-result-value">' + escapeHtml(completed ? value : "信息不足") + "</p>",
+        '<p class="smart-fill-result-value">' + escapeHtml(completed ? value : statusLabel) + "</p>",
         "</article>"
       );
     });
@@ -3324,6 +3395,8 @@
     createSettingsRefreshController: createSettingsRefreshController,
     extractExcelFormulaSelection: extractExcelFormulaSelection,
     extractExcelSmartFillPayload: extractExcelSmartFillPayload,
+    validateExcelSmartFillInstruction: validateExcelSmartFillInstruction,
+    sanitizeExcelSmartFillSource: sanitizeExcelSmartFillSource,
     buildExcelSmartFillDefaultSource: buildExcelSmartFillDefaultSource,
     buildExcelSmartFillReadonlyPreview: buildExcelSmartFillReadonlyPreview,
     createExcelSmartFillPreview: createExcelSmartFillPreview,
