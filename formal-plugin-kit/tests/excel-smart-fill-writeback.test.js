@@ -96,9 +96,90 @@ function testInsufficientItemsAreSkippedWithoutWriting() {
   assert.strictEqual(cell.Value2, "原值");
 }
 
+function testWritebackRejectsFormulaMergedProtectedAndHiddenTargets() {
+  const item = {
+    itemId: "target-1", address: "$C$2", originalValue: "原值", originalValueType: "text",
+    originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false
+  };
+  const results = [{ itemId: "target-1", status: "completed", valueType: "text", value: "新值" }];
+
+  // Formula target
+  const formulaCell = makeCell("原值");
+  formulaCell.HasFormula = true;
+  formulaCell.Formula = "=A1";
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells([item], results, () => formulaCell),
+    /公式|合并|受保护|隐藏/
+  );
+
+  // Merged cell
+  const mergedCell = makeCell("原值");
+  mergedCell.MergeCells = true;
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells([item], results, () => mergedCell),
+    /公式|合并|受保护|隐藏/
+  );
+
+  // Protected cell
+  const protectedCell = makeCell("原值");
+  protectedCell.Locked = true;
+  protectedCell.Worksheet = { ProtectContents: true };
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells([item], results, () => protectedCell),
+    /公式|合并|受保护|隐藏/
+  );
+
+  // Hidden cell
+  const hiddenCell = makeCell("原值");
+  hiddenCell.Hidden = true;
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells([item], results, () => hiddenCell),
+    /公式|合并|受保护|隐藏/
+  );
+}
+
+function testDateAndBooleanTreatedAsText() {
+  const item = {
+    itemId: "target-1", address: "$C$2", originalValue: "", originalValueType: "blank",
+    originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false
+  };
+  const dateCell = makeCell("");
+  helpers.writeExcelSmartFillCells(
+    [item],
+    [{ itemId: "target-1", status: "completed", valueType: "text", value: "2026-08-31" }],
+    () => dateCell
+  );
+  assert.strictEqual(dateCell.Value2, "2026-08-31");
+
+  const boolCell = makeCell("");
+  helpers.writeExcelSmartFillCells(
+    [item],
+    [{ itemId: "target-1", status: "completed", valueType: "text", value: "true" }],
+    () => boolCell
+  );
+  assert.strictEqual(boolCell.Value2, "true");
+}
+
+function testWritebackDetectsSnapshotConflict() {
+  assert.strictEqual(typeof helpers.detectExcelSmartFillConflicts, "function");
+  const item = {
+    itemId: "target-1", address: "$C$2", originalValue: "原值", originalValueType: "text",
+    originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false
+  };
+  const changedCell = makeCell("已在Excel中被修改");
+  const result = helpers.detectExcelSmartFillConflicts([item], () => changedCell);
+  assert.strictEqual(result.hasConflict, true);
+  assert.strictEqual(result.conflicts.length, 1);
+  assert.strictEqual(result.conflicts[0].itemId, "target-1");
+  assert.strictEqual(result.conflicts[0].reason, "content_changed");
+}
+
 testFormulaLikeValuesRemainLiteral();
 testBlankCellWritesNumberWithoutChangingNumberFormat();
 testBlankCellWritesFormulaLikeTextAsLiteral();
 testInsufficientItemsAreSkippedWithoutWriting();
+testWritebackRejectsFormulaMergedProtectedAndHiddenTargets();
+testDateAndBooleanTreatedAsText();
+testWritebackDetectsSnapshotConflict();
 
 console.log("Excel smart fill writeback tests passed");

@@ -2814,235 +2814,430 @@
     return true;
   }
 
+  function scalarText(value) {
+    return toSafeString(value, "").replace(/\r/g, "");
+  }
+
+  function readSmartFillPropertyState(owner, keys, preserveObject) {
+    var keyIndex;
+    var rawValue;
+    var value;
+    if (!owner) {
+      return { known: true, present: false, value: undefined };
+    }
+    for (keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
+      try {
+        rawValue = owner[keys[keyIndex]];
+        if (typeof rawValue === "function") {
+          rawValue = rawValue.call(owner);
+        }
+      } catch (error) {
+        return { known: false, present: true, value: undefined };
+      }
+      if (typeof rawValue === "undefined" || rawValue === null) {
+        continue;
+      }
+      if (preserveObject) {
+        return { known: true, present: true, value: rawValue };
+      }
+      value = resolveScalarValue(rawValue);
+      if (typeof value === "undefined" || value === null) {
+        return { known: false, present: true, value: undefined };
+      }
+      return { known: true, present: true, value: value };
+    }
+    return { known: true, present: false, value: undefined };
+  }
+
+  function readSmartFillBooleanState(owner, keys) {
+    var state = readSmartFillPropertyState(owner, keys, false);
+    var value;
+    if (!state.known || !state.present) {
+      return { known: state.known, present: state.present, value: null };
+    }
+    value = state.value;
+    if (typeof value === "boolean") {
+      return { known: true, present: true, value: value };
+    }
+    if (typeof value === "number" && isFinite(value)) {
+      return { known: true, present: true, value: value !== 0 };
+    }
+    if (typeof value === "string") {
+      if (/^(true|yes|1|是)$/i.test(value.trim())) {
+        return { known: true, present: true, value: true };
+      }
+      if (/^(false|no|0|否)$/i.test(value.trim())) {
+        return { known: true, present: true, value: false };
+      }
+    }
+    return { known: false, present: true, value: null };
+  }
+
+  function readSmartFillFormulaState(cell) {
+    var hasFormula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
+    var formulaState = readSmartFillPropertyState(cell, [
+      "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
+    ], false);
+    var formula = formulaState.present ? scalarText(formulaState.value).trim() : "";
+    if (!hasFormula.known || !formulaState.known) {
+      return { known: false, value: "", isFormula: false };
+    }
+    return {
+      known: true,
+      value: formula.charAt(0) === "=" ? formula : "",
+      isFormula: hasFormula.value === true || formula.charAt(0) === "="
+    };
+  }
+
+  function readSmartFillProtectedState(cell) {
+    var worksheetState = readSmartFillPropertyState(cell, ["Worksheet", "worksheet"], true);
+    var explicitlyProtected = readSmartFillBooleanState(cell, ["Protected", "protected"]);
+    var locked = readSmartFillBooleanState(cell, ["Locked", "locked"]);
+    var sheetProtected;
+    if (!worksheetState.known || !explicitlyProtected.known || !locked.known) {
+      return { known: false, value: false };
+    }
+    if (explicitlyProtected.value === true) {
+      return { known: true, value: true };
+    }
+    if (locked.value !== true) {
+      return { known: true, value: false };
+    }
+    if (!worksheetState.present || !worksheetState.value) {
+      return { known: true, value: true };
+    }
+    sheetProtected = readSmartFillBooleanState(worksheetState.value, [
+      "ProtectContents", "protectContents", "ProtectionMode", "protectionMode",
+      "Protected", "protected"
+    ]);
+    if (!sheetProtected.known) {
+      return { known: true, value: true };
+    }
+    return { known: true, value: sheetProtected.value !== false };
+  }
+
+  function readSmartFillHiddenState(cell) {
+    var direct = readSmartFillBooleanState(cell, ["Hidden", "hidden"]);
+    var rowOwner = readSmartFillPropertyState(cell, ["EntireRow", "entireRow"], true);
+    var columnOwner = readSmartFillPropertyState(cell, ["EntireColumn", "entireColumn"], true);
+    var rowHidden;
+    var columnHidden;
+    if (!direct.known || !rowOwner.known || !columnOwner.known) {
+      return { known: false, value: false };
+    }
+    rowHidden = readSmartFillBooleanState(rowOwner.present ? rowOwner.value : null, ["Hidden", "hidden"]);
+    columnHidden = readSmartFillBooleanState(columnOwner.present ? columnOwner.value : null, ["Hidden", "hidden"]);
+    if (!rowHidden.known || !columnHidden.known) {
+      return { known: false, value: false };
+    }
+    return {
+      known: true,
+      value: direct.value === true || rowHidden.value === true || columnHidden.value === true
+    };
+  }
+
+  function classifySmartFillSnapshotValue(text, formula, rawValue) {
+    if (formula) {
+      return "formula";
+    }
+    if (!text && (typeof rawValue === "undefined" || rawValue === null || rawValue === "")) {
+      return "blank";
+    }
+    if (typeof rawValue === "boolean") {
+      return "boolean";
+    }
+    if (typeof rawValue === "number") {
+      return "number";
+    }
+    if (/^#(?:N\/A|VALUE!|REF!|DIV\/0!|NAME\?|NUM!|NULL!)/i.test(text)) {
+      return "error";
+    }
+    return text ? "text" : "unknown";
+  }
+
+  function readSmartFillCellSnapshot(cell) {
+    var rawState = readSmartFillPropertyState(cell, ["Value2", "value2", "Value", "value"], false);
+    var textState = readSmartFillPropertyState(cell, ["Text", "text"], false);
+    var formulaState = readSmartFillFormulaState(cell);
+    var mergedState = readSmartFillBooleanState(cell, ["MergeCells", "mergeCells", "Merged", "merged"]);
+    var protectedState = readSmartFillProtectedState(cell);
+    var hiddenState = readSmartFillHiddenState(cell);
+    var rawValue;
+    var text;
+    if (!rawState.known || !rawState.present || !textState.known ||
+        !formulaState.known || !mergedState.known || !protectedState.known ||
+        !hiddenState.known) {
+      return { readable: false };
+    }
+    rawValue = rawState.value;
+    text = scalarText(textState.present ? textState.value : rawValue);
+    return {
+      readable: true,
+      text: text,
+      formula: formulaState.value,
+      isFormula: formulaState.isFormula,
+      isMerged: mergedState.value === true,
+      isProtected: protectedState.value === true,
+      isHidden: hiddenState.value === true,
+      rawValue: rawValue,
+      valueType: classifySmartFillSnapshotValue(text, formulaState.value, rawValue)
+    };
+  }
+
+  function sameSmartFillSnapshot(item, current) {
+    return String(item.originalValue || "") === current.text &&
+      String(item.originalFormula || "") === current.formula &&
+      Boolean(item.isFormula) === current.isFormula &&
+      Boolean(item.isMerged) === current.isMerged &&
+      Boolean(item.isProtected) === current.isProtected &&
+      Boolean(item.isHidden) === current.isHidden &&
+      (!item.originalValueType || item.originalValueType === current.valueType);
+  }
+
+  function sameSmartFillSnapshotState(expected, current) {
+    var rawValuesEqual = expected && current && expected.rawValue === current.rawValue;
+    if (expected && current && !rawValuesEqual &&
+        typeof expected.rawValue === "number" && typeof current.rawValue === "number" &&
+        isNaN(expected.rawValue) && isNaN(current.rawValue)) {
+      rawValuesEqual = true;
+    }
+    return Boolean(expected && current && current.readable && rawValuesEqual &&
+      expected.text === current.text &&
+      expected.formula === current.formula &&
+      expected.isFormula === current.isFormula &&
+      expected.isMerged === current.isMerged &&
+      expected.isProtected === current.isProtected &&
+      expected.isHidden === current.isHidden &&
+      expected.valueType === current.valueType);
+  }
+
+  function smartFillWriteValueMatches(current, value, valueType) {
+    if (valueType === "number") {
+      return current.rawValue === value || current.text === String(value);
+    }
+    return current.text === String(value) || current.text === "'" + String(value);
+  }
+
+  function detectExcelSmartFillConflicts(targetItems, getCell) {
+    var items = Array.isArray(targetItems) ? targetItems : [];
+    var conflicts = [];
+    if (typeof getCell !== "function") {
+      return { hasConflict: false, conflicts: [] };
+    }
+    items.forEach(function (item) {
+      var cell = getCell(item);
+      var current;
+      if (!cell) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "cell_unavailable" });
+        return;
+      }
+      current = readSmartFillCellSnapshot(cell);
+      if (!current.readable) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "unreadable" });
+        return;
+      }
+      if (current.isFormula || current.formula) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "formula_detected" });
+        return;
+      }
+      if (current.isMerged) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "merged" });
+        return;
+      }
+      if (current.isProtected) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "protected" });
+        return;
+      }
+      if (current.isHidden) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "hidden" });
+        return;
+      }
+      if (!sameSmartFillSnapshot(item, current)) {
+        conflicts.push({ itemId: item.itemId, address: item.address, reason: "content_changed" });
+      }
+    });
+    return {
+      hasConflict: conflicts.length > 0,
+      conflicts: conflicts
+    };
+  }
+
+  function buildExcelSmartFillEditorPreview(data, targets, drafts) {
+    var items = data && Array.isArray(data.items) ? data.items : [];
+    var targetList = Array.isArray(targets) ? targets : [];
+    var draftList = Array.isArray(drafts) ? drafts : [];
+    var draftById = {};
+    var targetById = {};
+    var html = [
+      '<div class="smart-fill-preview-head">',
+      "<strong>智能填写预览</strong>",
+      '<span class="field-hint">可编辑、取消勾选或逐项重试；未勾选项不会写入。</span>',
+      "</div>"
+    ];
+
+    draftList.forEach(function (draft) {
+      if (draft && draft.itemId) {
+        draftById[draft.itemId] = draft;
+      }
+    });
+
+    targetList.forEach(function (target) {
+      if (target && target.itemId) {
+        targetById[target.itemId] = target;
+      }
+    });
+
+    if (!items.length) {
+      html.push('<p class="field-hint">未返回可展示的目标结果。</p>');
+      return html.join("");
+    }
+
+    html.push('<div class="smart-fill-result-list">');
+    items.forEach(function (item) {
+      var itemId = item ? item.itemId : "";
+      var target = targetById[itemId] || {};
+      var draft = draftById[itemId] || {};
+      var address = target.address || itemId;
+      var status = draft.status || (item ? item.status : "unprocessed");
+      var completed = status === "completed";
+      var insufficient = status === "insufficient_information";
+      var failed = status === "failed";
+      var unprocessed = status === "unprocessed";
+      var conflict = status === "write_conflict";
+
+      var statusLabel = completed
+        ? "可写入"
+        : (conflict
+          ? "写入冲突"
+          : (failed
+            ? "失败"
+            : (unprocessed ? "未处理" : "信息不足")));
+
+      var statusClass = completed
+        ? "is-complete"
+        : (conflict
+          ? "is-conflict"
+          : (failed
+            ? "is-failed"
+            : (unprocessed ? "is-unprocessed" : "is-insufficient")));
+
+      var value = typeof draft.value !== "undefined"
+        ? String(draft.value == null ? "" : draft.value)
+        : (completed ? String(item.value == null ? "" : item.value) : "");
+
+      var valueType = draft.valueType || (item && item.valueType) || "text";
+      var inputType = valueType === "number" ? "number" : "text";
+
+      var checked = typeof draft.selected !== "undefined"
+        ? Boolean(draft.selected)
+        : (completed && !conflict);
+
+      html.push(
+        '<article class="smart-fill-result-item" data-smart-fill-item-id="' + escapeHtml(itemId) + '">',
+        '<div class="smart-fill-result-meta">',
+        '<label class="smart-fill-result-select">',
+        '<input type="checkbox" data-smart-fill-select="' + escapeHtml(itemId) + '"' +
+          (checked ? " checked" : "") + ' aria-label="选择 ' + escapeHtml(address) + '">',
+        "<span>" + escapeHtml(address) + "</span>",
+        "</label>",
+        '<span class="smart-fill-result-status ' + statusClass + '">' + statusLabel + "</span>",
+        "</div>",
+        '<div class="smart-fill-result-edit">',
+        '<input class="smart-fill-result-value" type="' + inputType + '" data-smart-fill-value-input="' +
+          escapeHtml(itemId) + '" value="' + escapeHtml(value) + '"' +
+          (inputType === "number" ? ' step="any"' : "") +
+          ' aria-label="编辑 ' + escapeHtml(address) + '">',
+        '<button type="button" class="ghost-action mini-button" data-smart-fill-retry="' +
+          escapeHtml(itemId) + '">重新生成此项</button>',
+        "</div>",
+        "</article>"
+      );
+    });
+    html.push("</div>");
+    return html.join("");
+  }
+
+  function validateExcelSmartFillDraft(draft) {
+    var value;
+    var valueType;
+    var codePoints;
+    if (!draft || !draft.selected) {
+      return { isWriteable: false, valid: true, value: "" };
+    }
+    value = String(draft.value == null ? "" : draft.value);
+    if (!value.trim()) {
+      return { isWriteable: false, valid: false, error: "填写内容不能为空" };
+    }
+    valueType = draft.valueType === "number" ? "number" : "text";
+    if (valueType === "number") {
+      if (!isFinite(Number(value))) {
+        return { isWriteable: false, valid: false, error: "数字格式无效" };
+      }
+    }
+    codePoints = Array.from ? Array.from(value).length : value.length;
+    if (codePoints > 2000) {
+      return { isWriteable: false, valid: false, error: "单单元格文本超出 2000 字符限制" };
+    }
+    return {
+      isWriteable: true,
+      valid: true,
+      value: valueType === "number" ? Number(value) : value,
+      valueType: valueType,
+      codePoints: codePoints
+    };
+  }
+
+  function calculateExcelSmartFillDraftsSummary(drafts, targetItems) {
+    var draftList = Array.isArray(drafts) ? drafts : [];
+    var targetList = Array.isArray(targetItems) ? targetItems : [];
+    var targetById = {};
+    var writableCount = 0;
+    var overwriteCount = 0;
+    var totalCodePoints = 0;
+
+    targetList.forEach(function (target) {
+      if (target && target.itemId) {
+        targetById[target.itemId] = target;
+      }
+    });
+
+    draftList.forEach(function (draft) {
+      var validation;
+      var target;
+      if (!draft || !draft.selected) {
+        return;
+      }
+      validation = validateExcelSmartFillDraft(draft);
+      if (validation.isWriteable) {
+        writableCount += 1;
+        totalCodePoints += validation.codePoints || 0;
+        target = targetById[draft.itemId];
+        if (target && (target.originalValueType === "text" || target.originalValueType === "number") &&
+            String(target.originalValue || "").trim()) {
+          overwriteCount += 1;
+        }
+      }
+    });
+
+    return {
+      writableCount: writableCount,
+      overwriteCount: overwriteCount,
+      totalCodePoints: totalCodePoints,
+      canWrite: writableCount > 0 && totalCodePoints <= 200000,
+      summaryText: writableCount > 0
+        ? "将写入 " + writableCount + " 个单元格；未勾选或信息不足项不会写入。"
+        : "尚无可写入的智能填写预览。"
+    };
+  }
+
   function writeExcelSmartFillCells(targetItems, results, getCell) {
     var items = Array.isArray(targetItems) ? targetItems : [];
     var output = Array.isArray(results) ? results : [];
     var resultById = {};
     var plans = [];
     var written = [];
+    var totalPlanCodePoints = 0;
     var index;
-
-    function readOwned(owner, keys) {
-      var keyIndex;
-      var value;
-      if (!owner) {
-        return undefined;
-      }
-      for (keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
-        value = safeRead(owner, keys[keyIndex]);
-        if (typeof value === "function") {
-          value = safeCall(value, owner);
-        }
-        if (typeof value !== "undefined" && value !== null) {
-          return value;
-        }
-      }
-      return undefined;
-    }
-
-    function scalarText(value) {
-      return toSafeString(value, "").replace(/\r/g, "");
-    }
-
-    function readPropertyState(owner, keys, preserveObject) {
-      var keyIndex;
-      var rawValue;
-      var value;
-      if (!owner) {
-        return { known: true, present: false, value: undefined };
-      }
-      for (keyIndex = 0; keyIndex < keys.length; keyIndex += 1) {
-        try {
-          rawValue = owner[keys[keyIndex]];
-          if (typeof rawValue === "function") {
-            rawValue = rawValue.call(owner);
-          }
-        } catch (error) {
-          return { known: false, present: true, value: undefined };
-        }
-        if (typeof rawValue === "undefined" || rawValue === null) {
-          continue;
-        }
-        if (preserveObject) {
-          return { known: true, present: true, value: rawValue };
-        }
-        value = resolveScalarValue(rawValue);
-        if (typeof value === "undefined" || value === null) {
-          return { known: false, present: true, value: undefined };
-        }
-        return { known: true, present: true, value: value };
-      }
-      return { known: true, present: false, value: undefined };
-    }
-
-    function readBooleanState(owner, keys) {
-      var state = readPropertyState(owner, keys, false);
-      var value;
-      if (!state.known || !state.present) {
-        return { known: state.known, present: state.present, value: null };
-      }
-      value = state.value;
-      if (typeof value === "boolean") {
-        return { known: true, present: true, value: value };
-      }
-      if (typeof value === "number" && isFinite(value)) {
-        return { known: true, present: true, value: value !== 0 };
-      }
-      if (typeof value === "string") {
-        if (/^(true|yes|1|是)$/i.test(value.trim())) {
-          return { known: true, present: true, value: true };
-        }
-        if (/^(false|no|0|否)$/i.test(value.trim())) {
-          return { known: true, present: true, value: false };
-        }
-      }
-      return { known: false, present: true, value: null };
-    }
-
-    function readFormulaState(cell) {
-      var hasFormula = readBooleanState(cell, ["HasFormula", "hasFormula"]);
-      var formulaState = readPropertyState(cell, [
-        "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
-      ], false);
-      var formula = formulaState.present ? scalarText(formulaState.value).trim() : "";
-      if (!hasFormula.known || !formulaState.known) {
-        return { known: false, value: "", isFormula: false };
-      }
-      return {
-        known: true,
-        value: formula.charAt(0) === "=" ? formula : "",
-        isFormula: hasFormula.value === true || formula.charAt(0) === "="
-      };
-    }
-
-    function readProtectedState(cell) {
-      var worksheetState = readPropertyState(cell, ["Worksheet", "worksheet"], true);
-      var explicitlyProtected = readBooleanState(cell, ["Protected", "protected"]);
-      var locked = readBooleanState(cell, ["Locked", "locked"]);
-      var sheetProtected;
-      if (!worksheetState.known || !explicitlyProtected.known || !locked.known) {
-        return { known: false, value: false };
-      }
-      if (explicitlyProtected.value === true) {
-        return { known: true, value: true };
-      }
-      if (locked.value !== true) {
-        return { known: true, value: false };
-      }
-      if (!worksheetState.present || !worksheetState.value) {
-        return { known: true, value: true };
-      }
-      sheetProtected = readBooleanState(worksheetState.value, [
-        "ProtectContents", "protectContents", "ProtectionMode", "protectionMode",
-        "Protected", "protected"
-      ]);
-      if (!sheetProtected.known) {
-        return { known: true, value: true };
-      }
-      return { known: true, value: sheetProtected.value !== false };
-    }
-
-    function readHiddenState(cell) {
-      var direct = readBooleanState(cell, ["Hidden", "hidden"]);
-      var rowOwner = readPropertyState(cell, ["EntireRow", "entireRow"], true);
-      var columnOwner = readPropertyState(cell, ["EntireColumn", "entireColumn"], true);
-      var rowHidden;
-      var columnHidden;
-      if (!direct.known || !rowOwner.known || !columnOwner.known) {
-        return { known: false, value: false };
-      }
-      rowHidden = readBooleanState(rowOwner.present ? rowOwner.value : null, ["Hidden", "hidden"]);
-      columnHidden = readBooleanState(columnOwner.present ? columnOwner.value : null, ["Hidden", "hidden"]);
-      if (!rowHidden.known || !columnHidden.known) {
-        return { known: false, value: false };
-      }
-      return {
-        known: true,
-        value: direct.value === true || rowHidden.value === true || columnHidden.value === true
-      };
-    }
-
-    function classifySnapshotValue(text, formula, rawValue) {
-      if (formula) {
-        return "formula";
-      }
-      if (!text && (typeof rawValue === "undefined" || rawValue === null || rawValue === "")) {
-        return "blank";
-      }
-      if (typeof rawValue === "boolean") {
-        return "boolean";
-      }
-      if (typeof rawValue === "number") {
-        return "number";
-      }
-      if (/^#(?:N\/A|VALUE!|REF!|DIV\/0!|NAME\?|NUM!|NULL!)/i.test(text)) {
-        return "error";
-      }
-      return text ? "text" : "unknown";
-    }
-
-    function readSnapshot(cell) {
-      var rawState = readPropertyState(cell, ["Value2", "value2", "Value", "value"], false);
-      var textState = readPropertyState(cell, ["Text", "text"], false);
-      var formulaState = readFormulaState(cell);
-      var mergedState = readBooleanState(cell, ["MergeCells", "mergeCells", "Merged", "merged"]);
-      var protectedState = readProtectedState(cell);
-      var hiddenState = readHiddenState(cell);
-      var rawValue;
-      var text;
-      if (!rawState.known || !rawState.present || !textState.known ||
-          !formulaState.known || !mergedState.known || !protectedState.known ||
-          !hiddenState.known) {
-        return { readable: false };
-      }
-      rawValue = rawState.value;
-      text = scalarText(textState.present ? textState.value : rawValue);
-      return {
-        readable: true,
-        text: text,
-        formula: formulaState.value,
-        isFormula: formulaState.isFormula,
-        isMerged: mergedState.value === true,
-        isProtected: protectedState.value === true,
-        isHidden: hiddenState.value === true,
-        rawValue: rawValue,
-        valueType: classifySnapshotValue(text, formulaState.value, rawValue)
-      };
-    }
-
-    function sameSnapshot(item, current) {
-      return String(item.originalValue || "") === current.text &&
-        String(item.originalFormula || "") === current.formula &&
-        Boolean(item.isFormula) === current.isFormula &&
-        Boolean(item.isMerged) === current.isMerged &&
-        Boolean(item.isProtected) === current.isProtected &&
-        Boolean(item.isHidden) === current.isHidden &&
-        (!item.originalValueType || item.originalValueType === current.valueType);
-    }
-
-    function sameSnapshotState(expected, current) {
-      var rawValuesEqual = expected && current && expected.rawValue === current.rawValue;
-      if (expected && current && !rawValuesEqual &&
-          typeof expected.rawValue === "number" && typeof current.rawValue === "number" &&
-          isNaN(expected.rawValue) && isNaN(current.rawValue)) {
-        rawValuesEqual = true;
-      }
-      return Boolean(expected && current && current.readable && rawValuesEqual &&
-        expected.text === current.text &&
-        expected.formula === current.formula &&
-        expected.isFormula === current.isFormula &&
-        expected.isMerged === current.isMerged &&
-        expected.isProtected === current.isProtected &&
-        expected.isHidden === current.isHidden &&
-        expected.valueType === current.valueType);
-    }
-
-    function writeValueMatches(current, value, valueType) {
-      if (valueType === "number") {
-        return current.rawValue === value || current.text === String(value);
-      }
-      return current.text === String(value) || current.text === "'" + String(value);
-    }
 
     if (items.length !== output.length || typeof getCell !== "function") {
       throw new Error("智能填写结果与目标单元格数量不一致。");
@@ -3059,13 +3254,15 @@
       var result = resultById[item.itemId];
       var cell = getCell(item);
       var current;
+      var strVal;
+      var codePoints;
       if (!result) {
         throw new Error("智能填写结果缺少目标单元格。");
       }
       if (!cell) {
         throw new Error("目标单元格不可用，已停止写回。");
       }
-      current = readSnapshot(cell);
+      current = readSmartFillCellSnapshot(cell);
       if (!current.readable) {
         throw new Error("目标单元格状态无法安全读取，已停止写回。");
       }
@@ -3074,7 +3271,7 @@
           current.formula) {
         throw new Error("目标区域包含公式、合并、受保护或隐藏单元格，已停止写回。");
       }
-      if (!sameSnapshot(item, current)) {
+      if (!sameSmartFillSnapshot(item, current)) {
         throw new Error("目标单元格内容已变化，请重新生成预览后再写入。");
       }
       if (result.status === "insufficient_information") {
@@ -3088,10 +3285,22 @@
           (typeof result.value !== "number" || !isFinite(result.value))) {
         throw new Error("智能填写数字结果无效，已停止写回。");
       }
-      if (result.valueType === "text" && !String(result.value || "").trim()) {
-        throw new Error("智能填写文本结果为空，已停止写回。");
+      if (result.valueType === "text") {
+        strVal = String(result.value || "");
+        if (!strVal.trim()) {
+          throw new Error("智能填写文本结果为空，已停止写回。");
+        }
+        codePoints = Array.from ? Array.from(strVal).length : strVal.length;
+        if (codePoints > 2000) {
+          throw new Error("智能填写文本超出 2000 字符限制，已停止写回。");
+        }
+        totalPlanCodePoints += codePoints;
       }
       plans.push({ item: item, cell: cell, result: result, current: current, skip: false });
+    }
+
+    if (totalPlanCodePoints > 200000) {
+      throw new Error("智能填写总文本超出 200000 字符限制，已停止写回。");
     }
 
     try {
@@ -3113,8 +3322,8 @@
           previousValue: plan.current.rawValue,
           previousSnapshot: plan.current
         });
-        afterWrite = readSnapshot(plan.cell);
-        if (!afterWrite.readable || !writeValueMatches(afterWrite, value, plan.result.valueType)) {
+        afterWrite = readSmartFillCellSnapshot(plan.cell);
+        if (!afterWrite.readable || !smartFillWriteValueMatches(afterWrite, value, plan.result.valueType)) {
           throw new Error("写回后未能核对目标地址 " + plan.item.address + "。");
         }
       });
@@ -3123,7 +3332,7 @@
       written.slice().reverse().forEach(function (entry) {
         try {
           entry.cell.Value2 = entry.previousValue;
-          if (!sameSnapshotState(entry.previousSnapshot, readSnapshot(entry.cell))) {
+          if (!sameSmartFillSnapshotState(entry.previousSnapshot, readSmartFillCellSnapshot(entry.cell))) {
             rollbackFailures.push(entry.address || "未知地址");
           }
         } catch (rollbackError) {
@@ -3419,6 +3628,10 @@
     sanitizeExcelSmartFillSource: sanitizeExcelSmartFillSource,
     buildExcelSmartFillDefaultSource: buildExcelSmartFillDefaultSource,
     buildExcelSmartFillReadonlyPreview: buildExcelSmartFillReadonlyPreview,
+    buildExcelSmartFillEditorPreview: buildExcelSmartFillEditorPreview,
+    validateExcelSmartFillDraft: validateExcelSmartFillDraft,
+    calculateExcelSmartFillDraftsSummary: calculateExcelSmartFillDraftsSummary,
+    detectExcelSmartFillConflicts: detectExcelSmartFillConflicts,
     createExcelSmartFillPreview: createExcelSmartFillPreview,
     consumeExcelSmartFillPreview: consumeExcelSmartFillPreview,
     describeExcelSmartFillHostCell: describeExcelSmartFillHostCell,

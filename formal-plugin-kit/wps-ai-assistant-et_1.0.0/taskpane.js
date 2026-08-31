@@ -1737,19 +1737,25 @@
   function setSmartFillWriteButtonState() {
     var button = byId("btn-write-smart-fill");
     var drafts = state.smartFillDraftItems || [];
-    var writableCount = drafts.filter(isSmartFillDraftWriteable).length;
+    var targetItems = state.smartFillTarget && state.smartFillTarget.items || [];
+    var summary = helpers.calculateExcelSmartFillDraftsSummary
+      ? helpers.calculateExcelSmartFillDraftsSummary(drafts, targetItems)
+      : {
+          writableCount: drafts.filter(isSmartFillDraftWriteable).length,
+          canWrite: drafts.filter(isSmartFillDraftWriteable).length > 0,
+          summaryText: "将写入 " + drafts.filter(isSmartFillDraftWriteable).length + " 个单元格；未勾选或信息不足项不会写入。"
+        };
+    var writableCount = summary.writableCount;
     if (!button) {
       return;
     }
     button.hidden = state.currentMode !== "excelSmartFill" || !state.smartFillResult;
     button.textContent = writableCount ? "写入内容（" + writableCount + "）" : "写入内容";
-    button.disabled = state.busy || state.workflowProfileMutationBusy || !writableCount ||
-      !state.smartFillTarget || !state.smartFillTarget.items || !state.smartFillTarget.items.length;
+    button.disabled = state.busy || state.workflowProfileMutationBusy || !summary.canWrite ||
+      !targetItems.length;
     setNodeTextIfChanged(
       byId("smart-fill-write-summary"),
-      state.smartFillResult
-        ? "将写入 " + writableCount + " 个单元格；未勾选或信息不足项不会写入。"
-        : "尚无可写入的智能填写预览。"
+      state.smartFillResult ? summary.summaryText : "尚无可写入的智能填写预览。"
     );
   }
 
@@ -1774,10 +1780,20 @@
     setResult(markdown, markdown);
     output = byId("result-output");
     state.smartFillPreview = helpers.createExcelSmartFillPreview(state.smartFillResult);
-    output.innerHTML = helpers.buildExcelSmartFillReadonlyPreview(
-      state.smartFillResult,
-      state.smartFillTarget && state.smartFillTarget.items || []
-    );
+    if (helpers.buildExcelSmartFillEditorPreview) {
+      output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
+        state.smartFillResult,
+        state.smartFillTarget && state.smartFillTarget.items || [],
+        state.smartFillDraftItems
+      );
+    } else if (helpers.buildExcelSmartFillReadonlyPreview) {
+      output.innerHTML = helpers.buildExcelSmartFillReadonlyPreview(
+        state.smartFillResult,
+        state.smartFillTarget && state.smartFillTarget.items || []
+      );
+    } else {
+      output.innerHTML = buildSmartFillPreviewEditor(state.smartFillResult);
+    }
     setSmartFillWriteButtonState();
   }
 
@@ -1930,6 +1946,9 @@
     var results;
     var writeResult;
     var overwriteCount;
+    var conflictReport;
+    var conflictItemIds;
+    var output;
     if (state.busy || state.workflowProfileMutationBusy || !state.smartFillResult) {
       return;
     }
@@ -1942,6 +1961,31 @@
       return;
     }
     try {
+      assertSmartFillPreflight();
+      if (helpers.detectExcelSmartFillConflicts) {
+        conflictReport = helpers.detectExcelSmartFillConflicts(items, getSmartFillTargetCell);
+        if (conflictReport && conflictReport.hasConflict) {
+          conflictItemIds = conflictReport.conflicts.map(function (c) { return c.itemId; });
+          state.smartFillDraftItems.forEach(function (draft) {
+            if (conflictItemIds.indexOf(draft.itemId) >= 0) {
+              draft.status = "write_conflict";
+              draft.selected = false;
+            }
+          });
+          output = byId("result-output");
+          if (output && helpers.buildExcelSmartFillEditorPreview) {
+            output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
+              state.smartFillResult,
+              state.smartFillTarget && state.smartFillTarget.items || [],
+              state.smartFillDraftItems
+            );
+          }
+          setSmartFillWriteButtonState();
+          setStatus("部分目标单元格已变化，变化项已标记为写入冲突；未冲突项可重新确认写入。");
+          setPlainResult("检测到部分目标单元格在生成后已被修改，已标记为写入冲突。\n未冲突的合格勾选项可重新点击“写入内容”继续写入。");
+          return;
+        }
+      }
       results = buildExcelSmartFillWriteResults();
       overwriteCount = results.filter(function (result) {
         var item = items.filter(function (candidate) {
@@ -1960,7 +2004,6 @@
           return;
         }
       }
-      assertSmartFillPreflight();
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell);
     } catch (error) {
       setStatus("智能填写未写入：" + error.message);
@@ -2027,6 +2070,8 @@
         state.smartFillDraftItems = baseDraftItems;
         setSmartFillWriteButtonState();
       }
+    }
+  }
   function tryRebindSmartFillTarget(result) {
     if (state.smartFillTarget && state.smartFillTarget.items && state.smartFillTarget.items.length) {
       return true;
