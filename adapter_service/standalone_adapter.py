@@ -3764,13 +3764,15 @@ class Handler(BaseHTTPRequestHandler):
                     ),
                 )
                 return
+            is_running = job.get("status") == "running" and job.get("cancelRequested")
+            message = "cancel_requested" if is_running else "cancelled"
             self._write(
                 200,
                 envelope(
                     job.get("traceId", job_id),
                     "excel.smart_fill",
                     excel_smart_fill_job_payload(job),
-                    message="cancelled",
+                    message=message,
                 ),
             )
             return

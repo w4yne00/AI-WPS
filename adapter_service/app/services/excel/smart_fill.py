@@ -2,6 +2,7 @@ import hashlib
 import json
 import math
 import re
+import time
 from copy import deepcopy
 from typing import Callable, Dict, Iterable, List, Optional, Tuple
 
@@ -61,6 +62,9 @@ class ExcelSmartFill:
         trace_id: str,
         task_auth: Optional[Dict] = None,
         progress_callback: Optional[Callable[[str], None]] = None,
+        timeout_seconds: Optional[float] = None,
+        deadline_monotonic: Optional[float] = None,
+        clock=time.monotonic,
     ) -> Dict:
         validate_smart_fill_request_limits(request)
         if len(request.target.items) > MAX_ITEMS_PER_BATCH:
@@ -93,11 +97,28 @@ class ExcelSmartFill:
             provider_kwargs["task_auth"] = task_auth
         if progress_callback is not None:
             provider_kwargs["progress_callback"] = progress_callback
-        result = self.provider_client.excel_smart_fill(
-            request,
-            trace_id=trace_id,
-            **provider_kwargs
-        )
+        if timeout_seconds is not None:
+            provider_kwargs["timeout_seconds"] = timeout_seconds
+        if deadline_monotonic is not None:
+            provider_kwargs["deadline_monotonic"] = deadline_monotonic
+        if clock is not None:
+            provider_kwargs["clock"] = clock
+        provider_fn = self.provider_client.excel_smart_fill
+        try:
+            result = provider_fn(
+                request,
+                trace_id=trace_id,
+                **provider_kwargs
+            )
+        except TypeError as err:
+            if "unexpected keyword argument" in str(err):
+                safe_kwargs = {
+                    k: v for k, v in provider_kwargs.items()
+                    if k in {"task_auth", "progress_callback"}
+                }
+                result = provider_fn(request, trace_id=trace_id, **safe_kwargs)
+            else:
+                raise
         if not isinstance(result, dict):
             raise AdapterError(
                 "MODEL_RESULT_INVALID",

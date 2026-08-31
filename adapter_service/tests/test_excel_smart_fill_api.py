@@ -147,6 +147,7 @@ def test_fastapi_smart_fill_job_routes_support_submit_poll_and_cooperative_cance
 
         cancelled = client.delete("/excel/smart-fill/jobs/smart-fill-api-running")
         assert cancelled.status_code == 200
+        assert cancelled.json()["message"] == "cancel_requested"
         assert cancelled.json()["data"]["cancelRequested"] is True
 
         provider.release.set()
@@ -216,7 +217,7 @@ class StandaloneSmartFillApiTestCase(unittest.TestCase):
         # 3. Request cancel
         cancelled = self._invoke("do_DELETE", "/excel/smart-fill/jobs/standalone-smart-fill-001")
         self.assertEqual(cancelled["status"], 200)
-        self.assertEqual(cancelled["body"]["message"], "cancelled")
+        self.assertEqual(cancelled["body"]["message"], "cancel_requested")
         self.assertTrue(cancelled["body"]["data"]["cancelRequested"])
 
         # 4. Finish provider and verify terminal cancelled state with partial preview

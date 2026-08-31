@@ -1303,13 +1303,36 @@
       state.smartFillTarget = payload.target;
       state.smartFillWorkbookId = payload.workbookId || state.smartFillWorkbookId;
       state.smartFillSource = context;
-      state.smartFillResult = null;
-      state.smartFillPreview = null;
-      state.smartFillDraftItems = [];
-      byId("btn-write-smart-fill").hidden = true;
+
+      var matchesExistingResult = false;
+      if (state.smartFillResult && Array.isArray(state.smartFillResult.items)) {
+        var rItems = state.smartFillResult.items;
+        var tItems = payload.target.items || [];
+        if (rItems.length > 0 && rItems.length === tItems.length) {
+          matchesExistingResult = true;
+          for (var i = 0; i < tItems.length; i += 1) {
+            if (tItems[i].itemId !== rItems[i].itemId) {
+              matchesExistingResult = false;
+              break;
+            }
+          }
+        }
+      }
+
+      if (!matchesExistingResult) {
+        state.smartFillResult = null;
+        state.smartFillPreview = null;
+        state.smartFillDraftItems = [];
+        byId("btn-write-smart-fill").hidden = true;
+      }
       renderSmartFillCaptureState();
       setScopeLine(summarizeSmartFillTarget(state.smartFillTarget));
-      setStatus("目标区域已捕获；已准备目标行可见上下文，来源区域可选。" );
+      if (matchesExistingResult) {
+        renderExcelSmartFillResult(state.smartFillResult);
+        setStatus("目标区域已重新匹配，可直接核对预览并写入内容。");
+      } else {
+        setStatus("目标区域已捕获；已准备目标行可见上下文，来源区域可选。");
+      }
     } catch (error) {
       setStatus("捕获目标区域失败：" + error.message);
     }
@@ -1608,7 +1631,9 @@
     }
     items.forEach(function (item) {
       var address = smartFillResultAddress(item.itemId);
-      var value = item.status === "completed" ? String(item.value) : "信息不足，未写入";
+      var value = item.status === "completed"
+        ? String(item.value)
+        : (item.status === "unprocessed" ? "未处理，未写入" : "信息不足，未写入");
       lines.push(
         "- " + address + "：" + value +
         (item.status === "completed" ? "" : "（" + item.status + "）")
@@ -1674,12 +1699,14 @@
       })[0] || {};
       var draft = smartFillDraftById(item.itemId) || {};
       var completed = item.status === "completed";
+      var isUnprocessed = item.status === "unprocessed";
       var value = typeof draft.value === "undefined"
         ? (completed ? item.value : "")
         : draft.value;
       var inputType = (draft.valueType || item.valueType) === "number" ? "number" : "text";
-      var checked = draft.selected !== false;
-      var statusLabel = completed ? "可写入" : "信息不足";
+      var checked = draft.selected !== false && !isUnprocessed;
+      var statusLabel = completed ? "可写入" : (isUnprocessed ? "未处理" : "信息不足");
+      var statusClass = completed ? "is-complete" : (isUnprocessed ? "is-unprocessed" : "is-insufficient");
       html.push(
         '<article class="smart-fill-result-item" data-smart-fill-item-id="' +
           escapeSmartFillHtml(item.itemId) + '">',
@@ -1689,7 +1716,7 @@
           (checked ? " checked" : "") + ' aria-label="选择 ' + escapeSmartFillHtml(target.address || item.itemId) + '">',
         '<span>' + escapeSmartFillHtml(target.address || item.itemId) + '</span>',
         '</label>',
-        '<span class="smart-fill-result-status ' + (completed ? "is-complete" : "is-insufficient") + '">' +
+        '<span class="smart-fill-result-status ' + statusClass + '">' +
           statusLabel + "</span>",
         '</div>',
         '<div class="smart-fill-result-edit">',
@@ -2000,6 +2027,36 @@
         state.smartFillDraftItems = baseDraftItems;
         setSmartFillWriteButtonState();
       }
+  function tryRebindSmartFillTarget(result) {
+    if (state.smartFillTarget && state.smartFillTarget.items && state.smartFillTarget.items.length) {
+      return true;
+    }
+    try {
+      var payload = extractExcelSmartFillSelection("target");
+      if (!payload || !payload.target || !Array.isArray(payload.target.items)) {
+        return false;
+      }
+      var targetItems = payload.target.items;
+      var resultItems = (result && Array.isArray(result.items)) ? result.items : [];
+      if (!resultItems.length || targetItems.length !== resultItems.length) {
+        return false;
+      }
+      for (var i = 0; i < targetItems.length; i += 1) {
+        if (targetItems[i].itemId !== resultItems[i].itemId) {
+          return false;
+        }
+      }
+      if (helpers.validateExcelSmartFillTarget) {
+        helpers.validateExcelSmartFillTarget(payload.target);
+      }
+      state.smartFillTarget = payload.target;
+      state.smartFillWorkbookId = payload.workbookId || state.smartFillWorkbookId;
+      state.smartFillSource = buildSmartFillDefaultSource(getActiveSheet(getEtApplication()), payload.target);
+      renderSmartFillCaptureState();
+      setScopeLine(summarizeSmartFillTarget(state.smartFillTarget));
+      return true;
+    } catch (e) {
+      return false;
     }
   }
 
@@ -2009,6 +2066,7 @@
     var baseDraftItems = state.smartFillRetryBaseDraftItems;
     var replacement;
     var merged;
+    tryRebindSmartFillTarget(data || {});
     if (!retryItemId || !base) {
       state.smartFillRetryItemId = "";
       state.smartFillRetryBaseResult = null;
@@ -2891,6 +2949,10 @@
       setStatus("智能填写正在处理，当前阶段：" + phaseText + "。" );
       lines.push(job.runningMessage || "adapter 正在执行智能填写。", "当前阶段：" + phaseText);
     }
+    if (job.totalBatches && job.totalBatches > 1) {
+      var currentBatch = job.currentBatch || (Number(job.completedBatchCount || 0) + 1);
+      lines.push("批次进度：第 " + currentBatch + " 批 / 共 " + job.totalBatches + " 批");
+    }
     lines.push(
       "总耗时：" + Number(job.elapsedSeconds || 0) + " 秒",
       "本阶段耗时：" + Number(job.phaseElapsedSeconds || 0) + " 秒",
@@ -2928,10 +2990,15 @@
       method: "DELETE",
       timeoutMs: EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
-      if (state.excelSmartFillJobId === jobId && (body.data || {}).status === "cancelled") {
-        finishCancelledExcelSmartFill(jobId, function () {
-          setAnalysisBusy(false);
-        }, (body.data || {}).result || null);
+      if (state.excelSmartFillJobId === jobId) {
+        var job = (body && body.data) || {};
+        if (job.status === "cancelled") {
+          finishCancelledExcelSmartFill(jobId, function () {
+            setAnalysisBusy(false);
+          }, job.result || null);
+        } else if (job.status === "running" && job.cancelRequested) {
+          setStatus("智能填写正在停止，当前批次完成后将保留部分预览。");
+        }
       }
     }).catch(function (error) {
       if (state.excelSmartFillJobId === jobId) {

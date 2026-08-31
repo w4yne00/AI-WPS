@@ -838,6 +838,48 @@ function testSmartFillPartialPreviewContract() {
   assert.ok(previewHtml.includes("$B$3"), "must include item 2 address");
 }
 
+function testSmartFillUnprocessedReadonlyPreview() {
+  const partialResult = {
+    schemaVersion: "excel.smart_fill.v1",
+    items: [
+      { itemId: "target-1", status: "completed", valueType: "text", value: "已生成标签" },
+      { itemId: "target-2", status: "unprocessed", valueType: "text", value: "" }
+    ],
+    partial: true,
+    stopReason: "cancelled"
+  };
+  const targets = [
+    { itemId: "target-1", address: "$B$2" },
+    { itemId: "target-2", address: "$B$3" }
+  ];
+  const previewHtml = helpers.buildExcelSmartFillReadonlyPreview(partialResult, targets);
+  assert.ok(previewHtml.includes("已生成标签"), "must render completed item value");
+  assert.ok(previewHtml.includes("可写入"), "must render completed status as 可写入");
+  assert.ok(previewHtml.includes("未处理"), "must render unprocessed item status as 未处理");
+  assert.ok(previewHtml.includes("is-unprocessed"), "must apply is-unprocessed class to unprocessed item");
+  assert.ok(!previewHtml.includes("信息不足"), "unprocessed item must NOT be rendered as 信息不足");
+}
+
+function testSmartFillProgressBatchDisplay() {
+  const progressMatch = js.match(/function renderExcelSmartFillJobProgress\([^)]*\)\s*\{([\s\S]*?)\n  \}/);
+  assert.ok(progressMatch, "renderExcelSmartFillJobProgress function body must be extractable");
+  const progressBody = progressMatch[1];
+  assert.ok(progressBody.includes("job.totalBatches"), "must check totalBatches for multi-batch progress");
+  assert.ok(progressBody.includes("批次进度：第 "), "must format batch progress line");
+  assert.ok(progressBody.includes(" 批 / 共 "), "must format total batch count");
+}
+
+function testSmartFillCancellationCooperativeNotice() {
+  assert.ok(
+    js.includes("智能填写正在停止，当前批次完成后将保留部分预览。"),
+    "taskpane.js must inform user when cancellation is requested on a running job"
+  );
+  assert.ok(
+    js.includes("cancelRequested"),
+    "taskpane.js must check cancelRequested property"
+  );
+}
+
 testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly();
 testSmartFillDefaultSourceKeepsARowForEachTargetItem();
 testHostDisplayedEmptyDoesNotFallBackToRawValue();
@@ -865,4 +907,7 @@ testWritePreflightHashMatchesSanitizedCapture();
 testSmartFillUiContract();
 testSmartFillJobLifecycleAndCancellationContract();
 testSmartFillPartialPreviewContract();
+testSmartFillUnprocessedReadonlyPreview();
+testSmartFillProgressBatchDisplay();
+testSmartFillCancellationCooperativeNotice();
 console.log("Excel smart fill tests passed");

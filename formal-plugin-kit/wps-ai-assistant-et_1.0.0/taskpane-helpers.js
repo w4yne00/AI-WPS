@@ -2727,14 +2727,17 @@
     items.forEach(function (item) {
       var completed = item && item.status === "completed";
       var failed = item && item.status === "failed";
+      var unprocessed = item && item.status === "unprocessed";
       var value = completed ? String(item.value == null ? "" : item.value) : "";
-      var statusLabel = completed ? "可写入" : (failed ? "失败" : "信息不足");
+      var statusLabel = completed ? "可写入" : (failed ? "失败" : (unprocessed ? "未处理" : "信息不足"));
+      var statusClass = completed
+        ? "is-complete"
+        : (failed ? "is-failed" : (unprocessed ? "is-unprocessed" : "is-insufficient"));
       html.push(
         '<article class="smart-fill-result-item">',
         '<div class="smart-fill-result-meta">',
         "<span>" + escapeHtml(targetAddress(item.itemId)) + "</span>",
-        '<span class="smart-fill-result-status ' +
-          (completed ? "is-complete" : (failed ? "is-failed" : "is-insufficient")) + '">' +
+        '<span class="smart-fill-result-status ' + statusClass + '">' +
           statusLabel + "</span>",
         "</div>",
         '<p class="smart-fill-result-value">' + escapeHtml(completed ? value : statusLabel) + "</p>",

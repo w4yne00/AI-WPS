@@ -390,7 +390,7 @@ class _RecordingSmartFillServiceProvider:
     def resolve_task_auth(self, task_type):
         return dict(self._task_auth)
 
-    def excel_smart_fill(self, request, trace_id, task_auth=None, progress_callback=None):
+    def excel_smart_fill(self, request, trace_id, task_auth=None, progress_callback=None, **kwargs):
         self.calls.append(request)
         if progress_callback:
             progress_callback("provider_processing")
