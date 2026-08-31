@@ -2087,8 +2087,27 @@
       }
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell);
     } catch (error) {
-      setStatus("智能填写未写入：" + error.message);
-      setPlainResult("为避免覆盖用户修改，本次写回已停止。\n" + error.message);
+      if (error && error.code === "COMPENSATION_FAILED") {
+        var failureAddresses = (error.rollbackFailures || error.manualReviewAddresses || []).join("、");
+        setStatus("智能填写写入异常：内部故障处理未能完全恢复，请人工核对单元格。");
+        setPlainResult([
+          "智能填写写入异常，内部故障处理未能完全恢复以下单元格：",
+          failureAddresses || "部分单元格",
+          "",
+          "详细原因：" + (error.message || "写回异常")
+        ].join("\n"));
+      } else if (error && error.code === "COMPENSATION_SUCCEEDED") {
+        setStatus("智能填写写入中断：已通过内部故障处理恢复原值。");
+        setPlainResult([
+          "智能填写写入中断，已通过内部故障处理恢复全部已改动单元格。",
+          "工作簿内容未保留本次写入修改。",
+          "",
+          "详细原因：" + (error.message || "写回中断")
+        ].join("\n"));
+      } else {
+        setStatus("智能填写未写入：" + (error && error.message ? error.message : ""));
+        setPlainResult("为避免覆盖用户修改，本次写回已停止。\n" + (error && error.message ? error.message : ""));
+      }
       setSmartFillWriteButtonState();
       return;
     }

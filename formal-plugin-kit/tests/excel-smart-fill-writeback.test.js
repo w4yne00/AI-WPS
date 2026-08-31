@@ -234,11 +234,18 @@ function testDateAndBooleanTargetValidationAndRollback() {
     get Text() { return String(boolVal); },
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
-  const failingSecondCell = makeCell("原值2");
-  Object.defineProperty(failingSecondCell, "Value2", {
-    get() { return "原值2"; },
-    set() { throw new Error("mock write failure"); }
-  });
+  let cell2Val = "原值2";
+  const failingSecondCell = {
+    get Value2() { return cell2Val; },
+    set Value2(v) {
+      if (v === "新值2") {
+        throw new Error("mock write failure");
+      }
+      cell2Val = v;
+    },
+    get Text() { return String(cell2Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
 
   assert.throws(
     () => helpers.writeExcelSmartFillCells(
@@ -334,13 +341,18 @@ function testMultiCellWriteFailureTriggersReverseRollback() {
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
 
+  let cell3Val = "原值3";
   const cell3 = {
-    get Value2() { return "原值3"; },
+    get Value2() { return cell3Val; },
     set Value2(v) {
       cell3Written = true;
-      throw new Error("mock write failure on item 3");
+      if (v === "新值3") {
+        throw new Error("mock write failure on item 3");
+      }
+      if (v === "原值3") rollbackOrder.push("target-3");
+      cell3Val = v;
     },
-    get Text() { return "原值3"; },
+    get Text() { return String(cell3Val); },
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
 
@@ -377,10 +389,11 @@ function testMultiCellWriteFailureTriggersReverseRollback() {
     }
   );
 
-  // Verify reverse rollback order (target-2 first, then target-1)
-  assert.deepStrictEqual(rollbackOrder, ["target-2", "target-1"]);
+  // Verify reverse rollback order (target-3 in-flight first, then target-2, then target-1)
+  assert.deepStrictEqual(rollbackOrder, ["target-3", "target-2", "target-1"]);
   assert.strictEqual(cell1Val, "原值1");
   assert.strictEqual(cell2Val, "原值2");
+  assert.strictEqual(cell3Val, "原值3");
   assert.strictEqual(cell3Written, true);
   assert.strictEqual(cell4Written, false, "Cell 4 must not be written to after cell 3 failure");
 }
@@ -411,11 +424,17 @@ function testCompensationFailureDisclosesAccurateManualReviewAddresses() {
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
 
-  // Cell 3 throws on write
+  // Cell 3 throws on write, restores cleanly on rollback
+  let cell3Val = "原值3";
   const cell3 = {
-    get Value2() { return "原值3"; },
-    set Value2(v) { throw new Error("mock write failure on item 3"); },
-    get Text() { return "原值3"; },
+    get Value2() { return cell3Val; },
+    set Value2(v) {
+      if (v === "新值3") {
+        throw new Error("mock write failure on item 3");
+      }
+      cell3Val = v;
+    },
+    get Text() { return String(cell3Val); },
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
 
@@ -457,11 +476,18 @@ function testBlankCellRollbackRestoresBlankSnapshot() {
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
 
-  const failingCell = makeCell("原值2");
-  Object.defineProperty(failingCell, "Value2", {
-    get() { return "原值2"; },
-    set() { throw new Error("mock write failure on cell 2"); }
-  });
+  let failingVal = "原值2";
+  const failingCell = {
+    get Value2() { return failingVal; },
+    set Value2(v) {
+      if (v === "新值2") {
+        throw new Error("mock write failure on cell 2");
+      }
+      failingVal = v;
+    },
+    get Text() { return String(failingVal); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
 
   const items = [
     { itemId: "target-1", address: "$C$2", row: 2, column: 3, originalValue: "", originalValueType: "blank", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false },
@@ -547,11 +573,18 @@ function testPostRollbackVerificationMismatchDisclosesManualReviewAddress() {
     Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
   };
 
-  const failingCell2 = makeCell("原值2");
-  Object.defineProperty(failingCell2, "Value2", {
-    get() { return "原值2"; },
-    set() { throw new Error("mock write failure on cell 2"); }
-  });
+  let cell2Val = "原值2";
+  const failingCell2 = {
+    get Value2() { return cell2Val; },
+    set Value2(v) {
+      if (v === "新值2") {
+        throw new Error("mock write failure on cell 2");
+      }
+      cell2Val = v;
+    },
+    get Text() { return String(cell2Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
 
   const items = [
     { itemId: "target-1", address: "$C$2", row: 2, column: 3, originalValue: "原值1", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false },
@@ -607,6 +640,247 @@ function testPreflightRejectionOnAnyItemPreventsAllWrites() {
   assert.strictEqual(cell1Written, false, "Preflight must prevent any writes from starting");
 }
 
+function testSetterMutatesStateThenThrowsCompensatesInFlightTarget() {
+  let cell1Val = "原值1";
+  let cell2Val = "原值2";
+
+  const cell1 = {
+    get Value2() { return cell1Val; },
+    set Value2(v) { cell1Val = v; },
+    get Text() { return String(cell1Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const cell2 = {
+    get Value2() { return cell2Val; },
+    set Value2(v) {
+      cell2Val = v; // Mutate internal state first
+      if (v === "新值2") {
+        throw new Error("mock host exception after mutating Value2");
+      }
+    },
+    get Text() { return String(cell2Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const items = [
+    { itemId: "target-1", address: "$C$2", row: 2, column: 3, originalValue: "原值1", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false },
+    { itemId: "target-2", address: "$C$3", row: 3, column: 3, originalValue: "原值2", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false }
+  ];
+
+  const results = [
+    { itemId: "target-1", status: "completed", valueType: "text", value: "新值1" },
+    { itemId: "target-2", status: "completed", valueType: "text", value: "新值2" }
+  ];
+
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells(items, results, (item) => item.itemId === "target-1" ? cell1 : cell2),
+    (err) => {
+      assert.strictEqual(err.code, "COMPENSATION_SUCCEEDED");
+      assert.ok(err.message.includes("智能填写写回失败，已尝试恢复已写入单元格"));
+      assert.ok(err.message.includes("mock host exception after mutating Value2"));
+      assert.ok(!err.message.includes("以下地址需要人工核对"));
+      return true;
+    }
+  );
+
+  // Both cell 1 and cell 2 should be restored to their original values
+  assert.strictEqual(cell1Val, "原值1");
+  assert.strictEqual(cell2Val, "原值2");
+}
+
+function testSetterMutatesStateThenThrowsAndFailsRollbackDisclosesAddress() {
+  let cell1Val = "原值1";
+  let cell2Val = "原值2";
+
+  const cell1 = {
+    get Value2() { return cell1Val; },
+    set Value2(v) { cell1Val = v; },
+    get Text() { return String(cell1Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const cell2 = {
+    get Value2() { return cell2Val; },
+    set Value2(v) {
+      if (v === "新值2") {
+        cell2Val = v; // Mutate internal state on write
+        throw new Error("mock host exception after mutating Value2");
+      }
+      if (v === "原值2") {
+        throw new Error("mock host failure during rollback restore");
+      }
+      cell2Val = v;
+    },
+    get Text() { return String(cell2Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const items = [
+    { itemId: "target-1", address: "$C$2", row: 2, column: 3, originalValue: "原值1", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false },
+    { itemId: "target-2", address: "$C$3", row: 3, column: 3, originalValue: "原值2", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false }
+  ];
+
+  const results = [
+    { itemId: "target-1", status: "completed", valueType: "text", value: "新值1" },
+    { itemId: "target-2", status: "completed", valueType: "text", value: "新值2" }
+  ];
+
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells(items, results, (item) => item.itemId === "target-1" ? cell1 : cell2),
+    (err) => {
+      assert.strictEqual(err.code, "COMPENSATION_FAILED");
+      assert.ok(err.message.includes("智能填写写回失败，已尝试恢复已写入单元格；以下地址需要人工核对：$C$3"));
+      assert.deepStrictEqual(err.rollbackFailures, ["$C$3"]);
+      return true;
+    }
+  );
+
+  // Cell 1 rolled back successfully, cell 2 failed during rollback
+  assert.strictEqual(cell1Val, "原值1");
+  assert.strictEqual(cell2Val, "新值2");
+}
+
+function testUnreadableRawStateCellFailsClosed() {
+  const unreadableCell = {
+    get Value2() { return undefined; },
+    get Text() { return "已存在不可读文本"; },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const item = {
+    itemId: "target-1", address: "$C$2", row: 2, column: 3,
+    originalValue: "已存在不可读文本", originalValueType: "text",
+    originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false
+  };
+
+  const results = [{ itemId: "target-1", status: "completed", valueType: "text", value: "新值" }];
+
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells([item], results, () => unreadableCell),
+    /无法安全读取/
+  );
+}
+
+function testPostWriteTypeMismatchTriggersRollback() {
+  let cell1Val = "原值1";
+  let cell2Raw = "原值2";
+  let cell2Type = "text";
+
+  const cell1 = {
+    get Value2() { return cell1Val; },
+    set Value2(v) { cell1Val = v; },
+    get Text() { return String(cell1Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  // Host coerces string "00123" into number 123
+  const coercingCell2 = {
+    get Value2() { return cell2Raw; },
+    set Value2(v) {
+      if (v === "'00123" || v === "00123") {
+        cell2Raw = 123; // Coerced to numeric 123
+        cell2Type = "number";
+      } else {
+        cell2Raw = v;
+        cell2Type = typeof v === "number" ? "number" : "text";
+      }
+    },
+    get Text() { return String(cell2Raw); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const items = [
+    { itemId: "target-1", address: "$C$2", row: 2, column: 3, originalValue: "原值1", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false },
+    { itemId: "target-2", address: "$C$3", row: 3, column: 3, originalValue: "原值2", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false }
+  ];
+
+  const results = [
+    { itemId: "target-1", status: "completed", valueType: "text", value: "新值1" },
+    { itemId: "target-2", status: "completed", valueType: "text", value: "00123" }
+  ];
+
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells(items, results, (item) => item.itemId === "target-1" ? cell1 : coercingCell2),
+    (err) => {
+      assert.strictEqual(err.code, "COMPENSATION_SUCCEEDED");
+      assert.ok(err.message.includes("写回后未能核对目标地址 $C$3"));
+      return true;
+    }
+  );
+
+  // Both cells rolled back
+  assert.strictEqual(cell1Val, "原值1");
+  assert.strictEqual(cell2Raw, "原值2");
+}
+
+function testPostWriteFormulaInjectionTriggersRollback() {
+  let cell1Val = "原值1";
+  let cell2Val = "原值2";
+  let cell2Formula = "";
+
+  const cell1 = {
+    get Value2() { return cell1Val; },
+    set Value2(v) { cell1Val = v; },
+    get Text() { return String(cell1Val); },
+    Formula: "", HasFormula: false, MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const formulaInjectedCell2 = {
+    get Value2() { return cell2Val; },
+    set Value2(v) {
+      cell2Val = v;
+      if (v === "新值2") {
+        cell2Formula = "=SUM(A1:A2)";
+      } else {
+        cell2Formula = "";
+      }
+    },
+    get Text() { return String(cell2Val); },
+    get Formula() { return cell2Formula; },
+    get HasFormula() { return Boolean(cell2Formula); },
+    MergeCells: false, Locked: false, Hidden: false
+  };
+
+  const items = [
+    { itemId: "target-1", address: "$C$2", row: 2, column: 3, originalValue: "原值1", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false },
+    { itemId: "target-2", address: "$C$3", row: 3, column: 3, originalValue: "原值2", originalValueType: "text", originalFormula: "", isFormula: false, isMerged: false, isProtected: false, isHidden: false }
+  ];
+
+  const results = [
+    { itemId: "target-1", status: "completed", valueType: "text", value: "新值1" },
+    { itemId: "target-2", status: "completed", valueType: "text", value: "新值2" }
+  ];
+
+  assert.throws(
+    () => helpers.writeExcelSmartFillCells(items, results, (item) => item.itemId === "target-1" ? cell1 : formulaInjectedCell2),
+    (err) => {
+      assert.strictEqual(err.code, "COMPENSATION_SUCCEEDED");
+      assert.ok(err.message.includes("写回后未能核对目标地址 $C$3"));
+      return true;
+    }
+  );
+
+  assert.strictEqual(cell1Val, "原值1");
+  assert.strictEqual(cell2Val, "原值2");
+}
+
+function testTaskpaneErrorPresentationContract() {
+  const fs = require("fs");
+  const path = require("path");
+  const taskpaneJsPath = path.resolve(__dirname, "../wps-ai-assistant-et_1.0.0/taskpane.js");
+  const taskpaneJs = fs.readFileSync(taskpaneJsPath, "utf8");
+
+  // Verify taskpane.js handles COMPENSATION_FAILED, COMPENSATION_SUCCEEDED, and preflight rejection
+  assert.ok(taskpaneJs.includes("COMPENSATION_FAILED"), "taskpane.js must handle COMPENSATION_FAILED");
+  assert.ok(taskpaneJs.includes("COMPENSATION_SUCCEEDED"), "taskpane.js must handle COMPENSATION_SUCCEEDED");
+  assert.ok(taskpaneJs.includes("智能填写写入异常：内部故障处理未能完全恢复，请人工核对单元格。"));
+  assert.ok(taskpaneJs.includes("智能填写写入中断：已通过内部故障处理恢复原值。"));
+  assert.ok(taskpaneJs.includes("智能填写未写入："));
+  assert.ok(taskpaneJs.includes("内部故障处理未能完全恢复以下单元格："));
+  assert.ok(taskpaneJs.includes("工作簿内容未保留本次写入修改。"));
+}
+
 testFormulaLikeValuesRemainLiteral();
 testBlankCellWritesNumberWithoutChangingNumberFormat();
 testBlankCellWritesFormulaLikeTextAsLiteral();
@@ -622,4 +896,10 @@ testBlankCellRollbackRestoresBlankSnapshot();
 testPostWriteVerificationMismatchTriggersRollback();
 testPostRollbackVerificationMismatchDisclosesManualReviewAddress();
 testPreflightRejectionOnAnyItemPreventsAllWrites();
+testSetterMutatesStateThenThrowsCompensatesInFlightTarget();
+testSetterMutatesStateThenThrowsAndFailsRollbackDisclosesAddress();
+testUnreadableRawStateCellFailsClosed();
+testPostWriteTypeMismatchTriggersRollback();
+testPostWriteFormulaInjectionTriggersRollback();
+testTaskpaneErrorPresentationContract();
 console.log("Excel smart fill writeback tests passed");

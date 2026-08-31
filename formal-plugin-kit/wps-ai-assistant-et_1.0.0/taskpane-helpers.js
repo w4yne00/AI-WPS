@@ -3000,8 +3000,16 @@
         !hiddenState.known) {
       return { readable: false };
     }
-    rawValue = rawState.present ? rawState.value : undefined;
-    text = scalarText(textState.present ? textState.value : rawValue);
+    if (!rawState.present) {
+      text = scalarText(textState.present ? textState.value : "");
+      if (text !== "") {
+        return { readable: false };
+      }
+      rawValue = undefined;
+    } else {
+      rawValue = rawState.value;
+      text = scalarText(textState.present ? textState.value : rawValue);
+    }
     return {
       readable: true,
       text: text,
@@ -3053,10 +3061,29 @@
   }
 
   function smartFillWriteValueMatches(current, value, valueType) {
-    if (valueType === "number") {
-      return current.rawValue === value || current.text === String(value);
+    if (!current || !current.readable || current.isFormula || current.formula) {
+      return false;
     }
-    return current.text === String(value) || current.text === "'" + String(value);
+    if (valueType === "number") {
+      if (current.valueType !== "number" || typeof current.rawValue !== "number") {
+        return false;
+      }
+      if (isNaN(value)) {
+        return isNaN(current.rawValue);
+      }
+      return current.rawValue === value || Math.abs(current.rawValue - value) < 1e-9;
+    }
+    if (valueType === "text") {
+      if (current.valueType !== "text" && current.valueType !== "unknown") {
+        return false;
+      }
+      var expectedStr = String(value);
+      var textMatches = current.text === expectedStr || current.text === "'" + expectedStr;
+      var rawMatches = typeof current.rawValue === "string" &&
+        (current.rawValue === expectedStr || current.rawValue === "'" + expectedStr);
+      return textMatches && rawMatches;
+    }
+    return false;
   }
 
   function detectExcelSmartFillConflicts(targetItems, getCell, candidateItemIds) {
@@ -3362,6 +3389,7 @@
         var value;
         var storedValue;
         var afterWrite;
+        var entry;
         if (plan.skip) {
           return;
         }
@@ -3369,13 +3397,14 @@
         storedValue = plan.result.valueType === "text" && /^[=+\-@]/.test(value)
           ? "'" + value
           : value;
-        plan.cell.Value2 = storedValue;
-        written.push({
+        entry = {
           address: plan.item.address || plan.item.itemId || "未知地址",
           cell: plan.cell,
           previousValue: plan.current.rawValue,
           previousSnapshot: plan.current
-        });
+        };
+        written.push(entry);
+        plan.cell.Value2 = storedValue;
         afterWrite = readSmartFillCellSnapshot(plan.cell);
         if (!afterWrite.readable || !smartFillWriteValueMatches(afterWrite, value, plan.result.valueType)) {
           throw new Error("写回后未能核对目标地址 " + plan.item.address + "。");
@@ -3397,14 +3426,24 @@
           rollbackFailures.push(entry.address || "未知地址");
         }
       });
+      var compErr;
       if (rollbackFailures.length) {
-        throw new Error(
+        compErr = new Error(
           "智能填写写回失败，已尝试恢复已写入单元格；以下地址需要人工核对：" +
           rollbackFailures.join("、")
         );
+        compErr.code = "COMPENSATION_FAILED";
+        compErr.rollbackFailures = rollbackFailures;
+        compErr.manualReviewAddresses = rollbackFailures;
+        compErr.cause = error;
+        throw compErr;
       }
-      throw new Error("智能填写写回失败，已尝试恢复已写入单元格。" +
+      compErr = new Error("智能填写写回失败，已尝试恢复已写入单元格。" +
         (error && error.message ? " " + error.message : ""));
+      compErr.code = "COMPENSATION_SUCCEEDED";
+      compErr.rollbackFailures = [];
+      compErr.cause = error;
+      throw compErr;
     }
     return {
       writtenCount: written.length,

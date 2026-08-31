@@ -263,6 +263,7 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
     try:
         html = (plugin / "taskpane.html").read_text(encoding="utf-8")
         js = (plugin / "taskpane.js").read_text(encoding="utf-8")
+        helpers_js = (plugin / "taskpane-helpers.js").read_text(encoding="utf-8")
         ribbon = (plugin / "ribbon.xml").read_text(encoding="utf-8")
         prompt_text = prompt.read_text(encoding="utf-8")
     except OSError as exc:
@@ -271,7 +272,7 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_RIBBON_MISSING")
     if "写入内容" not in html or "生成预览" not in html:
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
-    if "撤销" in html or "OnUndo" in js:
+    if "撤销" in html or "OnUndo" in js or "OnUndo" in helpers_js:
         raise DeliveryFailure("V0260_SMART_FILL_UNDO_PROMISE")
     if "excel.smart_fill.v1" not in prompt_text:
         raise DeliveryFailure("V0260_SMART_FILL_SCHEMA_MISSING")
@@ -280,8 +281,20 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         or "finalizeExcelSmartFillWriteSuccess" not in js
         or "buildExcelSmartFillDefaultSource" not in js
         or "describeExcelSmartFillHostCell" not in js
+        or "writeExcelSmartFillCells" not in js
+        or "COMPENSATION_FAILED" not in js
+        or "COMPENSATION_SUCCEEDED" not in js
+        or "内部故障处理" not in js
     ):
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
+    if (
+        "writeExcelSmartFillCells" not in helpers_js
+        or "sameSmartFillSnapshotState" not in helpers_js
+        or "smartFillWriteValueMatches" not in helpers_js
+        or "COMPENSATION_FAILED" not in helpers_js
+        or "COMPENSATION_SUCCEEDED" not in helpers_js
+    ):
+        raise DeliveryFailure("V0260_SMART_FILL_COMPENSATION_CONTRACT_MISSING")
 
 
 def audit_installer(root: Path) -> None:
