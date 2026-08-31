@@ -1,16 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-08-30
+更新时间：2026-09-01
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`codex/issue-120-smart-fill`
+当前分支：`agent/issue-128-target-acceptance`
 
 当前版本：`v0.26.0-preview.1`
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 当前实现 Issue #120 的 Excel“智能填写”第九任务，并沿用中性 Preview 交付边界；代码和合成数据验证已完成首轮，Issue #120 对应的目标机验收仍为 `manual-pending`。作为阻塞工单的 Issue #119 实现已完成并关闭，但不等同于本版本目标机验收完成。系统 Python 无 pip 时 get-pip 使用 `-sS`，不加载麒麟 apt 的 `dist-packages`。
+`v0.26.0-preview.1` 当前实现 Issue #120 / #127 的 Excel“智能填写”第九任务，并沿用中性 Preview 交付边界；Issue #128 目标机环境集成验收已完成，候选归档为 `dist-preview-delivery-kit/ai-wps-delivery-20260901-1ab4420-v0260-preview1.tar.gz`（SHA-256：`2c4b960bdc0a92713a066226bf5d016df83b260a2f2ddcfb26f86f5cc7f10b79`，源码提交：`1ab442045eba6dd481183e8cb87971a8e2fad46f`）。在麒麟 V10 ARM、WPS 12.1.2、Python 3.8.10、`cloud` 用户环境完成首次 Preview 安装边界（旧 `$TARGET_HOME/ai-wps-phase1` 只读检测、数据不迁移不删除、新 `$TARGET_HOME/ai-wps` 纯净初始化）、Ribbon 入口加载、九类任务模型配置隔离与 Excel 智能填写完整生命周期实测，现场脱敏记录见 `packaging/v0260-preview1-target-machine-acceptance.md`（状态 `passed`）。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
@@ -30,7 +30,7 @@
 - **写入失败补偿**：单元格写入中途失败时逆序恢复本次已改动单元格并校验恢复结果；补偿失败准确列出人工核对地址；不提供撤销（Undo/OnUndo），成功后销毁临时快照并锁定预览；
 - **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
-- **状态记录**：自动化构建通过后记录为 `candidate`，目标机验收状态保持 `manual-pending`（Issue #120）。
+- **状态记录**：自动化构建生成 `ai-wps-delivery-20260901-1ab4420-v0260-preview1.tar.gz` 候选包，Issue #128 真机集成验收完成（`passed`）。
 
 
 ## 当前修复状态：跨运行时格式审查哈希契约
