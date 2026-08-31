@@ -745,3 +745,123 @@ def test_preview_build_uses_preview_lifecycle_gate():
 
     assert "packaging/python38_preview1_delivery_lifecycle_gate.py" in build
     assert "packaging/python38_delivery_lifecycle_gate.py" not in build
+
+
+def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["adapter"]["systemPromptCount"] == 9
+    assert manifest["excelSmartFillAssets"] == {
+        "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
+        "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
+        "referenceWorkflow": "reference-workflows/excel-smart-fill-v1.yml",
+        "systemPrompt": "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md",
+    }
+
+    prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
+    prompt_manifest = json.loads(prompt_manifest_path.read_text(encoding="utf-8"))
+    assert prompt_manifest["release"] == "0.26.0-preview.1"
+    assert len(prompt_manifest["tasks"]) == 9
+    assert "excel.smart_fill" in prompt_manifest["tasks"]
+
+    smart_fill_prompt = prompt_manifest_path.parent / prompt_manifest["tasks"]["excel.smart_fill"]["file"]
+    assert smart_fill_prompt.is_file()
+    assert hashlib.sha256(smart_fill_prompt.read_bytes()).hexdigest() == prompt_manifest["tasks"]["excel.smart_fill"]["sha256"]
+    assert "excel.smart_fill.v1" in smart_fill_prompt.read_text(encoding="utf-8")
+
+    assert (delivery / "docs/operations/model-excel-smart-fill-contract.md").is_file()
+    assert (delivery / "docs/operations/workflow-platform-excel-smart-fill.md").is_file()
+    ref_wf = delivery / "reference-workflows/excel-smart-fill-v1.yml"
+    assert ref_wf.is_file()
+    assert "excel.smart_fill.v1" in ref_wf.read_text(encoding="utf-8")
+
+    icon_path = delivery / "packages/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"
+    assert icon_path.is_file()
+    assert icon_path.stat().st_size > 0
+
+    assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill.py").is_file()
+    assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill_jobs.py").is_file()
+
+
+def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    # Tamper with prompt
+    prompt_file = delivery / "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
+    original_prompt = prompt_file.read_text(encoding="utf-8")
+    prompt_file.write_text(original_prompt.replace("excel.smart_fill.v1", "excel.smart_fill.invalid"), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PROMPT_HASH_INVALID excel.smart_fill" in rejected.stdout or "V0260_SMART_FILL_SCHEMA_MISSING" in rejected.stdout
+    prompt_file.write_text(original_prompt, encoding="utf-8")
+
+    # Tamper with ribbon (missing button)
+    ribbon_file = delivery / "packages/wps-ai-assistant-et_1.0.0/ribbon.xml"
+    original_ribbon = ribbon_file.read_text(encoding="utf-8")
+    ribbon_file.write_text(original_ribbon.replace('id="btnAiExcelSmartFill"', 'id="btnOther"'), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_SMART_FILL_RIBBON_MISSING" in rejected.stdout
+    ribbon_file.write_text(original_ribbon, encoding="utf-8")
+
+    # Tamper with taskpane js (introduce undo)
+    taskpane_file = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane.js"
+    original_taskpane = taskpane_file.read_text(encoding="utf-8")
+    taskpane_file.write_text(original_taskpane + "\nfunction OnUndo() {}\n", encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_SMART_FILL_UNDO_PROMISE" in rejected.stdout
+    taskpane_file.write_text(original_taskpane, encoding="utf-8")
+
+
+def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    acceptance = (delivery / "docs/v0260-preview1-target-machine-acceptance.md").read_text(encoding="utf-8")
+
+    assert "Issue #120" in acceptance
+    assert "v0.26.0-preview.1" in acceptance
+    assert "manual-pending" in acceptance
+    assert "当前记录状态：`manual-pending`" in acceptance
+    assert "当前记录状态：`target-accepted`" not in acceptance
+    assert "智能填写" in acceptance
+    assert "九类任务" in acceptance or "九任务" in acceptance
+    assert "单列连续区域" in acceptance or "单列" in acceptance
+    assert "失败补偿" in acceptance
+
