@@ -20,6 +20,19 @@
 
 历史候选 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz`（SHA-256：`2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02`，源码提交：`ccad09fb1d8019da3a40f14610ab3bd75de1ec23`）已确认存在 `word.format_review.snapshot.v2` JS/Python structure/format 哈希契约漂移，登记为 `rejected`，不得继续分发。`e43dc8c` 及更早候选均为 `rejected`。修复报告见 `.superpowers/sdd/2026-08-24-v0251-format-review-hash-contract-fix/task-1-report.md`。
 
+## 当前版本：v0.26.0-preview.1 Excel“智能填写”与中性 Preview 交付基线
+
+- Issue #120 / #127 实现了第九任务 Excel“智能填写”，采用中性 Preview 交付边界；
+- **九类任务独立模型配置**：Word 4 类（智能编写、智能仿写、文档审查、格式审查）、Excel 3 类（智能分析、公式助手、智能填写）、PPT 2 类（智能总结、结构审查）统一按任务隔离模型配置、API Key 与接入参数；
+- **智能填写严格契约**：仅接受同一工作表单列连续目标（最多 500 项），模型请求不含地址、工作簿标识、公式或隐藏数据，模型结果严格限定为 `excel.smart_fill.v1` Schema；
+- **长任务生命周期**：复用共享长任务协调器，支持 10 秒短轮询、排队取消、运行中协作取消、部分预览、60 分钟 deadline，任务结果仅进程内保留 2 小时；
+- **写入门禁与保护**：写回前重新校验工作簿、工作表、地址、原值与保护状态；空白目标默认允许，已有普通文本/数值需二次确认，公式、合并、受保护单元格始终拒绝，`= + - @` 前缀按纯文本字面值安全写入；
+- **写入失败补偿**：单元格写入中途失败时逆序恢复本次已改动单元格并校验恢复结果；补偿失败准确列出人工核对地址；不提供撤销（Undo/OnUndo），成功后销毁临时快照并锁定预览；
+- **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；
+- **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
+- **状态记录**：自动化构建通过后记录为 `candidate`，目标机验收状态保持 `manual-pending`（Issue #120）。
+
+
 ## 当前修复状态：跨运行时格式审查哈希契约
 
 - JavaScript 上传前与 Python Adapter 信任边界现在按同一固定投影、UTF-16 字符计数、紧凑稳定 JSON 和 UTF-8 SHA-256 计算；Python 继续独立重算四项指标并 fail closed。

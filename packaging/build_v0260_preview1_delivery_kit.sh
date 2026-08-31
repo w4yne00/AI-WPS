@@ -5,7 +5,7 @@ export PYTHONDONTWRITEBYTECODE=1
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python3}"
 PYTHON38_BIN="${PYTHON38_BIN:-python3.8}"
-BASELINE_ARCHIVE="${AI_WPS_V0253_BASELINE_ARCHIVE:-}"
+BASELINE_ARCHIVE="${AI_WPS_V0253_BASELINE_ARCHIVE:-$ROOT_DIR/dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz}"
 OUT_DIR="${1:-$ROOT_DIR/dist-preview-delivery-kit}"
 DATE_TAG="${DATE_TAG:-$(date '+%Y%m%d')}"
 VERSION="0.26.0-preview.1"
@@ -40,7 +40,8 @@ fi
 "$PYTHON_BIN" "$ROOT_DIR/packaging/check_delivery_source_provenance.py" \
   --repo-root "$ROOT_DIR" \
   --source-allowlist "$SOURCE_ALLOWLIST" \
-  --source-commit "$SOURCE_COMMIT"
+  --source-commit "$SOURCE_COMMIT" \
+  --baseline-archive "$BASELINE_ARCHIVE"
 
 if [ -e "$ARCHIVE_PATH" ] || [ -e "$ARCHIVE_PATH.sha256" ]; then
   echo "delivery_output_exists=$ARCHIVE_PATH"
@@ -132,8 +133,17 @@ if ! command -v node >/dev/null 2>&1; then
   echo "plugin_contract_runtime_required=node"
   exit 1
 fi
-AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" node --test "$ROOT_DIR"/formal-plugin-kit/tests/*.test.js
+find "$TMP_DIR/packages" -type f -name '*.js' -exec node --check {} \;
+AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" \
+AI_WPS_WORD_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant_1.0.0" \
+AI_WPS_ET_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant-et_1.0.0" \
+AI_WPS_PPT_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant-wpp_1.0.0" \
+AI_WPS_DELIVERY_ROOT="$TMP_DIR" \
+node --test "$ROOT_DIR"/formal-plugin-kit/tests/*.test.js
 echo "plugin_contract=passed"
+
+PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" -m pytest -q "$ROOT_DIR/adapter_service/tests"
+echo "python_regression=passed"
 
 find "$TMP_DIR" -type f -name '*.sh' -exec chmod 755 {} \;
 find "$TMP_DIR/packages/adapter-start-kit/adapter_service" -type f -name '*.py' -exec chmod 755 {} \;

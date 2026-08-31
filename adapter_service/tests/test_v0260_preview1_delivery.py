@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tarfile
 from pathlib import Path
+import pytest
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -15,6 +16,19 @@ PREPARE = ROOT / "packaging/prepare_v0260_preview1_delivery.py"
 BASELINE = ROOT / (
     "dist-phase1-delivery-kit/"
     "ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"
+)
+EXPECTED_TASKS = frozenset(
+    {
+        "word.smart_write",
+        "word.smart_imitation",
+        "word.document_review",
+        "word.format_review",
+        "excel.analysis",
+        "excel.formula_assistant",
+        "excel.smart_fill",
+        "ppt.slide_assistant",
+        "ppt.structure_review",
+    }
 )
 
 
@@ -639,6 +653,61 @@ def test_preview_build_and_prepare_scripts_are_provenance_inputs():
     )
     assert '"packaging/build_v0260_preview1_delivery_kit.sh"' in provenance
     assert '"packaging/prepare_v0260_preview1_delivery.py"' in provenance
+    assert '"formal-plugin-kit/tests/support/*.js"' in provenance or '"formal-plugin-kit/tests/support"' in provenance
+
+
+def test_preview_provenance_validates_baseline_archive(tmp_path, monkeypatch):
+    import importlib.util
+    provenance_path = ROOT / "packaging/check_delivery_source_provenance.py"
+    spec = importlib.util.spec_from_file_location("provenance_module", provenance_path)
+    prov = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(prov)
+
+    allowlist = ROOT / "packaging/delivery-sources-v0260-preview1.json"
+
+    def make_fake_git(untracked_file=None, dirty_file=None):
+        def fake_git(repo_root, args):
+            if args == ["rev-parse", "HEAD"]:
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="testcommit\n", stderr="")
+            if args[0] == "ls-files" and args[1] == "--":
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="formal-plugin-kit/tests/layout-smoke.test.js\n", stderr="")
+            if args[0] == "ls-files" and args[1] == "--error-unmatch":
+                target = args[3]
+                if untracked_file and target == untracked_file:
+                    return subprocess.CompletedProcess(args=args, returncode=1, stdout="", stderr="error")
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            if args[0] == "status":
+                if dirty_file:
+                    return subprocess.CompletedProcess(args=args, returncode=0, stdout=f" M {dirty_file}\n", stderr="")
+                return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+            return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
+        return fake_git
+
+    monkeypatch.setattr(prov, "_git", make_fake_git())
+
+    # 1. Missing baseline archive argument
+    with pytest.raises(prov.ProvenanceFailure) as exc_info:
+        prov.verify(ROOT, allowlist, "testcommit", baseline_archive=None)
+    assert "DELIVERY_SOURCE_BASELINE_ARCHIVE_REQUIRED" in str(exc_info.value)
+
+    # 2. Baseline archive outside repo
+    outside_archive = tmp_path / "outside-v0253.tar.gz"
+    outside_archive.write_bytes(b"dummy")
+    with pytest.raises(prov.ProvenanceFailure) as exc_info:
+        prov.verify(ROOT, allowlist, "testcommit", baseline_archive=outside_archive)
+    assert "DELIVERY_SOURCE_PATH_OUTSIDE_REPOSITORY" in str(exc_info.value)
+
+    # 3. Untracked archive failure
+    monkeypatch.setattr(prov, "_git", make_fake_git(untracked_file="dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"))
+    valid_archive = ROOT / "dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz"
+    with pytest.raises(prov.ProvenanceFailure) as exc_info:
+        prov.verify(ROOT, allowlist, "testcommit", baseline_archive=valid_archive)
+    assert "DELIVERY_SOURCE_NOT_TRACKED" in str(exc_info.value)
+
+    # 4. Valid tracked baseline archive
+    monkeypatch.setattr(prov, "_git", make_fake_git())
+    count = prov.verify(ROOT, allowlist, "testcommit", baseline_archive=valid_archive)
+    assert count > 0
 
 
 def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(tmp_path):
@@ -745,3 +814,272 @@ def test_preview_build_uses_preview_lifecycle_gate():
 
     assert "packaging/python38_preview1_delivery_lifecycle_gate.py" in build
     assert "packaging/python38_delivery_lifecycle_gate.py" not in build
+
+
+def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+
+    manifest = json.loads((delivery / "release-manifest.json").read_text(encoding="utf-8"))
+    assert manifest["adapter"]["systemPromptCount"] == 9
+    assert manifest["excelSmartFillAssets"] == {
+        "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
+        "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
+        "referenceWorkflow": "reference-workflows/excel-smart-fill-v1.yml",
+        "systemPrompt": "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md",
+    }
+
+    prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
+    prompt_manifest = json.loads(prompt_manifest_path.read_text(encoding="utf-8"))
+    assert prompt_manifest["release"] == "0.26.0-preview.1"
+    assert len(prompt_manifest["tasks"]) == 9
+    assert set(prompt_manifest["tasks"].keys()) == EXPECTED_TASKS
+
+    smart_fill_prompt = prompt_manifest_path.parent / prompt_manifest["tasks"]["excel.smart_fill"]["file"]
+    assert smart_fill_prompt.is_file()
+    assert hashlib.sha256(smart_fill_prompt.read_bytes()).hexdigest() == prompt_manifest["tasks"]["excel.smart_fill"]["sha256"]
+    assert "excel.smart_fill.v1" in smart_fill_prompt.read_text(encoding="utf-8")
+
+    assert (delivery / "docs/operations/model-excel-smart-fill-contract.md").is_file()
+    assert (delivery / "docs/operations/workflow-platform-excel-smart-fill.md").is_file()
+    ref_wf = delivery / "reference-workflows/excel-smart-fill-v1.yml"
+    assert ref_wf.is_file()
+    assert "excel.smart_fill.v1" in ref_wf.read_text(encoding="utf-8")
+
+    icon_path = delivery / "packages/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"
+    assert icon_path.is_file()
+    assert icon_path.stat().st_size > 0
+
+    assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill.py").is_file()
+    assert (delivery / "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill_jobs.py").is_file()
+
+
+def test_preview_audit_rejects_missing_or_substituted_prompt_task(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    release_manifest_path = delivery / "release-manifest.json"
+    original_release_manifest_text = release_manifest_path.read_text(encoding="utf-8")
+    manifest = json.loads(original_release_manifest_text)
+    prompt_manifest_path = delivery / manifest["adapter"]["systemPromptManifest"]
+    original_manifest_text = prompt_manifest_path.read_text(encoding="utf-8")
+
+    # Tamper 1: Replace word.smart_write with unrelated.task (maintaining count=9, rewrite hashes)
+    tampered_data = json.loads(original_manifest_text)
+    item = tampered_data["tasks"].pop("word.smart_write")
+    tampered_data["tasks"]["word.unrelated_task"] = item
+    prompt_manifest_path.write_text(json.dumps(tampered_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=True,
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PROMPT_TASKS_MISMATCH" in rejected.stdout
+
+    # Tamper 2: Delete word.smart_write in prompt manifest only (count becomes 8)
+    tampered_data = json.loads(original_manifest_text)
+    del tampered_data["tasks"]["word.smart_write"]
+    prompt_manifest_path.write_text(json.dumps(tampered_data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PROMPT_TASK_COUNT_INVALID" in rejected.stdout
+
+    # Tamper 3: Delete word.smart_write and adjust release manifest count to 8 (so phase1 passes, but preview audit fails)
+    tampered_manifest = json.loads(original_release_manifest_text)
+    tampered_manifest["adapter"]["systemPromptCount"] = 8
+    release_manifest_path.write_text(json.dumps(tampered_manifest, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=True,
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_ADAPTER_IDENTITY_INVALID" in rejected.stdout
+
+    prompt_manifest_path.write_text(original_manifest_text, encoding="utf-8")
+    release_manifest_path.write_text(original_release_manifest_text, encoding="utf-8")
+
+
+def test_preview_audit_rejects_corrupted_plugin_js_syntax(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+    target_js = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane.js"
+    original_content = target_js.read_text(encoding="utf-8")
+
+    target_js.write_text(original_content + "\nfunction ( {\n", encoding="utf-8")
+    subprocess.run(
+        [sys.executable, str(ROOT / "packaging/audit_phase1_delivery.py"), str(delivery), "--write-hashes"],
+        cwd=ROOT,
+        check=True,
+    )
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PLUGIN_JS_SYNTAX_INVALID packages/wps-ai-assistant-et_1.0.0/taskpane.js" in rejected.stdout
+
+    target_js.write_text(original_content, encoding="utf-8")
+
+
+def _assembled_plugin_env(delivery: Path) -> dict:
+    return {
+        **os.environ,
+        "AI_WPS_HASH_CONTRACT_PYTHON": sys.executable,
+        "AI_WPS_WORD_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant_1.0.0"),
+        "AI_WPS_ET_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-et_1.0.0"),
+        "AI_WPS_PPT_PLUGIN_DIR": str(delivery / "packages/wps-ai-assistant-wpp_1.0.0"),
+        "AI_WPS_DELIVERY_ROOT": str(delivery),
+    }
+
+
+def test_preview_assembled_plugins_pass_node_contract_suite(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    env = _assembled_plugin_env(delivery)
+    result = subprocess.run(
+        ["node", "--test"] + [str(p) for p in sorted((ROOT / "formal-plugin-kit/tests").glob("*.test.js"))],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_preview_assembled_plugins_fail_node_contract_when_corrupted(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_helpers = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane-helpers.js"
+    original = target_helpers.read_text(encoding="utf-8")
+    target_helpers.write_text('throw new Error("delivery plugin corrupted");\n' + original, encoding="utf-8")
+    env = _assembled_plugin_env(delivery)
+    result = subprocess.run(
+        ["node", "--test", str(ROOT / "formal-plugin-kit/tests/excel-smart-fill.test.js")],
+        cwd=ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "delivery plugin corrupted" in result.stderr or "delivery plugin corrupted" in result.stdout
+
+
+def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    audit = delivery / "scripts/audit_v0260_preview1_delivery.py"
+
+    generated = subprocess.run(
+        [
+            sys.executable,
+            str(ROOT / "packaging/audit_phase1_delivery.py"),
+            str(delivery),
+            "--write-hashes",
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert generated.returncode == 0, generated.stdout + generated.stderr
+
+    # Tamper with prompt
+    prompt_file = delivery / "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
+    original_prompt = prompt_file.read_text(encoding="utf-8")
+    prompt_file.write_text(original_prompt.replace("excel.smart_fill.v1", "excel.smart_fill.invalid"), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_PROMPT_HASH_INVALID excel.smart_fill" in rejected.stdout or "V0260_SMART_FILL_SCHEMA_MISSING" in rejected.stdout
+    prompt_file.write_text(original_prompt, encoding="utf-8")
+
+    # Tamper with ribbon (missing button)
+    ribbon_file = delivery / "packages/wps-ai-assistant-et_1.0.0/ribbon.xml"
+    original_ribbon = ribbon_file.read_text(encoding="utf-8")
+    ribbon_file.write_text(original_ribbon.replace('id="btnAiExcelSmartFill"', 'id="btnOther"'), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_SMART_FILL_RIBBON_MISSING" in rejected.stdout
+    ribbon_file.write_text(original_ribbon, encoding="utf-8")
+
+    # Tamper with taskpane js (introduce undo)
+    taskpane_file = delivery / "packages/wps-ai-assistant-et_1.0.0/taskpane.js"
+    original_taskpane = taskpane_file.read_text(encoding="utf-8")
+    taskpane_file.write_text(original_taskpane + "\nfunction OnUndo() {}\n", encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_SMART_FILL_UNDO_PROMISE" in rejected.stdout
+    taskpane_file.write_text(original_taskpane, encoding="utf-8")
+
+    # Tamper with reference workflow (corrupt contract version)
+    workflow_file = delivery / "reference-workflows/excel-smart-fill-v1.yml"
+    original_workflow = workflow_file.read_text(encoding="utf-8")
+    workflow_file.write_text(original_workflow.replace("excel.smart_fill.v1", "excel.smart_fill.v2"), encoding="utf-8")
+
+    rejected = subprocess.run(
+        [sys.executable, str(audit), str(delivery)],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert rejected.returncode != 0
+    assert "V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID" in rejected.stdout
+    workflow_file.write_text(original_workflow, encoding="utf-8")
+
+
+def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    acceptance = (delivery / "docs/v0260-preview1-target-machine-acceptance.md").read_text(encoding="utf-8")
+
+    assert "Issue #120" in acceptance
+    assert "v0.26.0-preview.1" in acceptance
+    assert "manual-pending" in acceptance
+    assert "当前记录状态：`manual-pending`" in acceptance
+    assert "当前记录状态：`target-accepted`" not in acceptance
+    assert "智能填写" in acceptance
+    assert "九类任务" in acceptance or "九任务" in acceptance
+    assert "单列连续区域" in acceptance or "单列" in acceptance
+    assert "失败补偿" in acceptance

@@ -95,7 +95,12 @@ def _git(repo_root: Path, arguments: List[str]) -> subprocess.CompletedProcess:
     )
 
 
-def verify(repo_root: Path, source_allowlist: Path, source_commit: str) -> int:
+def verify(
+    repo_root: Path,
+    source_allowlist: Path,
+    source_commit: str,
+    baseline_archive: Optional[Path] = None,
+) -> int:
     head = _git(repo_root, ["rev-parse", "HEAD"])
     if head.returncode != 0:
         raise ProvenanceFailure("DELIVERY_SOURCE_GIT_HEAD_UNAVAILABLE")
@@ -107,7 +112,7 @@ def verify(repo_root: Path, source_allowlist: Path, source_commit: str) -> int:
             )
         )
     tracked_node_tests = _git(
-        repo_root, ["ls-files", "--", "formal-plugin-kit/tests/*.test.js"]
+        repo_root, ["ls-files", "--", "formal-plugin-kit/tests/*.test.js", "formal-plugin-kit/tests/support/*.js"]
     )
     if tracked_node_tests.returncode != 0:
         raise ProvenanceFailure("DELIVERY_SOURCE_NODE_TESTS_UNAVAILABLE")
@@ -116,19 +121,35 @@ def verify(repo_root: Path, source_allowlist: Path, source_commit: str) -> int:
         for path in (repo_root / "formal-plugin-kit/tests").glob("*.test.js")
         if path.is_file()
     }
+    support_dir = repo_root / "formal-plugin-kit/tests/support"
+    if support_dir.is_dir():
+        working_node_tests.update(
+            path.relative_to(repo_root).as_posix()
+            for path in support_dir.glob("*.js")
+            if path.is_file()
+        )
     policy_sources = set(_policy_sources(repo_root, source_allowlist, set()))
     try:
         root_policy = json.loads(source_allowlist.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProvenanceFailure("DELIVERY_SOURCE_POLICY_INVALID") from exc
     build_inputs = set(BUILD_INPUTS)
+    extra_sources: Set[str] = set()
     if root_policy.get("version") == "0.26.0-preview.1":
         build_inputs.update(PREVIEW_BUILD_INPUTS)
+        if baseline_archive is not None:
+            extra_sources.add(_relative_path(repo_root, baseline_archive))
+        else:
+            raise ProvenanceFailure("DELIVERY_SOURCE_BASELINE_ARCHIVE_REQUIRED")
+    elif baseline_archive is not None:
+        extra_sources.add(_relative_path(repo_root, baseline_archive))
+
     sources = sorted(
         policy_sources
         | build_inputs
         | set(tracked_node_tests.stdout.splitlines())
         | working_node_tests
+        | extra_sources
     )
     for relative in sources:
         tracked = _git(repo_root, ["ls-files", "--error-unmatch", "--", relative])
@@ -154,12 +175,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--repo-root", required=True, type=Path)
     parser.add_argument("--source-allowlist", required=True, type=Path)
     parser.add_argument("--source-commit", required=True)
+    parser.add_argument("--baseline-archive", type=Path, default=None)
     args = parser.parse_args(argv)
     try:
         count = verify(
             args.repo_root.resolve(),
             args.source_allowlist.resolve(),
             str(args.source_commit),
+            baseline_archive=args.baseline_archive.resolve() if args.baseline_archive else None,
         )
     except ProvenanceFailure as exc:
         print("delivery_source_provenance=failed {0}".format(exc))

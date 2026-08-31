@@ -1,10 +1,13 @@
 const assert = require("assert");
 const fs = require("fs");
+const path = require("path");
 const vm = require("vm");
+
+const { wordRoot, etRoot, pptRoot } = require("./support/plugin-roots");
 
 function loadPptHelpers() {
   const source = fs.readFileSync(
-    "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0/taskpane-helpers.js",
+    path.join(pptRoot, "taskpane-helpers.js"),
     "utf8"
   );
   const context = { window: {} };
@@ -15,17 +18,17 @@ function loadPptHelpers() {
 const hosts = [
   {
     name: "Word",
-    root: "formal-plugin-kit/wps-ai-assistant_1.0.0",
-    helpers: require("../wps-ai-assistant_1.0.0/taskpane-helpers.js")
+    root: wordRoot,
+    helpers: require(path.join(wordRoot, "taskpane-helpers.js"))
   },
   {
     name: "Excel",
-    root: "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
-    helpers: require("../wps-ai-assistant-et_1.0.0/taskpane-helpers.js")
+    root: etRoot,
+    helpers: require(path.join(etRoot, "taskpane-helpers.js"))
   },
   {
     name: "PPT",
-    root: "formal-plugin-kit/wps-ai-assistant-wpp_1.0.0",
+    root: pptRoot,
     helpers: loadPptHelpers()
   }
 ];
@@ -115,7 +118,7 @@ hosts.forEach(({ name, root, helpers }) => {
 });
 
 const wordTaskpane = fs.readFileSync(
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane.js",
+  path.join(wordRoot, "taskpane.js"),
   "utf8"
 );
 assert.ok(

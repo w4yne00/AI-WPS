@@ -4,14 +4,12 @@ const path = require("path");
 const vm = require("vm");
 
 const ROOT = path.resolve(__dirname, "..");
-const pptJs = fs.readFileSync(
-  path.join(ROOT, "wps-ai-assistant-wpp_1.0.0", "taskpane.js"),
-  "utf8"
-);
+const { pptRoot } = require("./support/plugin-roots");
+const pptJs = fs.readFileSync(path.join(pptRoot, "taskpane.js"), "utf8");
 const context = { window: {} };
 vm.createContext(context);
 vm.runInContext(
-  fs.readFileSync(path.join(ROOT, "wps-ai-assistant-wpp_1.0.0", "taskpane-helpers.js"), "utf8"),
+  fs.readFileSync(path.join(pptRoot, "taskpane-helpers.js"), "utf8"),
   context
 );
 const helpers = context.window.WpsAiPptHelpers;

@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import re
+import subprocess
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -19,6 +20,19 @@ BASELINE_ARCHIVE_RE = re.compile(
     r"^ai-wps-phase1-delivery-[0-9]{8}(?:-[0-9a-f]{7,40})?-v0253\.tar\.gz$"
 )
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+EXPECTED_TASKS = frozenset(
+    {
+        "word.smart_write",
+        "word.smart_imitation",
+        "word.document_review",
+        "word.format_review",
+        "excel.analysis",
+        "excel.formula_assistant",
+        "excel.smart_fill",
+        "ppt.slide_assistant",
+        "ppt.structure_review",
+    }
+)
 FORBIDDEN_OUTPUT_PATHS = {
     "installer/install_phase1.sh",
     "scripts/phase1_smoke_test.sh",
@@ -252,12 +266,36 @@ def audit_prompt_manifest(root: Path, manifest: Dict) -> None:
     tasks = prompt_manifest.get("tasks", {})
     if not isinstance(tasks, dict) or len(tasks) != 9:
         raise DeliveryFailure("V0260_PROMPT_TASK_COUNT_INVALID")
+    if set(tasks.keys()) != EXPECTED_TASKS:
+        raise DeliveryFailure("V0260_PROMPT_TASKS_MISMATCH")
     for name, item in tasks.items():
         if not isinstance(item, dict):
             raise DeliveryFailure("V0260_PROMPT_ENTRY_INVALID {0}".format(name))
         prompt_path = path.parent / str(item.get("file", ""))
         if not prompt_path.is_file() or sha256(prompt_path) != item.get("sha256"):
             raise DeliveryFailure("V0260_PROMPT_HASH_INVALID {0}".format(name))
+
+
+def audit_plugin_javascript(root: Path) -> None:
+    js_files = sorted(root.glob("packages/**/*.js"))
+    if not js_files:
+        raise DeliveryFailure("V0260_PLUGIN_JS_MISSING")
+    for js_path in js_files:
+        try:
+            result = subprocess.run(
+                ["node", "--check", str(js_path)],
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except OSError as exc:
+            raise DeliveryFailure("V0260_NODE_CHECK_UNAVAILABLE") from exc
+        if result.returncode != 0:
+            raise DeliveryFailure(
+                "V0260_PLUGIN_JS_SYNTAX_INVALID {0}".format(
+                    js_path.relative_to(root).as_posix()
+                )
+            )
 
 
 def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
@@ -305,6 +343,104 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_COMPENSATION_CONTRACT_MISSING")
 
 
+def _parse_simple_yaml(text: str) -> dict:
+    lines = text.splitlines()
+    root: dict = {}
+    stack = [(root, -1, None)]
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            i += 1
+            continue
+
+        indent = len(line) - len(line.lstrip(" "))
+        while len(stack) > 1 and indent <= stack[-1][1]:
+            stack.pop()
+
+        parent, parent_indent, parent_key = stack[-1]
+
+        if stripped.endswith(":") or ":" in stripped:
+            parts = stripped.split(":", 1)
+            key = parts[0].strip().lstrip("- ")
+            val = parts[1].strip() if len(parts) > 1 else ""
+            is_list_item = stripped.startswith("- ")
+
+            if val in ("|", ">"):
+                block_lines = []
+                i += 1
+                while i < len(lines):
+                    b_line = lines[i]
+                    if not b_line.strip():
+                        block_lines.append("")
+                        i += 1
+                        continue
+                    b_indent = len(b_line) - len(b_line.lstrip(" "))
+                    if b_indent <= indent:
+                        break
+                    block_lines.append(
+                        b_line[indent + 2:] if len(b_line) > indent + 2 else b_line.strip()
+                    )
+                    i += 1
+                block_str = "\n".join(block_lines)
+                if isinstance(parent, dict):
+                    parent[key] = block_str
+                elif isinstance(parent, list):
+                    parent.append({key: block_str})
+                continue
+
+            if not val:
+                next_is_list = False
+                for j in range(i + 1, len(lines)):
+                    next_s = lines[j].strip()
+                    if next_s and not next_s.startswith("#"):
+                        if next_s.startswith("- "):
+                            next_is_list = True
+                        break
+                new_container = [] if next_is_list else {}
+                if isinstance(parent, dict):
+                    parent[key] = new_container
+                elif isinstance(parent, list):
+                    if is_list_item:
+                        new_dict = {key: new_container}
+                        parent.append(new_dict)
+                        new_container = new_dict
+                    else:
+                        parent.append(new_container)
+                stack.append((new_container, indent, key))
+                i += 1
+                continue
+            else:
+                if val.lower() == "true":
+                    val_parsed = True
+                elif val.lower() == "false":
+                    val_parsed = False
+                elif val.isdigit():
+                    val_parsed = int(val)
+                else:
+                    val_parsed = val.strip("\"'")
+
+                if isinstance(parent, dict):
+                    parent[key] = val_parsed
+                elif isinstance(parent, list):
+                    if is_list_item:
+                        parent.append({key: val_parsed})
+                    else:
+                        parent.append(val_parsed)
+                i += 1
+                continue
+        elif stripped.startswith("- "):
+            item_val = stripped[2:].strip().strip("\"'")
+            if isinstance(parent, list):
+                parent.append(item_val)
+            i += 1
+            continue
+        i += 1
+    return root
+
+
 def audit_smart_fill_reference_workflow(root: Path) -> None:
     ref_workflow = Path(root) / "reference-workflows/excel-smart-fill-v1.yml"
     if not ref_workflow.is_file():
@@ -313,8 +449,49 @@ def audit_smart_fill_reference_workflow(root: Path) -> None:
         ref_text = ref_workflow.read_text(encoding="utf-8")
     except OSError as exc:
         raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_MISSING") from exc
-    if "excel.smart_fill.v1" not in ref_text:
-        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID")
+
+    try:
+        data = _parse_simple_yaml(ref_text)
+    except Exception as exc:
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID yaml_syntax") from exc
+
+    if data.get("kind") != "app":
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID kind_must_be_app")
+    app_info = data.get("app")
+    if not isinstance(app_info, dict) or app_info.get("mode") != "workflow":
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID app_mode_must_be_workflow")
+    workflow = data.get("workflow")
+    if not isinstance(workflow, dict):
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID workflow_section_missing")
+    if workflow.get("contract_version") != "excel.smart_fill.v1":
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID contract_version_mismatch")
+
+    output = workflow.get("output")
+    if not isinstance(output, dict) or output.get("variable") != "answer" or output.get("type") != "json":
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID output_contract_invalid")
+
+    schema = workflow.get("schema")
+    if not isinstance(schema, dict) or schema.get("type") != "object":
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID schema_missing_or_not_object")
+    required = schema.get("required", [])
+    if not ("schemaVersion" in required and "items" in required):
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID schema_required_missing")
+    properties = schema.get("properties", {})
+    if not isinstance(properties, dict):
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID schema_properties_invalid")
+    schema_ver = properties.get("schemaVersion", {})
+    if schema_ver.get("enum") != ["excel.smart_fill.v1"] and "excel.smart_fill.v1" not in schema_ver.get("enum", []):
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID schema_version_enum_mismatch")
+
+    items_prop = properties.get("items", {})
+    items_def = items_prop.get("items", {}) if isinstance(items_prop, dict) else {}
+    item_req = items_def.get("required", [])
+    for field in ("itemId", "status", "valueType", "value"):
+        if field not in item_req:
+            raise DeliveryFailure(f"V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID item_missing_required_{field}")
+
+    if not str(workflow.get("system_prompt", "")).strip():
+        raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID empty_system_prompt")
 
 
 def audit_installer(root: Path) -> None:
@@ -453,6 +630,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_current_identity_references(root)
     audit_status(root, manifest)
     audit_hashes(root)
+    audit_plugin_javascript(root)
     if archive is not None or checksum_file is not None:
         if archive is None or checksum_file is None:
             raise DeliveryFailure("V0260_ARCHIVE_CHECKSUM_PAIR_REQUIRED")

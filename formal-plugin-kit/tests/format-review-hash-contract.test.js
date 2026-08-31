@@ -4,10 +4,8 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "../..");
-const helpers = require(path.join(
-  ROOT,
-  "formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js"
-));
+const { wordRoot, adapterServiceDir } = require("./support/plugin-roots");
+const helpers = require(path.join(path.resolve(wordRoot), "taskpane-helpers.js"));
 
 function cloneRaw(value) {
   if (Array.isArray(value)) {
@@ -230,7 +228,7 @@ with tempfile.TemporaryDirectory() as directory:
 function runPython(input) {
   const python = process.env.AI_WPS_HASH_CONTRACT_PYTHON || "python3";
   const env = Object.assign({}, process.env, {
-    PYTHONPATH: path.join(ROOT, "adapter_service")
+    PYTHONPATH: adapterServiceDir
   });
   return JSON.parse(execFileSync(python, ["-c", PYTHON_BRIDGE], {
     cwd: ROOT,

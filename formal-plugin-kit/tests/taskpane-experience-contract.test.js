@@ -1,12 +1,13 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const { wordRoot, etRoot, pptRoot } = require("./support/plugin-roots");
 
 const ROOT = path.resolve(__dirname, "..");
 const hosts = [
   {
     name: "Word",
-    dir: "wps-ai-assistant_1.0.0",
+    dir: wordRoot,
     task: "word.smart_write",
     label: "智能编写",
     tabsLabel: "Word 任务",
@@ -15,7 +16,7 @@ const hosts = [
   },
   {
     name: "Excel",
-    dir: "wps-ai-assistant-et_1.0.0",
+    dir: etRoot,
     task: "excel.analysis",
     label: "智能分析",
     tabsLabel: "Excel 任务",
@@ -24,7 +25,7 @@ const hosts = [
   },
   {
     name: "PPT",
-    dir: "wps-ai-assistant-wpp_1.0.0",
+    dir: pptRoot,
     task: "ppt.slide_assistant",
     label: "智能总结",
     tabsLabel: "PPT 任务",
@@ -184,9 +185,10 @@ function functionSource(js, name) {
 }
 
 hosts.forEach((host) => {
-  const html = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.html"), "utf8");
-  const js = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.js"), "utf8");
-  const css = fs.readFileSync(path.join(ROOT, host.dir, "taskpane.css"), "utf8");
+  const hostDir = path.resolve(host.dir);
+  const html = fs.readFileSync(path.join(hostDir, "taskpane.html"), "utf8");
+  const js = fs.readFileSync(path.join(hostDir, "taskpane.js"), "utf8");
+  const css = fs.readFileSync(path.join(hostDir, "taskpane.css"), "utf8");
   const htmlIds = collectHtmlIds(html);
 
   commonCssMarkers.forEach((marker) => {
@@ -323,10 +325,10 @@ sharedCssTails.slice(1).forEach((tail, index) => {
   assert.strictEqual(tail, sharedCssTails[0], `${hosts[index + 1].name} shared interaction CSS drifted`);
 });
 
-const wordHtml = fs.readFileSync(path.join(ROOT, hosts[0].dir, "taskpane.html"), "utf8");
-const wordJs = fs.readFileSync(path.join(ROOT, hosts[0].dir, "taskpane.js"), "utf8");
-const excelJs = fs.readFileSync(path.join(ROOT, hosts[1].dir, "taskpane.js"), "utf8");
-const pptJs = fs.readFileSync(path.join(ROOT, hosts[2].dir, "taskpane.js"), "utf8");
+const wordHtml = fs.readFileSync(path.resolve(hosts[0].dir, "taskpane.html"), "utf8");
+const wordJs = fs.readFileSync(path.resolve(hosts[0].dir, "taskpane.js"), "utf8");
+const excelJs = fs.readFileSync(path.resolve(hosts[1].dir, "taskpane.js"), "utf8");
+const pptJs = fs.readFileSync(path.resolve(hosts[2].dir, "taskpane.js"), "utf8");
 [
   "word.smart_write",
   "word.smart_imitation",
