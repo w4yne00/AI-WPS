@@ -44,16 +44,12 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 ### 输入结构（由 Adapter 组装在 `query` 中）
 
-工作流从 `query`（或旧版 `inputs.query`）中接收 JSON 结构，包含填写项标识与授权来源数据：
+工作流从 `query`（或旧版 `inputs.query`）中接收 Adapter 组装的提示词 JSON，只含填写意图和按 `itemId` 绑定的来源行，不含目标地址：
 
 ```json
 {
   "schemaVersion": "excel.smart_fill.v2",
   "userInstruction": "根据来源上下文补齐分类或数值。",
-  "items": [
-    { "itemId": "sf_00000000000000000000000000000001", "sourceRowIndex": 1, "sourceRowLabel": "第 2 行" },
-    { "itemId": "sf_00000000000000000000000000000002", "sourceRowIndex": 2, "sourceRowLabel": "第 3 行" }
-  ],
   "source": {
     "headers": ["名称", "数值", "分类"],
     "itemRows": [

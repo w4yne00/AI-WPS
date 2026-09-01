@@ -2697,7 +2697,16 @@
     var merged;
     var hasHidden = false;
     var hasMerged = false;
+    var hasUnreadSafety = false;
     var displayed;
+    var hiddenState;
+    var rowState;
+    var columnState;
+    var rowHidden;
+    var columnHidden;
+    var mergedState;
+    var formulaState;
+    var textState;
     var totalLength = 0;
     var summary;
 
@@ -2778,22 +2787,36 @@
       var rowValues = [];
       for (columnIndex = 1; columnIndex <= columns; columnIndex += 1) {
         cell = getCell(rowIndex, columnIndex) || {};
-        hidden = cell.Hidden === true ||
-          (cell.EntireRow && cell.EntireRow.Hidden === true) ||
-          (cell.EntireColumn && cell.EntireColumn.Hidden === true);
-        merged = cell.MergeCells === true;
+        hiddenState = readSmartFillBooleanState(cell, ["Hidden", "hidden"]);
+        rowState = readSmartFillPropertyState(cell, ["EntireRow", "entireRow"], true);
+        columnState = readSmartFillPropertyState(cell, ["EntireColumn", "entireColumn"], true);
+        rowHidden = rowState.present
+          ? readSmartFillBooleanState(rowState.value, ["Hidden", "hidden"])
+          : { known: rowState.known, value: false };
+        columnHidden = columnState.present
+          ? readSmartFillBooleanState(columnState.value, ["Hidden", "hidden"])
+          : { known: columnState.known, value: false };
+        mergedState = readSmartFillBooleanState(cell, ["MergeCells", "mergeCells"]);
+        formulaState = readSmartFillFormulaState(cell);
+        textState = readSmartFillPropertyState(cell, ["Text", "text"], false);
+        if (!hiddenState.known || !rowHidden.known || !columnHidden.known ||
+            !mergedState.known || !formulaState.known || !textState.known) {
+          hasUnreadSafety = true;
+        }
+        hidden = hiddenState.value === true || rowHidden.value === true || columnHidden.value === true;
+        merged = mergedState.value === true;
         if (hidden) {
           hasHidden = true;
         }
         if (merged) {
           hasMerged = true;
         }
-        if (cell.HasFormula || String(cell.Formula || "").charAt(0) === "=") {
+        if (formulaState.isFormula) {
           displayed = "";
-        } else if (typeof cell.Text === "undefined" || cell.Text === null) {
+        } else if (!textState.present || textState.value == null) {
           displayed = "";
         } else {
-          displayed = bounded(String(cell.Text).replace(/\r/g, ""));
+          displayed = bounded(String(textState.value).replace(/\r/g, ""));
         }
         rowValues.push(displayed);
       }
@@ -2805,6 +2828,21 @@
       }
     }
 
+    if (hasUnreadSafety) {
+      return {
+        ok: false,
+        error: "无法安全读取来源单元格状态，请取消隐藏或公式单元格后重试。",
+        summary: summary,
+        sheetName: sheetName,
+        address: address,
+        headerCount: headerCount,
+        dataRowCount: dataRowCount,
+        rawAddress: rawAddress,
+        headers: headers,
+        rows: sourceRows,
+        dataSheetRows: dataSheetRows
+      };
+    }
     if (hasMerged) {
       return {
         ok: false,
@@ -2932,6 +2970,26 @@
           sourceRowLabel: "第 " + sheetRow + " 行"
         };
       })
+    };
+  }
+
+  function sliceExcelSmartFillSourceForRetry(source, item) {
+    var index = Number(item && item.sourceRowIndex) - 1;
+    var rows = source && Array.isArray(source.rows) ? source.rows : [];
+    var row;
+    if (!source || index < 0 || index >= rows.length || !Array.isArray(rows[index])) {
+      throw new Error("未找到需要重试的智能填写项。");
+    }
+    row = rows[index].slice();
+    return {
+      sheetName: source.sheetName,
+      address: source.address,
+      snapshotHash: source.snapshotHash || "",
+      headers: Array.isArray(source.headers) ? source.headers.slice() : [],
+      rows: [row],
+      rowCount: 1,
+      columnCount: Number(source.columnCount) || row.length,
+      truncated: false
     };
   }
 
@@ -4035,6 +4093,7 @@
     extractExcelSmartFillPayload: extractExcelSmartFillPayload,
     inspectExcelSmartFillSourceSelection: inspectExcelSmartFillSourceSelection,
     extractExcelSmartFillSourcePayload: extractExcelSmartFillSourcePayload,
+    sliceExcelSmartFillSourceForRetry: sliceExcelSmartFillSourceForRetry,
     displayExcelSmartFillSourceAddress: displayExcelSmartFillSourceAddress,
     createExcelSmartFillItemId: createExcelSmartFillItemId,
     requireExcelSmartFillInstruction: requireExcelSmartFillInstruction,

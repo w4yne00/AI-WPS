@@ -1363,11 +1363,14 @@
       if (!state.smartFillWorkbookId) {
         throw new Error("当前工作簿标识不可用，请重新选择来源范围。");
       }
+      if (!helpers.sliceExcelSmartFillSourceForRetry) {
+        throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
+      }
       return {
         workbookId: state.smartFillWorkbookId,
         scene: "excel",
         clientJobId: clientJobId || "",
-        source: JSON.parse(JSON.stringify(state.smartFillSource)),
+        source: helpers.sliceExcelSmartFillSourceForRetry(state.smartFillSource, retryItem),
         items: [retryItem],
         userInstruction: instruction
       };

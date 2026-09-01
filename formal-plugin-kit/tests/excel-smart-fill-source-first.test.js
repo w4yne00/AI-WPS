@@ -156,6 +156,62 @@ function testHiddenFormulaAndCommentsStayOutOfFrozenSource() {
   assert.ok(!JSON.stringify(payload.source).includes("=C2"));
 }
 
+function testComHiddenAndUnreadFormulaFailClosed() {
+  const comHidden = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  comHidden.Cells.Item(2, 1).EntireRow.Hidden = -1;
+  expectSourceError(comHidden, {}, /隐藏/);
+
+  const comHiddenCell = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  comHiddenCell.Cells.Item(2, 2).Hidden = -1;
+  expectSourceError(comHiddenCell, {}, /隐藏/);
+
+  const unreadFormula = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  Object.defineProperty(unreadFormula.Cells.Item(2, 2), "HasFormula", {
+    enumerable: true,
+    configurable: true,
+    get() { throw new Error("HasFormula unavailable"); }
+  });
+  unreadFormula.Cells.Item(2, 2).Text = "不应外发的公式结果";
+  expectSourceError(unreadFormula, {}, /无法安全读取|安全读取/);
+
+  const comFormula = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  comFormula.Cells.Item(2, 2).HasFormula = -1;
+  comFormula.Cells.Item(2, 2).Formula = "=C2";
+  comFormula.Cells.Item(2, 2).Text = "不应外发的公式结果";
+  const payload = helpers.extractExcelSmartFillSourcePayload(comFormula, {
+    createItemId: sequentialItemIdFactory()
+  });
+  assert.deepStrictEqual(payload.source.rows[0], ["张三", ""]);
+  assert.ok(!JSON.stringify(payload.source).includes("不应外发的公式结果"));
+}
+
+function testRetrySlicesSourceToTheMatchingRow() {
+  assert.strictEqual(typeof helpers.sliceExcelSmartFillSourceForRetry, "function");
+  const source = {
+    sheetName: "客户表",
+    address: "A1:C3",
+    snapshotHash: "abc",
+    headers: ["姓名", "部门", "城市"],
+    rows: [["张三", "研发", "北京"], ["李四", "销售", "上海"]],
+    rowCount: 2,
+    columnCount: 3,
+    truncated: false
+  };
+  const sliced = helpers.sliceExcelSmartFillSourceForRetry(source, {
+    itemId: "sf_" + "2".padStart(32, "0"),
+    sourceRowIndex: 2
+  });
+  assert.deepStrictEqual(sliced.rows, [["李四", "销售", "上海"]]);
+  assert.strictEqual(sliced.rowCount, 1);
+  assert.deepStrictEqual(sliced.headers, source.headers);
+  assert.strictEqual(sliced.sheetName, "客户表");
+  assert.throws(
+    () => helpers.sliceExcelSmartFillSourceForRetry(source, { sourceRowIndex: 9 }),
+    /重试/
+  );
+  assert.ok(js.includes("sliceExcelSmartFillSourceForRetry"));
+}
+
 function expectSourceError(range, extras, pattern) {
   const inspection = helpers.inspectExcelSmartFillSourceSelection(range, extras);
   assert.strictEqual(inspection.ok, false);
@@ -287,6 +343,8 @@ testInspectingSelectionDoesNotCreateASourceSnapshot();
 testGenerateFreezeCreatesOpaqueItemsWithoutTarget();
 testCreatedItemIdsAreOpaqueAndDoNotEncodeAddresses();
 testHiddenFormulaAndCommentsStayOutOfFrozenSource();
+testComHiddenAndUnreadFormulaFailClosed();
+testRetrySlicesSourceToTheMatchingRow();
 testSourceErrorsUseOneHighestPriorityReason();
 testInstructionIsRequiredAndNotInferred();
 testPreviewKeepsSourceOrderEditExcludeAndFailedSlots();
