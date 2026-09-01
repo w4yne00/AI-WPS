@@ -1149,6 +1149,9 @@
     if (unsupportedObjects.length) {
       coverage.unsupportedObjects = unsupportedObjects;
     }
+    if (Array.isArray(sourceCoverage.tocRegions) && sourceCoverage.tocRegions.length) {
+      coverage.tocRegions = sourceCoverage.tocRegions;
+    }
     return JSON.parse(stableFormatReviewJson(coverage));
   }
 
@@ -2250,7 +2253,9 @@
     table_body: "表正文",
     body: "正文",
     heading: "标题",
-    page_setup: "页面设置"
+    page_setup: "页面设置",
+    toc_title: "目录标题",
+    toc_entry: "目录项"
   };
   var FORMAT_REVIEW_RULE_TEXT = {
     page_setup: "页面设置",
@@ -2831,11 +2836,14 @@
       "审查依据：" + formatDeterministicFormatReviewTemplate(summary.templateId),
       "规则版本：" + String(summary.rulePackVersion || "未记录"),
       "来源版本：" + String(summary.rulePackSourceVersion || "未记录"),
-      "问题数量：" + total,
-      "",
-      "以下内容仅展示可由当前格式事实确认的问题，不修改 Word 文档。",
-      ""
+      "问题数量：" + total
     ];
+    if (String(summary.tocExemptionSummary || "").trim()) {
+      lines.push(String(summary.tocExemptionSummary).trim());
+    }
+    lines.push("");
+    lines.push("以下内容仅展示可由当前格式事实确认的问题，不修改 Word 文档。");
+    lines.push("");
     if (!issues.length) {
       lines.push("当前筛选范围未发现需要调整的格式问题。若覆盖状态不是“已完成”，零问题不代表文档完全合规。" );
       return lines.join("\n");
@@ -2922,11 +2930,20 @@
         status: status
       };
     });
+    var previewLines = [
+      "覆盖状态：" + formatDeterministicFormatReviewStatus(summary.coverageStatus, "无法判定"),
+      "问题数量：" + total
+    ];
+    var tocExemptionSummary = String(
+      summary.tocExemptionSummary ||
+      (source.coverage && source.coverage.tocExemptionSummary) ||
+      ""
+    ).trim();
+    if (tocExemptionSummary) {
+      previewLines.splice(1, 0, tocExemptionSummary);
+    }
     return {
-      previewText: [
-        "覆盖状态：" + formatDeterministicFormatReviewStatus(summary.coverageStatus, "无法判定"),
-        "问题数量：" + total
-      ].join("\n"),
+      previewText: previewLines.join("\n"),
       cards: cards,
       html: cards.map(function (card) {
         var lines = [
@@ -3770,6 +3787,153 @@
     ].join(":");
   }
 
+  function isAutoTocTitleText(text) {
+    var normalized = String(text || "").replace(/\s+/g, "").toLowerCase();
+    return normalized === "目录" || normalized === "contents" || normalized === "tableofcontents";
+  }
+
+  function readAutoTocParagraphIndex(paragraph) {
+    var range = firstDefined(safeRead(paragraph, "Range"), safeRead(paragraph, "range"));
+    return Number(firstDefined(
+      safeRead(paragraph, "ParagraphIndex"),
+      safeRead(paragraph, "paragraphIndex"),
+      safeRead(range, "paragraphIndex"),
+      safeRead(range, "ParagraphIndex"),
+      0
+    )) || 0;
+  }
+
+  function readAutoTocParagraphText(paragraph) {
+    var range = firstDefined(safeRead(paragraph, "Range"), safeRead(paragraph, "range"));
+    return String(firstDefined(
+      safeRead(paragraph, "Text"),
+      safeRead(paragraph, "text"),
+      safeRead(range, "Text"),
+      safeRead(range, "text"),
+      ""
+    ) || "").replace(/\r/g, "").trim();
+  }
+
+  function isAutoTocField(field) {
+    var type = firstDefined(safeRead(field, "Type"), safeRead(field, "type"));
+    var typeText = String(type == null ? "" : type).toLowerCase();
+    if (type === 13 || type === "13" || typeText === "wdfieldtoc" || typeText === "toc") {
+      return true;
+    }
+    var codeObject = firstDefined(safeRead(field, "Code"), safeRead(field, "code"));
+    var code = String(firstDefined(
+      safeRead(codeObject, "Text"),
+      safeRead(codeObject, "text"),
+      codeObject,
+      ""
+    ) || "");
+    return /\bTOC\b/i.test(code) && !/\bTOCE/i.test(code);
+  }
+
+  function collectAutoTocRangeIndexes(range) {
+    var paragraphs = firstDefined(safeRead(range, "Paragraphs"), safeRead(range, "paragraphs"));
+    var indexes = [];
+    var texts = {};
+    var count = readCollectionCount(paragraphs);
+    var index;
+    for (index = 1; index <= count; index += 1) {
+      var paragraph = getCollectionItem(paragraphs, index);
+      var paragraphIndex = readAutoTocParagraphIndex(paragraph);
+      if (paragraphIndex > 0 && indexes.indexOf(paragraphIndex) < 0) {
+        indexes.push(paragraphIndex);
+        texts[paragraphIndex] = readAutoTocParagraphText(paragraph);
+      }
+    }
+    indexes.sort(function (left, right) { return left - right; });
+    return { indexes: indexes, texts: texts };
+  }
+
+  function collectWordAutoTocRegions(document) {
+    var source = document || {};
+    var regions = [];
+    var seen = {};
+
+    function paragraphTextByIndex(paragraphIndex) {
+      var collection = getParagraphCollection(source);
+      var count = readCollectionCount(collection);
+      var index;
+      for (index = 1; index <= count; index += 1) {
+        var paragraph = getCollectionItem(collection, index);
+        if (readAutoTocParagraphIndex(paragraph) === paragraphIndex) {
+          return readAutoTocParagraphText(paragraph);
+        }
+      }
+      return "";
+    }
+
+    function addRegion(kind, range) {
+      var collected = collectAutoTocRangeIndexes(range);
+      var indexes = collected.indexes.slice();
+      var texts = collected.texts;
+      var titleParagraphIndex = 0;
+      if (!indexes.length) {
+        return;
+      }
+      if (isAutoTocTitleText(texts[indexes[0]])) {
+        titleParagraphIndex = indexes[0];
+      } else {
+        var previousIndex = indexes[0] - 1;
+        if (previousIndex > 0 && isAutoTocTitleText(paragraphTextByIndex(previousIndex))) {
+          indexes.unshift(previousIndex);
+          titleParagraphIndex = previousIndex;
+        }
+      }
+      var key = indexes.join(",");
+      if (seen[key]) {
+        return;
+      }
+      seen[key] = true;
+      var region = {
+        regionId: "auto-toc-" + (regions.length + 1),
+        source: kind,
+        startParagraphIndex: indexes[0],
+        endParagraphIndex: indexes[indexes.length - 1],
+        paragraphIndexes: indexes
+      };
+      if (titleParagraphIndex) {
+        region.titleParagraphIndex = titleParagraphIndex;
+      }
+      regions.push(region);
+    }
+
+    var tablesOfContents = firstDefined(
+      safeRead(source, "TablesOfContents"),
+      safeRead(source, "tablesOfContents")
+    );
+    var tocIndex;
+    for (tocIndex = 1; tocIndex <= readCollectionCount(tablesOfContents); tocIndex += 1) {
+      var toc = getCollectionItem(tablesOfContents, tocIndex);
+      addRegion(
+        "tables_of_contents",
+        firstDefined(safeRead(toc, "Range"), safeRead(toc, "range"), toc)
+      );
+    }
+
+    var fields = firstDefined(safeRead(source, "Fields"), safeRead(source, "fields"));
+    var fieldIndex;
+    for (fieldIndex = 1; fieldIndex <= readCollectionCount(fields); fieldIndex += 1) {
+      var field = getCollectionItem(fields, fieldIndex);
+      if (!isAutoTocField(field)) {
+        continue;
+      }
+      addRegion(
+        "field",
+        firstDefined(
+          safeRead(field, "Result"),
+          safeRead(field, "result"),
+          safeRead(field, "Range"),
+          safeRead(field, "range")
+        )
+      );
+    }
+    return regions;
+  }
+
   function collectFormatReviewCoverage(document) {
     var source = document || {};
     var sections = firstDefined(safeRead(source, "Sections"), safeRead(source, "sections"));
@@ -3850,13 +4014,18 @@
     addObjects("comment", ["Comments", "comments"]);
     addObjects("revision", ["Revisions", "revisions"]);
     addFloatingShapes();
-    return {
+    var coverage = {
       headerFooter: {
         header: header,
         footer: footer
       },
       unsupportedObjects: unsupportedObjects
     };
+    var tocRegions = collectWordAutoTocRegions(source);
+    if (tocRegions.length) {
+      coverage.tocRegions = tocRegions;
+    }
+    return coverage;
   }
 
   function collectParagraphsFromText(text, options) {
@@ -4913,6 +5082,7 @@
     collectFullDocumentReviewParagraphs: collectFullDocumentReviewParagraphs,
     collectFullDocumentReviewTables: collectFullDocumentReviewTables,
     collectFormatReviewCoverage: collectFormatReviewCoverage,
+    collectWordAutoTocRegions: collectWordAutoTocRegions,
     extractHomogeneousFormatSegments: extractHomogeneousFormatSegments,
     readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
     collectParagraphs: collectParagraphs,
