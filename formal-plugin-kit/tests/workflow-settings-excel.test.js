@@ -94,7 +94,7 @@ function assertFixedExcelWorkflowContract() {
   assert.ok(js.includes('var EXCEL_FORMULA_WORKFLOW_TASK_TYPE = "excel.formula_assistant";'));
   assert.ok(js.includes("function renderWorkflowTaskTabs()"));
   assertIncludesAll(js, [
-    "helpers.workflowProfileOptionState",
+    "helpers.formatTaskModelConfigEntry",
     "helpers.validateWorkflowProfileDraft",
     "helpers.shouldActivateNewWorkflowProfile"
   ]);
@@ -118,17 +118,17 @@ function assertImmediateActivationContract() {
   const bind = functionSource("bindEvents");
 
   assertIncludesAll(renderStrip, [
-    "helpers.workflowProfileOptionState",
-    "syncWorkflowProfileSelectOptions(select, optionModels)",
-    "select.disabled = state.busy || state.workflowProfileMutationBusy"
+    "helpers.formatTaskModelConfigEntry",
+    "helpers.buildTaskModelConfigMenuItems",
+    "trigger.disabled = state.busy || state.workflowProfileMutationBusy"
   ]);
-  assert.ok(bind.includes('byId("workflow-profile-select").addEventListener("change"'));
-  assert.ok(bind.includes("scheduleWorkflowProfileActivation("));
-  assert.ok(bind.includes("event.target.value"));
+  assert.ok(bind.includes('byId("task-model-config-trigger").addEventListener("click"'));
+  assert.ok(bind.includes("handleTaskModelConfigTriggerClick"));
   assert.ok(!bind.includes("workflowProfileSelection = event.target.value"));
   assertIncludesAll(activate, [
     "previousProfileId",
-    "state.workflowProfileSelections[targetTask] = previousProfileId",
+    "helpers.evaluateTaskModelConfigSwitch",
+    "helpers.rollbackTaskModelConfigSwitch",
     "切换模型配置失败"
   ]);
 }
@@ -566,59 +566,53 @@ function createRefreshHarness(options = {}) {
 }
 
 async function runSettingsBehaviorTests() {
-  const optionSelect = {
-    children: [],
-    disabled: false,
-    attributes: {},
-    appendChild(option) { this.children.push(option); },
-    setAttribute(name, value) { this.attributes[name] = value; }
-  };
-  Object.defineProperty(optionSelect, "innerHTML", {
-    get() { return ""; },
-    set() { this.children = []; }
-  });
   const optionNodes = {
     "workflow-profile-strip": { hidden: false },
-    "workflow-profile-select": optionSelect,
+    "task-model-config-trigger": {
+      disabled: false,
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; }
+    },
+    "task-model-config-label": { textContent: "" },
+    "task-model-config-status": { className: "" },
     "workflow-switch-feedback": { textContent: "" }
   };
   const optionState = {
     currentMode: "excelAnalysis",
     busy: false,
     workflowProfileMutationBusy: false,
-    workflowProfileSelections: { "excel.analysis": "profile-a" }
+    taskModelConfigStatus: "",
+    taskModelConfigMenu: { open: false },
+    workflowProfileSelections: { "excel.analysis": "profile-a" },
+    workflowProfilesByTask: {
+      "excel.analysis": {
+        activeProfileId: "profile-a",
+        profiles: [
+          { id: "profile-a", name: "主模型", complete: true, accessMethod: "workflow_platform" },
+          { id: "profile-b", name: "备用模型", complete: true, accessMethod: "direct_model", modelName: "secret-model" }
+        ]
+      }
+    }
   };
-  const optionProfiles = {
-    activeProfileId: "profile-a",
-    profiles: [
-      { id: "profile-a", name: "主模型", complete: true },
-      { id: "profile-b", name: "备用模型", complete: true }
-    ]
-  };
-  const syncOptions = loadFunction("syncWorkflowProfileSelectOptions", {
-    document: { createElement() { return {}; } }
-  });
   const renderOptions = loadFunction("renderWorkflowProfileStrip", {
     state: optionState,
-    helpers: {
-      workflowProfileOptionState(profile, activeProfileId) {
-        return { id: profile.id, label: profile.id === activeProfileId ? "✓ " + profile.name : profile.name, disabled: false };
-      }
-    },
+    helpers: sharedHelpers,
     EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
+    EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
     getTaskPageWorkflowType() { return "excel.analysis"; },
-    getWorkflowProfileData() { return optionProfiles; },
-    getActiveWorkflowProfileName() { return "主模型"; },
+    getWorkflowProfileData() { return optionState.workflowProfilesByTask["excel.analysis"]; },
+    currentTaskModelConfigProfile(data) {
+      return data.profiles.find((item) => item.id === optionState.workflowProfileSelections["excel.analysis"]);
+    },
+    resolveTaskModelConfigStatus() { return "ready"; },
+    closeTaskModelConfigMenu() {},
     byId(id) { return optionNodes[id]; },
-    setNodeTextIfChanged(node, value) { node.textContent = value; },
-    syncWorkflowProfileSelectOptions: syncOptions,
-    document: { createElement() { return {}; } }
+    setNodeTextIfChanged(node, value) { node.textContent = value; }
   });
   renderOptions();
-  const firstOptionNodes = optionSelect.children.slice();
-  renderOptions();
-  assert.strictEqual(optionSelect.children[0], firstOptionNodes[0]);
-  assert.strictEqual(optionSelect.children[1], firstOptionNodes[1]);
+  assert.strictEqual(optionNodes["task-model-config-label"].textContent, "主模型 · 工作流平台");
+  assert.ok(!optionNodes["task-model-config-label"].textContent.includes("secret-model"));
+  assert.ok(!String(optionNodes["task-model-config-trigger"].attributes["aria-label"] || "").includes("secret-model"));
 
   let nextTimerId = 1;
   const pendingActivations = new Map();

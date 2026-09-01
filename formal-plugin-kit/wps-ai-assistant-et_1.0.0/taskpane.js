@@ -110,6 +110,8 @@
     workflowTaskType: EXCEL_WORKFLOW_TASK_TYPE,
     workflowProfileMutationBusy: false,
     workflowProfileActivationTimer: null,
+    taskModelConfigStatus: "",
+    taskModelConfigMenu: { open: false, highlightedIndex: -1, itemCount: 0, items: [] },
     workflowEditor: { open: false, mode: "create", profileId: "", dirty: false },
     workflowDeleteCandidate: null,
     busy: false,
@@ -3620,91 +3622,222 @@
       : EXCEL_WORKFLOW_TASK_TYPE;
   }
 
-  function syncWorkflowProfileSelectOptions(select, optionModels) {
-    var options = select.options || select.children || [];
-    var canReuseOptions = options.length === optionModels.length;
+  function focusTaskModelConfigTrigger() {
+    var trigger = byId("task-model-config-trigger");
+    if (trigger && typeof trigger.focus === "function") {
+      trigger.focus();
+    }
+  }
+
+  function closeTaskModelConfigMenu(restoreFocus) {
+    var menu = byId("task-model-config-menu");
+    var trigger = byId("task-model-config-trigger");
+    state.taskModelConfigMenu = { open: false, highlightedIndex: -1, itemCount: 0, items: [] };
+    if (menu) {
+      menu.hidden = true;
+      menu.innerHTML = "";
+    }
+    if (trigger) {
+      trigger.setAttribute("aria-expanded", "false");
+    }
+    if (restoreFocus) {
+      focusTaskModelConfigTrigger();
+    }
+  }
+
+  function currentTaskModelConfigProfile(data) {
+    var taskType = getTaskPageWorkflowType();
+    var selectedId = state.workflowProfileSelections[taskType] || data.activeProfileId || "";
     var index;
-    var option;
-    var model;
-    if (canReuseOptions) {
-      for (index = 0; index < optionModels.length; index += 1) {
-        if (!options[index] || String(options[index].value || "") !== optionModels[index].value) {
-          canReuseOptions = false;
-          break;
-        }
+    for (index = 0; index < (data.profiles || []).length; index += 1) {
+      if (data.profiles[index].id === selectedId) {
+        return data.profiles[index];
       }
     }
-    if (!canReuseOptions) {
-      select.innerHTML = "";
-      for (index = 0; index < optionModels.length; index += 1) {
-        option = document.createElement("option");
-        option.value = optionModels[index].value;
-        select.appendChild(option);
-      }
-      options = select.options || select.children || [];
+    return (data.profiles || []).filter(function (profile) { return profile.complete; })[0] || null;
+  }
+
+  function resolveTaskModelConfigStatus(taskType, data, profile) {
+    if (state.workflowProfileMutationBusy) {
+      return "busy";
     }
-    for (index = 0; index < optionModels.length; index += 1) {
-      option = options[index];
-      model = optionModels[index];
-      if (option.textContent !== model.text) {
-        option.textContent = model.text;
-      }
-      if (option.selected !== model.selected) {
-        option.selected = model.selected;
-      }
-      if (option.disabled !== model.disabled) {
-        option.disabled = model.disabled;
-      }
+    if (state.taskModelConfigStatus === "error") {
+      return "error";
     }
+    if (!Object.prototype.hasOwnProperty.call(state.workflowProfilesByTask, taskType)) {
+      return "loading";
+    }
+    if (data && data.loadError) {
+      return "loadError";
+    }
+    if (!profile) {
+      return "empty";
+    }
+    return "ready";
+  }
+
+  function renderTaskModelConfigMenu(items, highlightedIndex) {
+    var menu = byId("task-model-config-menu");
+    var rows = [];
+    if (!menu) {
+      return;
+    }
+    items.forEach(function (item, index) {
+      var selected = index === highlightedIndex;
+      rows.push('<button type="button" class="task-model-config-option' +
+        (item.selected ? " is-current" : "") +
+        (selected ? " is-active" : "") +
+        '" role="option" data-config-action="' + escaped(item.action) +
+        '" data-profile-id="' + escaped(item.id || "") +
+        '" aria-selected="' + (selected ? "true" : "false") + '"' +
+        (item.disabled ? " disabled" : "") + ">" + escaped(item.label) + "</button>");
+    });
+    menu.innerHTML = rows.join("");
+    menu.hidden = false;
+  }
+
+  function openTaskModelConfigMenu() {
+    var taskType = getTaskPageWorkflowType();
+    var data = getWorkflowProfileData(taskType);
+    var items = helpers.buildTaskModelConfigMenuItems
+      ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], { activeProfileId: data.activeProfileId })
+      : [];
+    var reduced = helpers.reduceTaskModelConfigMenuKey
+      ? helpers.reduceTaskModelConfigMenuKey({ open: false, itemCount: items.length, highlightedIndex: -1 }, "Open")
+      : { open: true, highlightedIndex: 0, itemCount: items.length };
+    state.taskModelConfigMenu = {
+      open: true,
+      highlightedIndex: reduced.highlightedIndex,
+      itemCount: items.length,
+      items: items
+    };
+    byId("task-model-config-trigger").setAttribute("aria-expanded", "true");
+    renderTaskModelConfigMenu(items, reduced.highlightedIndex);
+  }
+
+  function applyTaskModelConfigMenuItem(item, restoreFocus) {
+    var taskType = getTaskPageWorkflowType();
+    closeTaskModelConfigMenu(restoreFocus);
+    if (!item) {
+      return;
+    }
+    if (item.action === "manage") {
+      switchMode("settings");
+      return;
+    }
+    if (item.action === "select" && item.id) {
+      scheduleWorkflowProfileActivation(item.id, getWorkflowProfileData(taskType).activeProfileId, taskType);
+    }
+  }
+
+  function handleTaskModelConfigTriggerClick() {
+    if (state.busy || state.workflowProfileMutationBusy) {
+      return;
+    }
+    if (state.taskModelConfigMenu.open) {
+      closeTaskModelConfigMenu(true);
+      return;
+    }
+    openTaskModelConfigMenu();
+  }
+
+  function handleTaskModelConfigMenuClick(event) {
+    var node = event.target;
+    var button = null;
+    var action;
+    var profileId;
+    while (node && node.getAttribute) {
+      if (node.getAttribute("data-config-action")) {
+        button = node;
+        break;
+      }
+      node = node.parentNode;
+    }
+    if (!button || !state.taskModelConfigMenu.open) {
+      return;
+    }
+    action = button.getAttribute("data-config-action");
+    profileId = button.getAttribute("data-profile-id");
+    applyTaskModelConfigMenuItem({ action: action, id: profileId }, action !== "manage");
+  }
+
+  function handleTaskModelConfigKeydown(event) {
+    var next;
+    if (!state.taskModelConfigMenu.open) {
+      return;
+    }
+    next = helpers.reduceTaskModelConfigMenuKey({
+      open: true,
+      itemCount: state.taskModelConfigMenu.itemCount,
+      highlightedIndex: state.taskModelConfigMenu.highlightedIndex
+    }, event.key);
+    if (event.key === "ArrowDown" || event.key === "ArrowUp" || event.key === "Enter" || event.key === "Escape") {
+      event.preventDefault();
+    }
+    state.taskModelConfigMenu.highlightedIndex = next.highlightedIndex;
+    if (next.action === "close") {
+      closeTaskModelConfigMenu(next.restoreFocus);
+      return;
+    }
+    if (next.action === "select" || next.action === "manage") {
+      applyTaskModelConfigMenuItem(
+        state.taskModelConfigMenu.items[next.action === "select" ? next.selectedIndex : next.highlightedIndex],
+        next.restoreFocus
+      );
+      return;
+    }
+    renderTaskModelConfigMenu(state.taskModelConfigMenu.items, next.highlightedIndex);
+  }
+
+  function bindTaskModelConfigPress(element) {
+    if (!element) {
+      return;
+    }
+    element.addEventListener("pointerdown", function () {
+      element.classList.add("is-pressed");
+    });
+    ["pointerup", "pointerleave", "pointercancel"].forEach(function (type) {
+      element.addEventListener(type, function () {
+        element.classList.remove("is-pressed");
+      });
+    });
   }
 
   function renderWorkflowProfileStrip() {
     var strip = byId("workflow-profile-strip");
-    var select = byId("workflow-profile-select");
+    var trigger = byId("task-model-config-trigger");
+    var label = byId("task-model-config-label");
+    var statusNode = byId("task-model-config-status");
     var feedback = byId("workflow-switch-feedback");
     var taskType = getTaskPageWorkflowType();
     var data = getWorkflowProfileData(taskType);
-    var selectedId = state.workflowProfileSelections[taskType] || data.activeProfileId || "";
-    var availableProfiles = data.profiles.filter(function (profile) { return profile.complete; });
-    var optionModels = [];
-    if (!strip || !select || !feedback) {
+    var profile = currentTaskModelConfigProfile(data);
+    var status = resolveTaskModelConfigStatus(taskType, data, profile);
+    var entry = helpers.formatTaskModelConfigEntry
+      ? helpers.formatTaskModelConfigEntry(profile, { status: status })
+      : { visibleText: "未配置", statusText: "未配置", ariaLabel: "未配置" };
+    var taskLabel = taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE
+      ? "选择公式助手模型配置"
+      : (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE ? "选择智能填写模型配置" : "选择智能分析模型配置");
+    if (!strip || !trigger || !label || !statusNode || !feedback) {
       return;
     }
     strip.hidden = state.currentMode === "settings";
-    select.setAttribute("aria-label", taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE
-      ? "选择公式助手模型配置"
-      : (taskType === "excel.smart_fill" ? "选择智能填写模型配置" : "选择智能分析模型配置"));
-    if (!availableProfiles.length) {
-      optionModels.push({
-        value: "",
-        text: data.loadError ? "配置读取失败" : "未配置",
-        selected: true,
-        disabled: false
-      });
-    } else {
-      availableProfiles.forEach(function (profile) {
-        var optionState = helpers.workflowProfileOptionState
-          ? helpers.workflowProfileOptionState(profile, data.activeProfileId)
-          : {
-            id: profile.id,
-            label: String(profile.name || "未命名配置") + " · " +
-              (profile.accessMethod === "direct_model" ? "模型直连" : "工作流平台"),
-            disabled: !profile.complete
-          };
-        optionModels.push({
-          value: optionState.id,
-          text: optionState.label,
-          disabled: optionState.disabled,
-          selected: optionState.id === selectedId
-        });
-      });
+    if (state.currentMode === "settings") {
+      closeTaskModelConfigMenu(false);
     }
-    syncWorkflowProfileSelectOptions(select, optionModels);
-    select.disabled = state.busy || state.workflowProfileMutationBusy || !availableProfiles.length;
-    setNodeTextIfChanged(
-      feedback,
-      state.workflowProfileMutationBusy ? "正在切换..." : "当前配置：" + getActiveWorkflowProfileName(data)
-    );
+    label.textContent = entry.visibleText;
+    trigger.setAttribute("aria-label", taskLabel + "，" + entry.ariaLabel);
+    statusNode.className = "task-model-config-status is-" + status;
+    trigger.disabled = state.busy || state.workflowProfileMutationBusy || status === "loading";
+    setNodeTextIfChanged(feedback, entry.statusText);
+    if (state.taskModelConfigMenu.open) {
+      state.taskModelConfigMenu.items = helpers.buildTaskModelConfigMenuItems
+        ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], { activeProfileId: data.activeProfileId })
+        : [];
+      state.taskModelConfigMenu.itemCount = state.taskModelConfigMenu.items.length;
+      renderTaskModelConfigMenu(state.taskModelConfigMenu.items, state.taskModelConfigMenu.highlightedIndex);
+    }
   }
 
   function escaped(value) {
@@ -4143,22 +4276,36 @@
   function activateWorkflowProfile(profileId, previousProfileId, taskType) {
     var targetTask = taskType || getTaskPageWorkflowType();
     var profile = findWorkflowProfile(profileId, targetTask);
+    var decision;
     previousProfileId = previousProfileId || getWorkflowProfileData(targetTask).activeProfileId || "";
-    if (!profileId || profileId === previousProfileId) {
-      state.workflowProfileSelections[targetTask] = previousProfileId;
+    decision = helpers.evaluateTaskModelConfigSwitch
+      ? helpers.evaluateTaskModelConfigSwitch({
+        requestedId: profileId,
+        previousId: previousProfileId,
+        busy: state.busy,
+        mutationBusy: state.workflowProfileMutationBusy,
+        profileComplete: Boolean(profile && profile.complete)
+      })
+      : {
+        allowed: Boolean(profileId && profileId !== previousProfileId && profile && profile.complete && !state.busy && !state.workflowProfileMutationBusy),
+        reason: "activate",
+        nextSelectionId: profileId,
+        restoreFocus: false
+      };
+    if (!decision.allowed) {
+      state.workflowProfileSelections[targetTask] = decision.nextSelectionId;
       renderWorkflowProfileStrip();
+      if (decision.reason === "incomplete") {
+        setStatus("该模型配置不完整，不能切换。");
+      } else if (decision.reason === "busy") {
+        setStatus("当前正忙，请稍后切换模型配置。");
+      }
+      if (decision.restoreFocus) {
+        focusTaskModelConfigTrigger();
+      }
       return;
     }
-    if (!profile || !profile.complete || state.busy || state.workflowProfileMutationBusy) {
-      state.workflowProfileSelections[targetTask] = previousProfileId;
-      renderWorkflowProfileStrip();
-      setStatus(!profile || !profile.complete ? "该模型配置不完整，不能切换。" : "当前正忙，请稍后切换模型配置。");
-      setNodeTextIfChanged(
-        byId("workflow-switch-feedback"),
-        "当前：" + getActiveWorkflowProfileName(getWorkflowProfileData(targetTask))
-      );
-      return;
-    }
+    state.taskModelConfigStatus = "";
     state.workflowProfileSelections[targetTask] = profileId;
     state.workflowProfileLoadSequences[targetTask] = (state.workflowProfileLoadSequences[targetTask] || 0) + 1;
     setWorkflowMutationBusy(true);
@@ -4167,17 +4314,29 @@
         return loadWorkflowProfileForTask(targetTask);
       }).then(function () {
         state.workflowProfileSelections[targetTask] = getWorkflowProfileData(targetTask).activeProfileId;
+        state.taskModelConfigStatus = "";
         setWorkflowMutationBusy(false);
         renderModelInterfaceState(state.modelInterfaceDetectable);
         setStatus("模型配置已切换，从下一次任务开始生效。");
+        renderWorkflowProfileStrip();
       }).catch(function (error) {
-        state.workflowProfileSelections[targetTask] = previousProfileId;
+        var previousProfile = findWorkflowProfile(previousProfileId, targetTask);
+        var previousEntry = helpers.formatTaskModelConfigEntry
+          ? helpers.formatTaskModelConfigEntry(previousProfile, { status: "error" })
+          : { visibleText: getActiveWorkflowProfileName(getWorkflowProfileData(targetTask)) };
+        var rolled = helpers.rollbackTaskModelConfigSwitch({
+          previousId: previousProfileId,
+          previousLabel: previousEntry.visibleText
+        });
+        state.workflowProfileSelections[targetTask] = rolled.selectionId;
+        state.taskModelConfigStatus = "error";
         setWorkflowMutationBusy(false);
         setStatus("切换模型配置失败：" + describeFetchError(error));
-        setNodeTextIfChanged(
-          byId("workflow-switch-feedback"),
-          "切换失败，当前：" + getActiveWorkflowProfileName(getWorkflowProfileData(targetTask))
-        );
+        setNodeTextIfChanged(byId("workflow-switch-feedback"), rolled.statusText);
+        renderWorkflowProfileStrip();
+        if (rolled.restoreFocus) {
+          focusTaskModelConfigTrigger();
+        }
       });
   }
 
@@ -4678,6 +4837,7 @@
         ? EXCEL_FORMULA_WORKFLOW_TASK_TYPE
         : (smartFillMode ? EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE : EXCEL_WORKFLOW_TASK_TYPE);
     }
+    closeTaskModelConfigMenu(false);
     returnTaskLabel = state.lastTaskMode === "excelFormulaAssistant"
       ? "公式助手"
       : (state.lastTaskMode === "excelSmartFill" ? "智能填写" : "智能分析");
@@ -4829,13 +4989,16 @@
     });
     document.addEventListener("visibilitychange", syncSettingsRefreshController);
     document.addEventListener("visibilitychange", syncScopeWatcher);
-    byId("workflow-profile-select").addEventListener("change", function (event) {
-      var taskType = getTaskPageWorkflowType();
-      scheduleWorkflowProfileActivation(
-        event.target.value,
-        getWorkflowProfileData(taskType).activeProfileId,
-        taskType
-      );
+    byId("task-model-config-trigger").addEventListener("click", handleTaskModelConfigTriggerClick);
+    byId("task-model-config-trigger").addEventListener("keydown", handleTaskModelConfigKeydown);
+    byId("task-model-config-menu").addEventListener("click", handleTaskModelConfigMenuClick);
+    byId("task-model-config-menu").addEventListener("keydown", handleTaskModelConfigKeydown);
+    bindTaskModelConfigPress(byId("task-model-config-trigger"));
+    document.addEventListener("click", function (event) {
+      var strip = byId("workflow-profile-strip");
+      if (state.taskModelConfigMenu.open && strip && !strip.contains(event.target)) {
+        closeTaskModelConfigMenu(false);
+      }
     });
     byId("btn-new-workflow-profile").addEventListener("click", function () {
       openWorkflowEditor("create", "");

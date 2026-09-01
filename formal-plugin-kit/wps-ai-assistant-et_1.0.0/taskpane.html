@@ -28,12 +28,14 @@
           <strong id="scope-line">未检测</strong>
         </section>
 
-        <section id="workflow-profile-strip" class="workflow-profile-strip" aria-label="当前模型配置">
-          <label for="workflow-profile-select">模型配置</label>
-          <select id="workflow-profile-select" aria-label="选择智能分析模型配置">
-            <option value="">正在读取...</option>
-          </select>
-          <span id="workflow-switch-feedback" class="inline-status" aria-live="polite">未检测</span>
+        <section id="workflow-profile-strip" class="workflow-profile-strip task-model-config-entry" aria-label="当前模型配置">
+          <button id="task-model-config-trigger" class="task-model-config-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-controls="task-model-config-menu">
+            <span id="task-model-config-status" class="task-model-config-status" aria-hidden="true"></span>
+            <span id="task-model-config-label" class="task-model-config-label">正在读取</span>
+            <span class="task-model-config-chevron" aria-hidden="true">›</span>
+          </button>
+          <div id="task-model-config-menu" class="task-model-config-menu" role="listbox" hidden></div>
+          <span id="workflow-switch-feedback" class="sr-only" aria-live="polite"></span>
         </section>
 
         <section class="controls glass-card">
