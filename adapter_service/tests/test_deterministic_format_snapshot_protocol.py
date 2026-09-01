@@ -468,6 +468,10 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         page = self.service.list_issues(job["jobId"], page_size=1)
         self.assertEqual(page["total"], 2)
         self.assertEqual(page["page"], 1)
+        self.assertEqual(page["pageSize"], 1)
+        self.assertEqual(page["locationGroupCount"], 2)
+        self.assertEqual(len(page["locationGroups"]), 1)
+        self.assertEqual(page["locationGroups"][0]["issueCount"], 1)
         self.assertTrue(page["nextCursor"])
         issue = page["items"][0]
         self.assertTrue(issue["issueId"])

@@ -279,10 +279,12 @@
           </div>
           <div id="deterministic-format-review-issue-controls" class="full-document-review-issue-controls" hidden>
             <div class="format-review-toolbar">
-              <button id="btn-format-review-filter" class="format-review-icon-button" type="button" aria-expanded="false" aria-controls="format-review-filter-panel" aria-haspopup="dialog">
-                <span>筛选</span>
-                <span id="format-review-filter-count" hidden>0</span>
-              </button>
+              <div class="format-review-filter-wrap">
+                <button id="btn-format-review-filter" class="format-review-icon-button" type="button" aria-expanded="false" aria-controls="format-review-filter-panel" aria-haspopup="dialog">
+                  <span>筛选</span>
+                </button>
+                <span id="format-review-filter-count" class="format-review-filter-badge" hidden>0</span>
+              </div>
               <div class="format-review-pager">
                 <button id="btn-format-review-previous-page" type="button" disabled>上一页</button>
                 <span id="format-review-page-status" role="status" aria-live="polite"></span>

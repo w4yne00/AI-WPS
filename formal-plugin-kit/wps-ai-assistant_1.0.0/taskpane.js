@@ -7957,19 +7957,29 @@
       var panel = byId("format-review-filter-panel");
       var menu = byId("format-review-more-menu");
       var open = panel.hidden;
-      menu.hidden = true;
-      byId("btn-format-review-more").setAttribute("aria-expanded", "false");
-      panel.hidden = !open;
-      byId("btn-format-review-filter").setAttribute("aria-expanded", open ? "true" : "false");
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(
+          panel,
+          byId("btn-format-review-filter"),
+          open,
+          menu,
+          byId("btn-format-review-more")
+        );
+      }
     });
     byId("btn-format-review-more").addEventListener("click", function () {
       var panel = byId("format-review-filter-panel");
       var menu = byId("format-review-more-menu");
       var open = menu.hidden;
-      panel.hidden = true;
-      byId("btn-format-review-filter").setAttribute("aria-expanded", "false");
-      menu.hidden = !open;
-      byId("btn-format-review-more").setAttribute("aria-expanded", open ? "true" : "false");
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(
+          menu,
+          byId("btn-format-review-more"),
+          open,
+          panel,
+          byId("btn-format-review-filter")
+        );
+      }
     });
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
@@ -8066,14 +8076,16 @@
       if (helpers.handleFormatReviewAnchoredPanelKeydown && filterPanel && !filterPanel.hidden) {
         helpers.handleFormatReviewAnchoredPanelKeydown(event, {
           panel: filterPanel,
-          trigger: byId("btn-format-review-filter")
+          trigger: byId("btn-format-review-filter"),
+          activeElement: document.activeElement
         });
         return;
       }
       if (helpers.handleFormatReviewAnchoredPanelKeydown && moreMenu && !moreMenu.hidden) {
         helpers.handleFormatReviewAnchoredPanelKeydown(event, {
           panel: moreMenu,
-          trigger: byId("btn-format-review-more")
+          trigger: byId("btn-format-review-more"),
+          activeElement: document.activeElement
         });
       }
     });

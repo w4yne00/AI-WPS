@@ -927,9 +927,37 @@ body[data-task-mode="smartWrite"] #result-output {
 }
 
 .format-review-pager button {
-  height: 36px;
   width: 100%;
-  min-width: 0;
+  min-width: 44px;
+  min-height: 44px;
+  height: 44px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+}
+
+.format-review-filter-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+
+.format-review-filter-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.format-review-filter-badge[hidden] {
+  display: none;
 }
 
 .format-review-icon-button {
@@ -1018,12 +1046,31 @@ body[data-task-mode="smartWrite"] #result-output {
   min-width: 0;
 }
 
+.review-issue-item .review-action-row button {
+  min-width: 44px;
+  min-height: 44px;
+  height: 44px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+}
+
 @media (max-width: 320px) {
   .format-review-toolbar,
   .format-review-pager,
   .review-location-card,
   #format-review-issue-actions {
     min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 420px) {
+  .format-review-toolbar,
+  .format-review-pager,
+  .review-location-card,
+  #format-review-issue-actions {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 }
 
@@ -2132,7 +2179,6 @@ body[data-task-mode="smartWrite"] #result-output {
   .review-location-body,
   .format-review-anchored-panel {
     transform: none !important;
-    transition: opacity 160ms ease;
   }
 }
 

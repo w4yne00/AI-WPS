@@ -2902,9 +2902,9 @@
       return anchorId;
     }
     if (isFinite(paragraphIndex) && paragraphIndex > 0) {
-      return "paragraph-" + paragraphIndex;
+      return "paragraph:" + paragraphIndex;
     }
-    return "issue-" + String(issue && issue.issueId || "");
+    return "issue:" + String(issue && issue.issueId || "");
   }
 
   function formatDeterministicFormatReviewIssuePair(issue, diagnostics) {
@@ -2966,19 +2966,55 @@
     return count;
   }
 
+  function formatReviewPanelFocusableItems(panel) {
+    if (!panel || !panel.querySelectorAll) {
+      return [];
+    }
+    return panel.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])");
+  }
+
+  function setFormatReviewAnchoredPanelOpen(panel, trigger, open, otherPanel, otherTrigger) {
+    var items;
+    if (!panel || !trigger) {
+      return;
+    }
+    panel.hidden = !open;
+    if (trigger.setAttribute) {
+      trigger.setAttribute("aria-expanded", open ? "true" : "false");
+    }
+    if (otherPanel) {
+      otherPanel.hidden = true;
+    }
+    if (otherTrigger && otherTrigger.setAttribute) {
+      otherTrigger.setAttribute("aria-expanded", "false");
+    }
+    if (open) {
+      items = formatReviewPanelFocusableItems(panel);
+      if (items[0] && items[0].focus) {
+        items[0].focus();
+      }
+    }
+  }
+
   function handleFormatReviewAnchoredPanelKeydown(event, context) {
     var panel = context && context.panel;
     var trigger = context && context.trigger;
+    var active = context && context.activeElement;
     var items;
     var index;
+    var tag;
     if (!event || !panel || panel.hidden) {
       return;
     }
+    if (!active && typeof document !== "undefined") {
+      active = document.activeElement;
+    }
+    tag = active && String(active.tagName || active.nodeName || "");
     if (event.key === "Escape") {
       if (event.preventDefault) {
         event.preventDefault();
       }
-      panel.hidden = true;
+      setFormatReviewAnchoredPanelOpen(panel, trigger, false);
       if (trigger && trigger.focus) {
         trigger.focus();
       }
@@ -2987,16 +3023,19 @@
     if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
       return;
     }
+    if (/^(INPUT|TEXTAREA|SELECT)$/i.test(tag)) {
+      return;
+    }
     if (event.preventDefault) {
       event.preventDefault();
     }
-    items = panel.querySelectorAll
-      ? panel.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")
-      : [];
-    index = Number(context && context.itemIndex);
-    if (!isFinite(index) || index < 0) {
-      index = 0;
-    }
+    items = formatReviewPanelFocusableItems(panel);
+    index = 0;
+    Array.prototype.forEach.call(items, function (item, itemIndex) {
+      if (item === active) {
+        index = itemIndex;
+      }
+    });
     if (event.key === "ArrowDown") {
       index += 1;
     } else {
@@ -3011,6 +3050,22 @@
     if (items[index] && items[index].focus) {
       items[index].focus();
     }
+  }
+
+  function formatDeterministicFormatReviewEvidence(issue) {
+    var evidence = issue && issue.evidence;
+    var first;
+    if (!Array.isArray(evidence) || !evidence.length) {
+      return "";
+    }
+    first = evidence[0];
+    if (!first || typeof first !== "object") {
+      return "";
+    }
+    if (first.kind || first.propertyPath) {
+      return "格式事实";
+    }
+    return "";
   }
 
   function presentDeterministicFormatReviewIssueView(input) {
@@ -3054,6 +3109,7 @@
         pairText: pair,
         message: formatDeterministicFormatReviewIssueMessage(issue),
         suggestion: formatDeterministicFormatReviewSuggestion(issue),
+        evidenceText: formatDeterministicFormatReviewEvidence(issue),
         processedEnabled: status !== "processed",
         ignoredEnabled: status !== "ignored",
         status: status
@@ -3072,7 +3128,9 @@
         var lines = [
           '<article class="review-location-card" data-location-key="' + escapeHtml(group.locationKey) + '">',
           '<div class="review-location-header">',
-          '<button type="button" class="review-location-toggle" aria-expanded="false" data-format-review-action="toggle-location" data-location-key="' +
+          '<button type="button" class="review-location-toggle" aria-expanded="false" aria-controls="' +
+            escapeHtml("format-review-location-body-" + group.locationKey) +
+            '" data-format-review-action="toggle-location" data-location-key="' +
             escapeHtml(group.locationKey) + '">',
           '<span class="review-location-excerpt">' + escapeHtml(group.excerpt) + "</span>",
           '<span class="review-location-meta">' + escapeHtml(group.location) + " · " +
@@ -3082,7 +3140,8 @@
             escapeHtml(group.locationKey) + '" data-issue-id="' + escapeHtml(group.locateIssueId) + '"' +
             (group.locateEnabled ? "" : ' disabled="disabled"') + "><span>定位</span></button>",
           "</div>",
-          '<div class="review-location-body" hidden>'
+          '<div class="review-location-body" id="' +
+            escapeHtml("format-review-location-body-" + group.locationKey) + '" hidden>'
         ];
         group.issues.forEach(function (item) {
           lines.push('<article class="review-issue-item" data-issue-id="' + escapeHtml(item.issueId) + '">');
@@ -3097,6 +3156,9 @@
             escapeHtml(item.issueId) + '"' + (item.ignoredEnabled ? "" : ' disabled="disabled"') + ">标记已忽略</button>");
           lines.push("</div>");
           lines.push("<details><summary>详情</summary>");
+          if (item.evidenceText) {
+            lines.push("<p>证据：" + escapeHtml(item.evidenceText) + "</p>");
+          }
           lines.push("<p>问题说明：" + escapeHtml(item.message) + "</p>");
           lines.push("<p>建议：" + escapeHtml(item.suggestion) + "</p>");
           lines.push("</details></article>");
@@ -5053,6 +5115,7 @@
     formatDeterministicFormatReviewPageStatus: formatDeterministicFormatReviewPageStatus,
     countEnabledFormatReviewFilters: countEnabledFormatReviewFilters,
     handleFormatReviewAnchoredPanelKeydown: handleFormatReviewAnchoredPanelKeydown,
+    setFormatReviewAnchoredPanelOpen: setFormatReviewAnchoredPanelOpen,
     renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,

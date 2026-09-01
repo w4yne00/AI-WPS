@@ -104,6 +104,7 @@ function testSameAnchorIssuesFormOneCollapsedLocationCard() {
   assert.ok(!view.html.includes("定位原文"));
   const header = headerSlice(view.html);
   assert.ok(header.indexOf("aria-expanded=\"false\"") >= 0);
+  assert.ok(header.indexOf("aria-controls=") >= 0);
   assert.ok(header.indexOf("问题说明") < 0);
   assert.ok(header.indexOf("建议") < 0);
   assert.ok(header.indexOf("当前值 → 期望值") < 0);
@@ -126,6 +127,9 @@ function testExpandedIssueShowsValuePairAndSecondaryDetails() {
   assert.ok(body.includes("<details"));
   assert.ok(body.includes("问题说明：字号不符合模板要求。"));
   assert.ok(body.includes("建议：请按模板要求调整字号。"));
+  assert.ok(body.includes("证据：格式事实"));
+  assert.ok(!headerSlice(view.html).includes("证据："));
+  assert.ok(!body.includes('"kind":"deterministic_format_fact"'));
 }
 
 function testCaptionAssociationShowsConclusionNotUnrecognized() {
@@ -252,6 +256,12 @@ function testToolbarMovesFiltersAndExportsOffTheFirstScreen() {
   assert.ok(!toolbar.includes("导出 JSON"));
   assert.ok(!toolbar.includes("导出 Markdown"));
   assert.ok(!toolbar.includes("<select"));
+  assert.ok(controls.includes("format-review-filter-wrap"));
+  assert.ok(controls.includes("format-review-filter-badge"));
+  const filterStart = wordHtml.indexOf('id="btn-format-review-filter"');
+  const filterEnd = wordHtml.indexOf("</button>", filterStart);
+  const filterBtn = wordHtml.slice(filterStart, filterEnd);
+  assert.ok(!filterBtn.includes("format-review-filter-count"));
 }
 
 function testPageStatusAndFilterCountHelpers() {
@@ -281,44 +291,72 @@ function testPageStatusAndFilterCountHelpers() {
 
 function testKeyboardHelperClosesPanelAndMovesFocus() {
   const events = [];
+  const jsonItem = { tagName: "BUTTON", focus: function () { events.push("json"); } };
+  const mdItem = { tagName: "BUTTON", focus: function () { events.push("markdown"); } };
   const panel = {
     hidden: false,
-    querySelectorAll: function () {
-      return [
-        { focus: function () { events.push("status"); } },
-        { focus: function () { events.push("rule"); } }
-      ];
-    }
+    querySelectorAll: function () { return [jsonItem, mdItem]; }
   };
-  const trigger = { focus: function () { events.push("trigger"); } };
+  const trigger = {
+    attrs: { "aria-expanded": "true" },
+    setAttribute: function (name, value) { this.attrs[name] = value; events.push("aria:" + value); },
+    focus: function () { events.push("trigger"); }
+  };
+
   helpers.handleFormatReviewAnchoredPanelKeydown(
     { key: "Escape", preventDefault: function () { events.push("prevent"); } },
     { panel: panel, trigger: trigger }
   );
   assert.strictEqual(panel.hidden, true);
-  assert.deepStrictEqual(events, ["prevent", "trigger"]);
+  assert.strictEqual(trigger.attrs["aria-expanded"], "false");
+  assert.deepStrictEqual(events, ["prevent", "aria:false", "trigger"]);
 
+  events.length = 0;
   panel.hidden = false;
+  trigger.attrs["aria-expanded"] = "true";
   helpers.handleFormatReviewAnchoredPanelKeydown(
     { key: "ArrowDown", preventDefault: function () { events.push("prevent-down"); } },
-    { panel: panel, trigger: trigger, itemIndex: 0 }
+    { panel: panel, trigger: trigger, activeElement: jsonItem }
   );
-  assert.ok(events.indexOf("prevent-down") >= 0);
-  assert.ok(events.indexOf("rule") >= 0);
+  assert.deepStrictEqual(events, ["prevent-down", "markdown"]);
+
+  events.length = 0;
+  const ruleInput = { tagName: "INPUT", focus: function () { events.push("input"); } };
+  helpers.handleFormatReviewAnchoredPanelKeydown(
+    { key: "ArrowDown", preventDefault: function () { events.push("prevent-input"); } },
+    { panel: panel, trigger: trigger, activeElement: ruleInput }
+  );
+  assert.deepStrictEqual(events, []);
+
+  events.length = 0;
+  panel.hidden = true;
+  helpers.setFormatReviewAnchoredPanelOpen(panel, trigger, true);
+  assert.strictEqual(panel.hidden, false);
+  assert.strictEqual(trigger.attrs["aria-expanded"], "true");
+  assert.deepStrictEqual(events, ["aria:true", "json"]);
 }
 
 function testGeometryAndReducedMotion() {
   const pagerButtons = cssRule(".format-review-pager button");
-  assert.ok(/height:\s*36px/.test(pagerButtons));
-  assert.ok(/min-width:\s*0/.test(pagerButtons) || /width:\s*100%/.test(pagerButtons));
+  assert.ok(/min-height:\s*44px/.test(pagerButtons));
+  assert.ok(/min-width:\s*44px/.test(pagerButtons));
+  assert.ok(/width:\s*100%/.test(pagerButtons));
+  const issueActions = cssRule(".review-issue-item .review-action-row button");
+  assert.ok(/min-height:\s*44px/.test(issueActions));
+  assert.ok(/min-width:\s*44px/.test(issueActions));
   const icon = cssRule(".format-review-icon-button");
   assert.ok(/width:\s*44px/.test(icon));
   assert.ok(/height:\s*44px/.test(icon));
   const iconGlyph = cssRule(".format-review-icon-button > span");
   assert.ok(/width:\s*32px/.test(iconGlyph));
   assert.ok(/height:\s*32px/.test(iconGlyph));
-  assert.ok(wordCss.includes("@media (max-width: 320px)"));
-  assert.ok(wordCss.includes("overflow-x: hidden"));
+  const badge = cssRule(".format-review-filter-badge");
+  assert.ok(/position:\s*absolute/.test(badge));
+  const narrow320 = wordCss.slice(wordCss.indexOf("@media (max-width: 320px)"));
+  const narrow420 = wordCss.slice(wordCss.indexOf("@media (max-width: 420px)"));
+  assert.ok(narrow320.includes(".format-review-toolbar"));
+  assert.ok(narrow420.includes(".format-review-toolbar"));
+  assert.ok(wordCss.includes("overflow-wrap: anywhere"));
   const reduced = wordCss.slice(wordCss.indexOf("@media (prefers-reduced-motion: reduce)"));
   assert.ok(reduced.includes(".review-location-card"));
   assert.ok(reduced.includes("transform: none"));
