@@ -295,6 +295,9 @@ body {
   z-index: 8;
   min-width: 0;
   max-width: 100%;
+  max-height: 240px;
+  max-height: min(240px, 45vh);
+  overflow-y: auto;
   padding: 4px;
   border: 1px solid var(--border-color);
   border-radius: 8px;
@@ -302,6 +305,12 @@ body {
   box-shadow: 0 8px 20px rgba(15, 23, 42, 0.08);
   transform-origin: top left;
   transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.task-model-config-menu.is-above {
+  top: auto;
+  bottom: calc(100% + 4px);
+  transform-origin: bottom left;
 }
 
 .task-model-config-option {
@@ -320,7 +329,10 @@ body {
   white-space: nowrap;
 }
 
-.task-model-config-option.is-current,
+.task-model-config-option.is-current {
+  font-weight: 650;
+}
+
 .task-model-config-option.is-active,
 .task-model-config-option[aria-selected="true"] {
   background: var(--color-surface-muted);

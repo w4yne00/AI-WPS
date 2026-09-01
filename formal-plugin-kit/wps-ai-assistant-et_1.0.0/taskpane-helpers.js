@@ -3667,6 +3667,26 @@
     return items;
   }
 
+  function resolveTaskModelConfigViewStatus(input) {
+    var view = input || {};
+    if (view.mutationBusy) {
+      return "busy";
+    }
+    if ((view.statusByTask || {})[view.taskType] === "error") {
+      return "error";
+    }
+    if (!view.hasLoaded) {
+      return "loading";
+    }
+    if (view.loadError) {
+      return "loadError";
+    }
+    if (!view.hasProfile) {
+      return "empty";
+    }
+    return "ready";
+  }
+
   function evaluateTaskModelConfigSwitch(request) {
     var input = request || {};
     var previousId = String(input.previousId || "");
@@ -3698,10 +3718,14 @@
     var itemCount = Number(current.itemCount || 0);
     var highlightedIndex = Number(current.highlightedIndex);
     if (key === "Open") {
+      var start = Number(current.highlightedIndex);
+      if (!(start >= 0 && start < itemCount)) {
+        start = 0;
+      }
       return {
         open: true,
         itemCount: itemCount,
-        highlightedIndex: 0,
+        highlightedIndex: start,
         action: "open",
         restoreFocus: false
       };
@@ -3740,7 +3764,8 @@
       };
     }
     if (key === "Enter") {
-      if (highlightedIndex === itemCount - 1) {
+      var item = (current.items || [])[highlightedIndex] || {};
+      if (item.action === "manage") {
         return {
           open: false,
           itemCount: itemCount,
@@ -3914,6 +3939,7 @@
     formatTaskModelConfigAccessMethod: formatTaskModelConfigAccessMethod,
     formatTaskModelConfigEntry: formatTaskModelConfigEntry,
     buildTaskModelConfigMenuItems: buildTaskModelConfigMenuItems,
+    resolveTaskModelConfigViewStatus: resolveTaskModelConfigViewStatus,
     evaluateTaskModelConfigSwitch: evaluateTaskModelConfigSwitch,
     rollbackTaskModelConfigSwitch: rollbackTaskModelConfigSwitch,
     reduceTaskModelConfigMenuKey: reduceTaskModelConfigMenuKey,
