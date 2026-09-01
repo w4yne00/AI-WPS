@@ -182,6 +182,8 @@ export ENTERPRISE_AI_API_KEY="your-api-key"
 
 ## 离线交付
 
+当前 Preview 安装入口是交付包内 `installer/install_ai_wps.sh`，默认安装根 `$HOME/ai-wps`。首次安装只读检测 `$HOME/ai-wps-phase1`，不迁移、覆盖或删除旧运行数据；若 18100 仍被历史 Adapter 占用，安装器会释放该端口上的监听进程后再继续。
+
 一期正式版本是一个 Word / Excel / PPT 统一包加一个安装脚本。覆盖安装保留已有 `config/adapter.json`、API Key、写作规范库和已有备份。
 
 ```bash

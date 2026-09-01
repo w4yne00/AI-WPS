@@ -2,9 +2,11 @@ import hashlib
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import tarfile
+import time
 from pathlib import Path
 import pytest
 
@@ -247,6 +249,103 @@ def test_preview_installer_only_reports_legacy_phase1_and_preserves_its_data(tmp
         for path in legacy.rglob("*")
         if path.is_file()
     } == before
+
+
+def _free_tcp_port():
+    probe = socket.socket()
+    probe.bind(("127.0.0.1", 0))
+    port = probe.getsockname()[1]
+    probe.close()
+    return port
+
+
+def _port_is_listening(port):
+    check = subprocess.run(
+        ["lsof", "-ti", "TCP:{0}".format(port), "-sTCP:LISTEN"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return bool(check.stdout.strip())
+
+
+def test_preview_installer_releases_occupied_port_without_touching_legacy_data(tmp_path):
+    delivery = _prepare_delivery(tmp_path)
+    target_home = tmp_path / "occupied-port-home"
+    legacy = target_home / "ai-wps-phase1"
+    (legacy / "config").mkdir(parents=True)
+    (legacy / "run").mkdir()
+    (legacy / "config/adapter.json").write_text(
+        '{"providerApiKey": "do-not-read"}\n', encoding="utf-8"
+    )
+    (legacy / "run/provider_api_key").write_text("legacy-secret\n", encoding="utf-8")
+    (legacy / "run/writing_policies.db").write_bytes(b"legacy-db")
+    before = {
+        path.relative_to(legacy): path.read_bytes()
+        for path in legacy.rglob("*")
+        if path.is_file()
+    }
+    port = _free_tcp_port()
+    listener = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import socket, sys, time\n"
+                "server = socket.socket()\n"
+                "server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n"
+                "server.bind(('127.0.0.1', int(sys.argv[1])))\n"
+                "server.listen(1)\n"
+                "time.sleep(120)\n"
+            ),
+            str(port),
+        ]
+    )
+    try:
+        for _ in range(50):
+            if _port_is_listening(port):
+                break
+            time.sleep(0.05)
+        else:
+            raise AssertionError("test listener did not bind port {0}".format(port))
+
+        result = subprocess.run(
+            ["bash", str(delivery / "installer/install_ai_wps.sh")],
+            cwd=delivery,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=_installer_environment(
+                target_home,
+                AI_WPS_INSTALL_ROOT=str(target_home / "ai-wps"),
+                WPS_JSADDONS_DIR=str(target_home / "jsaddons"),
+                AI_WPS_SYSTEMD_SERVICE_FILE=str(tmp_path / "no-systemd/ai-wps.service"),
+                PORT=str(port),
+                AI_WPS_CANDIDATE_PORT=str(port + 1),
+                PYTHON_BIN="/usr/bin/false",
+            ),
+        )
+    finally:
+        if listener.poll() is None:
+            listener.terminate()
+            try:
+                listener.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                listener.kill()
+                listener.wait(timeout=5)
+
+    assert "install_failed=adapter_port_still_listening" not in result.stdout
+    assert "adapter_state_transition_lock=stopped port={0}".format(port) in result.stdout
+    assert "legacy_phase1_install_detected=true" in result.stdout
+    assert "legacy_runtime_data_migrated=false" in result.stdout
+    assert "legacy_install_deleted=false" in result.stdout
+    assert {
+        path.relative_to(legacy): path.read_bytes()
+        for path in legacy.rglob("*")
+        if path.is_file()
+    } == before
+    assert listener.returncode not in (None, 0)
+    assert not _port_is_listening(port)
 
 
 def test_preview_installer_rejects_runtime_path_overlapping_legacy_install(tmp_path):

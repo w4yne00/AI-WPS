@@ -8,6 +8,9 @@ dist-adapter-start-kit/
 dist-phase1-delivery-kit/*
 !dist-phase1-delivery-kit/*.tar.gz
 !dist-phase1-delivery-kit/*.tar.gz.sha256
+dist-preview-delivery-kit/*
+!dist-preview-delivery-kit/*.tar.gz
+!dist-preview-delivery-kit/*.tar.gz.sha256
 .DS_Store
 ._*
 logs/

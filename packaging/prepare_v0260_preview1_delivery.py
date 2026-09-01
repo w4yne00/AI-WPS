@@ -553,6 +553,36 @@ PY
         + "validate_existing_preview_install\n",
         1,
     )
+    content = _replace_function(
+        content,
+        "stop_adapter_for_state_transition",
+        """stop_adapter_for_state_transition() {
+  local stop_script=""
+  if command -v systemctl >/dev/null 2>&1 && [ -f "$SYSTEMD_SERVICE_FILE" ]; then
+    SYSTEMD_SERVICE_PRESENT="1"
+    if [ "$(id -u)" != "0" ] && [ "${AI_WPS_SYSTEMD_MANAGED_BY_PARENT:-0}" != "1" ]; then
+      fail "adapter_service_update_requires_admin service=$SYSTEMD_SERVICE_NAME"
+    fi
+  fi
+  if [ "$SYSTEMD_SERVICE_PRESENT" = "1" ] && systemctl is-active --quiet "$SYSTEMD_SERVICE_NAME"; then
+    [ "$(id -u)" = "0" ] || fail "adapter_service_stop_requires_admin service=$SYSTEMD_SERVICE_NAME"
+    SYSTEMD_WAS_ACTIVE="1"
+    systemctl stop "$SYSTEMD_SERVICE_NAME" || fail "adapter_service_stop_failed service=$SYSTEMD_SERVICE_NAME"
+  fi
+  if [ -f "$ADAPTER_TARGET/scripts/stop_adapter.sh" ]; then
+    stop_script="$ADAPTER_TARGET/scripts/stop_adapter.sh"
+  elif [ -f "$ADAPTER_SOURCE/scripts/stop_adapter.sh" ]; then
+    stop_script="$ADAPTER_SOURCE/scripts/stop_adapter.sh"
+  fi
+  if [ -n "$stop_script" ]; then
+    AI_WPS_STATE_DIR="$STATE_DIR" AI_WPS_BACKUP_DIR="$BACKUP_DIR" AI_WPS_VAR_DIR="$VAR_DIR" \\
+      bash "$stop_script" "$PORT" || fail "adapter_stop_failed"
+  fi
+  adapter_port_is_listening && fail "adapter_port_still_listening port=$PORT"
+  log "adapter_state_transition_lock=stopped port=$PORT"
+}
+""",
+    )
     path.write_text(content, encoding="utf-8")
     path.chmod(0o755)
 

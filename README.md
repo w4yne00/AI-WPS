@@ -182,6 +182,8 @@ Envelope:
 
 ## Offline Delivery
 
+The current Preview kit installs with `installer/install_ai_wps.sh` into `$HOME/ai-wps`. The first install read-only detects `$HOME/ai-wps-phase1` and does not migrate, overwrite, or delete that tree. If port 18100 is still held by a leftover Adapter, the installer stops that listener and continues.
+
 The formal Phase 1 release is one Word / Excel / PPT package and one installer. Overwrite installs keep `config/adapter.json`, API keys, the writing-policy database, and existing backups.
 
 ```bash
