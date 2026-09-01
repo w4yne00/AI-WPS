@@ -59,28 +59,13 @@
           </div>
 
           <div id="excel-smart-fill-options" class="mode-block smart-fill-options" hidden>
-            <p class="field-note">智能填写只使用目标区域和来源上下文；来源区域可选，未捕获时使用目标行的可见上下文和表头。生成预览后会再次核对目标单元格未被改动。</p>
-            <div class="smart-fill-capture-grid">
-              <section class="smart-fill-capture-card">
-                <div class="smart-fill-capture-heading">
-                  <strong>目标区域</strong>
-                  <button id="btn-capture-smart-fill-target" class="ghost-action mini-button" type="button">捕获当前选区</button>
-                </div>
-                <p id="smart-fill-target-summary" class="excel-range-summary">尚未捕获目标区域。</p>
-              </section>
-              <section class="smart-fill-capture-card">
-                <div class="smart-fill-capture-heading">
-                  <strong>来源区域</strong>
-                  <button id="btn-capture-smart-fill-source" class="ghost-action mini-button" type="button">捕获当前选区</button>
-                </div>
-                <p id="smart-fill-source-summary" class="excel-range-summary">尚未捕获来源区域。</p>
-              </section>
-            </div>
+            <p id="smart-fill-source-summary" class="excel-range-summary">数据范围：未检测到当前选区</p>
             <label class="field" for="excel-smart-fill-instruction">
-              <span>填写规则</span>
-              <textarea id="excel-smart-fill-instruction" rows="4" maxlength="4000" placeholder="例如：根据来源表的姓名和部门，为目标区域补充统一格式的标签。"></textarea>
+              <span>需要生成什么？</span>
+              <textarea id="excel-smart-fill-instruction" rows="4" maxlength="4000" placeholder="例如：根据姓名和部门生成统一格式的岗位标签。"></textarea>
             </label>
-            <p id="smart-fill-validation-line" class="field-hint" aria-live="polite">请先捕获目标区域；来源区域可选。</p>
+            <p class="field-note">选择包含表头的数据范围后点击生成预览。本步骤不选择写入位置。</p>
+            <p id="smart-fill-validation-line" class="field-hint" aria-live="polite"></p>
           </div>
 
           <div class="button-cluster action-bar">

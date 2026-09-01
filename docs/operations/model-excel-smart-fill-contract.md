@@ -4,41 +4,26 @@
 
 用户可见名称：智能填写
 
-稳定结果版本：`excel.smart_fill.v1`
+稳定结果版本：`excel.smart_fill.v2`
 
-本合同同时适用于模型直连和工作流平台。Adapter 负责输入边界、目标绑定、严格解析和写回安全；模型只根据已授权的来源上下文，为不可猜测的 `itemId` 返回文本或普通数值。
+本合同同时适用于模型直连和工作流平台。Adapter 负责来源边界、逐行填写项、严格解析和写回安全；模型只根据已授权的来源上下文，为不可猜测的 `itemId` 返回文本或普通数值。目标地址在本版本生成请求中不存在，写入目标由后续写回阶段单独绑定。
 
 ## 输入
 
-Adapter 接收 JSON 请求，并在内存中冻结工作簿摘要、目标单元格和来源快照。请求的主要结构如下；示例使用合成数据，不代表真实业务内容：
+Adapter 接收 JSON 请求，并在内存中冻结工作簿身份、来源范围和来源快照；目标地址及目标原值不属于生成请求。请求的主要结构如下；示例使用合成数据，不代表真实业务内容：
 
 ```json
 {
   "workbookId": "synthetic-workbook",
   "scene": "excel",
   "clientJobId": "smart-fill-doc-001",
-  "target": {
-    "sheetName": "Sheet1",
-    "address": "D2:D3",
-    "columnHeader": "分类",
-    "rowContext": ["名称", "甲"],
-    "items": [
-      {
-        "itemId": "row-2-col-4",
-        "address": "D2",
-        "row": 2,
-        "column": 4,
-        "originalValue": "",
-        "originalValueType": "blank",
-        "originalFormula": "",
-        "isFormula": false,
-        "isMerged": false,
-        "isProtected": false,
-        "isHidden": false,
-        "snapshotHash": "00000000"
-      }
-    ]
-  },
+  "items": [
+    {
+      "itemId": "sf_00000000000000000000000000000001",
+      "sourceRowIndex": 1,
+      "sourceRowLabel": "第 2 行"
+    }
+  ],
   "source": {
     "sheetName": "Sheet1",
     "address": "A1:C3",
@@ -53,9 +38,9 @@ Adapter 接收 JSON 请求，并在内存中冻结工作簿摘要、目标单元
 }
 ```
 
-实际请求中的目标地址、原值、公式标记、快照哈希和工作簿标识用于本地校验；它们不会进入发送给模型的提示词。模型看到的目标只包含 `itemId`，以及不含地址的列标题、行上下文和来源表格值。隐藏单元格、来源公式表达式、批注、其他工作表和整个 `UsedRange` 不进入上下文。
+实际生成请求包含工作簿身份、填写项标识、来源范围和用户填写意图；目标地址、目标原值、公式标记和批注不会进入模型提示词。模型看到的来源按表头与逐行 `itemRows` 绑定。隐藏单元格、来源公式表达式、批注、其他工作表和整个 `UsedRange` 不进入上下文。
 
-目标只能是一个单元格或同一工作表中连续的单列区域。非连续区域、二维区域、跨表来源、隐藏/合并/受保护/公式目标均在调用前拒绝。目标列标题不足且用户指令为空时，Adapter 返回 `EXCEL_SMART_FILL_INSTRUCTION_REQUIRED`，不调用模型。
+来源必须是同一工作表中包含一行表头和至少一行可见数据的连续矩形区域，最多 500 个数据行。非连续、跨表、仅表头、含隐藏数据、含合并区域或超限来源在提交前拒绝。填写意图为空时，Adapter 返回 `EXCEL_SMART_FILL_INSTRUCTION_REQUIRED`，不调用模型。
 
 ## 输出
 
@@ -63,10 +48,10 @@ Adapter 接收 JSON 请求，并在内存中冻结工作簿摘要、目标单元
 
 ```json
 {
-  "schemaVersion": "excel.smart_fill.v1",
+  "schemaVersion": "excel.smart_fill.v2",
   "items": [
     {
-      "itemId": "row-2-col-4",
+      "itemId": "sf_00000000000000000000000000000001",
       "status": "completed",
       "valueType": "text",
       "value": "A类"
@@ -75,7 +60,7 @@ Adapter 接收 JSON 请求，并在内存中冻结工作簿摘要、目标单元
 }
 ```
 
-`items` 必须与本批目标一一对应，每个 `itemId` 只能出现一次，不能新增、遗漏、改写或排序后丢失目标。`status` 只能是 `completed` 或 `insufficient_information`；后者的 `value` 必须是空字符串。`valueType` 只能是 `text` 或 `number`；完成的文本不能为空，数字必须是有限 JSON 数字，不能是布尔值或 `NaN`/`Infinity`。
+`items` 必须与本批填写项一一对应，每个 `itemId` 只能出现一次，不能新增、遗漏、改写或通过地址推断。`status` 只能是 `completed` 或 `insufficient_information`；后者的 `value` 必须是空字符串。`valueType` 只能是 `text` 或 `number`；完成的文本不能为空，数字必须是有限 JSON 数字，不能是布尔值或 `NaN`/`Infinity`。
 
 模型不得返回或执行公式。以 `=`, `+`, `-`, `@` 开头的业务文本仍按普通文本返回；前端写回时会将其作为字面值保护。日期和布尔值首版按文本处理。无法从授权上下文可靠得到的事实必须返回 `insufficient_information`，不得使用外部知识补齐姓名、机构、日期、金额、数量、地域或责任主体。
 

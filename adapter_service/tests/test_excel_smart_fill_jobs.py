@@ -10,30 +10,25 @@ from app.services.excel.smart_fill_jobs import ExcelSmartFillJobStore
 from app.services.long_task_coordinator import LongTaskCoordinator
 
 
+def _item_id(n):
+    return "sf_{:032x}".format(n)
+
+
 def _request_payload(item_count=2, client_job_id="smart-fill-jobs-001"):
     return {
         "workbookId": "book-1",
         "scene": "excel",
         "clientJobId": client_job_id,
-        "target": {
-            "sheetName": "目标",
-            "address": "D2:D{0}".format(item_count + 1),
-            "columnHeader": "标签",
-            "items": [
-                {
-                    "itemId": "item-{0:03d}".format(index),
-                    "address": "D{0}".format(index + 2),
-                    "row": index + 2,
-                    "column": 4,
-                    "originalValue": "",
-                    "originalValueType": "blank",
-                    "isFormula": False,
-                }
-                for index in range(item_count)
-            ],
-        },
+        "items": [
+            {
+                "itemId": "sf_{:032x}".format(index + 1),
+                "sourceRowIndex": index + 1,
+                "sourceRowLabel": "第 {0} 行".format(index + 2),
+            }
+            for index in range(item_count)
+        ],
         "source": {
-            "sheetName": "目标",
+            "sheetName": "客户表",
             "address": "A1:C{0}".format(item_count + 1),
             "headers": ["名称", "类别", "说明"],
             "rows": [["甲", "A", "第一项"] for _ in range(item_count)],
@@ -41,7 +36,7 @@ def _request_payload(item_count=2, client_job_id="smart-fill-jobs-001"):
             "columnCount": 3,
             "truncated": False,
         },
-        "userInstruction": "根据来源表补齐目标列。",
+        "userInstruction": "根据来源表补齐标签。",
     }
 
 
@@ -64,7 +59,7 @@ class _BatchProvider:
             if not self.release.wait(2):
                 raise RuntimeError("test provider release timeout")
         return {
-            "schemaVersion": "excel.smart_fill.v1",
+            "schemaVersion": "excel.smart_fill.v2",
             "items": [
                 {
                     "itemId": item.item_id,
@@ -72,7 +67,7 @@ class _BatchProvider:
                     "valueType": "text",
                     "value": "填充值",
                 }
-                for item in request.target.items
+                for item in request.items
             ],
             "provider": "test",
         }
@@ -258,7 +253,7 @@ def test_multi_batch_cancellation_preserves_completed_batches_and_marks_remainin
                 if not release_second_batch.wait(2):
                     raise RuntimeError("test provider release timeout")
             return {
-                "schemaVersion": "excel.smart_fill.v1",
+                "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
                         "itemId": item.item_id,
@@ -266,7 +261,7 @@ def test_multi_batch_cancellation_preserves_completed_batches_and_marks_remainin
                         "valueType": "text",
                         "value": "批次生成-{0}".format(item.item_id),
                     }
-                    for item in request.target.items
+                    for item in request.items
                 ],
                 "provider": "test-multibatch",
             }
@@ -294,9 +289,9 @@ def test_multi_batch_cancellation_preserves_completed_batches_and_marks_remainin
     items = terminal["result"]["items"]
     assert len(items) == 101
     assert items[0]["status"] == "completed"
-    assert items[0]["value"] == "批次生成-item-000"
+    assert items[0]["value"] == "批次生成-{0}".format(_item_id(1))
     assert items[99]["status"] == "completed"
-    assert items[99]["value"] == "批次生成-item-099"
+    assert items[99]["value"] == "批次生成-{0}".format(_item_id(100))
     assert items[100]["status"] == "unprocessed"
     assert items[100]["value"] == ""
 
@@ -319,7 +314,7 @@ def test_multi_batch_deadline_exceeded_preserves_completed_batches_and_marks_rem
             # Advance clock by 3601 seconds on first batch completion
             now[0] += 3601.0
             return {
-                "schemaVersion": "excel.smart_fill.v1",
+                "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
                         "itemId": item.item_id,
@@ -327,7 +322,7 @@ def test_multi_batch_deadline_exceeded_preserves_completed_batches_and_marks_rem
                         "valueType": "text",
                         "value": "超时前完成-{0}".format(item.item_id),
                     }
-                    for item in request.target.items
+                    for item in request.items
                 ],
                 "provider": "test-stepping",
             }
@@ -354,7 +349,7 @@ def test_multi_batch_deadline_exceeded_preserves_completed_batches_and_marks_rem
     items = terminal["result"]["items"]
     assert len(items) == 101
     assert items[0]["status"] == "completed"
-    assert items[0]["value"] == "超时前完成-item-000"
+    assert items[0]["value"] == "超时前完成-{0}".format(_item_id(1))
     assert items[49]["status"] == "completed"
     assert items[50]["status"] == "unprocessed"
     assert items[100]["status"] == "unprocessed"
@@ -376,7 +371,7 @@ def test_provider_error_on_second_batch_preserves_first_batch_results():
                     status_code=504,
                 )
             return {
-                "schemaVersion": "excel.smart_fill.v1",
+                "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
                         "itemId": item.item_id,
@@ -384,7 +379,7 @@ def test_provider_error_on_second_batch_preserves_first_batch_results():
                         "valueType": "text",
                         "value": "批次1-{0}".format(item.item_id),
                     }
-                    for item in request.target.items
+                    for item in request.items
                 ],
                 "provider": "test-fail2",
             }
@@ -425,16 +420,16 @@ def test_fair_scheduling_between_continuation_and_queued_tasks():
 
         def fill_batch(self, request, trace_id, task_auth=None, progress_callback=None, timeout_seconds=None, deadline_monotonic=None, clock=None):
             client_id = request.client_job_id
-            batch_item_0 = request.target.items[0].item_id
+            batch_item_0 = request.items[0].item_id
             execution_order.append((client_id, batch_item_0))
-            if client_id == "job-task-a" and batch_item_0 == "item-000":
+            if client_id == "job-task-a" and batch_item_0 == _item_id(1):
                 self.task_a_step1_done.set()
                 # Wait for task B to finish before task A batch 2 runs
                 self.task_b_step1_start.wait(2)
             elif client_id == "job-task-b":
                 self.task_b_step1_start.set()
             return {
-                "schemaVersion": "excel.smart_fill.v1",
+                "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
                         "itemId": item.item_id,
@@ -442,7 +437,7 @@ def test_fair_scheduling_between_continuation_and_queued_tasks():
                         "valueType": "text",
                         "value": "v",
                     }
-                    for item in request.target.items
+                    for item in request.items
                 ],
                 "provider": "test-fair",
             }
@@ -468,6 +463,6 @@ def test_fair_scheduling_between_continuation_and_queued_tasks():
 
     # Execution order should interleave: Task A batch 1 -> Task B batch 1 -> Task A batch 2
     assert len(execution_order) == 3
-    assert execution_order[0] == ("job-task-a", "item-000")
-    assert execution_order[1] == ("job-task-b", "item-000")
-    assert execution_order[2] == ("job-task-a", "item-050")
+    assert execution_order[0] == ("job-task-a", _item_id(1))
+    assert execution_order[1] == ("job-task-b", _item_id(1))
+    assert execution_order[2] == ("job-task-a", _item_id(51))

@@ -33,9 +33,9 @@
       "sha256": "ba0baa2ec25b7b6490dbd26e89b462a6f660ba33c1691adec0de68dec8b8fdc5"
     },
     "excel.smart_fill": {
-      "version": "2026-08-31.1",
+      "version": "2026-09-01.1",
       "file": "excel-smart-fill.md",
-      "sha256": "e41d6b19508ac1fddf220e9536014eb42fc2d1ef4cde7560088f54eb7c2b46b3"
+      "sha256": "3fc7cfdacc8b2b504ad41a1ba4bc2b63c9982857153f978a70567c57aabebcf0"
     },
     "ppt.slide_assistant": {
       "version": "2026-08-10.1",

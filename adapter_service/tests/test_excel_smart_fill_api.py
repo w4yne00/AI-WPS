@@ -23,41 +23,18 @@ def _payload(client_job_id="smart-fill-api-001"):
         "workbookId": "synthetic-workbook",
         "scene": "excel",
         "clientJobId": client_job_id,
-        "target": {
-            "sheetName": "Sheet1",
-            "address": "D2:D3",
-            "columnHeader": "分类",
-            "items": [
-                {
-                    "itemId": "synthetic-item-001",
-                    "address": "D2",
-                    "row": 2,
-                    "column": 4,
-                    "originalValue": "",
-                    "originalValueType": "blank",
-                    "originalFormula": "",
-                    "isFormula": False,
-                    "isMerged": False,
-                    "isProtected": False,
-                    "isHidden": False,
-                    "snapshotHash": "00000000",
-                },
-                {
-                    "itemId": "synthetic-item-002",
-                    "address": "D3",
-                    "row": 3,
-                    "column": 4,
-                    "originalValue": "",
-                    "originalValueType": "blank",
-                    "originalFormula": "",
-                    "isFormula": False,
-                    "isMerged": False,
-                    "isProtected": False,
-                    "isHidden": False,
-                    "snapshotHash": "00000000",
-                },
-            ],
-        },
+        "items": [
+            {
+                "itemId": "synthetic-item-001",
+                "sourceRowIndex": 1,
+                "sourceRowLabel": "第 2 行",
+            },
+            {
+                "itemId": "synthetic-item-002",
+                "sourceRowIndex": 2,
+                "sourceRowLabel": "第 3 行",
+            },
+        ],
         "source": {
             "sheetName": "Sheet1",
             "address": "A1:C3",
@@ -89,7 +66,7 @@ class _ApiProvider:
         if not self.release.wait(timeout=2):
             raise RuntimeError("test provider release timeout")
         return {
-            "schemaVersion": "excel.smart_fill.v1",
+            "schemaVersion": "excel.smart_fill.v2",
             "items": [
                 {
                     "itemId": item.item_id,
@@ -97,7 +74,7 @@ class _ApiProvider:
                     "valueType": "text",
                     "value": "合成标签",
                 }
-                for item in request.target.items
+                for item in request.items
             ],
             "provider": "test",
         }

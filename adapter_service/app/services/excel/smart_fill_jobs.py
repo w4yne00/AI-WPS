@@ -96,7 +96,7 @@ class ExcelSmartFillJobStore:
             return existing
         snapshot_task_auth = getattr(self.smart_fill, "snapshot_task_auth", None)
         task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
-        total_items = len(request.target.items)
+        total_items = len(request.items)
         initial_batch_size = calculate_smart_fill_batch_size(
             request,
             start_index=0,
@@ -176,7 +176,7 @@ class ExcelSmartFillJobStore:
             task_auth=snapshot.get("taskAuth"),
         )
         batch = slice_smart_fill_batch(request, start, batch_size)
-        if not batch.target.items:
+        if not batch.items:
             raise AdapterError(
                 "EXCEL_SMART_FILL_JOB_FAILED",
                 "智能填写任务没有可处理的目标单元格。",
@@ -269,9 +269,9 @@ class ExcelSmartFillJobStore:
                     snapshot, combined, "failed"
                 )
             raise
-        next_index = start + len(batch.target.items)
+        next_index = start + len(batch.items)
         batch_count = int(snapshot.get("batchCount", 0)) + 1
-        total_items = len(request.target.items)
+        total_items = len(request.items)
         total_batches = max(batch_count + 1, math.ceil(total_items / max(1, batch_size)))
         if next_index < total_items:
             continuation = {
@@ -288,7 +288,7 @@ class ExcelSmartFillJobStore:
             {**snapshot, "results": combined, "batchCount": batch_count}
         )
         return {
-            "schemaVersion": "excel.smart_fill.v1",
+            "schemaVersion": "excel.smart_fill.v2",
             "items": combined,
             "provider": result.get("provider", ""),
             "processedItemCount": len(combined),
@@ -319,7 +319,7 @@ class ExcelSmartFillJobStore:
             if isinstance(item, dict) and item.get("itemId")
         }
         if request is not None:
-            for item in request.target.items:
+            for item in request.items:
                 if item.item_id in seen:
                     continue
                 existing.append(
@@ -331,7 +331,7 @@ class ExcelSmartFillJobStore:
                     }
                 )
         return {
-            "schemaVersion": "excel.smart_fill.v1",
+            "schemaVersion": "excel.smart_fill.v2",
             "items": existing,
             "provider": str(snapshot.get("provider", "")),
             "processedItemCount": len(seen),

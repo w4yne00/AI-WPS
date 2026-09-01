@@ -6,7 +6,7 @@
 
 用户可见名称：智能填写
 
-结果合同：`excel.smart_fill.v1`
+结果合同：`excel.smart_fill.v2`
 
 ## 调用方式
 
@@ -18,8 +18,8 @@ Adapter 将完整的受限提示词放入工作流平台 `/chat-messages` 的顶
 
 用户输入节点只转发 `userinput.query`，不增加额外业务变量，不拼接隐藏系统字段，不把 `userinput.files` 当作来源。提示词已经包含：
 
-- `schemaVersion`、用户指令、不可猜测的目标 `itemId`；
-- 不含地址的目标列标题和可见行上下文；
+- `schemaVersion`、用户指令、不可猜测的填写项 `itemId`；
+- 每个 `itemId` 对应的来源数据行；
 - 当前工作表中经过筛选的表头、可见显示值和截断标记；
 - 禁止外部事实、猜测和额外字段的明确规则。
 
@@ -31,8 +31,8 @@ Adapter 将完整的受限提示词放入工作流平台 `/chat-messages` 的顶
 
 ```text
 只返回一个 JSON 对象，顶层字段固定为 schemaVersion 和 items。
-schemaVersion 必须为 excel.smart_fill.v1。
-每个目标 itemId 必须且只能出现一次，不得新增或遗漏。
+schemaVersion 必须为 excel.smart_fill.v2。
+每个填写项 itemId 必须且只能出现一次，不得新增或遗漏。
 每个 item 只包含 itemId、status、valueType、value 四个字段。
 status 只能是 completed 或 insufficient_information；后者的 value 必须为空字符串。
 valueType 只能是 text 或 number；completed 文本不可为空，number 必须是有限 JSON 数字。
@@ -44,27 +44,21 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 ### 输入结构（由 Adapter 组装在 `query` 中）
 
-工作流从 `query`（或旧版 `inputs.query`）中接收 JSON 结构，包含目标项标识与授权来源数据：
+工作流从 `query`（或旧版 `inputs.query`）中接收 JSON 结构，包含填写项标识与授权来源数据：
 
 ```json
 {
-  "schemaVersion": "excel.smart_fill.v1",
+  "schemaVersion": "excel.smart_fill.v2",
   "userInstruction": "根据来源上下文补齐分类或数值。",
-  "targetItems": [
-    { "itemId": "item-001" },
-    { "itemId": "item-002" },
-    { "itemId": "item-003" }
+  "items": [
+    { "itemId": "sf_00000000000000000000000000000001", "sourceRowIndex": 1, "sourceRowLabel": "第 2 行" },
+    { "itemId": "sf_00000000000000000000000000000002", "sourceRowIndex": 2, "sourceRowLabel": "第 3 行" }
   ],
-  "targetContext": {
-    "columnHeader": "目标列",
-    "rowContext": ["上下文A", "上下文B"]
-  },
   "source": {
     "headers": ["名称", "数值", "分类"],
     "itemRows": [
-      { "itemId": "item-001", "values": ["甲", "100", "A类"] },
-      { "itemId": "item-002", "values": ["乙", "200", "B类"] },
-      { "itemId": "item-003", "values": ["丙", "", ""] }
+      { "itemId": "sf_00000000000000000000000000000001", "values": ["甲", "100", "A类"] },
+      { "itemId": "sf_00000000000000000000000000000002", "values": ["乙", "200", "B类"] }
     ],
     "truncated": false
   }
@@ -75,10 +69,10 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 ```json
 {
-  "schemaVersion": "excel.smart_fill.v1",
+  "schemaVersion": "excel.smart_fill.v2",
   "items": [
     {
-      "itemId": "item-001",
+      "itemId": "sf_00000000000000000000000000000001",
       "status": "completed",
       "valueType": "text",
       "value": "A类"
@@ -91,10 +85,10 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 ```json
 {
-  "schemaVersion": "excel.smart_fill.v1",
+  "schemaVersion": "excel.smart_fill.v2",
   "items": [
     {
-      "itemId": "item-002",
+      "itemId": "sf_00000000000000000000000000000002",
       "status": "completed",
       "valueType": "number",
       "value": 200.5
@@ -107,10 +101,10 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 ```json
 {
-  "schemaVersion": "excel.smart_fill.v1",
+  "schemaVersion": "excel.smart_fill.v2",
   "items": [
     {
-      "itemId": "item-003",
+      "itemId": "sf_00000000000000000000000000000003",
       "status": "insufficient_information",
       "valueType": "text",
       "value": ""
@@ -123,22 +117,22 @@ valueType 只能是 text 或 number；completed 文本不可为空，number 必�
 
 ```json
 {
-  "schemaVersion": "excel.smart_fill.v1",
+  "schemaVersion": "excel.smart_fill.v2",
   "items": [
     {
-      "itemId": "item-001",
+      "itemId": "sf_00000000000000000000000000000001",
       "status": "completed",
       "valueType": "text",
       "value": "A类"
     },
     {
-      "itemId": "item-002",
+      "itemId": "sf_00000000000000000000000000000002",
       "status": "completed",
       "valueType": "number",
       "value": 200.5
     },
     {
-      "itemId": "item-003",
+      "itemId": "sf_00000000000000000000000000000003",
       "status": "insufficient_information",
       "valueType": "text",
       "value": ""
@@ -160,7 +154,7 @@ Adapter 会在平台成功返回后再次校验 Schema、ID 集合、类型、�
 
 ## 参考工作流 DSL
 
-`packaging/reference-workflows/excel-smart-fill-v1.yml` 是白名单内的参考 DSL。供人工导入参考，包含输入 `query` 与符合 `excel.smart_fill.v1` 的严格 JSON 输出 Schema 与 System Prompt；发布清单记录文件哈希。
+`packaging/reference-workflows/excel-smart-fill-v1.yml`（文件名沿用 Preview 初版路径）是白名单内的参考 DSL，内容采用 v2 合同。
 
 ## 验证样例与失败案例
 
@@ -178,7 +172,7 @@ Adapter 会在平台成功返回后再次校验 Schema、ID 集合、类型、�
 | 包含额外字段 | 项中包含 `address` 或 `formula` | `MODEL_RESULT_INVALID`（协议外多余字段） | 严格限制每个 item 仅含 `itemId, status, valueType, value` 四字段 |
 | 信息不足非空值 | `status=insufficient_information, value="暂无"` | `MODEL_RESULT_INVALID`（信息不足值非空） | 信息不足时 `value` 必须设为空字符串 `""` |
 | 非有限数值 / 布尔值 | `valueType=number, value=true` 或 `value="NaN"` | `MODEL_RESULT_INVALID`（非有限数值） | 数值必须为有效 JSON 有限数字，严禁布尔类型 |
-| 顶层协议版本不符 | `schemaVersion="v1"` | `MODEL_RESULT_INVALID`（版本不匹配） | 固定使用 `schemaVersion: "excel.smart_fill.v1"` |
+| 顶层协议版本不符 | `schemaVersion="v1"` | `MODEL_RESULT_INVALID`（版本不匹配） | 固定使用 `schemaVersion: "excel.smart_fill.v2"` |
 
 ## 设置页验证
 

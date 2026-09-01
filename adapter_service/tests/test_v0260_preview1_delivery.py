@@ -947,13 +947,13 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
     smart_fill_prompt = prompt_manifest_path.parent / prompt_manifest["tasks"]["excel.smart_fill"]["file"]
     assert smart_fill_prompt.is_file()
     assert hashlib.sha256(smart_fill_prompt.read_bytes()).hexdigest() == prompt_manifest["tasks"]["excel.smart_fill"]["sha256"]
-    assert "excel.smart_fill.v1" in smart_fill_prompt.read_text(encoding="utf-8")
+    assert "excel.smart_fill.v2" in smart_fill_prompt.read_text(encoding="utf-8")
 
     assert (delivery / "docs/operations/model-excel-smart-fill-contract.md").is_file()
     assert (delivery / "docs/operations/workflow-platform-excel-smart-fill.md").is_file()
     ref_wf = delivery / "reference-workflows/excel-smart-fill-v1.yml"
     assert ref_wf.is_file()
-    assert "excel.smart_fill.v1" in ref_wf.read_text(encoding="utf-8")
+    assert "excel.smart_fill.v2" in ref_wf.read_text(encoding="utf-8")
 
     icon_path = delivery / "packages/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"
     assert icon_path.is_file()
@@ -1118,7 +1118,7 @@ def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
     # Tamper with prompt
     prompt_file = delivery / "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
     original_prompt = prompt_file.read_text(encoding="utf-8")
-    prompt_file.write_text(original_prompt.replace("excel.smart_fill.v1", "excel.smart_fill.invalid"), encoding="utf-8")
+    prompt_file.write_text(original_prompt.replace("excel.smart_fill.v2", "excel.smart_fill.invalid"), encoding="utf-8")
 
     rejected = subprocess.run(
         [sys.executable, str(audit), str(delivery)],
@@ -1166,7 +1166,7 @@ def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
     # Tamper with reference workflow (corrupt contract version)
     workflow_file = delivery / "reference-workflows/excel-smart-fill-v1.yml"
     original_workflow = workflow_file.read_text(encoding="utf-8")
-    workflow_file.write_text(original_workflow.replace("excel.smart_fill.v1", "excel.smart_fill.v2"), encoding="utf-8")
+    workflow_file.write_text(original_workflow.replace("excel.smart_fill.v2", "excel.smart_fill.v3"), encoding="utf-8")
 
     rejected = subprocess.run(
         [sys.executable, str(audit), str(delivery)],
