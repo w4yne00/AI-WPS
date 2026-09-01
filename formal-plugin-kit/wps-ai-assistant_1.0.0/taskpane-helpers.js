@@ -2618,7 +2618,7 @@
     return parts.length ? parts.join("；") : "无法识别";
   }
 
-  function formatDeterministicFormatReviewIssueLocation(issue) {
+  function formatDeterministicFormatReviewIssueLocation(issue, options) {
     var source = issue && issue.sourceAnchor && typeof issue.sourceAnchor === "object"
       ? issue.sourceAnchor : {};
     var parts = [];
@@ -2682,7 +2682,7 @@
     if (paragraphIndex > 0 && issue.anchorVerification === "verified") {
       parts.push("第 " + paragraphIndex + " 段");
     }
-    if (snippet) {
+    if (snippet && !(options && options.omitSnippet)) {
       parts.push("原文：“" + snippet.slice(0, 80) + "”");
     }
     appendPageRange();
@@ -2895,59 +2895,213 @@
     return role === "未识别角色" ? "无法识别" : role;
   }
 
+  function deterministicFormatReviewLocationGroupKey(issue) {
+    var anchorId = String(issue && issue.anchorId || "").trim();
+    var paragraphIndex = Number(issue && issue.paragraphIndex);
+    if (anchorId) {
+      return anchorId;
+    }
+    if (isFinite(paragraphIndex) && paragraphIndex > 0) {
+      return "paragraph-" + paragraphIndex;
+    }
+    return "issue-" + String(issue && issue.issueId || "");
+  }
+
+  function formatDeterministicFormatReviewIssuePair(issue, diagnostics) {
+    var rule = String(issue && issue.ruleId || "");
+    var captionMap = {
+      associated: "已关联",
+      orphaned: "孤立",
+      missing: "缺失",
+      ambiguous: "歧义"
+    };
+    var current;
+    var expected;
+    if (rule === "structure.caption_association") {
+      current = captionMap[String(issue && issue.currentValue == null ? "" : issue.currentValue).trim()];
+      expected = captionMap[String(issue && issue.expectedValue == null ? "" : issue.expectedValue).trim()];
+      if (!current) {
+        return null;
+      }
+      return expected ? current + " → " + expected : current;
+    }
+    current = formatDeterministicReadableFormatValue(rule, issue && issue.currentValue, false, diagnostics, issue);
+    expected = formatDeterministicReadableFormatValue(rule, issue && issue.expectedValue, true, diagnostics, issue);
+    return current + " → " + expected;
+  }
+
+  function formatDeterministicFormatReviewPageStatus(input) {
+    var page = Number(input && input.page || 1);
+    var count = Number(input && input.locationGroupCount || 0);
+    var size = Number(input && input.pageSize || 1);
+    var pageCount;
+    if (!isFinite(page) || page < 1) {
+      page = 1;
+    }
+    if (!isFinite(size) || size < 1) {
+      size = 1;
+    }
+    if (!isFinite(count) || count < 0) {
+      count = 0;
+    }
+    pageCount = count === 0 ? 1 : Math.ceil(count / size);
+    return "第 " + page + " / " + pageCount + " 页";
+  }
+
+  function countEnabledFormatReviewFilters(filters) {
+    var source = filters || {};
+    var count = 0;
+    if (String(source.rule || "").trim()) {
+      count += 1;
+    }
+    if (String(source.dataStatus || "").trim()) {
+      count += 1;
+    }
+    if (String(source.status || "").trim()) {
+      count += 1;
+    }
+    if (String(source.sort || "source") !== "source") {
+      count += 1;
+    }
+    return count;
+  }
+
+  function handleFormatReviewAnchoredPanelKeydown(event, context) {
+    var panel = context && context.panel;
+    var trigger = context && context.trigger;
+    var items;
+    var index;
+    if (!event || !panel || panel.hidden) {
+      return;
+    }
+    if (event.key === "Escape") {
+      if (event.preventDefault) {
+        event.preventDefault();
+      }
+      panel.hidden = true;
+      if (trigger && trigger.focus) {
+        trigger.focus();
+      }
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") {
+      return;
+    }
+    if (event.preventDefault) {
+      event.preventDefault();
+    }
+    items = panel.querySelectorAll
+      ? panel.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])")
+      : [];
+    index = Number(context && context.itemIndex);
+    if (!isFinite(index) || index < 0) {
+      index = 0;
+    }
+    if (event.key === "ArrowDown") {
+      index += 1;
+    } else {
+      index -= 1;
+    }
+    if (index < 0) {
+      index = items.length - 1;
+    }
+    if (index >= items.length) {
+      index = 0;
+    }
+    if (items[index] && items[index].focus) {
+      items[index].focus();
+    }
+  }
+
   function presentDeterministicFormatReviewIssueView(input) {
     var source = input || {};
     var summary = source.summary || {};
     var issues = Array.isArray(source.issues) ? source.issues : [];
     var diagnostics = summary.formatFactDiagnostics;
     var total = Number(source.total || source.issueCount || issues.length);
-    var cards;
+    var groups = [];
+    var indexByKey = {};
     if (!isFinite(total) || total < 0) {
       total = issues.length;
     }
-    cards = issues.map(function (issue) {
-      var value = formatDeterministicFormatReviewIssueCardValue(issue, diagnostics);
+    issues.forEach(function (issue) {
+      var key = deterministicFormatReviewLocationGroupKey(issue);
+      var sourceAnchor = issue && issue.sourceAnchor && typeof issue.sourceAnchor === "object"
+        ? issue.sourceAnchor : {};
+      var excerpt = String(sourceAnchor.textSnippet || sourceAnchor.text || "")
+        .replace(/[\r\n]+/g, " ").trim();
       var status = String(issue && issue.status || "open");
-      return {
+      var pair = formatDeterministicFormatReviewIssuePair(issue, diagnostics);
+      var group;
+      if (!Object.prototype.hasOwnProperty.call(indexByKey, key)) {
+        indexByKey[key] = groups.length;
+        groups.push({
+          locationKey: key,
+          excerpt: excerpt.slice(0, 80),
+          location: formatDeterministicFormatReviewIssueLocation(issue, { omitSnippet: true }),
+          locateEnabled: true,
+          locateIssueId: String(issue && issue.issueId || ""),
+          issues: []
+        });
+      }
+      group = groups[indexByKey[key]];
+      if (String(issue && issue.anchorVerification || "") !== "verified") {
+        group.locateEnabled = false;
+      }
+      group.issues.push({
         issueId: String(issue && issue.issueId || ""),
-        location: formatDeterministicFormatReviewIssueLocation(issue),
-        role: formatDeterministicFormatReviewIssueCardRole(issue),
-        valueLabel: value && value.label,
-        valueText: value && value.text,
+        ruleLabel: formatReviewRule(issue && issue.ruleId),
+        pairText: pair,
         message: formatDeterministicFormatReviewIssueMessage(issue),
         suggestion: formatDeterministicFormatReviewSuggestion(issue),
-        locateEnabled: String(issue && issue.anchorVerification || "") === "verified",
         processedEnabled: status !== "processed",
         ignoredEnabled: status !== "ignored",
         status: status
-      };
+      });
+    });
+    groups.forEach(function (group) {
+      group.issueCount = group.issues.length;
     });
     return {
       previewText: [
         "覆盖状态：" + formatDeterministicFormatReviewStatus(summary.coverageStatus, "无法判定"),
         "问题数量：" + total
       ].join("\n"),
-      cards: cards,
-      html: cards.map(function (card) {
+      locationGroups: groups,
+      html: groups.map(function (group) {
         var lines = [
-          '<article class="review-issue-card">',
-          '<div class="review-action-row">',
-          '<button type="button" class="ghost-action" data-format-review-action="locate" data-issue-id="' +
-            escapeHtml(card.issueId) + '"' + (card.locateEnabled ? "" : ' disabled="disabled"') + ">定位原文</button>",
-          '<button type="button" class="ghost-action" data-format-review-action="processed" data-issue-id="' +
-            escapeHtml(card.issueId) + '"' + (card.processedEnabled ? "" : ' disabled="disabled"') + ">标记已处理</button>",
-          '<button type="button" class="ghost-action" data-format-review-action="ignored" data-issue-id="' +
-            escapeHtml(card.issueId) + '"' + (card.ignoredEnabled ? "" : ' disabled="disabled"') + ">标记已忽略</button>",
+          '<article class="review-location-card" data-location-key="' + escapeHtml(group.locationKey) + '">',
+          '<div class="review-location-header">',
+          '<button type="button" class="review-location-toggle" aria-expanded="false" data-format-review-action="toggle-location" data-location-key="' +
+            escapeHtml(group.locationKey) + '">',
+          '<span class="review-location-excerpt">' + escapeHtml(group.excerpt) + "</span>",
+          '<span class="review-location-meta">' + escapeHtml(group.location) + " · " +
+            group.issueCount + " 个问题</span>",
+          "</button>",
+          '<button type="button" class="format-review-icon-button" data-format-review-action="locate" data-location-key="' +
+            escapeHtml(group.locationKey) + '" data-issue-id="' + escapeHtml(group.locateIssueId) + '"' +
+            (group.locateEnabled ? "" : ' disabled="disabled"') + "><span>定位</span></button>",
           "</div>",
-          "<p>位置：" + escapeHtml(card.location) + "</p>",
-          "<p>角色：" + escapeHtml(card.role) + "</p>"
+          '<div class="review-location-body" hidden>'
         ];
-        if (card.valueLabel && card.valueText) {
-          lines.push("<p>" + escapeHtml(card.valueLabel) + "：" + escapeHtml(card.valueText) + "</p>");
-        }
-        lines.push("<p>问题说明：" + escapeHtml(card.message) + "</p>");
-        lines.push("<p>建议：" + escapeHtml(card.suggestion) + "</p>");
-        lines.push("</article>");
+        group.issues.forEach(function (item) {
+          lines.push('<article class="review-issue-item" data-issue-id="' + escapeHtml(item.issueId) + '">');
+          lines.push("<p>" + escapeHtml(item.ruleLabel) + "</p>");
+          if (item.pairText) {
+            lines.push("<p>" + escapeHtml(item.pairText) + "</p>");
+          }
+          lines.push('<div class="review-action-row">');
+          lines.push('<button type="button" class="ghost-action" data-format-review-action="processed" data-issue-id="' +
+            escapeHtml(item.issueId) + '"' + (item.processedEnabled ? "" : ' disabled="disabled"') + ">标记已处理</button>");
+          lines.push('<button type="button" class="ghost-action" data-format-review-action="ignored" data-issue-id="' +
+            escapeHtml(item.issueId) + '"' + (item.ignoredEnabled ? "" : ' disabled="disabled"') + ">标记已忽略</button>");
+          lines.push("</div>");
+          lines.push("<details><summary>详情</summary>");
+          lines.push("<p>问题说明：" + escapeHtml(item.message) + "</p>");
+          lines.push("<p>建议：" + escapeHtml(item.suggestion) + "</p>");
+          lines.push("</details></article>");
+        });
+        lines.push("</div></article>");
         return lines.join("");
       }).join("")
     };
@@ -4896,6 +5050,9 @@
     buildSmartWritePreviewModel: buildSmartWritePreviewModel,
     presentWordResultView: presentWordResultView,
     presentDeterministicFormatReviewIssueView: presentDeterministicFormatReviewIssueView,
+    formatDeterministicFormatReviewPageStatus: formatDeterministicFormatReviewPageStatus,
+    countEnabledFormatReviewFilters: countEnabledFormatReviewFilters,
+    handleFormatReviewAnchoredPanelKeydown: handleFormatReviewAnchoredPanelKeydown,
     renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,
     formatReviewRole: formatReviewRole,

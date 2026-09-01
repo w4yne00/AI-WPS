@@ -1299,25 +1299,49 @@ class DeterministicFormatReviewService:
             ))
         else:
             issues.sort(key=lambda item: (item.get("_sourceOrder", 0), item.get("issueId", "")))
-        offset = 0
+        location_groups = []
+        index_by_key = {}
+        for item in issues:
+            key = self._location_group_key(item)
+            if key not in index_by_key:
+                index_by_key[key] = len(location_groups)
+                location_groups.append({
+                    "locationKey": key,
+                    "anchorId": str(item.get("anchorId") or ""),
+                    "issues": [],
+                })
+            location_groups[index_by_key[key]]["issues"].append(item)
+        start_group = 0
         if cursor:
             cursor_issue_id = self._decode_issue_cursor(cursor)
-            matching_index = next(
-                (index for index, item in enumerate(issues)
-                 if item.get("issueId") == cursor_issue_id),
+            matching_group = next(
+                (
+                    index for index, group in enumerate(location_groups)
+                    if any(item.get("issueId") == cursor_issue_id for item in group["issues"])
+                ),
                 None,
             )
-            if matching_index is None:
+            if matching_group is None:
                 raise AdapterError(
                     "DETERMINISTIC_FORMAT_REVIEW_ISSUES_CURSOR_INVALID",
                     "问题分页游标已失效，请从第一页重新读取。",
                 )
-            offset = matching_index + 1
-        selected = issues[offset:offset + size]
+            start_group = matching_group + 1
+        selected_groups = location_groups[start_group:start_group + size]
+        selected = []
+        public_location_groups = []
+        for group in selected_groups:
+            selected.extend(group["issues"])
+            public_location_groups.append({
+                "locationKey": group["locationKey"],
+                "anchorId": group["anchorId"],
+                "issueCount": len(group["issues"]),
+                "issueIds": [item.get("issueId", "") for item in group["issues"]],
+            })
         for item in selected:
             item.pop("_sourceOrder", None)
         next_cursor = ""
-        if offset + size < len(issues) and selected:
+        if start_group + size < len(location_groups) and selected:
             next_cursor = self._encode_issue_cursor(selected[-1]["issueId"])
         group_ids = {item.get("duplicateGroupId") for item in issues if item.get("duplicateGroupId")}
         groups = [
@@ -1334,9 +1358,11 @@ class DeterministicFormatReviewService:
             "items": _sanitize_export_value(selected),
             "total": len(issues),
             "pageSize": size,
-            "page": (offset // size) + 1,
+            "page": (start_group // size) + 1,
             "nextCursor": next_cursor,
             "hasMore": bool(next_cursor),
+            "locationGroupCount": len(location_groups),
+            "locationGroups": _sanitize_export_value(public_location_groups),
             "duplicateGroups": groups,
             "filters": {
                 "ruleId": rule_id,
@@ -1893,6 +1919,16 @@ class DeterministicFormatReviewService:
             if group_id:
                 group_sizes[group_id] = group_sizes.get(group_id, 0) + 1
         report["duplicateGroupCount"] = sum(1 for count in group_sizes.values() if count > 1)
+
+    @staticmethod
+    def _location_group_key(item: Dict) -> str:
+        anchor_id = str(item.get("anchorId") or "").strip()
+        if anchor_id:
+            return anchor_id
+        paragraph_index = item.get("paragraphIndex")
+        if type(paragraph_index) is int and paragraph_index > 0:
+            return "paragraph:{0}".format(paragraph_index)
+        return "issue:{0}".format(item.get("issueId") or "")
 
     @staticmethod
     def _encode_issue_cursor(issue_id: str) -> str:

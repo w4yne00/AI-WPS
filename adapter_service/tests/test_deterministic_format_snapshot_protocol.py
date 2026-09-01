@@ -488,6 +488,153 @@ class DeterministicFormatSnapshotProtocolTests(unittest.TestCase):
         self.assertIn("模型调用事实：已尝试，候选 2、调用 1、接受 0", markdown)
         self.assertIn("语义增强降级原因：模型已调用但没有接受任何结果", markdown)
 
+    def test_list_issues_keeps_same_anchor_group_intact_and_does_not_merge_ids(self):
+        # Break: pageSize=1 splits two issues that share one stable format anchor.
+        class SameLocationReviewer(object):
+            def review(self, request, trace_id=""):
+                return {
+                    "issues": [
+                        {
+                            "ruleId": "font_size",
+                            "paragraphIndex": 1,
+                            "role": "body",
+                            "message": "字号不符合模板要求。",
+                            "currentValue": "14pt",
+                            "expectedValue": "12pt",
+                            "suggestion": "建议调整字号。",
+                        },
+                        {
+                            "ruleId": "font_name",
+                            "paragraphIndex": 1,
+                            "role": "body",
+                            "message": "字体不符合模板要求。",
+                            "currentValue": "KaiTi",
+                            "expectedValue": "宋体",
+                            "suggestion": "建议调整字体。",
+                        },
+                        {
+                            "ruleId": "alignment",
+                            "paragraphIndex": 3,
+                            "role": "body",
+                            "message": "对齐方式不符合模板要求。",
+                            "currentValue": "left",
+                            "expectedValue": "justify",
+                            "suggestion": "建议调整对齐。",
+                        },
+                    ],
+                    "summary": {
+                        "provider": "local",
+                        "templateId": "technical-document-template-rules",
+                    },
+                }
+
+        self.service.reviewer = SameLocationReviewer()
+        session = self._session()
+        blocks = self._blocks()
+        blocks[0]["text"] = "同一位置正文"
+        blocks.append({
+            "blockId": "format-paragraph-3",
+            "blockType": "paragraph",
+            "scope": "in_scope",
+            "paragraphIndex": 3,
+            "text": "另一位置正文",
+            "format": {
+                "styleName": "Normal",
+                "fontName": "宋体",
+                "fontSize": 12,
+                "dataStatus": "verified",
+            },
+        })
+        uploaded, metrics = self._upload(session, blocks=blocks)
+        self.assertEqual(uploaded["status"], "uploaded")
+        committed = self.service.commit_snapshot(
+            session["snapshotId"],
+            {
+                "uploadToken": session["uploadToken"],
+                "batchCount": 1,
+                "blockCount": 3,
+                "reviewCharacterCount": metrics["characterCount"],
+                "contentSha256": metrics["contentSha256"],
+                "structureSha256": metrics["structureSha256"],
+                "formatSha256": metrics["formatSha256"],
+                "coverage": metrics["coverage"],
+                "verification": {
+                    "batchCount": 1,
+                    "blockCount": 3,
+                    "reviewCharacterCount": metrics["characterCount"],
+                    "contentSha256": metrics["contentSha256"],
+                    "structureSha256": metrics["structureSha256"],
+                    "formatSha256": metrics["formatSha256"],
+                    "coverage": metrics["coverage"],
+                    "documentIdentity": {
+                        "documentIdSha256": "document-fingerprint",
+                        "hostDocumentId": "host-document-1",
+                    },
+                    "editSequence": "5",
+                },
+            },
+        )
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "format-location-group-job",
+            },
+            "format-location-group-trace",
+        )
+        for _ in range(50):
+            current = self.service.get_job(job["jobId"])
+            if current["status"] in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.01)
+        self.assertEqual(current["status"], "completed")
+        self.assertEqual(current["issueCount"], 3)
+
+        page = self.service.list_issues(job["jobId"], page_size=1)
+        self.assertEqual(page["total"], 3)
+        self.assertEqual(page["locationGroupCount"], 2)
+        self.assertEqual(page["page"], 1)
+        self.assertEqual(len(page["items"]), 2)
+        self.assertEqual(
+            [item["paragraphIndex"] for item in page["items"]],
+            [1, 1],
+        )
+        self.assertEqual(
+            sorted(item["ruleId"] for item in page["items"]),
+            ["font_name", "font_size"],
+        )
+        self.assertTrue(page["nextCursor"])
+        self.assertEqual(len(page["locationGroups"]), 1)
+        group = page["locationGroups"][0]
+        self.assertEqual(group["issueCount"], 2)
+        self.assertEqual(len(group["issueIds"]), 2)
+        self.assertEqual(len(set(group["issueIds"])), 2)
+        self.assertEqual(set(group["issueIds"]), {item["issueId"] for item in page["items"]})
+        self.assertEqual(group["anchorId"], page["items"][0]["anchorId"])
+        self.assertNotEqual(page["items"][0]["issueId"], page["items"][1]["issueId"])
+        self.assertEqual(page["items"][0]["status"], "open")
+        self.assertEqual(page["items"][1]["status"], "open")
+
+        first_issue_id = page["items"][0]["issueId"]
+        second_issue_id = page["items"][1]["issueId"]
+        updated = self.service.update_issue(job["jobId"], first_issue_id, status="processed")
+        self.assertEqual(updated["issueId"], first_issue_id)
+        self.assertEqual(updated["status"], "processed")
+        reloaded = self.service.list_issues(job["jobId"], page_size=1)
+        statuses = {item["issueId"]: item["status"] for item in reloaded["items"]}
+        self.assertEqual(statuses[first_issue_id], "processed")
+        self.assertEqual(statuses[second_issue_id], "open")
+
+        second_page = self.service.list_issues(
+            job["jobId"],
+            page_size=1,
+            cursor=page["nextCursor"],
+        )
+        self.assertEqual(len(second_page["items"]), 1)
+        self.assertEqual(second_page["items"][0]["ruleId"], "alignment")
+        self.assertEqual(second_page["items"][0]["paragraphIndex"], 3)
+        self.assertFalse(second_page["nextCursor"])
+
     def test_heading_hierarchy_report_deduplicates_and_exports_verified_location(self):
         blocks = [
             {

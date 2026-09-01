@@ -4,36 +4,65 @@ const path = require("path");
 
 const { wordRoot } = require("./support/plugin-roots");
 const helpers = require(path.join(wordRoot, "taskpane-helpers.js"));
-const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
+const wordHtml = fs.readFileSync(path.join(wordRoot, "taskpane.html"), "utf8");
+const wordCss = fs.readFileSync(path.join(wordRoot, "taskpane.css"), "utf8");
 
 function present(input) {
   assert.strictEqual(typeof helpers.presentDeterministicFormatReviewIssueView, "function");
   return helpers.presentDeterministicFormatReviewIssueView(input);
 }
 
-function functionSource(source, name) {
-  const start = source.indexOf(`function ${name}(`);
-  assert.ok(start >= 0, `missing function ${name}`);
-  const end = source.indexOf("\n  function ", start + 1);
-  return source.slice(start, end < 0 ? source.length : end);
+function sameLocationIssues() {
+  return [
+    {
+      issueId: "font-1",
+      ruleId: "font_size",
+      role: "body",
+      paragraphIndex: 12,
+      anchorId: "format-paragraph-12",
+      anchorVerification: "verified",
+      currentValue: "14pt",
+      expectedValue: "12pt",
+      message: "字号不符合模板要求。",
+      suggestion: "建议调整字号。",
+      evidence: [{ kind: "deterministic_format_fact", propertyPath: "format.fontSize" }],
+      sourceAnchor: { textSnippet: "建设依据如下", paragraphIndex: 12 }
+    },
+    {
+      issueId: "name-1",
+      ruleId: "font_name",
+      role: "body",
+      paragraphIndex: 12,
+      anchorId: "format-paragraph-12",
+      anchorVerification: "verified",
+      currentValue: "Unmapped Font",
+      expectedValue: "宋体",
+      message: "字体不符合模板要求。",
+      suggestion: "建议调整字体。",
+      sourceAnchor: { textSnippet: "建设依据如下", paragraphIndex: 12 }
+    }
+  ];
 }
 
-function locateButtonHtml(html) {
-  const match = String(html || "").match(/<button\b[^>]*>定位原文<\/button>/);
-  assert.ok(match, "missing locate button");
-  return match[0];
+function headerSlice(html) {
+  const start = html.indexOf("review-location-header");
+  const body = html.indexOf("review-location-body");
+  assert.ok(start >= 0, "missing location header");
+  assert.ok(body >= 0, "missing location body");
+  return html.slice(start, body);
 }
 
-function actionBarSlice(html) {
-  const start = html.indexOf("定位原文");
-  const end = html.indexOf("标记已忽略");
-  assert.ok(start >= 0, "missing 定位原文");
-  assert.ok(end >= 0, "missing 标记已忽略");
-  return html.slice(start, end + "标记已忽略".length);
+function cssRule(selector) {
+  const pattern = new RegExp(
+    `(?:^|\\n)[ \\t]*${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[ \\t]*\\{([^}]*)\\}`,
+    "g"
+  );
+  const match = Array.from(wordCss.matchAll(pattern)).pop();
+  assert.ok(match, `missing CSS rule ${selector}`);
+  return match[1];
 }
 
 function testPreviewShowsCoverageAndCountOnly() {
-  // Break: preview still dumps the issue table / 详细说明 as the operation surface.
   const view = present({
     summary: {
       coverageStatus: "complete",
@@ -43,27 +72,7 @@ function testPreviewShowsCoverageAndCountOnly() {
       rulePackVersion: "1.0.0"
     },
     total: 2,
-    issues: [
-      {
-        issueId: "font-1",
-        ruleId: "font_size",
-        role: "body",
-        paragraphIndex: 12,
-        anchorVerification: "verified",
-        currentValue: "14pt",
-        expectedValue: "12pt"
-      },
-      {
-        issueId: "caption-1",
-        ruleId: "structure.caption_association",
-        role: "caption",
-        paragraphIndex: 20,
-        anchorVerification: "verified",
-        currentValue: "orphaned",
-        expectedValue: "associated",
-        sourceAnchor: { textSnippet: "表 9：跨节孤立" }
-      }
-    ]
+    issues: sameLocationIssues()
   });
 
   assert.ok(view.previewText.includes("覆盖状态：已完成"));
@@ -76,35 +85,91 @@ function testPreviewShowsCoverageAndCountOnly() {
   assert.ok(!view.previewText.includes("技术文档模板规则"));
 }
 
-function testCardPutsActionBarAboveLocationAndKeepsButtonsTogether() {
-  // Break: location sentence and the three buttons share one inline node.
+function testSameAnchorIssuesFormOneCollapsedLocationCard() {
+  // Break: each format issue still renders as its own expanded card with a locate button.
+  const view = present({
+    summary: { coverageStatus: "complete" },
+    issues: sameLocationIssues()
+  });
+
+  assert.strictEqual(view.locationGroups.length, 1);
+  assert.strictEqual(view.locationGroups[0].issueCount, 2);
+  assert.strictEqual(view.locationGroups[0].issues[0].issueId, "font-1");
+  assert.strictEqual(view.locationGroups[0].issues[1].issueId, "name-1");
+  assert.ok(view.html.includes("建设依据如下"));
+  assert.ok(view.html.includes("第 12 段"));
+  assert.ok(view.html.includes("2 个问题"));
+  assert.strictEqual((view.html.match(/data-format-review-action="locate"/g) || []).length, 1);
+  assert.ok(view.html.includes(">定位<"));
+  assert.ok(!view.html.includes("定位原文"));
+  const header = headerSlice(view.html);
+  assert.ok(header.indexOf("aria-expanded=\"false\"") >= 0);
+  assert.ok(header.indexOf("问题说明") < 0);
+  assert.ok(header.indexOf("建议") < 0);
+  assert.ok(header.indexOf("当前值 → 期望值") < 0);
+  assert.ok(view.html.includes("hidden"));
+}
+
+function testExpandedIssueShowsValuePairAndSecondaryDetails() {
+  // Break: first screen still dumps 说明/建议, or current/expected stay on separate unlabeled rows.
+  const view = present({
+    summary: { coverageStatus: "complete" },
+    issues: sameLocationIssues()
+  });
+  const bodyStart = view.html.indexOf("review-location-body");
+  const body = view.html.slice(bodyStart);
+  assert.ok(body.includes("字号"));
+  assert.ok(body.includes("四号（14pt） → 小四（12pt）"));
+  assert.ok(body.includes("字体"));
+  assert.ok(body.includes("无法识别 → 宋体"));
+  assert.ok(!body.includes("Unmapped Font"));
+  assert.ok(body.includes("<details"));
+  assert.ok(body.includes("问题说明：字号不符合模板要求。"));
+  assert.ok(body.includes("建议：请按模板要求调整字号。"));
+}
+
+function testCaptionAssociationShowsConclusionNotUnrecognized() {
   const view = present({
     summary: { coverageStatus: "complete" },
     issues: [{
-      issueId: "font-1",
-      ruleId: "font_size",
-      role: "body",
-      paragraphIndex: 12,
+      issueId: "caption-1",
+      ruleId: "structure.caption_association",
+      role: "caption",
+      paragraphIndex: 20,
+      anchorId: "format-paragraph-20",
       anchorVerification: "verified",
-      currentValue: "14pt",
-      expectedValue: "12pt"
+      currentValue: "orphaned",
+      expectedValue: "associated",
+      sourceAnchor: { textSnippet: "表 9：跨节孤立" }
     }]
   });
 
-  const html = view.html;
-  assert.ok(html.indexOf("定位原文") < html.indexOf("标记已处理"));
-  assert.ok(html.indexOf("标记已处理") < html.indexOf("标记已忽略"));
-  assert.ok(html.indexOf("定位原文") < html.indexOf("位置："));
-  assert.ok(html.indexOf("位置：") < html.indexOf("角色："));
-  assert.ok(actionBarSlice(html).indexOf("第 12 段") < 0);
-  assert.ok(html.includes("位置：第 12 段"));
-  assert.ok(html.includes("角色：正文"));
-  assert.ok(html.includes("问题说明："));
-  assert.ok(html.includes("建议："));
+  assert.ok(view.html.includes("孤立 → 已关联"));
+  assert.ok(!view.html.includes("无法识别"));
+  assert.ok(!view.html.includes("{\"status\""));
+}
+
+function testMissingAssociationConclusionDoesNotSayUnrecognized() {
+  const view = present({
+    summary: { coverageStatus: "complete" },
+    issues: [{
+      issueId: "caption-2",
+      ruleId: "structure.caption_association",
+      role: "caption",
+      paragraphIndex: 8,
+      anchorId: "format-paragraph-8",
+      anchorVerification: "verified",
+      currentValue: "",
+      expectedValue: "associated",
+      sourceAnchor: { textSnippet: "表题" }
+    }]
+  });
+
+  assert.ok(!view.html.includes("无法识别"));
+  assert.ok(!view.html.includes("题注关联结论："));
 }
 
 function testUnverifiedAnchorDisablesLocateWithoutHidingIt() {
-  // Break: locate is hidden, or still enabled, when the anchor is unverified.
   const view = present({
     summary: { coverageStatus: "partial" },
     issues: [{
@@ -117,112 +182,12 @@ function testUnverifiedAnchorDisablesLocateWithoutHidingIt() {
     }]
   });
 
-  const button = locateButtonHtml(view.html);
-  assert.ok(button.indexOf("disabled") >= 0);
-  assert.ok(view.html.includes("定位原文"));
-  assert.ok(view.cards[0].locateEnabled === false);
-}
-
-function testVerifiedAnchorKeepsLocateEnabled() {
-  // Break: locate is always disabled.
-  const view = present({
-    summary: { coverageStatus: "complete" },
-    issues: [{
-      issueId: "font-1",
-      ruleId: "font_size",
-      role: "body",
-      paragraphIndex: 1,
-      anchorVerification: "verified",
-      currentValue: "14pt",
-      expectedValue: "12pt"
-    }]
-  });
-
-  const button = locateButtonHtml(view.html);
-  assert.ok(button.indexOf("disabled") < 0);
-  assert.strictEqual(view.cards[0].locateEnabled, true);
-}
-
-function testCaptionAssociationShowsConclusionNotUnrecognized() {
-  // Break: association conclusion is shown as 无法识别.
-  const view = present({
-    summary: { coverageStatus: "complete" },
-    issues: [{
-      issueId: "caption-1",
-      ruleId: "structure.caption_association",
-      role: "caption",
-      paragraphIndex: 20,
-      anchorVerification: "verified",
-      currentValue: "orphaned",
-      expectedValue: "associated",
-      sourceAnchor: { textSnippet: "表 9：跨节孤立" }
-    }]
-  });
-
-  assert.ok(view.html.includes("题注关联结论：孤立"));
-  assert.ok(!view.html.includes("无法识别"));
-  assert.ok(!view.html.includes("{\"status\""));
-}
-
-function testMissingAssociationConclusionDoesNotSayUnrecognized() {
-  // Break: empty association currentValue is displayed as 无法识别.
-  const view = present({
-    summary: { coverageStatus: "complete" },
-    issues: [{
-      issueId: "caption-2",
-      ruleId: "structure.caption_association",
-      role: "caption",
-      paragraphIndex: 8,
-      anchorVerification: "verified",
-      currentValue: "",
-      expectedValue: "associated"
-    }]
-  });
-
-  assert.ok(!view.html.includes("无法识别"));
-  assert.ok(!view.html.includes("题注关联结论："));
-}
-
-function testOrdinaryFormatIssueShowsUserDisplayValue() {
-  // Break: font-size card omits the user-facing 四号 display value.
-  const view = present({
-    summary: { coverageStatus: "complete" },
-    issues: [{
-      issueId: "font-1",
-      ruleId: "font_size",
-      role: "body",
-      paragraphIndex: 1,
-      anchorVerification: "verified",
-      currentValue: "14pt",
-      expectedValue: "12pt"
-    }]
-  });
-
-  assert.ok(view.html.includes("当前值：四号（14pt）"));
-  assert.ok(!view.html.includes("题注关联结论："));
-}
-
-function testUnmappedFontStaysUnrecognized() {
-  // Break: unmapped font name leaks into the card.
-  const view = present({
-    summary: { coverageStatus: "complete" },
-    issues: [{
-      issueId: "font-2",
-      ruleId: "font_name",
-      role: "body",
-      paragraphIndex: 1,
-      anchorVerification: "verified",
-      currentValue: "Unmapped Font",
-      expectedValue: "宋体"
-    }]
-  });
-
-  assert.ok(view.html.includes("当前值：无法识别"));
-  assert.ok(!view.html.includes("Unmapped Font"));
+  assert.ok(view.html.includes(">定位<"));
+  assert.ok(/data-format-review-action="locate"[^>]*disabled/.test(view.html));
+  assert.strictEqual(view.locationGroups[0].locateEnabled, false);
 }
 
 function testProcessedAndIgnoredStatusStayPerIssue() {
-  // Break: processed/ignored disable state is shared across instances.
   const view = present({
     summary: { coverageStatus: "complete" },
     issues: [
@@ -231,34 +196,135 @@ function testProcessedAndIgnoredStatusStayPerIssue() {
         ruleId: "alignment",
         role: "body",
         paragraphIndex: 3,
+        anchorId: "format-paragraph-3",
         anchorVerification: "verified",
         currentValue: "left",
         expectedValue: "justify",
-        status: "processed"
+        status: "processed",
+        sourceAnchor: { textSnippet: "第一处", paragraphIndex: 3 }
       },
       {
         issueId: "b",
         ruleId: "alignment",
         role: "body",
-        paragraphIndex: 4,
+        paragraphIndex: 3,
+        anchorId: "format-paragraph-3",
         anchorVerification: "verified",
         currentValue: "left",
         expectedValue: "justify",
-        status: "ignored"
+        status: "ignored",
+        sourceAnchor: { textSnippet: "第一处", paragraphIndex: 3 }
       }
     ]
   });
 
-  assert.strictEqual(view.cards[0].processedEnabled, false);
-  assert.strictEqual(view.cards[0].ignoredEnabled, true);
-  assert.strictEqual(view.cards[1].processedEnabled, true);
-  assert.strictEqual(view.cards[1].ignoredEnabled, false);
-  assert.ok(view.html.includes('data-issue-id="a"'));
-  assert.ok(view.html.includes('data-issue-id="b"'));
+  const processedA = view.html.match(/data-format-review-action="processed" data-issue-id="a"[^>]*>/);
+  const ignoredA = view.html.match(/data-format-review-action="ignored" data-issue-id="a"[^>]*>/);
+  const processedB = view.html.match(/data-format-review-action="processed" data-issue-id="b"[^>]*>/);
+  const ignoredB = view.html.match(/data-format-review-action="ignored" data-issue-id="b"[^>]*>/);
+  assert.ok(processedA[0].includes("disabled"));
+  assert.ok(!ignoredA[0].includes("disabled"));
+  assert.ok(!processedB[0].includes("disabled"));
+  assert.ok(ignoredB[0].includes("disabled"));
+  assert.ok(!view.html.includes('data-format-review-action="processed" data-location-key'));
+}
+
+function testToolbarMovesFiltersAndExportsOffTheFirstScreen() {
+  // Break: four full-width filters and two export buttons still sit in the result toolbar.
+  assert.ok(wordHtml.includes('id="btn-format-review-filter"'));
+  assert.ok(wordHtml.includes('id="format-review-filter-panel"'));
+  assert.ok(wordHtml.includes('id="format-review-filter-status"'));
+  assert.ok(wordHtml.includes('id="format-review-filter-count"'));
+  assert.ok(wordHtml.includes('id="btn-format-review-more"'));
+  assert.ok(wordHtml.includes('id="format-review-more-menu"'));
+  const controls = wordHtml.slice(
+    wordHtml.indexOf("id=\"deterministic-format-review-issue-controls\""),
+    wordHtml.indexOf("id=\"settings-view\"")
+  );
+  const moreMenu = controls.slice(controls.indexOf("id=\"format-review-more-menu\""));
+  assert.ok(moreMenu.includes("btn-format-review-export-json"));
+  assert.ok(moreMenu.includes("btn-format-review-export-markdown"));
+  assert.ok(controls.includes("format-review-filter-data-status"));
+  assert.ok(controls.includes("format-review-filter-rule"));
+  assert.ok(controls.includes("format-review-filter-sort"));
+  assert.ok(!controls.includes("id=\"format-review-filter-severity\""));
+  const toolbar = controls.slice(0, controls.indexOf("id=\"format-review-filter-panel\""));
+  assert.ok(!toolbar.includes("导出 JSON"));
+  assert.ok(!toolbar.includes("导出 Markdown"));
+  assert.ok(!toolbar.includes("<select"));
+}
+
+function testPageStatusAndFilterCountHelpers() {
+  assert.strictEqual(
+    helpers.formatDeterministicFormatReviewPageStatus({ page: 1, locationGroupCount: 6, pageSize: 1 }),
+    "第 1 / 6 页"
+  );
+  assert.strictEqual(
+    helpers.countEnabledFormatReviewFilters({
+      rule: "",
+      dataStatus: "",
+      status: "",
+      sort: "source"
+    }),
+    0
+  );
+  assert.strictEqual(
+    helpers.countEnabledFormatReviewFilters({
+      rule: "font_size",
+      dataStatus: "verified",
+      status: "open",
+      sort: "rule"
+    }),
+    4
+  );
+}
+
+function testKeyboardHelperClosesPanelAndMovesFocus() {
+  const events = [];
+  const panel = {
+    hidden: false,
+    querySelectorAll: function () {
+      return [
+        { focus: function () { events.push("status"); } },
+        { focus: function () { events.push("rule"); } }
+      ];
+    }
+  };
+  const trigger = { focus: function () { events.push("trigger"); } };
+  helpers.handleFormatReviewAnchoredPanelKeydown(
+    { key: "Escape", preventDefault: function () { events.push("prevent"); } },
+    { panel: panel, trigger: trigger }
+  );
+  assert.strictEqual(panel.hidden, true);
+  assert.deepStrictEqual(events, ["prevent", "trigger"]);
+
+  panel.hidden = false;
+  helpers.handleFormatReviewAnchoredPanelKeydown(
+    { key: "ArrowDown", preventDefault: function () { events.push("prevent-down"); } },
+    { panel: panel, trigger: trigger, itemIndex: 0 }
+  );
+  assert.ok(events.indexOf("prevent-down") >= 0);
+  assert.ok(events.indexOf("rule") >= 0);
+}
+
+function testGeometryAndReducedMotion() {
+  const pagerButtons = cssRule(".format-review-pager button");
+  assert.ok(/height:\s*36px/.test(pagerButtons));
+  assert.ok(/min-width:\s*0/.test(pagerButtons) || /width:\s*100%/.test(pagerButtons));
+  const icon = cssRule(".format-review-icon-button");
+  assert.ok(/width:\s*44px/.test(icon));
+  assert.ok(/height:\s*44px/.test(icon));
+  const iconGlyph = cssRule(".format-review-icon-button > span");
+  assert.ok(/width:\s*32px/.test(iconGlyph));
+  assert.ok(/height:\s*32px/.test(iconGlyph));
+  assert.ok(wordCss.includes("@media (max-width: 320px)"));
+  assert.ok(wordCss.includes("overflow-x: hidden"));
+  const reduced = wordCss.slice(wordCss.indexOf("@media (prefers-reduced-motion: reduce)"));
+  assert.ok(reduced.includes(".review-location-card"));
+  assert.ok(reduced.includes("transform: none"));
 }
 
 function testExportMarkdownStillKeepsIssueTable() {
-  // Break: removing the preview table also deletes it from export markdown.
   const markdown = helpers.renderReadableDeterministicFormatReview({
     summary: { coverageStatus: "complete", templateId: "technical-document-template-rules" },
     issues: [{
@@ -288,25 +354,17 @@ function testExportMarkdownStillKeepsIssueTable() {
   assert.ok(!view.previewText.includes("## 问题清单"));
 }
 
-function testIssuePageNoLongerMixesLocationIntoButtonRow() {
-  // Break: renderDeterministicFormatReviewIssuePage still concatenates
-  // location text and the three buttons onto one unstyled row.
-  const issuePage = functionSource(wordJs, "renderDeterministicFormatReviewIssuePage");
-  assert.ok(issuePage.includes("presentDeterministicFormatReviewIssueView"));
-  assert.ok(!issuePage.includes("full-review-issue-row"));
-  assert.ok(!issuePage.includes("row.textContent = deterministicFormatReviewIssuePosition"));
-}
-
 testPreviewShowsCoverageAndCountOnly();
-testCardPutsActionBarAboveLocationAndKeepsButtonsTogether();
-testUnverifiedAnchorDisablesLocateWithoutHidingIt();
-testVerifiedAnchorKeepsLocateEnabled();
+testSameAnchorIssuesFormOneCollapsedLocationCard();
+testExpandedIssueShowsValuePairAndSecondaryDetails();
 testCaptionAssociationShowsConclusionNotUnrecognized();
 testMissingAssociationConclusionDoesNotSayUnrecognized();
-testOrdinaryFormatIssueShowsUserDisplayValue();
-testUnmappedFontStaysUnrecognized();
+testUnverifiedAnchorDisablesLocateWithoutHidingIt();
 testProcessedAndIgnoredStatusStayPerIssue();
+testToolbarMovesFiltersAndExportsOffTheFirstScreen();
+testPageStatusAndFilterCountHelpers();
+testKeyboardHelperClosesPanelAndMovesFocus();
+testGeometryAndReducedMotion();
 testExportMarkdownStillKeepsIssueTable();
-testIssuePageNoLongerMixesLocationIntoButtonRow();
 
 console.log("format review issue card tests passed");
