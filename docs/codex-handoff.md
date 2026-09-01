@@ -4,13 +4,13 @@
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`agent/issue-128-target-acceptance`
+当前分支：`fix/preview-first-install-port`
 
 当前版本：`v0.26.0-preview.1`
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 当前实现 Issue #120 / #127 的 Excel“智能填写”第九任务，并沿用中性 Preview 交付边界；Issue #128 目标机环境集成验收已完成，候选归档为 `dist-preview-delivery-kit/ai-wps-delivery-20260901-1ab4420-v0260-preview1.tar.gz`（SHA-256：`2c4b960bdc0a92713a066226bf5d016df83b260a2f2ddcfb26f86f5cc7f10b79`，源码提交：`1ab442045eba6dd481183e8cb87971a8e2fad46f`）。在麒麟 V10 ARM、WPS 12.1.2、Python 3.8.10、`cloud` 用户环境完成首次 Preview 安装边界（旧 `$TARGET_HOME/ai-wps-phase1` 只读检测、数据不迁移不删除、新 `$TARGET_HOME/ai-wps` 纯净初始化）、Ribbon 入口加载、九类任务模型配置隔离与 Excel 智能填写完整生命周期实测，现场脱敏记录见 `packaging/v0260-preview1-target-machine-acceptance.md`（状态 `passed`）。
+`v0.26.0-preview.1` 当前实现 Issue #120 / #127 的 Excel“智能填写”第九任务，并沿用中性 Preview 交付边界。当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256：`52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`，源码提交：`7cd5c01a9bbb2050524a7f60f12c24b5d0ba7d8c`）。该包相对 `0f571bb` 为同版本重建：首次安装在 18100 仍被历史 Adapter 占用时释放监听进程，不读取、搬迁或删除 `$TARGET_HOME/ai-wps-phase1`。自动化门禁终态为 `candidate`。Issue #128 曾在 `1ab4420` / `0f571bb` 上完成目标机环境集成验收（现场记录见 `packaging/v0260-preview1-target-machine-acceptance.md`，状态 `passed`）；本重建包的安装路径按 `manual-pending` 记录。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
@@ -28,9 +28,9 @@
 - **长任务生命周期**：复用共享长任务协调器，支持 10 秒短轮询、排队取消、运行中协作取消、部分预览、60 分钟 deadline，任务结果仅进程内保留 2 小时；
 - **写入门禁与保护**：写回前重新校验工作簿、工作表、地址、原值与保护状态；空白目标默认允许，已有普通文本/数值需二次确认，公式、合并、受保护单元格始终拒绝，`= + - @` 前缀按纯文本字面值安全写入；
 - **写入失败补偿**：单元格写入中途失败时逆序恢复本次已改动单元格并校验恢复结果；补偿失败准确列出人工核对地址；不提供撤销（Undo/OnUndo），成功后销毁临时快照并锁定预览；
-- **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；
+- **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；若 18100 仍被历史 Adapter 占用则释放该端口监听进程；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
-- **状态记录**：自动化构建生成 `ai-wps-delivery-20260901-1ab4420-v0260-preview1.tar.gz` 候选包，Issue #128 真机集成验收完成（`passed`）。
+- **状态记录**：当前自动化候选为 `ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256 `52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`），门禁终态 `candidate`；Issue #128 真机集成验收记录仍对应前任 `1ab4420`/`0f571bb`（`passed`）。
 
 
 ## 当前修复状态：跨运行时格式审查哈希契约
