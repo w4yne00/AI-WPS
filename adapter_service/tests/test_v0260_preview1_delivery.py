@@ -46,6 +46,17 @@ def _installer_environment(target_home, **updates):
         encoding="utf-8",
     )
     getent.chmod(0o755)
+    ps = target_tools / "ps"
+    ps.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [ "$#" -eq 4 ] && [ "$1" = "-u" ] && [ "$3" = "-o" ] '
+        '&& [ "$4" = "comm=" ]; then\n'
+        "  exit 0\n"
+        "fi\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    ps.chmod(0o755)
     environment = {
         **os.environ,
         "HOME": str(target_home),

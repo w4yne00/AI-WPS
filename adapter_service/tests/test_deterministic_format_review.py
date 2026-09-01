@@ -74,7 +74,9 @@ class DeterministicFormatReviewContractTests(unittest.TestCase):
         word_api.deterministic_format_review_service = self.previous_service
         self.client.close()
         self.temp_dir.cleanup()
-        if self.previous_flag is not None:
+        if self.previous_flag is None:
+            os.environ.pop("AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW", None)
+        else:
             os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = self.previous_flag
 
     @staticmethod
