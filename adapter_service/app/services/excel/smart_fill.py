@@ -414,7 +414,11 @@ def parse_excel_smart_fill_answer(
         )
     if seen != set(expected):
         raise _invalid_result("not every fill item has a result")
-    return {"schemaVersion": SCHEMA_VERSION, "items": normalized_items}
+    by_id = {item["itemId"]: item for item in normalized_items}
+    return {
+        "schemaVersion": SCHEMA_VERSION,
+        "items": [by_id[item_id] for item_id in expected],
+    }
 
 
 def _invalid_result(reason: str) -> AdapterError:

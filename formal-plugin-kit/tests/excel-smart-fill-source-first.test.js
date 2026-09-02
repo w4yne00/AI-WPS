@@ -159,11 +159,11 @@ function testHiddenFormulaAndCommentsStayOutOfFrozenSource() {
 function testComHiddenAndUnreadFormulaFailClosed() {
   const comHidden = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   comHidden.Cells.Item(2, 1).EntireRow.Hidden = -1;
-  expectSourceError(comHidden, {}, /隐藏/);
+  expectExtractError(comHidden, {}, /隐藏/);
 
   const comHiddenCell = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   comHiddenCell.Cells.Item(2, 2).Hidden = -1;
-  expectSourceError(comHiddenCell, {}, /隐藏/);
+  expectExtractError(comHiddenCell, {}, /隐藏/);
 
   const unreadFormula = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   Object.defineProperty(unreadFormula.Cells.Item(2, 2), "HasFormula", {
@@ -172,7 +172,7 @@ function testComHiddenAndUnreadFormulaFailClosed() {
     get() { throw new Error("HasFormula unavailable"); }
   });
   unreadFormula.Cells.Item(2, 2).Text = "不应外发的公式结果";
-  expectSourceError(unreadFormula, {}, /无法安全读取|安全读取/);
+  expectExtractError(unreadFormula, {}, /无法安全读取|安全读取/);
 
   const comFormula = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   comFormula.Cells.Item(2, 2).HasFormula = -1;
@@ -222,6 +222,13 @@ function expectSourceError(range, extras, pattern) {
   );
 }
 
+function expectExtractError(range, extras, pattern) {
+  assert.throws(
+    () => helpers.extractExcelSmartFillSourcePayload(range, extras),
+    pattern
+  );
+}
+
 function testSourceErrorsUseOneHighestPriorityReason() {
   const headerOnly = buildRange("$A$1:$B$1", [["姓名", "部门"]]);
   expectSourceError(headerOnly, {}, /表头.*数据/);
@@ -231,19 +238,18 @@ function testSourceErrorsUseOneHighestPriorityReason() {
 
   const merged = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   merged.Cells.Item(2, 1).MergeCells = true;
-  expectSourceError(merged, {}, /合并/);
+  expectExtractError(merged, {}, /合并/);
 
   const hidden = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   hidden.Cells.Item(2, 1).EntireRow.Hidden = true;
-  expectSourceError(hidden, {}, /隐藏/);
+  expectExtractError(hidden, {}, /隐藏/);
 
   const mergedAndHidden = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   mergedAndHidden.Cells.Item(2, 1).MergeCells = true;
   mergedAndHidden.Cells.Item(2, 1).EntireRow.Hidden = true;
   const inspection = helpers.inspectExcelSmartFillSourceSelection(mergedAndHidden);
-  assert.strictEqual(inspection.ok, false);
-  assert.match(inspection.error, /合并/);
-  assert.ok(!/隐藏/.test(inspection.error));
+  assert.strictEqual(inspection.ok, true);
+  expectExtractError(mergedAndHidden, {}, /合并/);
 
   const values = [["表头"]];
   for (let index = 0; index < 501; index += 1) {
@@ -338,6 +344,127 @@ function testWriteEntryStaysUnavailableWithoutTargetMapping() {
   assert.ok(js.includes("writeBound"));
 }
 
+function testFunctionAddressIsInvokedWithRangeThis() {
+  const source = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  let seenThis;
+  source.Address = function Address() {
+    seenThis = this;
+    return "$A$1:$B$2";
+  };
+  const inspection = helpers.inspectExcelSmartFillSourceSelection(source);
+  assert.strictEqual(seenThis, source);
+  assert.strictEqual(inspection.ok, true);
+  assert.strictEqual(inspection.address, "A1:B2");
+  assert.ok(!String(inspection.summary).includes("function"));
+  const payload = helpers.extractExcelSmartFillSourcePayload(source, {
+    createItemId: sequentialItemIdFactory()
+  });
+  assert.strictEqual(payload.source.address, "$A$1:$B$2");
+  assert.ok(!String(payload.source.address).includes("function"));
+}
+
+function testUnreadAddressFailsClosed() {
+  const source = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  source.Address = function Address() {
+    throw new Error("Address unavailable");
+  };
+  delete source.address;
+  expectSourceError(source, {}, /来源必须是可解析的连续区域|无法读取来源地址/);
+}
+
+function testMissingSafetyAttributesFailClosed() {
+  const missingHidden = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  delete missingHidden.Cells.Item(2, 1).Hidden;
+  expectExtractError(missingHidden, {}, /无法安全读取/);
+
+  const missingOwner = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  missingOwner.Cells.Item = function Item() { return null; };
+  expectExtractError(missingOwner, {}, /无法安全读取/);
+}
+
+function testActualSheetNameMustMatchActiveSheet() {
+  const source = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]], { sheetName: "客户表" });
+  expectExtractError(source, { sourceSheetName: "其他表" }, /同一工作表/);
+  const payload = helpers.extractExcelSmartFillSourcePayload(source, {
+    sourceSheetName: "客户表",
+    createItemId: sequentialItemIdFactory()
+  });
+  assert.strictEqual(payload.source.sheetName, "客户表");
+}
+
+function testLiveInspectionDoesNotWalkCells() {
+  const source = buildRange("$A$1:$C$11", [
+    ["姓名", "部门", "城市"],
+    ["张三", "研发", "北京"],
+    ["李四", "销售", "上海"]
+  ]);
+  source.Cells.Item = function Item() {
+    throw new Error("live inspection must not walk cells");
+  };
+  const inspection = helpers.inspectExcelSmartFillSourceSelection(source);
+  assert.strictEqual(inspection.ok, true);
+  assert.strictEqual(inspection.address, "A1:C11");
+  assert.strictEqual(inspection.dataRowCount, 2);
+}
+
+function testOversizedRangeIsRejectedBeforeCellWalk() {
+  const source = buildRange("$A$1:$A$2", [["表头"], ["行1"]]);
+  source.Rows.Count = 502;
+  source.Cells.Item = function Item() {
+    throw new Error("oversized freeze must not walk cells");
+  };
+  expectSourceError(source, { maxSourceRows: 500 }, /500/);
+}
+
+function testPreviewReordersModelItemsToFrozenSourceOrder() {
+  const data = {
+    schemaVersion: "excel.smart_fill.v2",
+    items: [
+      { itemId: "sf_" + "2".padStart(32, "0"), status: "completed", valueType: "text", value: "乙类" },
+      { itemId: "sf_" + "1".padStart(32, "0"), status: "completed", valueType: "text", value: "甲类" }
+    ]
+  };
+  const rows = [
+    { itemId: "sf_" + "1".padStart(32, "0"), sourceRowLabel: "第 2 行" },
+    { itemId: "sf_" + "2".padStart(32, "0"), sourceRowLabel: "第 3 行" }
+  ];
+  const preview = helpers.buildExcelSmartFillEditorPreview(data, rows, []);
+  const order = Array.from(preview.matchAll(/data-smart-fill-item-id="([^"]+)"/g)).map((match) => match[1]);
+  assert.deepStrictEqual(order, rows.map((row) => row.itemId));
+  assert.ok(preview.indexOf("甲类") < preview.indexOf("乙类"));
+}
+
+function testItemIdGenerationRequiresSecureRandom() {
+  const originalCrypto = global.crypto;
+  try {
+    Object.defineProperty(global, "crypto", {
+      configurable: true,
+      value: undefined
+    });
+    assert.throws(() => helpers.createExcelSmartFillItemId(), /安全随机/);
+  } finally {
+    Object.defineProperty(global, "crypto", {
+      configurable: true,
+      value: originalCrypto
+    });
+  }
+}
+
+function testRetryButtonsStayHiddenWithoutFrozenSource() {
+  const data = {
+    schemaVersion: "excel.smart_fill.v2",
+    items: [
+      { itemId: "sf_" + "1".padStart(32, "0"), status: "completed", valueType: "text", value: "甲类" }
+    ]
+  };
+  const rows = [{ itemId: "sf_" + "1".padStart(32, "0"), sourceRowLabel: "第 2 行" }];
+  const preview = helpers.buildExcelSmartFillEditorPreview(data, rows, [], { retryEnabled: false });
+  assert.ok(!preview.includes("data-smart-fill-retry="));
+  assert.ok(!preview.includes("重新生成此项"));
+  assert.ok(js.includes("canRetryExcelSmartFillFromFrozenSource") || js.includes("retryEnabled"));
+  assert.ok(/smartFillRetryItemId[\s\S]{0,800}重新生成预览|冻结来源/.test(js));
+}
+
 testLiveSourceSummaryUsesSheetAddressHeadersAndDataRows();
 testInspectingSelectionDoesNotCreateASourceSnapshot();
 testGenerateFreezeCreatesOpaqueItemsWithoutTarget();
@@ -351,4 +478,13 @@ testPreviewKeepsSourceOrderEditExcludeAndFailedSlots();
 testTaskPageDropsTargetFirstChrome();
 testSmartFillPageUsesConfirmedButtonGeometry();
 testWriteEntryStaysUnavailableWithoutTargetMapping();
+testFunctionAddressIsInvokedWithRangeThis();
+testUnreadAddressFailsClosed();
+testMissingSafetyAttributesFailClosed();
+testActualSheetNameMustMatchActiveSheet();
+testLiveInspectionDoesNotWalkCells();
+testOversizedRangeIsRejectedBeforeCellWalk();
+testPreviewReordersModelItemsToFrozenSourceOrder();
+testItemIdGenerationRequiresSecureRandom();
+testRetryButtonsStayHiddenWithoutFrozenSource();
 console.log("Excel smart fill source-first tests passed");

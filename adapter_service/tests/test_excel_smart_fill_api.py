@@ -25,12 +25,12 @@ def _payload(client_job_id="smart-fill-api-001"):
         "clientJobId": client_job_id,
         "items": [
             {
-                "itemId": "synthetic-item-001",
+                "itemId": "sf_{:032x}".format(1),
                 "sourceRowIndex": 1,
                 "sourceRowLabel": "第 2 行",
             },
             {
-                "itemId": "synthetic-item-002",
+                "itemId": "sf_{:032x}".format(2),
                 "sourceRowIndex": 2,
                 "sourceRowLabel": "第 3 行",
             },

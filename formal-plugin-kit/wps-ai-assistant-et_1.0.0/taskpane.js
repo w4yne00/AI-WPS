@@ -1353,7 +1353,11 @@
     instruction = helpers.requireExcelSmartFillInstruction
       ? helpers.requireExcelSmartFillInstruction(safeText(byId("excel-smart-fill-instruction").value))
       : safeText(byId("excel-smart-fill-instruction").value);
-    if (state.smartFillRetryItemId && state.smartFillSource && state.smartFillItems) {
+    if (state.smartFillRetryItemId) {
+      if (!helpers.canRetryExcelSmartFillFromFrozenSource ||
+          !helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)) {
+        throw new Error("冻结来源不可用，请重新生成预览。");
+      }
       retryItem = (state.smartFillItems || []).filter(function (item) {
         return item.itemId === state.smartFillRetryItemId;
       })[0];
@@ -1811,7 +1815,12 @@
       output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
         state.smartFillResult,
         state.smartFillItems || [],
-        state.smartFillDraftItems
+        state.smartFillDraftItems,
+        {
+          retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+            ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+            : false
+        }
       );
     } else if (helpers.buildExcelSmartFillReadonlyPreview) {
       output.innerHTML = helpers.buildExcelSmartFillReadonlyPreview(
@@ -2029,7 +2038,12 @@
           output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
             state.smartFillResult,
             state.smartFillTarget && state.smartFillTarget.items || [],
-            state.smartFillDraftItems
+            state.smartFillDraftItems,
+            {
+              retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+                ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+                : false
+            }
           );
         }
         setSmartFillWriteButtonState();
@@ -2064,7 +2078,12 @@
             output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
               state.smartFillResult,
               state.smartFillTarget && state.smartFillTarget.items || [],
-              state.smartFillDraftItems
+              state.smartFillDraftItems,
+              {
+                retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+                  ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+                  : false
+              }
             );
           }
           setSmartFillWriteButtonState();

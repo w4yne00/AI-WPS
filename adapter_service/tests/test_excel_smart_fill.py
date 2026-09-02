@@ -242,6 +242,59 @@ def test_smart_fill_request_rejects_target_field_and_address_like_item_ids():
         models.ExcelSmartFillRequest(**payload)
 
 
+def test_smart_fill_request_rejects_low_entropy_item_ids():
+    payload = _request_payload()
+    payload["items"][0]["itemId"] = "guessable-0001"
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+
+    payload = _request_payload()
+    payload["items"][0]["itemId"] = "sf_abc"
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+
+    payload = _request_payload()
+    payload["items"][0]["itemId"] = "synthetic-item-001"
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+
+
+def test_smart_fill_request_rejects_forged_counts_and_ragged_rows():
+    payload = _request_payload()
+    payload["source"]["rowCount"] = 9
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+
+    payload = _request_payload()
+    payload["source"]["columnCount"] = 9
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+
+    payload = _request_payload()
+    payload["source"]["rows"][1] = ["乙", "B"]
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+
+    payload = _request_payload()
+    payload["source"]["address"] = "A:C"
+    with pytest.raises((ValidationError, AdapterError)):
+        request = models.ExcelSmartFillRequest(**payload)
+        from app.services.excel.smart_fill import validate_smart_fill_request_limits
+
+        validate_smart_fill_request_limits(request)
+
+
+def test_smart_fill_parser_reorders_items_to_expected_ids():
+    payload = _answer_payload()
+    payload["items"] = list(reversed(payload["items"]))
+    result = parse_excel_smart_fill_answer(
+        json.dumps(payload, ensure_ascii=False), [_item_id(1), _item_id(2)]
+    )
+    assert [item["itemId"] for item in result["items"]] == [_item_id(1), _item_id(2)]
+    assert result["items"][0]["value"] == "甲类"
+    assert result["items"][1]["status"] == "insufficient_information"
+
+
 def test_smart_fill_rejects_unknown_item_fields_before_provider_call():
     payload = _request_payload()
     payload["items"][0]["originalValueType"] = "boolean"
@@ -543,7 +596,7 @@ def _single_blank_payload():
         "clientJobId": "smart-fill-single-001",
         "items": [
             {
-                "itemId": "item-7f3a91c2",
+                "itemId": "sf_00000000000000000000000000000001",
                 "sourceRowIndex": 1,
                 "sourceRowLabel": "第 2 行",
             }
@@ -565,7 +618,7 @@ def test_single_blank_cell_prompt_uses_unguessable_id_and_visible_row_only():
     request = models.ExcelSmartFillRequest(**_single_blank_payload())
     prompt = build_excel_smart_fill_prompt(request)
     assert "excel.smart_fill.v2" in prompt
-    assert "item-7f3a91c2" in prompt
+    assert "sf_00000000000000000000000000000001" in prompt
     assert "摘要" in prompt
     assert "甲" in prompt
     assert "D2" not in prompt
@@ -585,7 +638,7 @@ def test_single_blank_cell_parser_rejects_formula_address_and_unknown_fields():
         "schemaVersion": "excel.smart_fill.v2",
         "items": [
             {
-                "itemId": "item-7f3a91c2",
+                "itemId": "sf_00000000000000000000000000000001",
                 "status": "completed",
                 "valueType": "text",
                 "value": "甲类",
@@ -596,7 +649,7 @@ def test_single_blank_cell_parser_rejects_formula_address_and_unknown_fields():
     }
     with pytest.raises(AdapterError) as error_info:
         parse_excel_smart_fill_answer(
-            json.dumps(payload, ensure_ascii=False), ["item-7f3a91c2"]
+            json.dumps(payload, ensure_ascii=False), ["sf_00000000000000000000000000000001"]
         )
     assert error_info.value.code == "MODEL_RESULT_INVALID"
 
@@ -608,7 +661,7 @@ def test_single_blank_cell_parser_accepts_text_number_or_insufficient_informatio
                 "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
-                        "itemId": "item-7f3a91c2",
+                        "itemId": "sf_00000000000000000000000000000001",
                         "status": "completed",
                         "valueType": "text",
                         "value": "甲类",
@@ -617,7 +670,7 @@ def test_single_blank_cell_parser_accepts_text_number_or_insufficient_informatio
             },
             ensure_ascii=False,
         ),
-        ["item-7f3a91c2"],
+        ["sf_00000000000000000000000000000001"],
     )
     assert text_result["items"][0]["value"] == "甲类"
 
@@ -627,7 +680,7 @@ def test_single_blank_cell_parser_accepts_text_number_or_insufficient_informatio
                 "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
-                        "itemId": "item-7f3a91c2",
+                        "itemId": "sf_00000000000000000000000000000001",
                         "status": "completed",
                         "valueType": "number",
                         "value": 12.5,
@@ -636,7 +689,7 @@ def test_single_blank_cell_parser_accepts_text_number_or_insufficient_informatio
             },
             ensure_ascii=False,
         ),
-        ["item-7f3a91c2"],
+        ["sf_00000000000000000000000000000001"],
     )
     assert number_result["items"][0]["value"] == 12.5
 
@@ -646,7 +699,7 @@ def test_single_blank_cell_parser_accepts_text_number_or_insufficient_informatio
                 "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
-                        "itemId": "item-7f3a91c2",
+                        "itemId": "sf_00000000000000000000000000000001",
                         "status": "insufficient_information",
                         "valueType": "text",
                         "value": "",
@@ -655,7 +708,7 @@ def test_single_blank_cell_parser_accepts_text_number_or_insufficient_informatio
             },
             ensure_ascii=False,
         ),
-        ["item-7f3a91c2"],
+        ["sf_00000000000000000000000000000001"],
     )
     assert missing["items"][0]["status"] == "insufficient_information"
 
@@ -723,9 +776,10 @@ def test_smart_fill_rejects_unparseable_custom_source_address():
 
     payload = _request_payload()
     payload["source"]["address"] = "$D:$D"
-    with pytest.raises(AdapterError) as error_info:
-        validate_smart_fill_request_limits(models.ExcelSmartFillRequest(**payload))
-    assert error_info.value.code == "EXCEL_SMART_FILL_SOURCE_SHAPE_INVALID"
+    with pytest.raises(ValidationError):
+        models.ExcelSmartFillRequest(**payload)
+    payload["source"]["address"] = "A1:C3"
+    validate_smart_fill_request_limits(models.ExcelSmartFillRequest(**payload))
 
 
 def test_smart_fill_prompt_treats_user_instruction_as_data_only():

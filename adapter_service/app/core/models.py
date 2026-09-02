@@ -550,11 +550,47 @@ class ExcelSmartFillSource(_StrictExcelSmartFillModel):
             raise ValueError("source rows may contain at most 50 columns")
         return value
 
+    @root_validator(skip_on_failure=True)
+    def validate_source_matrix(cls, values):
+        rows = values.get("rows") or []
+        headers = values.get("headers") or []
+        row_count = values.get("row_count")
+        column_count = values.get("column_count")
+        address = values.get("address") or ""
+        if row_count != len(rows):
+            raise ValueError("source rowCount must equal the number of data rows")
+        if column_count != len(headers):
+            raise ValueError("source columnCount must equal the number of headers")
+        if any(len(row) != column_count for row in rows):
+            raise ValueError("source rows must have consistent width")
+        if _parse_smart_fill_a1_rectangle(address) is None:
+            raise ValueError("source address must be a contiguous A1 rectangle")
+        return values
 
-_SMART_FILL_ADDRESS_ITEM_ID = re.compile(
-    r"^(?:\$?[A-Za-z]+\$?\d+|target-\d+|row-\d+-col-\d+)$",
-    re.IGNORECASE,
-)
+
+_SMART_FILL_ITEM_ID = re.compile(r"^sf_[0-9a-f]{32}$")
+_SMART_FILL_A1_CELL = re.compile(r"^\$?([A-Za-z]+)\$?([0-9]+)$")
+
+
+def _parse_smart_fill_a1_rectangle(address):
+    raw = str(address or "").strip()
+    if "!" in raw:
+        raw = raw.split("!")[-1]
+    parts = [part.strip() for part in raw.split(":") if part.strip()]
+    if not parts or len(parts) > 2:
+        return None
+    start = _SMART_FILL_A1_CELL.match(parts[0])
+    if not start:
+        return None
+    end = _SMART_FILL_A1_CELL.match(parts[-1])
+    if not end:
+        return None
+    return (
+        start.group(1).upper(),
+        int(start.group(2)),
+        end.group(1).upper(),
+        int(end.group(2)),
+    )
 
 
 class ExcelSmartFillItem(_StrictExcelSmartFillModel):
@@ -567,8 +603,8 @@ class ExcelSmartFillItem(_StrictExcelSmartFillModel):
         if not isinstance(value, str) or not value.strip():
             raise ValueError("item id must be a non-empty string")
         text = value.strip()
-        if _SMART_FILL_ADDRESS_ITEM_ID.match(text):
-            raise ValueError("item id must not encode an address")
+        if not _SMART_FILL_ITEM_ID.match(text):
+            raise ValueError("item id must be an unguessable sf_ hex token")
         return text
 
     @validator("source_row_label", pre=True)
