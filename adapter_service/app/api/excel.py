@@ -285,7 +285,7 @@ def start_excel_smart_fill_job(request: ExcelSmartFillRequest) -> dict:
         "traceId=%s task=excel.smart_fill jobStatus=%s itemCount=%s",
         trace_id,
         job["status"],
-        len(request.target.items),
+        len(request.items),
     )
     return {
         "success": True,

@@ -1791,7 +1791,7 @@ _VALIDATION_PROBES = {
     ),
     "excel.smart_fill": (
         '根据来源“已完成”为 item-0001 生成填写值。只返回 JSON：'
-        '{"schemaVersion":"excel.smart_fill.v1","items":[{"itemId":"item-0001",'
+        '{"schemaVersion":"excel.smart_fill.v2","items":[{"itemId":"item-0001",'
         '"status":"completed","valueType":"text","value":"已填写"}]}'
     ),
     "ppt.slide_assistant": (
@@ -3789,7 +3789,7 @@ class ProviderClient:
         validate_smart_fill_request_limits(request)
         prompt = build_excel_smart_fill_prompt(request)
         task_type = "excel.smart_fill"
-        expected_item_ids = [item.item_id for item in request.target.items]
+        expected_item_ids = [item.item_id for item in request.items]
         has_auth_snapshot = task_auth is not None
         resolved_task_auth = task_auth or {}
         configured = (
@@ -3810,7 +3810,7 @@ class ProviderClient:
             if progress_callback:
                 progress_callback("parsing")
             return {
-                "schemaVersion": "excel.smart_fill.v1",
+                "schemaVersion": "excel.smart_fill.v2",
                 "items": [
                     {
                         "itemId": item_id,

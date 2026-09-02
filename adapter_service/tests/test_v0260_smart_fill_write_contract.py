@@ -33,7 +33,7 @@ def test_preview_audit_rejects_plugin_without_smart_fill_write_contract(tmp_path
     prompt_dir = tmp_path / "packages/adapter-start-kit/adapter_service/system_prompts"
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "excel-smart-fill.md").write_text(
-        "schemaVersion excel.smart_fill.v1",
+        "schemaVersion excel.smart_fill.v2",
         encoding="utf-8",
     )
 
@@ -65,7 +65,7 @@ def test_preview_audit_rejects_undo_promise_in_excel_plugin(tmp_path):
     prompt_dir = tmp_path / "packages/adapter-start-kit/adapter_service/system_prompts"
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "excel-smart-fill.md").write_text(
-        "schemaVersion excel.smart_fill.v1",
+        "schemaVersion excel.smart_fill.v2",
         encoding="utf-8",
     )
 
@@ -99,7 +99,7 @@ def test_preview_audit_rejects_plugin_without_compensation_contract(tmp_path):
     prompt_dir = tmp_path / "packages/adapter-start-kit/adapter_service/system_prompts"
     prompt_dir.mkdir(parents=True)
     (prompt_dir / "excel-smart-fill.md").write_text(
-        "schemaVersion excel.smart_fill.v1",
+        "schemaVersion excel.smart_fill.v2",
         encoding="utf-8",
     )
 
