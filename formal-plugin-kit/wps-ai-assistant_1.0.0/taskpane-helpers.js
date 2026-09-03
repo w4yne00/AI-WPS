@@ -3820,14 +3820,17 @@
     if (type === 13 || type === "13" || typeText === "wdfieldtoc" || typeText === "toc") {
       return true;
     }
+    if (type != null && type !== 0 && type !== "0" && type !== "") {
+      return false;
+    }
     var codeObject = firstDefined(safeRead(field, "Code"), safeRead(field, "code"));
     var code = String(firstDefined(
       safeRead(codeObject, "Text"),
       safeRead(codeObject, "text"),
       codeObject,
       ""
-    ) || "");
-    return /\bTOC\b/i.test(code) && !/\bTOCE/i.test(code);
+    ) || "").trim();
+    return /^TOC(?:\s|$)/i.test(code);
   }
 
   function collectAutoTocRangeIndexes(range) {
@@ -3850,55 +3853,31 @@
 
   function collectWordAutoTocRegions(document) {
     var source = document || {};
-    var regions = [];
+    var rawEntries = [];
     var seen = {};
 
-    function paragraphTextByIndex(paragraphIndex) {
-      var collection = getParagraphCollection(source);
-      var count = readCollectionCount(collection);
-      var index;
-      for (index = 1; index <= count; index += 1) {
-        var paragraph = getCollectionItem(collection, index);
-        if (readAutoTocParagraphIndex(paragraph) === paragraphIndex) {
-          return readAutoTocParagraphText(paragraph);
-        }
-      }
-      return "";
-    }
-
-    function addRegion(kind, range) {
+    function collectRawRegion(kind, range) {
       var collected = collectAutoTocRangeIndexes(range);
       var indexes = collected.indexes.slice();
       var texts = collected.texts;
-      var titleParagraphIndex = 0;
       if (!indexes.length) {
         return;
       }
+      var titleParagraphIndex = 0;
       if (isAutoTocTitleText(texts[indexes[0]])) {
         titleParagraphIndex = indexes[0];
-      } else {
-        var previousIndex = indexes[0] - 1;
-        if (previousIndex > 0 && isAutoTocTitleText(paragraphTextByIndex(previousIndex))) {
-          indexes.unshift(previousIndex);
-          titleParagraphIndex = previousIndex;
-        }
       }
       var key = indexes.join(",");
       if (seen[key]) {
         return;
       }
       seen[key] = true;
-      var region = {
-        regionId: "auto-toc-" + (regions.length + 1),
-        source: kind,
-        startParagraphIndex: indexes[0],
-        endParagraphIndex: indexes[indexes.length - 1],
-        paragraphIndexes: indexes
-      };
-      if (titleParagraphIndex) {
-        region.titleParagraphIndex = titleParagraphIndex;
-      }
-      regions.push(region);
+      rawEntries.push({
+        kind: kind,
+        indexes: indexes,
+        texts: texts,
+        titleParagraphIndex: titleParagraphIndex
+      });
     }
 
     var tablesOfContents = firstDefined(
@@ -3908,7 +3887,7 @@
     var tocIndex;
     for (tocIndex = 1; tocIndex <= readCollectionCount(tablesOfContents); tocIndex += 1) {
       var toc = getCollectionItem(tablesOfContents, tocIndex);
-      addRegion(
+      collectRawRegion(
         "tables_of_contents",
         firstDefined(safeRead(toc, "Range"), safeRead(toc, "range"), toc)
       );
@@ -3921,7 +3900,7 @@
       if (!isAutoTocField(field)) {
         continue;
       }
-      addRegion(
+      collectRawRegion(
         "field",
         firstDefined(
           safeRead(field, "Result"),
@@ -3930,6 +3909,48 @@
           safeRead(field, "range")
         )
       );
+    }
+
+    var regions = [];
+    var entryIndex;
+    for (entryIndex = 0; entryIndex < rawEntries.length; entryIndex += 1) {
+      var entry = rawEntries[entryIndex];
+      var indexes = entry.indexes;
+      var titleParagraphIndex = entry.titleParagraphIndex;
+      if (!titleParagraphIndex) {
+        var previousIndex = indexes[0] - 1;
+        if (previousIndex > 0) {
+          var collection = getParagraphCollection(source);
+          var prevParagraph = getCollectionItem(collection, previousIndex);
+          var prevIdx = prevParagraph ? readAutoTocParagraphIndex(prevParagraph) : 0;
+          if (prevIdx !== previousIndex) {
+            prevParagraph = null;
+            var collCount = readCollectionCount(collection);
+            for (var si = 1; si <= collCount; si += 1) {
+              var candidate = getCollectionItem(collection, si);
+              if (candidate && readAutoTocParagraphIndex(candidate) === previousIndex) {
+                prevParagraph = candidate;
+                break;
+              }
+            }
+          }
+          if (prevParagraph && isAutoTocTitleText(readAutoTocParagraphText(prevParagraph))) {
+            indexes = [previousIndex].concat(indexes);
+            titleParagraphIndex = previousIndex;
+          }
+        }
+      }
+      var region = {
+        regionId: "auto-toc-" + (regions.length + 1),
+        source: entry.kind,
+        startParagraphIndex: indexes[0],
+        endParagraphIndex: indexes[indexes.length - 1],
+        paragraphIndexes: indexes
+      };
+      if (titleParagraphIndex) {
+        region.titleParagraphIndex = titleParagraphIndex;
+      }
+      regions.push(region);
     }
     return regions;
   }
@@ -5083,6 +5104,7 @@
     collectFullDocumentReviewTables: collectFullDocumentReviewTables,
     collectFormatReviewCoverage: collectFormatReviewCoverage,
     collectWordAutoTocRegions: collectWordAutoTocRegions,
+    isAutoTocField: isAutoTocField,
     extractHomogeneousFormatSegments: extractHomogeneousFormatSegments,
     readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
     collectParagraphs: collectParagraphs,

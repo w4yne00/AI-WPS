@@ -2504,11 +2504,20 @@ class DeterministicFormatReviewService:
                         )
                     if raw_index not in indexes:
                         indexes.append(raw_index)
+                raw_start = item.get("startParagraphIndex")
+                raw_end = item.get("endParagraphIndex")
+                start_idx = raw_start if type(raw_start) is int else indexes[0]
+                end_idx = raw_end if type(raw_end) is int else indexes[-1]
+                if start_idx <= 0 or end_idx <= 0 or start_idx > end_idx:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "自动目录区域边界无效。",
+                    )
                 region = {
                     "regionId": str(item.get("regionId") or "auto-toc-{0}".format(len(normalized_regions) + 1))[:64],
                     "source": source,
-                    "startParagraphIndex": int(item.get("startParagraphIndex") or indexes[0]),
-                    "endParagraphIndex": int(item.get("endParagraphIndex") or indexes[-1]),
+                    "startParagraphIndex": start_idx,
+                    "endParagraphIndex": end_idx,
                     "paragraphIndexes": indexes,
                 }
                 title_index = item.get("titleParagraphIndex")

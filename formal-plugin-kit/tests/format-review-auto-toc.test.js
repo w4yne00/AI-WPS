@@ -172,6 +172,61 @@ function testReadableReportDisclosesSkippedAutoToc() {
   assert.ok(markdown.includes("已识别并略过目录：1 个区域，共 23 段"));
 }
 
+function testIsAutoTocFieldRejectsHyperlinkWithTocInUrl() {
+  // Regression: HYPERLINK field with "TOC" in URL was misidentified as TOC
+  assert.strictEqual(helpers.isAutoTocField({
+    Type: 88,
+    Code: { Text: 'HYPERLINK "https://example.org/TOC"' }
+  }), false, "HYPERLINK with TOC in URL should not be identified as TOC");
+}
+
+function testIsAutoTocFieldRejectsKnownNonTocType() {
+  // Any known field type that is not 13 should be rejected, even if code contains TOC
+  assert.strictEqual(helpers.isAutoTocField({
+    Type: 37,
+    Code: { Text: 'REF TOC \\h' }
+  }), false, "REF field with TOC bookmark should not be identified as TOC");
+}
+
+function testIsAutoTocFieldAcceptsType13() {
+  assert.strictEqual(helpers.isAutoTocField({
+    Type: 13,
+    Code: { Text: 'TOC \\o "1-3" \\h \\z \\u' }
+  }), true, "Type=13 should be identified as TOC");
+}
+
+function testIsAutoTocFieldAcceptsCodeOnlyToc() {
+  // When Type is unknown/missing, TOC at start of code should match
+  assert.strictEqual(helpers.isAutoTocField({
+    Code: { Text: 'TOC \\o "1-3"' }
+  }), true, "Code-only TOC instruction should be identified as TOC");
+}
+
+function testDuplicateTocViaTablesAndFieldsProducesSingleRegion() {
+  // Regression: same TOC via both sources caused duplicate scans before dedup
+  var sharedParagraphs = [
+    tocParagraph(2, "一、概述.........1"),
+    tocParagraph(3, "二、建设目标.........3")
+  ];
+  var regions = helpers.collectWordAutoTocRegions({
+    TablesOfContents: [{
+      Range: { Paragraphs: sharedParagraphs }
+    }],
+    Fields: [{
+      Type: 13,
+      Code: { Text: "TOC" },
+      Result: { Paragraphs: sharedParagraphs }
+    }],
+    Paragraphs: [
+      tocParagraph(1, "目录"),
+      tocParagraph(2, "一、概述.........1"),
+      tocParagraph(3, "二、建设目标.........3"),
+      tocParagraph(4, "正文")
+    ]
+  });
+  assert.strictEqual(regions.length, 1, "Duplicate TOC should produce only 1 region");
+}
+
 testExtractsTablesOfContentsRegionIncludingTitleAndEntries();
 testExtractsTocFieldWhenTablesOfContentsIsMissing();
 testAttachesPrecedingTitleToAutoTocRange();
@@ -180,5 +235,10 @@ testCoverageAndSnapshotBodyKeepAutoTocRegions();
 testChineseRoleDisplayClosesTocEnums();
 testCoverageSummaryShowsSkippedAutoToc();
 testReadableReportDisclosesSkippedAutoToc();
+testIsAutoTocFieldRejectsHyperlinkWithTocInUrl();
+testIsAutoTocFieldRejectsKnownNonTocType();
+testIsAutoTocFieldAcceptsType13();
+testIsAutoTocFieldAcceptsCodeOnlyToc();
+testDuplicateTocViaTablesAndFieldsProducesSingleRegion();
 
 console.log("format review auto toc tests passed");

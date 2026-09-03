@@ -301,3 +301,110 @@ if HAS_PYDANTIC:
 
             self.assertEqual(protocol._report_issue_role({"role": "toc_title"}), "目录标题")
             self.assertEqual(protocol._report_issue_role({"role": "toc_entry"}), "目录项")
+
+
+@unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
+class TocBoundaryValidationTests(unittest.TestCase):
+    """Regression: int() on startParagraphIndex/endParagraphIndex now controlled."""
+
+    def test_string_start_index_falls_back_to_paragraph_indexes(self):
+        """Non-int startParagraphIndex should fall back to indexes[0], not ValueError."""
+        from app.services.word.deterministic_format_review import (
+            DeterministicFormatReviewService,
+        )
+
+        region = {
+            "regionId": "auto-toc-1",
+            "source": "tables_of_contents",
+            "startParagraphIndex": "bad",
+            "endParagraphIndex": 4,
+            "paragraphIndexes": [2, 3, 4],
+        }
+        coverage = {"tocRegions": [region]}
+        result = DeterministicFormatReviewService._normalize_source_coverage(coverage)
+        regions = result.get("tocRegions", [])
+        self.assertEqual(len(regions), 1)
+        self.assertEqual(regions[0]["startParagraphIndex"], 2)
+
+    def test_invalid_boundary_raises_adapter_error(self):
+        """Boundary with start > end should raise controlled error."""
+        from app.core.errors import AdapterError
+        from app.services.word.deterministic_format_review import (
+            DeterministicFormatReviewService,
+        )
+
+        region = {
+            "regionId": "auto-toc-1",
+            "source": "tables_of_contents",
+            "startParagraphIndex": 10,
+            "endParagraphIndex": 2,
+            "paragraphIndexes": [2, 3, 4],
+        }
+        coverage = {"tocRegions": [region]}
+        with self.assertRaises(AdapterError) as ctx:
+            DeterministicFormatReviewService._normalize_source_coverage(coverage)
+        self.assertIn("COVERAGE_INVALID", ctx.exception.code)
+
+
+@unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
+class TocHeadingExclusionInStructureAuditTests(unittest.TestCase):
+    """Regression: TOC H1 title must not mask missing body H1 in structure audit."""
+
+    def test_toc_h1_does_not_mask_missing_body_h1(self):
+        """When TOC has H1 and body starts at H2, heading hierarchy issue is reported."""
+        paragraphs = [
+            _paragraph(1, "前言", styleName="Normal"),
+            _paragraph(2, "目录", styleName="Heading 1", fontName="黑体",
+                       fontSize=16, outlineLevel=1),
+            _paragraph(3, "一、概述.........1", styleName="TOC 1",
+                       fontName="楷体", fontSize=14, lineSpacing=1.0, firstLineIndent=0),
+            _paragraph(4, "1.1 背景", styleName="Heading 2", fontName="黑体",
+                       fontSize=14, outlineLevel=2),
+            _paragraph(5, "正文内容。", styleName="Normal", fontName="楷体",
+                       fontSize=14, outlineLevel=0, lineSpacing=1.0, firstLineIndent=0),
+        ]
+        blocks = [
+            _block(paragraphs[0], "paragraph"),
+            _block(paragraphs[1], "heading"),
+            _block(paragraphs[2], "paragraph"),
+            _block(paragraphs[3], "heading"),
+            _block(paragraphs[4], "paragraph"),
+        ]
+        payload = {
+            "documentId": "toc-h1-mask.docx",
+            "scene": "word",
+            "selectionMode": "document",
+            "content": {
+                "plainText": "\n".join(item["text"] for item in paragraphs),
+                "paragraphs": paragraphs,
+                "headings": [
+                    {"level": 1, "text": "目录", "paragraphIndex": 2},
+                    {"level": 2, "text": "1.1 背景", "paragraphIndex": 4},
+                ],
+                "documentStructure": {
+                    "formatSnapshotSchemaVersion": "word.format_review.snapshot.v2",
+                    "formatBlocks": blocks,
+                    "coverage": {
+                        "tocRegions": [{
+                            "regionId": "auto-toc-1",
+                            "source": "tables_of_contents",
+                            "startParagraphIndex": 2,
+                            "endParagraphIndex": 3,
+                            "paragraphIndexes": [2, 3],
+                            "titleParagraphIndex": 2,
+                        }],
+                    },
+                },
+            },
+            "options": {"templateId": "technical-document-template-rules"},
+        }
+        result = WordFormatReviewer().review(parse_word_request(payload))
+        hierarchy_issues = [
+            issue for issue in result["issues"]
+            if issue.get("ruleId") == "structure.heading_hierarchy"
+        ]
+        # Body starts at H2 with no body H1 — should report heading level issue
+        self.assertTrue(
+            len(hierarchy_issues) > 0,
+            "TOC H1 should not mask the absence of a body H1 heading"
+        )

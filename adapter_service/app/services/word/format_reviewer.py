@@ -1289,6 +1289,16 @@ class WordFormatReviewer:
         image_inventory: Optional[Dict] = None,
     ) -> List[FormatReviewIssue]:
         facts = self._format_structure_facts(request)
+
+        toc_exemption_map, _toc_regions = collect_auto_toc_exemption(
+            request.content.document_structure or {}
+        )
+        if toc_exemption_map:
+            facts["headings"] = [
+                h for h in facts.get("headings", [])
+                if h.get("paragraphIndex") not in toc_exemption_map
+            ]
+
         facts.setdefault("appendixFacts", [])
         facts.setdefault("noteFacts", [])
         pack = {"template": template, "rules": template.get("_rulePackRules", [])}
