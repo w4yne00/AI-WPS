@@ -7449,8 +7449,14 @@
       contextBlocks: contextBlocks,
       documentIdentity: documentIdentity,
       editSequence: editSequence,
-      coverage: helpers.collectFormatReviewCoverage
-        ? helpers.collectFormatReviewCoverage(document) : {},
+      coverage: (function () {
+        var cov = helpers.collectFormatReviewCoverage
+          ? helpers.collectFormatReviewCoverage(document) : {};
+        if (scope.selectionMode === "selection") {
+          delete cov.tocRegions;
+        }
+        return cov;
+      })(),
       scope: {
         mode: scope.selectionMode,
         expandedToSemanticUnits: scope.selectionMode === "selection",

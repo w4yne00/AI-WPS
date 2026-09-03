@@ -325,6 +325,8 @@ def _report_issue_role(issue: Dict) -> str:
         "chapter": "章节/节",
         "document": "全文",
         "page_setup": "页面设置",
+        "toc_title": "目录标题",
+        "toc_entry": "目录项",
     }.get(role, "无法识别")
 
 
@@ -1426,8 +1428,11 @@ class DeterministicFormatReviewService:
             "- 问题数量：{0}".format(report.get("issueCount", 0)),
             "- 重复问题组：{0}".format(report.get("duplicateGroupCount", 0)),
             "- 审查字符：{0}".format(report.get("coverage", {}).get("reviewCharacterCount", 0)),
-            "", report.get("disclaimer", ""), "",
         ]
+        toc_summary = str(summary.get("tocExemptionSummary") or report.get("coverage", {}).get("tocExemptionSummary") or "").strip()
+        if toc_summary:
+            lines.append("- {0}".format(toc_summary))
+        lines.extend(["", report.get("disclaimer", ""), ""])
         for index, issue in enumerate(report.get("issues", []), 1):
             lines.extend([
                 "## {0}. {1}".format(index, _report_issue_title(issue)),
@@ -1623,6 +1628,10 @@ class DeterministicFormatReviewService:
             "issueCount": len(issues),
             "zeroIssuesNotSufficient": coverage_status != "complete" or unresolved_semantic_roles or semantic_status in {"partial", "not_ready", "degraded"},
         })
+        if summary.get("tocExemptionSummary"):
+            coverage["exemptedTocRegionCount"] = int(summary.get("exemptedTocRegionCount") or 0)
+            coverage["exemptedTocParagraphCount"] = int(summary.get("exemptedTocParagraphCount") or 0)
+            coverage["tocExemptionSummary"] = summary["tocExemptionSummary"]
         format_fact_diagnostics = structure.get("formatFacts")
         if isinstance(format_fact_diagnostics, dict):
             summary["formatFactDiagnostics"] = deepcopy(format_fact_diagnostics)
@@ -2460,6 +2469,63 @@ class DeterministicFormatReviewService:
             })
         if normalized_objects:
             result["unsupportedObjects"] = normalized_objects
+        toc_regions = value.get("tocRegions")
+        if toc_regions is not None:
+            if not isinstance(toc_regions, list) or len(toc_regions) > 64:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                    "自动目录区域统计格式无效。",
+                )
+            normalized_regions = []
+            for item in toc_regions:
+                if not isinstance(item, dict):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "自动目录区域格式无效。",
+                    )
+                source = str(item.get("source") or "").strip()
+                if source not in {"tables_of_contents", "field", "auto_toc"}:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "自动目录区域来源不受支持。",
+                    )
+                indexes = []
+                raw_indexes = item.get("paragraphIndexes")
+                if not isinstance(raw_indexes, list) or not raw_indexes or len(raw_indexes) > 500:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "自动目录区域必须包含有限段落序号。",
+                    )
+                for raw_index in raw_indexes:
+                    if type(raw_index) is not int or raw_index <= 0:
+                        raise AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                            "自动目录段落序号必须是正整数。",
+                        )
+                    if raw_index not in indexes:
+                        indexes.append(raw_index)
+                raw_start = item.get("startParagraphIndex")
+                raw_end = item.get("endParagraphIndex")
+                start_idx = raw_start if type(raw_start) is int else indexes[0]
+                end_idx = raw_end if type(raw_end) is int else indexes[-1]
+                if start_idx <= 0 or end_idx <= 0 or start_idx > end_idx:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "自动目录区域边界无效。",
+                    )
+                region = {
+                    "regionId": str(item.get("regionId") or "auto-toc-{0}".format(len(normalized_regions) + 1))[:64],
+                    "source": source,
+                    "startParagraphIndex": start_idx,
+                    "endParagraphIndex": end_idx,
+                    "paragraphIndexes": indexes,
+                }
+                title_index = item.get("titleParagraphIndex")
+                if type(title_index) is int and title_index in indexes:
+                    region["titleParagraphIndex"] = title_index
+                normalized_regions.append(region)
+            if normalized_regions:
+                result["tocRegions"] = normalized_regions
         return result
 
     @classmethod
@@ -2700,6 +2766,8 @@ class DeterministicFormatReviewService:
             coverage["headerFooter"] = deepcopy(source_coverage["headerFooter"])
         if unsupported_objects:
             coverage["unsupportedObjects"] = unsupported_objects
+        if isinstance(source_coverage.get("tocRegions"), list) and source_coverage.get("tocRegions"):
+            coverage["tocRegions"] = deepcopy(source_coverage["tocRegions"])
         return {
             "characterCount": character_count,
             "contentSha256": hashlib.sha256("\n".join(text_values).encode("utf-8")).hexdigest(),
