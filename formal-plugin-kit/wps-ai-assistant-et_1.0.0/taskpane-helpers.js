@@ -40,6 +40,35 @@
     return text;
   }
 
+  function requireExcelSmartFillInstruction(value) {
+    var text = validateExcelSmartFillInstruction(value);
+    if (!String(text || "").trim()) {
+      throw new Error("请填写需要生成什么。");
+    }
+    return text;
+  }
+
+  function createExcelSmartFillItemId() {
+    var randomSource = (typeof globalThis !== "undefined" && globalThis.crypto) ||
+      (typeof crypto !== "undefined" ? crypto : null);
+    var bytes = [];
+    var index;
+    var hex = "";
+    var buffer;
+    if (!randomSource || typeof randomSource.getRandomValues !== "function") {
+      throw new Error("当前环境缺少安全随机源，无法生成智能填写项标识。");
+    }
+    buffer = new Uint8Array(16);
+    randomSource.getRandomValues(buffer);
+    for (index = 0; index < 16; index += 1) {
+      bytes.push(buffer[index]);
+    }
+    for (index = 0; index < bytes.length; index += 1) {
+      hex += ("0" + bytes[index].toString(16)).slice(-2);
+    }
+    return "sf_" + hex;
+  }
+
   function parseExcelA1Cell(address) {
     var match = String(address || "").replace(/^.*!/, "").match(/\$?([A-Za-z]+)\$?([0-9]+)/);
     var letters;
@@ -2623,6 +2652,443 @@
     return result;
   }
 
+  function displayExcelSmartFillSourceAddress(address) {
+    var text = String(address || "").trim();
+    if (text.indexOf("!") >= 0) {
+      text = text.split("!").pop();
+    }
+    return text.replace(/\$/g, "");
+  }
+
+  function formatExcelSmartFillSourceSummary(sheetName, address, headerCount, dataRowCount) {
+    if (!sheetName && !address) {
+      return "数据范围：未检测到当前选区";
+    }
+    return "数据范围：" + sheetName + "!" + address + " · " + headerCount + " 行表头 · " + dataRowCount + " 行数据";
+  }
+
+  function isExcelSmartFillSafetyStateReady(state) {
+    return Boolean(state && state.known === true && state.present === true);
+  }
+
+  function readExcelSmartFillBoundCount(owner, keys) {
+    var objectState = readSmartFillPropertyState(owner, keys, true);
+    var countState;
+    var count;
+    if (!isExcelSmartFillSafetyStateReady(objectState) || !objectState.value) {
+      return { known: false, value: 0 };
+    }
+    countState = readSmartFillPropertyState(objectState.value, ["Count", "count"], false);
+    if (!isExcelSmartFillSafetyStateReady(countState)) {
+      return { known: false, value: 0 };
+    }
+    count = Number(countState.value);
+    if (!isFinite(count) || count <= 0) {
+      return { known: false, value: 0 };
+    }
+    return { known: true, value: count };
+  }
+
+  function readExcelSmartFillRangeAddress(range) {
+    var state = readSmartFillPropertyState(range, ["Address", "address"], false);
+    var text;
+    if (!isExcelSmartFillSafetyStateReady(state)) {
+      return { known: false, value: "" };
+    }
+    text = String(state.value == null ? "" : state.value).trim();
+    if (!text || /^function\b/.test(text)) {
+      return { known: false, value: "" };
+    }
+    return { known: true, value: text };
+  }
+
+  function readExcelSmartFillRangeSheetName(range) {
+    var worksheetState = readSmartFillPropertyState(range, ["Worksheet", "worksheet"], true);
+    var nameState;
+    var name;
+    if (!isExcelSmartFillSafetyStateReady(worksheetState) || !worksheetState.value) {
+      return { known: false, value: "" };
+    }
+    nameState = readSmartFillPropertyState(worksheetState.value, ["Name", "name"], false);
+    if (!isExcelSmartFillSafetyStateReady(nameState)) {
+      return { known: false, value: "" };
+    }
+    name = String(nameState.value == null ? "" : nameState.value).trim();
+    if (!name) {
+      return { known: false, value: "" };
+    }
+    return { known: true, value: name };
+  }
+
+  function canRetryExcelSmartFillFromFrozenSource(source, items) {
+    return Boolean(
+      source &&
+      Array.isArray(source.rows) &&
+      source.rows.length > 0 &&
+      Array.isArray(items) &&
+      items.length > 0
+    );
+  }
+
+  function readExcelSmartFillSourceMetadata(range, options) {
+    var settings = options || {};
+    var maxDataRows = Number(settings.maxSourceRows || 500);
+    var maxSourceColumns = Number(settings.maxSourceColumns || 50);
+    var addressState = range ? readExcelSmartFillRangeAddress(range) : { known: false, value: "" };
+    var sheetState = range ? readExcelSmartFillRangeSheetName(range) : { known: false, value: "" };
+    var expectedSheet = String(settings.sourceSheetName || settings.sheetName || "").trim();
+    var rowsState = range ? readExcelSmartFillBoundCount(range, ["Rows", "rows"]) : { known: false, value: 0 };
+    var columnsState = range ? readExcelSmartFillBoundCount(range, ["Columns", "columns"]) : { known: false, value: 0 };
+    var areasState = range ? readExcelSmartFillBoundCount(range, ["Areas", "areas"]) : { known: true, value: 1 };
+    var rawAddress = addressState.known ? addressState.value : "";
+    var address = displayExcelSmartFillSourceAddress(rawAddress);
+    var sheetName = sheetState.known ? sheetState.value : "";
+    var rows = rowsState.known ? rowsState.value : 0;
+    var columns = columnsState.known ? columnsState.value : 0;
+    var areas = areasState.known ? areasState.value : 0;
+    var headerCount = 0;
+    var dataRowCount = 0;
+    var summary;
+    function fail(error, extra) {
+      extra = extra || {};
+      return {
+        ok: false,
+        error: error,
+        summary: extra.summary || summary || "数据范围：未检测到当前选区",
+        sheetName: extra.sheetName != null ? extra.sheetName : sheetName,
+        address: extra.address != null ? extra.address : address,
+        headerCount: extra.headerCount != null ? extra.headerCount : headerCount,
+        dataRowCount: extra.dataRowCount != null ? extra.dataRowCount : dataRowCount,
+        rawAddress: rawAddress,
+        rowCount: rows,
+        columnCount: columns
+      };
+    }
+
+    if (!range || !rowsState.known || !columnsState.known || !rows || !columns) {
+      return fail("未读取到明确来源区域，请先选中来源数据。", {
+        summary: "数据范围：未检测到当前选区",
+        headerCount: 0,
+        dataRowCount: 0
+      });
+    }
+
+    headerCount = 1;
+    dataRowCount = Math.max(rows - 1, 0);
+    summary = formatExcelSmartFillSourceSummary(
+      sheetName || "当前工作表",
+      address || "未识别地址",
+      headerCount,
+      dataRowCount
+    );
+
+    if (!addressState.known || !parseExcelA1Cell(address || rawAddress)) {
+      return fail("无法读取来源地址，请重新选择来源范围。");
+    }
+
+    if (!areasState.known || areas > 1) {
+      return fail("来源必须是同一工作表中的连续矩形区域。");
+    }
+
+    if (!sheetState.known || !sheetName) {
+      return fail("无法证明来源属于同一工作表。");
+    }
+    if (expectedSheet && expectedSheet !== sheetName) {
+      return fail("无法证明来源属于同一工作表。");
+    }
+
+    if (dataRowCount < 1) {
+      return fail("来源必须包含一行表头和至少一行数据。", { dataRowCount: 0 });
+    }
+
+    if (columns > maxSourceColumns) {
+      return fail("智能填写来源最多支持 " + maxSourceColumns + " 列，不能静默截断。");
+    }
+
+    if (dataRowCount > maxDataRows) {
+      return fail("来源数据行最多 " + maxDataRows + " 行。");
+    }
+
+    return {
+      ok: true,
+      error: "",
+      summary: summary,
+      sheetName: sheetName,
+      address: address,
+      headerCount: headerCount,
+      dataRowCount: dataRowCount,
+      rawAddress: rawAddress,
+      rowCount: rows,
+      columnCount: columns
+    };
+  }
+
+  function analyzeExcelSmartFillSourceRange(range, options) {
+    var settings = options || {};
+    var metadata = readExcelSmartFillSourceMetadata(range, settings);
+    var maxCellTextLength = Number(settings.maxCellTextLength || 2000);
+    var maxTotalTextLength = Number(settings.maxTotalTextLength || 200000);
+    var sheetName = metadata.sheetName;
+    var rawAddress = metadata.rawAddress;
+    var address = metadata.address;
+    var rows = metadata.rowCount;
+    var columns = metadata.columnCount;
+    var headerCount = 0;
+    var dataRowCount = 0;
+    var headers = [];
+    var sourceRows = [];
+    var dataSheetRows = [];
+    var rowIndex;
+    var columnIndex;
+    var cell;
+    var hidden;
+    var merged;
+    var hasHidden = false;
+    var hasMerged = false;
+    var hasUnreadSafety = false;
+    var displayed;
+    var hiddenState;
+    var rowState;
+    var columnState;
+    var rowHidden;
+    var columnHidden;
+    var mergedState;
+    var formulaState;
+    var textState;
+    var totalLength = 0;
+    var summary;
+
+    function getCell(row, column) {
+      var cells = range && range.Cells;
+      if (!cells || typeof cells.Item !== "function") {
+        return null;
+      }
+      return cells.Item(row, column);
+    }
+
+    function bounded(text) {
+      var value = String(text || "");
+      var length = countUnicodeCodePoints(value);
+      if (length > maxCellTextLength) {
+        throw new Error("智能填写单元格文本最多 " + maxCellTextLength + " 个字符，不能静默截断。");
+      }
+      if (totalLength + length > maxTotalTextLength) {
+        throw new Error("智能填写上下文文本总量超过 " + maxTotalTextLength + " 个字符，不能静默截断。");
+      }
+      totalLength += length;
+      return value;
+    }
+
+    if (!metadata.ok) {
+      return {
+        ok: false,
+        error: metadata.error,
+        summary: metadata.summary,
+        sheetName: sheetName,
+        address: address,
+        headerCount: metadata.headerCount,
+        dataRowCount: metadata.dataRowCount,
+        rawAddress: rawAddress,
+        headers: [],
+        rows: [],
+        dataSheetRows: [],
+        columnCount: columns
+      };
+    }
+
+    headerCount = metadata.headerCount;
+    dataRowCount = metadata.dataRowCount;
+    summary = metadata.summary;
+
+    for (rowIndex = 1; rowIndex <= rows; rowIndex += 1) {
+      var rowValues = [];
+      for (columnIndex = 1; columnIndex <= columns; columnIndex += 1) {
+        cell = getCell(rowIndex, columnIndex);
+        if (!cell) {
+          hasUnreadSafety = true;
+          rowValues.push("");
+          continue;
+        }
+        hiddenState = readSmartFillBooleanState(cell, ["Hidden", "hidden"]);
+        rowState = readSmartFillPropertyState(cell, ["EntireRow", "entireRow"], true);
+        columnState = readSmartFillPropertyState(cell, ["EntireColumn", "entireColumn"], true);
+        rowHidden = isExcelSmartFillSafetyStateReady(rowState)
+          ? readSmartFillBooleanState(rowState.value, ["Hidden", "hidden"])
+          : { known: false, present: false, value: null };
+        columnHidden = isExcelSmartFillSafetyStateReady(columnState)
+          ? readSmartFillBooleanState(columnState.value, ["Hidden", "hidden"])
+          : { known: false, present: false, value: null };
+        mergedState = readSmartFillBooleanState(cell, ["MergeCells", "mergeCells"]);
+        formulaState = readSmartFillFormulaState(cell);
+        textState = readSmartFillPropertyState(cell, ["Text", "text"], false);
+        if (!isExcelSmartFillSafetyStateReady(hiddenState) ||
+            !isExcelSmartFillSafetyStateReady(rowHidden) ||
+            !isExcelSmartFillSafetyStateReady(columnHidden) ||
+            !isExcelSmartFillSafetyStateReady(mergedState) ||
+            !formulaState.known ||
+            !isExcelSmartFillSafetyStateReady(textState)) {
+          hasUnreadSafety = true;
+        }
+        hidden = hiddenState.value === true || rowHidden.value === true || columnHidden.value === true;
+        merged = mergedState.value === true;
+        if (hidden) {
+          hasHidden = true;
+        }
+        if (merged) {
+          hasMerged = true;
+        }
+        if (formulaState.isFormula) {
+          displayed = "";
+        } else if (!textState.present || textState.value == null) {
+          displayed = "";
+        } else {
+          displayed = bounded(String(textState.value).replace(/\r/g, ""));
+        }
+        rowValues.push(displayed);
+      }
+      if (rowIndex === 1) {
+        headers = rowValues;
+      } else {
+        sourceRows.push(rowValues);
+        dataSheetRows.push(Number(cell && cell.Row) || rowIndex);
+      }
+    }
+
+    if (hasUnreadSafety) {
+      return {
+        ok: false,
+        error: "无法安全读取来源单元格状态，请取消隐藏或公式单元格后重试。",
+        summary: summary,
+        sheetName: sheetName,
+        address: address,
+        headerCount: headerCount,
+        dataRowCount: dataRowCount,
+        rawAddress: rawAddress,
+        headers: headers,
+        rows: sourceRows,
+        dataSheetRows: dataSheetRows
+      };
+    }
+    if (hasMerged) {
+      return {
+        ok: false,
+        error: "来源不能包含合并单元格。",
+        summary: summary,
+        sheetName: sheetName,
+        address: address,
+        headerCount: headerCount,
+        dataRowCount: dataRowCount,
+        rawAddress: rawAddress,
+        headers: headers,
+        rows: sourceRows,
+        dataSheetRows: dataSheetRows
+      };
+    }
+    if (hasHidden) {
+      return {
+        ok: false,
+        error: "来源不能包含隐藏行、列或单元格。",
+        summary: summary,
+        sheetName: sheetName,
+        address: address,
+        headerCount: headerCount,
+        dataRowCount: dataRowCount,
+        rawAddress: rawAddress,
+        headers: headers,
+        rows: sourceRows,
+        dataSheetRows: dataSheetRows
+      };
+    }
+
+    return {
+      ok: true,
+      error: "",
+      summary: summary,
+      sheetName: sheetName,
+      address: address,
+      headerCount: headerCount,
+      dataRowCount: dataRowCount,
+      rawAddress: rawAddress,
+      headers: headers,
+      rows: sourceRows,
+      dataSheetRows: dataSheetRows,
+      columnCount: columns
+    };
+  }
+
+  function inspectExcelSmartFillSourceSelection(range, options) {
+    var analysis = readExcelSmartFillSourceMetadata(range, options);
+    return {
+      ok: analysis.ok,
+      error: analysis.error,
+      summary: analysis.summary,
+      sheetName: analysis.sheetName,
+      address: analysis.address,
+      headerCount: analysis.headerCount,
+      dataRowCount: analysis.dataRowCount
+    };
+  }
+
+  function extractExcelSmartFillSourcePayload(range, options) {
+    var settings = options || {};
+    var analysis = analyzeExcelSmartFillSourceRange(range, settings);
+    var createItemId = typeof settings.createItemId === "function"
+      ? settings.createItemId
+      : createExcelSmartFillItemId;
+    var source;
+    if (!analysis.ok) {
+      throw new Error(analysis.error);
+    }
+    source = {
+      sheetName: analysis.sheetName,
+      address: analysis.rawAddress,
+      headers: analysis.headers,
+      rows: analysis.rows,
+      rowCount: analysis.rows.length,
+      columnCount: analysis.columnCount,
+      truncated: false
+    };
+    source.snapshotHash = makeTextHash(JSON.stringify({
+      sheetName: source.sheetName,
+      address: source.address,
+      headers: source.headers,
+      rows: source.rows
+    }));
+    return {
+      workbookId: String(settings.workbookId || "active-workbook"),
+      scene: "excel",
+      source: source,
+      items: analysis.rows.map(function (_row, index) {
+        var sheetRow = analysis.dataSheetRows[index] || (index + 2);
+        return {
+          itemId: createItemId(),
+          sourceRowIndex: index + 1,
+          sourceRowLabel: "第 " + sheetRow + " 行"
+        };
+      })
+    };
+  }
+
+  function sliceExcelSmartFillSourceForRetry(source, item) {
+    var index = Number(item && item.sourceRowIndex) - 1;
+    var rows = source && Array.isArray(source.rows) ? source.rows : [];
+    var row;
+    if (!source || index < 0 || index >= rows.length || !Array.isArray(rows[index])) {
+      throw new Error("未找到需要重试的智能填写项。");
+    }
+    row = rows[index].slice();
+    return {
+      sheetName: source.sheetName,
+      address: source.address,
+      snapshotHash: source.snapshotHash || "",
+      headers: Array.isArray(source.headers) ? source.headers.slice() : [],
+      rows: [row],
+      rowCount: 1,
+      columnCount: Number(source.columnCount) || row.length,
+      truncated: false
+    };
+  }
+
   function readExcelSmartFillDisplayCell(cell) {
     var text;
     if (!cell) {
@@ -3142,12 +3608,16 @@
     };
   }
 
-  function buildExcelSmartFillEditorPreview(data, targets, drafts) {
+  function buildExcelSmartFillEditorPreview(data, targets, drafts, options) {
     var items = data && Array.isArray(data.items) ? data.items : [];
     var targetList = Array.isArray(targets) ? targets : [];
     var draftList = Array.isArray(drafts) ? drafts : [];
+    var settings = options || {};
+    var retryEnabled = settings.retryEnabled !== false;
     var draftById = {};
     var targetById = {};
+    var itemById = {};
+    var ordered = [];
     var html = [
       '<div class="smart-fill-preview-head">',
       "<strong>智能填写预览</strong>",
@@ -3167,17 +3637,33 @@
       }
     });
 
-    if (!items.length) {
+    items.forEach(function (item) {
+      if (item && item.itemId) {
+        itemById[item.itemId] = item;
+      }
+    });
+
+    if (targetList.length) {
+      targetList.forEach(function (target) {
+        if (target && target.itemId) {
+          ordered.push(itemById[target.itemId] || target);
+        }
+      });
+    } else {
+      ordered = items.slice();
+    }
+
+    if (!ordered.length) {
       html.push('<p class="field-hint">未返回可展示的目标结果。</p>');
       return html.join("");
     }
 
     html.push('<div class="smart-fill-result-list">');
-    items.forEach(function (item) {
+    ordered.forEach(function (item) {
       var itemId = item ? item.itemId : "";
       var target = targetById[itemId] || {};
       var draft = draftById[itemId] || {};
-      var address = target.address || itemId;
+      var address = target.sourceRowLabel || (item && item.sourceRowLabel) || target.address || itemId;
       var status = draft.status || (item ? item.status : "unprocessed");
       var completed = status === "completed";
       var insufficient = status === "insufficient_information";
@@ -3227,8 +3713,10 @@
           escapeHtml(itemId) + '" value="' + escapeHtml(value) + '"' +
           (inputType === "number" ? ' step="any"' : "") +
           ' aria-label="编辑 ' + escapeHtml(address) + '">',
-        '<button type="button" class="ghost-action mini-button" data-smart-fill-retry="' +
-          escapeHtml(itemId) + '">重新生成此项</button>',
+        retryEnabled
+          ? ('<button type="button" class="ghost-action mini-button" data-smart-fill-retry="' +
+            escapeHtml(itemId) + '">重新生成此项</button>')
+          : "",
         "</div>",
         "</article>"
       );
@@ -3721,6 +4209,13 @@
     createSettingsRefreshController: createSettingsRefreshController,
     extractExcelFormulaSelection: extractExcelFormulaSelection,
     extractExcelSmartFillPayload: extractExcelSmartFillPayload,
+    inspectExcelSmartFillSourceSelection: inspectExcelSmartFillSourceSelection,
+    extractExcelSmartFillSourcePayload: extractExcelSmartFillSourcePayload,
+    sliceExcelSmartFillSourceForRetry: sliceExcelSmartFillSourceForRetry,
+    canRetryExcelSmartFillFromFrozenSource: canRetryExcelSmartFillFromFrozenSource,
+    displayExcelSmartFillSourceAddress: displayExcelSmartFillSourceAddress,
+    createExcelSmartFillItemId: createExcelSmartFillItemId,
+    requireExcelSmartFillInstruction: requireExcelSmartFillInstruction,
     validateExcelSmartFillInstruction: validateExcelSmartFillInstruction,
     sanitizeExcelSmartFillSource: sanitizeExcelSmartFillSource,
     buildExcelSmartFillDefaultSource: buildExcelSmartFillDefaultSource,

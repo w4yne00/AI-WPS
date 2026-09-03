@@ -124,6 +124,8 @@
     excelFormulaResumeExpected: false,
     smartFillTarget: null,
     smartFillSource: null,
+    smartFillItems: [],
+    smartFillLiveSource: null,
     smartFillWorkbookId: "",
     smartFillInstruction: "",
     smartFillResult: null,
@@ -274,14 +276,9 @@
   function setAnalysisBusy(isBusy) {
     state.busy = Boolean(isBusy);
     byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
-    if (byId("btn-write-smart-fill")) {
-      byId("btn-write-smart-fill").disabled = state.busy || state.workflowProfileMutationBusy || !state.smartFillResult;
+    if (state.currentMode === "excelSmartFill") {
+      updateSmartFillGenerateEnabled();
     }
-    ["btn-capture-smart-fill-target", "btn-capture-smart-fill-source"].forEach(function (id) {
-      if (byId(id)) {
-        byId(id).disabled = state.busy || state.workflowProfileMutationBusy;
-      }
-    });
     setSmartFillWriteButtonState();
     Array.prototype.forEach.call(
       document.querySelectorAll("[data-formula-mode]"),
@@ -955,11 +952,21 @@
   }
 
   function updateScopeIndicator() {
+    var scopeStrip = byId("scope-strip");
+    if (state.currentMode === "excelSmartFill") {
+      if (scopeStrip) {
+        scopeStrip.hidden = true;
+      }
+      refreshExcelSmartFillSourceSelection();
+      return;
+    }
+    if (scopeStrip) {
+      scopeStrip.hidden = false;
+    }
     try {
       setScopeLine(summarizeExcelRange());
     } catch (error) {
-      setScopeLine(state.currentMode === "excelSmartFill" ? "未检测到当前选区" :
-        (state.currentMode === "excelFormulaAssistant" ? "未检测到明确选区" : "未检测到可分析范围"));
+      setScopeLine(state.currentMode === "excelFormulaAssistant" ? "未检测到明确选区" : "未检测到可分析范围");
     }
   }
 
@@ -1262,138 +1269,138 @@
     });
   }
 
-  function summarizeSmartFillTarget(target) {
-    var itemCount = target && target.items ? target.items.length : 0;
-    return target && itemCount
-      ? [target.sheetName || "当前工作表", target.address || "未识别地址", itemCount + " 个单元格"].join(" / ")
-      : "尚未捕获目标区域。";
-  }
-
   function summarizeSmartFillSource(source) {
     var rowCount = source && source.rowCount || 0;
-    var columnCount = source && source.columnCount || 0;
-    return source && (source.headers || []).length
-      ? [source.sheetName || "当前工作表", source.address || "未识别地址", rowCount + " 行", columnCount + " 列"].join(" / ")
-      : "尚未捕获来源区域。";
+    var sheetName = source && source.sheetName || "当前工作表";
+    var address = helpers.displayExcelSmartFillSourceAddress
+      ? helpers.displayExcelSmartFillSourceAddress(source.address)
+      : String((source && source.address) || "").replace(/\$/g, "");
+    return source
+      ? "数据范围：" + sheetName + "!" + (address || "未识别地址") + " · 1 行表头 · " + rowCount + " 行数据"
+      : "数据范围：未检测到当前选区";
+  }
+
+  function updateSmartFillGenerateEnabled() {
+    var button = byId("btn-run-primary");
+    var instruction = safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value);
+    var sourceOk = Boolean(state.smartFillLiveSource && state.smartFillLiveSource.ok);
+    var instructionOk = Boolean(instruction.trim());
+    if (!button || state.currentMode !== "excelSmartFill") {
+      return;
+    }
+    button.disabled = state.busy || state.workflowProfileMutationBusy || !sourceOk || !instructionOk;
+    if (state.busy) {
+      return;
+    }
+    if (!sourceOk && state.smartFillLiveSource && state.smartFillLiveSource.error) {
+      setNodeTextIfChanged(byId("smart-fill-validation-line"), state.smartFillLiveSource.error);
+    } else if (!instructionOk) {
+      setNodeTextIfChanged(byId("smart-fill-validation-line"), "请填写需要生成什么。");
+    } else {
+      setNodeTextIfChanged(byId("smart-fill-validation-line"), "");
+    }
+  }
+
+  function refreshExcelSmartFillSourceSelection() {
+    var range;
+    var inspection;
+    if (state.currentMode !== "excelSmartFill") {
+      return;
+    }
+    if (!helpers.inspectExcelSmartFillSourceSelection) {
+      inspection = {
+        ok: false,
+        summary: "数据范围：未检测到当前选区",
+        error: "智能填写来源校验组件不可用，请重新打开任务窗格。"
+      };
+    } else {
+      try {
+        range = getSelectionRange(getEtApplication());
+        inspection = helpers.inspectExcelSmartFillSourceSelection(range, {
+          sourceSheetName: readSmartFillSheetName(getActiveSheet(getEtApplication()))
+        });
+      } catch (error) {
+        inspection = {
+          ok: false,
+          summary: "数据范围：未检测到当前选区",
+          error: error && error.message ? error.message : "未读取到明确来源区域，请先选中来源数据。"
+        };
+      }
+    }
+    state.smartFillLiveSource = inspection;
+    setNodeTextIfChanged(byId("smart-fill-source-summary"), inspection.summary);
+    updateSmartFillGenerateEnabled();
   }
 
   function renderSmartFillCaptureState() {
-    var targetReady = Boolean(state.smartFillTarget && state.smartFillTarget.items && state.smartFillTarget.items.length);
-    var sourceReady = Boolean(state.smartFillSource && state.smartFillSource.headers && state.smartFillSource.headers.length);
-    setNodeTextIfChanged(byId("smart-fill-target-summary"), summarizeSmartFillTarget(state.smartFillTarget));
-    setNodeTextIfChanged(byId("smart-fill-source-summary"), summarizeSmartFillSource(state.smartFillSource));
-    setNodeTextIfChanged(
-      byId("smart-fill-validation-line"),
-      targetReady && sourceReady ? "目标和来源已冻结，可以生成预览；来源区域可再次捕获替换。" :
-        (targetReady ? "目标已冻结，将使用目标行的可见上下文；来源区域可再次捕获替换。" : "请先捕获目标区域。")
-    );
-    if (byId("btn-write-smart-fill")) {
-      byId("btn-write-smart-fill").disabled = state.busy || state.workflowProfileMutationBusy || !state.smartFillResult;
-    }
-  }
-
-  function captureExcelSmartFillTarget() {
-    try {
-      var payload = extractExcelSmartFillSelection("target");
-      if (!helpers.validateExcelSmartFillTarget) {
-        throw new Error("智能填写目标校验组件不可用，请重新打开任务窗格。");
-      }
-      helpers.validateExcelSmartFillTarget(payload.target);
-      var context = buildSmartFillDefaultSource(getActiveSheet(getEtApplication()), payload.target);
-      state.smartFillTarget = payload.target;
-      state.smartFillWorkbookId = payload.workbookId || state.smartFillWorkbookId;
-      state.smartFillSource = context;
-
-      var matchesExistingResult = false;
-      if (state.smartFillResult && Array.isArray(state.smartFillResult.items)) {
-        var rItems = state.smartFillResult.items;
-        var tItems = payload.target.items || [];
-        if (rItems.length > 0 && rItems.length === tItems.length) {
-          matchesExistingResult = true;
-          for (var i = 0; i < tItems.length; i += 1) {
-            if (tItems[i].itemId !== rItems[i].itemId) {
-              matchesExistingResult = false;
-              break;
-            }
-          }
-        }
-      }
-
-      if (!matchesExistingResult) {
-        state.smartFillResult = null;
-        state.smartFillPreview = null;
-        state.smartFillDraftItems = [];
-        byId("btn-write-smart-fill").hidden = true;
-      }
-      renderSmartFillCaptureState();
-      setScopeLine(summarizeSmartFillTarget(state.smartFillTarget));
-      if (matchesExistingResult) {
-        renderExcelSmartFillResult(state.smartFillResult);
-        setStatus("目标区域已重新匹配，可直接核对预览并写入内容。");
-      } else {
-        setStatus("目标区域已捕获；已准备目标行可见上下文，来源区域可选。");
-      }
-    } catch (error) {
-      setStatus("捕获目标区域失败：" + error.message);
-    }
-  }
-
-  function captureExcelSmartFillSource() {
-    try {
-      var payload = extractExcelSmartFillSelection("source");
-      if (state.smartFillTarget && state.smartFillTarget.sheetName !== payload.source.sheetName) {
-        throw new Error("来源区域必须与目标区域位于同一工作表。" );
-      }
-      if (!helpers.sanitizeExcelSmartFillSource) {
-        throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
-      }
-      state.smartFillSource = helpers.sanitizeExcelSmartFillSource(payload.source, state.smartFillTarget);
-      state.smartFillWorkbookId = state.smartFillWorkbookId || payload.workbookId || "";
-      state.smartFillResult = null;
-      state.smartFillPreview = null;
-      state.smartFillDraftItems = [];
-      byId("btn-write-smart-fill").hidden = true;
-      renderSmartFillCaptureState();
-      setScopeLine(summarizeSmartFillSource(state.smartFillSource));
-      setStatus("来源区域已捕获；目标和来源均已冻结。" );
-    } catch (error) {
-      setStatus("捕获来源区域失败：" + error.message);
-    }
+    refreshExcelSmartFillSourceSelection();
+    setSmartFillWriteButtonState();
   }
 
   function buildExcelSmartFillRequest(clientJobId) {
-    var target = state.smartFillTarget;
-    var source = state.smartFillSource;
-    var requestTarget;
+    var app = getEtApplication();
+    var workbook = getActiveWorkbook(app);
+    var sheet = getActiveSheet(app);
+    var range = getSelectionRange(app);
+    var workbookId = readSmartFillWorkbookId(workbook);
+    var sheetName = readSmartFillSheetName(sheet);
+    var instruction;
+    var payload;
     var retryItem;
-    if (!target || !target.items || !target.items.length) {
-      throw new Error("请先捕获目标区域。" );
+    if (!helpers.extractExcelSmartFillSourcePayload) {
+      throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
     }
-    if (!source || !source.headers || !source.headers.length) {
-      throw new Error("请先捕获来源区域。" );
-    }
-    if (!state.smartFillWorkbookId) {
-      throw new Error("当前工作簿标识不可用，请重新捕获目标区域。" );
-    }
-    requestTarget = JSON.parse(JSON.stringify(target));
+    instruction = helpers.requireExcelSmartFillInstruction
+      ? helpers.requireExcelSmartFillInstruction(safeText(byId("excel-smart-fill-instruction").value))
+      : safeText(byId("excel-smart-fill-instruction").value);
     if (state.smartFillRetryItemId) {
-      retryItem = requestTarget.items.filter(function (item) {
+      if (!helpers.canRetryExcelSmartFillFromFrozenSource ||
+          !helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)) {
+        throw new Error("冻结来源不可用，请重新生成预览。");
+      }
+      retryItem = (state.smartFillItems || []).filter(function (item) {
         return item.itemId === state.smartFillRetryItemId;
       })[0];
       if (!retryItem) {
-        throw new Error("未找到需要重试的智能填写目标。" );
+        throw new Error("未找到需要重试的智能填写项。");
       }
-      requestTarget.items = [retryItem];
+      if (!state.smartFillWorkbookId) {
+        throw new Error("当前工作簿标识不可用，请重新选择来源范围。");
+      }
+      if (!helpers.sliceExcelSmartFillSourceForRetry) {
+        throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
+      }
+      return {
+        workbookId: state.smartFillWorkbookId,
+        scene: "excel",
+        clientJobId: clientJobId || "",
+        source: helpers.sliceExcelSmartFillSourceForRetry(state.smartFillSource, retryItem),
+        items: [retryItem],
+        userInstruction: instruction
+      };
     }
+    if (!workbookId) {
+      throw new Error("当前工作簿标识不可用，请重新选择来源范围。");
+    }
+    payload = helpers.extractExcelSmartFillSourcePayload(range, {
+      workbookId: workbookId,
+      sourceSheetName: sheetName,
+      maxItems: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxItems,
+      maxSourceRows: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceRows,
+      maxSourceColumns: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceColumns,
+      maxCellTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength,
+      maxTotalTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxTotalTextLength
+    });
+    state.smartFillSource = payload.source;
+    state.smartFillItems = payload.items;
+    state.smartFillWorkbookId = workbookId;
     return {
-      workbookId: state.smartFillWorkbookId,
+      workbookId: workbookId,
       scene: "excel",
       clientJobId: clientJobId || "",
-      target: requestTarget,
-      source: JSON.parse(JSON.stringify(source)),
-      userInstruction: helpers.validateExcelSmartFillInstruction
-        ? helpers.validateExcelSmartFillInstruction(safeText(byId("excel-smart-fill-instruction").value))
-        : safeText(byId("excel-smart-fill-instruction").value)
+      source: JSON.parse(JSON.stringify(payload.source)),
+      items: JSON.parse(JSON.stringify(payload.items)),
+      userInstruction: instruction
     };
   }
 
@@ -1609,11 +1616,11 @@
   }
 
   function smartFillResultAddress(itemId) {
-    var items = state.smartFillTarget && state.smartFillTarget.items || [];
+    var items = state.smartFillItems || [];
     var item = items.filter(function (candidate) {
       return candidate.itemId === itemId;
     })[0];
-    return item ? item.address : itemId;
+    return item ? (item.sourceRowLabel || item.itemId) : itemId;
   }
 
   function buildExcelSmartFillMarkdown(data) {
@@ -1622,7 +1629,7 @@
     var completedCount = items.filter(function (item) { return item.status === "completed"; }).length;
     var lines = [
       "## 智能填写预览",
-      "已生成 " + completedCount + " 个可写入结果；写入前会再次核对目标单元格快照。",
+      "已生成 " + completedCount + " 个预览结果；本版本按来源行展示，不绑定写入地址。",
       ""
     ];
     if (!items.length) {
@@ -1639,7 +1646,7 @@
         (item.status === "completed" ? "" : "（" + item.status + "）")
       );
     });
-    lines.push("", "> 预览不会自动修改工作簿；确认无误后点击“写入内容”。");
+    lines.push("", "> 预览不会自动修改工作簿。本版本只生成来源先行预览，写入位置在后续步骤选择。");
     return lines.join("\n");
   }
 
@@ -1713,8 +1720,8 @@
         '<div class="smart-fill-result-meta">',
         '<label class="smart-fill-result-select">',
         '<input type="checkbox" data-smart-fill-select="' + escapeSmartFillHtml(item.itemId) + '"' +
-          (checked ? " checked" : "") + ' aria-label="选择 ' + escapeSmartFillHtml(target.address || item.itemId) + '">',
-        '<span>' + escapeSmartFillHtml(target.address || item.itemId) + '</span>',
+          (checked ? " checked" : "") + ' aria-label="选择 ' + escapeSmartFillHtml(item.sourceRowLabel || item.itemId) + '">',
+        '<span>' + escapeSmartFillHtml(item.sourceRowLabel || item.itemId) + '</span>',
         '</label>',
         '<span class="smart-fill-result-status ' + statusClass + '">' +
           statusLabel + "</span>",
@@ -1723,7 +1730,7 @@
         '<input class="smart-fill-result-value" type="' + inputType + '" data-smart-fill-value-input="' +
           escapeSmartFillHtml(item.itemId) + '" value="' + escapeSmartFillHtml(value) + '"' +
           (inputType === "number" ? ' step="any"' : "") +
-          ' aria-label="编辑 ' + escapeSmartFillHtml(target.address || item.itemId) + '">',
+          ' aria-label="编辑 ' + escapeSmartFillHtml(item.sourceRowLabel || item.itemId) + '">',
         '<button type="button" class="ghost-action mini-button" data-smart-fill-retry="' +
           escapeSmartFillHtml(item.itemId) + '">重新生成此项</button>',
         '</div>',
@@ -1746,16 +1753,18 @@
           summaryText: "将写入 " + drafts.filter(isSmartFillDraftWriteable).length + " 个单元格；未勾选或信息不足项不会写入。"
         };
     var writableCount = summary.writableCount;
+    var writeBound = Boolean(state.smartFillTarget && state.smartFillTarget.items && state.smartFillTarget.items.length);
     if (!button) {
       return;
     }
-    button.hidden = state.currentMode !== "excelSmartFill" || !state.smartFillResult;
+    button.hidden = state.currentMode !== "excelSmartFill" || !state.smartFillResult || !writeBound;
     button.textContent = writableCount ? "写入内容（" + writableCount + "）" : "写入内容";
-    button.disabled = state.busy || state.workflowProfileMutationBusy || !summary.canWrite ||
-      !targetItems.length;
+    button.disabled = !writeBound || !summary.canWrite || state.busy || state.workflowProfileMutationBusy;
     setNodeTextIfChanged(
       byId("smart-fill-write-summary"),
-      state.smartFillResult ? summary.summaryText : "尚无可写入的智能填写预览。"
+      !state.smartFillResult
+        ? "尚无可写入的智能填写预览。"
+        : (writeBound ? summary.summaryText : "本版本只生成预览，写入目标需在后续步骤选择。")
     );
   }
 
@@ -1805,13 +1814,18 @@
     if (helpers.buildExcelSmartFillEditorPreview) {
       output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
         state.smartFillResult,
-        state.smartFillTarget && state.smartFillTarget.items || [],
-        state.smartFillDraftItems
+        state.smartFillItems || [],
+        state.smartFillDraftItems,
+        {
+          retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+            ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+            : false
+        }
       );
     } else if (helpers.buildExcelSmartFillReadonlyPreview) {
       output.innerHTML = helpers.buildExcelSmartFillReadonlyPreview(
         state.smartFillResult,
-        state.smartFillTarget && state.smartFillTarget.items || []
+        state.smartFillItems || []
       );
     } else {
       output.innerHTML = buildSmartFillPreviewEditor(state.smartFillResult);
@@ -2024,7 +2038,12 @@
           output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
             state.smartFillResult,
             state.smartFillTarget && state.smartFillTarget.items || [],
-            state.smartFillDraftItems
+            state.smartFillDraftItems,
+            {
+              retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+                ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+                : false
+            }
           );
         }
         setSmartFillWriteButtonState();
@@ -2059,7 +2078,12 @@
             output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
               state.smartFillResult,
               state.smartFillTarget && state.smartFillTarget.items || [],
-              state.smartFillDraftItems
+              state.smartFillDraftItems,
+              {
+                retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+                  ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+                  : false
+              }
             );
           }
           setSmartFillWriteButtonState();
@@ -2170,36 +2194,7 @@
     }
   }
   function tryRebindSmartFillTarget(result) {
-    if (state.smartFillTarget && state.smartFillTarget.items && state.smartFillTarget.items.length) {
-      return true;
-    }
-    try {
-      var payload = extractExcelSmartFillSelection("target");
-      if (!payload || !payload.target || !Array.isArray(payload.target.items)) {
-        return false;
-      }
-      var targetItems = payload.target.items;
-      var resultItems = (result && Array.isArray(result.items)) ? result.items : [];
-      if (!resultItems.length || targetItems.length !== resultItems.length) {
-        return false;
-      }
-      for (var i = 0; i < targetItems.length; i += 1) {
-        if (targetItems[i].itemId !== resultItems[i].itemId) {
-          return false;
-        }
-      }
-      if (helpers.validateExcelSmartFillTarget) {
-        helpers.validateExcelSmartFillTarget(payload.target);
-      }
-      state.smartFillTarget = payload.target;
-      state.smartFillWorkbookId = payload.workbookId || state.smartFillWorkbookId;
-      state.smartFillSource = buildSmartFillDefaultSource(getActiveSheet(getEtApplication()), payload.target);
-      renderSmartFillCaptureState();
-      setScopeLine(summarizeSmartFillTarget(state.smartFillTarget));
-      return true;
-    } catch (e) {
-      return false;
-    }
+    return false;
   }
 
   function finalizeExcelSmartFillResult(data) {
@@ -3334,7 +3329,7 @@
     startedAt = state.excelSmartFillPollStartedAt;
     saveExcelSmartFillActiveJob({ jobId: clientJobId, startedAt: startedAt });
     byId("result-view-switch").hidden = true;
-    setScopeLine(summarizeSmartFillTarget(payload.target) + " / 来源 " + summarizeSmartFillSource(payload.source));
+    setScopeLine(summarizeSmartFillSource(payload.source));
     setStatus("正在提交智能填写请求..." );
     setPlainResult("正在等待模型后台生成智能填写预览。" );
     stopWaiting = startExcelSmartFillWaitFeedback();
@@ -4682,6 +4677,9 @@
       ? "公式助手"
       : (state.lastTaskMode === "excelSmartFill" ? "智能填写" : "智能分析");
     document.body.setAttribute("data-task-mode", state.currentMode);
+    if (byId("scope-strip")) {
+      byId("scope-strip").hidden = smartFillMode;
+    }
     byId("task-title").textContent = settingsMode ? "设置" : taskTitle;
     byId("btn-open-settings").classList.toggle("is-back", settingsMode);
     byId("btn-open-settings").setAttribute("title", settingsMode ? "返回" + returnTaskLabel : "打开设置");
@@ -4743,8 +4741,7 @@
     });
     byId("excel-smart-fill-instruction").addEventListener("input", function (event) {
       state.smartFillInstruction = event.target.value;
-      state.smartFillResult = null;
-      byId("btn-write-smart-fill").hidden = true;
+      updateSmartFillGenerateEnabled();
       renderSmartFillCaptureState();
     });
     byId("excel-formula-mode-segment").addEventListener("click", function (event) {
@@ -4763,8 +4760,6 @@
         runExcelAnalysisAction();
       }
     });
-    byId("btn-capture-smart-fill-target").addEventListener("click", captureExcelSmartFillTarget);
-    byId("btn-capture-smart-fill-source").addEventListener("click", captureExcelSmartFillSource);
     byId("btn-write-smart-fill").addEventListener("click", writeExcelSmartFillResult);
     byId("result-output").addEventListener("input", handleSmartFillResultInput);
     byId("result-output").addEventListener("change", handleSmartFillResultChange);

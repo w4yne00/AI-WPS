@@ -466,7 +466,7 @@ class LongTaskCoordinator:
                         raw_results = continuation.snapshot.get("results")
                         if raw_results is not None:
                             final_result = {
-                                "schemaVersion": "excel.smart_fill.v1",
+                                "schemaVersion": "excel.smart_fill.v2",
                                 "items": raw_results,
                                 "provider": str(continuation.snapshot.get("provider", "")),
                                 "processedItemCount": len(raw_results),

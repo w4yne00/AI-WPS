@@ -460,7 +460,7 @@ function testSuccessfulWriteStillConsumesPreviewIfConsumeWouldThrow() {
   assert.strictEqual(preview.consumed, true);
   assert.strictEqual(preview.result, null);
   const ok = helpers.createExcelSmartFillPreview({
-    schemaVersion: "excel.smart_fill.v1",
+    schemaVersion: "excel.smart_fill.v2",
     items: [{ itemId: "target-1", status: "completed", valueType: "text", value: "甲类" }]
   });
   helpers.finalizeExcelSmartFillWriteSuccess(ok);
@@ -493,7 +493,7 @@ function testSmartFillPreviewCannotBeSubmittedTwice() {
   assert.strictEqual(typeof helpers.createExcelSmartFillPreview, "function");
   assert.strictEqual(typeof helpers.consumeExcelSmartFillPreview, "function");
   const preview = helpers.createExcelSmartFillPreview({
-    schemaVersion: "excel.smart_fill.v1",
+    schemaVersion: "excel.smart_fill.v2",
     items: [{ itemId: "target-1", status: "completed", valueType: "text", value: "甲类" }]
   });
   helpers.consumeExcelSmartFillPreview(preview);
@@ -738,14 +738,16 @@ function testWritePreflightHashMatchesSanitizedCapture() {
 function testSmartFillUiContract() {
   [
     'id="excel-smart-fill-options"',
-    'id="btn-capture-smart-fill-target"',
-    'id="btn-capture-smart-fill-source"',
     'id="excel-smart-fill-instruction"',
+    'id="smart-fill-source-summary"',
     'id="btn-write-smart-fill"',
     'id="smart-fill-write-summary"',
-    '生成预览',
-    '写入内容'
+    "写入内容",
+    "需要生成什么？"
   ].forEach((marker) => assert.ok(html.includes(marker), `missing smart fill UI marker: ${marker}`));
+  assert.ok(js.includes("生成预览"));
+  assert.ok(!html.includes('id="btn-capture-smart-fill-target"'));
+  assert.ok(!html.includes('id="btn-capture-smart-fill-source"'));
   assert.ok(ribbon.includes('id="btnAiExcelSmartFill" label="智能填写"'));
   assert.ok(ribbonJs.includes('btnAiExcelSmartFill: "excelSmartFill"'));
   assert.ok(js.includes('var EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE = "excel.smart_fill";'));
@@ -760,7 +762,7 @@ function testSmartFillUiContract() {
   assert.ok(js.includes("finalizeExcelSmartFillWriteSuccess"));
   assert.ok(js.includes("buildExcelSmartFillDefaultSource"));
   assert.ok(js.includes("describeExcelSmartFillHostCell"));
-  assert.ok(js.includes("validateExcelSmartFillInstruction"));
+  assert.ok(js.includes("requireExcelSmartFillInstruction"));
   assert.ok(js.includes("sanitizeExcelSmartFillSource"));
   assert.ok(js.includes("sanitizeExcelSmartFillSource(payload.source, target)"));
   assert.ok(js.includes("EXCEL_SMART_FILL_RESULT_TOO_LARGE"));
@@ -819,7 +821,7 @@ function testSmartFillPartialPreviewContract() {
 
   // Test that helper formats partial preview correctly
   const fullResult = {
-    schemaVersion: "excel.smart_fill.v1",
+    schemaVersion: "excel.smart_fill.v2",
     items: [
       { itemId: "target-1", status: "completed", valueType: "text", value: "已生成标签" },
       { itemId: "target-2", status: "insufficient_information", valueType: "text", value: "" }
@@ -841,7 +843,7 @@ function testSmartFillPartialPreviewContract() {
 
 function testSmartFillUnprocessedReadonlyPreview() {
   const partialResult = {
-    schemaVersion: "excel.smart_fill.v1",
+    schemaVersion: "excel.smart_fill.v2",
     items: [
       { itemId: "target-1", status: "completed", valueType: "text", value: "已生成标签" },
       { itemId: "target-2", status: "unprocessed", valueType: "text", value: "" }
@@ -884,7 +886,7 @@ function testSmartFillCancellationCooperativeNotice() {
 function testSmartFillEditorPreviewRendersEditableFieldsCheckboxesAndRetryButtons() {
   assert.strictEqual(typeof helpers.buildExcelSmartFillEditorPreview, "function");
   const data = {
-    schemaVersion: "excel.smart_fill.v1",
+    schemaVersion: "excel.smart_fill.v2",
     items: [
       { itemId: "target-1", status: "completed", valueType: "text", value: "甲类" },
       { itemId: "target-2", status: "insufficient_information", valueType: "text", value: "" },

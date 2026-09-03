@@ -1559,6 +1559,29 @@ button.danger-action:not(:disabled) {
   grid-template-columns: repeat(2, auto);
 }
 
+@media (max-width: 320px) {
+  body[data-task-mode="excelSmartFill"] .smart-fill-options,
+  body[data-task-mode="excelSmartFill"] .action-bar {
+    min-width: 0;
+  }
+}
+
+body[data-task-mode="excelSmartFill"] #btn-run-primary {
+  width: 100%;
+  min-height: 44px;
+}
+
+body[data-task-mode="excelSmartFill"] .secondary-action {
+  min-height: 36px;
+}
+
+body[data-task-mode="excelSmartFill"] .icon-button {
+  width: 32px;
+  height: 32px;
+  min-width: 44px;
+  min-height: 44px;
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

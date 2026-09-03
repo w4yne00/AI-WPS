@@ -320,7 +320,7 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
     if "撤销" in html or "OnUndo" in js or "OnUndo" in helpers_js:
         raise DeliveryFailure("V0260_SMART_FILL_UNDO_PROMISE")
-    if "excel.smart_fill.v1" not in prompt_text:
+    if "excel.smart_fill.v2" not in prompt_text:
         raise DeliveryFailure("V0260_SMART_FILL_SCHEMA_MISSING")
     if (
         "buildExcelSmartFillReadonlyPreview" not in js
@@ -463,7 +463,7 @@ def audit_smart_fill_reference_workflow(root: Path) -> None:
     workflow = data.get("workflow")
     if not isinstance(workflow, dict):
         raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID workflow_section_missing")
-    if workflow.get("contract_version") != "excel.smart_fill.v1":
+    if workflow.get("contract_version") != "excel.smart_fill.v2":
         raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID contract_version_mismatch")
 
     output = workflow.get("output")
@@ -480,7 +480,7 @@ def audit_smart_fill_reference_workflow(root: Path) -> None:
     if not isinstance(properties, dict):
         raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID schema_properties_invalid")
     schema_ver = properties.get("schemaVersion", {})
-    if schema_ver.get("enum") != ["excel.smart_fill.v1"] and "excel.smart_fill.v1" not in schema_ver.get("enum", []):
+    if schema_ver.get("enum") != ["excel.smart_fill.v2"] and "excel.smart_fill.v2" not in schema_ver.get("enum", []):
         raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_INVALID schema_version_enum_mismatch")
 
     items_prop = properties.get("items", {})

@@ -1,4 +1,5 @@
 from typing import Any, Dict, List, Literal, Optional
+import re
 
 from pydantic import (
     BaseModel,
@@ -549,6 +550,71 @@ class ExcelSmartFillSource(_StrictExcelSmartFillModel):
             raise ValueError("source rows may contain at most 50 columns")
         return value
 
+    @root_validator(skip_on_failure=True)
+    def validate_source_matrix(cls, values):
+        rows = values.get("rows") or []
+        headers = values.get("headers") or []
+        row_count = values.get("row_count")
+        column_count = values.get("column_count")
+        address = values.get("address") or ""
+        if row_count != len(rows):
+            raise ValueError("source rowCount must equal the number of data rows")
+        if column_count != len(headers):
+            raise ValueError("source columnCount must equal the number of headers")
+        if any(len(row) != column_count for row in rows):
+            raise ValueError("source rows must have consistent width")
+        if _parse_smart_fill_a1_rectangle(address) is None:
+            raise ValueError("source address must be a contiguous A1 rectangle")
+        return values
+
+
+_SMART_FILL_ITEM_ID = re.compile(r"^sf_[0-9a-f]{32}$")
+_SMART_FILL_A1_CELL = re.compile(r"^\$?([A-Za-z]+)\$?([0-9]+)$")
+
+
+def _parse_smart_fill_a1_rectangle(address):
+    raw = str(address or "").strip()
+    if "!" in raw:
+        raw = raw.split("!")[-1]
+    parts = [part.strip() for part in raw.split(":") if part.strip()]
+    if not parts or len(parts) > 2:
+        return None
+    start = _SMART_FILL_A1_CELL.match(parts[0])
+    if not start:
+        return None
+    end = _SMART_FILL_A1_CELL.match(parts[-1])
+    if not end:
+        return None
+    return (
+        start.group(1).upper(),
+        int(start.group(2)),
+        end.group(1).upper(),
+        int(end.group(2)),
+    )
+
+
+class ExcelSmartFillItem(_StrictExcelSmartFillModel):
+    item_id: StrictStr = Field(alias="itemId", min_length=8, max_length=128)
+    source_row_index: StrictInt = Field(alias="sourceRowIndex", ge=1, le=500)
+    source_row_label: StrictStr = Field(default="", alias="sourceRowLabel", max_length=128)
+
+    @validator("item_id", pre=True)
+    def validate_fill_item_id(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("item id must be a non-empty string")
+        text = value.strip()
+        if not _SMART_FILL_ITEM_ID.match(text):
+            raise ValueError("item id must be an unguessable sf_ hex token")
+        return text
+
+    @validator("source_row_label", pre=True)
+    def validate_source_row_label(cls, value):
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("source row label must be a string")
+        return value.strip()
+
 
 class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
     workbook_id: StrictStr = Field(
@@ -556,10 +622,10 @@ class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
     )
     scene: Literal["excel"] = "excel"
     client_job_id: StrictStr = Field(default="", alias="clientJobId", max_length=128)
-    target: ExcelSmartFillTarget
+    items: List[ExcelSmartFillItem] = Field(min_items=1, max_items=500)
     source: ExcelSmartFillSource
     user_instruction: StrictStr = Field(
-        default="", alias="userInstruction", max_length=4000
+        alias="userInstruction", min_length=1, max_length=4000
     )
 
     @validator("workbook_id", pre=True)
@@ -568,16 +634,29 @@ class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
             raise ValueError("workbook id must be a non-empty string")
         return value.strip()
 
-    @validator("client_job_id", "user_instruction", pre=True)
-    def validate_smart_fill_optional_text(cls, value):
+    @validator("client_job_id", pre=True)
+    def validate_smart_fill_client_job_id(cls, value):
         if not isinstance(value, str):
             raise ValueError("smart fill text fields must be strings")
+        return value
+
+    @validator("user_instruction", pre=True)
+    def validate_smart_fill_instruction(cls, value):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError("user instruction is required")
+        return value
+
+    @validator("items")
+    def validate_unique_fill_items(cls, value):
+        item_ids = [item.item_id for item in value]
+        if len(item_ids) != len(set(item_ids)):
+            raise ValueError("item ids must be unique")
         return value
 
     @root_validator(skip_on_failure=True)
     def validate_smart_fill_text_budget(cls, values):
         source = values.get("source")
-        target = values.get("target")
+        items = values.get("items") or []
         user_instruction = values.get("user_instruction", "")
         total_text_length = len(user_instruction)
         if source is not None:
@@ -585,13 +664,8 @@ class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
             total_text_length += sum(
                 len(cell) for row in source.rows for cell in row
             )
-        if target is not None:
-            total_text_length += len(target.column_header)
-            total_text_length += sum(len(item) for item in target.row_context)
-            total_text_length += sum(
-                len(item.original_value) + len(item.original_formula)
-                for item in target.items
-            )
+            if len(items) != len(source.rows):
+                raise ValueError("fill items must match source data rows")
         if total_text_length > 200000:
             raise ValueError("smart fill text exceeds 200000 characters")
         return values
