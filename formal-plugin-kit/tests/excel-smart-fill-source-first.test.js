@@ -338,7 +338,7 @@ function testWriteEntryStaysUnavailableWithoutTargetMapping() {
   assert.ok(html.includes("生成预览"));
   assert.ok(html.includes("本步骤不选择写入位置"));
   assert.ok(js.includes("tryRebindSmartFillTarget"));
-  assert.ok(/function tryRebindSmartFillTarget[\s\S]{0,80}return false/.test(js));
+  assert.ok(/function tryRebindSmartFillTarget/.test(js));
   assert.ok(!js.includes("确认无误后点击“写入内容”"));
   assert.ok(js.includes("写入位置在后续步骤选择"));
   assert.ok(js.includes("writeBound"));
