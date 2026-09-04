@@ -1046,12 +1046,31 @@ body[data-task-mode="smartWrite"] #result-output {
   min-width: 0;
 }
 
-.review-issue-item .review-action-row button {
-  min-width: 44px;
+.review-issue-item .review-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-height: 44px;
-  height: 44px;
+}
+
+.review-issue-item .review-action-row button {
+  position: relative;
+  min-width: 44px;
+  min-height: 36px;
+  height: 36px;
   padding: 4px 8px;
   box-sizing: border-box;
+}
+
+.review-issue-item .review-action-row button::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  min-height: 44px;
+  min-width: 44px;
 }
 
 @media (max-width: 320px) {

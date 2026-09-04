@@ -76,6 +76,7 @@ SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
 FORMAT_BLOCK_TYPES = {"paragraph", "heading", "listItem", "table", "caption", "context", "image", "unknown"}
 FORMAT_SCOPES = {"in_scope", "context"}
 FORMAT_ISSUE_STATUSES = {"open", "processed", "ignored"}
+FORMAT_ISSUE_DATA_STATUSES = {"verified", "insufficient", "not_assessable", "restricted"}
 FORMAT_ANCHOR_VERIFICATIONS = {"verified", "unverified"}
 FORMAT_SEVERITY_ORDER = {"error": 0, "warning": 1, "info": 2}
 FORMAT_RULE_PROPERTY_PATHS = {
@@ -139,6 +140,7 @@ FORMAT_DATA_STATUS_DISPLAY_NAMES = {
     "read_failed": "无法识别",
     "insufficient": "数据不足",
     "not_assessable": "无法判定",
+    "restricted": "受限",
 }
 FORMAT_FONT_DISPLAY_NAMES = {
     "simsun": "宋体",
@@ -1259,7 +1261,7 @@ class DeterministicFormatReviewService:
                 "DETERMINISTIC_FORMAT_REVIEW_ISSUE_STATUS_INVALID",
                 "问题处理状态无效。",
             )
-        if data_status and data_status not in {"verified", "insufficient", "not_assessable"}:
+        if data_status and data_status not in FORMAT_ISSUE_DATA_STATUSES:
             raise AdapterError(
                 "DETERMINISTIC_FORMAT_REVIEW_ISSUE_FILTER_INVALID",
                 "问题数据状态筛选值无效。",

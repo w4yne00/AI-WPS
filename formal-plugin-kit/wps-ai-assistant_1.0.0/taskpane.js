@@ -6396,8 +6396,18 @@
     }
     previous.disabled = state.deterministicFormatReviewIssueCursorHistory.length <= 1;
     next.disabled = !pageData.nextCursor;
-    exportJson.onclick = function () { downloadDeterministicFormatReviewExport(jobId, "json"); };
-    exportMarkdown.onclick = function () { downloadDeterministicFormatReviewExport(jobId, "markdown"); };
+    exportJson.onclick = function () {
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(byId("format-review-more-menu"), byId("btn-format-review-more"), false);
+      }
+      downloadDeterministicFormatReviewExport(jobId, "json");
+    };
+    exportMarkdown.onclick = function () {
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(byId("format-review-more-menu"), byId("btn-format-review-more"), false);
+      }
+      downloadDeterministicFormatReviewExport(jobId, "markdown");
+    };
     previous.onclick = function () {
       var history = state.deterministicFormatReviewIssueCursorHistory;
       if (history.length <= 1) { return; }
@@ -7987,6 +7997,30 @@
         );
       }
     });
+    var formatFilterPanelEl = byId("format-review-filter-panel");
+    var formatFilterTriggerEl = byId("btn-format-review-filter");
+    var formatMoreMenuEl = byId("format-review-more-menu");
+    var formatMoreTriggerEl = byId("btn-format-review-more");
+    if (formatFilterPanelEl) {
+      formatFilterPanelEl.addEventListener("focusout", function (event) {
+        if (helpers.handleFormatReviewAnchoredPanelFocusout) {
+          helpers.handleFormatReviewAnchoredPanelFocusout(event, {
+            panel: formatFilterPanelEl,
+            trigger: formatFilterTriggerEl
+          });
+        }
+      });
+    }
+    if (formatMoreMenuEl) {
+      formatMoreMenuEl.addEventListener("focusout", function (event) {
+        if (helpers.handleFormatReviewAnchoredPanelFocusout) {
+          helpers.handleFormatReviewAnchoredPanelFocusout(event, {
+            panel: formatMoreMenuEl,
+            trigger: formatMoreTriggerEl
+          });
+        }
+      });
+    }
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
@@ -8069,6 +8103,18 @@
     document.addEventListener("click", function (event) {
       if (!workflowHelpHeading.contains(event.target) && !workflowHelpPopover.contains(event.target)) {
         setWorkflowHelpOpen(false, false);
+      }
+      var filterPanel = byId("format-review-filter-panel");
+      var filterTrigger = byId("btn-format-review-filter");
+      var moreMenu = byId("format-review-more-menu");
+      var moreTrigger = byId("btn-format-review-more");
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        if (filterPanel && !filterPanel.hidden && !filterPanel.contains(event.target) && (!filterTrigger || !filterTrigger.contains(event.target))) {
+          helpers.setFormatReviewAnchoredPanelOpen(filterPanel, filterTrigger, false);
+        }
+        if (moreMenu && !moreMenu.hidden && !moreMenu.contains(event.target) && (!moreTrigger || !moreTrigger.contains(event.target))) {
+          helpers.setFormatReviewAnchoredPanelOpen(moreMenu, moreTrigger, false);
+        }
       }
     });
     document.addEventListener("keydown", function (event) {

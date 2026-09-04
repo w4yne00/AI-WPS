@@ -2398,7 +2398,8 @@
     unknown: "无法识别",
     read_failed: "无法识别",
     insufficient: "数据不足",
-    not_assessable: "无法判定"
+    not_assessable: "无法判定",
+    restricted: "受限"
   };
   var DETERMINISTIC_FORMAT_REVIEW_STYLE_TEXT = {
     Normal: "正文样式",
@@ -2968,9 +2969,6 @@
     if (String(source.status || "").trim()) {
       count += 1;
     }
-    if (String(source.sort || "source") !== "source") {
-      count += 1;
-    }
     return count;
   }
 
@@ -3060,9 +3058,26 @@
     }
   }
 
+  function handleFormatReviewAnchoredPanelFocusout(event, context) {
+    var panel = context && context.panel;
+    var trigger = context && context.trigger;
+    var relatedTarget = event && (event.relatedTarget || (context && context.relatedTarget));
+    if (!panel || panel.hidden) {
+      return;
+    }
+    if (!relatedTarget || (!panel.contains(relatedTarget) && relatedTarget !== trigger)) {
+      setFormatReviewAnchoredPanelOpen(panel, trigger, false);
+    }
+  }
+
   function formatDeterministicFormatReviewEvidence(issue) {
     var evidence = issue && issue.evidence;
     var first;
+    var parts = [];
+    var kindText = "";
+    var propPath;
+    var sourceId;
+    var status;
     if (!Array.isArray(evidence) || !evidence.length) {
       return "";
     }
@@ -3070,10 +3085,35 @@
     if (!first || typeof first !== "object") {
       return "";
     }
-    if (first.kind || first.propertyPath) {
-      return "格式事实";
+    if (first.kind === "deterministic_format_fact" || first.propertyPath) {
+      kindText = "格式事实";
+    } else if (first.kind === "table_caption_evidence") {
+      kindText = "表格题注证据";
+    } else if (first.kind === "figure_caption_evidence") {
+      kindText = "图片题注证据";
+    } else if (first.kind) {
+      kindText = String(first.kind);
+    } else {
+      kindText = "格式事实";
     }
-    return "";
+    parts.push(kindText);
+
+    propPath = first.propertyPath || (issue && issue.propertyPath);
+    if (propPath && typeof propPath === "string") {
+      parts.push("属性：" + propPath);
+    }
+    sourceId = first.anchorId || first.tableId || first.imageId || (typeof first.source === "string" ? first.source : "");
+    if (sourceId && typeof sourceId === "string") {
+      parts.push("来源：" + sourceId);
+    }
+    status = first.dataStatus || first.evidenceStatus || first.status || (issue && issue.dataStatus);
+    if (status && typeof status === "string") {
+      parts.push("状态：" + (DETERMINISTIC_FORMAT_REVIEW_DATA_STATUS_TEXT[status] || status));
+    }
+    if (evidence.length > 1) {
+      parts.push("共 " + evidence.length + " 项证据");
+    }
+    return parts.join(" · ");
   }
 
   function presentDeterministicFormatReviewIssueView(input) {
@@ -5305,6 +5345,7 @@
     formatDeterministicFormatReviewPageStatus: formatDeterministicFormatReviewPageStatus,
     countEnabledFormatReviewFilters: countEnabledFormatReviewFilters,
     handleFormatReviewAnchoredPanelKeydown: handleFormatReviewAnchoredPanelKeydown,
+    handleFormatReviewAnchoredPanelFocusout: handleFormatReviewAnchoredPanelFocusout,
     setFormatReviewAnchoredPanelOpen: setFormatReviewAnchoredPanelOpen,
     renderReadableDeterministicFormatReview: renderReadableDeterministicFormatReview,
     appendFormatFactDiagnostics: appendFormatFactDiagnostics,

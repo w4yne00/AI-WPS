@@ -6,6 +6,7 @@ const { wordRoot } = require("./support/plugin-roots");
 const helpers = require(path.join(wordRoot, "taskpane-helpers.js"));
 const wordHtml = fs.readFileSync(path.join(wordRoot, "taskpane.html"), "utf8");
 const wordCss = fs.readFileSync(path.join(wordRoot, "taskpane.css"), "utf8");
+const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
 
 function present(input) {
   assert.strictEqual(typeof helpers.presentDeterministicFormatReviewIssueView, "function");
@@ -128,8 +129,41 @@ function testExpandedIssueShowsValuePairAndSecondaryDetails() {
   assert.ok(body.includes("问题说明：字号不符合模板要求。"));
   assert.ok(body.includes("建议：请按模板要求调整字号。"));
   assert.ok(body.includes("证据：格式事实"));
+  assert.ok(body.includes("属性：format.fontSize"));
   assert.ok(!headerSlice(view.html).includes("证据："));
   assert.ok(!body.includes('"kind":"deterministic_format_fact"'));
+}
+
+function testEvidenceFormattingShowsControlledAttributesAndCount() {
+  const view = present({
+    summary: { coverageStatus: "complete" },
+    issues: [
+      {
+        issueId: "table-caption-1",
+        ruleId: "structure.missing_table_caption",
+        role: "table",
+        paragraphIndex: 5,
+        anchorId: "format-table-1",
+        anchorVerification: "verified",
+        currentValue: "table-1",
+        expectedValue: "表题正文",
+        message: "缺少表题",
+        suggestion: "建议添加表题",
+        dataStatus: "restricted",
+        evidence: [
+          { kind: "table_caption_evidence", tableId: "table-1", evidenceStatus: "restricted" },
+          { kind: "table_caption_evidence", tableId: "table-1", evidenceStatus: "restricted" }
+        ],
+        sourceAnchor: { textSnippet: "表格数据", paragraphIndex: 5 }
+      }
+    ]
+  });
+  const html = view.html;
+  assert.ok(html.includes("表格题注证据"));
+  assert.ok(html.includes("来源：table-1"));
+  assert.ok(html.includes("状态：受限"));
+  assert.ok(html.includes("共 2 项证据"));
+  assert.ok(!html.includes('"evidenceStatus":"restricted"'));
 }
 
 function testCaptionAssociationShowsConclusionNotUnrecognized() {
@@ -249,6 +283,8 @@ function testToolbarMovesFiltersAndExportsOffTheFirstScreen() {
   assert.ok(moreMenu.includes("btn-format-review-export-json"));
   assert.ok(moreMenu.includes("btn-format-review-export-markdown"));
   assert.ok(controls.includes("format-review-filter-data-status"));
+  assert.ok(controls.includes('value="not_assessable">无法判定</option>'));
+  assert.ok(controls.includes('value="restricted">受限</option>'));
   assert.ok(controls.includes("format-review-filter-rule"));
   assert.ok(controls.includes("format-review-filter-sort"));
   assert.ok(!controls.includes("id=\"format-review-filter-severity\""));
@@ -285,7 +321,16 @@ function testPageStatusAndFilterCountHelpers() {
       status: "open",
       sort: "rule"
     }),
-    4
+    3
+  );
+  assert.strictEqual(
+    helpers.countEnabledFormatReviewFilters({
+      rule: "",
+      dataStatus: "",
+      status: "",
+      sort: "rule"
+    }),
+    0
   );
 }
 
@@ -334,6 +379,28 @@ function testKeyboardHelperClosesPanelAndMovesFocus() {
   assert.strictEqual(panel.hidden, false);
   assert.strictEqual(trigger.attrs["aria-expanded"], "true");
   assert.deepStrictEqual(events, ["aria:true", "json"]);
+
+  events.length = 0;
+  panel.contains = function (target) { return target === jsonItem || target === mdItem; };
+  // Focusout within panel -> stays open
+  helpers.handleFormatReviewAnchoredPanelFocusout(
+    { relatedTarget: mdItem },
+    { panel: panel, trigger: trigger }
+  );
+  assert.strictEqual(panel.hidden, false);
+  assert.strictEqual(trigger.attrs["aria-expanded"], "true");
+
+  // Focusout to outside element -> closes panel and resets aria-expanded
+  const outsideEl = { tagName: "BODY" };
+  helpers.handleFormatReviewAnchoredPanelFocusout(
+    { relatedTarget: outsideEl },
+    { panel: panel, trigger: trigger }
+  );
+  assert.strictEqual(panel.hidden, true);
+  assert.strictEqual(trigger.attrs["aria-expanded"], "false");
+  assert.ok(wordJs.includes("handleFormatReviewAnchoredPanelFocusout"));
+  assert.ok(wordJs.includes('helpers.setFormatReviewAnchoredPanelOpen(byId("format-review-more-menu")'));
+  assert.ok(wordJs.includes("filterPanel.hidden && !filterPanel.contains(event.target)"));
 }
 
 function testGeometryAndReducedMotion() {
@@ -342,8 +409,14 @@ function testGeometryAndReducedMotion() {
   assert.ok(/min-width:\s*44px/.test(pagerButtons));
   assert.ok(/width:\s*100%/.test(pagerButtons));
   const issueActions = cssRule(".review-issue-item .review-action-row button");
-  assert.ok(/min-height:\s*44px/.test(issueActions));
+  assert.ok(/min-height:\s*36px/.test(issueActions));
+  assert.ok(/height:\s*36px/.test(issueActions));
   assert.ok(/min-width:\s*44px/.test(issueActions));
+  const actionRow = cssRule(".review-issue-item .review-action-row");
+  assert.ok(/min-height:\s*44px/.test(actionRow));
+  const buttonHit = cssRule(".review-issue-item .review-action-row button::after");
+  assert.ok(/min-height:\s*44px/.test(buttonHit));
+  assert.ok(/min-width:\s*44px/.test(buttonHit));
   const icon = cssRule(".format-review-icon-button");
   assert.ok(/width:\s*44px/.test(icon));
   assert.ok(/height:\s*44px/.test(icon));
@@ -360,6 +433,97 @@ function testGeometryAndReducedMotion() {
   const reduced = wordCss.slice(wordCss.indexOf("@media (prefers-reduced-motion: reduce)"));
   assert.ok(reduced.includes(".review-location-card"));
   assert.ok(reduced.includes("transform: none"));
+}
+
+function testRealViewportLayoutWithBrowser() {
+  const { execSync } = require("child_process");
+  try {
+    execSync("which agent-browser", { stdio: "ignore" });
+  } catch (_) {
+    console.log("agent-browser not installed, skipping browser viewport layout assertions");
+    return;
+  }
+  const os = require("os");
+  const tempFile = path.join(os.tmpdir(), `ai-wps-format-review-viewport-${Date.now()}.html`);
+  const view = present({
+    summary: { coverageStatus: "complete", tocExemptionSummary: "目录已自动豁免" },
+    issues: sameLocationIssues()
+  });
+  const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+${wordCss}
+body { margin: 0; padding: 12px; box-sizing: border-box; }
+</style>
+</head>
+<body>
+<div id="deterministic-format-review-issue-controls">
+  <div class="format-review-toolbar">
+    <div class="format-review-filter-wrap">
+      <button id="btn-format-review-filter" class="format-review-icon-button" type="button" aria-expanded="false">
+        <span>筛选</span>
+      </button>
+      <span id="format-review-filter-count" class="format-review-filter-badge">1</span>
+    </div>
+    <div class="format-review-pager">
+      <button id="btn-format-review-previous-page" type="button">上一页</button>
+      <span id="format-review-page-status">第 1 / 6 页</span>
+      <button id="btn-format-review-next-page" type="button">下一页</button>
+    </div>
+    <button id="btn-format-review-more" class="format-review-icon-button" type="button" aria-expanded="false">
+      <span>更多</span>
+    </button>
+  </div>
+</div>
+<div id="format-review-issue-actions">
+  ${view.html}
+</div>
+</body>
+</html>`;
+
+  fs.writeFileSync(tempFile, htmlContent, "utf8");
+  const sessionName = `test-narrow-${Date.now()}`;
+  const run = (cmd) => execSync(`agent-browser --session ${sessionName} ${cmd}`, { encoding: "utf8" });
+  const evalScript = (script) => {
+    const b64 = Buffer.from(script).toString("base64");
+    return run(`eval -b ${b64}`).trim().split("\n").pop();
+  };
+
+  try {
+    run(`open "file://${tempFile}"`);
+
+    // 1. Test at 320x700
+    run("set viewport 320 700");
+    const sw320 = evalScript("document.documentElement.scrollWidth");
+    assert.ok(Number(sw320) <= 320, `scrollWidth at 320 viewport must be <= 320, got ${sw320}`);
+
+    const toolbar320 = evalScript('document.querySelector(".format-review-toolbar").getBoundingClientRect().right <= 320');
+    assert.strictEqual(toolbar320, "true", "toolbar must fit within 320px viewport");
+
+    const card320 = evalScript('document.querySelector(".review-location-card").getBoundingClientRect().right <= 320');
+    assert.strictEqual(card320, "true", "location card must fit within 320px viewport");
+
+    // Expand location card body
+    evalScript('document.querySelector(".review-location-body").hidden = false');
+    const swExpanded320 = evalScript("document.documentElement.scrollWidth");
+    assert.ok(Number(swExpanded320) <= 320, `expanded scrollWidth at 320 viewport must be <= 320, got ${swExpanded320}`);
+
+    const actionRow320 = evalScript('document.querySelector(".review-action-row").getBoundingClientRect().right <= 320');
+    assert.strictEqual(actionRow320, "true", "action row must fit within 320px viewport");
+
+    // 2. Test at 420x900
+    run("set viewport 420 900");
+    const sw420 = evalScript("document.documentElement.scrollWidth");
+    assert.ok(Number(sw420) <= 420, `scrollWidth at 420 viewport must be <= 420, got ${sw420}`);
+
+    const toolbar420 = evalScript('document.querySelector(".format-review-toolbar").getBoundingClientRect().right <= 420');
+    assert.strictEqual(toolbar420, "true", "toolbar must fit within 420px viewport");
+  } finally {
+    try { run("close"); } catch (_) {}
+    try { fs.unlinkSync(tempFile); } catch (_) {}
+  }
 }
 
 function testExportMarkdownStillKeepsIssueTable() {
@@ -395,6 +559,7 @@ function testExportMarkdownStillKeepsIssueTable() {
 testPreviewShowsCoverageAndCountOnly();
 testSameAnchorIssuesFormOneCollapsedLocationCard();
 testExpandedIssueShowsValuePairAndSecondaryDetails();
+testEvidenceFormattingShowsControlledAttributesAndCount();
 testCaptionAssociationShowsConclusionNotUnrecognized();
 testMissingAssociationConclusionDoesNotSayUnrecognized();
 testUnverifiedAnchorDisablesLocateWithoutHidingIt();
@@ -403,6 +568,7 @@ testToolbarMovesFiltersAndExportsOffTheFirstScreen();
 testPageStatusAndFilterCountHelpers();
 testKeyboardHelperClosesPanelAndMovesFocus();
 testGeometryAndReducedMotion();
+testRealViewportLayoutWithBrowser();
 testExportMarkdownStillKeepsIssueTable();
 
 console.log("format review issue card tests passed");
