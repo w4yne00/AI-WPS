@@ -3283,6 +3283,369 @@
     return true;
   }
 
+  function checkExcelSmartFillRangesOverlap(addr1, addr2) {
+    if (!addr1 || !addr2) {
+      return false;
+    }
+    var p1 = String(addr1).replace(/^.*!/, "").split(":");
+    var p2 = String(addr2).replace(/^.*!/, "").split(":");
+    var r1Start = parseExcelA1Cell(p1[0]);
+    var r1End = parseExcelA1Cell(p1[1] || p1[0]);
+    var r2Start = parseExcelA1Cell(p2[0]);
+    var r2End = parseExcelA1Cell(p2[1] || p2[0]);
+    if (!r1Start || !r1End || !r2Start || !r2End) {
+      return false;
+    }
+    var r1MinRow = Math.min(r1Start.row, r1End.row);
+    var r1MaxRow = Math.max(r1Start.row, r1End.row);
+    var r1MinCol = Math.min(r1Start.column, r1End.column);
+    var r1MaxCol = Math.max(r1Start.column, r1End.column);
+    var r2MinRow = Math.min(r2Start.row, r2End.row);
+    var r2MaxRow = Math.max(r2Start.row, r2End.row);
+    var r2MinCol = Math.min(r2Start.column, r2End.column);
+    var r2MaxCol = Math.max(r2Start.column, r2End.column);
+    return Math.max(r1MinRow, r2MinRow) <= Math.min(r1MaxRow, r2MaxRow) &&
+           Math.max(r1MinCol, r2MinCol) <= Math.min(r1MaxCol, r2MaxCol);
+  }
+
+  function getSmartFillRangeCell(range, relativeRow, relativeCol, sheetRow, sheetCol) {
+    if (!range) {
+      return null;
+    }
+    var cells = range.Cells || range.cells;
+    if (cells && typeof cells.Item === "function") {
+      try {
+        var cell = cells.Item(relativeRow, relativeCol);
+        if (cell) {
+          return cell;
+        }
+      } catch (err) {}
+      try {
+        var absCell = cells.Item(sheetRow, sheetCol);
+        if (absCell) {
+          return absCell;
+        }
+      } catch (err2) {}
+    }
+    if (cells && typeof cells === "object") {
+      return cells[sheetRow + "," + sheetCol] || cells[relativeRow + "," + relativeCol] || null;
+    }
+    return null;
+  }
+
+  function inspectExcelSmartFillTargetSelection(range, options) {
+    var settings = options || {};
+    var source = settings.source || {};
+    var expectedSheet = settings.sourceSheetName || source.sheetName || "";
+    var expectedAddress = settings.sourceAddress || source.address || "";
+    var previewItems = Array.isArray(settings.previewItems) ? settings.previewItems : [];
+    var draftItems = Array.isArray(settings.draftItems) ? settings.draftItems : [];
+    var expectedCount = typeof settings.itemCount === "number" ? settings.itemCount : previewItems.length;
+    var rawAddress;
+    var address;
+    var sheetName;
+    var rows;
+    var columns;
+    var areas;
+
+    if (!range) {
+      return {
+        ok: false,
+        summary: "写入位置：未检测到目标选区",
+        error: "未读取到明确目标区域，请先在工作表中选择目标单元格。"
+      };
+    }
+
+    try {
+      rawAddress = typeof range.Address === "function" ? range.Address() : range.Address;
+    } catch (e) {
+      rawAddress = "";
+    }
+    if (!rawAddress) {
+      return {
+        ok: false,
+        summary: "写入位置：未检测到目标选区",
+        error: "未读取到明确目标区域，请先在工作表中选择目标单元格。"
+      };
+    }
+
+    address = displayExcelSmartFillSourceAddress(rawAddress);
+    try {
+      sheetName = (range.Worksheet && range.Worksheet.Name) || settings.targetSheetName || "";
+    } catch (e) {
+      sheetName = settings.targetSheetName || "";
+    }
+    try {
+      rows = Number((range.Rows && range.Rows.Count) || 0);
+      columns = Number((range.Columns && range.Columns.Count) || 0);
+      areas = Number((range.Areas && range.Areas.Count) || 1);
+    } catch (e) {
+      return {
+        ok: false,
+        summary: "写入位置：" + address,
+        error: "无法安全读取目标区域尺寸，请重新选择目标。"
+      };
+    }
+
+    // 1. Same worksheet
+    if (expectedSheet && sheetName && sheetName !== expectedSheet) {
+      return {
+        ok: false,
+        sheetName: sheetName,
+        address: address,
+        rawAddress: rawAddress,
+        cellCount: rows,
+        summary: "写入位置：" + address,
+        error: "目标区域必须与来源位于同一工作表（" + expectedSheet + "）。"
+      };
+    }
+
+    // 2. Single column continuous
+    if (areas > 1 || columns !== 1) {
+      return {
+        ok: false,
+        sheetName: sheetName,
+        address: address,
+        rawAddress: rawAddress,
+        cellCount: rows,
+        summary: "写入位置：" + address,
+        error: "目标区域必须是连续单列区域。"
+      };
+    }
+
+    // 3. Count matching total preview items
+    if (expectedCount > 0 && rows !== expectedCount) {
+      return {
+        ok: false,
+        sheetName: sheetName,
+        address: address,
+        rawAddress: rawAddress,
+        cellCount: rows,
+        summary: "写入位置：" + address,
+        error: "目标单元格数量（" + rows + "）与填写项数量（" + expectedCount + "）不一致，请选择包含 " + expectedCount + " 个单元格的单列区域。"
+      };
+    }
+
+    // 4. Overlap with source
+    if (expectedAddress && checkExcelSmartFillRangesOverlap(expectedAddress, rawAddress)) {
+      return {
+        ok: false,
+        sheetName: sheetName,
+        address: address,
+        rawAddress: rawAddress,
+        cellCount: rows,
+        summary: "写入位置：" + address,
+        error: "目标区域不得与来源数据区域重叠。"
+      };
+    }
+
+    // 5. Check cell safety & count overwrites
+    var origin = parseExcelA1Cell(String(rawAddress).split(":")[0]);
+    var startRow = origin ? origin.row : 1;
+    var startCol = origin ? origin.column : 1;
+    var draftById = {};
+    draftItems.forEach(function (d) {
+      if (d && d.itemId) {
+        draftById[d.itemId] = d;
+      }
+    });
+
+    var writableCount = 0;
+    var overwriteCount = 0;
+    var r;
+    for (r = 1; r <= rows; r += 1) {
+      var sheetRow = startRow + r - 1;
+      var cell = getSmartFillRangeCell(range, r, 1, sheetRow, startCol);
+      if (!cell) {
+        return {
+          ok: false,
+          sheetName: sheetName,
+          address: address,
+          rawAddress: rawAddress,
+          summary: "写入位置：" + address,
+          error: "无法安全读取目标单元格状态。"
+        };
+      }
+      var snapshot = readSmartFillCellSnapshot(cell);
+      if (!snapshot || !snapshot.readable) {
+        return {
+          ok: false,
+          sheetName: sheetName,
+          address: address,
+          rawAddress: rawAddress,
+          summary: "写入位置：" + address,
+          error: "无法安全读取目标单元格状态。"
+        };
+      }
+      if (snapshot.isFormula) {
+        return {
+          ok: false,
+          sheetName: sheetName,
+          address: address,
+          rawAddress: rawAddress,
+          summary: "写入位置：" + address,
+          error: "目标区域包含公式单元格，智能填写禁止覆盖公式。"
+        };
+      }
+      if (snapshot.isMerged) {
+        return {
+          ok: false,
+          sheetName: sheetName,
+          address: address,
+          rawAddress: rawAddress,
+          summary: "写入位置：" + address,
+          error: "目标区域包含合并单元格，智能填写不支持写入合并单元格。"
+        };
+      }
+      if (snapshot.isHidden) {
+        return {
+          ok: false,
+          sheetName: sheetName,
+          address: address,
+          rawAddress: rawAddress,
+          summary: "写入位置：" + address,
+          error: "目标区域包含隐藏单元格，无法执行智能填写。"
+        };
+      }
+      if (snapshot.isProtected) {
+        return {
+          ok: false,
+          sheetName: sheetName,
+          address: address,
+          rawAddress: rawAddress,
+          summary: "写入位置：" + address,
+          error: "目标区域包含受保护单元格，无法执行智能填写。"
+        };
+      }
+
+      var previewItem = previewItems[r - 1];
+      var itemId = previewItem ? previewItem.itemId : "";
+      var draft = itemId ? draftById[itemId] : null;
+      var isCompleted = previewItem ? previewItem.status === "completed" : false;
+      var isSelected = draft ? Boolean(draft.selected) : isCompleted;
+      var isWriteable = isCompleted && isSelected && (!draft || Boolean(String(draft.value || "").trim()));
+      if (isWriteable) {
+        writableCount += 1;
+        var existingText = String(snapshot.rawValue != null ? snapshot.rawValue : (snapshot.text || "")).trim();
+        if (snapshot.valueType !== "blank" && existingText.length > 0) {
+          overwriteCount += 1;
+        }
+      }
+    }
+
+    return {
+      ok: true,
+      sheetName: sheetName,
+      address: address,
+      rawAddress: rawAddress,
+      cellCount: rows,
+      writableCount: writableCount,
+      overwriteCount: overwriteCount,
+      summary: "写入位置：" + address + " · " + rows + " 个单元格 · 将写入 " + writableCount + " 项",
+      error: ""
+    };
+  }
+
+  function mapExcelSmartFillPreviewToTarget(range, options) {
+    var settings = options || {};
+    var source = settings.source || {};
+    var previewItems = Array.isArray(settings.previewItems) ? settings.previewItems : [];
+    var inspection = inspectExcelSmartFillTargetSelection(range, settings);
+    if (!inspection.ok) {
+      throw new Error(inspection.error || "目标选区无效。");
+    }
+    var origin = parseExcelA1Cell(String(inspection.rawAddress).split(":")[0]);
+    var startRow = origin ? origin.row : 1;
+    var startCol = origin ? origin.column : 1;
+
+    var jobId = String(settings.jobId || "");
+    var workbookId = String(settings.workbookId || "");
+    var sourceSnapshotHash = String((source && source.snapshotHash) || settings.sourceSnapshotHash || "");
+    var resultRevision = settings.resultRevision || 1;
+
+    var targetItems = previewItems.map(function (item, index) {
+      var sheetRow = startRow + index;
+      var sheetColumn = startCol;
+      var colLetters = "";
+      var tempCol = sheetColumn;
+      while (tempCol > 0) {
+        var rem = (tempCol - 1) % 26;
+        colLetters = String.fromCharCode(65 + rem) + colLetters;
+        tempCol = Math.floor((tempCol - 1) / 26);
+      }
+      var cellAddress = "$" + colLetters + "$" + sheetRow;
+      var cell = getSmartFillRangeCell(range, index + 1, 1, sheetRow, sheetColumn);
+      if (!cell) {
+        throw new Error("无法安全读取目标单元格状态。");
+      }
+      var snapshot = readSmartFillCellSnapshot(cell);
+      if (!snapshot || !snapshot.readable) {
+        throw new Error("无法安全读取目标单元格状态。");
+      }
+      if (snapshot.isFormula) {
+        throw new Error("目标区域包含公式单元格，智能填写禁止覆盖公式。");
+      }
+      if (snapshot.isMerged) {
+        throw new Error("目标区域包含合并单元格，智能填写不支持写入合并单元格。");
+      }
+      if (snapshot.isHidden) {
+        throw new Error("目标区域包含隐藏单元格，无法执行智能填写。");
+      }
+      if (snapshot.isProtected) {
+        throw new Error("目标区域包含受保护单元格，无法执行智能填写。");
+      }
+
+      return {
+        itemId: item.itemId,
+        address: cellAddress,
+        row: sheetRow,
+        column: sheetColumn,
+        originalValue: String(snapshot.rawValue == null ? "" : snapshot.rawValue),
+        originalValueType: snapshot.valueType || "blank",
+        originalFormula: snapshot.formula || "",
+        isFormula: snapshot.isFormula || false,
+        isMerged: snapshot.isMerged || false,
+        isProtected: snapshot.isProtected || false,
+        isHidden: snapshot.isHidden || false,
+        snapshotHash: snapshot.snapshotHash || "",
+        originalSnapshot: snapshot
+      };
+    });
+
+    var target = {
+      sheetName: inspection.sheetName,
+      address: inspection.rawAddress,
+      columnHeader: "",
+      items: targetItems
+    };
+
+    var commitContext = {
+      jobId: jobId,
+      workbookId: workbookId,
+      sourceSnapshotHash: sourceSnapshotHash,
+      resultRevision: resultRevision,
+      targetSheetName: inspection.sheetName,
+      targetAddress: inspection.rawAddress,
+      itemCount: targetItems.length
+    };
+
+    return {
+      ok: true,
+      jobId: jobId,
+      schemaVersion: "excel.smart_fill.v2",
+      workbookId: workbookId,
+      sourceSnapshotHash: sourceSnapshotHash,
+      resultRevision: resultRevision,
+      sheetName: inspection.sheetName,
+      address: inspection.rawAddress,
+      items: targetItems,
+      target: target,
+      commitContext: commitContext,
+      writableCount: inspection.writableCount,
+      overwriteCount: inspection.overwriteCount
+    };
+  }
+
   function scalarText(value) {
     return toSafeString(value, "").replace(/\r/g, "");
   }
@@ -3490,13 +3853,25 @@
   }
 
   function sameSmartFillSnapshot(item, current) {
-    return String(item.originalValue || "") === current.text &&
+    if (item && item.originalSnapshot) {
+      return sameSmartFillSnapshotState(item.originalSnapshot, current);
+    }
+    var valueMatches = Boolean(
+      item && current && (
+        String(item.originalValue || "") === current.text ||
+        (current.rawValue != null && String(item.originalValue || "") === String(current.rawValue))
+      )
+    );
+    return Boolean(
+      item && current && current.readable &&
+      valueMatches &&
       String(item.originalFormula || "") === current.formula &&
       Boolean(item.isFormula) === current.isFormula &&
       Boolean(item.isMerged) === current.isMerged &&
       Boolean(item.isProtected) === current.isProtected &&
       Boolean(item.isHidden) === current.isHidden &&
-      (!item.originalValueType || item.originalValueType === current.valueType);
+      (!item.originalValueType || item.originalValueType === current.valueType)
+    );
   }
 
   function sameSmartFillSnapshotState(expected, current) {
@@ -3516,8 +3891,12 @@
         expected.rawValue.getTime() === current.rawValue.getTime()) {
       rawValuesEqual = true;
     }
+    var textMatches = Boolean(
+      expected.text === current.text ||
+      (rawValuesEqual && (expected.valueType === "number" || expected.valueType === "date"))
+    );
     return Boolean(expected && current && current.readable && rawValuesEqual &&
-      expected.text === current.text &&
+      textMatches &&
       expected.formula === current.formula &&
       expected.isFormula === current.isFormula &&
       expected.isMerged === current.isMerged &&
@@ -3693,17 +4072,18 @@
 
       var valueType = draft.valueType || (item && item.valueType) || "text";
       var inputType = valueType === "number" ? "number" : "text";
-
+      var interactive = completed && !conflict;
       var checked = typeof draft.selected !== "undefined"
-        ? Boolean(draft.selected)
-        : (completed && !conflict);
+        ? (interactive && Boolean(draft.selected))
+        : interactive;
+      var disabledAttr = interactive ? "" : ' disabled="disabled"';
 
       html.push(
         '<article class="smart-fill-result-item" data-smart-fill-item-id="' + escapeHtml(itemId) + '">',
         '<div class="smart-fill-result-meta">',
         '<label class="smart-fill-result-select">',
         '<input type="checkbox" data-smart-fill-select="' + escapeHtml(itemId) + '"' +
-          (checked ? " checked" : "") + ' aria-label="选择 ' + escapeHtml(address) + '">',
+          (checked ? " checked" : "") + disabledAttr + ' aria-label="选择 ' + escapeHtml(address) + '">',
         "<span>" + escapeHtml(address) + "</span>",
         "</label>",
         '<span class="smart-fill-result-status ' + statusClass + '">' + statusLabel + "</span>",
@@ -3712,6 +4092,7 @@
         '<input class="smart-fill-result-value" type="' + inputType + '" data-smart-fill-value-input="' +
           escapeHtml(itemId) + '" value="' + escapeHtml(value) + '"' +
           (inputType === "number" ? ' step="any"' : "") +
+          disabledAttr +
           ' aria-label="编辑 ' + escapeHtml(address) + '">',
         retryEnabled
           ? ('<button type="button" class="ghost-action mini-button" data-smart-fill-retry="' +
@@ -3798,14 +4179,35 @@
     };
   }
 
-  function writeExcelSmartFillCells(targetItems, results, getCell) {
+  function writeExcelSmartFillCells(targetItems, results, getCell, options) {
     var items = Array.isArray(targetItems) ? targetItems : [];
     var output = Array.isArray(results) ? results : [];
+    var settings = options || {};
+    var commitContext = settings.commitContext || (settings.jobId ? settings : null);
     var resultById = {};
     var plans = [];
     var written = [];
     var totalPlanCodePoints = 0;
     var index;
+
+    if (commitContext) {
+      if (!commitContext.jobId || typeof commitContext.jobId !== "string" || !commitContext.jobId.trim()) {
+        throw new Error("提交映射缺少有效的任务标识。");
+      }
+      if (!commitContext.workbookId || typeof commitContext.workbookId !== "string" || !commitContext.workbookId.trim()) {
+        throw new Error("提交映射缺少有效的工作簿标识。");
+      }
+      if (!commitContext.sourceSnapshotHash || typeof commitContext.sourceSnapshotHash !== "string" || !commitContext.sourceSnapshotHash.trim()) {
+        throw new Error("提交映射缺少有效的来源快照哈希。");
+      }
+      if (typeof commitContext.itemCount === "number" && commitContext.itemCount !== items.length) {
+        throw new Error("提交映射目标单元格数量与实际不符。");
+      }
+      if (commitContext.targetSheetName && items[0] && items[0].sheetName &&
+          commitContext.targetSheetName !== items[0].sheetName) {
+        throw new Error("提交映射工作表与目标不符。");
+      }
+    }
 
     if (items.length !== output.length || typeof getCell !== "function") {
       throw new Error("智能填写结果与目标单元格数量不一致。");
@@ -3827,7 +4229,7 @@
       if (!result) {
         throw new Error("智能填写结果缺少目标单元格。");
       }
-      if (result.status === "insufficient_information") {
+      if (result.status === "insufficient_information" || result.status === "failed" || result.status === "unprocessed" || result.skip === true) {
         plans.push({ item: item, cell: null, result: result, current: null, skip: true });
         continue;
       }
@@ -4441,6 +4843,8 @@
     describeExcelSmartFillHostCell: describeExcelSmartFillHostCell,
     finalizeExcelSmartFillWriteSuccess: finalizeExcelSmartFillWriteSuccess,
     validateExcelSmartFillTarget: validateExcelSmartFillTarget,
+    inspectExcelSmartFillTargetSelection: inspectExcelSmartFillTargetSelection,
+    mapExcelSmartFillPreviewToTarget: mapExcelSmartFillPreviewToTarget,
     writeExcelSmartFillCells: writeExcelSmartFillCells,
     createExcelSelectionWatcher: createExcelSelectionWatcher,
     canDeleteWorkflowProfile: canDeleteWorkflowProfile,
