@@ -474,7 +474,11 @@ class WordFormatReviewer:
             deterministic_role = classify_role_fact(fact)
             role_result = deterministic_role
             ai_role = ai_roles.get(paragraph.index)
-            if isinstance(ai_role, dict) and ai_role.get("status") == "confirmed":
+            if (
+                isinstance(ai_role, dict)
+                and ai_role.get("status") == "confirmed"
+                and ai_role.get("role") not in {"toc_title", "toc_entry"}
+            ):
                 if deterministic_role.get("status") != "confirmed":
                     if deterministic_role.get("status") != "conflict":
                         role_result = {

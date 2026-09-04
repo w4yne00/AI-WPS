@@ -167,7 +167,40 @@ class ManualAndSuspectedTocValidationTests(unittest.TestCase):
     def test_rejects_invalid_suspected_toc_paragraph_indexes(self):
         with self.assertRaises(AdapterError) as ctx:
             DeterministicFormatReviewService._normalize_source_coverage({
-                "suspectedTocRegions": [{"source": "suspected_toc", "paragraphIndexes": [-1]}]
+                "suspectedTocRegions": [{"source": "suspected_toc", "paragraphIndexes": [-1], "reason": "insufficient"}]
+            })
+        self.assertEqual(ctx.exception.code, "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID")
+
+    def test_rejects_missing_or_empty_suspected_toc_reason(self):
+        with self.assertRaises(AdapterError) as ctx:
+            DeterministicFormatReviewService._normalize_source_coverage({
+                "suspectedTocRegions": [{"source": "suspected_toc", "paragraphIndexes": [1, 2]}]
+            })
+        self.assertEqual(ctx.exception.code, "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID")
+
+        with self.assertRaises(AdapterError) as ctx:
+            DeterministicFormatReviewService._normalize_source_coverage({
+                "suspectedTocRegions": [{"source": "suspected_toc", "paragraphIndexes": [1, 2], "reason": "   "}]
+            })
+        self.assertEqual(ctx.exception.code, "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID")
+
+    def test_rejects_non_continuous_suspected_toc_paragraph_indexes(self):
+        with self.assertRaises(AdapterError) as ctx:
+            DeterministicFormatReviewService._normalize_source_coverage({
+                "suspectedTocRegions": [{"source": "suspected_toc", "paragraphIndexes": [1, 3], "reason": "insufficient"}]
+            })
+        self.assertEqual(ctx.exception.code, "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID")
+
+    def test_rejects_mismatched_suspected_toc_start_end_bounds(self):
+        with self.assertRaises(AdapterError) as ctx:
+            DeterministicFormatReviewService._normalize_source_coverage({
+                "suspectedTocRegions": [{
+                    "source": "suspected_toc",
+                    "startParagraphIndex": 1,
+                    "endParagraphIndex": 2,
+                    "paragraphIndexes": [100, 101],
+                    "reason": "insufficient",
+                }]
             })
         self.assertEqual(ctx.exception.code, "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID")
 
@@ -250,14 +283,14 @@ class ManualAndSuspectedTocReviewerTests(unittest.TestCase):
                         "confidence": 0.99,
                     }
                 },
-                {"aiAttempted": True, "aiAcceptedCount": 1, "semanticStatus": "enhanced"},
                 1,
+                {"aiAttempted": True, "aiAcceptedCount": 1, "semanticStatus": "enhanced"},
             )
 
-        reviewer._classify_roles_with_model = fake_classify
+        reviewer._classify_roles_with_ai = fake_classify
         # Empty coverage: no auto/manual toc and no suspected toc
         payload = _document_payload(toc_regions=None, suspected_toc_regions=None)
-        result = reviewer.review(parse_word_request(payload))
+        result = reviewer.review(parse_word_request(payload), trace_id="trace-test-toc-exempt")
 
         # Paragraph 3 must NOT be exempted by AI alone
         para3_issues = [
@@ -265,6 +298,8 @@ class ManualAndSuspectedTocReviewerTests(unittest.TestCase):
             if issue.get("paragraphIndex") == 3
         ]
         self.assertTrue(para3_issues)
+        rule_ids = {issue.get("ruleId") for issue in para3_issues}
+        self.assertNotIn("structure.role_mapping", rule_ids)
         self.assertFalse(result["summary"].get("exemptedTocRegionCount"))
 
     def test_render_readable_report_discloses_exempted_and_suspected_toc_separately(self):

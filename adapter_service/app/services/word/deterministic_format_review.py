@@ -2605,6 +2605,13 @@ class DeterministicFormatReviewService:
                         "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
                         "疑似目录区域来源不受支持。",
                     )
+                raw_reason = item.get("reason")
+                if not isinstance(raw_reason, str) or not raw_reason.strip():
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域必须提供非空判定原因。",
+                    )
+                reason = raw_reason.strip()[:120]
                 raw_indexes = item.get("paragraphIndexes")
                 if not isinstance(raw_indexes, list) or not raw_indexes or len(raw_indexes) > 500:
                     raise AdapterError(
@@ -2618,24 +2625,34 @@ class DeterministicFormatReviewService:
                             "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
                             "疑似目录段落序号必须是正整数。",
                         )
-                    if raw_index not in indexes:
-                        indexes.append(raw_index)
+                    indexes.append(raw_index)
+                for i in range(len(indexes) - 1):
+                    if indexes[i + 1] != indexes[i] + 1:
+                        raise AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                            "疑似目录段落序号必须有序且连续。",
+                        )
                 raw_start = item.get("startParagraphIndex")
                 raw_end = item.get("endParagraphIndex")
-                start_idx = raw_start if type(raw_start) is int else indexes[0]
-                end_idx = raw_end if type(raw_end) is int else indexes[-1]
-                if start_idx <= 0 or end_idx <= 0 or start_idx > end_idx:
+                if raw_start is not None and (type(raw_start) is not int or raw_start != indexes[0]):
                     raise AdapterError(
                         "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
-                        "疑似目录区域边界无效。",
+                        "疑似目录区域起始段落序号与段落列表不一致。",
                     )
+                if raw_end is not None and (type(raw_end) is not int or raw_end != indexes[-1]):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域结束段落序号与段落列表不一致。",
+                    )
+                start_idx = indexes[0]
+                end_idx = indexes[-1]
                 normalized_suspected.append({
                     "regionId": str(item.get("regionId") or "suspected-toc-{0}".format(len(normalized_suspected) + 1))[:64],
                     "source": "suspected_toc",
                     "startParagraphIndex": start_idx,
                     "endParagraphIndex": end_idx,
                     "paragraphIndexes": indexes,
-                    **({"reason": str(item["reason"])[:120]} if item.get("reason") else {}),
+                    "reason": reason,
                 })
             if normalized_suspected:
                 result["suspectedTocRegions"] = normalized_suspected

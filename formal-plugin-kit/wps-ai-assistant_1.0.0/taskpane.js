@@ -7489,6 +7489,7 @@
           ? helpers.collectFormatReviewCoverage(document) : {};
         if (scope.selectionMode === "selection") {
           delete cov.tocRegions;
+          delete cov.suspectedTocRegions;
         }
         return cov;
       })(),

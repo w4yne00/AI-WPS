@@ -4242,7 +4242,8 @@
   }
 
   var MANUAL_TOC_TITLE_RE = /^(?:目\s*录|contents|table\s+of\s+contents)$/i;
-  var NUMBERED_ENTRY_RE = /^(?:第[0-9一二三四五六七八九十]+[章节篇部分]|(?:[0-9]+(?:\.[0-9]+)*|[一二三四五六七八九十]+|[（(][0-9一二三四五六七八九十]+[)）])(?:\s*、|\s*[\.．]|\s*)|附录\s*[A-Z0-9])/i;
+  var TITLE_PUNCTUATION_RE = /[\s!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~，。！？：；、“”‘’（）《》【】—…·～·]/g;
+  var NUMBERED_ENTRY_RE = /^(?:第[0-9一二三四五六七八九十]+[章节篇部分]|附录\s*[A-Z0-9]|[（(][0-9一二三四五六七八九十]+[)）](?:\s*、|\s*[\.．]|\s*)|(?:[0-9]{1,3}(?:\.[0-9]{1,3})+|[0-9]{1,3}|[一二三四五六七八九十]+)(?:\s*、|\s*[\.．]|\s+))/i;
   var DOT_LEADER_RE = /(?:\.{3,}|[…···]{2,}|[._\-—]{4,}|\t[\.…·]+)/;
   var NON_PAGE_UNIT_RE = /(?:元|万|页|个|条|款|项|年|月|日|分|秒|kg|cm|m|km|g|%|‰)[。，、；！]*$/i;
   var TRAILING_PAGE_RE = /(?:[\t\s]+|\.{2,}|[…·]{2,})(\d{1,4}|[ivxldcm]{1,8})$/i;
@@ -4253,13 +4254,25 @@
     if (!trimmed || trimmed.length > 20) {
       return false;
     }
-    var normalized = trimmed.replace(/\s+/g, "");
-    return /^(?:目录|contents|tableofcontents)$/i.test(normalized);
+    var stripped = trimmed.replace(TITLE_PUNCTUATION_RE, "");
+    return /^(?:目录|contents|tableofcontents)$/i.test(stripped);
   }
 
   function isNumberedEntryText(text) {
     var trimmed = String(text || "").replace(/\r/g, "").trim();
     return NUMBERED_ENTRY_RE.test(trimmed);
+  }
+
+  function hasConsecutiveNumberedEntries(list) {
+    if (!list || list.length < 2) {
+      return false;
+    }
+    for (var i = 1; i < list.length; i += 1) {
+      if (isNumberedEntryText(list[i].text) && isNumberedEntryText(list[i - 1].text)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   function hasDotLeaderText(text) {
@@ -4278,6 +4291,21 @@
     return TOC_STYLE_RE.test(String(styleName || "").trim());
   }
 
+  function hasTocStyleOrIndentation(paragraph) {
+    if (!paragraph) {
+      return false;
+    }
+    if (isTocStyleName(paragraph.styleName)) {
+      return true;
+    }
+    var outline = typeof paragraph.outlineLevel === "number" ? paragraph.outlineLevel : 0;
+    var firstLineIndent = typeof paragraph.firstLineIndent === "number" ? paragraph.firstLineIndent : 0;
+    if (outline >= 1 && outline <= 9 && firstLineIndent < 0) {
+      return true;
+    }
+    return false;
+  }
+
   function isManualTocEntryCandidate(paragraph) {
     if (!paragraph) {
       return false;
@@ -4289,7 +4317,7 @@
     return isNumberedEntryText(text) ||
       hasDotLeaderText(text) ||
       hasTrailingPageText(text) ||
-      isTocStyleName(paragraph.styleName);
+      hasTocStyleOrIndentation(paragraph);
   }
 
   function collectWordManualAndSuspectedTocRegions(document) {
@@ -4313,11 +4341,39 @@
       )) || i;
       var text = readAutoTocParagraphText(p);
       var style = readStyleName(p);
+      var pFormat = readParagraphFormat(p);
+      var rawOutline = firstDefined(
+        safeRead(p, "outlineLevel"),
+        safeRead(p, "OutlineLevel"),
+        pFormat ? safeRead(pFormat, "OutlineLevel") : null,
+        pFormat ? safeRead(pFormat, "outlineLevel") : null,
+        null
+      );
+      var outlineLevel = typeof rawOutline !== "undefined" && rawOutline !== null
+        ? normalizeWpsOutlineLevel(rawOutline)
+        : 0;
+      var firstLineIndent = normalizeNumber(firstDefined(
+        safeRead(p, "firstLineIndent"),
+        safeRead(p, "FirstLineIndent"),
+        pFormat ? safeRead(pFormat, "FirstLineIndent") : null,
+        pFormat ? safeRead(pFormat, "firstLineIndent") : null,
+        null
+      ));
+      var leftIndent = normalizeNumber(firstDefined(
+        safeRead(p, "leftIndent"),
+        safeRead(p, "LeftIndent"),
+        pFormat ? safeRead(pFormat, "LeftIndent") : null,
+        pFormat ? safeRead(pFormat, "leftIndent") : null,
+        null
+      ));
       paragraphs.push({
         raw: p,
         index: pIndex,
         text: text,
-        styleName: style
+        styleName: style,
+        outlineLevel: outlineLevel,
+        firstLineIndent: firstLineIndent,
+        leftIndent: leftIndent
       });
     }
 
@@ -4343,12 +4399,12 @@
         if (entries.length > 0) {
           var block = [current].concat(entries);
           var numCount = entries.filter(function (e) { return isNumberedEntryText(e.text); }).length;
-          var hasNumbered = numCount > 0 && (numCount / entries.length >= 0.4 || numCount >= 2);
+          var hasNumbered = numCount >= 2 && (numCount / entries.length >= 0.4) && hasConsecutiveNumberedEntries(entries);
           var dotCount = entries.filter(function (e) { return hasDotLeaderText(e.text); }).length;
           var hasDotLeader = dotCount > 0 && (dotCount / entries.length >= 0.4 || dotCount >= 2);
           var pageCount = entries.filter(function (e) { return hasTrailingPageText(e.text); }).length;
           var hasTrailingPage = pageCount > 0 && (pageCount / entries.length >= 0.4 || pageCount >= 2);
-          var styleCount = entries.filter(function (e) { return isTocStyleName(e.styleName); }).length;
+          var styleCount = entries.filter(function (e) { return hasTocStyleOrIndentation(e); }).length;
           var hasTocStyle = styleCount > 0 && (styleCount / entries.length >= 0.4 || styleCount >= 2);
 
           var evidenceTypes = ["title"];
@@ -4377,7 +4433,7 @@
             });
             index = j;
             continue;
-          } else if (evidenceCount >= 2 && block.length >= 2) {
+          } else if (evidenceCount === 2 && block.length >= 2) {
             suspectedTocRegions.push({
               regionId: "suspected-toc-" + (suspectedTocRegions.length + 1),
               source: "suspected_toc",
@@ -4388,6 +4444,9 @@
               reason: "insufficient_evidence:" + evidenceTypes.join(","),
               evidenceTypes: evidenceTypes
             });
+            index = j;
+            continue;
+          } else {
             index = j;
             continue;
           }
@@ -4405,12 +4464,12 @@
         }
         if (runEntries.length >= 2) {
           var rNumCount = runEntries.filter(function (e) { return isNumberedEntryText(e.text); }).length;
-          var rHasNumbered = rNumCount > 0 && (rNumCount / runEntries.length >= 0.4 || rNumCount >= 2);
+          var rHasNumbered = rNumCount >= 2 && (rNumCount / runEntries.length >= 0.4) && hasConsecutiveNumberedEntries(runEntries);
           var rDotCount = runEntries.filter(function (e) { return hasDotLeaderText(e.text); }).length;
           var rHasDotLeader = rDotCount > 0 && (rDotCount / runEntries.length >= 0.4 || rDotCount >= 2);
           var rPageCount = runEntries.filter(function (e) { return hasTrailingPageText(e.text); }).length;
           var rHasTrailingPage = rPageCount > 0 && (rPageCount / runEntries.length >= 0.4 || rPageCount >= 2);
-          var rStyleCount = runEntries.filter(function (e) { return isTocStyleName(e.styleName); }).length;
+          var rStyleCount = runEntries.filter(function (e) { return hasTocStyleOrIndentation(e); }).length;
           var rHasTocStyle = rStyleCount > 0 && (rStyleCount / runEntries.length >= 0.4 || rStyleCount >= 2);
 
           var rEvidenceTypes = [];
@@ -4439,7 +4498,7 @@
             });
             index = k;
             continue;
-          } else if (rEvidenceCount >= 2) {
+          } else if (rEvidenceCount === 2) {
             suspectedTocRegions.push({
               regionId: "suspected-toc-" + (suspectedTocRegions.length + 1),
               source: "suspected_toc",

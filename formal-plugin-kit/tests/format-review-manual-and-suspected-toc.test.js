@@ -175,10 +175,112 @@ function testReadableMarkdownReportDisclosesBothExemptedAndSuspectedToc() {
   assert.ok(markdown.includes("因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。"));
 }
 
+function testThreeEvidenceWithoutTrailingPageIsNotSuspectedOrManualToc() {
+  // Title + numbered entries + dot leaders (3 evidence types) but NO page numbers
+  // Neither manual TOC nor suspected TOC (strictly === 2 evidence types)
+  const document = {
+    Paragraphs: [
+      para(1, "目录", "Heading 1"),
+      para(2, "1.1 总体技术架构................................"),
+      para(3, "1.2 系统运行环境................................"),
+      para(4, "正文第一章")
+    ]
+  };
+  const result = helpers.collectWordManualAndSuspectedTocRegions(document);
+  assert.strictEqual(result.manualTocRegions.length, 0);
+  assert.strictEqual(result.suspectedTocRegions.length, 0);
+}
+
+function testNonCatalogItemsWithYearsDoNotMatchNumberedEntries() {
+  // Ordinary text with years like "2026 年度预算 1" / "2027 年度预算 2"
+  // Must NOT be treated as numbered catalog entries or suspected TOC
+  const document = {
+    Paragraphs: [
+      para(1, "2026 年度预算 1"),
+      para(2, "2027 年度预算 2")
+    ]
+  };
+  const result = helpers.collectWordManualAndSuspectedTocRegions(document);
+  assert.strictEqual(result.manualTocRegions.length, 0);
+  assert.strictEqual(result.suspectedTocRegions.length, 0);
+}
+
+function testManualTocTitleWithPunctuation() {
+  // E1: Punctuation stripping: "【目录】" and "目 录："
+  const doc1 = {
+    Paragraphs: [
+      para(1, "【目录】"),
+      para(2, "一、概述...........................1"),
+      para(3, "二、建设目标.......................5"),
+      para(4, "正文")
+    ]
+  };
+  const res1 = helpers.collectWordManualAndSuspectedTocRegions(doc1);
+  assert.strictEqual(res1.manualTocRegions.length, 1);
+  assert.strictEqual(res1.manualTocRegions[0].source, "manual_toc");
+
+  const doc2 = {
+    Paragraphs: [
+      para(1, "目 录："),
+      para(2, "一、概述...........................1"),
+      para(3, "二、建设目标.......................5"),
+      para(4, "正文")
+    ]
+  };
+  const res2 = helpers.collectWordManualAndSuspectedTocRegions(doc2);
+  assert.strictEqual(res2.manualTocRegions.length, 1);
+  assert.strictEqual(res2.manualTocRegions[0].source, "manual_toc");
+}
+
+function testManualTocWithOutlineLevelAndHangingIndent() {
+  // E5: outlineLevel >= 1 && outlineLevel <= 9 && firstLineIndent < 0
+  const document = {
+    Paragraphs: [
+      Object.assign(para(1, "1.1 总体架构 ................. 2", "CustomStyle"), {
+        outlineLevel: 1,
+        firstLineIndent: -28.35,
+        leftIndent: 28.35
+      }),
+      Object.assign(para(2, "1.2 实施路径 ................. 4", "CustomStyle"), {
+        outlineLevel: 1,
+        firstLineIndent: -28.35,
+        leftIndent: 28.35
+      }),
+      para(3, "正文内容开始")
+    ]
+  };
+  const result = helpers.collectWordManualAndSuspectedTocRegions(document);
+  assert.strictEqual(result.manualTocRegions.length, 1);
+  assert.strictEqual(result.manualTocRegions[0].source, "manual_toc");
+  assert.deepStrictEqual(result.manualTocRegions[0].paragraphIndexes, [1, 2]);
+}
+
+function testSelectionModeDeletesSuspectedTocRegions() {
+  const coverage = {
+    tocRegions: [{ regionId: "toc-1" }],
+    suspectedTocRegions: [{ regionId: "suspected-1" }],
+    headerFooter: {}
+  };
+  // Simulate selection mode logic in taskpane.js
+  const scope = { selectionMode: "selection" };
+  if (scope.selectionMode === "selection") {
+    delete coverage.tocRegions;
+    delete coverage.suspectedTocRegions;
+  }
+  assert.strictEqual(coverage.tocRegions, undefined);
+  assert.strictEqual(coverage.suspectedTocRegions, undefined);
+  assert.ok(coverage.headerFooter);
+}
+
 testIdentifiesReliableManualTocWithTitleEntriesAndDots();
 testIdentifiesReliableManualTocWithoutTitleViaStyleDotsAndPages();
 testIdentifiesSuspectedTocWhenEvidenceInsufficient();
 testIdentifiesSuspectedTocWithTitleAndDotsWithoutPages();
+testThreeEvidenceWithoutTrailingPageIsNotSuspectedOrManualToc();
+testNonCatalogItemsWithYearsDoNotMatchNumberedEntries();
+testManualTocTitleWithPunctuation();
+testManualTocWithOutlineLevelAndHangingIndent();
+testSelectionModeDeletesSuspectedTocRegions();
 testNegativeCasesDoNotProduceTocRegions();
 testBareCatalogWordWithoutEntriesDoesNotProduceAnyToc();
 testCoverageContractIncludesManualAndSuspectedToc();

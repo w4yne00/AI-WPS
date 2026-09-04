@@ -19,8 +19,7 @@
 - 单独出现“目录”文字、单一样式或模型判断不能单独建立目录审查豁免区；
 - 疑似目录不产生正文问题，不计为已审查，不计为已豁免；
 - 存在疑似目录时覆盖状态必须为 `partial`，任务页与导出报告必须独立分行展示已豁免与疑似目录；
-- Python 代码必须兼容 Python 3.8，不可使用仅在 Python 3.9+ 存在的类型注解或语法；
-- `formal-plugin-kit` 与 `jsaddons` 中的对应插件脚本保持同步。
+- 本仓库 Word 插件权威源为 `formal-plugin-kit/wps-ai-assistant_1.0.0`。
 
 ---
 
@@ -244,7 +243,6 @@ git commit -m "feat(word): implement manual toc exemption, suspected toc suppres
 
 **Files:**
 - Modify: `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js:4045-4210, 4290-4310`
-- Modify: `jsaddons/wps-ai-assistant_1.0.0/taskpane-helpers.js`
 - Create: `formal-plugin-kit/tests/format-review-manual-and-suspected-toc.test.js`
 
 **Interfaces:**
@@ -350,7 +348,6 @@ Expected: FAIL with `helpers.collectWordManualAndSuspectedTocRegions is not a fu
    - Append `manualTocRegions` to `coverage.tocRegions`;
    - If `suspectedTocRegions.length > 0`, set `coverage.suspectedTocRegions = suspectedTocRegions`.
 4. Export function on `helpers` / `window`.
-5. Mirror edits to `jsaddons/wps-ai-assistant_1.0.0/taskpane-helpers.js`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -360,7 +357,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js jsaddons/wps-ai-assistant_1.0.0/taskpane-helpers.js formal-plugin-kit/tests/format-review-manual-and-suspected-toc.test.js
+git add formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js formal-plugin-kit/tests/format-review-manual-and-suspected-toc.test.js
 git commit -m "feat(word): implement manual toc and suspected toc evidence detection in plugin helpers"
 ```
 
@@ -370,7 +367,6 @@ git commit -m "feat(word): implement manual toc and suspected toc evidence detec
 
 **Files:**
 - Modify: `formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js:2835-2855, 3170-3185`
-- Modify: `jsaddons/wps-ai-assistant_1.0.0/taskpane-helpers.js`
 - Modify: `adapter_service/app/services/word/deterministic_format_review.py:1460-1465`
 - Test: `formal-plugin-kit/tests/format-review-manual-and-suspected-toc.test.js`
 - Test: `adapter_service/tests/test_format_review_manual_and_suspected_toc.py`
@@ -435,7 +431,6 @@ Expected: FAIL (because `suspectedTocSummary` is not yet rendered).
 2. In `adapter_service/app/services/word/deterministic_format_review.py`:
    - In `_render_readable_report_markdown`:
      - Include `summary.suspectedTocSummary` if present.
-3. Mirror to `jsaddons/wps-ai-assistant_1.0.0/taskpane-helpers.js`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -446,7 +441,7 @@ Expected: PASS
 - [ ] **Step 5: Commit**
 
 ```bash
-git add formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js jsaddons/wps-ai-assistant_1.0.0/taskpane-helpers.js adapter_service/app/services/word/deterministic_format_review.py formal-plugin-kit/tests/format-review-manual-and-suspected-toc.test.js adapter_service/tests/test_format_review_manual_and_suspected_toc.py
+git add formal-plugin-kit/wps-ai-assistant_1.0.0/taskpane-helpers.js adapter_service/app/services/word/deterministic_format_review.py formal-plugin-kit/tests/format-review-manual-and-suspected-toc.test.js adapter_service/tests/test_format_review_manual_and_suspected_toc.py
 git commit -m "feat(word): display separate exempted and suspected toc lines in taskpane and markdown reports"
 ```
 
