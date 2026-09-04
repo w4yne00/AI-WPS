@@ -1596,7 +1596,9 @@ class DeterministicFormatReviewService:
             coverage = deepcopy(snapshot.get("sourceCoverage", {}) or {})
         header_footer = coverage.get("headerFooter", {})
         coverage_status = "partial" if (
-            coverage.get("formatDataStatus") in {"insufficient", "partial"}
+            summary.get("coverageStatus") == "partial"
+            or int(summary.get("suspectedTocRegionCount", 0) or 0) > 0
+            or coverage.get("formatDataStatus") in {"insufficient", "partial"}
             or int(coverage.get("unsupportedObjectCount", 0) or 0) > 0
             or int(coverage.get("formatDataInsufficientBlockCount", 0) or 0) > 0
             or any(
@@ -1660,6 +1662,12 @@ class DeterministicFormatReviewService:
             coverage["exemptedTocRegionCount"] = int(summary.get("exemptedTocRegionCount") or 0)
             coverage["exemptedTocParagraphCount"] = int(summary.get("exemptedTocParagraphCount") or 0)
             coverage["tocExemptionSummary"] = summary["tocExemptionSummary"]
+        if summary.get("suspectedTocSummary"):
+            coverage["suspectedTocRegionCount"] = int(summary.get("suspectedTocRegionCount") or 0)
+            coverage["suspectedTocParagraphCount"] = int(summary.get("suspectedTocParagraphCount") or 0)
+            coverage["suspectedTocSummary"] = summary["suspectedTocSummary"]
+        if summary.get("coverageReason"):
+            coverage["coverageReason"] = summary["coverageReason"]
         format_fact_diagnostics = structure.get("formatFacts")
         if isinstance(format_fact_diagnostics, dict):
             summary["formatFactDiagnostics"] = deepcopy(format_fact_diagnostics)
