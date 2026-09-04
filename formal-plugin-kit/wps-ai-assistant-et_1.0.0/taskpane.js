@@ -138,6 +138,8 @@
     smartFillRetryBaseResult: null,
     smartFillRetryBaseDraftItems: null,
     excelSmartFillJobId: "",
+    excelSmartFillCompletedJobId: "",
+    excelSmartFillResultRevision: 0,
     excelSmartFillPollStartedAt: 0,
     excelSmartFillPollErrorCount: 0,
     excelSmartFillResumeExpected: false
@@ -1870,25 +1872,27 @@
       if (!result) {
         throw new Error("智能填写结果缺少目标 " + (item.address || item.itemId) + "。");
       }
+      if (result.status !== "completed") {
+        return {
+          itemId: item.itemId,
+          status: result.status || "insufficient_information",
+          valueType: result.valueType === "number" ? "number" : "text",
+          value: "",
+          skip: true
+        };
+      }
       if (!draft || !draft.selected) {
         return {
           itemId: item.itemId,
-          status: "insufficient_information",
+          status: "completed",
           valueType: result.valueType === "number" ? "number" : "text",
-          value: ""
+          value: result.value,
+          skip: true
         };
       }
       value = String(draft.value === null || typeof draft.value === "undefined" ? "" : draft.value);
       if (!value.trim()) {
-        if (result.status === "completed") {
-          throw new Error("请为 " + (item.address || item.itemId) + " 保留填写值或取消勾选。");
-        }
-        return {
-          itemId: item.itemId,
-          status: "insufficient_information",
-          valueType: draft.valueType === "number" ? "number" : "text",
-          value: ""
-        };
+        throw new Error("请为 " + (item.address || item.itemId) + " 保留填写值或取消勾选。");
       }
       valueType = draft.valueType === "number" ? "number" : "text";
       if (valueType === "number") {
@@ -1901,7 +1905,8 @@
         itemId: item.itemId,
         status: "completed",
         valueType: valueType,
-        value: value
+        value: value,
+        skip: false
       };
     });
   }
@@ -2037,13 +2042,20 @@
       setStatus("智能填写写回组件不可用，请重新打开任务窗格。");
       return;
     }
+    var currentJobId = state.excelSmartFillCompletedJobId || state.excelSmartFillJobId || "";
+    var currentWorkbookId = state.smartFillWorkbookId || readSmartFillWorkbookId(workbook);
+    var currentSourceHash = (state.smartFillSource && state.smartFillSource.snapshotHash) || "";
+    var currentRevision = state.excelSmartFillResultRevision || 1;
+
     try {
       targetMapping = helpers.mapExcelSmartFillPreviewToTarget(range, {
         source: state.smartFillSource,
+        sourceSnapshotHash: currentSourceHash,
         previewItems: state.smartFillResult && state.smartFillResult.items || [],
         draftItems: state.smartFillDraftItems,
-        jobId: state.excelSmartFillJobId || "",
-        workbookId: state.smartFillWorkbookId || readSmartFillWorkbookId(workbook)
+        jobId: currentJobId,
+        workbookId: currentWorkbookId,
+        resultRevision: currentRevision
       });
     } catch (mappingError) {
       setStatus("写入目标无效：" + (mappingError && mappingError.message ? mappingError.message : ""));
@@ -2056,6 +2068,29 @@
       setStatus("暂无可写入的智能填写预览。");
       return;
     }
+
+    var commitContext = targetMapping.commitContext || {
+      jobId: currentJobId,
+      workbookId: currentWorkbookId,
+      sourceSnapshotHash: currentSourceHash,
+      resultRevision: currentRevision,
+      targetSheetName: targetMapping.target && targetMapping.target.sheetName,
+      targetAddress: targetMapping.target && targetMapping.target.address,
+      itemCount: items.length
+    };
+    if (!commitContext.jobId) {
+      setStatus("未绑定有效的智能填写任务，请重新生成预览后再写入。");
+      return;
+    }
+    if (commitContext.workbookId !== (state.smartFillWorkbookId || readSmartFillWorkbookId(workbook))) {
+      setStatus("工作簿已切换，智能填写写回已中止。");
+      return;
+    }
+    if (state.smartFillSource && commitContext.sourceSnapshotHash !== state.smartFillSource.snapshotHash) {
+      setStatus("来源快照已失效，请重新生成预览后再写入。");
+      return;
+    }
+
     try {
       preflight = checkSmartFillPreflight();
       if (!preflight.ok) {
@@ -2063,6 +2098,7 @@
           draft.status = "write_conflict";
           draft.selected = false;
         });
+        tryRebindSmartFillTarget();
         output = byId("result-output");
         if (output && helpers.buildExcelSmartFillEditorPreview) {
           output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
@@ -2083,7 +2119,7 @@
 
       results = buildExcelSmartFillWriteResults();
       writableItemIds = results.filter(function (r) {
-        return r.status === "completed";
+        return r.status === "completed" && !r.skip;
       }).map(function (r) {
         return r.itemId;
       });
@@ -2103,6 +2139,7 @@
               draft.selected = false;
             }
           });
+          tryRebindSmartFillTarget();
           output = byId("result-output");
           if (output && helpers.buildExcelSmartFillEditorPreview) {
             output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
@@ -2135,7 +2172,7 @@
           return;
         }
       }
-      writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell);
+      writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell, { commitContext: commitContext });
     } catch (error) {
       if (error && error.code === "COMPENSATION_FAILED") {
         var failureAddresses = (error.rollbackFailures || error.manualReviewAddresses || []).join("、");
@@ -2169,6 +2206,8 @@
     state.smartFillDraftItems = [];
     state.smartFillTarget = null;
     state.smartFillLiveTarget = null;
+    state.excelSmartFillCompletedJobId = "";
+    state.excelSmartFillResultRevision = 0;
     byId("btn-write-smart-fill").hidden = true;
     setPlainResult([
       "智能填写内容已写入工作簿。",
@@ -2267,13 +2306,17 @@
     }
   }
 
-  function finalizeExcelSmartFillResult(data) {
+  function finalizeExcelSmartFillResult(data, completedJobId) {
     var retryItemId = state.smartFillRetryItemId;
     var base = state.smartFillRetryBaseResult;
     var baseDraftItems = state.smartFillRetryBaseDraftItems;
     var replacement;
     var merged;
     var nextPreservedDrafts = null;
+    if (completedJobId) {
+      state.excelSmartFillCompletedJobId = completedJobId;
+    }
+    state.excelSmartFillResultRevision = (state.excelSmartFillResultRevision || 0) + 1;
     tryRebindSmartFillTarget(data || {});
     if (!retryItemId || !base) {
       state.smartFillRetryItemId = "";
@@ -3174,7 +3217,7 @@
     setExcelSmartFillCancelVisible(false);
     stopWaiting();
     if (partialResult && Array.isArray(partialResult.items) && partialResult.items.length) {
-      finalizeExcelSmartFillResult(partialResult);
+      finalizeExcelSmartFillResult(partialResult, jobId);
       setStatus("智能填写任务已取消，已保留部分预览；未完成项不会写入。" );
       return;
     }
@@ -3233,12 +3276,13 @@
       });
       if (job.status === "completed") {
         clearExcelSmartFillActiveJob(jobId);
+        state.excelSmartFillCompletedJobId = jobId;
         state.excelSmartFillJobId = "";
         state.excelSmartFillPollStartedAt = 0;
         state.excelSmartFillResumeExpected = false;
         setExcelSmartFillCancelVisible(false);
         stopWaiting();
-        finalizeExcelSmartFillResult(job.result || {});
+        finalizeExcelSmartFillResult(job.result || {}, jobId);
         setStatus("智能填写预览已生成，请确认后写入。" );
         refreshDiagnostics().then(function () {
           setStatus("智能填写预览已生成，请确认后写入。" );
@@ -3261,7 +3305,7 @@
           job.error.code === "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE"
         );
         if (!overflowFailed && job.result && Array.isArray(job.result.items) && job.result.items.length) {
-          finalizeExcelSmartFillResult(job.result);
+          finalizeExcelSmartFillResult(job.result, jobId);
           setStatus("智能填写任务失败，已保留部分预览；未完成项不会写入。" );
         } else {
           if (state.smartFillRetryItemId) {
@@ -3436,11 +3480,12 @@
       });
       if (job.status === "completed") {
         clearExcelSmartFillActiveJob(jobId);
+        state.excelSmartFillCompletedJobId = jobId;
         state.excelSmartFillJobId = "";
         state.excelSmartFillPollStartedAt = 0;
         state.excelSmartFillResumeExpected = false;
         stopWaiting();
-        finalizeExcelSmartFillResult(job.result || {});
+        finalizeExcelSmartFillResult(job.result || {}, jobId);
         setStatus("智能填写预览已生成，请确认后写入。" );
         return;
       }
