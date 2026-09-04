@@ -77,11 +77,15 @@ SEMANTIC_ROLE_NAMES = (
     "toc_title", "toc_entry", "appendix_title", "appendix_heading", "formula",
     "table_body",
 )
-AUTO_TOC_SOURCES = {"tables_of_contents", "field", "auto_toc"}
+AUTO_TOC_SOURCES = {"tables_of_contents", "field", "auto_toc", "manual_toc"}
 
 
 def format_toc_exemption_summary(region_count: int, paragraph_count: int) -> str:
     return "已识别并略过目录：{0} 个区域，共 {1} 段".format(region_count, paragraph_count)
+
+
+def format_suspected_toc_summary(region_count: int, paragraph_count: int) -> str:
+    return "发现疑似目录：{0} 个区域，共 {1} 段（证据不足，未审查未豁免）".format(region_count, paragraph_count)
 
 
 def collect_auto_toc_exemption(structure: Optional[Dict]) -> Tuple[Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
@@ -119,7 +123,8 @@ def collect_auto_toc_exemption(structure: Optional[Dict]) -> Tuple[Dict[int, Dic
                 candidate = 0
             if candidate in indexes:
                 title_index = candidate
-        region_id = str(region.get("regionId") or "auto-toc-{0}".format(len(accepted) + 1))[:64]
+        prefix = "manual-toc-" if source == "manual_toc" else "auto-toc-"
+        region_id = str(region.get("regionId") or "{0}{1}".format(prefix, len(accepted) + 1))[:64]
         accepted.append({
             "regionId": region_id,
             "source": source,
@@ -132,6 +137,49 @@ def collect_auto_toc_exemption(structure: Optional[Dict]) -> Tuple[Dict[int, Dic
             mapping[paragraph_index] = {
                 "regionId": region_id,
                 "role": "toc_title" if title_index == paragraph_index else "toc_entry",
+            }
+    return mapping, accepted
+
+
+def collect_suspected_toc(structure: Optional[Dict]) -> Tuple[Dict[int, Dict[str, Any]], List[Dict[str, Any]]]:
+    structure = structure if isinstance(structure, dict) else {}
+    coverage = structure.get("coverage") if isinstance(structure.get("coverage"), dict) else {}
+    raw_regions = coverage.get("suspectedTocRegions")
+    if not isinstance(raw_regions, list):
+        raw_regions = structure.get("suspectedTocRegions")
+    if not isinstance(raw_regions, list):
+        return {}, []
+    mapping: Dict[int, Dict[str, Any]] = {}
+    accepted: List[Dict[str, Any]] = []
+    for region in raw_regions:
+        if not isinstance(region, dict):
+            continue
+        source = str(region.get("source") or "").strip()
+        if source != "suspected_toc":
+            continue
+        indexes = []
+        for item in region.get("paragraphIndexes") if isinstance(region.get("paragraphIndexes"), list) else []:
+            try:
+                paragraph_index = int(item)
+            except (TypeError, ValueError):
+                continue
+            if paragraph_index > 0 and paragraph_index not in indexes:
+                indexes.append(paragraph_index)
+        if not indexes:
+            continue
+        region_id = str(region.get("regionId") or "suspected-toc-{0}".format(len(accepted) + 1))[:64]
+        accepted.append({
+            "regionId": region_id,
+            "source": source,
+            "startParagraphIndex": min(indexes),
+            "endParagraphIndex": max(indexes),
+            "paragraphIndexes": indexes,
+            **({"reason": str(region["reason"])[:120]} if region.get("reason") else {}),
+        })
+        for paragraph_index in indexes:
+            mapping[paragraph_index] = {
+                "regionId": region_id,
+                "reason": str(region.get("reason") or ""),
             }
     return mapping, accepted
 
@@ -303,6 +351,9 @@ class WordFormatReviewer:
         exemption_map, accepted_toc_regions = collect_auto_toc_exemption(
             request.content.document_structure or {}
         )
+        suspected_map, accepted_suspected_regions = collect_suspected_toc(
+            request.content.document_structure or {}
+        )
         summary = {
             "scope": request.selection_mode,
             "templateId": template["id"],
@@ -328,6 +379,14 @@ class WordFormatReviewer:
             summary["tocExemptionSummary"] = format_toc_exemption_summary(
                 len(accepted_toc_regions), len(exemption_map)
             )
+        if accepted_suspected_regions:
+            summary["suspectedTocRegionCount"] = len(accepted_suspected_regions)
+            summary["suspectedTocParagraphCount"] = len(suspected_map)
+            summary["suspectedTocSummary"] = format_suspected_toc_summary(
+                len(accepted_suspected_regions), len(suspected_map)
+            )
+            summary["coverageStatus"] = "partial"
+            summary["coverageReason"] = "存在疑似目录区域，因证据不足未纳入审查与豁免范围"
         binding = self._snapshot_binding(request)
         if any(binding.values()):
             summary["snapshotBinding"] = binding
@@ -387,10 +446,14 @@ class WordFormatReviewer:
         exemption_map, _accepted_toc_regions = collect_auto_toc_exemption(
             request.content.document_structure or {}
         )
-        if exemption_map:
+        suspected_map, _accepted_suspected_regions = collect_suspected_toc(
+            request.content.document_structure or {}
+        )
+        if exemption_map or suspected_map:
             issues = [
                 issue for issue in issues
                 if issue.paragraph_index not in exemption_map
+                and issue.paragraph_index not in suspected_map
             ]
         structure_facts = self._format_structure_facts(request)
         role_facts = {}
@@ -405,13 +468,17 @@ class WordFormatReviewer:
                 role_facts[paragraph_index] = item
         pack = {"template": template, "rules": template.get("_rulePackRules", [])}
         for paragraph in self._paragraphs_for_review(request):
-            if paragraph.index in exemption_map:
+            if paragraph.index in exemption_map or paragraph.index in suspected_map:
                 continue
             fact = role_facts.get(paragraph.index, {"paragraphIndex": paragraph.index})
             deterministic_role = classify_role_fact(fact)
             role_result = deterministic_role
             ai_role = ai_roles.get(paragraph.index)
-            if isinstance(ai_role, dict) and ai_role.get("status") == "confirmed":
+            if (
+                isinstance(ai_role, dict)
+                and ai_role.get("status") == "confirmed"
+                and ai_role.get("role") not in {"toc_title", "toc_entry"}
+            ):
                 if deterministic_role.get("status") != "confirmed":
                     if deterministic_role.get("status") != "conflict":
                         role_result = {
@@ -1293,10 +1360,14 @@ class WordFormatReviewer:
         toc_exemption_map, _toc_regions = collect_auto_toc_exemption(
             request.content.document_structure or {}
         )
-        if toc_exemption_map:
+        suspected_toc_map, _suspected_regions = collect_suspected_toc(
+            request.content.document_structure or {}
+        )
+        suppressed_headings = set(toc_exemption_map.keys()) | set(suspected_toc_map.keys())
+        if suppressed_headings:
             facts["headings"] = [
                 h for h in facts.get("headings", [])
-                if h.get("paragraphIndex") not in toc_exemption_map
+                if h.get("paragraphIndex") not in suppressed_headings
             ]
 
         facts.setdefault("appendixFacts", [])

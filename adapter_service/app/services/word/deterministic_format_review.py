@@ -1426,6 +1426,10 @@ class DeterministicFormatReviewService:
                 "DETERMINISTIC_FORMAT_REVIEW_REPORT_FORMAT_INVALID",
                 "格式审查报告仅支持 json 或 markdown 格式。",
             )
+        return self.render_markdown_report(report)
+
+    @classmethod
+    def render_markdown_report(cls, report: Dict) -> str:
         summary = report.get("summary", {})
         attempted = "已尝试" if summary.get("aiAttempted") else "未尝试"
         candidate_count = int(summary.get("aiCandidateCount", 0) or 0)
@@ -1460,7 +1464,16 @@ class DeterministicFormatReviewService:
         toc_summary = str(summary.get("tocExemptionSummary") or report.get("coverage", {}).get("tocExemptionSummary") or "").strip()
         if toc_summary:
             lines.append("- {0}".format(toc_summary))
+        suspected_summary = str(summary.get("suspectedTocSummary") or report.get("coverage", {}).get("suspectedTocSummary") or "").strip()
+        if suspected_summary:
+            lines.append("- {0}".format(suspected_summary))
         lines.extend(["", report.get("disclaimer", ""), ""])
+        if not report.get("issues"):
+            if suspected_summary:
+                lines.append("当前筛选范围未发现需要调整的格式问题。因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。")
+            else:
+                lines.append("当前筛选范围未发现需要调整的格式问题。若覆盖状态不是“已完成”，零问题不代表文档完全合规。")
+            return "\n".join(lines).strip()
         for index, issue in enumerate(report.get("issues", []), 1):
             lines.extend([
                 "## {0}. {1}".format(index, _report_issue_title(issue)),
@@ -1596,7 +1609,9 @@ class DeterministicFormatReviewService:
             coverage = deepcopy(snapshot.get("sourceCoverage", {}) or {})
         header_footer = coverage.get("headerFooter", {})
         coverage_status = "partial" if (
-            coverage.get("formatDataStatus") in {"insufficient", "partial"}
+            summary.get("coverageStatus") == "partial"
+            or int(summary.get("suspectedTocRegionCount", 0) or 0) > 0
+            or coverage.get("formatDataStatus") in {"insufficient", "partial"}
             or int(coverage.get("unsupportedObjectCount", 0) or 0) > 0
             or int(coverage.get("formatDataInsufficientBlockCount", 0) or 0) > 0
             or any(
@@ -1660,6 +1675,12 @@ class DeterministicFormatReviewService:
             coverage["exemptedTocRegionCount"] = int(summary.get("exemptedTocRegionCount") or 0)
             coverage["exemptedTocParagraphCount"] = int(summary.get("exemptedTocParagraphCount") or 0)
             coverage["tocExemptionSummary"] = summary["tocExemptionSummary"]
+        if summary.get("suspectedTocSummary"):
+            coverage["suspectedTocRegionCount"] = int(summary.get("suspectedTocRegionCount") or 0)
+            coverage["suspectedTocParagraphCount"] = int(summary.get("suspectedTocParagraphCount") or 0)
+            coverage["suspectedTocSummary"] = summary["suspectedTocSummary"]
+        if summary.get("coverageReason"):
+            coverage["coverageReason"] = summary["coverageReason"]
         format_fact_diagnostics = structure.get("formatFacts")
         if isinstance(format_fact_diagnostics, dict):
             summary["formatFactDiagnostics"] = deepcopy(format_fact_diagnostics)
@@ -2522,7 +2543,7 @@ class DeterministicFormatReviewService:
                         "自动目录区域格式无效。",
                     )
                 source = str(item.get("source") or "").strip()
-                if source not in {"tables_of_contents", "field", "auto_toc"}:
+                if source not in {"tables_of_contents", "field", "auto_toc", "manual_toc"}:
                     raise AdapterError(
                         "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
                         "自动目录区域来源不受支持。",
@@ -2564,6 +2585,77 @@ class DeterministicFormatReviewService:
                 normalized_regions.append(region)
             if normalized_regions:
                 result["tocRegions"] = normalized_regions
+        suspected_regions = value.get("suspectedTocRegions")
+        if suspected_regions is not None:
+            if not isinstance(suspected_regions, list) or len(suspected_regions) > 64:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                    "疑似目录区域统计格式无效。",
+                )
+            normalized_suspected = []
+            for item in suspected_regions:
+                if not isinstance(item, dict):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域格式无效。",
+                    )
+                source = str(item.get("source") or "").strip()
+                if source != "suspected_toc":
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域来源不受支持。",
+                    )
+                raw_reason = item.get("reason")
+                if not isinstance(raw_reason, str) or not raw_reason.strip():
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域必须提供非空判定原因。",
+                    )
+                reason = raw_reason.strip()[:120]
+                raw_indexes = item.get("paragraphIndexes")
+                if not isinstance(raw_indexes, list) or not raw_indexes or len(raw_indexes) > 500:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域必须包含有限段落序号。",
+                    )
+                indexes = []
+                for raw_index in raw_indexes:
+                    if type(raw_index) is not int or raw_index <= 0:
+                        raise AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                            "疑似目录段落序号必须是正整数。",
+                        )
+                    indexes.append(raw_index)
+                for i in range(len(indexes) - 1):
+                    if indexes[i + 1] != indexes[i] + 1:
+                        raise AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                            "疑似目录段落序号必须有序且连续。",
+                        )
+                raw_start = item.get("startParagraphIndex")
+                raw_end = item.get("endParagraphIndex")
+                if raw_start is not None and (type(raw_start) is not int or raw_start != indexes[0]):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域起始段落序号与段落列表不一致。",
+                    )
+                if raw_end is not None and (type(raw_end) is not int or raw_end != indexes[-1]):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域结束段落序号与段落列表不一致。",
+                    )
+                start_idx = indexes[0]
+                end_idx = indexes[-1]
+                normalized_suspected.append({
+                    "regionId": str(item.get("regionId") or "suspected-toc-{0}".format(len(normalized_suspected) + 1))[:64],
+                    "source": "suspected_toc",
+                    "startParagraphIndex": start_idx,
+                    "endParagraphIndex": end_idx,
+                    "paragraphIndexes": indexes,
+                    "reason": reason,
+                })
+            if normalized_suspected:
+                result["suspectedTocRegions"] = normalized_suspected
         return result
 
     @classmethod
@@ -2806,6 +2898,8 @@ class DeterministicFormatReviewService:
             coverage["unsupportedObjects"] = unsupported_objects
         if isinstance(source_coverage.get("tocRegions"), list) and source_coverage.get("tocRegions"):
             coverage["tocRegions"] = deepcopy(source_coverage["tocRegions"])
+        if isinstance(source_coverage.get("suspectedTocRegions"), list) and source_coverage.get("suspectedTocRegions"):
+            coverage["suspectedTocRegions"] = deepcopy(source_coverage["suspectedTocRegions"])
         return {
             "characterCount": character_count,
             "contentSha256": hashlib.sha256("\n".join(text_values).encode("utf-8")).hexdigest(),
