@@ -2522,7 +2522,7 @@ class DeterministicFormatReviewService:
                         "自动目录区域格式无效。",
                     )
                 source = str(item.get("source") or "").strip()
-                if source not in {"tables_of_contents", "field", "auto_toc"}:
+                if source not in {"tables_of_contents", "field", "auto_toc", "manual_toc"}:
                     raise AdapterError(
                         "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
                         "自动目录区域来源不受支持。",
@@ -2564,6 +2564,60 @@ class DeterministicFormatReviewService:
                 normalized_regions.append(region)
             if normalized_regions:
                 result["tocRegions"] = normalized_regions
+        suspected_regions = value.get("suspectedTocRegions")
+        if suspected_regions is not None:
+            if not isinstance(suspected_regions, list) or len(suspected_regions) > 64:
+                raise AdapterError(
+                    "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                    "疑似目录区域统计格式无效。",
+                )
+            normalized_suspected = []
+            for item in suspected_regions:
+                if not isinstance(item, dict):
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域格式无效。",
+                    )
+                source = str(item.get("source") or "").strip()
+                if source != "suspected_toc":
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域来源不受支持。",
+                    )
+                raw_indexes = item.get("paragraphIndexes")
+                if not isinstance(raw_indexes, list) or not raw_indexes or len(raw_indexes) > 500:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域必须包含有限段落序号。",
+                    )
+                indexes = []
+                for raw_index in raw_indexes:
+                    if type(raw_index) is not int or raw_index <= 0:
+                        raise AdapterError(
+                            "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                            "疑似目录段落序号必须是正整数。",
+                        )
+                    if raw_index not in indexes:
+                        indexes.append(raw_index)
+                raw_start = item.get("startParagraphIndex")
+                raw_end = item.get("endParagraphIndex")
+                start_idx = raw_start if type(raw_start) is int else indexes[0]
+                end_idx = raw_end if type(raw_end) is int else indexes[-1]
+                if start_idx <= 0 or end_idx <= 0 or start_idx > end_idx:
+                    raise AdapterError(
+                        "DETERMINISTIC_FORMAT_REVIEW_COVERAGE_INVALID",
+                        "疑似目录区域边界无效。",
+                    )
+                normalized_suspected.append({
+                    "regionId": str(item.get("regionId") or "suspected-toc-{0}".format(len(normalized_suspected) + 1))[:64],
+                    "source": "suspected_toc",
+                    "startParagraphIndex": start_idx,
+                    "endParagraphIndex": end_idx,
+                    "paragraphIndexes": indexes,
+                    **({"reason": str(item["reason"])[:120]} if item.get("reason") else {}),
+                })
+            if normalized_suspected:
+                result["suspectedTocRegions"] = normalized_suspected
         return result
 
     @classmethod
@@ -2806,6 +2860,8 @@ class DeterministicFormatReviewService:
             coverage["unsupportedObjects"] = unsupported_objects
         if isinstance(source_coverage.get("tocRegions"), list) and source_coverage.get("tocRegions"):
             coverage["tocRegions"] = deepcopy(source_coverage["tocRegions"])
+        if isinstance(source_coverage.get("suspectedTocRegions"), list) and source_coverage.get("suspectedTocRegions"):
+            coverage["suspectedTocRegions"] = deepcopy(source_coverage["suspectedTocRegions"])
         return {
             "characterCount": character_count,
             "contentSha256": hashlib.sha256("\n".join(text_values).encode("utf-8")).hexdigest(),
