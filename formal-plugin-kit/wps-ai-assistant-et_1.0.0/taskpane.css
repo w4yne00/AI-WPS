@@ -329,7 +329,8 @@ body {
   white-space: nowrap;
 }
 
-.task-model-config-option.is-current {
+.task-model-config-option.is-current,
+.task-model-config-option[aria-checked="true"] {
   font-weight: 650;
 }
 

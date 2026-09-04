@@ -14,7 +14,7 @@ const hosts = [
   {
     name: "Excel",
     dir: etRoot,
-    tasks: ["excel.analysis", "excel.formula_assistant"]
+    tasks: ["excel.analysis", "excel.formula_assistant", "excel.smart_fill"]
   },
   {
     name: "PPT",

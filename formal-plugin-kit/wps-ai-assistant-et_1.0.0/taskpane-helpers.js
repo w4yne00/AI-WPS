@@ -3644,6 +3644,21 @@
     return result;
   }
 
+  function resolveCurrentTaskModelConfigProfile(data, selectedId) {
+    var id = String(selectedId || (data && data.activeProfileId) || "");
+    var profiles = data && Array.isArray(data.profiles) ? data.profiles : [];
+    var index;
+    if (!id) {
+      return null;
+    }
+    for (index = 0; index < profiles.length; index += 1) {
+      if (profiles[index] && profiles[index].id === id) {
+        return profiles[index];
+      }
+    }
+    return null;
+  }
+
   function buildTaskModelConfigMenuItems(profiles, options) {
     var activeId = options && options.activeProfileId || "";
     var items = [];
@@ -3938,6 +3953,7 @@
     workflowProfileOptionState: workflowProfileOptionState,
     formatTaskModelConfigAccessMethod: formatTaskModelConfigAccessMethod,
     formatTaskModelConfigEntry: formatTaskModelConfigEntry,
+    resolveCurrentTaskModelConfigProfile: resolveCurrentTaskModelConfigProfile,
     buildTaskModelConfigMenuItems: buildTaskModelConfigMenuItems,
     resolveTaskModelConfigViewStatus: resolveTaskModelConfigViewStatus,
     evaluateTaskModelConfigSwitch: evaluateTaskModelConfigSwitch,

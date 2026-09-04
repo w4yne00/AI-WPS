@@ -1,6 +1,7 @@
 const assert = require("assert");
 const fs = require("fs");
 const path = require("path");
+const vm = require("vm");
 const { etRoot } = require("./support/plugin-roots");
 
 const helpers = require(path.join(etRoot, "taskpane-helpers.js"));
@@ -67,7 +68,10 @@ function assertExcelTaskPagesUseCompactEntry() {
   assert.ok(!strip.includes("workflow-profile-select"), "Excel task pages must remove workflow-profile-select");
   assert.ok(!strip.includes("当前配置"), "Excel task pages must not keep an independent 当前配置 status row");
   assert.ok(strip.includes('id="task-model-config-trigger"'), "Excel compact entry needs a trigger");
+  assert.ok(strip.includes('aria-haspopup="menu"'), "trigger must declare aria-haspopup=\"menu\"");
   assert.ok(strip.includes('id="task-model-config-menu"'), "Excel compact entry needs an anchored menu");
+  assert.ok(strip.includes('role="menu"'), "anchored menu container must declare role=\"menu\"");
+  assert.ok(strip.includes('aria-label="模型配置列表"'), "menu container must declare accessible label");
   assert.ok(strip.includes("›") || strip.includes("task-model-config-chevron"), "Excel compact entry needs a disclosure chevron");
 }
 
@@ -348,9 +352,370 @@ function assertLayoutContract() {
   assert.ok(excelCssHead.includes("transform: scale(0.98)") || excelCss.includes("transform: scale(0.98)"), "pointer-down must give immediate press feedback");
   assert.ok(excelCss.includes("@media (prefers-reduced-motion: reduce)"), "reduced motion support must remain");
   assert.ok(!excelCssHead.includes("backdrop-filter"), "compact entry must not add decorative blur");
-  assert.ok(excelJs.includes('tabindex="-1"') || excelJs.includes("tabindex=\\\"-1\\\""), "listbox options must stay out of tab order");
-  assert.ok(excelJs.includes("aria-activedescendant"), "listbox must expose the highlighted option without moving focus");
+  assert.ok(excelJs.includes('tabindex="-1"') || excelJs.includes("tabindex=\\\"-1\\\""), "menu options must stay out of tab order");
+  assert.ok(excelJs.includes("aria-activedescendant"), "trigger must expose the highlighted option via aria-activedescendant without moving focus");
+  assert.ok(excelJs.includes("role=\"menuitemradio\"") || excelJs.includes("isManage ? \"menuitem\" : \"menuitemradio\""), "options must use menuitemradio and menuitem");
+  assert.ok(excelJs.includes("aria-checked="), "options must expose real selection state via aria-checked");
   assert.ok(excelJs.includes("updateTaskModelConfigMenuHighlight"), "arrow keys must update highlight without replacing the menu");
+}
+
+function assertUnactivatedProfileContract() {
+  const unresolved = helpers.resolveCurrentTaskModelConfigProfile(
+    { activeProfileId: "", profiles: [PLATFORM_PROFILE, SECRET_PROFILE] },
+    ""
+  );
+  assert.strictEqual(unresolved, null, "unactivated profile set must resolve to null");
+
+  const nonExistent = helpers.resolveCurrentTaskModelConfigProfile(
+    { activeProfileId: "ghost", profiles: [PLATFORM_PROFILE] },
+    "ghost"
+  );
+  assert.strictEqual(nonExistent, null, "unknown profile id must resolve to null");
+
+  const resolvedActive = helpers.resolveCurrentTaskModelConfigProfile(
+    { activeProfileId: "flow-1", profiles: [PLATFORM_PROFILE, SECRET_PROFILE] },
+    "flow-1"
+  );
+  assert.strictEqual(resolvedActive.id, "flow-1");
+
+  const status = helpers.resolveTaskModelConfigViewStatus({
+    taskType: "excel.analysis",
+    mutationBusy: false,
+    statusByTask: {},
+    hasLoaded: true,
+    loadError: false,
+    hasProfile: Boolean(unresolved)
+  });
+  assert.strictEqual(status, "empty", "status must be empty when no profile is active");
+
+  const formatted = helpers.formatTaskModelConfigEntry(unresolved, { status: status });
+  assert.strictEqual(formatted.visibleText, "未配置");
+  assert.strictEqual(formatted.statusText, "未配置");
+  assert.strictEqual(formatted.ariaLabel, "未配置");
+
+  const menuItems = helpers.buildTaskModelConfigMenuItems(
+    [PLATFORM_PROFILE, SECRET_PROFILE],
+    { activeProfileId: "" }
+  );
+  menuItems.forEach((item) => {
+    if (item.action === "select") {
+      assert.strictEqual(item.selected, false, "no option should be selected when activeProfileId is empty");
+    }
+  });
+}
+
+async function assertBehavioralDomContracts() {
+  function functionSource(name) {
+    const start = excelJs.indexOf(`  function ${name}(`);
+    assert.notStrictEqual(start, -1, `missing function ${name}`);
+    const next = excelJs.indexOf("\n  function ", start + 3);
+    return excelJs.slice(start, next === -1 ? excelJs.length : next);
+  }
+  function loadFunction(name, context = {}) {
+    return vm.runInNewContext(`(${functionSource(name)})`, context);
+  }
+
+  function createClassList(initial = []) {
+    const classes = new Set(initial);
+    return {
+      add(...names) { names.forEach((n) => classes.add(n)); },
+      remove(...names) { names.forEach((n) => classes.delete(n)); },
+      toggle(name, force) {
+        if (force === undefined) {
+          if (classes.has(name)) classes.delete(name); else classes.add(name);
+        } else if (force) {
+          classes.add(name);
+        } else {
+          classes.delete(name);
+        }
+      },
+      contains(name) { return classes.has(name); }
+    };
+  }
+
+  function createMockElement(id = "", tagName = "div") {
+    const attributes = {};
+    const classList = createClassList();
+    const children = [];
+    let currentInnerHtml = "";
+    const el = {
+      id: id,
+      tagName: tagName.toUpperCase(),
+      attributes: attributes,
+      classList: classList,
+      children: children,
+      hidden: false,
+      disabled: false,
+      textContent: "",
+      setAttribute(name, value) { attributes[name] = String(value); },
+      getAttribute(name) { return Object.prototype.hasOwnProperty.call(attributes, name) ? attributes[name] : null; },
+      removeAttribute(name) { delete attributes[name]; },
+      hasAttribute(name) { return Object.prototype.hasOwnProperty.call(attributes, name); },
+      getBoundingClientRect() { return { top: 100, bottom: 200, height: 100, width: 200 }; },
+      focus() {
+        mockDocument.activeElement = el;
+      },
+      querySelectorAll(selector) {
+        if (selector === "[data-config-action]") {
+          return children.filter((c) => c.hasAttribute("data-config-action"));
+        }
+        return [];
+      },
+      get innerHTML() { return currentInnerHtml; },
+      set innerHTML(val) {
+        currentInnerHtml = val;
+        children.length = 0;
+        if (!val) return;
+        const regex = /<button\s+([^>]+)>([^<]*)<\/button>/g;
+        let match;
+        while ((match = regex.exec(val)) !== null) {
+          const attrsStr = match[1];
+          const text = match[2];
+          const btn = createMockElement("", "button");
+          btn.textContent = text;
+          const attrRegex = /([a-zA-Z0-9_-]+)="([^"]*)"/g;
+          let attrMatch;
+          while ((attrMatch = attrRegex.exec(attrsStr)) !== null) {
+            btn.setAttribute(attrMatch[1], attrMatch[2]);
+            if (attrMatch[1] === "id") btn.id = attrMatch[2];
+            if (attrMatch[1] === "class") {
+              attrMatch[2].split(/\s+/).forEach((c) => { if (c) btn.classList.add(c); });
+            }
+          }
+          if (attrsStr.includes("disabled")) btn.disabled = true;
+          children.push(btn);
+        }
+      }
+    };
+    return el;
+  }
+
+  const mockTabs = {
+    "excel.analysis": createMockElement("tab-excel-analysis", "button"),
+    "excel.formula_assistant": createMockElement("tab-excel-formula", "button"),
+    "excel.smart_fill": createMockElement("tab-excel-smart-fill", "button")
+  };
+  mockTabs["excel.analysis"].setAttribute("data-workflow-task-tab", "excel.analysis");
+  mockTabs["excel.formula_assistant"].setAttribute("data-workflow-task-tab", "excel.formula_assistant");
+  mockTabs["excel.smart_fill"].setAttribute("data-workflow-task-tab", "excel.smart_fill");
+
+  const mockNodes = {
+    "workflow-profile-strip": createMockElement("workflow-profile-strip"),
+    "task-model-config-trigger": createMockElement("task-model-config-trigger", "button"),
+    "task-model-config-menu": createMockElement("task-model-config-menu"),
+    "task-model-config-label": createMockElement("task-model-config-label", "span"),
+    "task-model-config-status": createMockElement("task-model-config-status", "span"),
+    "workflow-switch-feedback": createMockElement("workflow-switch-feedback", "span"),
+    "home-view": createMockElement("home-view", "section"),
+    "settings-view": createMockElement("settings-view", "section"),
+    "task-title": createMockElement("task-title", "h2"),
+    "btn-open-settings": createMockElement("btn-open-settings", "button"),
+    "excel-analysis-options": createMockElement("excel-analysis-options"),
+    "excel-formula-options": createMockElement("excel-formula-options"),
+    "excel-smart-fill-options": createMockElement("excel-smart-fill-options"),
+    "btn-run-primary": createMockElement("btn-run-primary", "button"),
+    "btn-copy-formula": createMockElement("btn-copy-formula", "button"),
+    "diagnostics-disclosure": createMockElement("diagnostics-disclosure"),
+    "btn-confirm-workflow-delete": createMockElement("btn-confirm-workflow-delete", "button"),
+    "btn-cancel-workflow-delete": createMockElement("btn-cancel-workflow-delete", "button"),
+    "btn-save-workflow-editor": createMockElement("btn-save-workflow-editor", "button"),
+    "btn-cancel-workflow-editor": createMockElement("btn-cancel-workflow-editor", "button"),
+    "btn-workflow-editor-back": createMockElement("btn-workflow-editor-back", "button")
+  };
+  mockNodes["home-view"].classList.add("active");
+
+  const mockDocument = {
+    activeElement: mockNodes["task-model-config-trigger"],
+    body: createMockElement("body", "body"),
+    querySelector(sel) {
+      const tabMatch = sel && sel.match(/\[data-workflow-task-tab="([^"]+)"\]/);
+      if (tabMatch && mockTabs[tabMatch[1]]) {
+        return mockTabs[tabMatch[1]];
+      }
+      return null;
+    }
+  };
+
+  const byId = (id) => mockNodes[id] || null;
+  const setNodeTextIfChanged = (node, text) => { if (node) node.textContent = text; };
+  const escaped = (v) => helpers.escapeHtml ? helpers.escapeHtml(v) : String(v || "");
+
+  const testState = {
+    currentMode: "excelAnalysis",
+    lastTaskMode: "excelAnalysis",
+    workflowTaskType: "excel.analysis",
+    busy: false,
+    workflowProfileMutationBusy: false,
+    taskModelConfigStatusByTask: {},
+    taskModelConfigMenu: { open: false, highlightedIndex: -1, itemCount: 0, items: [] },
+    workflowProfileSelections: { "excel.analysis": "" },
+    workflowProfileLoadSequences: {},
+    workflowProfilesByTask: {},
+    modelInterfaceDetectable: true,
+    workflowEditor: { open: false },
+    providerUrlEditorOpen: false
+  };
+
+  const baseContext = {
+    state: testState,
+    helpers: helpers,
+    byId: byId,
+    setNodeTextIfChanged: setNodeTextIfChanged,
+    escaped: escaped,
+    document: mockDocument,
+    window: { innerHeight: 700 },
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
+    EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
+    getTaskPageWorkflowType() { return testState.workflowTaskType; },
+    getWorkflowProfileData(task) {
+      return testState.workflowProfilesByTask[task] || { taskType: task, activeProfileId: "", profiles: [] };
+    },
+    normalizeWorkflowProfileData(data, task) {
+      return {
+        taskType: task,
+        activeProfileId: (data && data.activeConfigurationId) || (data && data.activeProfileId) || "",
+        profiles: (data && data.configurations) || (data && data.profiles) || []
+      };
+    },
+    getActiveWorkflowProfileName(data) {
+      const p = (data && data.profiles || []).find((x) => x.id === (data && data.activeProfileId));
+      return p ? p.name : "尚未配置";
+    },
+    findWorkflowProfile(id, task) {
+      const d = testState.workflowProfilesByTask[task];
+      return d && d.profiles ? d.profiles.find((x) => x.id === id) : null;
+    },
+    focusTaskModelConfigTrigger() { mockNodes["task-model-config-trigger"].focus(); },
+    describeFetchError(err) { return err && err.message || String(err); },
+    renderModelInterfaceState() {},
+    renderWorkflowProfileManager() {},
+    renderWorkflowTaskTabs() {},
+    renderSmartFillCaptureState() {},
+    setSmartFillWriteButtonState() {},
+    setExcelResultViewSwitchForMode() {},
+    refreshConfig() {},
+    syncSettingsRefreshController() {},
+    syncScopeWatcher() {},
+    setFormulaAssistantMode() {},
+    resumeExcelAnalysisActiveJob() {},
+    resumeExcelFormulaActiveJob() {},
+    resumeExcelSmartFillActiveJob() {},
+    loadWorkflowProfiles() {},
+    getFormulaModeUi() { return { actionLabel: "生成" }; }
+  };
+
+  baseContext.taskModelConfigOptionId = loadFunction("taskModelConfigOptionId", baseContext);
+  baseContext.positionTaskModelConfigMenu = loadFunction("positionTaskModelConfigMenu", baseContext);
+  baseContext.updateTaskModelConfigMenuHighlight = loadFunction("updateTaskModelConfigMenuHighlight", baseContext);
+  baseContext.closeTaskModelConfigMenu = loadFunction("closeTaskModelConfigMenu", baseContext);
+  baseContext.renderTaskModelConfigMenu = loadFunction("renderTaskModelConfigMenu", baseContext);
+  baseContext.currentTaskModelConfigProfile = loadFunction("currentTaskModelConfigProfile", baseContext);
+  baseContext.resolveTaskModelConfigStatus = loadFunction("resolveTaskModelConfigStatus", baseContext);
+  baseContext.openTaskModelConfigMenu = loadFunction("openTaskModelConfigMenu", baseContext);
+  baseContext.switchView = loadFunction("switchView", baseContext);
+  baseContext.switchMode = loadFunction("switchMode", baseContext);
+  baseContext.renderWorkflowProfileStrip = loadFunction("renderWorkflowProfileStrip", baseContext);
+  baseContext.setWorkflowMutationBusy = loadFunction("setWorkflowMutationBusy", baseContext);
+
+  let statusMessage = "";
+  baseContext.setStatus = (msg) => { statusMessage = msg; };
+
+  // --- Test 1: Unactivated profile rendering (complete profile exists, but activeConfigurationId is empty) ---
+  testState.workflowProfilesByTask["excel.analysis"] = {
+    taskType: "excel.analysis",
+    activeProfileId: "",
+    profiles: [PLATFORM_PROFILE, SECRET_PROFILE]
+  };
+  testState.workflowProfileSelections["excel.analysis"] = "";
+  const resolvedUnactivated = baseContext.currentTaskModelConfigProfile(testState.workflowProfilesByTask["excel.analysis"]);
+  assert.strictEqual(resolvedUnactivated, null, "currentTaskModelConfigProfile must return null when activeProfileId is empty");
+
+  baseContext.renderWorkflowProfileStrip();
+  assert.strictEqual(mockNodes["task-model-config-label"].textContent, "未配置");
+  assert.strictEqual(mockNodes["task-model-config-trigger"].getAttribute("aria-label"), "选择智能分析模型配置，未配置");
+  assert.ok(!mockNodes["task-model-config-trigger"].getAttribute("aria-label").includes("生产版"));
+  assert.ok(!mockNodes["task-model-config-trigger"].getAttribute("aria-label").includes("直连生产"));
+  assert.ok(mockNodes["task-model-config-status"].className.includes("empty"), "status indicator must reflect empty state");
+
+  // --- Test 2: Menu ARIA roles, aria-checked, and aria-activedescendant on trigger ---
+  testState.workflowProfilesByTask["excel.analysis"].activeProfileId = "flow-1";
+  testState.workflowProfileSelections["excel.analysis"] = "flow-1";
+  baseContext.renderWorkflowProfileStrip();
+  assert.strictEqual(mockNodes["task-model-config-label"].textContent, "生产版 · 工作流平台");
+
+  baseContext.openTaskModelConfigMenu();
+  assert.strictEqual(mockNodes["task-model-config-trigger"].getAttribute("aria-expanded"), "true");
+  assert.strictEqual(mockNodes["task-model-config-trigger"].getAttribute("aria-activedescendant"), "task-model-config-option-0");
+  assert.strictEqual(mockNodes["task-model-config-menu"].getAttribute("aria-activedescendant"), null, "aria-activedescendant must not sit on menu");
+
+  const menuButtons = mockNodes["task-model-config-menu"].querySelectorAll("[data-config-action]");
+  assert.strictEqual(menuButtons.length, 3);
+  assert.strictEqual(menuButtons[0].getAttribute("role"), "menuitemradio");
+  assert.strictEqual(menuButtons[0].getAttribute("aria-checked"), "true", "active profile must have aria-checked=true");
+  assert.strictEqual(menuButtons[1].getAttribute("role"), "menuitemradio");
+  assert.strictEqual(menuButtons[1].getAttribute("aria-checked"), "false", "inactive profile must have aria-checked=false");
+  assert.strictEqual(menuButtons[2].getAttribute("role"), "menuitem");
+  assert.strictEqual(menuButtons[2].getAttribute("aria-checked"), null, "manage action must not have aria-checked");
+
+  // Keyboard navigation moves highlight
+  baseContext.updateTaskModelConfigMenuHighlight(1);
+  assert.strictEqual(mockNodes["task-model-config-trigger"].getAttribute("aria-activedescendant"), "task-model-config-option-1");
+  assert.ok(menuButtons[1].classList.contains("is-active"));
+  assert.ok(!menuButtons[0].classList.contains("is-active"));
+  assert.strictEqual(menuButtons[0].getAttribute("aria-checked"), "true", "highlight movement must not corrupt aria-checked selection state");
+
+  // Close menu removes aria-activedescendant from trigger
+  baseContext.closeTaskModelConfigMenu(false);
+  assert.strictEqual(mockNodes["task-model-config-trigger"].getAttribute("aria-expanded"), "false");
+  assert.strictEqual(mockNodes["task-model-config-trigger"].getAttribute("aria-activedescendant"), null);
+
+  // --- Test 3: Settings navigation and document.activeElement ---
+  baseContext.applyTaskModelConfigMenuItem = loadFunction("applyTaskModelConfigMenuItem", baseContext);
+  mockDocument.activeElement = mockNodes["task-model-config-trigger"];
+  baseContext.applyTaskModelConfigMenuItem({ action: "manage" }, false);
+  assert.strictEqual(testState.currentMode, "settings");
+  assert.ok(mockNodes["settings-view"].classList.contains("active"));
+  assert.ok(!mockNodes["home-view"].classList.contains("active"));
+  assert.strictEqual(
+    mockDocument.activeElement,
+    mockTabs["excel.analysis"],
+    "navigating via 管理配置 must move document.activeElement to the task tab in settings view"
+  );
+  assert.notStrictEqual(mockDocument.activeElement, mockNodes["task-model-config-trigger"]);
+
+  // --- Test 4: Activation vs refresh failure behavior ---
+  baseContext.switchMode("excelAnalysis");
+  testState.workflowProfileSelections["excel.analysis"] = "flow-1";
+  testState.workflowProfilesByTask["excel.analysis"].activeProfileId = "flow-1";
+
+  baseContext.request = (url) => {
+    if (url.includes("/activate")) {
+      return Promise.resolve({
+        data: {
+          taskType: "excel.analysis",
+          activeConfigurationId: "direct-1",
+          configurations: [PLATFORM_PROFILE, SECRET_PROFILE]
+        }
+      });
+    }
+    return Promise.reject(new Error("unexpected url"));
+  };
+  baseContext.loadWorkflowProfileForTask = () => {
+    return Promise.resolve({ failed: true });
+  };
+  baseContext.activateWorkflowProfile = loadFunction("activateWorkflowProfile", baseContext);
+
+  await baseContext.activateWorkflowProfile("direct-1", "flow-1", "excel.analysis");
+  assert.strictEqual(testState.workflowProfileSelections["excel.analysis"], "direct-1", "selection must remain direct-1 even if list refresh failed");
+  assert.ok(statusMessage.includes("刷新最新列表失败"), `expected refresh failure message, got: ${statusMessage}`);
+  assert.notStrictEqual(testState.taskModelConfigStatusByTask["excel.analysis"], "error", "refresh failure must not flag switch error");
+
+  baseContext.request = () => Promise.reject(new Error("网络异常 503"));
+  await baseContext.activateWorkflowProfile("flow-1", "direct-1", "excel.analysis");
+  assert.strictEqual(testState.workflowProfileSelections["excel.analysis"], "direct-1", "activation failure must roll back selection");
+  assert.ok(statusMessage.includes("切换模型配置失败"), `expected activation failure message, got: ${statusMessage}`);
+  assert.strictEqual(testState.taskModelConfigStatusByTask["excel.analysis"], "error");
 }
 
 assertLabelContract();
@@ -362,5 +727,11 @@ assertExcelTaskPagesUseCompactEntry();
 assertSettingsNavigationContract();
 assertExcelTaskContextContract();
 assertLayoutContract();
+assertUnactivatedProfileContract();
 
-console.log("task model config entry contract tests passed");
+assertBehavioralDomContracts().then(() => {
+  console.log("task model config entry contract tests passed");
+}).catch((err) => {
+  console.error(err);
+  process.exit(1);
+});
