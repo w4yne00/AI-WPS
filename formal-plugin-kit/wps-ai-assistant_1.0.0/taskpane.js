@@ -240,8 +240,8 @@
     deterministicFormatReviewIssueCursorHistory: [],
     deterministicFormatReviewIssueFilters: {
       rule: "",
-      severity: "",
       dataStatus: "",
+      status: "",
       sort: "source"
     },
     deterministicFormatReviewDocumentIdentity: null,
@@ -6373,18 +6373,41 @@
       return;
     }
     controls.hidden = false;
-    ["rule", "severity", "dataStatus", "sort"].forEach(function (name) {
+    ["rule", "dataStatus", "status", "sort"].forEach(function (name) {
       var field = byId("format-review-filter-" + name.replace("dataStatus", "data-status"));
       if (field && field.value !== String(state.deterministicFormatReviewIssueFilters[name] || "")) {
         field.value = state.deterministicFormatReviewIssueFilters[name] || "";
       }
     });
-    pageStatus.textContent = "第 " + Number(pageData && pageData.page || 1) + " 页，共 " +
-      Number(pageData && pageData.total || 0) + " 项";
+    pageStatus.textContent = helpers.formatDeterministicFormatReviewPageStatus
+      ? helpers.formatDeterministicFormatReviewPageStatus({
+        page: Number(pageData && pageData.page || 1),
+        locationGroupCount: Number(pageData && pageData.locationGroupCount || 0),
+        pageSize: Number(pageData && pageData.pageSize || 20)
+      })
+      : ("第 " + Number(pageData && pageData.page || 1) + " / 1 页");
+    var filterCountEl = byId("format-review-filter-count");
+    var filterCount = helpers.countEnabledFormatReviewFilters
+      ? helpers.countEnabledFormatReviewFilters(state.deterministicFormatReviewIssueFilters)
+      : 0;
+    if (filterCountEl) {
+      filterCountEl.hidden = filterCount <= 0;
+      filterCountEl.textContent = String(filterCount);
+    }
     previous.disabled = state.deterministicFormatReviewIssueCursorHistory.length <= 1;
     next.disabled = !pageData.nextCursor;
-    exportJson.onclick = function () { downloadDeterministicFormatReviewExport(jobId, "json"); };
-    exportMarkdown.onclick = function () { downloadDeterministicFormatReviewExport(jobId, "markdown"); };
+    exportJson.onclick = function () {
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(byId("format-review-more-menu"), byId("btn-format-review-more"), false);
+      }
+      downloadDeterministicFormatReviewExport(jobId, "json");
+    };
+    exportMarkdown.onclick = function () {
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(byId("format-review-more-menu"), byId("btn-format-review-more"), false);
+      }
+      downloadDeterministicFormatReviewExport(jobId, "markdown");
+    };
     previous.onclick = function () {
       var history = state.deterministicFormatReviewIssueCursorHistory;
       if (history.length <= 1) { return; }
@@ -6405,6 +6428,18 @@
         var issue = issues.filter(function (item) {
           return String(item && item.issueId || "") === String(issueId || "");
         })[0];
+        if (action === "toggle-location") {
+          button.addEventListener("click", function () {
+            var card = button.closest ? button.closest(".review-location-card") : null;
+            var body = card && card.querySelector ? card.querySelector(".review-location-body") : null;
+            var expanded = button.getAttribute("aria-expanded") === "true";
+            button.setAttribute("aria-expanded", expanded ? "false" : "true");
+            if (body) {
+              body.hidden = expanded;
+            }
+          });
+          return;
+        }
         if (!issue) {
           return;
         }
@@ -6434,8 +6469,8 @@
     var path = "/word/format-review/jobs/" + encodeURIComponent(jobId) +
       "/issues?pageSize=20&sort=" + encodeURIComponent(filters.sort || "source");
     if (filters.rule) { path += "&ruleId=" + encodeURIComponent(filters.rule); }
-    if (filters.severity) { path += "&severity=" + encodeURIComponent(filters.severity); }
     if (filters.dataStatus) { path += "&dataStatus=" + encodeURIComponent(filters.dataStatus); }
+    if (filters.status) { path += "&status=" + encodeURIComponent(filters.status); }
     if (cursor) { path += "&cursor=" + encodeURIComponent(cursor); }
     return request(path, null, { timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS }).then(function (body) {
       var pageData = body.data || {};
@@ -6474,7 +6509,7 @@
 
   function changeDeterministicFormatReviewIssueFilter(name, value) {
     if (!state.deterministicFormatReviewIssueFilters ||
-        ["rule", "severity", "dataStatus", "sort"].indexOf(name) < 0) {
+        ["rule", "dataStatus", "status", "sort"].indexOf(name) < 0) {
       return;
     }
     state.deterministicFormatReviewIssueFilters[name] = String(value || "");
@@ -7925,8 +7960,8 @@
     byId("format-review-filter-rule").addEventListener("change", function (event) {
       changeDeterministicFormatReviewIssueFilter("rule", event.target.value);
     });
-    byId("format-review-filter-severity").addEventListener("change", function (event) {
-      changeDeterministicFormatReviewIssueFilter("severity", event.target.value);
+    byId("format-review-filter-status").addEventListener("change", function (event) {
+      changeDeterministicFormatReviewIssueFilter("status", event.target.value);
     });
     byId("format-review-filter-data-status").addEventListener("change", function (event) {
       changeDeterministicFormatReviewIssueFilter("dataStatus", event.target.value);
@@ -7934,6 +7969,58 @@
     byId("format-review-filter-sort").addEventListener("change", function (event) {
       changeDeterministicFormatReviewIssueFilter("sort", event.target.value);
     });
+    byId("btn-format-review-filter").addEventListener("click", function () {
+      var panel = byId("format-review-filter-panel");
+      var menu = byId("format-review-more-menu");
+      var open = panel.hidden;
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(
+          panel,
+          byId("btn-format-review-filter"),
+          open,
+          menu,
+          byId("btn-format-review-more")
+        );
+      }
+    });
+    byId("btn-format-review-more").addEventListener("click", function () {
+      var panel = byId("format-review-filter-panel");
+      var menu = byId("format-review-more-menu");
+      var open = menu.hidden;
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        helpers.setFormatReviewAnchoredPanelOpen(
+          menu,
+          byId("btn-format-review-more"),
+          open,
+          panel,
+          byId("btn-format-review-filter")
+        );
+      }
+    });
+    var formatFilterPanelEl = byId("format-review-filter-panel");
+    var formatFilterTriggerEl = byId("btn-format-review-filter");
+    var formatMoreMenuEl = byId("format-review-more-menu");
+    var formatMoreTriggerEl = byId("btn-format-review-more");
+    if (formatFilterPanelEl) {
+      formatFilterPanelEl.addEventListener("focusout", function (event) {
+        if (helpers.handleFormatReviewAnchoredPanelFocusout) {
+          helpers.handleFormatReviewAnchoredPanelFocusout(event, {
+            panel: formatFilterPanelEl,
+            trigger: formatFilterTriggerEl
+          });
+        }
+      });
+    }
+    if (formatMoreMenuEl) {
+      formatMoreMenuEl.addEventListener("focusout", function (event) {
+        if (helpers.handleFormatReviewAnchoredPanelFocusout) {
+          helpers.handleFormatReviewAnchoredPanelFocusout(event, {
+            panel: formatMoreMenuEl,
+            trigger: formatMoreTriggerEl
+          });
+        }
+      });
+    }
     byId("btn-resubmit-interrupted-job").addEventListener("click", runPrimaryAction);
     byId("template-select").addEventListener("change", function (event) {
       state.selectedTemplateId = event.target.value;
@@ -8017,11 +8104,41 @@
       if (!workflowHelpHeading.contains(event.target) && !workflowHelpPopover.contains(event.target)) {
         setWorkflowHelpOpen(false, false);
       }
+      var filterPanel = byId("format-review-filter-panel");
+      var filterTrigger = byId("btn-format-review-filter");
+      var moreMenu = byId("format-review-more-menu");
+      var moreTrigger = byId("btn-format-review-more");
+      if (helpers.setFormatReviewAnchoredPanelOpen) {
+        if (filterPanel && !filterPanel.hidden && !filterPanel.contains(event.target) && (!filterTrigger || !filterTrigger.contains(event.target))) {
+          helpers.setFormatReviewAnchoredPanelOpen(filterPanel, filterTrigger, false);
+        }
+        if (moreMenu && !moreMenu.hidden && !moreMenu.contains(event.target) && (!moreTrigger || !moreTrigger.contains(event.target))) {
+          helpers.setFormatReviewAnchoredPanelOpen(moreMenu, moreTrigger, false);
+        }
+      }
     });
     document.addEventListener("keydown", function (event) {
+      var filterPanel = byId("format-review-filter-panel");
+      var moreMenu = byId("format-review-more-menu");
       if (event.key === "Escape" && !workflowHelpPopover.hidden) {
         setWorkflowHelpOpen(false, false);
         workflowHelpButton.focus();
+        return;
+      }
+      if (helpers.handleFormatReviewAnchoredPanelKeydown && filterPanel && !filterPanel.hidden) {
+        helpers.handleFormatReviewAnchoredPanelKeydown(event, {
+          panel: filterPanel,
+          trigger: byId("btn-format-review-filter"),
+          activeElement: document.activeElement
+        });
+        return;
+      }
+      if (helpers.handleFormatReviewAnchoredPanelKeydown && moreMenu && !moreMenu.hidden) {
+        helpers.handleFormatReviewAnchoredPanelKeydown(event, {
+          panel: moreMenu,
+          trigger: byId("btn-format-review-more"),
+          activeElement: document.activeElement
+        });
       }
     });
     document.addEventListener("visibilitychange", syncSettingsRefreshController);

@@ -907,6 +907,190 @@ body[data-task-mode="smartWrite"] #result-output {
 #format-review-issue-actions {
   display: grid;
   gap: 8px;
+  min-width: 0;
+}
+
+.format-review-toolbar {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.format-review-pager {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.format-review-pager button {
+  width: 100%;
+  min-width: 44px;
+  min-height: 44px;
+  height: 44px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+}
+
+.format-review-filter-wrap {
+  position: relative;
+  width: 44px;
+  height: 44px;
+}
+
+.format-review-filter-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 10px;
+  line-height: 16px;
+  text-align: center;
+}
+
+.format-review-filter-badge[hidden] {
+  display: none;
+}
+
+.format-review-icon-button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.format-review-icon-button > span {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+}
+
+.format-review-anchored-panel {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-panel);
+  background: var(--surface);
+}
+
+.format-review-anchored-panel[hidden] {
+  display: none;
+}
+
+.review-location-card {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-panel);
+  min-width: 0;
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.review-location-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  align-items: start;
+}
+
+.review-location-toggle {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  padding: 8px;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  font-weight: 600;
+}
+
+.review-location-excerpt,
+.review-location-meta {
+  overflow-wrap: anywhere;
+}
+
+.review-location-meta,
+.review-issue-item p {
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.review-location-body {
+  display: grid;
+  gap: 8px;
+}
+
+.review-issue-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.review-issue-item .review-action-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+}
+
+.review-issue-item .review-action-row button {
+  position: relative;
+  min-width: 44px;
+  min-height: 36px;
+  height: 36px;
+  padding: 4px 8px;
+  box-sizing: border-box;
+}
+
+.review-issue-item .review-action-row button::after {
+  content: "";
+  position: absolute;
+  top: -4px;
+  bottom: -4px;
+  left: 0;
+  right: 0;
+  min-height: 44px;
+  min-width: 44px;
+}
+
+@media (max-width: 320px) {
+  .format-review-toolbar,
+  .format-review-pager,
+  .review-location-card,
+  #format-review-issue-actions {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@media (max-width: 420px) {
+  .format-review-toolbar,
+  .format-review-pager,
+  .review-location-card,
+  #format-review-issue-actions {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
 }
 
 .review-issue-meta,
@@ -1998,6 +2182,23 @@ body[data-task-mode="smartWrite"] #result-output {
 .full-document-review-entry small {
   margin: 0;
   color: var(--color-text-muted);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+
+  .review-location-card,
+  .review-location-body,
+  .format-review-anchored-panel {
+    transform: none !important;
+  }
 }
 
 /* Shared restrained settings and interaction treatment. */
