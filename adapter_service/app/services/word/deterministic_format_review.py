@@ -1426,6 +1426,10 @@ class DeterministicFormatReviewService:
                 "DETERMINISTIC_FORMAT_REVIEW_REPORT_FORMAT_INVALID",
                 "格式审查报告仅支持 json 或 markdown 格式。",
             )
+        return self.render_markdown_report(report)
+
+    @classmethod
+    def render_markdown_report(cls, report: Dict) -> str:
         summary = report.get("summary", {})
         attempted = "已尝试" if summary.get("aiAttempted") else "未尝试"
         candidate_count = int(summary.get("aiCandidateCount", 0) or 0)
@@ -1460,7 +1464,16 @@ class DeterministicFormatReviewService:
         toc_summary = str(summary.get("tocExemptionSummary") or report.get("coverage", {}).get("tocExemptionSummary") or "").strip()
         if toc_summary:
             lines.append("- {0}".format(toc_summary))
+        suspected_summary = str(summary.get("suspectedTocSummary") or report.get("coverage", {}).get("suspectedTocSummary") or "").strip()
+        if suspected_summary:
+            lines.append("- {0}".format(suspected_summary))
         lines.extend(["", report.get("disclaimer", ""), ""])
+        if not report.get("issues"):
+            if suspected_summary:
+                lines.append("当前筛选范围未发现需要调整的格式问题。因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。")
+            else:
+                lines.append("当前筛选范围未发现需要调整的格式问题。若覆盖状态不是“已完成”，零问题不代表文档完全合规。")
+            return "\n".join(lines).strip()
         for index, issue in enumerate(report.get("issues", []), 1):
             lines.extend([
                 "## {0}. {1}".format(index, _report_issue_title(issue)),

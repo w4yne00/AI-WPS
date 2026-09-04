@@ -2839,14 +2839,31 @@
       "来源版本：" + String(summary.rulePackSourceVersion || "未记录"),
       "问题数量：" + total
     ];
-    if (String(summary.tocExemptionSummary || "").trim()) {
-      lines.push(String(summary.tocExemptionSummary).trim());
+    var tocExemptionSummary = String(
+      summary.tocExemptionSummary ||
+      (source.coverage && source.coverage.tocExemptionSummary) ||
+      ""
+    ).trim();
+    if (tocExemptionSummary) {
+      lines.push(tocExemptionSummary);
+    }
+    var suspectedTocSummary = String(
+      summary.suspectedTocSummary ||
+      (source.coverage && source.coverage.suspectedTocSummary) ||
+      ""
+    ).trim();
+    if (suspectedTocSummary) {
+      lines.push(suspectedTocSummary);
     }
     lines.push("");
     lines.push("以下内容仅展示可由当前格式事实确认的问题，不修改 Word 文档。");
     lines.push("");
     if (!issues.length) {
-      lines.push("当前筛选范围未发现需要调整的格式问题。若覆盖状态不是“已完成”，零问题不代表文档完全合规。" );
+      if (suspectedTocSummary) {
+        lines.push("当前筛选范围未发现需要调整的格式问题。因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。");
+      } else {
+        lines.push("当前筛选范围未发现需要调整的格式问题。若覆盖状态不是“已完成”，零问题不代表文档完全合规。");
+      }
       return lines.join("\n");
     }
     lines.push("## 问题清单");
@@ -3177,6 +3194,19 @@
     ).trim();
     if (tocExemptionSummary) {
       previewLines.splice(1, 0, tocExemptionSummary);
+    }
+    var suspectedTocSummary = String(
+      summary.suspectedTocSummary ||
+      (source.coverage && source.coverage.suspectedTocSummary) ||
+      ""
+    ).trim();
+    if (suspectedTocSummary) {
+      previewLines.splice(previewLines.length - 1, 0, suspectedTocSummary);
+    }
+    if (total === 0) {
+      if (suspectedTocSummary) {
+        previewLines.push("当前筛选范围未发现需要调整的格式问题。因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。");
+      }
     }
     return {
       previewText: previewLines.join("\n"),

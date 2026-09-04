@@ -266,3 +266,34 @@ class ManualAndSuspectedTocReviewerTests(unittest.TestCase):
         ]
         self.assertTrue(para3_issues)
         self.assertFalse(result["summary"].get("exemptedTocRegionCount"))
+
+    def test_render_readable_report_discloses_exempted_and_suspected_toc_separately(self):
+        report = {
+            "jobId": "job-test-toc",
+            "issueCount": 0,
+            "issues": [],
+            "summary": {
+                "templateId": "standard",
+                "executionStatus": "completed",
+                "complianceStatus": "passed",
+                "coverageStatus": "partial",
+                "tocExemptionSummary": "已识别并略过目录：1 个区域，共 18 段",
+                "suspectedTocSummary": "发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）",
+            },
+            "coverage": {
+                "reviewCharacterCount": 1200,
+                "tocExemptionSummary": "已识别并略过目录：1 个区域，共 18 段",
+                "suspectedTocSummary": "发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）",
+            },
+            "disclaimer": "以下内容仅展示可由当前格式事实确认的问题，不修改 Word 文档。",
+        }
+        service = DeterministicFormatReviewService()
+        markdown = service.render_markdown_report(report)
+        self.assertIn("已识别并略过目录：1 个区域，共 18 段", markdown)
+        self.assertIn("发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）", markdown)
+        lines = markdown.splitlines()
+        exempted_line = next(line for line in lines if "已识别并略过目录：" in line)
+        suspected_line = next(line for line in lines if "发现疑似目录：" in line)
+        self.assertNotEqual(exempted_line, suspected_line)
+        self.assertNotIn("目录无问题", markdown)
+        self.assertIn("因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。", markdown)

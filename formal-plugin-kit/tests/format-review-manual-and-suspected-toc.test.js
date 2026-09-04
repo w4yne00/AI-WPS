@@ -134,6 +134,47 @@ function testCoverageContractIncludesManualAndSuspectedToc() {
   assert.deepStrictEqual(coverage.tocRegions[0].paragraphIndexes, [1, 2, 3]);
 }
 
+function testTaskpaneIssueViewDisplaysExemptedAndSuspectedTocSeparately() {
+  const view = helpers.presentDeterministicFormatReviewIssueView({
+    summary: {
+      coverageStatus: "partial",
+      tocExemptionSummary: "已识别并略过目录：1 个区域，共 18 段",
+      suspectedTocSummary: "发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）",
+      exemptedTocRegionCount: 1,
+      exemptedTocParagraphCount: 18,
+      suspectedTocRegionCount: 1,
+      suspectedTocParagraphCount: 4
+    },
+    issues: []
+  });
+  assert.ok(view.previewText.includes("已识别并略过目录：1 个区域，共 18 段"));
+  assert.ok(view.previewText.includes("发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）"));
+  const lines = view.previewText.split("\n");
+  const exemptedLine = lines.find(function (l) { return l.includes("已识别并略过目录："); });
+  const suspectedLine = lines.find(function (l) { return l.includes("发现疑似目录："); });
+  assert.ok(exemptedLine);
+  assert.ok(suspectedLine);
+  assert.notStrictEqual(exemptedLine, suspectedLine);
+  assert.ok(!view.previewText.includes("目录无问题"));
+  assert.ok(view.previewText.includes("因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。"));
+}
+
+function testReadableMarkdownReportDisclosesBothExemptedAndSuspectedToc() {
+  const markdown = helpers.renderReadableDeterministicFormatReview({
+    summary: {
+      coverageStatus: "partial",
+      executionStatus: "completed",
+      complianceStatus: "passed",
+      tocExemptionSummary: "已识别并略过目录：1 个区域，共 18 段",
+      suspectedTocSummary: "发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）"
+    },
+    issues: []
+  });
+  assert.ok(markdown.includes("已识别并略过目录：1 个区域，共 18 段"));
+  assert.ok(markdown.includes("发现疑似目录：1 个区域，共 4 段（证据不足，未审查未豁免）"));
+  assert.ok(markdown.includes("因存在疑似目录，覆盖状态为‘部分’，零问题不代表文档完全合规。"));
+}
+
 testIdentifiesReliableManualTocWithTitleEntriesAndDots();
 testIdentifiesReliableManualTocWithoutTitleViaStyleDotsAndPages();
 testIdentifiesSuspectedTocWhenEvidenceInsufficient();
@@ -141,5 +182,7 @@ testIdentifiesSuspectedTocWithTitleAndDotsWithoutPages();
 testNegativeCasesDoNotProduceTocRegions();
 testBareCatalogWordWithoutEntriesDoesNotProduceAnyToc();
 testCoverageContractIncludesManualAndSuspectedToc();
+testTaskpaneIssueViewDisplaysExemptedAndSuspectedTocSeparately();
+testReadableMarkdownReportDisclosesBothExemptedAndSuspectedToc();
 
 console.log("format review manual and suspected toc tests passed");
