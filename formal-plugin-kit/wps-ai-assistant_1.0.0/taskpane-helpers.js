@@ -4211,6 +4211,229 @@
     return regions;
   }
 
+  var MANUAL_TOC_TITLE_RE = /^(?:目\s*录|contents|table\s+of\s+contents)$/i;
+  var NUMBERED_ENTRY_RE = /^(?:第[0-9一二三四五六七八九十]+[章节篇部分]|(?:[0-9]+(?:\.[0-9]+)*|[一二三四五六七八九十]+|[（(][0-9一二三四五六七八九十]+[)）])(?:\s*、|\s*[\.．]|\s*)|附录\s*[A-Z0-9])/i;
+  var DOT_LEADER_RE = /(?:\.{3,}|[…···]{2,}|[._\-—]{4,}|\t[\.…·]+)/;
+  var NON_PAGE_UNIT_RE = /(?:元|万|页|个|条|款|项|年|月|日|分|秒|kg|cm|m|km|g|%|‰)[。，、；！]*$/i;
+  var TRAILING_PAGE_RE = /(?:[\t\s]+|\.{2,}|[…·]{2,})(\d{1,4}|[ivxldcm]{1,8})$/i;
+  var TOC_STYLE_RE = /^(?:toc\s*\d+|目录\s*\d+)$/i;
+
+  function isManualTocTitleText(text) {
+    var trimmed = String(text || "").replace(/\r/g, "").trim();
+    if (!trimmed || trimmed.length > 20) {
+      return false;
+    }
+    var normalized = trimmed.replace(/\s+/g, "");
+    return /^(?:目录|contents|tableofcontents)$/i.test(normalized);
+  }
+
+  function isNumberedEntryText(text) {
+    var trimmed = String(text || "").replace(/\r/g, "").trim();
+    return NUMBERED_ENTRY_RE.test(trimmed);
+  }
+
+  function hasDotLeaderText(text) {
+    return DOT_LEADER_RE.test(String(text || ""));
+  }
+
+  function hasTrailingPageText(text) {
+    var trimmed = String(text || "").replace(/\r/g, "").trim();
+    if (!trimmed || NON_PAGE_UNIT_RE.test(trimmed)) {
+      return false;
+    }
+    return TRAILING_PAGE_RE.test(trimmed);
+  }
+
+  function isTocStyleName(styleName) {
+    return TOC_STYLE_RE.test(String(styleName || "").trim());
+  }
+
+  function isManualTocEntryCandidate(paragraph) {
+    if (!paragraph) {
+      return false;
+    }
+    var text = paragraph.text;
+    if (!text) {
+      return false;
+    }
+    return isNumberedEntryText(text) ||
+      hasDotLeaderText(text) ||
+      hasTrailingPageText(text) ||
+      isTocStyleName(paragraph.styleName);
+  }
+
+  function collectWordManualAndSuspectedTocRegions(document) {
+    var source = document || {};
+    var collection = getParagraphCollection(source);
+    var count = readCollectionCount(collection);
+    var paragraphs = [];
+    var i;
+    for (i = 1; i <= count; i += 1) {
+      var p = getCollectionItem(collection, i);
+      if (!p) {
+        continue;
+      }
+      var range = resolveRange(p);
+      var pIndex = Number(firstDefined(
+        safeRead(p, "ParagraphIndex"),
+        safeRead(p, "paragraphIndex"),
+        safeRead(range, "paragraphIndex"),
+        safeRead(range, "ParagraphIndex"),
+        i
+      )) || i;
+      var text = readAutoTocParagraphText(p);
+      var style = readStyleName(p);
+      paragraphs.push({
+        raw: p,
+        index: pIndex,
+        text: text,
+        styleName: style
+      });
+    }
+
+    var manualTocRegions = [];
+    var suspectedTocRegions = [];
+    var index = 0;
+
+    while (index < paragraphs.length) {
+      var current = paragraphs[index];
+      if (!current.text) {
+        index += 1;
+        continue;
+      }
+
+      var hasTitle = isManualTocTitleText(current.text);
+      if (hasTitle) {
+        var j = index + 1;
+        var entries = [];
+        while (j < paragraphs.length && isManualTocEntryCandidate(paragraphs[j])) {
+          entries.push(paragraphs[j]);
+          j += 1;
+        }
+        if (entries.length > 0) {
+          var block = [current].concat(entries);
+          var numCount = entries.filter(function (e) { return isNumberedEntryText(e.text); }).length;
+          var hasNumbered = numCount > 0 && (numCount / entries.length >= 0.4 || numCount >= 2);
+          var dotCount = entries.filter(function (e) { return hasDotLeaderText(e.text); }).length;
+          var hasDotLeader = dotCount > 0 && (dotCount / entries.length >= 0.4 || dotCount >= 2);
+          var pageCount = entries.filter(function (e) { return hasTrailingPageText(e.text); }).length;
+          var hasTrailingPage = pageCount > 0 && (pageCount / entries.length >= 0.4 || pageCount >= 2);
+          var styleCount = entries.filter(function (e) { return isTocStyleName(e.styleName); }).length;
+          var hasTocStyle = styleCount > 0 && (styleCount / entries.length >= 0.4 || styleCount >= 2);
+
+          var evidenceTypes = ["title"];
+          if (hasNumbered) { evidenceTypes.push("numbered_entry"); }
+          if (hasDotLeader) { evidenceTypes.push("dot_leader"); }
+          if (hasTrailingPage) { evidenceTypes.push("trailing_page"); }
+          if (hasTocStyle) { evidenceTypes.push("toc_style"); }
+
+          var evidenceCount = evidenceTypes.length;
+          var isManual = evidenceCount >= 3 &&
+            hasTrailingPage &&
+            (hasDotLeader || hasNumbered) &&
+            (hasTitle || hasTocStyle);
+
+          if (isManual) {
+            manualTocRegions.push({
+              regionId: "manual-toc-" + (manualTocRegions.length + 1),
+              source: "manual_toc",
+              startParagraphIndex: block[0].index,
+              endParagraphIndex: block[block.length - 1].index,
+              paragraphIndexes: block.map(function (item) { return item.index; }),
+              titleParagraphIndex: current.index,
+              hasHeading: true,
+              itemCount: entries.length,
+              evidenceTypes: evidenceTypes
+            });
+            index = j;
+            continue;
+          } else if (evidenceCount >= 2 && block.length >= 2) {
+            suspectedTocRegions.push({
+              regionId: "suspected-toc-" + (suspectedTocRegions.length + 1),
+              source: "suspected_toc",
+              startParagraphIndex: block[0].index,
+              endParagraphIndex: block[block.length - 1].index,
+              paragraphIndexes: block.map(function (item) { return item.index; }),
+              titleParagraphIndex: current.index,
+              reason: "insufficient_evidence:" + evidenceTypes.join(","),
+              evidenceTypes: evidenceTypes
+            });
+            index = j;
+            continue;
+          }
+        }
+        index += 1;
+        continue;
+      }
+
+      if (isManualTocEntryCandidate(current)) {
+        var k = index;
+        var runEntries = [];
+        while (k < paragraphs.length && isManualTocEntryCandidate(paragraphs[k])) {
+          runEntries.push(paragraphs[k]);
+          k += 1;
+        }
+        if (runEntries.length >= 2) {
+          var rNumCount = runEntries.filter(function (e) { return isNumberedEntryText(e.text); }).length;
+          var rHasNumbered = rNumCount > 0 && (rNumCount / runEntries.length >= 0.4 || rNumCount >= 2);
+          var rDotCount = runEntries.filter(function (e) { return hasDotLeaderText(e.text); }).length;
+          var rHasDotLeader = rDotCount > 0 && (rDotCount / runEntries.length >= 0.4 || rDotCount >= 2);
+          var rPageCount = runEntries.filter(function (e) { return hasTrailingPageText(e.text); }).length;
+          var rHasTrailingPage = rPageCount > 0 && (rPageCount / runEntries.length >= 0.4 || rPageCount >= 2);
+          var rStyleCount = runEntries.filter(function (e) { return isTocStyleName(e.styleName); }).length;
+          var rHasTocStyle = rStyleCount > 0 && (rStyleCount / runEntries.length >= 0.4 || rStyleCount >= 2);
+
+          var rEvidenceTypes = [];
+          if (rHasNumbered) { rEvidenceTypes.push("numbered_entry"); }
+          if (rHasDotLeader) { rEvidenceTypes.push("dot_leader"); }
+          if (rHasTrailingPage) { rEvidenceTypes.push("trailing_page"); }
+          if (rHasTocStyle) { rEvidenceTypes.push("toc_style"); }
+
+          var rEvidenceCount = rEvidenceTypes.length;
+          var rIsManual = rEvidenceCount >= 3 &&
+            rHasTrailingPage &&
+            (rHasDotLeader || rHasNumbered) &&
+            rHasTocStyle;
+
+          if (rIsManual) {
+            manualTocRegions.push({
+              regionId: "manual-toc-" + (manualTocRegions.length + 1),
+              source: "manual_toc",
+              startParagraphIndex: runEntries[0].index,
+              endParagraphIndex: runEntries[runEntries.length - 1].index,
+              paragraphIndexes: runEntries.map(function (item) { return item.index; }),
+              titleParagraphIndex: 0,
+              hasHeading: false,
+              itemCount: runEntries.length,
+              evidenceTypes: rEvidenceTypes
+            });
+            index = k;
+            continue;
+          } else if (rEvidenceCount >= 2) {
+            suspectedTocRegions.push({
+              regionId: "suspected-toc-" + (suspectedTocRegions.length + 1),
+              source: "suspected_toc",
+              startParagraphIndex: runEntries[0].index,
+              endParagraphIndex: runEntries[runEntries.length - 1].index,
+              paragraphIndexes: runEntries.map(function (item) { return item.index; }),
+              reason: "insufficient_evidence:" + rEvidenceTypes.join(","),
+              evidenceTypes: rEvidenceTypes
+            });
+            index = k;
+            continue;
+          }
+        }
+      }
+
+      index += 1;
+    }
+
+    return {
+      manualTocRegions: manualTocRegions,
+      suspectedTocRegions: suspectedTocRegions
+    };
+  }
+
   function collectFormatReviewCoverage(document) {
     var source = document || {};
     var sections = firstDefined(safeRead(source, "Sections"), safeRead(source, "sections"));
@@ -4298,9 +4521,52 @@
       },
       unsupportedObjects: unsupportedObjects
     };
-    var tocRegions = collectWordAutoTocRegions(source);
-    if (tocRegions.length) {
-      coverage.tocRegions = tocRegions;
+    var autoTocRegions = collectWordAutoTocRegions(source);
+    var manualResult = collectWordManualAndSuspectedTocRegions(source);
+    var autoCovered = {};
+    var ai, aj, mi, mj, si, sj;
+    for (ai = 0; ai < autoTocRegions.length; ai += 1) {
+      var aIdxs = autoTocRegions[ai].paragraphIndexes || [];
+      for (aj = 0; aj < aIdxs.length; aj += 1) {
+        autoCovered[aIdxs[aj]] = true;
+      }
+    }
+    var manualTocRegions = [];
+    for (mi = 0; mi < manualResult.manualTocRegions.length; mi += 1) {
+      var mRegion = manualResult.manualTocRegions[mi];
+      var mIdxs = mRegion.paragraphIndexes || [];
+      var mOverlaps = false;
+      for (mj = 0; mj < mIdxs.length; mj += 1) {
+        if (autoCovered[mIdxs[mj]]) {
+          mOverlaps = true;
+          break;
+        }
+      }
+      if (!mOverlaps) {
+        manualTocRegions.push(mRegion);
+      }
+    }
+    var suspectedTocRegions = [];
+    for (si = 0; si < manualResult.suspectedTocRegions.length; si += 1) {
+      var sRegion = manualResult.suspectedTocRegions[si];
+      var sIdxs = sRegion.paragraphIndexes || [];
+      var sOverlaps = false;
+      for (sj = 0; sj < sIdxs.length; sj += 1) {
+        if (autoCovered[sIdxs[sj]]) {
+          sOverlaps = true;
+          break;
+        }
+      }
+      if (!sOverlaps) {
+        suspectedTocRegions.push(sRegion);
+      }
+    }
+    var allTocRegions = autoTocRegions.concat(manualTocRegions);
+    if (allTocRegions.length) {
+      coverage.tocRegions = allTocRegions;
+    }
+    if (suspectedTocRegions.length) {
+      coverage.suspectedTocRegions = suspectedTocRegions;
     }
     return coverage;
   }
@@ -5365,6 +5631,7 @@
     collectFullDocumentReviewTables: collectFullDocumentReviewTables,
     collectFormatReviewCoverage: collectFormatReviewCoverage,
     collectWordAutoTocRegions: collectWordAutoTocRegions,
+    collectWordManualAndSuspectedTocRegions: collectWordManualAndSuspectedTocRegions,
     isAutoTocField: isAutoTocField,
     extractHomogeneousFormatSegments: extractHomogeneousFormatSegments,
     readFullDocumentReviewEditSignal: readFullDocumentReviewEditSignal,
