@@ -14,7 +14,7 @@ const hosts = [
   {
     name: "Excel",
     dir: etRoot,
-    tasks: ["excel.analysis", "excel.formula_assistant"]
+    tasks: ["excel.analysis", "excel.formula_assistant", "excel.smart_fill"]
   },
   {
     name: "PPT",
@@ -27,8 +27,7 @@ const allTasks = hosts.flatMap((host) => host.tasks);
 
 const commonMarkup = [
   'id="workflow-settings-home"',
-  'id="workflow-profile-manager"',
-  'id="workflow-profile-select"'
+  'id="workflow-profile-manager"'
 ];
 
 const removedMarkup = [
@@ -63,6 +62,12 @@ hosts.forEach((host) => {
   commonMarkup.forEach((marker) => {
     assert.ok(html.includes(marker), `${host.name} missing ${marker}`);
   });
+  if (host.name === "Excel") {
+    assert.ok(html.includes('id="task-model-config-trigger"'), "Excel missing compact config trigger");
+    assert.ok(!html.includes('id="workflow-profile-select"'), "Excel still exposes native config select");
+  } else {
+    assert.ok(html.includes('id="workflow-profile-select"'), `${host.name} missing ${'id="workflow-profile-select"'}`);
+  }
   removedMarkup.forEach((marker) => {
     assert.ok(!html.includes(marker), `${host.name} still exposes ${marker}`);
   });
