@@ -285,17 +285,19 @@ assert.ok(sharedHelpers.formatModelValidationStatus({
 }, "active-63").includes("验证已过期"));
 
 const stripSource = functionSource("renderWorkflowProfileStrip");
-assert.ok(stripSource.includes("syncWorkflowProfileSelectOptions(select, optionModels)"));
-assert.ok(stripSource.includes("select.disabled = interactionBlocked || !availableProfiles.length"));
+assert.ok(stripSource.includes("helpers.formatTaskModelConfigEntry"));
+assert.ok(stripSource.includes("helpers.buildTaskModelConfigMenuItems"));
+assert.ok(stripSource.includes("trigger.disabled = state.busy || state.workflowProfileMutationBusy"));
 
-const selectChangeSource = functionSource("handleWorkflowProfileSelectionChange");
-assert.ok(selectChangeSource.includes("scheduleWorkflowProfileActivation"));
-assert.ok(selectChangeSource.includes("cancelWorkflowProfileActivation"));
-assert.ok(selectChangeSource.includes("previousProfileId"));
+const bindSource = functionSource("bindEvents");
+assert.ok(bindSource.includes('byId("task-model-config-trigger").addEventListener("click"'));
+assert.ok(bindSource.includes("handleTaskModelConfigTriggerClick"));
 
 const activateSource = functionSource("activateWorkflowProfile");
 assert.ok(activateSource.includes("previousProfileId"));
-assert.ok(activateSource.includes("state.workflowProfileSelections[taskType] = previousProfileId"));
+assert.ok(activateSource.includes("helpers.evaluateTaskModelConfigSwitch"));
+assert.ok(activateSource.includes("helpers.rollbackTaskModelConfigSwitch"));
+assert.ok(activateSource.includes("切换模型配置失败"));
 
 const deleteSource = functionSource("deleteWorkflowProfile");
 assert.ok(deleteSource.includes("canDeleteWorkflowProfile"));
@@ -440,62 +442,54 @@ reviewCheck("workflow mutations pause settings refresh", () => {
   assert.ok(functionSource("setWorkflowProfileMutationBusy").includes("syncSettingsRefreshController()"));
 });
 
-reviewCheck("repeated model selector renders preserve native option nodes", () => {
-  function createSelect() {
-    const select = {
-      children: [],
-      disabled: false,
-      appendChild(option) {
-        this.children.push(option);
-      }
-    };
-    Object.defineProperty(select, "innerHTML", {
-      get() { return ""; },
-      set() { this.children = []; }
-    });
-    return select;
-  }
-
-  const select = createSelect();
-  const nodes = {
+reviewCheck("task model config entry renders compact trigger with access method and hides secrets", () => {
+  const optionNodes = {
     "workflow-profile-strip": { hidden: false },
-    "workflow-profile-select": select,
-    "workflow-profile-current": { textContent: "" }
+    "task-model-config-trigger": {
+      disabled: false,
+      attributes: {},
+      setAttribute(name, value) { this.attributes[name] = value; }
+    },
+    "task-model-config-label": { textContent: "" },
+    "task-model-config-status": { className: "" },
+    "workflow-switch-feedback": { textContent: "" }
   };
   const selectorState = {
-    workflowProfileSelections: { "word.smart_write": "profile-a" }
-  };
-  const profileData = {
-    taskType: "word.smart_write",
-    activeProfileId: "profile-a",
-    profiles: [
-      { id: "profile-a", name: "主模型", complete: true, accessMethod: "direct_model", modelName: "model-a" },
-      { id: "profile-b", name: "备用模型", complete: true, accessMethod: "workflow_platform", modelName: "" }
-    ]
+    currentMode: "smartWrite",
+    busy: false,
+    workflowProfileMutationBusy: false,
+    taskModelConfigMenu: { open: false },
+    workflowProfileSelections: { "word.smart_write": "profile-a" },
+    workflowProfiles: {
+      "word.smart_write": {
+        taskType: "word.smart_write",
+        activeProfileId: "profile-a",
+        profiles: [
+          { id: "profile-a", name: "主模型", complete: true, accessMethod: "workflow_platform" },
+          { id: "profile-b", name: "备用模型", complete: true, accessMethod: "direct_model", modelName: "secret-model" }
+        ]
+      }
+    }
   };
   const renderSelector = loadFunction("renderWorkflowProfileStrip", {
     state: selectorState,
-    helpers: { getActiveWorkflowProfileName() { return "主模型"; } },
-    byId(id) { return nodes[id]; },
+    helpers: sharedHelpers,
     getCurrentWorkflowTaskType() { return "word.smart_write"; },
-    getWorkflowProfileData() { return profileData; },
-    getWorkflowProfileOptionState(profile) {
-      return { disabled: !profile.complete };
+    getWorkflowProfileData(task) { return selectorState.workflowProfiles[task]; },
+    currentTaskModelConfigProfile(data) {
+      return data.profiles.find((item) => item.id === selectorState.workflowProfileSelections["word.smart_write"]);
     },
+    resolveTaskModelConfigStatus() { return "ready"; },
     isWorkflowInteractionBlocked() { return false; },
-    setNodeTextIfChanged(node, value) { node.textContent = value; },
-    syncWorkflowProfileSelectOptions: loadFunction("syncWorkflowProfileSelectOptions", {
-      document: { createElement() { return {}; } }
-    }),
-    document: { createElement() { return {}; } }
+    closeTaskModelConfigMenu() {},
+    byId(id) { return optionNodes[id]; },
+    setNodeTextIfChanged(node, value) { node.textContent = value; }
   });
 
   renderSelector();
-  const firstOptions = select.children.slice();
-  renderSelector();
-  assert.strictEqual(select.children.length, 2);
-  assert.strictEqual(select.children[0], firstOptions[0]);
-  assert.strictEqual(select.children[1], firstOptions[1]);
+  assert.strictEqual(optionNodes["task-model-config-label"].textContent, "主模型 · 工作流平台");
+  assert.ok(!optionNodes["task-model-config-label"].textContent.includes("secret-model"));
+  assert.ok(!String(optionNodes["task-model-config-trigger"].attributes["aria-label"] || "").includes("secret-model"));
 });
 
 reviewCheck("model activation starts after the native select change event", () => {

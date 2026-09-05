@@ -32,6 +32,15 @@
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
 - **状态记录**：当前自动化候选为 `ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256 `52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`），门禁终态 `candidate`；Issue #128 真机集成验收记录仍对应前任 `1ab4420`/`0f571bb`（`passed`）。
 
+## 当前功能实现：Issue #150 Word 迁移至紧凑单行任务模型配置入口
+
+- **四类任务单行紧凑入口**：遵循 ADR-0127 与 Issue #147 契约，将 Word 四类任务页（`word.smart_write`、`word.smart_imitation`、`word.document_review`、`word.format_review`）的原生 `<select>` 与当前状态行替换为单行紧凑入口（`#task-model-config-trigger` + `#task-model-config-menu`）；
+- **最小信息披露**：显示格式统一为`[状态圆点] 配置名称 · 接入方式 ›`（接入方式仅为“工作流平台”或“模型直连”），严格不泄露模型标识、API 地址、Key、备注与完整度；
+- **即时激活与隔离**：切换后立即激活，保留忙碌门禁与失败回滚；切换失败状态基于 `state.taskModelConfigStatusByTask` 在四类任务间严格隔离，智能编写错误不污染仿写或审查；
+- **无障碍键盘交互**：菜单具备 ARIA 角色规范（`menuitemradio` 配合 `aria-checked`，管理项使用 `menuitem`，触发器拥有 `aria-activedescendant`），支持上下方向键循环聚焦、Enter 选中/管理、Escape 关闭并恢复触发器焦点；
+- **配置管理直达**：点击或回车菜单项“管理配置”直接切换至设置页并自动聚焦当前活跃任务选项卡；
+- **视觉一致与内容保护**：严格保留 Word 专属主强调色（`#1e5aa0`）与几何布局；任务特定内容区提示（如文档审查全篇就绪度）保留在正文区展示；跨宿主契约测试与全量回归测试保持全绿。
+
 ## 当前功能实现：Issue #149 格式审查识别手工目录并披露疑似目录
 
 - **多证据手工目录识别与豁免**：在 WPS 端实现 `collectWordManualAndSuspectedTocRegions`，基于 5 类确定性证据（E1 纯文本标题、E2 连续编号条目、E3 点引导符、E4 尾部独立页码、E5 TOC 专用样式），要求 $\ge 3$ 项独立强证据组合（尾部页码 + 引导线/编号 + 标题/样式）识别可靠手工目录，写入 `coverage.tocRegions`（`source: "manual_toc"`），建立目录审查豁免区（跳过字体、字号、段落样式、正文角色或未映射角色问题，并披露略过区域与段落数）；
