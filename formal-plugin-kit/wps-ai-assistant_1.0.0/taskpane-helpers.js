@@ -5220,6 +5220,218 @@
     };
   }
 
+  function formatTaskModelConfigAccessMethod(accessMethod) {
+    return accessMethod === "direct_model" ? "模型直连" : "工作流平台";
+  }
+
+  function formatTaskModelConfigEntry(profile, view) {
+    var status = String((view && view.status) || "ready");
+    var result = {
+      visibleText: "",
+      statusText: "",
+      chevron: "›",
+      ariaLabel: ""
+    };
+    if (status === "empty") {
+      result.visibleText = "未配置";
+      result.statusText = "未配置";
+    } else if (status === "loading") {
+      result.visibleText = "正在读取";
+      result.statusText = "正在读取";
+    } else if (status === "loadError") {
+      result.visibleText = "配置读取失败";
+      result.statusText = "配置读取失败";
+    } else if (!profile) {
+      result.visibleText = "未配置";
+      result.statusText = "未配置";
+    } else {
+      result.visibleText = String(profile.name || "未命名配置") + " · " +
+        formatTaskModelConfigAccessMethod(profile.accessMethod);
+      if (status === "busy") {
+        result.statusText = "正在切换";
+      } else if (status === "error") {
+        result.statusText = "切换失败";
+      } else {
+        result.statusText = "已就绪";
+      }
+    }
+    result.ariaLabel = result.statusText === result.visibleText
+      ? result.visibleText
+      : result.statusText + " " + result.visibleText;
+    return result;
+  }
+
+  function resolveCurrentTaskModelConfigProfile(data, selectedId) {
+    var id = String(selectedId || (data && data.activeProfileId) || "");
+    var profiles = data && Array.isArray(data.profiles) ? data.profiles : [];
+    var index;
+    if (!id) {
+      return null;
+    }
+    for (index = 0; index < profiles.length; index += 1) {
+      if (profiles[index] && profiles[index].id === id) {
+        return profiles[index];
+      }
+    }
+    return null;
+  }
+
+  function buildTaskModelConfigMenuItems(profiles, options) {
+    var activeId = options && options.activeProfileId || "";
+    var items = [];
+    (profiles || []).forEach(function (profile) {
+      var option = workflowProfileOptionState(profile, activeId);
+      items.push({
+        id: option.id,
+        action: "select",
+        label: option.label,
+        selected: option.active,
+        disabled: option.disabled
+      });
+    });
+    items.push({
+      id: "manage",
+      action: "manage",
+      label: "管理配置",
+      selected: false,
+      disabled: false
+    });
+    return items;
+  }
+
+  function resolveTaskModelConfigViewStatus(input) {
+    var view = input || {};
+    if (view.mutationBusy) {
+      return "busy";
+    }
+    if ((view.statusByTask || {})[view.taskType] === "error") {
+      return "error";
+    }
+    if (!view.hasLoaded) {
+      return "loading";
+    }
+    if (view.loadError) {
+      return "loadError";
+    }
+    if (!view.hasProfile) {
+      return "empty";
+    }
+    return "ready";
+  }
+
+  function evaluateTaskModelConfigSwitch(request) {
+    var input = request || {};
+    var previousId = String(input.previousId || "");
+    var requestedId = String(input.requestedId || "");
+    if (input.busy || input.mutationBusy) {
+      return { allowed: false, reason: "busy", nextSelectionId: previousId, restoreFocus: true };
+    }
+    if (input.profileComplete === false) {
+      return { allowed: false, reason: "incomplete", nextSelectionId: previousId, restoreFocus: true };
+    }
+    if (!requestedId || requestedId === previousId) {
+      return { allowed: false, reason: "unchanged", nextSelectionId: previousId, restoreFocus: false };
+    }
+    return { allowed: true, reason: "activate", nextSelectionId: requestedId, restoreFocus: false };
+  }
+
+  function rollbackTaskModelConfigSwitch(snapshot) {
+    var input = snapshot || {};
+    return {
+      selectionId: String(input.previousId || ""),
+      visibleText: String(input.previousLabel || ""),
+      restoreFocus: true,
+      statusText: "切换失败"
+    };
+  }
+
+  function reduceTaskModelConfigMenuKey(state, key) {
+    var current = state || {};
+    var itemCount = Number(current.itemCount || 0);
+    var highlightedIndex = Number(current.highlightedIndex);
+    if (key === "Open") {
+      var start = Number(current.highlightedIndex);
+      if (!(start >= 0 && start < itemCount)) {
+        start = 0;
+      }
+      return {
+        open: true,
+        itemCount: itemCount,
+        highlightedIndex: start,
+        action: "open",
+        restoreFocus: false
+      };
+    }
+    if (!current.open) {
+      return {
+        open: false,
+        itemCount: itemCount,
+        highlightedIndex: highlightedIndex,
+        action: null,
+        restoreFocus: false
+      };
+    }
+    if (key === "ArrowDown") {
+      if (highlightedIndex < itemCount - 1) {
+        highlightedIndex += 1;
+      }
+      return {
+        open: true,
+        itemCount: itemCount,
+        highlightedIndex: highlightedIndex,
+        action: null,
+        restoreFocus: false
+      };
+    }
+    if (key === "ArrowUp") {
+      if (highlightedIndex > 0) {
+        highlightedIndex -= 1;
+      }
+      return {
+        open: true,
+        itemCount: itemCount,
+        highlightedIndex: highlightedIndex,
+        action: null,
+        restoreFocus: false
+      };
+    }
+    if (key === "Enter") {
+      var item = (current.items || [])[highlightedIndex] || {};
+      if (item.action === "manage") {
+        return {
+          open: false,
+          itemCount: itemCount,
+          highlightedIndex: highlightedIndex,
+          action: "manage",
+          restoreFocus: false
+        };
+      }
+      return {
+        open: false,
+        itemCount: itemCount,
+        highlightedIndex: highlightedIndex,
+        action: "select",
+        selectedIndex: highlightedIndex,
+        restoreFocus: true
+      };
+    }
+    if (key === "Escape") {
+      return {
+        open: false,
+        itemCount: itemCount,
+        highlightedIndex: -1,
+        action: "close",
+        restoreFocus: true
+      };
+    }
+    return {
+      open: true,
+      itemCount: itemCount,
+      highlightedIndex: highlightedIndex,
+      restoreFocus: false
+    };
+  }
+
   function validateWorkflowProfileDraft(draft, mode) {
     var value = draft || {};
     var name = String(value.name || "").trim();
@@ -5742,6 +5954,14 @@
     canDeleteWorkflowProfile: canDeleteWorkflowProfile,
     workflowProfileStatusText: workflowProfileStatusText,
     workflowProfileOptionState: workflowProfileOptionState,
+    formatTaskModelConfigAccessMethod: formatTaskModelConfigAccessMethod,
+    formatTaskModelConfigEntry: formatTaskModelConfigEntry,
+    resolveCurrentTaskModelConfigProfile: resolveCurrentTaskModelConfigProfile,
+    buildTaskModelConfigMenuItems: buildTaskModelConfigMenuItems,
+    resolveTaskModelConfigViewStatus: resolveTaskModelConfigViewStatus,
+    evaluateTaskModelConfigSwitch: evaluateTaskModelConfigSwitch,
+    rollbackTaskModelConfigSwitch: rollbackTaskModelConfigSwitch,
+    reduceTaskModelConfigMenuKey: reduceTaskModelConfigMenuKey,
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
     normalizeWritingPolicyUsage: normalizeWritingPolicyUsage,
