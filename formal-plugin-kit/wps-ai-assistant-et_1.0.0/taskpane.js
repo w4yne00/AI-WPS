@@ -1341,8 +1341,17 @@
 
   function renderSmartFillCaptureState() {
     var editing = Boolean(state.smartFillPreview && state.smartFillPreview.editingInputs);
+    var life;
     if (editing) {
       refreshExcelSmartFillSourceSelection();
+      life = helpers.describeExcelSmartFillPreviewLifecycle
+        ? helpers.describeExcelSmartFillPreviewLifecycle(state.smartFillPreview, {
+          frozenSource: state.smartFillSource
+        })
+        : {};
+      if (life.status === "ready") {
+        tryRebindSmartFillTarget();
+      }
     } else if (state.smartFillResult) {
       tryRebindSmartFillTarget();
     } else {
@@ -1759,13 +1768,16 @@
     var frozen = (state.smartFillPreview && state.smartFillPreview.fingerprint) || {
       sourceAddress: (state.smartFillSource && state.smartFillSource.address) || "",
       sourceSnapshotHash: (state.smartFillSource && state.smartFillSource.snapshotHash) || "",
-      instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value)
+      instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value),
+      workbookId: state.smartFillWorkbookId || "",
+      sheetName: (state.smartFillSource && state.smartFillSource.sheetName) || ""
     };
     if (helpers.buildExcelSmartFillEditFingerprint) {
       return helpers.buildExcelSmartFillEditFingerprint(frozen, {
         liveSource: state.smartFillLiveSource,
         baselineAddress: state.smartFillEditBaselineAddress,
-        instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value)
+        instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value),
+        workbookId: state.smartFillWorkbookId || getSmartFillActiveWorkbookId()
       });
     }
     return frozen;
@@ -1937,6 +1949,10 @@
     }
     applySmartFillLifecycleControls();
     updateSmartFillGenerateEnabled();
+    if (state.smartFillPreview && state.smartFillPreview.status !== "invalid" && state.smartFillPreview.status !== "locked") {
+      tryRebindSmartFillTarget();
+      applySmartFillLifecycleControls();
+    }
     if (byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").focus) {
       byId("excel-smart-fill-instruction").focus();
     }
@@ -2390,8 +2406,68 @@
           return;
         }
       }
+    } catch (error) {
+      if (helpers.markExcelSmartFillPreviewTargetRejected && error && error.message) {
+        helpers.markExcelSmartFillPreviewTargetRejected(ensureExcelSmartFillPreview(), error.message);
+        rerenderExcelSmartFillPreview();
+      }
+      setStatus("智能填写未写入：" + (error && error.message ? error.message : ""));
+      setSmartFillWriteButtonState();
+      return;
+    }
+    return finishExcelSmartFillWriteAfterChecks(items, results, commitContext);
+  }
+
+  function excelSmartFillWriteCommitPayload(commitContext, writeResult, stage) {
+    return {
+      stage: stage,
+      resultRevision: (commitContext && commitContext.resultRevision) || state.excelSmartFillResultRevision || 1,
+      sourceSnapshotHash: (commitContext && commitContext.sourceSnapshotHash) || "",
+      workbookId: (commitContext && commitContext.workbookId) || state.smartFillWorkbookId || "",
+      targetAddress: (commitContext && commitContext.targetAddress) || "",
+      itemCount: (commitContext && commitContext.itemCount) || (writeResult && (writeResult.writtenCount + writeResult.skippedCount)) || 0
+    };
+  }
+
+  function postExcelSmartFillWriteCommit(commitContext, writeResult, stage) {
+    var jobId = (commitContext && commitContext.jobId) || state.excelSmartFillCompletedJobId || "";
+    if (!jobId || typeof request !== "function" || typeof fetch !== "function") {
+      return null;
+    }
+    return request(
+      "/excel/smart-fill/jobs/" + encodeURIComponent(jobId) + "/write-commits",
+      excelSmartFillWriteCommitPayload(commitContext, writeResult, stage)
+    );
+  }
+
+  function finishExcelSmartFillWriteAfterChecks(items, results, commitContext) {
+    var reservation = postExcelSmartFillWriteCommit(commitContext, null, "reserve");
+    if (!reservation) {
+      return completeExcelSmartFillHostWrite(items, results, commitContext);
+    }
+    state.busy = true;
+    setSmartFillWriteButtonState();
+    return reservation.then(function () {
+      state.busy = false;
+      return completeExcelSmartFillHostWrite(items, results, commitContext);
+    }, function (error) {
+      state.busy = false;
+      setSmartFillWriteButtonState();
+      setStatus("智能填写未写入：" + (error && error.message ? error.message : describeFetchError(error)));
+    });
+  }
+
+  function completeExcelSmartFillHostWrite(items, results, commitContext) {
+    var writeResult;
+    var confirm;
+    var release;
+    try {
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell, { commitContext: commitContext });
     } catch (error) {
+      release = postExcelSmartFillWriteCommit(commitContext, null, "release");
+      if (release && typeof release.catch === "function") {
+        release.catch(function () {});
+      }
       if (error && error.code === "COMPENSATION_FAILED") {
         var failureAddresses = error.rollbackFailures || error.manualReviewAddresses || [];
         if (helpers.markExcelSmartFillPreviewWriteFailed) {
@@ -2428,26 +2504,16 @@
     rerenderExcelSmartFillPreview();
     setStatus("智能填写已写入 " + writeResult.writtenCount + " 个单元格。");
     setSmartFillWriteButtonState();
-    commitExcelSmartFillWriteToAdapter(commitContext, writeResult);
+    confirm = postExcelSmartFillWriteCommit(commitContext, writeResult, "confirm");
+    if (confirm && typeof confirm.catch === "function") {
+      confirm.catch(function () {});
+    }
   }
 
   function commitExcelSmartFillWriteToAdapter(commitContext, writeResult) {
-    var jobId = (commitContext && commitContext.jobId) || state.excelSmartFillCompletedJobId || "";
-    if (!jobId || typeof request !== "function" || typeof fetch !== "function") {
-      return;
-    }
-    try {
-      request("/excel/smart-fill/jobs/" + encodeURIComponent(jobId) + "/write-commits", {
-        resultRevision: (commitContext && commitContext.resultRevision) || state.excelSmartFillResultRevision || 1,
-        sourceSnapshotHash: (commitContext && commitContext.sourceSnapshotHash) || "",
-        workbookId: (commitContext && commitContext.workbookId) || state.smartFillWorkbookId || "",
-        targetAddress: (commitContext && commitContext.targetAddress) || "",
-        itemCount: (commitContext && commitContext.itemCount) || (writeResult && (writeResult.writtenCount + writeResult.skippedCount)) || 0
-      }).catch(function () {
-        // Host write already succeeded; Adapter duplicate protection is best-effort.
-      });
-    } catch (error) {
-      // Tests and offline taskpanes must not fail after a successful host write.
+    var confirm = postExcelSmartFillWriteCommit(commitContext, writeResult, "confirm");
+    if (confirm && typeof confirm.catch === "function") {
+      confirm.catch(function () {});
     }
   }
 
@@ -2494,6 +2560,14 @@
       renderExcelSmartFillResult(base, baseDraftItems, retryItemId);
     }
   }
+  function smartFillTargetBindKey(target) {
+    if (!target) {
+      return "";
+    }
+    var address = String(target.rawAddress || target.address || "").replace(/\$/g, "").toUpperCase();
+    return String(target.sheetName || "") + "!" + address;
+  }
+
   function tryRebindSmartFillTarget(result) {
     var currentResult = result || state.smartFillResult;
     var app;
@@ -2526,7 +2600,17 @@
         previewItems: (currentResult && currentResult.items) || [],
         draftItems: state.smartFillDraftItems || []
       });
+      var previousBindKey = smartFillTargetBindKey(state.smartFillLiveTarget) || smartFillTargetBindKey(state.smartFillTarget);
       state.smartFillLiveTarget = inspection;
+      if (inspection && inspection.ok) {
+        var nextBindKey = smartFillTargetBindKey(inspection);
+        if (previousBindKey && nextBindKey && previousBindKey !== nextBindKey && helpers.resetExcelSmartFillDraftWriteConflicts) {
+          helpers.resetExcelSmartFillDraftWriteConflicts(state.smartFillDraftItems);
+        }
+        if (helpers.clearExcelSmartFillPreviewTargetError) {
+          helpers.clearExcelSmartFillPreviewTargetError(state.smartFillPreview);
+        }
+      }
       return Boolean(inspection && inspection.ok);
     } catch (error) {
       state.smartFillLiveTarget = {

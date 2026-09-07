@@ -86,6 +86,7 @@ class ExcelSmartFillJobStore:
         self._write_lock = threading.Lock()
 
     def start(self, request: ExcelSmartFillRequest, trace_id: str) -> Dict:
+        self._purge_expired_write_state()
         validate_smart_fill_request_limits(request)
         job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
         request_fingerprint = smart_fill_request_fingerprint(request)
@@ -157,7 +158,37 @@ class ExcelSmartFillJobStore:
             "sourceSnapshotHash": str(getattr(source, "snapshot_hash", "") or ""),
         }
 
+    def _purge_expired_write_state(self) -> None:
+        tracked = set(self._write_commits) | set(self._job_write_identity)
+        if not tracked:
+            return
+        stale = []
+        for job_id in tracked:
+            if self.coordinator.get(job_id, task_type="excel.smart_fill") is None:
+                stale.append(job_id)
+        if not stale:
+            return
+        with self._write_lock:
+            for job_id in stale:
+                self._write_commits.pop(job_id, None)
+                self._job_write_identity.pop(job_id, None)
+
+    @staticmethod
+    def _job_has_writable_preview(job: Dict) -> bool:
+        status = str((job or {}).get("status") or "")
+        if status == "completed":
+            return True
+        if status not in ("cancelled", "failed"):
+            return False
+        result = (job or {}).get("result") or {}
+        items = result.get("items") or []
+        return any(
+            isinstance(item, dict) and item.get("status") == "completed"
+            for item in items
+        )
+
     def get(self, job_id: str) -> Optional[Dict]:
+        self._purge_expired_write_state()
         job = self.coordinator.get(job_id, task_type="excel.smart_fill")
         if job is None:
             with self._write_lock:
@@ -167,11 +198,15 @@ class ExcelSmartFillJobStore:
         public = dict(job)
         commit = self._write_commits.get(job_id)
         if commit:
-            public["writeCommitted"] = True
-            public["writeResultRevision"] = commit.get("resultRevision")
+            if commit.get("writeCommitted"):
+                public["writeCommitted"] = True
+                public["writeResultRevision"] = commit.get("resultRevision")
+            elif commit.get("writeReserved"):
+                public["writeReserved"] = True
         return public
 
     def commit_write(self, job_id: str, payload) -> Dict:
+        self._purge_expired_write_state()
         job = self.coordinator.get(job_id, task_type="excel.smart_fill")
         if job is None:
             raise AdapterError(
@@ -179,7 +214,7 @@ class ExcelSmartFillJobStore:
                 "智能填写后台任务不存在或已过期。",
                 status_code=404,
             )
-        if job.get("status") != "completed":
+        if not self._job_has_writable_preview(job):
             raise AdapterError(
                 "EXCEL_SMART_FILL_WRITE_NOT_READY",
                 "智能填写预览尚未完成，不能提交写入。",
@@ -192,13 +227,11 @@ class ExcelSmartFillJobStore:
             body = payload.model_dump(by_alias=True)
         workbook_id = str(body.get("workbookId") or body.get("workbook_id") or "")
         source_hash = str(body.get("sourceSnapshotHash") or body.get("source_snapshot_hash") or "")
+        stage = str(body.get("stage") or "confirm").strip().lower()
+        if stage not in ("reserve", "confirm", "release"):
+            stage = "confirm"
         with self._write_lock:
-            if job_id in self._write_commits:
-                raise AdapterError(
-                    "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
-                    "同一预览不能重复提交写入。",
-                    status_code=409,
-                )
+            existing = self._write_commits.get(job_id)
             identity = self._job_write_identity.get(job_id) or {}
             expected_workbook = str(identity.get("workbookId") or "")
             expected_hash = str(identity.get("sourceSnapshotHash") or "")
@@ -210,7 +243,41 @@ class ExcelSmartFillJobStore:
                     "写入提交与当前预览任务的工作簿或来源快照不一致。",
                     status_code=409,
                 )
+            if stage == "release":
+                if existing and existing.get("writeCommitted"):
+                    raise AdapterError(
+                        "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
+                        "同一预览不能重复提交写入。",
+                        status_code=409,
+                    )
+                self._write_commits.pop(job_id, None)
+                return {"writeReserved": False, "writeCommitted": False}
+            if existing and existing.get("writeCommitted"):
+                raise AdapterError(
+                    "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
+                    "同一预览不能重复提交写入。",
+                    status_code=409,
+                )
+            if stage == "reserve":
+                if existing and existing.get("writeReserved"):
+                    raise AdapterError(
+                        "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
+                        "同一预览不能重复提交写入。",
+                        status_code=409,
+                    )
+                record = {
+                    "writeReserved": True,
+                    "writeCommitted": False,
+                    "resultRevision": int(body.get("resultRevision") or body.get("result_revision") or 1),
+                    "sourceSnapshotHash": source_hash,
+                    "workbookId": workbook_id,
+                    "targetAddress": str(body.get("targetAddress") or body.get("target_address") or ""),
+                    "itemCount": int(body.get("itemCount") or body.get("item_count") or 0),
+                }
+                self._write_commits[job_id] = record
+                return record
             record = {
+                "writeReserved": True,
                 "writeCommitted": True,
                 "resultRevision": int(body.get("resultRevision") or body.get("result_revision") or 1),
                 "sourceSnapshotHash": source_hash,

@@ -205,5 +205,110 @@ def test_fastapi_write_commit_is_public_and_idempotent_fail_closed():
         excel_api.excel_smart_fill_jobs = original_store
 
 
+def _wait_terminal(store, job_id):
+    terminal = store.coordinator.wait(job_id, task_type="excel.smart_fill")
+    assert terminal is not None
+    return terminal
+
+
+@pytest.mark.skipif(not HAS_PYDANTIC, reason="pydantic required")
+def test_job_store_reserve_is_exclusive_until_confirm_or_release():
+    store = ExcelSmartFillJobStore(
+        _ImmediateProvider(),
+        LongTaskCoordinator(max_running=1, max_queued=2),
+    )
+    request = ExcelSmartFillRequest.parse_obj(_payload("write-commit-reserve-001"))
+    job = store.start(request, trace_id="trace-write-reserve")
+    _wait_terminal(store, job["jobId"])
+    body = _commit_body()
+    body["stage"] = "reserve"
+
+    first = store.commit_write(job["jobId"], body)
+    assert first.get("writeReserved") is True
+    assert first.get("writeCommitted") is not True
+
+    with pytest.raises(AdapterError) as error_info:
+        store.commit_write(job["jobId"], body)
+    assert error_info.value.code == "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED"
+
+    confirmed = store.commit_write(job["jobId"], dict(_commit_body(), stage="confirm"))
+    assert confirmed["writeCommitted"] is True
+
+    with pytest.raises(AdapterError) as confirm_error:
+        store.commit_write(job["jobId"], dict(_commit_body(), stage="confirm"))
+    assert confirm_error.value.code == "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED"
+
+
+@pytest.mark.skipif(not HAS_PYDANTIC, reason="pydantic required")
+def test_job_store_release_clears_unconfirmed_reserve():
+    store = ExcelSmartFillJobStore(
+        _ImmediateProvider(),
+        LongTaskCoordinator(max_running=1, max_queued=2),
+    )
+    request = ExcelSmartFillRequest.parse_obj(_payload("write-commit-release-001"))
+    job = store.start(request, trace_id="trace-write-release")
+    _wait_terminal(store, job["jobId"])
+    store.commit_write(job["jobId"], dict(_commit_body(), stage="reserve"))
+    released = store.commit_write(job["jobId"], dict(_commit_body(), stage="release"))
+    assert released.get("writeReserved") is not True
+    assert released.get("writeCommitted") is not True
+    again = store.commit_write(job["jobId"], dict(_commit_body(), stage="reserve"))
+    assert again.get("writeReserved") is True
+
+
+@pytest.mark.skipif(not HAS_PYDANTIC, reason="pydantic required")
+def test_cancelled_partial_preview_can_register_write_commit():
+    provider = _BlockingProvider()
+    store = ExcelSmartFillJobStore(
+        provider,
+        LongTaskCoordinator(max_running=1, max_queued=2),
+    )
+    request = ExcelSmartFillRequest.parse_obj(_payload("write-commit-cancel-001"))
+    job = store.start(request, trace_id="trace-write-cancel")
+    assert provider.started.wait(timeout=1)
+    store.cancel(job["jobId"])
+    provider.release.set()
+    terminal = _wait_terminal(store, job["jobId"])
+    assert terminal["status"] == "cancelled"
+    completed_items = [
+        item
+        for item in (terminal.get("result") or {}).get("items") or []
+        if item.get("status") == "completed"
+    ]
+    assert completed_items
+    record = store.commit_write(job["jobId"], _commit_body())
+    assert record["writeCommitted"] is True
+    with pytest.raises(AdapterError) as error_info:
+        store.commit_write(job["jobId"], _commit_body())
+    assert error_info.value.code == "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED"
+
+
+@pytest.mark.skipif(not HAS_PYDANTIC, reason="pydantic required")
+def test_expired_write_commit_is_purged_without_querying_that_job():
+    clock = {"now": 0.0}
+
+    def mono():
+        return clock["now"]
+
+    coordinator = LongTaskCoordinator(
+        max_running=1,
+        max_queued=2,
+        terminal_ttl_seconds=1,
+        monotonic_clock=mono,
+    )
+    store = ExcelSmartFillJobStore(_ImmediateProvider(), coordinator, clock=mono)
+    request = ExcelSmartFillRequest.parse_obj(_payload("write-commit-ttl-old-001"))
+    job = store.start(request, trace_id="trace-write-ttl-old")
+    _wait_terminal(store, job["jobId"])
+    store.commit_write(job["jobId"], _commit_body())
+    assert job["jobId"] in store._write_commits
+
+    clock["now"] = 10.0
+    next_request = ExcelSmartFillRequest.parse_obj(_payload("write-commit-ttl-new-002"))
+    store.start(next_request, trace_id="trace-write-ttl-new")
+    assert job["jobId"] not in store._write_commits
+    assert job["jobId"] not in store._job_write_identity
+
+
 if __name__ == "__main__":
     unittest.main()

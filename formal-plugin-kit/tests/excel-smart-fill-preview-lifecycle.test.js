@@ -27,7 +27,9 @@ function sampleFingerprint(overrides) {
   return Object.assign({
     sourceAddress: "$A$1:$C$3",
     sourceSnapshotHash: "hash-source-1",
-    instruction: "根据姓名生成岗位标签"
+    instruction: "根据姓名生成岗位标签",
+    workbookId: "wb-1",
+    sheetName: "客户表"
   }, overrides || {});
 }
 
@@ -329,16 +331,73 @@ function testLifecycleControlsMatchNarrowWindowContract() {
   assert.strictEqual(controls.startNewDisabled, false);
 }
 
-function testTaskpaneDoesNotClearPreviewOnSuccessfulWrite() {
-  const codeToRun = js.replace(
-    "if (!isTaskpanePage()) {",
-    `window.__TEST_EXPORTS__ = {
-      state: state,
-      writeExcelSmartFillResult: writeExcelSmartFillResult
-    };
-    return;
-    if (!isTaskpanePage()) {`
+function testSameAddressOnAnotherSheetInvalidatesPreview() {
+  const frozen = sampleFingerprint();
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), frozen);
+  helpers.returnToExcelSmartFillEdit(preview);
+  const next = helpers.buildExcelSmartFillEditFingerprint(frozen, {
+    liveSource: { ok: true, address: "$A$1:$C$3", rawAddress: "$A$1:$C$3", sheetName: "备份表" },
+    baselineAddress: "$D$2:$D$4",
+    instruction: frozen.instruction,
+    workbookId: "wb-1"
+  });
+  helpers.syncExcelSmartFillPreviewWithInputs(preview, next);
+  assert.strictEqual(
+    helpers.describeExcelSmartFillPreviewLifecycle(preview).status,
+    "invalid",
+    "same A1 on another sheet must invalidate"
   );
+}
+
+function testTargetBaselineOnDifferentSheetDoesNotInvalidate() {
+  const frozen = sampleFingerprint();
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), frozen);
+  helpers.returnToExcelSmartFillEdit(preview);
+  const next = helpers.buildExcelSmartFillEditFingerprint(frozen, {
+    liveSource: { ok: true, address: "$D$2:$D$4", rawAddress: "$D$2:$D$4", sheetName: "目标表" },
+    baselineAddress: "$D$2:$D$4",
+    instruction: frozen.instruction,
+    workbookId: "wb-1"
+  });
+  helpers.syncExcelSmartFillPreviewWithInputs(preview, next);
+  assert.strictEqual(helpers.describeExcelSmartFillPreviewLifecycle(preview).status, "ready");
+}
+
+function testWorkbookIdentityChangeInvalidatesPreview() {
+  const frozen = sampleFingerprint();
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), frozen);
+  helpers.returnToExcelSmartFillEdit(preview);
+  const next = helpers.buildExcelSmartFillEditFingerprint(frozen, {
+    liveSource: { ok: true, address: "$A$1:$C$3", rawAddress: "$A$1:$C$3", sheetName: "客户表" },
+    baselineAddress: "$D$2:$D$4",
+    instruction: frozen.instruction,
+    workbookId: "wb-other"
+  });
+  helpers.syncExcelSmartFillPreviewWithInputs(preview, next);
+  assert.strictEqual(helpers.describeExcelSmartFillPreviewLifecycle(preview).status, "invalid");
+}
+
+function testRebindClearsTransientWriteConflict() {
+  assert.strictEqual(typeof helpers.resetExcelSmartFillDraftWriteConflicts, "function");
+  const drafts = [
+    { itemId: itemId(1), status: "write_conflict", selected: false, value: "甲类" },
+    { itemId: itemId(2), status: "completed", selected: true, value: "乙类" }
+  ];
+  helpers.resetExcelSmartFillDraftWriteConflicts(drafts);
+  assert.strictEqual(drafts[0].status, "completed");
+  assert.strictEqual(drafts[0].selected, true);
+  assert.strictEqual(drafts[1].status, "completed");
+}
+
+function testSuccessfulTargetBindClearsTargetError() {
+  assert.strictEqual(typeof helpers.clearExcelSmartFillPreviewTargetError, "function");
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), sampleFingerprint());
+  helpers.markExcelSmartFillPreviewTargetRejected(preview, "目标必须是连续的单列区域。");
+  helpers.clearExcelSmartFillPreviewTargetError(preview);
+  assert.strictEqual(helpers.describeExcelSmartFillPreviewLifecycle(preview).targetError, "");
+}
+
+function makeDom() {
   const dom = {};
   function el(id) {
     if (!dom[id]) {
@@ -346,6 +405,7 @@ function testTaskpaneDoesNotClearPreviewOnSuccessfulWrite() {
         id: id,
         innerHTML: "",
         textContent: "",
+        value: "",
         hidden: false,
         disabled: false,
         className: "",
@@ -353,30 +413,227 @@ function testTaskpaneDoesNotClearPreviewOnSuccessfulWrite() {
         attributes: {},
         getAttribute(k) { return this.attributes[k]; },
         setAttribute(k, v) { this.attributes[k] = v; },
-        addEventListener() {}
+        addEventListener() {},
+        focus() {}
       };
     }
     return dom[id];
   }
-  ["result-output", "status-line", "btn-write-smart-fill", "btn-edit-smart-fill", "btn-new-smart-fill", "btn-run-primary", "smart-fill-write-summary", "excel-smart-fill-options"].forEach(el);
+  [
+    "result-output", "status-line", "settings-status-line", "btn-write-smart-fill",
+    "btn-edit-smart-fill", "btn-new-smart-fill", "btn-run-primary",
+    "smart-fill-write-summary", "excel-smart-fill-options", "excel-smart-fill-instruction",
+    "smart-fill-source-summary", "smart-fill-validation-line", "btn-copy-formula"
+  ].forEach(el);
+  return { dom, el };
+}
+
+function loadTaskpane(fetchImpl) {
+  const { el } = makeDom();
+  const codeToRun = js.replace(
+    "if (!isTaskpanePage()) {",
+    `window.__TEST_EXPORTS__ = {
+      state: state,
+      writeExcelSmartFillResult: writeExcelSmartFillResult,
+      returnToExcelSmartFillEditAction: returnToExcelSmartFillEditAction,
+      renderSmartFillCaptureState: renderSmartFillCaptureState,
+      tryRebindSmartFillTarget: tryRebindSmartFillTarget
+    };
+    return;
+    if (!isTaskpanePage()) {`
+  );
+  const application = {
+    ActiveWorkbook: { Name: "wb-1" },
+    ActiveSheet: { Name: "客户表" },
+    Selection: {
+      Address: "$D$2:$D$3",
+      Worksheet: { Name: "客户表" }
+    }
+  };
   const context = {
     window: {
       WpsAiAssistantHelpers: helpers,
       localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
       confirm() { return true; },
-      Application: {},
+      Application: application,
       __TEST_EXPORTS__: null
     },
-    document: { getElementById: el, querySelector() { return null; }, querySelectorAll() { return []; } },
+    document: {
+      getElementById: el,
+      querySelector() { return null; },
+      querySelectorAll() { return []; }
+    },
     console: console,
     setTimeout: setTimeout,
-    clearTimeout: clearTimeout
+    clearTimeout: clearTimeout,
+    fetch: fetchImpl || function () {
+      return Promise.reject(new Error("fetch not stubbed"));
+    },
+    Promise: Promise,
+    JSON: JSON,
+    Error: Error,
+    encodeURIComponent: encodeURIComponent
   };
   vm.createContext(context);
   vm.runInContext(codeToRun, context);
-  assert.ok(js.includes("开始新的填写"));
-  assert.ok(js.includes("返回修改"));
-  assert.ok(js.includes("sanitizeRestoredExcelSmartFillState") || js.includes("startNewExcelSmartFill"));
+  const exported = context.window.__TEST_EXPORTS__;
+  exported.application = application;
+  exported.status = function () {
+    return el("status-line").textContent;
+  };
+  return exported;
+}
+
+function cannedMapping() {
+  return {
+    ok: true,
+    target: {
+      sheetName: "客户表",
+      address: "$D$2:$D$3",
+      items: [
+        {
+          itemId: itemId(1), address: "$D$2", row: 2, column: 4, sheetName: "客户表",
+          originalValue: "", originalValueType: "blank", originalFormula: "",
+          isFormula: false, isMerged: false, isProtected: false, isHidden: false
+        },
+        {
+          itemId: itemId(2), address: "$D$3", row: 3, column: 4, sheetName: "客户表",
+          originalValue: "", originalValueType: "blank", originalFormula: "",
+          isFormula: false, isMerged: false, isProtected: false, isHidden: false
+        }
+      ]
+    },
+    commitContext: {
+      jobId: "job-write-1",
+      workbookId: "wb-1",
+      sourceSnapshotHash: "hash-source-1",
+      resultRevision: 1,
+      targetSheetName: "客户表",
+      targetAddress: "$D$2:$D$3",
+      itemCount: 2
+    },
+    overwriteCount: 0
+  };
+}
+
+function seedWritableState(exported) {
+  exported.state.currentMode = "excelSmartFill";
+  exported.state.busy = false;
+  exported.state.smartFillResult = sampleResult();
+  exported.state.smartFillPreview = helpers.createExcelSmartFillPreview(sampleResult(), sampleFingerprint());
+  exported.state.smartFillDraftItems = [
+    { itemId: itemId(1), status: "completed", selected: true, value: "甲类", valueType: "text" },
+    { itemId: itemId(2), status: "completed", selected: true, value: "乙类", valueType: "text" }
+  ];
+  exported.state.excelSmartFillCompletedJobId = "job-write-1";
+  exported.state.excelSmartFillResultRevision = 1;
+  exported.state.smartFillWorkbookId = "wb-1";
+  exported.state.smartFillSource = null;
+}
+
+function jsonResponse(status, body) {
+  return {
+    ok: status >= 200 && status < 300,
+    status: status,
+    json: function () { return Promise.resolve(body); }
+  };
+}
+
+async function testWriteReservesBeforeHostWrite() {
+  const events = [];
+  let resolveReserve;
+  const fetchImpl = function (url, options) {
+    const body = JSON.parse(options.body || "{}");
+    events.push("fetch:" + (body.stage || "confirm"));
+    if (body.stage === "reserve") {
+      return new Promise(function (resolve) {
+        resolveReserve = function () {
+          resolve(jsonResponse(200, { success: true, data: { writeReserved: true } }));
+        };
+      });
+    }
+    return Promise.resolve(jsonResponse(200, { success: true, data: { writeCommitted: true } }));
+  };
+  const exported = loadTaskpane(fetchImpl);
+  helpers.mapExcelSmartFillPreviewToTarget = function () { return cannedMapping(); };
+  helpers.detectExcelSmartFillConflicts = function () { return { hasConflict: false, conflicts: [] }; };
+  helpers.writeExcelSmartFillCells = function () {
+    events.push("host-write");
+    return { writtenCount: 2, skippedCount: 0 };
+  };
+  seedWritableState(exported);
+
+  const pending = exported.writeExcelSmartFillResult();
+  assert.ok(pending && typeof pending.then === "function");
+  await Promise.resolve();
+  assert.deepStrictEqual(events, ["fetch:reserve"]);
+  assert.ok(!events.includes("host-write"));
+  resolveReserve();
+  await pending;
+  assert.deepStrictEqual(events, ["fetch:reserve", "host-write", "fetch:confirm"]);
+  assert.strictEqual(exported.state.smartFillPreview.consumed, true);
+  assert.strictEqual(exported.state.smartFillPreview.status, "locked");
+  assert.ok(exported.state.smartFillPreview.result);
+}
+
+async function testDuplicateReserveDoesNotWriteHost() {
+  const events = [];
+  const fetchImpl = function (url, options) {
+    const body = JSON.parse(options.body || "{}");
+    events.push("fetch:" + (body.stage || "confirm"));
+    return Promise.resolve(jsonResponse(409, {
+      success: false,
+      message: "同一预览不能重复提交写入。",
+      errors: [{ code: "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED", message: "同一预览不能重复提交写入。" }]
+    }));
+  };
+  const exported = loadTaskpane(fetchImpl);
+  helpers.mapExcelSmartFillPreviewToTarget = function () { return cannedMapping(); };
+  helpers.detectExcelSmartFillConflicts = function () { return { hasConflict: false, conflicts: [] }; };
+  helpers.writeExcelSmartFillCells = function () {
+    events.push("host-write");
+    return { writtenCount: 2, skippedCount: 0 };
+  };
+  seedWritableState(exported);
+  await exported.writeExcelSmartFillResult();
+  assert.ok(!events.includes("host-write"));
+  assert.strictEqual(exported.state.smartFillPreview.consumed, false);
+  assert.ok(/重复|已写入|占用/.test(exported.status()));
+}
+
+async function testConfirmFailureKeepsSuccessfulHostWrite() {
+  const fetchImpl = function (url, options) {
+    const body = JSON.parse(options.body || "{}");
+    if (body.stage === "reserve") {
+      return Promise.resolve(jsonResponse(200, { success: true, data: { writeReserved: true } }));
+    }
+    return Promise.reject(new Error("Failed to fetch"));
+  };
+  const exported = loadTaskpane(fetchImpl);
+  helpers.mapExcelSmartFillPreviewToTarget = function () { return cannedMapping(); };
+  helpers.detectExcelSmartFillConflicts = function () { return { hasConflict: false, conflicts: [] }; };
+  helpers.writeExcelSmartFillCells = function () {
+    return { writtenCount: 2, skippedCount: 0 };
+  };
+  seedWritableState(exported);
+  await exported.writeExcelSmartFillResult();
+  assert.strictEqual(exported.state.smartFillPreview.consumed, true);
+  assert.strictEqual(exported.state.smartFillPreview.status, "locked");
+}
+
+function testReturnToEditRebindsLiveTargetWhenUnchanged() {
+  const exported = loadTaskpane();
+  helpers.inspectExcelSmartFillSourceSelection = function () {
+    return { ok: true, address: "$D$2:$D$3", rawAddress: "$D$2:$D$3", sheetName: "客户表" };
+  };
+  helpers.inspectExcelSmartFillTargetSelection = function () {
+    return { ok: true, summary: "写入位置：客户表!D2:D3", writableCount: 2, error: "" };
+  };
+  seedWritableState(exported);
+  exported.state.smartFillSource = { address: "$A$1:$C$3", snapshotHash: "hash-source-1", sheetName: "客户表" };
+  exported.returnToExcelSmartFillEditAction();
+  assert.strictEqual(exported.state.smartFillPreview.editingInputs, true);
+  assert.ok(exported.state.smartFillLiveTarget && exported.state.smartFillLiveTarget.ok, "return to edit must rebind writable target");
 }
 
 testReturnToEditWithoutInputChangeKeepsWritablePreview();
@@ -385,6 +642,9 @@ testAddressChangeAlsoInvalidatesPreview();
 testUnchangedInputsAfterReturnDoNotInvalidate();
 testReturnToEditDoesNotTreatCurrentTargetSelectionAsSourceChange();
 testNewSourceSelectionAfterReturnInvalidatesPreview();
+testSameAddressOnAnotherSheetInvalidatesPreview();
+testTargetBaselineOnDifferentSheetDoesNotInvalidate();
+testWorkbookIdentityChangeInvalidatesPreview();
 testInvalidReadonlyPreviewShowsSourceRowLabelsNotItemIds();
 testRegenerateAfterInvalidCreatesNewWritablePreview();
 testTargetPrecheckFailureDoesNotConsumePreview();
@@ -395,6 +655,16 @@ testStartNewFillClearsLockedPreview();
 testSameCountNewTargetDoesNotReuseOldAddressBinding();
 testRestoreWithoutFrozenSourceDisablesWrite();
 testLifecycleControlsMatchNarrowWindowContract();
-testTaskpaneDoesNotClearPreviewOnSuccessfulWrite();
+testRebindClearsTransientWriteConflict();
+testSuccessfulTargetBindClearsTargetError();
+testReturnToEditRebindsLiveTargetWhenUnchanged();
 
-console.log("Excel smart fill preview lifecycle tests passed");
+(async function main() {
+  await testWriteReservesBeforeHostWrite();
+  await testDuplicateReserveDoesNotWriteHost();
+  await testConfirmFailureKeepsSuccessfulHostWrite();
+  console.log("Excel smart fill preview lifecycle tests passed");
+})().catch(function (error) {
+  console.error(error && error.stack ? error.stack : error);
+  process.exit(1);
+});

@@ -334,11 +334,14 @@ def cancel_excel_smart_fill_job(job_id: str, resume: bool = False):
 def commit_excel_smart_fill_write(job_id: str, request: ExcelSmartFillWriteCommitRequest) -> dict:
     result = excel_smart_fill_jobs.commit_write(job_id, request)
     job = excel_smart_fill_jobs.get(job_id)
+    message = "write_committed" if result.get("writeCommitted") else (
+        "write_reserved" if result.get("writeReserved") else "write_released"
+    )
     return {
         "success": True,
         "traceId": (job or {}).get("traceId", job_id),
         "taskType": "excel.smart_fill",
-        "message": "write_committed",
+        "message": message,
         "data": result,
         "errors": [],
     }

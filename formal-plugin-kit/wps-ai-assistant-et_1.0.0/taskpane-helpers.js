@@ -3244,7 +3244,9 @@
     }
     return String(left.sourceAddress || "") === String(right.sourceAddress || "") &&
       String(left.sourceSnapshotHash || "") === String(right.sourceSnapshotHash || "") &&
-      String(left.instruction || "") === String(right.instruction || "");
+      String(left.instruction || "") === String(right.instruction || "") &&
+      String(left.workbookId || "") === String(right.workbookId || "") &&
+      String(left.sheetName || "") === String(right.sheetName || "");
   }
 
   function buildExcelSmartFillEditFingerprint(frozen, options) {
@@ -3253,19 +3255,43 @@
     var live = settings.liveSource || {};
     var instruction = settings.instruction != null ? settings.instruction : frozenFp.instruction;
     var frozenAddress = normalizeExcelSmartFillA1Address(frozenFp.sourceAddress);
+    var frozenSheet = String(frozenFp.sheetName || "");
+    var frozenWorkbook = String(frozenFp.workbookId || "");
     var liveAddress = "";
+    var liveSheet = "";
+    var liveWorkbook = String(settings.workbookId || live.workbookId || "");
     var baseline = normalizeExcelSmartFillA1Address(settings.baselineAddress);
     var nextAddress = frozenFp.sourceAddress || "";
+    var nextSheet = frozenSheet;
+    var nextWorkbook = frozenWorkbook;
     if (live.ok) {
       liveAddress = normalizeExcelSmartFillA1Address(live.rawAddress || live.address);
-      if (liveAddress && liveAddress !== frozenAddress && liveAddress !== baseline) {
+      liveSheet = String(live.sheetName || "");
+      if (liveWorkbook && frozenWorkbook && liveWorkbook !== frozenWorkbook) {
         nextAddress = live.rawAddress || live.address || nextAddress;
+        nextSheet = liveSheet || nextSheet;
+        nextWorkbook = liveWorkbook;
+      } else if (liveAddress && liveAddress === baseline) {
+        nextAddress = frozenFp.sourceAddress || "";
+        nextSheet = frozenSheet;
+        nextWorkbook = frozenWorkbook;
+      } else if (
+        liveAddress &&
+        (liveAddress !== frozenAddress || (liveSheet && liveSheet !== frozenSheet))
+      ) {
+        nextAddress = live.rawAddress || live.address || nextAddress;
+        nextSheet = liveSheet || nextSheet;
+        if (liveWorkbook) {
+          nextWorkbook = liveWorkbook;
+        }
       }
     }
     return {
       sourceAddress: nextAddress,
       sourceSnapshotHash: frozenFp.sourceSnapshotHash || "",
-      instruction: instruction || ""
+      instruction: instruction || "",
+      workbookId: nextWorkbook,
+      sheetName: nextSheet
     };
   }
 
@@ -3296,6 +3322,25 @@
     }
     preview.targetError = String(message || "目标预检失败。");
     return preview;
+  }
+
+  function clearExcelSmartFillPreviewTargetError(preview) {
+    if (!preview) {
+      return preview;
+    }
+    preview.targetError = "";
+    return preview;
+  }
+
+  function resetExcelSmartFillDraftWriteConflicts(drafts) {
+    var list = Array.isArray(drafts) ? drafts : [];
+    list.forEach(function (draft) {
+      if (draft && draft.status === "write_conflict") {
+        draft.status = "completed";
+        draft.selected = true;
+      }
+    });
+    return list;
   }
 
   function markExcelSmartFillPreviewWriteFailed(preview, details) {
@@ -5100,6 +5145,8 @@
     buildExcelSmartFillEditFingerprint: buildExcelSmartFillEditFingerprint,
     syncExcelSmartFillPreviewWithInputs: syncExcelSmartFillPreviewWithInputs,
     markExcelSmartFillPreviewTargetRejected: markExcelSmartFillPreviewTargetRejected,
+    clearExcelSmartFillPreviewTargetError: clearExcelSmartFillPreviewTargetError,
+    resetExcelSmartFillDraftWriteConflicts: resetExcelSmartFillDraftWriteConflicts,
     markExcelSmartFillPreviewWriteFailed: markExcelSmartFillPreviewWriteFailed,
     describeExcelSmartFillPreviewLifecycle: describeExcelSmartFillPreviewLifecycle,
     resolveExcelSmartFillLifecycleControls: resolveExcelSmartFillLifecycleControls,
