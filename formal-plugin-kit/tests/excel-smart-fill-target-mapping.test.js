@@ -641,9 +641,9 @@ function createIntegrationEnvironment(customConfig) {
   const domElements = {};
   function mockElement(id) {
     if (!domElements[id]) {
-      domElements[id] = {
+      const el = {
         id: id,
-        innerHTML: "",
+        _innerHTML: "",
         textContent: "",
         value: "",
         hidden: false,
@@ -665,6 +665,14 @@ function createIntegrationEnvironment(customConfig) {
         querySelector() { return null; },
         querySelectorAll() { return []; }
       };
+      Object.defineProperty(el, "innerHTML", {
+        get() { return this._innerHTML; },
+        set(value) {
+          this._innerHTML = String(value || "");
+          this.textContent = this._innerHTML.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+        }
+      });
+      domElements[id] = el;
     }
     return domElements[id];
   }
@@ -827,10 +835,9 @@ function testTaskpaneBehavioralIntegration() {
     assert.strictEqual(targetRange2.Cells.Item(3, 5).Value2, "填2");
     assert.strictEqual(targetRange2.Cells.Item(4, 5).Value2, "填3");
 
-    // 2. State was cleaned up on success
-    assert.strictEqual(state.smartFillResult, null);
-    assert.strictEqual(state.excelSmartFillCompletedJobId, "");
-    assert.strictEqual(state.excelSmartFillResultRevision, 0);
+    // 2. Successful write locks the preview instead of deleting it
+    assert.ok(state.smartFillResult != null, "locked preview must keep results");
+    assert.ok(state.smartFillPreview && state.smartFillPreview.consumed);
 
     // 3. Status text updated
     assert.strictEqual(env.domElements["status-line"].textContent, "智能填写已写入 3 个单元格。");

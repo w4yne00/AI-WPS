@@ -8,6 +8,7 @@ from app.core.models import (
     ExcelFormulaAssistantRequest,
     ExcelFormulaAssistantResponseData,
     ExcelSmartFillRequest,
+    ExcelSmartFillWriteCommitRequest,
 )
 from app.core.tracing import new_trace_id
 from app.services.excel.analyzer import ExcelAnalyzer
@@ -325,5 +326,19 @@ def cancel_excel_smart_fill_job(job_id: str, resume: bool = False):
         "taskType": "excel.smart_fill",
         "message": message,
         "data": job,
+        "errors": [],
+    }
+
+
+@router.post("/excel/smart-fill/jobs/{job_id}/write-commits")
+def commit_excel_smart_fill_write(job_id: str, request: ExcelSmartFillWriteCommitRequest) -> dict:
+    result = excel_smart_fill_jobs.commit_write(job_id, request)
+    job = excel_smart_fill_jobs.get(job_id)
+    return {
+        "success": True,
+        "traceId": (job or {}).get("traceId", job_id),
+        "taskType": "excel.smart_fill",
+        "message": "write_committed",
+        "data": result,
         "errors": [],
     }

@@ -44,6 +44,8 @@ SAFE_ERROR_STATUSES = {
     "EXCEL_SMART_FILL_REQUEST_TOO_LARGE": 413,
     "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE": 400,
     "EXCEL_SMART_FILL_JOB_ID_CONFLICT": 409,
+    "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED": 409,
+    "EXCEL_SMART_FILL_WRITE_NOT_READY": 409,
     "EXCEL_SMART_FILL_RESULT_TOO_LARGE": 502,
     "EXCEL_SMART_FILL_DEADLINE_EXCEEDED": 504,
     "EXCEL_SMART_FILL_AUTH_SNAPSHOT_FAILED": 503,
@@ -77,6 +79,7 @@ class ExcelSmartFillJobStore:
         self.smart_fill = smart_fill or ExcelSmartFill()
         self.coordinator = coordinator or get_long_task_coordinator()
         self.clock = clock
+        self._write_commits = {}
 
     def start(self, request: ExcelSmartFillRequest, trace_id: str) -> Dict:
         validate_smart_fill_request_limits(request)
@@ -142,7 +145,53 @@ class ExcelSmartFillJobStore:
         )
 
     def get(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.get(job_id, task_type="excel.smart_fill")
+        job = self.coordinator.get(job_id, task_type="excel.smart_fill")
+        if job is None:
+            return None
+        public = dict(job)
+        commit = self._write_commits.get(job_id)
+        if commit:
+            public["writeCommitted"] = True
+            public["writeResultRevision"] = commit.get("resultRevision")
+        return public
+
+    def commit_write(self, job_id: str, payload) -> Dict:
+        job = self.coordinator.get(job_id, task_type="excel.smart_fill")
+        if job is None:
+            raise AdapterError(
+                "EXCEL_SMART_FILL_JOB_NOT_FOUND",
+                "智能填写后台任务不存在或已过期。",
+                status_code=404,
+            )
+        if job.get("status") != "completed":
+            raise AdapterError(
+                "EXCEL_SMART_FILL_WRITE_NOT_READY",
+                "智能填写预览尚未完成，不能提交写入。",
+                status_code=409,
+            )
+        if job_id in self._write_commits:
+            raise AdapterError(
+                "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
+                "同一预览不能重复提交写入。",
+                status_code=409,
+            )
+        body = payload or {}
+        if hasattr(payload, "dict"):
+            body = payload.dict(by_alias=True)
+        elif hasattr(payload, "model_dump"):
+            body = payload.model_dump(by_alias=True)
+        record = {
+            "writeCommitted": True,
+            "resultRevision": int(body.get("resultRevision") or body.get("result_revision") or 1),
+            "sourceSnapshotHash": str(
+                body.get("sourceSnapshotHash") or body.get("source_snapshot_hash") or ""
+            ),
+            "workbookId": str(body.get("workbookId") or body.get("workbook_id") or ""),
+            "targetAddress": str(body.get("targetAddress") or body.get("target_address") or ""),
+            "itemCount": int(body.get("itemCount") or body.get("item_count") or 0),
+        }
+        self._write_commits[job_id] = record
+        return record
 
     def cancel(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.request_cancel(job_id, task_type="excel.smart_fill")

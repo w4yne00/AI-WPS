@@ -498,7 +498,7 @@ function testSmartFillPreviewCannotBeSubmittedTwice() {
   });
   helpers.consumeExcelSmartFillPreview(preview);
   assert.strictEqual(preview.consumed, true);
-  assert.strictEqual(preview.result, null);
+  assert.ok(preview.result, "consumed preview must keep results for locked review");
   assert.throws(
     () => helpers.consumeExcelSmartFillPreview(preview),
     /重复/

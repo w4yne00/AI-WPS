@@ -51,7 +51,7 @@ def test_preview_audit_rejects_undo_promise_in_excel_plugin(tmp_path):
         encoding="utf-8",
     )
     (plugin / "taskpane.html").write_text(
-        "<button>生成预览</button><button>写入内容</button><button>撤销</button>",
+        "<button>生成预览</button><button>写入内容</button><button>返回修改</button><button>开始新的填写</button><button>撤销</button>",
         encoding="utf-8",
     )
     (plugin / "taskpane.js").write_text(
@@ -83,7 +83,7 @@ def test_preview_audit_rejects_plugin_without_compensation_contract(tmp_path):
         encoding="utf-8",
     )
     (plugin / "taskpane.html").write_text(
-        "<button>生成预览</button><button>写入内容</button>",
+        "<button>生成预览</button><button>写入内容</button><button>返回修改</button><button>开始新的填写</button>",
         encoding="utf-8",
     )
     (plugin / "taskpane.js").write_text(

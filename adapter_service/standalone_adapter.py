@@ -26,6 +26,7 @@ from app.core.models import (
     ExcelFormulaAssistantRequest,
     ExcelFormulaAssistantResponseData,
     ExcelSmartFillRequest,
+    ExcelSmartFillWriteCommitRequest,
     PptDocumentFileUploadRequest,
     PptSlideAssistantRequest,
     PptSlideAssistantResponseData,
@@ -2896,6 +2897,52 @@ class Handler(BaseHTTPRequestHandler):
                     "excel.formula_assistant",
                     excel_formula_job_payload(job),
                     message="accepted",
+                ),
+            )
+            return
+
+        write_commit_suffix = "/write-commits"
+        smart_fill_jobs_prefix = "/excel/smart-fill/jobs/"
+        if path.startswith(smart_fill_jobs_prefix) and path.endswith(write_commit_suffix):
+            job_id = unquote(path[len(smart_fill_jobs_prefix):-len(write_commit_suffix)].strip("/"))
+            trace_id = new_trace_id("standalone-excel-smart-fill")
+            try:
+                if hasattr(ExcelSmartFillWriteCommitRequest, "model_validate"):
+                    commit_request = ExcelSmartFillWriteCommitRequest.model_validate(payload)
+                else:
+                    commit_request = ExcelSmartFillWriteCommitRequest.parse_obj(payload)
+                result = EXCEL_SMART_FILL_JOB_STORE.commit_write(job_id, commit_request)
+            except AdapterError as error:
+                self._write(
+                    error.status_code,
+                    envelope(
+                        trace_id,
+                        "excel.smart_fill",
+                        success=False,
+                        message=error.message,
+                        errors=[{"code": error.code, "message": error.message}],
+                    ),
+                )
+                return
+            except (TypeError, ValueError) as error:
+                self._write(
+                    422,
+                    envelope(
+                        trace_id,
+                        "excel.smart_fill",
+                        success=False,
+                        message=str(error),
+                        errors=[{"code": "REQUEST_VALIDATION_FAILED", "message": str(error)[:160]}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    trace_id,
+                    "excel.smart_fill",
+                    result,
+                    message="write_committed",
                 ),
             )
             return
