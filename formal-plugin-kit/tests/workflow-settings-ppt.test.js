@@ -94,7 +94,7 @@ function testTaskScopedProfileAndHelperContract() {
     'var PPT_WORKFLOW_TASK_TYPE = "ppt.slide_assistant";',
     'var PPT_STRUCTURE_WORKFLOW_TASK_TYPE = "ppt.structure_review";',
     "state.workflowTaskType",
-    "helpers.workflowProfileOptionState(",
+    "helpers.buildTaskModelConfigMenuItems(",
     "helpers.validateWorkflowProfileDraft(",
     "helpers.shouldActivateNewWorkflowProfile("
   ], "task-scoped PPT profiles and shared helpers");
@@ -108,8 +108,10 @@ function testTaskScopedProfileAndHelperContract() {
   ], "independent PPT workflow tabs");
   excludesAll(js, [
     'request("/provider/api-key"',
-    'request("/provider/task-api-key"'
-  ], "unified and task Key frontend bindings");
+    'request("/provider/task-api-key"',
+    "function workflowProfileOptionState(",
+    "function syncWorkflowProfileSelectOptions("
+  ], "unified Key bindings and native-select leftovers");
 }
 
 function testImmediateActivationContract() {

@@ -1445,19 +1445,6 @@
     return found ? found.name : "尚未配置";
   }
 
-  function workflowProfileOptionState(profile) {
-    if (helpers.workflowProfileOptionState) {
-      return helpers.workflowProfileOptionState(profile, state.profiles.activeProfileId);
-    }
-    return {
-      id: safeText(profile && profile.id),
-      label: safeText(profile && profile.name || "未命名配置") + " · " +
-        (profile && profile.accessMethod === "direct_model" ? "模型直连" : "工作流平台"),
-      active: Boolean(profile && profile.id === state.profiles.activeProfileId),
-      disabled: !Boolean(profile && profile.complete)
-    };
-  }
-
   function validateWorkflowProfileDraft(draft, mode) {
     if (helpers.validateWorkflowProfileDraft) {
       return helpers.validateWorkflowProfileDraft(draft, mode);
@@ -1629,44 +1616,6 @@
     }
     popover.hidden = !open;
     button.setAttribute("aria-expanded", open ? "true" : "false");
-  }
-
-  function syncWorkflowProfileSelectOptions(select, optionModels) {
-    var options = select.options || select.children || [];
-    var canReuseOptions = options.length === optionModels.length;
-    var index;
-    var option;
-    var model;
-    if (canReuseOptions) {
-      for (index = 0; index < optionModels.length; index += 1) {
-        if (!options[index] || String(options[index].value || "") !== optionModels[index].value) {
-          canReuseOptions = false;
-          break;
-        }
-      }
-    }
-    if (!canReuseOptions) {
-      select.innerHTML = "";
-      for (index = 0; index < optionModels.length; index += 1) {
-        option = document.createElement("option");
-        option.value = optionModels[index].value;
-        select.appendChild(option);
-      }
-      options = select.options || select.children || [];
-    }
-    for (index = 0; index < optionModels.length; index += 1) {
-      option = options[index];
-      model = optionModels[index];
-      if (option.textContent !== model.text) {
-        option.textContent = model.text;
-      }
-      if (option.selected !== model.selected) {
-        option.selected = model.selected;
-      }
-      if (option.disabled !== model.disabled) {
-        option.disabled = model.disabled;
-      }
-    }
   }
 
   function getWorkflowProfileData(taskType) {
