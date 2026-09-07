@@ -62,9 +62,9 @@ hosts.forEach((host) => {
   commonMarkup.forEach((marker) => {
     assert.ok(html.includes(marker), `${host.name} missing ${marker}`);
   });
-  if (host.name === "Excel") {
-    assert.ok(html.includes('id="task-model-config-trigger"'), "Excel missing compact config trigger");
-    assert.ok(!html.includes('id="workflow-profile-select"'), "Excel still exposes native config select");
+  if (host.name === "Excel" || host.name === "Word") {
+    assert.ok(html.includes('id="task-model-config-trigger"'), `${host.name} missing compact config trigger`);
+    assert.ok(!html.includes('id="workflow-profile-select"'), `${host.name} still exposes native config select`);
   } else {
     assert.ok(html.includes('id="workflow-profile-select"'), `${host.name} missing ${'id="workflow-profile-select"'}`);
   }
@@ -132,7 +132,7 @@ const wordCss = fs.readFileSync(path.join(wordRoot, "taskpane.css"), "utf8");
 const wordJs = fs.readFileSync(path.join(wordRoot, "taskpane.js"), "utf8");
 [
   'id="workflow-task-tabs"',
-  'id="workflow-profile-current"'
+  'id="workflow-switch-feedback"'
 ].forEach((marker) => assert.ok(wordHtml.includes(marker), `Word missing ${marker}`));
 [
   'byId("btn-new-workflow-profile").addEventListener',
