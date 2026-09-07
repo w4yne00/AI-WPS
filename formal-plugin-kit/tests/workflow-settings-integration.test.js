@@ -62,12 +62,8 @@ hosts.forEach((host) => {
   commonMarkup.forEach((marker) => {
     assert.ok(html.includes(marker), `${host.name} missing ${marker}`);
   });
-  if (host.name === "Excel" || host.name === "Word") {
-    assert.ok(html.includes('id="task-model-config-trigger"'), `${host.name} missing compact config trigger`);
-    assert.ok(!html.includes('id="workflow-profile-select"'), `${host.name} still exposes native config select`);
-  } else {
-    assert.ok(html.includes('id="workflow-profile-select"'), `${host.name} missing ${'id="workflow-profile-select"'}`);
-  }
+  assert.ok(html.includes('id="task-model-config-trigger"'), `${host.name} missing compact config trigger`);
+  assert.ok(!html.includes('id="workflow-profile-select"'), `${host.name} still exposes native config select`);
   removedMarkup.forEach((marker) => {
     assert.ok(!html.includes(marker), `${host.name} still exposes ${marker}`);
   });

@@ -43,7 +43,8 @@ function loadPureFunction(name, context = {}) {
 function testStaticMarkupContract() {
   includesAll(html, [
     'id="settings-status-line"',
-    'id="workflow-profile-select"',
+    'id="task-model-config-trigger"',
+    'id="task-model-config-menu"',
     'id="workflow-switch-feedback"',
     'id="workflow-settings-home"',
     'id="workflow-profile-manager"',
@@ -116,75 +117,29 @@ function testImmediateActivationContract() {
   const activate = functionSource("activateWorkflowProfile");
   const binding = functionSource("bindEvents");
   includesAll(render, [
-    "workflowProfileOptionState",
-    "syncWorkflowProfileSelectOptions(select, optionModels)",
-    "state.workflowProfileMutationBusy"
-  ], "profile dropdown option state");
+    "helpers.formatTaskModelConfigEntry",
+    "helpers.buildTaskModelConfigMenuItems",
+    "state.busy"
+  ], "compact entry rendering");
+  assert.ok(!render.includes("syncWorkflowProfileSelectOptions"), "PPT compact entry must not rebuild a native select");
   includesAll(binding, [
-    'byId("workflow-profile-select").addEventListener("change"',
-    "scheduleWorkflowProfileActivation(event.target.value)"
-  ], "immediate dropdown activation");
+    'byId("task-model-config-trigger").addEventListener("click"',
+    "handleTaskModelConfigTriggerClick"
+  ], "immediate compact-entry activation");
   includesAll(activate, [
     "previousProfileId",
-    "setWorkflowProfileMutationBusy(true)",
-    "state.selectedProfileId = previousProfileId",
-    "renderProfileStrip()",
+    "helpers.evaluateTaskModelConfigSwitch",
+    "helpers.rollbackTaskModelConfigSwitch",
+    "taskModelConfigStatusByTask",
+    "getSettingsWorkflowTaskType",
     "切换模型配置失败"
   ], "activation rollback and busy state");
   const disable = functionSource("setRunDisabled");
-  assert.ok(disable.includes('"workflow-profile-select"'), "busy tasks must disable the dropdown");
+  assert.ok(disable.includes('"task-model-config-trigger"'), "busy tasks must disable the compact entry");
+  assert.ok(!disable.includes('"workflow-profile-select"'), "native select must not remain as a busy target");
 }
 
 function testStableProfileSelectionInteraction() {
-  const select = {
-    children: [],
-    disabled: false,
-    attributes: {},
-    appendChild(option) { this.children.push(option); },
-    setAttribute(name, value) { this.attributes[name] = value; }
-  };
-  Object.defineProperty(select, "innerHTML", {
-    get() { return ""; },
-    set() { this.children = []; }
-  });
-  const nodes = {
-    "workflow-profile-select": select,
-    "workflow-switch-feedback": { textContent: "" }
-  };
-  const profileState = {
-    workflowTaskType: "ppt.slide_assistant",
-    selectedProfileId: "profile-a",
-    profiles: {
-      activeProfileId: "profile-a",
-      profiles: [
-        { id: "profile-a", name: "主模型", complete: true },
-        { id: "profile-b", name: "备用模型", complete: true }
-      ]
-    },
-    busy: false,
-    workflowProfileMutationBusy: false
-  };
-  const syncOptions = loadPureFunction("syncWorkflowProfileSelectOptions", {
-    document: { createElement() { return {}; } }
-  });
-  const render = loadPureFunction("renderProfileStrip", {
-    state: profileState,
-    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
-    byId(id) { return nodes[id]; },
-    workflowProfileOptionState(profile) {
-      return { id: profile.id, label: profile.name, disabled: false };
-    },
-    activeProfileName() { return "主模型"; },
-    setNodeTextIfChanged(node, value) { node.textContent = value; },
-    syncWorkflowProfileSelectOptions: syncOptions,
-    document: { createElement() { return {}; } }
-  });
-  render();
-  const firstOptions = select.children.slice();
-  render();
-  assert.strictEqual(select.children[0], firstOptions[0]);
-  assert.strictEqual(select.children[1], firstOptions[1]);
-
   let nextTimerId = 1;
   const pending = new Map();
   const activated = [];
@@ -399,11 +354,10 @@ function testLiveSettingsExperienceContract() {
     'byId("diagnostics-summary")'
   ], "PPT model interface readiness");
   includesAll(functionSource("renderProfileStrip"), [
-    "select.setAttribute(",
-    '"aria-label"',
+    "helpers.formatTaskModelConfigEntry",
     '"选择结构审查模型配置"',
     '"选择智能总结模型配置"'
-  ], "task-specific workflow selector label");
+  ], "task-specific compact entry label");
   includesAll(refresh, [
     "configRefreshRequestId",
     "configRefreshPromise",
