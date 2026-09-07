@@ -1818,7 +1818,48 @@ async function assertPptBehavioralDomContracts() {
   });
 
   testState.taskMode = "pptSlideAssistant";
+  testState.currentView = "settings";
+  testState.workflowTaskType = "ppt.structure_review";
+  testState.busy = false;
+  testState.workflowProfileMutationBusy = false;
+  testState.taskModelConfigStatusByTask = {};
+  testState.profilesByTask["ppt.structure_review"] = {
+    taskType: "ppt.structure_review",
+    activeProfileId: "direct-1",
+    profiles: [PLATFORM_PROFILE, SECRET_PROFILE]
+  };
+  testState.profiles = testState.profilesByTask["ppt.structure_review"];
+  testState.workflowProfileSelections["ppt.structure_review"] = "direct-1";
+  statusMessage = "结构审查设置就绪";
+  baseContext.request = () => Promise.reject(new Error("网络异常 503"));
+  baseContext.activateWorkflowProfile = loadFunction("activateWorkflowProfile", baseContext);
+  await baseContext.activateWorkflowProfile("flow-1");
+  assert.ok(
+    String(statusMessage).includes("切换模型配置失败"),
+    `settings 设为当前 failure must still announce when home task differs, got: ${statusMessage}`
+  );
+  assert.strictEqual(testState.taskModelConfigStatusByTask["ppt.structure_review"], "error");
+  assert.strictEqual(testState.taskModelConfigStatusByTask["ppt.slide_assistant"], undefined);
+
+  testState.taskModelConfigStatusByTask = {};
+  statusMessage = "";
+  baseContext.request = () => Promise.resolve({
+    data: {
+      taskType: "ppt.structure_review",
+      activeConfigurationId: "flow-1",
+      configurations: [PLATFORM_PROFILE, SECRET_PROFILE]
+    }
+  });
+  baseContext.activateWorkflowProfile = loadFunction("activateWorkflowProfile", baseContext);
+  await baseContext.activateWorkflowProfile("flow-1");
+  assert.ok(
+    String(statusMessage).includes("已切换至"),
+    `settings 设为当前 success must announce when home task differs, got: ${statusMessage}`
+  );
+
+  testState.taskMode = "pptSlideAssistant";
   testState.workflowTaskType = "ppt.slide_assistant";
+  testState.currentView = "home";
   testState.sourceMode = "slide";
   testState.busy = false;
   baseContext.setSourceMode = loadFunction("setSourceMode", baseContext);

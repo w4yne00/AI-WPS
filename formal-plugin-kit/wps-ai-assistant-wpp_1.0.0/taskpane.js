@@ -2484,9 +2484,7 @@
         renderWorkflowTaskTabs();
         renderProfileManager();
         renderModelInterfaceState(state.modelInterfaceDetectable);
-        if (getCurrentWorkflowTaskType() === taskType) {
-          setStatus("已切换至：" + ((profile && profile.name) || "模型配置"));
-        }
+        setStatus("已切换至：" + ((profile && profile.name) || "模型配置"));
       })
       .catch(function (error) {
         var previousProfile = getWorkflowProfileById(taskType, previousProfileId);
@@ -2503,22 +2501,24 @@
             statusText: "切换失败",
             restoreFocus: true
           };
-        var stillOnOriginatingTask = getCurrentWorkflowTaskType() === taskType;
+        var stillRelevant = state.currentView === "settings"
+          ? getSettingsWorkflowTaskType() === taskType
+          : getCurrentWorkflowTaskType() === taskType;
         setWorkflowProfileMutationBusy(false);
         state.workflowProfileSelections[taskType] = rolled.selectionId;
-        if (stillOnOriginatingTask) {
+        if (stillRelevant) {
           state.selectedProfileId = rolled.selectionId;
         }
         state.taskModelConfigStatusByTask[taskType] = "error";
         renderProfileStrip();
         renderWorkflowTaskTabs();
         renderProfileManager();
-        if (!stillOnOriginatingTask) {
+        if (!stillRelevant) {
           return;
         }
         setStatus("切换模型配置失败：" + (typeof describeSettingsError === "function" ? describeSettingsError(error) : error.message));
         setNodeTextIfChanged(byId("workflow-switch-feedback"), rolled.statusText);
-        if (rolled.restoreFocus) {
+        if (rolled.restoreFocus && state.currentView !== "settings") {
           focusTaskModelConfigTrigger();
         }
       });
