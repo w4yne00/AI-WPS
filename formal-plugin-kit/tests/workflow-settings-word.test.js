@@ -287,7 +287,8 @@ assert.ok(sharedHelpers.formatModelValidationStatus({
 const stripSource = functionSource("renderWorkflowProfileStrip");
 assert.ok(stripSource.includes("helpers.formatTaskModelConfigEntry"));
 assert.ok(stripSource.includes("helpers.buildTaskModelConfigMenuItems"));
-assert.ok(stripSource.includes("trigger.disabled = state.busy || state.workflowProfileMutationBusy"));
+assert.ok(stripSource.includes("state.modelTaskBusy"));
+assert.ok(!stripSource.includes("state.busy"), "Word compact entry must not read a nonexistent state.busy flag");
 
 const bindSource = functionSource("bindEvents");
 assert.ok(bindSource.includes('byId("task-model-config-trigger").addEventListener("click"'));

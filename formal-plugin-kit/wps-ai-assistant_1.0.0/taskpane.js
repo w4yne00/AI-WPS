@@ -2325,7 +2325,7 @@
         taskType: taskType,
         mutationBusy: state.workflowProfileMutationBusy,
         statusByTask: state.taskModelConfigStatusByTask,
-        hasLoaded: Boolean(data && (data.profiles.length > 0 || !data.loadError)),
+        hasLoaded: Object.prototype.hasOwnProperty.call(state.workflowProfiles, taskType),
         loadError: Boolean(data && data.loadError),
         hasProfile: Boolean(profile)
       });
@@ -2366,6 +2366,9 @@
       } else {
         options[index].classList.remove("is-active");
       }
+    }
+    if (highlightedIndex >= 0 && options[highlightedIndex]) {
+      scrollWorkflowTaskTabIntoView(options[highlightedIndex]);
     }
     if (trigger) {
       if (highlightedIndex >= 0) {
@@ -2478,6 +2481,7 @@
       return;
     }
     if (item.action === "manage") {
+      state.settingsWorkflowTaskType = taskType;
       switchMode("settings");
       var targetTab = document.querySelector('[data-workflow-task-tab="' + taskType + '"]');
       if (targetTab && typeof targetTab.focus === "function") {
@@ -2496,7 +2500,7 @@
   }
 
   function handleTaskModelConfigTriggerClick() {
-    if (state.busy || state.workflowProfileMutationBusy || isWorkflowInteractionBlocked()) {
+    if (state.modelTaskBusy || state.workflowProfileMutationBusy || isWorkflowInteractionBlocked()) {
       return;
     }
     if (state.taskModelConfigMenu.open) {
@@ -2613,7 +2617,7 @@
     var interactionBlocked = typeof isWorkflowInteractionBlocked === "function"
       ? isWorkflowInteractionBlocked()
       : Boolean(state.documentReviewJobId || state.fullDocumentReviewJobId);
-    trigger.disabled = state.busy || state.workflowProfileMutationBusy || interactionBlocked || status === "loading";
+    trigger.disabled = state.modelTaskBusy || state.workflowProfileMutationBusy || interactionBlocked || status === "loading";
     setNodeTextIfChanged(feedback, entry.statusText);
     if (state.taskModelConfigMenu.open) {
       state.taskModelConfigMenu.items = helpers.buildTaskModelConfigMenuItems
@@ -3154,12 +3158,12 @@
       ? helpers.evaluateTaskModelConfigSwitch({
         requestedId: profileId,
         previousId: previousProfileId,
-        busy: state.busy || isWorkflowInteractionBlocked(),
+        busy: state.modelTaskBusy || isWorkflowInteractionBlocked(),
         mutationBusy: state.workflowProfileMutationBusy,
         profileComplete: Boolean(profile && profile.complete)
       })
       : {
-        allowed: Boolean(profileId && profileId !== previousProfileId && profile && profile.complete && !state.busy && !state.workflowProfileMutationBusy && !isWorkflowInteractionBlocked()),
+        allowed: Boolean(profileId && profileId !== previousProfileId && profile && profile.complete && !state.modelTaskBusy && !state.workflowProfileMutationBusy && !isWorkflowInteractionBlocked()),
         reason: "activate",
         nextSelectionId: profileId,
         restoreFocus: false
@@ -3216,12 +3220,16 @@
             statusText: "切换模型配置失败，已恢复至“" + previousEntry.visibleText + "”",
             restoreFocus: true
           };
+        var stillOnOriginatingTask = getCurrentWorkflowTaskType() === taskType;
         state.workflowProfileMutationBusy = false;
         state.workflowProfileSelections[taskType] = rolled.selectionId;
         state.taskModelConfigStatusByTask[taskType] = "error";
         renderWorkflowProfileStrip();
         renderWorkflowTaskTabs();
         renderWorkflowProfileManager();
+        if (!stillOnOriginatingTask) {
+          return;
+        }
         setStatus("切换模型配置失败：" + describeFetchError(error));
         setNodeTextIfChanged(byId("workflow-switch-feedback"), rolled.statusText);
         if (rolled.restoreFocus) {

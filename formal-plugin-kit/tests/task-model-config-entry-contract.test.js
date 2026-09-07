@@ -502,6 +502,10 @@ async function assertBehavioralDomContracts() {
       focus() {
         mockDocument.activeElement = el;
       },
+      scrollIntoViewArgs: [],
+      scrollIntoView(arg) {
+        el.scrollIntoViewArgs.push(arg);
+      },
       querySelectorAll(selector) {
         if (selector === "[data-config-action]") {
           return children.filter((c) => c.hasAttribute("data-config-action"));
@@ -816,6 +820,10 @@ async function assertWordBehavioralDomContracts() {
       focus() {
         mockDocument.activeElement = el;
       },
+      scrollIntoViewArgs: [],
+      scrollIntoView(arg) {
+        el.scrollIntoViewArgs.push(arg);
+      },
       querySelectorAll(selector) {
         if (selector === "[data-config-action]") {
           return children.filter((c) => c.hasAttribute("data-config-action"));
@@ -875,9 +883,21 @@ async function assertWordBehavioralDomContracts() {
     "btn-open-settings": createMockElement("btn-open-settings", "button"),
     "workflow-profile-manager": createMockElement("workflow-profile-manager"),
     "btn-new-workflow-profile": createMockElement("btn-new-workflow-profile", "button"),
-    "diagnostics-disclosure": createMockElement("diagnostics-disclosure")
+    "diagnostics-disclosure": createMockElement("diagnostics-disclosure"),
+    "workflow-task-tabs": createMockElement("workflow-task-tabs")
   };
   mockNodes["home-view"].classList.add("active");
+  mockNodes["workflow-task-tabs"].querySelectorAll = (selector) => {
+    if (selector === "[data-workflow-task-tab]") {
+      return [
+        mockTabs["word.smart_write"],
+        mockTabs["word.smart_imitation"],
+        mockTabs["word.document_review"],
+        mockTabs["word.format_review"]
+      ];
+    }
+    return [];
+  };
 
   const mockDocument = {
     activeElement: mockNodes["task-model-config-trigger"],
@@ -899,11 +919,15 @@ async function assertWordBehavioralDomContracts() {
     currentMode: "smartWrite",
     lastTaskMode: "smartWrite",
     busy: false,
+    modelTaskBusy: false,
+    documentReviewJobId: "",
+    fullDocumentReviewJobId: "",
     workflowProfileMutationBusy: false,
     taskModelConfigStatusByTask: {},
     taskModelConfigMenu: { open: false, highlightedIndex: -1, itemCount: 0, items: [] },
     workflowProfileSelections: { "word.smart_write": "" },
     workflowProfiles: {},
+    settingsWorkflowTaskType: "word.smart_write",
     modelInterfaceDetectable: true,
     workflowProfileEditor: null,
     providerUrlEditorOpen: false
@@ -972,6 +996,7 @@ async function assertWordBehavioralDomContracts() {
   baseContext.escapeWorkflowText = loadFunction("escapeWorkflowText", baseContext);
   baseContext.taskModelConfigOptionId = loadFunction("taskModelConfigOptionId", baseContext);
   baseContext.positionTaskModelConfigMenu = loadFunction("positionTaskModelConfigMenu", baseContext);
+  baseContext.scrollWorkflowTaskTabIntoView = loadFunction("scrollWorkflowTaskTabIntoView", baseContext);
   baseContext.updateTaskModelConfigMenuHighlight = loadFunction("updateTaskModelConfigMenuHighlight", baseContext);
   baseContext.closeTaskModelConfigMenu = loadFunction("closeTaskModelConfigMenu", baseContext);
   baseContext.renderTaskModelConfigMenu = loadFunction("renderTaskModelConfigMenu", baseContext);
@@ -1068,6 +1093,258 @@ async function assertWordBehavioralDomContracts() {
 
   // Document review must be isolated and have no error
   assert.strictEqual(testState.taskModelConfigStatusByTask["word.document_review"], undefined);
+
+  // Test 5: running tasks gate the compact entry with modelTaskBusy, not a fake state.busy
+  const busyTaskCases = [
+    ["smartWrite", "word.smart_write"],
+    ["smartImitation", "word.smart_imitation"],
+    ["formatReview", "word.format_review"]
+  ];
+  const requestUrls = [];
+  baseContext.request = (url) => {
+    requestUrls.push(url);
+    return Promise.resolve({
+      data: {
+        activeConfigurationId: "direct-1",
+        configurations: [PLATFORM_PROFILE, SECRET_PROFILE]
+      }
+    });
+  };
+  baseContext.activateWorkflowProfile = loadFunction("activateWorkflowProfile", baseContext);
+  baseContext.scheduleWorkflowProfileActivation = (profileId, taskType, previousProfileId) => {
+    return baseContext.activateWorkflowProfile(profileId, taskType, previousProfileId);
+  };
+  baseContext.applyTaskModelConfigMenuItem = loadFunction("applyTaskModelConfigMenuItem", baseContext);
+  baseContext.handleTaskModelConfigTriggerClick = loadFunction("handleTaskModelConfigTriggerClick", baseContext);
+  baseContext.handleTaskModelConfigKeydown = loadFunction("handleTaskModelConfigKeydown", baseContext);
+
+  busyTaskCases.forEach(([mode, taskType]) => {
+    testState.currentMode = mode;
+    testState.lastTaskMode = mode;
+    testState.busy = false;
+    testState.modelTaskBusy = true;
+    testState.workflowProfileMutationBusy = false;
+    testState.documentReviewJobId = "";
+    testState.fullDocumentReviewJobId = "";
+    testState.taskModelConfigMenu = { open: false, highlightedIndex: -1, itemCount: 0, items: [] };
+    testState.workflowProfiles[taskType] = {
+      taskType,
+      activeProfileId: "flow-1",
+      profiles: [PLATFORM_PROFILE, SECRET_PROFILE]
+    };
+    testState.workflowProfileSelections[taskType] = "flow-1";
+    requestUrls.length = 0;
+    mockNodes["task-model-config-trigger"].disabled = false;
+
+    baseContext.renderWorkflowProfileStrip();
+    assert.strictEqual(
+      mockNodes["task-model-config-trigger"].disabled,
+      true,
+      `${taskType} running task must disable the compact entry`
+    );
+
+    baseContext.handleTaskModelConfigTriggerClick();
+    assert.strictEqual(testState.taskModelConfigMenu.open, false, `${taskType} busy click must not open the menu`);
+    assert.strictEqual(requestUrls.length, 0, `${taskType} busy click must not send a request`);
+
+    testState.modelTaskBusy = false;
+    baseContext.openTaskModelConfigMenu();
+    assert.strictEqual(testState.taskModelConfigMenu.open, true, `${taskType} must be able to open the menu when idle`);
+    testState.taskModelConfigMenu.highlightedIndex = 1;
+    testState.modelTaskBusy = true;
+    requestUrls.length = 0;
+    baseContext.handleTaskModelConfigKeydown({
+      key: "Enter",
+      preventDefault() {}
+    });
+    assert.ok(
+      !requestUrls.some((url) => String(url).includes("/activate")),
+      `${taskType} busy keyboard activation must not send an activate request, got ${requestUrls.join(",")}`
+    );
+  });
+
+  // Test 6: 管理配置 must select the originating Word task in settings
+  baseContext.getSettingsWorkflowTaskType = loadFunction("getSettingsWorkflowTaskType", baseContext);
+  baseContext.renderWorkflowTaskTabs = loadFunction("renderWorkflowTaskTabs", baseContext);
+  baseContext.renderWorkflowProfileManager = function () {
+    mockNodes["workflow-profile-manager"].textContent = baseContext.getSettingsWorkflowTaskType();
+  };
+  baseContext.switchMode = function (mode) {
+    testState.currentMode = mode;
+    if (mode === "settings") {
+      mockNodes["settings-view"].classList.add("active");
+      mockNodes["home-view"].classList.remove("active");
+      baseContext.renderWorkflowProfileManager();
+      baseContext.renderWorkflowTaskTabs();
+    } else {
+      mockNodes["home-view"].classList.add("active");
+      mockNodes["settings-view"].classList.remove("active");
+    }
+  };
+  baseContext.applyTaskModelConfigMenuItem = loadFunction("applyTaskModelConfigMenuItem", baseContext);
+
+  [
+    ["smartWrite", "word.smart_write"],
+    ["smartImitation", "word.smart_imitation"],
+    ["documentReview", "word.document_review"],
+    ["formatReview", "word.format_review"]
+  ].forEach(([mode, taskType]) => {
+    testState.currentMode = mode;
+    testState.lastTaskMode = mode;
+    testState.settingsWorkflowTaskType = "word.smart_write";
+    testState.modelTaskBusy = false;
+    mockDocument.activeElement = mockNodes["task-model-config-trigger"];
+    mockNodes["workflow-profile-manager"].textContent = "";
+    baseContext.applyTaskModelConfigMenuItem({ action: "manage" }, false);
+    assert.strictEqual(
+      testState.settingsWorkflowTaskType,
+      taskType,
+      `${taskType} 管理配置 must set settingsWorkflowTaskType before opening settings`
+    );
+    assert.strictEqual(
+      mockNodes["workflow-profile-manager"].textContent,
+      taskType,
+      `${taskType} settings content must follow the originating task`
+    );
+    assert.ok(
+      mockTabs[taskType].classList.contains("active"),
+      `${taskType} settings tab must be selected`
+    );
+    assert.strictEqual(mockTabs[taskType].getAttribute("aria-selected"), "true");
+    assert.strictEqual(
+      mockDocument.activeElement,
+      mockTabs[taskType],
+      `${taskType} 管理配置 must move focus to the matching settings tab`
+    );
+  });
+
+  // Test 7: activation failure after switching tasks must not steal focus or current-page feedback
+  testState.currentMode = "smartWrite";
+  testState.lastTaskMode = "smartWrite";
+  testState.modelTaskBusy = false;
+  testState.workflowProfileMutationBusy = false;
+  testState.taskModelConfigStatusByTask = {};
+  testState.workflowProfiles["word.smart_write"] = {
+    taskType: "word.smart_write",
+    activeProfileId: "direct-1",
+    profiles: [PLATFORM_PROFILE, SECRET_PROFILE]
+  };
+  testState.workflowProfileSelections["word.smart_write"] = "direct-1";
+  mockNodes["home-view"].classList.add("active");
+  mockNodes["settings-view"].classList.remove("active");
+  mockNodes["workflow-switch-feedback"].textContent = "已就绪";
+  mockDocument.activeElement = mockTabs["word.document_review"];
+  statusMessage = "文档审查就绪";
+  let rejectActivate;
+  baseContext.request = () => new Promise((_, reject) => {
+    rejectActivate = reject;
+  });
+  baseContext.activateWorkflowProfile = loadFunction("activateWorkflowProfile", baseContext);
+  const pendingActivate = baseContext.activateWorkflowProfile("flow-1", "word.smart_write", "direct-1");
+  testState.currentMode = "documentReview";
+  rejectActivate(new Error("网络异常 503"));
+  await pendingActivate;
+  assert.strictEqual(testState.workflowProfileSelections["word.smart_write"], "direct-1");
+  assert.strictEqual(testState.taskModelConfigStatusByTask["word.smart_write"], "error");
+  assert.strictEqual(testState.taskModelConfigStatusByTask["word.document_review"], undefined);
+  assert.ok(
+    !String(statusMessage).includes("切换模型配置失败"),
+    `switched-away failure must not overwrite current task status, got: ${statusMessage}`
+  );
+  assert.ok(
+    !String(mockNodes["workflow-switch-feedback"].textContent).includes("已恢复"),
+    "switched-away failure must not overwrite current-page live feedback"
+  );
+  assert.strictEqual(
+    mockDocument.activeElement,
+    mockTabs["word.document_review"],
+    "switched-away failure must not steal focus back to the compact entry"
+  );
+
+  // Test 8: first paint before the task's profile request returns is loading, not 未配置
+  testState.workflowProfiles = {};
+  testState.workflowProfileSelections = {};
+  testState.taskModelConfigStatusByTask = {};
+  testState.modelTaskBusy = false;
+  testState.workflowProfileMutationBusy = false;
+  testState.documentReviewJobId = "";
+  testState.fullDocumentReviewJobId = "";
+  [
+    ["smartWrite", "word.smart_write"],
+    ["smartImitation", "word.smart_imitation"],
+    ["documentReview", "word.document_review"],
+    ["formatReview", "word.format_review"]
+  ].forEach(([mode, taskType]) => {
+    testState.currentMode = mode;
+    mockNodes["task-model-config-trigger"].disabled = false;
+    baseContext.renderWorkflowProfileStrip();
+    assert.strictEqual(
+      mockNodes["task-model-config-label"].textContent,
+      "正在读取",
+      `${taskType} first paint must stay in loading, not 未配置`
+    );
+    assert.ok(
+      mockNodes["task-model-config-status"].className.includes("loading"),
+      `${taskType} status indicator must be loading while the request is pending`
+    );
+    assert.strictEqual(
+      mockNodes["task-model-config-trigger"].disabled,
+      true,
+      `${taskType} compact entry must stay disabled until this task has loaded`
+    );
+  });
+
+  testState.workflowProfiles["word.smart_write"] = {
+    taskType: "word.smart_write",
+    activeProfileId: "flow-1",
+    profiles: [PLATFORM_PROFILE, SECRET_PROFILE]
+  };
+  testState.workflowProfileSelections["word.smart_write"] = "flow-1";
+  testState.currentMode = "smartWrite";
+  baseContext.renderWorkflowProfileStrip();
+  assert.strictEqual(mockNodes["task-model-config-label"].textContent, "生产版 · 工作流平台");
+  testState.currentMode = "documentReview";
+  baseContext.renderWorkflowProfileStrip();
+  assert.strictEqual(
+    mockNodes["task-model-config-label"].textContent,
+    "正在读取",
+    "a loaded Word task must not mark other tasks as loaded"
+  );
+
+  // Test 9: keyboard highlight on a tall menu must scroll the active option into view
+  baseContext.scrollWorkflowTaskTabIntoView = loadFunction("scrollWorkflowTaskTabIntoView", baseContext);
+  const longProfiles = [];
+  for (let index = 0; index < 12; index += 1) {
+    longProfiles.push({
+      id: "cfg-" + index,
+      name: "配置" + index,
+      accessMethod: "workflow_platform",
+      complete: true
+    });
+  }
+  testState.currentMode = "smartWrite";
+  testState.modelTaskBusy = false;
+  testState.workflowProfiles["word.smart_write"] = {
+    taskType: "word.smart_write",
+    activeProfileId: "cfg-0",
+    profiles: longProfiles
+  };
+  testState.workflowProfileSelections["word.smart_write"] = "cfg-0";
+  baseContext.openTaskModelConfigMenu();
+  const longOptions = mockNodes["task-model-config-menu"].querySelectorAll("[data-config-action]");
+  assert.ok(longOptions.length >= 12, "long configuration list must render overflow candidates");
+  const lastOption = longOptions[longOptions.length - 1];
+  lastOption.scrollIntoViewArgs = [];
+  baseContext.updateTaskModelConfigMenuHighlight(longOptions.length - 1);
+  assert.ok(
+    lastOption.scrollIntoViewArgs.length > 0,
+    "highlighted overflow option must be scrolled into view"
+  );
+  const scrollArg = lastOption.scrollIntoViewArgs[lastOption.scrollIntoViewArgs.length - 1];
+  assert.ok(
+    scrollArg === true || (scrollArg && scrollArg.block === "nearest"),
+    `scrollIntoView must use nearest-block compatibility args, got ${JSON.stringify(scrollArg)}`
+  );
 }
 
 // Excel tests
