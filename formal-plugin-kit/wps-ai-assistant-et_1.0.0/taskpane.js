@@ -129,6 +129,7 @@
     smartFillItems: [],
     smartFillLiveSource: null,
     smartFillLiveTarget: null,
+    smartFillEditBaselineAddress: "",
     smartFillWorkbookId: "",
     smartFillInstruction: "",
     smartFillResult: null,
@@ -1290,7 +1291,7 @@
     var instruction = safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value);
     var sourceOk = Boolean(state.smartFillLiveSource && state.smartFillLiveSource.ok);
     var instructionOk = Boolean(instruction.trim());
-    if (!button || state.currentMode !== "excelSmartFill") {
+    if (!button || state.currentMode !== "excelSmartFill" || button.hidden) {
       return;
     }
     button.disabled = state.busy || state.workflowProfileMutationBusy || !sourceOk || !instructionOk;
@@ -1334,11 +1335,24 @@
     }
     state.smartFillLiveSource = inspection;
     setNodeTextIfChanged(byId("smart-fill-source-summary"), inspection.summary);
+    syncSmartFillPreviewWithCurrentInputs();
     updateSmartFillGenerateEnabled();
   }
 
   function renderSmartFillCaptureState() {
-    if (state.smartFillResult) {
+    var editing = Boolean(state.smartFillPreview && state.smartFillPreview.editingInputs);
+    var life;
+    if (editing) {
+      refreshExcelSmartFillSourceSelection();
+      life = helpers.describeExcelSmartFillPreviewLifecycle
+        ? helpers.describeExcelSmartFillPreviewLifecycle(state.smartFillPreview, {
+          frozenSource: state.smartFillSource
+        })
+        : {};
+      if (life.status === "ready") {
+        tryRebindSmartFillTarget();
+      }
+    } else if (state.smartFillResult) {
       tryRebindSmartFillTarget();
     } else {
       refreshExcelSmartFillSourceSelection();
@@ -1750,34 +1764,226 @@
     return html.join("");
   }
 
-  function setSmartFillWriteButtonState() {
-    var button = byId("btn-write-smart-fill");
+  function currentSmartFillInputFingerprint() {
+    var frozen = (state.smartFillPreview && state.smartFillPreview.fingerprint) || {
+      sourceAddress: (state.smartFillSource && state.smartFillSource.address) || "",
+      sourceSnapshotHash: (state.smartFillSource && state.smartFillSource.snapshotHash) || "",
+      instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value),
+      workbookId: state.smartFillWorkbookId || "",
+      sheetName: (state.smartFillSource && state.smartFillSource.sheetName) || ""
+    };
+    if (helpers.buildExcelSmartFillEditFingerprint) {
+      return helpers.buildExcelSmartFillEditFingerprint(frozen, {
+        liveSource: state.smartFillLiveSource,
+        baselineAddress: state.smartFillEditBaselineAddress,
+        instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value),
+        workbookId: state.smartFillWorkbookId || getSmartFillActiveWorkbookId()
+      });
+    }
+    return frozen;
+  }
+
+  function ensureExcelSmartFillPreview() {
+    if (state.smartFillPreview || !state.smartFillResult || !helpers.createExcelSmartFillPreview) {
+      return state.smartFillPreview;
+    }
+    state.smartFillPreview = helpers.createExcelSmartFillPreview(
+      state.smartFillResult,
+      currentSmartFillInputFingerprint()
+    );
+    return state.smartFillPreview;
+  }
+
+  function rerenderExcelSmartFillPreview() {
+    var output = byId("result-output");
+    if (!output || !state.smartFillPreview || !helpers.buildExcelSmartFillLifecyclePreview) {
+      return;
+    }
+    output.innerHTML = helpers.buildExcelSmartFillLifecyclePreview(
+      state.smartFillPreview,
+      state.smartFillItems || [],
+      state.smartFillDraftItems,
+      {
+        retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+          ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+          : false,
+        frozenSource: state.smartFillSource
+      }
+    );
+  }
+
+  function syncSmartFillPreviewWithCurrentInputs() {
+    if (!state.smartFillPreview || !state.smartFillPreview.editingInputs ||
+        !helpers.syncExcelSmartFillPreviewWithInputs) {
+      return;
+    }
+    helpers.syncExcelSmartFillPreviewWithInputs(state.smartFillPreview, currentSmartFillInputFingerprint());
+    rerenderExcelSmartFillPreview();
+  }
+
+  function applySmartFillLifecycleControls() {
+    var controls;
+    var generate = byId("btn-run-primary");
+    var write = byId("btn-write-smart-fill");
+    var edit = byId("btn-edit-smart-fill");
+    var startNew = byId("btn-new-smart-fill");
+    var options = byId("excel-smart-fill-options");
     var summaryNode = byId("smart-fill-write-summary");
     var liveTarget = state.smartFillLiveTarget;
-    var targetOk = Boolean(liveTarget && liveTarget.ok);
-    var writableCount = liveTarget ? liveTarget.writableCount : 0;
-    var writeBound = Boolean(targetOk && writableCount > 0);
-    var summaryText;
-    if (!button) {
+    var life;
+    var targetOk;
+    var writableCount;
+    if (state.currentMode !== "excelSmartFill") {
+      if (write) {
+        write.hidden = true;
+        write.disabled = true;
+      }
+      if (edit) {
+        edit.hidden = true;
+      }
+      if (startNew) {
+        startNew.hidden = true;
+      }
       return;
     }
-    if (state.currentMode !== "excelSmartFill" || !state.smartFillResult) {
-      button.hidden = true;
-      button.disabled = true;
-      setNodeTextIfChanged(summaryNode, "尚无可写入的智能填写预览。");
+    controls = helpers.resolveExcelSmartFillLifecycleControls
+      ? helpers.resolveExcelSmartFillLifecycleControls(state.smartFillPreview, {
+        busy: state.busy || state.workflowProfileMutationBusy,
+        frozenSource: state.smartFillSource
+      })
+      : {
+        generateHidden: false,
+        writeHidden: !state.smartFillResult,
+        writeDisabled: true,
+        returnToEditHidden: true,
+        startNewHidden: true,
+        startNewDisabled: true,
+        sourceInputsHidden: false
+      };
+    life = helpers.describeExcelSmartFillPreviewLifecycle
+      ? helpers.describeExcelSmartFillPreviewLifecycle(state.smartFillPreview, {
+        frozenSource: state.smartFillSource
+      })
+      : {};
+    if (generate) {
+      generate.hidden = Boolean(controls.generateHidden);
+      if (!generate.hidden) {
+        generate.textContent = "生成预览";
+      }
+    }
+    if (options && state.currentMode === "excelSmartFill") {
+      options.hidden = Boolean(controls.sourceInputsHidden);
+    }
+    if (edit) {
+      edit.hidden = Boolean(controls.returnToEditHidden);
+      edit.disabled = state.busy || state.workflowProfileMutationBusy;
+      edit.textContent = "返回修改";
+    }
+    if (startNew) {
+      startNew.hidden = Boolean(controls.startNewHidden);
+      startNew.disabled = Boolean(controls.startNewDisabled);
+      startNew.textContent = "开始新的填写";
+    }
+    if (!write) {
       return;
     }
-    button.hidden = false;
-    button.textContent = writableCount ? "写入内容（" + writableCount + "）" : "写入内容";
-    button.disabled = !writeBound || state.busy || state.workflowProfileMutationBusy;
-    if (!liveTarget) {
-      summaryText = "请在工作表中选择单列目标区域。";
-    } else if (targetOk) {
-      summaryText = liveTarget.summary;
+    write.hidden = Boolean(controls.writeHidden);
+    targetOk = Boolean(liveTarget && liveTarget.ok);
+    writableCount = liveTarget ? liveTarget.writableCount : 0;
+    var writeBound = Boolean(targetOk && writableCount > 0) && !Boolean(controls.writeHidden) && !Boolean(controls.writeDisabled);
+    write.textContent = writableCount ? "写入内容（" + writableCount + "）" : "写入内容";
+    write.disabled = !writeBound;
+    if (life.status === "locked") {
+      setNodeTextIfChanged(summaryNode, life.summary || "");
+    } else if (life.status === "invalid") {
+      setNodeTextIfChanged(summaryNode, life.reason || "");
+    } else if (life.targetError) {
+      setNodeTextIfChanged(summaryNode, life.targetError);
+    } else if (life.writeFailureReason) {
+      setNodeTextIfChanged(summaryNode, life.writeFailureReason);
+    } else if (!liveTarget) {
+      setNodeTextIfChanged(summaryNode, state.smartFillResult ? "请在工作表中选择单列目标区域。" : "尚无可写入的智能填写预览。");
+    } else if (liveTarget.ok) {
+      setNodeTextIfChanged(summaryNode, liveTarget.summary);
     } else {
-      summaryText = liveTarget.error || liveTarget.summary || "请在工作表中选择单列目标区域。";
+      setNodeTextIfChanged(summaryNode, liveTarget.error || liveTarget.summary || "请在工作表中选择单列目标区域。");
     }
-    setNodeTextIfChanged(summaryNode, summaryText);
+  }
+
+  function setSmartFillWriteButtonState() {
+    applySmartFillLifecycleControls();
+  }
+
+  function returnToExcelSmartFillEditAction() {
+    var inspection;
+    if (!state.smartFillPreview || !helpers.returnToExcelSmartFillEdit) {
+      return;
+    }
+    try {
+      inspection = helpers.inspectExcelSmartFillSourceSelection
+        ? helpers.inspectExcelSmartFillSourceSelection(getSelectionRange(getEtApplication()), {
+          sourceSheetName: readSmartFillSheetName(getActiveSheet(getEtApplication()))
+        })
+        : null;
+      state.smartFillEditBaselineAddress = (inspection && (inspection.rawAddress || inspection.address)) || "";
+    } catch (error) {
+      state.smartFillEditBaselineAddress = "";
+    }
+    helpers.returnToExcelSmartFillEdit(state.smartFillPreview);
+    if (helpers.sanitizeRestoredExcelSmartFillState) {
+      state.smartFillTarget = helpers.sanitizeRestoredExcelSmartFillState(state).smartFillTarget;
+      state.smartFillLiveTarget = null;
+    } else {
+      state.smartFillTarget = null;
+      state.smartFillLiveTarget = null;
+    }
+    if (state.smartFillSource) {
+      state.smartFillLiveSource = {
+        ok: true,
+        address: state.smartFillSource.address,
+        rawAddress: state.smartFillSource.address,
+        summary: summarizeSmartFillSource(state.smartFillSource),
+        error: ""
+      };
+      setNodeTextIfChanged(byId("smart-fill-source-summary"), state.smartFillLiveSource.summary);
+    }
+    applySmartFillLifecycleControls();
+    updateSmartFillGenerateEnabled();
+    if (state.smartFillPreview && state.smartFillPreview.status !== "invalid" && state.smartFillPreview.status !== "locked") {
+      tryRebindSmartFillTarget();
+      applySmartFillLifecycleControls();
+    }
+    if (byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").focus) {
+      byId("excel-smart-fill-instruction").focus();
+    }
+    setStatus("可修改来源范围或填写意图。未改动时仍可使用当前预览写入。");
+  }
+
+  function startNewExcelSmartFillAction() {
+    if (helpers.startNewExcelSmartFill) {
+      helpers.startNewExcelSmartFill(state.smartFillPreview);
+    }
+    state.smartFillResult = null;
+    state.smartFillPreview = null;
+    state.smartFillDraftItems = [];
+    state.smartFillTarget = null;
+    state.smartFillLiveTarget = null;
+    state.smartFillSource = null;
+    state.smartFillItems = [];
+    state.smartFillEditBaselineAddress = "";
+    state.excelSmartFillCompletedJobId = "";
+    state.excelSmartFillResultRevision = 0;
+    if (byId("result-output")) {
+      byId("result-output").innerHTML = "";
+    }
+    setPlainResult("");
+    applySmartFillLifecycleControls();
+    refreshExcelSmartFillSourceSelection();
+    updateSmartFillGenerateEnabled();
+    if (byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").focus) {
+      byId("excel-smart-fill-instruction").focus();
+    }
+    setStatus("已开始新的填写。");
   }
 
   function renderExcelSmartFillResult(data, preservedDrafts, focusItemId) {
@@ -1822,8 +2028,23 @@
     markdown = buildExcelSmartFillMarkdown(state.smartFillResult);
     setResult(markdown, markdown);
     output = byId("result-output");
-    state.smartFillPreview = helpers.createExcelSmartFillPreview(state.smartFillResult);
-    if (helpers.buildExcelSmartFillEditorPreview) {
+    state.smartFillPreview = helpers.createExcelSmartFillPreview(
+      state.smartFillResult,
+      currentSmartFillInputFingerprint()
+    );
+    if (helpers.buildExcelSmartFillLifecyclePreview) {
+      output.innerHTML = helpers.buildExcelSmartFillLifecyclePreview(
+        state.smartFillPreview,
+        state.smartFillItems || [],
+        state.smartFillDraftItems,
+        {
+          retryEnabled: helpers.canRetryExcelSmartFillFromFrozenSource
+            ? helpers.canRetryExcelSmartFillFromFrozenSource(state.smartFillSource, state.smartFillItems)
+            : false,
+          frozenSource: state.smartFillSource
+        }
+      );
+    } else if (helpers.buildExcelSmartFillEditorPreview) {
       output.innerHTML = helpers.buildExcelSmartFillEditorPreview(
         state.smartFillResult,
         state.smartFillItems || [],
@@ -2038,6 +2259,10 @@
     if (state.busy || state.workflowProfileMutationBusy || !state.smartFillResult) {
       return;
     }
+    if (state.smartFillPreview && (state.smartFillPreview.consumed || state.smartFillPreview.status === "invalid" || state.smartFillPreview.status === "locked")) {
+      setStatus("当前预览不可写入，请重新生成或开始新的填写。");
+      return;
+    }
     if (!helpers.writeExcelSmartFillCells || !helpers.mapExcelSmartFillPreviewToTarget) {
       setStatus("智能填写写回组件不可用，请重新打开任务窗格。");
       return;
@@ -2058,7 +2283,16 @@
         resultRevision: currentRevision
       });
     } catch (mappingError) {
-      setStatus("写入目标无效：" + (mappingError && mappingError.message ? mappingError.message : ""));
+      var mappingMessage = mappingError && mappingError.message ? mappingError.message : "目标选区无效。";
+      if (helpers.markExcelSmartFillPreviewTargetRejected) {
+        helpers.markExcelSmartFillPreviewTargetRejected(ensureExcelSmartFillPreview(), mappingMessage);
+        rerenderExcelSmartFillPreview();
+      }
+      setStatus("写入目标无效：" + mappingMessage);
+      setSmartFillWriteButtonState();
+      if (byId("smart-fill-write-summary") && byId("smart-fill-write-summary").focus) {
+        byId("smart-fill-write-summary").focus();
+      }
       return;
     }
 
@@ -2172,51 +2406,115 @@
           return;
         }
       }
+    } catch (error) {
+      if (helpers.markExcelSmartFillPreviewTargetRejected && error && error.message) {
+        helpers.markExcelSmartFillPreviewTargetRejected(ensureExcelSmartFillPreview(), error.message);
+        rerenderExcelSmartFillPreview();
+      }
+      setStatus("智能填写未写入：" + (error && error.message ? error.message : ""));
+      setSmartFillWriteButtonState();
+      return;
+    }
+    return finishExcelSmartFillWriteAfterChecks(items, results, commitContext);
+  }
+
+  function excelSmartFillWriteCommitPayload(commitContext, writeResult, stage) {
+    return {
+      stage: stage,
+      resultRevision: (commitContext && commitContext.resultRevision) || state.excelSmartFillResultRevision || 1,
+      sourceSnapshotHash: (commitContext && commitContext.sourceSnapshotHash) || "",
+      workbookId: (commitContext && commitContext.workbookId) || state.smartFillWorkbookId || "",
+      targetAddress: (commitContext && commitContext.targetAddress) || "",
+      itemCount: (commitContext && commitContext.itemCount) || (writeResult && (writeResult.writtenCount + writeResult.skippedCount)) || 0
+    };
+  }
+
+  function postExcelSmartFillWriteCommit(commitContext, writeResult, stage) {
+    var jobId = (commitContext && commitContext.jobId) || state.excelSmartFillCompletedJobId || "";
+    if (!jobId || typeof request !== "function" || typeof fetch !== "function") {
+      return null;
+    }
+    return request(
+      "/excel/smart-fill/jobs/" + encodeURIComponent(jobId) + "/write-commits",
+      excelSmartFillWriteCommitPayload(commitContext, writeResult, stage)
+    );
+  }
+
+  function finishExcelSmartFillWriteAfterChecks(items, results, commitContext) {
+    var reservation = postExcelSmartFillWriteCommit(commitContext, null, "reserve");
+    if (!reservation) {
+      return completeExcelSmartFillHostWrite(items, results, commitContext);
+    }
+    state.busy = true;
+    setSmartFillWriteButtonState();
+    return reservation.then(function () {
+      state.busy = false;
+      return completeExcelSmartFillHostWrite(items, results, commitContext);
+    }, function (error) {
+      state.busy = false;
+      setSmartFillWriteButtonState();
+      setStatus("智能填写未写入：" + (error && error.message ? error.message : describeFetchError(error)));
+    });
+  }
+
+  function completeExcelSmartFillHostWrite(items, results, commitContext) {
+    var writeResult;
+    var confirm;
+    var release;
+    try {
       writeResult = helpers.writeExcelSmartFillCells(items, results, getSmartFillTargetCell, { commitContext: commitContext });
     } catch (error) {
+      release = postExcelSmartFillWriteCommit(commitContext, null, "release");
+      if (release && typeof release.catch === "function") {
+        release.catch(function () {});
+      }
       if (error && error.code === "COMPENSATION_FAILED") {
-        var failureAddresses = (error.rollbackFailures || error.manualReviewAddresses || []).join("、");
+        var failureAddresses = error.rollbackFailures || error.manualReviewAddresses || [];
+        if (helpers.markExcelSmartFillPreviewWriteFailed) {
+          helpers.markExcelSmartFillPreviewWriteFailed(ensureExcelSmartFillPreview(), {
+            compensated: false,
+            message: "智能填写写入异常，内部故障处理未能完全恢复以下单元格：",
+            addresses: failureAddresses
+          });
+          rerenderExcelSmartFillPreview();
+        }
         setStatus("智能填写写入异常：内部故障处理未能完全恢复，请人工核对单元格。");
-        setPlainResult([
-          "智能填写写入异常，内部故障处理未能完全恢复以下单元格：",
-          failureAddresses || "部分单元格",
-          "",
-          "详细原因：" + (error.message || "写回异常")
-        ].join("\n"));
       } else if (error && error.code === "COMPENSATION_SUCCEEDED") {
+        if (helpers.markExcelSmartFillPreviewWriteFailed) {
+          helpers.markExcelSmartFillPreviewWriteFailed(ensureExcelSmartFillPreview(), {
+            compensated: true,
+            message: "智能填写写入中断，已通过内部故障处理恢复全部已改动单元格。工作簿内容未保留本次写入修改。"
+          });
+          rerenderExcelSmartFillPreview();
+        }
         setStatus("智能填写写入中断：已通过内部故障处理恢复原值。");
-        setPlainResult([
-          "智能填写写入中断，已通过内部故障处理恢复全部已改动单元格。",
-          "工作簿内容未保留本次写入修改。",
-          "",
-          "详细原因：" + (error.message || "写回中断")
-        ].join("\n"));
       } else {
+        if (helpers.markExcelSmartFillPreviewTargetRejected && error && error.message) {
+          helpers.markExcelSmartFillPreviewTargetRejected(ensureExcelSmartFillPreview(), error.message);
+          rerenderExcelSmartFillPreview();
+        }
         setStatus("智能填写未写入：" + (error && error.message ? error.message : ""));
-        setPlainResult("为避免覆盖用户修改，本次写回已停止。\n" + (error && error.message ? error.message : ""));
       }
       setSmartFillWriteButtonState();
       return;
     }
-    helpers.finalizeExcelSmartFillWriteSuccess(
-      state.smartFillPreview || helpers.createExcelSmartFillPreview(state.smartFillResult)
-    );
-    state.smartFillResult = null;
-    state.smartFillPreview = null;
-    state.smartFillDraftItems = [];
+    helpers.finalizeExcelSmartFillWriteSuccess(ensureExcelSmartFillPreview(), writeResult);
     state.smartFillTarget = null;
     state.smartFillLiveTarget = null;
-    state.excelSmartFillCompletedJobId = "";
-    state.excelSmartFillResultRevision = 0;
-    byId("btn-write-smart-fill").hidden = true;
-    setPlainResult([
-      "智能填写内容已写入工作簿。",
-      "写入单元格：" + writeResult.writtenCount,
-      "信息不足而跳过：" + writeResult.skippedCount,
-      "未写入公式；如需再次生成，请重新选择来源数据区域。"
-    ].join("\n"));
+    rerenderExcelSmartFillPreview();
     setStatus("智能填写已写入 " + writeResult.writtenCount + " 个单元格。");
     setSmartFillWriteButtonState();
+    confirm = postExcelSmartFillWriteCommit(commitContext, writeResult, "confirm");
+    if (confirm && typeof confirm.catch === "function") {
+      confirm.catch(function () {});
+    }
+  }
+
+  function commitExcelSmartFillWriteToAdapter(commitContext, writeResult) {
+    var confirm = postExcelSmartFillWriteCommit(commitContext, writeResult, "confirm");
+    if (confirm && typeof confirm.catch === "function") {
+      confirm.catch(function () {});
+    }
   }
 
   function handleSmartFillResultInput(event) {
@@ -2262,6 +2560,14 @@
       renderExcelSmartFillResult(base, baseDraftItems, retryItemId);
     }
   }
+  function smartFillTargetBindKey(target) {
+    if (!target) {
+      return "";
+    }
+    var address = String(target.rawAddress || target.address || "").replace(/\$/g, "").toUpperCase();
+    return String(target.sheetName || "") + "!" + address;
+  }
+
   function tryRebindSmartFillTarget(result) {
     var currentResult = result || state.smartFillResult;
     var app;
@@ -2294,7 +2600,17 @@
         previewItems: (currentResult && currentResult.items) || [],
         draftItems: state.smartFillDraftItems || []
       });
+      var previousBindKey = smartFillTargetBindKey(state.smartFillLiveTarget) || smartFillTargetBindKey(state.smartFillTarget);
       state.smartFillLiveTarget = inspection;
+      if (inspection && inspection.ok) {
+        var nextBindKey = smartFillTargetBindKey(inspection);
+        if (previousBindKey && nextBindKey && previousBindKey !== nextBindKey && helpers.resetExcelSmartFillDraftWriteConflicts) {
+          helpers.resetExcelSmartFillDraftWriteConflicts(state.smartFillDraftItems);
+        }
+        if (helpers.clearExcelSmartFillPreviewTargetError) {
+          helpers.clearExcelSmartFillPreviewTargetError(state.smartFillPreview);
+        }
+      }
       return Boolean(inspection && inspection.ok);
     } catch (error) {
       state.smartFillLiveTarget = {
@@ -3388,6 +3704,12 @@
 
   function resumeExcelSmartFillActiveJob() {
     var active = loadExcelSmartFillActiveJob();
+    var restored;
+    if (helpers.sanitizeRestoredExcelSmartFillState) {
+      restored = helpers.sanitizeRestoredExcelSmartFillState(state);
+      state.smartFillTarget = restored.smartFillTarget;
+      state.smartFillLiveTarget = restored.smartFillLiveTarget;
+    }
     if (!active || !active.jobId || state.currentMode !== "excelSmartFill") {
       return;
     }
@@ -3433,7 +3755,11 @@
     setSmartFillInterruptedRetryVisible(false);
     setExcelSmartFillCancelVisible(false);
     setAnalysisBusy(true);
-    state.smartFillResult = null;
+    if (!state.smartFillRetryItemId) {
+      state.smartFillResult = null;
+      state.smartFillPreview = null;
+      state.smartFillEditBaselineAddress = "";
+    }
     byId("btn-write-smart-fill").hidden = true;
     clearExcelSmartFillActiveJob();
     state.excelSmartFillJobId = clientJobId;
@@ -5120,6 +5446,7 @@
     });
     byId("excel-smart-fill-instruction").addEventListener("input", function (event) {
       state.smartFillInstruction = event.target.value;
+      syncSmartFillPreviewWithCurrentInputs();
       updateSmartFillGenerateEnabled();
       renderSmartFillCaptureState();
     });
@@ -5140,6 +5467,12 @@
       }
     });
     byId("btn-write-smart-fill").addEventListener("click", writeExcelSmartFillResult);
+    if (byId("btn-edit-smart-fill")) {
+      byId("btn-edit-smart-fill").addEventListener("click", returnToExcelSmartFillEditAction);
+    }
+    if (byId("btn-new-smart-fill")) {
+      byId("btn-new-smart-fill").addEventListener("click", startNewExcelSmartFillAction);
+    }
     byId("result-output").addEventListener("input", handleSmartFillResultInput);
     byId("result-output").addEventListener("change", handleSmartFillResultChange);
     byId("result-output").addEventListener("click", handleSmartFillResultClick);

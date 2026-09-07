@@ -318,6 +318,8 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
         raise DeliveryFailure("V0260_SMART_FILL_RIBBON_MISSING")
     if "写入内容" not in html or "生成预览" not in html:
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
+    if "返回修改" not in html or "开始新的填写" not in html:
+        raise DeliveryFailure("V0260_SMART_FILL_LIFECYCLE_MISSING")
     if "撤销" in html or "OnUndo" in js or "OnUndo" in helpers_js:
         raise DeliveryFailure("V0260_SMART_FILL_UNDO_PROMISE")
     if "excel.smart_fill.v2" not in prompt_text:

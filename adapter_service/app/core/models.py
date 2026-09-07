@@ -671,6 +671,24 @@ class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
         return values
 
 
+class ExcelSmartFillWriteCommitRequest(_StrictExcelSmartFillModel):
+    result_revision: int = Field(alias="resultRevision", ge=1)
+    source_snapshot_hash: StrictStr = Field(
+        alias="sourceSnapshotHash", min_length=1, max_length=128
+    )
+    workbook_id: StrictStr = Field(alias="workbookId", min_length=1, max_length=128)
+    target_address: StrictStr = Field(alias="targetAddress", min_length=1, max_length=128)
+    item_count: int = Field(alias="itemCount", ge=1, le=500)
+    stage: str = "confirm"
+
+    @validator("stage", pre=True, always=True)
+    def coerce_stage(cls, value):
+        text = str(value or "confirm").strip().lower()
+        if text not in ("reserve", "confirm", "release"):
+            raise ValueError("write commit stage must be reserve, confirm, or release")
+        return text
+
+
 class PptSlideInput(BaseModel):
     index: int = 1
     title: str = ""

@@ -3179,14 +3179,19 @@
       '<span class="field-hint">写入前请核对生成结果；本页为只读预览。</span>',
       "</div>"
     ];
-    function targetAddress(itemId) {
+    function previewRowLabel(item) {
       var index;
+      var target;
+      if (item && item.sourceRowLabel) {
+        return item.sourceRowLabel;
+      }
       for (index = 0; index < targetList.length; index += 1) {
-        if (targetList[index] && targetList[index].itemId === itemId) {
-          return targetList[index].address || itemId;
+        target = targetList[index];
+        if (target && item && target.itemId === item.itemId) {
+          return target.sourceRowLabel || target.address || item.itemId;
         }
       }
-      return itemId;
+      return item && item.itemId ? item.itemId : "";
     }
     if (!items.length) {
       html.push('<p class="field-hint">未返回可展示的目标结果。</p>');
@@ -3205,7 +3210,7 @@
       html.push(
         '<article class="smart-fill-result-item">',
         '<div class="smart-fill-result-meta">',
-        "<span>" + escapeHtml(targetAddress(item.itemId)) + "</span>",
+        "<span>" + escapeHtml(previewRowLabel(item)) + "</span>",
         '<span class="smart-fill-result-status ' + statusClass + '">' +
           statusLabel + "</span>",
         "</div>",
@@ -3217,11 +3222,248 @@
     return html.join("");
   }
 
-  function createExcelSmartFillPreview(result) {
+  function createExcelSmartFillPreview(result, fingerprint) {
     return {
       result: result || null,
-      consumed: false
+      consumed: false,
+      status: result ? "ready" : "empty",
+      editingInputs: false,
+      fingerprint: fingerprint || null,
+      invalidReason: "",
+      targetError: "",
+      writeFailureReason: "",
+      manualReviewAddresses: [],
+      writtenCount: 0,
+      skippedCount: 0
     };
+  }
+
+  function excelSmartFillFingerprintsEqual(left, right) {
+    if (!left || !right) {
+      return false;
+    }
+    return String(left.sourceAddress || "") === String(right.sourceAddress || "") &&
+      String(left.sourceSnapshotHash || "") === String(right.sourceSnapshotHash || "") &&
+      String(left.instruction || "") === String(right.instruction || "") &&
+      String(left.workbookId || "") === String(right.workbookId || "") &&
+      String(left.sheetName || "") === String(right.sheetName || "");
+  }
+
+  function buildExcelSmartFillEditFingerprint(frozen, options) {
+    var settings = options || {};
+    var frozenFp = frozen || {};
+    var live = settings.liveSource || {};
+    var instruction = settings.instruction != null ? settings.instruction : frozenFp.instruction;
+    var frozenAddress = normalizeExcelSmartFillA1Address(frozenFp.sourceAddress);
+    var frozenSheet = String(frozenFp.sheetName || "");
+    var frozenWorkbook = String(frozenFp.workbookId || "");
+    var liveAddress = "";
+    var liveSheet = "";
+    var liveWorkbook = String(settings.workbookId || live.workbookId || "");
+    var baseline = normalizeExcelSmartFillA1Address(settings.baselineAddress);
+    var nextAddress = frozenFp.sourceAddress || "";
+    var nextSheet = frozenSheet;
+    var nextWorkbook = frozenWorkbook;
+    if (live.ok) {
+      liveAddress = normalizeExcelSmartFillA1Address(live.rawAddress || live.address);
+      liveSheet = String(live.sheetName || "");
+      if (liveWorkbook && frozenWorkbook && liveWorkbook !== frozenWorkbook) {
+        nextAddress = live.rawAddress || live.address || nextAddress;
+        nextSheet = liveSheet || nextSheet;
+        nextWorkbook = liveWorkbook;
+      } else if (liveAddress && liveAddress === baseline) {
+        nextAddress = frozenFp.sourceAddress || "";
+        nextSheet = frozenSheet;
+        nextWorkbook = frozenWorkbook;
+      } else if (
+        liveAddress &&
+        (liveAddress !== frozenAddress || (liveSheet && liveSheet !== frozenSheet))
+      ) {
+        nextAddress = live.rawAddress || live.address || nextAddress;
+        nextSheet = liveSheet || nextSheet;
+        if (liveWorkbook) {
+          nextWorkbook = liveWorkbook;
+        }
+      }
+    }
+    return {
+      sourceAddress: nextAddress,
+      sourceSnapshotHash: frozenFp.sourceSnapshotHash || "",
+      instruction: instruction || "",
+      workbookId: nextWorkbook,
+      sheetName: nextSheet
+    };
+  }
+
+  function returnToExcelSmartFillEdit(preview) {
+    if (!preview || preview.consumed || preview.status === "locked") {
+      return preview;
+    }
+    preview.editingInputs = true;
+    return preview;
+  }
+
+  function syncExcelSmartFillPreviewWithInputs(preview, nextFingerprint) {
+    if (!preview || preview.consumed || preview.status === "locked") {
+      return preview;
+    }
+    if (excelSmartFillFingerprintsEqual(preview.fingerprint, nextFingerprint)) {
+      return preview;
+    }
+    preview.status = "invalid";
+    preview.editingInputs = true;
+    preview.invalidReason = "来源范围或填写意图已变化，旧预览已失效。请重新生成后再写入。";
+    return preview;
+  }
+
+  function markExcelSmartFillPreviewTargetRejected(preview, message) {
+    if (!preview) {
+      return preview;
+    }
+    preview.targetError = String(message || "目标预检失败。");
+    return preview;
+  }
+
+  function clearExcelSmartFillPreviewTargetError(preview) {
+    if (!preview) {
+      return preview;
+    }
+    preview.targetError = "";
+    return preview;
+  }
+
+  function resetExcelSmartFillDraftWriteConflicts(drafts) {
+    var list = Array.isArray(drafts) ? drafts : [];
+    list.forEach(function (draft) {
+      if (draft && draft.status === "write_conflict") {
+        draft.status = "completed";
+        draft.selected = true;
+      }
+    });
+    return list;
+  }
+
+  function markExcelSmartFillPreviewWriteFailed(preview, details) {
+    var info = details || {};
+    var addresses = Array.isArray(info.addresses) ? info.addresses.slice() : [];
+    var reason = String(info.message || "写入失败。");
+    if (!preview) {
+      return preview;
+    }
+    preview.consumed = false;
+    if (preview.status !== "invalid") {
+      preview.status = "ready";
+    }
+    preview.manualReviewAddresses = addresses;
+    if (!info.compensated && addresses.length) {
+      reason += " 以下地址需要人工核对：" + addresses.join("、");
+    }
+    preview.writeFailureReason = reason;
+    return preview;
+  }
+
+  function describeExcelSmartFillPreviewLifecycle(preview, options) {
+    var settings = options || {};
+    var frozenSource = settings.frozenSource;
+    var hasFrozenSource = frozenSource === undefined
+      ? true
+      : Boolean(frozenSource && frozenSource.snapshotHash);
+    var empty = !preview || !preview.result;
+    var status = empty
+      ? "empty"
+      : (preview.status || (preview.consumed ? "locked" : "ready"));
+    var invalid = status === "invalid";
+    var locked = status === "locked" || Boolean(preview && preview.consumed);
+    var writeEnabled = !empty && status === "ready" && !locked && hasFrozenSource;
+    var reason = preview && preview.invalidReason ? String(preview.invalidReason) : "";
+    var writeFailureReason = preview && preview.writeFailureReason
+      ? String(preview.writeFailureReason)
+      : "";
+    var manualReviewAddresses = preview && Array.isArray(preview.manualReviewAddresses)
+      ? preview.manualReviewAddresses.slice()
+      : [];
+    var writtenCount = preview ? Number(preview.writtenCount || 0) : 0;
+    var skippedCount = preview ? Number(preview.skippedCount || 0) : 0;
+    var summary = locked
+      ? ("写入 " + writtenCount + " 个单元格，跳过 " + skippedCount + " 个。")
+      : "";
+    return {
+      status: locked ? "locked" : status,
+      writeEnabled: writeEnabled,
+      showReturnToEdit: !empty && !locked && !invalid && !preview.editingInputs,
+      showStartNew: locked,
+      sourceInputsVisible: empty || Boolean(preview && preview.editingInputs) || invalid,
+      previewReadonly: empty ? false : (locked || invalid),
+      reason: reason,
+      targetError: preview && preview.targetError ? String(preview.targetError) : "",
+      writeFailureReason: writeFailureReason,
+      manualReviewAddresses: manualReviewAddresses,
+      overallWriteSuccess: false,
+      writtenCount: writtenCount,
+      skippedCount: skippedCount,
+      summary: summary
+    };
+  }
+
+  function resolveExcelSmartFillLifecycleControls(preview, options) {
+    var life = describeExcelSmartFillPreviewLifecycle(preview, options);
+    var busy = Boolean(options && options.busy);
+    var empty = life.status === "empty";
+    var locked = life.status === "locked";
+    var editing = Boolean(preview && preview.editingInputs);
+    return {
+      generateHidden: empty ? false : (locked || (!editing && life.status === "ready")),
+      generateDisabled: busy,
+      writeHidden: empty || locked,
+      writeDisabled: busy || !life.writeEnabled,
+      returnToEditHidden: !life.showReturnToEdit,
+      startNewHidden: !life.showStartNew,
+      startNewDisabled: busy || !locked,
+      sourceInputsHidden: !life.sourceInputsVisible
+    };
+  }
+
+  function buildExcelSmartFillLifecyclePreview(preview, targets, drafts, options) {
+    var life = describeExcelSmartFillPreviewLifecycle(preview, options);
+    var html = [];
+    var result = preview && preview.result;
+    if (life.status === "invalid") {
+      html.push(
+        '<div class="smart-fill-lifecycle-banner is-invalid" role="status">',
+        "<strong>失效智能填写预览</strong>",
+        '<p class="field-hint">' + escapeHtml(life.reason) + "</p>",
+        "</div>"
+      );
+    }
+    if (life.writeFailureReason) {
+      html.push(
+        '<div class="smart-fill-lifecycle-banner is-write-failed" role="status">',
+        '<p class="field-hint">' + escapeHtml(life.writeFailureReason) + "</p>",
+        "</div>"
+      );
+    }
+    if (life.status === "locked") {
+      html.push(
+        '<div class="smart-fill-lifecycle-banner is-locked" role="status">',
+        "<strong>智能填写已写入</strong>",
+        '<p class="field-hint">' + escapeHtml(life.summary) + "</p>",
+        "</div>"
+      );
+    }
+    if (life.targetError) {
+      html.push(
+        '<p class="field-hint" role="status">' + escapeHtml(life.targetError) + "</p>"
+      );
+    }
+    if (!result) {
+      return html.join("");
+    }
+    if (life.previewReadonly) {
+      html.push(buildExcelSmartFillReadonlyPreview(result, targets || []));
+    } else {
+      html.push(buildExcelSmartFillEditorPreview(result, targets || [], drafts || [], options));
+    }
+    return html.join("");
   }
 
   function consumeExcelSmartFillPreview(preview) {
@@ -3229,7 +3471,7 @@
       throw new Error("同一预览不能重复提交写入。");
     }
     preview.consumed = true;
-    preview.result = null;
+    preview.status = "locked";
     return preview;
   }
 
@@ -3244,16 +3486,68 @@
     };
   }
 
-  function finalizeExcelSmartFillWriteSuccess(preview) {
+  function finalizeExcelSmartFillWriteSuccess(preview, summary) {
+    var counts = summary || {};
+    if (preview && preview.consumed) {
+      throw new Error("同一预览不能重复提交写入。");
+    }
     try {
       consumeExcelSmartFillPreview(preview);
     } catch (error) {
-      if (preview) {
+      if (preview && !preview.result) {
         preview.consumed = true;
-        preview.result = null;
+        preview.status = "locked";
+      } else {
+        throw error;
       }
     }
+    if (preview) {
+      preview.writtenCount = Number(counts.writtenCount || 0);
+      preview.skippedCount = Number(counts.skippedCount || 0);
+      preview.editingInputs = false;
+      preview.writeFailureReason = "";
+      preview.targetError = "";
+    }
     return preview;
+  }
+
+  function startNewExcelSmartFill(preview) {
+    return null;
+  }
+
+  function sanitizeRestoredExcelSmartFillState(stateLike) {
+    var input = stateLike || {};
+    return {
+      smartFillResult: input.smartFillResult || null,
+      smartFillSource: input.smartFillSource || null,
+      smartFillItems: Array.isArray(input.smartFillItems) ? input.smartFillItems : [],
+      smartFillTarget: null,
+      smartFillLiveTarget: null
+    };
+  }
+
+  function normalizeExcelSmartFillA1Address(value) {
+    var text = String(value || "").replace(/^.*!/, "").replace(/\$/g, "").toUpperCase();
+    var parts = text.split(":");
+    if (parts.length === 2 && parts[0] === parts[1]) {
+      return parts[0];
+    }
+    return text;
+  }
+
+  function excelSmartFillItemsAddressRange(items) {
+    var list = Array.isArray(items) ? items : [];
+    var first;
+    var last;
+    if (!list.length) {
+      return "";
+    }
+    first = normalizeExcelSmartFillA1Address(list[0] && list[0].address);
+    last = normalizeExcelSmartFillA1Address(list[list.length - 1] && list[list.length - 1].address);
+    if (!first) {
+      return "";
+    }
+    return first === last ? first : first + ":" + last;
   }
 
   function validateExcelSmartFillTarget(target) {
@@ -4203,6 +4497,13 @@
       if (typeof commitContext.itemCount === "number" && commitContext.itemCount !== items.length) {
         throw new Error("提交映射目标单元格数量与实际不符。");
       }
+      if (commitContext.targetAddress) {
+        var commitAddress = normalizeExcelSmartFillA1Address(commitContext.targetAddress);
+        var liveAddress = excelSmartFillItemsAddressRange(items);
+        if (commitAddress && liveAddress && commitAddress !== liveAddress) {
+          throw new Error("提交映射目标地址与当前选区不符，已拒绝沿用旧绑定。");
+        }
+      }
       if (commitContext.targetSheetName && items[0] && items[0].sheetName &&
           commitContext.targetSheetName !== items[0].sheetName) {
         throw new Error("提交映射工作表与目标不符。");
@@ -4840,6 +5141,18 @@
     detectExcelSmartFillConflicts: detectExcelSmartFillConflicts,
     createExcelSmartFillPreview: createExcelSmartFillPreview,
     consumeExcelSmartFillPreview: consumeExcelSmartFillPreview,
+    returnToExcelSmartFillEdit: returnToExcelSmartFillEdit,
+    buildExcelSmartFillEditFingerprint: buildExcelSmartFillEditFingerprint,
+    syncExcelSmartFillPreviewWithInputs: syncExcelSmartFillPreviewWithInputs,
+    markExcelSmartFillPreviewTargetRejected: markExcelSmartFillPreviewTargetRejected,
+    clearExcelSmartFillPreviewTargetError: clearExcelSmartFillPreviewTargetError,
+    resetExcelSmartFillDraftWriteConflicts: resetExcelSmartFillDraftWriteConflicts,
+    markExcelSmartFillPreviewWriteFailed: markExcelSmartFillPreviewWriteFailed,
+    describeExcelSmartFillPreviewLifecycle: describeExcelSmartFillPreviewLifecycle,
+    resolveExcelSmartFillLifecycleControls: resolveExcelSmartFillLifecycleControls,
+    buildExcelSmartFillLifecyclePreview: buildExcelSmartFillLifecyclePreview,
+    startNewExcelSmartFill: startNewExcelSmartFill,
+    sanitizeRestoredExcelSmartFillState: sanitizeRestoredExcelSmartFillState,
     describeExcelSmartFillHostCell: describeExcelSmartFillHostCell,
     finalizeExcelSmartFillWriteSuccess: finalizeExcelSmartFillWriteSuccess,
     validateExcelSmartFillTarget: validateExcelSmartFillTarget,
