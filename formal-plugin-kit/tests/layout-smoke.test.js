@@ -149,7 +149,7 @@ assert.ok(fs.existsSync(path.join(pptRoot, "assets/icon-ppt-structure-review.png
   'id="task-title">智能总结',
   'id="health-indicator"',
   'id="btn-open-settings"',
-  'id="workflow-profile-select"',
+  'id="task-model-config-trigger"',
   'id="ppt-source-slide"',
   'id="ppt-source-document"',
   'id="slide-summary-controls"',
@@ -171,6 +171,7 @@ assert.ok(fs.existsSync(path.join(pptRoot, "assets/icon-ppt-structure-review.png
   'id="workflow-editor-view"',
   'id="workflow-profile-manager"'
 ].forEach(token => assert.ok(pptHtml.includes(token), token));
+assert.ok(!pptHtml.includes('id="workflow-profile-select"'));
 [
   'id="structure-review-controls"',
   'id="ppt-structure-start-slide"',
