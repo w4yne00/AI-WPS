@@ -1,5 +1,6 @@
 import math
 import re
+import threading
 import time
 from copy import deepcopy
 from typing import Dict, Optional
@@ -46,6 +47,7 @@ SAFE_ERROR_STATUSES = {
     "EXCEL_SMART_FILL_JOB_ID_CONFLICT": 409,
     "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED": 409,
     "EXCEL_SMART_FILL_WRITE_NOT_READY": 409,
+    "EXCEL_SMART_FILL_WRITE_IDENTITY_MISMATCH": 409,
     "EXCEL_SMART_FILL_RESULT_TOO_LARGE": 502,
     "EXCEL_SMART_FILL_DEADLINE_EXCEEDED": 504,
     "EXCEL_SMART_FILL_AUTH_SNAPSHOT_FAILED": 503,
@@ -80,6 +82,8 @@ class ExcelSmartFillJobStore:
         self.coordinator = coordinator or get_long_task_coordinator()
         self.clock = clock
         self._write_commits = {}
+        self._job_write_identity = {}
+        self._write_lock = threading.Lock()
 
     def start(self, request: ExcelSmartFillRequest, trace_id: str) -> Dict:
         validate_smart_fill_request_limits(request)
@@ -96,6 +100,7 @@ class ExcelSmartFillJobStore:
                     "相同任务编号已绑定其他智能填写请求，请使用新的任务编号。",
                     status_code=409,
                 )
+            self._remember_write_identity(job_id, request)
             return existing
         snapshot_task_auth = getattr(self.smart_fill, "snapshot_task_auth", None)
         task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
@@ -107,6 +112,7 @@ class ExcelSmartFillJobStore:
         )
         total_batches = max(1, math.ceil(total_items / max(1, initial_batch_size)))
         retention_seconds = getattr(self.coordinator, "terminal_ttl_seconds", RESULT_RETENTION_SECONDS)
+        self._remember_write_identity(job_id, request)
         return self.coordinator.submit(
             job_id=job_id,
             trace_id=trace_id,
@@ -144,9 +150,19 @@ class ExcelSmartFillJobStore:
             allow_running_cancel=True,
         )
 
+    def _remember_write_identity(self, job_id: str, request: ExcelSmartFillRequest) -> None:
+        source = getattr(request, "source", None)
+        self._job_write_identity[job_id] = {
+            "workbookId": str(getattr(request, "workbook_id", "") or ""),
+            "sourceSnapshotHash": str(getattr(source, "snapshot_hash", "") or ""),
+        }
+
     def get(self, job_id: str) -> Optional[Dict]:
         job = self.coordinator.get(job_id, task_type="excel.smart_fill")
         if job is None:
+            with self._write_lock:
+                self._write_commits.pop(job_id, None)
+                self._job_write_identity.pop(job_id, None)
             return None
         public = dict(job)
         commit = self._write_commits.get(job_id)
@@ -169,29 +185,41 @@ class ExcelSmartFillJobStore:
                 "智能填写预览尚未完成，不能提交写入。",
                 status_code=409,
             )
-        if job_id in self._write_commits:
-            raise AdapterError(
-                "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
-                "同一预览不能重复提交写入。",
-                status_code=409,
-            )
         body = payload or {}
         if hasattr(payload, "dict"):
             body = payload.dict(by_alias=True)
         elif hasattr(payload, "model_dump"):
             body = payload.model_dump(by_alias=True)
-        record = {
-            "writeCommitted": True,
-            "resultRevision": int(body.get("resultRevision") or body.get("result_revision") or 1),
-            "sourceSnapshotHash": str(
-                body.get("sourceSnapshotHash") or body.get("source_snapshot_hash") or ""
-            ),
-            "workbookId": str(body.get("workbookId") or body.get("workbook_id") or ""),
-            "targetAddress": str(body.get("targetAddress") or body.get("target_address") or ""),
-            "itemCount": int(body.get("itemCount") or body.get("item_count") or 0),
-        }
-        self._write_commits[job_id] = record
-        return record
+        workbook_id = str(body.get("workbookId") or body.get("workbook_id") or "")
+        source_hash = str(body.get("sourceSnapshotHash") or body.get("source_snapshot_hash") or "")
+        with self._write_lock:
+            if job_id in self._write_commits:
+                raise AdapterError(
+                    "EXCEL_SMART_FILL_WRITE_ALREADY_COMMITTED",
+                    "同一预览不能重复提交写入。",
+                    status_code=409,
+                )
+            identity = self._job_write_identity.get(job_id) or {}
+            expected_workbook = str(identity.get("workbookId") or "")
+            expected_hash = str(identity.get("sourceSnapshotHash") or "")
+            if (expected_workbook and workbook_id and expected_workbook != workbook_id) or (
+                expected_hash and source_hash and expected_hash != source_hash
+            ):
+                raise AdapterError(
+                    "EXCEL_SMART_FILL_WRITE_IDENTITY_MISMATCH",
+                    "写入提交与当前预览任务的工作簿或来源快照不一致。",
+                    status_code=409,
+                )
+            record = {
+                "writeCommitted": True,
+                "resultRevision": int(body.get("resultRevision") or body.get("result_revision") or 1),
+                "sourceSnapshotHash": source_hash,
+                "workbookId": workbook_id,
+                "targetAddress": str(body.get("targetAddress") or body.get("target_address") or ""),
+                "itemCount": int(body.get("itemCount") or body.get("item_count") or 0),
+            }
+            self._write_commits[job_id] = record
+            return record
 
     def cancel(self, job_id: str) -> Optional[Dict]:
         return self.coordinator.request_cancel(job_id, task_type="excel.smart_fill")

@@ -3179,14 +3179,19 @@
       '<span class="field-hint">写入前请核对生成结果；本页为只读预览。</span>',
       "</div>"
     ];
-    function targetAddress(itemId) {
+    function previewRowLabel(item) {
       var index;
+      var target;
+      if (item && item.sourceRowLabel) {
+        return item.sourceRowLabel;
+      }
       for (index = 0; index < targetList.length; index += 1) {
-        if (targetList[index] && targetList[index].itemId === itemId) {
-          return targetList[index].address || itemId;
+        target = targetList[index];
+        if (target && item && target.itemId === item.itemId) {
+          return target.sourceRowLabel || target.address || item.itemId;
         }
       }
-      return itemId;
+      return item && item.itemId ? item.itemId : "";
     }
     if (!items.length) {
       html.push('<p class="field-hint">未返回可展示的目标结果。</p>');
@@ -3205,7 +3210,7 @@
       html.push(
         '<article class="smart-fill-result-item">',
         '<div class="smart-fill-result-meta">',
-        "<span>" + escapeHtml(targetAddress(item.itemId)) + "</span>",
+        "<span>" + escapeHtml(previewRowLabel(item)) + "</span>",
         '<span class="smart-fill-result-status ' + statusClass + '">' +
           statusLabel + "</span>",
         "</div>",
@@ -3240,6 +3245,28 @@
     return String(left.sourceAddress || "") === String(right.sourceAddress || "") &&
       String(left.sourceSnapshotHash || "") === String(right.sourceSnapshotHash || "") &&
       String(left.instruction || "") === String(right.instruction || "");
+  }
+
+  function buildExcelSmartFillEditFingerprint(frozen, options) {
+    var settings = options || {};
+    var frozenFp = frozen || {};
+    var live = settings.liveSource || {};
+    var instruction = settings.instruction != null ? settings.instruction : frozenFp.instruction;
+    var frozenAddress = normalizeExcelSmartFillA1Address(frozenFp.sourceAddress);
+    var liveAddress = "";
+    var baseline = normalizeExcelSmartFillA1Address(settings.baselineAddress);
+    var nextAddress = frozenFp.sourceAddress || "";
+    if (live.ok) {
+      liveAddress = normalizeExcelSmartFillA1Address(live.rawAddress || live.address);
+      if (liveAddress && liveAddress !== frozenAddress && liveAddress !== baseline) {
+        nextAddress = live.rawAddress || live.address || nextAddress;
+      }
+    }
+    return {
+      sourceAddress: nextAddress,
+      sourceSnapshotHash: frozenFp.sourceSnapshotHash || "",
+      instruction: instruction || ""
+    };
   }
 
   function returnToExcelSmartFillEdit(preview) {
@@ -5070,6 +5097,7 @@
     createExcelSmartFillPreview: createExcelSmartFillPreview,
     consumeExcelSmartFillPreview: consumeExcelSmartFillPreview,
     returnToExcelSmartFillEdit: returnToExcelSmartFillEdit,
+    buildExcelSmartFillEditFingerprint: buildExcelSmartFillEditFingerprint,
     syncExcelSmartFillPreviewWithInputs: syncExcelSmartFillPreviewWithInputs,
     markExcelSmartFillPreviewTargetRejected: markExcelSmartFillPreviewTargetRejected,
     markExcelSmartFillPreviewWriteFailed: markExcelSmartFillPreviewWriteFailed,

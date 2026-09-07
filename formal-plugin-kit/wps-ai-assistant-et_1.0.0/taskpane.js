@@ -129,6 +129,7 @@
     smartFillItems: [],
     smartFillLiveSource: null,
     smartFillLiveTarget: null,
+    smartFillEditBaselineAddress: "",
     smartFillWorkbookId: "",
     smartFillInstruction: "",
     smartFillResult: null,
@@ -1339,7 +1340,10 @@
   }
 
   function renderSmartFillCaptureState() {
-    if (state.smartFillResult) {
+    var editing = Boolean(state.smartFillPreview && state.smartFillPreview.editingInputs);
+    if (editing) {
+      refreshExcelSmartFillSourceSelection();
+    } else if (state.smartFillResult) {
       tryRebindSmartFillTarget();
     } else {
       refreshExcelSmartFillSourceSelection();
@@ -1752,13 +1756,19 @@
   }
 
   function currentSmartFillInputFingerprint() {
-    var live = state.smartFillLiveSource || {};
-    var frozen = state.smartFillSource || {};
-    return {
-      sourceAddress: live.rawAddress || live.address || frozen.address || "",
-      sourceSnapshotHash: frozen.snapshotHash || "",
+    var frozen = (state.smartFillPreview && state.smartFillPreview.fingerprint) || {
+      sourceAddress: (state.smartFillSource && state.smartFillSource.address) || "",
+      sourceSnapshotHash: (state.smartFillSource && state.smartFillSource.snapshotHash) || "",
       instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value)
     };
+    if (helpers.buildExcelSmartFillEditFingerprint) {
+      return helpers.buildExcelSmartFillEditFingerprint(frozen, {
+        liveSource: state.smartFillLiveSource,
+        baselineAddress: state.smartFillEditBaselineAddress,
+        instruction: safeText(byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").value)
+      });
+    }
+    return frozen;
   }
 
   function ensureExcelSmartFillPreview() {
@@ -1893,11 +1903,38 @@
   }
 
   function returnToExcelSmartFillEditAction() {
+    var inspection;
     if (!state.smartFillPreview || !helpers.returnToExcelSmartFillEdit) {
       return;
     }
+    try {
+      inspection = helpers.inspectExcelSmartFillSourceSelection
+        ? helpers.inspectExcelSmartFillSourceSelection(getSelectionRange(getEtApplication()), {
+          sourceSheetName: readSmartFillSheetName(getActiveSheet(getEtApplication()))
+        })
+        : null;
+      state.smartFillEditBaselineAddress = (inspection && (inspection.rawAddress || inspection.address)) || "";
+    } catch (error) {
+      state.smartFillEditBaselineAddress = "";
+    }
     helpers.returnToExcelSmartFillEdit(state.smartFillPreview);
-    refreshExcelSmartFillSourceSelection();
+    if (helpers.sanitizeRestoredExcelSmartFillState) {
+      state.smartFillTarget = helpers.sanitizeRestoredExcelSmartFillState(state).smartFillTarget;
+      state.smartFillLiveTarget = null;
+    } else {
+      state.smartFillTarget = null;
+      state.smartFillLiveTarget = null;
+    }
+    if (state.smartFillSource) {
+      state.smartFillLiveSource = {
+        ok: true,
+        address: state.smartFillSource.address,
+        rawAddress: state.smartFillSource.address,
+        summary: summarizeSmartFillSource(state.smartFillSource),
+        error: ""
+      };
+      setNodeTextIfChanged(byId("smart-fill-source-summary"), state.smartFillLiveSource.summary);
+    }
     applySmartFillLifecycleControls();
     updateSmartFillGenerateEnabled();
     if (byId("excel-smart-fill-instruction") && byId("excel-smart-fill-instruction").focus) {
@@ -1917,6 +1954,7 @@
     state.smartFillLiveTarget = null;
     state.smartFillSource = null;
     state.smartFillItems = [];
+    state.smartFillEditBaselineAddress = "";
     state.excelSmartFillCompletedJobId = "";
     state.excelSmartFillResultRevision = 0;
     if (byId("result-output")) {
@@ -3582,6 +3620,12 @@
 
   function resumeExcelSmartFillActiveJob() {
     var active = loadExcelSmartFillActiveJob();
+    var restored;
+    if (helpers.sanitizeRestoredExcelSmartFillState) {
+      restored = helpers.sanitizeRestoredExcelSmartFillState(state);
+      state.smartFillTarget = restored.smartFillTarget;
+      state.smartFillLiveTarget = restored.smartFillLiveTarget;
+    }
     if (!active || !active.jobId || state.currentMode !== "excelSmartFill") {
       return;
     }
@@ -3627,7 +3671,11 @@
     setSmartFillInterruptedRetryVisible(false);
     setExcelSmartFillCancelVisible(false);
     setAnalysisBusy(true);
-    state.smartFillResult = null;
+    if (!state.smartFillRetryItemId) {
+      state.smartFillResult = null;
+      state.smartFillPreview = null;
+      state.smartFillEditBaselineAddress = "";
+    }
     byId("btn-write-smart-fill").hidden = true;
     clearExcelSmartFillActiveJob();
     state.excelSmartFillJobId = clientJobId;

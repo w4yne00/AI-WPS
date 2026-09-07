@@ -150,6 +150,23 @@ def test_job_store_rejects_write_commit_before_job_completes():
         provider.release.set()
 
 
+@pytest.mark.skipif(not HAS_PYDANTIC, reason="pydantic required")
+def test_job_store_rejects_write_commit_with_mismatched_workbook_or_source():
+    store = ExcelSmartFillJobStore(
+        _ImmediateProvider(),
+        LongTaskCoordinator(max_running=1, max_queued=2),
+    )
+    request = ExcelSmartFillRequest.parse_obj(_payload("write-commit-identity-001"))
+    job = store.start(request, trace_id="trace-write-identity")
+    store.coordinator.wait(job["jobId"], task_type="excel.smart_fill")
+    mismatched = _commit_body()
+    mismatched["workbookId"] = "other-workbook"
+    with pytest.raises(AdapterError) as error_info:
+        store.commit_write(job["jobId"], mismatched)
+    assert error_info.value.code == "EXCEL_SMART_FILL_WRITE_IDENTITY_MISMATCH"
+    assert error_info.value.status_code == 409
+
+
 @pytest.mark.skipif(not (HAS_FASTAPI and HAS_PYDANTIC), reason="fastapi and pydantic required")
 def test_fastapi_write_commit_is_public_and_idempotent_fail_closed():
     from fastapi.testclient import TestClient

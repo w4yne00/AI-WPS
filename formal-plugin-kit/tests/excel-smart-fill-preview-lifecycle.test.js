@@ -106,6 +106,46 @@ function testUnchangedInputsAfterReturnDoNotInvalidate() {
   assert.strictEqual(life.writeEnabled, true);
 }
 
+function testReturnToEditDoesNotTreatCurrentTargetSelectionAsSourceChange() {
+  assert.strictEqual(typeof helpers.buildExcelSmartFillEditFingerprint, "function");
+  const frozen = sampleFingerprint();
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), frozen);
+  helpers.returnToExcelSmartFillEdit(preview);
+  const next = helpers.buildExcelSmartFillEditFingerprint(frozen, {
+    liveSource: { ok: true, address: "$D$2:$D$4", rawAddress: "$D$2:$D$4" },
+    baselineAddress: "$D$2:$D$4",
+    instruction: frozen.instruction
+  });
+  helpers.syncExcelSmartFillPreviewWithInputs(preview, next);
+  const life = helpers.describeExcelSmartFillPreviewLifecycle(preview);
+  assert.strictEqual(life.status, "ready", "staying on the write target must not invalidate");
+  assert.strictEqual(life.writeEnabled, true);
+}
+
+function testNewSourceSelectionAfterReturnInvalidatesPreview() {
+  const frozen = sampleFingerprint();
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), frozen);
+  helpers.returnToExcelSmartFillEdit(preview);
+  const next = helpers.buildExcelSmartFillEditFingerprint(frozen, {
+    liveSource: { ok: true, address: "$E$1:$G$10", rawAddress: "$E$1:$G$10" },
+    baselineAddress: "$D$2:$D$4",
+    instruction: frozen.instruction
+  });
+  helpers.syncExcelSmartFillPreviewWithInputs(preview, next);
+  assert.strictEqual(helpers.describeExcelSmartFillPreviewLifecycle(preview).status, "invalid");
+}
+
+function testInvalidReadonlyPreviewShowsSourceRowLabelsNotItemIds() {
+  const preview = helpers.createExcelSmartFillPreview(sampleResult(), sampleFingerprint());
+  helpers.syncExcelSmartFillPreviewWithInputs(
+    preview,
+    sampleFingerprint({ instruction: "新意图" })
+  );
+  const htmlPreview = helpers.buildExcelSmartFillLifecyclePreview(preview, [], []);
+  assert.ok(htmlPreview.includes("第 2 行"));
+  assert.ok(!htmlPreview.includes(itemId(1)));
+}
+
 function testRegenerateAfterInvalidCreatesNewWritablePreview() {
   const oldPreview = helpers.createExcelSmartFillPreview(sampleResult(), sampleFingerprint());
   helpers.syncExcelSmartFillPreviewWithInputs(
@@ -256,6 +296,7 @@ function testLifecycleControlsMatchNarrowWindowContract() {
   assert.ok(html.includes("开始新的填写"));
   assert.ok(html.includes("id=\"btn-edit-smart-fill\""));
   assert.ok(html.includes("id=\"btn-new-smart-fill\""));
+  assert.ok(/id=\"smart-fill-write-summary\"[^>]*tabindex=\"-1\"/.test(html));
   assert.ok(!html.includes("撤销"));
 
   const sharedTail = css.indexOf("/* Shared restrained settings and interaction treatment. */");
@@ -342,6 +383,9 @@ testReturnToEditWithoutInputChangeKeepsWritablePreview();
 testSourceOrInstructionChangeInvalidatesPreviewWithoutDeletingResult();
 testAddressChangeAlsoInvalidatesPreview();
 testUnchangedInputsAfterReturnDoNotInvalidate();
+testReturnToEditDoesNotTreatCurrentTargetSelectionAsSourceChange();
+testNewSourceSelectionAfterReturnInvalidatesPreview();
+testInvalidReadonlyPreviewShowsSourceRowLabelsNotItemIds();
 testRegenerateAfterInvalidCreatesNewWritablePreview();
 testTargetPrecheckFailureDoesNotConsumePreview();
 testCompensationSuccessKeepsPreviewAndAllowsRetryWithoutConsuming();
