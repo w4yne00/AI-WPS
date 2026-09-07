@@ -1857,6 +1857,25 @@ async function assertPptBehavioralDomContracts() {
     `settings 设为当前 success must announce when home task differs, got: ${statusMessage}`
   );
 
+  mockDocument.activeElement = mockTabs["ppt.structure_review"];
+  testState.busy = true;
+  testState.workflowProfileMutationBusy = false;
+  testState.currentView = "settings";
+  testState.workflowTaskType = "ppt.structure_review";
+  requestUrls.length = 0;
+  baseContext.request = (url) => {
+    requestUrls.push(url);
+    return Promise.resolve({ data: {} });
+  };
+  baseContext.activateWorkflowProfile = loadFunction("activateWorkflowProfile", baseContext);
+  await baseContext.activateWorkflowProfile("flow-1");
+  assert.strictEqual(
+    mockDocument.activeElement,
+    mockTabs["ppt.structure_review"],
+    "settings busy reject must not steal focus to the compact entry"
+  );
+  assert.ok(!requestUrls.some((url) => String(url).includes("/activate")), "settings busy reject must not activate");
+
   testState.taskMode = "pptSlideAssistant";
   testState.workflowTaskType = "ppt.slide_assistant";
   testState.currentView = "home";

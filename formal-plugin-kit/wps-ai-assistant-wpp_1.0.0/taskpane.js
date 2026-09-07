@@ -2454,7 +2454,7 @@
       } else if (decision.reason === "busy") {
         setStatus("当前正忙，请稍后切换模型配置。");
       }
-      if (decision.restoreFocus) {
+      if (decision.restoreFocus && state.currentView !== "settings") {
         focusTaskModelConfigTrigger();
       }
       return Promise.resolve();
