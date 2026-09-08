@@ -827,7 +827,7 @@ def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(t
     lifecycle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lifecycle)
 
-    environment = lifecycle.install_environment(tmp_path / "lifecycle", 18101)
+    environment = lifecycle.install_environment(tmp_path / "lifecycle", 18101, 29137)
     lookup = Path(environment["PATH"].split(os.pathsep, 1)[0]) / "getent"
     resolved = subprocess.run(
         [str(lookup), "passwd", environment["AI_WPS_TARGET_USER"]],
@@ -841,6 +841,39 @@ def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(t
     assert resolved.stdout.strip().split(":")[5] == environment["HOME"]
     assert '"--target-user"' in lifecycle_path.read_text(encoding="utf-8")
     assert '"--target-home"' not in lifecycle_path.read_text(encoding="utf-8")
+
+
+def test_preview_lifecycle_accepts_independently_reserved_candidate_port(tmp_path):
+    lifecycle_path = ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    spec = importlib.util.spec_from_file_location(
+        "preview_lifecycle_candidate_port", lifecycle_path
+    )
+    assert spec is not None and spec.loader is not None
+    lifecycle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lifecycle)
+
+    environment = lifecycle.install_environment(
+        tmp_path / "lifecycle", 18101, 29137
+    )
+
+    assert environment["PORT"] == "18101"
+    assert environment["AI_WPS_CANDIDATE_PORT"] == "29137"
+
+
+def test_preview_lifecycle_reserves_distinct_runtime_and_candidate_ports(tmp_path):
+    del tmp_path
+    lifecycle_path = ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    spec = importlib.util.spec_from_file_location(
+        "preview_lifecycle_distinct_ports", lifecycle_path
+    )
+    assert spec is not None and spec.loader is not None
+    lifecycle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lifecycle)
+    reserved = iter((18101, 18101, 29137))
+
+    ports = lifecycle.reserve_install_ports(lambda: next(reserved))
+
+    assert ports == (18101, 29137)
 
 
 def test_preview_lifecycle_can_stage_external_dependencies_in_temporary_delivery(
@@ -933,7 +966,10 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
     monkeypatch.setattr(lifecycle, "stop_adapter", lambda environment: None)
     monkeypatch.setattr(lifecycle, "verify_install", lambda environment: None)
 
-    lifecycle.run_preview_upgrade(tmp_path / "delivery", tmp_path, lambda: 18101)
+    reserved = iter((18101, 29137))
+    lifecycle.run_preview_upgrade(
+        tmp_path / "delivery", tmp_path, lambda: next(reserved)
+    )
     assert calls == [1, 2]
 
 

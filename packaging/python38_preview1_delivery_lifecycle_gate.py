@@ -10,7 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional, Tuple
 
 
 VERSION = "0.26.0-preview.1"
@@ -113,7 +113,17 @@ printf '%s\n' "private_runtime=ready source=external_gate_fixture path=$PRIVATE_
     return True
 
 
-def install_environment(root: Path, port: int) -> Dict[str, str]:
+def reserve_install_ports(reserve_port: Callable[[], int]) -> Tuple[int, int]:
+    port = reserve_port()
+    candidate_port = reserve_port()
+    while candidate_port == port:
+        candidate_port = reserve_port()
+    return port, candidate_port
+
+
+def install_environment(
+    root: Path, port: int, candidate_port: int
+) -> Dict[str, str]:
     home = root / "home"
     install_root = home / "ai-wps"
     jsaddons = home / "jsaddons"
@@ -153,7 +163,7 @@ def install_environment(root: Path, port: int) -> Dict[str, str]:
                 (str(target_tools), environment.get("PATH", ""))
             ),
             "AI_WPS_SYSTEMD_SERVICE_FILE": str(root / "no-systemd/ai-wps.service"),
-            "AI_WPS_CANDIDATE_PORT": str(port + 1),
+            "AI_WPS_CANDIDATE_PORT": str(candidate_port),
             "PORT": str(port),
             "PYTHON_BIN": sys.executable,
             "PYTHONDONTWRITEBYTECODE": "1",
@@ -247,7 +257,7 @@ def assert_files_unchanged(root: Path, expected: Dict[Path, bytes]) -> None:
 
 def run_fresh_install(delivery_root: Path, temp_root: Path, reserve_port) -> None:
     root = temp_root / "fresh"
-    environment = install_environment(root, reserve_port())
+    environment = install_environment(root, *reserve_install_ports(reserve_port))
     result = run_installer(delivery_root, environment)
     try:
         verify_install(environment)
@@ -259,7 +269,7 @@ def run_fresh_install(delivery_root: Path, temp_root: Path, reserve_port) -> Non
 
 def run_legacy_boundary(delivery_root: Path, temp_root: Path, reserve_port) -> None:
     root = temp_root / "legacy-boundary"
-    environment = install_environment(root, reserve_port())
+    environment = install_environment(root, *reserve_install_ports(reserve_port))
     legacy_root = Path(environment["HOME"]) / "ai-wps-phase1"
     fixtures = legacy_fixture(legacy_root)
     result = run_installer(delivery_root, environment)
@@ -291,7 +301,7 @@ def run_legacy_boundary(delivery_root: Path, temp_root: Path, reserve_port) -> N
 
 def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> None:
     root = temp_root / "preview-upgrade"
-    environment = install_environment(root, reserve_port())
+    environment = install_environment(root, *reserve_install_ports(reserve_port))
     run_installer(delivery_root, environment)
     stop_adapter(environment)
     state_root = Path(environment["AI_WPS_INSTALL_ROOT"]) / "state"
