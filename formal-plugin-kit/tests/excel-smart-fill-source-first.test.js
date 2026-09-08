@@ -465,6 +465,32 @@ function testRetryButtonsStayHiddenWithoutFrozenSource() {
   assert.ok(/smartFillRetryItemId[\s\S]{0,800}重新生成预览|冻结来源/.test(js));
 }
 
+function testLegacyTargetFirstContractIsNotExposed() {
+  const source = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+
+  assert.strictEqual(
+    helpers.extractExcelSmartFillPayload,
+    undefined,
+    "source-first flow must not expose the combined source/target extractor"
+  );
+  assert.strictEqual(
+    helpers.buildExcelSmartFillDefaultSource,
+    undefined,
+    "source-first flow must not expose the deprecated target-derived source builder"
+  );
+  assert.strictEqual(
+    helpers.sanitizeExcelSmartFillSource,
+    undefined,
+    "source-first flow must not expose target-aware source masking"
+  );
+  const sourcePayload = helpers.extractExcelSmartFillSourcePayload(source, {
+    sheetName: "客户表",
+    createItemId: () => "sf_" + "1".repeat(32)
+  });
+  assert.ok(sourcePayload.source);
+  assert.ok(!Object.prototype.hasOwnProperty.call(sourcePayload, "target"));
+}
+
 testLiveSourceSummaryUsesSheetAddressHeadersAndDataRows();
 testInspectingSelectionDoesNotCreateASourceSnapshot();
 testGenerateFreezeCreatesOpaqueItemsWithoutTarget();
@@ -487,4 +513,5 @@ testOversizedRangeIsRejectedBeforeCellWalk();
 testPreviewReordersModelItemsToFrozenSourceOrder();
 testItemIdGenerationRequiresSecureRandom();
 testRetryButtonsStayHiddenWithoutFrozenSource();
+testLegacyTargetFirstContractIsNotExposed();
 console.log("Excel smart fill source-first tests passed");

@@ -45,6 +45,11 @@ def test_excel_smart_fill_has_a_strict_request_contract():
     assert request_model is not None
 
 
+def test_excel_smart_fill_does_not_expose_generation_time_target_contract():
+    assert getattr(models, "ExcelSmartFillTarget", None) is None
+    assert getattr(models, "ExcelSmartFillTargetItem", None) is None
+
+
 def _item_id(n):
     return "sf_{:032x}".format(n)
 
@@ -1390,13 +1395,13 @@ def test_smart_fill_diagnostics_and_logs_minimal_whitelisted_sentinels(mock_urlo
 
 def test_reference_workflow_dsl_and_example_fixtures_validation():
     from pathlib import Path
-    ref_path = Path(__file__).resolve().parents[2] / "packaging/reference-workflows/excel-smart-fill-v1.yml"
+    ref_path = Path(__file__).resolve().parents[2] / "packaging/reference-workflows/excel-smart-fill-v2.yml"
     assert ref_path.is_file(), f"Missing reference workflow at {ref_path}"
     content = ref_path.read_text(encoding="utf-8")
 
     assert "kind: app" in content
-    assert "version: 0.1.5" in content
-    assert "name: AI-WPS Excel smart fill v1" in content
+    assert "version: 0.2.0" in content
+    assert "name: AI-WPS Excel smart fill v2" in content
     assert "contract_version: excel.smart_fill.v2" in content
     assert "schemaVersion" in content
     assert "insufficient_information" in content

@@ -38,46 +38,6 @@ function buildRange(address, values) {
   };
 }
 
-function testSmartFillPayloadCapturesFrozenSnapshots() {
-  assert.strictEqual(typeof helpers.extractExcelSmartFillPayload, "function");
-  const target = buildRange("$B$2:$C$3", [["待填写", "已有"], ["", "待填写"]]);
-  const source = buildRange("$F$1:$G$3", [["姓名", "部门"], ["张三", "研发"], ["李四", "销售"]]);
-  target.Cells.Item(1, 1).Formula = "";
-  target.Cells.Item(1, 1).HasFormula = false;
-
-  const payload = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "数据表",
-    maxItems: 500,
-    maxSourceRows: 500,
-    maxSourceColumns: 50,
-    maxCellTextLength: 2000,
-    maxTotalTextLength: 200000
-  });
-
-  assert.deepStrictEqual(payload.target.sheetName, "目标表");
-  assert.strictEqual(payload.target.address, "$B$2:$C$3");
-  assert.strictEqual(payload.target.items.length, 4);
-  assert.strictEqual(payload.target.items[0].itemId, "target-1");
-  assert.strictEqual(payload.target.items[0].address, "$A$1");
-  assert.strictEqual(payload.target.items[0].originalValue, "待填写");
-  assert.strictEqual(payload.target.items[0].originalValueType, "text");
-  assert.strictEqual(payload.target.items[0].originalFormula, "");
-  assert.strictEqual(payload.target.items[0].isFormula, false);
-  assert.strictEqual(payload.target.items[0].isMerged, false);
-  assert.strictEqual(payload.target.items[0].isProtected, false);
-  assert.strictEqual(payload.target.items[0].isHidden, false);
-  assert.strictEqual(payload.target.items[0].row, 1);
-  assert.strictEqual(payload.target.items[0].column, 1);
-
-  assert.deepStrictEqual(payload.source.headers, ["姓名", "部门"]);
-  assert.deepStrictEqual(payload.source.rows, [["张三", "研发"], ["李四", "销售"]]);
-  assert.strictEqual(payload.source.rowCount, 2);
-  assert.strictEqual(payload.source.columnCount, 2);
-  assert.strictEqual(payload.source.truncated, false);
-  assert.ok(!Object.prototype.hasOwnProperty.call(payload.source.rows[0][0], "formula"));
-}
-
 function testSmartFillWritebackGuardsSnapshotAndFormulaSafety() {
   assert.strictEqual(typeof helpers.writeExcelSmartFillCells, "function");
   function makeCell(value, extra) {
@@ -300,159 +260,6 @@ function testSmartFillFailsClosedWhenHostSafetyPropertiesCannotBeRead() {
   );
 }
 
-function testSmartFillExcludesHiddenSourceValuesAndValidatesTargetShape() {
-  const target = buildRange("$D$2:$D$3", [["", ""], ["", ""]]);
-  const source = buildRange("$A$1:$B$3", [["姓名", "部门"], ["张三", "研发"], ["李四", "销售"]]);
-  source.Cells.Item(2, 2).Hidden = true;
-  const payload = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "目标表"
-  });
-  assert.strictEqual(payload.source.rows[0][1], "");
-  assert.strictEqual(typeof helpers.validateExcelSmartFillTarget, "function");
-  assert.doesNotThrow(() => helpers.validateExcelSmartFillTarget({ items: [
-    { row: 2, column: 4, isFormula: false, isMerged: false, isProtected: false, isHidden: false },
-    { row: 3, column: 4, isFormula: false, isMerged: false, isProtected: false, isHidden: false }
-  ] }));
-  assert.throws(() => helpers.validateExcelSmartFillTarget({ items: [
-    { row: 2, column: 4 }, { row: 2, column: 5 }
-  ] }), /单列/);
-}
-
-function testSmartFillExtractionFailsClosedOnUnreadableHostFlags() {
-  const target = buildRange("$D$2:$D$2", [["待填写"]]);
-  const source = buildRange("$A$1:$A$2", [["说明"], ["不应外泄"]]);
-  Object.defineProperties(source.Cells.Item(2, 1), {
-    HasFormula: {
-      configurable: true,
-      get() { throw new Error("HasFormula unavailable"); }
-    }
-  });
-  Object.defineProperties(target.Cells.Item(1, 1), {
-    Hidden: {
-      configurable: true,
-      get() { throw new Error("Hidden unavailable"); }
-    }
-  });
-  const payload = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "目标表"
-  });
-  assert.strictEqual(payload.source.rows[0][0], "");
-  assert.strictEqual(payload.target.items[0].isHidden, true);
-  assert.throws(() => helpers.validateExcelSmartFillTarget(payload.target), /隐藏/);
-}
-
-function makeDefaultSourceCell(text, extra) {
-  return Object.assign({
-    text: text,
-    hidden: false,
-    hasFormula: false,
-    formula: "",
-    comment: ""
-  }, extra || {});
-}
-
-function testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly() {
-  assert.strictEqual(typeof helpers.buildExcelSmartFillDefaultSource, "function");
-  const cells = {
-    "1,1": makeDefaultSourceCell("名称"),
-    "1,2": makeDefaultSourceCell("部门"),
-    "1,3": makeDefaultSourceCell("说明"),
-    "1,4": makeDefaultSourceCell("摘要"),
-    "2,1": makeDefaultSourceCell("甲", { comment: "内部批注不得外发" }),
-    "2,2": makeDefaultSourceCell("研发", { hidden: true }),
-    "2,3": makeDefaultSourceCell("=A2", { hasFormula: true, formula: "=A2" }),
-    "2,4": makeDefaultSourceCell("旧摘要"),
-    "3,1": makeDefaultSourceCell("乙"),
-    "3,2": makeDefaultSourceCell("销售"),
-    "3,3": makeDefaultSourceCell("第二项"),
-    "3,4": makeDefaultSourceCell("不应进入默认来源")
-  };
-  const target = {
-    sheetName: "目标表",
-    address: "$D$2",
-    items: [{
-      itemId: "target-1",
-      address: "$D$2",
-      row: 2,
-      column: 4,
-      originalValue: "",
-      originalValueType: "blank",
-      originalFormula: "",
-      isFormula: false,
-      isMerged: false,
-      isProtected: false,
-      isHidden: false
-    }]
-  };
-  const source = helpers.buildExcelSmartFillDefaultSource(target, (row, column) => (
-    cells[`${row},${column}`] || makeDefaultSourceCell("")
-  ));
-
-  assert.strictEqual(target.columnHeader, "摘要");
-  assert.deepStrictEqual(source.headers, ["名称", "部门", "说明", "摘要"]);
-  assert.strictEqual(source.rowCount, 1);
-  assert.strictEqual(source.columnCount, 4);
-  assert.deepStrictEqual(source.rows, [["甲", "", "", ""]]);
-  assert.ok(!JSON.stringify(source).includes("内部批注不得外发"));
-  assert.ok(!JSON.stringify(source).includes("=A2"));
-  assert.ok(!JSON.stringify(source).includes("不应进入默认来源"));
-  assert.ok(!JSON.stringify(source).includes("旧摘要"));
-  assert.ok(!Object.prototype.hasOwnProperty.call(source, "comments"));
-}
-
-function testSmartFillDefaultSourceKeepsARowForEachTargetItem() {
-  const cells = {
-    "1,1": makeDefaultSourceCell("名称"),
-    "1,4": makeDefaultSourceCell("摘要"),
-    "2,1": makeDefaultSourceCell("甲"),
-    "2,4": makeDefaultSourceCell("旧D2"),
-    "3,1": makeDefaultSourceCell("乙"),
-    "3,4": makeDefaultSourceCell("旧D3"),
-    "4,1": makeDefaultSourceCell("丙")
-  };
-  const target = {
-    sheetName: "目标表",
-    address: "$D$2:$D$3",
-    items: [
-      {
-        itemId: "target-1", address: "$D$2", row: 2, column: 4,
-        originalValue: "", originalValueType: "blank", originalFormula: "",
-        isFormula: false, isMerged: false, isProtected: false, isHidden: false
-      },
-      {
-        itemId: "target-2", address: "$D$3", row: 3, column: 4,
-        originalValue: "", originalValueType: "blank", originalFormula: "",
-        isFormula: false, isMerged: false, isProtected: false, isHidden: false
-      }
-    ]
-  };
-  const source = helpers.buildExcelSmartFillDefaultSource(target, (row, column) => (
-    cells[`${row},${column}`] || makeDefaultSourceCell("")
-  ));
-  assert.strictEqual(source.rowCount, 2);
-  assert.deepStrictEqual(source.rows, [
-    ["甲", "", "", ""],
-    ["乙", "", "", ""]
-  ]);
-  assert.ok(!JSON.stringify(source).includes("丙"));
-  assert.ok(!JSON.stringify(source).includes("旧D2"));
-  assert.ok(!JSON.stringify(source).includes("旧D3"));
-}
-
-function testHostDisplayedEmptyDoesNotFallBackToRawValue() {
-  assert.strictEqual(typeof helpers.describeExcelSmartFillHostCell, "function");
-  const cell = helpers.describeExcelSmartFillHostCell("", {
-    hasFormula: true,
-    formula: "=A1",
-    rawText: "12"
-  });
-  assert.strictEqual(cell.text, "");
-  assert.strictEqual(cell.hasFormula, true);
-  assert.ok(!JSON.stringify(cell).includes("12"));
-}
-
 function testSuccessfulWriteStillConsumesPreviewIfConsumeWouldThrow() {
   assert.strictEqual(typeof helpers.finalizeExcelSmartFillWriteSuccess, "function");
   const preview = { consumed: false, result: null };
@@ -505,65 +312,6 @@ function testSmartFillPreviewCannotBeSubmittedTwice() {
   );
 }
 
-function testSmartFillExtractionFailsClosedOnOversizedCellText() {
-  const target = buildRange("$D$2:$D$2", [["待填写"]]);
-  const source = buildRange("$A$1:$A$2", [["说明"], ["x".repeat(2001)]]);
-  assert.throws(
-    () => helpers.extractExcelSmartFillPayload(target, source, {
-      targetSheetName: "目标表",
-      sourceSheetName: "目标表",
-      maxCellTextLength: 2000,
-      maxTotalTextLength: 200000
-    }),
-    /2000/
-  );
-}
-
-function testSmartFillExtractionFailsClosedOnOversizedSourceRange() {
-  const values = [["表头"]];
-  for (let index = 0; index < 501; index += 1) {
-    values.push(["行" + index]);
-  }
-  const target = buildRange("$D$2:$D$2", [["待填写"]]);
-  const source = buildRange("$A$1:$A$502", values);
-  assert.throws(
-    () => helpers.extractExcelSmartFillPayload(target, source, {
-      targetSheetName: "目标表",
-      sourceSheetName: "目标表",
-      maxSourceRows: 500
-    }),
-    /500/
-  );
-}
-
-function testSmartFillCustomSourceBlanksTargetCurrentValues() {
-  const target = buildRange("$D$2:$D$3", [["旧D2"], ["旧D3"]]);
-  const source = buildRange("$A$1:$D$3", [
-    ["名称", "部门", "说明", "摘要"],
-    ["甲", "研发", "第一项", "旧D2"],
-    ["乙", "销售", "第二项", "旧D3"]
-  ]);
-  target.Cells.Item(1, 1).Row = 2;
-  target.Cells.Item(1, 1).Column = 4;
-  target.Cells.Item(2, 1).Row = 3;
-  target.Cells.Item(2, 1).Column = 4;
-  source.Cells.Item(2, 4).Row = 2;
-  source.Cells.Item(2, 4).Column = 4;
-  source.Cells.Item(3, 4).Row = 3;
-  source.Cells.Item(3, 4).Column = 4;
-  const payload = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "目标表"
-  });
-  assert.deepStrictEqual(payload.source.headers, ["名称", "部门", "说明", "摘要"]);
-  assert.deepStrictEqual(payload.source.rows, [
-    ["甲", "研发", "第一项", ""],
-    ["乙", "销售", "第二项", ""]
-  ]);
-  assert.ok(!JSON.stringify(payload.source).includes("旧D2"));
-  assert.ok(!JSON.stringify(payload.source).includes("旧D3"));
-}
-
 function testSmartFillInstructionRejectsMoreThan4000CodePoints() {
   assert.strictEqual(typeof helpers.validateExcelSmartFillInstruction, "function");
   assert.strictEqual(helpers.validateExcelSmartFillInstruction("按来源分类"), "按来源分类");
@@ -597,144 +345,6 @@ function testSmartFillPreviewKeepsFailedInsufficientAndCompletedStatuses() {
   assert.ok(!html.includes("<input"));
 }
 
-function testSmartFillRejectsNonContiguousSourceAreas() {
-  const target = buildRange("$D$2:$D$2", [["待填写"]]);
-  const source = buildRange("$A$1:$B$2", [["姓名", "部门"], ["甲", "研发"]]);
-  source.Areas = { Count: 2 };
-  assert.throws(
-    () => helpers.extractExcelSmartFillPayload(target, source, {
-      targetSheetName: "目标表",
-      sourceSheetName: "目标表"
-    }),
-    /连续/
-  );
-}
-
-function testSmartFillSanitizeHelperBlanksOverlappingTargetColumn() {
-  assert.strictEqual(typeof helpers.sanitizeExcelSmartFillSource, "function");
-  const sanitized = helpers.sanitizeExcelSmartFillSource({
-    sheetName: "目标表",
-    address: "$A$1:$D$3",
-    headers: ["名称", "部门", "说明", "摘要"],
-    rows: [["甲", "研发", "第一项", "旧D2"], ["乙", "销售", "第二项", "旧D3"]],
-    rowCount: 2,
-    columnCount: 4,
-    truncated: false,
-    snapshotHash: "deadbeef"
-  }, {
-    sheetName: "目标表",
-    items: [
-      { row: 2, column: 4 },
-      { row: 3, column: 4 }
-    ]
-  });
-  assert.deepStrictEqual(sanitized.rows, [
-    ["甲", "研发", "第一项", ""],
-    ["乙", "销售", "第二项", ""]
-  ]);
-  assert.ok(sanitized.snapshotHash);
-  assert.notStrictEqual(sanitized.snapshotHash, "deadbeef");
-}
-
-function testSmartFillSanitizeFailsClosedOnUnparseableCustomSourceAddress() {
-  assert.throws(
-    () => helpers.sanitizeExcelSmartFillSource({
-      sheetName: "目标表",
-      address: "$D:$D",
-      headers: ["摘要"],
-      rows: [["旧D2"]],
-      rowCount: 1,
-      columnCount: 1,
-      truncated: false
-    }, {
-      sheetName: "目标表",
-      items: [{ row: 2, column: 4 }]
-    }),
-    /来源/
-  );
-}
-
-function testSmartFillSanitizeBlanksDefaultSourceWhenAddressIsEmpty() {
-  const sanitized = helpers.sanitizeExcelSmartFillSource({
-    sheetName: "目标表",
-    address: "",
-    headers: ["名称", "部门", "说明", "摘要"],
-    rows: [["甲", "研发", "第一项", "旧D2"]],
-    rowCount: 1,
-    columnCount: 4,
-    truncated: false
-  }, {
-    sheetName: "目标表",
-    items: [{ row: 2, column: 4 }]
-  });
-  assert.strictEqual(sanitized.rows[0][3], "");
-  assert.ok(!JSON.stringify(sanitized.rows).includes("旧D2"));
-}
-
-function testSmartFillSourceTextDoesNotFallBackToRawValue() {
-  const target = buildRange("$D$2:$D$2", [["待填写"]]);
-  const source = buildRange("$A$1:$A$2", [["说明"], ["显示值"]]);
-  Object.defineProperties(source.Cells.Item(2, 1), {
-    Text: {
-      configurable: true,
-      get() { throw new Error("Text unavailable"); }
-    },
-    Value2: {
-      configurable: true,
-      get() { return 44927; }
-    }
-  });
-  const payload = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "目标表"
-  });
-  assert.strictEqual(payload.source.rows[0][0], "");
-  assert.ok(!JSON.stringify(payload.source).includes("44927"));
-}
-
-function testSmartFillSourceTextMissingDoesNotUseValue2() {
-  const target = buildRange("$D$2:$D$2", [["待填写"]]);
-  const source = buildRange("$A$1:$A$2", [["说明"], ["显示值"]]);
-  const cell = source.Cells.Item(2, 1);
-  delete cell.Text;
-  cell.Value2 = 44927;
-  const payload = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "目标表"
-  });
-  assert.strictEqual(payload.source.rows[0][0], "");
-  assert.ok(!JSON.stringify(payload.source).includes("44927"));
-}
-
-function testWritePreflightHashMatchesSanitizedCapture() {
-  const target = buildRange("$D$2:$D$3", [["旧D2"], ["旧D3"]]);
-  const source = buildRange("$A$1:$D$3", [
-    ["名称", "部门", "说明", "摘要"],
-    ["甲", "研发", "第一项", "旧D2"],
-    ["乙", "销售", "第二项", "旧D3"]
-  ]);
-  target.Cells.Item(1, 1).Row = 2;
-  target.Cells.Item(1, 1).Column = 4;
-  target.Cells.Item(2, 1).Row = 3;
-  target.Cells.Item(2, 1).Column = 4;
-  source.Cells.Item(2, 4).Row = 2;
-  source.Cells.Item(2, 4).Column = 4;
-  source.Cells.Item(3, 4).Row = 3;
-  source.Cells.Item(3, 4).Column = 4;
-  const captured = helpers.extractExcelSmartFillPayload(target, source, {
-    targetSheetName: "目标表",
-    sourceSheetName: "目标表"
-  });
-  const reread = helpers.extractExcelSmartFillPayload(null, source, {
-    sourceOnly: true,
-    sourceSheetName: "目标表"
-  });
-  const unsanitizedHash = reread.source.snapshotHash;
-  const sanitizedReread = helpers.sanitizeExcelSmartFillSource(reread.source, captured.target);
-  assert.strictEqual(sanitizedReread.snapshotHash, captured.source.snapshotHash);
-  assert.notStrictEqual(unsanitizedHash, captured.source.snapshotHash);
-}
-
 function testSmartFillUiContract() {
   [
     'id="excel-smart-fill-options"',
@@ -760,11 +370,12 @@ function testSmartFillUiContract() {
   assert.ok(!html.includes("撤销"));
   assert.ok(js.includes("buildExcelSmartFillReadonlyPreview"));
   assert.ok(js.includes("finalizeExcelSmartFillWriteSuccess"));
-  assert.ok(js.includes("buildExcelSmartFillDefaultSource"));
-  assert.ok(js.includes("describeExcelSmartFillHostCell"));
+  assert.ok(js.includes("mapExcelSmartFillPreviewToTarget"));
+  assert.ok(js.includes("/write-commits"));
   assert.ok(js.includes("requireExcelSmartFillInstruction"));
-  assert.ok(js.includes("sanitizeExcelSmartFillSource"));
-  assert.ok(js.includes("sanitizeExcelSmartFillSource(payload.source, target)"));
+  assert.ok(!js.includes("buildSmartFillDefaultSource"));
+  assert.ok(!js.includes("sanitizeExcelSmartFillSource"));
+  assert.ok(!js.includes("describeExcelSmartFillHostCell"));
   assert.ok(js.includes("EXCEL_SMART_FILL_RESULT_TOO_LARGE"));
   assert.ok(js.includes("智能填写来源校验组件不可用"));
   assert.ok(!/readSmartFillPropertyState\(cell, \[\s*"Text", "text", "Value2"/.test(js));
@@ -1005,30 +616,14 @@ function testSmartFillDraftsSummaryCalculation() {
   assert.strictEqual(summary.summaryText, "将写入 2 个单元格；未勾选或信息不足项不会写入。");
 }
 
-testSmartFillDefaultSourceUsesHeaderAndCurrentRowOnly();
-testSmartFillDefaultSourceKeepsARowForEachTargetItem();
-testHostDisplayedEmptyDoesNotFallBackToRawValue();
 testSuccessfulWriteStillConsumesPreviewIfConsumeWouldThrow();
 testSmartFillReadonlyPreviewOmitsEditingAndUndo();
 testSmartFillPreviewCannotBeSubmittedTwice();
-testSmartFillPayloadCapturesFrozenSnapshots();
 testSmartFillWritebackGuardsSnapshotAndFormulaSafety();
 testSmartFillWritesFormulaLikeTextAsLiteralAndReportsRollbackAddresses();
 testSmartFillFailsClosedWhenHostSafetyPropertiesCannotBeRead();
-testSmartFillExcludesHiddenSourceValuesAndValidatesTargetShape();
-testSmartFillExtractionFailsClosedOnUnreadableHostFlags();
-testSmartFillExtractionFailsClosedOnOversizedCellText();
-testSmartFillExtractionFailsClosedOnOversizedSourceRange();
-testSmartFillCustomSourceBlanksTargetCurrentValues();
 testSmartFillInstructionRejectsMoreThan4000CodePoints();
 testSmartFillPreviewKeepsFailedInsufficientAndCompletedStatuses();
-testSmartFillRejectsNonContiguousSourceAreas();
-testSmartFillSanitizeHelperBlanksOverlappingTargetColumn();
-testSmartFillSanitizeFailsClosedOnUnparseableCustomSourceAddress();
-testSmartFillSanitizeBlanksDefaultSourceWhenAddressIsEmpty();
-testSmartFillSourceTextDoesNotFallBackToRawValue();
-testSmartFillSourceTextMissingDoesNotUseValue2();
-testWritePreflightHashMatchesSanitizedCapture();
 testSmartFillUiContract();
 testSmartFillJobLifecycleAndCancellationContract();
 testSmartFillPartialPreviewContract();

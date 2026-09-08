@@ -150,7 +150,7 @@ Adapter 会在平台成功返回后再次校验 Schema、ID 集合、类型、�
 
 ## 参考工作流 DSL
 
-`packaging/reference-workflows/excel-smart-fill-v1.yml`（文件名沿用 Preview 初版路径）是白名单内的参考 DSL，内容采用 v2 合同。
+`packaging/reference-workflows/excel-smart-fill-v2.yml` 是白名单内的参考 DSL，文件名与内容均明确绑定 `excel.smart_fill.v2`，不提供旧版地址绑定语义的兼容回退。
 
 ## 验证样例与失败案例
 

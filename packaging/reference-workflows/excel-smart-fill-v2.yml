@@ -1,9 +1,9 @@
 kind: app
-version: 0.1.5
+version: 0.2.0
 
 app:
   mode: workflow
-  name: AI-WPS Excel smart fill v1
+  name: AI-WPS Excel smart fill v2
   description: Reference workflow for versioned Excel smart fill contract (excel.smart_fill.v2).
 
 workflow:

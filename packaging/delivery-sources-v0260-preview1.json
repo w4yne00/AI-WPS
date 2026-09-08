@@ -35,8 +35,8 @@
     },
     {
       "type": "file",
-      "source": "packaging/reference-workflows/excel-smart-fill-v1.yml",
-      "target": "reference-workflows/excel-smart-fill-v1.yml"
+      "source": "packaging/reference-workflows/excel-smart-fill-v2.yml",
+      "target": "reference-workflows/excel-smart-fill-v2.yml"
     },
     {
       "type": "tree",

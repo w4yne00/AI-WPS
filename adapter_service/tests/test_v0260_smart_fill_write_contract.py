@@ -88,7 +88,7 @@ def test_preview_audit_rejects_plugin_without_compensation_contract(tmp_path):
     )
     (plugin / "taskpane.js").write_text(
         "buildExcelSmartFillReadonlyPreview(); finalizeExcelSmartFillWriteSuccess(); "
-        "buildExcelSmartFillDefaultSource(); describeExcelSmartFillHostCell(); "
+        "mapExcelSmartFillPreviewToTarget(); /write-commits; "
         "writeExcelSmartFillCells(); COMPENSATION_FAILED; COMPENSATION_SUCCEEDED; 内部故障处理;",
         encoding="utf-8",
     )
@@ -115,3 +115,43 @@ def test_source_tree_excel_plugin_satisfies_single_cell_write_contract():
         plugin_root=ROOT / "formal-plugin-kit/wps-ai-assistant-et_1.0.0",
         prompt_path=ROOT / "adapter_service/system_prompts/excel-smart-fill.md",
     )
+
+
+def test_source_tree_satisfies_preview_experience_contract():
+    module = _load_audit()
+    module.audit_experience_contract(
+        ROOT,
+        packages_root=ROOT / "formal-plugin-kit",
+    )
+
+
+def test_preview_experience_contract_rejects_legacy_model_selector(tmp_path):
+    module = _load_audit()
+    packages = tmp_path / "packages"
+    for plugin_name in (
+        "wps-ai-assistant_1.0.0",
+        "wps-ai-assistant-et_1.0.0",
+        "wps-ai-assistant-wpp_1.0.0",
+    ):
+        plugin = packages / plugin_name
+        plugin.mkdir(parents=True)
+        (plugin / "taskpane.html").write_text(
+            '<button id="task-model-config-trigger"></button>'
+            '<div id="task-model-config-menu"></div>'
+            '<select id="workflow-profile-select"></select>',
+            encoding="utf-8",
+        )
+        (plugin / "taskpane.js").write_text("", encoding="utf-8")
+    word = packages / "wps-ai-assistant_1.0.0"
+    (word / "taskpane.css").write_text(
+        ".review-location-card {} @media (max-width: 320px) {} @media (max-width: 420px) {}",
+        encoding="utf-8",
+    )
+    (word / "taskpane-helpers.js").write_text(
+        "review-location-card manual_toc suspected-toc-",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(module.DeliveryFailure) as error_info:
+        module.audit_experience_contract(tmp_path)
+    assert "LEGACY_TASK_MODEL_SELECTOR" in str(error_info.value)

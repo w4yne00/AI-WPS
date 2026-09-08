@@ -1069,168 +1069,12 @@
     };
   }
 
-  function extractExcelSmartFillSelection(role) {
-    var app = getEtApplication();
-    var workbook = getActiveWorkbook(app);
-    var sheet = getActiveSheet(app);
-    var range = getSelectionRange(app);
-    var workbookId = readSmartFillWorkbookId(workbook);
-    var sheetName = readSmartFillSheetName(sheet);
-    if (!workbookId) {
-      throw new Error("无法安全读取当前工作簿标识，请重新打开任务窗格后重试。");
-    }
-    if (!sheetName) {
-      throw new Error("无法安全读取当前工作表标识，请重新打开任务窗格后重试。");
-    }
-    var options = {
-      workbookId: workbookId,
-      targetSheetName: sheetName,
-      sourceSheetName: sheetName,
-      maxItems: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxItems,
-      maxSourceRows: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceRows,
-      maxSourceColumns: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceColumns,
-      maxCellTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength,
-      maxTotalTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxTotalTextLength
-    };
-    if (!helpers.extractExcelSmartFillPayload) {
-      throw new Error("智能填写选区读取组件不可用，请重新打开任务窗格。");
-    }
-    if (role === "target") {
-      options.targetOnly = true;
-      return helpers.extractExcelSmartFillPayload(range, null, options);
-    }
-    options.sourceOnly = true;
-    return helpers.extractExcelSmartFillPayload(null, range, options);
-  }
-
-  function getSmartFillSheetCell(sheet, row, column) {
-    var cells = resolveValue(safeRead(sheet, "Cells"), sheet) || resolveValue(safeRead(sheet, "cells"), sheet);
-    var item = cells && (safeRead(cells, "Item") || safeRead(cells, "item"));
-    var cell;
-    if (typeof item === "function") {
-      cell = safeCall(item, cells, [row, column]);
-      if (cell) {
-        return cell;
-      }
-    }
-    if (typeof cells === "function") {
-      cell = safeCall(cells, sheet, [row, column]);
-      if (cell) {
-        return cell;
-      }
-    }
-    return null;
-  }
-
-  function readSmartFillPropertyState(owner, keys, preserveObject) {
-    var index;
-    var rawValue;
-    var value;
-    if (!owner) {
-      return { known: true, present: false, value: undefined };
-    }
-    for (index = 0; index < keys.length; index += 1) {
-      try {
-        rawValue = owner[keys[index]];
-        if (typeof rawValue === "function") {
-          rawValue = rawValue.call(owner);
-        }
-      } catch (error) {
-        return { known: false, present: true, value: undefined };
-      }
-      if (typeof rawValue === "undefined" || rawValue === null) {
-        continue;
-      }
-      if (preserveObject) {
-        return { known: true, present: true, value: rawValue };
-      }
-      value = resolveScalarValue(rawValue);
-      if (typeof value === "undefined" || value === null) {
-        return { known: false, present: true, value: undefined };
-      }
-      return { known: true, present: true, value: value };
-    }
-    return { known: true, present: false, value: undefined };
-  }
-
-  function readSmartFillObjectState(owner, keys) {
-    return readSmartFillPropertyState(owner, keys, true);
-  }
-
-  function readSmartFillBooleanState(owner, keys) {
-    var state = readSmartFillPropertyState(owner, keys, false);
-    var value;
-    if (!state.known || !state.present) {
-      return { known: state.known, present: state.present, value: null };
-    }
-    value = state.value;
-    if (typeof value === "boolean") {
-      return { known: true, present: true, value: value };
-    }
-    if (typeof value === "number" && isFinite(value)) {
-      return { known: true, present: true, value: value !== 0 };
-    }
-    if (typeof value === "string") {
-      if (/^(true|yes|1|是)$/i.test(value.trim())) {
-        return { known: true, present: true, value: true };
-      }
-      if (/^(false|no|0|否)$/i.test(value.trim())) {
-        return { known: true, present: true, value: false };
-      }
-    }
-    return { known: false, present: true, value: null };
-  }
-
   function readSmartFillSheetName(sheet) {
-    var state = readSmartFillPropertyState(sheet, ["Name", "name"]);
-    return state.known && state.present ? safeText(state.value, "") : "";
-  }
-
-  function isSmartFillHostCellHidden(cell) {
-    var direct = readSmartFillBooleanState(cell, ["Hidden", "hidden"]);
-    var rowOwner = readSmartFillObjectState(cell, ["EntireRow", "entireRow"]);
-    var columnOwner = readSmartFillObjectState(cell, ["EntireColumn", "entireColumn"]);
-    var rowHidden;
-    var columnHidden;
-    if (!direct.known || !rowOwner.known || !columnOwner.known) {
-      return true;
+    var name = resolveValue(safeRead(sheet, "Name"), sheet);
+    if (typeof name === "undefined" || name === null) {
+      name = resolveValue(safeRead(sheet, "name"), sheet);
     }
-    rowHidden = readSmartFillBooleanState(rowOwner.present ? rowOwner.value : null, ["Hidden", "hidden"]);
-    columnHidden = readSmartFillBooleanState(columnOwner.present ? columnOwner.value : null, ["Hidden", "hidden"]);
-    return !rowHidden.known || !columnHidden.known || direct.value === true ||
-      rowHidden.value === true || columnHidden.value === true;
-  }
-
-  function readSmartFillDisplayedValue(cell) {
-    var formulaState;
-    var hasFormula;
-    var valueState;
-    var displayed;
-    if (!cell || isSmartFillHostCellHidden(cell)) {
-      return "";
-    }
-    hasFormula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
-    formulaState = readSmartFillPropertyState(cell, [
-      "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
-    ]);
-    if (!hasFormula.known || !formulaState.known) {
-      return "";
-    }
-    if (hasFormula.value === true ||
-        String(formulaState.value || "").trim().charAt(0) === "=") {
-      return "";
-    }
-    valueState = readSmartFillPropertyState(cell, [
-      "Text", "text"
-    ]);
-    if (!valueState.known) {
-      return "";
-    }
-    displayed = valueState.present ? safeText(valueState.value) : "";
-    if (Array.from(String(displayed)).length > EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength) {
-      throw new Error("智能填写单元格文本最多 2000 个字符，不能静默截断。");
-    }
-    return displayed;
+    return safeText(name, "");
   }
 
   function makeSmartFillTextHash(value) {
@@ -1250,29 +1094,6 @@
       headers: source && source.headers || [],
       rows: source && source.rows || []
     }));
-  }
-
-  function buildSmartFillDefaultSource(sheet, target) {
-    if (!helpers.buildExcelSmartFillDefaultSource) {
-      throw new Error("智能填写默认来源组件不可用，请重新打开任务窗格。");
-    }
-    return helpers.buildExcelSmartFillDefaultSource(target, function (row, column) {
-      var cell = getSmartFillSheetCell(sheet, row, column);
-      var formulaState;
-      var hasFormula;
-      if (!cell) {
-        return { text: "", hidden: false, hasFormula: false, formula: "", comment: "" };
-      }
-      hasFormula = readSmartFillBooleanState(cell, ["HasFormula", "hasFormula"]);
-      formulaState = readSmartFillPropertyState(cell, [
-        "Formula", "formula", "FormulaLocal", "formulaLocal", "FormulaR1C1", "formulaR1C1"
-      ]);
-      return helpers.describeExcelSmartFillHostCell(readSmartFillDisplayedValue(cell), {
-        hidden: isSmartFillHostCellHidden(cell),
-        hasFormula: hasFormula.value === true,
-        formula: String(formulaState.value || "")
-      });
-    });
   }
 
   function summarizeSmartFillSource(source) {
@@ -2144,35 +1965,27 @@
 
   function getSmartFillCurrentSource() {
     var source = state.smartFillSource || {};
-    var target = state.smartFillTarget || {};
     var sheet = getSmartFillTargetSheet(source.sheetName);
     var range;
     var payload;
-    var targetCopy;
     if (!sheet) {
       return null;
     }
     if (!source.address) {
-      targetCopy = JSON.parse(JSON.stringify(target));
-      return buildSmartFillDefaultSource(sheet, targetCopy);
-    }
-    range = getSmartFillSheetRange(sheet, source.address);
-    if (!range || !helpers.extractExcelSmartFillPayload) {
       return null;
     }
-    payload = helpers.extractExcelSmartFillPayload(null, range, {
-      sourceOnly: true,
-      sourceSheetName: source.sheetName,
-      maxItems: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxItems,
+    range = getSmartFillSheetRange(sheet, source.address);
+    if (!range || !helpers.extractExcelSmartFillSourcePayload) {
+      return null;
+    }
+    payload = helpers.extractExcelSmartFillSourcePayload(range, {
+      sheetName: source.sheetName,
       maxSourceRows: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceRows,
       maxSourceColumns: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxSourceColumns,
       maxCellTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxCellTextLength,
       maxTotalTextLength: EXCEL_SMART_FILL_EXTRACTION_OPTIONS.maxTotalTextLength
     });
-    if (!helpers.sanitizeExcelSmartFillSource) {
-      throw new Error("智能填写来源校验组件不可用，请重新打开任务窗格。");
-    }
-    return helpers.sanitizeExcelSmartFillSource(payload.source, target);
+    return payload.source;
   }
 
   function readSmartFillWorkbookId(workbook) {

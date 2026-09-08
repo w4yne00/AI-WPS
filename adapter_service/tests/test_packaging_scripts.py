@@ -1771,7 +1771,9 @@ esac
 
         self.assertNotIn("renderTaskRoutes", js)
         self.assertIn("workflow-profile-manager", html)
-        self.assertIn("workflow-profile-select", html)
+        self.assertNotIn("workflow-profile-select", html)
+        self.assertIn('id="task-model-config-trigger"', html)
+        self.assertIn('id="task-model-config-menu"', html)
         self.assertIn("/provider/model-configurations", js)
         self.assertIn("word.smart_write", js)
         self.assertIn("word.smart_imitation", js)
@@ -1781,6 +1783,9 @@ esac
         for host_html_path, host_js_path in host_files:
             host_html = host_html_path.read_text(encoding="utf-8")
             host_js = host_js_path.read_text(encoding="utf-8")
+            self.assertNotIn('id="workflow-profile-select"', host_html)
+            self.assertIn('id="task-model-config-trigger"', host_html)
+            self.assertIn('id="task-model-config-menu"', host_html)
             self.assertNotIn('id="provider-api-key"', host_html)
             self.assertNotIn('id="btn-save-api-key"', host_html)
             self.assertNotIn('id="btn-clear-api-key"', host_html)

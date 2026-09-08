@@ -354,6 +354,8 @@ function testTargetMappingTopToBottomWithEmptySlotsForExcludedOrFailed() {
   });
 
   assert.strictEqual(mapping.items.length, 3);
+  assert.ok(!Object.prototype.hasOwnProperty.call(mapping.target, "columnHeader"));
+  assert.ok(!Object.prototype.hasOwnProperty.call(mapping.target, "rowContext"));
   assert.strictEqual(mapping.items[0].itemId, "sf_001");
   assert.strictEqual(mapping.items[0].address, "$D$2");
   assert.strictEqual(mapping.items[0].row, 2);
@@ -802,9 +804,8 @@ function testTaskpaneBehavioralIntegration() {
     const { state, writeExcelSmartFillResult } = env.exports;
 
     // Set up state as if pollExcelSmartFillJob completed
-    state.smartFillSource = helpers.extractExcelSmartFillPayload(null, sourceRange, {
-      sourceOnly: true,
-      sourceSheetName: "客户表"
+    state.smartFillSource = helpers.extractExcelSmartFillSourcePayload(sourceRange, {
+      sheetName: "客户表"
     }).source;
     state.smartFillTarget = {
       sheetName: "客户表",
@@ -882,9 +883,8 @@ function testTaskpaneBehavioralIntegration() {
     });
     const { state, writeExcelSmartFillResult } = env.exports;
 
-    state.smartFillSource = helpers.extractExcelSmartFillPayload(null, sourceRange, {
-      sourceOnly: true,
-      sourceSheetName: "客户表"
+    state.smartFillSource = helpers.extractExcelSmartFillSourcePayload(sourceRange, {
+      sheetName: "客户表"
     }).source;
     state.smartFillTarget = { sheetName: "客户表", address: "$D$2:$D$4", rowCount: 3 };
     state.smartFillWorkbookId = "测试表.xlsx";
@@ -955,9 +955,8 @@ function testTaskpaneBehavioralIntegration() {
     const { state, writeExcelSmartFillResult } = env.exports;
 
     state.currentMode = "excelSmartFill";
-    state.smartFillSource = helpers.extractExcelSmartFillPayload(null, sourceRange, {
-      sourceOnly: true,
-      sourceSheetName: "客户表"
+    state.smartFillSource = helpers.extractExcelSmartFillSourcePayload(sourceRange, {
+      sheetName: "客户表"
     }).source;
     state.smartFillTarget = { sheetName: "客户表", address: "$D$2:$D$4", rowCount: 3 };
     state.smartFillWorkbookId = "测试表.xlsx";
@@ -1054,9 +1053,8 @@ function testTaskpaneBehavioralIntegration() {
     const env = createIntegrationEnvironment({ appMock });
     const { state, writeExcelSmartFillResult } = env.exports;
 
-    state.smartFillSource = helpers.extractExcelSmartFillPayload(null, sourceRange, {
-      sourceOnly: true,
-      sourceSheetName: "客户表"
+    state.smartFillSource = helpers.extractExcelSmartFillSourcePayload(sourceRange, {
+      sheetName: "客户表"
     }).source;
     state.smartFillTarget = { sheetName: "客户表", address: "$D$2:$D$3", rowCount: 2 };
     state.smartFillWorkbookId = "测试表.xlsx";

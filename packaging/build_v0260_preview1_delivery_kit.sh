@@ -89,7 +89,7 @@ PY
   --date "$DATE_TAG" \
   --baseline-archive "$BASELINE_ARCHIVE" \
   --baseline-version "$BASELINE_VERSION" \
-  --acceptance-issue 120 \
+  --acceptance-issue 154 \
   --source-commit "$SOURCE_COMMIT"
 
 PYTHONPATH="$ROOT_DIR/adapter_service" "$PYTHON_BIN" \
@@ -133,6 +133,17 @@ if ! command -v node >/dev/null 2>&1; then
   echo "plugin_contract_runtime_required=node"
   exit 1
 fi
+if ! command -v npm >/dev/null 2>&1; then
+  echo "plugin_addon_runtime_required=npm"
+  exit 1
+fi
+npm --prefix "$ROOT_DIR/wps-addon" test
+npm --prefix "$ROOT_DIR/wps-addon" run build
+echo "plugin_addon_regression=passed"
+
+find "$TMP_DIR" -type f -name '*.sh' -exec bash -n {} \;
+echo "shell_syntax=passed"
+
 find "$TMP_DIR/packages" -type f -name '*.js' -exec node --check {} \;
 AI_WPS_HASH_CONTRACT_PYTHON="$PYTHON_BIN" \
 AI_WPS_WORD_PLUGIN_DIR="$TMP_DIR/packages/wps-ai-assistant_1.0.0" \

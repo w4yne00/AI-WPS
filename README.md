@@ -16,10 +16,10 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 | Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | `v0.26.0-preview.1` automated status `candidate` after build; Issue #120 target-machine acceptance remains `manual-pending`; blocking Issue #119 implementation is completed and closed |
+| Delivery status | The Issue #153 aggregate is recorded as `candidate` only after automated gates pass; Issue #154 target-machine acceptance remains `manual-pending` |
 | Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.26.0-preview.1` establishes the neutral Preview delivery boundary and adds Excel Smart Fill as the ninth independently configured task. The feature is synthetic-data validated and still requires target-machine acceptance; the package does not claim WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
+`v0.26.0-preview.1` aggregates source-first Excel Smart Fill, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The automated candidate still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
@@ -27,7 +27,7 @@ Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is
 
 | Version | Summary |
 | --- | --- |
-| `v0.26.0-preview.1` | Excel Smart Fill as an independently configured ninth task; guarded preview and write-back |
+| `v0.26.0-preview.1` | Source-first Smart Fill; automatic/manual/suspected TOC handling; location-grouped format issues; compact model entries for nine tasks |
 | `v0.25.3-alpha` | Result preview; format-issue cards; caption-association conclusions; slide page roles |
 | `v0.25.2-alpha` | Image-semantics supplement default-on with visual-off degrade; PPT Chinese template title recognition |
 | `v0.25.1-alpha` | Format-review v2 JS/Python hash contract; allowlist assembly; Python 3.8 lifecycle gate |
@@ -44,11 +44,11 @@ Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-disp
 | Word | Smart Write | Rewrite, continue, summarize, custom write; preview / compare / plain text, then write-back |
 | Word | Smart Imitation | Template-based imitation; preview, plain text, copy; no write-back |
 | Word | Document Review | Typos, expression, logic, fluency, professionalism; selection or limited full document |
-| Word | Format Review | Against `技术文件格式及书写要求`; 格式问题 cards, 题注关联结论, 图像语义补充; no format write-back |
+| Word | Format Review | Automatic/manual TOC exemptions, suspected-TOC disclosure, location-grouped issues, caption associations, and image semantics; no format write-back |
 | Word | Writing policy | Four preset packs plus a local organization library |
 | Excel | 智能分析 | Selected or used range; structured report and briefing paragraph; no cell writes |
 | Excel | 公式助手 | Explicit selection (max 30×20); generate or explain; copy only |
-| Excel | 智能填写 | One contiguous single-column target (max 500); preview, edit/exclude/retry, then guarded write-back; no undo |
+| Excel | 智能填写 | One header-bearing rectangular source (max 500 data rows), source-first address-free preview, then a guarded same-sheet single-column write target; no undo |
 | PPT | 智能总结 | Current slide, or one `.md` / `.docx` (≤10 MB) for a full-deck outline; preview and copy only |
 | PPT | 结构审查 | Up to 60 slides; 幻灯片页角色 list; read-only |
 

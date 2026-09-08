@@ -100,7 +100,7 @@ def _prepare_delivery(tmp_path, source_commit="e94c561"):
             "--baseline-version",
             "0.25.3-alpha",
             "--acceptance-issue",
-            "120",
+            "154",
             "--source-commit",
             source_commit,
         ],
@@ -926,6 +926,18 @@ def test_preview_build_uses_preview_lifecycle_gate():
     assert "packaging/python38_delivery_lifecycle_gate.py" not in build
 
 
+def test_preview_build_runs_addon_and_shell_syntax_gates():
+    build = (ROOT / "packaging/build_v0260_preview1_delivery_kit.sh").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'npm --prefix "$ROOT_DIR/wps-addon" test' in build
+    assert 'npm --prefix "$ROOT_DIR/wps-addon" run build' in build
+    assert "plugin_addon_regression=passed" in build
+    assert "-name '*.sh' -exec bash -n {} \\;" in build
+    assert "shell_syntax=passed" in build
+
+
 def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp_path):
     delivery = _prepare_delivery(tmp_path)
 
@@ -934,7 +946,7 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
     assert manifest["excelSmartFillAssets"] == {
         "operationsGuide": "docs/operations/model-excel-smart-fill-contract.md",
         "workflowGuide": "docs/operations/workflow-platform-excel-smart-fill.md",
-        "referenceWorkflow": "reference-workflows/excel-smart-fill-v1.yml",
+        "referenceWorkflow": "reference-workflows/excel-smart-fill-v2.yml",
         "systemPrompt": "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md",
     }
 
@@ -951,9 +963,10 @@ def test_preview_delivery_tree_contains_all_nine_tasks_and_smart_fill_assets(tmp
 
     assert (delivery / "docs/operations/model-excel-smart-fill-contract.md").is_file()
     assert (delivery / "docs/operations/workflow-platform-excel-smart-fill.md").is_file()
-    ref_wf = delivery / "reference-workflows/excel-smart-fill-v1.yml"
+    ref_wf = delivery / "reference-workflows/excel-smart-fill-v2.yml"
     assert ref_wf.is_file()
     assert "excel.smart_fill.v2" in ref_wf.read_text(encoding="utf-8")
+    assert not (delivery / "reference-workflows/excel-smart-fill-v1.yml").exists()
 
     icon_path = delivery / "packages/wps-ai-assistant-et_1.0.0/assets/icon-excel-smart-fill.png"
     assert icon_path.is_file()
@@ -1164,7 +1177,7 @@ def test_preview_audit_rejects_smart_fill_contract_violations(tmp_path):
     taskpane_file.write_text(original_taskpane, encoding="utf-8")
 
     # Tamper with reference workflow (corrupt contract version)
-    workflow_file = delivery / "reference-workflows/excel-smart-fill-v1.yml"
+    workflow_file = delivery / "reference-workflows/excel-smart-fill-v2.yml"
     original_workflow = workflow_file.read_text(encoding="utf-8")
     workflow_file.write_text(original_workflow.replace("excel.smart_fill.v2", "excel.smart_fill.v3"), encoding="utf-8")
 
@@ -1184,7 +1197,7 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     delivery = _prepare_delivery(tmp_path)
     acceptance = (delivery / "docs/v0260-preview1-target-machine-acceptance.md").read_text(encoding="utf-8")
 
-    assert "Issue #120" in acceptance
+    assert "Issue #154" in acceptance
     assert "v0.26.0-preview.1" in acceptance
     assert "manual-pending" in acceptance
     assert "当前记录状态：`manual-pending`" in acceptance
@@ -1193,3 +1206,10 @@ def test_preview_acceptance_template_covers_nine_tasks_and_pending_status(tmp_pa
     assert "九类任务" in acceptance or "九任务" in acceptance
     assert "单列连续区域" in acceptance or "单列" in acceptance
     assert "失败补偿" in acceptance
+    assert "自动目录" in acceptance
+    assert "手工目录" in acceptance
+    assert "疑似目录" in acceptance
+    assert "格式位置问题组" in acceptance
+    assert "320×700" in acceptance
+    assert "420×900" in acceptance
+    assert "目标机人工验收" in acceptance

@@ -785,7 +785,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--date", required=True)
     parser.add_argument("--baseline-archive", required=True, type=Path)
     parser.add_argument("--baseline-version", default=BASELINE_VERSION)
-    parser.add_argument("--acceptance-issue", default=120, type=int)
+    parser.add_argument("--acceptance-issue", default=154, type=int)
     parser.add_argument("--source-commit", required=True)
     args = parser.parse_args(argv)
     try:

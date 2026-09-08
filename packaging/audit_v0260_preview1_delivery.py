@@ -36,6 +36,7 @@ EXPECTED_TASKS = frozenset(
 FORBIDDEN_OUTPUT_PATHS = {
     "installer/install_phase1.sh",
     "scripts/phase1_smoke_test.sh",
+    "reference-workflows/excel-smart-fill-v1.yml",
 }
 REQUIRED_OUTPUTS = {
     "README.md",
@@ -165,7 +166,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
     if (
         smart_fill_assets.get("operationsGuide") != "docs/operations/model-excel-smart-fill-contract.md"
         or smart_fill_assets.get("workflowGuide") != "docs/operations/workflow-platform-excel-smart-fill.md"
-        or smart_fill_assets.get("referenceWorkflow") != "reference-workflows/excel-smart-fill-v1.yml"
+        or smart_fill_assets.get("referenceWorkflow") != "reference-workflows/excel-smart-fill-v2.yml"
         or smart_fill_assets.get("systemPrompt") != "packages/adapter-start-kit/adapter_service/system_prompts/excel-smart-fill.md"
     ):
         raise DeliveryFailure("V0260_SMART_FILL_ASSETS_INVALID")
@@ -209,7 +210,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
 
     target_acceptance = manifest.get("targetAcceptance", {})
     if (
-        manifest.get("targetAcceptanceIssue") != 120
+        manifest.get("targetAcceptanceIssue") != 154
         or target_acceptance.get("status") != "manual-pending"
         or target_acceptance.get("required") is not True
         or target_acceptance.get("doesNotCloseIssue") is not True
@@ -237,7 +238,7 @@ def audit_manifest(root: Path, manifest: Dict) -> None:
         raise DeliveryFailure("V0260_ARCHIVE_IDENTITY_INVALID")
     if evidence.get("archiveChecksumFile") != expected_archive_name + ".sha256":
         raise DeliveryFailure("V0260_ARCHIVE_CHECKSUM_EVIDENCE_INVALID")
-    if evidence.get("acceptanceRecord") != "Issue #120":
+    if evidence.get("acceptanceRecord") != "Issue #154":
         raise DeliveryFailure("V0260_ACCEPTANCE_EVIDENCE_INVALID")
     baseline = manifest.get("baseline", {})
     if (
@@ -327,22 +328,118 @@ def audit_smart_fill_write_contract(root, plugin_root=None, prompt_path=None):
     if (
         "buildExcelSmartFillReadonlyPreview" not in js
         or "finalizeExcelSmartFillWriteSuccess" not in js
-        or "buildExcelSmartFillDefaultSource" not in js
-        or "describeExcelSmartFillHostCell" not in js
+        or "mapExcelSmartFillPreviewToTarget" not in js
+        or "/write-commits" not in js
         or "writeExcelSmartFillCells" not in js
         or "COMPENSATION_FAILED" not in js
         or "COMPENSATION_SUCCEEDED" not in js
         or "内部故障处理" not in js
     ):
         raise DeliveryFailure("V0260_SMART_FILL_WRITE_MISSING")
+    if any(
+        marker in html or marker in js or marker in helpers_js
+        for marker in (
+            "buildExcelSmartFillDefaultSource",
+            "buildSmartFillDefaultSource",
+            "sanitizeExcelSmartFillSource",
+            "describeExcelSmartFillHostCell",
+            "extractExcelSmartFillPayload:",
+            "columnHeader",
+            "rowContext",
+            'id="btn-capture-smart-fill-source"',
+            'id="btn-capture-smart-fill-target"',
+        )
+    ):
+        raise DeliveryFailure("V0260_SMART_FILL_LEGACY_FLOW_PRESENT")
     if (
-        "writeExcelSmartFillCells" not in helpers_js
+        "extractExcelSmartFillSourcePayload" not in helpers_js
+        or "mapExcelSmartFillPreviewToTarget" not in helpers_js
+        or "inspectExcelSmartFillTargetSelection" not in helpers_js
+        or "writeExcelSmartFillCells" not in helpers_js
         or "sameSmartFillSnapshotState" not in helpers_js
         or "smartFillWriteValueMatches" not in helpers_js
         or "COMPENSATION_FAILED" not in helpers_js
         or "COMPENSATION_SUCCEEDED" not in helpers_js
     ):
         raise DeliveryFailure("V0260_SMART_FILL_COMPENSATION_CONTRACT_MISSING")
+
+
+def audit_experience_contract(root: Path, packages_root=None) -> None:
+    packages = Path(packages_root) if packages_root is not None else Path(root) / "packages"
+    plugin_tasks = {
+        "wps-ai-assistant_1.0.0": {
+            "word.smart_write",
+            "word.smart_imitation",
+            "word.document_review",
+            "word.format_review",
+        },
+        "wps-ai-assistant-et_1.0.0": {
+            "excel.analysis",
+            "excel.formula_assistant",
+            "excel.smart_fill",
+        },
+        "wps-ai-assistant-wpp_1.0.0": {
+            "ppt.slide_assistant",
+            "ppt.structure_review",
+        },
+    }
+    plugin_sources = {}
+    try:
+        for plugin_name in plugin_tasks:
+            plugin = packages / plugin_name
+            plugin_sources[plugin_name] = {
+                "html": (plugin / "taskpane.html").read_text(encoding="utf-8"),
+                "js": (plugin / "taskpane.js").read_text(encoding="utf-8"),
+            }
+    except OSError as exc:
+        raise DeliveryFailure("V0260_EXPERIENCE_CONTRACT_MISSING") from exc
+
+    for sources in plugin_sources.values():
+        html = sources["html"]
+        if "workflow-profile-select" in html:
+            raise DeliveryFailure("V0260_LEGACY_TASK_MODEL_SELECTOR")
+        if (
+            'id="task-model-config-trigger"' not in html
+            or 'id="task-model-config-menu"' not in html
+        ):
+            raise DeliveryFailure("V0260_TASK_MODEL_COMPACT_ENTRY_MISSING")
+
+    for plugin_name, tasks in plugin_tasks.items():
+        js = plugin_sources[plugin_name]["js"]
+        if any(task not in js for task in tasks):
+            raise DeliveryFailure("V0260_TASK_MODEL_COVERAGE_MISSING")
+
+    word = packages / "wps-ai-assistant_1.0.0"
+    word_html = plugin_sources["wps-ai-assistant_1.0.0"]["html"]
+    try:
+        word_css = (word / "taskpane.css").read_text(encoding="utf-8")
+        word_helpers = (word / "taskpane-helpers.js").read_text(encoding="utf-8")
+    except OSError as exc:
+        raise DeliveryFailure("V0260_FORMAT_REVIEW_EXPERIENCE_MISSING") from exc
+    if any(
+        marker not in word_html
+        for marker in (
+            'id="btn-format-review-filter"',
+            'id="format-review-filter-panel"',
+            'id="btn-format-review-more"',
+            'id="format-review-more-menu"',
+        )
+    ):
+        raise DeliveryFailure("V0260_FORMAT_REVIEW_CONTROLS_MISSING")
+    if any(
+        marker not in word_helpers
+        for marker in ("review-location-card", "manual_toc", "suspected-toc-")
+    ):
+        raise DeliveryFailure("V0260_FORMAT_REVIEW_LOCATION_GROUP_MISSING")
+    if any(
+        marker not in word_css
+        for marker in (
+            ".review-location-card",
+            "@media (max-width: 320px)",
+            "@media (max-width: 420px)",
+        )
+    ):
+        raise DeliveryFailure("V0260_NARROW_VIEWPORT_CONTRACT_MISSING")
 
 
 def _parse_simple_yaml(text: str) -> dict:
@@ -444,7 +541,7 @@ def _parse_simple_yaml(text: str) -> dict:
 
 
 def audit_smart_fill_reference_workflow(root: Path) -> None:
-    ref_workflow = Path(root) / "reference-workflows/excel-smart-fill-v1.yml"
+    ref_workflow = Path(root) / "reference-workflows/excel-smart-fill-v2.yml"
     if not ref_workflow.is_file():
         raise DeliveryFailure("V0260_SMART_FILL_REFERENCE_WORKFLOW_MISSING")
     try:
@@ -626,6 +723,7 @@ def audit(root: Path, archive: Optional[Path], checksum_file: Optional[Path], ex
     audit_manifest(root, manifest)
     audit_prompt_manifest(root, manifest)
     audit_smart_fill_write_contract(root)
+    audit_experience_contract(root)
     audit_smart_fill_reference_workflow(root)
     audit_installer(root)
     audit_lifecycle(root)

@@ -1,16 +1,16 @@
 # Codex Handoff - AI-WPS
 
-更新时间：2026-09-01
+更新时间：2026-09-08
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 
-当前分支：`fix/preview-first-install-port`
+当前分支：`codex/issue-153-v026-preview-candidate`
 
 当前版本：`v0.26.0-preview.1`
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 当前实现 Issue #120 / #127 的 Excel“智能填写”第九任务，并沿用中性 Preview 交付边界。当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256：`52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`，源码提交：`7cd5c01a9bbb2050524a7f60f12c24b5d0ba7d8c`）。该包相对 `0f571bb` 为同版本重建：首次安装在 18100 仍被历史 Adapter 占用时释放监听进程，不读取、搬迁或删除 `$TARGET_HOME/ai-wps-phase1`。自动化门禁终态为 `candidate`。Issue #128 曾在 `1ab4420` / `0f571bb` 上完成目标机环境集成验收（现场记录见 `packaging/v0260-preview1-target-machine-acceptance.md`，状态 `passed`）；本重建包的安装路径按 `manual-pending` 记录。
+`v0.26.0-preview.1` 正在通过 Issue #153 汇总来源先行智能填写、自动/手工/疑似目录、格式位置问题组和九任务紧凑模型配置入口，并沿用中性 Preview 交付边界。汇总候选必须通过完整回归、Python 3.8 生命周期门禁和发布审计后才能登记为 `candidate`；目标机人工验收绑定 Issue #154，构建阶段保持 `manual-pending`。上一自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256：`52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`，源码提交：`7cd5c01a9bbb2050524a7f60f12c24b5d0ba7d8c`），不得替代本轮汇总候选的独立验收。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
@@ -20,9 +20,9 @@
 
 历史候选 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260824-ccad09f-v0251.tar.gz`（SHA-256：`2c3f8b5004c40fb7271a6afe7e4c8a292acb227b9d3ec08afc7f6b561d413a02`，源码提交：`ccad09fb1d8019da3a40f14610ab3bd75de1ec23`）已确认存在 `word.format_review.snapshot.v2` JS/Python structure/format 哈希契约漂移，登记为 `rejected`，不得继续分发。`e43dc8c` 及更早候选均为 `rejected`。修复报告见 `.superpowers/sdd/2026-08-24-v0251-format-review-hash-contract-fix/task-1-report.md`。
 
-## 当前版本：v0.26.0-preview.1 Excel“智能填写”与中性 Preview 交付基线
+## 当前版本：v0.26.0-preview.1 Issue #153 汇总候选
 
-- Issue #120 / #127 实现了第九任务 Excel“智能填写”，采用中性 Preview 交付边界；
+- **汇总范围**：合入 Issue #146、#149、#150、#151、#152 的用户可见流程与恢复契约，发布边界由 Issue #153 统一审计；
 - **九类任务独立模型配置**：Word 4 类（智能编写、智能仿写、文档审查、格式审查）、Excel 3 类（智能分析、公式助手、智能填写）、PPT 2 类（智能总结、结构审查）统一按任务隔离模型配置、API Key 与接入参数；
 - **智能填写严格契约**：生成阶段仅接受同一工作表含表头的连续矩形来源（最多 500 个数据行）和必填填写意图，模型请求不含目标地址、工作簿标识、公式或隐藏数据，模型结果严格限定为 `excel.smart_fill.v2` Schema；写入目标在预览之后单独绑定；
 - **长任务生命周期**：复用共享长任务协调器，支持 10 秒短轮询、排队取消、运行中协作取消、部分预览、60 分钟 deadline，任务结果仅进程内保留 2 小时；
@@ -30,7 +30,7 @@
 - **写入失败补偿**：单元格写入中途失败时逆序恢复本次已改动单元格并校验恢复结果；补偿失败准确列出人工核对地址；不提供撤销（Undo/OnUndo），成功后销毁临时快照并锁定预览；
 - **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；若 18100 仍被历史 Adapter 占用则释放该端口监听进程；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
-- **状态记录**：当前自动化候选为 `ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256 `52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`），门禁终态 `candidate`；Issue #128 真机集成验收记录仍对应前任 `1ab4420`/`0f571bb`（`passed`）。
+- **状态记录**：上一自动化候选为 `ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz`（SHA-256 `52338637d565ea064714b4efbd81e864b1628344739295ffbbc9018246cf069c`）；本轮归档待完整门禁生成，目标机验收绑定 Issue #154 并保持 `manual-pending`。
 
 ## 当前功能实现：Issue #150 Word 迁移至紧凑单行任务模型配置入口
 
