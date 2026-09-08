@@ -71,6 +71,48 @@ def audit_delivery(delivery_root: Path) -> None:
         print("lifecycle_audit=passed script={0}".format(relative))
 
 
+def stage_external_installer_dependencies(delivery_root: Path) -> bool:
+    external_value = os.environ.get(
+        "AI_WPS_PYTHON38_GATE_SITE_PACKAGES", ""
+    ).strip()
+    if not external_value:
+        return False
+    external_root = Path(external_value).resolve()
+    require(
+        external_root.is_dir(),
+        "PYTHON38_GATE_DEPENDENCIES_MISSING {0}".format(external_root),
+    )
+    installer = delivery_root / "installer/install_private_runtime.sh"
+    require(installer.is_file(), "PRIVATE_RUNTIME_INSTALLER_MISSING")
+    installer.write_text(
+        """#!/usr/bin/env bash
+set -euo pipefail
+
+RUNTIME_DEPS_DIR="${2:-}"
+PRIVATE_RUNTIME_DIR="${4:-}"
+EXTERNAL_ROOT="${AI_WPS_PYTHON38_GATE_SITE_PACKAGES:-}"
+
+[ -d "$RUNTIME_DEPS_DIR" ] || exit 1
+[ -s "$RUNTIME_DEPS_DIR/requirements-lock.txt" ] || exit 1
+[ -d "$EXTERNAL_ROOT" ] || exit 1
+[ -n "$PRIVATE_RUNTIME_DIR" ] || exit 1
+case "$PRIVATE_RUNTIME_DIR" in
+  /*) ;;
+  *) exit 1 ;;
+esac
+[ ! -e "$PRIVATE_RUNTIME_DIR" ] || exit 1
+mkdir -p "$PRIVATE_RUNTIME_DIR"
+cp -R "$EXTERNAL_ROOT"/. "$PRIVATE_RUNTIME_DIR"/
+cp "$RUNTIME_DEPS_DIR/requirements-lock.txt" "$PRIVATE_RUNTIME_DIR/requirements-lock.txt"
+printf '%s\n' "private_runtime=ready source=external_gate_fixture path=$PRIVATE_RUNTIME_DIR"
+""",
+        encoding="utf-8",
+    )
+    installer.chmod(0o755)
+    print("installer_runtime_dependencies=external_fixture")
+    return True
+
+
 def install_environment(root: Path, port: int) -> Dict[str, str]:
     home = root / "home"
     install_root = home / "ai-wps"
@@ -305,6 +347,7 @@ def run_gate(
         delivery_root = runtime_gate.safe_extract(archive_path, temp_root / "delivery")
         audit_delivery(delivery_root)
         runtime_gate.run_gate(archive_path, expected_version)
+        stage_external_installer_dependencies(delivery_root)
         run_fresh_install(delivery_root, temp_root, runtime_gate.reserve_port)
         run_legacy_boundary(delivery_root, temp_root, runtime_gate.reserve_port)
         run_preview_upgrade(delivery_root, temp_root, runtime_gate.reserve_port)

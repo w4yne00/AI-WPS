@@ -843,6 +843,62 @@ def test_preview_lifecycle_uses_isolated_home_lookup_without_relaxing_identity(t
     assert '"--target-home"' not in lifecycle_path.read_text(encoding="utf-8")
 
 
+def test_preview_lifecycle_can_stage_external_dependencies_in_temporary_delivery(
+    tmp_path, monkeypatch
+):
+    lifecycle_path = ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    spec = importlib.util.spec_from_file_location(
+        "preview_lifecycle_external_dependencies", lifecycle_path
+    )
+    assert spec is not None and spec.loader is not None
+    lifecycle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lifecycle)
+
+    delivery = tmp_path / "delivery"
+    installer = delivery / "installer/install_private_runtime.sh"
+    installer.parent.mkdir(parents=True)
+    installer.write_text("#!/bin/sh\nexit 99\n", encoding="utf-8")
+    dependencies = tmp_path / "host-python38-site-packages"
+    dependencies.mkdir()
+    (dependencies / "dependency_sentinel.py").write_text(
+        "HOST_FIXTURE = True\n", encoding="utf-8"
+    )
+    runtime_deps = tmp_path / "runtime-deps"
+    runtime_deps.mkdir()
+    (runtime_deps / "requirements-lock.txt").write_text(
+        "example==1.0 --hash=sha256:" + "a" * 64 + "\n", encoding="utf-8"
+    )
+    target = tmp_path / "private-runtime"
+    monkeypatch.setenv(
+        "AI_WPS_PYTHON38_GATE_SITE_PACKAGES", str(dependencies)
+    )
+
+    assert lifecycle.stage_external_installer_dependencies(delivery) is True
+    result = subprocess.run(
+        [
+            "bash",
+            str(installer),
+            sys.executable,
+            str(runtime_deps),
+            str(tmp_path / "pip-bootstrap"),
+            str(target),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=os.environ,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (target / "dependency_sentinel.py").read_text(encoding="utf-8") == (
+        "HOST_FIXTURE = True\n"
+    )
+    assert (target / "requirements-lock.txt").read_text(encoding="utf-8") == (
+        "example==1.0 --hash=sha256:" + "a" * 64 + "\n"
+    )
+    assert "private_runtime=ready source=external_gate_fixture" in result.stdout
+
+
 def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_config(
     tmp_path, monkeypatch
 ):
