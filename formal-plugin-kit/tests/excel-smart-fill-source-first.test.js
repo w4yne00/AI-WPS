@@ -372,11 +372,20 @@ function testUnreadAddressFailsClosed() {
   expectSourceError(source, {}, /来源必须是可解析的连续区域|无法读取来源地址/);
 }
 
-function testMissingSafetyAttributesFailClosed() {
-  const missingHidden = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
-  delete missingHidden.Cells.Item(2, 1).Hidden;
-  expectExtractError(missingHidden, {}, /无法安全读取/);
+function testMissingDirectHiddenUsesReadableRowAndColumnVisibility() {
+  const source = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
+  for (let row = 1; row <= 2; row += 1) {
+    for (let column = 1; column <= 2; column += 1) {
+      delete source.Cells.Item(row, column).Hidden;
+    }
+  }
+  const payload = helpers.extractExcelSmartFillSourcePayload(source, {
+    createItemId: sequentialItemIdFactory()
+  });
+  assert.deepStrictEqual(payload.source.rows, [["张三", "研发"]]);
+}
 
+function testMissingSafetyAttributesFailClosed() {
   const missingOwner = buildRange("$A$1:$B$2", [["姓名", "部门"], ["张三", "研发"]]);
   missingOwner.Cells.Item = function Item() { return null; };
   expectExtractError(missingOwner, {}, /无法安全读取/);
@@ -506,6 +515,7 @@ testSmartFillPageUsesConfirmedButtonGeometry();
 testWriteEntryStaysUnavailableWithoutTargetMapping();
 testFunctionAddressIsInvokedWithRangeThis();
 testUnreadAddressFailsClosed();
+testMissingDirectHiddenUsesReadableRowAndColumnVisibility();
 testMissingSafetyAttributesFailClosed();
 testActualSheetNameMustMatchActiveSheet();
 testLiveInspectionDoesNotWalkCells();

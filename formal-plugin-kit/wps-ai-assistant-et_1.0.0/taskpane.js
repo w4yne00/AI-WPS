@@ -3560,8 +3560,11 @@
     } catch (error) {
       if (state.smartFillRetryItemId) {
         restoreSmartFillRetryResult();
+      } else {
+        setPlainResult("智能填写未开始：" + error.message);
       }
       setStatus(error.message);
+      setNodeTextIfChanged(byId("smart-fill-validation-line"), error.message);
       return;
     }
     state.smartFillInstruction = payload.userInstruction;

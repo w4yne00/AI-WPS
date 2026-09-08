@@ -428,12 +428,13 @@ function makeDom() {
   return { dom, el };
 }
 
-function loadTaskpane(fetchImpl) {
+function loadTaskpane(fetchImpl, selection) {
   const { el } = makeDom();
   const codeToRun = js.replace(
     "if (!isTaskpanePage()) {",
     `window.__TEST_EXPORTS__ = {
       state: state,
+      runExcelSmartFillAction: runExcelSmartFillAction,
       writeExcelSmartFillResult: writeExcelSmartFillResult,
       returnToExcelSmartFillEditAction: returnToExcelSmartFillEditAction,
       renderSmartFillCaptureState: renderSmartFillCaptureState,
@@ -445,7 +446,7 @@ function loadTaskpane(fetchImpl) {
   const application = {
     ActiveWorkbook: { Name: "wb-1" },
     ActiveSheet: { Name: "客户表" },
-    Selection: {
+    Selection: selection || {
       Address: "$D$2:$D$3",
       Worksheet: { Name: "客户表" }
     }
@@ -481,7 +482,44 @@ function loadTaskpane(fetchImpl) {
   exported.status = function () {
     return el("status-line").textContent;
   };
+  exported.result = function () {
+    return el("result-output").textContent;
+  };
+  exported.setInstruction = function (value) {
+    el("excel-smart-fill-instruction").value = value;
+  };
   return exported;
+}
+
+function testGeneratePreflightFailureIsVisibleInResultPreview() {
+  const cells = [makeCell("姓名"), makeCell("张三")];
+  cells.forEach(function (cell) {
+    cell.EntireRow = { Hidden: false };
+    cell.EntireColumn = { Hidden: false };
+  });
+  Object.defineProperty(cells[1], "HasFormula", {
+    configurable: true,
+    get() { throw new Error("HasFormula unavailable"); }
+  });
+  const source = {
+    Address: "$A$1:$A$2",
+    Worksheet: { Name: "客户表" },
+    Rows: { Count: 2 },
+    Columns: { Count: 1 },
+    Areas: { Count: 1 },
+    Cells: { Item(row) { return cells[row - 1]; } }
+  };
+  const exported = loadTaskpane(null, source);
+  exported.state.currentMode = "excelSmartFill";
+  exported.state.modelTasksAllowed = true;
+  exported.application.Selection = source;
+  exported.application.ActiveSheet = source.Worksheet;
+  exported.application.ActiveWorkbook = { Name: "wb-1" };
+  exported.state.smartFillRetryItemId = "";
+  exported.setInstruction("生成标签");
+  exported.runExcelSmartFillAction();
+  assert.match(exported.status(), /无法安全读取来源单元格状态/);
+  assert.match(exported.result(), /无法安全读取来源单元格状态/);
 }
 
 function cannedMapping() {
@@ -658,6 +696,7 @@ testLifecycleControlsMatchNarrowWindowContract();
 testRebindClearsTransientWriteConflict();
 testSuccessfulTargetBindClearsTargetError();
 testReturnToEditRebindsLiveTargetWhenUnchanged();
+testGeneratePreflightFailureIsVisibleInResultPreview();
 
 (async function main() {
   await testWriteReservesBeforeHostWrite();

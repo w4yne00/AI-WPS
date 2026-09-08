@@ -2506,7 +2506,7 @@
         mergedState = readSmartFillBooleanState(cell, ["MergeCells", "mergeCells"]);
         formulaState = readSmartFillFormulaState(cell);
         textState = readSmartFillPropertyState(cell, ["Text", "text"], false);
-        if (!isExcelSmartFillSafetyStateReady(hiddenState) ||
+        if (!hiddenState.known ||
             !isExcelSmartFillSafetyStateReady(rowHidden) ||
             !isExcelSmartFillSafetyStateReady(columnHidden) ||
             !isExcelSmartFillSafetyStateReady(mergedState) ||
