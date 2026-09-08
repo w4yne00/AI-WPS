@@ -44,7 +44,7 @@ Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-disp
 | Word | Smart Write | Rewrite, continue, summarize, custom write; preview / compare / plain text, then write-back |
 | Word | Smart Imitation | Template-based imitation; preview, plain text, copy; no write-back |
 | Word | Document Review | Typos, expression, logic, fluency, professionalism; selection or limited full document |
-| Word | Format Review | Automatic/manual TOC exemptions, suspected-TOC disclosure, location-grouped issues, caption associations, and image semantics; no format write-back |
+| Word | Format Review | Automatic/manual TOC exemptions, suspected-TOC disclosure, location-grouped issues, caption associations, and 图像语义补充 (image semantics); no format write-back |
 | Word | Writing policy | Four preset packs plus a local organization library |
 | Excel | 智能分析 | Selected or used range; structured report and briefing paragraph; no cell writes |
 | Excel | 公式助手 | Explicit selection (max 30×20); generate or explain; copy only |
