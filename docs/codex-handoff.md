@@ -10,7 +10,7 @@
 
 版本规则号：`AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1`
 
-`v0.26.0-preview.1` 已通过 Issue #153 汇总来源先行智能填写、自动/手工/疑似目录、格式位置问题组和九任务紧凑模型配置入口，并沿用中性 Preview 交付边界。当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260908-c1d3d99-v0260-preview1.tar.gz`（SHA-256：`5316b84542dc8427a7cb6090c1a0a8e2efdf9775b6aa61537b9fe84c4547059f`，源码提交：`c1d3d996f47ca2e76804e8399dca651d8b8dc136`），已通过完整回归、Python 3.8 生命周期门禁和发布审计。目标机人工验收绑定 Issue #154，仍保持 `manual-pending`；自动化 `candidate` 不等于真实 WPS、模型或目标机验收通过。上一自动化候选 `dist-preview-delivery-kit/ai-wps-delivery-20260901-7cd5c01-v0260-preview1.tar.gz` 已被本轮候选替代，但继续保留原字节供审计追溯。
+`v0.26.0-preview.1` 已通过 Issue #153 汇总来源先行智能填写、自动/手工/疑似目录、格式位置问题组和九任务紧凑模型配置入口，并沿用中性 Preview 交付边界。当前自动化候选为 `dist-preview-delivery-kit/ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256：`7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交：`487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`），已通过完整回归、Python 3.8 生命周期门禁和发布审计。目标机人工验收绑定 Issue #154，仍保持 `manual-pending`；自动化 `candidate` 不等于真实 WPS、模型或目标机验收通过。上一自动化候选 `dist-preview-delivery-kit/ai-wps-delivery-20260908-c1d3d99-v0260-preview1.tar.gz` 已被本轮候选替代，但继续保留原字节供审计追溯。
 
 `v0.25.3-alpha` 是已验收基线：当前唯一自动化候选为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.3-20260826-d1a346b0d7e1301f74b37e692664fd31085ee050`，源码提交为 `d1a346b0d7e1301f74b37e692664fd31085ee050`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260826-d1a346b-v0253.tar.gz`，SHA-256 为 `120a2cfd8decd956224c3702721d85846bdaecf91d71b87b31c0f7be1b258cb7`，目标机验收状态为 `target-accepted`（Issue #59 已完成并关闭）。冻结的 `v0.25.2-alpha` 唯一自动化候选仍为 `AI-WPS-P1-WORD-EXCEL-PPT-0.25.2-20260825-850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，源码提交为 `850871c10a17f03c8a58abd02ca58c2f3fc70fc9`，归档为 `dist-phase1-delivery-kit/ai-wps-phase1-delivery-20260825-850871c-v0252.tar.gz`，SHA-256 为 `c5d663d1249147104bee66790fea60f5e15675418a51c0c1a7a0fc028a285a92`，自动化状态为 `candidate`。图像语义补充默认开启与视觉关闭降级保持不变。
 
@@ -30,7 +30,7 @@
 - **写入失败补偿**：单元格写入中途失败时逆序恢复本次已改动单元格并校验恢复结果；补偿失败准确列出人工核对地址；不提供撤销（Undo/OnUndo），成功后销毁临时快照并锁定预览；
 - **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；若 18100 仍被历史 Adapter 占用则释放该端口监听进程；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
-- **状态记录**：当前自动化候选为 `ai-wps-delivery-20260908-c1d3d99-v0260-preview1.tar.gz`（SHA-256 `5316b84542dc8427a7cb6090c1a0a8e2efdf9775b6aa61537b9fe84c4547059f`，源码提交 `c1d3d996f47ca2e76804e8399dca651d8b8dc136`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
+- **状态记录**：当前自动化候选为 `ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
 
 ## 当前功能实现：Issue #150 Word 迁移至紧凑单行任务模型配置入口
 
