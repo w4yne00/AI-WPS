@@ -16,10 +16,10 @@ Product page: [English](https://w4yne00.github.io/AI-WPS/en.html) · [中文](ht
 | Version rule number | `AI-WPS-WORD-EXCEL-PPT-0.26.0-preview.1` |
 | Phase | `P1` platform foundation + Word + Excel + PPT |
 | Runtime target | Kylin V10 ARM, Python 3.8, WPS native JS add-in |
-| Delivery status | The Issue #153 aggregate is recorded as `candidate` only after automated gates pass; Issue #154 target-machine acceptance remains `manual-pending` |
+| Delivery status | Issue #153 automated candidate `20260908-c1d3d99` is recorded as `candidate`; Issue #154 target-machine acceptance remains `manual-pending` |
 | Baseline | `v0.25.3-alpha` target-machine acceptance is `target-accepted` under Issue #59 |
 
-`v0.26.0-preview.1` aggregates source-first Excel Smart Fill, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The automated candidate still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
+`v0.26.0-preview.1` aggregates source-first Excel Smart Fill, automatic/manual/suspected TOC handling and location-grouped format issues in Word, plus compact model-configuration entries for all nine tasks. The current automated candidate is [`ai-wps-delivery-20260908-c1d3d99-v0260-preview1.tar.gz`](./dist-preview-delivery-kit/ai-wps-delivery-20260908-c1d3d99-v0260-preview1.tar.gz), built from source commit `c1d3d996f47ca2e76804e8399dca651d8b8dc136` with SHA-256 `5316b84542dc8427a7cb6090c1a0a8e2efdf9775b6aa61537b9fe84c4547059f`. It still requires Issue #154 target-machine acceptance and does not claim real WPS or model acceptance. The accepted `v0.25.3-alpha` baseline remains recorded under Issue #59.
 
 Version rule: `AI-WPS-P{phase}-{scope}-{major.minor.patch}-{yyyymmdd}`. Major is a compatibility boundary, minor is user-visible capability, patch covers fixes, UI, packaging, and docs.
 
