@@ -727,6 +727,60 @@ esac
             with self.assertRaises(OSError):
                 os.kill(candidate_pid, 0)
 
+    def test_candidate_preflight_surfaces_candidate_log_when_start_fails(self) -> None:
+        script = ROOT / "phase1-delivery-kit/installer/preflight_candidate.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            candidate = root / "candidate"
+            (candidate / "adapter_service").mkdir(parents=True)
+            private_runtime = candidate / "python-runtime"
+            private_runtime.mkdir()
+            preflight_root = root / "preflight"
+            bin_dir = root / "bin"
+            bin_dir.mkdir()
+            python_stub = bin_dir / "python"
+            python_stub.write_text(
+                """#!/usr/bin/env bash
+if [[ " $* " == *" -m uvicorn "* ]]; then
+  printf '%s\n' 'candidate-log-diagnostic-sentinel'
+  exit 23
+fi
+exit 0
+""",
+                encoding="utf-8",
+            )
+            python_stub.chmod(0o755)
+            curl_stub = bin_dir / "curl"
+            curl_stub.write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8")
+            curl_stub.chmod(0o755)
+            environment = dict(os.environ)
+            environment["PATH"] = "{0}:{1}".format(
+                bin_dir, environment.get("PATH", "")
+            )
+
+            result = subprocess.run(
+                [
+                    "bash",
+                    str(script),
+                    str(python_stub),
+                    str(candidate),
+                    str(private_runtime),
+                    "28125",
+                    "0.26.0-preview.1",
+                    str(preflight_root),
+                ],
+                check=False,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("candidate_preflight_failed=candidate_start_failed", result.stdout)
+            self.assertIn("candidate_start_log=begin", result.stdout)
+            self.assertIn("candidate-log-diagnostic-sentinel", result.stdout)
+            self.assertIn("candidate_start_log=end", result.stdout)
+
     def test_standalone_adapter_exposes_split_health_and_recovery_guard(self) -> None:
         script = (ROOT / "adapter_service/standalone_adapter.py").read_text(
             encoding="utf-8"

@@ -39,6 +39,14 @@ stop_candidate() {
 }
 trap stop_candidate EXIT
 
+report_candidate_start_log() {
+  local candidate_log="$PREFLIGHT_ROOT/var/logs/candidate.log"
+  [ -s "$candidate_log" ] || return 0
+  log "candidate_start_log=begin"
+  tail -n 80 "$candidate_log"
+  log "candidate_start_log=end"
+}
+
 [ -x "$PYTHON_BIN" ] || fail "python_not_executable"
 [ -d "$CANDIDATE_ROOT/adapter_service" ] || fail "candidate_adapter_missing"
 [ -d "$PRIVATE_RUNTIME_DIR" ] || fail "private_runtime_missing"
@@ -110,11 +118,15 @@ for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
   LIVE_BODY="$(curl -fsS "$BASE_URL/health/live" 2>/dev/null || true)"
   [ -n "$LIVE_BODY" ] && break
   if ! kill -0 "$CANDIDATE_PID" >/dev/null 2>&1; then
+    report_candidate_start_log
     fail "candidate_start_failed"
   fi
   sleep 1
 done
-[ -n "$LIVE_BODY" ] || fail "candidate_live_timeout"
+if [ -z "$LIVE_BODY" ]; then
+  report_candidate_start_log
+  fail "candidate_live_timeout"
+fi
 
 READY_BODY="$(curl -sS "$BASE_URL/health/ready" 2>/dev/null || true)"
 [ -n "$READY_BODY" ] || fail "candidate_business_not_ready"
