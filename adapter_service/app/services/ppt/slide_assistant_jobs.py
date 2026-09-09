@@ -128,11 +128,35 @@ class PptSlideAssistantJobStore:
         if snapshot.get("stagedDocument") is not None:
             kwargs["staged_document"] = snapshot["stagedDocument"]
         try:
-            return self.assistant.assist(
+            result = self.assistant.assist(
                 snapshot["request"],
                 trace_id=snapshot.get("traceId", "") or "",
                 **kwargs,
             )
+            try:
+                from app.services.task_history import get_task_history_store
+
+                req = snapshot.get("request")
+                doc_name = (
+                    getattr(req, "document_display_name", "")
+                    or getattr(req, "presentation_id", "")
+                    or "演示文稿"
+                )
+                auth = snapshot.get("taskAuth") or {}
+                service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
+                model_name = auth.get("modelName") or result.get("provider") or "model"
+                get_task_history_store().record_success(
+                    task_type="ppt.slide_assistant",
+                    job_id=str(snapshot.get("documentOwnerId", ""))
+                    or str(snapshot.get("traceId", "")),
+                    result=result,
+                    document_display_name=doc_name,
+                    service_name=service_name,
+                    model_name=model_name,
+                )
+            except Exception:
+                pass
+            return result
         finally:
             if owner_id and self.document_file_store is not None:
                 self.document_file_store.release(owner_id)

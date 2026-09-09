@@ -81,9 +81,14 @@
         <section id="summary-result-section" class="result-panel">
           <div class="panel-head">
             <h2>结果预览</h2>
-            <div id="result-view-switch" class="result-view-switch" hidden>
-              <button id="btn-result-preview" class="view-switch-button active" type="button" aria-pressed="true">预览</button>
-              <button id="btn-result-plain" class="view-switch-button" type="button" aria-pressed="false">纯文本</button>
+            <div class="result-actions">
+              <button id="btn-view-history" class="ghost-action history-entry-button" type="button" title="查看成功历史">
+                历史记录<span id="history-unread-badge" class="history-badge" hidden>0</span>
+              </button>
+              <div id="result-view-switch" class="result-view-switch" hidden>
+                <button id="btn-result-preview" class="view-switch-button active" type="button" aria-pressed="true">预览</button>
+                <button id="btn-result-plain" class="view-switch-button" type="button" aria-pressed="false">纯文本</button>
+              </div>
             </div>
           </div>
           <div id="result-output" class="result-output">等待运行。</div>
@@ -96,6 +101,19 @@
           <div id="document-copy-toolbar" class="copy-toolbar document-copy-toolbar" aria-label="复制文档总结" hidden>
             <button id="btn-copy-outline" class="ghost-action" type="button" title="复制大纲" aria-label="复制大纲" disabled>复制大纲</button>
             <button id="btn-copy-document-result" class="ghost-action" type="button" title="复制完整方案" aria-label="复制完整方案" disabled>复制完整方案</button>
+          </div>
+        </section>
+
+        <section id="ppt-history-view" class="result-panel ppt-history-view" hidden>
+          <div class="panel-head">
+            <h2>成功历史记录</h2>
+            <div class="history-panel-actions">
+              <button id="btn-history-back" class="ghost-action" type="button">返回当前结果</button>
+              <button id="btn-clear-history" class="ghost-action danger" type="button">清空历史</button>
+            </div>
+          </div>
+          <div id="ppt-history-content" class="ppt-history-content">
+            <div class="ppt-history-empty">暂无成功历史记录。</div>
           </div>
         </section>
 

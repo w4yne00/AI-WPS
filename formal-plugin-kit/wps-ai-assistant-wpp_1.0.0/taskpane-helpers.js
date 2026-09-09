@@ -1792,6 +1792,128 @@
     };
   }
 
+  var _presentationSessionMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+
+  function getDocumentSessionId(presentation) {
+    if (!presentation) {
+      return "doc_session_default";
+    }
+    if (_presentationSessionMap && typeof presentation === "object") {
+      try {
+        if (_presentationSessionMap.has(presentation)) {
+          return _presentationSessionMap.get(presentation);
+        }
+      } catch (e) {
+        // Fall through
+      }
+    }
+    var existing = resolveValue(safeRead(presentation, "__ai_wps_doc_session__"), presentation);
+    if (existing && typeof existing === "string") {
+      return existing;
+    }
+    var token = "doc_session_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now().toString(36);
+    try {
+      presentation.__ai_wps_doc_session__ = token;
+    } catch (e) {
+      // Host COM objects might reject direct assignment
+    }
+    if (_presentationSessionMap && typeof presentation === "object") {
+      try {
+        _presentationSessionMap.set(presentation, token);
+      } catch (e) {
+        // Ignore
+      }
+    }
+    return token;
+  }
+
+  function getDocumentDisplayName(presentation) {
+    if (!presentation) {
+      return "未命名演示文稿.pptx";
+    }
+    var name = safeText(safeRead(presentation, "Name") || safeRead(presentation, "name"));
+    if (name) {
+      return name;
+    }
+    var fullName = safeText(safeRead(presentation, "FullName") || safeRead(presentation, "fullName"));
+    if (fullName) {
+      var parts = fullName.split(/[/\\]/);
+      return parts[parts.length - 1] || "演示文稿.pptx";
+    }
+    return "演示文稿.pptx";
+  }
+
+  function makeTaskSlotKey(host, taskType, docSessionId) {
+    return [host || "wpp", taskType || "ppt.slide_assistant", docSessionId || "default"].join("::");
+  }
+
+  function isTaskSlotBusy(slots, host, taskType, docSessionId) {
+    if (!slots || typeof slots !== "object") {
+      return false;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    return Boolean(slots[key]);
+  }
+
+  function claimTaskSlot(slots, host, taskType, docSessionId, jobId) {
+    if (!slots || typeof slots !== "object") {
+      return;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    slots[key] = {
+      jobId: jobId || "",
+      claimedAt: Date.now()
+    };
+  }
+
+  function releaseTaskSlot(slots, host, taskType, docSessionId, jobId) {
+    if (!slots || typeof slots !== "object") {
+      return;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    if (!slots[key]) {
+      return;
+    }
+    if (!jobId || slots[key].jobId === jobId) {
+      delete slots[key];
+    }
+  }
+
+  function renderHistoryList(items) {
+    var list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return '<div class="ppt-history-empty">暂无成功历史记录。</div>';
+    }
+    var html = '<div class="ppt-history-list">';
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      var id = escapeHtml(item.id || "");
+      var docName = escapeHtml(item.documentDisplayName || "未命名演示文稿");
+      var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
+      var result = item.result || {};
+      var title = escapeHtml(result.suggestedTitle || result.deckTitle || "总结结果");
+      var conclusion = escapeHtml(result.conclusion || result.documentSummary || "");
+
+      html += '<div class="ppt-history-card" data-history-id="' + id + '">';
+      html += '  <div class="ppt-history-card-header">';
+      html += '    <span class="ppt-history-doc-name">' + docName + '</span>';
+      html += '    <span class="ppt-history-time">' + timeStr + '</span>';
+      html += '  </div>';
+      html += '  <div class="ppt-history-card-title">' + title + '</div>';
+      if (conclusion) {
+        html += '  <div class="ppt-history-card-snippet">' + conclusion + '</div>';
+      }
+      html += '  <div class="ppt-history-card-actions">';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-view" data-history-id="' + id + '">查看</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-delete" data-history-id="' + id + '">删除</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   global.WpsAiPptHelpers = {
     extractPresentationSlide: extractPresentationSlide,
     extractPresentationStructure: extractPresentationStructure,
@@ -1823,7 +1945,14 @@
     resolveTaskModelConfigViewStatus: resolveTaskModelConfigViewStatus,
     evaluateTaskModelConfigSwitch: evaluateTaskModelConfigSwitch,
     rollbackTaskModelConfigSwitch: rollbackTaskModelConfigSwitch,
-    reduceTaskModelConfigMenuKey: reduceTaskModelConfigMenuKey
+    reduceTaskModelConfigMenuKey: reduceTaskModelConfigMenuKey,
+    getDocumentSessionId: getDocumentSessionId,
+    getDocumentDisplayName: getDocumentDisplayName,
+    makeTaskSlotKey: makeTaskSlotKey,
+    isTaskSlotBusy: isTaskSlotBusy,
+    claimTaskSlot: claimTaskSlot,
+    releaseTaskSlot: releaseTaskSlot,
+    renderHistoryList: renderHistoryList
   };
   if (typeof module === "object" && module.exports) {
     module.exports = global.WpsAiPptHelpers;

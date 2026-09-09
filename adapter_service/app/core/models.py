@@ -706,6 +706,7 @@ class PptSlideAssistantRequest(BaseModel):
     file_token: str = Field(default="", alias="fileToken")
     requested_slide_count: int = Field(default=10, alias="requestedSlideCount")
     user_instruction: str = Field(default="", alias="userInstruction")
+    document_display_name: str = Field(default="", alias="documentDisplayName")
 
     @validator("presentation_id", pre=True, always=True)
     def coerce_presentation_id(cls, value):
@@ -720,7 +721,7 @@ class PptSlideAssistantRequest(BaseModel):
         normalized = _safe_str(value, "slide").strip().lower()
         return normalized if normalized in {"slide", "document"} else "slide"
 
-    @validator("client_job_id", "file_token", "user_instruction", pre=True, always=True)
+    @validator("client_job_id", "file_token", "user_instruction", "document_display_name", pre=True, always=True)
     def coerce_ppt_request_text(cls, value):
         return _safe_str(value)
 

@@ -94,6 +94,11 @@ from app.services.direct_services import (
     DirectServiceError,
     DirectServiceStore,
 )
+from app.services.task_history import (
+    TaskHistoryError,
+    TaskHistoryStore,
+    get_task_history_store,
+)
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
 from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
 
@@ -1755,6 +1760,47 @@ class Handler(BaseHTTPRequestHandler):
                     "standalone-task-model-selection",
                     "provider.task_model_selection",
                     {"taskModelSelection": selection},
+                ),
+            )
+            return
+
+        if path == "/history":
+            task_type = str(parse_qs(parsed.query).get("taskType", [""])[0]).strip()
+            store = get_task_history_store()
+            items = store.list_history(task_type)
+            self._write(
+                200,
+                envelope(
+                    f"standalone-history-list-{task_type or 'all'}",
+                    "task.history",
+                    {"items": items, "total": len(items), "taskType": task_type},
+                ),
+            )
+            return
+
+        history_prefix = "/history/"
+        if path.startswith(history_prefix):
+            history_id = unquote(path[len(history_prefix) :]).strip("/")
+            store = get_task_history_store()
+            item = store.get_history(history_id)
+            if item is None:
+                self._write(
+                    404,
+                    envelope(
+                        history_id,
+                        "task.history",
+                        success=False,
+                        message="未找到指定的历史记录。",
+                        errors=[{"code": "HISTORY_ENTRY_NOT_FOUND", "message": "未找到指定的历史记录。"}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    history_id,
+                    "task.history",
+                    {"item": item},
                 ),
             )
             return
@@ -3457,16 +3503,28 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(model_prefix):
             configuration_id = unquote(path[len(model_prefix) :]).strip("/")
             try:
+                update_fields = {}
+                if "name" in payload:
+                    update_fields["name"] = payload["name"]
+                if "accessMethod" in payload:
+                    update_fields["access_method"] = payload["accessMethod"]
+                if "note" in payload:
+                    update_fields["note"] = payload["note"]
+                if "serviceBaseUrl" in payload:
+                    update_fields["service_base_url"] = payload["serviceBaseUrl"]
+                if "modelName" in payload:
+                    update_fields["model_name"] = payload["modelName"]
+                if "temperature" in payload:
+                    update_fields["temperature"] = payload["temperature"]
+                if "maxOutputTokens" in payload:
+                    update_fields["max_output_tokens"] = payload["maxOutputTokens"]
+                if "contextWindowTokens" in payload:
+                    update_fields["context_window_tokens"] = payload["contextWindowTokens"]
+                if "imageInputMode" in payload:
+                    update_fields["image_input_mode"] = payload["imageInputMode"]
                 configuration = ModelConfigurationStore().update_configuration(
                     configuration_id,
-                    name=payload.get("name", ""),
-                    access_method=payload.get("accessMethod", ""),
-                    note=payload.get("note", ""),
-                    service_base_url=payload.get("serviceBaseUrl", ""),
-                    model_name=payload.get("modelName", ""),
-                    temperature=payload.get("temperature"),
-                    max_output_tokens=payload.get("maxOutputTokens"),
-                    context_window_tokens=payload.get("contextWindowTokens"),
+                    **update_fields
                 )
             except ModelConfigurationError as error:
                 self._write_model_configuration_error(error)
@@ -4208,6 +4266,59 @@ class Handler(BaseHTTPRequestHandler):
             except DirectServiceError as error:
                 self._write_direct_service_error(error)
                 return
+
+        if path == "/history":
+            task_type = str(parse_qs(parsed.query).get("taskType", [""])[0]).strip()
+            if not task_type:
+                self._write(
+                    400,
+                    envelope(
+                        "standalone-history-clear",
+                        "task.history",
+                        success=False,
+                        message="缺少 taskType 查询参数。",
+                        errors=[{"code": "TASK_TYPE_REQUIRED", "message": "缺少 taskType 查询参数。"}],
+                    ),
+                )
+                return
+            store = get_task_history_store()
+            cleared_count = store.clear_history(task_type)
+            self._write(
+                200,
+                envelope(
+                    f"standalone-history-clear-{task_type}",
+                    "task.history",
+                    {"clearedCount": cleared_count, "taskType": task_type},
+                ),
+            )
+            return
+
+        history_prefix = "/history/"
+        if path.startswith(history_prefix):
+            history_id = unquote(path[len(history_prefix) :]).strip("/")
+            store = get_task_history_store()
+            deleted = store.delete_history(history_id)
+            if not deleted:
+                self._write(
+                    404,
+                    envelope(
+                        history_id,
+                        "task.history",
+                        success=False,
+                        message="未找到指定的历史记录。",
+                        errors=[{"code": "HISTORY_ENTRY_NOT_FOUND", "message": "未找到指定的历史记录。"}],
+                    ),
+                )
+                return
+            self._write(
+                200,
+                envelope(
+                    history_id,
+                    "task.history",
+                    {"deleted": True, "id": history_id},
+                ),
+            )
+            return
 
         self._write(
             404,
