@@ -50,13 +50,34 @@ class PptSlideAssistantJobStore:
         self.coordinator = coordinator or get_long_task_coordinator()
         self.document_file_store = getattr(self.assistant, "document_file_store", None)
         self._submission_lock = threading.Lock()
+        self._active_doc_sessions: Dict[Tuple[str, str, str], str] = {}
 
     def start(self, request: PptSlideAssistantRequest, trace_id: str) -> Dict:
         job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
+        doc_session = str(getattr(request, "document_session_id", "") or "").strip()
+        host = str(getattr(request, "host", "") or "wpp").strip()
+        task_type = "ppt.slide_assistant"
+
         with self._submission_lock:
-            existing = self.coordinator.get(job_id, task_type="ppt.slide_assistant")
+            existing = self.coordinator.get(job_id, task_type=task_type)
             if existing is not None:
                 return existing
+
+            # Document session active slot guard: reject duplicate concurrent task in same document session
+            if doc_session:
+                slot_key = (host, task_type, doc_session)
+                active_job_id = self._active_doc_sessions.get(slot_key)
+                if active_job_id:
+                    active_job = self.coordinator.get(active_job_id, task_type=task_type)
+                    if active_job and active_job.get("status") in {"queued", "running"}:
+                        if active_job_id != job_id:
+                            raise AdapterError(
+                                "PPT_SLIDE_ASSISTANT_DOCUMENT_TASK_BUSY",
+                                "当前演示文稿已存在进行中的智能总结任务，请等待其完成。",
+                                status_code=409,
+                            )
+                    else:
+                        self._active_doc_sessions.pop(slot_key, None)
 
             staged_document = None
             if request.source_mode == "document":
@@ -78,16 +99,19 @@ class PptSlideAssistantJobStore:
             try:
                 snapshot_task_auth = getattr(self.assistant, "snapshot_task_auth", None)
                 task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
-                return self.coordinator.submit(
+                submitted = self.coordinator.submit(
                     job_id=job_id,
                     trace_id=trace_id,
-                    task_type="ppt.slide_assistant",
+                    task_type=task_type,
                     runner=self._run,
                     snapshot={
                         "request": _copy_request(request),
                         "taskAuth": task_auth,
                         "stagedDocument": staged_document,
                         "documentOwnerId": job_id if staged_document is not None else "",
+                        "jobId": job_id,
+                        "host": host,
+                        "documentSessionId": doc_session,
                     },
                     failure_code="PPT_SLIDE_JOB_FAILED",
                     failure_message=JOB_FAILED_MESSAGE,
@@ -102,6 +126,9 @@ class PptSlideAssistantJobStore:
                     },
                     safe_failure_codes=SAFE_ERROR_CODES,
                 )
+                if doc_session:
+                    self._active_doc_sessions[(host, task_type, doc_session)] = job_id
+                return submitted
             except Exception:
                 if staged_document is not None:
                     self.document_file_store.release(job_id)
@@ -112,8 +139,13 @@ class PptSlideAssistantJobStore:
 
     def cancel(self, job_id: str) -> Optional[Dict]:
         job = self.coordinator.cancel(job_id, task_type="ppt.slide_assistant")
-        if job is not None and job.get("status") == "cancelled" and self.document_file_store:
-            self.document_file_store.release(job_id)
+        if job is not None and job.get("status") == "cancelled":
+            if self.document_file_store:
+                self.document_file_store.release(job_id)
+            with self._submission_lock:
+                for key, val in list(self._active_doc_sessions.items()):
+                    if val == job_id:
+                        self._active_doc_sessions.pop(key, None)
         return job
 
     def close(self) -> None:
@@ -134,7 +166,10 @@ class PptSlideAssistantJobStore:
                 **kwargs,
             )
             try:
-                from app.services.task_history import get_task_history_store
+                from app.services.task_history import (
+                    TaskHistoryError,
+                    get_task_history_store,
+                )
 
                 req = snapshot.get("request")
                 doc_name = (
@@ -145,18 +180,50 @@ class PptSlideAssistantJobStore:
                 auth = snapshot.get("taskAuth") or {}
                 service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
                 model_name = auth.get("modelName") or result.get("provider") or "model"
+                job_id = str(snapshot.get("jobId") or snapshot.get("documentOwnerId") or snapshot.get("traceId") or "")
+
+                # Strict allowlist sanitization: strip prompt, userInstruction, fileToken, rawAnswer
+                source_mode = getattr(req, "source_mode", "slide")
+                if source_mode == "document":
+                    archived_result = {
+                        "resultType": "document",
+                        "deckTitle": result.get("deckTitle", ""),
+                        "documentSummary": result.get("documentSummary", ""),
+                        "recommendedSlideCount": result.get("recommendedSlideCount", 10),
+                        "slides": result.get("slides") or [],
+                        "globalStyleAdvice": result.get("globalStyleAdvice", ""),
+                        "plainText": result.get("plainText", ""),
+                    }
+                else:
+                    archived_result = {
+                        "resultType": "slide",
+                        "summary": result.get("summary", ""),
+                        "actionItems": result.get("actionItems") or [],
+                        "bulletPoints": result.get("bulletPoints") or [],
+                        "plainText": result.get("plainText", ""),
+                    }
+
                 get_task_history_store().record_success(
                     task_type="ppt.slide_assistant",
-                    job_id=str(snapshot.get("documentOwnerId", ""))
-                    or str(snapshot.get("traceId", "")),
-                    result=result,
+                    job_id=job_id,
+                    result=archived_result,
                     document_display_name=doc_name,
                     service_name=service_name,
                     model_name=model_name,
                 )
+            except TaskHistoryError as exc:
+                if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                    result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
             except Exception:
                 pass
             return result
         finally:
             if owner_id and self.document_file_store is not None:
                 self.document_file_store.release(owner_id)
+            doc_session = str(snapshot.get("documentSessionId") or "")
+            host = str(snapshot.get("host") or "wpp")
+            if doc_session:
+                with self._submission_lock:
+                    slot_key = (host, "ppt.slide_assistant", doc_session)
+                    if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
+                        self._active_doc_sessions.pop(slot_key, None)

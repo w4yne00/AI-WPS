@@ -113,6 +113,17 @@ POST /ppt/document-files
 
 智能总结只读取当前页内容或用户主动选择的文档，只提供结果预览、纯文本和复制操作。不得自动创建页面，不得修改幻灯片文字、形状、版式、主题、图表、动画或备注，也不得声称已经完成这些操作。
 
+## 成功历史与只读历史接口
+
+智能总结成功完成后，结构化结果按字段白名单脱敏归档至私有历史存储（跨 WPS 与 Adapter 重启保留 24 小时，每功能最多 20 条，单条上限 5 MiB，全局上限 100 MiB；失败与取消不归档）：
+
+- 列表查询：`GET /history?taskType=ppt.slide_assistant`
+- 详情查询：`GET /history/{historyId}`（单条详情严格执行 24 小时 TTL 检查）
+- 单条删除：`DELETE /history/{historyId}`
+- 清空功能历史：`DELETE /history?taskType=ppt.slide_assistant`
+
+请求合同支持 `documentDisplayName`（展示用文件名，不含全路径）、`documentSessionId`（文档会话标识）与 `host`（宿主应用，默认 `wpp`）。同一功能和文档会话存在未结束任务时拒绝重复提交（HTTP 409 `PPT_SLIDE_ASSISTANT_DOCUMENT_TASK_BUSY`）。归档结果严格剥离 `prompt`、`userInstruction`、`rawAnswer` 及密钥/请求头等敏感信息。超 5 MiB 结果跳过归档并在活动区提示用户。
+
 ## 故障排查
 
 - 文件类型或大小错误：确认扩展名为 `.md`/`.docx` 且不超过 10 MB。

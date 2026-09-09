@@ -15,7 +15,10 @@ MAX_HISTORY_ENTRY_BYTES = 5 * 1024 * 1024  # 5 MiB
 MAX_TOTAL_HISTORY_BYTES = 100 * 1024 * 1024  # 100 MiB
 HISTORY_TTL_SECONDS = 24 * 3600  # 24 hours
 
-SENSITIVE_KEY_PATTERN = re.compile(r"(?i)(api_?key|token|auth|secret|full_?path|raw_?input|request_?body|headers)")
+HISTORY_ID_PATTERN = re.compile(r"^hist_\d+_[a-f0-9]{8,32}$")
+SENSITIVE_KEY_PATTERN = re.compile(
+    r"(?i)(api_?key|token|auth|secret|full_?path|raw_?input|request_?body|headers|prompt|user_?instruction)"
+)
 _HISTORY_LOCK = threading.RLock()
 
 
@@ -66,6 +69,11 @@ def _default_history_dir() -> Path:
 class TaskHistoryStore:
     def __init__(self, history_dir: Optional[Path] = None) -> None:
         self.history_dir = Path(history_dir) if history_dir is not None else _default_history_dir()
+        if self.history_dir.exists():
+            try:
+                os.chmod(self.history_dir, 0o700)
+            except OSError:
+                pass
 
     def _ensure_dir(self, directory: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True)
@@ -73,10 +81,39 @@ class TaskHistoryStore:
             os.chmod(directory, 0o700)
         except OSError:
             pass
+        if self.history_dir.exists():
+            try:
+                os.chmod(self.history_dir, 0o700)
+            except OSError:
+                pass
 
     def _task_dir(self, task_type: str) -> Path:
         safe_task = re.sub(r"[^A-Za-z0-9_.-]", "_", str(task_type))
         return self.history_dir / safe_task
+
+    def _find_history_file(self, history_id: str) -> Optional[Path]:
+        target_id = str(history_id or "").strip()
+        if not target_id or not HISTORY_ID_PATTERN.match(target_id):
+            return None
+        if not self.history_dir.exists():
+            return None
+
+        resolved_root = self.history_dir.resolve()
+        target_filename = f"{target_id}.json"
+
+        for task_dir in self.history_dir.iterdir():
+            if not task_dir.is_dir():
+                continue
+            candidate = task_dir / target_filename
+            try:
+                resolved_candidate = candidate.resolve()
+                if not str(resolved_candidate).startswith(str(resolved_root)):
+                    continue
+                if candidate.is_file():
+                    return candidate
+            except Exception:
+                continue
+        return None
 
     def record_success(
         self,
@@ -164,35 +201,33 @@ class TaskHistoryStore:
 
     def get_history(self, history_id: str) -> Optional[Dict[str, Any]]:
         with _HISTORY_LOCK:
-            target_id = str(history_id or "").strip()
-            if not target_id:
+            file_path = self._find_history_file(history_id)
+            if file_path is None:
                 return None
-            if not self.history_dir.exists():
-                return None
-
-            for file_path in self.history_dir.glob(f"*/{target_id}.json"):
-                try:
-                    return json.loads(file_path.read_text(encoding="utf-8"))
-                except Exception:
+            try:
+                data = json.loads(file_path.read_text(encoding="utf-8"))
+                completed_dt = _parse_iso(data.get("completedAt", ""))
+                now = datetime.now(timezone.utc)
+                if completed_dt is None or (now - completed_dt).total_seconds() > HISTORY_TTL_SECONDS:
+                    try:
+                        file_path.unlink()
+                    except Exception:
+                        pass
                     return None
-            return None
+                return data
+            except Exception:
+                return None
 
     def delete_history(self, history_id: str) -> bool:
         with _HISTORY_LOCK:
-            target_id = str(history_id or "").strip()
-            if not target_id:
+            file_path = self._find_history_file(history_id)
+            if file_path is None:
                 return False
-            if not self.history_dir.exists():
+            try:
+                file_path.unlink()
+                return True
+            except Exception:
                 return False
-
-            deleted = False
-            for file_path in self.history_dir.glob(f"*/{target_id}.json"):
-                try:
-                    file_path.unlink()
-                    deleted = True
-                except Exception:
-                    pass
-            return deleted
 
     def clear_history(self, task_type: str) -> int:
         with _HISTORY_LOCK:

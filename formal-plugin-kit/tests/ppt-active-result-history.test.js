@@ -26,7 +26,7 @@ const helpers = context.window.WpsAiPptHelpers;
 // Test 1: Document Session Identification
 function testDocumentSessionIdentification() {
   assert.strictEqual(typeof helpers.getDocumentSessionId, "function", "getDocumentSessionId should be a function");
-  
+
   const pres1 = { Name: "演示文稿1.pptx", FullName: "/Users/wayne/Documents/演示文稿1.pptx" };
   const pres2 = { Name: "方案汇报.pptx", FullName: "/Users/wayne/Secret/方案汇报.pptx" };
 
@@ -257,6 +257,162 @@ function testActiveResultBehaviorWithExistingResult() {
   assert.strictEqual(elements["history-unread-badge"].hidden, false);
 }
 
+// Test 7: History List API Envelope Handling
+function testHistoryListEnvelopeParsing() {
+  const elements = {
+    "ppt-history-content": { innerHTML: "" }
+  };
+  const byId = (id) => elements[id] || { innerHTML: "" };
+  const state = { historyItems: [] };
+
+  const rawApiResponse = {
+    success: true,
+    data: {
+      items: [
+        {
+          id: "hist_123456_abcdefabcdef",
+          taskType: "ppt.slide_assistant",
+          jobId: "job_01",
+          completedAt: "2026-09-09T16:00:00Z",
+          documentDisplayName: "总结测试.pptx",
+          serviceName: "模型服务",
+          modelName: "test-model",
+          result: { suggestedTitle: "测试总结标题" }
+        }
+      ],
+      total: 1,
+      taskType: "ppt.slide_assistant"
+    }
+  };
+
+  const ctx = {
+    state,
+    byId,
+    request: () => Promise.resolve(rawApiResponse),
+    helpers,
+    PPT_WORKFLOW_TASK_TYPE: "ppt.slide_assistant"
+  };
+
+  const loadAndRenderHistory = vm.runInNewContext(
+    `(${functionSource("loadAndRenderHistory")})`,
+    ctx
+  );
+
+  loadAndRenderHistory();
+
+  // Wait for promise tick
+  return Promise.resolve().then(() => {
+    assert.ok(Array.isArray(state.historyItems), "state.historyItems must be an Array");
+    assert.strictEqual(state.historyItems.length, 1, "state.historyItems must contain 1 item");
+    assert.ok(
+      elements["ppt-history-content"].innerHTML.includes("总结测试.pptx"),
+      "Rendered history must contain document display name"
+    );
+  });
+}
+
+// Test 8: Cross-Document Session Resume Isolation
+function testCrossDocumentResumeIsolation() {
+  let activeJobInStorage = {
+    jobId: "job_docA",
+    documentSessionId: "doc_session_A",
+    sourceMode: "slide",
+    stage: "job"
+  };
+
+  let polledJobId = null;
+  let statusSet = "";
+  let activePres = { Name: "DocB.pptx" };
+
+  const state = {
+    jobId: "",
+    documentSessionId: "doc_session_B",
+    taskMode: "pptSlideAssistant",
+    currentView: "home",
+    activeTaskSlots: {}
+  };
+
+  const ctx = {
+    state,
+    loadActiveJob: () => activeJobInStorage,
+    clearActiveJob: () => { activeJobInStorage = null; },
+    getActivePresentation: () => activePres,
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: (pres) => pres.Name === "DocB.pptx" ? "doc_session_B" : "doc_session_A"
+    },
+    setSourceMode: () => {},
+    setStatus: (msg) => { statusSet = msg; },
+    setRunDisabled: () => {},
+    setInterruptedRetryVisible: () => {},
+    showProgressText: () => {},
+    pollPptSlideJob: (id) => { polledJobId = id; },
+    PPT_WORKFLOW_TASK_TYPE: "ppt.slide_assistant"
+  };
+
+  const resumeJob = vm.runInNewContext(
+    `(${functionSource("resumeJob")})`,
+    ctx
+  );
+
+  // Attempt 1: Current presentation is DocB (session B), active job is from DocA (session A)
+  resumeJob();
+  assert.strictEqual(polledJobId, null, "Must NOT resume job belonging to different document session");
+  assert.strictEqual(state.jobId, "", "state.jobId must remain empty");
+
+  // Attempt 2: Switch current presentation to DocA (session A)
+  activePres = { Name: "DocA.pptx" };
+  resumeJob();
+  assert.strictEqual(polledJobId, "job_docA", "Must resume job matching current document session");
+  assert.strictEqual(state.jobId, "job_docA");
+}
+
+// Test 9: User notice on > 5 MiB archive skip
+function testHistoryNoticeOnLargeResult() {
+  const elements = {
+    "result-output": { textContent: "", className: "", classList: { add: () => {}, remove: () => {} } },
+    "status-line": { textContent: "" },
+    "btn-cancel-ppt-slide-job": { hidden: false, disabled: false },
+    "summary-result-section": { hidden: false }
+  };
+  const byId = (id) => elements[id] || { textContent: "", classList: { add: () => {}, remove: () => {} } };
+  const state = {
+    result: null,
+    activeTaskSlots: {},
+    documentSessionId: "doc_1",
+    jobId: "job_oversize",
+    historyOpen: false
+  };
+
+  const ctx = {
+    state,
+    byId,
+    clearActiveJob: () => {},
+    releaseTaskSlotsForJob: () => {},
+    setPptJobActionVisibility: () => {},
+    setRunDisabled: () => {},
+    setStatus: (text) => { elements["status-line"].textContent = text; },
+    renderResult: (res) => { state.result = res; },
+    helpers
+  };
+
+  const finishJob = vm.runInNewContext(
+    `(${functionSource("finishJob")})`,
+    ctx
+  );
+
+  finishJob("job_oversize", {
+    resultType: "document",
+    deckTitle: "大型方案",
+    historyNotice: "任务结果超过 5 MiB，未写入历史记录。"
+  });
+
+  assert.ok(
+    elements["status-line"].textContent.includes("任务结果超过 5 MiB，未写入历史记录。"),
+    "Status line must display historyNotice"
+  );
+}
+
 function runAll() {
   testDocumentSessionIdentification();
   testDocumentDisplayName();
@@ -264,7 +420,11 @@ function runAll() {
   testActiveResultLifecycleSourceContract();
   testHistoryRenderingHelper();
   testActiveResultBehaviorWithExistingResult();
-  console.log("All PPT active result and history tests passed!");
+  testCrossDocumentResumeIsolation();
+  testHistoryNoticeOnLargeResult();
+  testHistoryListEnvelopeParsing().then(() => {
+    console.log("All PPT active result and history tests passed!");
+  });
 }
 
 runAll();

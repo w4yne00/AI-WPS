@@ -3503,28 +3503,16 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(model_prefix):
             configuration_id = unquote(path[len(model_prefix) :]).strip("/")
             try:
-                update_fields = {}
-                if "name" in payload:
-                    update_fields["name"] = payload["name"]
-                if "accessMethod" in payload:
-                    update_fields["access_method"] = payload["accessMethod"]
-                if "note" in payload:
-                    update_fields["note"] = payload["note"]
-                if "serviceBaseUrl" in payload:
-                    update_fields["service_base_url"] = payload["serviceBaseUrl"]
-                if "modelName" in payload:
-                    update_fields["model_name"] = payload["modelName"]
-                if "temperature" in payload:
-                    update_fields["temperature"] = payload["temperature"]
-                if "maxOutputTokens" in payload:
-                    update_fields["max_output_tokens"] = payload["maxOutputTokens"]
-                if "contextWindowTokens" in payload:
-                    update_fields["context_window_tokens"] = payload["contextWindowTokens"]
-                if "imageInputMode" in payload:
-                    update_fields["image_input_mode"] = payload["imageInputMode"]
                 configuration = ModelConfigurationStore().update_configuration(
                     configuration_id,
-                    **update_fields
+                    name=payload.get("name", ""),
+                    access_method=payload.get("accessMethod", ""),
+                    note=payload.get("note", ""),
+                    service_base_url=payload.get("serviceBaseUrl", ""),
+                    model_name=payload.get("modelName", ""),
+                    temperature=payload.get("temperature"),
+                    max_output_tokens=payload.get("maxOutputTokens"),
+                    context_window_tokens=payload.get("contextWindowTokens"),
                 )
             except ModelConfigurationError as error:
                 self._write_model_configuration_error(error)

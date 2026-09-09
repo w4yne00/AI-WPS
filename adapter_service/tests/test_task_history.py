@@ -184,6 +184,82 @@ class TaskHistoryStoreTests(unittest.TestCase):
         self.assertEqual(cleared_count, 1)
         self.assertEqual(len(self.store.list_history("ppt.slide_assistant")), 0)
 
+    def test_wildcard_and_path_traversal_rejected(self) -> None:
+        e1 = self.store.record_success(
+            task_type="ppt.slide_assistant",
+            job_id="job-sec-1",
+            result={"val": "protected"},
+            document_display_name="sec.pptx",
+            service_name="svc",
+            model_name="m1",
+        )
+        # Attempt wildcard deletion
+        self.assertFalse(self.store.delete_history("*"))
+        self.assertIsNone(self.store.get_history("*"))
+        # Verify legitimate entry was not deleted
+        self.assertIsNotNone(self.store.get_history(e1["id"]))
+
+        # Attempt path traversal
+        traversal_id = "../../config/adapter"
+        self.assertFalse(self.store.delete_history(traversal_id))
+        self.assertIsNone(self.store.get_history(traversal_id))
+        self.assertFalse(self.store.delete_history("..\\..\\config\\adapter"))
+        self.assertIsNone(self.store.get_history("..\\..\\config\\adapter"))
+
+        # Verify legitimate entry still exists
+        self.assertEqual(len(self.store.list_history("ppt.slide_assistant")), 1)
+
+    def test_get_history_ttl_eviction(self) -> None:
+        old_time = (datetime.now(timezone.utc) - timedelta(hours=25)).isoformat()
+        old_entry = self.store.record_success(
+            task_type="ppt.slide_assistant",
+            job_id="job-old-direct",
+            result={"text": "expired"},
+            document_display_name="expired.pptx",
+            service_name="svc",
+            model_name="m1",
+            completed_at=old_time,
+        )
+        # Directly fetching single entry older than 24h must return None and unlink
+        self.assertIsNone(self.store.get_history(old_entry["id"]))
+        file_path = self.history_dir / "ppt.slide_assistant" / f"{old_entry['id']}.json"
+        self.assertFalse(file_path.exists(), "Expired history file must be unlinked on get_history")
+
+    def test_sanitization_strips_prompt_and_user_instruction(self) -> None:
+        result_payload = {
+            "resultType": "document",
+            "deckTitle": "安全测试",
+            "prompt": "系统提示词以及用户的原始敏感输入信息",
+            "userInstruction": "请重点总结第二章财务细节",
+            "plainText": "测试输出",
+        }
+        entry = self.store.record_success(
+            task_type="ppt.slide_assistant",
+            job_id="job-prompt-strip",
+            result=result_payload,
+            document_display_name="prompt_test.pptx",
+            service_name="svc",
+            model_name="m1",
+        )
+        fetched = self.store.get_history(entry["id"])
+        self.assertIsNotNone(fetched)
+        self.assertNotIn("prompt", fetched["result"])
+        self.assertNotIn("userInstruction", fetched["result"])
+        self.assertEqual(fetched["result"]["deckTitle"], "安全测试")
+
+    def test_root_dir_permissions(self) -> None:
+        self.store.record_success(
+            task_type="ppt.slide_assistant",
+            job_id="job-perm-root",
+            result={"text": "perm"},
+            document_display_name="test.pptx",
+            service_name="svc",
+            model_name="m1",
+        )
+        self.assertTrue(self.history_dir.exists())
+        mode = stat.S_IMODE(os.stat(self.history_dir).st_mode)
+        self.assertEqual(mode & 0o777, 0o700)
+
 
 if __name__ == "__main__":
     unittest.main()

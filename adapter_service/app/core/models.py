@@ -699,6 +699,8 @@ class PptDocumentSlide(BaseModel):
 
 class PptSlideAssistantRequest(BaseModel):
     presentation_id: str = Field(default="active-presentation", alias="presentationId")
+    host: str = Field(default="wpp", alias="host")
+    document_session_id: str = Field(default="", alias="documentSessionId")
     scene: Literal["ppt"] = "ppt"
     source_mode: Literal["slide", "document"] = Field(default="slide", alias="sourceMode")
     client_job_id: str = Field(default="", alias="clientJobId")
@@ -712,6 +714,10 @@ class PptSlideAssistantRequest(BaseModel):
     def coerce_presentation_id(cls, value):
         return _safe_str(value, "active-presentation") or "active-presentation"
 
+    @validator("host", pre=True, always=True)
+    def coerce_ppt_host(cls, value):
+        return _safe_str(value, "wpp") or "wpp"
+
     @validator("scene", pre=True, always=True)
     def coerce_ppt_scene(cls, value):
         return "ppt"
@@ -721,7 +727,15 @@ class PptSlideAssistantRequest(BaseModel):
         normalized = _safe_str(value, "slide").strip().lower()
         return normalized if normalized in {"slide", "document"} else "slide"
 
-    @validator("client_job_id", "file_token", "user_instruction", "document_display_name", pre=True, always=True)
+    @validator(
+        "client_job_id",
+        "file_token",
+        "user_instruction",
+        "document_display_name",
+        "document_session_id",
+        pre=True,
+        always=True,
+    )
     def coerce_ppt_request_text(cls, value):
         return _safe_str(value)
 

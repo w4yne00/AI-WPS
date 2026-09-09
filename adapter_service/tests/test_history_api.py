@@ -1,3 +1,4 @@
+import importlib.util
 import json
 import unittest
 from io import BytesIO
@@ -7,7 +8,11 @@ from unittest.mock import patch
 
 from app.services.task_history import TaskHistoryStore
 
+HAS_PYDANTIC = bool(importlib.util.find_spec("pydantic"))
+HAS_FASTAPI = bool(importlib.util.find_spec("fastapi"))
 
+
+@unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for standalone adapter tests")
 class StandaloneHistoryApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = TemporaryDirectory()
@@ -75,8 +80,18 @@ class StandaloneHistoryApiTests(unittest.TestCase):
         self.assertEqual(res["body"]["data"]["item"]["id"], entry_id)
         self.assertEqual(res["body"]["data"]["item"]["result"]["suggestedTitle"], "总结标题")
 
-        # 5. Get non-existent item returns 404
+        # 5. Get non-existent or malicious item returns 404
         res = self._invoke("do_GET", "/history/hist_not_found")
+        self.assertEqual(res["status"], 404)
+        res = self._invoke("do_GET", "/history/*")
+        self.assertEqual(res["status"], 404)
+        res = self._invoke("do_GET", "/history/..%2F..%2Fconfig%2Fadapter")
+        self.assertEqual(res["status"], 404)
+
+        # 5.1 Delete with wildcard/traversal returns 404 and does not delete
+        res = self._invoke("do_DELETE", "/history/*")
+        self.assertEqual(res["status"], 404)
+        res = self._invoke("do_DELETE", "/history/..%2F..%2Fconfig%2Fadapter")
         self.assertEqual(res["status"], 404)
 
         # 6. Delete single item
@@ -97,6 +112,7 @@ class StandaloneHistoryApiTests(unittest.TestCase):
         self.assertEqual(res["body"]["data"]["clearedCount"], 2)
 
 
+@unittest.skipUnless(HAS_PYDANTIC and HAS_FASTAPI, "fastapi and pydantic are required for FastApi history API tests")
 class FastApiHistoryApiTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = TemporaryDirectory()
@@ -143,8 +159,14 @@ class FastApiHistoryApiTests(unittest.TestCase):
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json()["data"]["item"]["id"], entry_id)
 
-            # 5. Get 404
+            # 5. Get 404 on invalid ID / traversal / not found
             res = self.client.get("/history/non_existent_id")
+            self.assertEqual(res.status_code, 404)
+            res = self.client.get("/history/*")
+            self.assertEqual(res.status_code, 404)
+
+            # 5.1 Delete 404 on invalid ID / wildcard
+            res = self.client.delete("/history/*")
             self.assertEqual(res.status_code, 404)
 
             # 6. Delete item

@@ -391,6 +391,10 @@
   function saveActiveJob(job) {
     try {
       if (window.localStorage && job && job.jobId) {
+        if (!job.documentSessionId) {
+          var prev = loadActiveJob();
+          job.documentSessionId = (prev && prev.documentSessionId) || state.documentSessionId || "";
+        }
         window.localStorage.setItem(PPT_SLIDE_ACTIVE_JOB_STORAGE_KEY, JSON.stringify(job));
       }
     } catch (error) {
@@ -788,15 +792,23 @@
     state.resumeExpected = false;
     setPptJobActionVisibility(null);
     setRunDisabled(false);
+    var statusText = (result && result.resultType === "document" ? "文档总结已完成。" : "当前页总结已完成。");
+    if (result && result.historyNotice) {
+      statusText += "（" + result.historyNotice + "）";
+    }
     if (state.historyOpen) {
       state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
       updateHistoryBadge();
-      setStatus(result && result.resultType === "document" ? "文档总结已完成（请返回查看）。" : "当前页总结已完成（请返回查看）。");
+      var bgStatus = (result && result.resultType === "document" ? "文档总结已完成（请返回查看）。" : "当前页总结已完成（请返回查看）。");
+      if (result && result.historyNotice) {
+        bgStatus += "（" + result.historyNotice + "）";
+      }
+      setStatus(bgStatus);
       state.result = result || {};
       return;
     }
     renderResult(result || {});
-    setStatus(result && result.resultType === "document" ? "文档总结已完成。" : "当前页总结已完成。");
+    setStatus(statusText);
   }
 
   function failJob(jobId, message, statusMessage) {
@@ -833,7 +845,8 @@
         traceId: body.traceId || job.traceId || "",
         startedAt: state.startedAt,
         sourceMode: state.jobSourceMode || state.sourceMode,
-        stage: "job"
+        stage: "job",
+        documentSessionId: state.documentSessionId
       });
       if (job.status === "completed") {
         finishJob(jobId, job.result || {});
@@ -886,7 +899,8 @@
         jobId: jobId,
         startedAt: state.startedAt,
         sourceMode: state.jobSourceMode || state.sourceMode,
-        stage: "job"
+        stage: "job",
+        documentSessionId: state.documentSessionId
       });
       setStatus(within
         ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
@@ -2885,6 +2899,14 @@
     if (!active || !active.jobId || state.currentView === "settings") {
       return;
     }
+    var pres = getActivePresentation();
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : "";
+    if (active.documentSessionId && currentDocSession && active.documentSessionId !== currentDocSession) {
+      return;
+    }
+    if (!state.documentSessionId && currentDocSession) {
+      state.documentSessionId = currentDocSession;
+    }
     setSourceMode(active.sourceMode === "document" ? "document" : "slide");
     if (active.stage === "uploading") {
       clearActiveJob(active.jobId);
@@ -3034,7 +3056,9 @@
     request("/history?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE), null, {
       timeoutMs: 8000
     }).then(function (body) {
-      state.historyItems = (body && body.data) || [];
+      var data = body && body.data;
+      var items = (data && Array.isArray(data.items)) ? data.items : (Array.isArray(data) ? data : []);
+      state.historyItems = items;
       if (contentEl) {
         contentEl.innerHTML = helpers.renderHistoryList(state.historyItems);
       }
