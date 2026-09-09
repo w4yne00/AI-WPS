@@ -159,6 +159,9 @@ class RequestOptions(BaseModel):
 
 class WordDocumentRequest(BaseModel):
     document_id: str = Field(default="unnamed.docx", alias="documentId")
+    host: str = Field(default="wps", alias="host")
+    document_session_id: str = Field(default="", alias="documentSessionId")
+    document_display_name: str = Field(default="", alias="documentDisplayName")
     scene: Literal["word"] = "word"
     selection_mode: Literal["document", "selection"] = Field(default="document", alias="selectionMode")
     writing_policy_scene: Literal[
@@ -171,6 +174,14 @@ class WordDocumentRequest(BaseModel):
     @validator("document_id", pre=True, always=True)
     def coerce_document_id(cls, value):
         return _safe_str(value, "unnamed.docx") or "unnamed.docx"
+
+    @validator("host", pre=True, always=True)
+    def coerce_word_host(cls, value):
+        return _safe_str(value, "wps") or "wps"
+
+    @validator("document_session_id", "document_display_name", pre=True, always=True)
+    def coerce_word_session_text(cls, value):
+        return _safe_str(value)
 
     @validator("scene", pre=True, always=True)
     def coerce_scene(cls, value):

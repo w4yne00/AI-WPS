@@ -5886,7 +5886,148 @@
       code === "IMPORT_PREVIEW_NOT_FOUND" || code === "IMPORT_PREVIEW_EXPIRED";
   }
 
+  var _documentSessionMap = typeof WeakMap !== "undefined" ? new WeakMap() : null;
+
+  function getDocumentSessionId(document) {
+    if (!document) {
+      return "doc_session_default";
+    }
+    if (_documentSessionMap && typeof document === "object") {
+      try {
+        if (_documentSessionMap.has(document)) {
+          return _documentSessionMap.get(document);
+        }
+      } catch (e) {
+        // Fall through
+      }
+    }
+    var existing = null;
+    try {
+      existing = document.__ai_wps_doc_session__;
+    } catch (e) {
+      // Host COM objects might reject direct assignment
+    }
+    if (existing && typeof existing === "string") {
+      return existing;
+    }
+    var token = "doc_session_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now().toString(36);
+    try {
+      document.__ai_wps_doc_session__ = token;
+    } catch (e) {
+      // Ignore
+    }
+    if (_documentSessionMap && typeof document === "object") {
+      try {
+        _documentSessionMap.set(document, token);
+      } catch (e) {
+        // Ignore
+      }
+    }
+    return token;
+  }
+
+  function getDocumentDisplayName(document) {
+    if (!document) {
+      return "未命名文档.docx";
+    }
+    var name = "";
+    try {
+      name = document.Name || document.name || "";
+    } catch (e) {}
+    if (name) {
+      var nameParts = String(name).split(/[/\\]/);
+      return nameParts[nameParts.length - 1] || "未命名文档.docx";
+    }
+    var fullName = "";
+    try {
+      fullName = document.FullName || document.fullName || "";
+    } catch (e) {}
+    if (fullName) {
+      var parts = String(fullName).split(/[/\\]/);
+      return parts[parts.length - 1] || "未命名文档.docx";
+    }
+    return "未命名文档.docx";
+  }
+
+  function makeTaskSlotKey(host, taskType, docSessionId) {
+    return [host || "wps", taskType || "word.smart_write", docSessionId || "default"].join("::");
+  }
+
+  function isTaskSlotBusy(slots, host, taskType, docSessionId) {
+    if (!slots || typeof slots !== "object") {
+      return false;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    return Boolean(slots[key]);
+  }
+
+  function claimTaskSlot(slots, host, taskType, docSessionId, jobId) {
+    if (!slots || typeof slots !== "object") {
+      return;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    slots[key] = {
+      jobId: jobId || "",
+      claimedAt: Date.now()
+    };
+  }
+
+  function releaseTaskSlot(slots, host, taskType, docSessionId, jobId) {
+    if (!slots || typeof slots !== "object") {
+      return;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    if (!slots[key]) {
+      return;
+    }
+    if (!jobId || slots[key].jobId === jobId) {
+      delete slots[key];
+    }
+  }
+
+  function renderWritingHistoryList(items) {
+    var list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return '<div class="word-history-empty">暂无成功历史记录。</div>';
+    }
+    var html = '<div class="word-history-list">';
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      var id = escapeHtml(item.id || "");
+      var docName = escapeHtml(item.documentDisplayName || "未命名文档");
+      var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
+      var result = item.result || {};
+      var text = escapeHtml(result.rewrittenText || result.plainText || "");
+      var taskLabel = item.taskType === "word.smart_imitation" ? "智能仿写" : "智能编写";
+
+      html += '<div class="word-history-card" data-history-id="' + id + '">';
+      html += '  <div class="word-history-card-header">';
+      html += '    <span class="word-history-doc-name">' + docName + '</span>';
+      html += '    <span class="word-history-time">' + timeStr + '</span>';
+      html += '  </div>';
+      html += '  <div class="word-history-card-title">' + taskLabel + '成果</div>';
+      if (text) {
+        html += '  <div class="word-history-card-snippet">' + text + '</div>';
+      }
+      html += '  <div class="word-history-card-actions">';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-view" data-history-id="' + id + '">查看</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-delete" data-history-id="' + id + '">删除</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   return {
+    getDocumentSessionId: getDocumentSessionId,
+    getDocumentDisplayName: getDocumentDisplayName,
+    makeTaskSlotKey: makeTaskSlotKey,
+    isTaskSlotBusy: isTaskSlotBusy,
+    claimTaskSlot: claimTaskSlot,
+    releaseTaskSlot: releaseTaskSlot,
+    renderWritingHistoryList: renderWritingHistoryList,
     normalizeText: normalizeText,
     sha256Text: sha256Text,
     getFullDocumentReviewCapacity: getFullDocumentReviewCapacity,
