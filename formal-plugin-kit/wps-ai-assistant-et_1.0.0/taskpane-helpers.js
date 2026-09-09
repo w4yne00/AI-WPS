@@ -1946,6 +1946,12 @@
         return profiles[index].name;
       }
     }
+    var directServices = data && Array.isArray(data.directServices) ? data.directServices : [];
+    for (index = 0; index < directServices.length; index += 1) {
+      if (directServices[index].id === activeId) {
+        return directServices[index].name;
+      }
+    }
     return "尚未配置";
   }
 
@@ -1959,6 +1965,8 @@
     var profileIndex;
     var data;
     var profiles;
+    var directServices;
+    var matched;
 
     if (source.detectable === false) {
       return { code: "unavailable", label: "无法检测", readyCount: 0, totalCount: totalCount };
@@ -1967,12 +1975,26 @@
     for (taskIndex = 0; taskIndex < taskTypes.length; taskIndex += 1) {
       data = profilesByTask[taskTypes[taskIndex]] || {};
       profiles = Array.isArray(data.profiles) ? data.profiles : [];
+      directServices = Array.isArray(data.directServices) ? data.directServices : [];
+      matched = false;
       for (profileIndex = 0; profileIndex < profiles.length; profileIndex += 1) {
         if (profiles[profileIndex]
           && profiles[profileIndex].id === data.activeProfileId
           && profiles[profileIndex].complete) {
           readyCount += 1;
+          matched = true;
           break;
+        }
+      }
+      if (!matched) {
+        for (profileIndex = 0; profileIndex < directServices.length; profileIndex += 1) {
+          if (directServices[profileIndex]
+            && directServices[profileIndex].id === data.activeProfileId
+            && directServices[profileIndex].keyConfigured
+            && directServices[profileIndex].serviceBaseUrl) {
+            readyCount += 1;
+            break;
+          }
         }
       }
     }
@@ -4311,8 +4333,10 @@
       result.visibleText = "未配置";
       result.statusText = "未配置";
     } else {
-      result.visibleText = String(profile.name || "未命名配置") + " · " +
-        formatTaskModelConfigAccessMethod(profile.accessMethod);
+      var accessPart = profile.accessMethod === "direct_model" && profile.effectiveModel
+        ? "模型直连 · " + profile.effectiveModel
+        : formatTaskModelConfigAccessMethod(profile.accessMethod);
+      result.visibleText = String(profile.name || "未命名配置") + " · " + accessPart;
       if (status === "busy") {
         result.statusText = "正在切换";
       } else if (status === "error") {
@@ -4339,12 +4363,32 @@
         return profiles[index];
       }
     }
+    var directServices = (data && data.directServices) || [];
+    for (index = 0; index < directServices.length; index += 1) {
+      if (directServices[index] && directServices[index].id === id) {
+        var svc = directServices[index];
+        var selection = (data && data.taskModelSelection) || {};
+        var effModel = selection.effectiveModel || svc.defaultModel || "";
+        return {
+          id: svc.id,
+          name: svc.name,
+          accessMethod: "direct_model",
+          effectiveModel: effModel,
+          complete: Boolean(svc.serviceBaseUrl && svc.keyConfigured),
+          serviceBaseUrl: svc.serviceBaseUrl,
+          keyConfigured: svc.keyConfigured
+        };
+      }
+    }
     return null;
   }
 
   function buildTaskModelConfigMenuItems(profiles, options) {
     var activeId = options && options.activeProfileId || "";
     var items = [];
+    var directServices = (options && options.directServices) || [];
+    var taskSelection = options && options.taskModelSelection;
+
     (profiles || []).forEach(function (profile) {
       var option = workflowProfileOptionState(profile, activeId);
       items.push({
@@ -4355,6 +4399,20 @@
         disabled: option.disabled
       });
     });
+
+    directServices.forEach(function (svc) {
+      var isCurrent = svc.id === activeId;
+      var effModel = (taskSelection && taskSelection.serviceId === svc.id && (taskSelection.modelName || taskSelection.effectiveModel)) || svc.defaultModel || "默认模型";
+      var label = (svc.name || "直连服务") + " · 模型直连 · " + effModel;
+      items.push({
+        id: svc.id,
+        action: "select",
+        label: label,
+        selected: isCurrent,
+        disabled: !svc.keyConfigured || !svc.serviceBaseUrl
+      });
+    });
+
     items.push({
       id: "manage",
       action: "manage",
@@ -4515,6 +4573,75 @@
     return { ok: true, name: name, note: note, apiKey: apiKey };
   }
 
+  function validateDirectServiceDraft(draft, mode) {
+    var input = draft || {};
+    var name = String(input.name || "").trim();
+    var url = String(input.serviceBaseUrl || "").trim();
+    var apiKey = (input.apiKey !== undefined ? String(input.apiKey) : (input.key !== undefined ? String(input.key) : "")).trim();
+    var isNew = input.isNew !== undefined ? Boolean(input.isNew) : (mode === "create");
+    var keyConfigured = Boolean(input.keyConfigured);
+
+    function fail(msg) {
+      return { valid: false, ok: false, error: msg, message: msg };
+    }
+
+    if (!name) {
+      return fail("请输入配置名称。");
+    }
+    if (name.length > 40) {
+      return fail("配置名称不能超过 40 个字符。");
+    }
+    if (/[\x00-\x1f\x7f]/.test(name)) {
+      return fail("配置名称不能包含控制字符。");
+    }
+    if (!url) {
+      return fail("请输入服务地址。");
+    }
+    if (!/^https?:\/\//i.test(url)) {
+      return fail("服务地址必须以 http:// 或 https:// 开头。");
+    }
+    if (isNew && !keyConfigured && !apiKey) {
+      return fail("新建直连服务必须配置 API Key。");
+    }
+    if (apiKey && /[\x00-\x1f\x7f]/.test(apiKey)) {
+      return fail("API Key 不能包含控制字符。");
+    }
+    return { valid: true, ok: true, error: "", message: "" };
+  }
+
+  function validateTaskModelSelectionDraft(draft) {
+    var input = draft || {};
+    var serviceId = String(input.serviceId || "").trim();
+    if (!serviceId) {
+      return { valid: false, ok: false, error: "请选择共享直连服务。" };
+    }
+    if (input.temperature !== undefined && input.temperature !== null && input.temperature !== "") {
+      var t = Number(input.temperature);
+      if (isNaN(t) || t < 0 || t > 2) {
+        return { valid: false, ok: false, error: "温度参数必须在 0 到 2 之间。" };
+      }
+    }
+    if (input.maxOutputTokens !== undefined && input.maxOutputTokens !== null && input.maxOutputTokens !== "") {
+      var m = Number(input.maxOutputTokens);
+      if (isNaN(m) || m < 1 || m > 16384) {
+        return { valid: false, ok: false, error: "最大输出 Token 必须在 1 到 16384 之间。" };
+      }
+    }
+    if (input.contextWindowTokens !== undefined && input.contextWindowTokens !== null && input.contextWindowTokens !== "") {
+      var c = Number(input.contextWindowTokens);
+      if (isNaN(c) || c < 1000 || c > 2000000) {
+        return { valid: false, ok: false, error: "上下文容量必须在 1000 到 2000000 之间。" };
+      }
+    }
+    if (input.customModel) {
+      var customName = String(input.modelName || "").trim();
+      if (!customName) {
+        return { valid: false, ok: false, error: "自定义模型名称不能为空。" };
+      }
+    }
+    return { valid: true, ok: true, error: "" };
+  }
+
   function shouldActivateNewWorkflowProfile(profileCount, requested) {
     return Number(profileCount || 0) === 0 || Boolean(requested);
   }
@@ -4660,6 +4787,8 @@
     rollbackTaskModelConfigSwitch: rollbackTaskModelConfigSwitch,
     reduceTaskModelConfigMenuKey: reduceTaskModelConfigMenuKey,
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
-    shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile
+    shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
+    validateDirectServiceDraft: validateDirectServiceDraft,
+    validateTaskModelSelectionDraft: validateTaskModelSelectionDraft
   };
 });

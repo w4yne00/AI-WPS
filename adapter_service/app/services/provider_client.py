@@ -13,7 +13,7 @@ from types import SimpleNamespace
 from typing import Dict, List, Optional, Tuple
 from urllib import error, request as urllib_request
 
-from app.core.config import AppSettings, TaskRoute, default_config_path, load_settings
+from app.core.config import AppSettings, TaskRoute, default_config_path, load_settings, load_config_payload
 from app.core.runtime_paths import resolve_runtime_paths
 from app.core.errors import (
     AdapterError,
@@ -45,6 +45,7 @@ from app.services.model_configurations import (
     ModelConfigurationStore,
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
+from app.services.direct_services import DirectServiceError, DirectServiceStore
 from app.services.ppt.document_text_extractor import extract_staged_document_text
 from app.services.word.image_semantics import ImageSemanticConfigStore
 
@@ -2005,6 +2006,7 @@ class ProviderClient:
         workflow_profile_store: Optional[WorkflowProfileStore] = None,
         model_configuration_store: Optional[ModelConfigurationStore] = None,
         system_prompt_store: Optional[SystemPromptStore] = None,
+        direct_service_store: Optional[DirectServiceStore] = None,
     ) -> None:
         self.settings = settings or load_settings()
         self.reload_settings = settings is None
@@ -2013,6 +2015,11 @@ class ProviderClient:
         )
         self.model_configuration_store = model_configuration_store or (
             ModelConfigurationStore() if settings is None else None
+        )
+        self.direct_service_store = direct_service_store or (
+            DirectServiceStore()
+            if (settings is None or model_configuration_store is not None)
+            else None
         )
         self.system_prompt_store = system_prompt_store or SystemPromptStore()
 
@@ -2030,6 +2037,71 @@ class ProviderClient:
 
     def resolve_task_auth(self, task_type: str) -> Dict:
         self.refresh_settings()
+        if self.direct_service_store is not None:
+            try:
+                payload = load_config_payload(self.direct_service_store.config_path)
+                active_map = payload.get("activeModelConfigurations") or {}
+                active_id = str(active_map.get(task_type, "")).strip()
+                services = payload.get("directServices") or {}
+                if active_id and active_id in services:
+                    service = self.direct_service_store.get_service(active_id, include_secret=True)
+                    selection = self.direct_service_store.get_task_model_selection(task_type)
+                    effective_model = str(selection.get("modelName") or service.get("defaultModel") or "").strip()
+                    if not effective_model:
+                        raise AdapterError(
+                            "DIRECT_SERVICE_MODEL_REQUIRED",
+                            "直连服务未指定有效模型，无法执行任务。",
+                            status_code=400,
+                        )
+                    is_custom = bool(selection.get("customModel", False))
+
+                    model_list = service.get("modelList") or []
+                    if model_list and not is_custom and effective_model not in model_list:
+                        raise AdapterError(
+                            "DIRECT_SERVICE_MODEL_DISAPPEARED",
+                            f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
+                            status_code=400,
+                        )
+
+                    base_url = str(service.get("serviceBaseUrl", "")).rstrip("/")
+                    call_path = "/chat/completions"
+                    api_key = str(service.get("apiKey", "")).strip()
+                    auth_source = "task-file" if service.get("keyConfigured") else "none"
+
+                    return {
+                        "providerBaseUrl": base_url,
+                        "providerChatPath": call_path,
+                        "providerMode": "blocking",
+                        "providerName": str(service.get("name", "模型直连")),
+                        "providerType": ACCESS_DIRECT_MODEL,
+                        "providerInputMode": DIFY_INPUT_MODE_LEGACY,
+                        "accessMethod": ACCESS_DIRECT_MODEL,
+                        "modelConfiguration": None,
+                        "modelConfigurationId": service["id"],
+                        "modelConfigurationName": str(service.get("name", "")),
+                        "modelName": effective_model,
+                        "temperature": selection.get("temperature"),
+                        "maxOutputTokens": selection.get("maxOutputTokens"),
+                        "contextWindowTokens": int(
+                            selection.get("contextWindowTokens")
+                            or DEFAULT_CONTEXT_WINDOW_TOKENS
+                        ),
+                        "contextWindowTokensExplicit": selection.get("contextWindowTokens") is not None,
+                        "formatSemanticValidation": None,
+                        "formatSemanticReadiness": None,
+                        "imageSemantics": self.image_semantic_settings(),
+                        "imageInputMode": selection.get("imageInputMode", "disabled"),
+                        "imageExternalAuthorization": None,
+                        "imageSemanticValidation": None,
+                        "apiKeyRef": service["id"],
+                        "apiKey": api_key,
+                        "authSource": auth_source,
+                        "directService": service,
+                        "taskModelSelection": selection,
+                    }
+            except DirectServiceError:
+                pass
+
         model_configuration = self.get_active_model_configuration(task_type, include_secret=True)
         if model_configuration:
             access_method = str(model_configuration.get("accessMethod", ACCESS_WORKFLOW_PLATFORM))
@@ -2250,6 +2322,24 @@ class ProviderClient:
 
     def is_task_configured(self, task_type: str, key_base_path: Optional[Path] = None) -> bool:
         self.refresh_settings()
+        if self.direct_service_store is not None:
+            try:
+                payload = load_config_payload(self.direct_service_store.config_path)
+                active_map = payload.get("activeModelConfigurations") or {}
+                active_id = str(active_map.get(task_type, "")).strip()
+                services = payload.get("directServices") or {}
+                if active_id and active_id in services:
+                    service = services[active_id]
+                    selection = self.direct_service_store.get_task_model_selection(task_type)
+                    effective_model = str(selection.get("modelName") or service.get("defaultModel") or "").strip()
+                    if (
+                        bool(str(service.get("serviceBaseUrl", "")).strip())
+                        and bool(self.direct_service_store.has_api_key(active_id))
+                        and bool(effective_model)
+                    ):
+                        return True
+            except Exception:
+                pass
         if self.model_configuration_store is not None:
             try:
                 return self.model_configuration_store.get_active_configuration(task_type) is not None
@@ -2336,6 +2426,40 @@ class ProviderClient:
         ]
         status = {}
         for task_type, label in tasks:
+            if self.direct_service_store is not None:
+                try:
+                    payload = load_config_payload(self.direct_service_store.config_path)
+                    active_map = payload.get("activeModelConfigurations") or {}
+                    active_id = str(active_map.get(task_type, "")).strip()
+                    services = payload.get("directServices") or {}
+                    if active_id and active_id in services:
+                        service = self.direct_service_store.get_service(active_id)
+                        selection = self.direct_service_store.get_task_model_selection(task_type)
+                        effective_model = str(selection.get("modelName") or service.get("defaultModel") or "").strip()
+                        key_configured = bool(service.get("keyConfigured"))
+                        status[task_type] = {
+                            "label": label,
+                            "apiKeyRef": active_id,
+                            "taskKeyConfigured": key_configured,
+                            "configured": bool(
+                                service.get("serviceBaseUrl")
+                                and key_configured
+                                and effective_model
+                            ),
+                            "authSource": "task-file" if key_configured else "none",
+                            "activeProfileId": active_id,
+                            "activeProfileName": str(service.get("name", "")),
+                            "profileCount": len(services),
+                            "activeConfigurationId": active_id,
+                            "activeConfigurationName": str(service.get("name", "")),
+                            "configurationCount": len(services),
+                            "accessMethod": ACCESS_DIRECT_MODEL,
+                            "modelName": effective_model,
+                            "serviceId": active_id,
+                        }
+                        continue
+                except Exception:
+                    pass
             if self.model_configuration_store is not None:
                 try:
                     model_data = self.model_configuration_store.list_for_task(task_type)
@@ -3329,6 +3453,108 @@ class ProviderClient:
             "accessMethod": str(configuration.get("accessMethod", "")),
             "modelName": str(configuration.get("modelName", "")),
             "promptVersion": prompt_version,
+        }
+
+    def validate_task_model_selection(
+        self, task_type: str, selection_data: Dict, trace_id: str
+    ) -> Dict:
+        if self.direct_service_store is None:
+            raise AdapterError(
+                "DIRECT_SERVICE_UNAVAILABLE", "直连服务存储未初始化。", status_code=500
+            )
+        service_id = str(selection_data.get("serviceId", "")).strip()
+        if not service_id:
+            current_sel = self.direct_service_store.get_task_model_selection(task_type)
+            service_id = str(current_sel.get("serviceId", "")).strip()
+        if not service_id:
+            raise AdapterError(
+                "DIRECT_SERVICE_REQUIRED", "请先选择直连服务。", status_code=400
+            )
+
+        service = self.direct_service_store.get_service(service_id, include_secret=True)
+        if not service.get("serviceBaseUrl"):
+            raise AdapterError(
+                "DIRECT_SERVICE_URL_REQUIRED", "直连服务缺少服务地址，无法验证。", status_code=400
+            )
+        if not service.get("keyConfigured") or not service.get("apiKey"):
+            raise AdapterError(
+                "DIRECT_SERVICE_KEY_REQUIRED", "直连服务未配置 API Key，无法验证。", status_code=400
+            )
+
+        model_name = str(
+            selection_data.get("modelName") or service.get("defaultModel") or ""
+        ).strip()
+        if not model_name:
+            raise AdapterError(
+                "DIRECT_SERVICE_MODEL_REQUIRED", "请选择或填写模型名称。", status_code=400
+            )
+
+        is_custom = bool(selection_data.get("customModel", False))
+        model_list = service.get("modelList") or []
+        if model_list and not is_custom and model_name not in model_list:
+            raise AdapterError(
+                "DIRECT_SERVICE_MODEL_DISAPPEARED",
+                f"所选模型 {model_name} 已从服务目录中移除，请重新选择模型。",
+                status_code=400,
+            )
+
+        probe = _VALIDATION_PROBES.get(task_type)
+        if not probe:
+            raise AdapterError(
+                "MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400
+            )
+
+        task_auth = {
+            "providerBaseUrl": service["serviceBaseUrl"].rstrip("/"),
+            "providerChatPath": "/chat/completions",
+            "providerMode": "blocking",
+            "providerName": service.get("name", "模型直连"),
+            "providerType": ACCESS_DIRECT_MODEL,
+            "providerInputMode": DIFY_INPUT_MODE_LEGACY,
+            "accessMethod": ACCESS_DIRECT_MODEL,
+            "modelConfiguration": None,
+            "modelConfigurationId": service["id"],
+            "modelConfigurationName": service.get("name", ""),
+            "modelName": model_name,
+            "temperature": selection_data.get("temperature"),
+            "maxOutputTokens": selection_data.get("maxOutputTokens"),
+            "contextWindowTokens": int(
+                selection_data.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS
+            ),
+            "contextWindowTokensExplicit": selection_data.get("contextWindowTokens") is not None,
+            "formatSemanticValidation": None,
+            "formatSemanticReadiness": None,
+            "imageSemantics": self.image_semantic_settings(),
+            "imageInputMode": selection_data.get("imageInputMode", "disabled"),
+            "imageExternalAuthorization": None,
+            "imageSemanticValidation": None,
+            "apiKeyRef": service["id"],
+            "apiKey": service.get("apiKey", ""),
+            "authSource": "task-file",
+            "directService": service,
+            "taskModelSelection": selection_data,
+        }
+
+        timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
+        body = self.post_task(
+            task_type,
+            trace_id,
+            {"validation": True},
+            probe,
+            timeout_seconds=timeout,
+            task_auth=task_auth,
+        )
+        answer = extract_answer(body)
+        _validate_probe_answer(task_type, answer)
+
+        return {
+            "success": True,
+            "taskType": task_type,
+            "serviceId": service["id"],
+            "serviceName": service.get("name", ""),
+            "modelName": model_name,
+            "customModel": is_custom,
+            "customModelValidated": True,
         }
 
     def _validation_configuration_identity(self, configuration: Dict) -> Dict:

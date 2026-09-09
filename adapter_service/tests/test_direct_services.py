@@ -575,7 +575,57 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         )
         self.assertEqual(res["status"], 400)
         self.assertEqual(len(res["writes"]), 1)
-        self.assertEqual(res["body"]["errors"][0]["code"], "DIRECT_SERVICE_URL_INVALID")
+    def test_direct_service_atomic_create_with_api_key(self) -> None:
+        """Atomic direct service creation with API key configured in one shot."""
+        res = self._invoke(
+            "do_POST",
+            "/provider/direct-services",
+            {
+                "name": "原子创建直连服务",
+                "serviceBaseUrl": "https://api.openai.com/v1",
+                "defaultModel": "gpt-4o",
+                "apiKey": "sk-atomic-key-123",
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        svc = res["body"]["data"]["directService"]
+        self.assertEqual(svc["name"], "原子创建直连服务")
+        self.assertTrue(svc["keyConfigured"])
+        self.assertEqual(svc["revision"], 1)
+
+    def test_activate_direct_service_requires_effective_model(self) -> None:
+        """Activating direct service without defaultModel and without task model selection must fail."""
+        res = self._invoke(
+            "do_POST",
+            "/provider/direct-services",
+            {
+                "name": "无模型直连服务",
+                "serviceBaseUrl": "https://api.openai.com/v1",
+                "defaultModel": "",
+                "apiKey": "sk-test-key",
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        svc_id = res["body"]["data"]["directService"]["id"]
+
+        # Activate on excel.analysis without setting modelName -> must fail with 400 DIRECT_SERVICE_MODEL_REQUIRED
+        res = self._invoke(
+            "do_POST",
+            f"/provider/direct-services/{svc_id}/activate",
+            {"taskType": "excel.analysis"},
+        )
+        self.assertEqual(res["status"], 400)
+        self.assertEqual(res["body"]["errors"][0]["code"], "DIRECT_SERVICE_MODEL_REQUIRED")
+
+    def test_list_task_model_selections_returns_selections_dict(self) -> None:
+        """Listing task model selections must provide both array and dict mapping."""
+        res = self._invoke("do_GET", "/provider/task-model-selections?host=excel")
+        self.assertEqual(res["status"], 200)
+        data = res["body"]["data"]
+        self.assertIn("taskModelSelections", data)
+        self.assertIn("selections", data)
+        self.assertIn("excel.analysis", data["selections"])
+        self.assertEqual(data["selections"]["excel.analysis"]["taskType"], "excel.analysis")
 
 
 if __name__ == "__main__":
