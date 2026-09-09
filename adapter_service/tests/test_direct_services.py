@@ -331,7 +331,10 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         self.api_key_dir = Path(self.temp_dir.name) / "keys"
         self.api_key_dir.mkdir(parents=True, exist_ok=True)
 
+        from app.services.model_configurations import ModelConfigurationStore
+
         self._orig_store = standalone_adapter.DirectServiceStore
+        self._orig_model_store = standalone_adapter.ModelConfigurationStore
 
         # Create a store bound to temp paths
         def store_factory():
@@ -339,10 +342,17 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
                 config_path=self.config_path, api_key_dir=self.api_key_dir
             )
 
+        def model_store_factory():
+            return ModelConfigurationStore(
+                config_path=self.config_path, key_dir=self.api_key_dir
+            )
+
         standalone_adapter.DirectServiceStore = store_factory
+        standalone_adapter.ModelConfigurationStore = model_store_factory
 
     def tearDown(self):
         self.standalone.DirectServiceStore = self._orig_store
+        self.standalone.ModelConfigurationStore = self._orig_model_store
         self.temp_dir.cleanup()
 
     def _invoke(self, method, path, body=None):
@@ -352,6 +362,8 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         handler = object.__new__(self.standalone.Handler)
         handler.path = path
         handler.command = method
+        handler.requestline = f"{method} {path} HTTP/1.1"
+        handler.request_version = "HTTP/1.1"
         raw = json.dumps(body or {}).encode("utf-8") if body is not None else b""
         handler.headers = {"Content-Length": str(len(raw))}
         handler.rfile = BytesIO(raw)
@@ -362,6 +374,9 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
             (code, {"message": message})
         )
         handler._write = lambda status, payload: writes.append((status, payload))
+        handler._write_bytes = lambda status, payload, headers=None: writes.append(
+            (status, json.loads(payload.decode("utf-8")) if payload else {})
+        )
         getattr(handler, method)()
         status, resp_body = writes[-1] if writes else (None, None)
         return {"status": status, "body": resp_body, "writes": writes}
@@ -515,7 +530,7 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         cfg = model_store.create_configuration(
             task_type="word.smart_write",
             name="既有编写配置",
-            access_method="direct",
+            access_method="direct_model",
             service_base_url="https://api.openai.com/v1",
             model_name="gpt-4o",
         )

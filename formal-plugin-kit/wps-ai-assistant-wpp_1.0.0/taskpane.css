@@ -1154,6 +1154,109 @@ button.ghost-action:hover {
   }
 }
 
+.result-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-entry-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.history-badge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: var(--brand, #d36b2c);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.history-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ppt-history-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.ppt-history-empty {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--muted, #666);
+  font-size: 13px;
+}
+
+.ppt-history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ppt-history-card {
+  padding: 10px 12px;
+  border: 1px solid var(--hairline, #e2e8f0);
+  border-radius: var(--radius-card, 6px);
+  background: var(--surface, #fff);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ppt-history-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 12px;
+  color: var(--muted, #666);
+}
+
+.ppt-history-doc-name {
+  font-weight: 500;
+  color: var(--text, #1a202c);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ppt-history-time {
+  font-size: 11px;
+  color: var(--muted, #888);
+}
+
+.ppt-history-card-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text, #1a202c);
+}
+
+.ppt-history-card-snippet {
+  font-size: 12px;
+  color: var(--muted, #4a5568);
+  line-height: 1.4;
+  max-height: 42px;
+  overflow: hidden;
+}
+
+.ppt-history-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 4px;
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,

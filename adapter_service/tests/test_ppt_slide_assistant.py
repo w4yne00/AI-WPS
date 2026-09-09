@@ -179,26 +179,28 @@ class PptSlideAssistantTests(unittest.TestCase):
         next_title="风险与措施",
         instruction="面向管理层，突出进展和风险。",
         client_job_id="",
+        document_session_id="",
     ):
-        return parse_ppt_request(
-            {
-                "presentationId": "汇报材料.pptx",
-                "scene": "ppt",
-                "clientJobId": client_job_id,
-                "slide": {
-                    "index": 2,
-                    "title": title,
-                    "subtitle": subtitle,
-                    "textBlocks": text_blocks
-                    if text_blocks is not None
-                    else ["总体方案设计已完成", "正在开展接口联调"],
-                    "previousTitle": previous_title,
-                    "nextTitle": next_title,
-                    "truncated": False,
-                },
-                "userInstruction": instruction,
-            }
-        )
+        payload = {
+            "presentationId": "汇报材料.pptx",
+            "scene": "ppt",
+            "clientJobId": client_job_id,
+            "slide": {
+                "index": 2,
+                "title": title,
+                "subtitle": subtitle,
+                "textBlocks": text_blocks
+                if text_blocks is not None
+                else ["总体方案设计已完成", "正在开展接口联调"],
+                "previousTitle": previous_title,
+                "nextTitle": next_title,
+                "truncated": False,
+            },
+            "userInstruction": instruction,
+        }
+        if document_session_id:
+            payload["documentSessionId"] = document_session_id
+        return parse_ppt_request(payload)
 
     def _document_request(
         self,
@@ -564,6 +566,38 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(completed["status"], "completed")
         self.assertEqual(completed["result"]["suggestedTitle"], "后台任务完成")
 
+    def test_job_store_rejects_concurrent_submission_in_same_document_session(self):
+        assistant = BlockingPptAssistant()
+        store = PptSlideAssistantJobStore(assistant=assistant)
+        req1 = self._request(
+            client_job_id="job-session-first",
+            document_session_id="doc-session-test",
+        )
+        req2 = self._request(
+            client_job_id="job-session-second",
+            document_session_id="doc-session-test",
+        )
+        req_other = self._request(
+            client_job_id="job-session-other",
+            document_session_id="doc-session-different",
+        )
+
+        started = store.start(req1, trace_id="trace-session-first")
+        self.assertEqual(started["jobId"], "job-session-first")
+        self.assertTrue(assistant.started.wait(timeout=1))
+
+        # Duplicate submission under the same document session must be rejected with 409
+        with self.assertRaises(AdapterError) as err:
+            store.start(req2, trace_id="trace-session-second")
+        self.assertEqual(err.exception.code, "PPT_SLIDE_ASSISTANT_DOCUMENT_TASK_BUSY")
+        self.assertEqual(err.exception.status_code, 409)
+
+        # Submission under different document session should succeed
+        diff_started = store.start(req_other, trace_id="trace-session-other")
+        self.assertEqual(diff_started["jobId"], "job-session-other")
+
+        assistant.release.set()
+
     def test_job_store_rejects_new_job_when_shared_queue_is_full(self):
         assistant = BlockingPptAssistant()
         store = PptSlideAssistantJobStore(
@@ -593,6 +627,76 @@ class PptSlideAssistantTests(unittest.TestCase):
         self.assertEqual(error.exception.status_code, 429)
         self.assertEqual(assistant.call_count, 1)
         assistant.release.set()
+
+    def test_job_store_records_sanitized_history_and_handles_oversize_notice(self):
+        from app.services.task_history import TaskHistoryStore
+        from tempfile import TemporaryDirectory
+
+        with TemporaryDirectory() as tmp:
+            tmp_history = Path(tmp) / "history"
+            custom_store = TaskHistoryStore(tmp_history)
+
+            class FakeAssistant:
+                def __init__(self, oversize=False):
+                    self.oversize = oversize
+
+                def assist(self, req, trace_id, **kwargs):
+                    if self.oversize:
+                        return {
+                            "resultType": "slide",
+                            "summary": "x" * (6 * 1024 * 1024),
+                            "actionItems": [],
+                            "bulletPoints": [],
+                            "plainText": "huge",
+                            "prompt": "secret prompt",
+                        }
+                    return {
+                        "resultType": "slide",
+                        "summary": "正常总结",
+                        "actionItems": ["跟进"],
+                        "bulletPoints": ["要点"],
+                        "plainText": "输出",
+                        "prompt": "secret prompt should not leak",
+                    }
+
+            # 1. Normal run: prompt stripped
+            with patch("app.services.ppt.slide_assistant_jobs.get_task_history_store", return_value=custom_store):
+                store = PptSlideAssistantJobStore(assistant=FakeAssistant(oversize=False))
+                req = self._request(client_job_id="client-ppt-hist-normal")
+                store.start(req, trace_id="trace-normal")
+
+                res = None
+                for _ in range(50):
+                    res = store.get("client-ppt-hist-normal")
+                    if res and res.get("status") == "completed":
+                        break
+                    time.sleep(0.02)
+                self.assertIsNotNone(res)
+                self.assertEqual(res["status"], "completed")
+
+                histories = custom_store.list_history("ppt.slide_assistant")
+                self.assertEqual(len(histories), 1)
+                self.assertEqual(histories[0]["jobId"], "client-ppt-hist-normal")
+                self.assertNotIn("prompt", histories[0]["result"])
+
+            # 2. Oversize run: 5 MiB notice populated
+            with patch("app.services.ppt.slide_assistant_jobs.get_task_history_store", return_value=custom_store):
+                store_over = PptSlideAssistantJobStore(assistant=FakeAssistant(oversize=True))
+                req_over = self._request(client_job_id="client-ppt-hist-over")
+                store_over.start(req_over, trace_id="trace-over")
+
+                res_over = None
+                for _ in range(50):
+                    res_over = store_over.get("client-ppt-hist-over")
+                    if res_over and res_over.get("status") == "completed":
+                        break
+                    time.sleep(0.02)
+                self.assertIsNotNone(res_over)
+                self.assertEqual(res_over["status"], "completed")
+                self.assertEqual(
+                    res_over["result"].get("historyNotice"),
+                    "任务结果超过 5 MiB，未写入历史记录。"
+                )
 
     def test_job_store_keeps_safe_slide_validation_message(self):
         store = PptSlideAssistantJobStore(assistant=PptSlideAssistant())
