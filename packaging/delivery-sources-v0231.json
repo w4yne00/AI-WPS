@@ -184,6 +184,7 @@
         "core/tracing.py",
         "main.py",
         "services/dify_client.py",
+        "services/direct_services.py",
         "services/document_normalizer.py",
         "services/excel/__init__.py",
         "services/excel/analysis_jobs.py",

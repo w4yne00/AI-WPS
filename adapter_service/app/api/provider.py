@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, Field
-from typing import Optional
+from typing import List, Optional
 import time
 
 from app.core.config import save_provider_base_url
@@ -19,6 +19,10 @@ from app.services.model_configurations import (
     ModelConfigurationError,
     ModelConfigurationStore,
     WorkflowProfileCompatibilityStore,
+)
+from app.services.direct_services import (
+    DirectServiceError,
+    DirectServiceStore,
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
 
@@ -99,12 +103,78 @@ class ModelConfigurationCopyRequest(BaseModel):
     name: str = ""
 
 
+class DirectServiceCreateRequest(BaseModel):
+    name: str
+    service_base_url: str = Field(default="", alias="serviceBaseUrl")
+    default_model: str = Field(default="", alias="defaultModel")
+
+
+class DirectServiceUpdateRequest(BaseModel):
+    name: str
+    expected_revision: int = Field(alias="expectedRevision")
+    service_base_url: str = Field(default="", alias="serviceBaseUrl")
+    default_model: str = Field(default="", alias="defaultModel")
+
+
+class DirectServiceApiKeyRequest(BaseModel):
+    api_key: str = Field(alias="apiKey")
+    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+
+
+class DirectServiceClearApiKeyRequest(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+
+
+class DirectServiceModelListUpdateRequest(BaseModel):
+    model_list: List[str] = Field(alias="modelList")
+    fetched_at: Optional[str] = Field(default=None, alias="fetchedAt")
+
+
+class TaskModelSelectionUpdateRequest(BaseModel):
+    service_id: str = Field(default="", alias="serviceId")
+    model_name: str = Field(default="", alias="modelName")
+    temperature: Optional[float] = None
+    max_output_tokens: Optional[int] = Field(default=None, alias="maxOutputTokens")
+    context_window_tokens: Optional[int] = Field(
+        default=None, alias="contextWindowTokens"
+    )
+    image_input_mode: Optional[str] = Field(default=None, alias="imageInputMode")
+    custom_model: bool = Field(default=False, alias="customModel")
+    custom_model_validated: bool = Field(
+        default=False, alias="customModelValidated"
+    )
+
+
 def get_workflow_profile_store() -> WorkflowProfileCompatibilityStore:
     return WorkflowProfileCompatibilityStore()
 
 
 def get_model_configuration_store() -> ModelConfigurationStore:
     return ModelConfigurationStore()
+
+
+def get_direct_service_store() -> DirectServiceStore:
+    return DirectServiceStore()
+
+
+def _raise_direct_service_error(exc: DirectServiceError) -> None:
+    if exc.code == "DIRECT_SERVICE_NOT_FOUND":
+        status_code = 404
+    elif exc.code in {
+        "DIRECT_SERVICE_LIMIT",
+        "DIRECT_SERVICE_NAME_DUPLICATE",
+        "DIRECT_SERVICE_REVISION_CONFLICT",
+        "DIRECT_SERVICE_IN_USE",
+    }:
+        status_code = 409
+    else:
+        status_code = 400
+    raise AdapterError(
+        exc.code,
+        exc.message,
+        status_code=status_code,
+        referenced_tasks=exc.referenced_tasks,
+    )
 
 
 def _raise_profile_error(exc: WorkflowProfileError) -> None:
@@ -546,4 +616,182 @@ def delete_provider_task_api_key(task_type: str) -> dict:
         "success": True,
         "message": "cleared",
         "data": _task_key_status(task_type, profile_data),
+    }
+
+
+@router.get("/provider/direct-services")
+def get_direct_services() -> dict:
+    try:
+        data = get_direct_service_store().list_services()
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": data}
+
+
+@router.post("/provider/direct-services")
+def create_direct_service(request: DirectServiceCreateRequest) -> dict:
+    try:
+        service = get_direct_service_store().create_service(
+            request.name,
+            service_base_url=request.service_base_url,
+            default_model=request.default_model,
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {"directService": service},
+    }
+
+
+@router.get("/provider/direct-services/{service_id}")
+def get_direct_service(service_id: str) -> dict:
+    try:
+        service = get_direct_service_store().get_service(service_id)
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": {"directService": service}}
+
+
+@router.patch("/provider/direct-services/{service_id}")
+def update_direct_service(
+    service_id: str, request: DirectServiceUpdateRequest
+) -> dict:
+    try:
+        service = get_direct_service_store().update_service(
+            service_id,
+            name=request.name,
+            expected_revision=request.expected_revision,
+            service_base_url=request.service_base_url,
+            default_model=request.default_model,
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {"directService": service},
+    }
+
+
+@router.delete("/provider/direct-services/{service_id}")
+def delete_direct_service(
+    service_id: str,
+    expected_revision: Optional[int] = Query(default=None, alias="expectedRevision"),
+) -> dict:
+    try:
+        data = get_direct_service_store().delete_service(
+            service_id, expected_revision=expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "deleted",
+        "data": data,
+    }
+
+
+@router.post("/provider/direct-services/{service_id}/api-key")
+def replace_direct_service_api_key(
+    service_id: str, request: DirectServiceApiKeyRequest
+) -> dict:
+    try:
+        service = get_direct_service_store().replace_api_key(
+            service_id,
+            request.api_key,
+            expected_revision=request.expected_revision,
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {"directService": service},
+    }
+
+
+@router.delete("/provider/direct-services/{service_id}/api-key")
+def clear_direct_service_api_key(
+    service_id: str,
+    expected_revision: Optional[int] = Query(default=None, alias="expectedRevision"),
+) -> dict:
+    try:
+        service = get_direct_service_store().clear_api_key(
+            service_id, expected_revision=expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "cleared",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/direct-services/{service_id}/models")
+def update_direct_service_models(
+    service_id: str, request: DirectServiceModelListUpdateRequest
+) -> dict:
+    try:
+        service = get_direct_service_store().update_model_list(
+            service_id,
+            request.model_list,
+            fetched_at=request.fetched_at,
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {"directService": service},
+    }
+
+
+@router.get("/provider/task-model-selections")
+def get_task_model_selections(
+    host: Optional[str] = None,
+    task_type: Optional[str] = Query(default=None, alias="taskType"),
+) -> dict:
+    try:
+        data = get_direct_service_store().list_task_model_selections(
+            host=host, task_type=task_type
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": data}
+
+
+@router.get("/provider/task-model-selections/{task_type}")
+def get_task_model_selection(task_type: str) -> dict:
+    try:
+        data = get_direct_service_store().get_task_model_selection(task_type)
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": {"taskModelSelection": data}}
+
+
+@router.put("/provider/task-model-selections/{task_type}")
+def update_task_model_selection_route(
+    task_type: str, request: TaskModelSelectionUpdateRequest
+) -> dict:
+    try:
+        selection = get_direct_service_store().update_task_model_selection(
+            task_type,
+            service_id=request.service_id,
+            model_name=request.model_name,
+            temperature=request.temperature,
+            max_output_tokens=request.max_output_tokens,
+            context_window_tokens=request.context_window_tokens,
+            image_input_mode=request.image_input_mode,
+            custom_model=request.custom_model,
+            custom_model_validated=request.custom_model_validated,
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "saved",
+        "data": {"taskModelSelection": selection},
     }

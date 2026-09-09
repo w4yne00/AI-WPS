@@ -90,6 +90,10 @@ from app.services.model_configurations import (
     ModelConfigurationStore,
     WorkflowProfileCompatibilityStore,
 )
+from app.services.direct_services import (
+    DirectServiceError,
+    DirectServiceStore,
+)
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
 from app.services.word.writing_jobs import SmartImitationJobStore, SmartWriteJobStore
 
@@ -1681,6 +1685,80 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/provider/direct-services":
+            try:
+                data = DirectServiceStore().list_services()
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-direct-services",
+                    "provider.direct_services",
+                    data,
+                ),
+            )
+            return
+
+        direct_service_prefix = "/provider/direct-services/"
+        if path.startswith(direct_service_prefix):
+            service_id = unquote(path[len(direct_service_prefix) :]).strip("/")
+            try:
+                service = DirectServiceStore().get_service(service_id)
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-direct-service",
+                    "provider.direct_service",
+                    {"directService": service},
+                ),
+            )
+            return
+
+        if path == "/provider/task-model-selections":
+            host = str(parse_qs(parsed.query).get("host", [""])[0]).strip() or None
+            task_type = (
+                str(parse_qs(parsed.query).get("taskType", [""])[0]).strip() or None
+            )
+            try:
+                data = DirectServiceStore().list_task_model_selections(
+                    host=host, task_type=task_type
+                )
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-task-model-selections",
+                    "provider.task_model_selections",
+                    data,
+                ),
+            )
+            return
+
+        task_model_selection_prefix = "/provider/task-model-selections/"
+        if path.startswith(task_model_selection_prefix):
+            task_type = unquote(path[len(task_model_selection_prefix) :]).strip("/")
+            try:
+                selection = DirectServiceStore().get_task_model_selection(task_type)
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-task-model-selection",
+                    "provider.task_model_selection",
+                    {"taskModelSelection": selection},
+                ),
+            )
+            return
+
         model_configuration_prefix = "/provider/model-configurations/"
         if path.startswith(model_configuration_prefix) and path.endswith("/system-prompt"):
             configuration_id = unquote(
@@ -2495,6 +2573,70 @@ class Handler(BaseHTTPRequestHandler):
                 ),
             )
             return
+
+        if path == "/provider/direct-services":
+            try:
+                service = DirectServiceStore().create_service(
+                    payload.get("name", ""),
+                    service_base_url=payload.get("serviceBaseUrl", ""),
+                    default_model=payload.get("defaultModel", ""),
+                )
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-direct-service",
+                    "provider.direct_service",
+                    {"directService": service},
+                    message="saved",
+                ),
+            )
+            return
+
+        direct_service_prefix = "/provider/direct-services/"
+        if path.startswith(direct_service_prefix):
+            relative = path[len(direct_service_prefix) :].strip("/")
+            service_id, separator, action = relative.partition("/")
+            service_id = unquote(service_id)
+            store = DirectServiceStore()
+            try:
+                if action == "api-key":
+                    service = store.replace_api_key(
+                        service_id,
+                        payload.get("apiKey", ""),
+                        expected_revision=payload.get("expectedRevision"),
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            {"directService": service},
+                            message="saved",
+                        ),
+                    )
+                    return
+                elif action == "models":
+                    service = store.update_model_list(
+                        service_id,
+                        payload.get("modelList", []),
+                        fetched_at=payload.get("fetchedAt"),
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            {"directService": service},
+                            message="saved",
+                        ),
+                    )
+                    return
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
 
         if path == "/provider/model-configurations":
             try:
@@ -3338,7 +3480,31 @@ class Handler(BaseHTTPRequestHandler):
                     message="saved",
                 ),
             )
+        direct_service_prefix = "/provider/direct-services/"
+        if path.startswith(direct_service_prefix):
+            service_id = unquote(path[len(direct_service_prefix) :]).strip("/")
+            try:
+                service = DirectServiceStore().update_service(
+                    service_id,
+                    name=payload.get("name", ""),
+                    expected_revision=payload.get("expectedRevision"),
+                    service_base_url=payload.get("serviceBaseUrl", ""),
+                    default_model=payload.get("defaultModel", ""),
+                )
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-direct-service-update",
+                    "provider.direct_service",
+                    {"directService": service},
+                    message="saved",
+                ),
+            )
             return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
@@ -3460,7 +3626,42 @@ class Handler(BaseHTTPRequestHandler):
                 body_size=len(raw_bytes),
             )
             self._write_writing_policy_response(response)
+        task_selection_prefix = "/provider/task-model-selections/"
+        if path.startswith(task_selection_prefix):
+            task_type = unquote(path[len(task_selection_prefix) :]).strip("/")
+            length = int(self.headers.get("Content-Length", "0"))
+            try:
+                raw_body = self.rfile.read(length).decode("utf-8") if length else "{}"
+                payload = json.loads(raw_body or "{}")
+            except (UnicodeDecodeError, ValueError):
+                self._write(400, envelope("standalone-validation", "adapter.validation", success=False, message="请求内容格式无效，请检查后重试。"))
+                return
+            try:
+                selection = DirectServiceStore().update_task_model_selection(
+                    task_type,
+                    service_id=payload.get("serviceId", ""),
+                    model_name=payload.get("modelName", ""),
+                    temperature=payload.get("temperature"),
+                    max_output_tokens=payload.get("maxOutputTokens"),
+                    context_window_tokens=payload.get("contextWindowTokens"),
+                    image_input_mode=payload.get("imageInputMode"),
+                    custom_model=bool(payload.get("customModel", False)),
+                    custom_model_validated=bool(payload.get("customModelValidated", False)),
+                )
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-task-model-selection-update",
+                    "provider.task_model_selection",
+                    {"taskModelSelection": selection},
+                    message="saved",
+                ),
+            )
             return
+
         self.send_error(501, "Unsupported method (%r)" % self.command)
 
     def do_DELETE(self):
@@ -3950,9 +4151,91 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        direct_service_prefix = "/provider/direct-services/"
+        if path.startswith(direct_service_prefix):
+            relative = path[len(direct_service_prefix) :].strip("/")
+            service_id, separator, action = relative.partition("/")
+            service_id = unquote(service_id)
+            query_params = parse_qs(parsed.query)
+            expected_revision_raw = query_params.get("expectedRevision", [None])[0]
+            expected_revision = None
+            if expected_revision_raw is not None and expected_revision_raw != "":
+                try:
+                    expected_revision = int(expected_revision_raw)
+                except ValueError:
+                    self._write(
+                        400,
+                        envelope(
+                            "standalone-validation",
+                            "adapter.validation",
+                            success=False,
+                            message="expectedRevision must be an integer",
+                        ),
+                    )
+                    return
+            store = DirectServiceStore()
+            try:
+                if action == "api-key":
+                    service = store.clear_api_key(
+                        service_id, expected_revision=expected_revision
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            {"directService": service},
+                            message="cleared",
+                        ),
+                    )
+                    return
+                elif not action:
+                    data = store.delete_service(
+                        service_id, expected_revision=expected_revision
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service-delete",
+                            "provider.direct_service",
+                            data,
+                            message="deleted",
+                        ),
+                    )
+                    return
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+
         self._write(
             404,
             envelope("standalone-not-found", "adapter.error", success=False, message="Not found", errors=[{"code": "NOT_FOUND", "message": path}]),
+        )
+
+    def _write_direct_service_error(self, error):
+        if error.code == "DIRECT_SERVICE_NOT_FOUND":
+            status_code = 404
+        elif error.code in {
+            "DIRECT_SERVICE_LIMIT",
+            "DIRECT_SERVICE_NAME_DUPLICATE",
+            "DIRECT_SERVICE_REVISION_CONFLICT",
+            "DIRECT_SERVICE_IN_USE",
+        }:
+            status_code = 409
+        else:
+            status_code = 400
+        error_item = {"code": error.code, "message": error.message}
+        if getattr(error, "referenced_tasks", None):
+            error_item["referencedTasks"] = error.referenced_tasks
+        self._write(
+            status_code,
+            envelope(
+                "standalone-direct-service-error",
+                "provider.direct_service",
+                success=False,
+                message=error.message,
+                errors=[error_item],
+            ),
         )
 
     def _write_workflow_error(self, error):
