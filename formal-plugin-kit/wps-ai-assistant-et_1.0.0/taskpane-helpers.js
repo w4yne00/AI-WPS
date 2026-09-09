@@ -4573,36 +4573,40 @@
     return { ok: true, name: name, note: note, apiKey: apiKey };
   }
 
-  function validateDirectServiceDraft(draft) {
+  function validateDirectServiceDraft(draft, mode) {
     var input = draft || {};
     var name = String(input.name || "").trim();
     var url = String(input.serviceBaseUrl || "").trim();
-    var apiKey = input.apiKey !== undefined ? String(input.apiKey).trim() : "";
-    var isNew = Boolean(input.isNew);
+    var apiKey = (input.apiKey !== undefined ? String(input.apiKey) : (input.key !== undefined ? String(input.key) : "")).trim();
+    var isNew = input.isNew !== undefined ? Boolean(input.isNew) : (mode === "create");
     var keyConfigured = Boolean(input.keyConfigured);
 
+    function fail(msg) {
+      return { valid: false, ok: false, error: msg, message: msg };
+    }
+
     if (!name) {
-      return { valid: false, ok: false, error: "请输入配置名称。" };
+      return fail("请输入配置名称。");
     }
     if (name.length > 40) {
-      return { valid: false, ok: false, error: "配置名称不能超过 40 个字符。" };
+      return fail("配置名称不能超过 40 个字符。");
     }
     if (/[\x00-\x1f\x7f]/.test(name)) {
-      return { valid: false, ok: false, error: "配置名称不能包含控制字符。" };
+      return fail("配置名称不能包含控制字符。");
     }
     if (!url) {
-      return { valid: false, ok: false, error: "请输入服务地址。" };
+      return fail("请输入服务地址。");
     }
     if (!/^https?:\/\//i.test(url)) {
-      return { valid: false, ok: false, error: "服务地址必须以 http:// 或 https:// 开头。" };
+      return fail("服务地址必须以 http:// 或 https:// 开头。");
     }
     if (isNew && !keyConfigured && !apiKey) {
-      return { valid: false, ok: false, error: "新建直连服务必须配置 API Key。" };
+      return fail("新建直连服务必须配置 API Key。");
     }
     if (apiKey && /[\x00-\x1f\x7f]/.test(apiKey)) {
-      return { valid: false, ok: false, error: "API Key 不能包含控制字符。" };
+      return fail("API Key 不能包含控制字符。");
     }
-    return { valid: true, ok: true, error: "" };
+    return { valid: true, ok: true, error: "", message: "" };
   }
 
   function validateTaskModelSelectionDraft(draft) {

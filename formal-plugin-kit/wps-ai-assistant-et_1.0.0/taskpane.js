@@ -3746,6 +3746,13 @@
     var config = configData || {};
     setProviderBaseUrl(config.providerBaseUrl || "");
     state.taskApiKeys = config.taskApiKeys || {};
+    TASK_API_KEY_DEFS.forEach(function (definition) {
+      var taskType = definition.taskType;
+      var taskStatus = state.taskApiKeys[taskType];
+      if (taskStatus && taskStatus.accessMethod === "direct_model" && taskStatus.activeProfileId) {
+        state.workflowProfileSelections[taskType] = taskStatus.activeProfileId;
+      }
+    });
     renderWorkflowProfileManager();
     renderWorkflowProfileStrip();
   }
@@ -3791,8 +3798,11 @@
     var targetTask = taskType || state.workflowTaskType || EXCEL_WORKFLOW_TASK_TYPE;
     var base = state.workflowProfilesByTask[targetTask] || emptyWorkflowProfileData(targetTask);
     var activeId = base.activeProfileId;
-    if (!activeId && state.taskApiKeys && state.taskApiKeys[targetTask] && state.taskApiKeys[targetTask].activeProfileId) {
-      activeId = state.taskApiKeys[targetTask].activeProfileId;
+    var taskKeyStatus = state.taskApiKeys && state.taskApiKeys[targetTask];
+    if (taskKeyStatus && taskKeyStatus.accessMethod === "direct_model" && taskKeyStatus.activeProfileId) {
+      activeId = taskKeyStatus.activeProfileId;
+    } else if (!activeId && taskKeyStatus && taskKeyStatus.activeProfileId) {
+      activeId = taskKeyStatus.activeProfileId;
     }
     if (!activeId && state.workflowProfileSelections[targetTask] && String(state.workflowProfileSelections[targetTask]).startsWith("direct_svc_")) {
       activeId = state.workflowProfileSelections[targetTask];
@@ -4882,7 +4892,25 @@
         return { superseded: true };
       }
       state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
-      state.taskModelSelections = (tmsBody && tmsBody.data && tmsBody.data.selections) || {};
+      var selectionsMap = {};
+      var rawSelections = (tmsBody && tmsBody.data && (tmsBody.data.taskModelSelections || tmsBody.data.selections)) || [];
+      if (Array.isArray(rawSelections)) {
+        rawSelections.forEach(function (sel) {
+          if (sel && sel.taskType) {
+            selectionsMap[sel.taskType] = sel;
+          }
+        });
+      } else if (rawSelections && typeof rawSelections === "object") {
+        selectionsMap = rawSelections;
+      }
+      state.taskModelSelections = selectionsMap;
+      TASK_API_KEY_DEFS.forEach(function (definition) {
+        var taskType = definition.taskType;
+        var taskStatus = state.taskApiKeys && state.taskApiKeys[taskType];
+        if (taskStatus && taskStatus.accessMethod === "direct_model" && taskStatus.activeProfileId) {
+          state.workflowProfileSelections[taskType] = taskStatus.activeProfileId;
+        }
+      });
       renderDirectServicesList();
       renderTaskModelSelectionSection();
       renderWorkflowProfileStrip();
@@ -5023,17 +5051,19 @@
     var draft = {
       name: name,
       serviceBaseUrl: url,
+      apiKey: key,
       key: key,
+      isNew: isCreate,
       defaultModel: defaultModel
     };
 
     var checked = helpers.validateDirectServiceDraft
       ? helpers.validateDirectServiceDraft(draft, state.directServiceEditor.mode)
-      : { ok: Boolean(draft.name && draft.serviceBaseUrl && (!isCreate || draft.key)) };
+      : { ok: Boolean(draft.name && draft.serviceBaseUrl && (!isCreate || draft.apiKey)) };
 
     if (!checked.ok) {
       if (errorBox) {
-        errorBox.textContent = checked.message || "请检查输入项。";
+        errorBox.textContent = checked.message || checked.error || "请检查输入项。";
       }
       return;
     }
@@ -5044,22 +5074,37 @@
       request("/provider/direct-services", {
         name: draft.name,
         serviceBaseUrl: draft.serviceBaseUrl,
-        defaultModel: draft.defaultModel
+        defaultModel: draft.defaultModel,
+        apiKey: draft.apiKey
       }).then(function (body) {
         var created = (body.data && body.data.directService) || body.data;
         var createdId = created.id;
         var createdRev = created.revision || 1;
-        return request("/provider/direct-services/" + encodeURIComponent(createdId) + "/api-key", {
-          apiKey: draft.key,
-          expectedRevision: createdRev
-        }).then(function () {
-          request("/provider/direct-services/" + encodeURIComponent(createdId) + "/refresh-models", {
-            expectedRevision: createdRev + 1
-          }).catch(function () {});
-          closeDirectServiceEditor();
-          return loadDirectServices().then(function () {
-            setWorkflowMutationBusy(false);
-            setStatus("共享直连服务已新建。");
+        var keyPromise = created.keyConfigured
+          ? Promise.resolve()
+          : request("/provider/direct-services/" + encodeURIComponent(createdId) + "/api-key", {
+              apiKey: draft.apiKey,
+              expectedRevision: createdRev
+            }).catch(function (keyErr) {
+              return request("/provider/direct-services/" + encodeURIComponent(createdId) + "?expectedRevision=" + encodeURIComponent(createdRev), null, {
+                method: "DELETE"
+              }).then(function () {
+                throw keyErr;
+              }, function () {
+                throw keyErr;
+              });
+            });
+
+        return keyPromise.then(function () {
+          var nextRev = created.keyConfigured ? createdRev : (createdRev + 1);
+          return request("/provider/direct-services/" + encodeURIComponent(createdId) + "/refresh-models", {
+            expectedRevision: nextRev
+          }).catch(function () {}).then(function () {
+            closeDirectServiceEditor();
+            return loadDirectServices().then(function () {
+              setWorkflowMutationBusy(false);
+              setStatus("共享直连服务已新建。");
+            });
           });
         });
       }).catch(function (error) {
@@ -5117,11 +5162,23 @@
     request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/refresh-models", {
       expectedRevision: revision
     }).then(function (body) {
-      var models = (body.data && body.data.models) || [];
+      var svc = (body && body.data && body.data.directService) || {};
+      var models = svc.modelList || (body && body.data && body.data.models) || [];
+      var nextRev = svc.revision || (body && body.data && body.data.revision) || (revision + 1);
+      if (state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
+        state.directServiceEditor.revision = nextRev;
+      }
       if (statusNode) {
         statusNode.textContent = "已获取 " + models.length + " 个模型";
       }
-      return loadDirectServices();
+      return loadDirectServices().then(function () {
+        if (state.directServiceEditor && state.directServiceEditor.open && state.directServiceEditor.serviceId === serviceId) {
+          var updatedSvc = findDirectService(serviceId);
+          if (updatedSvc && updatedSvc.revision) {
+            state.directServiceEditor.revision = updatedSvc.revision;
+          }
+        }
+      });
     }).catch(function (error) {
       if (statusNode) {
         statusNode.textContent = "刷新失败：" + describeFetchError(error);
@@ -5145,7 +5202,7 @@
     }
     if (warningNode) {
       if (activeId === svc.id || selection.serviceId === svc.id) {
-        warningNode.textContent = "警告：此直连服务正被 Excel 智能分析使用，删除后智能分析将不可用！";
+        warningNode.textContent = "警告：此直连服务正被智能分析使用，删除后智能分析将不可用！";
       } else {
         warningNode.textContent = "";
       }
@@ -5260,7 +5317,9 @@
       modelSelect.innerHTML = modelOptionsHtml.join("");
     }
 
-    var isCustom = Boolean(currentModel && !isModelInCatalog);
+    var isCustom = currentSelection && currentSelection.customModel !== undefined
+      ? Boolean(currentSelection.customModel)
+      : Boolean(currentModel && !isModelInCatalog);
     if (customCheck) {
       customCheck.checked = isCustom;
     }
@@ -5349,6 +5408,7 @@
     return {
       serviceId: serviceId,
       modelName: modelName,
+      customModel: isCustom,
       temperature: tempVal !== "" ? Number(tempVal) : null,
       maxOutputTokens: maxOutVal !== "" ? Number(maxOutVal) : null,
       contextWindowTokens: contextVal !== "" ? Number(contextVal) : 40000
@@ -5380,6 +5440,9 @@
     request("/provider/task-model-selections/excel.analysis/validate", draft)
       .then(function () {
         setWorkflowMutationBusy(false);
+        if (draft.customModel && draft.modelName) {
+          state.lastValidatedCustomModel = draft.modelName;
+        }
         if (statusNode) {
           statusNode.textContent = "验证成功！模型可正常调用。";
         }
@@ -5406,6 +5469,9 @@
         statusNode.textContent = checked.message || "请检查参数设置。";
       }
       return;
+    }
+    if (draft.customModel && state.lastValidatedCustomModel === draft.modelName) {
+      draft.customModelValidated = true;
     }
     setWorkflowMutationBusy(true);
     request("/provider/task-model-selections/excel.analysis", draft, { method: "PUT" })

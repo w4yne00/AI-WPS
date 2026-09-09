@@ -321,3 +321,142 @@ test("Direct services behavior: max 5 limit, single key contract, and activation
   assert.strictEqual(state.workflowProfileSelections["excel.analysis"], "direct_svc_2", "must rollback to previous on failure");
   assert.strictEqual(state.taskModelConfigStatusByTask["excel.analysis"], "error");
 });
+
+test("Code review fixes: loadDirectServices array-to-map, draft customModel, and revision sync", async () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  function loadFn(name, ctx) {
+    return vm.runInNewContext(`(${functionSource(name)})`, ctx);
+  }
+
+  // 1. Validator key field & mode checks
+  const createEmptyKey = helpers.validateDirectServiceDraft({
+    name: "测试服务",
+    serviceBaseUrl: "https://api.openai.com/v1",
+    apiKey: ""
+  }, "create");
+  assert.strictEqual(createEmptyKey.valid, false);
+  assert.ok(createEmptyKey.error.includes("必须配置 API Key"));
+
+  const editEmptyKeyConfigured = helpers.validateDirectServiceDraft({
+    name: "测试服务",
+    serviceBaseUrl: "https://api.openai.com/v1",
+    apiKey: "",
+    keyConfigured: true
+  }, "edit");
+  assert.strictEqual(editEmptyKeyConfigured.valid, true);
+
+  // 2. Draft returns customModel
+  const mockNodes = {
+    "excel-task-direct-service-select": { value: "direct_svc_1" },
+    "excel-task-custom-model-check": { checked: true },
+    "excel-task-custom-model-input": { value: "deepseek-custom-v3" },
+    "excel-task-model-select": { value: "" },
+    "excel-task-temperature": { value: "0.8" },
+    "excel-task-max-output": { value: "2048" },
+    "excel-task-context": { value: "64000" }
+  };
+
+  const draftCtx = {
+    byId(id) { return mockNodes[id] || null; }
+  };
+  const getDraft = loadFn("getTaskModelSelectionDraft", draftCtx);
+  const draft = getDraft();
+  assert.strictEqual(draft.customModel, true, "draft must contain customModel: true");
+  assert.strictEqual(draft.modelName, "deepseek-custom-v3");
+  assert.strictEqual(draft.serviceId, "direct_svc_1");
+
+  // 3. loadDirectServices converts taskModelSelections array to map
+  const state = {
+    directServices: [],
+    taskModelSelections: {},
+    taskApiKeys: {
+      "excel.analysis": { activeProfileId: "direct_svc_1", accessMethod: "direct_model" }
+    },
+    workflowProfileSelections: {},
+    configRefreshRequestId: 1
+  };
+
+  const loadCtx = {
+    state,
+    TASK_API_KEY_DEFS: [{ taskType: "excel.analysis" }],
+    renderDirectServicesList() {},
+    renderTaskModelSelectionSection() {},
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    request(url) {
+      if (url.includes("/provider/direct-services")) {
+        return Promise.resolve({
+          data: {
+            directServices: [
+              { id: "direct_svc_1", name: "S1", revision: 1 }
+            ]
+          }
+        });
+      }
+      if (url.includes("/provider/task-model-selections")) {
+        return Promise.resolve({
+          data: {
+            taskModelSelections: [
+              {
+                taskType: "excel.analysis",
+                serviceId: "direct_svc_1",
+                modelName: "gpt-4o",
+                temperature: 0.5
+              }
+            ]
+          }
+        });
+      }
+      return Promise.resolve({ data: {} });
+    }
+  };
+
+  const loadDirectServices = loadFn("loadDirectServices", loadCtx);
+  await loadDirectServices();
+  assert.ok(state.taskModelSelections["excel.analysis"], "taskModelSelections must be converted to object keyed by taskType");
+  assert.strictEqual(state.taskModelSelections["excel.analysis"].serviceId, "direct_svc_1");
+  assert.strictEqual(state.workflowProfileSelections["excel.analysis"], "direct_svc_1", "active direct service selection must be restored");
+
+  // 4. refreshDirectServiceModelsInEditor updates revision
+  state.directServiceEditor = {
+    serviceId: "direct_svc_1",
+    revision: 1,
+    open: true
+  };
+  const statusNode = { textContent: "" };
+  const refreshCtx = {
+    state,
+    byId(id) {
+      if (id === "direct-service-models-status") return statusNode;
+      return null;
+    },
+    findDirectService() {
+      return { id: "direct_svc_1", revision: 2, modelList: ["m1", "m2"] };
+    },
+    loadDirectServices() { return Promise.resolve(); },
+    describeFetchError(e) { return String(e); },
+    request(url) {
+      return Promise.resolve({
+        data: {
+          directService: {
+            id: "direct_svc_1",
+            revision: 2,
+            modelList: ["m1", "m2"]
+          }
+        }
+      });
+    }
+  };
+  const refreshFn = loadFn("refreshDirectServiceModelsInEditor", refreshCtx);
+  await refreshFn();
+  assert.strictEqual(state.directServiceEditor.revision, 2, "editor revision must be updated to 2 after refresh");
+  assert.ok(statusNode.textContent.includes("2 个模型"), "status must reflect model count");
+});

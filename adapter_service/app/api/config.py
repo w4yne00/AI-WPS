@@ -7,6 +7,8 @@ from app.core.features import (
     full_document_review_enabled,
     image_semantics_enabled,
 )
+from app.services.direct_services import DirectServiceStore
+from app.services.model_configurations import ModelConfigurationStore
 from app.services.provider_client import ProviderClient
 from app.services.word.image_semantics import ImageSemanticConfigStore
 
@@ -20,7 +22,11 @@ class ImageSemanticSettingsRequest(BaseModel):
 @router.get("/config")
 def get_config() -> dict:
     settings = load_settings()
-    provider = ProviderClient(settings)
+    provider = ProviderClient(
+        settings,
+        model_configuration_store=ModelConfigurationStore(),
+        direct_service_store=DirectServiceStore(),
+    )
     image_semantic_settings = ImageSemanticConfigStore(default_config_path()).get()
     return {
         "success": True,

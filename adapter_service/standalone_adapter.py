@@ -1592,7 +1592,9 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/config":
             settings = load_settings()
             provider = ProviderClient(
-                settings, model_configuration_store=ModelConfigurationStore()
+                settings,
+                model_configuration_store=ModelConfigurationStore(),
+                direct_service_store=DirectServiceStore(),
             )
             self._write(
                 200,
@@ -2626,6 +2628,7 @@ class Handler(BaseHTTPRequestHandler):
                     payload.get("name", ""),
                     service_base_url=payload.get("serviceBaseUrl", ""),
                     default_model=payload.get("defaultModel", ""),
+                    api_key=payload.get("apiKey"),
                 )
             except DirectServiceError as error:
                 self._write_direct_service_error(error)
@@ -2690,7 +2693,11 @@ class Handler(BaseHTTPRequestHandler):
                         envelope(
                             "standalone-direct-service",
                             "provider.direct_service",
-                            {"directService": service},
+                            {
+                                "directService": service,
+                                "models": service.get("modelList", []),
+                                "revision": service.get("revision", 1),
+                            },
                             message="refreshed",
                         ),
                     )

@@ -2017,7 +2017,9 @@ class ProviderClient:
             ModelConfigurationStore() if settings is None else None
         )
         self.direct_service_store = direct_service_store or (
-            DirectServiceStore() if settings is None else None
+            DirectServiceStore()
+            if (settings is None or model_configuration_store is not None)
+            else None
         )
         self.system_prompt_store = system_prompt_store or SystemPromptStore()
 
@@ -2045,10 +2047,16 @@ class ProviderClient:
                     service = self.direct_service_store.get_service(active_id, include_secret=True)
                     selection = self.direct_service_store.get_task_model_selection(task_type)
                     effective_model = str(selection.get("modelName") or service.get("defaultModel") or "").strip()
+                    if not effective_model:
+                        raise AdapterError(
+                            "DIRECT_SERVICE_MODEL_REQUIRED",
+                            "直连服务未指定有效模型，无法执行任务。",
+                            status_code=400,
+                        )
                     is_custom = bool(selection.get("customModel", False))
 
                     model_list = service.get("modelList") or []
-                    if model_list and not is_custom and effective_model and effective_model not in model_list:
+                    if model_list and not is_custom and effective_model not in model_list:
                         raise AdapterError(
                             "DIRECT_SERVICE_MODEL_DISAPPEARED",
                             f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
@@ -2322,7 +2330,13 @@ class ProviderClient:
                 services = payload.get("directServices") or {}
                 if active_id and active_id in services:
                     service = services[active_id]
-                    if bool(str(service.get("serviceBaseUrl", "")).strip()) and bool(self.direct_service_store.has_api_key(active_id)):
+                    selection = self.direct_service_store.get_task_model_selection(task_type)
+                    effective_model = str(selection.get("modelName") or service.get("defaultModel") or "").strip()
+                    if (
+                        bool(str(service.get("serviceBaseUrl", "")).strip())
+                        and bool(self.direct_service_store.has_api_key(active_id))
+                        and bool(effective_model)
+                    ):
                         return True
             except Exception:
                 pass
@@ -2427,7 +2441,11 @@ class ProviderClient:
                             "label": label,
                             "apiKeyRef": active_id,
                             "taskKeyConfigured": key_configured,
-                            "configured": bool(service.get("serviceBaseUrl") and key_configured),
+                            "configured": bool(
+                                service.get("serviceBaseUrl")
+                                and key_configured
+                                and effective_model
+                            ),
                             "authSource": "task-file" if key_configured else "none",
                             "activeProfileId": active_id,
                             "activeProfileName": str(service.get("name", "")),
@@ -3528,15 +3546,6 @@ class ProviderClient:
         )
         answer = extract_answer(body)
         _validate_probe_answer(task_type, answer)
-
-        if is_custom:
-            try:
-                self.direct_service_store.update_task_model_selection(
-                    task_type,
-                    custom_model_validated=True,
-                )
-            except Exception:
-                pass
 
         return {
             "success": True,

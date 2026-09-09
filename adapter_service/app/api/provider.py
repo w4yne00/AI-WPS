@@ -107,6 +107,7 @@ class DirectServiceCreateRequest(BaseModel):
     name: str
     service_base_url: str = Field(default="", alias="serviceBaseUrl")
     default_model: str = Field(default="", alias="defaultModel")
+    api_key: Optional[str] = Field(default=None, alias="apiKey")
 
 
 class DirectServiceUpdateRequest(BaseModel):
@@ -660,6 +661,7 @@ def create_direct_service(request: DirectServiceCreateRequest) -> dict:
             request.name,
             service_base_url=request.service_base_url,
             default_model=request.default_model,
+            api_key=request.api_key,
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
@@ -836,7 +838,11 @@ def refresh_direct_service_models(
     return {
         "success": True,
         "message": "refreshed",
-        "data": {"directService": service},
+        "data": {
+            "directService": service,
+            "models": service.get("modelList", []),
+            "revision": service.get("revision", 1),
+        },
     }
 
 

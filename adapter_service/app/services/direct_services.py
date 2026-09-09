@@ -110,6 +110,7 @@ class DirectServiceStore:
         name: str,
         service_base_url: str = "",
         default_model: str = "",
+        api_key: Optional[str] = None,
     ) -> dict:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
@@ -125,6 +126,9 @@ class DirectServiceStore:
             clean_model = self._validate_model_name(default_model)
 
             service_id = f"direct_svc_{uuid.uuid4().hex[:12]}"
+            if api_key is not None and str(api_key).strip():
+                self._write_key(service_id, str(api_key).strip())
+
             now = _utc_now()
             record = {
                 "id": service_id,
@@ -412,6 +416,15 @@ class DirectServiceStore:
 
             selections = self._selection_map(payload)
             task_sel = selections.get(clean_task, {})
+            effective_model = str(
+                task_sel.get("modelName") or service.get("defaultModel") or ""
+            ).strip()
+            if not effective_model:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_MODEL_REQUIRED",
+                    "直连服务未配置有效模型（未设置服务默认模型且任务未指定模型），无法设为当前。",
+                )
+
             task_sel["serviceId"] = service_id
             task_sel["updatedAt"] = _utc_now()
             selections[clean_task] = task_sel
@@ -490,6 +503,7 @@ class DirectServiceStore:
             return {
                 "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
                 "taskModelSelections": results,
+                "selections": {r["taskType"]: r for r in results},
             }
 
     def get_task_model_selection(self, task_type: str) -> dict:
