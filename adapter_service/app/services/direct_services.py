@@ -10,6 +10,8 @@ from app.core.config import default_config_path, load_config_payload, save_confi
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.model_configurations import (
     MAX_CONFIGURATION_NAME_LENGTH,
+    ModelConfigurationError,
+    _STORE_LOCK,
     host_for_task,
     normalize_service_base_url,
 )
@@ -18,9 +20,10 @@ from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 
 MAX_DIRECT_SERVICES = 5
 MAX_DIRECT_SERVICE_NAME_LENGTH = MAX_CONFIGURATION_NAME_LENGTH
+DIRECT_SERVICE_SCHEMA_VERSION = "provider.direct_service.v1"
+TASK_MODEL_SELECTION_SCHEMA_VERSION = "provider.task_model_selection.v1"
 _SAFE_KEY_REF = re.compile(r"^[A-Za-z0-9_.-]+$")
 _CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
-_STORE_LOCK = threading.RLock()
 
 
 class DirectServiceError(ValueError):
@@ -66,6 +69,15 @@ class DirectServiceStore:
     # Shared Direct Model Services
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _normalize_url(url: str) -> str:
+        try:
+            return normalize_service_base_url(url)
+        except ModelConfigurationError as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_URL_INVALID", exc.message
+            ) from exc
+
     def list_services(self) -> dict:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
@@ -75,6 +87,7 @@ class DirectServiceStore:
             ]
             services.sort(key=lambda s: (s.get("createdAt", ""), s["id"]))
             return {
+                "schemaVersion": DIRECT_SERVICE_SCHEMA_VERSION,
                 "directServiceCount": len(services),
                 "directServices": services,
             }
@@ -104,7 +117,7 @@ class DirectServiceStore:
                 )
 
             clean_name = self._validate_service_name(name, services)
-            clean_url = normalize_service_base_url(service_base_url)
+            clean_url = self._normalize_url(service_base_url)
             clean_model = self._validate_model_name(default_model)
 
             service_id = f"direct_svc_{uuid.uuid4().hex[:12]}"
@@ -143,7 +156,7 @@ class DirectServiceStore:
             clean_name = self._validate_service_name(
                 name, services, exclude_id=service_id
             )
-            clean_url = normalize_service_base_url(service_base_url)
+            clean_url = self._normalize_url(service_base_url)
             clean_model = self._validate_model_name(default_model)
 
             service["name"] = clean_name
@@ -160,15 +173,14 @@ class DirectServiceStore:
     def delete_service(
         self,
         service_id: str,
-        expected_revision: Optional[int] = None,
+        expected_revision: int,
     ) -> dict:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
-            if expected_revision is not None:
-                self._check_revision(service, expected_revision)
+            self._check_revision(service, expected_revision)
 
             # Check references from taskModelSelections
             selections = self._selection_map(payload)
@@ -194,15 +206,14 @@ class DirectServiceStore:
         self,
         service_id: str,
         api_key: str,
-        expected_revision: Optional[int] = None,
+        expected_revision: int,
     ) -> dict:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
-            if expected_revision is not None:
-                self._check_revision(service, expected_revision)
+            self._check_revision(service, expected_revision)
 
             clean_key = str(api_key or "").strip()
             if not clean_key or _CONTROL_CHAR_RE.search(clean_key):
@@ -210,18 +221,64 @@ class DirectServiceStore:
                     "DIRECT_SERVICE_KEY_INVALID", "API Key 格式无效。"
                 )
 
+            prior_key = self._read_key(service_id)
+            had_prior_key = self._key_exists(service_id)
+
             self._write_key(service_id, clean_key)
-            service["revision"] = int(service.get("revision", 1)) + 1
-            service["updatedAt"] = _utc_now()
-            services[service_id] = service
-            payload["directServices"] = services
-            save_config_payload(payload, self.config_path)
+            try:
+                service["revision"] = int(service.get("revision", 1)) + 1
+                service["updatedAt"] = _utc_now()
+                services[service_id] = service
+                payload["directServices"] = services
+                save_config_payload(payload, self.config_path)
+            except Exception:
+                if had_prior_key:
+                    try:
+                        self._write_key(service_id, prior_key)
+                    except Exception:
+                        pass
+                else:
+                    self._delete_key(service_id)
+                raise
             return self._sanitize_service(service)
 
     def clear_api_key(
         self,
         service_id: str,
+        expected_revision: int,
+    ) -> dict:
+        with _STORE_LOCK:
+            payload = load_config_payload(self.config_path)
+            services = self._service_map(payload)
+            service = self._require_service(services, service_id)
+
+            self._check_revision(service, expected_revision)
+
+            prior_key = self._read_key(service_id)
+            had_prior_key = self._key_exists(service_id)
+
+            self._delete_key(service_id)
+            try:
+                service["revision"] = int(service.get("revision", 1)) + 1
+                service["updatedAt"] = _utc_now()
+                services[service_id] = service
+                payload["directServices"] = services
+                save_config_payload(payload, self.config_path)
+            except Exception:
+                if had_prior_key:
+                    try:
+                        self._write_key(service_id, prior_key)
+                    except Exception:
+                        pass
+                raise
+            return self._sanitize_service(service)
+
+    def update_model_list(
+        self,
+        service_id: str,
+        model_list: List[str],
         expected_revision: Optional[int] = None,
+        fetched_at: Optional[str] = None,
     ) -> dict:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
@@ -231,28 +288,10 @@ class DirectServiceStore:
             if expected_revision is not None:
                 self._check_revision(service, expected_revision)
 
-            self._delete_key(service_id)
-            service["revision"] = int(service.get("revision", 1)) + 1
-            service["updatedAt"] = _utc_now()
-            services[service_id] = service
-            payload["directServices"] = services
-            save_config_payload(payload, self.config_path)
-            return self._sanitize_service(service)
-
-    def update_model_list(
-        self,
-        service_id: str,
-        model_list: List[str],
-        fetched_at: Optional[str] = None,
-    ) -> dict:
-        with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
-            services = self._service_map(payload)
-            service = self._require_service(services, service_id)
-
             clean_models = [str(m).strip() for m in model_list if str(m).strip()]
             service["modelList"] = clean_models
-            service["modelListFetchedAt"] = fetched_at or _utc_now()
+            service["modelListFetchedAt"] = _utc_now()
+            service["revision"] = int(service.get("revision", 1)) + 1
             service["updatedAt"] = _utc_now()
             services[service_id] = service
             payload["directServices"] = services
@@ -296,6 +335,7 @@ class DirectServiceStore:
 
                 results.append(
                     {
+                        "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
                         "taskType": task,
                         "host": host_for_task(task),
                         "serviceId": service_id,
@@ -314,7 +354,10 @@ class DirectServiceStore:
                     }
                 )
 
-            return {"taskModelSelections": results}
+            return {
+                "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
+                "taskModelSelections": results,
+            }
 
     def get_task_model_selection(self, task_type: str) -> dict:
         result = self.list_task_model_selections(task_type=task_type)
@@ -362,6 +405,17 @@ class DirectServiceStore:
                 clean_task, image_input_mode
             )
 
+            prior = selections.get(clean_task, {})
+            prior_model = str(prior.get("modelName", "")).strip()
+            prior_custom = bool(prior.get("customModel", False))
+            prior_validated = bool(prior.get("customModelValidated", False))
+
+            is_custom = bool(custom_model)
+            if is_custom and is_custom == prior_custom and clean_model == prior_model and prior_validated:
+                effective_validated = True
+            else:
+                effective_validated = False
+
             record = {
                 "serviceId": clean_service_id,
                 "modelName": clean_model,
@@ -369,8 +423,8 @@ class DirectServiceStore:
                 "maxOutputTokens": clean_max_output,
                 "contextWindowTokens": clean_context,
                 "imageInputMode": clean_image_mode,
-                "customModel": bool(custom_model),
-                "customModelValidated": bool(custom_model_validated),
+                "customModel": is_custom,
+                "customModelValidated": effective_validated,
                 "updatedAt": _utc_now(),
             }
             selections[clean_task] = record
@@ -406,9 +460,21 @@ class DirectServiceStore:
         return service
 
     @staticmethod
-    def _check_revision(service: dict, expected_revision: int) -> None:
+    def _check_revision(service: dict, expected_revision) -> None:
+        if expected_revision is None:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_REVISION_REQUIRED",
+                "缺少 expectedRevision 参数，无法进行并发校验。",
+            )
+        try:
+            exp = int(expected_revision)
+        except (ValueError, TypeError):
+            raise DirectServiceError(
+                "DIRECT_SERVICE_REVISION_INVALID",
+                "expectedRevision 必须是有效整数。",
+            )
         current = int(service.get("revision", 1))
-        if int(expected_revision) != current:
+        if exp != current:
             raise DirectServiceError(
                 "DIRECT_SERVICE_REVISION_CONFLICT",
                 "直连服务已被修改，请刷新后重试。",
@@ -497,6 +563,7 @@ class DirectServiceStore:
     def _sanitize_service(self, service: dict) -> dict:
         service_id = str(service.get("id", ""))
         return {
+            "schemaVersion": DIRECT_SERVICE_SCHEMA_VERSION,
             "id": service_id,
             "name": str(service.get("name", "")),
             "serviceBaseUrl": str(service.get("serviceBaseUrl", "")),
@@ -537,26 +604,36 @@ class DirectServiceStore:
 
     def _write_key(self, service_id: str, api_key: str) -> None:
         path = self._key_path(service_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
         try:
+            os.makedirs(str(path.parent), mode=0o700, exist_ok=True)
             os.chmod(str(path.parent), 0o700)
-        except OSError:
-            pass
+        except OSError as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_KEY_PERSIST_FAILED", f"无法创建或保护密钥目录: {exc}"
+            ) from exc
+
         temporary = path.parent / f".{path.name}.{uuid.uuid4().hex}.tmp"
         try:
-            temporary.write_text(api_key.strip() + "\n", encoding="utf-8")
-            try:
-                os.chmod(str(temporary), 0o600)
-            except OSError:
-                pass
+            fd = os.open(
+                str(temporary),
+                os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+                0o600,
+            )
+            with open(fd, "w", encoding="utf-8") as f:
+                f.write(api_key.strip() + "\n")
+            os.chmod(str(temporary), 0o600)
             os.replace(str(temporary), str(path))
-            try:
-                os.chmod(str(path), 0o600)
-            except OSError:
-                pass
+            os.chmod(str(path), 0o600)
+        except OSError as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_KEY_PERSIST_FAILED", f"无法写入或保护密钥文件: {exc}"
+            ) from exc
         finally:
             if temporary.exists():
-                temporary.unlink()
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
 
     def _delete_key(self, service_id: str) -> None:
         path = self._key_path(service_id)

@@ -118,15 +118,16 @@ class DirectServiceUpdateRequest(BaseModel):
 
 class DirectServiceApiKeyRequest(BaseModel):
     api_key: str = Field(alias="apiKey")
-    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+    expected_revision: int = Field(alias="expectedRevision")
 
 
 class DirectServiceClearApiKeyRequest(BaseModel):
-    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+    expected_revision: int = Field(alias="expectedRevision")
 
 
 class DirectServiceModelListUpdateRequest(BaseModel):
     model_list: List[str] = Field(alias="modelList")
+    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
     fetched_at: Optional[str] = Field(default=None, alias="fetchedAt")
 
 
@@ -678,7 +679,7 @@ def update_direct_service(
 @router.delete("/provider/direct-services/{service_id}")
 def delete_direct_service(
     service_id: str,
-    expected_revision: Optional[int] = Query(default=None, alias="expectedRevision"),
+    expected_revision: int = Query(..., alias="expectedRevision"),
 ) -> dict:
     try:
         data = get_direct_service_store().delete_service(
@@ -715,7 +716,7 @@ def replace_direct_service_api_key(
 @router.delete("/provider/direct-services/{service_id}/api-key")
 def clear_direct_service_api_key(
     service_id: str,
-    expected_revision: Optional[int] = Query(default=None, alias="expectedRevision"),
+    expected_revision: int = Query(..., alias="expectedRevision"),
 ) -> dict:
     try:
         service = get_direct_service_store().clear_api_key(
@@ -738,7 +739,7 @@ def update_direct_service_models(
         service = get_direct_service_store().update_model_list(
             service_id,
             request.model_list,
-            fetched_at=request.fetched_at,
+            expected_revision=request.expected_revision,
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)

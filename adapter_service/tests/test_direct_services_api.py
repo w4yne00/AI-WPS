@@ -69,6 +69,22 @@ class DirectServicesApiTests(unittest.TestCase):
                     "https://api.openai.com/v1",
                 )
                 self.assertEqual(created["data"]["directService"]["revision"], 1)
+                self.assertEqual(
+                    created["data"]["directService"]["schemaVersion"],
+                    "provider.direct_service.v1",
+                )
+
+                # Invalid URL raises 400
+                with self.assertRaises(AdapterError) as ctx:
+                    create_direct_service(
+                        DirectServiceCreateRequest(
+                            name="非法URL服务",
+                            serviceBaseUrl="ftp://invalid.example.com",
+                            defaultModel="gpt-4o",
+                        )
+                    )
+                self.assertEqual(ctx.exception.status_code, 400)
+                self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_URL_INVALID")
 
                 # 3. Get single service
                 got = get_direct_service(service_id)
@@ -103,17 +119,36 @@ class DirectServicesApiTests(unittest.TestCase):
                 self.assertEqual(ctx.exception.status_code, 409)
                 self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
 
-                # 6. Replace API key
+                # 6. Replace API key with conflict check
+                with self.assertRaises(AdapterError) as ctx:
+                    replace_direct_service_api_key(
+                        service_id,
+                        DirectServiceApiKeyRequest(
+                            apiKey="sk-api-test-secret",
+                            expectedRevision=999,
+                        ),
+                    )
+                self.assertEqual(ctx.exception.status_code, 409)
+                self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
+
                 keyed = replace_direct_service_api_key(
                     service_id,
-                    DirectServiceApiKeyRequest(apiKey="sk-api-test-secret"),
+                    DirectServiceApiKeyRequest(
+                        apiKey="sk-api-test-secret",
+                        expectedRevision=2,
+                    ),
                 )
                 self.assertTrue(keyed["success"])
                 self.assertTrue(keyed["data"]["directService"]["keyConfigured"])
                 self.assertEqual(keyed["data"]["directService"]["revision"], 3)
 
-                # 7. Clear API key
-                cleared = clear_direct_service_api_key(service_id)
+                # 7. Clear API key with conflict check
+                with self.assertRaises(AdapterError) as ctx:
+                    clear_direct_service_api_key(service_id, expected_revision=999)
+                self.assertEqual(ctx.exception.status_code, 409)
+                self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
+
+                cleared = clear_direct_service_api_key(service_id, expected_revision=3)
                 self.assertTrue(cleared["success"])
                 self.assertFalse(cleared["data"]["directService"]["keyConfigured"])
                 self.assertEqual(cleared["data"]["directService"]["revision"], 4)
@@ -143,19 +178,28 @@ class DirectServicesApiTests(unittest.TestCase):
                     sel_updated["data"]["taskModelSelection"]["effectiveModel"],
                     "gpt-4o-mini",
                 )
+                self.assertEqual(
+                    sel_updated["data"]["taskModelSelection"]["schemaVersion"],
+                    "provider.task_model_selection.v1",
+                )
 
                 # 10. Delete in-use service raises 409
                 with self.assertRaises(AdapterError) as ctx:
-                    delete_direct_service(service_id)
+                    delete_direct_service(service_id, expected_revision=4)
                 self.assertEqual(ctx.exception.status_code, 409)
                 self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_IN_USE")
 
-                # 11. Unbind and delete
+                # 11. Unbind and delete (with revision conflict check)
                 update_task_model_selection_route(
                     "word.smart_write",
                     TaskModelSelectionUpdateRequest(serviceId=""),
                 )
-                deleted = delete_direct_service(service_id)
+                with self.assertRaises(AdapterError) as ctx:
+                    delete_direct_service(service_id, expected_revision=999)
+                self.assertEqual(ctx.exception.status_code, 409)
+                self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
+
+                deleted = delete_direct_service(service_id, expected_revision=4)
                 self.assertTrue(deleted["success"])
                 self.assertEqual(deleted["data"]["directServiceCount"], 0)
 

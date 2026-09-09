@@ -2622,7 +2622,7 @@ class Handler(BaseHTTPRequestHandler):
                     service = store.update_model_list(
                         service_id,
                         payload.get("modelList", []),
-                        fetched_at=payload.get("fetchedAt"),
+                        expected_revision=payload.get("expectedRevision"),
                     )
                     self._write(
                         200,
@@ -3480,6 +3480,7 @@ class Handler(BaseHTTPRequestHandler):
                     message="saved",
                 ),
             )
+            return
         direct_service_prefix = "/provider/direct-services/"
         if path.startswith(direct_service_prefix):
             service_id = unquote(path[len(direct_service_prefix) :]).strip("/")
@@ -3626,6 +3627,7 @@ class Handler(BaseHTTPRequestHandler):
                 body_size=len(raw_bytes),
             )
             self._write_writing_policy_response(response)
+            return
         task_selection_prefix = "/provider/task-model-selections/"
         if path.startswith(task_selection_prefix):
             task_type = unquote(path[len(task_selection_prefix) :]).strip("/")
