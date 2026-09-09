@@ -983,6 +983,17 @@ esac
         self.assertIn("ModelConfigurationStore", script)
         self.assertIn("WorkflowProfileCompatibilityStore", script)
 
+    def test_standalone_adapter_exposes_direct_service_management(self) -> None:
+        script = (ROOT / "adapter_service/standalone_adapter.py").read_text(encoding="utf-8")
+
+        self.assertIn('path == "/provider/direct-services"', script)
+        self.assertIn('direct_service_prefix = "/provider/direct-services/"', script)
+        self.assertIn('path == "/provider/task-model-selections"', script)
+        self.assertIn('task_model_selection_prefix = "/provider/task-model-selections/"', script)
+        self.assertIn('task_selection_prefix = "/provider/task-model-selections/"', script)
+        self.assertIn("DirectServiceStore", script)
+        self.assertIn("_write_direct_service_error", script)
+
     def test_delivery_audits_eight_versioned_system_prompts(self) -> None:
         script = (ROOT / "packaging/build_phase1_delivery_kit.sh").read_text(encoding="utf-8")
         auditor = (ROOT / "packaging/audit_phase1_delivery.py").read_text(

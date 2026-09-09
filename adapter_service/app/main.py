@@ -448,6 +448,9 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
         exc.code,
         exc.message,
     )
+    error_item = {"code": exc.code, "message": exc.message}
+    if getattr(exc, "referenced_tasks", None):
+        error_item["referencedTasks"] = exc.referenced_tasks
     return JSONResponse(
         status_code=exc.status_code,
         content={
@@ -456,12 +459,16 @@ async def handle_adapter_error(request: Request, exc: AdapterError) -> JSONRespo
             "taskType": _task_type_from_path(request.url.path),
             "message": exc.message,
             "data": {},
-            "errors": [{"code": exc.code, "message": exc.message}],
+            "errors": [error_item],
         },
     )
 
 
 def _task_type_from_path(path: str) -> str:
+    if path.startswith("/provider/direct-services"):
+        return "provider.direct_services"
+    if path.startswith("/provider/task-model-selections"):
+        return "provider.task_model_selections"
     if path.startswith("/writing-policies/"):
         return "writing_policy"
     if path.startswith("/word/document-review/full/"):

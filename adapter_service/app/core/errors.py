@@ -1,9 +1,19 @@
+from typing import List, Optional
+
+
 class AdapterError(Exception):
-    def __init__(self, code: str, message: str, status_code: int = 400) -> None:
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        status_code: int = 400,
+        referenced_tasks: Optional[List[str]] = None,
+    ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.status_code = status_code
+        self.referenced_tasks = referenced_tasks or []
 
 
 class AdapterUnavailableError(AdapterError):
