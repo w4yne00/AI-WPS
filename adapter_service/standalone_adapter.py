@@ -2680,8 +2680,83 @@ class Handler(BaseHTTPRequestHandler):
                         ),
                     )
                     return
+                elif action == "refresh-models":
+                    service = store.refresh_models(
+                        service_id,
+                        expected_revision=payload.get("expectedRevision"),
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            {"directService": service},
+                            message="refreshed",
+                        ),
+                    )
+                    return
+                elif action == "activate":
+                    result = store.activate_direct_service(
+                        service_id,
+                        payload.get("taskType", ""),
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service",
+                            "provider.direct_service",
+                            result,
+                            message="activated",
+                        ),
+                    )
+                    return
             except DirectServiceError as error:
                 self._write_direct_service_error(error)
+                return
+
+        task_model_selection_prefix = "/provider/task-model-selections/"
+        if path.startswith(task_model_selection_prefix):
+            relative = path[len(task_model_selection_prefix) :].strip("/")
+            task_type, separator, action = relative.partition("/")
+            task_type = unquote(task_type)
+            if action == "validate":
+                trace_id = new_trace_id("standalone-task-model-selection-validation")
+                started = time.monotonic()
+                try:
+                    result = ProviderClient(
+                        model_configuration_store=ModelConfigurationStore(),
+                        direct_service_store=DirectServiceStore(),
+                    ).validate_task_model_selection(task_type, payload, trace_id)
+                except DirectServiceError as error:
+                    self._write_direct_service_error(error)
+                    return
+                except AdapterError as error:
+                    self._write(
+                        error.status_code,
+                        envelope(
+                            "standalone-task-model-selection-validation",
+                            "error",
+                            {
+                                "code": error.code,
+                                "message": error.message,
+                                "detail": error.message,
+                            },
+                            success=False,
+                            message=error.message,
+                        ),
+                    )
+                    return
+                duration_ms = int((time.monotonic() - started) * 1000)
+                result["durationMs"] = duration_ms
+                self._write(
+                    200,
+                    envelope(
+                        "standalone-task-model-selection-validation",
+                        "provider.task_model_selection",
+                        result,
+                        message="validated",
+                    ),
+                )
                 return
 
         if path == "/provider/model-configurations":
@@ -3503,16 +3578,28 @@ class Handler(BaseHTTPRequestHandler):
         if path.startswith(model_prefix):
             configuration_id = unquote(path[len(model_prefix) :]).strip("/")
             try:
+                update_fields = {}
+                if "name" in payload:
+                    update_fields["name"] = payload["name"]
+                if "accessMethod" in payload:
+                    update_fields["access_method"] = payload["accessMethod"]
+                if "note" in payload:
+                    update_fields["note"] = payload["note"]
+                if "serviceBaseUrl" in payload:
+                    update_fields["service_base_url"] = payload["serviceBaseUrl"]
+                if "modelName" in payload:
+                    update_fields["model_name"] = payload["modelName"]
+                if "temperature" in payload:
+                    update_fields["temperature"] = payload["temperature"]
+                if "maxOutputTokens" in payload:
+                    update_fields["max_output_tokens"] = payload["maxOutputTokens"]
+                if "contextWindowTokens" in payload:
+                    update_fields["context_window_tokens"] = payload["contextWindowTokens"]
+                if "imageInputMode" in payload:
+                    update_fields["image_input_mode"] = payload["imageInputMode"]
                 configuration = ModelConfigurationStore().update_configuration(
                     configuration_id,
-                    name=payload.get("name", ""),
-                    access_method=payload.get("accessMethod", ""),
-                    note=payload.get("note", ""),
-                    service_base_url=payload.get("serviceBaseUrl", ""),
-                    model_name=payload.get("modelName", ""),
-                    temperature=payload.get("temperature"),
-                    max_output_tokens=payload.get("maxOutputTokens"),
-                    context_window_tokens=payload.get("contextWindowTokens"),
+                    **update_fields
                 )
             except ModelConfigurationError as error:
                 self._write_model_configuration_error(error)

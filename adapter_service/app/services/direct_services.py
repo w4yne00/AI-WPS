@@ -1,10 +1,14 @@
+import json
 import os
 import re
+import socket
 import threading
+import urllib.request
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+from urllib.error import HTTPError, URLError
 
 from app.core.config import default_config_path, load_config_payload, save_config_payload
 from app.core.runtime_paths import resolve_runtime_paths
@@ -298,6 +302,135 @@ class DirectServiceStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize_service(service)
 
+    def is_model_list_expired(self, service: dict) -> bool:
+        fetched_at = service.get("modelListFetchedAt")
+        if not fetched_at:
+            return True
+        try:
+            cleaned = str(fetched_at).replace("Z", "+00:00")
+            dt = datetime.fromisoformat(cleaned)
+            return (datetime.now(timezone.utc) - dt).total_seconds() > 86400
+        except Exception:
+            return True
+
+    def refresh_models(
+        self, service_id: str, expected_revision: Optional[int] = None
+    ) -> dict:
+        with _STORE_LOCK:
+            payload = load_config_payload(self.config_path)
+            services = self._service_map(payload)
+            service = self._require_service(services, service_id)
+            if expected_revision is not None:
+                self._check_revision(service, expected_revision)
+
+            api_key = self._read_key(service_id)
+            if not api_key:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_KEY_REQUIRED", "未配置 API Key，无法获取模型目录。"
+                )
+            base_url = str(service.get("serviceBaseUrl", "")).strip().rstrip("/")
+            if not base_url:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_URL_REQUIRED", "未配置服务地址，无法获取模型目录。"
+                )
+
+        models_url = f"{base_url}/models"
+        req = urllib.request.Request(
+            models_url,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Accept": "application/json",
+                "User-Agent": "AI-WPS-Adapter",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                raw = resp.read().decode("utf-8")
+        except HTTPError as exc:
+            if exc.code in (401, 403):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_AUTH_FAILED", "API Key 认证失败，请检查密钥是否正确。"
+                ) from exc
+            if exc.code in (404, 405):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_MODELS_UNAVAILABLE", "服务未提供模型目录接口，可使用高级手动输入。"
+                ) from exc
+            raise DirectServiceError(
+                "DIRECT_SERVICE_UNREACHABLE", f"请求模型目录失败（HTTP {exc.code}）。"
+            ) from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_TIMEOUT", "读取模型目录超时，请稍后重试。"
+            ) from exc
+        except (URLError, OSError) as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_UNREACHABLE", "直连服务地址无法连接，请检查服务地址。"
+            ) from exc
+
+        try:
+            data = json.loads(raw)
+        except Exception as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_MODELS_PARSE_FAILED", "模型目录返回格式无效。"
+            ) from exc
+
+        model_items = []
+        if isinstance(data, dict):
+            raw_list = data.get("data")
+            if isinstance(raw_list, list):
+                model_items = raw_list
+            elif isinstance(data.get("models"), list):
+                model_items = data.get("models")
+        elif isinstance(data, list):
+            model_items = data
+
+        extracted = []
+        for item in model_items:
+            if isinstance(item, dict):
+                mid = str(item.get("id") or item.get("name") or "").strip()
+            else:
+                mid = str(item or "").strip()
+            if mid and not _CONTROL_CHAR_RE.search(mid):
+                extracted.append(mid)
+
+        return self.update_model_list(service_id, extracted, expected_revision=expected_revision)
+
+    def activate_direct_service(self, service_id: str, task_type: str) -> dict:
+        clean_task = self._validate_task_type(task_type)
+        with _STORE_LOCK:
+            payload = load_config_payload(self.config_path)
+            services = self._service_map(payload)
+            service = self._require_service(services, service_id)
+            if not service.get("serviceBaseUrl"):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_URL_REQUIRED", "直连服务缺少服务地址，无法设为当前。"
+                )
+            if not self._key_exists(service_id):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_KEY_REQUIRED", "直连服务未配置 API Key，无法设为当前。"
+                )
+
+            selections = self._selection_map(payload)
+            task_sel = selections.get(clean_task, {})
+            task_sel["serviceId"] = service_id
+            task_sel["updatedAt"] = _utc_now()
+            selections[clean_task] = task_sel
+            payload["taskModelSelections"] = selections
+
+            active = payload.get("activeModelConfigurations")
+            if not isinstance(active, dict):
+                active = {}
+            active[clean_task] = service_id
+            payload["activeModelConfigurations"] = active
+
+            save_config_payload(payload, self.config_path)
+
+            return {
+                "taskType": clean_task,
+                "activeConfigurationId": service_id,
+                "taskModelSelection": self.get_task_model_selection(clean_task),
+            }
+
     # ------------------------------------------------------------------
     # Task Model Selections
     # ------------------------------------------------------------------
@@ -583,6 +716,9 @@ class DirectServiceStore:
                 "DIRECT_SERVICE_KEY_REF_INVALID", "API Key 引用格式无效。"
             )
         return self.key_dir / ref
+
+    def has_api_key(self, service_id: str) -> bool:
+        return self._key_exists(service_id)
 
     def _key_exists(self, service_id: str) -> bool:
         path = self._key_path(service_id)

@@ -146,6 +146,30 @@ class TaskModelSelectionUpdateRequest(BaseModel):
     )
 
 
+class DirectServiceRefreshRequest(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+
+
+class DirectServiceActivateRequest(BaseModel):
+    task_type: str = Field(..., alias="taskType")
+
+
+class TaskModelSelectionValidateRequest(BaseModel):
+    service_id: Optional[str] = Field(default=None, alias="serviceId")
+    model_name: Optional[str] = Field(default=None, alias="modelName")
+    custom_model: Optional[bool] = Field(default=False, alias="customModel")
+    temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
+    max_output_tokens: Optional[int] = Field(
+        default=None, ge=1, le=16384, alias="maxOutputTokens"
+    )
+    context_window_tokens: Optional[int] = Field(
+        default=None, ge=1, le=2000000, alias="contextWindowTokens"
+    )
+    image_input_mode: Optional[str] = Field(
+        default="disabled", alias="imageInputMode"
+    )
+
+
 def get_workflow_profile_store() -> WorkflowProfileCompatibilityStore:
     return WorkflowProfileCompatibilityStore()
 
@@ -795,4 +819,66 @@ def update_task_model_selection_route(
         "success": True,
         "message": "saved",
         "data": {"taskModelSelection": selection},
+    }
+
+
+@router.post("/provider/direct-services/{service_id}/refresh-models")
+def refresh_direct_service_models(
+    service_id: str, request: Optional[DirectServiceRefreshRequest] = None
+) -> dict:
+    expected_revision = request.expected_revision if request else None
+    try:
+        service = get_direct_service_store().refresh_models(
+            service_id, expected_revision=expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "refreshed",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/direct-services/{service_id}/activate")
+def activate_direct_service_route(
+    service_id: str, request: DirectServiceActivateRequest
+) -> dict:
+    try:
+        result = get_direct_service_store().activate_direct_service(
+            service_id, request.task_type
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "activated",
+        "data": result,
+    }
+
+
+@router.post("/provider/task-model-selections/{task_type}/validate")
+def validate_task_model_selection_route(
+    task_type: str, request: Optional[TaskModelSelectionValidateRequest] = None
+) -> dict:
+    store = get_direct_service_store()
+    model_store = get_model_configuration_store()
+    client = ProviderClient(
+        model_configuration_store=model_store, direct_service_store=store
+    )
+    trace_id = "task-model-selection-validation-{0}".format(int(time.time() * 1000))
+    started = time.monotonic()
+    payload = request.dict(by_alias=True, exclude_unset=True) if request else {}
+    try:
+        result = client.validate_task_model_selection(task_type, payload, trace_id)
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    except AdapterError:
+        raise
+    duration_ms = int((time.monotonic() - started) * 1000)
+    result["durationMs"] = duration_ms
+    return {
+        "success": True,
+        "message": "validated",
+        "data": result,
     }
