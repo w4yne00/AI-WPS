@@ -187,9 +187,14 @@
           <div id="status-line" class="sr-only">等待操作。</div>
         </section>
 
-        <section class="panel result-panel glass-card">
+        <section id="word-result-section" class="panel result-panel glass-card">
           <div class="panel-head">
-            <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
+            <div class="result-actions">
+              <button id="btn-copy-result" class="ghost-action copy-button" type="button" title="复制结果" aria-label="复制结果">复制</button>
+              <button id="btn-view-history" class="ghost-action history-entry-button" type="button" title="查看成功历史" hidden>
+                历史记录<span id="history-unread-badge" class="history-badge" hidden>0</span>
+              </button>
+            </div>
             <div>
               <h2>结果预览</h2>
               <div id="result-view-switch" class="result-view-switch" hidden>
@@ -330,6 +335,19 @@
               <button id="btn-format-review-export-markdown" type="button" role="menuitem">导出 Markdown</button>
             </div>
             <div id="format-review-issue-actions"></div>
+          </div>
+        </section>
+
+        <section id="word-history-view" class="panel result-panel glass-card word-history-view" hidden>
+          <div class="panel-head">
+            <h2>成功历史记录</h2>
+            <div class="history-panel-actions">
+              <button id="btn-history-back" class="ghost-action" type="button">返回当前结果</button>
+              <button id="btn-clear-history" class="ghost-action danger" type="button">清空历史</button>
+            </div>
+          </div>
+          <div id="word-history-content" class="word-history-content">
+            <div class="word-history-empty">暂无成功历史记录。</div>
           </div>
         </section>
       </section>

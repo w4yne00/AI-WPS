@@ -328,7 +328,18 @@
     modelTaskBusy: false,
     copyText: "",
     diagnosticsCopyText: "",
-    scopeWatcher: null
+    scopeWatcher: null,
+    activeTaskSlots: {},
+    activeResultsByTask: {},
+    activeWritingJobsByTask: {},
+    activeResults: {},
+    activeWritingJobs: {},
+    historyOpen: false,
+    historyItems: [],
+    historyUnreadCount: 0,
+    historyTaskType: "word.smart_write",
+    historyLoadSequence: 0,
+    documentSessionId: ""
   };
 
   function byId(id) {
@@ -436,10 +447,131 @@
     ].join("-");
   }
 
-  function loadWritingActiveJob() {
+  function getWritingActiveJobStorageKey(taskType, docSessionId) {
+    return [
+      "ai-wps:writing-active-job",
+      taskType || "word.smart_write",
+      docSessionId || "default"
+    ].join(":");
+  }
+
+  function getWritingDocTaskKey(taskType, docSessionId) {
+    var tt = taskType || "word.smart_write";
+    var ds = docSessionId || (state.documentSessionId || "default");
+    return "wps::" + tt + "::" + ds;
+  }
+
+  function getActiveWritingJobRecord(taskType, docSessionId) {
+    var key = getWritingDocTaskKey(taskType, docSessionId);
+    if (state.activeWritingJobs && Object.prototype.hasOwnProperty.call(state.activeWritingJobs, key)) {
+      return state.activeWritingJobs[key];
+    }
+    if (state.activeWritingJobs && state.activeWritingJobs[key]) {
+      return state.activeWritingJobs[key];
+    }
+    if (!state.activeWritingJobs && state.activeWritingJobsByTask && state.activeWritingJobsByTask[taskType]) {
+      var fallback = state.activeWritingJobsByTask[taskType];
+      if (fallback && (!docSessionId || !fallback.documentSessionId || fallback.documentSessionId === docSessionId)) {
+        return fallback;
+      }
+    }
+    return null;
+  }
+
+  function setActiveWritingJobRecord(taskType, docSessionId, record) {
+    var key = getWritingDocTaskKey(taskType, docSessionId);
+    state.activeWritingJobs = state.activeWritingJobs || {};
+    state.activeWritingJobsByTask = state.activeWritingJobsByTask || {};
+    if (record) {
+      state.activeWritingJobs[key] = record;
+      state.activeWritingJobsByTask[taskType] = record;
+    } else {
+      delete state.activeWritingJobs[key];
+      if (state.activeWritingJobsByTask[taskType]) {
+        var existingJob = state.activeWritingJobsByTask[taskType];
+        if (!docSessionId || !existingJob || !existingJob.documentSessionId || existingJob.documentSessionId === docSessionId) {
+          delete state.activeWritingJobsByTask[taskType];
+        }
+      }
+    }
+  }
+
+  function getActiveResultRecord(taskType, docSessionId) {
+    var key = getWritingDocTaskKey(taskType, docSessionId);
+    if (state.activeResults && Object.prototype.hasOwnProperty.call(state.activeResults, key)) {
+      return state.activeResults[key];
+    }
+    if (state.activeResults && state.activeResults[key]) {
+      return state.activeResults[key];
+    }
+    if (!state.activeResults && state.activeResultsByTask && state.activeResultsByTask[taskType]) {
+      var fallback = state.activeResultsByTask[taskType];
+      if (fallback && (!docSessionId || !fallback.documentSessionId || fallback.documentSessionId === docSessionId)) {
+        return fallback;
+      }
+    }
+    return null;
+  }
+
+  function setActiveResultRecord(taskType, docSessionId, record) {
+    var key = getWritingDocTaskKey(taskType, docSessionId);
+    state.activeResults = state.activeResults || {};
+    state.activeResultsByTask = state.activeResultsByTask || {};
+    if (record) {
+      state.activeResults[key] = record;
+      var activeRes = record.result || record;
+      if (activeRes && typeof activeRes === "object" && docSessionId && !activeRes.documentSessionId) {
+        activeRes.documentSessionId = docSessionId;
+      }
+      state.activeResultsByTask[taskType] = activeRes;
+    } else {
+      delete state.activeResults[key];
+      if (state.activeResultsByTask[taskType]) {
+        var existingRes = state.activeResultsByTask[taskType];
+        if (!docSessionId || !existingRes || !existingRes.documentSessionId || existingRes.documentSessionId === docSessionId) {
+          delete state.activeResultsByTask[taskType];
+        }
+      }
+    }
+  }
+
+  function releaseTaskSlotsForJob(jobId) {
+    if (!state.activeTaskSlots) {
+      return;
+    }
+    for (var k in state.activeTaskSlots) {
+      if (Object.prototype.hasOwnProperty.call(state.activeTaskSlots, k)) {
+        if (!jobId || (state.activeTaskSlots[k] && state.activeTaskSlots[k].jobId === jobId)) {
+          delete state.activeTaskSlots[k];
+        }
+      }
+    }
+  }
+
+  function loadWritingActiveJob(taskType, docSessionId) {
     var raw;
     try {
-      raw = window.localStorage && window.localStorage.getItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
+      if (!window.localStorage) {
+        return null;
+      }
+      if (taskType && docSessionId) {
+        raw = window.localStorage.getItem(getWritingActiveJobStorageKey(taskType, docSessionId));
+        if (raw) {
+          return JSON.parse(raw);
+        }
+      }
+      if (taskType) {
+        for (var i = 0; i < window.localStorage.length; i += 1) {
+          var k = window.localStorage.key(i);
+          if (k && k.indexOf("ai-wps:writing-active-job:" + taskType + ":") === 0) {
+            raw = window.localStorage.getItem(k);
+            if (raw) {
+              return JSON.parse(raw);
+            }
+          }
+        }
+      }
+      raw = window.localStorage.getItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
       return raw ? JSON.parse(raw) : null;
     } catch (error) {
       return null;
@@ -450,33 +582,55 @@
     if (!job || !job.jobId) {
       return;
     }
+    var key = getWritingActiveJobStorageKey(job.taskType, job.documentSessionId);
     try {
       if (window.localStorage) {
-        window.localStorage.setItem(WRITING_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+        var record = JSON.stringify({
           jobId: job.jobId,
           taskType: job.taskType,
           mode: job.mode,
+          documentSessionId: job.documentSessionId || "",
           traceId: job.traceId || "",
           startedAt: job.startedAt || Date.now(),
           frontendVersion: FRONTEND_BUILD_VERSION
-        }));
+        });
+        window.localStorage.setItem(key, record);
+        window.localStorage.setItem(WRITING_ACTIVE_JOB_STORAGE_KEY, record);
       }
     } catch (error) {
       // Storage may be unavailable in some WPS WebView modes.
     }
   }
 
-  function clearWritingActiveJob(jobId) {
-    var active;
+  function clearWritingActiveJob(jobId, taskType, docSessionId) {
     try {
       if (!window.localStorage) {
         return;
       }
-      active = loadWritingActiveJob();
-      if (jobId && active && active.jobId && active.jobId !== jobId) {
-        return;
+      if (taskType && docSessionId) {
+        window.localStorage.removeItem(getWritingActiveJobStorageKey(taskType, docSessionId));
       }
-      window.localStorage.removeItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
+      for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        var k = window.localStorage.key(i);
+        if (k && k.indexOf("ai-wps:writing-active-job:") === 0) {
+          var val = window.localStorage.getItem(k);
+          if (val) {
+            try {
+              var parsed = JSON.parse(val);
+              if (!jobId || (parsed && parsed.jobId === jobId)) {
+                window.localStorage.removeItem(k);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      var legacyRaw = window.localStorage.getItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
+      if (legacyRaw) {
+        var legacy = JSON.parse(legacyRaw);
+        if (!jobId || !legacy || !legacy.jobId || legacy.jobId === jobId) {
+          window.localStorage.removeItem(WRITING_ACTIVE_JOB_STORAGE_KEY);
+        }
+      }
     } catch (error) {
       // Storage cleanup must not block result rendering.
     }
@@ -1321,13 +1475,11 @@
     var requestedMode = modeConfig[mode] ? mode : "smartWrite";
     var config = modeConfig[requestedMode] || modeConfig.smartWrite;
     var settingsMode = requestedMode === "settings";
+    var writingMode = requestedMode === "smartWrite" || requestedMode === "smartImitation";
     var writingPolicyMode;
     var returnTitle;
 
     setInterruptedRetryVisible(false);
-    if (state.writingJobId && state.writingJobMode !== requestedMode) {
-      setWritingJob("", "", "");
-    }
     state.currentMode = requestedMode;
     if (!settingsMode) {
       state.lastTaskMode = requestedMode;
@@ -1338,9 +1490,19 @@
     byId("btn-open-settings").classList.toggle("is-back", settingsMode);
     byId("btn-open-settings").setAttribute("title", settingsMode ? "返回" + returnTitle : "打开设置");
     byId("btn-open-settings").setAttribute("aria-label", settingsMode ? "返回" + returnTitle : "打开设置");
-    resetSmartWritePreviewState();
-    resetDocumentReviewState();
     closeTaskModelConfigMenu(false);
+
+    var btnViewHistory = byId("btn-view-history");
+    if (btnViewHistory) {
+      btnViewHistory.hidden = !writingMode;
+    }
+    if (!writingMode && state.historyOpen) {
+      switchWordHistoryView(false);
+    } else if (writingMode && state.historyOpen) {
+      var currentWritingTask = getCurrentWorkflowTaskType();
+      state.historyTaskType = currentWritingTask;
+      loadAndRenderWritingHistory(currentWritingTask);
+    }
 
     if (settingsMode) {
       switchView("settings");
@@ -1370,8 +1532,43 @@
     byId("btn-apply").hidden = state.currentMode !== "smartWrite";
     hideCompareForSmartImitation();
     updateRewritePromptPreview();
-    state.pendingApplyAction = "";
-    setApplyEnabled(false);
+
+    if (writingMode) {
+      var currentTaskType = getCurrentWorkflowTaskType();
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var activeJob = getActiveWritingJobRecord(currentTaskType, currentDoc);
+      if (activeJob) {
+        state.writingJobId = activeJob.jobId;
+        state.writingJobTaskType = currentTaskType;
+        state.writingJobMode = requestedMode;
+        setModelTaskBusy(true);
+      } else {
+        state.writingJobId = "";
+        state.writingJobTaskType = "";
+        state.writingJobMode = "";
+        setModelTaskBusy(false);
+        var activeRecord = getActiveResultRecord(currentTaskType, currentDoc);
+        if (activeRecord) {
+          var activeRes = activeRecord.result || activeRecord;
+          state.rewriteResult = setSmartWriteResult(activeRes, currentTaskType);
+          var canApply = state.currentMode === "smartWrite" && !activeRecord.resumed && (activeRecord.pendingApplyAction === "rewrite" || (!activeRecord.resumed && state.latestDocumentPayload));
+          state.pendingApplyAction = canApply ? "rewrite" : "";
+          setApplyEnabled(canApply);
+          setTrace(activeRecord.traceId || "");
+        } else {
+          resetSmartWritePreviewState();
+          state.pendingApplyAction = "";
+          setApplyEnabled(false);
+          setPlainResult("等待运行。");
+        }
+      }
+    } else {
+      resetSmartWritePreviewState();
+      resetDocumentReviewState();
+      state.pendingApplyAction = "";
+      setApplyEnabled(false);
+    }
+
     setStatus("等待操作。");
     if (state.currentMode === "smartImitation") {
       fillSmartImitationTemplateFromSelection();
@@ -1382,7 +1579,7 @@
       }
     } else if (state.currentMode === "formatReview") {
       resumeDeterministicFormatReviewActiveJob();
-    } else if (state.currentMode === "smartWrite" || state.currentMode === "smartImitation") {
+    } else if (writingMode) {
       resumeWritingActiveJob();
     }
   }
@@ -5903,21 +6100,313 @@
     setPlainResult(lines.join("\n"));
   }
 
-  function completeWritingJob(result, traceId, taskType, resumed) {
+  function completeWritingJob(result, traceId, taskType, resumed, mode, jobId, docSessionId) {
     var label = writingTaskLabel(taskType);
-    setWritingJob("", "", "");
-    state.writingJobStartedAt = 0;
-    state.writingJobPollErrorCount = 0;
-    state.pendingApplyAction = taskType === "word.smart_write" && !resumed && state.latestDocumentPayload
-      ? "rewrite"
-      : "";
-    state.rewriteResult = setSmartWriteResult(result || {}, taskType);
-    setApplyEnabled(state.pendingApplyAction === "rewrite");
-    setTrace(traceId || "");
-    if (taskType === "word.smart_imitation") {
-      hideCompareForSmartImitation();
+    var targetJobId = jobId || traceId || state.writingJobId || "";
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
+
+    if (targetJobId) {
+      releaseTaskSlotsForJob(targetJobId);
+      if (helpers.releaseTaskSlot) {
+        helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, targetJobId);
+      }
+      clearWritingActiveJob(targetJobId, taskType, targetDocSession);
     }
-    setStatus(label + "结果已生成。" + (resumed && taskType === "word.smart_write" ? "为保护原选区，本次恢复结果仅供预览和复制。" : ""));
+    setActiveWritingJobRecord(taskType, targetDocSession, null);
+
+    var isCurrentGlobalJob = (!targetJobId || state.writingJobId === targetJobId || state.writingJobTaskType === taskType);
+    if (isCurrentGlobalJob) {
+      setWritingJob("", "", "");
+      state.writingJobStartedAt = 0;
+      state.writingJobPollErrorCount = 0;
+      setModelTaskBusy(false);
+    }
+
+    var canApply = (taskType === "word.smart_write") && !resumed && Boolean(state.latestDocumentPayload);
+    state.pendingApplyAction = taskType === "word.smart_write" && canApply ? "rewrite" : "";
+    var resultRecord = {
+      result: result || {},
+      traceId: traceId || targetJobId || "",
+      taskType: taskType,
+      documentSessionId: targetDocSession,
+      resumed: Boolean(resumed),
+      pendingApplyAction: state.pendingApplyAction,
+      documentPayload: canApply ? state.latestDocumentPayload : null,
+      completedAt: Date.now()
+    };
+    setActiveResultRecord(taskType, targetDocSession, resultRecord);
+
+    var notice = result && result.historyNotice ? "（" + result.historyNotice + "）" : "";
+
+    if (state.historyOpen) {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+      setStatus(label + "结果已在后台生成。" + notice);
+      return;
+    }
+
+    var targetMode = mode || (taskType === "word.smart_imitation" ? "smartImitation" : "smartWrite");
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var isCurrentView = (state.currentMode === targetMode) && (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+
+    if (isCurrentView) {
+      state.pendingApplyAction = resultRecord.pendingApplyAction;
+      state.rewriteResult = setSmartWriteResult(result || {}, taskType);
+      setApplyEnabled(state.pendingApplyAction === "rewrite");
+      setTrace(traceId || targetJobId || "");
+      if (taskType === "word.smart_imitation") {
+        hideCompareForSmartImitation();
+      }
+      setStatus(label + "结果已生成。" + notice + (resumed && taskType === "word.smart_write" ? "为保护原选区，本次恢复结果仅供预览和复制。" : ""));
+    } else {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+      setStatus(label + "结果已在后台生成。" + notice);
+    }
+  }
+
+  function failWritingJob(jobId, taskType, mode, error, docSessionId) {
+    var targetJobId = jobId || "";
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
+
+    if (targetJobId) {
+      releaseTaskSlotsForJob(targetJobId);
+      if (helpers.releaseTaskSlot) {
+        helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, targetJobId);
+      }
+      clearWritingActiveJob(targetJobId, taskType, targetDocSession);
+    }
+    setActiveWritingJobRecord(taskType, targetDocSession, null);
+    setActiveResultRecord(taskType, targetDocSession, null);
+
+    var targetMode = mode || (taskType === "word.smart_imitation" ? "smartImitation" : "smartWrite");
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var isCurrentView = (state.currentMode === targetMode) && (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+
+    if (isCurrentView || (targetJobId && state.writingJobId === targetJobId)) {
+      setWritingJob("", "", "");
+      state.writingJobStartedAt = 0;
+      state.writingJobPollErrorCount = 0;
+      setModelTaskBusy(false);
+    }
+    var errorMsg = (error && error.message) || describeFetchError(error) || "后台任务执行失败。";
+    if (isCurrentView) {
+      setStatus(writingTaskLabel(taskType) + "失败：" + errorMsg);
+      setResult(errorMsg);
+    }
+  }
+
+  function updateHistoryBadge() {
+    var badge = byId("history-unread-badge");
+    if (!badge) {
+      return;
+    }
+    var count = Number(state.historyUnreadCount || 0);
+    if (count > 0) {
+      badge.textContent = count > 99 ? "99+" : String(count);
+      badge.hidden = false;
+    } else {
+      badge.textContent = "0";
+      badge.hidden = true;
+    }
+  }
+
+  function switchWordHistoryView(open) {
+    state.historyOpen = Boolean(open);
+    var historyView = byId("word-history-view");
+    var resultSection = byId("word-result-section");
+    if (historyView) {
+      historyView.hidden = !state.historyOpen;
+    }
+    if (resultSection) {
+      resultSection.hidden = state.historyOpen;
+    }
+    if (state.historyOpen) {
+      state.historyUnreadCount = 0;
+      updateHistoryBadge();
+      loadAndRenderWritingHistory();
+    } else {
+      var taskType = getCurrentWorkflowTaskType();
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var activeRecord = getActiveResultRecord(taskType, currentDoc);
+      if (activeRecord) {
+        var res = activeRecord.result || activeRecord;
+        state.rewriteResult = setSmartWriteResult(res, taskType);
+        var canApply = state.currentMode === "smartWrite" && !activeRecord.resumed && (activeRecord.pendingApplyAction === "rewrite" || (!activeRecord.resumed && state.latestDocumentPayload));
+        state.pendingApplyAction = canApply ? "rewrite" : "";
+        setApplyEnabled(canApply);
+        setTrace(activeRecord.traceId || "");
+        if (taskType === "word.smart_imitation") {
+          hideCompareForSmartImitation();
+        }
+      }
+    }
+  }
+
+  function loadAndRenderWritingHistory(targetTaskType) {
+    var contentEl = byId("word-history-content");
+    if (contentEl) {
+      contentEl.innerHTML = '<div class="word-history-empty">正在加载历史记录...</div>';
+    }
+    var taskType = targetTaskType || getCurrentWorkflowTaskType();
+    state.historyTaskType = taskType;
+    var currentSeq = (state.historyLoadSequence || 0) + 1;
+    state.historyLoadSequence = currentSeq;
+    return request("/history?taskType=" + encodeURIComponent(taskType), null, {
+      timeoutMs: 8000
+    }).then(function (body) {
+      if (state.historyLoadSequence !== currentSeq || state.historyTaskType !== taskType) {
+        return [];
+      }
+      var data = body && body.data;
+      var items = (data && Array.isArray(data.items)) ? data.items : (Array.isArray(data) ? data : []);
+      state.historyItems = items;
+      if (contentEl) {
+        contentEl.innerHTML = helpers.renderWritingHistoryList(state.historyItems);
+      }
+      return items;
+    }).catch(function (error) {
+      if (state.historyLoadSequence !== currentSeq || state.historyTaskType !== taskType) {
+        return;
+      }
+      if (contentEl) {
+        contentEl.innerHTML = '<div class="word-history-empty">读取历史记录失败：' + (helpers.escapeHtml ? helpers.escapeHtml(error.message) : error.message) + '</div>';
+      }
+    });
+  }
+
+  function handleClearWritingHistory() {
+    var taskType = state.historyTaskType || getCurrentWorkflowTaskType();
+    return request("/history?taskType=" + encodeURIComponent(taskType), null, {
+      method: "DELETE",
+      timeoutMs: 8000
+    }).then(function () {
+      state.historyItems = [];
+      var contentEl = byId("word-history-content");
+      if (contentEl) {
+        contentEl.innerHTML = helpers.renderWritingHistoryList([]);
+      }
+      setStatus("历史记录已清空。");
+    }).catch(function (error) {
+      setStatus("清空历史记录失败：" + error.message);
+    });
+  }
+
+  function handleWritingHistoryContentClick(event) {
+    var target = event.target;
+    if (!target) {
+      return;
+    }
+    var viewBtn = target.closest ? target.closest(".btn-history-view") : null;
+    var copyBtn = target.closest ? target.closest(".btn-history-copy") : null;
+    var deleteBtn = target.closest ? target.closest(".btn-history-delete") : null;
+
+    if (viewBtn) {
+      var id = viewBtn.getAttribute("data-history-id");
+      handleWritingHistoryViewItem(id, viewBtn);
+      return;
+    }
+    if (copyBtn) {
+      var copyId = copyBtn.getAttribute("data-history-id");
+      handleWritingHistoryCopyItem(copyId);
+      return;
+    }
+    if (deleteBtn) {
+      var deleteId = deleteBtn.getAttribute("data-history-id");
+      handleWritingHistoryDeleteItem(deleteId);
+      return;
+    }
+  }
+
+  function handleWritingHistoryViewItem(id, btn) {
+    var item = null;
+    for (var i = 0; i < (state.historyItems || []).length; i += 1) {
+      if (state.historyItems[i].id === id) {
+        item = state.historyItems[i];
+        break;
+      }
+    }
+    if (!item) {
+      return;
+    }
+    var card = btn.closest ? btn.closest(".word-history-card") : null;
+    if (!card) {
+      return;
+    }
+    var existingDetail = card.querySelector(".word-history-card-detail");
+    if (existingDetail) {
+      if (existingDetail.hidden) {
+        existingDetail.hidden = false;
+        btn.textContent = "收起";
+      } else {
+        existingDetail.hidden = true;
+        btn.textContent = "查看";
+      }
+      return;
+    }
+    var detailDiv = document.createElement("div");
+    detailDiv.className = "word-history-card-detail";
+    detailDiv.style.marginTop = "8px";
+    detailDiv.style.paddingTop = "8px";
+    detailDiv.style.borderTop = "1px dashed var(--hairline, #e2e8f0)";
+    detailDiv.style.fontSize = "12px";
+    detailDiv.style.lineHeight = "1.5";
+
+    var result = item.result || {};
+    var text = result.rewrittenText || result.plainText || "";
+    var renderedHtml = helpers.renderMarkdown
+      ? helpers.renderMarkdown(text)
+      : (helpers.escapeHtml ? helpers.escapeHtml(text) : text);
+    detailDiv.innerHTML = renderedHtml;
+
+    var actionsDiv = card.querySelector(".word-history-card-actions");
+    if (actionsDiv) {
+      card.insertBefore(detailDiv, actionsDiv);
+    } else {
+      card.appendChild(detailDiv);
+    }
+    btn.textContent = "收起";
+  }
+
+  function handleWritingHistoryCopyItem(id) {
+    var item = null;
+    for (var i = 0; i < (state.historyItems || []).length; i += 1) {
+      if (state.historyItems[i].id === id) {
+        item = state.historyItems[i];
+        break;
+      }
+    }
+    if (!item) {
+      setStatus("未找到对应历史记录。");
+      return;
+    }
+    var res = item.result || {};
+    var text = res.plainText || res.rewrittenText || "";
+    if (!text) {
+      text = JSON.stringify(res, null, 2);
+    }
+    copyText(text, "历史结果已复制。");
+  }
+
+  function handleWritingHistoryDeleteItem(id) {
+    if (!id) {
+      return Promise.resolve();
+    }
+    return request("/history/" + encodeURIComponent(id), null, {
+      method: "DELETE",
+      timeoutMs: 8000
+    }).then(function () {
+      state.historyItems = (state.historyItems || []).filter(function (it) {
+        return it.id !== id;
+      });
+      var container = byId("word-history-content");
+      if (container) {
+        container.innerHTML = helpers.renderWritingHistoryList(state.historyItems);
+      }
+      setStatus("已删除该条历史记录。");
+    }).catch(function (error) {
+      setStatus("删除历史记录失败：" + error.message);
+    });
   }
 
   function isFatalWritingPollError(error) {
@@ -5928,143 +6417,207 @@
       code === "REQUEST_VALIDATION_FAILED";
   }
 
-  function scheduleWritingPoll(jobId, taskType, mode, resumed, delayMs) {
+  function scheduleWritingPoll(jobId, taskType, mode, resumed, delayMs, docSessionId) {
     setTimeout(function () {
-      pollWritingJob(jobId, taskType, mode, resumed);
+      pollWritingJob(jobId, taskType, mode, resumed, docSessionId);
     }, delayMs);
   }
 
-  function pollWritingJob(jobId, taskType, mode, resumed) {
-    if (!jobId || state.writingJobId !== jobId) {
+  function pollWritingJob(jobId, taskType, mode, resumed, docSessionId) {
+    if (!jobId) {
       return;
     }
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
     request(writingJobPath(taskType) + "/" + encodeURIComponent(jobId) + "?resume=1", null, {
       timeoutMs: WRITING_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
       var job = body.data || {};
-      if (state.writingJobId !== jobId) {
-        return;
-      }
       state.writingJobPollErrorCount = 0;
       saveWritingActiveJob({
         jobId: jobId,
         taskType: taskType,
         mode: mode,
+        documentSessionId: targetDocSession,
         traceId: body.traceId || job.traceId || "",
         startedAt: state.writingJobStartedAt || Date.now()
       });
       if (job.status === "completed") {
-        clearWritingActiveJob(jobId);
-        completeWritingJob(job.result || {}, body.traceId || job.traceId || jobId, taskType, resumed);
+        releaseTaskSlotsForJob(jobId);
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, jobId);
+        }
+        clearWritingActiveJob(jobId, taskType, targetDocSession);
+        if (resumed) {
+          if (state.writingJobId === jobId) {
+            setWritingJob("", "", "");
+            setModelTaskBusy(false);
+          }
+          setActiveWritingJobRecord(taskType, targetDocSession, null);
+          setStatus("历史写作任务已结束，可在历史记录中查看。");
+          return;
+        }
+        completeWritingJob(job.result || {}, body.traceId || job.traceId || jobId, taskType, false, mode, jobId, targetDocSession);
         return;
       }
       if (job.status === "cancelled") {
-        clearWritingActiveJob(jobId);
-        setWritingJob("", "", "");
-        setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
-        setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+        releaseTaskSlotsForJob(jobId);
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, jobId);
+        }
+        clearWritingActiveJob(jobId, taskType, targetDocSession);
+        setActiveWritingJobRecord(taskType, targetDocSession, null);
+
+        var targetMode = mode || (taskType === "word.smart_imitation" ? "smartImitation" : "smartWrite");
+        var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+        var isCurrentView = (state.currentMode === targetMode) && (!targetDocSession || targetDocSession === currentDoc || !currentDoc);
+
+        if (isCurrentView || state.writingJobId === jobId) {
+          setWritingJob("", "", "");
+          setModelTaskBusy(false);
+        }
+        if (isCurrentView) {
+          setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
+          setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
+        }
         return;
       }
       if (job.status === "failed") {
-        clearWritingActiveJob(jobId);
-        setWritingJob("", "", "");
-        setStatus(writingTaskLabel(taskType) + "失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
-        setResult((job.error && job.error.message) || "后台任务执行失败。");
+        failWritingJob(jobId, taskType, mode, job.error, targetDocSession);
         return;
       }
-      renderWritingJobProgress(job, taskType, jobId);
-      scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_INTERVAL_MS);
+      if (state.currentMode === mode) {
+        renderWritingJobProgress(job, taskType, jobId);
+      }
+      scheduleWritingPoll(jobId, taskType, mode, false, WRITING_POLL_INTERVAL_MS, targetDocSession);
     }).catch(function (error) {
-      if (state.writingJobId !== jobId) {
-        return;
-      }
       state.writingJobPollErrorCount += 1;
       if (isFatalWritingPollError(error)) {
-        clearWritingActiveJob(jobId);
-        setWritingJob("", "", "");
-        setStatus(writingTaskLabel(taskType) + "任务无法恢复：" + describeFetchError(error));
-        setResult(describeFetchError(error));
+        failWritingJob(jobId, taskType, mode, error, targetDocSession);
         return;
       }
-      setStatus(writingTaskLabel(taskType) + "状态查询暂时失败，将继续自动刷新。");
-      setPlainResult([
-        "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败。",
-        "已重试：" + state.writingJobPollErrorCount,
-        "任务编号：" + jobId,
-        "最近错误：" + describeFetchError(error)
-      ].join("\n"));
-      scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_RETRY_DELAY_MS);
+      if (state.currentMode === mode) {
+        setStatus(writingTaskLabel(taskType) + "状态查询暂时失败，将继续自动刷新。");
+        setPlainResult([
+          "状态查询暂时未连上本地 adapter；这不代表模型后台任务失败。",
+          "已重试：" + state.writingJobPollErrorCount,
+          "任务编号：" + jobId,
+          "最近错误：" + describeFetchError(error)
+        ].join("\n"));
+      }
+      scheduleWritingPoll(jobId, taskType, mode, false, WRITING_POLL_RETRY_DELAY_MS, targetDocSession);
     });
   }
 
-  function startWritingJob(payload, taskType, mode) {
-    var active = loadWritingActiveJob();
+  function startWritingJob(payload, taskType, mode, docSessionId, docDisplayName) {
+    var document = getActiveDocument();
+    var docSession = docSessionId || payload.documentSessionId || (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default");
+    var docName = docDisplayName || payload.documentDisplayName || (helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(document) : "未命名文档.docx");
     var jobId;
     var startedAt;
-    if (state.writingJobId || (active && active.jobId)) {
+
+    state.documentSessionId = docSession;
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", taskType, docSession)) {
       setModelTaskBusy(false);
-      setStatus("已有写作任务尚未结束，请等待当前任务完成。");
+      setStatus("已有" + writingTaskLabel(taskType) + "任务尚未结束，请等待当前任务完成。");
       return;
     }
+
     jobId = buildWritingClientJobId(taskType);
     startedAt = Date.now();
     payload.clientJobId = jobId;
+    payload.host = "wps";
+    payload.documentSessionId = docSession;
+    payload.documentDisplayName = docName;
+
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wps", taskType, docSession, jobId);
+    }
+
     setWritingJob(jobId, taskType, mode);
     state.writingJobStartedAt = startedAt;
     state.writingJobPollErrorCount = 0;
-    saveWritingActiveJob({ jobId: jobId, taskType: taskType, mode: mode, startedAt: startedAt });
+    var jobRecord = {
+      jobId: jobId,
+      taskType: taskType,
+      mode: mode,
+      documentSessionId: docSession,
+      startedAt: startedAt
+    };
+    setActiveWritingJobRecord(taskType, docSession, jobRecord);
+    saveWritingActiveJob(jobRecord);
+
     request(writingJobPath(taskType), payload, { timeoutMs: WRITING_POLL_REQUEST_TIMEOUT_MS })
       .then(function (body) {
         var job = body.data || {};
         var returnedJobId = job.jobId || jobId;
-        if (state.writingJobId !== jobId) {
-          return;
-        }
         setWritingJob(returnedJobId, taskType, mode);
         setTrace(body.traceId || job.traceId || returnedJobId);
+        jobRecord.jobId = returnedJobId;
+        setActiveWritingJobRecord(taskType, docSession, jobRecord);
         saveWritingActiveJob({
           jobId: returnedJobId,
           taskType: taskType,
           mode: mode,
+          documentSessionId: docSession,
           traceId: body.traceId || job.traceId || "",
           startedAt: startedAt
         });
         if (job.status === "completed") {
-          clearWritingActiveJob(returnedJobId);
-          completeWritingJob(job.result || {}, body.traceId || job.traceId || returnedJobId, taskType, false);
+          completeWritingJob(job.result || {}, body.traceId || job.traceId || returnedJobId, taskType, false, mode, returnedJobId, docSession);
           return;
         }
-        renderWritingJobProgress(job, taskType, returnedJobId);
-        pollWritingJob(returnedJobId, taskType, mode, false);
+        if (job.status === "failed") {
+          failWritingJob(returnedJobId, taskType, mode, job.error, docSession);
+          return;
+        }
+        if (state.currentMode === mode) {
+          renderWritingJobProgress(job, taskType, returnedJobId);
+        }
+        pollWritingJob(returnedJobId, taskType, mode, false, docSession);
       }).catch(function (error) {
-        if (state.writingJobId !== jobId) {
-          return;
-        }
         if (isFatalWritingPollError(error)) {
-          clearWritingActiveJob(jobId);
-          setWritingJob("", "", "");
-          setStatus(writingTaskLabel(taskType) + "提交失败：" + describeFetchError(error));
-          setResult(describeFetchError(error));
+          failWritingJob(jobId, taskType, mode, error, docSession);
           return;
         }
         setStatus(writingTaskLabel(taskType) + "提交响应未确认，正在按任务编号恢复查询...");
-        pollWritingJob(jobId, taskType, mode, false);
+        pollWritingJob(jobId, taskType, mode, false, docSession);
       });
   }
 
   function resumeWritingActiveJob() {
-    var active = loadWritingActiveJob();
+    var document = getActiveDocument();
+    var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default";
+    var taskType = getCurrentWorkflowTaskType();
+
+    var active = loadWritingActiveJob(taskType, docSession);
     if (!active || !active.jobId || active.mode !== state.currentMode) {
       return;
     }
+    if (active.documentSessionId && docSession && active.documentSessionId !== docSession) {
+      return;
+    }
+    state.documentSessionId = docSession;
+
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wps", active.taskType, docSession, active.jobId);
+    }
+
     setWritingJob(active.jobId, active.taskType, active.mode);
     state.writingJobStartedAt = active.startedAt || Date.now();
     state.writingJobPollErrorCount = 0;
+    var jobRecord = {
+      jobId: active.jobId,
+      taskType: active.taskType,
+      mode: active.mode,
+      documentSessionId: docSession,
+      startedAt: state.writingJobStartedAt
+    };
+    setActiveWritingJobRecord(active.taskType, docSession, jobRecord);
     setTrace(active.traceId || active.jobId);
     setApplyEnabled(false);
     setStatus("已恢复未完成的" + writingTaskLabel(active.taskType) + "任务，正在查询结果...");
     setPlainResult("检测到未完成的写作任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
-    pollWritingJob(active.jobId, active.taskType, active.mode, true);
+    pollWritingJob(active.jobId, active.taskType, active.mode, true, docSession);
   }
 
   function cancelQueuedWritingJob() {
@@ -6080,8 +6633,14 @@
     }).then(function (body) {
       var job = body.data || {};
       if (job.status === "cancelled") {
-        clearWritingActiveJob(jobId);
+        releaseTaskSlotsForJob(jobId);
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, state.documentSessionId, jobId);
+        }
+        clearWritingActiveJob(jobId, taskType, state.documentSessionId);
+        setActiveWritingJobRecord(taskType, state.documentSessionId, null);
         setWritingJob("", "", "");
+        setModelTaskBusy(false);
         setStatus("排队中的" + writingTaskLabel(taskType) + "任务已取消。");
         setPlainResult("排队任务已取消，未调用模型后台。\n任务编号：" + jobId);
         return;
@@ -8052,17 +8611,28 @@
   }
 
   function runSmartWriteAction() {
+    var document = getActiveDocument();
+    var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default";
+    var docDisplayName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(document) : "未命名文档.docx";
+    state.documentSessionId = docSession;
+
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", "word.smart_write", docSession)) {
+      setStatus("已有智能编写任务正在进行中，请等待当前任务完成。");
+      return;
+    }
+
     var selectionScope = resolveSelectionScope(true);
-    resetSmartWritePreviewState();
     if (!selectionScope.ok) {
       setStatus(selectionScope.message);
-      setResult(selectionScope.message);
       return;
     }
 
     var config = modeConfig[state.currentMode] || modeConfig.smartWrite;
     setModelTaskBusy(true);
     setStatus("正在读取选中文本...");
+
+    resetSmartWritePreviewState();
+    setActiveResultRecord("word.smart_write", docSession, null);
     setPlainResult("正在读取选中文本，请稍候。");
     setApplyEnabled(false);
 
@@ -8075,6 +8645,9 @@
         );
         state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+        state.latestDocumentPayload.host = "wps";
+        state.latestDocumentPayload.documentSessionId = docSession;
+        state.latestDocumentPayload.documentDisplayName = docDisplayName;
       } catch (error) {
         setModelTaskBusy(false);
         setStatus(error.message);
@@ -8088,26 +8661,35 @@
   }
 
   function runSmartImitationAction() {
+    var document = getActiveDocument();
+    var docSession = helpers.getDocumentSessionId ? helpers.getDocumentSessionId(document) : "doc_session_default";
+    var docDisplayName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(document) : "未命名文档.docx";
+    state.documentSessionId = docSession;
+
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", "word.smart_imitation", docSession)) {
+      setStatus("已有智能仿写任务正在进行中，请等待当前任务完成。");
+      return;
+    }
+
     var templateText = String(byId("imitation-template-text").value || "").trim();
     var requirement = String(byId("imitation-requirement").value || "").trim();
     var referenceMaterial = String(byId("imitation-reference-material").value || "").trim();
     var paragraphs;
     var config = modeConfig[state.currentMode] || modeConfig.smartImitation;
 
-    resetSmartWritePreviewState();
-    state.pendingApplyAction = "";
-    setApplyEnabled(false);
-
     if (!templateText) {
       setStatus("请先提供仿写模板。");
-      setResult("请先提供仿写模板。");
       return;
     }
     if (!requirement) {
       setStatus("请填写仿写需求。");
-      setResult("请填写仿写需求。");
       return;
     }
+
+    resetSmartWritePreviewState();
+    state.pendingApplyAction = "";
+    setApplyEnabled(false);
+    setActiveResultRecord("word.smart_imitation", docSession, null);
 
     paragraphs = helpers.collectParagraphsFromText
       ? helpers.collectParagraphsFromText(templateText, SMART_WRITE_EXTRACTION_OPTIONS)
@@ -8117,6 +8699,9 @@
       documentId: "smart-imitation",
       scene: "word",
       selectionMode: "selection",
+      host: "wps",
+      documentSessionId: docSession,
+      documentDisplayName: docDisplayName,
       writingPolicyScene: getWritingPolicyScene(),
       content: {
         plainText: templateText,
@@ -8558,6 +9143,26 @@
     byId("btn-result-plain").addEventListener("click", function () {
       setResultViewMode("plain");
     });
+    var btnViewHistory = byId("btn-view-history");
+    if (btnViewHistory) {
+      btnViewHistory.addEventListener("click", function () {
+        switchWordHistoryView(true);
+      });
+    }
+    var btnHistoryBack = byId("btn-history-back");
+    if (btnHistoryBack) {
+      btnHistoryBack.addEventListener("click", function () {
+        switchWordHistoryView(false);
+      });
+    }
+    var btnClearHistory = byId("btn-clear-history");
+    if (btnClearHistory) {
+      btnClearHistory.addEventListener("click", handleClearWritingHistory);
+    }
+    var historyContent = byId("word-history-content");
+    if (historyContent) {
+      historyContent.addEventListener("click", handleWritingHistoryContentClick);
+    }
   }
 
   if (!isTaskpanePage()) {
