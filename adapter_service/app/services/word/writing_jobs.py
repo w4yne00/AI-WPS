@@ -1,7 +1,7 @@
 import re
 import threading
 from copy import deepcopy
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.errors import AdapterError
 from app.core.models import WordDocumentRequest
@@ -14,6 +14,8 @@ from app.services.provider_client import INTERACTIVE_WRITING_TIMEOUT_SECONDS
 from app.services.task_history import (
     TaskHistoryError,
     get_task_history_store,
+    sanitize_audit_for_history,
+    sanitize_usage_for_history,
 )
 from app.services.word.rewriter import WordRewriter
 from app.services.word.smart_imitator import WordSmartImitator
@@ -168,8 +170,8 @@ class WritingJobStore:
                 "rewriteMode": result.get("rewriteMode", ""),
                 "diffHints": result.get("diffHints") or [],
                 "plainText": rewritten_text,
-                "writingPolicyUsage": result.get("writingPolicyUsage") or {},
-                "writingPolicyAudit": result.get("writingPolicyAudit") or {},
+                "writingPolicyUsage": sanitize_usage_for_history(result.get("writingPolicyUsage")),
+                "writingPolicyAudit": sanitize_audit_for_history(result.get("writingPolicyAudit")),
             }
 
             get_task_history_store().record_success(

@@ -17,7 +17,7 @@ HISTORY_TTL_SECONDS = 24 * 3600  # 24 hours
 
 HISTORY_ID_PATTERN = re.compile(r"^hist_\d+_[a-f0-9]{8,32}$")
 SENSITIVE_KEY_PATTERN = re.compile(
-    r"(?i)(api_?key|token|auth|secret|full_?path|raw_?input|request_?body|headers|prompt|user_?instruction)"
+    r"(?i)(api_?key|token|auth|secret|full_?path|raw_?input|request_?body|headers|prompt|user_?instruction|evidence|original_?text|selection)"
 )
 _HISTORY_LOCK = threading.RLock()
 
@@ -59,6 +59,48 @@ def _sanitize_data(data: Any) -> Any:
     elif isinstance(data, list):
         return [_sanitize_data(item) for item in data]
     return data
+
+
+def sanitize_audit_for_history(audit: Any) -> Dict[str, Any]:
+    if not isinstance(audit, dict):
+        return {}
+    sanitized: Dict[str, Any] = {
+        "enabled": bool(audit.get("enabled", False)),
+        "passed": bool(audit.get("passed", False)),
+        "degraded": bool(audit.get("degraded", False)),
+        "summary": str(audit.get("summary") or ""),
+    }
+    if "needsReview" in audit and isinstance(audit["needsReview"], list):
+        cleaned_needs_review: List[Dict[str, str]] = []
+        for item in audit["needsReview"]:
+            if isinstance(item, dict):
+                cleaned_needs_review.append({
+                    "code": str(item.get("code") or ""),
+                    "severity": str(item.get("severity") or ""),
+                    "message": str(item.get("message") or ""),
+                })
+        sanitized["needsReview"] = cleaned_needs_review
+    if "expressionSuggestions" in audit and isinstance(audit["expressionSuggestions"], list):
+        cleaned_suggestions: List[Dict[str, str]] = []
+        for item in audit["expressionSuggestions"]:
+            if isinstance(item, dict):
+                cleaned_suggestions.append({
+                    "code": str(item.get("code") or ""),
+                    "message": str(item.get("message") or ""),
+                    "suggestion": str(item.get("suggestion") or ""),
+                })
+        sanitized["expressionSuggestions"] = cleaned_suggestions
+    return sanitized
+
+
+def sanitize_usage_for_history(usage: Any) -> Dict[str, Any]:
+    if not isinstance(usage, dict):
+        return {}
+    pack_names = usage.get("packNames")
+    return {
+        "scene": str(usage.get("scene") or ""),
+        "packNames": [str(name) for name in pack_names] if isinstance(pack_names, list) else [],
+    }
 
 
 def _default_history_dir() -> Path:
