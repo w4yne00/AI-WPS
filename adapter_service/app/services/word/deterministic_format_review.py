@@ -29,6 +29,7 @@ from app.services.long_task_coordinator import (
     LongTaskCancelled,
     get_long_task_coordinator,
 )
+from app.services.task_history import get_task_history_store, TaskHistoryError
 from app.services.word.format_reviewer import (
     WordFormatReviewer,
     build_format_review_model_identity,
@@ -659,6 +660,9 @@ class DeterministicFormatReviewService:
         self._reports: Dict[str, Dict] = {}
         self._lock = threading.Lock()
         self._snapshot_mutation_lock = threading.Lock()
+        self._submission_lock = threading.Lock()
+        self._active_doc_sessions: Dict[tuple, str] = {}
+        self._job_identities: Dict[str, tuple] = {}
         self.image_asset_store = ImageAssetStore(self.staging_root / "image-assets")
         self._cleanup_expired()
 
@@ -730,6 +734,9 @@ class DeterministicFormatReviewService:
             "status": "uploading",
             "documentIdSha256": hashlib.sha256(document_id.encode("utf-8")).hexdigest(),
             "documentIdentity": document_identity,
+            "documentSessionId": str(payload.get("documentSessionId") or "").strip(),
+            "documentDisplayName": str(payload.get("documentDisplayName") or "").strip(),
+            "host": str(payload.get("host") or "wps").strip(),
             "selectionMode": selection_mode,
             "templateId": str(payload.get("templateId") or "technical-document-template-rules"),
             "scope": self._normalize_scope(payload.get("scope"), selection_mode),
@@ -1150,10 +1157,48 @@ class DeterministicFormatReviewService:
             )
         client_job_id = str(payload.get("clientJobId") or "").strip()
         job_id = client_job_id if SAFE_ID.fullmatch(client_job_id) else trace_id
-        existing = self.coordinator.get(job_id, task_type=TASK_TYPE)
-        if existing is not None:
-            self._remove_snapshot(snapshot_id)
-            return existing
+
+        doc_session = str(
+            payload.get("documentSessionId") or record.get("documentSessionId") or ""
+        ).strip()
+        doc_display_name = str(
+            payload.get("documentDisplayName") or record.get("documentDisplayName") or ""
+        ).strip()
+        host = str(payload.get("host") or record.get("host") or "wps").strip()
+        session_key = (host, TASK_TYPE, doc_session) if doc_session else None
+
+        with self._submission_lock:
+            if session_key:
+                if job_id in self._job_identities:
+                    existing_session_key = self._job_identities[job_id]
+                    if existing_session_key != session_key:
+                        raise AdapterError(
+                            "WORD_FORMAT_REVIEW_TASK_CONFLICT",
+                            "任务标识冲突，不能跨文档会话复用同一任务标识。",
+                            status_code=409,
+                        )
+                if session_key in self._active_doc_sessions:
+                    active_job_id = self._active_doc_sessions[session_key]
+                    active_job = self.coordinator.get(active_job_id, task_type=TASK_TYPE)
+                    if active_job is not None and active_job.get("status") in {"queued", "running"}:
+                        if active_job_id != job_id:
+                            raise AdapterError(
+                                "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY",
+                                "当前文档已有正在运行或排队的格式审查任务，请勿重复提交。",
+                                status_code=409,
+                            )
+                    else:
+                        self._active_doc_sessions.pop(session_key, None)
+
+            existing = self.coordinator.get(job_id, task_type=TASK_TYPE)
+            if existing is not None:
+                self._remove_snapshot(snapshot_id)
+                return existing
+
+            if session_key:
+                self._job_identities[job_id] = session_key
+                self._active_doc_sessions[session_key] = job_id
+
         if hasattr(WordDocumentRequest, "model_validate"):
             request = WordDocumentRequest.model_validate(record["request"])
         else:
@@ -1167,31 +1212,40 @@ class DeterministicFormatReviewService:
                 task_auth = {"authSnapshotStatus": "unavailable"}
         image_assets = deepcopy(record.get("imageAssets", []))
         self._remove_snapshot(snapshot_id, cleanup_images=False)
-        return self.coordinator.submit(
-            job_id=job_id,
-            trace_id=trace_id,
-            task_type=TASK_TYPE,
-            runner=self._run,
-            snapshot={
-                "jobId": job_id,
-                "traceId": trace_id,
-                "request": request,
-                "taskAuth": task_auth,
-                "snapshotId": snapshot_id,
-                "selectionMode": record.get("selectionMode", request.selection_mode),
-                "contentSha256": record.get("contentSha256", ""),
-                "structureSha256": record.get("structureSha256", ""),
-                "formatSha256": record.get("formatSha256", ""),
-                "committedAt": record.get("committedAt", self._wall_clock()),
-                "reviewCharacterCount": record.get("reviewCharacterCount", 0),
-                "sourceCoverage": deepcopy(record.get("sourceCoverage", {})),
-                "imageAssets": image_assets,
-            },
-            failure_code="DETERMINISTIC_FORMAT_REVIEW_JOB_FAILED",
-            failure_message="确定性格式审查后台任务执行失败，请稍后重试。",
-            public_metadata={"runningMessage": "正在执行确定性格式审查。"},
-            allow_running_cancel=True,
-        )
+        try:
+            return self.coordinator.submit(
+                job_id=job_id,
+                trace_id=trace_id,
+                task_type=TASK_TYPE,
+                runner=self._run,
+                snapshot={
+                    "jobId": job_id,
+                    "traceId": trace_id,
+                    "request": request,
+                    "taskAuth": task_auth,
+                    "snapshotId": snapshot_id,
+                    "selectionMode": record.get("selectionMode", request.selection_mode),
+                    "contentSha256": record.get("contentSha256", ""),
+                    "structureSha256": record.get("structureSha256", ""),
+                    "formatSha256": record.get("formatSha256", ""),
+                    "committedAt": record.get("committedAt", self._wall_clock()),
+                    "reviewCharacterCount": record.get("reviewCharacterCount", 0),
+                    "sourceCoverage": deepcopy(record.get("sourceCoverage", {})),
+                    "imageAssets": image_assets,
+                    "documentSessionId": doc_session,
+                    "documentDisplayName": doc_display_name,
+                    "host": host,
+                },
+                failure_code="DETERMINISTIC_FORMAT_REVIEW_JOB_FAILED",
+                failure_message="确定性格式审查后台任务执行失败，请稍后重试。",
+                public_metadata={"runningMessage": "正在执行确定性格式审查。"},
+                allow_running_cancel=True,
+            )
+        except Exception:
+            with self._submission_lock:
+                if session_key and self._active_doc_sessions.get(session_key) == job_id:
+                    self._active_doc_sessions.pop(session_key, None)
+            raise
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         self._require_enabled()
@@ -1213,6 +1267,10 @@ class DeterministicFormatReviewService:
     def cancel_job(self, job_id: str) -> Optional[Dict]:
         self._require_enabled()
         job = self.coordinator.request_cancel(job_id, task_type=TASK_TYPE)
+        with self._submission_lock:
+            session_key = self._job_identities.get(job_id)
+            if session_key and self._active_doc_sessions.get(session_key) == job_id:
+                self._active_doc_sessions.pop(session_key, None)
         if job is None:
             return None
         if job.get("status") == "cancelled":
@@ -1581,6 +1639,7 @@ class DeterministicFormatReviewService:
                 return LongTaskContinuation(snapshot, phase="provider_processing")
             report = self._build_report(result, snapshot)
             self._save_report(snapshot["jobId"], report)
+            self._record_history_on_report_saved(snapshot["jobId"], snapshot, report)
             summary = report["summary"]
             return {
                 "summary": deepcopy(summary),
@@ -1590,6 +1649,13 @@ class DeterministicFormatReviewService:
                 "reportAvailable": True,
             }
         finally:
+            with self._submission_lock:
+                job_id = snapshot.get("jobId")
+                current_job = self.coordinator.get(job_id, task_type=TASK_TYPE)
+                if current_job is None or current_job.get("status") not in {"queued", "running"}:
+                    session_key = self._job_identities.get(job_id)
+                    if session_key and self._active_doc_sessions.get(session_key) == job_id:
+                        self._active_doc_sessions.pop(session_key, None)
             self._remove_snapshot(snapshot.get("snapshotId", ""))
             self.image_asset_store.cleanup_snapshot(snapshot.get("snapshotId", ""))
 
@@ -1603,7 +1669,11 @@ class DeterministicFormatReviewService:
             for key in ("modelConfigurationName", "modelConfigurationId", "modelConfigurationVersion", "accessMethod")
         ):
             summary.update(model_identity)
-        structure = request.content.document_structure or {}
+        content = getattr(request, "content", None)
+        if isinstance(content, dict):
+            structure = content.get("document_structure") or {}
+        else:
+            structure = getattr(content, "document_structure", None) or {}
         coverage = deepcopy(structure.get("coverage", {}) or {})
         if not coverage:
             coverage = deepcopy(snapshot.get("sourceCoverage", {}) or {})
@@ -1735,7 +1805,9 @@ class DeterministicFormatReviewService:
         item = {key: deepcopy(value) for key, value in issue.items() if key in allowed_fields}
         rule_id = str(item.get("ruleId") or "unknown")
         paragraph_index = normalize_paragraph_index(item.get("paragraphIndex"))
-        blocks = (request.content.document_structure or {}).get("formatBlocks", []) or []
+        content = getattr(request, "content", None)
+        structure = (content.get("document_structure") if isinstance(content, dict) else getattr(content, "document_structure", None)) or {}
+        blocks = structure.get("formatBlocks", []) or []
         block = next(
             (candidate for candidate in blocks
              if isinstance(candidate, dict) and paragraph_index is not None
@@ -1995,15 +2067,69 @@ class DeterministicFormatReviewService:
         return report
 
     def _save_report(self, job_id: str, report: Dict) -> None:
-        stored = deepcopy(report)
-        stored["reportExpiresAt"] = report.get(
+        report["reportExpiresAt"] = report.get(
             "reportExpiresAt", self._wall_clock() + REPORT_RESULT_TTL_SECONDS
         )
+        stored = deepcopy(report)
+        stored["reportExpiresAt"] = report["reportExpiresAt"]
         stored["reportSha256"] = _report_sha256(stored)
         self._ensure_staging_root()
         with self._lock:
             self._reports[job_id] = stored
         self._write_private_json(self.report_path(job_id), stored)
+
+    def _record_history_on_report_saved(self, job_id: str, snapshot: Dict, report: Dict) -> None:
+        try:
+            task_auth = snapshot.get("taskAuth") or {}
+            service_name = str(
+                task_auth.get("serviceName")
+                or task_auth.get("service_name")
+                or task_auth.get("modelConfigurationName")
+                or ""
+            ).strip()
+            model_name = str(
+                task_auth.get("modelName")
+                or task_auth.get("model_name")
+                or task_auth.get("modelConfigurationId")
+                or ""
+            ).strip()
+            doc_display_name = str(
+                snapshot.get("documentDisplayName")
+                or snapshot.get("documentId")
+                or "未命名文档"
+            ).strip()
+
+            category_counts: Dict[str, int] = {}
+            for issue in report.get("issues", []):
+                cat = str(issue.get("category") or "other")
+                category_counts[cat] = category_counts.get(cat, 0) + 1
+
+            history_result = {
+                "reportType": "format_review",
+                "reportId": job_id,
+                "issueCount": int(report.get("issueCount", len(report.get("issues", [])))),
+                "duplicateGroupCount": int(report.get("duplicateGroupCount", 0)),
+                "categoryCounts": category_counts,
+                "severityCounts": deepcopy(report.get("severityCounts", {})),
+                "statusCounts": deepcopy(report.get("statusCounts", {})),
+                "coverage": deepcopy(report.get("coverage", {})),
+                "summary": deepcopy(report.get("summary", {})),
+                "reportExpiresAt": report.get("reportExpiresAt"),
+            }
+
+            store = get_task_history_store()
+            store.record_success(
+                task_type="word.format_review",
+                job_id=job_id,
+                result=history_result,
+                document_display_name=doc_display_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError:
+            pass
+        except Exception:
+            pass
 
     def _get_report(self, job_id: str) -> Optional[Dict]:
         with self._lock:
