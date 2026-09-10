@@ -196,7 +196,8 @@ function testActiveResultBehaviorWithExistingResult() {
       elements["result-output"].textContent = res.suggestedTitle;
     },
     helpers,
-    PPT_WORKFLOW_TASK_TYPE: "ppt.slide_assistant"
+    PPT_WORKFLOW_TASK_TYPE: "ppt.slide_assistant",
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review"
   };
 
   const releaseTaskSlotsForJob = vm.runInNewContext(
@@ -413,6 +414,220 @@ function testHistoryNoticeOnLargeResult() {
   );
 }
 
+// Test 10: Structure Review Task Slot Guard
+function testStructureReviewTaskSlotGuard() {
+  const slots = {};
+  const host = "wpp";
+  const taskType = "ppt.structure_review";
+  const session1 = "doc_session_1";
+  const session2 = "doc_session_2";
+
+  assert.strictEqual(helpers.isTaskSlotBusy(slots, host, taskType, session1), false);
+  helpers.claimTaskSlot(slots, host, taskType, session1, "job-s01");
+  assert.strictEqual(helpers.isTaskSlotBusy(slots, host, taskType, session1), true);
+  assert.strictEqual(helpers.isTaskSlotBusy(slots, host, taskType, session2), false);
+
+  helpers.releaseTaskSlot(slots, host, taskType, session1, "job-s01");
+  assert.strictEqual(helpers.isTaskSlotBusy(slots, host, taskType, session1), false);
+}
+
+// Test 11: Structure Review Source Contract
+function testStructureReviewSourceContract() {
+  assert.ok(
+    taskpaneHtml.includes("btn-view-structure-history") ||
+      (taskpaneHtml.includes("structure-result-section") && taskpaneHtml.includes("btn-view-history")),
+    "taskpane.html structure section must have a history view button"
+  );
+
+  assert.ok(
+    !taskpaneSource.includes('if (!state.structureResult) {\n      byId("structure-result-output").textContent = failureMessage;\n    }'),
+    "failStructureJob must unconditionally update structure-result-output and not freeze old result"
+  );
+
+  assert.ok(
+    taskpaneSource.includes("state.structureResult = null;") ||
+      taskpaneSource.includes("state.structureResult = null"),
+    "submitStructureReviewJob or runPptStructureReview must clear state.structureResult upon valid submission"
+  );
+}
+
+// Test 12: Structure Review Active Result Behavior With Existing Result
+function testStructureReviewActiveResultBehaviorWithExistingResult() {
+  const elements = {
+    "structure-result-output": { textContent: "", innerHTML: "", className: "", classList: { add: function(c) { this[c] = true; }, remove: function(c) { delete this[c]; } } },
+    "status-line": { textContent: "" },
+    "btn-cancel-structure-review-job": { hidden: false, disabled: false },
+    "btn-resubmit-structure-review": { hidden: true },
+    "btn-copy-review-conclusion": { disabled: false },
+    "btn-copy-recommended-outline": { disabled: false },
+    "history-unread-badge": { textContent: "0", hidden: true },
+    "structure-history-unread-badge": { textContent: "0", hidden: true },
+    "structure-result-section": { hidden: false },
+    "ppt-history-view": { hidden: true }
+  };
+
+  const byId = (id) => {
+    if (!elements[id]) {
+      elements[id] = { textContent: "", innerHTML: "", className: "", classList: { add: function(c) { this[c] = true; }, remove: function(c) { delete this[c]; } }, hidden: false, disabled: false };
+    }
+    return elements[id];
+  };
+
+  const state = {
+    structureResult: { reviewConclusion: "旧审查结论", overallStoryline: "旧主线" },
+    activeTaskSlots: {},
+    documentSessionId: "doc_1",
+    jobId: "job_struct_old",
+    historyOpen: false,
+    historyUnreadCount: 0,
+    taskMode: "pptStructureReview"
+  };
+
+  const ctx = {
+    state,
+    byId,
+    safeText: (v) => String(v || "").trim(),
+    clearStructureActiveJob: () => {},
+    setStructureJobActionVisibility: () => {},
+    setRunDisabled: () => {},
+    setStatus: (text) => { elements["status-line"].textContent = text; },
+    renderStructureResult: (res) => {
+      state.structureResult = res;
+      elements["structure-result-output"].textContent = res.reviewConclusion || "结构审查已完成";
+    },
+    helpers,
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
+    PPT_WORKFLOW_TASK_TYPE: "ppt.slide_assistant"
+  };
+
+  const releaseTaskSlotsForJob = vm.runInNewContext(
+    `(${functionSource("releaseTaskSlotsForJob")})`,
+    ctx
+  );
+  ctx.releaseTaskSlotsForJob = releaseTaskSlotsForJob;
+
+  const updateHistoryBadge = vm.runInNewContext(
+    `(${functionSource("updateHistoryBadge")})`,
+    ctx
+  );
+  ctx.updateHistoryBadge = updateHistoryBadge;
+
+  const failStructureJob = vm.runInNewContext(
+    `(${functionSource("failStructureJob")})`,
+    ctx
+  );
+
+  const finishStructureJob = vm.runInNewContext(
+    `(${functionSource("finishStructureJob")})`,
+    ctx
+  );
+
+  helpers.claimTaskSlot(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_1", "job_struct_1");
+  assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_1"), true);
+
+  // Case 1: Failure must clear state.structureResult and output error message unconditionally
+  failStructureJob("job_struct_1", "结构审查超时失败", "审查失败");
+  assert.strictEqual(state.structureResult, null, "state.structureResult must be cleared on failure");
+  assert.strictEqual(elements["structure-result-output"].textContent, "结构审查超时失败");
+  assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_1"), false, "Slot must be released on failure");
+
+  // Case 2: Successful finish
+  helpers.claimTaskSlot(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_1", "job_struct_2");
+  finishStructureJob("job_struct_2", { reviewConclusion: "全新审查结论" });
+  assert.deepStrictEqual(state.structureResult, { reviewConclusion: "全新审查结论" });
+  assert.strictEqual(elements["structure-result-output"].textContent, "全新审查结论");
+  assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_1"), false, "Slot must be released on finish");
+
+  // Case 3: Completion while viewing history updates badge and does not disrupt history view
+  state.historyOpen = true;
+  state.historyUnreadCount = 0;
+  helpers.claimTaskSlot(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_1", "job_struct_3");
+  finishStructureJob("job_struct_3", { reviewConclusion: "后台完成的审查" });
+  assert.strictEqual(state.historyUnreadCount, 1);
+  const badgeEl = elements["structure-history-unread-badge"] || elements["history-unread-badge"];
+  assert.strictEqual(badgeEl.textContent, "1");
+  assert.strictEqual(badgeEl.hidden, false);
+}
+
+// Test 13: Structure Review Cross-Document Resume Isolation
+function testStructureReviewCrossDocumentResumeIsolation() {
+  let activeJobInStorage = {
+    jobId: "job_struct_docA",
+    documentSessionId: "doc_session_A",
+    startedAt: 123456
+  };
+
+  let polledJobId = null;
+  let activePres = { Name: "DocB.pptx" };
+
+  const state = {
+    jobId: "",
+    documentSessionId: "doc_session_B",
+    taskMode: "pptStructureReview",
+    currentView: "home",
+    activeTaskSlots: {}
+  };
+
+  const ctx = {
+    state,
+    byId: (id) => ({ value: "", textContent: "", hidden: false }),
+    loadStructureActiveJob: () => activeJobInStorage,
+    clearStructureActiveJob: () => { activeJobInStorage = null; },
+    getActivePresentation: () => activePres,
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: (pres) => pres.Name === "DocB.pptx" ? "doc_session_B" : "doc_session_A"
+    },
+    setStatus: () => {},
+    setRunDisabled: () => {},
+    pollStructureReviewJob: (id) => { polledJobId = id; },
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review"
+  };
+
+  const resumeStructureReviewJob = vm.runInNewContext(
+    `(${functionSource("resumeStructureReviewJob")})`,
+    ctx
+  );
+
+  // Attempt 1: Current doc is DocB (session B), active job is from DocA (session A)
+  resumeStructureReviewJob();
+  assert.strictEqual(polledJobId, null, "Must NOT resume structure review job belonging to different document session");
+  assert.strictEqual(state.jobId, "");
+
+  // Attempt 2: Switch to DocA (session A)
+  activePres = { Name: "DocA.pptx" };
+  resumeStructureReviewJob();
+  assert.strictEqual(polledJobId, "job_struct_docA", "Must resume structure review job for matching document session");
+  assert.strictEqual(state.jobId, "job_struct_docA");
+}
+
+// Test 14: Structure Review History Rendering
+function testStructureReviewHistoryRendering() {
+  const items = [
+    {
+      id: "hist_struct_1",
+      taskType: "ppt.structure_review",
+      jobId: "job-s1",
+      completedAt: "2026-09-10T10:00:00Z",
+      documentDisplayName: "技术架构.pptx",
+      serviceName: "模型服务",
+      modelName: "review-model",
+      result: {
+        resultType: "structure_review",
+        reviewedRange: { startSlide: 1, endSlide: 10, totalSlides: 10 },
+        reviewConclusion: "本次审查第 1–10 页，主线清晰。",
+        overallStoryline: "整体架构推进有序",
+        plainText: "本次审查第 1–10 页结论..."
+      }
+    }
+  ];
+
+  const html = helpers.renderHistoryList(items);
+  assert.ok(html.includes("技术架构.pptx"), "History HTML must include document name");
+  assert.ok(html.includes('data-history-id="hist_struct_1"'), "History HTML must include data-history-id");
+  assert.ok(html.includes("审查") || html.includes("1–10"), "History HTML must include review info");
+}
+
 function runAll() {
   testDocumentSessionIdentification();
   testDocumentDisplayName();
@@ -422,6 +637,11 @@ function runAll() {
   testActiveResultBehaviorWithExistingResult();
   testCrossDocumentResumeIsolation();
   testHistoryNoticeOnLargeResult();
+  testStructureReviewTaskSlotGuard();
+  testStructureReviewSourceContract();
+  testStructureReviewActiveResultBehaviorWithExistingResult();
+  testStructureReviewCrossDocumentResumeIsolation();
+  testStructureReviewHistoryRendering();
   testHistoryListEnvelopeParsing().then(() => {
     console.log("All PPT active result and history tests passed!");
   });

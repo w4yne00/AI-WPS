@@ -138,7 +138,14 @@
         </section>
 
         <section id="structure-result-section" class="result-panel" hidden>
-          <div class="panel-head"><h2>结构审查结果</h2></div>
+          <div class="panel-head">
+            <h2>结构审查结果</h2>
+            <div class="result-actions">
+              <button id="btn-view-structure-history" class="ghost-action history-entry-button" type="button" title="查看成功历史">
+                历史记录<span id="structure-history-unread-badge" class="history-badge" hidden>0</span>
+              </button>
+            </div>
+          </div>
           <div id="structure-result-output" class="result-output">等待审查。</div>
           <div class="copy-toolbar" aria-label="复制结构审查结果">
             <button id="btn-copy-review-conclusion" class="ghost-action" type="button" disabled>复制审查结论</button>

@@ -269,7 +269,12 @@
       return;
     }
     if (helpers.releaseTaskSlot && state.documentSessionId) {
-      helpers.releaseTaskSlot(state.activeTaskSlots, "wpp", PPT_WORKFLOW_TASK_TYPE, state.documentSessionId, jobId);
+      if (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined") {
+        helpers.releaseTaskSlot(state.activeTaskSlots, "wpp", PPT_WORKFLOW_TASK_TYPE, state.documentSessionId, jobId);
+      }
+      if (typeof PPT_STRUCTURE_WORKFLOW_TASK_TYPE !== "undefined") {
+        helpers.releaseTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, state.documentSessionId, jobId);
+      }
     }
     for (var k in state.activeTaskSlots) {
       if (Object.prototype.hasOwnProperty.call(state.activeTaskSlots, k)) {
@@ -305,13 +310,26 @@
 
   function setHomeTaskMode(mode) {
     var structureMode = mode === "pptStructureReview";
+    var historyView = byId("ppt-history-view");
     state.taskMode = structureMode ? "pptStructureReview" : "pptSlideAssistant";
     state.workflowTaskType = homeWorkflowTaskType();
     byId("summary-source-segments").hidden = structureMode;
     byId("summary-controls").hidden = structureMode;
-    byId("summary-result-section").hidden = structureMode;
+    if (state.historyOpen) {
+      byId("summary-result-section").hidden = true;
+      byId("structure-result-section").hidden = true;
+      if (historyView) {
+        historyView.hidden = false;
+      }
+      loadAndRenderHistory();
+    } else {
+      byId("summary-result-section").hidden = structureMode;
+      byId("structure-result-section").hidden = !structureMode;
+      if (historyView) {
+        historyView.hidden = true;
+      }
+    }
     byId("structure-review-controls").hidden = !structureMode;
-    byId("structure-result-section").hidden = !structureMode;
     document.body.setAttribute("data-task-mode", state.taskMode);
   }
 
@@ -425,6 +443,10 @@
   function saveStructureActiveJob(job) {
     try {
       if (window.localStorage && job && job.jobId) {
+        if (!job.documentSessionId) {
+          var prev = loadStructureActiveJob();
+          job.documentSessionId = (prev && prev.documentSessionId) || state.documentSessionId || "";
+        }
         window.localStorage.setItem(PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY, JSON.stringify(job));
       }
     } catch (error) {
@@ -1250,25 +1272,43 @@
 
   function finishStructureJob(jobId, result) {
     clearStructureActiveJob(jobId);
+    releaseTaskSlotsForJob(jobId);
     state.jobId = "";
     state.resumeExpected = false;
     setStructureJobActionVisibility(null);
     setRunDisabled(false);
+    var statusText = "结构审查已完成。";
+    if (result && result.historyNotice) {
+      statusText += "（" + result.historyNotice + "）";
+    }
+    if (state.historyOpen) {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+      var bgStatus = "结构审查已完成（请返回查看）。";
+      if (result && result.historyNotice) {
+        bgStatus += "（" + result.historyNotice + "）";
+      }
+      setStatus(bgStatus);
+      state.structureResult = result || {};
+      return;
+    }
     renderStructureResult(result || {});
-    setStatus("结构审查已完成。");
+    setStatus(statusText);
   }
 
   function failStructureJob(jobId, message, statusMessage) {
     var failureMessage = safeText(message) || "结构审查后台任务执行失败。";
     clearStructureActiveJob(jobId);
+    releaseTaskSlotsForJob(jobId);
     state.jobId = "";
     state.resumeExpected = false;
     setStructureJobActionVisibility(null);
     setRunDisabled(false);
+    state.structureResult = null;
+    byId("btn-copy-review-conclusion").disabled = true;
+    byId("btn-copy-recommended-outline").disabled = true;
     setStatus((statusMessage || "结构审查失败") + "：" + failureMessage);
-    if (!state.structureResult) {
-      byId("structure-result-output").textContent = failureMessage;
-    }
+    byId("structure-result-output").textContent = failureMessage;
   }
 
   function isFatalStructurePollError(error) {
@@ -1280,7 +1320,8 @@
       error.adapterCode === "PPT_STRUCTURE_SLIDES_INCOMPLETE" ||
       error.adapterCode === "PPT_STRUCTURE_AUTH_SNAPSHOT_FAILED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED" ||
-      error.adapterCode === "LONG_TASK_QUEUE_FULL"
+      error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
+      error.adapterCode === "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY"
     );
   }
 
@@ -1327,6 +1368,7 @@
       state.pollErrors += 1;
       if (error && error.adapterCode === "PPT_STRUCTURE_JOB_INTERRUPTED") {
         clearStructureActiveJob(jobId);
+        releaseTaskSlotsForJob(jobId);
         state.jobId = "";
         state.resumeExpected = false;
         setRunDisabled(false);
@@ -1393,6 +1435,9 @@
   function runPptStructureReview() {
     var startSlide;
     var endSlide;
+    var pres;
+    var docSession;
+    var docName;
     if (state.adapterHealthStatus === "recovery" || !state.modelTasksAllowed) {
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
@@ -1401,8 +1446,18 @@
       setStatus("模型配置正在更新，请稍后再运行结构审查。");
       return;
     }
+    pres = getActivePresentation();
+    docSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : (state.documentSessionId || "");
+    docName = (helpers.getDocumentDisplayName && pres) ? helpers.getDocumentDisplayName(pres) : "";
+    if (docSession) {
+      state.documentSessionId = docSession;
+    }
     if (state.jobId) {
       setStatus("已有结构审查任务正在运行，请等待当前任务完成。");
+      return;
+    }
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, docSession)) {
+      setStatus("当前文档已有进行中的任务，请稍候。");
       return;
     }
     startSlide = safeText(byId("ppt-structure-start-slide").value);
@@ -1433,6 +1488,16 @@
           " ｜ 已识别主标题 " + titledCount + "/" + payload.slides.length + " 页" +
           " ｜ 演示文稿共 " + payload.scope.totalSlides + " 页";
         payload.clientJobId = buildPptSlideClientJobId("structure");
+        payload.documentSessionId = docSession;
+        payload.documentDisplayName = docName;
+        payload.host = "wpp";
+        state.structureResult = null;
+        byId("btn-copy-review-conclusion").disabled = true;
+        byId("btn-copy-recommended-outline").disabled = true;
+        byId("structure-result-output").textContent = "正在提交结构审查任务...";
+        if (helpers.claimTaskSlot) {
+          helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, docSession, payload.clientJobId);
+        }
         submitStructureReviewJob(payload);
       } catch (error) {
         setRunDisabled(false);
@@ -2950,10 +3015,21 @@
     if (!active || !active.jobId) {
       return;
     }
+    var pres = getActivePresentation();
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : "";
+    if (active.documentSessionId && currentDocSession && active.documentSessionId !== currentDocSession) {
+      return;
+    }
+    if (!state.documentSessionId && currentDocSession) {
+      state.documentSessionId = currentDocSession;
+    }
     state.jobId = active.jobId;
     state.startedAt = active.startedAt || Date.now();
     state.pollErrors = 0;
     state.resumeExpected = true;
+    if (active.documentSessionId && helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, active.documentSessionId, active.jobId);
+    }
     byId("btn-resubmit-structure-review").hidden = true;
     setRunDisabled(true);
     setStatus("正在恢复未完成的结构审查任务...");
@@ -3013,26 +3089,33 @@
   }
 
   function updateHistoryBadge() {
-    var badge = byId("history-unread-badge");
-    if (!badge) {
-      return;
-    }
+    var badges = [byId("history-unread-badge"), byId("structure-history-unread-badge")];
     var count = state.historyUnreadCount || 0;
-    if (count > 0) {
-      badge.textContent = count > 99 ? "99+" : String(count);
-      badge.hidden = false;
-    } else {
-      badge.hidden = true;
-      badge.textContent = "0";
-    }
+    badges.forEach(function (badge) {
+      if (!badge) {
+        return;
+      }
+      if (count > 0) {
+        badge.textContent = count > 99 ? "99+" : String(count);
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+        badge.textContent = "0";
+      }
+    });
   }
 
   function switchHistoryView(open) {
     state.historyOpen = Boolean(open);
+    var isStructure = state.taskMode === "pptStructureReview";
     var summarySection = byId("summary-result-section");
+    var structureSection = byId("structure-result-section");
     var historyView = byId("ppt-history-view");
     if (summarySection) {
-      summarySection.hidden = state.historyOpen;
+      summarySection.hidden = state.historyOpen || isStructure;
+    }
+    if (structureSection) {
+      structureSection.hidden = state.historyOpen || !isStructure;
     }
     if (historyView) {
       historyView.hidden = !state.historyOpen;
@@ -3042,8 +3125,14 @@
       updateHistoryBadge();
       loadAndRenderHistory();
     } else {
-      if (state.result) {
-        renderResult(state.result);
+      if (isStructure) {
+        if (state.structureResult) {
+          renderStructureResult(state.structureResult);
+        }
+      } else {
+        if (state.result) {
+          renderResult(state.result);
+        }
       }
     }
   }
@@ -3053,7 +3142,10 @@
     if (contentEl) {
       contentEl.innerHTML = '<div class="ppt-history-empty">正在加载历史记录...</div>';
     }
-    request("/history?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE), null, {
+    var taskType = typeof homeWorkflowTaskType === "function"
+      ? homeWorkflowTaskType()
+      : (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined" ? PPT_WORKFLOW_TASK_TYPE : "ppt.slide_assistant");
+    request("/history?taskType=" + encodeURIComponent(taskType), null, {
       timeoutMs: 8000
     }).then(function (body) {
       var data = body && body.data;
@@ -3070,7 +3162,10 @@
   }
 
   function handleClearHistory() {
-    request("/history?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE), null, {
+    var taskType = typeof homeWorkflowTaskType === "function"
+      ? homeWorkflowTaskType()
+      : (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined" ? PPT_WORKFLOW_TASK_TYPE : "ppt.slide_assistant");
+    request("/history?taskType=" + encodeURIComponent(taskType), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
@@ -3147,7 +3242,10 @@
 
     var result = item.result || {};
     var html = "";
-    if (result.resultType === "document" || result.slides) {
+    if (result.resultType === "structure_review" || item.taskType === PPT_STRUCTURE_WORKFLOW_TASK_TYPE) {
+      var structText = result.plainText || result.reviewConclusion || (result.summary ? (result.summary.overview || "") : "");
+      html = '<pre style="white-space:pre-wrap;margin:0;font-family:inherit;">' + (helpers.escapeHtml ? helpers.escapeHtml(structText) : structText) + '</pre>';
+    } else if (result.resultType === "document" || result.slides) {
       var md = helpers.buildPptDocumentPlainText(result);
       html = '<pre style="white-space:pre-wrap;margin:0;font-family:inherit;">' + (helpers.escapeHtml ? helpers.escapeHtml(md) : md) + '</pre>';
     } else {
@@ -3178,7 +3276,9 @@
     }
     var res = item.result || {};
     var text = "";
-    if (res.resultType === "document" || res.slides) {
+    if (res.resultType === "structure_review" || item.taskType === PPT_STRUCTURE_WORKFLOW_TASK_TYPE) {
+      text = res.plainText || res.reviewConclusion || (res.summary ? (res.summary.overview || "") : "");
+    } else if (res.resultType === "document" || res.slides) {
       text = helpers.buildPptDocumentPlainText(res);
     } else {
       text = helpers.buildPptSlidePlainText(res);
@@ -3214,6 +3314,12 @@
     var btnViewHistory = byId("btn-view-history");
     if (btnViewHistory) {
       btnViewHistory.addEventListener("click", function () {
+        switchHistoryView(true);
+      });
+    }
+    var btnViewStructureHistory = byId("btn-view-structure-history");
+    if (btnViewStructureHistory) {
+      btnViewStructureHistory.addEventListener("click", function () {
         switchHistoryView(true);
       });
     }

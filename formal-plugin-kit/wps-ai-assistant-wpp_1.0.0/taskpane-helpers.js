@@ -1891,8 +1891,15 @@
       var docName = escapeHtml(item.documentDisplayName || "未命名演示文稿");
       var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
       var result = item.result || {};
-      var title = escapeHtml(result.suggestedTitle || result.deckTitle || "总结结果");
-      var conclusion = escapeHtml(result.conclusion || result.documentSummary || "");
+      var isStructure = item.taskType === "ppt.structure_review" || result.resultType === "structure_review" || Boolean(result.reviewedRange);
+      var defaultTitle = isStructure ? "结构审查结果" : "总结结果";
+      var titleText = result.suggestedTitle || result.deckTitle;
+      if (!titleText && isStructure && result.reviewedRange) {
+        var range = result.reviewedRange;
+        titleText = "结构审查（第 " + (range.startSlide || 1) + "–" + (range.endSlide || "-") + " 页）";
+      }
+      var title = escapeHtml(titleText || defaultTitle);
+      var conclusion = escapeHtml(result.overallStoryline || result.reviewConclusion || result.conclusion || result.documentSummary || "");
 
       html += '<div class="ppt-history-card" data-history-id="' + id + '">';
       html += '  <div class="ppt-history-card-header">';

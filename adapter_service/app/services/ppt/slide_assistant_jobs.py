@@ -11,6 +11,7 @@ from app.services.long_task_coordinator import (
 )
 from app.services.ppt.slide_assistant import PptSlideAssistant
 from app.services.provider_client import PPT_SLIDE_ASSISTANT_TIMEOUT_SECONDS
+from app.services.task_history import TaskHistoryError, get_task_history_store
 
 
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
@@ -166,11 +167,6 @@ class PptSlideAssistantJobStore:
                 **kwargs,
             )
             try:
-                from app.services.task_history import (
-                    TaskHistoryError,
-                    get_task_history_store,
-                )
-
                 req = snapshot.get("request")
                 doc_name = (
                     getattr(req, "document_display_name", "")

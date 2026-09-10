@@ -2,6 +2,7 @@ import importlib.util
 from io import BytesIO
 import time
 import unittest
+from unittest.mock import MagicMock, patch
 
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
@@ -16,6 +17,11 @@ if HAS_PYDANTIC:
     from app.services.provider_client import (
         build_ppt_structure_review_prompt,
         parse_ppt_structure_review_answer,
+    )
+    from app.services.task_history import (
+        TaskHistoryError,
+        TaskHistoryStore,
+        get_task_history_store,
     )
 
 if HAS_PYDANTIC and HAS_FASTAPI:
@@ -36,8 +42,11 @@ def request_payload(
     start_slide=1,
     end_slide=5,
     client_job_id="client-ppt-structure-01",
+    document_session_id=None,
+    document_display_name=None,
+    host=None,
 ):
-    return {
+    payload = {
         "presentationId": "项目汇报.pptx",
         "scene": "ppt",
         "clientJobId": client_job_id,
@@ -56,6 +65,13 @@ def request_payload(
             {"index": 5, "title": "4. 实施计划", "subtitle": "保障措施"},
         ],
     }
+    if document_session_id is not None:
+        payload["documentSessionId"] = document_session_id
+    if document_display_name is not None:
+        payload["documentDisplayName"] = document_display_name
+    if host is not None:
+        payload["host"] = host
+    return payload
 
 
 class RecordingProvider:
@@ -877,6 +893,263 @@ class PptStructureReviewApiTests(unittest.TestCase):
             )
         finally:
             ppt_api.ppt_structure_review_jobs = original
+
+    def test_api_returns_409_when_document_session_is_busy(self):
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        jobs = PptStructureReviewJobStore(
+            reviewer=reviewer,
+            coordinator=LongTaskCoordinator(max_running=2, max_queued=2),
+        )
+        original = ppt_api.ppt_structure_review_jobs
+        ppt_api.ppt_structure_review_jobs = jobs
+        try:
+            client = TestClient(app_main.app)
+            started = client.post(
+                "/ppt/structure-review/jobs",
+                json=request_payload(
+                    client_job_id="client-ppt-api-slot-1",
+                    document_session_id="session-api-busy",
+                ),
+            )
+            self.assertEqual(started.status_code, 200)
+
+            duplicate = client.post(
+                "/ppt/structure-review/jobs",
+                json=request_payload(
+                    client_job_id="client-ppt-api-slot-2",
+                    document_session_id="session-api-busy",
+                ),
+            )
+            self.assertEqual(duplicate.status_code, 409)
+            self.assertEqual(
+                duplicate.json()["errors"][0]["code"],
+                "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY",
+            )
+        finally:
+            ppt_api.ppt_structure_review_jobs = original
+
+
+@unittest.skipUnless(HAS_PYDANTIC, "pydantic is required")
+class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
+    def test_request_model_accepts_session_identity_and_defaults(self):
+        req = parse_request(
+            request_payload(
+                document_session_id="doc-session-xyz",
+                document_display_name="方案汇报.pptx",
+                host="wpp",
+            )
+        )
+        self.assertEqual(req.document_session_id, "doc-session-xyz")
+        self.assertEqual(req.document_display_name, "方案汇报.pptx")
+        self.assertEqual(req.host, "wpp")
+
+        # default host
+        req_default = parse_request(request_payload())
+        self.assertEqual(req_default.host, "wpp")
+        self.assertEqual(req_default.document_session_id, "")
+        self.assertEqual(req_default.document_display_name, "")
+
+    def test_job_store_guards_document_session_slots_and_rejects_busy_duplicate(self):
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        req1 = parse_request(
+            request_payload(
+                client_job_id="client-job-1",
+                document_session_id="doc-session-busy",
+            )
+        )
+        submitted1 = jobs.start(req1, "trace-1")
+        self.assertEqual(submitted1["jobId"], "client-job-1")
+
+        # Duplicate submission with same docSession while first job is running/queued
+        req2 = parse_request(
+            request_payload(
+                client_job_id="client-job-2",
+                document_session_id="doc-session-busy",
+            )
+        )
+        with self.assertRaises(AdapterError) as ctx:
+            jobs.start(req2, "trace-2")
+        self.assertEqual(ctx.exception.code, "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY")
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_job_store_allows_concurrent_jobs_across_different_document_sessions(self):
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        req1 = parse_request(
+            request_payload(
+                client_job_id="client-job-session1",
+                document_session_id="doc-session-1",
+            )
+        )
+        req2 = parse_request(
+            request_payload(
+                client_job_id="client-job-session2",
+                document_session_id="doc-session-2",
+            )
+        )
+
+        sub1 = jobs.start(req1, "trace-1")
+        sub2 = jobs.start(req2, "trace-2")
+        self.assertEqual(sub1["jobId"], "client-job-session1")
+        self.assertEqual(sub2["jobId"], "client-job-session2")
+
+    def test_job_store_releases_slot_on_cancel(self):
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        # Occupy running slot with a dummy task so next task stays queued
+        dummy_job = coordinator.submit(
+            job_id="dummy-running",
+            trace_id="trace-dummy",
+            task_type="other",
+            runner=lambda snap, prog: time.sleep(1),
+            snapshot={},
+            failure_code="DUMMY_FAILED",
+            failure_message="dummy failure",
+        )
+
+        req1 = parse_request(
+            request_payload(
+                client_job_id="client-job-queued",
+                document_session_id="doc-session-cancel",
+            )
+        )
+        jobs.start(req1, "trace-1")
+
+        # Cancel queued job
+        cancelled = jobs.cancel("client-job-queued")
+        self.assertIsNotNone(cancelled)
+        self.assertEqual(cancelled.get("status"), "cancelled")
+
+        # Now same session can submit a new job without 409
+        req2 = parse_request(
+            request_payload(
+                client_job_id="client-job-after-cancel",
+                document_session_id="doc-session-cancel",
+            )
+        )
+        sub2 = jobs.start(req2, "trace-2")
+        self.assertEqual(sub2["jobId"], "client-job-after-cancel")
+
+    def test_job_store_records_sanitized_history_and_handles_oversize_notice(self):
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        recorded = []
+
+        class CustomHistoryStore:
+            def record_success(self, **kwargs):
+                recorded.append(kwargs)
+
+        with patch(
+            "app.services.ppt.structure_review_jobs.get_task_history_store",
+            return_value=CustomHistoryStore(),
+        ):
+            req = parse_request(
+                request_payload(
+                    client_job_id="client-job-history-1",
+                    document_session_id="doc-session-hist",
+                    document_display_name="我的汇报.pptx",
+                )
+            )
+            jobs.start(req, "trace-hist")
+
+            for _ in range(50):
+                job = jobs.get("client-job-history-1")
+                if job and job.get("status") in {"completed", "failed"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(job.get("status"), "completed")
+            self.assertEqual(len(recorded), 1)
+            entry = recorded[0]
+            self.assertEqual(entry["task_type"], "ppt.structure_review")
+            self.assertEqual(entry["job_id"], "client-job-history-1")
+            self.assertEqual(entry["document_display_name"], "我的汇报.pptx")
+            res = entry["result"]
+            self.assertIn("reviewConclusion", res)
+            self.assertIn("plainText", res)
+            self.assertIn("highPriorityIssues", res)
+            self.assertIn("generalSuggestions", res)
+            self.assertIn("reviewedRange", res)
+            self.assertIn("pageRoles", res)
+            self.assertNotIn("rawAnswer", res)
+            self.assertNotIn("slides", res)
+
+        # Test oversize handling
+        class OversizeHistoryStore:
+            def record_success(self, **kwargs):
+                raise TaskHistoryError("HISTORY_ENTRY_TOO_LARGE", "Entry too large")
+
+        with patch(
+            "app.services.ppt.structure_review_jobs.get_task_history_store",
+            return_value=OversizeHistoryStore(),
+        ):
+            req_large = parse_request(
+                request_payload(
+                    client_job_id="client-job-large",
+                    document_session_id="doc-session-large",
+                )
+            )
+            jobs.start(req_large, "trace-large")
+            for _ in range(50):
+                job = jobs.get("client-job-large")
+                if job and job.get("status") in {"completed", "failed"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(job.get("status"), "completed")
+            self.assertEqual(
+                job.get("result", {}).get("historyNotice"),
+                "任务结果超过 5 MiB，未写入历史记录。",
+            )
+
+    def test_job_store_does_not_record_history_on_failure_or_cancellation(self):
+        class FailingProvider(RecordingProvider):
+            def ppt_structure_review(self, *args, **kwargs):
+                raise Exception("Backend model failed")
+
+        reviewer = PptStructureReviewer(provider_client=FailingProvider())
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        recorded = []
+
+        class CustomHistoryStore:
+            def record_success(self, **kwargs):
+                recorded.append(kwargs)
+
+        with patch(
+            "app.services.ppt.structure_review_jobs.get_task_history_store",
+            return_value=CustomHistoryStore(),
+        ):
+            req = parse_request(
+                request_payload(
+                    client_job_id="client-job-fail",
+                    document_session_id="doc-session-fail",
+                )
+            )
+            jobs.start(req, "trace-fail")
+            for _ in range(50):
+                job = jobs.get("client-job-fail")
+                if job and job.get("status") in {"completed", "failed"}:
+                    break
+                time.sleep(0.05)
+
+            self.assertEqual(job.get("status"), "failed")
+            self.assertEqual(len(recorded), 0)
 
 
 if __name__ == "__main__":

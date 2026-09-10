@@ -831,8 +831,11 @@ class PptStructureReviewSlide(BaseModel):
 
 class PptStructureReviewRequest(BaseModel):
     presentation_id: str = Field(default="active-presentation", alias="presentationId")
+    host: str = "wpp"
     scene: Literal["ppt"] = "ppt"
     client_job_id: str = Field(default="", alias="clientJobId")
+    document_session_id: str = Field(default="", alias="documentSessionId")
+    document_display_name: str = Field(default="", alias="documentDisplayName")
     scope: PptStructureReviewScope = Field(default_factory=PptStructureReviewScope)
     slides: List[PptStructureReviewSlide] = Field(default_factory=list)
 
@@ -840,11 +843,21 @@ class PptStructureReviewRequest(BaseModel):
     def coerce_structure_presentation_id(cls, value):
         return _safe_str(value, "active-presentation") or "active-presentation"
 
+    @validator("host", pre=True, always=True)
+    def coerce_structure_host(cls, value):
+        return _safe_str(value, "wpp") or "wpp"
+
     @validator("scene", pre=True, always=True)
     def coerce_structure_scene(cls, value):
         return "ppt"
 
-    @validator("client_job_id", pre=True, always=True)
+    @validator(
+        "client_job_id",
+        "document_session_id",
+        "document_display_name",
+        pre=True,
+        always=True,
+    )
     def coerce_structure_client_job_id(cls, value):
         return _safe_str(value)
 
