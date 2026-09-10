@@ -24,6 +24,7 @@ from app.services.long_task_coordinator import (
     get_long_task_coordinator,
 )
 from app.services.provider_client import EXCEL_SMART_FILL_TIMEOUT_SECONDS
+from app.services.task_history import TaskHistoryError, get_task_history_store
 
 
 CLIENT_JOB_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{7,95}$")
@@ -35,6 +36,7 @@ SAFE_ERROR_STATUSES = {
     "EXCEL_SMART_FILL_CROSS_SHEET": 400,
     "EXCEL_SMART_FILL_INSTRUCTION_REQUIRED": 400,
     "EXCEL_SMART_FILL_TARGET_UNSAFE": 409,
+    "EXCEL_SMART_FILL_DOCUMENT_TASK_BUSY": 409,
     "EXCEL_SMART_FILL_BATCH_TOO_LARGE": 400,
     "EXCEL_SMART_FILL_ITEMS_TOO_MANY": 400,
     "EXCEL_SMART_FILL_INSTRUCTION_TOO_LONG": 400,
@@ -84,72 +86,107 @@ class ExcelSmartFillJobStore:
         self._write_commits = {}
         self._job_write_identity = {}
         self._write_lock = threading.Lock()
+        self._submission_lock = threading.Lock()
+        self._active_doc_sessions = {}
 
     def start(self, request: ExcelSmartFillRequest, trace_id: str) -> Dict:
         self._purge_expired_write_state()
         validate_smart_fill_request_limits(request)
         job_id = normalize_client_job_id(getattr(request, "client_job_id", "")) or trace_id
         request_fingerprint = smart_fill_request_fingerprint(request)
-        existing = self.coordinator.get(job_id, task_type="excel.smart_fill")
-        if existing is not None:
-            stored_fingerprint = self.coordinator.get_request_fingerprint(
-                job_id, task_type="excel.smart_fill"
-            )
-            if stored_fingerprint and stored_fingerprint != request_fingerprint:
-                raise AdapterError(
-                    "EXCEL_SMART_FILL_JOB_ID_CONFLICT",
-                    "相同任务编号已绑定其他智能填写请求，请使用新的任务编号。",
-                    status_code=409,
+        doc_session = str(getattr(request, "document_session_id", "") or "").strip()
+        host = str(getattr(request, "host", "") or "et").strip()
+        doc_name = str(
+            getattr(request, "document_display_name", "")
+            or getattr(request, "workbook_id", "")
+            or "工作簿.xlsx"
+        ).strip()
+        task_type = "excel.smart_fill"
+
+        with self._submission_lock:
+            existing = self.coordinator.get(job_id, task_type=task_type)
+            if existing is not None:
+                stored_fingerprint = self.coordinator.get_request_fingerprint(
+                    job_id, task_type=task_type
                 )
+                if stored_fingerprint and stored_fingerprint != request_fingerprint:
+                    raise AdapterError(
+                        "EXCEL_SMART_FILL_JOB_ID_CONFLICT",
+                        "相同任务编号已绑定其他智能填写请求，请使用新的任务编号。",
+                        status_code=409,
+                    )
+                self._remember_write_identity(job_id, request)
+                return existing
+
+            # Document session active slot guard: reject duplicate concurrent task in same document session
+            if doc_session:
+                slot_key = (host, task_type, doc_session)
+                active_job_id = self._active_doc_sessions.get(slot_key)
+                if active_job_id:
+                    active_job = self.coordinator.get(active_job_id, task_type=task_type)
+                    if active_job and active_job.get("status") in {"queued", "running"}:
+                        if active_job_id != job_id:
+                            raise AdapterError(
+                                "EXCEL_SMART_FILL_DOCUMENT_TASK_BUSY",
+                                "当前工作簿已存在进行中的智能填写任务，请等待其完成。",
+                                status_code=409,
+                            )
+                    else:
+                        self._active_doc_sessions.pop(slot_key, None)
+
+            snapshot_task_auth = getattr(self.smart_fill, "snapshot_task_auth", None)
+            task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
+            total_items = len(request.items)
+            initial_batch_size = calculate_smart_fill_batch_size(
+                request,
+                start_index=0,
+                task_auth=task_auth,
+            )
+            total_batches = max(1, math.ceil(total_items / max(1, initial_batch_size)))
+            retention_seconds = getattr(self.coordinator, "terminal_ttl_seconds", RESULT_RETENTION_SECONDS)
             self._remember_write_identity(job_id, request)
-            return existing
-        snapshot_task_auth = getattr(self.smart_fill, "snapshot_task_auth", None)
-        task_auth = snapshot_task_auth() if callable(snapshot_task_auth) else None
-        total_items = len(request.items)
-        initial_batch_size = calculate_smart_fill_batch_size(
-            request,
-            start_index=0,
-            task_auth=task_auth,
-        )
-        total_batches = max(1, math.ceil(total_items / max(1, initial_batch_size)))
-        retention_seconds = getattr(self.coordinator, "terminal_ttl_seconds", RESULT_RETENTION_SECONDS)
-        self._remember_write_identity(job_id, request)
-        return self.coordinator.submit(
-            job_id=job_id,
-            trace_id=trace_id,
-            task_type="excel.smart_fill",
-            runner=self._run,
-            snapshot={
-                "jobId": job_id,
-                "traceId": trace_id,
-                "request": deepcopy(request),
-                "taskAuth": task_auth,
-                "nextIndex": 0,
-                "results": [],
-                "batchCount": 0,
-                "currentBatch": 1,
-                "totalBatches": total_batches,
-                "startedAtMonotonic": self.clock(),
-            },
-            failure_code="EXCEL_SMART_FILL_JOB_FAILED",
-            failure_message="智能填写后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
-            public_metadata={
-                "runningMessage": RUNNING_MESSAGE,
-                "providerTimeoutSeconds": EXCEL_SMART_FILL_TIMEOUT_SECONDS,
-                "totalTimeoutSeconds": TOTAL_TIMEOUT_SECONDS,
-                "resultRetentionSeconds": retention_seconds,
-                "maxItems": MAX_ITEMS_PER_TASK,
-                "batchSize": MAX_ITEMS_PER_BATCH,
-                "currentBatch": 1,
-                "totalBatches": total_batches,
-                "completedBatchCount": 0,
-            },
-            safe_failure_codes=set(SAFE_ERROR_STATUSES),
-            request_fingerprint=request_fingerprint,
-            request_conflict_code="EXCEL_SMART_FILL_JOB_ID_CONFLICT",
-            request_conflict_message="相同任务编号已绑定其他智能填写请求，请使用新的任务编号。",
-            allow_running_cancel=True,
-        )
+            submitted = self.coordinator.submit(
+                job_id=job_id,
+                trace_id=trace_id,
+                task_type=task_type,
+                runner=self._run,
+                snapshot={
+                    "jobId": job_id,
+                    "traceId": trace_id,
+                    "request": deepcopy(request),
+                    "taskAuth": task_auth,
+                    "nextIndex": 0,
+                    "results": [],
+                    "batchCount": 0,
+                    "currentBatch": 1,
+                    "totalBatches": total_batches,
+                    "startedAtMonotonic": self.clock(),
+                    "host": host,
+                    "documentSessionId": doc_session,
+                    "documentDisplayName": doc_name,
+                },
+                failure_code="EXCEL_SMART_FILL_JOB_FAILED",
+                failure_message="智能填写后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
+                public_metadata={
+                    "runningMessage": RUNNING_MESSAGE,
+                    "providerTimeoutSeconds": EXCEL_SMART_FILL_TIMEOUT_SECONDS,
+                    "totalTimeoutSeconds": TOTAL_TIMEOUT_SECONDS,
+                    "resultRetentionSeconds": retention_seconds,
+                    "maxItems": MAX_ITEMS_PER_TASK,
+                    "batchSize": MAX_ITEMS_PER_BATCH,
+                    "currentBatch": 1,
+                    "totalBatches": total_batches,
+                    "completedBatchCount": 0,
+                },
+                safe_failure_codes=set(SAFE_ERROR_STATUSES),
+                request_fingerprint=request_fingerprint,
+                request_conflict_code="EXCEL_SMART_FILL_JOB_ID_CONFLICT",
+                request_conflict_message="相同任务编号已绑定其他智能填写请求，请使用新的任务编号。",
+                allow_running_cancel=True,
+            )
+            if doc_session:
+                self._active_doc_sessions[(host, task_type, doc_session)] = job_id
+            return submitted
 
     def _remember_write_identity(self, job_id: str, request: ExcelSmartFillRequest) -> None:
         source = getattr(request, "source", None)
@@ -289,7 +326,12 @@ class ExcelSmartFillJobStore:
             return record
 
     def cancel(self, job_id: str) -> Optional[Dict]:
-        return self.coordinator.request_cancel(job_id, task_type="excel.smart_fill")
+        job = self.coordinator.request_cancel(job_id, task_type="excel.smart_fill")
+        with self._submission_lock:
+            for key, val in list(self._active_doc_sessions.items()):
+                if val == job_id:
+                    self._active_doc_sessions.pop(key, None)
+        return job
 
     def run_sync(self, request: ExcelSmartFillRequest, trace_id: str) -> Dict:
         job = self.start(request, trace_id)
@@ -305,6 +347,19 @@ class ExcelSmartFillJobStore:
         )
 
     def _run(self, snapshot: Dict, progress) -> Dict:
+        try:
+            return self._run_internal(snapshot, progress)
+        except Exception:
+            doc_session = str(snapshot.get("documentSessionId") or "")
+            host = str(snapshot.get("host") or "et")
+            if doc_session:
+                with self._submission_lock:
+                    slot_key = (host, "excel.smart_fill", doc_session)
+                    if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
+                        self._active_doc_sessions.pop(slot_key, None)
+            raise
+
+    def _run_internal(self, snapshot: Dict, progress) -> Dict:
         self._raise_if_deadline_exceeded(snapshot)
         if self.coordinator.is_cancel_requested(
             snapshot["jobId"], task_type="excel.smart_fill"
@@ -431,7 +486,7 @@ class ExcelSmartFillJobStore:
         self._raise_if_deadline_exceeded(
             {**snapshot, "results": combined, "batchCount": batch_count}
         )
-        return {
+        processed_result = {
             "schemaVersion": "excel.smart_fill.v2",
             "items": combined,
             "provider": result.get("provider", ""),
@@ -439,6 +494,60 @@ class ExcelSmartFillJobStore:
             "batchCount": batch_count,
             "totalBatches": batch_count,
         }
+        try:
+            req = snapshot.get("request")
+            doc_name = (
+                snapshot.get("documentDisplayName")
+                or getattr(req, "document_display_name", "")
+                or getattr(req, "workbook_id", "")
+                or "工作簿.xlsx"
+            )
+            auth = snapshot.get("taskAuth") or {}
+            service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
+            model_name = auth.get("modelName") or result.get("provider") or "model"
+            job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
+
+            archived_items = [
+                {
+                    "itemId": item.get("itemId"),
+                    "status": item.get("status"),
+                    "valueType": item.get("valueType", "text"),
+                    "value": item.get("value", ""),
+                    "sourceRowIndex": item.get("sourceRowIndex"),
+                    "sourceRowLabel": item.get("sourceRowLabel", ""),
+                }
+                for item in combined
+                if isinstance(item, dict)
+            ]
+            archived_result = {
+                "schemaVersion": "excel.smart_fill.v2",
+                "processedItemCount": len(archived_items),
+                "items": archived_items,
+                "totalBatches": batch_count,
+            }
+            get_task_history_store().record_success(
+                task_type="excel.smart_fill",
+                job_id=job_id,
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError as exc:
+            if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                processed_result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+        except Exception:
+            pass
+
+        doc_session = str(snapshot.get("documentSessionId") or "")
+        host = str(snapshot.get("host") or "et")
+        if doc_session:
+            with self._submission_lock:
+                slot_key = (host, "excel.smart_fill", doc_session)
+                if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
+                    self._active_doc_sessions.pop(slot_key, None)
+
+        return processed_result
 
     def _raise_if_deadline_exceeded(self, snapshot: Dict) -> None:
         started = float(snapshot.get("startedAtMonotonic", self.clock()))
