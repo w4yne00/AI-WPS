@@ -334,6 +334,8 @@
     activeWritingJobsByTask: {},
     activeResults: {},
     activeWritingJobs: {},
+    activeReviewJobs: {},
+    viewingHistoryReport: null,
     historyOpen: false,
     historyItems: [],
     historyUnreadCount: 0,
@@ -496,6 +498,27 @@
     }
   }
 
+  function getActiveReviewJobRecord(taskType, docSessionId) {
+    var key = getWritingDocTaskKey(taskType, docSessionId);
+    if (state.activeReviewJobs && Object.prototype.hasOwnProperty.call(state.activeReviewJobs, key)) {
+      return state.activeReviewJobs[key];
+    }
+    if (state.activeReviewJobs && state.activeReviewJobs[key]) {
+      return state.activeReviewJobs[key];
+    }
+    return null;
+  }
+
+  function setActiveReviewJobRecord(taskType, docSessionId, record) {
+    var key = getWritingDocTaskKey(taskType, docSessionId);
+    state.activeReviewJobs = state.activeReviewJobs || {};
+    if (record) {
+      state.activeReviewJobs[key] = record;
+    } else {
+      delete state.activeReviewJobs[key];
+    }
+  }
+
   function getActiveResultRecord(taskType, docSessionId) {
     var key = getWritingDocTaskKey(taskType, docSessionId);
     if (state.activeResults && Object.prototype.hasOwnProperty.call(state.activeResults, key)) {
@@ -636,11 +659,35 @@
     }
   }
 
-  function loadDocumentReviewActiveJob() {
+  function getReviewActiveJobStorageKey(taskType, docSessionId) {
+    return [
+      "ai-wps:review-active-job",
+      taskType || "word.document_review",
+      docSessionId || "default"
+    ].join(":");
+  }
+
+  function loadDocumentReviewActiveJob(docSessionId) {
     var raw;
     try {
-      raw = window.localStorage && window.localStorage.getItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      if (!window.localStorage) {
+        return null;
+      }
+      var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+      if (currentDoc) {
+        raw = window.localStorage.getItem(getReviewActiveJobStorageKey("word.document_review", currentDoc));
+        if (raw) {
+          return JSON.parse(raw);
+        }
+      }
+      raw = window.localStorage.getItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      if (raw) {
+        var legacy = JSON.parse(raw);
+        if (!currentDoc || !legacy.documentSessionId || legacy.documentSessionId === currentDoc) {
+          return legacy;
+        }
+      }
+      return null;
     } catch (error) {
       return null;
     }
@@ -650,83 +697,197 @@
     if (!job || !job.jobId) {
       return;
     }
+    var currentDoc = job.documentSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     try {
       if (window.localStorage) {
-        window.localStorage.setItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+        var record = JSON.stringify({
           jobId: job.jobId,
+          host: "wps",
+          taskType: "word.document_review",
+          documentSessionId: currentDoc || "",
           traceId: job.traceId || "",
           startedAt: job.startedAt || Date.now(),
           frontendVersion: FRONTEND_BUILD_VERSION
-        }));
+        });
+        window.localStorage.setItem(getReviewActiveJobStorageKey("word.document_review", currentDoc), record);
+        window.localStorage.setItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY, record);
       }
     } catch (error) {
       // localStorage may be unavailable in some WPS WebView modes; polling still works in memory.
     }
   }
 
-  function clearDocumentReviewActiveJob(jobId) {
+  function clearDocumentReviewActiveJob(jobId, docSessionId) {
     var active;
     try {
       if (!window.localStorage) {
         return;
       }
-      if (jobId) {
-        active = loadDocumentReviewActiveJob();
-        if (active && active.jobId && active.jobId !== jobId) {
-          return;
+      var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+      if (currentDoc) {
+        window.localStorage.removeItem(getReviewActiveJobStorageKey("word.document_review", currentDoc));
+      }
+      for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        var k = window.localStorage.key(i);
+        if (k && k.indexOf("ai-wps:review-active-job:word.document_review:") === 0) {
+          var val = window.localStorage.getItem(k);
+          if (val) {
+            try {
+              var parsed = JSON.parse(val);
+              if (!jobId || (parsed && parsed.jobId === jobId)) {
+                window.localStorage.removeItem(k);
+              }
+            } catch (e) {}
+          }
         }
       }
-      window.localStorage.removeItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      active = loadDocumentReviewActiveJob(currentDoc);
+      if (!jobId || (active && active.jobId === jobId)) {
+        window.localStorage.removeItem(DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      }
     } catch (error) {
       // Ignore storage cleanup failures; they should not block task-pane rendering.
     }
   }
 
-  function loadFullDocumentReviewActiveJob() {
+  function loadFullDocumentReviewActiveJob(docSessionId) {
     var raw;
     try {
-      raw = window.localStorage && window.localStorage.getItem(
-        FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY
-      );
-      return raw ? JSON.parse(raw) : null;
+      if (!window.localStorage) {
+        return null;
+      }
+      var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+      if (currentDoc) {
+        raw = window.localStorage.getItem(getReviewActiveJobStorageKey("word.document_review.full", currentDoc));
+        if (raw) {
+          return JSON.parse(raw);
+        }
+      }
+      raw = window.localStorage.getItem(FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      if (raw) {
+        var legacy = JSON.parse(raw);
+        if (!currentDoc || !legacy.documentSessionId || legacy.documentSessionId === currentDoc) {
+          return legacy;
+        }
+      }
+      return null;
     } catch (error) {
       return null;
     }
   }
 
-  function saveFullDocumentReviewActiveJob(jobId) {
+  function saveFullDocumentReviewActiveJob(jobId, docSessionId) {
     if (!jobId) {
       return;
     }
+    var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     try {
       if (window.localStorage) {
-        window.localStorage.setItem(
-          FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY,
-          JSON.stringify({
-            jobId: jobId,
-            startedAt: Date.now(),
-            frontendVersion: FRONTEND_BUILD_VERSION
-          })
-        );
+        var record = JSON.stringify({
+          jobId: jobId,
+          host: "wps",
+          taskType: "word.document_review.full",
+          documentSessionId: currentDoc || "",
+          startedAt: Date.now(),
+          frontendVersion: FRONTEND_BUILD_VERSION
+        });
+        window.localStorage.setItem(getReviewActiveJobStorageKey("word.document_review.full", currentDoc), record);
+        window.localStorage.setItem(FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY, record);
       }
     } catch (error) {
       // Storage may be unavailable; in-memory polling remains active.
     }
   }
 
-  function clearFullDocumentReviewActiveJob(jobId) {
+  function clearFullDocumentReviewActiveJob(jobId, docSessionId) {
     var active;
     try {
       if (!window.localStorage) {
         return;
       }
-      active = loadFullDocumentReviewActiveJob();
-      if (jobId && active && active.jobId && active.jobId !== jobId) {
-        return;
+      var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+      if (currentDoc) {
+        window.localStorage.removeItem(getReviewActiveJobStorageKey("word.document_review.full", currentDoc));
       }
-      window.localStorage.removeItem(FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        var k = window.localStorage.key(i);
+        if (k && k.indexOf("ai-wps:review-active-job:word.document_review.full:") === 0) {
+          var val = window.localStorage.getItem(k);
+          if (val) {
+            try {
+              var parsed = JSON.parse(val);
+              if (!jobId || (parsed && parsed.jobId === jobId)) {
+                window.localStorage.removeItem(k);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      active = loadFullDocumentReviewActiveJob(currentDoc);
+      if (!jobId || (active && active.jobId === jobId)) {
+        window.localStorage.removeItem(FULL_DOCUMENT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      }
     } catch (error) {
       // Storage cleanup must not block report rendering.
+    }
+  }
+
+  function cleanupDocumentReviewTerminal(submittedDocSession, jobId) {
+    var targetDocSession = submittedDocSession || state.documentSessionId || "default";
+    releaseTaskSlotsForJob(jobId);
+    if (helpers.releaseTaskSlot) {
+      helpers.releaseTaskSlot(state.activeTaskSlots, "wps", "word.document_review", targetDocSession, jobId);
+    }
+    clearDocumentReviewActiveJob(jobId, targetDocSession);
+    setActiveReviewJobRecord("word.document_review", targetDocSession, null);
+    if (!jobId || state.documentReviewJobId === jobId) {
+      setDocumentReviewJobId("");
+      state.documentReviewPollStartedAt = 0;
+      state.documentReviewPollErrorCount = 0;
+      stopDocumentReviewWaitFeedback();
+      setModelTaskBusy(false);
+      setDocumentReviewCancelVisible(false, false);
+    }
+  }
+
+  function cleanupFullDocumentReviewTerminal(submittedDocSession, jobId) {
+    var targetDocSession = submittedDocSession || state.documentSessionId || "default";
+    releaseTaskSlotsForJob(jobId);
+    if (helpers.releaseTaskSlot) {
+      helpers.releaseTaskSlot(state.activeTaskSlots, "wps", "word.document_review.full", targetDocSession, jobId);
+    }
+    clearFullDocumentReviewActiveJob(jobId, targetDocSession);
+    setActiveReviewJobRecord("word.document_review.full", targetDocSession, null);
+    if (!jobId || state.fullDocumentReviewJobId === jobId) {
+      state.fullDocumentReviewJobId = "";
+      state.fullDocumentReviewPollErrorCount = 0;
+      state.fullDocumentReviewPreparing = false;
+      state.fullDocumentReviewCancelRequested = false;
+      setModelTaskBusy(false);
+      setDocumentReviewCancelVisible(false, false);
+    }
+  }
+
+  function restoreActiveReviewResult() {
+    state.viewingHistoryReport = null;
+    var controls = byId("full-document-review-issue-controls");
+    if (controls) {
+      controls.hidden = true;
+    }
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var activeRec = getActiveResultRecord("word.document_review", currentDoc);
+    if (activeRec && activeRec.result) {
+      var res = activeRec.result;
+      if (res.reportType === "full_document_review" || res.report) {
+        renderFullDocumentReviewReport(res.report || res, res.reportId || activeRec.traceId);
+      } else {
+        renderDocumentReviewResult(res);
+      }
+      setStatus("已恢复当前文档审查结果。");
+    } else {
+      renderFullDocumentReviewEntry();
+      setPlainResult("等待运行。");
+      setStatus("等待操作。");
     }
   }
 
@@ -1493,12 +1654,13 @@
     closeTaskModelConfigMenu(false);
 
     var btnViewHistory = byId("btn-view-history");
+    var historySupported = writingMode || requestedMode === "documentReview";
     if (btnViewHistory) {
-      btnViewHistory.hidden = !writingMode;
+      btnViewHistory.hidden = !historySupported;
     }
-    if (!writingMode && state.historyOpen) {
+    if (!historySupported && state.historyOpen) {
       switchWordHistoryView(false);
-    } else if (writingMode && state.historyOpen) {
+    } else if (historySupported && state.historyOpen) {
       var currentWritingTask = getCurrentWorkflowTaskType();
       state.historyTaskType = currentWritingTask;
       loadAndRenderWritingHistory(currentWritingTask);
@@ -1562,6 +1724,34 @@
           setPlainResult("等待运行。");
         }
       }
+    } else if (state.currentMode === "documentReview") {
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var activeReviewJob = getActiveReviewJobRecord("word.document_review", currentDoc) || getActiveReviewJobRecord("word.document_review.full", currentDoc);
+      if (activeReviewJob) {
+        state.documentReviewJobId = activeReviewJob.taskType === "word.document_review" ? activeReviewJob.jobId : "";
+        state.fullDocumentReviewJobId = activeReviewJob.taskType === "word.document_review.full" ? activeReviewJob.jobId : "";
+        setModelTaskBusy(true);
+      } else {
+        state.documentReviewJobId = "";
+        state.fullDocumentReviewJobId = "";
+        setModelTaskBusy(false);
+        var activeRecord = getActiveResultRecord("word.document_review", currentDoc);
+        if (activeRecord && activeRecord.result) {
+          var res = activeRecord.result;
+          setTrace(activeRecord.traceId || "");
+          if (res.reportType === "full_document_review" || res.report) {
+            renderFullDocumentReviewReport(res.report || res, res.reportId || activeRecord.traceId);
+          } else {
+            renderDocumentReviewResult(res);
+          }
+        } else {
+          resetSmartWritePreviewState();
+          resetDocumentReviewState();
+          setPlainResult("等待运行。");
+        }
+      }
+      state.pendingApplyAction = "";
+      setApplyEnabled(false);
     } else {
       resetSmartWritePreviewState();
       resetDocumentReviewState();
@@ -1980,6 +2170,15 @@
 
   function describeFetchError(error) {
     var message = error && error.message ? error.message : String(error || "");
+    if (error && error.adapterCode === "WORD_DOCUMENT_REVIEW_TASK_BUSY") {
+      return "当前文档已存在进行中的文档审查任务，请等待其完成。";
+    }
+    if (error && error.adapterCode === "WORD_DOCUMENT_REVIEW_TASK_CONFLICT") {
+      return "文档审查任务标识冲突，请重试。";
+    }
+    if (error && error.adapterCode === "FULL_DOCUMENT_REVIEW_TASK_BUSY") {
+      return "当前文档已存在进行中的全篇审查任务，请等待其完成。";
+    }
     if (message === "Failed to fetch" || message.indexOf("NetworkError") >= 0) {
       return "插件无法访问 http://127.0.0.1:18100。请确认 adapter 正在运行、端口为 18100，并重新打开任务窗格。";
     }
@@ -1996,6 +2195,15 @@
 
   function describeDocumentReviewError(error) {
     var message = describeFetchError(error);
+    if (error && error.adapterCode === "WORD_DOCUMENT_REVIEW_TASK_BUSY") {
+      return "当前文档已存在进行中的文档审查任务，请等待其完成。";
+    }
+    if (error && error.adapterCode === "WORD_DOCUMENT_REVIEW_TASK_CONFLICT") {
+      return "文档审查任务标识冲突，请重试。";
+    }
+    if (error && error.adapterCode === "FULL_DOCUMENT_REVIEW_TASK_BUSY") {
+      return "当前文档已存在进行中的全篇审查任务，请等待其完成。";
+    }
     if (error && error.name === "AbortError") {
       return "文档审查任务提交请求超过 10 秒未返回，任务窗格将尝试按本地任务编号恢复查询。";
     }
@@ -5404,7 +5612,8 @@
     }
   }
 
-  function completeDocumentReview(data, traceId) {
+  function completeDocumentReview(data, traceId, docSessionId) {
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
     state.pendingApplyAction = "";
     setApplyEnabled(false);
     if (traceId) {
@@ -5412,6 +5621,13 @@
     }
     state.documentReviewData = data || {};
     state.documentReviewIssueStatus = {};
+    setActiveResultRecord("word.document_review", targetDocSession, {
+      result: data,
+      traceId: traceId || "",
+      taskType: "word.document_review",
+      documentSessionId: targetDocSession,
+      completedAt: Date.now()
+    });
     if (renderDocumentReviewResult(state.documentReviewData)) {
       setStatus("文档审查完成。");
     } else {
@@ -5419,9 +5635,9 @@
     }
   }
 
-  function scheduleDocumentReviewPoll(jobId, stopWaiting, delayMs, resumeExpected) {
+  function scheduleDocumentReviewPoll(jobId, stopWaiting, delayMs, resumeExpected, docSessionId) {
     setTimeout(function () {
-      pollDocumentReviewJob(jobId, stopWaiting, resumeExpected);
+      pollDocumentReviewJob(jobId, stopWaiting, resumeExpected, docSessionId);
     }, delayMs);
   }
 
@@ -5431,7 +5647,10 @@
       error.adapterCode === "DOCUMENT_REVIEW_JOB_INTERRUPTED" ||
       error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
       error.adapterCode === "DOCUMENT_REVIEW_AUTH_SNAPSHOT_FAILED" ||
-      error.adapterCode === "REQUEST_VALIDATION_FAILED"
+      error.adapterCode === "REQUEST_VALIDATION_FAILED" ||
+      error.adapterCode === "WORD_DOCUMENT_REVIEW_TASK_CONFLICT" ||
+      error.adapterCode === "WORD_DOCUMENT_REVIEW_TASK_BUSY" ||
+      error.httpStatus === 409
     );
   }
 
@@ -5456,18 +5675,15 @@
     setPlainResult(lines.join("\n"));
   }
 
-  function finishCancelledDocumentReview(jobId, stopWaiting) {
-    clearDocumentReviewActiveJob(jobId);
-    setDocumentReviewJobId("");
-    state.documentReviewPollStartedAt = 0;
-    state.documentReviewPollErrorCount = 0;
-    stopDocumentReviewWaitFeedback(stopWaiting);
+  function finishCancelledDocumentReview(jobId, stopWaiting, docSessionId) {
+    cleanupDocumentReviewTerminal(docSessionId, jobId);
     setStatus("排队中的文档审查任务已取消。");
     setPlainResult("排队中的文档审查任务已取消，未调用模型后台。\n任务编号：" + jobId);
   }
 
-  function pollDocumentReviewJob(jobId, stopWaiting, resumeExpected) {
+  function pollDocumentReviewJob(jobId, stopWaiting, resumeExpected, docSessionId) {
     var query = resumeExpected ? "?resume=1" : "";
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
     if (!jobId || state.documentReviewJobId !== jobId) {
       return;
     }
@@ -5483,32 +5699,30 @@
         setTrace(body.traceId || job.traceId || jobId);
         saveDocumentReviewActiveJob({
           jobId: jobId,
+          host: "wps",
+          taskType: "word.document_review",
+          documentSessionId: targetDocSession,
           traceId: body.traceId || job.traceId || "",
           startedAt: state.documentReviewPollStartedAt || Date.now()
         });
         if (job.status === "completed") {
-          clearDocumentReviewActiveJob(jobId);
-          setDocumentReviewJobId("");
-          state.documentReviewPollStartedAt = 0;
-          stopDocumentReviewWaitFeedback(stopWaiting);
-          completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId);
+          cleanupDocumentReviewTerminal(targetDocSession, jobId);
+          completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId, targetDocSession);
           return;
         }
         if (job.status === "cancelled") {
-          finishCancelledDocumentReview(jobId, stopWaiting);
+          finishCancelledDocumentReview(jobId, stopWaiting, targetDocSession);
           return;
         }
         if (job.status === "failed") {
-          clearDocumentReviewActiveJob(jobId);
-          setDocumentReviewJobId("");
-          state.documentReviewPollStartedAt = 0;
-          stopDocumentReviewWaitFeedback(stopWaiting);
-          setStatus("文档审查失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
-          setResult((job.error && job.error.message) || "后台任务执行失败。");
+          cleanupDocumentReviewTerminal(targetDocSession, jobId);
+          var errMsg = (job.error && job.error.message) || "后台任务执行失败。";
+          setStatus("文档审查失败：" + errMsg);
+          setResult(errMsg);
           return;
         }
         renderDocumentReviewJobProgress(job, jobId);
-        scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_INTERVAL_MS, true);
+        scheduleDocumentReviewPoll(jobId, stopWaiting, DOCUMENT_REVIEW_POLL_INTERVAL_MS, true, targetDocSession);
       })
       .catch(function (error) {
         var elapsed;
@@ -5522,14 +5736,10 @@
         state.documentReviewPollErrorCount = (state.documentReviewPollErrorCount || 0) + 1;
         elapsed = Date.now() - (state.documentReviewPollStartedAt || Date.now());
         if (error && error.adapterCode === "DOCUMENT_REVIEW_JOB_INTERRUPTED") {
-          clearDocumentReviewActiveJob(jobId);
-          setDocumentReviewJobId("");
-          state.documentReviewPollStartedAt = 0;
-          state.documentReviewPollErrorCount = 0;
+          cleanupDocumentReviewTerminal(targetDocSession, jobId);
           setStatus("adapter 已重启，原文档审查任务已中断，请重新提交。");
           setResult("adapter 已重启，原文档审查任务无法恢复。阻塞式模型请求不会伪装为可恢复，请重新提交文档审查。\n任务编号：" + jobId);
           setInterruptedRetryVisible(true);
-          stopDocumentReviewWaitFeedback(stopWaiting);
           return;
         }
         if (!isFatalDocumentReviewPollError(error)) {
@@ -5542,6 +5752,9 @@
             : DOCUMENT_REVIEW_POLL_SLOW_RETRY_DELAY_MS;
           saveDocumentReviewActiveJob({
             jobId: jobId,
+            host: "wps",
+            taskType: "word.document_review",
+            documentSessionId: targetDocSession,
             traceId: state.traceId || "",
             startedAt: state.documentReviewPollStartedAt || Date.now()
           });
@@ -5557,18 +5770,16 @@
             "任务编号：" + jobId,
             "最近错误：" + message
           ].join("\n"));
-          scheduleDocumentReviewPoll(jobId, stopWaiting, retryDelay, resumeExpected);
+          scheduleDocumentReviewPoll(jobId, stopWaiting, retryDelay, resumeExpected, targetDocSession);
           return;
         }
-        clearDocumentReviewActiveJob(jobId);
-        setDocumentReviewJobId("");
-        state.documentReviewPollStartedAt = 0;
-        state.documentReviewPollErrorCount = 0;
+        cleanupDocumentReviewTerminal(targetDocSession, jobId);
         setStatus("文档审查状态查询持续失败，请查看最近一次任务诊断。");
         setResult([
           "文档审查状态查询持续失败，前台已暂停自动刷新。",
           "这不代表模型后台任务失败；如果模型后台已收到请求，adapter 可能仍在等待模型后台返回，或目标机网络/任务窗格连接不稳定。",
           "请到“设置-最近一次任务诊断”查看 trace、provider 状态和模型后台返回情况。",
+          "任务编号：" + jobId,
           "最近错误：" + message
         ].join("\n"));
         stopDocumentReviewWaitFeedback(stopWaiting);
@@ -5576,13 +5787,30 @@
   }
 
   function resumeDocumentReviewActiveJob() {
-    var active = loadDocumentReviewActiveJob();
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var active = loadDocumentReviewActiveJob(currentDoc);
     if (!active || !active.jobId || state.currentMode !== "documentReview") {
-      return;
+      return false;
+    }
+    if (active.host && active.host !== "wps") {
+      return false;
+    }
+    if (active.taskType && active.taskType !== "word.document_review") {
+      return false;
+    }
+    if (active.documentSessionId && currentDoc && active.documentSessionId !== currentDoc) {
+      return false;
+    }
+    if (state.documentReviewJobId === active.jobId) {
+      return true;
     }
     setDocumentReviewJobId(active.jobId);
     state.documentReviewPollStartedAt = active.startedAt || Date.now();
     state.documentReviewPollErrorCount = 0;
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.document_review", currentDoc, active.jobId);
+    }
+    setActiveReviewJobRecord("word.document_review", currentDoc, active);
     setApplyEnabled(false);
     setReviewRecordActionsVisible(false);
     setTrace(active.traceId || active.jobId);
@@ -5592,7 +5820,8 @@
       "如果模型后台仍在处理，请保持 WPS 和 adapter 打开。",
       "任务编号：" + active.jobId
     ].join("\n"));
-    pollDocumentReviewJob(active.jobId, function () {}, true);
+    pollDocumentReviewJob(active.jobId, function () {}, true, currentDoc);
+    return true;
   }
 
   function cancelQueuedDocumentReviewJob() {
@@ -5600,6 +5829,7 @@
     if (!jobId) {
       return;
     }
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
     setDocumentReviewCancelVisible(true, true);
     setStatus("正在取消排队中的文档审查任务...");
     request("/word/document-review/jobs/" + encodeURIComponent(jobId) + "?resume=1", null, {
@@ -5610,11 +5840,9 @@
       if (state.documentReviewJobId !== jobId) {
         return;
       }
-      if (job.status === "cancelled") {
-        finishCancelledDocumentReview(jobId);
-        return;
-      }
-      renderDocumentReviewJobProgress(job, jobId);
+      cleanupDocumentReviewTerminal(currentDoc, jobId);
+      setStatus("排队中的文档审查任务已取消。");
+      setPlainResult("排队中的文档审查任务已取消，未调用模型后台。\n任务编号：" + jobId);
     }).catch(function (error) {
       if (state.documentReviewJobId !== jobId) {
         return;
@@ -6228,16 +6456,31 @@
     } else {
       var taskType = getCurrentWorkflowTaskType();
       var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
-      var activeRecord = getActiveResultRecord(taskType, currentDoc);
-      if (activeRecord) {
-        var res = activeRecord.result || activeRecord;
-        state.rewriteResult = setSmartWriteResult(res, taskType);
-        var canApply = state.currentMode === "smartWrite" && !activeRecord.resumed && (activeRecord.pendingApplyAction === "rewrite" || (!activeRecord.resumed && state.latestDocumentPayload));
-        state.pendingApplyAction = canApply ? "rewrite" : "";
-        setApplyEnabled(canApply);
-        setTrace(activeRecord.traceId || "");
-        if (taskType === "word.smart_imitation") {
-          hideCompareForSmartImitation();
+      if (taskType === "word.document_review") {
+        if (!state.viewingHistoryReport) {
+          var activeRecord = getActiveResultRecord("word.document_review", currentDoc);
+          if (activeRecord && activeRecord.result) {
+            var res = activeRecord.result;
+            setTrace(activeRecord.traceId || "");
+            if (res.reportType === "full_document_review" || res.report) {
+              renderFullDocumentReviewReport(res.report || res, res.reportId || activeRecord.traceId);
+            } else {
+              renderDocumentReviewResult(res);
+            }
+          }
+        }
+      } else {
+        var activeRecord = getActiveResultRecord(taskType, currentDoc);
+        if (activeRecord) {
+          var res = activeRecord.result || activeRecord;
+          state.rewriteResult = setSmartWriteResult(res, taskType);
+          var canApply = state.currentMode === "smartWrite" && !activeRecord.resumed && (activeRecord.pendingApplyAction === "rewrite" || (!activeRecord.resumed && state.latestDocumentPayload));
+          state.pendingApplyAction = canApply ? "rewrite" : "";
+          setApplyEnabled(canApply);
+          setTrace(activeRecord.traceId || "");
+          if (taskType === "word.smart_imitation") {
+            hideCompareForSmartImitation();
+          }
         }
       }
     }
@@ -6353,13 +6596,73 @@
     detailDiv.style.lineHeight = "1.5";
 
     var result = item.result || {};
+    var actionsDiv = card.querySelector(".word-history-card-actions");
+
+    if (result.reportType === "full_document_review") {
+      var fullJobId = result.reportId || result.jobId || item.jobId;
+      detailDiv.innerHTML = '<div class="history-detail-loading">正在读取全篇审查专用报告...</div>';
+      btn.textContent = "收起";
+      if (actionsDiv) {
+        card.insertBefore(detailDiv, actionsDiv);
+      } else {
+        card.appendChild(detailDiv);
+      }
+      return request("/word/document-review/full/jobs/" + encodeURIComponent(fullJobId) + "/report", null, {
+        timeoutMs: 8000
+      }).then(function (reportBody) {
+        var report = reportBody.data || {};
+        var summaryText = helpers.escapeHtml ? helpers.escapeHtml(report.summary || result.summary || "") : (report.summary || result.summary || "");
+        var issueCount = Number(report.issueCount !== undefined ? report.issueCount : (result.issueCount || 0));
+        var openBtnHtml = '<div style="margin-top:8px;"><button type="button" class="btn btn-secondary btn-sm btn-open-full-report">在窗格中查看完整报告</button></div>';
+        detailDiv.innerHTML = '<div>' + summaryText + '（共 ' + issueCount + ' 项问题）</div>' + openBtnHtml;
+        var openBtn = detailDiv.querySelector(".btn-open-full-report");
+        if (openBtn) {
+          openBtn.addEventListener("click", function () {
+            state.viewingHistoryReport = {
+              report: report,
+              jobId: fullJobId,
+              documentDisplayName: item.documentDisplayName
+            };
+            switchWordHistoryView(false);
+            renderFullDocumentReviewReport(report, fullJobId).catch(function (err) {
+              setStatus("打开报告失败：" + describeFetchError(err));
+            });
+          });
+        }
+      }).catch(function () {
+        detailDiv.innerHTML = '<div class="history-report-expired" style="color:var(--danger, #dc2626);">专用报告已过期或不可用。</div>';
+      });
+    }
+
+    if (item.taskType === "word.document_review") {
+      var docSummary = helpers.escapeHtml ? helpers.escapeHtml(result.summary || "无审查摘要") : (result.summary || "无审查摘要");
+      var docIssueCount = Number(result.issueCount || 0);
+      var categoryParts = [];
+      if (result.categoryCounts) {
+        for (var cat in result.categoryCounts) {
+          if (Object.prototype.hasOwnProperty.call(result.categoryCounts, cat)) {
+            categoryParts.push(cat + ": " + result.categoryCounts[cat]);
+          }
+        }
+      }
+      var catStr = categoryParts.length ? ('<div style="margin-top:4px;color:var(--text-muted, #64748b);">问题分类：' + helpers.escapeHtml(categoryParts.join(", ")) + '</div>') : "";
+      detailDiv.innerHTML = '<div><strong>' + docSummary + '</strong></div>' +
+        '<div>发现问题：' + docIssueCount + ' 项</div>' + catStr;
+      if (actionsDiv) {
+        card.insertBefore(detailDiv, actionsDiv);
+      } else {
+        card.appendChild(detailDiv);
+      }
+      btn.textContent = "收起";
+      return;
+    }
+
     var text = result.rewrittenText || result.plainText || "";
     var renderedHtml = helpers.renderMarkdown
       ? helpers.renderMarkdown(text)
       : (helpers.escapeHtml ? helpers.escapeHtml(text) : text);
     detailDiv.innerHTML = renderedHtml;
 
-    var actionsDiv = card.querySelector(".word-history-card-actions");
     if (actionsDiv) {
       card.insertBefore(detailDiv, actionsDiv);
     } else {
@@ -6884,6 +7187,25 @@
       lines.push("下一页游标：" + pageData.nextCursor);
     }
     setResult(lines.join("\n"), lines.join("\n"));
+    if (state.viewingHistoryReport) {
+      var banner = document.createElement("div");
+      banner.className = "history-report-return-banner";
+      banner.style.cssText = "display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle, #f1f5f9);padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;border:1px solid var(--hairline, #e2e8f0);";
+      var docName = state.viewingHistoryReport.documentDisplayName || "历史";
+      banner.innerHTML = '<span>当前正在查看历史审查报告（' + (helpers.escapeHtml ? helpers.escapeHtml(docName) : docName) + '）</span><button type="button" class="btn btn-secondary btn-sm btn-return-active-review">返回当前审查结果</button>';
+      var output = byId("result-output");
+      if (output && output.firstChild) {
+        output.insertBefore(banner, output.firstChild);
+      } else if (output) {
+        output.appendChild(banner);
+      }
+      var returnBtn = banner.querySelector(".btn-return-active-review");
+      if (returnBtn) {
+        returnBtn.addEventListener("click", function () {
+          restoreActiveReviewResult();
+        });
+      }
+    }
     setStatus("全篇审查只读报告已生成。");
     var controls = byId("full-document-review-issue-controls");
     var previous = byId("btn-full-review-previous-page");
@@ -7419,7 +7741,8 @@
     return loadFullDocumentReviewIssuePage(jobId, report, "");
   }
 
-  function pollFullDocumentReviewJob(jobId) {
+  function pollFullDocumentReviewJob(jobId, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     if (!jobId || state.fullDocumentReviewJobId !== jobId) {
       return;
     }
@@ -7434,24 +7757,29 @@
         return request("/word/document-review/full/jobs/" + encodeURIComponent(jobId) + "/report", null, {
           timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
         }).then(function (reportBody) {
-          state.fullDocumentReviewJobId = "";
-          state.fullDocumentReviewPollErrorCount = 0;
-          clearFullDocumentReviewActiveJob(jobId);
-          setModelTaskBusy(false);
-          setDocumentReviewCancelVisible(false, false);
+          var reportData = reportBody.data || {};
+          cleanupFullDocumentReviewTerminal(targetDocSession, jobId);
           renderFullDocumentReviewEntry();
-          renderFullDocumentReviewReport(reportBody.data || {}, jobId).catch(function (error) {
+          setActiveResultRecord("word.document_review", targetDocSession, {
+            result: {
+              reportType: "full_document_review",
+              report: reportData,
+              reportId: jobId
+            },
+            traceId: jobId,
+            jobId: jobId,
+            taskType: "word.document_review.full",
+            documentSessionId: targetDocSession,
+            completedAt: Date.now()
+          });
+          renderFullDocumentReviewReport(reportData, jobId).catch(function (error) {
             setStatus("全篇审查报告分页读取失败：" + describeFetchError(error));
           });
         });
       }
       if (job.status === "failed" || job.status === "cancelled") {
         var terminalMessage = job.error && job.error.message || "全篇审查未生成报告。";
-        state.fullDocumentReviewJobId = "";
-        state.fullDocumentReviewPollErrorCount = 0;
-        clearFullDocumentReviewActiveJob(jobId);
-        setModelTaskBusy(false);
-        setDocumentReviewCancelVisible(false, false);
+        cleanupFullDocumentReviewTerminal(targetDocSession, jobId);
         renderFullDocumentReviewEntry();
         setStatus(job.status === "cancelled" ? "全篇审查已取消。" : "全篇审查失败：" + terminalMessage);
         setResult(terminalMessage);
@@ -7461,18 +7789,14 @@
       state.fullDocumentReviewPollErrorCount = 0;
       setStatus("全篇审查：" + (DOCUMENT_REVIEW_PHASE_TEXT[job.phase] || job.phase || "处理中"));
       setTimeout(function () {
-        pollFullDocumentReviewJob(jobId);
+        pollFullDocumentReviewJob(jobId, targetDocSession);
       }, DOCUMENT_REVIEW_POLL_INTERVAL_MS);
     }).catch(function (error) {
       if (state.fullDocumentReviewJobId !== jobId) {
         return;
       }
       if (isFullDocumentReviewPermanentPollError(error)) {
-        state.fullDocumentReviewJobId = "";
-        state.fullDocumentReviewPollErrorCount = 0;
-        clearFullDocumentReviewActiveJob(jobId);
-        setModelTaskBusy(false);
-        setDocumentReviewCancelVisible(false, false);
+        cleanupFullDocumentReviewTerminal(targetDocSession, jobId);
         renderFullDocumentReviewEntry();
         setStatus(Number(error.httpStatus) === 404
           ? "原全篇审查任务不存在或已过期，请重新发起。"
@@ -7483,7 +7807,7 @@
       state.fullDocumentReviewPollErrorCount += 1;
       setStatus("全篇审查连接暂时中断，正在保留任务并重试：" + describeFetchError(error));
       setTimeout(function () {
-        pollFullDocumentReviewJob(jobId);
+        pollFullDocumentReviewJob(jobId, targetDocSession);
       }, Math.min(30000, DOCUMENT_REVIEW_POLL_INTERVAL_MS *
         Math.pow(2, Math.min(state.fullDocumentReviewPollErrorCount, 4))));
     });
@@ -7549,19 +7873,40 @@
     var firstPass;
     var session = null;
     var firstPassStartedAt = Date.now();
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var docDisplayName = (helpers.getDocumentDisplayName && getActiveDocument)
+      ? helpers.getDocumentDisplayName(getActiveDocument())
+      : (state.documentDisplayName || "Word 文档");
     if (!state.fullDocumentReviewEnabled || !readiness.fullDocumentReviewReady) {
       setStatus(readiness.label || "全篇审查尚未就绪。");
+      return;
+    }
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", "word.document_review.full", currentDoc)) {
+      setStatus("当前文档已存在进行中的全篇审查任务，请等待其完成。");
       return;
     }
     if (state.fullDocumentReviewJobId || state.documentReviewJobId) {
       setStatus("已有文档审查任务尚未结束。");
       return;
     }
+
+    state.fullDocumentReviewReportMetadata = null;
+    state.fullDocumentReviewIssueFilters = null;
+    state.fullDocumentReviewIssueCursorHistory = [""];
+    state.fullDocumentReviewReport = null;
+    state.fullDocumentReviewIssueJobId = "";
+    var controls = byId("full-document-review-issue-controls");
+    if (controls) {
+      controls.hidden = true;
+    }
+    setActiveResultRecord("word.document_review", currentDoc, null);
+
     setModelTaskBusy(true);
     state.fullDocumentReviewPreparing = true;
     state.fullDocumentReviewCancelRequested = false;
     setDocumentReviewCancelVisible(true, false);
     renderFullDocumentReviewEntry();
+    setPlainResult("正在准备全篇审查...");
     setStatus("正在执行第一遍轻量抽取...");
     return extractFullDocumentReviewBodyYielding().then(function (body) {
       firstPass = body;
@@ -7573,6 +7918,9 @@
         documentType: state.technicalDocumentType,
         reviewPrompt: state.technicalReviewPrompt,
         writingPolicyScene: getWritingPolicyScene(),
+        host: "wps",
+        documentSessionId: currentDoc,
+        documentDisplayName: docDisplayName,
         coverage: {
           includedRegions: ["body", "tables"],
           excludedRegions: ["headers", "footers", "footnotes", "endnotes", "comments",
@@ -7642,7 +7990,10 @@
         snapshotId: snapshot.snapshotId,
         snapshotToken: session.snapshotToken,
         confirmLarge: Boolean(capacity.requiresConfirmation),
-        confirmationToken: snapshot.confirmationToken || ""
+        confirmationToken: snapshot.confirmationToken || "",
+        host: "wps",
+        documentSessionId: currentDoc,
+        documentDisplayName: docDisplayName
       });
     }).then(function (body) {
       var job = body.data || {};
@@ -7653,10 +8004,20 @@
       state.fullDocumentReviewCancelRequested = false;
       state.fullDocumentReviewJobId = job.jobId;
       state.fullDocumentReviewPollErrorCount = 0;
-      saveFullDocumentReviewActiveJob(job.jobId);
+      if (helpers.claimTaskSlot) {
+        helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.document_review.full", currentDoc, job.jobId);
+      }
+      saveFullDocumentReviewActiveJob(job.jobId, currentDoc);
+      setActiveReviewJobRecord("word.document_review.full", currentDoc, {
+        jobId: job.jobId,
+        host: "wps",
+        taskType: "word.document_review.full",
+        startedAt: Date.now(),
+        documentSessionId: currentDoc
+      });
       renderFullDocumentReviewEntry();
       setStatus("全篇审查任务已提交。");
-      pollFullDocumentReviewJob(job.jobId);
+      pollFullDocumentReviewJob(job.jobId, currentDoc);
     }).catch(function (error) {
       var cleanup = Promise.resolve();
       if (session && session.sessionId && session.uploadToken) {
@@ -7667,16 +8028,11 @@
         ).catch(function () { return null; });
       }
       return cleanup.then(function () {
-        state.fullDocumentReviewJobId = "";
-        state.fullDocumentReviewPollErrorCount = 0;
-        state.fullDocumentReviewPreparing = false;
-        state.fullDocumentReviewCancelRequested = false;
-        clearFullDocumentReviewActiveJob();
-        setModelTaskBusy(false);
-        setDocumentReviewCancelVisible(false, false);
+        cleanupFullDocumentReviewTerminal(currentDoc);
         renderFullDocumentReviewEntry();
-        setStatus("全篇审查失败：" + describeFetchError(error));
-        setResult(describeFetchError(error));
+        var errMsg = describeFetchError(error);
+        setStatus("全篇审查失败：" + errMsg);
+        setResult(errMsg);
       });
     });
   }
@@ -7686,15 +8042,13 @@
     if (!jobId) {
       return;
     }
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
     request("/word/document-review/full/jobs/" + encodeURIComponent(jobId), null, {
       method: "DELETE",
       timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
       if (body.data && body.data.status === "cancelled") {
-        state.fullDocumentReviewJobId = "";
-        state.fullDocumentReviewPollErrorCount = 0;
-        clearFullDocumentReviewActiveJob(jobId);
-        setModelTaskBusy(false);
+        cleanupFullDocumentReviewTerminal(currentDoc, jobId);
         renderFullDocumentReviewEntry();
         setStatus("排队中的全篇审查任务已取消。");
       }
@@ -7709,16 +8063,30 @@
   }
 
   function resumeFullDocumentReviewActiveJob() {
-    var active = loadFullDocumentReviewActiveJob();
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var active = loadFullDocumentReviewActiveJob(currentDoc);
     if (!state.fullDocumentReviewEnabled || !active || !active.jobId) {
+      return false;
+    }
+    if (active.host && active.host !== "wps") {
+      return false;
+    }
+    if (active.taskType && active.taskType !== "word.document_review.full") {
+      return false;
+    }
+    if (active.documentSessionId && currentDoc && active.documentSessionId !== currentDoc) {
       return false;
     }
     state.fullDocumentReviewJobId = active.jobId;
     state.fullDocumentReviewPollErrorCount = 0;
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.document_review.full", currentDoc, active.jobId);
+    }
+    setActiveReviewJobRecord("word.document_review.full", currentDoc, active);
     setModelTaskBusy(true);
     renderFullDocumentReviewEntry();
     setStatus("正在续查未完成的全篇审查任务...");
-    pollFullDocumentReviewJob(active.jobId);
+    pollFullDocumentReviewJob(active.jobId, currentDoc);
     return true;
   }
 
@@ -7741,19 +8109,28 @@
 
   function runDocumentReview() {
     var scope;
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    var docDisplayName = (helpers.getDocumentDisplayName && getActiveDocument)
+      ? helpers.getDocumentDisplayName(getActiveDocument())
+      : (state.documentDisplayName || "Word 文档");
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", "word.document_review", currentDoc)) {
+      setStatus("当前文档已存在进行中的文档审查任务，请等待其完成。");
+      return;
+    }
     if (state.documentReviewJobId) {
       setStatus("已有文档审查任务尚未结束，请等待当前任务完成。排队任务可使用“取消排队任务”。");
       return;
     }
     scope = resolveSelectionScope(false);
-    resetSmartWritePreviewState();
-    resetDocumentReviewState();
-    clearDocumentReviewActiveJob();
     if (!scope.ok) {
       setStatus(scope.message);
       setResult(scope.message);
       return;
     }
+    resetSmartWritePreviewState();
+    resetDocumentReviewState();
+    clearDocumentReviewActiveJob(null, currentDoc);
+    setActiveResultRecord("word.document_review", currentDoc, null);
 
     setModelTaskBusy(true);
     setStatus("正在读取文档审查范围...");
@@ -7768,6 +8145,9 @@
         state.latestDocumentPayload = extractDocument(scope.selectionMode, null, DOCUMENT_REVIEW_EXTRACTION_OPTIONS);
         state.latestDocumentPayload.writingPolicyScene = getWritingPolicyScene();
         state.latestSelectionMode = state.latestDocumentPayload.selectionMode;
+        state.latestDocumentPayload.host = "wps";
+        state.latestDocumentPayload.documentSessionId = currentDoc;
+        state.latestDocumentPayload.documentDisplayName = docDisplayName;
       } catch (error) {
         setModelTaskBusy(false);
         setStatus(error.message);
@@ -7785,11 +8165,19 @@
       setDocumentReviewJobId(clientJobId);
       state.documentReviewPollStartedAt = startedAt;
       state.documentReviewPollErrorCount = 0;
-      saveDocumentReviewActiveJob({
+      if (helpers.claimTaskSlot) {
+        helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.document_review", currentDoc, clientJobId);
+      }
+      var activeRecord = {
         jobId: clientJobId,
+        host: "wps",
+        taskType: "word.document_review",
         traceId: "",
-        startedAt: startedAt
-      });
+        startedAt: startedAt,
+        documentSessionId: currentDoc
+      };
+      saveDocumentReviewActiveJob(activeRecord);
+      setActiveReviewJobRecord("word.document_review", currentDoc, activeRecord);
       request("/word/document-review/jobs", state.latestDocumentPayload, {
         timeoutMs: DOCUMENT_REVIEW_POLL_REQUEST_TIMEOUT_MS
       })
@@ -7801,8 +8189,7 @@
           }
           setTrace(body.traceId || job.traceId || jobId);
           if (!jobId) {
-            clearDocumentReviewActiveJob(clientJobId);
-            setDocumentReviewJobId("");
+            cleanupDocumentReviewTerminal(currentDoc, clientJobId);
             stopDocumentReviewWaitFeedback(stopWaiting);
             setStatus("文档审查失败：adapter 未返回后台任务编号。");
             setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
@@ -7811,21 +8198,24 @@
           setDocumentReviewJobId(jobId);
           state.documentReviewPollStartedAt = startedAt;
           state.documentReviewPollErrorCount = 0;
-          saveDocumentReviewActiveJob({
+          var updatedRecord = {
             jobId: jobId,
+            host: "wps",
+            taskType: "word.document_review",
             traceId: body.traceId || job.traceId || "",
-            startedAt: startedAt
-          });
+            startedAt: startedAt,
+            documentSessionId: currentDoc
+          };
+          saveDocumentReviewActiveJob(updatedRecord);
+          setActiveReviewJobRecord("word.document_review", currentDoc, updatedRecord);
           if (job.status === "completed") {
-            clearDocumentReviewActiveJob(jobId);
-            setDocumentReviewJobId("");
-            state.documentReviewPollStartedAt = 0;
+            cleanupDocumentReviewTerminal(currentDoc, jobId);
             stopDocumentReviewWaitFeedback(stopWaiting);
-            completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId);
+            completeDocumentReview(job.result || {}, body.traceId || job.traceId || jobId, currentDoc);
             return;
           }
           renderDocumentReviewJobProgress(job, jobId);
-          pollDocumentReviewJob(state.documentReviewJobId, stopWaiting, true);
+          pollDocumentReviewJob(state.documentReviewJobId, stopWaiting, true, currentDoc);
         })
         .catch(function (error) {
           var message;
@@ -7834,10 +8224,7 @@
             return;
           }
           if (isFatalDocumentReviewPollError(error)) {
-            clearDocumentReviewActiveJob(clientJobId);
-            setDocumentReviewJobId("");
-            state.documentReviewPollStartedAt = 0;
-            state.documentReviewPollErrorCount = 0;
+            cleanupDocumentReviewTerminal(currentDoc, clientJobId);
             stopDocumentReviewWaitFeedback(stopWaiting);
             setStatus("文档审查失败：" + message);
             setResult(message);
@@ -7850,7 +8237,7 @@
             "任务编号：" + clientJobId,
             "最近错误：" + message
           ].join("\n"));
-          pollDocumentReviewJob(clientJobId, stopWaiting, false);
+          pollDocumentReviewJob(clientJobId, stopWaiting, false, currentDoc);
         });
     }, 0);
   }
