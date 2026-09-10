@@ -1,5 +1,6 @@
 import re
 import threading
+import time
 from copy import deepcopy
 from typing import Dict, Optional, Tuple
 
@@ -44,16 +45,29 @@ class PptStructureReviewJobStore:
         self.coordinator = coordinator or get_long_task_coordinator()
         self._submission_lock = threading.Lock()
         self._active_doc_sessions: Dict[Tuple[str, str, str], str] = {}
+        self._job_identities: Dict[str, Tuple[str, str, str]] = {}
 
     def start(self, request: PptStructureReviewRequest, trace_id: str) -> Dict:
         job_id = _job_id(request.client_job_id, trace_id)
-        doc_session = str(getattr(request, "document_session_id", "") or "").strip()
+        doc_session = str(
+            getattr(request, "document_session_id", "")
+            or getattr(request, "presentation_id", "")
+            or "active-presentation"
+        ).strip()
         host = str(getattr(request, "host", "") or "wpp").strip()
         task_type = "ppt.structure_review"
+        identity = (host, task_type, doc_session)
 
         with self._submission_lock:
             existing = self.get(job_id)
             if existing is not None:
+                recorded_identity = self._job_identities.get(job_id)
+                if recorded_identity is not None and recorded_identity != identity:
+                    raise AdapterError(
+                        "PPT_STRUCTURE_REVIEW_TASK_CONFLICT",
+                        "任务编号已绑定到其他文档会话。",
+                        status_code=409,
+                    )
                 return existing
 
             # Document session active slot guard: reject duplicate concurrent task in same document session
@@ -72,6 +86,7 @@ class PptStructureReviewJobStore:
                     else:
                         self._active_doc_sessions.pop(slot_key, None)
 
+            self._job_identities[job_id] = identity
             snapshot_auth = getattr(self.reviewer, "snapshot_task_auth", None)
             task_auth = snapshot_auth() if callable(snapshot_auth) else None
             submitted = self.coordinator.submit(
@@ -93,8 +108,11 @@ class PptStructureReviewJobStore:
                     "providerTimeoutSeconds": PPT_STRUCTURE_REVIEW_TIMEOUT_SECONDS,
                 },
                 safe_failure_codes=SAFE_ERROR_CODES,
+                request_fingerprint=f"{host}::{task_type}::{doc_session}",
+                request_conflict_code="PPT_STRUCTURE_REVIEW_TASK_CONFLICT",
+                request_conflict_message="任务编号已绑定到其他文档会话。",
             )
-            if doc_session:
+            if doc_session and submitted.get("status") in {"queued", "running"}:
                 self._active_doc_sessions[(host, task_type, doc_session)] = job_id
             return submitted
 
@@ -108,6 +126,7 @@ class PptStructureReviewJobStore:
                 for key, val in list(self._active_doc_sessions.items()):
                     if val == job_id:
                         self._active_doc_sessions.pop(key, None)
+                self._job_identities.pop(job_id, None)
         return job
 
     def _run(self, snapshot: Dict, progress) -> Dict:
@@ -132,20 +151,22 @@ class PptStructureReviewJobStore:
                 model_name = auth.get("modelName") or result.get("provider") or "model"
                 job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
 
-                # Strict allowlist sanitization: exclude rawAnswer, prompt, input slides
+                high_priority_issues = result.get("highPriorityIssues") or []
+                general_suggestions = result.get("generalSuggestions") or []
+                slide_recommendations = result.get("slideRecommendations") or []
+
+                # Strict ADR-0131 sanitization: only archive summary metadata and report reference
                 archived_result = {
                     "resultType": "structure_review",
+                    "reportId": job_id,
+                    "jobId": job_id,
                     "reviewedRange": result.get("reviewedRange"),
                     "overallStoryline": result.get("overallStoryline", ""),
-                    "inferredChapters": result.get("inferredChapters") or [],
-                    "highPriorityIssues": result.get("highPriorityIssues") or [],
-                    "generalSuggestions": result.get("generalSuggestions") or [],
-                    "slideRecommendations": result.get("slideRecommendations") or [],
-                    "recommendedOutline": result.get("recommendedOutline") or [],
                     "reviewConclusion": result.get("reviewConclusion", ""),
-                    "outlineText": result.get("outlineText", ""),
-                    "plainText": result.get("plainText", ""),
-                    "pageRoles": result.get("pageRoles") or [],
+                    "highPriorityIssueCount": len(high_priority_issues),
+                    "generalSuggestionCount": len(general_suggestions),
+                    "slideRecommendationCount": len(slide_recommendations),
+                    "reportExpiresAt": float(time.time() + 7200),
                 }
 
                 get_task_history_store().record_success(

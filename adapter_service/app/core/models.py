@@ -851,14 +851,20 @@ class PptStructureReviewRequest(BaseModel):
     def coerce_structure_scene(cls, value):
         return "ppt"
 
-    @validator(
-        "client_job_id",
-        "document_session_id",
-        "document_display_name",
-        pre=True,
-        always=True,
-    )
+    @validator("client_job_id", pre=True, always=True)
     def coerce_structure_client_job_id(cls, value):
+        return _safe_str(value)
+
+    @validator("document_session_id", pre=True, always=True)
+    def coerce_structure_document_session_id(cls, value, values):
+        text = _safe_str(value)
+        if not text:
+            pres_id = _safe_str(values.get("presentation_id"))
+            return pres_id or "active-presentation"
+        return text
+
+    @validator("document_display_name", pre=True, always=True)
+    def coerce_structure_document_display_name(cls, value):
         return _safe_str(value)
 
     @validator("slides", pre=True, always=True)
@@ -880,6 +886,7 @@ class PptStructureReviewResponseData(BaseModel):
     page_roles: List[Dict[str, Any]] = Field(default_factory=list, alias="pageRoles")
     raw_answer: Optional[str] = Field(default=None, alias="rawAnswer")
     parse_fallback_reason: Optional[str] = Field(default=None, alias="parseFallbackReason")
+    history_notice: Optional[str] = Field(default=None, alias="historyNotice")
     provider: str = "mock"
 
 

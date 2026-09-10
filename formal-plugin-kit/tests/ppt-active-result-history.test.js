@@ -495,6 +495,7 @@ function testStructureReviewActiveResultBehaviorWithExistingResult() {
       state.structureResult = res;
       elements["structure-result-output"].textContent = res.reviewConclusion || "结构审查已完成";
     },
+    getActivePresentation: () => ({ Name: "演示文稿1.pptx" }),
     helpers,
     PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
     PPT_WORKFLOW_TASK_TYPE: "ppt.slide_assistant"
@@ -550,7 +551,7 @@ function testStructureReviewActiveResultBehaviorWithExistingResult() {
 }
 
 // Test 13: Structure Review Cross-Document Resume Isolation
-function testStructureReviewCrossDocumentResumeIsolation() {
+async function testStructureReviewCrossDocumentResumeIsolation() {
   let activeJobInStorage = {
     jobId: "job_struct_docA",
     documentSessionId: "doc_session_A",
@@ -574,6 +575,12 @@ function testStructureReviewCrossDocumentResumeIsolation() {
     loadStructureActiveJob: () => activeJobInStorage,
     clearStructureActiveJob: () => { activeJobInStorage = null; },
     getActivePresentation: () => activePres,
+    request: (url) => Promise.resolve({
+      success: true,
+      data: { jobId: "job_struct_docA", status: "running" }
+    }),
+    describeStructureProgress: () => ({ status: "审查中", detail: "已等待 5 秒" }),
+    setStructureJobActionVisibility: () => {},
     helpers: {
       ...helpers,
       getDocumentSessionId: (pres) => pres.Name === "DocB.pptx" ? "doc_session_B" : "doc_session_A"
@@ -581,7 +588,9 @@ function testStructureReviewCrossDocumentResumeIsolation() {
     setStatus: () => {},
     setRunDisabled: () => {},
     pollStructureReviewJob: (id) => { polledJobId = id; },
-    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review"
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
+    PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS: 5000,
+    PPT_SLIDE_POLL_INTERVAL_MS: 1000
   };
 
   const resumeStructureReviewJob = vm.runInNewContext(
@@ -590,18 +599,17 @@ function testStructureReviewCrossDocumentResumeIsolation() {
   );
 
   // Attempt 1: Current doc is DocB (session B), active job is from DocA (session A)
-  resumeStructureReviewJob();
+  await resumeStructureReviewJob();
   assert.strictEqual(polledJobId, null, "Must NOT resume structure review job belonging to different document session");
   assert.strictEqual(state.jobId, "");
 
   // Attempt 2: Switch to DocA (session A)
   activePres = { Name: "DocA.pptx" };
-  resumeStructureReviewJob();
-  assert.strictEqual(polledJobId, "job_struct_docA", "Must resume structure review job for matching document session");
-  assert.strictEqual(state.jobId, "job_struct_docA");
+  await resumeStructureReviewJob();
+  assert.strictEqual(state.jobId, "job_struct_docA", "Must resume structure review job for matching document session");
 }
 
-// Test 14: Structure Review History Rendering
+// Test 14: Structure Review History Rendering (includes jobId)
 function testStructureReviewHistoryRendering() {
   const items = [
     {
@@ -626,9 +634,280 @@ function testStructureReviewHistoryRendering() {
   assert.ok(html.includes("技术架构.pptx"), "History HTML must include document name");
   assert.ok(html.includes('data-history-id="hist_struct_1"'), "History HTML must include data-history-id");
   assert.ok(html.includes("审查") || html.includes("1–10"), "History HTML must include review info");
+  assert.ok(html.includes("任务号：job-s1"), "History HTML must include job ID in card");
 }
 
-function runAll() {
+// Test 15: Multi-Window LocalStorage Isolation
+function testStructureReviewMultiWindowLocalStorageIsolation() {
+  const localStorageMock = (function() {
+    let store = {};
+    return {
+      getItem: (k) => Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null,
+      setItem: (k, v) => { store[k] = String(v); },
+      removeItem: (k) => { delete store[k]; },
+      clear: () => { store = {}; },
+      get length() { return Object.keys(store).length; },
+      key: (i) => Object.keys(store)[i] || null,
+      _dump: () => store
+    };
+  })();
+
+  let activePres = { Name: "Doc1.pptx" };
+  const state = { documentSessionId: "doc_session_1" };
+
+  const ctx = {
+    window: { localStorage: localStorageMock },
+    state,
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: (pres) => pres && pres.Name === "Doc2.pptx" ? "doc_session_2" : "doc_session_1"
+    },
+    getActivePresentation: () => activePres,
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
+    PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY: "ai-wps:wpp:ppt.structure_review:active_job"
+  };
+
+  const getStructureActiveJobStorageKey = vm.runInNewContext(
+    `(${functionSource("getStructureActiveJobStorageKey")})`,
+    ctx
+  );
+  ctx.getStructureActiveJobStorageKey = getStructureActiveJobStorageKey;
+  const saveStructureActiveJob = vm.runInNewContext(
+    `(${functionSource("saveStructureActiveJob")})`,
+    ctx
+  );
+  ctx.saveStructureActiveJob = saveStructureActiveJob;
+  const loadStructureActiveJob = vm.runInNewContext(
+    `(${functionSource("loadStructureActiveJob")})`,
+    ctx
+  );
+  ctx.loadStructureActiveJob = loadStructureActiveJob;
+  const clearStructureActiveJob = vm.runInNewContext(
+    `(${functionSource("clearStructureActiveJob")})`,
+    ctx
+  );
+  ctx.clearStructureActiveJob = clearStructureActiveJob;
+
+  // 1. Save active job for doc 1
+  saveStructureActiveJob({ jobId: "job-doc-1", documentSessionId: "doc_session_1", startedAt: 1000 });
+  // 2. Save active job for doc 2
+  activePres = { Name: "Doc2.pptx" };
+  state.documentSessionId = "doc_session_2";
+  saveStructureActiveJob({ jobId: "job-doc-2", documentSessionId: "doc_session_2", startedAt: 2000 });
+
+  // 3. Verify storage keys are distinct
+  assert.strictEqual(
+    JSON.parse(localStorageMock.getItem("ai-wps:wpp:ppt.structure_review:doc_session_1")).jobId,
+    "job-doc-1"
+  );
+  assert.strictEqual(
+    JSON.parse(localStorageMock.getItem("ai-wps:wpp:ppt.structure_review:doc_session_2")).jobId,
+    "job-doc-2"
+  );
+
+  // 4. Loading for Doc2 returns Doc2's job
+  const job2 = loadStructureActiveJob("doc_session_2");
+  assert.strictEqual(job2.jobId, "job-doc-2");
+
+  // 5. Switching active pres back to Doc1 and loading returns Doc1's job
+  activePres = { Name: "Doc1.pptx" };
+  state.documentSessionId = "doc_session_1";
+  const job1 = loadStructureActiveJob("doc_session_1");
+  assert.strictEqual(job1.jobId, "job-doc-1");
+
+  // 6. Clearing Doc1 does NOT delete Doc2
+  clearStructureActiveJob("job-doc-1", "doc_session_1");
+  assert.strictEqual(loadStructureActiveJob("doc_session_1"), null);
+  assert.strictEqual(loadStructureActiveJob("doc_session_2").jobId, "job-doc-2");
+}
+
+// Test 16: Presentation Switching During Finish Isolation
+function testStructureReviewPresentationSwitchingDuringFinish() {
+  const elements = {
+    "structure-result-output": { textContent: "初始内容" },
+    "status-line": { textContent: "" },
+    "btn-copy-review-conclusion": { disabled: false },
+    "btn-copy-recommended-outline": { disabled: false }
+  };
+  const byId = (id) => elements[id] || { disabled: false, textContent: "" };
+
+  let activePres = { Name: "Doc2.pptx" };
+  const state = {
+    documentSessionId: "doc_session_2",
+    structureResult: null,
+    structureResultsBySession: {},
+    jobId: ""
+  };
+
+  let renderedResults = [];
+
+  const ctx = {
+    state,
+    byId,
+    clearStructureActiveJob: () => {},
+    releaseTaskSlotsForJob: () => {},
+    setStructureJobActionVisibility: () => {},
+    setRunDisabled: () => {},
+    setStatus: () => {},
+    renderStructureResult: (res) => {
+      renderedResults.push(res);
+      elements["structure-result-output"].textContent = res.reviewConclusion;
+    },
+    getActivePresentation: () => activePres,
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: (pres) => pres && pres.Name === "Doc2.pptx" ? "doc_session_2" : "doc_session_1"
+    }
+  };
+
+  const finishStructureJob = vm.runInNewContext(
+    `(${functionSource("finishStructureJob")})`,
+    ctx
+  );
+
+  // Background job for Doc1 finishes while user is on Doc2
+  finishStructureJob("job-doc-1", { reviewConclusion: "Doc1后台结果" }, "doc_session_1");
+
+  // Verify: Doc1 result stored in session cache, but foreground Doc2 UI remains untouched
+  assert.deepStrictEqual(state.structureResultsBySession["doc_session_1"], { reviewConclusion: "Doc1后台结果" });
+  assert.strictEqual(state.structureResult, null, "Foreground state.structureResult must not be overwritten");
+  assert.strictEqual(elements["structure-result-output"].textContent, "初始内容", "Foreground text must not be overwritten");
+  assert.strictEqual(renderedResults.length, 0, "Foreground renderer must not be called");
+
+  // Now switch presentation to Doc1 and finish a job for Doc1
+  activePres = { Name: "Doc1.pptx" };
+  state.documentSessionId = "doc_session_1";
+  finishStructureJob("job-doc-1-fg", { reviewConclusion: "Doc1前台结果" }, "doc_session_1");
+
+  assert.strictEqual(state.structureResult.reviewConclusion, "Doc1前台结果");
+  assert.strictEqual(elements["structure-result-output"].textContent, "Doc1前台结果");
+  assert.strictEqual(renderedResults.length, 1);
+}
+
+// Test 17: Resuming Completed Task Clears Storage Without Populating Active Results View
+async function testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean() {
+  let clearedJob = null;
+  const elements = {
+    "structure-result-output": { textContent: "默认空状态" },
+    "status-line": { textContent: "" },
+    "btn-resubmit-structure-review": { hidden: true }
+  };
+  const byId = (id) => elements[id] || { hidden: true, textContent: "" };
+
+  const state = {
+    jobId: "",
+    documentSessionId: "doc_session_1",
+    structureResult: null,
+    currentView: "home",
+    activeTaskSlots: {}
+  };
+
+  const ctx = {
+    state,
+    byId,
+    loadStructureActiveJob: () => ({ jobId: "job-completed-01", documentSessionId: "doc_session_1" }),
+    clearStructureActiveJob: (id) => { clearedJob = id; },
+    getActivePresentation: () => ({ Name: "Doc1.pptx" }),
+    request: (url) => Promise.resolve({
+      success: true,
+      data: {
+        jobId: "job-completed-01",
+        status: "completed",
+        result: { reviewConclusion: "历史旧结果，不应进活动视图" }
+      }
+    }),
+    describeStructureProgress: () => ({ status: "", detail: "" }),
+    setStructureJobActionVisibility: () => {},
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: () => "doc_session_1"
+    },
+    setStatus: () => {},
+    setRunDisabled: () => {},
+    pollStructureReviewJob: () => { assert.fail("Must not poll completed job"); },
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
+    PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS: 5000
+  };
+
+  const resumeStructureReviewJob = vm.runInNewContext(
+    `(${functionSource("resumeStructureReviewJob")})`,
+    ctx
+  );
+
+  await resumeStructureReviewJob();
+
+  // Must clear active storage
+  assert.strictEqual(clearedJob, "job-completed-01", "Storage must be cleared for completed job");
+  // Must NOT populate state.jobId
+  assert.strictEqual(state.jobId, "", "state.jobId must remain empty");
+  // Must NOT set state.structureResult
+  assert.strictEqual(state.structureResult, null, "state.structureResult must remain null");
+  // Must NOT touch structure-result-output
+  assert.strictEqual(elements["structure-result-output"].textContent, "默认空状态");
+}
+
+// Test 18: Resuming Running Task Sets Active State And Begins Polling
+async function testStructureReviewResumeRunningSetsActiveStateAndBeginsPolling() {
+  let polledJob = null;
+  const elements = {
+    "structure-result-output": { textContent: "" },
+    "status-line": { textContent: "" },
+    "btn-resubmit-structure-review": { hidden: false }
+  };
+  const byId = (id) => elements[id] || { hidden: true, textContent: "", disabled: false };
+
+  const state = {
+    jobId: "",
+    documentSessionId: "doc_session_1",
+    currentView: "home",
+    activeTaskSlots: {}
+  };
+
+  const ctx = {
+    state,
+    byId,
+    loadStructureActiveJob: () => ({ jobId: "job-running-01", documentSessionId: "doc_session_1", startedAt: 1000 }),
+    clearStructureActiveJob: () => {},
+    getActivePresentation: () => ({ Name: "Doc1.pptx" }),
+    request: (url) => Promise.resolve({
+      success: true,
+      data: {
+        jobId: "job-running-01",
+        status: "running",
+        queuePosition: 0,
+        elapsedSeconds: 5
+      }
+    }),
+    describeStructureProgress: (job, id) => ({ status: "正在审查中...", detail: "已等待 5 秒" }),
+    setStructureJobActionVisibility: () => {},
+    helpers: {
+      ...helpers,
+      getDocumentSessionId: () => "doc_session_1",
+      claimTaskSlot: helpers.claimTaskSlot
+    },
+    setStatus: (s) => { elements["status-line"].textContent = s; },
+    setRunDisabled: () => {},
+    pollStructureReviewJob: (id) => { polledJob = id; },
+    setTimeout: (fn) => fn(),
+    PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
+    PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS: 5000,
+    PPT_SLIDE_POLL_INTERVAL_MS: 0
+  };
+
+  const resumeStructureReviewJob = vm.runInNewContext(
+    `(${functionSource("resumeStructureReviewJob")})`,
+    ctx
+  );
+
+  await resumeStructureReviewJob();
+
+  assert.strictEqual(state.jobId, "job-running-01", "state.jobId must be set to running job");
+  assert.strictEqual(state.resumeExpected, true, "state.resumeExpected must be true");
+  assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wpp", "ppt.structure_review", "doc_session_1"), true, "Slot must be claimed");
+  assert.strictEqual(polledJob, "job-running-01", "Polling must be initiated");
+}
+
+async function runAll() {
   testDocumentSessionIdentification();
   testDocumentDisplayName();
   testActiveTaskSlotGuard();
@@ -640,11 +919,17 @@ function runAll() {
   testStructureReviewTaskSlotGuard();
   testStructureReviewSourceContract();
   testStructureReviewActiveResultBehaviorWithExistingResult();
-  testStructureReviewCrossDocumentResumeIsolation();
+  await testStructureReviewCrossDocumentResumeIsolation();
   testStructureReviewHistoryRendering();
-  testHistoryListEnvelopeParsing().then(() => {
-    console.log("All PPT active result and history tests passed!");
-  });
+  testStructureReviewMultiWindowLocalStorageIsolation();
+  testStructureReviewPresentationSwitchingDuringFinish();
+  await testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean();
+  await testStructureReviewResumeRunningSetsActiveStateAndBeginsPolling();
+  await testHistoryListEnvelopeParsing();
+  console.log("All PPT active result and history tests passed!");
 }
 
-runAll();
+runAll().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

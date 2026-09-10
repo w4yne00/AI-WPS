@@ -1,5 +1,6 @@
 import importlib.util
 from io import BytesIO
+import threading
 import time
 import unittest
 from unittest.mock import MagicMock, patch
@@ -144,6 +145,29 @@ class RecordingProvider:
             "parseFallbackReason": None,
             "provider": "provider-test",
         }
+
+
+class BlockingProvider(RecordingProvider):
+    def __init__(self):
+        super().__init__()
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def ppt_structure_review(
+        self,
+        request,
+        trace_id,
+        task_auth=None,
+        progress_callback=None,
+    ):
+        self.started_event.set()
+        self.release_event.wait(timeout=5)
+        return super().ppt_structure_review(
+            request,
+            trace_id,
+            task_auth=task_auth,
+            progress_callback=progress_callback,
+        )
 
 
 class UnconfiguredProvider:
@@ -895,7 +919,7 @@ class PptStructureReviewApiTests(unittest.TestCase):
             ppt_api.ppt_structure_review_jobs = original
 
     def test_api_returns_409_when_document_session_is_busy(self):
-        provider = RecordingProvider()
+        provider = BlockingProvider()
         reviewer = PptStructureReviewer(provider_client=provider)
         jobs = PptStructureReviewJobStore(
             reviewer=reviewer,
@@ -913,6 +937,7 @@ class PptStructureReviewApiTests(unittest.TestCase):
                 ),
             )
             self.assertEqual(started.status_code, 200)
+            self.assertTrue(provider.started_event.wait(timeout=5))
 
             duplicate = client.post(
                 "/ppt/structure-review/jobs",
@@ -927,6 +952,7 @@ class PptStructureReviewApiTests(unittest.TestCase):
                 "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY",
             )
         finally:
+            provider.release_event.set()
             ppt_api.ppt_structure_review_jobs = original
 
 
@@ -951,7 +977,7 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
         self.assertEqual(req_default.document_display_name, "")
 
     def test_job_store_guards_document_session_slots_and_rejects_busy_duplicate(self):
-        provider = RecordingProvider()
+        provider = BlockingProvider()
         reviewer = PptStructureReviewer(provider_client=provider)
         coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
         jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
@@ -964,18 +990,22 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
         )
         submitted1 = jobs.start(req1, "trace-1")
         self.assertEqual(submitted1["jobId"], "client-job-1")
+        self.assertTrue(provider.started_event.wait(timeout=5))
 
-        # Duplicate submission with same docSession while first job is running/queued
-        req2 = parse_request(
-            request_payload(
-                client_job_id="client-job-2",
-                document_session_id="doc-session-busy",
+        try:
+            # Duplicate submission with same docSession while first job is running/queued
+            req2 = parse_request(
+                request_payload(
+                    client_job_id="client-job-2",
+                    document_session_id="doc-session-busy",
+                )
             )
-        )
-        with self.assertRaises(AdapterError) as ctx:
-            jobs.start(req2, "trace-2")
-        self.assertEqual(ctx.exception.code, "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY")
-        self.assertEqual(ctx.exception.status_code, 409)
+            with self.assertRaises(AdapterError) as ctx:
+                jobs.start(req2, "trace-2")
+            self.assertEqual(ctx.exception.code, "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY")
+            self.assertEqual(ctx.exception.status_code, 409)
+        finally:
+            provider.release_event.set()
 
     def test_job_store_allows_concurrent_jobs_across_different_document_sessions(self):
         provider = RecordingProvider()
@@ -1000,6 +1030,67 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
         sub2 = jobs.start(req2, "trace-2")
         self.assertEqual(sub1["jobId"], "client-job-session1")
         self.assertEqual(sub2["jobId"], "client-job-session2")
+
+    def test_job_store_rejects_same_client_job_id_across_different_document_sessions(self):
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        req1 = parse_request(
+            request_payload(
+                client_job_id="client-job-fixed-identity",
+                document_session_id="doc-session-A",
+            )
+        )
+        jobs.start(req1, "trace-1")
+        for _ in range(50):
+            job = jobs.get("client-job-fixed-identity")
+            if job and job.get("status") in {"completed", "failed"}:
+                break
+            time.sleep(0.02)
+
+        req2 = parse_request(
+            request_payload(
+                client_job_id="client-job-fixed-identity",
+                document_session_id="doc-session-B",
+            )
+        )
+        with self.assertRaises(AdapterError) as ctx:
+            jobs.start(req2, "trace-2")
+        self.assertEqual(ctx.exception.code, "PPT_STRUCTURE_REVIEW_TASK_CONFLICT")
+        self.assertEqual(ctx.exception.status_code, 409)
+
+    def test_job_store_guards_omitted_document_session_id_with_presentation_fallback(self):
+        provider = BlockingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        req1 = parse_request(
+            request_payload(
+                client_job_id="client-job-fb-1",
+                document_session_id="",
+            )
+        )
+        self.assertEqual(req1.document_session_id, "项目汇报.pptx")
+        jobs.start(req1, "trace-1")
+        self.assertTrue(provider.started_event.wait(timeout=5))
+
+        try:
+            req2 = parse_request(
+                request_payload(
+                    client_job_id="client-job-fb-2",
+                    document_session_id="",
+                )
+            )
+            self.assertEqual(req2.document_session_id, "项目汇报.pptx")
+            with self.assertRaises(AdapterError) as ctx:
+                jobs.start(req2, "trace-2")
+            self.assertEqual(ctx.exception.code, "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY")
+            self.assertEqual(ctx.exception.status_code, 409)
+        finally:
+            provider.release_event.set()
 
     def test_job_store_releases_slot_on_cancel(self):
         provider = RecordingProvider()
@@ -1080,11 +1171,16 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
             self.assertEqual(entry["document_display_name"], "我的汇报.pptx")
             res = entry["result"]
             self.assertIn("reviewConclusion", res)
-            self.assertIn("plainText", res)
-            self.assertIn("highPriorityIssues", res)
-            self.assertIn("generalSuggestions", res)
+            self.assertIn("overallStoryline", res)
             self.assertIn("reviewedRange", res)
-            self.assertIn("pageRoles", res)
+            self.assertIn("reportId", res)
+            self.assertIn("reportExpiresAt", res)
+            self.assertIn("highPriorityIssueCount", res)
+            self.assertNotIn("plainText", res)
+            self.assertNotIn("highPriorityIssues", res)
+            self.assertNotIn("generalSuggestions", res)
+            self.assertNotIn("slideRecommendations", res)
+            self.assertNotIn("pageRoles", res)
             self.assertNotIn("rawAnswer", res)
             self.assertNotIn("slides", res)
 
@@ -1150,6 +1246,52 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
 
             self.assertEqual(job.get("status"), "failed")
             self.assertEqual(len(recorded), 0)
+
+    def test_get_job_preserves_history_notice_in_api_response(self):
+        if not HAS_FASTAPI:
+            self.skipTest("fastapi is required")
+        provider = RecordingProvider()
+        reviewer = PptStructureReviewer(provider_client=provider)
+        coordinator = LongTaskCoordinator(max_running=2, max_queued=4)
+        jobs = PptStructureReviewJobStore(reviewer=reviewer, coordinator=coordinator)
+
+        class OversizeHistoryStore:
+            def record_success(self, **kwargs):
+                raise TaskHistoryError("HISTORY_ENTRY_TOO_LARGE", "Entry too large")
+
+        with patch(
+            "app.services.ppt.structure_review_jobs.get_task_history_store",
+            return_value=OversizeHistoryStore(),
+        ):
+            original = ppt_api.ppt_structure_review_jobs
+            ppt_api.ppt_structure_review_jobs = jobs
+            try:
+                client = TestClient(app_main.app)
+                started = client.post(
+                    "/ppt/structure-review/jobs",
+                    json=request_payload(
+                        client_job_id="client-job-notice-api",
+                        document_session_id="session-notice",
+                    ),
+                )
+                self.assertEqual(started.status_code, 200)
+
+                for _ in range(50):
+                    res = client.get("/ppt/structure-review/jobs/client-job-notice-api")
+                    self.assertEqual(res.status_code, 200)
+                    body = res.json()["data"]
+                    if body.get("status") in {"completed", "failed"}:
+                        break
+                    time.sleep(0.02)
+
+                self.assertEqual(body.get("status"), "completed")
+                result_data = body.get("result", {})
+                self.assertEqual(
+                    result_data.get("historyNotice"),
+                    "任务结果超过 5 MiB，未写入历史记录。",
+                )
+            finally:
+                ppt_api.ppt_structure_review_jobs = original
 
 
 if __name__ == "__main__":

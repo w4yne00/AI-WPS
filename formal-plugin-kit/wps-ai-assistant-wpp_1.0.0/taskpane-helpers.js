@@ -1901,11 +1901,16 @@
       var title = escapeHtml(titleText || defaultTitle);
       var conclusion = escapeHtml(result.overallStoryline || result.reviewConclusion || result.conclusion || result.documentSummary || "");
 
+      var jobId = escapeHtml(item.jobId || item.id || "");
+
       html += '<div class="ppt-history-card" data-history-id="' + id + '">';
       html += '  <div class="ppt-history-card-header">';
       html += '    <span class="ppt-history-doc-name">' + docName + '</span>';
       html += '    <span class="ppt-history-time">' + timeStr + '</span>';
       html += '  </div>';
+      if (jobId) {
+        html += '  <div class="ppt-history-card-meta"><span class="ppt-history-job-id">任务号：' + jobId + '</span></div>';
+      }
       html += '  <div class="ppt-history-card-title">' + title + '</div>';
       if (conclusion) {
         html += '  <div class="ppt-history-card-snippet">' + conclusion + '</div>';
