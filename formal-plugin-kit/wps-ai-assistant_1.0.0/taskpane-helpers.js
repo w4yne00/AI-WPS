@@ -5997,8 +5997,25 @@
       var docName = escapeHtml(item.documentDisplayName || "未命名文档");
       var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
       var result = item.result || {};
-      var text = escapeHtml(result.rewrittenText || result.plainText || "");
-      var taskLabel = item.taskType === "word.smart_imitation" ? "智能仿写" : "智能编写";
+      var isReview = item.taskType === "word.document_review";
+      var isFullReview = isReview && (result.reportType === "full_document_review");
+      var taskLabel;
+      if (isFullReview) {
+        taskLabel = "全篇审查";
+      } else if (isReview) {
+        taskLabel = "文档审查";
+      } else if (item.taskType === "word.smart_imitation") {
+        taskLabel = "智能仿写";
+      } else {
+        taskLabel = "智能编写";
+      }
+
+      var text = "";
+      if (isReview) {
+        text = escapeHtml(result.summary || (result.issueCount !== undefined ? ("审查发现 " + result.issueCount + " 项问题") : ""));
+      } else {
+        text = escapeHtml(result.rewrittenText || result.plainText || "");
+      }
 
       html += '<div class="word-history-card" data-history-id="' + id + '">';
       html += '  <div class="word-history-card-header">';
@@ -6011,7 +6028,9 @@
       }
       html += '  <div class="word-history-card-actions">';
       html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-view" data-history-id="' + id + '">查看</button>';
-      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      if (!isFullReview) {
+        html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      }
       html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-delete" data-history-id="' + id + '">删除</button>';
       html += '  </div>';
       html += '</div>';

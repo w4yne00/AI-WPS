@@ -25,6 +25,7 @@ from app.services.long_task_coordinator import (
 )
 from app.services.model_configurations import ACCESS_DIRECT_MODEL
 from app.services.provider_client import ProviderClient
+from app.services.task_history import get_task_history_store
 
 
 TASK_TYPE = "word.document_review.full"
@@ -1994,6 +1995,7 @@ class FullDocumentReviewService:
                     state.get("aggregateResult"),
                 )
                 self._save_report(job_id, report)
+                self._record_history_on_report_saved(job_id, snapshot, report)
                 return report
 
             chunk = state["pendingChunks"].pop(0)
@@ -2067,6 +2069,7 @@ class FullDocumentReviewService:
                 state.get("aggregateResult"),
             )
             self._save_report(job_id, report)
+            self._record_history_on_report_saved(job_id, snapshot, report)
             return report
         except AdapterError as exc:
             if snapshot.get("_persistentJob") and self._is_recoverable_failure(exc):
@@ -3296,6 +3299,42 @@ class FullDocumentReviewService:
             self._reports[job_id] = stored
         self._ensure_root()
         self._write_private_json(self._report_path(job_id), stored)
+
+    def _record_history_on_report_saved(self, job_id: str, snapshot: Dict, report: Dict) -> None:
+        try:
+            doc_name = str(
+                snapshot.get("documentDisplayName")
+                or snapshot.get("documentId")
+                or ""
+            )
+            service_name = str(snapshot.get("serviceName") or "")
+            model_name = str(snapshot.get("modelName") or "")
+
+            archived_result = {
+                "reportType": "full_document_review",
+                "reportId": job_id,
+                "jobId": job_id,
+                "summary": str(report.get("summary") or ""),
+                "issueCount": int(report.get("issueCount", 0) or 0),
+                "categoryCounts": deepcopy(report.get("categoryCounts") or {}),
+                "severityCounts": deepcopy(report.get("severityCounts") or {}),
+                "statusCounts": deepcopy(report.get("statusCounts") or {}),
+                "coverage": deepcopy(report.get("coverage") or {}),
+                "enumerationStatus": str(report.get("enumerationStatus") or ""),
+                "reportExpiresAt": report.get("reportExpiresAt"),
+                "reviewCharacterCount": int(snapshot.get("reviewCharacterCount", 0) or 0),
+            }
+
+            get_task_history_store().record_success(
+                task_type="word.document_review",
+                job_id=job_id,
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except Exception:
+            pass
 
     def _get_report(self, job_id: str) -> Optional[Dict]:
         with self._lock:
