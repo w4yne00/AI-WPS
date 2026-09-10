@@ -7775,15 +7775,15 @@
     });
   }
 
-  function loadDeterministicFormatReviewReport(jobId) {
+  function loadDeterministicFormatReviewReport(jobId, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     return request("/word/format-review/jobs/" + encodeURIComponent(jobId) + "/report?format=summary", null, {
       timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
     }).then(function (body) {
       var report = body.data || {};
       state.deterministicFormatReviewIssueCursorHistory = [""];
-      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
       if (!state.viewingHistoryReport) {
-        setActiveResultRecord("word.format_review", currentDoc, {
+        setActiveResultRecord("word.format_review", targetDocSession, {
           result: {
             reportType: "format_review",
             report: report,
@@ -7793,10 +7793,14 @@
           jobId: jobId,
           traceId: body.traceId || jobId,
           taskType: "word.format_review",
-          documentSessionId: currentDoc
+          documentSessionId: targetDocSession
         });
       }
-      return loadDeterministicFormatReviewIssuePage(jobId, report, "");
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      if (!currentDoc || !targetDocSession || currentDoc === targetDocSession) {
+        return loadDeterministicFormatReviewIssuePage(jobId, report, "");
+      }
+      return Promise.resolve();
     });
   }
 
@@ -8512,14 +8516,17 @@
     disclosure.hidden = false;
   }
 
-  function expireDeterministicFormatReviewJob(jobId, message) {
+  function expireDeterministicFormatReviewJob(jobId, message, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
-    cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
-    clearDeterministicFormatReviewPresentation();
-    setModelTaskBusy(false);
-    setDocumentReviewCancelVisible(false, false);
-    setStatus(message || "格式审查任务已失效，请重新审查。");
-    setPlainResult("本次格式审查任务已失效，旧结果不会复用。请重新点击“开始格式审查”。");
+    cleanupDeterministicFormatReviewTerminal(targetDocSession, jobId);
+    if (!currentDoc || !targetDocSession || currentDoc === targetDocSession) {
+      clearDeterministicFormatReviewPresentation();
+      setModelTaskBusy(false);
+      setDocumentReviewCancelVisible(false, false);
+      setStatus(message || "格式审查任务已失效，请重新审查。");
+      setPlainResult("本次格式审查任务已失效，旧结果不会复用。请重新点击“开始格式审查”。");
+    }
   }
 
   function resumeDeterministicFormatReviewActiveJob() {
@@ -8568,7 +8575,7 @@
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
-        clearDeterministicFormatReviewActiveJob(jobId);
+        clearDeterministicFormatReviewActiveJob(jobId, currentDoc);
         cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
         return;
       }
@@ -8579,13 +8586,13 @@
       setDocumentReviewCancelVisible(true, false);
       setStatus("正在恢复格式审查后台任务...");
       setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
-      pollDeterministicFormatReviewJob(jobId);
+      pollDeterministicFormatReviewJob(jobId, currentDoc);
     }).catch(function (error) {
       if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {
         return;
       }
       if (error && error.adapterCode === "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND") {
-        clearDeterministicFormatReviewActiveJob(jobId);
+        clearDeterministicFormatReviewActiveJob(jobId, currentDoc);
         cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
         return;
       }
@@ -8596,12 +8603,16 @@
       setDocumentReviewCancelVisible(true, false);
       setStatus("正在恢复格式审查后台任务...");
       setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
-      pollDeterministicFormatReviewJob(jobId);
+      pollDeterministicFormatReviewJob(jobId, currentDoc);
     });
     return true;
   }
 
-  function pollDeterministicFormatReviewJob(jobId) {
+  function pollDeterministicFormatReviewJob(jobId, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+    if (!jobId || state.deterministicFormatReviewJobId !== jobId) {
+      return;
+    }
     request("/word/format-review/jobs/" + encodeURIComponent(jobId), null, {
       timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
     }).then(function (body) {
@@ -8610,37 +8621,46 @@
         return;
       }
       var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var isMatchingDoc = Boolean(!currentDoc || !targetDocSession || currentDoc === targetDocSession);
       setTrace(body.traceId || job.traceId || jobId);
       if (job.status === "completed") {
-        cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
-        loadDeterministicFormatReviewReport(jobId).then(function () {
-          setModelTaskBusy(false);
-          setDocumentReviewCancelVisible(false, false);
-          setStatus("确定性格式审查完成，结构化报告已生成。");
+        cleanupDeterministicFormatReviewTerminal(targetDocSession, jobId);
+        loadDeterministicFormatReviewReport(jobId, targetDocSession).then(function () {
+          if (isMatchingDoc && state.currentMode === "formatReview") {
+            setModelTaskBusy(false);
+            setDocumentReviewCancelVisible(false, false);
+            setStatus("确定性格式审查完成，结构化报告已生成。");
+          }
         }).catch(function (error) {
-          clearDeterministicFormatReviewPresentation();
-          setModelTaskBusy(false);
-          setDocumentReviewCancelVisible(false, false);
-          setStatus("确定性格式审查完成，但报告读取失败：" + describeFetchError(error));
-          setPlainResult("本次格式审查已完成，但中文报告未能读取；旧结果不会复用，请重新审查。");
+          if (isMatchingDoc && state.currentMode === "formatReview") {
+            clearDeterministicFormatReviewPresentation();
+            setModelTaskBusy(false);
+            setDocumentReviewCancelVisible(false, false);
+            setStatus("确定性格式审查完成，但报告读取失败：" + describeFetchError(error));
+            setPlainResult("本次格式审查已完成，但中文报告未能读取；旧结果不会复用，请重新审查。");
+          }
         });
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
-        cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
-        clearDeterministicFormatReviewPresentation();
-        setModelTaskBusy(false);
-        setDocumentReviewCancelVisible(false, false);
-        setStatus("确定性格式审查" + (job.status === "cancelled" ? "已取消。" : "失败。"));
-        setPlainResult(job.status === "cancelled"
-          ? "本次格式审查已取消，旧结果不会复用。"
-          : "本次格式审查后台任务失败，旧结果不会复用，请重新审查。");
+        cleanupDeterministicFormatReviewTerminal(targetDocSession, jobId);
+        if (isMatchingDoc && state.currentMode === "formatReview") {
+          clearDeterministicFormatReviewPresentation();
+          setModelTaskBusy(false);
+          setDocumentReviewCancelVisible(false, false);
+          setStatus("确定性格式审查" + (job.status === "cancelled" ? "已取消。" : "失败。"));
+          setPlainResult(job.status === "cancelled"
+            ? "本次格式审查已取消，旧结果不会复用。"
+            : "本次格式审查后台任务失败，旧结果不会复用，请重新审查。");
+        }
         return;
       }
-      setStatus(job.runningMessage || "正在执行确定性格式审查...");
-      setPlainResult("确定性格式审查任务已提交，正在按本地规则生成结构化结果。\n任务编号：" + jobId);
+      if (isMatchingDoc && state.currentMode === "formatReview") {
+        setStatus(job.runningMessage || "正在执行确定性格式审查...");
+        setPlainResult("确定性格式审查任务已提交，正在按本地规则生成结构化结果。\n任务编号：" + jobId);
+      }
       setTimeout(function () {
-        pollDeterministicFormatReviewJob(jobId);
+        pollDeterministicFormatReviewJob(jobId, targetDocSession);
       }, DETERMINISTIC_FORMAT_REVIEW_POLL_INTERVAL_MS);
     }).catch(function (error) {
       if (state.deterministicFormatReviewJobId !== jobId) {
@@ -8648,7 +8668,7 @@
       }
       state.deterministicFormatReviewPollErrorCount += 1;
       if (error && error.adapterCode === "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND") {
-        expireDeterministicFormatReviewJob(jobId, "格式审查后台任务不存在或已过期，请重新审查。");
+        expireDeterministicFormatReviewJob(jobId, "格式审查后台任务不存在或已过期，请重新审查。", targetDocSession);
         return;
       }
       if (!state.deterministicFormatReviewPollStartedAt) {
@@ -8656,15 +8676,19 @@
       }
       if (state.deterministicFormatReviewPollErrorCount >= DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_ERRORS ||
           Date.now() - state.deterministicFormatReviewPollStartedAt >= DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS) {
-        expireDeterministicFormatReviewJob(jobId, "格式审查任务状态查询超时，请重新审查。");
+        expireDeterministicFormatReviewJob(jobId, "格式审查任务状态查询超时，请重新审查。", targetDocSession);
         return;
       }
-      saveDeterministicFormatReviewActiveJob(jobId, state.deterministicFormatReviewPollStartedAt);
-      setDocumentReviewCancelVisible(true, false);
-      setStatus("暂时无法读取格式审查任务状态，正在自动恢复（第 " +
-        state.deterministicFormatReviewPollErrorCount + " 次）...");
+      saveDeterministicFormatReviewActiveJob(jobId, state.deterministicFormatReviewPollStartedAt, targetDocSession);
+      var currentDocOnCatch = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var isMatchingDocOnCatch = Boolean(!currentDocOnCatch || !targetDocSession || currentDocOnCatch === targetDocSession);
+      if (isMatchingDocOnCatch && state.currentMode === "formatReview") {
+        setDocumentReviewCancelVisible(true, false);
+        setStatus("暂时无法读取格式审查任务状态，正在自动恢复（第 " +
+          state.deterministicFormatReviewPollErrorCount + " 次）...");
+      }
       setTimeout(function () {
-        pollDeterministicFormatReviewJob(jobId);
+        pollDeterministicFormatReviewJob(jobId, targetDocSession);
       }, DETERMINISTIC_FORMAT_REVIEW_POLL_RETRY_DELAY_MS);
     });
   }
@@ -9194,7 +9218,7 @@
         }
         state.deterministicFormatReviewPollErrorCount = 0;
         setDocumentReviewCancelVisible(true, false);
-        pollDeterministicFormatReviewJob(jobId);
+        pollDeterministicFormatReviewJob(jobId, currentDoc);
       }).catch(function (error) {
         cleanupDeterministicFormatReviewTerminal(currentDoc, state.deterministicFormatReviewJobId);
         discardDeterministicFormatReviewSnapshot();
@@ -9203,6 +9227,7 @@
         setDocumentReviewCancelVisible(false, false);
         setStatus("确定性格式审查失败：" + describeFetchError(error));
         setResult(describeFetchError(error));
+      });
     }, 0);
   }
 

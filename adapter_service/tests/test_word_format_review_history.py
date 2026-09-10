@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import time
 import types
 import unittest
@@ -101,6 +102,76 @@ class MockFormatReviewer:
         }
 
 
+class BlockingFormatReviewer:
+    def __init__(self) -> None:
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+        self.snapshot_calls = 0
+
+    def snapshot_task_auth(self):
+        self.snapshot_calls += 1
+        return {
+            "serviceName": "格式审查模型服务",
+            "modelName": "format-review-model-v1",
+            "accessMethod": "direct_model",
+            "modelConfigurationId": "cfg-format-1",
+            "modelConfigurationName": "格式审查配置",
+        }
+
+    def review(self, request, trace_id="", task_auth=None, progress_callback=None, **kwargs):
+        if progress_callback:
+            progress_callback("inspecting")
+        self.started_event.set()
+        self.release_event.wait(timeout=5)
+        return {
+            "summary": {
+                "scope": getattr(request, "selection_mode", "document"),
+                "templateId": "technical-document-template-rules",
+                "provider": "local",
+                "semanticStatus": "not_needed",
+                "executionStatus": "completed",
+                "complianceStatus": "violations_found",
+                "coverageStatus": "complete",
+            },
+            "issues": [],
+        }
+
+
+class ContinuationFormatReviewer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def snapshot_task_auth(self):
+        return {
+            "serviceName": "格式审查模型服务",
+            "modelName": "format-review-model-v1",
+            "accessMethod": "direct_model",
+            "modelConfigurationId": "cfg-format-1",
+            "modelConfigurationName": "格式审查配置",
+        }
+
+    def review(self, request, trace_id="", task_auth=None, progress_callback=None, semantic_state=None, **kwargs):
+        self.calls += 1
+        if self.calls == 1:
+            return {
+                "_semanticComplete": False,
+                "_semanticState": {"step": 1},
+            }
+        return {
+            "_semanticComplete": True,
+            "summary": {
+                "scope": getattr(request, "selection_mode", "document"),
+                "templateId": "technical-document-template-rules",
+                "provider": "local",
+                "semanticStatus": "completed",
+                "executionStatus": "completed",
+                "complianceStatus": "compliant",
+                "coverageStatus": "complete",
+            },
+            "issues": [],
+        }
+
+
 class WordFormatReviewHistoryTests(unittest.TestCase):
     def setUp(self) -> None:
         os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = "1"
@@ -109,6 +180,11 @@ class WordFormatReviewHistoryTests(unittest.TestCase):
         self.history_dir = self.temp_path / "history"
         self.staging_dir = self.temp_path / "staging"
         self.history_store = TaskHistoryStore(base_dir=self.history_dir)
+        self.history_patch = patch(
+            "app.services.word.deterministic_format_review.get_task_history_store",
+            return_value=self.history_store,
+        )
+        self.history_patch.start()
         self.coordinator = LongTaskCoordinator(max_running=4, max_queued=8)
         self.reviewer = MockFormatReviewer()
         self.service = DeterministicFormatReviewService(
@@ -118,7 +194,11 @@ class WordFormatReviewHistoryTests(unittest.TestCase):
         )
 
     def tearDown(self) -> None:
-        self.temp_dir.cleanup()
+        self.history_patch.stop()
+        try:
+            self.temp_dir.cleanup()
+        except Exception:
+            pass
 
     def _create_and_commit_snapshot(
         self,
@@ -291,43 +371,365 @@ class WordFormatReviewHistoryTests(unittest.TestCase):
         self.assertEqual(cm.exception.status_code, 409)
         self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_TASK_CONFLICT")
 
-    def test_format_review_slot_released_on_cancel(self) -> None:
-        self.service.reviewer = MockFormatReviewer(delay=0.5)
+    def test_format_review_slot_released_on_cancel_queued(self) -> None:
+        # Occupy running slots with dummy jobs so next format review task is queued
+        dummy_events = [threading.Event() for _ in range(self.coordinator.max_running)]
+        for i, ev in enumerate(dummy_events):
+            self.coordinator.submit(
+                job_id=f"dummy-running-job-{i}",
+                trace_id=f"trace-dummy-{i}",
+                task_type="other",
+                runner=lambda snap, prog, e=ev: e.wait(timeout=5),
+                snapshot={},
+                failure_code="DUMMY_FAILED",
+                failure_message="dummy failure",
+            )
 
         committed = self._create_and_commit_snapshot(
-            doc_id="doc-cancel.docx", doc_session_id="session-cancel"
+            doc_id="doc-cancel-q.docx", doc_session_id="session-cancel-q"
         )
         job = self.service.start_job(
             {
                 "snapshotId": committed["snapshotId"],
                 "snapshotToken": committed["snapshotToken"],
-                "clientJobId": "client-job-cancel-1",
-                "documentSessionId": "session-cancel",
+                "clientJobId": "client-job-cancel-q1",
+                "documentSessionId": "session-cancel-q",
                 "documentDisplayName": "取消测试.docx",
                 "host": "wps",
             },
-            "trace-cancel",
+            "trace-cancel-q",
         )
-        self.assertEqual(job["status"], "running")
+        self.assertEqual(job["status"], "queued")
 
         cancel_result = self.service.cancel_job(job["jobId"])
         self.assertIsNotNone(cancel_result)
+        self.assertEqual(cancel_result["status"], "cancelled")
 
+        # After queued cancellation, the slot is immediately released
         committed2 = self._create_and_commit_snapshot(
-            doc_id="doc-cancel.docx", doc_session_id="session-cancel"
+            doc_id="doc-cancel-q.docx", doc_session_id="session-cancel-q"
         )
         job2 = self.service.start_job(
             {
                 "snapshotId": committed2["snapshotId"],
                 "snapshotToken": committed2["snapshotToken"],
-                "clientJobId": "client-job-cancel-2",
-                "documentSessionId": "session-cancel",
+                "clientJobId": "client-job-cancel-q2",
+                "documentSessionId": "session-cancel-q",
                 "documentDisplayName": "取消测试.docx",
                 "host": "wps",
             },
-            "trace-cancel-2",
+            "trace-cancel-q2",
+        )
+        self.assertEqual(job2["status"], "queued")
+        for ev in dummy_events:
+            ev.set()
+
+    def test_format_review_running_cancel_retains_slot_until_runner_exits(self) -> None:
+        reviewer = BlockingFormatReviewer()
+        self.service.reviewer = reviewer
+
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-cancel-run.docx", doc_session_id="session-cancel-run"
+        )
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "client-job-cancel-run1",
+                "documentSessionId": "session-cancel-run",
+                "documentDisplayName": "运行中取消.docx",
+                "host": "wps",
+            },
+            "trace-cancel-run",
+        )
+        self.assertTrue(reviewer.started_event.wait(timeout=5))
+
+        try:
+            # Request cancel while runner is executing
+            cancel_result = self.service.cancel_job(job["jobId"])
+            self.assertIsNotNone(cancel_result)
+            self.assertEqual(cancel_result["status"], "running")
+
+            # Slot MUST still be occupied while runner is running
+            committed2 = self._create_and_commit_snapshot(
+                doc_id="doc-cancel-run.docx", doc_session_id="session-cancel-run"
+            )
+            with self.assertRaises(AdapterError) as cm:
+                self.service.start_job(
+                    {
+                        "snapshotId": committed2["snapshotId"],
+                        "snapshotToken": committed2["snapshotToken"],
+                        "clientJobId": "client-job-cancel-run2",
+                        "documentSessionId": "session-cancel-run",
+                        "documentDisplayName": "运行中取消2.docx",
+                        "host": "wps",
+                    },
+                    "trace-cancel-run-2",
+                )
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY")
+        finally:
+            reviewer.release_event.set()
+
+        # Wait for runner to exit
+        for _ in range(50):
+            cur = self.service.get_job(job["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+        # Now slot must be released, allowing new submission
+        committed3 = self._create_and_commit_snapshot(
+            doc_id="doc-cancel-run.docx", doc_session_id="session-cancel-run"
+        )
+        job3 = self.service.start_job(
+            {
+                "snapshotId": committed3["snapshotId"],
+                "snapshotToken": committed3["snapshotToken"],
+                "clientJobId": "client-job-cancel-run3",
+                "documentSessionId": "session-cancel-run",
+                "documentDisplayName": "运行中取消3.docx",
+                "host": "wps",
+            },
+            "trace-cancel-run-3",
+        )
+        self.assertIn(job3["status"], {"queued", "running", "completed"})
+        for _ in range(50):
+            cur = self.service.get_job(job3["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+    def test_format_review_snapshot_session_binding_missing_in_request(self) -> None:
+        reviewer = BlockingFormatReviewer()
+        self.service.reviewer = reviewer
+
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-bound.docx", doc_session_id="session-bound-1"
+        )
+        # Omit documentSessionId in request payload
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "client-job-missing-sess",
+                "documentDisplayName": "缺失会话.docx",
+            },
+            "trace-missing",
+        )
+        self.assertTrue(reviewer.started_event.wait(timeout=5))
+
+        try:
+            # Another task with same session-bound-1 should be blocked by busy slot
+            committed2 = self._create_and_commit_snapshot(
+                doc_id="doc-bound.docx", doc_session_id="session-bound-1"
+            )
+            with self.assertRaises(AdapterError) as cm:
+                self.service.start_job(
+                    {
+                        "snapshotId": committed2["snapshotId"],
+                        "snapshotToken": committed2["snapshotToken"],
+                        "clientJobId": "client-job-dup-sess",
+                        "documentSessionId": "session-bound-1",
+                    },
+                    "trace-dup",
+                )
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY")
+        finally:
+            reviewer.release_event.set()
+        for _ in range(50):
+            cur = self.service.get_job(job["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+    def test_format_review_snapshot_session_binding_empty_in_request(self) -> None:
+        reviewer = BlockingFormatReviewer()
+        self.service.reviewer = reviewer
+
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-empty.docx", doc_session_id="session-empty-bound"
+        )
+        # Empty string documentSessionId in request payload
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "client-job-empty-sess",
+                "documentSessionId": "",
+                "documentDisplayName": "空会话.docx",
+            },
+            "trace-empty",
+        )
+        self.assertTrue(reviewer.started_event.wait(timeout=5))
+
+        try:
+            committed2 = self._create_and_commit_snapshot(
+                doc_id="doc-empty.docx", doc_session_id="session-empty-bound"
+            )
+            with self.assertRaises(AdapterError) as cm:
+                self.service.start_job(
+                    {
+                        "snapshotId": committed2["snapshotId"],
+                        "snapshotToken": committed2["snapshotToken"],
+                        "clientJobId": "client-job-dup-empty",
+                        "documentSessionId": "session-empty-bound",
+                    },
+                    "trace-dup-empty",
+                )
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY")
+        finally:
+            reviewer.release_event.set()
+        for _ in range(50):
+            cur = self.service.get_job(job["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+    def test_format_review_snapshot_session_binding_matching_in_request(self) -> None:
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-match.docx", doc_session_id="session-match"
+        )
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "client-job-match",
+                "documentSessionId": "session-match",
+                "host": "wps",
+            },
+            "trace-match",
+        )
+        self.assertIn(job["status"], {"queued", "running", "completed"})
+
+    def test_format_review_snapshot_session_binding_conflict_in_request(self) -> None:
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-conflict.docx", doc_session_id="session-original"
+        )
+        with self.assertRaises(AdapterError) as cm:
+            self.service.start_job(
+                {
+                    "snapshotId": committed["snapshotId"],
+                    "snapshotToken": committed["snapshotToken"],
+                    "clientJobId": "client-job-conflict",
+                    "documentSessionId": "session-tampered",
+                },
+                "trace-conflict",
+            )
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_TASK_CONFLICT")
+
+    def test_format_review_snapshot_host_conflict_in_request(self) -> None:
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-host-conflict.docx", doc_session_id="session-host-test"
+        )
+        with self.assertRaises(AdapterError) as cm:
+            self.service.start_job(
+                {
+                    "snapshotId": committed["snapshotId"],
+                    "snapshotToken": committed["snapshotToken"],
+                    "clientJobId": "client-job-host-conflict",
+                    "host": "word",
+                },
+                "trace-host-conflict",
+            )
+        self.assertEqual(cm.exception.status_code, 409)
+        self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_TASK_CONFLICT")
+
+    def test_format_review_empty_snapshot_session_defaults_to_document_id(self) -> None:
+        reviewer = BlockingFormatReviewer()
+        self.service.reviewer = reviewer
+
+        # Snapshot created with empty documentSessionId
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-fallback.docx", doc_session_id=""
+        )
+
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "client-job-fb-slot",
+            },
+            "trace-fb",
+        )
+        self.assertTrue(reviewer.started_event.wait(timeout=5))
+
+        try:
+            # Second job submitted with documentId as documentSessionId should hit 409 BUSY
+            committed2 = self._create_and_commit_snapshot(
+                doc_id="doc-fallback.docx", doc_session_id="doc-fallback.docx"
+            )
+            with self.assertRaises(AdapterError) as cm:
+                self.service.start_job(
+                    {
+                        "snapshotId": committed2["snapshotId"],
+                        "snapshotToken": committed2["snapshotToken"],
+                        "clientJobId": "client-job-fb-slot2",
+                        "documentSessionId": "doc-fallback.docx",
+                    },
+                    "trace-fb2",
+                )
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertEqual(cm.exception.code, "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY")
+        finally:
+            reviewer.release_event.set()
+        for _ in range(50):
+            cur = self.service.get_job(job["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+    def test_format_review_continuation_retains_slot_until_terminal_completion(self) -> None:
+        reviewer = ContinuationFormatReviewer()
+        self.service.reviewer = reviewer
+
+        committed = self._create_and_commit_snapshot(
+            doc_id="doc-continuation.docx", doc_session_id="session-cont"
+        )
+        job = self.service.start_job(
+            {
+                "snapshotId": committed["snapshotId"],
+                "snapshotToken": committed["snapshotToken"],
+                "clientJobId": "client-job-cont-1",
+                "documentSessionId": "session-cont",
+                "host": "wps",
+            },
+            "trace-cont",
+        )
+
+        # Wait for first slice to return continuation and complete second slice
+        for _ in range(50):
+            cur = self.service.get_job(job["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.05)
+
+        self.assertEqual(cur["status"], "completed")
+        self.assertEqual(reviewer.calls, 2)
+
+        # After final completion, slot is released so a new task can submit
+        committed2 = self._create_and_commit_snapshot(
+            doc_id="doc-continuation.docx", doc_session_id="session-cont"
+        )
+        job2 = self.service.start_job(
+            {
+                "snapshotId": committed2["snapshotId"],
+                "snapshotToken": committed2["snapshotToken"],
+                "clientJobId": "client-job-cont-2",
+                "documentSessionId": "session-cont",
+                "host": "wps",
+            },
+            "trace-cont-2",
         )
         self.assertIn(job2["status"], {"queued", "running", "completed"})
+        for _ in range(50):
+            cur = self.service.get_job(job2["jobId"])
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
 
     def test_format_review_records_minimal_summary_history(self) -> None:
         with patch(

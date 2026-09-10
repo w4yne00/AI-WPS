@@ -1,5 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert");
+const cp = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
@@ -469,4 +470,90 @@ test("Behavioral: Expired format review report shows unavailable notice in histo
   assert.ok(cardElement.detail, "Detail should exist");
   assert.ok(cardElement.detail.innerHTML.includes("history-report-expired"), "Should display expired notice");
   assert.ok(!cardElement.detail.innerHTML.includes("btn-open-format-report"), "Should NOT show open button on expired report");
+});
+
+test("taskpane.js syntax and integrity check", () => {
+  const taskpanePath = path.join(root, "taskpane.js");
+  const result = cp.spawnSync(process.execPath, ["--check", taskpanePath], {
+    encoding: "utf8"
+  });
+  assert.strictEqual(
+    result.status,
+    0,
+    `taskpane.js syntax error:\n${result.stderr || result.stdout}`
+  );
+});
+
+test("Behavioral: Background format review completion for document A does not contaminate document B", async () => {
+  let currentDocSession = "doc-session-A";
+  const ctx = createBaseTestContext({
+    ctx: {
+      getActiveDocument: () => ({ Name: "文档A.docx", __sessionId: currentDocSession }),
+      helpers: {
+        ...helpers,
+        getDocumentSessionId: () => currentDocSession,
+        getDocumentDisplayName: () => (currentDocSession === "doc-session-A" ? "文档A.docx" : "文档B.docx")
+      }
+    },
+    state: {
+      documentSessionId: "doc-session-A",
+      documentDisplayName: "文档A.docx",
+      deterministicFormatReviewJobId: "job-fmt-A"
+    }
+  });
+
+  // Setup active review job for doc-session-A
+  ctx.setActiveReviewJobRecord("word.format_review", "doc-session-A", {
+    jobId: "job-fmt-A",
+    status: "running",
+    taskType: "word.format_review"
+  });
+
+  const reportA = {
+    issueCount: 5,
+    summary: { issueCount: 5, complianceStatus: "violations_found" }
+  };
+
+  ctx.request = (url) => {
+    if (url.includes("/word/format-review/jobs/job-fmt-A/report")) {
+      return Promise.resolve({ data: reportA, traceId: "trace-fmt-A" });
+    }
+    if (url.includes("/word/format-review/jobs/job-fmt-A/issues")) {
+      return Promise.resolve({ data: { items: [], total: 5 } });
+    }
+    if (url.includes("/word/format-review/jobs/job-fmt-A")) {
+      return Promise.resolve({ data: { jobId: "job-fmt-A", status: "completed" } });
+    }
+    return Promise.resolve({ data: {} });
+  };
+
+  // Switch to Document B before poll completes
+  currentDocSession = "doc-session-B";
+  ctx.state.documentSessionId = "doc-session-B";
+  ctx.state.documentDisplayName = "文档B.docx";
+  ctx.setStatus("正在编辑文档B");
+  ctx.setPlainResult("文档B正文");
+
+  // Trigger report load for Document A's job with targetDocSession = "doc-session-A"
+  await ctx.loadDeterministicFormatReviewReport("job-fmt-A", "doc-session-A");
+
+  // 1. Result for Document A must be recorded
+  const recA = ctx.getActiveResultRecord("word.format_review", "doc-session-A");
+  assert.ok(recA, "Document A active result must be saved");
+  assert.strictEqual(recA.jobId, "job-fmt-A");
+  assert.strictEqual(recA.result.report.issueCount, 5);
+
+  // 2. Document B must NOT be contaminated
+  const recB = ctx.getActiveResultRecord("word.format_review", "doc-session-B");
+  assert.strictEqual(recB, null, "Document B must NOT have Document A's result");
+  assert.strictEqual(ctx.state.deterministicFormatReviewReport, null, "Active UI state report must not be updated to Document A while viewing Document B");
+
+  // 3. User switches back to Document A and restores result
+  currentDocSession = "doc-session-A";
+  ctx.state.documentSessionId = "doc-session-A";
+  ctx.state.documentDisplayName = "文档A.docx";
+  ctx.restoreActiveReviewResult();
+
+  assert.ok(ctx.state.deterministicFormatReviewReport, "Document A report restored after switching back");
+  assert.strictEqual(ctx.state.deterministicFormatReviewReport.issueCount, 5);
 });

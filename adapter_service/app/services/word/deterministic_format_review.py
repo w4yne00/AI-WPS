@@ -27,6 +27,7 @@ from app.core.runtime_paths import resolve_runtime_paths
 from app.services.long_task_coordinator import (
     LongTaskCoordinator,
     LongTaskCancelled,
+    LongTaskContinuation,
     get_long_task_coordinator,
 )
 from app.services.task_history import get_task_history_store, TaskHistoryError
@@ -734,8 +735,8 @@ class DeterministicFormatReviewService:
             "status": "uploading",
             "documentIdSha256": hashlib.sha256(document_id.encode("utf-8")).hexdigest(),
             "documentIdentity": document_identity,
-            "documentSessionId": str(payload.get("documentSessionId") or "").strip(),
-            "documentDisplayName": str(payload.get("documentDisplayName") or "").strip(),
+            "documentSessionId": str(payload.get("documentSessionId") or document_id).strip(),
+            "documentDisplayName": str(payload.get("documentDisplayName") or document_id).strip(),
             "host": str(payload.get("host") or "wps").strip(),
             "selectionMode": selection_mode,
             "templateId": str(payload.get("templateId") or "technical-document-template-rules"),
@@ -1158,46 +1159,83 @@ class DeterministicFormatReviewService:
         client_job_id = str(payload.get("clientJobId") or "").strip()
         job_id = client_job_id if SAFE_ID.fullmatch(client_job_id) else trace_id
 
-        doc_session = str(
-            payload.get("documentSessionId") or record.get("documentSessionId") or ""
+        # Bound identity from committed snapshot record
+        bound_doc_session = str(
+            record.get("documentSessionId")
+            or record.get("documentId")
+            or "default-doc-session"
         ).strip()
-        doc_display_name = str(
-            payload.get("documentDisplayName") or record.get("documentDisplayName") or ""
+        bound_host = str(record.get("host") or "wps").strip()
+        bound_display_name = str(
+            record.get("documentDisplayName") or bound_doc_session
         ).strip()
-        host = str(payload.get("host") or record.get("host") or "wps").strip()
-        session_key = (host, TASK_TYPE, doc_session) if doc_session else None
+
+        # Strict validation: if request payload explicitly provides documentSessionId or host, it must match bound value
+        req_doc_session = payload.get("documentSessionId")
+        if req_doc_session is not None:
+            req_doc_session_str = str(req_doc_session).strip()
+            if req_doc_session_str and req_doc_session_str != bound_doc_session:
+                raise AdapterError(
+                    "WORD_FORMAT_REVIEW_TASK_CONFLICT",
+                    "任务请求文档会话与快照绑定不一致。",
+                    status_code=409,
+                )
+
+        req_host = payload.get("host")
+        if req_host is not None:
+            req_host_str = str(req_host).strip()
+            if req_host_str and req_host_str != bound_host:
+                raise AdapterError(
+                    "WORD_FORMAT_REVIEW_TASK_CONFLICT",
+                    "任务请求宿主环境与快照绑定不一致。",
+                    status_code=409,
+                )
+
+        doc_session = bound_doc_session
+        host = bound_host
+        doc_display_name = (
+            str(payload.get("documentDisplayName") or "").strip()
+            or bound_display_name
+        )
+        session_key = (host, TASK_TYPE, doc_session)
 
         with self._submission_lock:
-            if session_key:
-                if job_id in self._job_identities:
-                    existing_session_key = self._job_identities[job_id]
-                    if existing_session_key != session_key:
+            if job_id in self._job_identities:
+                existing_session_key = self._job_identities[job_id]
+                if existing_session_key != session_key:
+                    raise AdapterError(
+                        "WORD_FORMAT_REVIEW_TASK_CONFLICT",
+                        "任务标识冲突，不能跨文档会话复用同一任务标识。",
+                        status_code=409,
+                    )
+            if session_key in self._active_doc_sessions:
+                active_job_id = self._active_doc_sessions[session_key]
+                active_job = self.coordinator.get(active_job_id, task_type=TASK_TYPE)
+                if active_job is not None and active_job.get("status") in {"queued", "running"}:
+                    if active_job_id != job_id:
                         raise AdapterError(
-                            "WORD_FORMAT_REVIEW_TASK_CONFLICT",
-                            "任务标识冲突，不能跨文档会话复用同一任务标识。",
+                            "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY",
+                            "当前文档已有正在运行或排队的格式审查任务，请勿重复提交。",
                             status_code=409,
                         )
-                if session_key in self._active_doc_sessions:
-                    active_job_id = self._active_doc_sessions[session_key]
-                    active_job = self.coordinator.get(active_job_id, task_type=TASK_TYPE)
-                    if active_job is not None and active_job.get("status") in {"queued", "running"}:
-                        if active_job_id != job_id:
-                            raise AdapterError(
-                                "WORD_FORMAT_REVIEW_DOCUMENT_TASK_BUSY",
-                                "当前文档已有正在运行或排队的格式审查任务，请勿重复提交。",
-                                status_code=409,
-                            )
-                    else:
-                        self._active_doc_sessions.pop(session_key, None)
+                else:
+                    self._active_doc_sessions.pop(session_key, None)
 
             existing = self.coordinator.get(job_id, task_type=TASK_TYPE)
             if existing is not None:
+                stored_fp = self.coordinator.get_request_fingerprint(job_id, task_type=TASK_TYPE)
+                expected_fp = f"{host}::{TASK_TYPE}::{doc_session}"
+                if stored_fp and stored_fp != expected_fp:
+                    raise AdapterError(
+                        "WORD_FORMAT_REVIEW_TASK_CONFLICT",
+                        "任务标识冲突，不能跨文档会话复用同一任务标识。",
+                        status_code=409,
+                    )
                 self._remove_snapshot(snapshot_id)
                 return existing
 
-            if session_key:
-                self._job_identities[job_id] = session_key
-                self._active_doc_sessions[session_key] = job_id
+            self._job_identities[job_id] = session_key
+            self._active_doc_sessions[session_key] = job_id
 
         if hasattr(WordDocumentRequest, "model_validate"):
             request = WordDocumentRequest.model_validate(record["request"])
@@ -1240,10 +1278,14 @@ class DeterministicFormatReviewService:
                 failure_message="确定性格式审查后台任务执行失败，请稍后重试。",
                 public_metadata={"runningMessage": "正在执行确定性格式审查。"},
                 allow_running_cancel=True,
+                request_fingerprint=f"{host}::{TASK_TYPE}::{doc_session}",
+                request_conflict_code="WORD_FORMAT_REVIEW_TASK_CONFLICT",
+                request_conflict_message="任务标识冲突，不能跨文档会话复用同一任务标识。",
             )
         except Exception:
             with self._submission_lock:
-                if session_key and self._active_doc_sessions.get(session_key) == job_id:
+                self._job_identities.pop(job_id, None)
+                if self._active_doc_sessions.get(session_key) == job_id:
                     self._active_doc_sessions.pop(session_key, None)
             raise
 
@@ -1268,9 +1310,10 @@ class DeterministicFormatReviewService:
         self._require_enabled()
         job = self.coordinator.request_cancel(job_id, task_type=TASK_TYPE)
         with self._submission_lock:
-            session_key = self._job_identities.get(job_id)
-            if session_key and self._active_doc_sessions.get(session_key) == job_id:
-                self._active_doc_sessions.pop(session_key, None)
+            if job is not None and job.get("status") in {"cancelled", "failed"}:
+                session_key = self._job_identities.pop(job_id, None)
+                if session_key and self._active_doc_sessions.get(session_key) == job_id:
+                    self._active_doc_sessions.pop(session_key, None)
         if job is None:
             return None
         if job.get("status") == "cancelled":
@@ -1611,6 +1654,7 @@ class DeterministicFormatReviewService:
     def _run(self, snapshot: Dict, progress) -> Dict:
         progress("extracting")
         request = snapshot["request"]
+        continuation = False
         try:
             if self.coordinator.is_cancel_requested(snapshot.get("jobId", ""), TASK_TYPE):
                 raise LongTaskCancelled()
@@ -1636,6 +1680,7 @@ class DeterministicFormatReviewService:
             if isinstance(result, dict) and result.get("_semanticComplete") is False:
                 snapshot["semanticState"] = deepcopy(result.get("_semanticState", {}))
                 progress("provider_processing")
+                continuation = True
                 return LongTaskContinuation(snapshot, phase="provider_processing")
             report = self._build_report(result, snapshot)
             self._save_report(snapshot["jobId"], report)
@@ -1649,15 +1694,14 @@ class DeterministicFormatReviewService:
                 "reportAvailable": True,
             }
         finally:
-            with self._submission_lock:
-                job_id = snapshot.get("jobId")
-                current_job = self.coordinator.get(job_id, task_type=TASK_TYPE)
-                if current_job is None or current_job.get("status") not in {"queued", "running"}:
-                    session_key = self._job_identities.get(job_id)
+            if not continuation:
+                with self._submission_lock:
+                    job_id = snapshot.get("jobId")
+                    session_key = self._job_identities.pop(job_id, None)
                     if session_key and self._active_doc_sessions.get(session_key) == job_id:
                         self._active_doc_sessions.pop(session_key, None)
-            self._remove_snapshot(snapshot.get("snapshotId", ""))
-            self.image_asset_store.cleanup_snapshot(snapshot.get("snapshotId", ""))
+                self._remove_snapshot(snapshot.get("snapshotId", ""))
+                self.image_asset_store.cleanup_snapshot(snapshot.get("snapshotId", ""))
 
     def _build_report(self, result: Dict, snapshot: Dict) -> Dict:
         result = result if isinstance(result, dict) else {}
