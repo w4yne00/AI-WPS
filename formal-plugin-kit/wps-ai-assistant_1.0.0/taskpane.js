@@ -840,7 +840,7 @@
     }
     clearDocumentReviewActiveJob(jobId, targetDocSession);
     setActiveReviewJobRecord("word.document_review", targetDocSession, null);
-    if (!jobId || state.documentReviewJobId === jobId) {
+    if (!jobId || jobId === state.documentReviewJobId) {
       setDocumentReviewJobId("");
       state.documentReviewPollStartedAt = 0;
       state.documentReviewPollErrorCount = 0;
@@ -868,13 +868,48 @@
     }
   }
 
+  function cleanupDeterministicFormatReviewTerminal(submittedDocSession, jobId) {
+    var targetDocSession = submittedDocSession || state.documentSessionId || "default";
+    releaseTaskSlotsForJob(jobId);
+    if (helpers.releaseTaskSlot) {
+      helpers.releaseTaskSlot(state.activeTaskSlots, "wps", "word.format_review", targetDocSession, jobId);
+    }
+    clearDeterministicFormatReviewActiveJob(jobId, targetDocSession);
+    setActiveReviewJobRecord("word.format_review", targetDocSession, null);
+    if (!jobId || state.deterministicFormatReviewJobId === jobId) {
+      state.deterministicFormatReviewJobId = "";
+      state.deterministicFormatReviewPollStartedAt = 0;
+      state.deterministicFormatReviewPollErrorCount = 0;
+      state.deterministicFormatReviewSnapshot = null;
+      setModelTaskBusy(false);
+      setDocumentReviewCancelVisible(false, false);
+    }
+  }
+
   function restoreActiveReviewResult() {
     state.viewingHistoryReport = null;
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    if (state.currentMode === "formatReview") {
+      var activeFmtRec = getActiveResultRecord("word.format_review", currentDoc);
+      if (activeFmtRec && activeFmtRec.result) {
+        var fmtRes = activeFmtRec.result;
+        var fmtReport = fmtRes.report || fmtRes;
+        var fmtJobId = fmtRes.reportId || fmtRes.jobId || activeFmtRec.jobId || activeFmtRec.traceId;
+        state.deterministicFormatReviewReport = fmtReport;
+        state.deterministicFormatReviewIssueJobId = fmtJobId;
+        renderDeterministicFormatReviewReport(fmtReport, fmtJobId);
+        setStatus("已恢复当前格式审查结果。");
+      } else {
+        clearDeterministicFormatReviewPresentation();
+        setPlainResult("等待运行。");
+        setStatus("等待操作。");
+      }
+      return;
+    }
     var controls = byId("full-document-review-issue-controls");
     if (controls) {
       controls.hidden = true;
     }
-    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
     var activeRec = getActiveResultRecord("word.document_review", currentDoc);
     if (activeRec && activeRec.result) {
       var res = activeRec.result;
@@ -1654,7 +1689,7 @@
     closeTaskModelConfigMenu(false);
 
     var btnViewHistory = byId("btn-view-history");
-    var historySupported = writingMode || requestedMode === "documentReview";
+    var historySupported = writingMode || requestedMode === "documentReview" || requestedMode === "formatReview";
     if (btnViewHistory) {
       btnViewHistory.hidden = !historySupported;
     }
@@ -1728,11 +1763,11 @@
       var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
       var activeReviewJob = getActiveReviewJobRecord("word.document_review", currentDoc) || getActiveReviewJobRecord("word.document_review.full", currentDoc);
       if (activeReviewJob) {
-        state.documentReviewJobId = activeReviewJob.taskType === "word.document_review" ? activeReviewJob.jobId : "";
+        setDocumentReviewJobId(activeReviewJob.taskType === "word.document_review" ? activeReviewJob.jobId : "");
         state.fullDocumentReviewJobId = activeReviewJob.taskType === "word.document_review.full" ? activeReviewJob.jobId : "";
         setModelTaskBusy(true);
       } else {
-        state.documentReviewJobId = "";
+        setDocumentReviewJobId("");
         state.fullDocumentReviewJobId = "";
         setModelTaskBusy(false);
         var activeRecord = getActiveResultRecord("word.document_review", currentDoc);
@@ -1747,6 +1782,29 @@
         } else {
           resetSmartWritePreviewState();
           resetDocumentReviewState();
+          setPlainResult("等待运行。");
+        }
+      }
+      state.pendingApplyAction = "";
+      setApplyEnabled(false);
+    } else if (state.currentMode === "formatReview") {
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var activeReviewJob = getActiveReviewJobRecord("word.format_review", currentDoc);
+      if (activeReviewJob) {
+        state.deterministicFormatReviewJobId = activeReviewJob.jobId;
+        setModelTaskBusy(true);
+      } else {
+        var activeRecord = getActiveResultRecord("word.format_review", currentDoc);
+        if (activeRecord && activeRecord.result) {
+          var res = activeRecord.result;
+          setTrace(activeRecord.traceId || activeRecord.jobId || "");
+          var fmtReport = res.report || res;
+          var fmtJobId = res.reportId || res.jobId || activeRecord.jobId || activeRecord.traceId;
+          state.deterministicFormatReviewReport = fmtReport;
+          state.deterministicFormatReviewIssueJobId = fmtJobId;
+          renderDeterministicFormatReviewReport(fmtReport, fmtJobId);
+        } else {
+          clearDeterministicFormatReviewPresentation();
           setPlainResult("等待运行。");
         }
       }
@@ -5801,7 +5859,7 @@
     if (active.documentSessionId && currentDoc && active.documentSessionId !== currentDoc) {
       return false;
     }
-    if (state.documentReviewJobId === active.jobId) {
+    if (active.jobId === state.documentReviewJobId) {
       return true;
     }
     setDocumentReviewJobId(active.jobId);
@@ -6456,7 +6514,20 @@
     } else {
       var taskType = getCurrentWorkflowTaskType();
       var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
-      if (taskType === "word.document_review") {
+      if (taskType === "word.format_review") {
+        if (!state.viewingHistoryReport) {
+          var activeRecord = getActiveResultRecord("word.format_review", currentDoc);
+          if (activeRecord && activeRecord.result) {
+            var res = activeRecord.result;
+            setTrace(activeRecord.traceId || activeRecord.jobId || "");
+            var fmtReport = res.report || res;
+            var fmtJobId = res.reportId || res.jobId || activeRecord.jobId || activeRecord.traceId;
+            state.deterministicFormatReviewReport = fmtReport;
+            state.deterministicFormatReviewIssueJobId = fmtJobId;
+            renderDeterministicFormatReviewReport(fmtReport, fmtJobId);
+          }
+        }
+      } else if (taskType === "word.document_review") {
         if (!state.viewingHistoryReport) {
           var activeRecord = getActiveResultRecord("word.document_review", currentDoc);
           if (activeRecord && activeRecord.result) {
@@ -6597,6 +6668,42 @@
 
     var result = item.result || {};
     var actionsDiv = card.querySelector(".word-history-card-actions");
+
+    if (result.reportType === "format_review" || item.taskType === "word.format_review") {
+      var formatJobId = result.reportId || result.jobId || item.jobId;
+      detailDiv.innerHTML = '<div class="history-detail-loading">正在读取格式审查专用报告...</div>';
+      btn.textContent = "收起";
+      if (actionsDiv) {
+        card.insertBefore(detailDiv, actionsDiv);
+      } else {
+        card.appendChild(detailDiv);
+      }
+      return request("/word/format-review/jobs/" + encodeURIComponent(formatJobId) + "/report?format=summary", null, {
+        timeoutMs: 8000
+      }).then(function (reportBody) {
+        var report = reportBody.data || {};
+        var summary = report.summary || result.summary || {};
+        var issueCount = Number(report.issueCount !== undefined ? report.issueCount : (result.issueCount || 0));
+        var summaryText = "格式审查报告（共 " + issueCount + " 项问题）";
+        var openBtnHtml = '<div style="margin-top:8px;"><button type="button" class="btn btn-secondary btn-sm btn-open-format-report btn-open-full-report">在窗格中查看完整报告</button></div>';
+        detailDiv.innerHTML = '<div>' + summaryText + '</div>' + openBtnHtml;
+        var openBtn = detailDiv.querySelector(".btn-open-format-report") || detailDiv.querySelector(".btn-open-full-report");
+        if (openBtn) {
+          openBtn.addEventListener("click", function () {
+            state.viewingHistoryReport = {
+              report: report,
+              jobId: formatJobId,
+              taskType: "word.format_review",
+              documentDisplayName: item.documentDisplayName
+            };
+            switchWordHistoryView(false);
+            renderDeterministicFormatReviewReport(report, formatJobId);
+          });
+        }
+      }).catch(function () {
+        detailDiv.innerHTML = '<div class="history-report-expired" style="color:var(--danger, #dc2626);">专用报告已过期或不可用。</div>';
+      });
+    }
 
     if (result.reportType === "full_document_review") {
       var fullJobId = result.reportId || result.jobId || item.jobId;
@@ -7528,6 +7635,25 @@
     } else {
       setResult("# 格式审查报告\n\n当前版本无法生成中文报告，请重新审查。");
     }
+    if (state.viewingHistoryReport) {
+      var banner = document.createElement("div");
+      banner.className = "history-report-return-banner";
+      banner.style.cssText = "display:flex;justify-content:space-between;align-items:center;background:var(--bg-subtle, #f1f5f9);padding:8px 12px;margin-bottom:12px;border-radius:4px;font-size:12px;border:1px solid var(--hairline, #e2e8f0);";
+      var docName = state.viewingHistoryReport.documentDisplayName || "历史";
+      banner.innerHTML = '<span>当前正在查看历史审查报告（' + (helpers.escapeHtml ? helpers.escapeHtml(docName) : docName) + '）</span><button type="button" class="btn btn-secondary btn-sm btn-return-active-review">返回当前审查结果</button>';
+      var output = byId("result-output");
+      if (output && output.firstChild) {
+        output.insertBefore(banner, output.firstChild);
+      } else if (output) {
+        output.appendChild(banner);
+      }
+      var returnBtn = banner.querySelector(".btn-return-active-review");
+      if (returnBtn) {
+        returnBtn.addEventListener("click", function () {
+          restoreActiveReviewResult();
+        });
+      }
+    }
     renderDeterministicFormatReviewDiagnostics(report, issues);
     setStatus("确定性格式审查只读报告已生成。");
     var controls = byId("deterministic-format-review-issue-controls");
@@ -7649,14 +7775,38 @@
     });
   }
 
-  function loadDeterministicFormatReviewReport(jobId) {
+  function loadDeterministicFormatReviewReport(jobId, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     return request("/word/format-review/jobs/" + encodeURIComponent(jobId) + "/report?format=summary", null, {
       timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
     }).then(function (body) {
       var report = body.data || {};
       state.deterministicFormatReviewIssueCursorHistory = [""];
-      return loadDeterministicFormatReviewIssuePage(jobId, report, "");
+      if (!state.viewingHistoryReport) {
+        setActiveResultRecord("word.format_review", targetDocSession, {
+          result: {
+            reportType: "format_review",
+            report: report,
+            jobId: jobId,
+            reportId: jobId
+          },
+          jobId: jobId,
+          traceId: body.traceId || jobId,
+          taskType: "word.format_review",
+          documentSessionId: targetDocSession
+        });
+      }
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      if (!currentDoc || !targetDocSession || currentDoc === targetDocSession) {
+        return loadDeterministicFormatReviewIssuePage(jobId, report, "");
+      }
+      return Promise.resolve();
     });
+  }
+
+  function renderDeterministicFormatReviewReport(report, jobId) {
+    state.deterministicFormatReviewIssueCursorHistory = [""];
+    return loadDeterministicFormatReviewIssuePage(jobId, report, "");
   }
 
   function updateDeterministicFormatReviewIssueStatus(jobId, issueId, status) {
@@ -8242,48 +8392,91 @@
     }, 0);
   }
 
-  function loadDeterministicFormatReviewActiveJob() {
+  function loadDeterministicFormatReviewActiveJob(docSessionId) {
     try {
-      var raw = window.localStorage && window.localStorage.getItem(
-        DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY
-      );
-      return raw ? JSON.parse(raw) : null;
+      if (!window.localStorage) {
+        return null;
+      }
+      var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+      var raw;
+      if (currentDoc) {
+        raw = window.localStorage.getItem(getReviewActiveJobStorageKey("word.format_review", currentDoc));
+        if (raw) {
+          return JSON.parse(raw);
+        }
+      }
+      raw = window.localStorage.getItem(DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      if (raw) {
+        var legacy = JSON.parse(raw);
+        if (!currentDoc || !legacy.documentSessionId || legacy.documentSessionId === currentDoc) {
+          return legacy;
+        }
+      }
+      return null;
     } catch (error) {
       return null;
     }
   }
 
-  function saveDeterministicFormatReviewActiveJob(jobId, startedAt) {
+  function saveDeterministicFormatReviewActiveJob(jobId, startedAt, docSessionId) {
     if (!jobId) {
       return;
     }
+    var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
     try {
       if (window.localStorage) {
-        window.localStorage.setItem(
-          DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY,
-          JSON.stringify({
-            jobId: jobId,
-            startedAt: startedAt || Date.now(),
-            frontendVersion: FRONTEND_BUILD_VERSION
-          })
-        );
+        var record = JSON.stringify({
+          jobId: jobId,
+          host: "wps",
+          taskType: "word.format_review",
+          documentSessionId: currentDoc || "",
+          startedAt: startedAt || Date.now(),
+          frontendVersion: FRONTEND_BUILD_VERSION
+        });
+        if (currentDoc) {
+          window.localStorage.setItem(getReviewActiveJobStorageKey("word.format_review", currentDoc), record);
+        }
+        window.localStorage.setItem(DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY, record);
       }
     } catch (error) {
       // In-memory polling remains active when the host disables localStorage.
     }
   }
 
-  function clearDeterministicFormatReviewActiveJob(jobId) {
+  function clearDeterministicFormatReviewActiveJob(jobId, docSessionId) {
     var active;
     try {
       if (!window.localStorage) {
         return;
       }
-      active = loadDeterministicFormatReviewActiveJob();
-      if (jobId && active && active.jobId && active.jobId !== jobId) {
-        return;
+      var currentDoc = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+      if (currentDoc) {
+        window.localStorage.removeItem(getReviewActiveJobStorageKey("word.format_review", currentDoc));
       }
-      window.localStorage.removeItem(DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        var k = window.localStorage.key(i);
+        if (k && k.indexOf("ai-wps:review-active-job:word.format_review:") === 0) {
+          var val = window.localStorage.getItem(k);
+          if (val) {
+            try {
+              var parsed = JSON.parse(val);
+              if (!jobId || (parsed && parsed.jobId === jobId)) {
+                window.localStorage.removeItem(k);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      active = null;
+      try {
+        var rawLegacy = window.localStorage.getItem(DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+        if (rawLegacy) {
+          active = JSON.parse(rawLegacy);
+        }
+      } catch (e) {}
+      if (!jobId || (active && active.jobId === jobId)) {
+        window.localStorage.removeItem(DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY);
+      }
     } catch (error) {
       // Storage cleanup must not block the terminal state.
     }
@@ -8323,17 +8516,17 @@
     disclosure.hidden = false;
   }
 
-  function expireDeterministicFormatReviewJob(jobId, message) {
-    clearDeterministicFormatReviewActiveJob(jobId);
-    state.deterministicFormatReviewJobId = "";
-    state.deterministicFormatReviewPollStartedAt = 0;
-    state.deterministicFormatReviewPollErrorCount = 0;
-    state.deterministicFormatReviewSnapshot = null;
-    clearDeterministicFormatReviewPresentation();
-    setModelTaskBusy(false);
-    setDocumentReviewCancelVisible(false, false);
-    setStatus(message || "格式审查任务已失效，请重新审查。");
-    setPlainResult("本次格式审查任务已失效，旧结果不会复用。请重新点击“开始格式审查”。");
+  function expireDeterministicFormatReviewJob(jobId, message, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    cleanupDeterministicFormatReviewTerminal(targetDocSession, jobId);
+    if (!currentDoc || !targetDocSession || currentDoc === targetDocSession) {
+      clearDeterministicFormatReviewPresentation();
+      setModelTaskBusy(false);
+      setDocumentReviewCancelVisible(false, false);
+      setStatus(message || "格式审查任务已失效，请重新审查。");
+      setPlainResult("本次格式审查任务已失效，旧结果不会复用。请重新点击“开始格式审查”。");
+    }
   }
 
   function resumeDeterministicFormatReviewActiveJob() {
@@ -8345,16 +8538,29 @@
         state.deterministicFormatReviewJobId) {
       return false;
     }
-    active = loadDeterministicFormatReviewActiveJob();
+    var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+    active = loadDeterministicFormatReviewActiveJob(currentDoc);
     if (!active || !active.jobId) {
+      return false;
+    }
+    if (active.documentSessionId && currentDoc && active.documentSessionId !== currentDoc) {
+      return false;
+    }
+    if (active.host && active.host !== "wps") {
+      return false;
+    }
+    if (active.taskType && active.taskType !== "word.format_review") {
       return false;
     }
     startedAt = Number(active.startedAt) || Date.now();
     if (Date.now() - startedAt >= DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS) {
-      clearDeterministicFormatReviewActiveJob(active.jobId);
+      cleanupDeterministicFormatReviewTerminal(currentDoc, active.jobId);
       return false;
     }
     jobId = String(active.jobId);
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.format_review", currentDoc, jobId);
+    }
     request("/word/format-review/jobs/" + encodeURIComponent(jobId), null, {
       timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
     }).then(function (body) {
@@ -8365,15 +8571,12 @@
         return;
       }
       if (job.status === "completed") {
-        loadDeterministicFormatReviewReport(jobId).then(function () {
-          clearDeterministicFormatReviewActiveJob(jobId);
-        }).catch(function () {
-          clearDeterministicFormatReviewActiveJob(jobId);
-        });
+        cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
-        clearDeterministicFormatReviewActiveJob(jobId);
+        clearDeterministicFormatReviewActiveJob(jobId, currentDoc);
+        cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
         return;
       }
       state.deterministicFormatReviewJobId = jobId;
@@ -8383,13 +8586,14 @@
       setDocumentReviewCancelVisible(true, false);
       setStatus("正在恢复格式审查后台任务...");
       setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
-      pollDeterministicFormatReviewJob(jobId);
+      pollDeterministicFormatReviewJob(jobId, currentDoc);
     }).catch(function (error) {
       if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {
         return;
       }
       if (error && error.adapterCode === "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND") {
-        clearDeterministicFormatReviewActiveJob(jobId);
+        clearDeterministicFormatReviewActiveJob(jobId, currentDoc);
+        cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
         return;
       }
       state.deterministicFormatReviewJobId = jobId;
@@ -8399,12 +8603,16 @@
       setDocumentReviewCancelVisible(true, false);
       setStatus("正在恢复格式审查后台任务...");
       setPlainResult("正在恢复格式审查后台任务，旧结果不会复用。\n任务编号：" + jobId);
-      pollDeterministicFormatReviewJob(jobId);
+      pollDeterministicFormatReviewJob(jobId, currentDoc);
     });
     return true;
   }
 
-  function pollDeterministicFormatReviewJob(jobId) {
+  function pollDeterministicFormatReviewJob(jobId, docSessionId) {
+    var targetDocSession = docSessionId || ((helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId);
+    if (!jobId || state.deterministicFormatReviewJobId !== jobId) {
+      return;
+    }
     request("/word/format-review/jobs/" + encodeURIComponent(jobId), null, {
       timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS
     }).then(function (body) {
@@ -8412,50 +8620,47 @@
       if (state.deterministicFormatReviewJobId !== jobId) {
         return;
       }
+      var currentDoc = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var isMatchingDoc = Boolean(!currentDoc || !targetDocSession || currentDoc === targetDocSession);
       setTrace(body.traceId || job.traceId || jobId);
       if (job.status === "completed") {
-        loadDeterministicFormatReviewReport(jobId).then(function () {
-          clearDeterministicFormatReviewActiveJob(jobId);
-          state.deterministicFormatReviewJobId = "";
-          state.deterministicFormatReviewPollStartedAt = 0;
-          state.deterministicFormatReviewPollErrorCount = 0;
-          state.deterministicFormatReviewSnapshot = null;
-          setModelTaskBusy(false);
-          setDocumentReviewCancelVisible(false, false);
-          setStatus("确定性格式审查完成，结构化报告已生成。");
+        cleanupDeterministicFormatReviewTerminal(targetDocSession, jobId);
+        loadDeterministicFormatReviewReport(jobId, targetDocSession).then(function () {
+          if (isMatchingDoc && state.currentMode === "formatReview") {
+            setModelTaskBusy(false);
+            setDocumentReviewCancelVisible(false, false);
+            setStatus("确定性格式审查完成，结构化报告已生成。");
+          }
         }).catch(function (error) {
-          clearDeterministicFormatReviewActiveJob(jobId);
-          state.deterministicFormatReviewJobId = "";
-          state.deterministicFormatReviewPollStartedAt = 0;
-          state.deterministicFormatReviewPollErrorCount = 0;
-          state.deterministicFormatReviewSnapshot = null;
-          clearDeterministicFormatReviewPresentation();
-          setModelTaskBusy(false);
-          setDocumentReviewCancelVisible(false, false);
-          setStatus("确定性格式审查完成，但报告读取失败：" + describeFetchError(error));
-          setPlainResult("本次格式审查已完成，但中文报告未能读取；旧结果不会复用，请重新审查。");
+          if (isMatchingDoc && state.currentMode === "formatReview") {
+            clearDeterministicFormatReviewPresentation();
+            setModelTaskBusy(false);
+            setDocumentReviewCancelVisible(false, false);
+            setStatus("确定性格式审查完成，但报告读取失败：" + describeFetchError(error));
+            setPlainResult("本次格式审查已完成，但中文报告未能读取；旧结果不会复用，请重新审查。");
+          }
         });
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
-        clearDeterministicFormatReviewActiveJob(jobId);
-        state.deterministicFormatReviewJobId = "";
-        state.deterministicFormatReviewPollStartedAt = 0;
-        state.deterministicFormatReviewPollErrorCount = 0;
-        state.deterministicFormatReviewSnapshot = null;
-        clearDeterministicFormatReviewPresentation();
-        setModelTaskBusy(false);
-        setDocumentReviewCancelVisible(false, false);
-        setStatus("确定性格式审查" + (job.status === "cancelled" ? "已取消。" : "失败。"));
-        setPlainResult(job.status === "cancelled"
-          ? "本次格式审查已取消，旧结果不会复用。"
-          : "本次格式审查后台任务失败，旧结果不会复用，请重新审查。");
+        cleanupDeterministicFormatReviewTerminal(targetDocSession, jobId);
+        if (isMatchingDoc && state.currentMode === "formatReview") {
+          clearDeterministicFormatReviewPresentation();
+          setModelTaskBusy(false);
+          setDocumentReviewCancelVisible(false, false);
+          setStatus("确定性格式审查" + (job.status === "cancelled" ? "已取消。" : "失败。"));
+          setPlainResult(job.status === "cancelled"
+            ? "本次格式审查已取消，旧结果不会复用。"
+            : "本次格式审查后台任务失败，旧结果不会复用，请重新审查。");
+        }
         return;
       }
-      setStatus(job.runningMessage || "正在执行确定性格式审查...");
-      setPlainResult("确定性格式审查任务已提交，正在按本地规则生成结构化结果。\n任务编号：" + jobId);
+      if (isMatchingDoc && state.currentMode === "formatReview") {
+        setStatus(job.runningMessage || "正在执行确定性格式审查...");
+        setPlainResult("确定性格式审查任务已提交，正在按本地规则生成结构化结果。\n任务编号：" + jobId);
+      }
       setTimeout(function () {
-        pollDeterministicFormatReviewJob(jobId);
+        pollDeterministicFormatReviewJob(jobId, targetDocSession);
       }, DETERMINISTIC_FORMAT_REVIEW_POLL_INTERVAL_MS);
     }).catch(function (error) {
       if (state.deterministicFormatReviewJobId !== jobId) {
@@ -8463,7 +8668,7 @@
       }
       state.deterministicFormatReviewPollErrorCount += 1;
       if (error && error.adapterCode === "DETERMINISTIC_FORMAT_REVIEW_JOB_NOT_FOUND") {
-        expireDeterministicFormatReviewJob(jobId, "格式审查后台任务不存在或已过期，请重新审查。");
+        expireDeterministicFormatReviewJob(jobId, "格式审查后台任务不存在或已过期，请重新审查。", targetDocSession);
         return;
       }
       if (!state.deterministicFormatReviewPollStartedAt) {
@@ -8471,15 +8676,19 @@
       }
       if (state.deterministicFormatReviewPollErrorCount >= DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_ERRORS ||
           Date.now() - state.deterministicFormatReviewPollStartedAt >= DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS) {
-        expireDeterministicFormatReviewJob(jobId, "格式审查任务状态查询超时，请重新审查。");
+        expireDeterministicFormatReviewJob(jobId, "格式审查任务状态查询超时，请重新审查。", targetDocSession);
         return;
       }
-      saveDeterministicFormatReviewActiveJob(jobId, state.deterministicFormatReviewPollStartedAt);
-      setDocumentReviewCancelVisible(true, false);
-      setStatus("暂时无法读取格式审查任务状态，正在自动恢复（第 " +
-        state.deterministicFormatReviewPollErrorCount + " 次）...");
+      saveDeterministicFormatReviewActiveJob(jobId, state.deterministicFormatReviewPollStartedAt, targetDocSession);
+      var currentDocOnCatch = (helpers.getDocumentSessionId && getActiveDocument) ? helpers.getDocumentSessionId(getActiveDocument()) : state.documentSessionId;
+      var isMatchingDocOnCatch = Boolean(!currentDocOnCatch || !targetDocSession || currentDocOnCatch === targetDocSession);
+      if (isMatchingDocOnCatch && state.currentMode === "formatReview") {
+        setDocumentReviewCancelVisible(true, false);
+        setStatus("暂时无法读取格式审查任务状态，正在自动恢复（第 " +
+          state.deterministicFormatReviewPollErrorCount + " 次）...");
+      }
       setTimeout(function () {
-        pollDeterministicFormatReviewJob(jobId);
+        pollDeterministicFormatReviewJob(jobId, targetDocSession);
       }, DETERMINISTIC_FORMAT_REVIEW_POLL_RETRY_DELAY_MS);
     });
   }
@@ -8838,6 +9047,9 @@
     var scope;
     var firstPass;
     var session = null;
+    var document = getActiveDocument();
+    var currentDoc = (helpers.getDocumentSessionId && document) ? helpers.getDocumentSessionId(document) : state.documentSessionId;
+    var docDisplayName = (helpers.getDocumentDisplayName && document) ? helpers.getDocumentDisplayName(document) : (state.documentDisplayName || "未命名文档.docx");
     // Extraction is bounded by DETERMINISTIC_FORMAT_REVIEW_EXTRACTION_OPTIONS.
     if (!state.deterministicFormatReviewEnabled) {
       setStatus("无法开始格式审查。");
@@ -8845,6 +9057,10 @@
         "当前本地服务未开放格式审查。请确认本地 Adapter 已升级到当前版本并重新启动，" +
         "然后再次尝试。如仍无法使用，请前往“设置 > 高级诊断”查看详情。"
       );
+      return;
+    }
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", "word.format_review", currentDoc)) {
+      setStatus("已有格式审查任务正在执行，请等待当前任务完成。");
       return;
     }
     if (state.deterministicFormatReviewJobId || state.modelTaskBusy) {
@@ -8857,8 +9073,12 @@
       setResult(scope.message);
       return;
     }
+    setActiveResultRecord("word.format_review", currentDoc, null);
     clearDeterministicFormatReviewPresentation();
-    clearDeterministicFormatReviewActiveJob();
+    clearDeterministicFormatReviewActiveJob(null, currentDoc);
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.format_review", currentDoc, null);
+    }
     state.deterministicFormatReviewJobId = "";
     state.deterministicFormatReviewPollStartedAt = Date.now();
     state.deterministicFormatReviewPollErrorCount = 0;
@@ -8874,6 +9094,7 @@
         state.deterministicFormatReviewDocumentIdentity = firstPass.documentIdentity;
         state.latestSelectionMode = firstPass.selectionMode;
       } catch (error) {
+        cleanupDeterministicFormatReviewTerminal(currentDoc, null);
         setModelTaskBusy(false);
         setStatus(error.message);
         setResult(error.message);
@@ -8884,6 +9105,9 @@
         documentId: firstPass.documentId,
         selectionMode: firstPass.selectionMode,
         documentIdentity: firstPass.documentIdentity,
+        documentSessionId: currentDoc || "",
+        documentDisplayName: docDisplayName || "",
+        host: "wps",
         editSequence: firstPass.editSequence,
         templateId: firstPass.templateId,
         formatSnapshotSchemaVersion: firstPass.formatSnapshotSchemaVersion,
@@ -8968,7 +9192,10 @@
         return request("/word/format-review/jobs", {
           snapshotId: committed.snapshotId,
           snapshotToken: committed.snapshotToken,
-          clientJobId: state.deterministicFormatReviewJobId
+          clientJobId: state.deterministicFormatReviewJobId,
+          documentSessionId: currentDoc || "",
+          documentDisplayName: docDisplayName || "",
+          host: "wps"
         }, { timeoutMs: DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS });
       }).then(function (jobBody) {
         var job = jobBody.data || {};
@@ -8978,15 +9205,22 @@
           throw new Error("adapter 未返回确定性格式审查任务编号。");
         }
         state.deterministicFormatReviewJobId = jobId;
-        saveDeterministicFormatReviewActiveJob(jobId, state.deterministicFormatReviewPollStartedAt);
+        saveDeterministicFormatReviewActiveJob(jobId, state.deterministicFormatReviewPollStartedAt, currentDoc);
+        setActiveReviewJobRecord("word.format_review", currentDoc, {
+          jobId: jobId,
+          host: "wps",
+          taskType: "word.format_review",
+          documentSessionId: currentDoc,
+          startedAt: state.deterministicFormatReviewPollStartedAt
+        });
+        if (helpers.claimTaskSlot) {
+          helpers.claimTaskSlot(state.activeTaskSlots, "wps", "word.format_review", currentDoc, jobId);
+        }
         state.deterministicFormatReviewPollErrorCount = 0;
         setDocumentReviewCancelVisible(true, false);
-        pollDeterministicFormatReviewJob(jobId);
+        pollDeterministicFormatReviewJob(jobId, currentDoc);
       }).catch(function (error) {
-        clearDeterministicFormatReviewActiveJob(state.deterministicFormatReviewJobId);
-        state.deterministicFormatReviewJobId = "";
-        state.deterministicFormatReviewPollStartedAt = 0;
-        state.deterministicFormatReviewPollErrorCount = 0;
+        cleanupDeterministicFormatReviewTerminal(currentDoc, state.deterministicFormatReviewJobId);
         discardDeterministicFormatReviewSnapshot();
         clearDeterministicFormatReviewPresentation();
         setModelTaskBusy(false);

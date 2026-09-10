@@ -29,6 +29,13 @@ class TaskHistoryError(ValueError):
         self.message = message
 
 
+def canonical_task_type(task_type: str) -> str:
+    val = str(task_type or "").strip()
+    if val == "word.format_review.deterministic":
+        return "word.format_review"
+    return val
+
+
 def _utc_now() -> str:
     return (
         datetime.now(timezone.utc)
@@ -109,8 +116,9 @@ def _default_history_dir() -> Path:
 
 
 class TaskHistoryStore:
-    def __init__(self, history_dir: Optional[Path] = None) -> None:
-        self.history_dir = Path(history_dir) if history_dir is not None else _default_history_dir()
+    def __init__(self, history_dir: Optional[Path] = None, base_dir: Optional[Path] = None) -> None:
+        target_dir = history_dir if history_dir is not None else base_dir
+        self.history_dir = Path(target_dir) if target_dir is not None else _default_history_dir()
         if self.history_dir.exists():
             try:
                 os.chmod(self.history_dir, 0o700)
@@ -130,7 +138,8 @@ class TaskHistoryStore:
                 pass
 
     def _task_dir(self, task_type: str) -> Path:
-        safe_task = re.sub(r"[^A-Za-z0-9_.-]", "_", str(task_type))
+        canon = canonical_task_type(task_type)
+        safe_task = re.sub(r"[^A-Za-z0-9_.-]", "_", str(canon))
         return self.history_dir / safe_task
 
     def _find_history_file(self, history_id: str) -> Optional[Path]:
@@ -168,7 +177,7 @@ class TaskHistoryStore:
         completed_at: Optional[str] = None,
     ) -> Dict[str, Any]:
         with _HISTORY_LOCK:
-            task_type_str = str(task_type or "").strip()
+            task_type_str = canonical_task_type(str(task_type or "").strip())
             if not task_type_str:
                 raise TaskHistoryError("TASK_TYPE_REQUIRED", "任务功能标识不能为空。")
 
@@ -222,7 +231,7 @@ class TaskHistoryStore:
 
     def list_history(self, task_type: str) -> List[Dict[str, Any]]:
         with _HISTORY_LOCK:
-            task_type_str = str(task_type or "").strip()
+            task_type_str = canonical_task_type(str(task_type or "").strip())
             if not task_type_str:
                 return []
             self._cleanup_task_history(task_type_str)
@@ -273,7 +282,7 @@ class TaskHistoryStore:
 
     def clear_history(self, task_type: str) -> int:
         with _HISTORY_LOCK:
-            task_type_str = str(task_type or "").strip()
+            task_type_str = canonical_task_type(str(task_type or "").strip())
             if not task_type_str:
                 return 0
             task_dir = self._task_dir(task_type_str)
