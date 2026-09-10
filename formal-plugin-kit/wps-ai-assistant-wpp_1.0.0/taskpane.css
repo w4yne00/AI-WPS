@@ -1236,6 +1236,13 @@ button.ghost-action:hover {
   color: var(--muted, #888);
 }
 
+.ppt-history-card-meta {
+  font-size: 11px;
+  color: var(--muted, #888);
+  font-family: var(--font-mono, monospace);
+  word-break: break-all;
+}
+
 .ppt-history-card-title {
   font-size: 13px;
   font-weight: 600;

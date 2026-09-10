@@ -269,7 +269,12 @@
       return;
     }
     if (helpers.releaseTaskSlot && state.documentSessionId) {
-      helpers.releaseTaskSlot(state.activeTaskSlots, "wpp", PPT_WORKFLOW_TASK_TYPE, state.documentSessionId, jobId);
+      if (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined") {
+        helpers.releaseTaskSlot(state.activeTaskSlots, "wpp", PPT_WORKFLOW_TASK_TYPE, state.documentSessionId, jobId);
+      }
+      if (typeof PPT_STRUCTURE_WORKFLOW_TASK_TYPE !== "undefined") {
+        helpers.releaseTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, state.documentSessionId, jobId);
+      }
     }
     for (var k in state.activeTaskSlots) {
       if (Object.prototype.hasOwnProperty.call(state.activeTaskSlots, k)) {
@@ -305,13 +310,26 @@
 
   function setHomeTaskMode(mode) {
     var structureMode = mode === "pptStructureReview";
+    var historyView = byId("ppt-history-view");
     state.taskMode = structureMode ? "pptStructureReview" : "pptSlideAssistant";
     state.workflowTaskType = homeWorkflowTaskType();
     byId("summary-source-segments").hidden = structureMode;
     byId("summary-controls").hidden = structureMode;
-    byId("summary-result-section").hidden = structureMode;
+    if (state.historyOpen) {
+      byId("summary-result-section").hidden = true;
+      byId("structure-result-section").hidden = true;
+      if (historyView) {
+        historyView.hidden = false;
+      }
+      loadAndRenderHistory();
+    } else {
+      byId("summary-result-section").hidden = structureMode;
+      byId("structure-result-section").hidden = !structureMode;
+      if (historyView) {
+        historyView.hidden = true;
+      }
+    }
     byId("structure-review-controls").hidden = !structureMode;
-    byId("structure-result-section").hidden = !structureMode;
     document.body.setAttribute("data-task-mode", state.taskMode);
   }
 
@@ -413,10 +431,36 @@
     }
   }
 
-  function loadStructureActiveJob() {
+  function getStructureActiveJobStorageKey(docSessionId) {
+    return [
+      "ai-wps",
+      "wpp",
+      "ppt.structure_review",
+      docSessionId || "default"
+    ].join(":");
+  }
+
+  function loadStructureActiveJob(docSessionId) {
     try {
-      var raw = window.localStorage && window.localStorage.getItem(PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY);
-      return raw ? JSON.parse(raw) : null;
+      if (!window.localStorage) {
+        return null;
+      }
+      var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+      var currentDoc = docSessionId || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId);
+      if (currentDoc) {
+        var scopedRaw = window.localStorage.getItem(getStructureActiveJobStorageKey(currentDoc));
+        if (scopedRaw) {
+          return JSON.parse(scopedRaw);
+        }
+      }
+      var raw = window.localStorage.getItem(PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY);
+      if (raw) {
+        var legacy = JSON.parse(raw);
+        if (!currentDoc || !legacy.documentSessionId || legacy.documentSessionId === currentDoc) {
+          return legacy;
+        }
+      }
+      return null;
     } catch (error) {
       return null;
     }
@@ -425,17 +469,51 @@
   function saveStructureActiveJob(job) {
     try {
       if (window.localStorage && job && job.jobId) {
-        window.localStorage.setItem(PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY, JSON.stringify(job));
+        var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+        var currentDoc = job.documentSessionId || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId) || "";
+        var record = JSON.stringify({
+          jobId: job.jobId,
+          host: "wpp",
+          taskType: PPT_STRUCTURE_WORKFLOW_TASK_TYPE,
+          documentSessionId: currentDoc,
+          startedAt: job.startedAt || state.startedAt || Date.now()
+        });
+        if (currentDoc) {
+          window.localStorage.setItem(getStructureActiveJobStorageKey(currentDoc), record);
+        }
+        window.localStorage.setItem(PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY, record);
       }
     } catch (error) {
       // In-memory polling remains available.
     }
   }
 
-  function clearStructureActiveJob(jobId) {
+  function clearStructureActiveJob(jobId, docSessionId) {
     try {
-      var active = loadStructureActiveJob();
-      if (!jobId || !active || !active.jobId || active.jobId === jobId) {
+      if (!window.localStorage) {
+        return;
+      }
+      var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+      var currentDoc = docSessionId || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId);
+      if (currentDoc) {
+        window.localStorage.removeItem(getStructureActiveJobStorageKey(currentDoc));
+      }
+      for (var i = window.localStorage.length - 1; i >= 0; i -= 1) {
+        var k = window.localStorage.key(i);
+        if (k && k.indexOf("ai-wps:wpp:ppt.structure_review:") === 0) {
+          var val = window.localStorage.getItem(k);
+          if (val) {
+            try {
+              var parsed = JSON.parse(val);
+              if (!jobId || (parsed && parsed.jobId === jobId)) {
+                window.localStorage.removeItem(k);
+              }
+            } catch (e) {}
+          }
+        }
+      }
+      var active = loadStructureActiveJob(currentDoc);
+      if (!jobId || (active && active.jobId === jobId)) {
         window.localStorage.removeItem(PPT_STRUCTURE_ACTIVE_JOB_STORAGE_KEY);
       }
     } catch (error) {
@@ -1248,27 +1326,71 @@
     };
   }
 
-  function finishStructureJob(jobId, result) {
-    clearStructureActiveJob(jobId);
-    state.jobId = "";
-    state.resumeExpected = false;
-    setStructureJobActionVisibility(null);
-    setRunDisabled(false);
+  function finishStructureJob(jobId, result, targetDocSession) {
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
+    var jobSession = targetDocSession || currentDocSession;
+    clearStructureActiveJob(jobId, jobSession);
+    releaseTaskSlotsForJob(jobId);
+    if (state.jobId === jobId) {
+      state.jobId = "";
+      state.resumeExpected = false;
+      setStructureJobActionVisibility(null);
+      setRunDisabled(false);
+    }
+    if (!state.structureResultsBySession) {
+      state.structureResultsBySession = {};
+    }
+    state.structureResultsBySession[jobSession] = result || {};
+
+    var statusText = "结构审查已完成。";
+    if (result && result.historyNotice) {
+      statusText += "（" + result.historyNotice + "）";
+    }
+
+    if (currentDocSession && jobSession && currentDocSession !== jobSession) {
+      return;
+    }
+
+    state.structureResult = result || {};
+    if (state.historyOpen) {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+      var bgStatus = "结构审查已完成（请返回查看）。";
+      if (result && result.historyNotice) {
+        bgStatus += "（" + result.historyNotice + "）";
+      }
+      setStatus(bgStatus);
+      return;
+    }
     renderStructureResult(result || {});
-    setStatus("结构审查已完成。");
+    setStatus(statusText);
   }
 
-  function failStructureJob(jobId, message, statusMessage) {
+  function failStructureJob(jobId, message, statusMessage, targetDocSession) {
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : state.documentSessionId;
+    var jobSession = targetDocSession || currentDocSession;
     var failureMessage = safeText(message) || "结构审查后台任务执行失败。";
-    clearStructureActiveJob(jobId);
-    state.jobId = "";
-    state.resumeExpected = false;
-    setStructureJobActionVisibility(null);
-    setRunDisabled(false);
-    setStatus((statusMessage || "结构审查失败") + "：" + failureMessage);
-    if (!state.structureResult) {
-      byId("structure-result-output").textContent = failureMessage;
+    clearStructureActiveJob(jobId, jobSession);
+    releaseTaskSlotsForJob(jobId);
+    if (state.jobId === jobId) {
+      state.jobId = "";
+      state.resumeExpected = false;
+      setStructureJobActionVisibility(null);
+      setRunDisabled(false);
     }
+    if (state.structureResultsBySession) {
+      delete state.structureResultsBySession[jobSession];
+    }
+    if (currentDocSession && jobSession && currentDocSession !== jobSession) {
+      return;
+    }
+    state.structureResult = null;
+    byId("btn-copy-review-conclusion").disabled = true;
+    byId("btn-copy-recommended-outline").disabled = true;
+    setStatus((statusMessage || "结构审查失败") + "：" + failureMessage);
+    byId("structure-result-output").textContent = failureMessage;
   }
 
   function isFatalStructurePollError(error) {
@@ -1280,14 +1402,17 @@
       error.adapterCode === "PPT_STRUCTURE_SLIDES_INCOMPLETE" ||
       error.adapterCode === "PPT_STRUCTURE_AUTH_SNAPSHOT_FAILED" ||
       error.adapterCode === "REQUEST_VALIDATION_FAILED" ||
-      error.adapterCode === "LONG_TASK_QUEUE_FULL"
+      error.adapterCode === "LONG_TASK_QUEUE_FULL" ||
+      error.adapterCode === "PPT_STRUCTURE_REVIEW_DOCUMENT_TASK_BUSY"
     );
   }
 
-  function pollStructureReviewJob(jobId) {
+  function pollStructureReviewJob(jobId, targetDocSession) {
     if (!jobId || state.jobId !== jobId || state.taskMode !== "pptStructureReview") {
       return;
     }
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var docSession = targetDocSession || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId);
     request(
       "/ppt/structure-review/jobs/" + encodeURIComponent(jobId) +
         (state.resumeExpected ? "?resume=1" : ""),
@@ -1300,24 +1425,24 @@
         return;
       }
       state.pollErrors = 0;
-      saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt });
+      saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
-        finishStructureJob(jobId, job.result || {});
+        finishStructureJob(jobId, job.result || {}, docSession);
         return;
       }
       if (job.status === "failed") {
-        failStructureJob(jobId, job.error && job.error.message, "结构审查失败");
+        failStructureJob(jobId, job.error && job.error.message, "结构审查失败", docSession);
         return;
       }
       if (job.status === "cancelled") {
-        failStructureJob(jobId, "排队中的结构审查任务已取消。", "结构审查已取消");
+        failStructureJob(jobId, "排队中的结构审查任务已取消。", "结构审查已取消", docSession);
         return;
       }
       progress = describeStructureProgress(job, jobId);
       setStatus(progress.status);
       setStructureJobActionVisibility(job);
       byId("structure-result-output").textContent = progress.detail;
-      setTimeout(function () { pollStructureReviewJob(jobId); }, PPT_SLIDE_POLL_INTERVAL_MS);
+      setTimeout(function () { pollStructureReviewJob(jobId, docSession); }, PPT_SLIDE_POLL_INTERVAL_MS);
     }).catch(function (error) {
       var elapsed = Date.now() - (state.startedAt || Date.now());
       var within;
@@ -1326,7 +1451,8 @@
       }
       state.pollErrors += 1;
       if (error && error.adapterCode === "PPT_STRUCTURE_JOB_INTERRUPTED") {
-        clearStructureActiveJob(jobId);
+        clearStructureActiveJob(jobId, docSession);
+        releaseTaskSlotsForJob(jobId);
         state.jobId = "";
         state.resumeExpected = false;
         setRunDisabled(false);
@@ -1336,16 +1462,16 @@
         return;
       }
       if (isFatalStructurePollError(error)) {
-        failStructureJob(jobId, error.message, "状态查询失败");
+        failStructureJob(jobId, error.message, "状态查询失败", docSession);
         return;
       }
       within = state.pollErrors <= PPT_SLIDE_POLL_MAX_ERRORS && elapsed <= PPT_SLIDE_POLL_MAX_WAIT_MS;
-      saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt });
+      saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       setStatus(within
         ? "状态查询暂时未连接本地 adapter，继续等待模型后台..."
         : "连接中断，正在低频恢复查询...");
       setTimeout(
-        function () { pollStructureReviewJob(jobId); },
+        function () { pollStructureReviewJob(jobId, docSession); },
         within ? PPT_SLIDE_POLL_ERROR_RETRY_DELAY_MS : PPT_SLIDE_POLL_SLOW_RETRY_DELAY_MS
       );
     });
@@ -1353,12 +1479,14 @@
 
   function submitStructureReviewJob(payload) {
     var clientJobId = payload.clientJobId;
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var docSession = payload.documentSessionId || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId) || "";
     state.jobId = clientJobId;
     state.startedAt = Date.now();
     state.pollErrors = 0;
     state.resumeExpected = true;
     byId("btn-resubmit-structure-review").hidden = true;
-    saveStructureActiveJob({ jobId: clientJobId, startedAt: state.startedAt });
+    saveStructureActiveJob({ jobId: clientJobId, startedAt: state.startedAt, documentSessionId: docSession });
     setStatus("正在提交结构审查任务...");
     request("/ppt/structure-review/jobs", payload, {
       timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
@@ -1370,29 +1498,32 @@
         return;
       }
       state.jobId = jobId;
-      saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt });
+      saveStructureActiveJob({ jobId: jobId, startedAt: state.startedAt, documentSessionId: docSession });
       if (job.status === "completed") {
-        finishStructureJob(jobId, job.result || {});
+        finishStructureJob(jobId, job.result || {}, docSession);
         return;
       }
       progress = describeStructureProgress(job, jobId);
       setStatus(progress.status);
       setStructureJobActionVisibility(job);
       byId("structure-result-output").textContent = progress.detail;
-      pollStructureReviewJob(jobId);
+      pollStructureReviewJob(jobId, docSession);
     }).catch(function (error) {
       if (isFatalStructurePollError(error)) {
-        failStructureJob(clientJobId, error.message, "提交失败");
+        failStructureJob(clientJobId, error.message, "提交失败", docSession);
         return;
       }
       setStatus("提交响应未确认，正在按任务编号恢复查询...");
-      pollStructureReviewJob(clientJobId);
+      pollStructureReviewJob(clientJobId, docSession);
     });
   }
 
   function runPptStructureReview() {
     var startSlide;
     var endSlide;
+    var pres;
+    var docSession;
+    var docName;
     if (state.adapterHealthStatus === "recovery" || !state.modelTasksAllowed) {
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
@@ -1401,8 +1532,18 @@
       setStatus("模型配置正在更新，请稍后再运行结构审查。");
       return;
     }
+    pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    docSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : (state.documentSessionId || "");
+    docName = (helpers.getDocumentDisplayName && pres) ? helpers.getDocumentDisplayName(pres) : "";
+    if (docSession) {
+      state.documentSessionId = docSession;
+    }
     if (state.jobId) {
       setStatus("已有结构审查任务正在运行，请等待当前任务完成。");
+      return;
+    }
+    if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, docSession)) {
+      setStatus("当前文档已有进行中的任务，请稍候。");
       return;
     }
     startSlide = safeText(byId("ppt-structure-start-slide").value);
@@ -1433,6 +1574,16 @@
           " ｜ 已识别主标题 " + titledCount + "/" + payload.slides.length + " 页" +
           " ｜ 演示文稿共 " + payload.scope.totalSlides + " 页";
         payload.clientJobId = buildPptSlideClientJobId("structure");
+        payload.documentSessionId = docSession;
+        payload.documentDisplayName = docName;
+        payload.host = "wpp";
+        state.structureResult = null;
+        byId("btn-copy-review-conclusion").disabled = true;
+        byId("btn-copy-recommended-outline").disabled = true;
+        byId("structure-result-output").textContent = "正在提交结构审查任务...";
+        if (helpers.claimTaskSlot) {
+          helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, docSession, payload.clientJobId);
+        }
         submitStructureReviewJob(payload);
       } catch (error) {
         setRunDisabled(false);
@@ -2942,24 +3093,55 @@
   }
 
   function resumeStructureReviewJob() {
-    var active;
     if (state.jobId || state.currentView === "settings") {
       return;
     }
-    active = loadStructureActiveJob();
+    var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
+    var currentDocSession = (helpers.getDocumentSessionId && pres) ? helpers.getDocumentSessionId(pres) : (state.documentSessionId || "");
+    var active = loadStructureActiveJob(currentDocSession);
     if (!active || !active.jobId) {
       return;
     }
-    state.jobId = active.jobId;
-    state.startedAt = active.startedAt || Date.now();
-    state.pollErrors = 0;
-    state.resumeExpected = true;
-    byId("btn-resubmit-structure-review").hidden = true;
-    setRunDisabled(true);
-    setStatus("正在恢复未完成的结构审查任务...");
-    byId("structure-result-output").textContent =
-      "任务编号已恢复，正在继续查询模型后台状态。\n任务编号：" + active.jobId;
-    pollStructureReviewJob(active.jobId);
+    if (active.documentSessionId && currentDocSession && active.documentSessionId !== currentDocSession) {
+      return;
+    }
+    if (!state.documentSessionId && currentDocSession) {
+      state.documentSessionId = currentDocSession;
+    }
+
+    return request("/ppt/structure-review/jobs/" + encodeURIComponent(active.jobId) + "?resume=1", null, {
+      timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
+    }).then(function (body) {
+      var job = body.data || {};
+      if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
+        clearStructureActiveJob(active.jobId, currentDocSession);
+        return;
+      }
+      if (job.status === "queued" || job.status === "running") {
+        if (state.jobId) {
+          return;
+        }
+        state.jobId = active.jobId;
+        state.startedAt = active.startedAt || Date.now();
+        state.pollErrors = 0;
+        state.resumeExpected = true;
+        if (active.documentSessionId && helpers.claimTaskSlot) {
+          helpers.claimTaskSlot(state.activeTaskSlots, "wpp", PPT_STRUCTURE_WORKFLOW_TASK_TYPE, active.documentSessionId, active.jobId);
+        }
+        byId("btn-resubmit-structure-review").hidden = true;
+        setRunDisabled(true);
+        setStatus("正在恢复未完成的结构审查任务...");
+        var progress = describeStructureProgress(job, active.jobId);
+        byId("structure-result-output").textContent =
+          "任务编号已恢复，正在继续查询模型后台状态。\n" + progress.detail;
+        setStructureJobActionVisibility(job);
+        setTimeout(function () { pollStructureReviewJob(active.jobId, currentDocSession); }, PPT_SLIDE_POLL_INTERVAL_MS);
+      }
+    }).catch(function (error) {
+      if (error && (error.adapterCode === "LONG_TASK_NOT_FOUND" || error.adapterCode === "PPT_STRUCTURE_JOB_INTERRUPTED")) {
+        clearStructureActiveJob(active.jobId, currentDocSession);
+      }
+    });
   }
 
   function cancelQueuedPptSlideJob() {
@@ -3013,26 +3195,33 @@
   }
 
   function updateHistoryBadge() {
-    var badge = byId("history-unread-badge");
-    if (!badge) {
-      return;
-    }
+    var badges = [byId("history-unread-badge"), byId("structure-history-unread-badge")];
     var count = state.historyUnreadCount || 0;
-    if (count > 0) {
-      badge.textContent = count > 99 ? "99+" : String(count);
-      badge.hidden = false;
-    } else {
-      badge.hidden = true;
-      badge.textContent = "0";
-    }
+    badges.forEach(function (badge) {
+      if (!badge) {
+        return;
+      }
+      if (count > 0) {
+        badge.textContent = count > 99 ? "99+" : String(count);
+        badge.hidden = false;
+      } else {
+        badge.hidden = true;
+        badge.textContent = "0";
+      }
+    });
   }
 
   function switchHistoryView(open) {
     state.historyOpen = Boolean(open);
+    var isStructure = state.taskMode === "pptStructureReview";
     var summarySection = byId("summary-result-section");
+    var structureSection = byId("structure-result-section");
     var historyView = byId("ppt-history-view");
     if (summarySection) {
-      summarySection.hidden = state.historyOpen;
+      summarySection.hidden = state.historyOpen || isStructure;
+    }
+    if (structureSection) {
+      structureSection.hidden = state.historyOpen || !isStructure;
     }
     if (historyView) {
       historyView.hidden = !state.historyOpen;
@@ -3042,8 +3231,14 @@
       updateHistoryBadge();
       loadAndRenderHistory();
     } else {
-      if (state.result) {
-        renderResult(state.result);
+      if (isStructure) {
+        if (state.structureResult) {
+          renderStructureResult(state.structureResult);
+        }
+      } else {
+        if (state.result) {
+          renderResult(state.result);
+        }
       }
     }
   }
@@ -3053,7 +3248,10 @@
     if (contentEl) {
       contentEl.innerHTML = '<div class="ppt-history-empty">正在加载历史记录...</div>';
     }
-    request("/history?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE), null, {
+    var taskType = typeof homeWorkflowTaskType === "function"
+      ? homeWorkflowTaskType()
+      : (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined" ? PPT_WORKFLOW_TASK_TYPE : "ppt.slide_assistant");
+    request("/history?taskType=" + encodeURIComponent(taskType), null, {
       timeoutMs: 8000
     }).then(function (body) {
       var data = body && body.data;
@@ -3070,7 +3268,10 @@
   }
 
   function handleClearHistory() {
-    request("/history?taskType=" + encodeURIComponent(PPT_WORKFLOW_TASK_TYPE), null, {
+    var taskType = typeof homeWorkflowTaskType === "function"
+      ? homeWorkflowTaskType()
+      : (typeof PPT_WORKFLOW_TASK_TYPE !== "undefined" ? PPT_WORKFLOW_TASK_TYPE : "ppt.slide_assistant");
+    request("/history?taskType=" + encodeURIComponent(taskType), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
@@ -3147,7 +3348,77 @@
 
     var result = item.result || {};
     var html = "";
-    if (result.resultType === "document" || result.slides) {
+    var actionsDiv = card.querySelector(".ppt-history-card-actions");
+    if (result.resultType === "structure_review" || item.taskType === PPT_STRUCTURE_WORKFLOW_TASK_TYPE) {
+      var summaryParts = [];
+      if (result.reviewedRange) {
+        var r = result.reviewedRange;
+        summaryParts.push("审查范围：第 " + (r.startSlide || 1) + "–" + (r.endSlide || "-") + " 页");
+      }
+      if (result.overallStoryline) {
+        summaryParts.push("整体主线：" + result.overallStoryline);
+      }
+      if (result.reviewConclusion) {
+        summaryParts.push("审查结论：" + result.reviewConclusion);
+      }
+      var countParts = [];
+      if (result.highPriorityIssueCount !== undefined) {
+        countParts.push("高优先级问题：" + result.highPriorityIssueCount + " 项");
+      }
+      if (result.generalSuggestionCount !== undefined) {
+        countParts.push("一般建议：" + result.generalSuggestionCount + " 项");
+      }
+      if (result.slideRecommendationCount !== undefined) {
+        countParts.push("逐页建议：" + result.slideRecommendationCount + " 项");
+      }
+      if (countParts.length) {
+        summaryParts.push("问题统计：" + countParts.join("，"));
+      }
+
+      var summaryText = summaryParts.join("\n\n") || result.plainText || result.reviewConclusion || "暂无摘要";
+      var summaryHtml = '<pre style="white-space:pre-wrap;margin:0;font-family:inherit;">' + (helpers.escapeHtml ? helpers.escapeHtml(summaryText) : summaryText) + '</pre>';
+
+      var reportId = result.reportId || result.jobId || item.jobId;
+      var nowSeconds = Date.now() / 1000;
+      var isExpired = Boolean(result.reportExpiresAt && nowSeconds >= result.reportExpiresAt);
+
+      if (isExpired) {
+        detailDiv.innerHTML = summaryHtml + '<div class="history-report-expired" style="color:var(--danger, #dc2626);margin-top:6px;">专用报告已过期。</div>';
+        if (actionsDiv) {
+          card.insertBefore(detailDiv, actionsDiv);
+        } else {
+          card.appendChild(detailDiv);
+        }
+        btn.textContent = "收起";
+        return;
+      }
+
+      if (reportId) {
+        detailDiv.innerHTML = summaryHtml + '<div class="history-detail-loading" style="color:var(--muted, #666);margin-top:6px;">正在读取完整审查报告...</div>';
+        if (actionsDiv) {
+          card.insertBefore(detailDiv, actionsDiv);
+        } else {
+          card.appendChild(detailDiv);
+        }
+        btn.textContent = "收起";
+        return request("/ppt/structure-review/jobs/" + encodeURIComponent(reportId) + "?resume=1", null, {
+          timeoutMs: PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS
+        }).then(function (body) {
+          var job = body.data || {};
+          if (job.status === "completed" && job.result) {
+            var fullResult = job.result;
+            var fullText = fullResult.plainText || fullResult.reviewConclusion || summaryText;
+            detailDiv.innerHTML = '<pre style="white-space:pre-wrap;margin:0;font-family:inherit;">' + (helpers.escapeHtml ? helpers.escapeHtml(fullText) : fullText) + '</pre>';
+          } else {
+            detailDiv.innerHTML = summaryHtml + '<div class="history-report-expired" style="color:var(--danger, #dc2626);margin-top:6px;">专用报告已过期或不可用。</div>';
+          }
+        }).catch(function () {
+          detailDiv.innerHTML = summaryHtml + '<div class="history-report-expired" style="color:var(--danger, #dc2626);margin-top:6px;">专用报告已过期或不可用。</div>';
+        });
+      }
+
+      html = summaryHtml;
+    } else if (result.resultType === "document" || result.slides) {
       var md = helpers.buildPptDocumentPlainText(result);
       html = '<pre style="white-space:pre-wrap;margin:0;font-family:inherit;">' + (helpers.escapeHtml ? helpers.escapeHtml(md) : md) + '</pre>';
     } else {
@@ -3155,7 +3426,6 @@
       html = helpers.renderMarkdown ? helpers.renderMarkdown(slideMd) : (helpers.escapeHtml ? helpers.escapeHtml(slideMd) : slideMd);
     }
     detailDiv.innerHTML = html;
-    var actionsDiv = card.querySelector(".ppt-history-card-actions");
     if (actionsDiv) {
       card.insertBefore(detailDiv, actionsDiv);
     } else {
@@ -3178,7 +3448,9 @@
     }
     var res = item.result || {};
     var text = "";
-    if (res.resultType === "document" || res.slides) {
+    if (res.resultType === "structure_review" || item.taskType === PPT_STRUCTURE_WORKFLOW_TASK_TYPE) {
+      text = res.plainText || res.reviewConclusion || res.overallStoryline || (res.summary ? (res.summary.overview || "") : "");
+    } else if (res.resultType === "document" || res.slides) {
       text = helpers.buildPptDocumentPlainText(res);
     } else {
       text = helpers.buildPptSlidePlainText(res);
@@ -3214,6 +3486,12 @@
     var btnViewHistory = byId("btn-view-history");
     if (btnViewHistory) {
       btnViewHistory.addEventListener("click", function () {
+        switchHistoryView(true);
+      });
+    }
+    var btnViewStructureHistory = byId("btn-view-structure-history");
+    if (btnViewStructureHistory) {
+      btnViewStructureHistory.addEventListener("click", function () {
         switchHistoryView(true);
       });
     }

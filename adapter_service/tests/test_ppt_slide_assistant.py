@@ -8,6 +8,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 HAS_PYDANTIC = importlib.util.find_spec("pydantic") is not None
 HAS_FASTAPI = importlib.util.find_spec("fastapi") is not None
