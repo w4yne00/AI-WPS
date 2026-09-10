@@ -48,6 +48,7 @@ class DocumentReviewJobStore:
         self.coordinator = coordinator or get_long_task_coordinator()
         self._submission_lock = threading.Lock()
         self._active_doc_sessions: Dict[Tuple[str, str, str], str] = {}
+        self._job_identities: Dict[str, Tuple[str, str, str]] = {}
 
     def start(self, request: WordDocumentRequest, trace_id: str) -> Dict:
         job_id = (
@@ -63,10 +64,18 @@ class DocumentReviewJobStore:
             or ""
         ).strip()
         host = str(getattr(request, "host", "") or "wps").strip()
+        identity = (host, "word.document_review", doc_session)
 
         with self._submission_lock:
             existing = self.coordinator.get(job_id, task_type="word.document_review")
             if existing is not None:
+                recorded_identity = self._job_identities.get(job_id)
+                if recorded_identity is not None and recorded_identity != identity:
+                    raise AdapterError(
+                        "WORD_DOCUMENT_REVIEW_TASK_CONFLICT",
+                        "任务编号已绑定到其他文档会话。",
+                        status_code=409,
+                    )
                 return existing
 
             if doc_session:
@@ -84,6 +93,7 @@ class DocumentReviewJobStore:
                     else:
                         self._active_doc_sessions.pop(slot_key, None)
 
+            self._job_identities[job_id] = identity
             snapshot = {
                 "request": _copy_request(request),
                 "jobId": job_id,
@@ -116,6 +126,7 @@ class DocumentReviewJobStore:
             for key, val in list(self._active_doc_sessions.items()):
                 if val == job_id:
                     self._active_doc_sessions.pop(key, None)
+            self._job_identities.pop(job_id, None)
         return res
 
     def run_sync(self, request: WordDocumentRequest, trace_id: str) -> Dict:
@@ -175,9 +186,6 @@ class DocumentReviewJobStore:
                     "writingPolicyUsage": sanitize_usage_for_history(result.get("writingPolicyUsage")),
                     "writingPolicyAudit": sanitize_audit_for_history(result.get("writingPolicyAudit")),
                 }
-                if "oversizedData" in result:
-                    archived_result["oversizedData"] = result["oversizedData"]
-
                 get_task_history_store().record_success(
                     task_type="word.document_review",
                     job_id=job_id,

@@ -266,6 +266,7 @@ class FullDocumentReviewService:
         self._reports: Dict[str, Dict] = {}
         self._job_records: Dict[str, Dict] = {}
         self._recovery_rejections: Dict[str, Dict] = {}
+        self._active_doc_sessions: Dict[Tuple[str, str, str], str] = {}
         self._lock = threading.Lock()
         self._cleanup_stop = threading.Event()
         self._cleanup_thread = None
@@ -379,6 +380,8 @@ class FullDocumentReviewService:
         identity = {
             "snapshotSha256": str(snapshot.get("contentSha256", "")),
             "documentIdSha256": str(snapshot.get("documentIdSha256", "")),
+            "host": str(snapshot.get("host", "wps") or "wps"),
+            "documentSessionId": str(snapshot.get("documentSessionId", "") or ""),
             "documentType": str(snapshot.get("documentType", "")),
             "reviewPrompt": str(snapshot.get("reviewPrompt", "")),
             "writingPolicyScene": str(snapshot.get("writingPolicyScene", "auto")),
@@ -719,11 +722,15 @@ class FullDocumentReviewService:
     def create_session(self, payload: Dict) -> Dict:
         self._require_enabled()
         self._require_object(payload, {
-            "documentId", "documentType", "reviewPrompt", "writingPolicyScene", "coverage"
+            "documentId", "documentType", "reviewPrompt", "writingPolicyScene", "coverage",
+            "host", "documentSessionId", "documentDisplayName"
         })
         document_id = self._required_string(
             payload, "documentId", "FULL_DOCUMENT_REVIEW_DOCUMENT_INVALID", 160
         ).strip()
+        host = self._optional_string(payload, "host", "wps", 64).strip() or "wps"
+        document_session_id = self._optional_string(payload, "documentSessionId", "", 256).strip()
+        document_display_name = self._optional_string(payload, "documentDisplayName", "", 256).strip()
         document_type = self._optional_string(
             payload, "documentType", "technical_solution", 120
         ).strip()
@@ -761,6 +768,10 @@ class FullDocumentReviewService:
             "sessionId": session_id,
             "snapshotId": session_id,
             "status": "uploading",
+            "documentId": document_id,
+            "host": host,
+            "documentSessionId": document_session_id,
+            "documentDisplayName": document_display_name,
             "documentIdSha256": _sha256_text(document_id),
             "documentType": document_type or "technical_solution",
             "reviewPrompt": review_prompt,
@@ -1542,6 +1553,9 @@ class FullDocumentReviewService:
                 "clientJobId",
                 "confirmLarge",
                 "confirmationToken",
+                "host",
+                "documentSessionId",
+                "documentDisplayName",
             },
         )
         snapshot_id = self._required_string(
@@ -1592,12 +1606,36 @@ class FullDocumentReviewService:
                 if _SAFE_ID.fullmatch(requested_job_id)
                 else "full-review-job-{0}".format(secrets.token_hex(16))
             )
+            host = str(payload.get("host") or session.get("host") or "wps").strip()
+            doc_session = str(payload.get("documentSessionId") or session.get("documentSessionId") or "").strip()
+            doc_display_name = str(payload.get("documentDisplayName") or session.get("documentDisplayName") or session.get("documentId") or "").strip()
+
+            if doc_session:
+                slot_key = (host, TASK_TYPE, doc_session)
+                active_job_id = self._active_doc_sessions.get(slot_key)
+                if active_job_id:
+                    active_job = self.coordinator.get(active_job_id, task_type=TASK_TYPE)
+                    if active_job and active_job.get("status") in {"queued", "running"}:
+                        if active_job_id != job_id:
+                            raise AdapterError(
+                                "FULL_DOCUMENT_REVIEW_TASK_BUSY",
+                                "当前文档已存在进行中的全篇审查任务，请等待其完成。",
+                                status_code=409,
+                            )
+                    else:
+                        self._active_doc_sessions.pop(slot_key, None)
+
             session["status"] = "submitting"
             session["submittedJobId"] = job_id
             snapshot = {
                 "snapshotId": snapshot_id,
                 "jobId": job_id,
                 "traceId": trace_id,
+                "host": host,
+                "documentSessionId": doc_session,
+                "documentDisplayName": doc_display_name,
+                "serviceName": str(task_auth.get("serviceName") or ""),
+                "modelName": str(task_auth.get("modelName") or ""),
                 "sourceText": session["sourceText"],
                 "blocks": deepcopy(session["blocks"]),
                 "documentType": session["documentType"],
@@ -1637,19 +1675,20 @@ class FullDocumentReviewService:
                     "客户端任务编号已绑定到其他全篇审查快照。",
                     status_code=409,
                 )
+            if doc_session and job.get("status") in {"queued", "running"}:
+                with self._lock:
+                    self._active_doc_sessions[(host, TASK_TYPE, doc_session)] = job.get("jobId")
         except Exception:
             remove_job_data = False
             with self._lock:
                 if session.get("status") == "submitting":
                     session["status"] = (
                         "awaiting_confirmation"
-                        if session.get("capacity", {}).get("requiresConfirmation")
+                        if session.get("confirmationTokenSha256")
                         else "committed"
                     )
                     session.pop("submittedJobId", None)
-                persisted = self._job_records.get(job_id, {})
-                persisted_snapshot = persisted.get("snapshot", {})
-                remove_job_data = not persisted or persisted_snapshot.get("snapshotId") == snapshot_id
+                    remove_job_data = True
             if remove_job_data:
                 self._remove_job_data(job_id)
             raise
@@ -1659,23 +1698,21 @@ class FullDocumentReviewService:
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         self._require_enabled()
-        rejected = self._recovery_rejections.get(job_id)
-        if rejected is not None:
-            return deepcopy(rejected)
         job = self.coordinator.get(job_id, task_type=TASK_TYPE)
         if job is None:
+            with self._lock:
+                if job_id in self._recovery_rejections:
+                    return deepcopy(self._recovery_rejections[job_id])
             return None
-        job.pop("result", None)
-        result = self._get_report(job_id) if job.get("status") == "completed" else None
-        job["reportAvailable"] = bool(
-            job.get("status") == "completed" and isinstance(result, dict)
-        )
+        result = self._get_report(job_id)
         if isinstance(result, dict):
-            job["coverage"] = result.get("coverage", {})
-            job["enumerationStatus"] = result.get("enumerationStatus", "")
-            job["enumerationLimitedRanges"] = deepcopy(
-                result.get("enumerationLimitedRanges", [])
-            )
+            job["report"] = {
+                "reportId": job_id,
+                "summary": result.get("summary", ""),
+                "disclaimer": result.get("disclaimer", ""),
+                "enumerationStatus": result.get("enumerationStatus", "limited"),
+                "coverage": deepcopy(result.get("coverage", {})),
+            }
             job["issueCount"] = result.get("issueCount", 0)
             job["categoryCounts"] = deepcopy(result.get("categoryCounts", {}))
             job["severityCounts"] = deepcopy(result.get("severityCounts", {}))
@@ -1690,10 +1727,24 @@ class FullDocumentReviewService:
             if snapshot_id:
                 self._remove_snapshot(snapshot_id)
             self._remove_job_data(job_id)
+        with self._lock:
+            for key, val in list(self._active_doc_sessions.items()):
+                if val == job_id:
+                    self._active_doc_sessions.pop(key, None)
         return job
 
     def get_report(self, job_id: str) -> Dict:
         self._require_enabled()
+        report = self._get_report(job_id)
+        if isinstance(report, dict):
+            expires_at = report.get("reportExpiresAt")
+            if expires_at and self._wall_clock() > float(expires_at):
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_REPORT_EXPIRED",
+                    "全篇审查报告已过期。",
+                    status_code=404,
+                )
+            return self._public_report(report)
         job = self.coordinator.get(job_id, task_type=TASK_TYPE)
         if job is None:
             raise AdapterError(
@@ -1701,20 +1752,17 @@ class FullDocumentReviewService:
                 "全篇审查任务不存在或已过期。",
                 status_code=404,
             )
-        report = self._get_report(job_id)
         if job.get("status") != "completed":
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_REPORT_NOT_AVAILABLE",
                 "全篇审查尚未生成可用的结构化报告。",
                 status_code=409,
             )
-        if not isinstance(report, dict):
-            raise AdapterError(
-                "FULL_DOCUMENT_REVIEW_RESULT_NOT_FOUND",
-                "全篇审查结果不存在或已删除。",
-                status_code=404,
-            )
-        return self._public_report(report)
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_REPORT_NOT_AVAILABLE",
+            "全篇审查尚未生成可用的结构化报告。",
+            status_code=404,
+        )
 
     def list_issues(
         self,
@@ -2090,6 +2138,12 @@ class FullDocumentReviewService:
             if not keep_staging:
                 self._remove_snapshot(str(snapshot.get("snapshotId", "")))
                 self._remove_job_data(job_id)
+                host = str(snapshot.get("host") or "wps").strip()
+                doc_session = str(snapshot.get("documentSessionId") or "").strip()
+                if doc_session:
+                    with self._lock:
+                        if self._active_doc_sessions.get((host, TASK_TYPE, doc_session)) == job_id:
+                            self._active_doc_sessions.pop((host, TASK_TYPE, doc_session), None)
 
     @staticmethod
     def _is_recoverable_failure(error: AdapterError) -> bool:
@@ -3279,21 +3333,34 @@ class FullDocumentReviewService:
 
     def _require_report(self, job_id: str) -> Dict:
         self._require_enabled()
-        job = self.coordinator.get(job_id, task_type=TASK_TYPE)
         report = self._get_report(job_id)
-        if job is None or job.get("status") != "completed" or not isinstance(report, dict):
+        if isinstance(report, dict):
+            expires_at = report.get("reportExpiresAt")
+            if expires_at and self._wall_clock() > float(expires_at):
+                raise AdapterError(
+                    "FULL_DOCUMENT_REVIEW_REPORT_EXPIRED",
+                    "全篇审查报告已过期。",
+                    status_code=404,
+                )
+            return report
+        job = self.coordinator.get(job_id, task_type=TASK_TYPE)
+        if job is not None and job.get("status") in {"queued", "running"}:
             raise AdapterError(
                 "FULL_DOCUMENT_REVIEW_REPORT_NOT_AVAILABLE",
                 "全篇审查尚未生成可用的结构化报告。",
-                status_code=404,
+                status_code=409,
             )
-        return report
+        raise AdapterError(
+            "FULL_DOCUMENT_REVIEW_REPORT_NOT_AVAILABLE",
+            "全篇审查尚未生成可用的结构化报告。",
+            status_code=404,
+        )
 
     def _save_report(self, job_id: str, report: Dict) -> None:
-        stored = deepcopy(report)
-        stored["reportExpiresAt"] = report.get(
+        report["reportExpiresAt"] = report.get(
             "reportExpiresAt", self._wall_clock() + REPORT_RESULT_TTL_SECONDS
         )
+        stored = deepcopy(report)
         stored["reportSha256"] = _report_sha256(stored)
         with self._lock:
             self._reports[job_id] = stored
@@ -3307,8 +3374,9 @@ class FullDocumentReviewService:
                 or snapshot.get("documentId")
                 or ""
             )
-            service_name = str(snapshot.get("serviceName") or "")
-            model_name = str(snapshot.get("modelName") or "")
+            task_auth = snapshot.get("taskAuth") or {}
+            service_name = str(snapshot.get("serviceName") or task_auth.get("serviceName") or "")
+            model_name = str(snapshot.get("modelName") or task_auth.get("modelName") or "")
 
             archived_result = {
                 "reportType": "full_document_review",
