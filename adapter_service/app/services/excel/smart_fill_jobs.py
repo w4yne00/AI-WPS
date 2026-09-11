@@ -328,9 +328,10 @@ class ExcelSmartFillJobStore:
     def cancel(self, job_id: str) -> Optional[Dict]:
         job = self.coordinator.request_cancel(job_id, task_type="excel.smart_fill")
         with self._submission_lock:
-            for key, val in list(self._active_doc_sessions.items()):
-                if val == job_id:
-                    self._active_doc_sessions.pop(key, None)
+            if job is not None and job.get("status") in {"cancelled", "failed"}:
+                for key, val in list(self._active_doc_sessions.items()):
+                    if val == job_id:
+                        self._active_doc_sessions.pop(key, None)
         return job
 
     def run_sync(self, request: ExcelSmartFillRequest, trace_id: str) -> Dict:
@@ -347,17 +348,21 @@ class ExcelSmartFillJobStore:
         )
 
     def _run(self, snapshot: Dict, progress) -> Dict:
+        continuation = False
         try:
-            return self._run_internal(snapshot, progress)
-        except Exception:
-            doc_session = str(snapshot.get("documentSessionId") or "")
-            host = str(snapshot.get("host") or "et")
-            if doc_session:
-                with self._submission_lock:
-                    slot_key = (host, "excel.smart_fill", doc_session)
-                    if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
-                        self._active_doc_sessions.pop(slot_key, None)
-            raise
+            result = self._run_internal(snapshot, progress)
+            if isinstance(result, LongTaskContinuation):
+                continuation = True
+            return result
+        finally:
+            if not continuation:
+                doc_session = str(snapshot.get("documentSessionId") or "")
+                host = str(snapshot.get("host") or "et")
+                if doc_session:
+                    with self._submission_lock:
+                        slot_key = (host, "excel.smart_fill", doc_session)
+                        if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
+                            self._active_doc_sessions.pop(slot_key, None)
 
     def _run_internal(self, snapshot: Dict, progress) -> Dict:
         self._raise_if_deadline_exceeded(snapshot)
@@ -507,18 +512,34 @@ class ExcelSmartFillJobStore:
             model_name = auth.get("modelName") or result.get("provider") or "model"
             job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
 
-            archived_items = [
-                {
+            req_items_map = {}
+            if req and hasattr(req, "items") and req.items:
+                for req_item in req.items:
+                    if isinstance(req_item, dict):
+                        i_id = req_item.get("itemId") or req_item.get("item_id")
+                        row_idx = req_item.get("sourceRowIndex") or req_item.get("source_row_index")
+                        row_lbl = req_item.get("sourceRowLabel") or req_item.get("source_row_label") or ""
+                    else:
+                        i_id = getattr(req_item, "item_id", None) or getattr(req_item, "itemId", None)
+                        row_idx = getattr(req_item, "source_row_index", None) or getattr(req_item, "sourceRowIndex", None)
+                        row_lbl = getattr(req_item, "source_row_label", "") or getattr(req_item, "sourceRowLabel", "") or ""
+                    if i_id:
+                        req_items_map[str(i_id)] = (row_idx, row_lbl)
+
+            archived_items = []
+            for item in combined:
+                if not isinstance(item, dict):
+                    continue
+                item_id = str(item.get("itemId") or "")
+                meta = req_items_map.get(item_id, (None, ""))
+                archived_items.append({
                     "itemId": item.get("itemId"),
                     "status": item.get("status"),
                     "valueType": item.get("valueType", "text"),
                     "value": item.get("value", ""),
-                    "sourceRowIndex": item.get("sourceRowIndex"),
-                    "sourceRowLabel": item.get("sourceRowLabel", ""),
-                }
-                for item in combined
-                if isinstance(item, dict)
-            ]
+                    "sourceRowIndex": meta[0] if meta[0] is not None else item.get("sourceRowIndex"),
+                    "sourceRowLabel": meta[1] if meta[1] else item.get("sourceRowLabel", ""),
+                })
             archived_result = {
                 "schemaVersion": "excel.smart_fill.v2",
                 "processedItemCount": len(archived_items),
@@ -538,14 +559,6 @@ class ExcelSmartFillJobStore:
                 processed_result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
         except Exception:
             pass
-
-        doc_session = str(snapshot.get("documentSessionId") or "")
-        host = str(snapshot.get("host") or "et")
-        if doc_session:
-            with self._submission_lock:
-                slot_key = (host, "excel.smart_fill", doc_session)
-                if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
-                    self._active_doc_sessions.pop(slot_key, None)
 
         return processed_result
 

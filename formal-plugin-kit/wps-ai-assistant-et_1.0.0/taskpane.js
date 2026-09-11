@@ -473,10 +473,22 @@
     ].join("-");
   }
 
-  function loadExcelSmartFillActiveJob() {
+  function getExcelSmartFillActiveJobStorageKey(docSessionId) {
+    var safeSession = encodeURIComponent(String(docSessionId || "default"));
+    return EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY + "_" + safeSession;
+  }
+
+  function loadExcelSmartFillActiveJob(docSessionId) {
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
     var raw;
     try {
-      raw = window.localStorage && window.localStorage.getItem(EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY);
+      if (!window.localStorage) {
+        return null;
+      }
+      raw = window.localStorage.getItem(getExcelSmartFillActiveJobStorageKey(targetDocSession));
+      if (!raw && (!targetDocSession || targetDocSession === "default")) {
+        raw = window.localStorage.getItem(EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY);
+      }
       return raw ? JSON.parse(raw) : null;
     } catch (error) {
       return null;
@@ -487,12 +499,14 @@
     if (!job || !job.jobId) {
       return;
     }
+    var targetDocSession = job.documentSessionId || state.documentSessionId || "default";
     try {
       if (window.localStorage) {
-        window.localStorage.setItem(EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY, JSON.stringify({
+        window.localStorage.setItem(getExcelSmartFillActiveJobStorageKey(targetDocSession), JSON.stringify({
           jobId: job.jobId,
           traceId: job.traceId || "",
           startedAt: job.startedAt || Date.now(),
+          documentSessionId: targetDocSession,
           frontendVersion: FRONTEND_BUILD_VERSION
         }));
       }
@@ -501,19 +515,24 @@
     }
   }
 
-  function clearExcelSmartFillActiveJob(jobId) {
+  function clearExcelSmartFillActiveJob(jobId, docSessionId) {
+    var targetDocSession = docSessionId || state.documentSessionId || "default";
     var active;
     try {
       if (!window.localStorage) {
         return;
       }
+      var key = getExcelSmartFillActiveJobStorageKey(targetDocSession);
       if (jobId) {
-        active = loadExcelSmartFillActiveJob();
+        active = loadExcelSmartFillActiveJob(targetDocSession);
         if (active && active.jobId && active.jobId !== jobId) {
           return;
         }
       }
-      window.localStorage.removeItem(EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY);
+      window.localStorage.removeItem(key);
+      if (!targetDocSession || targetDocSession === "default") {
+        window.localStorage.removeItem(EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY);
+      }
     } catch (error) {
       // Storage cleanup must not block result rendering.
     }
@@ -2452,13 +2471,14 @@
     }
   }
 
-  function finalizeExcelSmartFillResult(data, completedJobId) {
+  function finalizeExcelSmartFillResult(data, completedJobId, isSuccess) {
     var retryItemId = state.smartFillRetryItemId;
     var base = state.smartFillRetryBaseResult;
     var baseDraftItems = state.smartFillRetryBaseDraftItems;
     var replacement;
     var merged;
     var nextPreservedDrafts = null;
+    var success = typeof isSuccess !== "undefined" ? Boolean(isSuccess) : true;
     if (completedJobId) {
       state.excelSmartFillCompletedJobId = completedJobId;
     }
@@ -2469,7 +2489,7 @@
       state.smartFillRetryBaseResult = null;
       state.smartFillRetryBaseDraftItems = null;
       renderExcelSmartFillResult(data || {});
-      recordFinalizedSmartFillResult(completedJobId);
+      recordFinalizedSmartFillResult(completedJobId, data || {}, success);
       return;
     }
     replacement = smartFillResultById(data || {}, retryItemId);
@@ -2491,7 +2511,7 @@
     state.smartFillRetryBaseResult = null;
     state.smartFillRetryBaseDraftItems = null;
     renderExcelSmartFillResult(merged, nextPreservedDrafts, retryItemId);
-    recordFinalizedSmartFillResult(completedJobId);
+    recordFinalizedSmartFillResult(completedJobId, merged, success);
   }
 
   function updateHistoryBadge() {
@@ -2507,16 +2527,18 @@
     }
   }
 
-  function recordFinalizedSmartFillResult(completedJobId) {
+  function recordFinalizedSmartFillResult(completedJobId, result, isSuccess) {
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var docSessionId = state.documentSessionId || (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "default");
+    var docSessionId = (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     if (!state.activeSmartFillResultsBySession) {
       state.activeSmartFillResultsBySession = {};
     }
     state.activeSmartFillResultsBySession[docSessionId] = state.smartFillResult;
-    state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
-    updateHistoryBadge();
+    if (isSuccess && (!result || !result.historyNotice)) {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+    }
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, completedJobId);
     }
@@ -2536,17 +2558,6 @@
       state.historyUnreadCount = 0;
       updateHistoryBadge();
       loadAndRenderSmartFillHistory();
-    } else {
-      var app = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-      var docSessionId = state.documentSessionId || (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "default");
-      var sessionResult = state.activeSmartFillResultsBySession && state.activeSmartFillResultsBySession[docSessionId];
-      if (sessionResult) {
-        state.smartFillResult = sessionResult;
-        renderExcelSmartFillResult(sessionResult);
-      } else if (state.smartFillResult) {
-        renderExcelSmartFillResult(state.smartFillResult);
-      }
     }
   }
 
@@ -2696,7 +2707,7 @@
     var lines = [];
     for (var i = 0; i < items.length; i += 1) {
       var it = items[i];
-      var label = it.sourceRowLabel || ("第" + it.sourceRowIndex + "行");
+      var label = it.sourceRowLabel || ("第 " + (it.sourceRowIndex || (i + 1)) + " 行");
       lines.push(label + "\t" + (it.value || ""));
     }
     var copyStr = lines.join("\n");
@@ -3603,7 +3614,7 @@
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", state.documentSessionId, jobId);
     }
-    clearExcelSmartFillActiveJob(jobId);
+    clearExcelSmartFillActiveJob(jobId, state.documentSessionId);
     state.excelSmartFillJobId = "";
     state.excelSmartFillPollStartedAt = 0;
     state.excelSmartFillPollErrorCount = 0;
@@ -3611,7 +3622,7 @@
     setExcelSmartFillCancelVisible(false);
     stopWaiting();
     if (partialResult && Array.isArray(partialResult.items) && partialResult.items.length) {
-      finalizeExcelSmartFillResult(partialResult, jobId);
+      finalizeExcelSmartFillResult(partialResult, jobId, false);
       setStatus("智能填写任务已取消，已保留部分预览；未完成项不会写入。");
       return;
     }
@@ -3666,17 +3677,18 @@
       saveExcelSmartFillActiveJob({
         jobId: jobId,
         traceId: body.traceId || job.traceId || "",
-        startedAt: state.excelSmartFillPollStartedAt || Date.now()
+        startedAt: state.excelSmartFillPollStartedAt || Date.now(),
+        documentSessionId: state.documentSessionId
       });
       if (job.status === "completed") {
-        clearExcelSmartFillActiveJob(jobId);
+        clearExcelSmartFillActiveJob(jobId, state.documentSessionId);
         state.excelSmartFillCompletedJobId = jobId;
         state.excelSmartFillJobId = "";
         state.excelSmartFillPollStartedAt = 0;
         state.excelSmartFillResumeExpected = false;
         setExcelSmartFillCancelVisible(false);
         stopWaiting();
-        finalizeExcelSmartFillResult(job.result || {}, jobId);
+        finalizeExcelSmartFillResult(job.result || {}, jobId, true);
         setStatus("智能填写预览已生成，请确认后写入。");
         refreshDiagnostics().then(function () {
           setStatus("智能填写预览已生成，请确认后写入。");
@@ -3688,7 +3700,8 @@
         return;
       }
       if (job.status === "failed") {
-        clearExcelSmartFillActiveJob(jobId);
+        clearExcelSmartFillActiveJob(jobId, state.documentSessionId);
+        state.excelSmartFillCompletedJobId = "";
         state.excelSmartFillJobId = "";
         state.excelSmartFillPollStartedAt = 0;
         state.excelSmartFillResumeExpected = false;
@@ -3699,7 +3712,7 @@
           job.error.code === "EXCEL_SMART_FILL_CONTEXT_TOO_LARGE"
         );
         if (!overflowFailed && job.result && Array.isArray(job.result.items) && job.result.items.length) {
-          finalizeExcelSmartFillResult(job.result, jobId);
+          finalizeExcelSmartFillResult(job.result, jobId, false);
           setStatus("智能填写任务失败，已保留部分预览；未完成项不会写入。");
         } else {
           if (helpers.releaseTaskSlot) {
@@ -3758,7 +3771,8 @@
         saveExcelSmartFillActiveJob({
           jobId: jobId,
           traceId: state.traceId || "",
-          startedAt: state.excelSmartFillPollStartedAt || Date.now()
+          startedAt: state.excelSmartFillPollStartedAt || Date.now(),
+          documentSessionId: state.documentSessionId
         });
         setStatus("智能填写状态查询暂时失败，正在继续恢复...");
         setPlainResult([
@@ -3775,7 +3789,8 @@
       if (helpers.releaseTaskSlot) {
         helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", state.documentSessionId, jobId);
       }
-      clearExcelSmartFillActiveJob(jobId);
+      clearExcelSmartFillActiveJob(jobId, state.documentSessionId);
+      state.excelSmartFillCompletedJobId = "";
       state.excelSmartFillJobId = "";
       state.excelSmartFillPollStartedAt = 0;
       state.excelSmartFillPollErrorCount = 0;
@@ -3790,7 +3805,10 @@
   }
 
   function resumeExcelSmartFillActiveJob() {
-    var active = loadExcelSmartFillActiveJob();
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var currentDocSession = (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var active = loadExcelSmartFillActiveJob(currentDocSession);
     var restored;
     if (helpers.sanitizeRestoredExcelSmartFillState) {
       restored = helpers.sanitizeRestoredExcelSmartFillState(state);
@@ -3827,8 +3845,8 @@
     var startedAt;
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var docSessionId = state.documentSessionId || (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "default");
-    var docName = helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(workbook) : "当前工作簿";
+    var docSessionId = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var docName = (workbook && helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(workbook) : "") || state.documentDisplayName || "当前工作簿";
     state.documentSessionId = docSessionId;
     state.documentDisplayName = docName;
 
@@ -3869,9 +3887,14 @@
       state.smartFillResult = null;
       state.smartFillPreview = null;
       state.smartFillEditBaselineAddress = "";
+      state.smartFillDraftItems = [];
+      state.excelSmartFillCompletedJobId = "";
+      if (state.activeSmartFillResultsBySession) {
+        delete state.activeSmartFillResultsBySession[docSessionId];
+      }
     }
     byId("btn-write-smart-fill").hidden = true;
-    clearExcelSmartFillActiveJob();
+    clearExcelSmartFillActiveJob(null, docSessionId);
     state.excelSmartFillJobId = clientJobId;
     state.excelSmartFillPollStartedAt = Date.now();
     state.excelSmartFillPollErrorCount = 0;
@@ -3902,7 +3925,8 @@
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
         }
-        clearExcelSmartFillActiveJob(clientJobId);
+        clearExcelSmartFillActiveJob(clientJobId, docSessionId);
+        state.excelSmartFillCompletedJobId = "";
         stopWaiting();
         if (state.smartFillRetryItemId) {
           restoreSmartFillRetryResult();
@@ -3922,13 +3946,13 @@
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, jobId);
         }
-        clearExcelSmartFillActiveJob(jobId);
+        clearExcelSmartFillActiveJob(jobId, docSessionId);
         state.excelSmartFillCompletedJobId = jobId;
         state.excelSmartFillJobId = "";
         state.excelSmartFillPollStartedAt = 0;
         state.excelSmartFillResumeExpected = false;
         stopWaiting();
-        finalizeExcelSmartFillResult(job.result || {}, jobId);
+        finalizeExcelSmartFillResult(job.result || {}, jobId, true);
         setStatus("智能填写预览已生成，请确认后写入。");
         return;
       }
@@ -3943,7 +3967,8 @@
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
         }
-        clearExcelSmartFillActiveJob(clientJobId);
+        clearExcelSmartFillActiveJob(clientJobId, docSessionId);
+        state.excelSmartFillCompletedJobId = "";
         state.excelSmartFillJobId = "";
         state.excelSmartFillPollStartedAt = 0;
         state.excelSmartFillResumeExpected = false;

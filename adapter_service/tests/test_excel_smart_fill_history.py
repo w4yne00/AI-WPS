@@ -105,6 +105,18 @@ class MockExcelSmartFill:
         }
 
 
+class BlockingExcelSmartFill(MockExcelSmartFill):
+    def __init__(self):
+        super().__init__()
+        self.started_event = threading.Event()
+        self.release_event = threading.Event()
+
+    def fill_batch(self, *args, **kwargs):
+        self.started_event.set()
+        self.release_event.wait(timeout=5)
+        return super().fill_batch(*args, **kwargs)
+
+
 def make_test_smart_fill_request(
     workbook_id="wb-1",
     client_job_id="sf-client-job-001",
@@ -147,8 +159,14 @@ class ExcelSmartFillHistoryTests(unittest.TestCase):
             max_queued=8,
             terminal_ttl_seconds=3600,
         )
+        self._history_patcher = patch(
+            "app.services.excel.smart_fill_jobs.get_task_history_store",
+            return_value=self.history_store,
+        )
+        self._history_patcher.start()
 
     def tearDown(self):
+        self._history_patcher.stop()
         self.temp_dir.cleanup()
 
     def test_request_model_accepts_document_session_and_display_name(self):
@@ -229,8 +247,8 @@ class ExcelSmartFillHistoryTests(unittest.TestCase):
             job2 = store.start(req2, trace_id="trace-2")
             self.assertIn(job2.get("status"), {"queued", "running"})
 
-    def test_active_task_slot_released_on_cancellation(self):
-        assistant = MockExcelSmartFill(delay=0.5)
+    def test_smart_fill_running_cancel_retains_slot_until_runner_exits(self):
+        assistant = BlockingExcelSmartFill()
         store = ExcelSmartFillJobStore(smart_fill=assistant, coordinator=self.coordinator)
 
         req1 = make_test_smart_fill_request(
@@ -238,16 +256,85 @@ class ExcelSmartFillHistoryTests(unittest.TestCase):
             doc_session="session_et_cancel",
         )
         store.start(req1, trace_id="trace-1")
-        cancelled = store.cancel("job-sf-cancel-001")
-        self.assertIsNotNone(cancelled)
+        self.assertTrue(assistant.started_event.wait(timeout=5))
 
-        # Slot must be released so next submission on same session is accepted
-        req2 = make_test_smart_fill_request(
-            client_job_id="job-sf-cancel-002",
+        try:
+            # Request cancel while runner is executing
+            cancelled = store.cancel("job-sf-cancel-001")
+            self.assertIsNotNone(cancelled)
+            self.assertEqual(cancelled.get("status"), "running")
+
+            # Slot MUST still be occupied while runner is running
+            req2 = make_test_smart_fill_request(
+                client_job_id="job-sf-cancel-002",
+                doc_session="session_et_cancel",
+            )
+            with self.assertRaises(AdapterError) as cm:
+                store.start(req2, trace_id="trace-2")
+            self.assertEqual(cm.exception.status_code, 409)
+            self.assertEqual(cm.exception.code, "EXCEL_SMART_FILL_DOCUMENT_TASK_BUSY")
+        finally:
+            assistant.release_event.set()
+
+        # Wait for runner to exit
+        for _ in range(50):
+            cur = store.get("job-sf-cancel-001")
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+        # Slot must be released now that runner exited
+        req3 = make_test_smart_fill_request(
+            client_job_id="job-sf-cancel-003",
             doc_session="session_et_cancel",
         )
-        job2 = store.start(req2, trace_id="trace-2")
-        self.assertIn(job2.get("status"), {"queued", "running"})
+        job3 = store.start(req3, trace_id="trace-3")
+        self.assertIn(job3.get("status"), {"queued", "running", "completed"})
+        for _ in range(50):
+            cur = store.get("job-sf-cancel-003")
+            if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                break
+            time.sleep(0.02)
+
+    def test_smart_fill_queued_cancel_immediately_releases_slot(self):
+        # Coordinator allows 2 concurrent running slots. Run 2 blocking tasks to force 3rd to be queued.
+        assistant = BlockingExcelSmartFill()
+        store = ExcelSmartFillJobStore(smart_fill=assistant, coordinator=self.coordinator)
+
+        req1 = make_test_smart_fill_request(client_job_id="job-block-1", doc_session="session-b1")
+        req2 = make_test_smart_fill_request(client_job_id="job-block-2", doc_session="session-b2")
+        store.start(req1, trace_id="trace-b1")
+        store.start(req2, trace_id="trace-b2")
+        self.assertTrue(assistant.started_event.wait(timeout=5))
+
+        try:
+            # 3rd task must be queued
+            req3 = make_test_smart_fill_request(client_job_id="job-queued-1", doc_session="session-q1")
+            job3 = store.start(req3, trace_id="trace-q1")
+            self.assertEqual(job3.get("status"), "queued")
+
+            # Cancelling queued task transitions directly to cancelled and frees slot immediately
+            cancelled = store.cancel("job-queued-1")
+            self.assertIsNotNone(cancelled)
+            self.assertEqual(cancelled.get("status"), "cancelled")
+
+            # Submitting same session immediately succeeds without 409
+            req4 = make_test_smart_fill_request(client_job_id="job-queued-2", doc_session="session-q1")
+            job4 = store.start(req4, trace_id="trace-q2")
+            self.assertIn(job4.get("status"), {"queued", "running"})
+            for _ in range(50):
+                cur = store.get("job-queued-2")
+                if cur and cur.get("status") in {"completed", "failed", "cancelled"}:
+                    break
+                time.sleep(0.02)
+        finally:
+            assistant.release_event.set()
+            for _ in range(50):
+                j1 = store.get("job-block-1")
+                j2 = store.get("job-block-2")
+                if j1 and j1.get("status") in {"completed", "failed", "cancelled"} and j2 and j2.get("status") in {"completed", "failed", "cancelled"}:
+                    break
+                time.sleep(0.02)
 
     def test_record_success_persists_read_only_history(self):
         assistant = MockExcelSmartFill(delay=0.01)
@@ -287,6 +374,12 @@ class ExcelSmartFillHistoryTests(unittest.TestCase):
             self.assertEqual(len(res["items"]), 2)
             self.assertEqual(res["items"][0]["value"], "生成的_张三")
             self.assertEqual(res["items"][1]["value"], "生成的_李四")
+
+            # Crucial: sourceRowIndex and sourceRowLabel are populated from request.items
+            self.assertEqual(res["items"][0]["sourceRowIndex"], 1)
+            self.assertEqual(res["items"][0]["sourceRowLabel"], "张三")
+            self.assertEqual(res["items"][1]["sourceRowIndex"], 2)
+            self.assertEqual(res["items"][1]["sourceRowLabel"], "李四")
 
             # Crucial: NO targetAddress, targetColumn, or userInstruction in archived result
             self.assertNotIn("targetAddress", res)

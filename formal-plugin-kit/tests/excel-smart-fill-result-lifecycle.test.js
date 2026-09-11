@@ -127,10 +127,17 @@ function createBaseTestContext(initialOverrides = {}) {
     setTrace: () => {},
     safeRead: (obj, key) => (obj ? obj[key] : undefined),
     resolveValue: (v) => v,
-    getEtApplication: () => ({
-      ActiveWorkbook: { Name: "工作簿1.xlsx", FullName: "/path/工作簿1.xlsx" }
-    }),
-    getActiveWorkbook: (app) => (app && app.ActiveWorkbook) || { Name: "工作簿1.xlsx" },
+    defaultWorkbook: {
+      Name: "工作簿1.xlsx",
+      FullName: "/path/工作簿1.xlsx",
+      __ai_wps_doc_session__: state.documentSessionId
+    },
+    getEtApplication: function() {
+      return { ActiveWorkbook: this.defaultWorkbook };
+    },
+    getActiveWorkbook: function(app) {
+      return (app && app.ActiveWorkbook) || this.defaultWorkbook;
+    },
     EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS: 30000,
     ...(initialOverrides.context || {})
   };
@@ -302,4 +309,160 @@ test("Behavioral: slot busy prevents duplicate submission", () => {
 
   assert.strictEqual(ctx.requests.length, 0, "no network request should be sent when slot is busy");
   assert.strictEqual(ctx.state.statusMessage, "当前工作簿已存在进行中的智能填写任务，请等待其完成。");
+});
+
+test("Behavioral: switchHistoryView toggles panels without resetting result-output or draft items", () => {
+  const ctx = createBaseTestContext();
+  ctx.state.smartFillResult = { items: [{ itemId: "sf_1", value: "现有结果" }] };
+  ctx.state.smartFillPreview = { rows: [] };
+  ctx.byId("result-output").innerHTML = '<table id="smart-fill-table"><tr><td>现有结果</td></tr></table>';
+  const initialHtml = ctx.byId("result-output").innerHTML;
+
+  const sandbox = vm.createContext(ctx);
+  const switchCode = functionSource("switchHistoryView");
+  const updateBadgeCode = functionSource("updateHistoryBadge");
+  ctx.loadAndRenderSmartFillHistory = () => {};
+
+  // Open history view
+  vm.runInContext(updateBadgeCode + "\n" + switchCode + "\nswitchHistoryView(true);", sandbox);
+  assert.strictEqual(ctx.state.historyOpen, true);
+  assert.strictEqual(ctx.byId("excel-result-panel").hidden, true);
+  assert.strictEqual(ctx.byId("excel-history-view").hidden, false);
+
+  // Close history view
+  vm.runInContext("switchHistoryView(false);", sandbox);
+  assert.strictEqual(ctx.state.historyOpen, false);
+  assert.strictEqual(ctx.byId("excel-result-panel").hidden, false);
+  assert.strictEqual(ctx.byId("excel-history-view").hidden, true);
+
+  // Result output HTML must be preserved
+  assert.strictEqual(ctx.byId("result-output").innerHTML, initialHtml, "result-output HTML must be preserved when toggling history view");
+  assert.ok(ctx.state.smartFillResult, "smartFillResult must remain intact");
+});
+
+test("Behavioral: valid submission clears session result cache and excelSmartFillCompletedJobId", () => {
+  const ctx = createBaseTestContext();
+  ctx.state.activeSmartFillResultsBySession = {
+    doc_session_1: { items: [{ itemId: "sf_1", value: "旧会话结果" }] }
+  };
+  ctx.state.excelSmartFillCompletedJobId = "old-job-id-123";
+  ctx.state.smartFillDraftItems = [{ itemId: "sf_1", value: "草稿修改" }];
+  ctx.state.smartFillResult = { items: [{ itemId: "sf_1", value: "旧会话结果" }] };
+
+  const sandbox = vm.createContext(ctx);
+  const runCode = functionSource("runExcelSmartFillAction");
+  vm.runInContext(runCode + "\nrunExcelSmartFillAction();", sandbox);
+
+  assert.strictEqual(ctx.state.activeSmartFillResultsBySession["doc_session_1"], undefined, "active session result cache must be cleared");
+  assert.strictEqual(ctx.state.excelSmartFillCompletedJobId, "", "completedJobId must be reset");
+  assert.strictEqual(ctx.state.smartFillDraftItems.length, 0, "smartFillDraftItems must be reset");
+});
+
+test("Behavioral: active job localStorage keys and resume are isolated per documentSessionId", () => {
+  const mockStorage = {};
+  const ctx = createBaseTestContext({
+    context: {
+      window: {
+        localStorage: {
+          getItem: (k) => mockStorage[k] || null,
+          setItem: (k, v) => { mockStorage[k] = String(v); },
+          removeItem: (k) => { delete mockStorage[k]; }
+        }
+      },
+      EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY: "wps_ai_excel_smart_fill_active_job",
+      FRONTEND_BUILD_VERSION: "1.0.0"
+    }
+  });
+
+  const sandbox = vm.createContext(ctx);
+  const getStorageKeyCode = functionSource("getExcelSmartFillActiveJobStorageKey");
+  const saveCode = functionSource("saveExcelSmartFillActiveJob");
+  const loadCode = functionSource("loadExcelSmartFillActiveJob");
+  const clearCode = functionSource("clearExcelSmartFillActiveJob");
+
+  const combined = [getStorageKeyCode, saveCode, loadCode, clearCode].join("\n");
+  vm.runInContext(combined, sandbox);
+
+  // Save job for session-A
+  vm.runInContext(`
+    saveExcelSmartFillActiveJob({
+      jobId: "job-A",
+      documentSessionId: "session-A",
+      startedAt: 1000
+    });
+  `, sandbox);
+
+  // Save job for session-B
+  vm.runInContext(`
+    saveExcelSmartFillActiveJob({
+      jobId: "job-B",
+      documentSessionId: "session-B",
+      startedAt: 2000
+    });
+  `, sandbox);
+
+  // Verify separate keys in localStorage
+  assert.ok(mockStorage["wps_ai_excel_smart_fill_active_job_session-A"], "session-A key must exist");
+  assert.ok(mockStorage["wps_ai_excel_smart_fill_active_job_session-B"], "session-B key must exist");
+
+  // Load session A
+  const loadedA = vm.runInContext(`loadExcelSmartFillActiveJob("session-A");`, sandbox);
+  assert.strictEqual(loadedA.jobId, "job-A");
+  assert.strictEqual(loadedA.documentSessionId, "session-A");
+
+  // Load session B
+  const loadedB = vm.runInContext(`loadExcelSmartFillActiveJob("session-B");`, sandbox);
+  assert.strictEqual(loadedB.jobId, "job-B");
+  assert.strictEqual(loadedB.documentSessionId, "session-B");
+
+  // Clear session A does not affect session B
+  vm.runInContext(`clearExcelSmartFillActiveJob("job-A", "session-A");`, sandbox);
+  assert.strictEqual(mockStorage["wps_ai_excel_smart_fill_active_job_session-A"], undefined);
+  assert.ok(mockStorage["wps_ai_excel_smart_fill_active_job_session-B"] !== undefined);
+});
+
+test("Behavioral: recordFinalizedSmartFillResult suppresses badge on failure or historyNotice", () => {
+  const ctx = createBaseTestContext();
+  ctx.state.historyUnreadCount = 0;
+  ctx.updateHistoryBadge = () => {};
+
+  const sandbox = vm.createContext(ctx);
+  const recordCode = functionSource("recordFinalizedSmartFillResult");
+  vm.runInContext(recordCode, sandbox);
+
+  // 1. Successful normal result -> increments unread
+  vm.runInContext(`recordFinalizedSmartFillResult("job-1", { items: [] }, true);`, sandbox);
+  assert.strictEqual(ctx.state.historyUnreadCount, 1, "success should increment unread count");
+
+  // 2. Failed / cancelled / partial preview (isSuccess = false) -> does NOT increment
+  vm.runInContext(`recordFinalizedSmartFillResult("job-2", { items: [], partial: true }, false);`, sandbox);
+  assert.strictEqual(ctx.state.historyUnreadCount, 1, "failed/cancelled result must NOT increment unread count");
+
+  // 3. Oversized payload (> 5 MiB) with historyNotice -> does NOT increment
+  vm.runInContext(`recordFinalizedSmartFillResult("job-3", { items: [], historyNotice: "结果过大未归档" }, true);`, sandbox);
+  assert.strictEqual(ctx.state.historyUnreadCount, 1, "oversized payload with historyNotice must NOT increment unread count");
+});
+
+test("Helper: renderSmartFillHistoryList falls back gracefully when sourceRowIndex is missing", () => {
+  const items = [
+    {
+      id: "hist_missing_idx",
+      taskType: "excel.smart_fill",
+      documentDisplayName: "无行号历史.xlsx",
+      completedAt: "2026-09-10T12:00:00Z",
+      result: {
+        schemaVersion: "excel.smart_fill.v2",
+        processedItemCount: 2,
+        items: [
+          { itemId: "sf_1", value: "填入值A" },
+          { itemId: "sf_2", value: "填入值B", sourceRowIndex: null }
+        ]
+      }
+    }
+  ];
+
+  const html = helpers.renderSmartFillHistoryList(items);
+  assert.ok(!html.includes("undefined"), "rendered history HTML must never include 'undefined'");
+  assert.ok(html.includes("第1行"), "should fall back to 1-based index (第1行)");
+  assert.ok(html.includes("第2行"), "should fall back to 1-based index (第2行)");
 });
