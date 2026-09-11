@@ -564,11 +564,31 @@ class ExcelSmartFillRequest(_StrictExcelSmartFillModel):
     )
     scene: Literal["excel"] = "excel"
     client_job_id: StrictStr = Field(default="", alias="clientJobId", max_length=128)
+    host: StrictStr = Field(default="et", alias="host", max_length=32)
+    document_session_id: StrictStr = Field(default="", alias="documentSessionId", max_length=128)
+    document_display_name: StrictStr = Field(default="", alias="documentDisplayName", max_length=255)
     items: List[ExcelSmartFillItem] = Field(min_items=1, max_items=500)
     source: ExcelSmartFillSource
     user_instruction: StrictStr = Field(
         alias="userInstruction", min_length=1, max_length=4000
     )
+
+    @validator("host", pre=True, always=True)
+    def validate_smart_fill_host(cls, value):
+        if value is None:
+            return "et"
+        if not isinstance(value, str):
+            raise ValueError("host must be a string")
+        text = value.strip()
+        return text or "et"
+
+    @validator("document_session_id", "document_display_name", pre=True, always=True)
+    def validate_smart_fill_session_text(cls, value):
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError("session text must be a string")
+        return value.strip()
 
     @validator("workbook_id", pre=True)
     def validate_smart_fill_workbook_id(cls, value):

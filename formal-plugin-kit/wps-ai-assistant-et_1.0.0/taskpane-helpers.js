@@ -4708,6 +4708,143 @@
     return mode === "excelAnalysis";
   }
 
+  var _workbookSessionMap = typeof WeakMap === "function" ? new WeakMap() : null;
+
+  function getDocumentSessionId(workbook) {
+    if (!workbook) {
+      return "doc_session_default";
+    }
+    var existing = null;
+    try {
+      existing = workbook.__ai_wps_doc_session__;
+    } catch (e) {}
+    if (existing && typeof existing === "string") {
+      return existing;
+    }
+    if (_workbookSessionMap && typeof workbook === "object") {
+      try {
+        existing = _workbookSessionMap.get(workbook);
+      } catch (e) {}
+      if (existing && typeof existing === "string") {
+        return existing;
+      }
+    }
+    var token = "doc_session_" + Math.random().toString(36).slice(2, 10) + "_" + Date.now().toString(36);
+    try {
+      workbook.__ai_wps_doc_session__ = token;
+    } catch (e) {}
+    if (_workbookSessionMap && typeof workbook === "object") {
+      try {
+        _workbookSessionMap.set(workbook, token);
+      } catch (e) {}
+    }
+    return token;
+  }
+
+  function getDocumentDisplayName(workbook) {
+    if (!workbook) {
+      return "未命名工作簿.xlsx";
+    }
+    var name = "";
+    try {
+      name = workbook.Name || workbook.name || "";
+    } catch (e) {}
+    if (name) {
+      var nameParts = String(name).split(/[/\\]/);
+      return nameParts[nameParts.length - 1] || "未命名工作簿.xlsx";
+    }
+    var fullName = "";
+    try {
+      fullName = workbook.FullName || workbook.fullName || "";
+    } catch (e) {}
+    if (fullName) {
+      var parts = String(fullName).split(/[/\\]/);
+      return parts[parts.length - 1] || "未命名工作簿.xlsx";
+    }
+    return "未命名工作簿.xlsx";
+  }
+
+  function makeTaskSlotKey(host, taskType, docSessionId) {
+    return [host || "et", taskType || "excel.smart_fill", docSessionId || "default"].join("::");
+  }
+
+  function isTaskSlotBusy(slots, host, taskType, docSessionId) {
+    if (!slots || typeof slots !== "object") {
+      return false;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    return Boolean(slots[key]);
+  }
+
+  function claimTaskSlot(slots, host, taskType, docSessionId, jobId) {
+    if (!slots || typeof slots !== "object") {
+      return;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    slots[key] = {
+      jobId: jobId || "",
+      claimedAt: Date.now()
+    };
+  }
+
+  function releaseTaskSlot(slots, host, taskType, docSessionId, jobId) {
+    if (!slots || typeof slots !== "object") {
+      return;
+    }
+    var key = makeTaskSlotKey(host, taskType, docSessionId);
+    if (!slots[key]) {
+      return;
+    }
+    if (!jobId || slots[key].jobId === jobId) {
+      delete slots[key];
+    }
+  }
+
+  function renderSmartFillHistoryList(items) {
+    var list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return '<div class="excel-history-empty">暂无成功历史记录。</div>';
+    }
+    var html = '<div class="excel-history-list">';
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      var id = escapeHtml(item.id || "");
+      var docName = escapeHtml(item.documentDisplayName || "未命名工作簿");
+      var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
+      var result = item.result || {};
+      var count = (result.items && result.items.length) || result.processedItemCount || 0;
+      var snippetText = "已生成 " + count + " 项填写内容";
+      if (Array.isArray(result.items) && result.items.length > 0) {
+        var sampleLabels = [];
+        for (var j = 0; j < Math.min(3, result.items.length); j += 1) {
+          var sampleItem = result.items[j];
+          var rowIdx = sampleItem.sourceRowIndex || (j + 1);
+          var label = "第" + rowIdx + "行";
+          sampleLabels.push(label + ": " + (sampleItem.value || ""));
+        }
+        if (sampleLabels.length) {
+          snippetText += " (" + sampleLabels.join("；") + (result.items.length > 3 ? "..." : "") + ")";
+        }
+      }
+
+      html += '<div class="excel-history-card" data-history-id="' + id + '">';
+      html += '  <div class="excel-history-card-header">';
+      html += '    <span class="excel-history-doc-name">' + docName + '</span>';
+      html += '    <span class="excel-history-time">' + timeStr + '</span>';
+      html += '  </div>';
+      html += '  <div class="excel-history-card-title">智能填写成果</div>';
+      html += '  <div class="excel-history-card-snippet">' + escapeHtml(snippetText) + '</div>';
+      html += '  <div class="excel-history-card-actions">';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-view" data-history-id="' + id + '">查看</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-delete" data-history-id="' + id + '">删除</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -4789,6 +4926,13 @@
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
     validateDirectServiceDraft: validateDirectServiceDraft,
-    validateTaskModelSelectionDraft: validateTaskModelSelectionDraft
+    validateTaskModelSelectionDraft: validateTaskModelSelectionDraft,
+    getDocumentSessionId: getDocumentSessionId,
+    getDocumentDisplayName: getDocumentDisplayName,
+    makeTaskSlotKey: makeTaskSlotKey,
+    isTaskSlotBusy: isTaskSlotBusy,
+    claimTaskSlot: claimTaskSlot,
+    releaseTaskSlot: releaseTaskSlot,
+    renderSmartFillHistoryList: renderSmartFillHistoryList
   };
 });

@@ -32,7 +32,22 @@
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
 - **状态记录**：当前自动化候选为 `ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
 
-## 当前功能实现：Issue #168 Word 智能编写与智能仿写统一活跃结果生命周期与成功历史隔离
+## 当前功能实现：Issue #172 扩展 Excel 智能填写的只读历史与活跃结果生命周期
+
+- **文档会话槽位隔离**：遵循 Issue #164 父规格规范，为 Excel 智能填写任务（`excel.smart_fill`）建立基于 `host::taskType::docSessionId` 的前后端任务槽位隔离。同工作簿同任务进行中时阻断重复生成提交（返回 409 `EXCEL_SMART_FILL_DOCUMENT_TASK_BUSY`），跨工作簿互不阻塞；
+- **协同取消槽位保持**：协作取消运行中任务时，会话槽位保持锁定以阻断同文档并发提交，直到后台执行 runner 真正退出后才释放槽位；排队中任务取消则立即释放槽位；
+- **重新生成与校验门禁**：前端重新生成智能填写时，若本地表头/选区校验失败，严格保留当前活跃结果和预览；本地校验通过并正式发起提交后，立即清理旧活跃结果与会话缓存并进入生成进度状态；
+- **非新任务免拦截**：编辑填写项、排除项、选择目标列、返回修改、复制和写回不被认定为新任务，不被槽位拦截；
+- **历史视图开闭无损**：打开或收起历史记录抽屉仅切换面板显隐与加载历史列表，严格不重置或重新渲染当前未完成的预览表格与草稿修改；
+- **活跃任务跨工作簿隔离**：未完成活跃任务保存、读取与清除按 `documentSessionId` 独立键隔离存储，切换工作簿不发生串读或共享 localStorage 键；
+- **未读角标精确过滤**：仅完整成功的归档记录递增未读角标计数，协作取消/部分预览及超过 5 MiB（带 `historyNotice`）的未归档结果严格不增加未读计数；
+- **失效预览只读核对**：失效预览继续按既有合同保留只读核对，不被通用清理提前删除；
+- **只读成功历史机制**：智能填写成功结果自动记录至 TaskHistoryStore，支持通过 `GET /history?taskType=excel.smart_fill` 查看列表与只读详情、复制文本、单条删除（`DELETE /history/{id}`）与清空（`DELETE /history?taskType=excel.smart_fill`）。任务窗格提供成功历史入口及未读数量角标提示；
+- **严格隐私与安全边界**：历史记录仅持久化只读生成值与最小元数据（`schemaVersion: "excel.smart_fill.v2"`, `processedItemCount`, `items: [{itemId, status, valueType, value, sourceRowIndex}]`），严格排除目标写入单元格映射（`targetAddress` / `targetSheetName`）、来源单元格客户可控文本（`sourceRowLabel`）、原始提示词与本地文件路径（仅脱敏保留工作簿显示名）。历史条目严格禁止提供写回工作表、重试或恢复任务提交能力；前端渲染与复制严格基于行号派生只读行标签（`第 X 行`），针对历史缺失 `sourceRowIndex` 提供兜底，杜绝 `第undefined行`。持久化遇到非超限异常时统一记录中性提示（`historyNotice`）并安全抑制未读角标自增；
+- **任务会话绑定与恢复校验**：后台任务轮询全程冻结提交时的工作簿文档会话标识（`targetDocSession`），切至其他工作簿时不串染 DOM 且精准释放对应工作簿的后台槽位；页面恢复任务时严格校验存储记录的 `documentSessionId === currentDocSession`、`host === "et"` 及 `taskType === "excel.smart_fill"`，一旦校验不通过立即清除脏存储记录并不予恢复；
+- **写入补偿与锁定规则保持**：写入失败补偿、重新选择目标和成功后锁定规则完全保持不变；
+- **测试覆盖**：新增后端单元测试 `adapter_service/tests/test_excel_smart_fill_history.py`（9 测试全绿）与前端契约测试 `formal-plugin-kit/tests/excel-smart-fill-result-lifecycle.test.js`（17 测试全绿），全量 Excel 测试（34 测试）与历史测试保持全绿。
+
 
 - **文档会话槽位隔离**：遵循 Issue #164 统一活跃结果生命周期规范，为 Word 两类写作任务（`word.smart_write`、`word.smart_imitation`）建立基于 `host::taskType::docSessionId` 的前后台任务槽位隔离。同文档同任务进行中时阻断重复提交（返回 409 `WORD_WRITING_DOCUMENT_TASK_BUSY`），跨文档或跨任务互不阻塞；
 - **提交与校验行为**：前端提交前表单/选区本地校验失败时，严格保留当前活跃结果视图；校验通过并正式发起新提交后，立即清理旧活跃结果并进入进度状态；
