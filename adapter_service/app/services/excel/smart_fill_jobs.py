@@ -518,27 +518,24 @@ class ExcelSmartFillJobStore:
                     if isinstance(req_item, dict):
                         i_id = req_item.get("itemId") or req_item.get("item_id")
                         row_idx = req_item.get("sourceRowIndex") or req_item.get("source_row_index")
-                        row_lbl = req_item.get("sourceRowLabel") or req_item.get("source_row_label") or ""
                     else:
                         i_id = getattr(req_item, "item_id", None) or getattr(req_item, "itemId", None)
                         row_idx = getattr(req_item, "source_row_index", None) or getattr(req_item, "sourceRowIndex", None)
-                        row_lbl = getattr(req_item, "source_row_label", "") or getattr(req_item, "sourceRowLabel", "") or ""
                     if i_id:
-                        req_items_map[str(i_id)] = (row_idx, row_lbl)
+                        req_items_map[str(i_id)] = row_idx
 
             archived_items = []
             for item in combined:
                 if not isinstance(item, dict):
                     continue
                 item_id = str(item.get("itemId") or "")
-                meta = req_items_map.get(item_id, (None, ""))
+                row_idx = req_items_map.get(item_id, item.get("sourceRowIndex"))
                 archived_items.append({
                     "itemId": item.get("itemId"),
                     "status": item.get("status"),
                     "valueType": item.get("valueType", "text"),
                     "value": item.get("value", ""),
-                    "sourceRowIndex": meta[0] if meta[0] is not None else item.get("sourceRowIndex"),
-                    "sourceRowLabel": meta[1] if meta[1] else item.get("sourceRowLabel", ""),
+                    "sourceRowIndex": row_idx,
                 })
             archived_result = {
                 "schemaVersion": "excel.smart_fill.v2",
@@ -557,8 +554,10 @@ class ExcelSmartFillJobStore:
         except TaskHistoryError as exc:
             if exc.code == "HISTORY_ENTRY_TOO_LARGE":
                 processed_result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+            else:
+                processed_result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
         except Exception:
-            pass
+            processed_result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
 
         return processed_result
 

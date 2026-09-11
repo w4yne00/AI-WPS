@@ -375,11 +375,11 @@ class ExcelSmartFillHistoryTests(unittest.TestCase):
             self.assertEqual(res["items"][0]["value"], "生成的_张三")
             self.assertEqual(res["items"][1]["value"], "生成的_李四")
 
-            # Crucial: sourceRowIndex and sourceRowLabel are populated from request.items
+            # Crucial: sourceRowIndex is populated from request.items, but sourceRowLabel MUST NOT be persisted
             self.assertEqual(res["items"][0]["sourceRowIndex"], 1)
-            self.assertEqual(res["items"][0]["sourceRowLabel"], "张三")
+            self.assertNotIn("sourceRowLabel", res["items"][0])
             self.assertEqual(res["items"][1]["sourceRowIndex"], 2)
-            self.assertEqual(res["items"][1]["sourceRowLabel"], "李四")
+            self.assertNotIn("sourceRowLabel", res["items"][1])
 
             # Crucial: NO targetAddress, targetColumn, or userInstruction in archived result
             self.assertNotIn("targetAddress", res)
@@ -412,6 +412,33 @@ class ExcelSmartFillHistoryTests(unittest.TestCase):
             self.assertEqual(job.get("status"), "completed")
             result = job.get("result", {})
             self.assertEqual(result.get("historyNotice"), "任务结果超过 5 MiB，未写入历史记录。")
+
+    def test_history_generic_error_handled_gracefully(self):
+        assistant = MockExcelSmartFill(delay=0.01)
+        store = ExcelSmartFillJobStore(smart_fill=assistant, coordinator=self.coordinator)
+
+        def mock_record_success(**kwargs):
+            raise RuntimeError("disk failure")
+
+        with patch("app.services.excel.smart_fill_jobs.get_task_history_store") as mock_get_store:
+            mock_store = mock_get_store.return_value
+            mock_store.record_success.side_effect = mock_record_success
+
+            req = make_test_smart_fill_request(
+                client_job_id="job-sf-err-001",
+                doc_session="session_et_err",
+            )
+            store.start(req, trace_id="trace-err-1")
+
+            for _ in range(50):
+                job = store.get("job-sf-err-001")
+                if job and job.get("status") in {"completed", "failed"}:
+                    break
+                time.sleep(0.02)
+
+            self.assertEqual(job.get("status"), "completed")
+            result = job.get("result", {})
+            self.assertEqual(result.get("historyNotice"), "历史记录写入失败，未保存至历史列表。")
 
 
 if __name__ == "__main__":

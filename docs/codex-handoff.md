@@ -43,9 +43,10 @@
 - **未读角标精确过滤**：仅完整成功的归档记录递增未读角标计数，协作取消/部分预览及超过 5 MiB（带 `historyNotice`）的未归档结果严格不增加未读计数；
 - **失效预览只读核对**：失效预览继续按既有合同保留只读核对，不被通用清理提前删除；
 - **只读成功历史机制**：智能填写成功结果自动记录至 TaskHistoryStore，支持通过 `GET /history?taskType=excel.smart_fill` 查看列表与只读详情、复制文本、单条删除（`DELETE /history/{id}`）与清空（`DELETE /history?taskType=excel.smart_fill`）。任务窗格提供成功历史入口及未读数量角标提示；
-- **严格隐私与安全边界**：历史记录仅持久化只读生成值与最小元数据（`schemaVersion: "excel.smart_fill.v2"`, `processedItemCount`, `items: [{itemId, status, valueType, value, sourceRowIndex, sourceRowLabel}]`），严格排除目标写入单元格映射（`targetAddress` / `targetSheetName`）、原始提示词与本地文件路径（仅脱敏保留工作簿显示名）。历史条目严格禁止提供写回工作表、重试或恢复任务提交能力；前端渲染与复制针对历史缺失 `sourceRowIndex` 提供兜底，杜绝 `第undefined行`；
+- **严格隐私与安全边界**：历史记录仅持久化只读生成值与最小元数据（`schemaVersion: "excel.smart_fill.v2"`, `processedItemCount`, `items: [{itemId, status, valueType, value, sourceRowIndex}]`），严格排除目标写入单元格映射（`targetAddress` / `targetSheetName`）、来源单元格客户可控文本（`sourceRowLabel`）、原始提示词与本地文件路径（仅脱敏保留工作簿显示名）。历史条目严格禁止提供写回工作表、重试或恢复任务提交能力；前端渲染与复制严格基于行号派生只读行标签（`第 X 行`），针对历史缺失 `sourceRowIndex` 提供兜底，杜绝 `第undefined行`。持久化遇到非超限异常时统一记录中性提示（`historyNotice`）并安全抑制未读角标自增；
+- **任务会话绑定与恢复校验**：后台任务轮询全程冻结提交时的工作簿文档会话标识（`targetDocSession`），切至其他工作簿时不串染 DOM 且精准释放对应工作簿的后台槽位；页面恢复任务时严格校验存储记录的 `documentSessionId === currentDocSession`、`host === "et"` 及 `taskType === "excel.smart_fill"`，一旦校验不通过立即清除脏存储记录并不予恢复；
 - **写入补偿与锁定规则保持**：写入失败补偿、重新选择目标和成功后锁定规则完全保持不变；
-- **测试覆盖**：新增后端单元测试 `adapter_service/tests/test_excel_smart_fill_history.py`（8 测试全绿）与前端契约测试 `formal-plugin-kit/tests/excel-smart-fill-result-lifecycle.test.js`（14 测试全绿），全量 Excel 测试（31 测试）与历史测试保持全绿。
+- **测试覆盖**：新增后端单元测试 `adapter_service/tests/test_excel_smart_fill_history.py`（9 测试全绿）与前端契约测试 `formal-plugin-kit/tests/excel-smart-fill-result-lifecycle.test.js`（17 测试全绿），全量 Excel 测试（34 测试）与历史测试保持全绿。
 
 
 - **文档会话槽位隔离**：遵循 Issue #164 统一活跃结果生命周期规范，为 Word 两类写作任务（`word.smart_write`、`word.smart_imitation`）建立基于 `host::taskType::docSessionId` 的前后台任务槽位隔离。同文档同任务进行中时阻断重复提交（返回 409 `WORD_WRITING_DOCUMENT_TASK_BUSY`），跨文档或跨任务互不阻塞；

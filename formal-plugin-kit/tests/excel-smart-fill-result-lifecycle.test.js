@@ -133,10 +133,10 @@ function createBaseTestContext(initialOverrides = {}) {
       __ai_wps_doc_session__: state.documentSessionId
     },
     getEtApplication: function() {
-      return { ActiveWorkbook: this.defaultWorkbook };
+      return { ActiveWorkbook: ctx.defaultWorkbook };
     },
     getActiveWorkbook: function(app) {
-      return (app && app.ActiveWorkbook) || this.defaultWorkbook;
+      return (app && app.ActiveWorkbook) || ctx.defaultWorkbook;
     },
     EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS: 30000,
     ...(initialOverrides.context || {})
@@ -465,4 +465,158 @@ test("Helper: renderSmartFillHistoryList falls back gracefully when sourceRowInd
   assert.ok(!html.includes("undefined"), "rendered history HTML must never include 'undefined'");
   assert.ok(html.includes("第1行"), "should fall back to 1-based index (第1行)");
   assert.ok(html.includes("第2行"), "should fall back to 1-based index (第2行)");
+});
+
+test("Behavioral: background job completion attributes to frozen document session without leaking to current workbook", () => {
+  const ctx = createBaseTestContext();
+  const sessionA = "session-doc-A";
+  const sessionB = "session-doc-B";
+
+  // Claim slot for session A
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, "et", "excel.smart_fill", sessionA, "job-A-001");
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.smart_fill", sessionA), true);
+
+  // Set active workbook to Workbook B
+  ctx.defaultWorkbook = {
+    Name: "工作簿B.xlsx",
+    FullName: "/path/工作簿B.xlsx",
+    __ai_wps_doc_session__: sessionB
+  };
+  ctx.state.documentSessionId = sessionB;
+  ctx.byId("result-output").innerHTML = "<div>工作簿B现有内容</div>";
+
+  const sandbox = vm.createContext(ctx);
+  const finalizeCode = functionSource("finalizeExcelSmartFillResult");
+  const recordCode = functionSource("recordFinalizedSmartFillResult");
+  const updateBadgeCode = functionSource("updateHistoryBadge");
+  ctx.tryRebindSmartFillTarget = () => {};
+  ctx.renderExcelSmartFillResult = () => {};
+
+  const combined = [updateBadgeCode, recordCode, finalizeCode].join("\n");
+  vm.runInContext(combined, sandbox);
+
+  // Finalize result for session A while user is on session B
+  vm.runInContext(`
+    finalizeExcelSmartFillResult({ items: [{ itemId: "sf_1", value: "结果A" }] }, "job-A-001", true, "session-doc-A");
+  `, sandbox);
+
+  // 1. Session A slot MUST be released (no lingering slot!)
+  assert.strictEqual(
+    helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.smart_fill", sessionA),
+    false,
+    "session-A slot must be released when job-A completes"
+  );
+
+  // 2. Session B slot MUST NOT be occupied or affected
+  assert.strictEqual(
+    helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.smart_fill", sessionB),
+    false,
+    "session-B slot must remain free"
+  );
+
+  // 3. Result MUST be stored in session A's cache, NOT session B's cache
+  assert.ok(ctx.state.activeSmartFillResultsBySession[sessionA], "session-A must have cached result");
+  assert.strictEqual(ctx.state.activeSmartFillResultsBySession[sessionB], undefined, "session-B must NOT have session-A's result");
+
+  // 4. Session B's visible DOM output MUST remain untouched
+  assert.strictEqual(ctx.byId("result-output").innerHTML, "<div>工作簿B现有内容</div>", "Workbook B output must NOT be overwritten");
+
+  // 5. Unread badge count was incremented
+  assert.strictEqual(ctx.state.historyUnreadCount, 1, "history unread count should be incremented");
+});
+
+test("Behavioral: resumeExcelSmartFillActiveJob strictly validates session identity, host, and taskType", () => {
+  const mockStorage = {};
+  const currentSession = "session-doc-A";
+  let pollCalledWith = null;
+
+  const ctx = createBaseTestContext({
+    context: {
+      window: {
+        localStorage: {
+          getItem: (k) => mockStorage[k] || null,
+          setItem: (k, v) => { mockStorage[k] = String(v); },
+          removeItem: (k) => { delete mockStorage[k]; }
+        }
+      },
+      EXCEL_SMART_FILL_ACTIVE_JOB_STORAGE_KEY: "wps_ai_excel_smart_fill_active_job",
+      FRONTEND_BUILD_VERSION: "1.0.0",
+      pollExcelSmartFillJob: (jobId, cb, docSession) => {
+        pollCalledWith = { jobId, docSession };
+      }
+    }
+  });
+
+  ctx.defaultWorkbook = {
+    Name: "工作簿A.xlsx",
+    FullName: "/path/工作簿A.xlsx",
+    __ai_wps_doc_session__: currentSession
+  };
+  ctx.state.documentSessionId = currentSession;
+
+  const sandbox = vm.createContext(ctx);
+  const getStorageKeyCode = functionSource("getExcelSmartFillActiveJobStorageKey");
+  const saveCode = functionSource("saveExcelSmartFillActiveJob");
+  const loadCode = functionSource("loadExcelSmartFillActiveJob");
+  const clearCode = functionSource("clearExcelSmartFillActiveJob");
+  const resumeCode = functionSource("resumeExcelSmartFillActiveJob");
+
+  const combined = [getStorageKeyCode, saveCode, loadCode, clearCode, resumeCode].join("\n");
+  vm.runInContext(combined, sandbox);
+
+  // Case 1: Corrupted record with mismatched documentSessionId (e.g. "session-doc-B" stored under session-A's key)
+  mockStorage["wps_ai_excel_smart_fill_active_job_" + encodeURIComponent(currentSession)] = JSON.stringify({
+    jobId: "job-corrupted-B",
+    documentSessionId: "session-doc-B",
+    host: "et",
+    taskType: "excel.smart_fill"
+  });
+
+  vm.runInContext("resumeExcelSmartFillActiveJob();", sandbox);
+
+  // Must reject resume
+  assert.strictEqual(pollCalledWith, null, "must NOT start poll on mismatched documentSessionId");
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.smart_fill", "session-doc-B"), false, "must NOT claim foreign session slot");
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.smart_fill", currentSession), false, "must NOT claim slot for invalid job");
+  // Corrupted storage entry must be removed
+  assert.strictEqual(mockStorage["wps_ai_excel_smart_fill_active_job_" + encodeURIComponent(currentSession)], undefined, "corrupted storage entry must be cleaned up");
+
+  // Case 2: Matching record
+  mockStorage["wps_ai_excel_smart_fill_active_job_" + encodeURIComponent(currentSession)] = JSON.stringify({
+    jobId: "job-valid-A",
+    documentSessionId: currentSession,
+    host: "et",
+    taskType: "excel.smart_fill",
+    startedAt: 12345
+  });
+
+  vm.runInContext("resumeExcelSmartFillActiveJob();", sandbox);
+  assert.ok(pollCalledWith !== null, "valid session record must resume");
+  assert.strictEqual(pollCalledWith.jobId, "job-valid-A");
+  assert.strictEqual(pollCalledWith.docSession, currentSession);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.smart_fill", currentSession), true, "must claim slot for matching session");
+});
+
+test("Helper: renderSmartFillHistoryList derives item labels strictly from row index without sourceRowLabel", () => {
+  const items = [
+    {
+      id: "hist_no_label",
+      taskType: "excel.smart_fill",
+      documentDisplayName: "数据.xlsx",
+      completedAt: "2026-09-10T12:00:00Z",
+      result: {
+        schemaVersion: "excel.smart_fill.v2",
+        processedItemCount: 2,
+        items: [
+          { itemId: "sf_1", value: "工程师", sourceRowIndex: 5 },
+          { itemId: "sf_2", value: "主管", sourceRowIndex: 8 }
+        ]
+      }
+    }
+  ];
+
+  const html = helpers.renderSmartFillHistoryList(items);
+  assert.ok(html.includes("第5行: 工程师"), "snippet should render '第5行: 工程师'");
+  assert.ok(html.includes("第8行: 主管"), "snippet should render '第8行: 主管'");
+  assert.ok(!html.includes("undefined"), "rendered html must never contain undefined");
 });

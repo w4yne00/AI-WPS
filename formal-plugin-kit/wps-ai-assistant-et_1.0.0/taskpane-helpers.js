@@ -4819,7 +4819,7 @@
         for (var j = 0; j < Math.min(3, result.items.length); j += 1) {
           var sampleItem = result.items[j];
           var rowIdx = sampleItem.sourceRowIndex || (j + 1);
-          var label = sampleItem.sourceRowLabel || ("第" + rowIdx + "行");
+          var label = "第" + rowIdx + "行";
           sampleLabels.push(label + ": " + (sampleItem.value || ""));
         }
         if (sampleLabels.length) {
