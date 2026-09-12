@@ -699,6 +699,7 @@ class DirectServiceStore:
                 "serviceName": service.get("name", ""),
                 "reachable": True,
                 "authenticated": True,
+                "authenticationVerified": True,
                 "modelCatalogAvailable": bool(
                     service.get("modelCatalog", {}).get("usableForSelection")
                 ),
@@ -721,13 +722,15 @@ class DirectServiceStore:
                 raise
             service = self.get_service(service_id)
             catalog = service.get("modelCatalog", {})
+            authentication_verified = exc.code != "DIRECT_SERVICE_MODELS_UNAVAILABLE"
             return {
                 "success": True,
                 "validationScope": "service",
                 "serviceId": service["id"],
                 "serviceName": service.get("name", ""),
                 "reachable": True,
-                "authenticated": True,
+                "authenticated": True if authentication_verified else None,
+                "authenticationVerified": authentication_verified,
                 "modelCatalogAvailable": bool(catalog.get("usableForSelection")),
                 "modelCatalogEndpointAvailable": False,
                 "modelCatalogFetchError": {

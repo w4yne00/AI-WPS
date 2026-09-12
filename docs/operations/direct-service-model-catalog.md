@@ -19,7 +19,7 @@
 
 ## 验证边界
 
-`POST /provider/direct-services/{serviceId}/validate` 只验证 URL、认证和目录读取。目录接口返回 404/405 时，服务仍可判定为可连接和已认证，但目录不可用；该响应不会执行任务调用，也不产生模型费用。
+`POST /provider/direct-services/{serviceId}/validate` 只验证 URL、认证和目录读取。目录接口返回 404/405 时，只能判定服务可达，不能证明 API Key 已通过认证；响应会返回 `authenticated=null`、`authenticationVerified=false`，并标记目录不可用。该响应不会执行任务调用，也不产生模型费用；系统不会为了补验认证而隐式发起可能计费的任务调用。
 
 `POST /provider/task-model-selections/{taskType}/validate` 使用目标任务的真实提示词、输入和结果契约执行一次调用。只有任务契约校验成功后，自定义模型标识才会记录为已验证；响应明确返回 `taskCallPerformed`、`taskContractValidated`、`mayIncurModelCost` 和费用提示。任务验证失败不会留下已验证标记。
 

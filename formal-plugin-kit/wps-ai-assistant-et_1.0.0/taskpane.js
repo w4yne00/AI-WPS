@@ -6192,18 +6192,16 @@
   function validateActiveDirectTaskSelection(taskType) {
     var taskStatus = (state.taskApiKeys && state.taskApiKeys[taskType]) || {};
     var selection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
-    var serviceId = String(selection.serviceId || taskStatus.serviceId || "").trim();
     var activeProfileId = String(taskStatus.activeProfileId || "").trim();
+    var serviceId = "";
     var service;
 
-    if (!serviceId && activeProfileId.indexOf("direct_svc_") === 0) {
+    if (taskStatus.accessMethod === "direct_model" && activeProfileId.indexOf("direct_svc_") === 0) {
       serviceId = activeProfileId;
-    }
-    if (!serviceId && state.workflowProfileSelections &&
-        String(state.workflowProfileSelections[taskType] || "").indexOf("direct_svc_") === 0) {
-      serviceId = String(state.workflowProfileSelections[taskType]);
-    }
-    if (taskStatus.accessMethod !== "direct_model" && !serviceId) {
+    } else if (taskStatus.accessMethod === "direct_model" &&
+        String(taskStatus.serviceId || "").indexOf("direct_svc_") === 0) {
+      serviceId = String(taskStatus.serviceId).trim();
+    } else {
       return { valid: true, ok: true, applicable: false, error: "" };
     }
 
@@ -6628,9 +6626,13 @@
         state.directServiceEditor.revision = data.directService.revision;
       }
       if (statusNode) {
-        statusNode.textContent = catalogAvailable
-          ? "服务验证成功；模型目录可用。"
-          : "服务可达且认证成功，但未提供可用模型目录；可使用高级手填。";
+        if (catalogAvailable) {
+          statusNode.textContent = "服务验证成功；模型目录可用。";
+        } else if (data.authenticationVerified === false) {
+          statusNode.textContent = "服务可达，但认证未验证；未提供可用模型目录，可使用高级手填。";
+        } else {
+          statusNode.textContent = "服务可达且认证成功，但未提供可用模型目录；可使用高级手填。";
+        }
       }
       if (typeof loadDirectServices === "function") {
         loadDirectServices().catch(function () {});

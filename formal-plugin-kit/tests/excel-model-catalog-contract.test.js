@@ -2,11 +2,22 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 
 const { etRoot: root } = require("./support/plugin-roots");
 const html = fs.readFileSync(path.join(root, "taskpane.html"), "utf8");
 const js = fs.readFileSync(path.join(root, "taskpane.js"), "utf8");
 const helpers = require(path.join(root, "taskpane-helpers.js"));
+
+function runActiveDirectTaskSelection(state, taskType) {
+  const start = js.indexOf("  function findDirectService(");
+  const end = js.indexOf("\n  function getDirectServiceCatalogState(", start);
+  assert.ok(start >= 0 && end > start);
+  return vm.runInNewContext(
+    `${js.slice(start, end)}\nvalidateActiveDirectTaskSelection(${JSON.stringify(taskType)});`,
+    { state, helpers }
+  );
+}
 
 test("Excel exposes separate service validation and task cost-risk disclosure", () => {
   assert.ok(html.includes('id="btn-validate-direct-service"'));
@@ -105,8 +116,52 @@ test("Taskpane task submitters include direct-model readiness preflight", () => 
   assert.ok(js.includes("validateActiveDirectTaskSelection(\"excel.smart_fill\")"));
 });
 
+test("Workflow activation ignores a stale shared-direct selection", () => {
+  const result = runActiveDirectTaskSelection({
+    taskApiKeys: {
+      "excel.analysis": {
+        accessMethod: "workflow_platform",
+        activeProfileId: "workflow_profile_current"
+      }
+    },
+    taskModelSelections: {
+      "excel.analysis": {
+        serviceId: "direct_svc_stale",
+        modelName: "stale-model",
+        modelAvailable: false,
+        modelUnavailableReason: "cache_expired"
+      }
+    },
+    workflowProfileSelections: {
+      "excel.analysis": "workflow_profile_current"
+    },
+    directServices: []
+  }, "excel.analysis");
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.applicable, false);
+});
+
+test("Independent direct-model activation bypasses the shared catalog gate", () => {
+  const result = runActiveDirectTaskSelection({
+    taskApiKeys: {
+      "excel.analysis": {
+        accessMethod: "direct_model",
+        activeProfileId: "model_cfg_independent"
+      }
+    },
+    taskModelSelections: {},
+    workflowProfileSelections: {
+      "excel.analysis": "model_cfg_independent"
+    },
+    directServices: []
+  }, "excel.analysis");
+
+  assert.strictEqual(result.ok, true);
+  assert.strictEqual(result.applicable, false);
+});
+
 test("Direct service validation stays separate from task validation", async () => {
-  const vm = require("node:vm");
   const start = js.indexOf("function validateDirectService(");
   const end = js.indexOf("\n  function openDirectServiceDeleteDialog(", start);
   assert.ok(start >= 0 && end > start);
@@ -115,13 +170,14 @@ test("Direct service validation stays separate from task validation", async () =
     workflowProfileMutationBusy: false
   };
   let requestSeen = null;
+  const validationNodes = {
+    "direct-service-validation-status": { textContent: "" },
+    "direct-service-models-status": { textContent: "" }
+  };
   const vmContext = {
     state: validationState,
     byId(id) {
-      return {
-        "direct-service-validation-status": { textContent: "" },
-        "direct-service-models-status": { textContent: "" }
-      }[id] || null;
+      return validationNodes[id] || null;
     },
     setWorkflowMutationBusy(value) {
       validationState.workflowProfileMutationBusy = value;
@@ -131,6 +187,8 @@ test("Direct service validation stays separate from task validation", async () =
       return Promise.resolve({
         data: {
           validationScope: "service",
+          authenticated: null,
+          authenticationVerified: false,
           modelCatalogAvailable: false,
           directService: {
             id: "direct_svc_1",
@@ -163,4 +221,8 @@ test("Direct service validation stays separate from task validation", async () =
   assert.ok(requestSeen.url.endsWith("/direct_svc_1/validate"));
   assert.strictEqual(requestSeen.url.includes("task-model"), false);
   assert.strictEqual(validationState.directServiceEditor.revision, 5);
+  assert.strictEqual(
+    validationNodes["direct-service-validation-status"].textContent,
+    "服务可达，但认证未验证；未提供可用模型目录，可使用高级手填。"
+  );
 });

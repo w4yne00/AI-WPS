@@ -322,7 +322,7 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             "DIRECT_SERVICE_TIMEOUT",
         )
 
-    def test_service_validation_is_separate_and_no_catalog_is_non_task_success(self) -> None:
+    def test_service_validation_is_separate_and_no_catalog_leaves_auth_unverified(self) -> None:
         service = self._service()
 
         with patch(
@@ -335,7 +335,8 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertEqual(result["validationScope"], "service")
         self.assertTrue(result["reachable"])
-        self.assertTrue(result["authenticated"])
+        self.assertIsNone(result["authenticated"])
+        self.assertFalse(result["authenticationVerified"])
         self.assertFalse(result["taskCallPerformed"])
         self.assertFalse(result["mayIncurModelCost"])
         self.assertFalse(result["modelCatalogAvailable"])
@@ -560,6 +561,46 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
         )
         self.assertFalse(
             self.store.get_task_model_selection("excel.smart_fill")["customModelValidated"]
+        )
+
+    def test_formula_probe_fallback_does_not_mark_manual_model_validated(self) -> None:
+        service = self._service("公式任务合同失败服务")
+        client = ProviderClient(
+            model_configuration_store=None,
+            direct_service_store=self.store,
+        )
+        refusal_response = self._response(
+            {
+                "id": "chatcmpl-formula-refusal",
+                "choices": [
+                    {
+                        "message": {
+                            "role": "assistant",
+                            "content": "I cannot return a formula or comply with this task.",
+                        },
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
+        )
+
+        with patch("urllib.request.urlopen", return_value=refusal_response):
+            with self.assertRaises(AdapterError) as context:
+                client.validate_task_model_selection(
+                    "excel.formula_assistant",
+                    {
+                        "serviceId": service["id"],
+                        "modelName": "manual-model",
+                        "customModel": True,
+                    },
+                    "trace-formula-refusal",
+                )
+
+        self.assertEqual(context.exception.code, "MODEL_RESULT_INVALID")
+        self.assertFalse(
+            self.store.is_custom_model_validated(
+                "excel.formula_assistant", service["id"], "manual-model"
+            )
         )
 
     def test_custom_task_validation_requires_explicit_model_name(self) -> None:

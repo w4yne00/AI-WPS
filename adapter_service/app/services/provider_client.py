@@ -1827,6 +1827,14 @@ def _validate_probe_answer(task_type: str, answer: str) -> None:
     parsed = parser(answer)
     if not isinstance(parsed, dict):
         raise AdapterError("MODEL_RESULT_INVALID", "模型返回结果不符合任务契约。", status_code=502)
+    if task_type == "excel.formula_assistant":
+        primary_formula = str(parsed.get("primaryFormula") or "").strip()
+        if parsed.get("parseDiagnostic") or not re.fullmatch(r"=[^\r\n]+", primary_formula):
+            raise AdapterError(
+                "MODEL_RESULT_INVALID",
+                "模型返回结果不符合公式任务契约。",
+                status_code=502,
+            )
 
 
 def _full_document_review_chunk_response_format() -> Dict:
