@@ -44,9 +44,19 @@
   - 公式助手历史仅持久化推荐公式（`primaryFormula`）、备选公式（`alternativeFormula`）、说明（`explanation`）、组件解析（`components`）、引用范围（`referenceRanges`）、发现问题（`issues`）等计算成果，严格排除用户原始需求提示词与选区单元格数据；
   - 超过 5 MiB 单条上限时自动降级跳过持久化并记录中性提示（`historyNotice`），且不增加未读角标计数；
 - **向下兼容保证**：现有智能分析 Markdown 报告、汇报段落双视图切换、公式助手模式切换与复制功能完全保持兼容；
-- **测试覆盖**：
-  - 后端：`adapter_service/tests/test_excel_analysis_formula_history.py` 覆盖请求模型、409 槽位忙碌拦截、并发隔离、脱敏历史写入、超限降级等场景（5/5 测试通过）；
-  - 前端：`formal-plugin-kit/tests/excel-analysis-formula-lifecycle.test.js` 覆盖历史卡片只读渲染、本地校验失败保留旧结果、有效提交清理旧结果与锁定槽位、槽位忙碌拦截、跨模式活跃结果隔离、已完成任务恢复清理等场景（13/13 测试通过）。
+- **测试覆盖与 PR #191 Code Review 修复**：
+  - **PR #191 Code Review 彻底清零**：
+    1. *智能填写草稿与锁定状态保持*：新增 `activeSmartFillStatesBySession` 缓存每工作簿草稿修改、排除项、锁定及消耗状态，模式切换或会话同步通过 `rerenderExcelSmartFillPreview()` 恢复，杜绝 `renderExcelSmartFillResult()` 盲目重置；
+    2. *分析/公式任务取消槽位释放*：`finishCancelledExcelAnalysis` 与 `finishCancelledExcelFormula` 支持传入 `boundDocSessionId` 释放 `(host, taskType, targetDocSession)` 槽位，杜绝取消后永久占用槽位；
+    3. *异步 DOM 污染防护*：智能分析、公式助手与智能填写的轮询、完成、取消与错误回调均通过 `currentMode === expectedMode && currSession === targetDocSession` 门禁，切换工作簿或模式时不篡改当前 DOM；
+    4. *历史响应乱序防护*：引入递增 `historyRequestId` 与 `taskType` 严格匹配，抛弃乱序或串流的历史数据；
+    5. *恢复前置查询容灾*：网络超时或瞬态错误（非 404/NOT_FOUND）时保留 localStorage 中的活跃任务，禁止静默清除；
+    6. *公式助手诊断降级与隐私*：诊断降级结果（`parseDiagnostic`）不入历史库并标注 `historyNotice`；正常入库条目严格由 `primaryFormula` 派生 `copyText`，杜绝用户提示词或原始回显污染；
+    7. *并发槽位与忙碌解耦*：移除基于全局 `state.busy` 的粗粒度跨工作簿阻塞，完全收敛至 `isTaskSlotBusy`，并在选区读取前置 `setAnalysisBusy(true, docSessionId)`；
+    8. *工作簿切换视图同步*：选区监听器 `updateScopeIndicator` 及 `switchMode` 统一触发 `syncActiveSessionView`，切回工作簿即时还原活跃结果；
+    9. *统一终态记录与角标抑制*：提取统一的 `recordFinalizedAnalysisResult` 等终态处理，带有 `historyNotice` 的结果严格不递增未读角标计数；
+  - 后端：`adapter_service/tests/test_excel_analysis_formula_history.py` 覆盖请求模型、409 槽位忙碌拦截、并发隔离、脱敏历史写入、超限降级、诊断降级不入库、白名单公式文本派生等场景（7/7 测试通过）；
+  - 前端：`formal-plugin-kit/tests/excel-analysis-formula-lifecycle.test.js` 覆盖历史卡片只读渲染、本地校验失败保留旧结果、有效提交清理旧结果与锁定槽位、槽位忙碌拦截、跨模式活跃结果隔离、已完成任务恢复清理、智能填写草稿状态保持、取消任务槽位释放、异步 DOM 隔离、乱序历史丢弃、恢复瞬态网络错误保护、跨工作簿并发提交、降级历史角标抑制等场景（20/20 测试通过，全量 Excel 测试 53/53 通过）。
 
 ## 当前功能实现：Issue #172 扩展 Excel 智能填写的只读历史与活跃结果生命周期
 

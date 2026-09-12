@@ -429,6 +429,10 @@ test("Behavioral: switchMode isolates active results across task modes", () => {
     "function switchHistoryView() {}",
     "function setFormulaAssistantMode() {}",
     "function refreshConfig() {}",
+    "function syncActiveTaskBusyUi() {}",
+    "function rerenderExcelSmartFillPreview() {}",
+    "function tryRebindSmartFillTarget() {}",
+    functionSource("syncActiveSessionView"),
     switchModeCode
   ].join("\n"), sandbox);
 
@@ -641,4 +645,312 @@ test("Behavioral: Clear history sends DELETE request for current task type", (t,
     assert.strictEqual(ctx.requests[0].options.method, "DELETE");
     done();
   }, 10);
+});
+
+test("Behavioral: Smart Fill draft, exclusions, and locked status preserved across mode switches", () => {
+  const ctx = createBaseTestContext();
+  const session = "doc_session_smart_fill";
+  ctx.state.documentSessionId = session;
+  ctx.state.smartFillResult = {
+    items: [
+      { itemId: "item-1", status: "completed", value: "值1" },
+      { itemId: "item-2", status: "completed", value: "值2" }
+    ]
+  };
+  ctx.state.smartFillPreview = {
+    consumed: false,
+    status: "ready"
+  };
+  ctx.state.smartFillDraftItems = [
+    { itemId: "item-1", status: "completed", value: "用户修改的值1", selected: true },
+    { itemId: "item-2", status: "completed", value: "值2", selected: false }
+  ];
+  ctx.state.smartFillItems = [{ itemId: "item-1" }, { itemId: "item-2" }];
+
+  const sandbox = vm.createContext(ctx);
+  const saveStateCode = functionSource("saveCurrentSmartFillSessionState");
+  const syncActiveSessionViewCode = functionSource("syncActiveSessionView");
+
+  vm.runInContext([
+    saveStateCode,
+    syncActiveSessionViewCode,
+    "function rerenderExcelSmartFillPreview() {}",
+    "function setExcelResultViewSwitchForMode() {}",
+    "function tryRebindSmartFillTarget() {}",
+    "function setSmartFillWriteButtonState() {}",
+    "function resumeExcelSmartFillActiveJob() {}",
+    "function syncActiveTaskBusyUi() {}"
+  ].join("\n"), sandbox);
+
+  // 1. Save state
+  vm.runInContext("saveCurrentSmartFillSessionState('doc_session_smart_fill');", sandbox);
+  assert.ok(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"]);
+  assert.strictEqual(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"].draftItems[0].value, "用户修改的值1");
+  assert.strictEqual(ctx.state.activeSmartFillStatesBySession["doc_session_smart_fill"].draftItems[1].selected, false);
+
+  // 2. User switches to excelAnalysis, changing state.smartFillDraftItems
+  ctx.state.currentMode = "excelAnalysis";
+  ctx.state.smartFillDraftItems = [];
+
+  // 3. User switches back to excelSmartFill
+  ctx.state.currentMode = "excelSmartFill";
+  vm.runInContext("syncActiveSessionView('doc_session_smart_fill');", sandbox);
+
+  // Drafts, exclusions, and preview must be restored without reset!
+  assert.strictEqual(ctx.state.smartFillDraftItems.length, 2);
+  assert.strictEqual(ctx.state.smartFillDraftItems[0].value, "用户修改的值1");
+  assert.strictEqual(ctx.state.smartFillDraftItems[1].selected, false);
+});
+
+test("Behavioral: finishCancelledExcelAnalysis and finishCancelledExcelFormula release targetDocSession slot", () => {
+  const ctx = createBaseTestContext();
+  const session = "doc_session_cancel";
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, "et", "excel.analysis", session, "job-cancel-ana");
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, "et", "excel.formula_assistant", session, "job-cancel-form");
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.analysis", session), true);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.formula_assistant", session), true);
+
+  const sandbox = vm.createContext(ctx);
+  const finishCancelAnaCode = functionSource("finishCancelledExcelAnalysis");
+  const finishCancelFormCode = functionSource("finishCancelledExcelFormula");
+
+  vm.runInContext([
+    finishCancelAnaCode,
+    finishCancelFormCode,
+    "function clearExcelAnalysisActiveJob() {}",
+    "function clearExcelFormulaActiveJob() {}",
+    "function setExcelAnalysisCancelVisible() {}",
+    "function setExcelFormulaCancelVisible() {}"
+  ].join("\n"), sandbox);
+
+  // Finish cancel with targetDocSession
+  vm.runInContext(`finishCancelledExcelAnalysis("job-cancel-ana", () => {}, "${session}");`, sandbox);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.analysis", session), false);
+
+  vm.runInContext(`finishCancelledExcelFormula("job-cancel-form", () => {}, "${session}");`, sandbox);
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.formula_assistant", session), false);
+});
+
+test("Behavioral: Async job completion does not overwrite DOM when mode or session changed during run", (t, done) => {
+  const ctx = createBaseTestContext();
+  const sessionA = "session_A";
+  const sessionB = "session_B";
+
+  ctx.state.currentMode = "excelAnalysis";
+  ctx.state.documentSessionId = sessionA;
+  ctx.state.excelAnalysisJobId = "job_bg_1";
+
+  // Simulate network response resolving with completed result
+  ctx.request = (url) => {
+    return Promise.resolve({
+      traceId: "tr-1",
+      data: {
+        jobId: "job_bg_1",
+        status: "completed",
+        result: { plainText: "任务A完成分析" }
+      }
+    });
+  };
+
+  let renderCalled = false;
+  ctx.renderExcelAnalysisResult = () => { renderCalled = true; };
+
+  const sandbox = vm.createContext(ctx);
+  const pollCode = functionSource("pollExcelAnalysisJob");
+  const recordCode = functionSource("recordFinalizedAnalysisResult");
+  const updateBadgeCode = functionSource("updateHistoryBadge");
+
+  vm.runInContext([
+    updateBadgeCode,
+    recordCode,
+    pollCode,
+    "function clearExcelAnalysisActiveJob() {}",
+    "function saveExcelAnalysisActiveJob() {}",
+    "function setExcelAnalysisCancelVisible() {}",
+    "function setTrace() {}",
+    "function setStatus() {}",
+    "function refreshDiagnostics() { return Promise.resolve(); }"
+  ].join("\n"), sandbox);
+
+  // Before response arrives, user switched to session B and mode excelFormulaAssistant
+  ctx.state.documentSessionId = sessionB;
+  ctx.state.currentMode = "excelFormulaAssistant";
+
+  // Polling completes for session A
+  vm.runInContext(`pollExcelAnalysisJob("job_bg_1", () => {}, "${sessionA}");`, sandbox);
+
+  setTimeout(() => {
+    // 1. Result should be stored in session A cache
+    assert.ok(ctx.state.activeAnalysisResultsBySession[sessionA]);
+    assert.strictEqual(ctx.state.activeAnalysisResultsBySession[sessionA].plainText, "任务A完成分析");
+
+    // 2. DOM rendering MUST NOT have occurred because user switched away!
+    assert.strictEqual(renderCalled, false, "renderExcelAnalysisResult must not be called when user switched mode/session");
+    done();
+  }, 20);
+});
+
+test("Behavioral: Out-of-order history responses with mismatched taskType are discarded", (t, done) => {
+  const ctx = createBaseTestContext();
+  ctx.state.currentMode = "excelAnalysis";
+  ctx.state.historyItems = [];
+
+  let resolveAnalysis;
+  let resolveFormula;
+
+  ctx.request = (url) => {
+    if (url.includes("excel.analysis")) {
+      return new Promise((resolve) => { resolveAnalysis = resolve; });
+    }
+    if (url.includes("excel.formula_assistant")) {
+      return new Promise((resolve) => { resolveFormula = resolve; });
+    }
+    return Promise.resolve({ data: [] });
+  };
+
+  const sandbox = vm.createContext(ctx);
+  const loadHistoryCode = functionSource("loadAndRenderSmartFillHistory");
+  const getCurrentWorkflowTaskTypeCode = functionSource("getCurrentWorkflowTaskType");
+  const renderCurrentTaskHistoryListCode = functionSource("renderCurrentTaskHistoryList");
+
+  vm.runInContext([
+    getCurrentWorkflowTaskTypeCode,
+    renderCurrentTaskHistoryListCode,
+    loadHistoryCode
+  ].join("\n"), sandbox);
+
+  // 1. User starts on excelAnalysis, request 1 fires
+  vm.runInContext("loadAndRenderSmartFillHistory();", sandbox);
+
+  // 2. User quickly switches to excelFormulaAssistant, request 2 fires
+  ctx.state.currentMode = "excelFormulaAssistant";
+  vm.runInContext("loadAndRenderSmartFillHistory();", sandbox);
+
+  // 3. Request 1 (analysis) resolves late (out-of-order!)
+  resolveAnalysis({
+    data: [{ id: "h_ana_old", taskType: "excel.analysis" }]
+  });
+
+  // 4. Request 2 (formula) resolves
+  resolveFormula({
+    data: [{ id: "h_form_new", taskType: "excel.formula_assistant" }]
+  });
+
+  setTimeout(() => {
+    // State historyItems must only contain the latest formula history, not the out-of-order analysis response
+    assert.strictEqual(ctx.state.historyItems.length, 1);
+    assert.strictEqual(ctx.state.historyItems[0].id, "h_form_new");
+    assert.strictEqual(ctx.state.historyItems[0].taskType, "excel.formula_assistant");
+    done();
+  }, 20);
+});
+
+test("Behavioral: Transient network error on resume pre-query does not purge storage", (t, done) => {
+  const ctx = createBaseTestContext();
+  const session = "doc_session_resume_transient";
+  ctx.state.documentSessionId = session;
+  ctx.defaultWorkbook.__ai_wps_doc_session__ = session;
+  ctx.state.currentMode = "excelAnalysis";
+
+  // Seed storage with active job
+  let storageCleared = false;
+  ctx.loadExcelAnalysisActiveJob = () => ({
+    jobId: "job_resume_active",
+    startedAt: Date.now(),
+    documentSessionId: session,
+    host: "et",
+    taskType: "excel.analysis"
+  });
+  ctx.clearExcelAnalysisActiveJob = () => {
+    storageCleared = true;
+  };
+
+  // Simulate transient network timeout error (not 404)
+  ctx.request = () => {
+    const error = new Error("Network timeout");
+    error.status = 504;
+    error.adapterCode = "TIMEOUT";
+    return Promise.reject(error);
+  };
+
+  const sandbox = vm.createContext(ctx);
+  const resumeCode = functionSource("resumeExcelAnalysisActiveJob");
+
+  vm.runInContext([
+    resumeCode
+  ].join("\n"), sandbox);
+
+  vm.runInContext("resumeExcelAnalysisActiveJob();", sandbox);
+
+  setTimeout(() => {
+    // Storage MUST NOT have been purged!
+    assert.strictEqual(storageCleared, false, "transient error must not purge active job from storage");
+    done();
+  }, 20);
+});
+
+test("Behavioral: Different workbooks submit concurrently without being blocked by another session slot", (t, done) => {
+  const ctx = createBaseTestContext();
+  const sessionA = "session_wb_A";
+  const sessionB = "session_wb_B";
+
+  // Session A has an active analysis job running
+  helpers.claimTaskSlot(ctx.state.activeTaskSlots, "et", "excel.analysis", sessionA, "job_A_active");
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.analysis", sessionA), true);
+
+  // User is now on Session B
+  ctx.defaultWorkbook = {
+    Name: "工作簿B.xlsx",
+    FullName: "/path/工作簿B.xlsx",
+    __ai_wps_doc_session__: sessionB
+  };
+  ctx.state.documentSessionId = sessionB;
+  ctx.state.currentMode = "excelAnalysis";
+
+  // Session B should NOT be busy
+  assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.analysis", sessionB), false);
+
+  const sandbox = vm.createContext(ctx);
+  const runAnalysisCode = functionSource("runExcelAnalysisAction");
+
+  vm.runInContext([
+    runAnalysisCode,
+    "function buildExcelAnalysisClientJobId() { return 'job_B_client'; }",
+    "function extractExcelRange() { return { rows: 2, columns: 2 }; }",
+    "function summarizeExcelPayload() { return '2行 x 2列'; }",
+    "function setScopeLine() {}",
+    "function setInterruptedRetryVisible() {}",
+    "function setExcelAnalysisCancelVisible() {}",
+    "function setAnalysisBusy() {}",
+    "function clearExcelAnalysisActiveJob() {}",
+    "function startExcelAnalysisWaitFeedback() { return () => {}; }",
+    "function saveExcelAnalysisActiveJob() {}"
+  ].join("\n"), sandbox);
+
+  // Submission in Session B should succeed in claiming slot and submitting
+  vm.runInContext("runExcelAnalysisAction();", sandbox);
+
+  setTimeout(() => {
+    // Check that slot was claimed for session B
+    assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, "et", "excel.analysis", sessionB), true);
+    done();
+  }, 20);
+});
+
+test("Behavioral: Analysis result with historyNotice suppresses unread count increment", () => {
+  const ctx = createBaseTestContext();
+  ctx.state.historyUnreadCount = 0;
+  ctx.updateHistoryBadge = () => {};
+
+  const sandbox = vm.createContext(ctx);
+  const recordAnalysisCode = functionSource("recordFinalizedAnalysisResult");
+  vm.runInContext(recordAnalysisCode, sandbox);
+
+  // 1. Success without historyNotice -> increments unread
+  vm.runInContext(`recordFinalizedAnalysisResult("job-a1", { structuredReport: {} }, true, "s1");`, sandbox);
+  assert.strictEqual(ctx.state.historyUnreadCount, 1, "success without notice must increment unread");
+
+  // 2. Success with historyNotice (e.g. diagnostic degradation) -> does NOT increment unread
+  vm.runInContext(`recordFinalizedAnalysisResult("job-a2", { structuredReport: {}, historyNotice: "未保存历史" }, true, "s1");`, sandbox);
+  assert.strictEqual(ctx.state.historyUnreadCount, 1, "historyNotice must suppress unread count increment");
 });

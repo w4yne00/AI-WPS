@@ -154,9 +154,11 @@
     activeAnalysisResultsBySession: {},
     activeFormulaResultsBySession: {},
     activeSmartFillResultsBySession: {},
+    activeSmartFillStatesBySession: {},
     historyOpen: false,
     historyUnreadCount: 0,
-    historyItems: []
+    historyItems: [],
+    historyRequestId: 0
   };
 
   function byId(id) {
@@ -292,21 +294,38 @@
     setNodeTextIfChanged(byId("settings-status-line"), message || "");
   }
 
-  function setAnalysisBusy(isBusy) {
-    state.busy = Boolean(isBusy);
-    byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
-    if (state.currentMode === "excelSmartFill") {
-      updateSmartFillGenerateEnabled();
-    }
-    setSmartFillWriteButtonState();
-    Array.prototype.forEach.call(
-      document.querySelectorAll("[data-formula-mode]"),
-      function (button) {
-        button.disabled = state.busy || state.workflowProfileMutationBusy;
+  function setAnalysisBusy(isBusy, docSessionId) {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var session = docSessionId || (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var isCurrent = (session === state.documentSessionId);
+    if (isCurrent) {
+      state.busy = Boolean(isBusy);
+      if (byId("btn-run-primary")) {
+        byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
       }
-    );
-    renderWorkflowProfileStrip();
-    syncScopeWatcher();
+      if (state.currentMode === "excelSmartFill") {
+        updateSmartFillGenerateEnabled();
+      }
+      setSmartFillWriteButtonState();
+      Array.prototype.forEach.call(
+        document.querySelectorAll("[data-formula-mode]"),
+        function (button) {
+          button.disabled = state.busy || state.workflowProfileMutationBusy;
+        }
+      );
+      renderWorkflowProfileStrip();
+      syncScopeWatcher();
+    }
+  }
+
+  function syncActiveTaskBusyUi(docSessionId) {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var session = docSessionId || (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var currentTaskType = typeof getCurrentWorkflowTaskType === "function" ? getCurrentWorkflowTaskType() : "excel.analysis";
+    var isBusy = helpers.isTaskSlotBusy ? helpers.isTaskSlotBusy(state.activeTaskSlots, "et", currentTaskType, session) : false;
+    setAnalysisBusy(isBusy, session);
   }
 
   function setExcelAnalysisCancelVisible(visible, disabled) {
@@ -1126,7 +1145,106 @@
     ].join(" / ");
   }
 
+  function syncActiveSessionView(docSessionId) {
+    var session = docSessionId || state.documentSessionId || "default";
+    if (state.currentMode === "excelAnalysis") {
+      state.analysisResult = (state.activeAnalysisResultsBySession && state.activeAnalysisResultsBySession[session]) || null;
+      if (state.analysisResult && typeof renderExcelAnalysisResult === "function") {
+        renderExcelAnalysisResult(state.analysisResult);
+      } else {
+        if (typeof setExcelResultViewSwitchForMode === "function") {
+          setExcelResultViewSwitchForMode("excelAnalysis");
+        }
+        if (typeof setPlainResult === "function") {
+          setPlainResult("尚未生成智能分析报告。请先选择表格区域并输入分析要求，再点击“生成分析报告”。");
+        }
+      }
+      if (typeof resumeExcelAnalysisActiveJob === "function") {
+        resumeExcelAnalysisActiveJob();
+      }
+    } else if (state.currentMode === "excelFormulaAssistant") {
+      state.formulaResult = (state.activeFormulaResultsBySession && state.activeFormulaResultsBySession[session]) || null;
+      if (state.formulaResult && typeof renderExcelFormulaResult === "function") {
+        renderExcelFormulaResult(state.formulaResult);
+      } else {
+        if (typeof setExcelResultViewSwitchForMode === "function") {
+          setExcelResultViewSwitchForMode("excelFormulaAssistant");
+        }
+        if (byId("btn-copy-formula")) {
+          byId("btn-copy-formula").hidden = true;
+        }
+        if (byId("excel-formula-alternative")) {
+          byId("excel-formula-alternative").hidden = true;
+        }
+        if (typeof setPlainResult === "function") {
+          setPlainResult(typeof getFormulaModeUi === "function" ? getFormulaModeUi(state.formulaMode).submitResult : "正在生成推荐公式。");
+        }
+      }
+      if (typeof resumeExcelFormulaActiveJob === "function") {
+        resumeExcelFormulaActiveJob();
+      }
+    } else if (state.currentMode === "excelSmartFill") {
+      var savedSmartFillState = (state.activeSmartFillStatesBySession && state.activeSmartFillStatesBySession[session]) || null;
+      if (savedSmartFillState && savedSmartFillState.preview) {
+        state.smartFillResult = savedSmartFillState.result;
+        state.smartFillPreview = savedSmartFillState.preview;
+        state.smartFillDraftItems = savedSmartFillState.draftItems || [];
+        state.smartFillItems = savedSmartFillState.items || [];
+        state.smartFillSource = savedSmartFillState.source || null;
+        state.smartFillTarget = savedSmartFillState.target || null;
+        state.smartFillEditBaselineAddress = savedSmartFillState.editBaselineAddress || "";
+        state.smartFillWorkbookId = savedSmartFillState.workbookId || "";
+        state.smartFillInstruction = savedSmartFillState.instruction || "";
+        state.excelSmartFillCompletedJobId = savedSmartFillState.completedJobId || "";
+        if (typeof setExcelResultViewSwitchForMode === "function") {
+          setExcelResultViewSwitchForMode("excelSmartFill");
+        }
+        if (byId("btn-copy-formula")) {
+          byId("btn-copy-formula").hidden = true;
+        }
+        rerenderExcelSmartFillPreview();
+        tryRebindSmartFillTarget();
+        setSmartFillWriteButtonState();
+      } else {
+        state.smartFillResult = (state.activeSmartFillResultsBySession && state.activeSmartFillResultsBySession[session]) || null;
+        if (state.smartFillResult && typeof renderExcelSmartFillResult === "function") {
+          renderExcelSmartFillResult(state.smartFillResult);
+        } else {
+          state.smartFillResult = null;
+          state.smartFillPreview = null;
+          state.smartFillDraftItems = [];
+          if (typeof setExcelResultViewSwitchForMode === "function") {
+            setExcelResultViewSwitchForMode("excelSmartFill");
+          }
+          if (typeof setPlainResult === "function") {
+            setPlainResult("尚未生成智能填写预览。请先框选样本与目标单元格，再点击“生成预览”。");
+          }
+        }
+      }
+      if (typeof resumeExcelSmartFillActiveJob === "function") {
+        resumeExcelSmartFillActiveJob();
+      }
+    }
+    if (typeof syncActiveTaskBusyUi === "function") {
+      syncActiveTaskBusyUi(session);
+    }
+  }
+
   function updateScopeIndicator() {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var currentDocName = (workbook && helpers.getDocumentDisplayName ? helpers.getDocumentDisplayName(workbook) : "") || state.documentDisplayName || "当前工作簿";
+
+    if (state.documentSessionId && currentDocSession !== state.documentSessionId) {
+      state.documentSessionId = currentDocSession;
+      state.documentDisplayName = currentDocName;
+      syncActiveSessionView(currentDocSession);
+    } else if (!state.documentSessionId) {
+      state.documentSessionId = currentDocSession;
+      state.documentDisplayName = currentDocName;
+    }
+
     var scopeStrip = byId("scope-strip");
     if (state.currentMode === "excelSmartFill") {
       if (scopeStrip) {
@@ -1806,6 +1924,7 @@
         frozenSource: state.smartFillSource
       }
     );
+    saveCurrentSmartFillSessionState();
   }
 
   function syncSmartFillPreviewWithCurrentInputs() {
@@ -2072,6 +2191,7 @@
         // Focus restoration is best-effort.
       }
     }
+    saveCurrentSmartFillSessionState();
   }
 
   function buildExcelSmartFillWriteResults() {
@@ -2515,6 +2635,7 @@
     draft.value = input.value;
     tryRebindSmartFillTarget();
     setSmartFillWriteButtonState();
+    saveCurrentSmartFillSessionState();
   }
 
   function handleSmartFillResultChange(event) {
@@ -2527,6 +2648,7 @@
     draft.selected = Boolean(input.checked);
     tryRebindSmartFillTarget();
     setSmartFillWriteButtonState();
+    saveCurrentSmartFillSessionState();
   }
 
   function cloneSmartFillResult(data) {
@@ -2682,6 +2804,28 @@
     }
   }
 
+  function saveCurrentSmartFillSessionState(boundDocSessionId) {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var docSessionId = boundDocSessionId || currentDocSession;
+    if (!state.activeSmartFillStatesBySession) {
+      state.activeSmartFillStatesBySession = {};
+    }
+    state.activeSmartFillStatesBySession[docSessionId] = {
+      result: state.smartFillResult,
+      preview: state.smartFillPreview,
+      draftItems: Array.isArray(state.smartFillDraftItems) ? state.smartFillDraftItems.slice() : [],
+      items: Array.isArray(state.smartFillItems) ? state.smartFillItems.slice() : [],
+      source: state.smartFillSource,
+      target: state.smartFillTarget,
+      editBaselineAddress: state.smartFillEditBaselineAddress,
+      workbookId: state.smartFillWorkbookId,
+      instruction: state.smartFillInstruction,
+      completedJobId: state.excelSmartFillCompletedJobId
+    };
+  }
+
   function recordFinalizedSmartFillResult(completedJobId, result, isSuccess, boundDocSessionId) {
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
@@ -2691,12 +2835,51 @@
       state.activeSmartFillResultsBySession = {};
     }
     state.activeSmartFillResultsBySession[docSessionId] = result;
+    if (typeof saveCurrentSmartFillSessionState === "function") {
+      saveCurrentSmartFillSessionState(docSessionId);
+    }
     if (isSuccess && (!result || !result.historyNotice)) {
       state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
       updateHistoryBadge();
     }
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, completedJobId);
+    }
+  }
+
+  function recordFinalizedAnalysisResult(completedJobId, result, isSuccess, boundDocSessionId) {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var docSessionId = boundDocSessionId || currentDocSession;
+    if (!state.activeAnalysisResultsBySession) {
+      state.activeAnalysisResultsBySession = {};
+    }
+    state.activeAnalysisResultsBySession[docSessionId] = result;
+    if (isSuccess && (!result || !result.historyNotice)) {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+    }
+    if (helpers.releaseTaskSlot) {
+      helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, completedJobId);
+    }
+  }
+
+  function recordFinalizedFormulaResult(completedJobId, result, isSuccess, boundDocSessionId) {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var docSessionId = boundDocSessionId || currentDocSession;
+    if (!state.activeFormulaResultsBySession) {
+      state.activeFormulaResultsBySession = {};
+    }
+    state.activeFormulaResultsBySession[docSessionId] = result;
+    if (isSuccess && (!result || !result.historyNotice)) {
+      state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
+      updateHistoryBadge();
+    }
+    if (helpers.releaseTaskSlot) {
+      helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, completedJobId);
     }
   }
 
@@ -2749,9 +2932,15 @@
     if (contentEl) {
       contentEl.innerHTML = '<div class="excel-history-empty">正在加载历史记录...</div>';
     }
+    state.historyRequestId = (state.historyRequestId || 0) + 1;
+    var thisRequestId = state.historyRequestId;
+    var requestedTaskType = currentTaskType;
     request("/history?taskType=" + encodeURIComponent(currentTaskType), null, {
       timeoutMs: 8000
     }).then(function (body) {
+      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
+        return;
+      }
       var data = body && body.data;
       var items = (data && Array.isArray(data.items)) ? data.items : (Array.isArray(data) ? data : []);
       state.historyItems = items;
@@ -2759,6 +2948,9 @@
         contentEl.innerHTML = renderCurrentTaskHistoryList(state.historyItems);
       }
     }).catch(function (error) {
+      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
+        return;
+      }
       if (contentEl) {
         contentEl.innerHTML = '<div class="excel-history-empty">读取历史记录失败：' + (helpers.escapeHtml ? helpers.escapeHtml(error.message) : error.message) + '</div>';
       }
@@ -2767,10 +2959,16 @@
 
   function handleClearSmartFillHistory() {
     var currentTaskType = getCurrentWorkflowTaskType();
+    state.historyRequestId = (state.historyRequestId || 0) + 1;
+    var thisRequestId = state.historyRequestId;
+    var requestedTaskType = currentTaskType;
     request("/history?taskType=" + encodeURIComponent(currentTaskType), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
+      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
+        return;
+      }
       state.historyItems = [];
       var contentEl = byId("excel-history-content");
       if (contentEl) {
@@ -2778,6 +2976,9 @@
       }
       setStatus("历史记录已清空。");
     }).catch(function (error) {
+      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) {
+        return;
+      }
       setStatus("清空历史记录失败：" + error.message);
     });
   }
@@ -3157,19 +3358,29 @@
     }, delayMs);
   }
 
-  function finishCancelledExcelAnalysis(jobId, stopWaiting, targetDocSession) {
+  function finishCancelledExcelAnalysis(jobId, stopWaiting, boundDocSessionId) {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var latestSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var targetDocSession = boundDocSessionId || latestSession;
+    var isCurrent = (state.currentMode === "excelAnalysis" && latestSession === targetDocSession);
+
     clearExcelAnalysisActiveJob(jobId, targetDocSession);
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
     }
-    state.excelAnalysisJobId = "";
-    state.excelAnalysisPollStartedAt = 0;
-    state.excelAnalysisPollErrorCount = 0;
-    state.excelAnalysisResumeExpected = false;
-    setExcelAnalysisCancelVisible(false);
+    if (state.excelAnalysisJobId === jobId) {
+      state.excelAnalysisJobId = "";
+      state.excelAnalysisPollStartedAt = 0;
+      state.excelAnalysisPollErrorCount = 0;
+      state.excelAnalysisResumeExpected = false;
+    }
     stopWaiting();
-    setStatus("智能分析任务已取消。");
-    setPlainResult("排队中的智能分析任务已取消，未调用模型后台。\n任务编号：" + jobId);
+    if (isCurrent) {
+      setExcelAnalysisCancelVisible(false);
+      setStatus("智能分析任务已取消。");
+      setPlainResult("排队中的智能分析任务已取消，未调用模型后台。\n任务编号：" + jobId);
+    }
   }
 
   function cancelQueuedExcelAnalysisJob() {
@@ -3177,6 +3388,10 @@
     if (!jobId) {
       return;
     }
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    var targetDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+
     setExcelAnalysisCancelVisible(true, true);
     request("/excel/analysis/jobs/" + encodeURIComponent(jobId), null, {
       method: "DELETE",
@@ -3187,11 +3402,14 @@
       }
       if ((body.data || {}).status === "cancelled") {
         finishCancelledExcelAnalysis(jobId, function () {
-          setAnalysisBusy(false);
-        });
+          setAnalysisBusy(false, targetDocSession);
+        }, targetDocSession);
       }
     }).catch(function (error) {
-      if (state.excelAnalysisJobId === jobId) {
+      var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
+      var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
+      if (state.excelAnalysisJobId === jobId && state.currentMode === "excelAnalysis" && curr === targetDocSession) {
         setExcelAnalysisCancelVisible(true, false);
         setStatus("取消排队任务失败：" + describeExcelAnalysisPollError(error));
       }
@@ -3207,7 +3425,13 @@
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var targetDocSession = boundDocSessionId || currentSession;
-    var isCurrentDoc = (targetDocSession === currentSession);
+
+    function isVisibleForTask() {
+      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
+      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
+      return state.currentMode === "excelAnalysis" && curr === targetDocSession;
+    }
 
     request(
       "/excel/analysis/jobs/" + encodeURIComponent(jobId) +
@@ -3223,7 +3447,7 @@
           return;
         }
         state.excelAnalysisPollErrorCount = 0;
-        if (isCurrentDoc) {
+        if (isVisibleForTask()) {
           setTrace(body.traceId || job.traceId || jobId);
         }
         saveExcelAnalysisActiveJob({
@@ -3241,24 +3465,14 @@
             state.excelAnalysisPollStartedAt = 0;
             state.excelAnalysisResumeExpected = false;
           }
-          if (helpers.releaseTaskSlot) {
-            helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
-          }
-          if (!state.activeAnalysisResultsBySession) {
-            state.activeAnalysisResultsBySession = {};
-          }
-          state.activeAnalysisResultsBySession[targetDocSession] = job.result || {};
-          state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
-          updateHistoryBadge();
-          setExcelAnalysisCancelVisible(false);
+          recordFinalizedAnalysisResult(jobId, job.result || {}, true, targetDocSession);
           stopWaiting();
-          if (isCurrentDoc) {
+          if (isVisibleForTask()) {
+            setExcelAnalysisCancelVisible(false);
             renderExcelAnalysisResult(job.result || {});
             setStatus("智能分析报告已生成。");
             refreshDiagnostics().then(function () {
-              var latestWb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-              var latestSession = (latestWb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(latestWb) : "") || state.documentSessionId || "default";
-              if (latestSession === targetDocSession) {
+              if (isVisibleForTask()) {
                 setStatus("智能分析报告已生成。");
               }
             });
@@ -3279,15 +3493,17 @@
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
           }
-          setExcelAnalysisCancelVisible(false);
           stopWaiting();
-          if (isCurrentDoc) {
+          if (isVisibleForTask()) {
+            setExcelAnalysisCancelVisible(false);
             setStatus("智能分析失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
             setResult((job.error && job.error.message) || "后台任务执行失败。");
           }
           return;
         }
-        renderExcelAnalysisJobProgress(job, jobId);
+        if (isVisibleForTask()) {
+          renderExcelAnalysisJobProgress(job, jobId);
+        }
         scheduleExcelAnalysisPoll(jobId, stopWaiting, EXCEL_ANALYSIS_POLL_INTERVAL_MS, targetDocSession);
       })
       .catch(function (error) {
@@ -3310,11 +3526,13 @@
           state.excelAnalysisPollStartedAt = 0;
           state.excelAnalysisPollErrorCount = 0;
           state.excelAnalysisResumeExpected = false;
-          setExcelAnalysisCancelVisible(false);
-          setInterruptedRetryVisible(true);
           stopWaiting();
-          setStatus("adapter 已重启，原智能分析任务已中断，请重新提交。");
-          setPlainResult("adapter 已重启，原智能分析任务无法恢复，请使用“重新提交分析”。\n任务编号：" + jobId);
+          if (isVisibleForTask()) {
+            setExcelAnalysisCancelVisible(false);
+            setInterruptedRetryVisible(true);
+            setStatus("adapter 已重启，原智能分析任务已中断，请重新提交。");
+            setPlainResult("adapter 已重启，原智能分析任务无法恢复，请使用“重新提交分析”。\n任务编号：" + jobId);
+          }
           return;
         }
         if (!isFatalExcelAnalysisPollError(error)) {
@@ -3333,18 +3551,20 @@
             host: "et",
             taskType: "excel.analysis"
           });
-          setStatus(withinRetryBudget
-            ? "智能分析状态查询暂时失败，正在继续等待模型后台返回..."
-            : "智能分析任务连接中断，正在尝试恢复状态查询...");
-          setPlainResult([
-            withinRetryBudget
-              ? "智能分析状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。"
-              : "智能分析任务连接中断，前台不会丢弃任务编号，将继续低频自动刷新。",
-            "这不代表模型后台任务失败；如果模型后台已收到请求，请保持 WPS 和 adapter 打开。",
-            "已重试：" + state.excelAnalysisPollErrorCount + "/" + EXCEL_ANALYSIS_POLL_MAX_ERRORS,
-            "任务编号：" + jobId,
-            "最近错误：" + message
-          ].join("\n"));
+          if (isVisibleForTask()) {
+            setStatus(withinRetryBudget
+              ? "智能分析状态查询暂时失败，正在继续等待模型后台返回..."
+              : "智能分析任务连接中断，正在尝试恢复状态查询...");
+            setPlainResult([
+              withinRetryBudget
+                ? "智能分析状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。"
+                : "智能分析任务连接中断，前台不会丢弃任务编号，将继续低频自动刷新。",
+              "这不代表模型后台任务失败；如果模型后台已收到请求，请保持 WPS 和 adapter 打开。",
+              "已重试：" + state.excelAnalysisPollErrorCount + "/" + EXCEL_ANALYSIS_POLL_MAX_ERRORS,
+              "任务编号：" + jobId,
+              "最近错误：" + message
+            ].join("\n"));
+          }
           scheduleExcelAnalysisPoll(jobId, stopWaiting, retryDelay, targetDocSession);
           return;
         }
@@ -3356,8 +3576,10 @@
         state.excelAnalysisPollStartedAt = 0;
         state.excelAnalysisPollErrorCount = 0;
         stopWaiting();
-        setStatus("智能分析状态查询持续失败，请查看最近一次任务诊断。");
-        setResult(message);
+        if (isVisibleForTask()) {
+          setStatus("智能分析状态查询持续失败，请查看最近一次任务诊断。");
+          setResult(message);
+        }
       });
   }
 
@@ -3400,7 +3622,7 @@
       state.excelAnalysisPollErrorCount = 0;
       state.excelAnalysisResumeExpected = true;
       setInterruptedRetryVisible(false);
-      setAnalysisBusy(true);
+      setAnalysisBusy(true, currentDocSession);
       setTrace(active.traceId || active.jobId);
       setStatus("已恢复未完成的智能分析任务，正在查询模型后台结果...");
       setPlainResult([
@@ -3409,10 +3631,15 @@
         "任务编号：" + active.jobId
       ].join("\n"));
       pollExcelAnalysisJob(active.jobId, function () {
-        setAnalysisBusy(false);
+        setAnalysisBusy(false, currentDocSession);
       }, currentDocSession);
-    }).catch(function () {
-      clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
+    }).catch(function (error) {
+      if (error && (error.status === 404 || (error.adapterCode && error.adapterCode.indexOf("NOT_FOUND") >= 0))) {
+        clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", currentDocSession, active.jobId);
+        }
+      }
     });
   }
 
@@ -3455,6 +3682,13 @@
     state.documentSessionId = docSessionId;
     state.documentDisplayName = docName;
 
+    function isCurrentVisible() {
+      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
+      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
+      return state.currentMode === "excelAnalysis" && curr === docSessionId;
+    }
+
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", "excel.analysis", docSessionId)) {
       setStatus("当前工作簿已存在进行中的智能分析任务，请等待其完成。");
       return;
@@ -3463,16 +3697,18 @@
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
     }
-    if (state.busy || state.workflowProfileMutationBusy) {
+    if (state.workflowProfileMutationBusy) {
       return;
     }
 
     setTimeout(function () {
+      setAnalysisBusy(true, docSessionId);
       try {
         state.latestExcelPayload = extractExcelRange();
         byId("excel-range-summary").textContent = summarizeExcelPayload(state.latestExcelPayload);
         setScopeLine(summarizeExcelPayload(state.latestExcelPayload));
       } catch (error) {
+        setAnalysisBusy(false, docSessionId);
         setStatus("读取 Excel 表格失败：" + error.message);
         // Do NOT clear state.analysisResult on local validation/reading error!
         return;
@@ -3480,7 +3716,6 @@
 
       setInterruptedRetryVisible(false);
       setExcelAnalysisCancelVisible(false);
-      setAnalysisBusy(true);
       state.analysisRequirement = safeText(byId("excel-analysis-requirement").value);
       state.analysisResult = null;
       if (state.activeAnalysisResultsBySession) {
@@ -3503,7 +3738,7 @@
       (function (stopFeedback) {
         stopWaiting = function () {
           stopFeedback();
-          setAnalysisBusy(false);
+          setAnalysisBusy(false, docSessionId);
         };
       })(stopWaiting);
 
@@ -3532,15 +3767,19 @@
           if (state.excelAnalysisJobId !== clientJobId) {
             return;
           }
-          setTrace(body.traceId || job.traceId || jobId);
+          if (isCurrentVisible()) {
+            setTrace(body.traceId || job.traceId || jobId);
+          }
           if (!jobId) {
             clearExcelAnalysisActiveJob(clientJobId, docSessionId);
             if (helpers.releaseTaskSlot) {
               helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
             }
             stopWaiting();
-            setStatus("智能分析失败：adapter 未返回后台任务编号。");
-            setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+            if (isCurrentVisible()) {
+              setStatus("智能分析失败：adapter 未返回后台任务编号。");
+              setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+            }
             return;
           }
           state.excelAnalysisJobId = jobId;
@@ -3557,21 +3796,17 @@
             state.excelAnalysisJobId = "";
             state.excelAnalysisPollStartedAt = 0;
             state.excelAnalysisResumeExpected = false;
-            if (helpers.releaseTaskSlot) {
-              helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, jobId);
-            }
-            if (!state.activeAnalysisResultsBySession) {
-              state.activeAnalysisResultsBySession = {};
-            }
-            state.activeAnalysisResultsBySession[docSessionId] = job.result || {};
-            state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
-            updateHistoryBadge();
+            recordFinalizedAnalysisResult(jobId, job.result || {}, true, docSessionId);
             stopWaiting();
-            renderExcelAnalysisResult(job.result || {});
-            setStatus("智能分析报告已生成。");
+            if (isCurrentVisible()) {
+              renderExcelAnalysisResult(job.result || {});
+              setStatus("智能分析报告已生成。");
+            }
             return;
           }
-          renderExcelAnalysisJobProgress(job, jobId);
+          if (isCurrentVisible()) {
+            renderExcelAnalysisJobProgress(job, jobId);
+          }
           pollExcelAnalysisJob(jobId, stopWaiting, docSessionId);
         })
         .catch(function (error) {
@@ -3587,17 +3822,21 @@
             state.excelAnalysisJobId = "";
             state.excelAnalysisPollStartedAt = 0;
             stopWaiting();
-            setStatus("智能分析失败：" + message);
-            setResult(message);
+            if (isCurrentVisible()) {
+              setStatus("智能分析失败：" + message);
+              setResult(message);
+            }
             return;
           }
-          setStatus("智能分析提交响应未确认，正在按任务编号恢复状态查询...");
-          setPlainResult([
-            "智能分析任务可能已经提交到 adapter，但任务窗格没有收到确认响应。",
-            "将按本地任务编号继续查询；如果 adapter 未收到请求，会返回任务不存在。",
-            "任务编号：" + clientJobId,
-            "最近错误：" + message
-          ].join("\n"));
+          if (isCurrentVisible()) {
+            setStatus("智能分析提交响应未确认，正在按任务编号恢复状态查询...");
+            setPlainResult([
+              "智能分析任务可能已经提交到 adapter，但任务窗格没有收到确认响应。",
+              "将按本地任务编号继续查询；如果 adapter 未收到请求，会返回任务不存在。",
+              "任务编号：" + clientJobId,
+              "最近错误：" + message
+            ].join("\n"));
+          }
           pollExcelAnalysisJob(clientJobId, stopWaiting, docSessionId);
         });
     }, 0);
@@ -3650,20 +3889,26 @@
   function finishCancelledExcelFormula(jobId, stopWaiting, boundDocSessionId) {
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
-    var targetDocSession = boundDocSessionId || currentDocSession;
+    var latestSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+    var targetDocSession = boundDocSessionId || latestSession;
+    var isCurrent = (state.currentMode === "excelFormulaAssistant" && latestSession === targetDocSession);
+
     clearExcelFormulaActiveJob(jobId, targetDocSession);
-    state.excelFormulaJobId = "";
-    state.excelFormulaPollStartedAt = 0;
-    state.excelFormulaPollErrorCount = 0;
-    state.excelFormulaResumeExpected = false;
-    setExcelFormulaCancelVisible(false);
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
     }
+    if (state.excelFormulaJobId === jobId) {
+      state.excelFormulaJobId = "";
+      state.excelFormulaPollStartedAt = 0;
+      state.excelFormulaPollErrorCount = 0;
+      state.excelFormulaResumeExpected = false;
+    }
     stopWaiting();
-    setStatus("公式助手任务已取消。");
-    setPlainResult("排队中的公式助手任务已取消，未调用模型后台。\n任务编号：" + jobId);
+    if (isCurrent) {
+      setExcelFormulaCancelVisible(false);
+      setStatus("公式助手任务已取消。");
+      setPlainResult("排队中的公式助手任务已取消，未调用模型后台。\n任务编号：" + jobId);
+    }
   }
 
   function cancelQueuedExcelFormulaJob() {
@@ -3674,6 +3919,7 @@
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var targetDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+
     setExcelFormulaCancelVisible(true, true);
     request("/excel/formula-assistant/jobs/" + encodeURIComponent(jobId), null, {
       method: "DELETE",
@@ -3681,11 +3927,14 @@
     }).then(function (body) {
       if (state.excelFormulaJobId === jobId && (body.data || {}).status === "cancelled") {
         finishCancelledExcelFormula(jobId, function () {
-          setAnalysisBusy(false);
+          setAnalysisBusy(false, targetDocSession);
         }, targetDocSession);
       }
     }).catch(function (error) {
-      if (state.excelFormulaJobId === jobId) {
+      var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
+      var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
+      if (state.excelFormulaJobId === jobId && state.currentMode === "excelFormulaAssistant" && curr === targetDocSession) {
         setExcelFormulaCancelVisible(true, false);
         setStatus("取消排队任务失败：" + describeExcelFormulaPollError(error));
       }
@@ -3701,7 +3950,13 @@
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var targetDocSession = boundDocSessionId || currentDocSession;
-    var isCurrentDoc = targetDocSession === currentDocSession;
+
+    function isVisibleForTask() {
+      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
+      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
+      return state.currentMode === "excelFormulaAssistant" && curr === targetDocSession;
+    }
 
     request(
       "/excel/formula-assistant/jobs/" + encodeURIComponent(jobId) +
@@ -3714,7 +3969,9 @@
         return;
       }
       state.excelFormulaPollErrorCount = 0;
-      setTrace(body.traceId || job.traceId || jobId);
+      if (isVisibleForTask()) {
+        setTrace(body.traceId || job.traceId || jobId);
+      }
       saveExcelFormulaActiveJob({
         jobId: jobId,
         traceId: body.traceId || job.traceId || "",
@@ -3725,27 +3982,21 @@
       });
       if (job.status === "completed") {
         clearExcelFormulaActiveJob(jobId, targetDocSession);
-        state.excelFormulaJobId = "";
-        state.excelFormulaPollStartedAt = 0;
-        state.excelFormulaResumeExpected = false;
-        setExcelFormulaCancelVisible(false);
-        if (helpers.releaseTaskSlot) {
-          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
+        if (state.excelFormulaJobId === jobId) {
+          state.excelFormulaJobId = "";
+          state.excelFormulaPollStartedAt = 0;
+          state.excelFormulaResumeExpected = false;
         }
-        if (!state.activeFormulaResultsBySession) {
-          state.activeFormulaResultsBySession = {};
-        }
-        state.activeFormulaResultsBySession[targetDocSession] = job.result || {};
-        if (!job.result || !job.result.historyNotice) {
-          state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
-          updateHistoryBadge();
-        }
+        recordFinalizedFormulaResult(jobId, job.result || {}, true, targetDocSession);
         stopWaiting();
-        if (isCurrentDoc) {
+        if (isVisibleForTask()) {
+          setExcelFormulaCancelVisible(false);
           renderExcelFormulaResult(job.result || {});
           setStatus(getExcelFormulaCompletionStatus(job.result));
           refreshDiagnostics().then(function () {
-            setStatus(getExcelFormulaCompletionStatus(job.result));
+            if (isVisibleForTask()) {
+              setStatus(getExcelFormulaCompletionStatus(job.result));
+            }
           });
         }
         return;
@@ -3756,21 +4007,25 @@
       }
       if (job.status === "failed") {
         clearExcelFormulaActiveJob(jobId, targetDocSession);
-        state.excelFormulaJobId = "";
-        state.excelFormulaPollStartedAt = 0;
-        state.excelFormulaResumeExpected = false;
-        setExcelFormulaCancelVisible(false);
+        if (state.excelFormulaJobId === jobId) {
+          state.excelFormulaJobId = "";
+          state.excelFormulaPollStartedAt = 0;
+          state.excelFormulaResumeExpected = false;
+        }
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
         }
         stopWaiting();
-        if (isCurrentDoc) {
+        if (isVisibleForTask()) {
+          setExcelFormulaCancelVisible(false);
           setStatus("公式助手失败：" + ((job.error && job.error.message) || "后台任务执行失败。"));
           setResult((job.error && job.error.message) || "后台任务执行失败。");
         }
         return;
       }
-      renderExcelFormulaJobProgress(job, jobId);
+      if (isVisibleForTask()) {
+        renderExcelFormulaJobProgress(job, jobId);
+      }
       scheduleExcelFormulaPoll(jobId, stopWaiting, EXCEL_ANALYSIS_POLL_INTERVAL_MS, targetDocSession);
     }).catch(function (error) {
       var elapsed;
@@ -3792,11 +4047,13 @@
         state.excelFormulaPollStartedAt = 0;
         state.excelFormulaPollErrorCount = 0;
         state.excelFormulaResumeExpected = false;
-        setExcelFormulaCancelVisible(false);
-        setFormulaInterruptedRetryVisible(true);
         stopWaiting();
-        setStatus("adapter 已重启，原公式助手任务已中断，请重新提交。");
-        setPlainResult("adapter 已重启，原公式助手任务无法恢复，请重新提交计算需求。\n任务编号：" + jobId);
+        if (isVisibleForTask()) {
+          setExcelFormulaCancelVisible(false);
+          setFormulaInterruptedRetryVisible(true);
+          setStatus("adapter 已重启，原公式助手任务已中断，请重新提交。");
+          setPlainResult("adapter 已重启，原公式助手任务无法恢复，请重新提交计算需求。\n任务编号：" + jobId);
+        }
         return;
       }
       if (!isFatalExcelFormulaPollError(error)) {
@@ -3815,13 +4072,15 @@
           host: "et",
           taskType: "excel.formula_assistant"
         });
-        setStatus("公式助手状态查询暂时失败，正在继续恢复...");
-        setPlainResult([
-          "公式助手任务编号仍已保留，将继续自动刷新。",
-          "这不代表模型后台任务失败；请保持 WPS 和 adapter 打开。",
-          "任务编号：" + jobId,
-          "最近错误：" + message
-        ].join("\n"));
+        if (isVisibleForTask()) {
+          setStatus("公式助手状态查询暂时失败，正在继续恢复...");
+          setPlainResult([
+            "公式助手任务编号仍已保留，将继续自动刷新。",
+            "这不代表模型后台任务失败；请保持 WPS 和 adapter 打开。",
+            "任务编号：" + jobId,
+            "最近错误：" + message
+          ].join("\n"));
+        }
         scheduleExcelFormulaPoll(jobId, stopWaiting, retryDelay, targetDocSession);
         return;
       }
@@ -3833,8 +4092,10 @@
       state.excelFormulaPollStartedAt = 0;
       state.excelFormulaPollErrorCount = 0;
       stopWaiting();
-      setStatus("公式助手状态查询持续失败，请查看最近一次任务诊断。");
-      setResult(message);
+      if (isVisibleForTask()) {
+        setStatus("公式助手状态查询持续失败，请查看最近一次任务诊断。");
+        setResult(message);
+      }
     });
   }
 
@@ -3877,15 +4138,20 @@
       state.excelFormulaPollErrorCount = 0;
       state.excelFormulaResumeExpected = true;
       setFormulaInterruptedRetryVisible(false);
-      setAnalysisBusy(true);
+      setAnalysisBusy(true, currentDocSession);
       setTrace(active.traceId || active.jobId);
       setStatus("已恢复未完成的公式助手任务，正在查询模型后台结果...");
       setPlainResult("检测到未完成的公式助手任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
       pollExcelFormulaJob(active.jobId, function () {
-        setAnalysisBusy(false);
+        setAnalysisBusy(false, currentDocSession);
       }, currentDocSession);
-    }).catch(function () {
-      clearExcelFormulaActiveJob(active.jobId, currentDocSession);
+    }).catch(function (error) {
+      if (error && (error.status === 404 || (error.adapterCode && error.adapterCode.indexOf("NOT_FOUND") >= 0))) {
+        clearExcelFormulaActiveJob(active.jobId, currentDocSession);
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", currentDocSession, active.jobId);
+        }
+      }
     });
   }
 
@@ -3900,6 +4166,13 @@
     state.documentSessionId = docSessionId;
     state.documentDisplayName = docName;
 
+    function isCurrentVisible() {
+      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
+      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
+      return state.currentMode === "excelFormulaAssistant" && curr === docSessionId;
+    }
+
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId)) {
       setStatus("当前工作簿已存在进行中的公式助手任务，请等待其完成。");
       return;
@@ -3908,7 +4181,7 @@
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
     }
-    if (state.busy || state.workflowProfileMutationBusy) {
+    if (state.workflowProfileMutationBusy) {
       return;
     }
     state.formulaRequirement = safeText(byId("excel-formula-requirement").value);
@@ -3920,11 +4193,13 @@
 
     setTimeout(function () {
       var payload;
+      setAnalysisBusy(true, docSessionId);
       try {
         payload = extractExcelFormulaRange();
         byId("excel-formula-range-summary").textContent = summarizeExcelFormulaPayload(payload);
         setScopeLine(summarizeExcelFormulaPayload(payload));
       } catch (error) {
+        setAnalysisBusy(false, docSessionId);
         setStatus("读取公式上下文失败：" + error.message);
         // Do NOT clear state.formulaResult on local validation error
         return;
@@ -3932,7 +4207,6 @@
 
       setFormulaInterruptedRetryVisible(false);
       setExcelFormulaCancelVisible(false);
-      setAnalysisBusy(true);
       state.formulaResult = null;
       if (state.activeFormulaResultsBySession) {
         delete state.activeFormulaResultsBySession[docSessionId];
@@ -3956,7 +4230,7 @@
       (function (stopFeedback) {
         stopWaiting = function () {
           stopFeedback();
-          setAnalysisBusy(false);
+          setAnalysisBusy(false, docSessionId);
         };
       })(stopWaiting);
 
@@ -3983,15 +4257,19 @@
         if (state.excelFormulaJobId !== clientJobId) {
           return;
         }
-        setTrace(body.traceId || job.traceId || jobId);
+        if (isCurrentVisible()) {
+          setTrace(body.traceId || job.traceId || jobId);
+        }
         if (!jobId) {
           clearExcelFormulaActiveJob(clientJobId, docSessionId);
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
           }
           stopWaiting();
-          setStatus("公式助手失败：adapter 未返回后台任务编号。");
-          setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+          if (isCurrentVisible()) {
+            setStatus("公式助手失败：adapter 未返回后台任务编号。");
+            setResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+          }
           return;
         }
         state.excelFormulaJobId = jobId;
@@ -4008,23 +4286,17 @@
           state.excelFormulaJobId = "";
           state.excelFormulaPollStartedAt = 0;
           state.excelFormulaResumeExpected = false;
-          if (helpers.releaseTaskSlot) {
-            helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, jobId);
-          }
-          if (!state.activeFormulaResultsBySession) {
-            state.activeFormulaResultsBySession = {};
-          }
-          state.activeFormulaResultsBySession[docSessionId] = job.result || {};
-          if (!job.result || !job.result.historyNotice) {
-            state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
-            updateHistoryBadge();
-          }
+          recordFinalizedFormulaResult(jobId, job.result || {}, true, docSessionId);
           stopWaiting();
-          renderExcelFormulaResult(job.result || {});
-          setStatus(getExcelFormulaCompletionStatus(job.result));
+          if (isCurrentVisible()) {
+            renderExcelFormulaResult(job.result || {});
+            setStatus(getExcelFormulaCompletionStatus(job.result));
+          }
           return;
         }
-        renderExcelFormulaJobProgress(job, jobId);
+        if (isCurrentVisible()) {
+          renderExcelFormulaJobProgress(job, jobId);
+        }
         pollExcelFormulaJob(jobId, stopWaiting, docSessionId);
       }).catch(function (error) {
         var message = describeExcelFormulaPollError(error);
@@ -4039,12 +4311,16 @@
           state.excelFormulaJobId = "";
           state.excelFormulaPollStartedAt = 0;
           stopWaiting();
-          setStatus("公式助手失败：" + message);
-          setResult(message);
+          if (isCurrentVisible()) {
+            setStatus("公式助手失败：" + message);
+            setResult(message);
+          }
           return;
         }
-        setStatus("公式助手提交响应未确认，正在按任务编号恢复状态查询...");
-        setPlainResult("任务可能已经提交，将按本地任务编号继续查询。\n任务编号：" + clientJobId + "\n最近错误：" + message);
+        if (isCurrentVisible()) {
+          setStatus("公式助手提交响应未确认，正在按任务编号恢复状态查询...");
+          setPlainResult("任务可能已经提交，将按本地任务编号继续查询。\n任务编号：" + clientJobId + "\n最近错误：" + message);
+        }
         pollExcelFormulaJob(clientJobId, stopWaiting, docSessionId);
       });
     }, 0);
@@ -4134,7 +4410,7 @@
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var targetDocSession = boundDocSessionId || currentSession;
-    var isCurrentDoc = (targetDocSession === currentSession);
+    var isCurrentDoc = (state.currentMode === "excelSmartFill" && targetDocSession === currentSession);
 
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
@@ -4179,14 +4455,17 @@
         var job = (body && body.data) || {};
         if (job.status === "cancelled") {
           finishCancelledExcelSmartFill(jobId, function () {
-            setAnalysisBusy(false);
+            setAnalysisBusy(false, docSessionId);
           }, job.result || null, docSessionId);
         } else if (job.status === "running" && job.cancelRequested) {
           setStatus("智能填写正在停止，当前批次完成后将保留部分预览。");
         }
       }
     }).catch(function (error) {
-      if (state.excelSmartFillJobId === jobId) {
+      var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
+      var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
+      if (state.excelSmartFillJobId === jobId && state.currentMode === "excelSmartFill" && curr === docSessionId) {
         setExcelSmartFillCancelVisible(true, false);
         setStatus("取消智能填写任务失败：" + describeExcelSmartFillPollError(error));
       }
@@ -4201,7 +4480,13 @@
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var targetDocSession = boundDocSessionId || currentSession;
-    var isCurrentDoc = (targetDocSession === currentSession);
+
+    function isCurrentDoc() {
+      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
+      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
+      return state.currentMode === "excelSmartFill" && curr === targetDocSession;
+    }
 
     request(
       "/excel/smart-fill/jobs/" + encodeURIComponent(jobId) +
@@ -4214,7 +4499,7 @@
         return;
       }
       state.excelSmartFillPollErrorCount = 0;
-      if (isCurrentDoc) {
+      if (isCurrentDoc()) {
         setTrace(body.traceId || job.traceId || jobId);
       }
       saveExcelSmartFillActiveJob({
@@ -4234,13 +4519,11 @@
         }
         stopWaiting();
         finalizeExcelSmartFillResult(job.result || {}, jobId, true, targetDocSession);
-        if (isCurrentDoc) {
+        if (isCurrentDoc()) {
           setExcelSmartFillCancelVisible(false);
           setStatus("智能填写预览已生成，请确认后写入。");
           refreshDiagnostics().then(function () {
-            var latestWb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-            var latestSession = (latestWb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(latestWb) : "") || state.documentSessionId || "default";
-            if (latestSession === targetDocSession) {
+            if (isCurrentDoc()) {
               setStatus("智能填写预览已生成，请确认后写入。");
             }
           });
@@ -4265,7 +4548,7 @@
         );
         if (!overflowFailed && job.result && Array.isArray(job.result.items) && job.result.items.length) {
           finalizeExcelSmartFillResult(job.result, jobId, false, targetDocSession);
-          if (isCurrentDoc) {
+          if (isCurrentDoc()) {
             setExcelSmartFillCancelVisible(false);
             setStatus("智能填写任务失败，已保留部分预览；未完成项不会写入。");
           }
@@ -4273,7 +4556,7 @@
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
           }
-          if (isCurrentDoc) {
+          if (isCurrentDoc()) {
             state.excelSmartFillCompletedJobId = "";
             setExcelSmartFillCancelVisible(false);
             if (state.smartFillRetryItemId) {
@@ -4285,7 +4568,7 @@
         }
         return;
       }
-      if (isCurrentDoc) {
+      if (isCurrentDoc()) {
         renderExcelSmartFillJobProgress(job, jobId);
       }
       setTimeout(function () {
@@ -4314,7 +4597,7 @@
           state.excelSmartFillResumeExpected = false;
         }
         stopWaiting();
-        if (isCurrentDoc) {
+        if (isCurrentDoc()) {
           setExcelSmartFillCancelVisible(false);
           setSmartFillInterruptedRetryVisible(true);
           if (state.smartFillRetryItemId) {
@@ -4341,7 +4624,7 @@
           host: "et",
           taskType: "excel.smart_fill"
         });
-        if (isCurrentDoc) {
+        if (isCurrentDoc()) {
           setStatus("智能填写状态查询暂时失败，正在继续恢复...");
           setPlainResult([
             "智能填写任务编号仍已保留，将继续自动刷新。",
@@ -4365,7 +4648,7 @@
         state.excelSmartFillPollErrorCount = 0;
       }
       stopWaiting();
-      if (isCurrentDoc) {
+      if (isCurrentDoc()) {
         state.excelSmartFillCompletedJobId = "";
         setExcelSmartFillCancelVisible(false);
         if (state.smartFillRetryItemId) {
@@ -4429,6 +4712,13 @@
     state.documentSessionId = docSessionId;
     state.documentDisplayName = docName;
 
+    function isCurrentVisible() {
+      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
+      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
+      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
+      return state.currentMode === "excelSmartFill" && curr === docSessionId;
+    }
+
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId)) {
       setStatus("当前工作簿已存在进行中的智能填写任务，请等待其完成。");
       return;
@@ -4440,7 +4730,7 @@
       setStatus("Adapter 当前处于恢复模式，模型任务已被安全阻止。");
       return;
     }
-    if (state.busy || state.workflowProfileMutationBusy) {
+    if (state.workflowProfileMutationBusy) {
       return;
     }
     try {
@@ -4461,7 +4751,7 @@
     state.smartFillInstruction = payload.userInstruction;
     setSmartFillInterruptedRetryVisible(false);
     setExcelSmartFillCancelVisible(false);
-    setAnalysisBusy(true);
+    setAnalysisBusy(true, docSessionId);
     if (!state.smartFillRetryItemId) {
       state.smartFillResult = null;
       state.smartFillPreview = null;
@@ -4470,6 +4760,9 @@
       state.excelSmartFillCompletedJobId = "";
       if (state.activeSmartFillResultsBySession) {
         delete state.activeSmartFillResultsBySession[docSessionId];
+      }
+      if (state.activeSmartFillStatesBySession) {
+        delete state.activeSmartFillStatesBySession[docSessionId];
       }
     }
     byId("btn-write-smart-fill").hidden = true;
@@ -4488,7 +4781,7 @@
     (function (stopFeedback) {
       stopWaiting = function () {
         stopFeedback();
-        setAnalysisBusy(false);
+        setAnalysisBusy(false, docSessionId);
       };
     })(stopWaiting);
     request("/excel/smart-fill/jobs", payload, {
@@ -4499,7 +4792,9 @@
       if (state.excelSmartFillJobId !== clientJobId) {
         return;
       }
-      setTrace(body.traceId || job.traceId || jobId);
+      if (isCurrentVisible()) {
+        setTrace(body.traceId || job.traceId || jobId);
+      }
       if (!jobId) {
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
@@ -4510,8 +4805,10 @@
         if (state.smartFillRetryItemId) {
           restoreSmartFillRetryResult();
         }
-        setStatus("智能填写失败：adapter 未返回后台任务编号。");
-        setPlainResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+        if (isCurrentVisible()) {
+          setStatus("智能填写失败：adapter 未返回后台任务编号。");
+          setPlainResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
+        }
         return;
       }
       state.excelSmartFillJobId = jobId;
@@ -4532,10 +4829,14 @@
         state.excelSmartFillResumeExpected = false;
         stopWaiting();
         finalizeExcelSmartFillResult(job.result || {}, jobId, true, docSessionId);
-        setStatus("智能填写预览已生成，请确认后写入。");
+        if (isCurrentVisible()) {
+          setStatus("智能填写预览已生成，请确认后写入。");
+        }
         return;
       }
-      renderExcelSmartFillJobProgress(job, jobId);
+      if (isCurrentVisible()) {
+        renderExcelSmartFillJobProgress(job, jobId);
+      }
       pollExcelSmartFillJob(jobId, stopWaiting, docSessionId);
     }).catch(function (error) {
       var message = describeExcelSmartFillPollError(error);
@@ -4556,12 +4857,16 @@
         if (state.smartFillRetryItemId) {
           restoreSmartFillRetryResult();
         }
-        setStatus("智能填写失败：" + message);
-        setPlainResult(message);
+        if (isCurrentVisible()) {
+          setStatus("智能填写失败：" + message);
+          setPlainResult(message);
+        }
         return;
       }
-      setStatus("智能填写提交响应未确认，正在按任务编号恢复状态查询...");
-      setPlainResult("任务可能已经提交，将按本地任务编号继续查询。\n任务编号：" + clientJobId + "\n最近错误：" + message);
+      if (isCurrentVisible()) {
+        setStatus("智能填写提交响应未确认，正在按任务编号恢复状态查询...");
+        setPlainResult("任务可能已经提交，将按本地任务编号继续查询。\n任务编号：" + clientJobId + "\n最近错误：" + message);
+      }
       pollExcelSmartFillJob(clientJobId, stopWaiting, docSessionId);
     });
   }
@@ -6860,50 +7165,8 @@
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var docSessionId = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
 
-    if (!settingsMode) {
-      if (formulaMode) {
-        state.formulaResult = (state.activeFormulaResultsBySession && state.activeFormulaResultsBySession[docSessionId]) || null;
-        if (state.formulaResult && typeof renderExcelFormulaResult === "function") {
-          renderExcelFormulaResult(state.formulaResult);
-        } else {
-          if (typeof setExcelResultViewSwitchForMode === "function") {
-            setExcelResultViewSwitchForMode("excelFormulaAssistant");
-          }
-          if (byId("btn-copy-formula")) {
-            byId("btn-copy-formula").hidden = true;
-          }
-          if (byId("excel-formula-alternative")) {
-            byId("excel-formula-alternative").hidden = true;
-          }
-          if (typeof setPlainResult === "function") {
-            setPlainResult(typeof getFormulaModeUi === "function" ? getFormulaModeUi(state.formulaMode).submitResult : "正在生成推荐公式。");
-          }
-        }
-      } else if (smartFillMode) {
-        state.smartFillResult = (state.activeSmartFillResultsBySession && state.activeSmartFillResultsBySession[docSessionId]) || null;
-        if (state.smartFillResult && typeof renderExcelSmartFillResult === "function") {
-          renderExcelSmartFillResult(state.smartFillResult);
-        } else {
-          if (typeof setExcelResultViewSwitchForMode === "function") {
-            setExcelResultViewSwitchForMode("excelSmartFill");
-          }
-          if (typeof setPlainResult === "function") {
-            setPlainResult("尚未生成智能填写预览。请先框选样本与目标单元格，再点击“生成预览”。");
-          }
-        }
-      } else {
-        state.analysisResult = (state.activeAnalysisResultsBySession && state.activeAnalysisResultsBySession[docSessionId]) || null;
-        if (state.analysisResult && typeof renderExcelAnalysisResult === "function") {
-          renderExcelAnalysisResult(state.analysisResult);
-        } else {
-          if (typeof setExcelResultViewSwitchForMode === "function") {
-            setExcelResultViewSwitchForMode("excelAnalysis");
-          }
-          if (typeof setPlainResult === "function") {
-            setPlainResult("尚未生成智能分析报告。请先选择表格区域并输入分析要求，再点击“生成分析报告”。");
-          }
-        }
-      }
+    if (!settingsMode && typeof syncActiveSessionView === "function") {
+      syncActiveSessionView(docSessionId);
     }
     if (settingsMode && byId("diagnostics-disclosure")) {
       byId("diagnostics-disclosure").open = false;

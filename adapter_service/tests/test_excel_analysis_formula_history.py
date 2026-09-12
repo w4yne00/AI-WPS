@@ -382,7 +382,94 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
             time.sleep(0.02)
         self.assertEqual(job.get("status"), "completed")
         self.assertIn("historyNotice", job.get("result", {}))
-        self.assertEqual(job["result"]["historyNotice"], "任务结果超过 5 MiB，未写入历史记录。")
+    @patch("app.services.excel.formula_assistant_jobs.get_task_history_store")
+    def test_excel_formula_history_diagnostic_degradation_not_archived(self, mock_get_history):
+        mock_get_history.return_value = self.history_store
+        class DegradedAssistant:
+            def generate(self, *args, **kwargs):
+                return {
+                    "mode": "generate",
+                    "primaryFormula": "=SUM(A1:A5)",
+                    "alternativeFormula": "",
+                    "suggestedTarget": "",
+                    "explanation": "原始文本包含用户输入及回显",
+                    "components": [],
+                    "referenceRanges": [],
+                    "issues": [],
+                    "assumptions": [],
+                    "compatibilityNotes": ["未按 JSON 输出"],
+                    "rawFinalResult": "原始文本包含用户输入及回显",
+                    "parseDiagnostic": "模型后台最终结果未按结构化 JSON 输出",
+                    "copyText": "原始文本包含用户输入及回显",
+                }
+
+        degraded_assistant = DegradedAssistant()
+        store = ExcelFormulaAssistantJobStore(assistant=degraded_assistant, coordinator=self.coordinator)
+        req = ExcelFormulaAssistantRequest(
+            workbook_id="wb-1",
+            client_job_id="job-form-degraded-001",
+            document_session_id="doc-degraded",
+            document_display_name="降级.xlsx",
+            host="et",
+            selection=ExcelFormulaSelection(address="A1:A5", sheet_name="Sheet1"),
+            options=ExcelFormulaOptions(mode="generate", requirement="求和"),
+        )
+        store.start(req, "trace-degraded")
+        for _ in range(50):
+            job = store.get("job-form-degraded-001")
+            if job and job.get("status") == "completed":
+                break
+            time.sleep(0.02)
+        self.assertEqual(job.get("status"), "completed")
+        self.assertEqual(job["result"].get("historyNotice"), "诊断降级结果未保存至历史记录。")
+        history = self.history_store.list_history(task_type="excel.formula_assistant")
+        self.assertEqual(len(history), 0)
+
+    @patch("app.services.excel.formula_assistant_jobs.get_task_history_store")
+    def test_excel_formula_history_copy_text_whitelisted(self, mock_get_history):
+        mock_get_history.return_value = self.history_store
+        class NormalAssistant:
+            def generate(self, *args, **kwargs):
+                return {
+                    "mode": "generate",
+                    "primaryFormula": "=AVERAGE(B2:B10)",
+                    "alternativeFormula": "",
+                    "suggestedTarget": "",
+                    "explanation": "计算平均值",
+                    "components": [{"label": "AVERAGE", "description": "平均值"}],
+                    "referenceRanges": ["B2:B10"],
+                    "issues": [],
+                    "assumptions": [],
+                    "compatibilityNotes": [],
+                    "rawFinalResult": "",
+                    "parseDiagnostic": "",
+                    "copyText": "带有原始输入的非白名单文本",
+                }
+
+        assistant = NormalAssistant()
+        store = ExcelFormulaAssistantJobStore(assistant=assistant, coordinator=self.coordinator)
+        req = ExcelFormulaAssistantRequest(
+            workbook_id="wb-1",
+            client_job_id="job-form-clean-001",
+            document_session_id="doc-clean",
+            document_display_name="正常.xlsx",
+            host="et",
+            selection=ExcelFormulaSelection(address="B2:B10", sheet_name="Sheet1"),
+            options=ExcelFormulaOptions(mode="generate", requirement="求均值"),
+        )
+        store.start(req, "trace-clean")
+        for _ in range(50):
+            job = store.get("job-form-clean-001")
+            if job and job.get("status") == "completed":
+                break
+            time.sleep(0.02)
+        self.assertEqual(job.get("status"), "completed")
+        self.assertNotIn("historyNotice", job["result"])
+        history = self.history_store.list_history(task_type="excel.formula_assistant")
+        self.assertEqual(len(history), 1)
+        archived = history[0]["result"]
+        self.assertEqual(archived["copyText"], "=AVERAGE(B2:B10)")
+        self.assertEqual(archived["primaryFormula"], "=AVERAGE(B2:B10)")
 
 
 if __name__ == "__main__":

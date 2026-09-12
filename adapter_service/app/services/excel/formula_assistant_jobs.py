@@ -130,15 +130,21 @@ class ExcelFormulaAssistantJobStore:
                 trace_id=snapshot.get("traceId", "") or "",
                 **kwargs
             )
+            # Diagnostic degradation results must not be archived to history
+            if result.get("parseDiagnostic"):
+                result["historyNotice"] = "诊断降级结果未保存至历史记录。"
+                return result
+
             # Record success history
             try:
                 task_auth = snapshot.get("taskAuth") or {}
                 service_name = str(task_auth.get("serviceName") or "").strip()
                 model_name = str(task_auth.get("modelName") or "").strip()
                 doc_name = str(snapshot.get("documentDisplayName") or "工作簿.xlsx").strip()
+                primary_formula = str(result.get("primaryFormula") or "").strip()
                 archived_result = {
                     "mode": str(result.get("mode") or "generate"),
-                    "primaryFormula": str(result.get("primaryFormula") or ""),
+                    "primaryFormula": primary_formula,
                     "alternativeFormula": str(result.get("alternativeFormula") or ""),
                     "suggestedTarget": str(result.get("suggestedTarget") or ""),
                     "explanation": str(result.get("explanation") or ""),
@@ -147,7 +153,7 @@ class ExcelFormulaAssistantJobStore:
                     "issues": list(result.get("issues") or []),
                     "assumptions": list(result.get("assumptions") or []),
                     "compatibilityNotes": list(result.get("compatibilityNotes") or []),
-                    "copyText": str(result.get("copyText") or ""),
+                    "copyText": primary_formula,
                 }
                 get_task_history_store().record_success(
                     task_type="excel.formula_assistant",
