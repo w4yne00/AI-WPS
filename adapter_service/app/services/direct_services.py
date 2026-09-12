@@ -832,7 +832,12 @@ class DirectServiceStore:
                 },
             }
 
-    def activate_direct_service(self, service_id: str, task_type: str) -> dict:
+    def activate_direct_service(
+        self,
+        service_id: str,
+        task_type: str,
+        task_model_selection: Optional[dict] = None,
+    ) -> dict:
         clean_task = self._validate_task_type(task_type)
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
@@ -848,7 +853,36 @@ class DirectServiceStore:
                 )
 
             selections = self._selection_map(payload)
-            task_sel = selections.get(clean_task, {})
+            if task_model_selection is not None:
+                if not isinstance(task_model_selection, dict):
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_PARAM_INVALID",
+                        "任务模型选择必须是对象。",
+                    )
+                requested_service_id = str(
+                    task_model_selection.get("serviceId", "")
+                ).strip()
+                if requested_service_id and requested_service_id != service_id:
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_SELECTION_MISMATCH",
+                        "任务模型选择引用的直连服务与待激活服务不一致。",
+                    )
+                task_sel = self._build_task_model_selection_record(
+                    payload,
+                    services,
+                    clean_task,
+                    service_id=service_id,
+                    model_name=task_model_selection.get("modelName", ""),
+                    temperature=task_model_selection.get("temperature"),
+                    max_output_tokens=task_model_selection.get("maxOutputTokens"),
+                    context_window_tokens=task_model_selection.get(
+                        "contextWindowTokens"
+                    ),
+                    image_input_mode=task_model_selection.get("imageInputMode"),
+                    custom_model=bool(task_model_selection.get("customModel", False)),
+                )
+            else:
+                task_sel = dict(selections.get(clean_task, {}))
             effective_model = str(
                 task_sel.get("modelName") or service.get("defaultModel") or ""
             ).strip()
@@ -1002,67 +1036,90 @@ class DirectServiceStore:
             payload = load_config_payload(self.config_path)
             services = self._service_map(payload)
             selections = self._selection_map(payload)
-
-            clean_service_id = str(service_id or "").strip()
-            if clean_service_id:
-                if clean_service_id not in services:
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_NOT_FOUND", "引用的直连服务不存在。"
-                    )
-
-            clean_model = self._validate_model_name(model_name)
-            clean_temp = self._validate_temperature(temperature)
-            clean_max_output = self._validate_positive_int(
-                max_output_tokens, "最大输出 Token"
+            record = self._build_task_model_selection_record(
+                payload,
+                services,
+                clean_task,
+                service_id=service_id,
+                model_name=model_name,
+                temperature=temperature,
+                max_output_tokens=max_output_tokens,
+                context_window_tokens=context_window_tokens,
+                image_input_mode=image_input_mode,
+                custom_model=custom_model,
             )
-            clean_context = self._validate_positive_int(
-                context_window_tokens, "上下文容量"
-            )
-            clean_image_mode = self._validate_image_input_mode(
-                clean_task, image_input_mode
-            )
-
-            is_custom = bool(custom_model)
-            service = services.get(clean_service_id, {}) if clean_service_id else {}
-            if is_custom:
-                if not clean_model:
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
-                    )
-                catalog = self._model_catalog_state(service) if service else {}
-                if catalog.get("usableForSelection"):
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
-                        "模型目录当前可用时不能使用高级手填模型。",
-                    )
-
-            effective_validated = bool(
-                is_custom
-                and service
-                and self._is_custom_model_validated(
-                    payload,
-                    clean_task,
-                    service,
-                    clean_model,
-                )
-            )
-
-            record = {
-                "serviceId": clean_service_id,
-                "modelName": clean_model,
-                "temperature": clean_temp,
-                "maxOutputTokens": clean_max_output,
-                "contextWindowTokens": clean_context,
-                "imageInputMode": clean_image_mode,
-                "customModel": is_custom,
-                "customModelValidated": effective_validated,
-                "updatedAt": _utc_now(),
-            }
             selections[clean_task] = record
             payload["taskModelSelections"] = selections
             save_config_payload(payload, self.config_path)
 
             return self.get_task_model_selection(clean_task)
+
+    def _build_task_model_selection_record(
+        self,
+        payload: dict,
+        services: dict,
+        task_type: str,
+        service_id: str = "",
+        model_name: str = "",
+        temperature=None,
+        max_output_tokens=None,
+        context_window_tokens=None,
+        image_input_mode=None,
+        custom_model: bool = False,
+    ) -> dict:
+        clean_service_id = str(service_id or "").strip()
+        if clean_service_id and clean_service_id not in services:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_NOT_FOUND", "引用的直连服务不存在。"
+            )
+
+        clean_model = self._validate_model_name(model_name)
+        clean_temp = self._validate_temperature(temperature)
+        clean_max_output = self._validate_positive_int(
+            max_output_tokens, "最大输出 Token"
+        )
+        clean_context = self._validate_positive_int(
+            context_window_tokens, "上下文容量"
+        )
+        clean_image_mode = self._validate_image_input_mode(
+            task_type, image_input_mode
+        )
+
+        is_custom = bool(custom_model)
+        service = services.get(clean_service_id, {}) if clean_service_id else {}
+        if is_custom:
+            if not clean_model:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
+                )
+            catalog = self._model_catalog_state(service) if service else {}
+            if catalog.get("usableForSelection"):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
+                    "模型目录当前可用时不能使用高级手填模型。",
+                )
+
+        effective_validated = bool(
+            is_custom
+            and service
+            and self._is_custom_model_validated(
+                payload,
+                task_type,
+                service,
+                clean_model,
+            )
+        )
+        return {
+            "serviceId": clean_service_id,
+            "modelName": clean_model,
+            "temperature": clean_temp,
+            "maxOutputTokens": clean_max_output,
+            "contextWindowTokens": clean_context,
+            "imageInputMode": clean_image_mode,
+            "customModel": is_custom,
+            "customModelValidated": effective_validated,
+            "updatedAt": _utc_now(),
+        }
 
     def mark_custom_model_validated(
         self,

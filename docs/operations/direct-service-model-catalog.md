@@ -24,3 +24,9 @@
 `POST /provider/task-model-selections/{taskType}/validate` 使用目标任务的真实提示词、输入和结果契约执行一次调用。只有任务契约校验成功后，自定义模型标识才会记录为已验证；响应明确返回 `taskCallPerformed`、`taskContractValidated`、`mayIncurModelCost` 和费用提示。任务验证失败不会留下已验证标记。
 
 模型目录可用时，任务选择不得使用高级手填，也不得把不在目录中的模型静默替换为其他模型。已选模型从新目录消失、目录过期或目录因 URL/Key 变化而失效时，新任务和激活请求会被阻断。
+
+## 任务选择与激活
+
+`POST /provider/direct-services/{serviceId}/activate` 可在 `taskType` 之外携带 `taskModelSelection`。Adapter 会先校验服务、模型目录和任务参数，再用一次配置文件写入同时更新任务模型选择与 `activeModelConfigurations`；任一校验失败时两者都保持原值。未携带 `taskModelSelection` 的旧客户端仍沿用已保存的任务选择。
+
+任务页切换共享服务时必须显式提交选择快照。仅从紧凑菜单切换服务时，前端提交空 `modelName` 和空任务参数，使新服务继承自己的默认模型，不能把上一服务的同名覆盖静默带入新服务。

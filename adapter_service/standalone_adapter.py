@@ -2740,6 +2740,7 @@ class Handler(BaseHTTPRequestHandler):
                     result = store.activate_direct_service(
                         service_id,
                         payload.get("taskType", ""),
+                        task_model_selection=payload.get("taskModelSelection"),
                     )
                     self._write(
                         200,

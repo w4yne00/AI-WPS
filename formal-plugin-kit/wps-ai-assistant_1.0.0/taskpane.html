@@ -399,6 +399,72 @@
               </div>
             </section>
 
+            <section id="direct-services-card" class="settings-card direct-services-card">
+              <div class="direct-services-heading">
+                <div>
+                  <h4>共享直连服务</h4>
+                  <p class="field-hint">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</p>
+                </div>
+                <button id="btn-new-direct-service" type="button">新建直连服务</button>
+              </div>
+              <div id="direct-services-list" class="direct-services-list">
+                <p class="field-hint">正在读取共享直连服务...</p>
+              </div>
+
+              <section id="direct-service-editor-view" class="direct-service-editor-view" hidden>
+                <div class="workflow-editor-head">
+                  <button id="btn-direct-service-editor-back" class="icon-button is-back" type="button" title="返回直连服务列表" aria-label="返回直连服务列表">
+                    <span class="back-icon" aria-hidden="true">←</span>
+                  </button>
+                  <h3 id="direct-service-editor-title">新建直连服务</h3>
+                </div>
+                <label class="field" for="direct-service-name">
+                  <span>服务名称</span>
+                  <input id="direct-service-name" type="text" maxlength="40" placeholder="例如：企业网关" />
+                </label>
+                <label class="field" for="direct-service-url">
+                  <span>服务地址</span>
+                  <input id="direct-service-url" type="text" placeholder="例如：https://api.openai.com/v1" />
+                </label>
+                <p id="direct-service-url-impact" class="field-hint" style="color: #c67d0a;" hidden></p>
+                <label class="field" for="direct-service-key">
+                  <span id="direct-service-key-label">API Key（仅需录入一次）</span>
+                  <input id="direct-service-key" type="password" autocomplete="off" />
+                </label>
+                <div class="direct-service-key-row">
+                  <p id="direct-service-key-status" class="inline-status"></p>
+                  <button id="btn-clear-direct-service-key" class="ghost-action danger-link" type="button" hidden>清除已配置 Key</button>
+                </div>
+                <label class="field" for="direct-service-default-model">
+                  <span>默认模型</span>
+                  <input id="direct-service-default-model" type="text" placeholder="例如：gpt-4o" />
+                </label>
+                <div class="direct-service-model-fetch-row">
+                  <button id="btn-refresh-direct-service-models" class="ghost-action" type="button">刷新模型目录</button>
+                  <button id="btn-validate-direct-service" class="ghost-action" type="button">验证服务</button>
+                  <span id="direct-service-models-status" class="inline-status">目录未获取</span>
+                </div>
+                <p id="direct-service-validation-status" class="inline-status"></p>
+                <div id="direct-service-editor-error" class="workflow-profile-error" role="alert"></div>
+                <div class="workflow-editor-actions">
+                  <button id="btn-cancel-direct-service" class="ghost-action" type="button">取消</button>
+                  <button id="btn-save-direct-service" type="button">保存</button>
+                </div>
+              </section>
+
+              <section id="direct-service-delete-dialog" class="workflow-delete-dialog" role="dialog" aria-modal="true" aria-labelledby="direct-service-delete-title" hidden>
+                <div class="workflow-delete-dialog-panel">
+                  <h3 id="direct-service-delete-title">删除直连服务</h3>
+                  <p>确认删除“<strong id="direct-service-delete-name"></strong>”？</p>
+                  <p id="direct-service-delete-warning" class="field-hint" style="color: #b71c1c;"></p>
+                  <div class="workflow-editor-actions">
+                    <button id="btn-cancel-direct-service-delete" class="ghost-action" type="button">取消</button>
+                    <button id="btn-confirm-direct-service-delete" class="danger-action" type="button">删除</button>
+                  </div>
+                </div>
+              </section>
+            </section>
+
             <section class="settings-card workflow-settings-card">
               <div class="workflow-settings-heading">
                 <h4>模型配置</h4>
@@ -412,6 +478,48 @@
                 <button type="button" role="tab" data-workflow-task-tab="word.format_review" aria-selected="false">格式审查</button>
               </div>
               <div id="workflow-settings-home" class="workflow-settings-home">
+                <section id="word-task-direct-service-section" class="task-model-selection-card">
+                  <div class="workflow-manager-head">
+                    <div>
+                      <h4 id="word-task-direct-service-title">智能编写接入选择</h4>
+                      <p id="word-task-direct-service-hint" class="field-hint">使用工作流平台或绑定上方共享直连服务，独立调整任务参数。</p>
+                    </div>
+                  </div>
+                  <label class="field" for="word-task-direct-service-select">
+                    <span>接入模式</span>
+                    <select id="word-task-direct-service-select">
+                      <option value="">-- 使用工作流平台配置 --</option>
+                    </select>
+                  </label>
+                  <div id="word-task-direct-params" hidden>
+                    <label class="field" for="word-task-model-select">
+                      <span>任务模型</span>
+                      <select id="word-task-model-select">
+                        <option value="">继承服务默认模型</option>
+                      </select>
+                    </label>
+                    <label class="workflow-activate-check" for="word-task-custom-model-check">
+                      <input id="word-task-custom-model-check" type="checkbox" />
+                      <span>使用自定义模型标识</span>
+                    </label>
+                    <label id="word-task-custom-model-row" class="field" for="word-task-custom-model-input" hidden>
+                      <span>自定义模型</span>
+                      <input id="word-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
+                    </label>
+                    <div class="grid-three-col">
+                      <label class="field"><span>温度</span><input id="word-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
+                      <label class="field"><span>最大 Token</span><input id="word-task-max-output" type="number" min="1" placeholder="默认" /></label>
+                      <label class="field"><span>上下文容量</span><input id="word-task-context" type="number" min="1000" placeholder="40000" /></label>
+                    </div>
+                    <div class="button-row" style="margin-top: 8px;">
+                      <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
+                      <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
+                    </div>
+                    <p id="word-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
+                    <p id="word-task-model-validation-status" class="inline-status"></p>
+                  </div>
+                </section>
+
                 <div class="workflow-manager-head">
                   <div>
                     <h3 id="workflow-manager-title">模型配置</h3>

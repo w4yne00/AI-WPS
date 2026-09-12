@@ -341,6 +341,78 @@ class DirectServiceStoreTests(unittest.TestCase):
             self.assertTrue(sel["customModel"])
             self.assertEqual(sel["schemaVersion"], "provider.task_model_selection.v1")
 
+    def test_activation_updates_selection_and_active_service_atomically(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store = self._store(root)
+            first = store.create_service(
+                "原服务",
+                service_base_url="https://old.example.com/v1",
+                default_model="old-default",
+            )
+            second = store.create_service(
+                "新服务",
+                service_base_url="https://new.example.com/v1",
+                default_model="new-default",
+            )
+            store.replace_api_key(first["id"], "sk-old", expected_revision=1)
+            store.replace_api_key(second["id"], "sk-new", expected_revision=1)
+            store.update_model_list(
+                first["id"],
+                ["old-default", "old-override", "invalid-model"],
+                expected_revision=2,
+                trusted=True,
+            )
+            store.update_model_list(
+                second["id"],
+                ["new-default", "new-write-model"],
+                expected_revision=2,
+                trusted=True,
+            )
+            store.update_task_model_selection(
+                task_type="word.smart_write",
+                service_id=first["id"],
+                model_name="old-override",
+            )
+            store.activate_direct_service(first["id"], "word.smart_write")
+
+            activated = store.activate_direct_service(
+                second["id"],
+                "word.smart_write",
+                task_model_selection={
+                    "serviceId": second["id"],
+                    "modelName": "new-write-model",
+                    "temperature": 0.4,
+                    "maxOutputTokens": 2048,
+                    "contextWindowTokens": 32000,
+                    "customModel": False,
+                },
+            )
+            selection = activated["taskModelSelection"]
+            self.assertEqual(activated["activeConfigurationId"], second["id"])
+            self.assertEqual(selection["serviceId"], second["id"])
+            self.assertEqual(selection["modelName"], "new-write-model")
+            self.assertEqual(selection["temperature"], 0.4)
+
+            before_failure = json.loads(
+                (root / "adapter.json").read_text(encoding="utf-8")
+            )
+            with self.assertRaises(DirectServiceError) as context:
+                store.activate_direct_service(
+                    first["id"],
+                    "word.smart_write",
+                    task_model_selection={
+                        "serviceId": first["id"],
+                        "modelName": "invalid-model",
+                        "temperature": 3.5,
+                    },
+                )
+            self.assertEqual(context.exception.code, "DIRECT_SERVICE_PARAM_INVALID")
+            after_failure = json.loads(
+                (root / "adapter.json").read_text(encoding="utf-8")
+            )
+            self.assertEqual(after_failure, before_failure)
+
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for standalone adapter tests")
 class StandaloneDirectServiceHandlerTests(unittest.TestCase):

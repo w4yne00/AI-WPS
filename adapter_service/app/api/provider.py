@@ -157,6 +157,9 @@ class DirectServiceValidateRequest(BaseModel):
 
 class DirectServiceActivateRequest(BaseModel):
     task_type: str = Field(..., alias="taskType")
+    task_model_selection: Optional[TaskModelSelectionUpdateRequest] = Field(
+        default=None, alias="taskModelSelection"
+    )
 
 
 class TaskModelSelectionValidateRequest(BaseModel):
@@ -903,7 +906,13 @@ def activate_direct_service_route(
 ) -> dict:
     try:
         result = get_direct_service_store().activate_direct_service(
-            service_id, request.task_type
+            service_id,
+            request.task_type,
+            task_model_selection=(
+                request.task_model_selection.model_dump(by_alias=True)
+                if request.task_model_selection is not None
+                else None
+            ),
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
