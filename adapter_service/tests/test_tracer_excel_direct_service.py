@@ -202,6 +202,9 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
             default_model="gpt-4o",
         )
         self.direct_store.replace_api_key(service["id"], "sk-test-secret-42", expected_revision=1)
+        self.direct_store.update_model_list(
+            service["id"], ["gpt-4o"], expected_revision=2
+        )
 
         # Activate direct service for excel.analysis
         self.direct_store.activate_direct_service(service["id"], "excel.analysis")
@@ -261,6 +264,9 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
             default_model="gpt-4o",
         )
         self.direct_store.replace_api_key(service["id"], "sk-live-test", expected_revision=1)
+        self.direct_store.update_model_list(
+            service["id"], ["gpt-4o"], expected_revision=2
+        )
         self.direct_store.activate_direct_service(service["id"], "excel.analysis")
 
         client = ProviderClient(model_configuration_store=self.model_store)

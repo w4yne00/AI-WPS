@@ -116,6 +116,7 @@
     directServiceEditor: { open: false, mode: "create", serviceId: "", revision: 1, dirty: false },
     directServiceDeleteCandidate: null,
     taskModelSelections: {},
+    lastValidatedCustomModel: null,
     workflowEditor: { open: false, mode: "create", profileId: "", dirty: false },
     workflowDeleteCandidate: null,
     busy: false,
@@ -3748,6 +3749,13 @@
     if (state.workflowProfileMutationBusy) {
       return;
     }
+    var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("excel.analysis")
+      : { ok: true };
+    if (!modelReadiness.ok) {
+      setStatus(modelReadiness.error || "当前模型不可用，请先刷新目录或重新验证模型。");
+      return;
+    }
 
     setTimeout(function () {
       if (!isCurrentVisible()) { return; }
@@ -4249,6 +4257,13 @@
       return;
     }
     if (state.workflowProfileMutationBusy) {
+      return;
+    }
+    var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("excel.formula_assistant")
+      : { ok: true };
+    if (!modelReadiness.ok) {
+      setStatus(modelReadiness.error || "当前模型不可用，请先刷新目录或重新验证模型。");
       return;
     }
     state.formulaRequirement = safeText(byId("excel-formula-requirement").value);
@@ -4806,6 +4821,14 @@
       return;
     }
     if (state.workflowProfileMutationBusy) {
+      return;
+    }
+    var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("excel.smart_fill")
+      : { ok: true };
+    if (!modelReadiness.ok) {
+      setStatus(modelReadiness.error || "当前模型不可用，请先刷新目录或重新验证模型。");
+      setNodeTextIfChanged(byId("smart-fill-validation-line"), modelReadiness.error || "当前模型不可用。");
       return;
     }
     try {
@@ -6166,6 +6189,86 @@
     return null;
   }
 
+  function validateActiveDirectTaskSelection(taskType) {
+    var taskStatus = (state.taskApiKeys && state.taskApiKeys[taskType]) || {};
+    var selection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
+    var serviceId = String(selection.serviceId || taskStatus.serviceId || "").trim();
+    var activeProfileId = String(taskStatus.activeProfileId || "").trim();
+    var service;
+
+    if (!serviceId && activeProfileId.indexOf("direct_svc_") === 0) {
+      serviceId = activeProfileId;
+    }
+    if (!serviceId && state.workflowProfileSelections &&
+        String(state.workflowProfileSelections[taskType] || "").indexOf("direct_svc_") === 0) {
+      serviceId = String(state.workflowProfileSelections[taskType]);
+    }
+    if (taskStatus.accessMethod !== "direct_model" && !serviceId) {
+      return { valid: true, ok: true, applicable: false, error: "" };
+    }
+
+    service = findDirectService(serviceId);
+    if (helpers.validateDirectTaskSelectionReadiness) {
+      return helpers.validateDirectTaskSelectionReadiness(
+        Object.assign({}, selection, { serviceId: serviceId }),
+        service,
+        Object.assign({}, taskStatus, { accessMethod: "direct_model" })
+      );
+    }
+    if (!service) {
+      return { valid: false, ok: false, applicable: true, error: "直连服务状态尚未加载，请刷新设置后重试。" };
+    }
+    return { valid: true, ok: true, applicable: true, error: "" };
+  }
+
+  function getDirectServiceCatalogState(service) {
+    if (helpers.getDirectServiceCatalogState) {
+      return helpers.getDirectServiceCatalogState(service || {});
+    }
+    var value = service || {};
+    var models = Array.isArray(value.modelList) ? value.modelList : [];
+    var cacheStatus = value.modelListCacheStatus || "empty";
+    var status = value.modelListStatus || (models.length ? "available" : "unavailable");
+    return {
+      status: status,
+      cacheStatus: cacheStatus,
+      fetchStatus: value.modelListFetchStatus || "not_attempted",
+      models: models,
+      fetchedAt: value.modelListFetchedAt || null,
+      expiresAt: value.modelListExpiresAt || null,
+      lastAttemptAt: value.modelListLastAttemptAt || null,
+      lastError: value.modelListError || null,
+      manualModelAllowed: value.manualModelAllowed !== false && cacheStatus !== "valid",
+      usableForSelection: status === "available" && models.length > 0
+    };
+  }
+
+  function isDirectServiceManualModelAllowed(service) {
+    if (helpers.isDirectServiceManualModelAllowed) {
+      return helpers.isDirectServiceManualModelAllowed(service || {});
+    }
+    return getDirectServiceCatalogState(service).manualModelAllowed;
+  }
+
+  function formatDirectServiceCatalogStatus(service) {
+    var catalog = getDirectServiceCatalogState(service);
+    var count = catalog.models.length;
+    var errorText = catalog.lastError && (catalog.lastError.message || catalog.lastError.code);
+    if (catalog.status === "available" && catalog.cacheStatus === "valid") {
+      if (catalog.fetchStatus === "error" && errorText) {
+        return "目录刷新失败，继续使用 " + count + " 个缓存模型；" + errorText;
+      }
+      return "目录有效：" + count + " 个模型" + (catalog.fetchedAt ? "，获取于 " + catalog.fetchedAt : "");
+    }
+    if (catalog.status === "expired") {
+      return "目录已过期；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+    }
+    if (catalog.status === "empty") {
+      return "目录为空；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+    }
+    return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+  }
+
   function loadDirectServices(configRefreshRequestId, requestOptions) {
     return Promise.all([
       request("/provider/direct-services", null, requestOptions),
@@ -6228,11 +6331,15 @@
     state.directServices.forEach(function (svc) {
       var id = escaped(svc.id);
       var modelText = svc.defaultModel ? (" · 默认模型：" + escaped(svc.defaultModel)) : "";
+      var catalogText = typeof formatDirectServiceCatalogStatus === "function"
+        ? formatDirectServiceCatalogStatus(svc)
+        : (svc.modelList && svc.modelList.length ? ("目录已有 " + svc.modelList.length + " 个模型") : "目录未获取");
       rows.push('<div class="workflow-profile-list-row" data-direct-service-id="' + id + '">');
       rows.push('<div class="workflow-profile-copy">');
       rows.push('<div class="workflow-profile-title"><strong>' + escaped(svc.name) + '</strong>');
       rows.push('<span class="provider-badge">' + (svc.keyConfigured ? "已配Key" : "未配Key") + '</span></div>');
       rows.push('<p class="workflow-profile-note">' + escaped(svc.serviceBaseUrl || "未配置URL") + modelText + '</p>');
+      rows.push('<p class="workflow-profile-note">' + escaped(catalogText) + '</p>');
       rows.push('</div>');
       rows.push('<div class="workflow-profile-actions">');
       rows.push('<button type="button" class="ghost-action mini-button" data-direct-action="edit" data-direct-id="' + id + '">编辑</button>');
@@ -6254,6 +6361,8 @@
     var defaultModelInput = byId("direct-service-default-model");
     var modelsStatus = byId("direct-service-models-status");
     var btnRefresh = byId("btn-refresh-direct-service-models");
+    var btnValidate = byId("btn-validate-direct-service");
+    var validationStatus = byId("direct-service-validation-status");
     var errorBox = byId("direct-service-editor-error");
 
     if (isCreate && (state.directServices || []).length >= 5) {
@@ -6296,12 +6405,20 @@
       defaultModelInput.value = isCreate ? "" : (svc.defaultModel || "");
     }
     if (modelsStatus) {
-      modelsStatus.textContent = !isCreate && svc.modelList && svc.modelList.length
-        ? ("已获取 " + svc.modelList.length + " 个模型")
-        : "目录未获取";
+      modelsStatus.textContent = !isCreate && typeof formatDirectServiceCatalogStatus === "function"
+        ? formatDirectServiceCatalogStatus(svc)
+        : (!isCreate && svc.modelList && svc.modelList.length
+          ? ("已获取 " + svc.modelList.length + " 个模型")
+          : "目录未获取");
     }
     if (btnRefresh) {
       btnRefresh.disabled = isCreate;
+    }
+    if (btnValidate) {
+      btnValidate.disabled = isCreate;
+    }
+    if (validationStatus) {
+      validationStatus.textContent = "";
     }
     if (errorBox) {
       errorBox.textContent = "";
@@ -6381,15 +6498,10 @@
             });
 
         return keyPromise.then(function () {
-          var nextRev = created.keyConfigured ? createdRev : (createdRev + 1);
-          return request("/provider/direct-services/" + encodeURIComponent(createdId) + "/refresh-models", {
-            expectedRevision: nextRev
-          }).catch(function () {}).then(function () {
-            closeDirectServiceEditor();
-            return loadDirectServices().then(function () {
-              setWorkflowMutationBusy(false);
-              setStatus("共享直连服务已新建。");
-            });
+          closeDirectServiceEditor();
+          return loadDirectServices().then(function () {
+            setWorkflowMutationBusy(false);
+            setStatus("共享直连服务已新建，模型目录已自动刷新。");
           });
         });
       }).catch(function (error) {
@@ -6454,7 +6566,9 @@
         state.directServiceEditor.revision = nextRev;
       }
       if (statusNode) {
-        statusNode.textContent = "已获取 " + models.length + " 个模型";
+        statusNode.textContent = typeof formatDirectServiceCatalogStatus === "function"
+          ? formatDirectServiceCatalogStatus(svc)
+          : ("已获取 " + models.length + " 个模型");
       }
       return loadDirectServices().then(function () {
         if (state.directServiceEditor && state.directServiceEditor.open && state.directServiceEditor.serviceId === serviceId) {
@@ -6462,11 +6576,77 @@
           if (updatedSvc && updatedSvc.revision) {
             state.directServiceEditor.revision = updatedSvc.revision;
           }
+          if (statusNode && updatedSvc && typeof formatDirectServiceCatalogStatus === "function") {
+            statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
+          }
         }
       });
     }).catch(function (error) {
       if (statusNode) {
         statusNode.textContent = "刷新失败：" + describeFetchError(error);
+      }
+      if (typeof loadDirectServices === "function") {
+        loadDirectServices().then(function () {
+          var updatedSvc = findDirectService(serviceId);
+          if (statusNode && updatedSvc && typeof formatDirectServiceCatalogStatus === "function") {
+            statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
+          }
+        }).catch(function () {});
+      }
+    });
+  }
+
+  function validateDirectService() {
+    var editor = state.directServiceEditor || {};
+    var serviceId = editor.serviceId;
+    var revision = editor.revision;
+    var statusNode = byId("direct-service-validation-status");
+    var modelsStatus = byId("direct-service-models-status");
+    if (!serviceId) {
+      if (statusNode) {
+        statusNode.textContent = "请先保存直连服务。";
+      }
+      return;
+    }
+    if (statusNode) {
+      statusNode.textContent = "正在验证服务连接、认证和模型目录（不执行任务调用）...";
+    }
+    setWorkflowMutationBusy(true);
+    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/validate", {
+      expectedRevision: revision
+    }).then(function (body) {
+      setWorkflowMutationBusy(false);
+      var data = (body && body.data) || {};
+      var catalogAvailable = data.modelCatalogAvailable;
+      if (catalogAvailable === undefined && data.directService) {
+        catalogAvailable = getDirectServiceCatalogState(data.directService).usableForSelection;
+      }
+      if (modelsStatus && data.directService && typeof formatDirectServiceCatalogStatus === "function") {
+        modelsStatus.textContent = formatDirectServiceCatalogStatus(data.directService);
+      }
+      if (data.directService && data.directService.revision && state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
+        state.directServiceEditor.revision = data.directService.revision;
+      }
+      if (statusNode) {
+        statusNode.textContent = catalogAvailable
+          ? "服务验证成功；模型目录可用。"
+          : "服务可达且认证成功，但未提供可用模型目录；可使用高级手填。";
+      }
+      if (typeof loadDirectServices === "function") {
+        loadDirectServices().catch(function () {});
+      }
+    }).catch(function (error) {
+      setWorkflowMutationBusy(false);
+      if (statusNode) {
+        statusNode.textContent = "服务验证失败：" + describeFetchError(error);
+      }
+      if (typeof loadDirectServices === "function") {
+        loadDirectServices().then(function () {
+          var currentSvc = findDirectService(serviceId);
+          if (modelsStatus && currentSvc && typeof formatDirectServiceCatalogStatus === "function") {
+            modelsStatus.textContent = formatDirectServiceCatalogStatus(currentSvc);
+          }
+        }).catch(function () {});
       }
     });
   }
@@ -6550,6 +6730,7 @@
     var tempInput = byId("excel-task-temperature");
     var maxOutInput = byId("excel-task-max-output");
     var contextInput = byId("excel-task-context");
+    var costWarning = byId("excel-task-model-cost-warning");
     var statusNode = byId("excel-task-model-validation-status");
 
     if (!section || !select) {
@@ -6577,6 +6758,12 @@
       if (paramsDiv) {
         paramsDiv.hidden = true;
       }
+      if (costWarning) {
+        costWarning.hidden = true;
+      }
+      if (statusNode) {
+        statusNode.textContent = "";
+      }
       return;
     }
 
@@ -6585,7 +6772,17 @@
     }
 
     var currentSvc = findDirectService(chosenServiceId);
-    var modelList = (currentSvc && currentSvc.modelList) || [];
+    var catalog = helpers.getDirectServiceCatalogState
+      ? helpers.getDirectServiceCatalogState(currentSvc || {})
+      : {
+        status: currentSvc && currentSvc.modelList && currentSvc.modelList.length ? "available" : "unavailable",
+        cacheStatus: currentSvc && currentSvc.modelList && currentSvc.modelList.length ? "valid" : "empty",
+        fetchStatus: "not_attempted",
+        models: (currentSvc && currentSvc.modelList) || [],
+        manualModelAllowed: true,
+        usableForSelection: Boolean(currentSvc && currentSvc.modelList && currentSvc.modelList.length)
+      };
+    var modelList = catalog.usableForSelection ? catalog.models : [];
     var defaultModel = (currentSvc && currentSvc.defaultModel) || "";
     var currentModel = (currentSelection && currentSelection.modelName) || "";
 
@@ -6598,15 +6795,21 @@
       }
       modelOptionsHtml.push('<option value="' + escaped(m) + '"' + sel + '>' + escaped(m) + '</option>');
     });
-    if (modelSelect) {
-      modelSelect.innerHTML = modelOptionsHtml.join("");
-    }
-
     var isCustom = currentSelection && currentSelection.customModel !== undefined
       ? Boolean(currentSelection.customModel)
       : Boolean(currentModel && !isModelInCatalog);
+    if (currentModel && !isCustom && !isModelInCatalog) {
+      modelOptionsHtml.push('<option value="' + escaped(currentModel) + '" selected disabled>当前模型：' + escaped(currentModel) + '（目录不可用）</option>');
+    }
+    if (modelSelect) {
+      modelSelect.innerHTML = modelOptionsHtml.join("");
+    }
     if (customCheck) {
       customCheck.checked = isCustom;
+      customCheck.disabled = Boolean(!catalog.manualModelAllowed && !isCustom);
+      customCheck.title = catalog.usableForSelection
+        ? "模型目录可用时不能使用高级手填模型。"
+        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
     }
     if (customRow) {
       customRow.hidden = !isCustom;
@@ -6623,8 +6826,25 @@
     if (contextInput) {
       contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "40000";
     }
+    if (costWarning) {
+      costWarning.hidden = false;
+      costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
+    }
     if (statusNode) {
-      statusNode.textContent = "";
+      var unavailableReason = currentSelection && currentSelection.modelUnavailableReason;
+      if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "catalog_usable") {
+        statusNode.textContent = "模型目录当前可用，不能使用高级手填模型；请从目录选择。";
+      } else if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "cache_expired") {
+        statusNode.textContent = "模型目录已过期，不能发起新任务；请先刷新目录。";
+      } else if (currentSelection && currentSelection.modelAvailable === false && (unavailableReason === "catalog_unavailable" || unavailableReason === "catalog_empty")) {
+        statusNode.textContent = "模型目录当前不可用；请刷新目录，或使用高级手填并验证真实任务调用。";
+      } else if (currentSelection && currentSelection.modelAvailable === false) {
+        statusNode.textContent = "当前模型已从最新目录移除，不能发起新任务；请重新选择模型。";
+      } else if (catalog.fetchStatus === "error" && catalog.cacheStatus === "valid") {
+        statusNode.textContent = "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。";
+      } else {
+        statusNode.textContent = "";
+      }
     }
   }
 
@@ -6636,6 +6856,8 @@
     var customCheck = byId("excel-task-custom-model-check");
     var customRow = byId("excel-task-custom-model-row");
     var customInput = byId("excel-task-custom-model-input");
+    var statusNode = byId("excel-task-model-validation-status");
+    state.lastValidatedCustomModel = null;
 
     if (!serviceId) {
       if (paramsDiv) {
@@ -6647,7 +6869,10 @@
       paramsDiv.hidden = false;
     }
     var svc = findDirectService(serviceId);
-    var modelList = (svc && svc.modelList) || [];
+    var catalog = helpers.getDirectServiceCatalogState
+      ? helpers.getDirectServiceCatalogState(svc || {})
+      : { usableForSelection: Boolean(svc && svc.modelList && svc.modelList.length), manualModelAllowed: true };
+    var modelList = catalog.usableForSelection ? catalog.models : [];
     var defaultModel = (svc && svc.defaultModel) || "";
     var modelOptionsHtml = ['<option value="">继承服务默认模型 (' + (escaped(defaultModel) || "未设置") + ')</option>'];
     modelList.forEach(function (m) {
@@ -6658,12 +6883,21 @@
     }
     if (customCheck) {
       customCheck.checked = false;
+      customCheck.disabled = Boolean(!catalog.manualModelAllowed);
+      customCheck.title = catalog.usableForSelection
+        ? "模型目录可用时不能使用高级手填模型。"
+        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
     }
     if (customRow) {
       customRow.hidden = true;
     }
     if (customInput) {
       customInput.value = "";
+    }
+    if (statusNode) {
+      statusNode.textContent = catalog.fetchStatus === "error" && catalog.cacheStatus === "valid"
+        ? "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。"
+        : "";
     }
   }
 
@@ -6703,6 +6937,8 @@
   function validateTaskModelSelection() {
     var draft = getTaskModelSelectionDraft();
     var statusNode = byId("excel-task-model-validation-status");
+    var costWarning = byId("excel-task-model-cost-warning");
+    var currentSvc = findDirectService(draft.serviceId);
     if (!draft.serviceId) {
       if (statusNode) {
         statusNode.textContent = "请先选择直连服务。";
@@ -6710,26 +6946,41 @@
       return;
     }
     var checked = helpers.validateTaskModelSelectionDraft
-      ? helpers.validateTaskModelSelectionDraft(draft)
+      ? helpers.validateTaskModelSelectionDraft(draft, { service: currentSvc })
       : { ok: Boolean(draft.serviceId) };
     if (!checked.ok) {
       if (statusNode) {
-        statusNode.textContent = checked.message || "请检查参数设置。";
+        statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
       }
       return;
     }
     if (statusNode) {
-      statusNode.textContent = "正在验证调用...";
+      statusNode.textContent = "正在验证调用（会真实请求模型，可能产生费用）...";
+    }
+    if (costWarning) {
+      costWarning.hidden = false;
+      costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
     }
     setWorkflowMutationBusy(true);
     request("/provider/task-model-selections/excel.analysis/validate", draft)
-      .then(function () {
+      .then(function (body) {
         setWorkflowMutationBusy(false);
         if (draft.customModel && draft.modelName) {
-          state.lastValidatedCustomModel = draft.modelName;
+          state.lastValidatedCustomModel = {
+            serviceId: draft.serviceId,
+            modelName: draft.modelName
+          };
+        } else {
+          state.lastValidatedCustomModel = null;
         }
+        var result = body && body.data && body.data.validation ? body.data.validation : (body && body.data) || {};
         if (statusNode) {
-          statusNode.textContent = "验证成功！模型可正常调用。";
+          statusNode.textContent = (result.costWarning || result.mayIncurModelCost)
+            ? "验证成功（真实调用，可能产生费用）。"
+            : "验证成功！模型可正常调用。";
+        }
+        if (costWarning && result.costWarning) {
+          costWarning.textContent = result.costWarning;
         }
       }).catch(function (error) {
         setWorkflowMutationBusy(false);
@@ -6742,20 +6993,31 @@
   function saveTaskModelSelection() {
     var draft = getTaskModelSelectionDraft();
     var statusNode = byId("excel-task-model-validation-status");
+    var currentSvc = findDirectService(draft.serviceId);
     if (!draft.serviceId) {
       setStatus("请先选择直连服务。");
       return;
     }
     var checked = helpers.validateTaskModelSelectionDraft
-      ? helpers.validateTaskModelSelectionDraft(draft)
+      ? helpers.validateTaskModelSelectionDraft(draft, { service: currentSvc })
       : { ok: Boolean(draft.serviceId) };
     if (!checked.ok) {
       if (statusNode) {
-        statusNode.textContent = checked.message || "请检查参数设置。";
+        statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
       }
       return;
     }
-    if (draft.customModel && state.lastValidatedCustomModel === draft.modelName) {
+    if (draft.customModel) {
+      var validatedCustom = state.lastValidatedCustomModel;
+      var customValidated = typeof validatedCustom === "string"
+        ? validatedCustom === draft.modelName
+        : Boolean(validatedCustom && validatedCustom.serviceId === draft.serviceId && validatedCustom.modelName === draft.modelName);
+      if (!customValidated) {
+        if (statusNode) {
+          statusNode.textContent = "请先验证调用；验证会真实请求模型并可能产生费用。";
+        }
+        return;
+      }
       draft.customModelValidated = true;
     }
     setWorkflowMutationBusy(true);
@@ -7480,6 +7742,9 @@
     }
     if (byId("btn-refresh-direct-service-models")) {
       byId("btn-refresh-direct-service-models").addEventListener("click", refreshDirectServiceModelsInEditor);
+    }
+    if (byId("btn-validate-direct-service")) {
+      byId("btn-validate-direct-service").addEventListener("click", validateDirectService);
     }
     if (byId("btn-cancel-direct-service-delete")) {
       byId("btn-cancel-direct-service-delete").addEventListener("click", hideDirectServiceDeleteDialog);

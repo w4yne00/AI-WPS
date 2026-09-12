@@ -4609,7 +4609,66 @@
     return { valid: true, ok: true, error: "", message: "" };
   }
 
-  function validateTaskModelSelectionDraft(draft) {
+  function getDirectServiceCatalogState(service) {
+    var value = service || {};
+    var nested = value.modelCatalog && typeof value.modelCatalog === "object"
+      ? value.modelCatalog
+      : {};
+    var models = Array.isArray(nested.models)
+      ? nested.models.slice()
+      : (Array.isArray(value.modelList) ? value.modelList.slice() : []);
+    var fetchedAt = nested.fetchedAt || value.modelListFetchedAt || null;
+    var expiresAt = nested.expiresAt || value.modelListExpiresAt || null;
+    var status = String(nested.status || value.modelListStatus || "").trim();
+    var cacheStatus = String(nested.cacheStatus || value.modelListCacheStatus || "").trim();
+    var fetchStatus = String(nested.fetchStatus || value.modelListFetchStatus || "").trim();
+    if (!status && !cacheStatus && !fetchStatus && !fetchedAt && models.length) {
+      status = "available";
+      cacheStatus = "valid";
+      fetchStatus = "success";
+    }
+    if (!status) {
+      if (cacheStatus === "valid") {
+        status = models.length ? "available" : "empty";
+      } else if (cacheStatus === "expired" || fetchedAt) {
+        status = "expired";
+      } else {
+        status = "unavailable";
+      }
+    }
+    if (!cacheStatus) {
+      cacheStatus = status === "available" || status === "empty" ? "valid" : (status === "expired" ? "expired" : "empty");
+    }
+    if (!fetchStatus) {
+      fetchStatus = fetchedAt ? "success" : "not_attempted";
+    }
+    var manualModelAllowed = nested.manualModelAllowed !== undefined
+      ? Boolean(nested.manualModelAllowed)
+      : (value.manualModelAllowed !== undefined
+        ? Boolean(value.manualModelAllowed)
+        : cacheStatus !== "valid" || status === "empty");
+    var usableForSelection = nested.usableForSelection !== undefined
+      ? Boolean(nested.usableForSelection)
+      : status === "available" && models.length > 0;
+    return {
+      status: status,
+      cacheStatus: cacheStatus,
+      fetchStatus: fetchStatus,
+      models: models,
+      fetchedAt: fetchedAt,
+      expiresAt: expiresAt,
+      lastAttemptAt: nested.lastAttemptAt || value.modelListLastAttemptAt || null,
+      lastError: nested.lastError || value.modelListError || null,
+      manualModelAllowed: manualModelAllowed,
+      usableForSelection: usableForSelection
+    };
+  }
+
+  function isDirectServiceManualModelAllowed(service) {
+    return getDirectServiceCatalogState(service).manualModelAllowed;
+  }
+
+  function validateTaskModelSelectionDraft(draft, context) {
     var input = draft || {};
     var serviceId = String(input.serviceId || "").trim();
     if (!serviceId) {
@@ -4638,8 +4697,86 @@
       if (!customName) {
         return { valid: false, ok: false, error: "自定义模型名称不能为空。" };
       }
+      var customService = context && context.service;
+      if (customService) {
+        var customCatalog = getDirectServiceCatalogState(customService);
+        if (!customCatalog.manualModelAllowed || customCatalog.usableForSelection) {
+          return { valid: false, ok: false, error: "模型目录可用时不能使用高级手填模型。" };
+        }
+      }
+    } else if (context && context.service) {
+      var selectedCatalog = getDirectServiceCatalogState(context.service);
+      var selectedName = String(input.modelName || "").trim();
+      if (selectedCatalog.status === "expired") {
+        return { valid: false, ok: false, error: "模型目录已过期，请先刷新目录。" };
+      }
+      if (selectedCatalog.cacheStatus === "invalidated") {
+        return { valid: false, ok: false, error: "模型目录已因服务地址或 API Key 变更失效，请先刷新目录。" };
+      }
+      if (selectedCatalog.status === "empty" || selectedCatalog.status === "unavailable") {
+        return { valid: false, ok: false, error: "模型目录当前不可用，请使用高级手填并先验证真实任务调用。" };
+      }
+      if (selectedCatalog.usableForSelection && selectedName && selectedCatalog.models.indexOf(selectedName) < 0) {
+        return { valid: false, ok: false, error: "所选模型已从最新目录移除，请重新选择。" };
+      }
     }
     return { valid: true, ok: true, error: "" };
+  }
+
+  function validateDirectTaskSelectionReadiness(selection, service, taskStatus) {
+    var current = selection || {};
+    var status = taskStatus || {};
+    var serviceId = String(current.serviceId || (service && service.id) || "").trim();
+    var modelName = String(current.modelName || (service && service.defaultModel) || "").trim();
+    var customModel = Boolean(current.customModel);
+    var reason;
+    var draftResult;
+
+    if (status.accessMethod !== "direct_model") {
+      return { valid: true, ok: true, applicable: false, error: "" };
+    }
+    if (!serviceId || !service) {
+      return { valid: false, ok: false, applicable: true, error: "直连服务状态尚未加载，请刷新设置后重试。" };
+    }
+
+    draftResult = validateTaskModelSelectionDraft(
+      {
+        serviceId: serviceId,
+        modelName: modelName,
+        customModel: customModel
+      },
+      { service: service }
+    );
+    if (!draftResult.ok) {
+      return {
+        valid: false,
+        ok: false,
+        applicable: true,
+        error: draftResult.error || "当前模型目录状态不允许提交任务。"
+      };
+    }
+
+    if (current.modelAvailable === false || current.modelAvailability === "unverified") {
+      reason = String(current.modelUnavailableReason || current.modelAvailability || "");
+      if (reason === "cache_expired" || reason === "expired") {
+        return { valid: false, ok: false, applicable: true, error: "模型目录已过期，请先刷新目录。" };
+      }
+      if (reason === "catalog_usable") {
+        return { valid: false, ok: false, applicable: true, error: "模型目录当前可用，不能使用高级手填模型；请从目录选择。" };
+      }
+      if (reason === "validation_required" || reason === "unverified") {
+        return { valid: false, ok: false, applicable: true, error: "高级手填模型尚未通过真实任务调用验证，请先验证模型。" };
+      }
+      if (reason === "catalog_unavailable" || reason === "catalog_empty") {
+        return { valid: false, ok: false, applicable: true, error: "模型目录当前不可用，请刷新目录，或先验证高级手填模型。" };
+      }
+      if (reason === "disappeared") {
+        return { valid: false, ok: false, applicable: true, error: "所选模型已从最新目录移除，请重新选择。" };
+      }
+      return { valid: false, ok: false, applicable: true, error: "当前模型不可用，请先刷新目录或重新验证模型。" };
+    }
+
+    return { valid: true, ok: true, applicable: true, error: "" };
   }
 
   function shouldActivateNewWorkflowProfile(profileCount, requested) {
@@ -4995,7 +5132,10 @@
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
     validateDirectServiceDraft: validateDirectServiceDraft,
+    getDirectServiceCatalogState: getDirectServiceCatalogState,
+    isDirectServiceManualModelAllowed: isDirectServiceManualModelAllowed,
     validateTaskModelSelectionDraft: validateTaskModelSelectionDraft,
+    validateDirectTaskSelectionReadiness: validateDirectTaskSelectionReadiness,
     getDocumentSessionId: getDocumentSessionId,
     getDocumentDisplayName: getDocumentDisplayName,
     makeTaskSlotKey: makeTaskSlotKey,

@@ -2055,13 +2055,44 @@ class ProviderClient:
                         )
                     is_custom = bool(selection.get("customModel", False))
 
-                    model_list = service.get("modelList") or []
-                    if model_list and not is_custom and effective_model not in model_list:
+                    if is_custom and not selection.get("customModelValidated"):
                         raise AdapterError(
-                            "DIRECT_SERVICE_MODEL_DISAPPEARED",
-                            f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
+                            "DIRECT_SERVICE_CUSTOM_MODEL_UNVERIFIED",
+                            "高级手填模型尚未通过真实任务调用验证，不能执行新任务。",
                             status_code=400,
                         )
+
+                    model_availability = str(
+                        selection.get("modelAvailability", "")
+                    )
+                    if model_availability == "expired":
+                        raise AdapterError(
+                            "DIRECT_SERVICE_MODEL_CATALOG_EXPIRED",
+                            "模型目录缓存已过期，请先刷新目录后再提交任务。",
+                            status_code=400,
+                        )
+                    if model_availability == "unavailable":
+                        reason = str(
+                            selection.get("modelUnavailableReason", "")
+                        )
+                        if reason == "catalog_usable":
+                            raise AdapterError(
+                                "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
+                                "模型目录当前可用时不能使用高级手填模型。",
+                                status_code=400,
+                            )
+                        if reason == "disappeared":
+                            raise AdapterError(
+                                "DIRECT_SERVICE_MODEL_DISAPPEARED",
+                                f"所选模型 {effective_model} 已从服务目录中移除，请重新选择模型。",
+                                status_code=400,
+                            )
+                        if reason in {"catalog_unavailable", "catalog_empty"}:
+                            raise AdapterError(
+                                "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
+                                "模型目录当前不可用，请刷新目录或先验证高级手填模型。",
+                                status_code=400,
+                            )
 
                     base_url = str(service.get("serviceBaseUrl", "")).rstrip("/")
                     call_path = "/chat/completions"
@@ -2337,7 +2368,7 @@ class ProviderClient:
                         and bool(self.direct_service_store.has_api_key(active_id))
                         and bool(effective_model)
                     ):
-                        return True
+                        return selection.get("modelAvailable") is not False
             except Exception:
                 pass
         if self.model_configuration_store is not None:
@@ -2445,6 +2476,7 @@ class ProviderClient:
                                 service.get("serviceBaseUrl")
                                 and key_configured
                                 and effective_model
+                                and selection.get("modelAvailable") is not False
                             ),
                             "authSource": "task-file" if key_configured else "none",
                             "activeProfileId": active_id,
@@ -2456,6 +2488,17 @@ class ProviderClient:
                             "accessMethod": ACCESS_DIRECT_MODEL,
                             "modelName": effective_model,
                             "serviceId": active_id,
+                            "modelAvailability": selection.get("modelAvailability"),
+                            "modelAvailable": selection.get("modelAvailable"),
+                            "modelUnavailableReason": selection.get(
+                                "modelUnavailableReason", ""
+                            ),
+                            "modelCatalogStatus": selection.get(
+                                "modelCatalogStatus", "unavailable"
+                            ),
+                            "modelCatalogCacheStatus": selection.get(
+                                "modelCatalogCacheStatus", "empty"
+                            ),
                         }
                         continue
                 except Exception:
@@ -3481,17 +3524,46 @@ class ProviderClient:
                 "DIRECT_SERVICE_KEY_REQUIRED", "直连服务未配置 API Key，无法验证。", status_code=400
             )
 
+        is_custom = bool(selection_data.get("customModel", False))
+        explicit_model_name = str(selection_data.get("modelName") or "").strip()
+        if is_custom and not explicit_model_name:
+            raise AdapterError(
+                "DIRECT_SERVICE_MODEL_REQUIRED",
+                "高级手填模型名称不能为空。",
+                status_code=400,
+            )
         model_name = str(
-            selection_data.get("modelName") or service.get("defaultModel") or ""
+            explicit_model_name or service.get("defaultModel") or ""
         ).strip()
         if not model_name:
             raise AdapterError(
                 "DIRECT_SERVICE_MODEL_REQUIRED", "请选择或填写模型名称。", status_code=400
             )
 
-        is_custom = bool(selection_data.get("customModel", False))
-        model_list = service.get("modelList") or []
-        if model_list and not is_custom and model_name not in model_list:
+        catalog = service.get("modelCatalog") or {}
+        if is_custom and not catalog.get("manualModelAllowed"):
+            raise AdapterError(
+                "DIRECT_SERVICE_CUSTOM_MODEL_NOT_ALLOWED",
+                "模型目录当前可用时不能使用高级手填模型。",
+                status_code=400,
+            )
+        if not is_custom and catalog.get("status") == "expired":
+            raise AdapterError(
+                "DIRECT_SERVICE_MODEL_CATALOG_EXPIRED",
+                "模型目录缓存已过期，请先刷新目录后再验证任务。",
+                status_code=400,
+            )
+        if not is_custom and not catalog.get("usableForSelection"):
+            raise AdapterError(
+                "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
+                "模型目录当前不可用，请使用高级手填模型并先验证真实任务调用。",
+                status_code=400,
+            )
+        if (
+            not is_custom
+            and catalog.get("usableForSelection")
+            and model_name not in (catalog.get("models") or [])
+        ):
             raise AdapterError(
                 "DIRECT_SERVICE_MODEL_DISAPPEARED",
                 f"所选模型 {model_name} 已从服务目录中移除，请重新选择模型。",
@@ -3547,14 +3619,30 @@ class ProviderClient:
         answer = extract_answer(body)
         _validate_probe_answer(task_type, answer)
 
+        if is_custom:
+            self.direct_service_store.mark_custom_model_validated(
+                task_type,
+                service["id"],
+                model_name,
+                expected_service_base_url=service.get("serviceBaseUrl", ""),
+                expected_api_key_fingerprint=DirectServiceStore.api_key_fingerprint(
+                    service.get("apiKey", "")
+                ),
+            )
+
         return {
             "success": True,
+            "validationScope": "task",
             "taskType": task_type,
             "serviceId": service["id"],
             "serviceName": service.get("name", ""),
             "modelName": model_name,
             "customModel": is_custom,
             "customModelValidated": True,
+            "taskCallPerformed": True,
+            "taskContractValidated": True,
+            "mayIncurModelCost": True,
+            "costWarning": "验证调用会真实请求模型，可能产生费用并等待服务返回。",
         }
 
     def _validation_configuration_identity(self, configuration: Dict) -> Dict:

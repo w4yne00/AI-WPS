@@ -151,6 +151,10 @@ class DirectServiceRefreshRequest(BaseModel):
     expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
 
 
+class DirectServiceValidateRequest(BaseModel):
+    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+
+
 class DirectServiceActivateRequest(BaseModel):
     task_type: str = Field(..., alias="taskType")
 
@@ -190,6 +194,7 @@ def _raise_direct_service_error(exc: DirectServiceError) -> None:
         "DIRECT_SERVICE_LIMIT",
         "DIRECT_SERVICE_NAME_DUPLICATE",
         "DIRECT_SERVICE_REVISION_CONFLICT",
+        "DIRECT_SERVICE_CONFIG_CHANGED",
         "DIRECT_SERVICE_IN_USE",
     }:
         status_code = 409
@@ -201,6 +206,15 @@ def _raise_direct_service_error(exc: DirectServiceError) -> None:
         status_code=status_code,
         referenced_tasks=exc.referenced_tasks,
     )
+
+
+def _refresh_direct_service_after_mutation(
+    store: DirectServiceStore, service: dict
+) -> tuple:
+    result = store.refresh_models_best_effort(
+        service["id"], expected_revision=service.get("revision")
+    )
+    return result["directService"], result["modelCatalogRefresh"]
 
 
 def _raise_profile_error(exc: WorkflowProfileError) -> None:
@@ -656,8 +670,9 @@ def get_direct_services() -> dict:
 
 @router.post("/provider/direct-services")
 def create_direct_service(request: DirectServiceCreateRequest) -> dict:
+    store = get_direct_service_store()
     try:
-        service = get_direct_service_store().create_service(
+        service = store.create_service(
             request.name,
             service_base_url=request.service_base_url,
             default_model=request.default_model,
@@ -665,10 +680,14 @@ def create_direct_service(request: DirectServiceCreateRequest) -> dict:
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
+    service, catalog_refresh = _refresh_direct_service_after_mutation(store, service)
     return {
         "success": True,
         "message": "saved",
-        "data": {"directService": service},
+        "data": {
+            "directService": service,
+            "modelCatalogRefresh": catalog_refresh,
+        },
     }
 
 
@@ -685,8 +704,9 @@ def get_direct_service(service_id: str) -> dict:
 def update_direct_service(
     service_id: str, request: DirectServiceUpdateRequest
 ) -> dict:
+    store = get_direct_service_store()
     try:
-        service = get_direct_service_store().update_service(
+        service = store.update_service(
             service_id,
             name=request.name,
             expected_revision=request.expected_revision,
@@ -695,10 +715,14 @@ def update_direct_service(
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
+    service, catalog_refresh = _refresh_direct_service_after_mutation(store, service)
     return {
         "success": True,
         "message": "saved",
-        "data": {"directService": service},
+        "data": {
+            "directService": service,
+            "modelCatalogRefresh": catalog_refresh,
+        },
     }
 
 
@@ -724,18 +748,23 @@ def delete_direct_service(
 def replace_direct_service_api_key(
     service_id: str, request: DirectServiceApiKeyRequest
 ) -> dict:
+    store = get_direct_service_store()
     try:
-        service = get_direct_service_store().replace_api_key(
+        service = store.replace_api_key(
             service_id,
             request.api_key,
             expected_revision=request.expected_revision,
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
+    service, catalog_refresh = _refresh_direct_service_after_mutation(store, service)
     return {
         "success": True,
         "message": "saved",
-        "data": {"directService": service},
+        "data": {
+            "directService": service,
+            "modelCatalogRefresh": catalog_refresh,
+        },
     }
 
 
@@ -766,6 +795,8 @@ def update_direct_service_models(
             service_id,
             request.model_list,
             expected_revision=request.expected_revision,
+            trusted=False,
+            source="client",
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
@@ -781,6 +812,10 @@ def get_task_model_selections(
     host: Optional[str] = None,
     task_type: Optional[str] = Query(default=None, alias="taskType"),
 ) -> dict:
+    # Direct Python callers do not receive FastAPI's injected default value.
+    # Normalize that Query object before passing the value to the store.
+    if not isinstance(task_type, str):
+        task_type = None
     try:
         data = get_direct_service_store().list_task_model_selections(
             host=host, task_type=task_type
@@ -843,6 +878,24 @@ def refresh_direct_service_models(
             "models": service.get("modelList", []),
             "revision": service.get("revision", 1),
         },
+    }
+
+
+@router.post("/provider/direct-services/{service_id}/validate")
+def validate_direct_service_route(
+    service_id: str, request: Optional[DirectServiceValidateRequest] = None
+) -> dict:
+    expected_revision = request.expected_revision if request else None
+    try:
+        result = get_direct_service_store().validate_service(
+            service_id, expected_revision=expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "validated",
+        "data": result,
     }
 
 
