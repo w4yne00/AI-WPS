@@ -254,6 +254,9 @@ class ExcelAnalysisRequest(BaseModel):
     workbook_id: str = Field(default="active-workbook", alias="workbookId")
     scene: Literal["excel"] = "excel"
     client_job_id: str = Field(default="", alias="clientJobId")
+    host: str = Field(default="et", alias="host")
+    document_session_id: str = Field(default="", alias="documentSessionId")
+    document_display_name: str = Field(default="", alias="documentDisplayName")
     scope: ExcelAnalysisScope = Field(default_factory=ExcelAnalysisScope)
     table: ExcelAnalysisTable = Field(default_factory=ExcelAnalysisTable)
     options: ExcelAnalysisOptions = Field(default_factory=ExcelAnalysisOptions)
@@ -268,6 +271,14 @@ class ExcelAnalysisRequest(BaseModel):
 
     @validator("client_job_id", pre=True, always=True)
     def coerce_excel_client_job_id(cls, value):
+        return _safe_str(value)
+
+    @validator("host", pre=True, always=True)
+    def coerce_excel_analysis_host(cls, value):
+        return _safe_str(value, "et") or "et"
+
+    @validator("document_session_id", "document_display_name", pre=True, always=True)
+    def coerce_excel_analysis_session_fields(cls, value):
         return _safe_str(value)
 
 
@@ -395,6 +406,9 @@ class ExcelFormulaAssistantRequest(BaseModel):
     workbook_id: str = Field(default="active-workbook", alias="workbookId")
     scene: Literal["excel"] = "excel"
     client_job_id: str = Field(default="", alias="clientJobId")
+    host: str = Field(default="et", alias="host")
+    document_session_id: str = Field(default="", alias="documentSessionId")
+    document_display_name: str = Field(default="", alias="documentDisplayName")
     selection: ExcelFormulaSelection = Field(default_factory=ExcelFormulaSelection)
     options: ExcelFormulaOptions = Field(default_factory=ExcelFormulaOptions)
 
@@ -408,6 +422,14 @@ class ExcelFormulaAssistantRequest(BaseModel):
 
     @validator("client_job_id", pre=True, always=True)
     def coerce_formula_client_job_id(cls, value):
+        return _safe_str(value)
+
+    @validator("host", pre=True, always=True)
+    def coerce_excel_formula_host(cls, value):
+        return _safe_str(value, "et") or "et"
+
+    @validator("document_session_id", "document_display_name", pre=True, always=True)
+    def coerce_excel_formula_session_fields(cls, value):
         return _safe_str(value)
 
 

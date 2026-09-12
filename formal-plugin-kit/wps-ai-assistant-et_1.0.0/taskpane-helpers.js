@@ -4845,6 +4845,75 @@
     return html;
   }
 
+  function renderExcelAnalysisHistoryList(items) {
+    var list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return '<div class="excel-history-empty">暂无成功历史记录。</div>';
+    }
+    var html = '<div class="excel-history-list">';
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      var id = escapeHtml(item.id || "");
+      var docName = escapeHtml(item.documentDisplayName || "未命名工作簿");
+      var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
+      var result = item.result || {};
+      var report = result.structuredReport || {};
+      var overview = report.overview || result.plainText || "";
+      var snippetText = overview ? (overview.length > 80 ? overview.slice(0, 80) + "..." : overview) : "智能分析报告";
+
+      html += '<div class="excel-history-card" data-history-id="' + id + '">';
+      html += '  <div class="excel-history-card-header">';
+      html += '    <span class="excel-history-doc-name">' + docName + '</span>';
+      html += '    <span class="excel-history-time">' + timeStr + '</span>';
+      html += '  </div>';
+      html += '  <div class="excel-history-card-title">智能分析成果</div>';
+      html += '  <div class="excel-history-card-snippet">' + escapeHtml(snippetText) + '</div>';
+      html += '  <div class="excel-history-card-actions">';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-view" data-history-id="' + id + '">查看</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-delete" data-history-id="' + id + '">删除</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
+  function renderExcelFormulaHistoryList(items) {
+    var list = Array.isArray(items) ? items : [];
+    if (!list.length) {
+      return '<div class="excel-history-empty">暂无成功历史记录。</div>';
+    }
+    var html = '<div class="excel-history-list">';
+    for (var i = 0; i < list.length; i += 1) {
+      var item = list[i];
+      var id = escapeHtml(item.id || "");
+      var docName = escapeHtml(item.documentDisplayName || "未命名工作簿");
+      var timeStr = escapeHtml(item.completedAt ? new Date(item.completedAt).toLocaleString("zh-CN") : "刚刚");
+      var result = item.result || {};
+      var mode = result.mode || "generate";
+      var title = mode === "explain" ? "公式解释成果" : "公式推荐成果";
+      var formula = result.primaryFormula || result.copyText || "";
+      var snippetText = formula || result.explanation || "已生成公式";
+
+      html += '<div class="excel-history-card" data-history-id="' + id + '">';
+      html += '  <div class="excel-history-card-header">';
+      html += '    <span class="excel-history-doc-name">' + docName + '</span>';
+      html += '    <span class="excel-history-time">' + timeStr + '</span>';
+      html += '  </div>';
+      html += '  <div class="excel-history-card-title">' + title + '</div>';
+      html += '  <div class="excel-history-card-snippet">' + escapeHtml(snippetText) + '</div>';
+      html += '  <div class="excel-history-card-actions">';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-view" data-history-id="' + id + '">查看</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-copy" data-history-id="' + id + '">复制</button>';
+      html += '    <button type="button" class="btn btn-secondary btn-sm btn-history-delete" data-history-id="' + id + '">删除</button>';
+      html += '  </div>';
+      html += '</div>';
+    }
+    html += '</div>';
+    return html;
+  }
+
   return {
     normalizeText: normalizeText,
     escapeHtml: escapeHtml,
@@ -4933,6 +5002,8 @@
     isTaskSlotBusy: isTaskSlotBusy,
     claimTaskSlot: claimTaskSlot,
     releaseTaskSlot: releaseTaskSlot,
-    renderSmartFillHistoryList: renderSmartFillHistoryList
+    renderSmartFillHistoryList: renderSmartFillHistoryList,
+    renderExcelAnalysisHistoryList: renderExcelAnalysisHistoryList,
+    renderExcelFormulaHistoryList: renderExcelFormulaHistoryList
   };
 });
