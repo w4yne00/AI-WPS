@@ -53,7 +53,9 @@ except ImportError:
         def validator(*a, **k):
             return lambda fn: fn
 
+    import importlib.machinery
     pyd = types.ModuleType("pydantic")
+    pyd.__spec__ = importlib.machinery.ModuleSpec("pydantic", None)
     for attr in dir(_PydanticShim):
         if not attr.startswith("__"):
             setattr(pyd, attr, getattr(_PydanticShim, attr))

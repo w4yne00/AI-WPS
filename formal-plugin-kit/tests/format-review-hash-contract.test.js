@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const path = require("node:path");
+const fs = require("node:fs");
 const { execFileSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "../..");
@@ -48,6 +49,7 @@ class Reviewer:
 
 payload = json.load(sys.stdin)
 with tempfile.TemporaryDirectory() as directory:
+    os.environ["AI_WPS_VAR_DIR"] = directory
     reviewer = Reviewer()
     service = DeterministicFormatReviewService(
         staging_root=Path(directory),
@@ -226,7 +228,9 @@ with tempfile.TemporaryDirectory() as directory:
 `;
 
 function runPython(input) {
-  const python = process.env.AI_WPS_HASH_CONTRACT_PYTHON || "python3";
+  const projectPython = path.join(ROOT, ".venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+  const python = process.env.AI_WPS_HASH_CONTRACT_PYTHON ||
+    (fs.existsSync(projectPython) ? projectPython : "python3");
   const env = Object.assign({}, process.env, {
     PYTHONPATH: adapterServiceDir
   });

@@ -263,7 +263,7 @@ function assertExcelAnalysisPreservationContract() {
     'request("/excel/analysis/jobs"',
     'request("/excel/analysis/jobs/"',
     "function extractExcelRange()",
-    "function pollExcelAnalysisJob(jobId, stopWaiting)",
+    "function pollExcelAnalysisJob(jobId, stopWaiting, boundDocSessionId)",
     "function resumeExcelAnalysisActiveJob()",
     "function renderExcelAnalysisResult(data)",
     "analysisRequirement",

@@ -137,7 +137,7 @@ function testTaskpaneLifecycleAndChangedOnlyRendering() {
   assert.ok(functionSource("getExcelSelectionEventSources").includes("window.wps && window.wps.ApiEvent"));
   assert.ok(functionSource("getExcelSelectionEventSources").includes("window.et && window.et.ApiEvent"));
   assert.ok(functionSource("switchView").includes("syncScopeWatcher()"));
-  assert.ok(functionSource("setAnalysisBusy").includes("syncScopeWatcher()"));
+  assert.ok(functionSource("setExcelTaskBusy").includes("syncScopeWatcher()"));
 
   const scopeNodes = {
     "scope-line": { textContent: "未检测" },
@@ -205,7 +205,7 @@ function testSubmissionStillReadsTheLiveWorkbook() {
   const runAnalysis = functionSource("runExcelAnalysisAction");
   const extraction = functionSource("extractExcelRange");
   assert.ok(runAnalysis.includes("state.latestExcelPayload = extractExcelRange()"));
-  assert.ok(runAnalysis.indexOf("setAnalysisBusy(true)") < runAnalysis.indexOf("extractExcelRange()"));
+  assert.ok(runAnalysis.indexOf("setExcelTaskBusy(true, docSessionId") < runAnalysis.indexOf("extractExcelRange()"));
   assert.ok(extraction.includes("getSelectionRange(app)"), "submission must continue to prefer the live selection");
   assert.ok(extraction.includes("getUsedRange(sheet)"), "submission must keep the UsedRange fallback");
   assert.ok(extraction.includes("readRangeMatrix(range)"), "submission must keep the budgeted matrix reader");

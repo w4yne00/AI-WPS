@@ -32,6 +32,38 @@
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
 - **状态记录**：当前自动化候选为 `ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
 
+## 当前功能实现：Issue #173 扩展 Excel 智能分析与公式助手的活跃结果生命周期与只读历史
+
+- **文档会话槽位隔离**：遵循 Issue #164 父规格与 ADR-0131，为 Excel 智能分析（`excel.analysis`）与公式助手（`excel.formula_assistant`）建立基于 `host::taskType::docSessionId` 的前后端任务槽位隔离。同工作簿同任务进行中时阻断重复提交（分别返回 409 `EXCEL_ANALYSIS_DOCUMENT_TASK_BUSY` 和 `EXCEL_FORMULA_DOCUMENT_TASK_BUSY`），跨工作簿或不同任务间互不阻塞；
+- **提交校验与结果保护**：前端在提交前进行选区提取与需求本地校验。校验失败时严格保留当前活跃结果；校验通过并正式向后端发起提交后，立即清空旧活跃结果并进入生成进度状态；若后端提交或执行失败，仅渲染当前失败错误，严格禁止回滚旧活跃结果；
+- **多模式切换与活跃结果隔离**：用户在智能分析、公式助手、智能填写与设置模式之间切换时，各任务活跃结果按 `documentSessionId` 独立保存在 `activeAnalysisResultsBySession`、`activeFormulaResultsBySession` 与 `activeSmartFillResultsBySession` 中。切回时精准恢复对应任务在当前工作簿的活跃成果；切换至设置页时隐藏历史记录按钮，在三个 Excel 任务页均正常展示历史入口按钮；
+- **未完成任务恢复约束**：页面初始化或模式切回时，仅恢复与当前工作簿 `documentSessionId`、`host` 及 `taskType` 严格匹配且未完成（`queued` / `running`）的长任务；已处于终态（`completed` / `failed` / `cancelled`）的历史任务清除脏缓存，不回填为前台活跃结果；
+- **只读成功历史机制**：智能分析与公式助手的成功结果自动归档至 `TaskHistoryStore`，支持通过 `GET /history?taskType=excel.analysis` 及 `GET /history?taskType=excel.formula_assistant` 查看列表与详情、复制文本、单条删除（`DELETE /history/{id}`）与按任务类型清空（`DELETE /history?taskType=...`）。任务窗格统一支持展开查看详情、复制关键成果（分析汇报段落/Markdown 或推荐公式）与删除；
+- **最小化元数据与隐私保护**：
+  - 智能分析历史仅持久化结构化报告（`overview`, `findings`, `risks`, `actions`）与纯文本汇报段落（`plainText`），严格排除表格选区数据、原始行列数据与本地绝对路径；
+  - 公式助手历史仅持久化推荐公式（`primaryFormula`）、备选公式（`alternativeFormula`）、说明（`explanation`）、组件解析（`components`）、引用范围（`referenceRanges`）、发现问题（`issues`）等计算成果，严格排除用户原始需求提示词与选区单元格数据；
+  - 超过 5 MiB 单条上限时自动降级跳过持久化并记录中性提示（`historyNotice`），且不增加未读角标计数；
+- **向下兼容保证**：现有智能分析 Markdown 报告、汇报段落双视图切换、公式助手模式切换与复制功能完全保持兼容；
+- **测试覆盖与 PR #191 Code Review 修复**：
+  - **PR #191 首轮审查修复记录**：
+    1. *智能填写草稿与锁定状态保持*：新增 `activeSmartFillStatesBySession` 缓存每工作簿草稿修改、排除项、锁定及消耗状态，模式切换或会话同步通过 `rerenderExcelSmartFillPreview()` 恢复，杜绝 `renderExcelSmartFillResult()` 盲目重置；
+    2. *分析/公式任务取消槽位释放*：`finishCancelledExcelAnalysis` 与 `finishCancelledExcelFormula` 支持传入 `boundDocSessionId` 释放 `(host, taskType, targetDocSession)` 槽位，杜绝取消后永久占用槽位；
+    3. *异步 DOM 污染防护*：智能分析、公式助手与智能填写的轮询、完成、取消与错误回调均通过 `currentMode === expectedMode && currSession === targetDocSession` 门禁，切换工作簿或模式时不篡改当前 DOM；
+    4. *历史响应乱序防护*：引入递增 `historyRequestId` 与 `taskType` 严格匹配，抛弃乱序或串流的历史数据；
+    5. *恢复前置查询容灾*：网络超时或瞬态错误（非 404/NOT_FOUND）时保留 localStorage 中的活跃任务，禁止静默清除；
+    6. *公式助手诊断降级与隐私*：诊断降级结果（`parseDiagnostic`）不入历史库并标注 `historyNotice`；正常入库条目严格由 `primaryFormula` 派生 `copyText`，杜绝用户提示词或原始回显污染；
+    7. *并发槽位与忙碌解耦*：移除基于全局 `state.busy` 的粗粒度跨工作簿阻塞，完全收敛至 `isTaskSlotBusy`，并在选区读取前置 `setExcelTaskBusy(true, docSessionId, taskType)`；
+    8. *工作簿切换视图同步*：选区监听器 `updateScopeIndicator` 及 `switchMode` 统一触发 `syncActiveSessionView`，切回工作簿即时还原活跃结果；
+    9. *统一终态记录与角标抑制*：提取统一的 `recordFinalizedAnalysisResult` 等终态处理，带有 `historyNotice` 的结果严格不递增未读角标计数；
+  - 后端：`adapter_service/tests/test_excel_analysis_formula_history.py` 覆盖请求模型、409 槽位忙碌拦截、并发隔离、脱敏历史写入、超限降级、诊断降级不入库、白名单公式文本派生等场景（7/7 测试通过）；
+  - 前端：`formal-plugin-kit/tests/excel-analysis-formula-lifecycle.test.js` 覆盖历史卡片只读渲染、本地校验失败保留旧结果、有效提交清理旧结果与锁定槽位、槽位忙碌拦截、跨模式活跃结果隔离、已完成任务恢复清理、智能填写草稿状态保持、取消任务槽位释放、异步 DOM 隔离、乱序历史丢弃、恢复瞬态网络错误保护、跨工作簿并发提交、降级历史角标抑制等场景（首轮记录：20/20 测试通过，全量 Excel 测试 53/53 通过）。
+  - **PR #191 复审修复（2026-09-12）**：三条任务链改用 `excelTaskSessions[taskType + "::" + documentSessionId]` 保存任务编号、轮询计时、错误次数与恢复状态，提交、轮询和取消回调固定引用所属会话；通用忙碌函数改名为 `setExcelTaskBusy`，可见性统一由 `isExcelTaskVisible` 判断，等待提示定时器也必须匹配功能与会话。
+  - **填写终态会话归属**：提交时保存来源与单项重试上下文；后台完成仅更新所属会话的结果与保留草稿，不从前台读取其他工作簿的目标、草稿、锁定或消耗状态。切回后恢复所属会话来源，再构建新结果预览。
+  - **恢复与历史删除**：分析/公式恢复身份校验通过后立即占用槽位；预查询超时保留任务编号和槽位，下次恢复可重试，明确终态或 404/NOT_FOUND 才释放。历史单条删除的成功及失败响应均校验请求序号与任务类型。
+  - **本轮验证**：生命周期测试 32/32、全部 Excel 测试 65/65；新增测试覆盖三条真实提交→轮询链跨工作簿并发、超时后阻断再提交及 404 释放、后台填写终态与单项重试隔离、等待提示和历史删除乱序，以及工作簿监听器尚未同步时的终态来源隔离。`wps-addon` 单元测试 12/12，Vite 构建通过。本轮全量正式插件测试 105 通过、12 失败，与原始 PR 的失败集合一致（Word 既有断言、Python 缺少 pydantic、浏览器测试目录权限）。JS 语法检查、Python 3.8 兼容扫描（95 文件）和 `git diff --check` 通过。本轮未修改后端；麒麟测试机 SSH 超时，后端 7/7 属于首轮记录，不作为本轮复测结果。
+
+  - **既有全量失败修复（2026-09-12）**：格式审查恢复测试改为执行完成、失败、取消三种终态，验证只清理所属文档的存储与槽位、不重载旧报告；哈希测试优先采用显式 `AI_WPS_HASH_CONTRACT_PYTHON`，未设置时使用仓库 `.venv`，最后回退 `python3`，Python 子进程通过 `AI_WPS_VAR_DIR` 将历史等运行态数据保存在测试临时目录；浏览器视口测试在独立临时目录保存通信文件，使用参数数组启动 CLI，结束后清理目录。本轮全量正式插件测试 **119/119 通过，0 失败、0 跳过**，包含真实 Chrome 的 320px/420px 检查；Chrome 在允许启动浏览器的沙箱外测试进程运行。该结果取代上一阶段 105 通过、12 失败的状态；本轮没有新增依赖或修改生产逻辑，也不替代麒麟 Python 3.8 真机验证。
+
 ## 当前功能实现：Issue #172 扩展 Excel 智能填写的只读历史与活跃结果生命周期
 
 - **文档会话槽位隔离**：遵循 Issue #164 父规格规范，为 Excel 智能填写任务（`excel.smart_fill`）建立基于 `host::taskType::docSessionId` 的前后端任务槽位隔离。同工作簿同任务进行中时阻断重复生成提交（返回 409 `EXCEL_SMART_FILL_DOCUMENT_TASK_BUSY`），跨工作簿互不阻塞；
