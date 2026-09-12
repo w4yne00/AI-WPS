@@ -192,11 +192,15 @@
                   <span>服务地址</span>
                   <input id="direct-service-url" type="text" placeholder="例如：https://api.openai.com/v1" />
                 </label>
+                <p id="direct-service-url-impact" class="field-hint" style="color: #c67d0a;" hidden></p>
                 <label class="field" for="direct-service-key">
                   <span id="direct-service-key-label">API Key（仅需录入一次）</span>
                   <input id="direct-service-key" type="password" autocomplete="off" />
                 </label>
-                <p id="direct-service-key-status" class="inline-status"></p>
+                <div class="direct-service-key-row">
+                  <p id="direct-service-key-status" class="inline-status"></p>
+                  <button id="btn-clear-direct-service-key" class="ghost-action danger-link" type="button" hidden>清除已配置 Key</button>
+                </div>
                 <label class="field" for="direct-service-default-model">
                   <span>默认模型</span>
                   <input id="direct-service-default-model" type="text" placeholder="例如：gpt-4o" />

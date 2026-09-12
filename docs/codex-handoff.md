@@ -31,6 +31,21 @@
 - **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；若 18100 仍被历史 Adapter 占用则释放该端口监听进程；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
 - **状态记录**：当前自动化候选为 `ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
+## 当前功能实现：Issue #175 保护共享服务修改并执行 Key 轮换失效
+
+- **版本与并发冲突控制**：遵循 ADR-0128 与 ADR-0129，共享直连服务对象暴露 `revision: int`。所有变更操作（更新属性、替换 Key、清除 Key、删除服务）强制携带 `expectedRevision` 校验。若发生版本冲突，后端返回 409 `DIRECT_SERVICE_REVISION_CONFLICT`；前端拦截冲突并明确提示版本冲突，要求用户刷新后重新编辑，严格禁止前端自动合并字段或盲目覆盖；
+- **引用感知与删除保护**：后端 `_sanitize_service` 汇总 `taskModelSelections` 与 `activeModelConfigurations`，在服务对象中暴露 `referencedTasks: string[]`。被任何任务引用的直连服务禁止删除，后端直接返回 409 `DIRECT_SERVICE_IN_USE` 并附带引用任务列表；前端删除弹窗实时校验引用状态，被引用时禁用删除确认按钮并给出直观的中文任务引用警告；
+- **服务地址修改影响面披露**：前端直连服务编辑态支持地址变更影响感知（`evaluateDirectServiceUrlImpact`），当编辑在用服务的地址时，实时披露该修改将影响的具体任务名称，提醒用户保存后各任务将立即调用新地址；
+- **Key 安全与单输入操作**：保存的 API Key 绝不回显至前端，输入框严格采用 `type="password"`；Key 的更换与清除采用独立的原子操作，清除操作通过独立的 `DELETE /provider/direct-services/{id}/api-key?expectedRevision={rev}` 执行，更换与清除均不保留旧 Key 历史版本；
+- **Key 轮换任务失效机制**：
+  - `DirectServiceStore` 在 Key 发生替换或清除时，获取被替换旧 Key 的哈希指纹（`api_key_fingerprint`），并通过监听器广播；
+  - `LongTaskCoordinator` 提供 `invalidate_by_auth(service_id, old_key_fingerprint)` 接口，跨 Word（4 类）、Excel（3 类）、PPT（2 类）全部 9 类任务生效；
+  - 引用旧 Key 指纹的排队中任务（`queued`）立即移出队列并标记为不可恢复失败（`DIRECT_SERVICE_KEY_ROTATED`）；
+  - 引用旧 Key 指纹的运行中任务（`running`）触发协作取消，对外状态立即转换为 `failed`（错误码 `DIRECT_SERVICE_KEY_ROTATED`，提示用户重新提交），底层 worker 退出时严格抑制结果并维持失败；
+  - 已完成任务（`completed`）及历史归档（`TaskHistoryStore`）严格不受 Key 轮换影响；新提交任务可正常使用新 Key 成功执行；
+- **测试覆盖**：
+  - 后端：`adapter_service/tests/test_direct_service_key_rotation.py` 覆盖版本冲突拦截、被引用阻断删除、引用列表暴露、排队中任务失效、运行中任务失效且抑制结果、已完成任务和历史保留、新 Key 提交成功，以及覆盖 Word/Excel/PPT 全部 9 类任务的端到端监听轮换失效验证（8/8 测试全绿）；
+  - 前端：`formal-plugin-kit/tests/direct-service-lifecycle-protection.test.js` 覆盖页面结构（URL 影响披露、清除 Key 按钮、密码框、删除弹窗）、生命周期辅助函数（引用格式化、删除评估、地址影响评估、版本冲突识别）、删除弹窗引用保护与禁用、编辑态版本冲突拦截与不自动合并、Key 清除独立调用等契约（5/5 测试全绿）。
 
 ## 当前功能实现：Issue #173 扩展 Excel 智能分析与公式助手的活跃结果生命周期与只读历史
 

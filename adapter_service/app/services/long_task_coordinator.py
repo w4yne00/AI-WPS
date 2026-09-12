@@ -1,3 +1,4 @@
+import hashlib
 import os
 import threading
 import time
@@ -104,6 +105,7 @@ class LongTaskCoordinator:
         request_fingerprint: Optional[str] = None,
         request_conflict_code: str = "LONG_TASK_JOB_ID_CONFLICT",
         request_conflict_message: str = "相同任务编号已绑定其他请求，请使用新的任务编号。",
+        task_auth: Optional[Dict] = None,
     ) -> Dict:
         worker_job_key: Optional[JobKey] = None
         now_mono = self._monotonic()
@@ -114,6 +116,37 @@ class LongTaskCoordinator:
             if priority_class == PRIORITY_INTERACTIVE
             else PRIORITY_REGULAR
         )
+
+        auth_service_id = None
+        auth_key_fp = None
+        task_auth_source = (
+            task_auth
+            if task_auth is not None
+            else (snapshot.get("taskAuth") if isinstance(snapshot, dict) else None)
+        )
+        if isinstance(task_auth_source, dict):
+            auth_service_id = str(
+                task_auth_source.get("directServiceId")
+                or (
+                    task_auth_source.get("directService", {}).get("id")
+                    if isinstance(task_auth_source.get("directService"), dict)
+                    else ""
+                )
+                or task_auth_source.get("apiKeyRef")
+                or task_auth_source.get("serviceId")
+                or ""
+            ).strip() or None
+
+            raw_fp = task_auth_source.get("apiKeyFingerprint") or task_auth_source.get(
+                "keyFingerprint"
+            )
+            if raw_fp:
+                auth_key_fp = str(raw_fp).strip() or None
+            elif task_auth_source.get("apiKey"):
+                auth_key_fp = hashlib.sha256(
+                    str(task_auth_source["apiKey"]).encode("utf-8")
+                ).hexdigest()
+
         with self._lock:
             self._cleanup_locked(now_mono)
             existing = self._jobs.get(job_key)
@@ -164,6 +197,10 @@ class LongTaskCoordinator:
                 "_allowRunningCancel": bool(allow_running_cancel),
                 "_cancelRequested": False,
                 "_occupiesSlot": status == "running",
+                "_authServiceId": auth_service_id,
+                "_authKeyFingerprint": auth_key_fp,
+                "_authInvalidated": False,
+                "_authInvalidatedError": None,
                 "result": None,
                 "error": None,
             }
@@ -211,7 +248,7 @@ class LongTaskCoordinator:
                 job = self._jobs.get(job_key) if job_key is not None else None
                 if job is None:
                     return None
-                if job["status"] in TERMINAL_STATUSES:
+                if job["status"] in TERMINAL_STATUSES or job.get("_authInvalidated"):
                     return self._public_job_locked(job, now_mono)
                 self._condition.wait()
 
@@ -337,6 +374,61 @@ class LongTaskCoordinator:
                 and job.get("_cancelRequested")
             )
 
+    def invalidate_by_auth(
+        self,
+        service_id: str,
+        api_key_fingerprint: str,
+        failure_code: str = "DIRECT_SERVICE_KEY_ROTATED",
+        failure_message: str = "服务 API Key 已更换或清除，原任务已失效，请重新提交任务。",
+    ) -> int:
+        if not service_id or not api_key_fingerprint:
+            return 0
+        now_mono = self._monotonic()
+        invalidated_count = 0
+        next_job_key = None
+        with self._lock:
+            self._cleanup_locked(now_mono)
+            for job_key, job in self._jobs.items():
+                if job.get("status") in TERMINAL_STATUSES:
+                    continue
+                if (
+                    job.get("_authServiceId") == service_id
+                    and job.get("_authKeyFingerprint") == api_key_fingerprint
+                ):
+                    invalidated_count += 1
+                    err = {
+                        "code": failure_code,
+                        "message": failure_message,
+                    }
+                    job["_authInvalidated"] = True
+                    job["_authInvalidatedError"] = deepcopy(err)
+                    job["_cancelRequested"] = True
+                    job["error"] = deepcopy(err)
+
+                    if job["status"] == "queued":
+                        try:
+                            self._queue.remove(job_key)
+                        except ValueError:
+                            try:
+                                self._deferred.remove(job_key)
+                            except ValueError:
+                                pass
+                        self._finish_locked(job, "failed", now_mono)
+                    elif job["status"] == "running":
+                        if not job.get("_occupiesSlot"):
+                            try:
+                                self._deferred.remove(job_key)
+                            except ValueError:
+                                pass
+                            self._finish_locked(job, "failed", now_mono)
+                            if next_job_key is None:
+                                next_job_key = self._promote_next_locked(now_mono)
+            self._trim_terminal_locked()
+            self._condition.notify_all()
+        if next_job_key is not None:
+            self._start_worker(next_job_key)
+        return invalidated_count
+
     def diagnostics(self) -> Dict:
         now_mono = self._monotonic()
         with self._lock:
@@ -444,6 +536,23 @@ class LongTaskCoordinator:
         with self._lock:
             job = self._jobs.get(job_key)
             if job is None or job["status"] != "running":
+                return
+            if job.get("_authInvalidated"):
+                job["result"] = None
+                job["error"] = deepcopy(
+                    job.get("_authInvalidatedError")
+                    or {
+                        "code": "DIRECT_SERVICE_KEY_ROTATED",
+                        "message": "服务 API Key 已更换或清除，原任务已失效，请重新提交任务。",
+                    }
+                )
+                self._finish_locked(job, "failed", now_mono)
+                self._running_count = max(self._running_count - 1, 0)
+                next_job_key = self._promote_next_locked(now_mono)
+                self._trim_terminal_locked()
+                self._condition.notify_all()
+                if next_job_key is not None:
+                    self._start_worker(next_job_key)
                 return
             cancel_requested = bool(job.get("_cancelRequested"))
             if (
@@ -673,11 +782,14 @@ class LongTaskCoordinator:
                 queue_position = queued_order.index(job_key) + 1
             except ValueError:
                 queue_position = None
+        is_invalidated = bool(job.get("_authInvalidated"))
+        effective_status = "failed" if is_invalidated else job["status"]
+        effective_phase = "failed" if is_invalidated else job["phase"]
         public_job = {
             "jobId": job["jobId"],
             "traceId": job["traceId"],
-            "status": job["status"],
-            "phase": job["phase"],
+            "status": effective_status,
+            "phase": effective_phase,
             "createdAt": job["createdAt"],
             "updatedAt": job["updatedAt"],
             "elapsedSeconds": int(max(elapsed_until - job["_createdMonotonic"], 0.0)),
@@ -689,22 +801,32 @@ class LongTaskCoordinator:
             "heartbeatAgeSeconds": int(
                 max(now_mono - job.get("_updatedMonotonic", now_mono), 0.0)
             ),
-            "queuePosition": queue_position,
-            "canCancel": job["status"] == "queued" or bool(
+            "queuePosition": queue_position if not is_invalidated else None,
+            "canCancel": False if is_invalidated else (job["status"] == "queued" or bool(
                 job["status"] == "running"
                 and job.get("_allowRunningCancel")
                 and not job.get("_cancelRequested")
-            ),
+            )),
         }
-        if job.get("_allowRunningCancel"):
+        if job.get("_allowRunningCancel") and not is_invalidated:
             public_job["cancelRequested"] = bool(job.get("_cancelRequested"))
         public_job.update(job.get("_publicMetadata", {}))
-        if job["status"] in TERMINAL_STATUSES:
+        if effective_status in TERMINAL_STATUSES:
             public_job.pop("runningMessage", None)
-        if job.get("result") is not None:
-            public_job["result"] = job["result"]
-        if job.get("error") is not None:
-            public_job["error"] = job["error"]
+        if is_invalidated:
+            public_job["result"] = None
+            public_job["error"] = deepcopy(
+                job.get("_authInvalidatedError")
+                or {
+                    "code": "DIRECT_SERVICE_KEY_ROTATED",
+                    "message": "服务 API Key 已更换或清除，原任务已失效，请重新提交任务。",
+                }
+            )
+        else:
+            if job.get("result") is not None:
+                public_job["result"] = job["result"]
+            if job.get("error") is not None:
+                public_job["error"] = job["error"]
         return public_job
 
     def _terminal_diagnostic(self, job: Dict) -> Dict:

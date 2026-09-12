@@ -8,7 +8,7 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Callable, Dict, List, Optional
 from urllib.error import HTTPError, URLError
 
 from app.core.config import default_config_path, load_config_payload, save_config_payload
@@ -79,6 +79,32 @@ def _format_utc_timestamp(value: datetime) -> str:
 
 
 class DirectServiceStore:
+    _KEY_ROTATION_LISTENERS: List[Callable[[str, str], None]] = []
+
+    @classmethod
+    def register_key_rotation_listener(cls, listener: Callable[[str, str], None]) -> None:
+        if listener not in cls._KEY_ROTATION_LISTENERS:
+            cls._KEY_ROTATION_LISTENERS.append(listener)
+
+    @classmethod
+    def unregister_key_rotation_listener(cls, listener: Callable[[str, str], None]) -> None:
+        if listener in cls._KEY_ROTATION_LISTENERS:
+            cls._KEY_ROTATION_LISTENERS.remove(listener)
+
+    def _notify_key_rotation(self, service_id: str, old_key_fingerprint: str) -> None:
+        for listener in list(self._KEY_ROTATION_LISTENERS):
+            try:
+                listener(service_id, old_key_fingerprint)
+            except Exception:
+                pass
+        try:
+            from app.services.long_task_coordinator import get_long_task_coordinator
+            coord = get_long_task_coordinator()
+            if coord is not None and hasattr(coord, "invalidate_by_auth"):
+                coord.invalidate_by_auth(service_id, old_key_fingerprint)
+        except Exception:
+            pass
+
     def __init__(
         self,
         config_path: Optional[Path] = None,
@@ -112,7 +138,7 @@ class DirectServiceStore:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
             services = [
-                self._sanitize_service(item)
+                self._sanitize_service(item, payload=payload)
                 for item in self._service_map(payload).values()
             ]
             services.sort(key=lambda s: (s.get("createdAt", ""), s["id"]))
@@ -126,7 +152,7 @@ class DirectServiceStore:
         with _STORE_LOCK:
             payload = load_config_payload(self.config_path)
             service = self._require_service(self._service_map(payload), service_id)
-            result = self._sanitize_service(service)
+            result = self._sanitize_service(service, payload=payload)
             if include_secret:
                 result["apiKey"] = self._read_key(service["id"])
             return result
@@ -225,13 +251,7 @@ class DirectServiceStore:
 
             self._check_revision(service, expected_revision)
 
-            # Check references from taskModelSelections
-            selections = self._selection_map(payload)
-            referenced = [
-                task_type
-                for task_type, sel in selections.items()
-                if isinstance(sel, dict) and sel.get("serviceId") == service_id
-            ]
+            referenced = self._get_referenced_tasks(payload, service_id)
             if referenced:
                 raise DirectServiceError(
                     "DIRECT_SERVICE_IN_USE",
@@ -266,6 +286,11 @@ class DirectServiceStore:
 
             prior_key = self._read_key(service_id)
             had_prior_key = self._key_exists(service_id)
+            old_fp = (
+                self._api_key_fingerprint(prior_key)
+                if had_prior_key and prior_key
+                else ""
+            )
 
             self._invalidate_model_catalog(service)
             self._write_key(service_id, clean_key)
@@ -284,7 +309,9 @@ class DirectServiceStore:
                 else:
                     self._delete_key(service_id)
                 raise
-            return self._sanitize_service(service)
+            if old_fp:
+                self._notify_key_rotation(service_id, old_fp)
+            return self._sanitize_service(service, payload=payload)
 
     def clear_api_key(
         self,
@@ -300,6 +327,11 @@ class DirectServiceStore:
 
             prior_key = self._read_key(service_id)
             had_prior_key = self._key_exists(service_id)
+            old_fp = (
+                self._api_key_fingerprint(prior_key)
+                if had_prior_key and prior_key
+                else ""
+            )
 
             self._invalidate_model_catalog(service)
             self._delete_key(service_id)
@@ -316,7 +348,9 @@ class DirectServiceStore:
                     except Exception:
                         pass
                 raise
-            return self._sanitize_service(service)
+            if old_fp:
+                self._notify_key_rotation(service_id, old_fp)
+            return self._sanitize_service(service, payload=payload)
 
     def update_model_list(
         self,
@@ -1357,9 +1391,33 @@ class DirectServiceStore:
             return "disabled"
         return clean
 
-    def _sanitize_service(self, service: dict) -> dict:
+    def _get_referenced_tasks(self, payload: Optional[dict], service_id: str) -> List[str]:
+        if not payload or not service_id:
+            return []
+        referenced = set()
+        selections = payload.get("taskModelSelections")
+        if isinstance(selections, dict):
+            for task, sel in selections.items():
+                if isinstance(sel, dict) and sel.get("serviceId") == service_id:
+                    referenced.add(task)
+        active = payload.get("activeModelConfigurations")
+        if isinstance(active, dict):
+            for task, act_id in active.items():
+                if act_id == service_id:
+                    referenced.add(task)
+                elif isinstance(act_id, dict) and act_id.get("serviceId") == service_id:
+                    referenced.add(task)
+        return sorted(list(referenced))
+
+    def _sanitize_service(self, service: dict, payload: Optional[dict] = None) -> dict:
         service_id = str(service.get("id", ""))
         catalog = self._model_catalog_state(service)
+        if payload is None:
+            try:
+                payload = load_config_payload(self.config_path)
+            except Exception:
+                payload = {}
+        referenced_tasks = self._get_referenced_tasks(payload, service_id)
         return {
             "schemaVersion": DIRECT_SERVICE_SCHEMA_VERSION,
             "id": service_id,
@@ -1382,6 +1440,7 @@ class DirectServiceStore:
             "modelListSource": str(service.get("modelListSource", "discovery")),
             "modelCatalog": catalog,
             "revision": int(service.get("revision", 1)),
+            "referencedTasks": referenced_tasks,
             "createdAt": str(service.get("createdAt", "")),
             "updatedAt": str(service.get("updatedAt", "")),
         }

@@ -6421,6 +6421,16 @@
     if (errorBox) {
       errorBox.textContent = "";
     }
+    var urlImpactNode = byId("direct-service-url-impact");
+    if (urlImpactNode) {
+      urlImpactNode.hidden = true;
+      urlImpactNode.textContent = "";
+    }
+    var btnClearKey = byId("btn-clear-direct-service-key");
+    if (btnClearKey) {
+      btnClearKey.hidden = isCreate || !svc.keyConfigured;
+      btnClearKey.disabled = false;
+    }
 
     byId("direct-service-editor-view").hidden = false;
     byId("direct-services-list").hidden = true;
@@ -6436,6 +6446,85 @@
     byId("direct-services-list").hidden = false;
     byId("btn-new-direct-service").hidden = false;
     byId("direct-service-editor-error").textContent = "";
+    var urlImpactNode = byId("direct-service-url-impact");
+    if (urlImpactNode) {
+      urlImpactNode.hidden = true;
+      urlImpactNode.textContent = "";
+    }
+  }
+
+  function updateDirectServiceUrlImpact() {
+    var editor = state.directServiceEditor || {};
+    if (editor.mode !== "edit" || !editor.serviceId) {
+      var node = byId("direct-service-url-impact");
+      if (node) {
+        node.hidden = true;
+        node.textContent = "";
+      }
+      return;
+    }
+    var svc = findDirectService(editor.serviceId);
+    var urlInput = byId("direct-service-url");
+    var urlImpactNode = byId("direct-service-url-impact");
+    if (!svc || !urlInput || !urlImpactNode) {
+      return;
+    }
+    var res = helpers.evaluateDirectServiceUrlImpact
+      ? helpers.evaluateDirectServiceUrlImpact(svc, urlInput.value)
+      : { isModified: false, warning: "" };
+    if (res.isModified && res.warning) {
+      urlImpactNode.textContent = res.warning;
+      urlImpactNode.hidden = false;
+    } else {
+      urlImpactNode.hidden = true;
+      urlImpactNode.textContent = "";
+    }
+  }
+
+  function clearDirectServiceApiKey() {
+    var editor = state.directServiceEditor || {};
+    var serviceId = editor.serviceId;
+    var revision = editor.revision;
+    var keyInput = byId("direct-service-key");
+    var keyStatus = byId("direct-service-key-status");
+    var btnClear = byId("btn-clear-direct-service-key");
+    var errorBox = byId("direct-service-editor-error");
+    if (!serviceId || state.workflowProfileMutationBusy) {
+      return;
+    }
+    setWorkflowMutationBusy(true);
+    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/api-key?expectedRevision=" + encodeURIComponent(revision), null, {
+      method: "DELETE"
+    }).then(function (body) {
+      setWorkflowMutationBusy(false);
+      var svc = (body && body.data && body.data.directService) || {};
+      var nextRev = svc.revision || (revision + 1);
+      if (state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
+        state.directServiceEditor.revision = nextRev;
+      }
+      if (keyInput) {
+        keyInput.value = "";
+        keyInput.placeholder = "输入新 API Key";
+      }
+      if (keyStatus) {
+        keyStatus.textContent = "未配置";
+      }
+      if (btnClear) {
+        btnClear.hidden = true;
+      }
+      return loadDirectServices().then(function () {
+        setStatus("API Key 已清除。");
+      });
+    }).catch(function (error) {
+      setWorkflowMutationBusy(false);
+      if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
+        if (errorBox) {
+          errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止清除 Key。请刷新后重新编辑，本次修改未自动合并。";
+        }
+      } else if (errorBox) {
+        errorBox.textContent = "清除 API Key 失败：" + describeFetchError(error);
+      }
+    });
   }
 
   function saveDirectServiceEditor() {
@@ -6504,7 +6593,11 @@
         });
       }).catch(function (error) {
         setWorkflowMutationBusy(false);
-        if (errorBox) {
+        if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
+          if (errorBox) {
+            errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
+          }
+        } else if (errorBox) {
           errorBox.textContent = "新建直连服务失败：" + describeFetchError(error);
         }
       });
@@ -6538,7 +6631,11 @@
       });
     }).catch(function (error) {
       setWorkflowMutationBusy(false);
-      if (errorBox) {
+      if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
+        if (errorBox) {
+          errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
+        }
+      } else if (errorBox) {
         errorBox.textContent = "保存直连服务失败：" + describeFetchError(error);
       }
     });
@@ -6657,9 +6754,8 @@
     var svc = findDirectService(serviceId);
     var nameNode = byId("direct-service-delete-name");
     var warningNode = byId("direct-service-delete-warning");
+    var confirmBtn = byId("btn-confirm-direct-service-delete");
     var dialog = byId("direct-service-delete-dialog");
-    var activeId = getWorkflowProfileData("excel.analysis").activeProfileId;
-    var selection = (state.taskModelSelections && state.taskModelSelections["excel.analysis"]) || {};
     if (!svc) {
       return;
     }
@@ -6667,12 +6763,12 @@
     if (nameNode) {
       nameNode.textContent = svc.name;
     }
+    var evalRes = helpers.evaluateDirectServiceDelete ? helpers.evaluateDirectServiceDelete(svc) : { canDelete: true, message: "" };
     if (warningNode) {
-      if (activeId === svc.id || selection.serviceId === svc.id) {
-        warningNode.textContent = "警告：此直连服务正被智能分析使用，删除后智能分析将不可用！";
-      } else {
-        warningNode.textContent = "";
-      }
+      warningNode.textContent = evalRes.message || "";
+    }
+    if (confirmBtn) {
+      confirmBtn.disabled = !evalRes.canDelete;
     }
     if (dialog) {
       dialog.hidden = false;
@@ -6684,6 +6780,10 @@
     var dialog = byId("direct-service-delete-dialog");
     if (dialog) {
       dialog.hidden = true;
+    }
+    var confirmBtn = byId("btn-confirm-direct-service-delete");
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
     }
   }
 
@@ -6704,7 +6804,14 @@
     }).catch(function (error) {
       hideDirectServiceDeleteDialog();
       setWorkflowMutationBusy(false);
-      setStatus("删除直连服务失败：" + describeFetchError(error));
+      var errObj = error || {};
+      var referenced = errObj.referencedTasks || (errObj.data && errObj.data.referencedTasks);
+      if (errObj.code === "DIRECT_SERVICE_IN_USE" || (Array.isArray(referenced) && referenced.length)) {
+        var tasksStr = helpers.formatReferencedTasks ? helpers.formatReferencedTasks(referenced) : "";
+        setStatus("删除直连服务失败：该服务正被任务使用（" + (tasksStr || "已引用") + "），无法删除。");
+      } else {
+        setStatus("删除直连服务失败：" + describeFetchError(error));
+      }
     });
   }
 
@@ -7754,6 +7861,9 @@
     if (byId("btn-confirm-direct-service-delete")) {
       byId("btn-confirm-direct-service-delete").addEventListener("click", confirmDirectServiceDelete);
     }
+    if (byId("btn-clear-direct-service-key")) {
+      byId("btn-clear-direct-service-key").addEventListener("click", clearDirectServiceApiKey);
+    }
     ["direct-service-name", "direct-service-url", "direct-service-key", "direct-service-default-model"].forEach(function (id) {
       var el = byId(id);
       if (el) {
@@ -7762,6 +7872,9 @@
           var err = byId("direct-service-editor-error");
           if (err) {
             err.textContent = "";
+          }
+          if (id === "direct-service-url") {
+            updateDirectServiceUrlImpact();
           }
         });
       }
