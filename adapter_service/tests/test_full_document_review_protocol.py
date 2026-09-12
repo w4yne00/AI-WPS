@@ -378,6 +378,84 @@ class FullDocumentReviewProtocolTests(unittest.TestCase):
         )
         self.assertEqual(restarted_provider.calls, 0)
 
+    def test_explicit_key_rotation_persists_stable_terminal_failure_across_restart(self):
+        class BlockingProvider:
+            def __init__(self, api_key, block=False):
+                self.api_key = api_key
+                self.block = block
+                self.calls = 0
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def resolve_task_auth(self, task_type):
+                return {
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "providerBaseUrl": "https://model.example/v1",
+                    "apiKey": self.api_key,
+                    "modelName": "review-model",
+                    "contextWindowTokens": 40000,
+                    "contextWindowTokensExplicit": True,
+                    "maxOutputTokens": 2048,
+                    "modelConfigurationId": "config-review",
+                    "directService": {"id": "direct-review", "revision": 2},
+                }
+
+            def full_document_review_chunk(self, *args, **kwargs):
+                self.calls += 1
+                self.started.set()
+                if self.block:
+                    self.release.wait(timeout=2)
+                    raise AdapterError("PROVIDER_TIMEOUT", "模型超时。", 504)
+                return FullDocumentReviewProtocolTests._answer(
+                    args[2], kwargs.get("blocks")
+                )
+
+        with TemporaryDirectory() as tmp, patch.dict(
+            os.environ, {"AI_WPS_ENABLE_FULL_DOCUMENT_REVIEW": "1"}, clear=False
+        ):
+            root = Path(tmp) / "full-review"
+            provider = BlockingProvider("old-secret", block=True)
+            coordinator = LongTaskCoordinator()
+            service = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=provider,
+                coordinator=coordinator,
+            )
+            snapshot = self._stage_public_snapshot(service, "轮换中的正文")
+            service.start_job(
+                {
+                    "snapshotId": snapshot["snapshotId"],
+                    "snapshotToken": snapshot["snapshotToken"],
+                    "clientJobId": "explicit-rotation-job",
+                },
+                "explicit-rotation-trace",
+            )
+            self.assertTrue(provider.started.wait(timeout=1))
+            coordinator.invalidate_by_auth(
+                "direct-review",
+                _digest("old-secret"),
+                service_revision=2,
+            )
+            provider.release.set()
+            failed = coordinator.wait(
+                "explicit-rotation-job", task_type="word.document_review.full"
+            )
+            restarted_provider = BlockingProvider("new-secret")
+            restarted = FullDocumentReviewService(
+                staging_root=root,
+                provider_client=restarted_provider,
+                coordinator=LongTaskCoordinator(),
+            )
+            rejected = restarted.get_job("explicit-rotation-job")
+
+        self.assertEqual(failed["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED")
+        self.assertIsNotNone(rejected)
+        self.assertEqual(rejected["status"], "failed")
+        self.assertEqual(
+            rejected["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+        )
+        self.assertEqual(restarted_provider.calls, 0)
+
     def test_identical_active_task_reuses_original_job_id(self):
         class Provider:
             def __init__(self):

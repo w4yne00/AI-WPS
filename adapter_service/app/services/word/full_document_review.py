@@ -268,6 +268,7 @@ class FullDocumentReviewService:
         self._recovery_rejections: Dict[str, Dict] = {}
         self._active_doc_sessions: Dict[Tuple[str, str, str], str] = {}
         self._lock = threading.Lock()
+        self._job_persistence_lock = threading.Lock()
         self._cleanup_stop = threading.Event()
         self._cleanup_thread = None
         self._staging_ttl_seconds = max(int(staging_ttl_seconds), 1)
@@ -420,6 +421,18 @@ class FullDocumentReviewService:
         status: str = "active",
         error_code: str = "",
     ) -> None:
+        with self._job_persistence_lock:
+            if snapshot.get("_authInvalidated"):
+                return
+            self._persist_job_state_unlocked(snapshot, state, status, error_code)
+
+    def _persist_job_state_unlocked(
+        self,
+        snapshot: Dict,
+        state: Dict,
+        status: str = "active",
+        error_code: str = "",
+    ) -> None:
         if not snapshot.get("_persistentJob"):
             return
         job_id = str(snapshot.get("jobId", ""))
@@ -479,6 +492,65 @@ class FullDocumentReviewService:
         self._write_private_json(job_dir / "checkpoint.json", checkpoint)
         with self._lock:
             self._job_records[job_id] = record
+
+    def _persist_auth_invalidation(self, snapshot: Dict, error: Dict) -> None:
+        snapshot["_authInvalidated"] = True
+        snapshot["_authInvalidatedError"] = deepcopy(error)
+        if not snapshot.get("_persistentJob"):
+            return
+        job_id = str(snapshot.get("jobId", ""))
+        if not _SAFE_ID.fullmatch(job_id):
+            return
+        with self._job_persistence_lock:
+            now = self._wall_clock()
+            with self._lock:
+                previous = self._job_records.get(job_id, {})
+            record = {
+                "schemaVersion": PERSISTENCE_SCHEMA_VERSION,
+                "jobId": job_id,
+                "traceId": str(snapshot.get("traceId", "")),
+                "taskType": TASK_TYPE,
+                "status": "auth_invalidated",
+                "createdAt": previous.get("createdAt", now),
+                "updatedAt": now,
+                "expiresAt": now + RECOVERABLE_FAILURE_TTL_SECONDS,
+                "errorCode": str(
+                    error.get("code") or "DIRECT_SERVICE_KEY_ROTATED"
+                ),
+            }
+            record["recordSha256"] = self._canonical_sha256(
+                {
+                    key: value
+                    for key, value in record.items()
+                    if key != "recordSha256"
+                }
+            )
+            self._remove_job_data(job_id)
+            self._ensure_root()
+            self._write_private_json(self._job_path(job_id), record)
+            with self._lock:
+                self._job_records[job_id] = record
+
+    def _load_auth_invalidation_record(self, path: Path) -> Optional[Dict]:
+        try:
+            with path.open("r", encoding="utf-8") as handle:
+                record = json.load(handle)
+        except (OSError, ValueError):
+            return None
+        if (
+            not isinstance(record, dict)
+            or record.get("schemaVersion") != PERSISTENCE_SCHEMA_VERSION
+            or record.get("taskType") != TASK_TYPE
+            or record.get("status") != "auth_invalidated"
+            or record.get("errorCode") != "DIRECT_SERVICE_KEY_ROTATED"
+            or not _SAFE_ID.fullmatch(str(record.get("jobId", "")))
+            or self._contains_secret_field(record)
+        ):
+            return None
+        expected = self._canonical_sha256(
+            {key: value for key, value in record.items() if key != "recordSha256"}
+        )
+        return record if record.get("recordSha256") == expected else None
 
     def _load_persisted_job(self, path: Path) -> Optional[Dict]:
         try:
@@ -577,6 +649,28 @@ class FullDocumentReviewService:
             return
         now = self._wall_clock()
         for path in paths:
+            invalidation_record = self._load_auth_invalidation_record(path)
+            if invalidation_record is not None:
+                expiry = float(invalidation_record.get("expiresAt", 0) or 0)
+                job_id = str(invalidation_record.get("jobId", ""))
+                if expiry and now >= expiry:
+                    self._remove_job_data(job_id)
+                    continue
+                self._job_records[job_id] = invalidation_record
+                self._recovery_rejections[job_id] = {
+                    "jobId": job_id,
+                    "traceId": str(invalidation_record.get("traceId", "")),
+                    "taskType": TASK_TYPE,
+                    "status": "failed",
+                    "phase": "failed",
+                    "createdAt": invalidation_record.get("createdAt", now),
+                    "updatedAt": invalidation_record.get("updatedAt", now),
+                    "error": {
+                        "code": "DIRECT_SERVICE_KEY_ROTATED",
+                        "message": "服务 API Key 已更换或清除，原任务已失效，请重新提交任务。",
+                    },
+                }
+                continue
             record = self._load_persisted_job(path)
             if record is None:
                 self._remove_job_data(path.parent.name[4:])
@@ -650,6 +744,8 @@ class FullDocumentReviewService:
             trace_id=str(snapshot.get("traceId", "")),
             task_type=TASK_TYPE,
             runner=self._run_job,
+            success_committer=self._commit_success,
+            auth_invalidation_committer=self._persist_auth_invalidation,
             snapshot=snapshot,
             failure_code="FULL_DOCUMENT_REVIEW_JOB_FAILED",
             failure_message="全篇审查任务失败，未生成报告。",
@@ -1704,6 +1800,7 @@ class FullDocumentReviewService:
                 if job_id in self._recovery_rejections:
                     return deepcopy(self._recovery_rejections[job_id])
             return None
+        job.pop("result", None)
         result = self._get_report(job_id)
         if isinstance(result, dict):
             job["report"] = {
@@ -2042,8 +2139,6 @@ class FullDocumentReviewService:
                     state.get("limitedRanges", []),
                     state.get("aggregateResult"),
                 )
-                self._save_report(job_id, report)
-                self._record_history_on_report_saved(job_id, snapshot, report)
                 return report
 
             chunk = state["pendingChunks"].pop(0)
@@ -2116,11 +2211,13 @@ class FullDocumentReviewService:
                 state.get("limitedRanges", []),
                 state.get("aggregateResult"),
             )
-            self._save_report(job_id, report)
-            self._record_history_on_report_saved(job_id, snapshot, report)
             return report
         except AdapterError as exc:
-            if snapshot.get("_persistentJob") and self._is_recoverable_failure(exc):
+            if (
+                snapshot.get("_persistentJob")
+                and not snapshot.get("_authInvalidated")
+                and self._is_recoverable_failure(exc)
+            ):
                 keep_staging = True
                 if active_chunk is not None and not any(
                     item.get("chunkId") == active_chunk.get("chunkId")
@@ -2137,7 +2234,8 @@ class FullDocumentReviewService:
         finally:
             if not keep_staging:
                 self._remove_snapshot(str(snapshot.get("snapshotId", "")))
-                self._remove_job_data(job_id)
+                if not snapshot.get("_authInvalidated"):
+                    self._remove_job_data(job_id)
                 host = str(snapshot.get("host") or "wps").strip()
                 doc_session = str(snapshot.get("documentSessionId") or "").strip()
                 if doc_session:
@@ -3367,6 +3465,11 @@ class FullDocumentReviewService:
         self._ensure_root()
         self._write_private_json(self._report_path(job_id), stored)
 
+    def _commit_success(self, snapshot: Dict, report: Dict) -> None:
+        job_id = str(snapshot.get("jobId") or "")
+        self._save_report(job_id, report)
+        self._record_history_on_report_saved(job_id, snapshot, report)
+
     def _record_history_on_report_saved(self, job_id: str, snapshot: Dict, report: Dict) -> None:
         try:
             doc_name = str(
@@ -3741,7 +3844,9 @@ class FullDocumentReviewService:
                 continue
             if child.name.startswith("job-"):
                 job_id = child.name[4:]
-                record = self._load_persisted_job(child / "job.json")
+                record = self._load_auth_invalidation_record(child / "job.json")
+                if record is None:
+                    record = self._load_persisted_job(child / "job.json")
                 expiry = float((record or {}).get("expiresAt", 0) or 0)
                 expired = record is None or (expiry and now >= expiry)
                 if expired:

@@ -101,6 +101,7 @@ class ExcelAnalysisJobStore:
                     "providerTimeoutSeconds": EXCEL_ANALYSIS_TIMEOUT_SECONDS,
                 },
                 safe_failure_codes=set(SAFE_ERROR_STATUSES),
+                success_committer=self._commit_success,
             )
             if doc_session:
                 self._active_doc_sessions[(host, task_type, doc_session)] = job_id
@@ -138,36 +139,6 @@ class ExcelAnalysisJobStore:
                 trace_id=snapshot.get("traceId", "") or "",
                 **analyzer_kwargs
             )
-            # Record success history
-            try:
-                task_auth = snapshot.get("taskAuth") or {}
-                service_name = str(task_auth.get("serviceName") or "").strip()
-                model_name = str(task_auth.get("modelName") or "").strip()
-                doc_name = str(snapshot.get("documentDisplayName") or "工作簿.xlsx").strip()
-                archived_result = {
-                    "structuredReport": {
-                        "overview": str((result.get("structuredReport") or {}).get("overview") or ""),
-                        "findings": list((result.get("structuredReport") or {}).get("findings") or []),
-                        "risks": list((result.get("structuredReport") or {}).get("risks") or []),
-                        "actions": list((result.get("structuredReport") or {}).get("actions") or []),
-                    },
-                    "plainText": str(result.get("plainText") or ""),
-                }
-                get_task_history_store().record_success(
-                    task_type="excel.analysis",
-                    job_id=job_id,
-                    result=archived_result,
-                    document_display_name=doc_name,
-                    service_name=service_name,
-                    model_name=model_name,
-                )
-            except TaskHistoryError as exc:
-                if exc.code == "HISTORY_ENTRY_TOO_LARGE":
-                    result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
-                else:
-                    result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
-            except Exception:
-                result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
             return result
         finally:
             if doc_session:
@@ -175,3 +146,38 @@ class ExcelAnalysisJobStore:
                     slot_key = (host, "excel.analysis", doc_session)
                     if self._active_doc_sessions.get(slot_key) == job_id:
                         self._active_doc_sessions.pop(slot_key, None)
+
+    @staticmethod
+    def _commit_success(snapshot: Dict, result: Dict) -> None:
+        try:
+            task_auth = snapshot.get("taskAuth") or {}
+            service_name = str(task_auth.get("serviceName") or "").strip()
+            model_name = str(task_auth.get("modelName") or "").strip()
+            doc_name = str(
+                snapshot.get("documentDisplayName") or "工作簿.xlsx"
+            ).strip()
+            structured_report = result.get("structuredReport") or {}
+            archived_result = {
+                "structuredReport": {
+                    "overview": str(structured_report.get("overview") or ""),
+                    "findings": list(structured_report.get("findings") or []),
+                    "risks": list(structured_report.get("risks") or []),
+                    "actions": list(structured_report.get("actions") or []),
+                },
+                "plainText": str(result.get("plainText") or ""),
+            }
+            get_task_history_store().record_success(
+                task_type="excel.analysis",
+                job_id=str(snapshot.get("jobId") or "").strip(),
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError as exc:
+            if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+            else:
+                result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
+        except Exception:
+            result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"

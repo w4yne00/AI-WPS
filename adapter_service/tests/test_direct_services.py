@@ -16,6 +16,28 @@ from app.services.direct_services import (
 
 
 class DirectServiceStoreTests(unittest.TestCase):
+    def test_model_mutations_require_expected_revision(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = DirectServiceStore(config_path, root / "keys")
+            service = store.create_service(
+                name="版本必填测试",
+                service_base_url="https://api.example.com/v1",
+            )
+
+            for operation in (
+                lambda: store.update_model_list(service["id"], ["model-a"]),
+                lambda: store.refresh_models(service["id"]),
+                lambda: store.validate_service(service["id"]),
+            ):
+                with self.assertRaises(DirectServiceError) as context:
+                    operation()
+                self.assertEqual(
+                    context.exception.code, "DIRECT_SERVICE_REVISION_REQUIRED"
+                )
+
     def _store(self, root: Path) -> DirectServiceStore:
         config_path = root / "adapter.json"
         if not config_path.exists():
@@ -380,6 +402,33 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         getattr(handler, method)()
         status, resp_body = writes[-1] if writes else (None, None)
         return {"status": status, "body": resp_body, "writes": writes}
+
+    def test_model_mutation_routes_reject_missing_expected_revision(self) -> None:
+        created = self._invoke(
+            "do_POST",
+            "/provider/direct-services",
+            {
+                "name": "版本路由测试",
+                "serviceBaseUrl": "https://api.example.com/v1",
+            },
+        )
+        service_id = created["body"]["data"]["directService"]["id"]
+
+        for action, body in (
+            ("models", {"modelList": ["model-a"]}),
+            ("refresh-models", {}),
+            ("validate", {}),
+        ):
+            response = self._invoke(
+                "do_POST",
+                f"/provider/direct-services/{service_id}/{action}",
+                body,
+            )
+            self.assertEqual(response["status"], 400)
+            self.assertEqual(
+                response["body"]["errors"][0]["code"],
+                "DIRECT_SERVICE_REVISION_REQUIRED",
+            )
 
     def test_standalone_direct_service_lifecycle(self) -> None:
         # 1. List services initially empty

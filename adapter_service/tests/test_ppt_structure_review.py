@@ -970,10 +970,10 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
         self.assertEqual(req.document_display_name, "方案汇报.pptx")
         self.assertEqual(req.host, "wpp")
 
-        # default host
+        # Omitted document session falls back to the presentation identity.
         req_default = parse_request(request_payload())
         self.assertEqual(req_default.host, "wpp")
-        self.assertEqual(req_default.document_session_id, "")
+        self.assertEqual(req_default.document_session_id, "项目汇报.pptx")
         self.assertEqual(req_default.document_display_name, "")
 
     def test_job_store_guards_document_session_slots_and_rejects_busy_duplicate(self):
@@ -1030,6 +1030,18 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
         sub2 = jobs.start(req2, "trace-2")
         self.assertEqual(sub1["jobId"], "client-job-session1")
         self.assertEqual(sub2["jobId"], "client-job-session2")
+        self.assertEqual(
+            coordinator.wait(
+                "client-job-session1", task_type="ppt.structure_review"
+            )["status"],
+            "completed",
+        )
+        self.assertEqual(
+            coordinator.wait(
+                "client-job-session2", task_type="ppt.structure_review"
+            )["status"],
+            "completed",
+        )
 
     def test_job_store_rejects_same_client_job_id_across_different_document_sessions(self):
         provider = RecordingProvider()

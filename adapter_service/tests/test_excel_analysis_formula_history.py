@@ -73,6 +73,7 @@ from app.core.models import (
 )
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
 from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
+from app.services.direct_services import DirectServiceStore
 from app.services.long_task_coordinator import LongTaskCoordinator
 from app.services.task_history import TaskHistoryError, TaskHistoryStore
 
@@ -165,32 +166,107 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
 
     def test_excel_analysis_request_model_attributes(self):
         req = ExcelAnalysisRequest(
-            workbook_id="wb-test",
-            client_job_id="job-analysis-001",
-            document_session_id="session-analysis-1",
-            document_display_name="财务报表.xlsx",
+            workbookId="wb-test",
+            clientJobId="job-analysis-001",
+            documentSessionId="session-analysis-1",
+            documentDisplayName="财务报表.xlsx",
             host="et",
-            scope=ExcelAnalysisScope(sheet_name="Sheet1", range_address="A1:C10"),
+            scope=ExcelAnalysisScope(sheetName="Sheet1", address="A1:C10"),
             table=ExcelAnalysisTable(headers=["日期", "项目", "金额"], rows=[["2026-01-01", "收入", "1000"]]),
-            options=ExcelAnalysisOptions(requirement="分析利润走势"),
+            options=ExcelAnalysisOptions(analysisRequirement="分析利润走势"),
         )
+        self.assertEqual(req.workbook_id, "wb-test")
+        self.assertEqual(req.client_job_id, "job-analysis-001")
         self.assertEqual(req.document_session_id, "session-analysis-1")
         self.assertEqual(req.document_display_name, "财务报表.xlsx")
         self.assertEqual(req.host, "et")
+        self.assertEqual(req.scope.sheet_name, "Sheet1")
+        self.assertEqual(req.scope.address, "A1:C10")
+        self.assertEqual(req.options.analysis_requirement, "分析利润走势")
+
+    @patch("app.services.excel.analysis_jobs.get_task_history_store")
+    def test_key_rotation_suppresses_real_analysis_history_commit(
+        self, mock_get_history
+    ):
+        service_id = "direct_svc_analysis_history"
+        service_revision = 11
+        old_fp = DirectServiceStore.api_key_fingerprint("sk-analysis-old")
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingAnalyzer(MockAnalyzer):
+            def snapshot_task_auth(self):
+                auth = super().snapshot_task_auth()
+                auth.update(
+                    {
+                        "directService": {
+                            "id": service_id,
+                            "revision": service_revision,
+                        },
+                        "apiKeyFingerprint": old_fp,
+                    }
+                )
+                return auth
+
+            def analyze(self, *args, **kwargs):
+                started.set()
+                release.wait(timeout=2)
+                return super().analyze(*args, **kwargs)
+
+        mock_get_history.return_value = self.history_store
+        store = ExcelAnalysisJobStore(
+            analyzer=BlockingAnalyzer(), coordinator=self.coordinator
+        )
+        request = ExcelAnalysisRequest(
+            workbookId="wb-rotation",
+            clientJobId="job-analysis-rotation",
+            documentSessionId="doc-analysis-rotation",
+            documentDisplayName="轮换分析.xlsx",
+            host="et",
+            table=ExcelAnalysisTable(headers=["A"], rows=[["1"]]),
+        )
+
+        store.start(request, "trace-analysis-rotation")
+        self.assertTrue(started.wait(timeout=1))
+        self.coordinator.invalidate_by_auth(
+            service_id,
+            old_fp,
+            service_revision=service_revision,
+        )
+        release.set()
+        terminal = self.coordinator.wait(
+            "job-analysis-rotation", task_type="excel.analysis"
+        )
+        for _ in range(100):
+            if self.coordinator.diagnostics()["runningCount"] == 0:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(
+            terminal["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+        )
+        self.assertEqual(
+            self.history_store.list_history(task_type="excel.analysis"), []
+        )
 
     def test_excel_formula_request_model_attributes(self):
         req = ExcelFormulaAssistantRequest(
-            workbook_id="wb-test",
-            client_job_id="job-formula-001",
-            document_session_id="session-formula-1",
-            document_display_name="工资表.xlsx",
+            workbookId="wb-test",
+            clientJobId="job-formula-001",
+            documentSessionId="session-formula-1",
+            documentDisplayName="工资表.xlsx",
             host="et",
-            selection=ExcelFormulaSelection(address="B2:B10", sheet_name="Sheet1"),
+            selection=ExcelFormulaSelection(address="B2:B10", sheetName="Sheet1"),
             options=ExcelFormulaOptions(mode="generate", requirement="计算总和"),
         )
+        self.assertEqual(req.workbook_id, "wb-test")
+        self.assertEqual(req.client_job_id, "job-formula-001")
         self.assertEqual(req.document_session_id, "session-formula-1")
         self.assertEqual(req.document_display_name, "工资表.xlsx")
         self.assertEqual(req.host, "et")
+        self.assertEqual(req.selection.sheet_name, "Sheet1")
+        self.assertEqual(req.selection.address, "B2:B10")
 
     @patch("app.services.excel.analysis_jobs.get_task_history_store")
     def test_excel_analysis_slot_busy_guard_and_history_recording(self, mock_get_history):
@@ -199,10 +275,10 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
         store = ExcelAnalysisJobStore(analyzer=analyzer, coordinator=self.coordinator)
 
         req1 = ExcelAnalysisRequest(
-            workbook_id="wb-1",
-            client_job_id="job-ana-001",
-            document_session_id="doc-session-A",
-            document_display_name="/path/to/私密路径/报表A.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-ana-001",
+            documentSessionId="doc-session-A",
+            documentDisplayName="/path/to/私密路径/报表A.xlsx",
             host="et",
             table=ExcelAnalysisTable(headers=["A", "B"], rows=[["1", "2"]]),
         )
@@ -211,10 +287,10 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
 
         # 1. Duplicate submission in same doc session must be blocked with 409
         req1_dup = ExcelAnalysisRequest(
-            workbook_id="wb-1",
-            client_job_id="job-ana-002",
-            document_session_id="doc-session-A",
-            document_display_name="报表A.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-ana-002",
+            documentSessionId="doc-session-A",
+            documentDisplayName="报表A.xlsx",
             host="et",
             table=ExcelAnalysisTable(headers=["A", "B"], rows=[["1", "2"]]),
         )
@@ -225,10 +301,10 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
 
         # 2. Concurrent submission in different doc session is permitted
         req2 = ExcelAnalysisRequest(
-            workbook_id="wb-2",
-            client_job_id="job-ana-003",
-            document_session_id="doc-session-B",
-            document_display_name="报表B.xlsx",
+            workbookId="wb-2",
+            clientJobId="job-ana-003",
+            documentSessionId="doc-session-B",
+            documentDisplayName="报表B.xlsx",
             host="et",
             table=ExcelAnalysisTable(headers=["X", "Y"], rows=[["3", "4"]]),
         )
@@ -262,10 +338,10 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
 
         # 5. After completion, slot is released and new job in session A is allowed
         req1_next = ExcelAnalysisRequest(
-            workbook_id="wb-1",
-            client_job_id="job-ana-004",
-            document_session_id="doc-session-A",
-            document_display_name="报表A.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-ana-004",
+            documentSessionId="doc-session-A",
+            documentDisplayName="报表A.xlsx",
             host="et",
             table=ExcelAnalysisTable(headers=["A", "B"], rows=[["1", "2"]]),
         )
@@ -287,12 +363,12 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
         store = ExcelFormulaAssistantJobStore(assistant=assistant, coordinator=self.coordinator)
 
         req1 = ExcelFormulaAssistantRequest(
-            workbook_id="wb-1",
-            client_job_id="job-form-001",
-            document_session_id="doc-session-FA",
-            document_display_name="/secret/dir/公式A.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-form-001",
+            documentSessionId="doc-session-FA",
+            documentDisplayName="/secret/dir/公式A.xlsx",
             host="et",
-            selection=ExcelFormulaSelection(address="A1:A5", sheet_name="Sheet1"),
+            selection=ExcelFormulaSelection(address="A1:A5", sheetName="Sheet1"),
             options=ExcelFormulaOptions(mode="generate", requirement="计算总和"),
         )
         started1 = store.start(req1, "trace-form-1")
@@ -300,12 +376,12 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
 
         # 1. Duplicate submission in same doc session must be blocked with 409
         req1_dup = ExcelFormulaAssistantRequest(
-            workbook_id="wb-1",
-            client_job_id="job-form-002",
-            document_session_id="doc-session-FA",
-            document_display_name="公式A.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-form-002",
+            documentSessionId="doc-session-FA",
+            documentDisplayName="公式A.xlsx",
             host="et",
-            selection=ExcelFormulaSelection(address="A1:A5", sheet_name="Sheet1"),
+            selection=ExcelFormulaSelection(address="A1:A5", sheetName="Sheet1"),
             options=ExcelFormulaOptions(mode="generate", requirement="计算总和"),
         )
         with self.assertRaises(AdapterError) as ctx:
@@ -340,12 +416,12 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
 
         # 4. Slot is released after completion
         req1_next = ExcelFormulaAssistantRequest(
-            workbook_id="wb-1",
-            client_job_id="job-form-003",
-            document_session_id="doc-session-FA",
-            document_display_name="公式A.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-form-003",
+            documentSessionId="doc-session-FA",
+            documentDisplayName="公式A.xlsx",
             host="et",
-            selection=ExcelFormulaSelection(address="A1:A5", sheet_name="Sheet1"),
+            selection=ExcelFormulaSelection(address="A1:A5", sheetName="Sheet1"),
             options=ExcelFormulaOptions(mode="generate", requirement="求均值"),
         )
         started_next = store.start(req1_next, "trace-form-3")
@@ -367,10 +443,10 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
         analyzer = MockAnalyzer(delay=0.0)
         store = ExcelAnalysisJobStore(analyzer=analyzer, coordinator=self.coordinator)
         req = ExcelAnalysisRequest(
-            workbook_id="wb-1",
-            client_job_id="job-overflow-001",
-            document_session_id="doc-overflow",
-            document_display_name="大表.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-overflow-001",
+            documentSessionId="doc-overflow",
+            documentDisplayName="大表.xlsx",
             host="et",
             table=ExcelAnalysisTable(headers=["A"], rows=[["1"]]),
         )
@@ -406,12 +482,12 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
         degraded_assistant = DegradedAssistant()
         store = ExcelFormulaAssistantJobStore(assistant=degraded_assistant, coordinator=self.coordinator)
         req = ExcelFormulaAssistantRequest(
-            workbook_id="wb-1",
-            client_job_id="job-form-degraded-001",
-            document_session_id="doc-degraded",
-            document_display_name="降级.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-form-degraded-001",
+            documentSessionId="doc-degraded",
+            documentDisplayName="降级.xlsx",
             host="et",
-            selection=ExcelFormulaSelection(address="A1:A5", sheet_name="Sheet1"),
+            selection=ExcelFormulaSelection(address="A1:A5", sheetName="Sheet1"),
             options=ExcelFormulaOptions(mode="generate", requirement="求和"),
         )
         store.start(req, "trace-degraded")
@@ -449,12 +525,12 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
         assistant = NormalAssistant()
         store = ExcelFormulaAssistantJobStore(assistant=assistant, coordinator=self.coordinator)
         req = ExcelFormulaAssistantRequest(
-            workbook_id="wb-1",
-            client_job_id="job-form-clean-001",
-            document_session_id="doc-clean",
-            document_display_name="正常.xlsx",
+            workbookId="wb-1",
+            clientJobId="job-form-clean-001",
+            documentSessionId="doc-clean",
+            documentDisplayName="正常.xlsx",
             host="et",
-            selection=ExcelFormulaSelection(address="B2:B10", sheet_name="Sheet1"),
+            selection=ExcelFormulaSelection(address="B2:B10", sheetName="Sheet1"),
             options=ExcelFormulaOptions(mode="generate", requirement="求均值"),
         )
         store.start(req, "trace-clean")

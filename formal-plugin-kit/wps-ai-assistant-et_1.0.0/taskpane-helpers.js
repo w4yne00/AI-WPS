@@ -4783,6 +4783,72 @@
     return Number(profileCount || 0) === 0 || Boolean(requested);
   }
 
+  var DIRECT_SERVICE_TASK_LABELS = {
+    "excel.analysis": "表格智能分析",
+    "excel.formula_assistant": "表格公式助手",
+    "excel.smart_fill": "表格智能填写",
+    "word.smart_write": "文字智能编写",
+    "word.smart_imitation": "文字智能仿写",
+    "word.document_review": "文字文档审查",
+    "word.format_review": "文字排版审查",
+    "ppt.slide_assistant": "幻灯片智能助手",
+    "ppt.structure_review": "幻灯片结构审查"
+  };
+
+  function formatReferencedTasks(tasks) {
+    if (!Array.isArray(tasks) || !tasks.length) {
+      return "";
+    }
+    return tasks.map(function (t) {
+      return DIRECT_SERVICE_TASK_LABELS[t] || t;
+    }).join("、");
+  }
+
+  function evaluateDirectServiceDelete(service) {
+    var s = service || {};
+    var referenced = Array.isArray(s.referencedTasks) ? s.referencedTasks : [];
+    if (referenced.length > 0) {
+      return {
+        canDelete: false,
+        referencedTasks: referenced,
+        reason: "in_use",
+        message: "该服务正被以下任务使用：" + formatReferencedTasks(referenced) + "，无法删除。请先在对应任务中切换或解除引用。"
+      };
+    }
+    return {
+      canDelete: true,
+      referencedTasks: [],
+      reason: "",
+      message: ""
+    };
+  }
+
+  function evaluateDirectServiceUrlImpact(service, draftUrl) {
+    var s = service || {};
+    var origUrl = String(s.serviceBaseUrl || "").trim();
+    var newUrl = String(draftUrl || "").trim();
+    var isModified = Boolean(origUrl && newUrl && origUrl !== newUrl);
+    var referenced = Array.isArray(s.referencedTasks) ? s.referencedTasks : [];
+    return {
+      isModified: isModified,
+      referencedCount: referenced.length,
+      referencedTasks: referenced,
+      warning: isModified && referenced.length > 0
+        ? "修改服务地址将影响以下任务：" + formatReferencedTasks(referenced) + "。保存后这些任务将立即调用新地址。"
+        : ""
+    };
+  }
+
+  function isDirectServiceRevisionConflict(error) {
+    if (!error) {
+      return false;
+    }
+    var code = String(error.adapterCode || error.code || (error.data && error.data.code) || "");
+    var msg = String(error.message || "");
+    var status = error.status || error.statusCode;
+    return code === "DIRECT_SERVICE_REVISION_CONFLICT" || status === 409 || msg.indexOf("冲突") !== -1 || msg.indexOf("conflict") !== -1;
+  }
+
   function normalizeExcelReportList(value) {
     if (Array.isArray(value)) {
       return value.map(function (item) {
@@ -5132,6 +5198,10 @@
     validateWorkflowProfileDraft: validateWorkflowProfileDraft,
     shouldActivateNewWorkflowProfile: shouldActivateNewWorkflowProfile,
     validateDirectServiceDraft: validateDirectServiceDraft,
+    formatReferencedTasks: formatReferencedTasks,
+    evaluateDirectServiceDelete: evaluateDirectServiceDelete,
+    evaluateDirectServiceUrlImpact: evaluateDirectServiceUrlImpact,
+    isDirectServiceRevisionConflict: isDirectServiceRevisionConflict,
     getDirectServiceCatalogState: getDirectServiceCatalogState,
     isDirectServiceManualModelAllowed: isDirectServiceManualModelAllowed,
     validateTaskModelSelectionDraft: validateTaskModelSelectionDraft,

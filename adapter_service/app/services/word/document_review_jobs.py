@@ -105,6 +105,7 @@ class DocumentReviewJobStore:
                 trace_id=trace_id,
                 task_type="word.document_review",
                 runner=self._run,
+                success_committer=self._commit_success,
                 snapshot=snapshot,
                 failure_code="DOCUMENT_REVIEW_JOB_FAILED",
                 failure_message="文档审查后台任务执行失败，请稍后重试或查看最近一次任务诊断。",
@@ -149,57 +150,6 @@ class DocumentReviewJobStore:
                 task_auth=snapshot.get("taskAuth"),
                 progress_callback=progress,
             )
-            try:
-                req = snapshot["request"]
-                doc_name = (
-                    getattr(req, "document_display_name", None)
-                    or getattr(req, "documentDisplayName", None)
-                    or getattr(req, "document_id", None)
-                    or getattr(req, "documentId", None)
-                    or ""
-                )
-                task_auth = snapshot.get("taskAuth") or {}
-                service_name = str(task_auth.get("serviceName") or "")
-                model_name = str(task_auth.get("modelName") or "")
-                job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
-
-                issues = result.get("issues") or []
-                category_counts = {}
-                severity_counts = {}
-                for iss in issues:
-                    cat = str(iss.get("category", "")).strip()
-                    if cat:
-                        category_counts[cat] = category_counts.get(cat, 0) + 1
-                    sev = str(iss.get("severity", "")).strip()
-                    if sev:
-                        severity_counts[sev] = severity_counts.get(sev, 0) + 1
-
-                archived_result = {
-                    "reportType": "document_review",
-                    "jobId": job_id,
-                    "summary": result.get("summary", ""),
-                    "issueCount": len(issues),
-                    "categoryCounts": category_counts,
-                    "severityCounts": severity_counts,
-                    "documentType": result.get("documentType", ""),
-                    "scope": result.get("scope", ""),
-                    "writingPolicyUsage": sanitize_usage_for_history(result.get("writingPolicyUsage")),
-                    "writingPolicyAudit": sanitize_audit_for_history(result.get("writingPolicyAudit")),
-                }
-                get_task_history_store().record_success(
-                    task_type="word.document_review",
-                    job_id=job_id,
-                    result=archived_result,
-                    document_display_name=doc_name,
-                    service_name=service_name,
-                    model_name=model_name,
-                )
-            except TaskHistoryError as exc:
-                if exc.code == "HISTORY_ENTRY_TOO_LARGE":
-                    result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
-            except Exception:
-                pass
-
             return result
         finally:
             req = snapshot.get("request")
@@ -214,3 +164,54 @@ class DocumentReviewJobStore:
                 with self._submission_lock:
                     if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
                         self._active_doc_sessions.pop(slot_key, None)
+
+    @staticmethod
+    def _commit_success(snapshot: Dict, result: Dict) -> None:
+        try:
+            req = snapshot["request"]
+            doc_name = (
+                getattr(req, "document_display_name", None)
+                or getattr(req, "documentDisplayName", None)
+                or getattr(req, "document_id", None)
+                or getattr(req, "documentId", None)
+                or ""
+            )
+            task_auth = snapshot.get("taskAuth") or {}
+            service_name = str(task_auth.get("serviceName") or "")
+            model_name = str(task_auth.get("modelName") or "")
+            job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
+            issues = result.get("issues") or []
+            category_counts = {}
+            severity_counts = {}
+            for issue in issues:
+                category = str(issue.get("category", "")).strip()
+                if category:
+                    category_counts[category] = category_counts.get(category, 0) + 1
+                severity = str(issue.get("severity", "")).strip()
+                if severity:
+                    severity_counts[severity] = severity_counts.get(severity, 0) + 1
+            archived_result = {
+                "reportType": "document_review",
+                "jobId": job_id,
+                "summary": result.get("summary", ""),
+                "issueCount": len(issues),
+                "categoryCounts": category_counts,
+                "severityCounts": severity_counts,
+                "documentType": result.get("documentType", ""),
+                "scope": result.get("scope", ""),
+                "writingPolicyUsage": sanitize_usage_for_history(result.get("writingPolicyUsage")),
+                "writingPolicyAudit": sanitize_audit_for_history(result.get("writingPolicyAudit")),
+            }
+            get_task_history_store().record_success(
+                task_type="word.document_review",
+                job_id=job_id,
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError as exc:
+            if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+        except Exception:
+            pass

@@ -105,6 +105,7 @@ class PptSlideAssistantJobStore:
                     trace_id=trace_id,
                     task_type=task_type,
                     runner=self._run,
+                    success_committer=self._commit_success,
                     snapshot={
                         "request": _copy_request(request),
                         "taskAuth": task_auth,
@@ -166,52 +167,6 @@ class PptSlideAssistantJobStore:
                 trace_id=snapshot.get("traceId", "") or "",
                 **kwargs,
             )
-            try:
-                req = snapshot.get("request")
-                doc_name = (
-                    getattr(req, "document_display_name", "")
-                    or getattr(req, "presentation_id", "")
-                    or "演示文稿"
-                )
-                auth = snapshot.get("taskAuth") or {}
-                service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
-                model_name = auth.get("modelName") or result.get("provider") or "model"
-                job_id = str(snapshot.get("jobId") or snapshot.get("documentOwnerId") or snapshot.get("traceId") or "")
-
-                # Strict allowlist sanitization: strip prompt, userInstruction, fileToken, rawAnswer
-                source_mode = getattr(req, "source_mode", "slide")
-                if source_mode == "document":
-                    archived_result = {
-                        "resultType": "document",
-                        "deckTitle": result.get("deckTitle", ""),
-                        "documentSummary": result.get("documentSummary", ""),
-                        "recommendedSlideCount": result.get("recommendedSlideCount", 10),
-                        "slides": result.get("slides") or [],
-                        "globalStyleAdvice": result.get("globalStyleAdvice", ""),
-                        "plainText": result.get("plainText", ""),
-                    }
-                else:
-                    archived_result = {
-                        "resultType": "slide",
-                        "summary": result.get("summary", ""),
-                        "actionItems": result.get("actionItems") or [],
-                        "bulletPoints": result.get("bulletPoints") or [],
-                        "plainText": result.get("plainText", ""),
-                    }
-
-                get_task_history_store().record_success(
-                    task_type="ppt.slide_assistant",
-                    job_id=job_id,
-                    result=archived_result,
-                    document_display_name=doc_name,
-                    service_name=service_name,
-                    model_name=model_name,
-                )
-            except TaskHistoryError as exc:
-                if exc.code == "HISTORY_ENTRY_TOO_LARGE":
-                    result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
-            except Exception:
-                pass
             return result
         finally:
             if owner_id and self.document_file_store is not None:
@@ -223,3 +178,49 @@ class PptSlideAssistantJobStore:
                     slot_key = (host, "ppt.slide_assistant", doc_session)
                     if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
                         self._active_doc_sessions.pop(slot_key, None)
+
+    @staticmethod
+    def _commit_success(snapshot: Dict, result: Dict) -> None:
+        try:
+            req = snapshot.get("request")
+            doc_name = (
+                getattr(req, "document_display_name", "")
+                or getattr(req, "presentation_id", "")
+                or "演示文稿"
+            )
+            auth = snapshot.get("taskAuth") or {}
+            service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
+            model_name = auth.get("modelName") or result.get("provider") or "model"
+            job_id = str(snapshot.get("jobId") or snapshot.get("documentOwnerId") or snapshot.get("traceId") or "")
+            source_mode = getattr(req, "source_mode", "slide")
+            if source_mode == "document":
+                archived_result = {
+                    "resultType": "document",
+                    "deckTitle": result.get("deckTitle", ""),
+                    "documentSummary": result.get("documentSummary", ""),
+                    "recommendedSlideCount": result.get("recommendedSlideCount", 10),
+                    "slides": result.get("slides") or [],
+                    "globalStyleAdvice": result.get("globalStyleAdvice", ""),
+                    "plainText": result.get("plainText", ""),
+                }
+            else:
+                archived_result = {
+                    "resultType": "slide",
+                    "summary": result.get("summary", ""),
+                    "actionItems": result.get("actionItems") or [],
+                    "bulletPoints": result.get("bulletPoints") or [],
+                    "plainText": result.get("plainText", ""),
+                }
+            get_task_history_store().record_success(
+                task_type="ppt.slide_assistant",
+                job_id=job_id,
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError as exc:
+            if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+        except Exception:
+            pass

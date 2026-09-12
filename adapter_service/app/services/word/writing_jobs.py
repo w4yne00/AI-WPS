@@ -91,6 +91,7 @@ class WritingJobStore:
                 trace_id=trace_id,
                 task_type=self.task_type,
                 runner=self._run,
+                success_committer=self._commit_success,
                 snapshot=snapshot,
                 failure_code="WRITING_JOB_FAILED",
                 failure_message="{0}后台任务执行失败，请查看最近一次任务诊断。".format(label),
@@ -152,6 +153,9 @@ class WritingJobStore:
         else:
             result = self.worker.imitate(snapshot["request"], **kwargs)
 
+        return result
+
+    def _commit_success(self, snapshot: Dict, result: Dict) -> None:
         try:
             req = snapshot.get("request")
             doc_name = (
@@ -163,7 +167,6 @@ class WritingJobStore:
             service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
             model_name = auth.get("modelName") or result.get("provider") or "model"
             job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
-
             rewritten_text = result.get("rewrittenText", "")
             archived_result = {
                 "rewrittenText": rewritten_text,
@@ -173,7 +176,6 @@ class WritingJobStore:
                 "writingPolicyUsage": sanitize_usage_for_history(result.get("writingPolicyUsage")),
                 "writingPolicyAudit": sanitize_audit_for_history(result.get("writingPolicyAudit")),
             }
-
             get_task_history_store().record_success(
                 task_type=self.task_type,
                 job_id=job_id,
@@ -187,8 +189,6 @@ class WritingJobStore:
                 result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
         except Exception:
             pass
-
-        return result
 
 
 class SmartWriteJobStore(WritingJobStore):

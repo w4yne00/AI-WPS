@@ -90,6 +90,7 @@ class ExcelFormulaAssistantJobStore:
                 trace_id=trace_id,
                 task_type=task_type,
                 runner=self._run,
+                success_committer=self._commit_success,
                 snapshot={
                     "request": request,
                     "taskAuth": task_auth,
@@ -130,46 +131,6 @@ class ExcelFormulaAssistantJobStore:
                 trace_id=snapshot.get("traceId", "") or "",
                 **kwargs
             )
-            # Diagnostic degradation results must not be archived to history
-            if result.get("parseDiagnostic"):
-                result["historyNotice"] = "诊断降级结果未保存至历史记录。"
-                return result
-
-            # Record success history
-            try:
-                task_auth = snapshot.get("taskAuth") or {}
-                service_name = str(task_auth.get("serviceName") or "").strip()
-                model_name = str(task_auth.get("modelName") or "").strip()
-                doc_name = str(snapshot.get("documentDisplayName") or "工作簿.xlsx").strip()
-                primary_formula = str(result.get("primaryFormula") or "").strip()
-                archived_result = {
-                    "mode": str(result.get("mode") or "generate"),
-                    "primaryFormula": primary_formula,
-                    "alternativeFormula": str(result.get("alternativeFormula") or ""),
-                    "suggestedTarget": str(result.get("suggestedTarget") or ""),
-                    "explanation": str(result.get("explanation") or ""),
-                    "components": list(result.get("components") or []),
-                    "referenceRanges": list(result.get("referenceRanges") or []),
-                    "issues": list(result.get("issues") or []),
-                    "assumptions": list(result.get("assumptions") or []),
-                    "compatibilityNotes": list(result.get("compatibilityNotes") or []),
-                    "copyText": primary_formula,
-                }
-                get_task_history_store().record_success(
-                    task_type="excel.formula_assistant",
-                    job_id=job_id,
-                    result=archived_result,
-                    document_display_name=doc_name,
-                    service_name=service_name,
-                    model_name=model_name,
-                )
-            except TaskHistoryError as exc:
-                if exc.code == "HISTORY_ENTRY_TOO_LARGE":
-                    result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
-                else:
-                    result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
-            except Exception:
-                result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
             return result
         finally:
             if doc_session:
@@ -177,3 +138,43 @@ class ExcelFormulaAssistantJobStore:
                     slot_key = (host, "excel.formula_assistant", doc_session)
                     if self._active_doc_sessions.get(slot_key) == job_id:
                         self._active_doc_sessions.pop(slot_key, None)
+
+    @staticmethod
+    def _commit_success(snapshot: Dict, result: Dict) -> None:
+        if result.get("parseDiagnostic"):
+            result["historyNotice"] = "诊断降级结果未保存至历史记录。"
+            return
+        try:
+            task_auth = snapshot.get("taskAuth") or {}
+            service_name = str(task_auth.get("serviceName") or "").strip()
+            model_name = str(task_auth.get("modelName") or "").strip()
+            doc_name = str(snapshot.get("documentDisplayName") or "工作簿.xlsx").strip()
+            primary_formula = str(result.get("primaryFormula") or "").strip()
+            archived_result = {
+                "mode": str(result.get("mode") or "generate"),
+                "primaryFormula": primary_formula,
+                "alternativeFormula": str(result.get("alternativeFormula") or ""),
+                "suggestedTarget": str(result.get("suggestedTarget") or ""),
+                "explanation": str(result.get("explanation") or ""),
+                "components": list(result.get("components") or []),
+                "referenceRanges": list(result.get("referenceRanges") or []),
+                "issues": list(result.get("issues") or []),
+                "assumptions": list(result.get("assumptions") or []),
+                "compatibilityNotes": list(result.get("compatibilityNotes") or []),
+                "copyText": primary_formula,
+            }
+            get_task_history_store().record_success(
+                task_type="excel.formula_assistant",
+                job_id=str(snapshot.get("jobId") or "").strip(),
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError as exc:
+            if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+            else:
+                result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
+        except Exception:
+            result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
