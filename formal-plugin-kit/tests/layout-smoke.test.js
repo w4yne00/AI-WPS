@@ -614,9 +614,9 @@ assert.ok(excelJs.includes('"?resume=1"'));
 const excelSubmitStart = excelJs.indexOf("function runExcelAnalysisAction()");
 const excelSubmitEnd = excelJs.indexOf("\n  function ", excelSubmitStart + 1);
 const excelSubmitSource = excelJs.slice(excelSubmitStart, excelSubmitEnd);
-assert.ok(excelSubmitSource.includes("state.excelAnalysisResumeExpected = true"));
+assert.ok(excelSubmitSource.includes("taskSession.resumeExpected = true"));
 assert.ok(
-  excelSubmitSource.indexOf("state.excelAnalysisResumeExpected = true") <
+  excelSubmitSource.indexOf("taskSession.resumeExpected = true") <
     excelSubmitSource.indexOf('request("/excel/analysis/jobs"')
 );
 assert.ok(excelJs.includes("longTaskCoordinator"));

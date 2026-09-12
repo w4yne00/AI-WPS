@@ -436,15 +436,16 @@ function testGeometryAndReducedMotion() {
 }
 
 function testRealViewportLayoutWithBrowser() {
-  const { execSync } = require("child_process");
+  const { execFileSync } = require("child_process");
   try {
-    execSync("which agent-browser", { stdio: "ignore" });
+    execFileSync("agent-browser", ["--version"], { stdio: "ignore" });
   } catch (_) {
     console.log("agent-browser not installed, skipping browser viewport layout assertions");
     return;
   }
   const os = require("os");
-  const tempFile = path.join(os.tmpdir(), `ai-wps-format-review-viewport-${Date.now()}.html`);
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "ab-"));
+  const tempFile = path.join(tempDir, "viewport.html");
   const view = present({
     summary: { coverageStatus: "complete", tocExemptionSummary: "目录已自动豁免" },
     issues: sameLocationIssues()
@@ -484,18 +485,21 @@ body { margin: 0; padding: 12px; box-sizing: border-box; }
 </html>`;
 
   fs.writeFileSync(tempFile, htmlContent, "utf8");
-  const sessionName = `test-narrow-${Date.now()}`;
-  const run = (cmd) => execSync(`agent-browser --session ${sessionName} ${cmd}`, { encoding: "utf8" });
+  // Keep browser sockets/profile separate from the user's agent-browser sessions.
+  const run = (...args) => execFileSync("agent-browser", ["--session", "viewport", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, AGENT_BROWSER_SOCKET_DIR: tempDir }
+  });
   const evalScript = (script) => {
     const b64 = Buffer.from(script).toString("base64");
-    return run(`eval -b ${b64}`).trim().split("\n").pop();
+    return run("eval", "-b", b64).trim().split("\n").pop();
   };
 
   try {
-    run(`open "file://${tempFile}"`);
+    run("open", require("url").pathToFileURL(tempFile).href);
 
     // 1. Test at 320x700
-    run("set viewport 320 700");
+    run("set", "viewport", "320", "700");
     const sw320 = evalScript("document.documentElement.scrollWidth");
     assert.ok(Number(sw320) <= 320, `scrollWidth at 320 viewport must be <= 320, got ${sw320}`);
 
@@ -514,7 +518,7 @@ body { margin: 0; padding: 12px; box-sizing: border-box; }
     assert.strictEqual(actionRow320, "true", "action row must fit within 320px viewport");
 
     // 2. Test at 420x900
-    run("set viewport 420 900");
+    run("set", "viewport", "420", "900");
     const sw420 = evalScript("document.documentElement.scrollWidth");
     assert.ok(Number(sw420) <= 420, `scrollWidth at 420 viewport must be <= 420, got ${sw420}`);
 
@@ -522,7 +526,7 @@ body { margin: 0; padding: 12px; box-sizing: border-box; }
     assert.strictEqual(toolbar420, "true", "toolbar must fit within 420px viewport");
   } finally {
     try { run("close"); } catch (_) {}
-    try { fs.unlinkSync(tempFile); } catch (_) {}
+    fs.rmSync(tempDir, { recursive: true, force: true });
   }
 }
 

@@ -1,4 +1,5 @@
 const assert = require("assert");
+const test = require("node:test");
 const fs = require("fs");
 const path = require("path");
 const vm = require("vm");
@@ -86,7 +87,7 @@ assert.ok(js.includes("DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY"));
 const resume = functionSource("resumeDeterministicFormatReviewActiveJob");
 assert.ok(resume.includes('job.status === "failed"'));
 assert.ok(resume.includes('job.status === "cancelled"'));
-assert.ok(resume.includes("clearDeterministicFormatReviewActiveJob(jobId)"));
+// Exercise terminal cleanup below; its document-bound call signature is an implementation detail.
 assert.ok(
   resume.indexOf("request(") < resume.indexOf("setModelTaskBusy(true)"),
   "resume must peek job status before locking the start button"
@@ -584,3 +585,61 @@ assert.ok(associationMarkdown.includes("题注关联"));
 assert.ok(associationMarkdown.includes("当前值：无法识别"));
 assert.ok(!associationMarkdown.includes("Unmapped Font"));
 assert.ok(!associationMarkdown.includes("{\"status\""));
+
+
+for (const status of ["completed", "failed", "cancelled"]) {
+  test(`resuming a ${status} format-review job clears only its document session`, async () => {
+    const taskType = "word.format_review";
+    const ownerKey = "ai-wps:review-active-job:word.format_review:doc-A";
+    const otherKey = "ai-wps:review-active-job:word.format_review:doc-B";
+    const owner = { jobId: "job-A", documentSessionId: "doc-A", host: "wps", taskType, startedAt: Date.now() };
+    const other = { jobId: "job-B", documentSessionId: "doc-B", host: "wps", taskType };
+    const storage = new Map([[ownerKey, JSON.stringify(owner)], [otherKey, JSON.stringify(other)]]);
+    const state = {
+      currentMode: "formatReview", deterministicFormatReviewEnabled: true,
+      deterministicFormatReviewJobId: "", modelTaskBusy: false, documentSessionId: "doc-A",
+      activeTaskSlots: {}, activeReviewJobs: { "wps::word.format_review::doc-A": owner }
+    };
+    helpers.claimTaskSlot(state.activeTaskSlots, "wps", taskType, "doc-B", "job-B");
+    const effects = [];
+    let finishRequest;
+    const sandbox = vm.createContext({
+      state, helpers: { ...helpers, getDocumentSessionId: () => "doc-A" },
+      getActiveDocument: () => ({}),
+      window: { localStorage: {
+        get length() { return storage.size; },
+        key: index => Array.from(storage.keys())[index],
+        getItem: key => storage.get(key) || null,
+        removeItem: key => storage.delete(key)
+      } },
+      request: () => new Promise(resolve => { finishRequest = resolve; }),
+      DETERMINISTIC_FORMAT_REVIEW_POLL_MAX_WAIT_MS: 3600000,
+      DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS: 10000,
+      DETERMINISTIC_FORMAT_REVIEW_ACTIVE_JOB_STORAGE_KEY: "legacy-format-review",
+      setModelTaskBusy: busy => { state.modelTaskBusy = busy; },
+      setDocumentReviewCancelVisible: () => {},
+      setStatus: message => effects.push(message),
+      setPlainResult: result => effects.push(result),
+      pollDeterministicFormatReviewJob: () => effects.push("poll"),
+      loadDeterministicFormatReviewReport: () => effects.push("load-report")
+    });
+    vm.runInContext([
+      "getWritingDocTaskKey", "getReviewActiveJobStorageKey", "loadDeterministicFormatReviewActiveJob",
+      "clearDeterministicFormatReviewActiveJob", "releaseTaskSlotsForJob", "setActiveReviewJobRecord",
+      "cleanupDeterministicFormatReviewTerminal", "resumeDeterministicFormatReviewActiveJob"
+    ].map(functionSource).join("\n"), sandbox);
+    assert.strictEqual(vm.runInContext("resumeDeterministicFormatReviewActiveJob()", sandbox), true);
+    assert.strictEqual(state.modelTaskBusy, false, "pre-query must not present an active task");
+    assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", taskType, "doc-A"), true);
+    finishRequest({ data: { status } });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(storage.has(ownerKey), false);
+    assert.strictEqual(storage.get(otherKey), JSON.stringify(other));
+    assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", taskType, "doc-A"), false);
+    assert.strictEqual(helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", taskType, "doc-B"), true);
+    assert.strictEqual(state.activeReviewJobs["wps::word.format_review::doc-A"], undefined);
+    assert.strictEqual(state.deterministicFormatReviewJobId, "");
+    assert.strictEqual(state.modelTaskBusy, false);
+    assert.deepStrictEqual(effects, [], "old terminal results must not be rendered or polled again");
+  });
+}

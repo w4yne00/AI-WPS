@@ -17,7 +17,9 @@ function functionSource(name) {
   }
   assert.ok(start >= 0, `missing function ${name}`);
   const next = taskpaneSource.indexOf("\n  function ", start + 3);
-  return taskpaneSource.slice(start, next === -1 ? taskpaneSource.length : next);
+  const common = ['getCurrentExcelDocumentSession', 'getExcelTaskSession', 'isExcelTaskVisible', 'restoreSmartFillSessionState'];
+  const dependencies = common.includes(name) ? '' : common.map(functionSource).join('\n');
+  return dependencies + '\n' + taskpaneSource.slice(start, next === -1 ? taskpaneSource.length : next);
 }
 
 function createBaseTestContext(initialOverrides = {}) {
@@ -73,9 +75,6 @@ function createBaseTestContext(initialOverrides = {}) {
     analysisResult: null,
     formulaResult: null,
     smartFillResult: null,
-    excelAnalysisJobId: "",
-    excelFormulaJobId: "",
-    excelSmartFillJobId: "",
     formulaMode: "generate",
     historyOpen: false,
     historyUnreadCount: 0,
@@ -129,7 +128,7 @@ function createBaseTestContext(initialOverrides = {}) {
     saveExcelAnalysisActiveJob: () => {},
     clearExcelFormulaActiveJob: () => {},
     saveExcelFormulaActiveJob: () => {},
-    setAnalysisBusy: (busy) => { state.busy = busy; },
+    setExcelTaskBusy: (busy) => { state.busy = busy; },
     setInterruptedRetryVisible: () => {},
     setExcelAnalysisCancelVisible: () => {},
     setFormulaInterruptedRetryVisible: () => {},
@@ -519,7 +518,7 @@ test("Behavioral: resume completed analysis job clears storage and leaves UI cle
   );
   // Must NOT set active analysis result in state
   assert.strictEqual(ctx.state.analysisResult, null, "analysisResult must remain null");
-  assert.strictEqual(ctx.state.excelAnalysisJobId, "", "excelAnalysisJobId must remain empty");
+  assert.strictEqual(ctx.state.excelTaskSessions["excel.analysis::" + currentSession].jobId, "", "completed analysis must not stay active");
 });
 
 test("Behavioral: resume completed formula job clears storage and leaves UI clean", async () => {
@@ -575,7 +574,7 @@ test("Behavioral: resume completed formula job clears storage and leaves UI clea
     "completed job must be cleared from storage"
   );
   assert.strictEqual(ctx.state.formulaResult, null, "formulaResult must remain null");
-  assert.strictEqual(ctx.state.excelFormulaJobId, "", "excelFormulaJobId must remain empty");
+  assert.strictEqual(ctx.state.excelTaskSessions["excel.formula_assistant::" + currentSession].jobId, "", "completed formula must not stay active");
 });
 
 test("Behavioral: History copy copies formula / analysis content", () => {
@@ -650,6 +649,7 @@ test("Behavioral: Clear history sends DELETE request for current task type", (t,
 test("Behavioral: Smart Fill draft, exclusions, and locked status preserved across mode switches", () => {
   const ctx = createBaseTestContext();
   const session = "doc_session_smart_fill";
+  ctx.defaultWorkbook.__ai_wps_doc_session__ = session;
   ctx.state.documentSessionId = session;
   ctx.state.smartFillResult = {
     items: [
@@ -738,7 +738,7 @@ test("Behavioral: Async job completion does not overwrite DOM when mode or sessi
 
   ctx.state.currentMode = "excelAnalysis";
   ctx.state.documentSessionId = sessionA;
-  ctx.state.excelAnalysisJobId = "job_bg_1";
+  ctx.state.excelTaskSessions = { "excel.analysis::session_A": { jobId: "job_bg_1" } };
 
   // Simulate network response resolving with completed result
   ctx.request = (url) => {
@@ -921,7 +921,7 @@ test("Behavioral: Different workbooks submit concurrently without being blocked 
     "function setScopeLine() {}",
     "function setInterruptedRetryVisible() {}",
     "function setExcelAnalysisCancelVisible() {}",
-    "function setAnalysisBusy() {}",
+    "function setExcelTaskBusy() {}",
     "function clearExcelAnalysisActiveJob() {}",
     "function startExcelAnalysisWaitFeedback() { return () => {}; }",
     "function saveExcelAnalysisActiveJob() {}"
@@ -953,4 +953,211 @@ test("Behavioral: Analysis result with historyNotice suppresses unread count inc
   // 2. Success with historyNotice (e.g. diagnostic degradation) -> does NOT increment unread
   vm.runInContext(`recordFinalizedAnalysisResult("job-a2", { structuredReport: {}, historyNotice: "未保存历史" }, true, "s1");`, sandbox);
   assert.strictEqual(ctx.state.historyUnreadCount, 1, "historyNotice must suppress unread count increment");
+});
+
+const flushJobs = () => new Promise(resolve => setImmediate(resolve));
+
+for (const [kind, taskType, mode] of [
+  ['Analysis', 'excel.analysis', 'excelAnalysis'],
+  ['Formula', 'excel.formula_assistant', 'excelFormulaAssistant'],
+  ['SmartFill', 'excel.smart_fill', 'excelSmartFill']
+]) {
+  test(`Concurrent ${kind}: two production submission and polling chains both finish`, async () => {
+    const ctx = createBaseTestContext({ state: { currentMode: mode } });
+    const pending = new Map();
+    const timers = [];
+    const rendered = [];
+    ctx.setTimeout = fn => { timers.push(fn); return fn; };
+    ctx.clearTimeout = fn => { const i = timers.indexOf(fn); if (i >= 0) timers.splice(i, 1); };
+    ctx[`buildExcel${kind}ClientJobId`] = () => 'job-' + ctx.state.documentSessionId;
+    ctx.byId('excel-formula-requirement').value = 'sum';
+    ctx.startExcelSmartFillWaitFeedback = () => () => {};
+    ctx.tryRebindSmartFillTarget = () => {};
+    ctx.extractExcelRange = () => ({ rows: 2 });
+    ctx.extractExcelFormulaRange = () => ({ rows: 2 });
+    ctx.buildExcelSmartFillRequest = () => ({ userInstruction: 'fill', source: {} });
+    ctx.summarizeSmartFillSource = () => 'source';
+    ctx.setSmartFillInterruptedRetryVisible = () => {};
+    ctx.setExcelSmartFillCancelVisible = () => {};
+    ctx.saveExcelSmartFillActiveJob = () => {};
+    ctx.clearExcelSmartFillActiveJob = () => {};
+    ctx.EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS = 30000;
+    ctx.EXCEL_ANALYSIS_POLL_INTERVAL_MS = 100;
+    ctx[`renderExcel${kind}JobProgress`] = () => {};
+    ctx[`renderExcel${kind}Result`] = result => rendered.push(result);
+    ctx.describeExcelSmartFillPollError = error => error.message;
+    ctx.isFatalExcelSmartFillPollError = () => true;
+    ctx.request = (url, body) => {
+      const id = body ? 'job-' + ctx.state.documentSessionId : url.split('/').pop().split('?')[0];
+      return new Promise(resolve => pending.set((body ? 'submit:' : 'poll:') + id, resolve));
+    };
+    const sandbox = vm.createContext(ctx);
+    const names = [`runExcel${kind}Action`, `pollExcel${kind}Job`, 'updateHistoryBadge'];
+    if (kind !== 'SmartFill') names.push(`scheduleExcel${kind}Poll`, `recordFinalized${kind}Result`);
+    else names.push('finalizeExcelSmartFillResult', 'recordFinalizedSmartFillResult', 'saveCurrentSmartFillSessionState');
+    vm.runInContext(names.map(functionSource).join('\n'), sandbox);
+    for (const session of ['A', 'B']) {
+      ctx.state.documentSessionId = session;
+      ctx.defaultWorkbook.__ai_wps_doc_session__ = session;
+      vm.runInContext(`runExcel${kind}Action()`, sandbox);
+      if (kind !== 'SmartFill') timers.shift()();
+      const submit = pending.get('submit:job-' + session);
+      assert.ok(submit, `${session} submitted`);
+      submit({ data: { jobId: 'job-' + session, status: 'running' } });
+      await flushJobs();
+      assert.ok(pending.has('poll:job-' + session), `${session} entered production poll`);
+    }
+    // A responds after B has replaced the foreground task; A must keep polling.
+    pending.get('poll:job-A')({ data: { status: 'running' } });
+    pending.delete('poll:job-A');
+    await flushJobs();
+    while (timers.length) timers.shift()();
+    assert.ok(pending.has('poll:job-A'), 'background A schedules its next production poll');
+    for (const session of ['A', 'B']) {
+      pending.get('poll:job-' + session)({ data: { status: 'completed', result: { plainText: session, items: [] } } });
+      await flushJobs();
+      const resultMap = ctx.state[`active${kind}ResultsBySession`];
+      assert.strictEqual(resultMap[session].plainText, session);
+      assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'et', taskType, session), false);
+    }
+    assert.deepStrictEqual(rendered.map(result => result.plainText), ['B']);
+  });
+}
+
+for (const [kind, taskType, mode] of [
+  ['Analysis', 'excel.analysis', 'excelAnalysis'], ['Formula', 'excel.formula_assistant', 'excelFormulaAssistant']
+]) {
+  test(`Resume ${kind}: timeout keeps document slot reserved`, async () => {
+    const ctx = createBaseTestContext({ state: { currentMode: mode } });
+    const session = ctx.state.documentSessionId;
+    ctx[`loadExcel${kind}ActiveJob`] = () => ({ jobId: 'resume-job', documentSessionId: session, host: 'et', taskType });
+    ctx.request = () => Promise.reject(Object.assign(new Error('timeout'), { status: 504 }));
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(`resumeExcel${kind}ActiveJob`), sandbox);
+    await vm.runInContext(`resumeExcel${kind}ActiveJob()`, sandbox);
+    assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'et', taskType, session), true);
+  });
+}
+
+test('Smart fill completion updates only owning session and does not render in analysis mode', () => {
+  const ctx = createBaseTestContext();
+  const own = { result: null, source: { snapshotHash: 'source-A' }, draftItems: [], target: null };
+  ctx.state.activeSmartFillStatesBySession = { A: own };
+  ctx.state.smartFillDraftItems = [{ itemId: 'B', value: 'B edit' }];
+  ctx.state.smartFillPreview = { status: 'locked', consumed: true };
+  ctx.state.smartFillTarget = { address: 'B9' };
+  ctx.state.smartFillRetryItemId = '';
+  ctx.tryRebindSmartFillTarget = () => {};
+  let renders = 0;
+  ctx.renderExcelSmartFillResult = () => { renders++; };
+  const sandbox = vm.createContext(ctx);
+  vm.runInContext(['finalizeExcelSmartFillResult', 'recordFinalizedSmartFillResult', 'saveCurrentSmartFillSessionState', 'updateHistoryBadge'].map(functionSource).join('\n'), sandbox);
+  vm.runInContext(`finalizeExcelSmartFillResult({items: [], plainText: 'A result'}, 'job-A', true, 'A')`, sandbox);
+  const saved = ctx.state.activeSmartFillStatesBySession.A;
+  assert.deepStrictEqual(saved.source, { snapshotHash: 'source-A' });
+  assert.strictEqual(saved.result.plainText, 'A result');
+  assert.strictEqual(saved.target, null);
+  assert.notStrictEqual(saved.preview && saved.preview.status, 'locked');
+  ctx.defaultWorkbook.__ai_wps_doc_session__ = 'A';
+  vm.runInContext(`finalizeExcelSmartFillResult({items: []}, 'job-A2', true, 'A')`, sandbox);
+  assert.strictEqual(renders, 0, 'same document in analysis mode must not render smart fill');
+});
+
+test('History delete ignores a late response after switching tasks', async () => {
+  const ctx = createBaseTestContext();
+  let resolveDelete;
+  ctx.request = () => new Promise(resolve => { resolveDelete = resolve; });
+  const sandbox = vm.createContext(ctx);
+  vm.runInContext(['handleSmartFillHistoryDeleteItem', 'getCurrentWorkflowTaskType', 'renderCurrentTaskHistoryList'].map(functionSource).join('\n'), sandbox);
+  vm.runInContext(`handleSmartFillHistoryDeleteItem('old')`, sandbox);
+  ctx.state.currentMode = 'excelFormulaAssistant';
+  ctx.state.historyRequestId++;
+  ctx.byId('excel-history-content').innerHTML = 'formula history';
+  ctx.state.statusMessage = 'formula status';
+  resolveDelete({});
+  await flushJobs();
+  assert.strictEqual(ctx.byId('excel-history-content').innerHTML, 'formula history');
+  assert.strictEqual(ctx.state.statusMessage, 'formula status');
+});
+
+for (const [kind, taskType, mode] of [
+  ['Analysis', 'excel.analysis', 'excelAnalysis'], ['Formula', 'excel.formula_assistant', 'excelFormulaAssistant']
+]) {
+  test(`Resume ${kind}: timeout blocks resubmission until authoritative 404`, async () => {
+    const ctx = createBaseTestContext({ state: { currentMode: mode } });
+    const session = ctx.state.documentSessionId;
+    let missing = false;
+    let cleared = false;
+    let queries = 0;
+    ctx[`loadExcel${kind}ActiveJob`] = () => ({ jobId: 'resume-job', documentSessionId: session, host: 'et', taskType });
+    ctx[`clearExcel${kind}ActiveJob`] = () => { cleared = true; };
+    ctx.request = () => { queries++; return Promise.reject(Object.assign(new Error('unavailable'), { status: missing ? 404 : 504 })); };
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext([`resumeExcel${kind}ActiveJob`, `runExcel${kind}Action`].map(functionSource).join('\n'), sandbox);
+    await vm.runInContext(`resumeExcel${kind}ActiveJob()`, sandbox);
+    vm.runInContext(`runExcel${kind}Action()`, sandbox);
+    await flushJobs();
+    assert.strictEqual(queries, 1, 'no new submission after recovery timeout');
+    assert.strictEqual(cleared, false);
+    missing = true;
+    await vm.runInContext(`resumeExcel${kind}ActiveJob()`, sandbox);
+    assert.strictEqual(queries, 2, 'can retry the retained recovery identity');
+    assert.strictEqual(cleared, true);
+    assert.strictEqual(helpers.isTaskSlotBusy(ctx.state.activeTaskSlots, 'et', taskType, session), false);
+  });
+}
+
+test('Smart fill background retry merges the owning result and preserves its other drafts', () => {
+  const ctx = createBaseTestContext();
+  ctx.state.activeSmartFillStatesBySession = { A: {
+    source: { snapshotHash: 'A-source' }, target: null,
+    retryItemId: 'a1',
+    retryBaseResult: { items: [{itemId: 'a1', value: 'old'}, {itemId: 'a2', value: 'keep'}] },
+    retryBaseDraftItems: [{itemId: 'a1', value: 'old'}, {itemId: 'a2', value: 'edited', selected: false}]
+  } };
+  ctx.state.smartFillRetryItemId = 'b1';
+  ctx.state.smartFillRetryBaseResult = { items: [{itemId: 'b1', value: 'B'}] };
+  const sandbox = vm.createContext(ctx);
+  vm.runInContext(['finalizeExcelSmartFillResult', 'recordFinalizedSmartFillResult', 'cloneSmartFillResult', 'smartFillResultById', 'updateHistoryBadge'].map(functionSource).join('\n'), sandbox);
+  vm.runInContext(`finalizeExcelSmartFillResult({items: [{itemId: 'a1', value: 'new'}]}, 'A-job', true, 'A')`, sandbox);
+  const own = ctx.state.activeSmartFillStatesBySession.A;
+  assert.strictEqual(own.result.items[0].value, 'new');
+  assert.strictEqual(own.result.items[1].value, 'keep');
+  assert.strictEqual(own.draftItems[0].value, 'edited');
+  assert.strictEqual(own.draftItems[0].selected, false);
+  assert.strictEqual(ctx.state.smartFillRetryItemId, 'b1');
+});
+
+test('Wait feedback timers do not write after workbook or mode changes', () => {
+  for (const kind of ['Analysis', 'Formula', 'SmartFill']) {
+    const ctx = createBaseTestContext();
+    const timers = [];
+    ctx.setTimeout = fn => { timers.push(fn); return fn; };
+    const sandbox = vm.createContext(ctx);
+    vm.runInContext(functionSource(`startExcel${kind}WaitFeedback`), sandbox);
+    vm.runInContext(`startExcel${kind}WaitFeedback()`, sandbox);
+    ctx.defaultWorkbook.__ai_wps_doc_session__ = 'other-workbook';
+    ctx.state.currentMode = 'settings';
+    ctx.state.statusMessage = 'settings';
+    ctx.byId('result-output').textContent = 'current result';
+    timers.forEach(fn => fn());
+    assert.strictEqual(ctx.state.statusMessage, 'settings');
+    assert.strictEqual(ctx.byId('result-output').textContent, 'current result');
+  }
+});
+
+test('Smart fill completion restores owner data before rendering when workbook watcher lags', () => {
+  const ctx = createBaseTestContext({ state: { currentMode: 'excelSmartFill', documentSessionId: 'B' } });
+  ctx.defaultWorkbook.__ai_wps_doc_session__ = 'A';
+  ctx.state.smartFillSource = { snapshotHash: 'B-source' };
+  ctx.state.smartFillTarget = { address: 'B9' };
+  ctx.state.activeSmartFillStatesBySession = { A: { source: { snapshotHash: 'A-source' }, target: null, instruction: 'A instruction' } };
+  ctx.tryRebindSmartFillTarget = () => {};
+  let renderedSource;
+  ctx.renderExcelSmartFillResult = () => { renderedSource = ctx.state.smartFillSource.snapshotHash; };
+  const sandbox = vm.createContext(ctx);
+  vm.runInContext(['finalizeExcelSmartFillResult', 'recordFinalizedSmartFillResult', 'updateHistoryBadge'].map(functionSource).join('\n'), sandbox);
+  vm.runInContext(`finalizeExcelSmartFillResult({items: []}, 'job-A', true, 'A')`, sandbox);
+  assert.strictEqual(renderedSource, 'A-source');
+  assert.strictEqual(ctx.state.smartFillTarget, null);
 });

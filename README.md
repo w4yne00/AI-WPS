@@ -216,6 +216,14 @@ cd wps-addon
 npm test
 ```
 
+Run the formal plugin tests from the repository root:
+
+```bash
+node --test formal-plugin-kit/tests/*.test.js
+```
+
+The JS/Python hash tests use `AI_WPS_HASH_CONTRACT_PYTHON` when set, otherwise the repository `.venv` interpreter, then `python3`. The selected environment needs `adapter_service/requirements.txt`. For Kylin, set `AI_WPS_HASH_CONTRACT_PYTHON=/mnt/ai-wps-test-venv/bin/python`. Browser viewport tests use an installed `agent-browser`, isolated temporary sockets, and an environment that permits Chrome to launch.
+
 Target-machine regression uses Python 3.8 on Kylin V10 ARM64 ([test host](./docs/operations/kylin-v10-test-environment.md)). Delivery audit scripts live under `packaging/`.
 
 ## Roadmap

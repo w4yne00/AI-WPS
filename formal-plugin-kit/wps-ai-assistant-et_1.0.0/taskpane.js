@@ -120,14 +120,6 @@
     workflowDeleteCandidate: null,
     busy: false,
     scopeWatcher: null,
-    excelAnalysisJobId: "",
-    excelAnalysisPollStartedAt: 0,
-    excelAnalysisPollErrorCount: 0,
-    excelAnalysisResumeExpected: false,
-    excelFormulaJobId: "",
-    excelFormulaPollStartedAt: 0,
-    excelFormulaPollErrorCount: 0,
-    excelFormulaResumeExpected: false,
     smartFillTarget: null,
     smartFillSource: null,
     smartFillItems: [],
@@ -142,15 +134,12 @@
     smartFillRetryItemId: "",
     smartFillRetryBaseResult: null,
     smartFillRetryBaseDraftItems: null,
-    excelSmartFillJobId: "",
     excelSmartFillCompletedJobId: "",
     excelSmartFillResultRevision: 0,
-    excelSmartFillPollStartedAt: 0,
-    excelSmartFillPollErrorCount: 0,
-    excelSmartFillResumeExpected: false,
     documentSessionId: "",
     documentDisplayName: "",
     activeTaskSlots: {},
+    excelTaskSessions: {},
     activeAnalysisResultsBySession: {},
     activeFormulaResultsBySession: {},
     activeSmartFillResultsBySession: {},
@@ -294,13 +283,42 @@
     setNodeTextIfChanged(byId("settings-status-line"), message || "");
   }
 
-  function setAnalysisBusy(isBusy, docSessionId) {
+  function getCurrentExcelDocumentSession() {
+    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
+    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
+    return (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
+  }
+
+  function getExcelTaskSession(taskType, documentSessionId) {
+    var session = documentSessionId || getCurrentExcelDocumentSession();
+    var key = taskType + "::" + session;
+    if (!state.excelTaskSessions) {
+      state.excelTaskSessions = {};
+    }
+    if (!state.excelTaskSessions[key]) {
+      state.excelTaskSessions[key] = {
+        jobId: "", pollStartedAt: 0, pollErrorCount: 0, resumeExpected: false
+      };
+    }
+    return state.excelTaskSessions[key];
+  }
+
+  function isExcelTaskVisible(taskType, documentSessionId) {
+    var modes = {
+      "excel.analysis": "excelAnalysis",
+      "excel.formula_assistant": "excelFormulaAssistant",
+      "excel.smart_fill": "excelSmartFill"
+    };
+    return state.currentMode === modes[taskType] && getCurrentExcelDocumentSession() === documentSessionId;
+  }
+
+  function setExcelTaskBusy(isBusy, docSessionId, taskType) {
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var session = docSessionId || (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
-    var isCurrent = (session === state.documentSessionId);
+    var isCurrent = session === getCurrentExcelDocumentSession() && (!taskType || isExcelTaskVisible(taskType, session));
     if (isCurrent) {
-      state.busy = Boolean(isBusy);
+      state.busy = Boolean(isBusy) || Boolean(helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", getCurrentWorkflowTaskType(), session));
       if (byId("btn-run-primary")) {
         byId("btn-run-primary").disabled = state.busy || state.workflowProfileMutationBusy;
       }
@@ -325,7 +343,7 @@
     var session = docSessionId || (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var currentTaskType = typeof getCurrentWorkflowTaskType === "function" ? getCurrentWorkflowTaskType() : "excel.analysis";
     var isBusy = helpers.isTaskSlotBusy ? helpers.isTaskSlotBusy(state.activeTaskSlots, "et", currentTaskType, session) : false;
-    setAnalysisBusy(isBusy, session);
+    setExcelTaskBusy(isBusy, session);
   }
 
   function setExcelAnalysisCancelVisible(visible, disabled) {
@@ -1145,6 +1163,27 @@
     ].join(" / ");
   }
 
+  function restoreSmartFillSessionState(saved) {
+    state.smartFillResult = saved.result;
+    state.smartFillPreview = saved.preview;
+    state.smartFillDraftItems = saved.draftItems || [];
+    state.smartFillItems = saved.items || [];
+    state.smartFillSource = saved.source || null;
+    state.smartFillTarget = saved.target || null;
+    state.smartFillEditBaselineAddress = saved.editBaselineAddress || "";
+    state.smartFillWorkbookId = saved.workbookId || "";
+    state.smartFillInstruction = saved.instruction || "";
+    state.excelSmartFillCompletedJobId = saved.completedJobId || "";
+    state.excelSmartFillResultRevision = saved.resultRevision || 0;
+    state.smartFillLiveTarget = null;
+    state.smartFillRetryItemId = saved.retryItemId || "";
+    state.smartFillRetryBaseResult = saved.retryBaseResult || null;
+    state.smartFillRetryBaseDraftItems = saved.retryBaseDraftItems || null;
+    if (byId("excel-smart-fill-instruction")) {
+      byId("excel-smart-fill-instruction").value = saved.instruction || "";
+    }
+  }
+
   function syncActiveSessionView(docSessionId) {
     var session = docSessionId || state.documentSessionId || "default";
     if (state.currentMode === "excelAnalysis") {
@@ -1185,26 +1224,23 @@
       }
     } else if (state.currentMode === "excelSmartFill") {
       var savedSmartFillState = (state.activeSmartFillStatesBySession && state.activeSmartFillStatesBySession[session]) || null;
-      if (savedSmartFillState && savedSmartFillState.preview) {
-        state.smartFillResult = savedSmartFillState.result;
-        state.smartFillPreview = savedSmartFillState.preview;
-        state.smartFillDraftItems = savedSmartFillState.draftItems || [];
-        state.smartFillItems = savedSmartFillState.items || [];
-        state.smartFillSource = savedSmartFillState.source || null;
-        state.smartFillTarget = savedSmartFillState.target || null;
-        state.smartFillEditBaselineAddress = savedSmartFillState.editBaselineAddress || "";
-        state.smartFillWorkbookId = savedSmartFillState.workbookId || "";
-        state.smartFillInstruction = savedSmartFillState.instruction || "";
-        state.excelSmartFillCompletedJobId = savedSmartFillState.completedJobId || "";
+      if (savedSmartFillState) {
+        restoreSmartFillSessionState(savedSmartFillState);
         if (typeof setExcelResultViewSwitchForMode === "function") {
           setExcelResultViewSwitchForMode("excelSmartFill");
         }
         if (byId("btn-copy-formula")) {
           byId("btn-copy-formula").hidden = true;
         }
-        rerenderExcelSmartFillPreview();
-        tryRebindSmartFillTarget();
-        setSmartFillWriteButtonState();
+        if (savedSmartFillState.preview) {
+          rerenderExcelSmartFillPreview();
+          tryRebindSmartFillTarget();
+          setSmartFillWriteButtonState();
+        } else if (savedSmartFillState.result) {
+          renderExcelSmartFillResult(savedSmartFillState.result, savedSmartFillState.draftItems);
+        } else {
+          setPlainResult("正在等待智能填写任务完成。");
+        }
       } else {
         state.smartFillResult = (state.activeSmartFillResultsBySession && state.activeSmartFillResultsBySession[session]) || null;
         if (state.smartFillResult && typeof renderExcelSmartFillResult === "function") {
@@ -2351,6 +2387,7 @@
   }
 
   function writeExcelSmartFillResult() {
+    var taskSession = getExcelTaskSession("excel.smart_fill");
     var app = getEtApplication();
     var workbook = getActiveWorkbook(app);
     var range = getSelectionRange(app);
@@ -2375,7 +2412,7 @@
       setStatus("智能填写写回组件不可用，请重新打开任务窗格。");
       return;
     }
-    var currentJobId = state.excelSmartFillCompletedJobId || state.excelSmartFillJobId || "";
+    var currentJobId = state.excelSmartFillCompletedJobId || taskSession.jobId || "";
     var currentWorkbookId = state.smartFillWorkbookId || readSmartFillWorkbookId(workbook);
     var currentSourceHash = (state.smartFillSource && state.smartFillSource.snapshotHash) || "";
     var currentRevision = state.excelSmartFillResultRevision || 1;
@@ -2733,62 +2770,35 @@
   }
 
   function finalizeExcelSmartFillResult(data, completedJobId, isSuccess, boundDocSessionId) {
-    var app = typeof getEtApplication === "function" ? getEtApplication() : null;
-    var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
-    var currentSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
-    var targetDocSession = boundDocSessionId || currentSession;
-    var isCurrentDoc = (targetDocSession === currentSession);
-
-    var retryItemId = state.smartFillRetryItemId;
-    var base = state.smartFillRetryBaseResult;
-    var baseDraftItems = state.smartFillRetryBaseDraftItems;
-    var replacement;
-    var merged;
-    var nextPreservedDrafts = null;
+    var targetDocSession = boundDocSessionId || getCurrentExcelDocumentSession();
+    var saved = (state.activeSmartFillStatesBySession || {})[targetDocSession] || {};
+    var retryItemId = saved.retryItemId;
+    var result = data || {};
+    var preservedDrafts = null;
     var success = typeof isSuccess !== "undefined" ? Boolean(isSuccess) : true;
-
-    if (!retryItemId || !base) {
-      if (isCurrentDoc) {
-        if (completedJobId) {
-          state.excelSmartFillCompletedJobId = completedJobId;
-        }
-        state.excelSmartFillResultRevision = (state.excelSmartFillResultRevision || 0) + 1;
-        tryRebindSmartFillTarget(data || {});
-        state.smartFillRetryItemId = "";
-        state.smartFillRetryBaseResult = null;
-        state.smartFillRetryBaseDraftItems = null;
-        renderExcelSmartFillResult(data || {});
+    if (retryItemId && saved.retryBaseResult) {
+      var replacement = smartFillResultById(result, retryItemId);
+      var merged = cloneSmartFillResult(saved.retryBaseResult);
+      if (replacement && Array.isArray(merged.items)) {
+        merged.items = merged.items.map(function (item) {
+          return item.itemId === retryItemId ? replacement : item;
+        });
+        merged.provider = result.provider || merged.provider || "";
+        merged.partial = Boolean(result.partial);
+        merged.stopReason = result.stopReason || "";
       }
-      recordFinalizedSmartFillResult(completedJobId, data || {}, success, targetDocSession);
-      return;
-    }
-    replacement = smartFillResultById(data || {}, retryItemId);
-    merged = cloneSmartFillResult(base) || {};
-    if (replacement && Array.isArray(merged.items)) {
-      merged.items = merged.items.map(function (item) {
-        return item.itemId === retryItemId ? replacement : item;
-      });
-      merged.provider = data.provider || merged.provider || "";
-      merged.partial = Boolean(data.partial);
-      merged.stopReason = data.stopReason || "";
-    }
-    if (baseDraftItems) {
-      nextPreservedDrafts = baseDraftItems.filter(function (draft) {
-        return draft.itemId !== retryItemId;
-      });
-    }
-    if (isCurrentDoc) {
-      if (completedJobId) {
-        state.excelSmartFillCompletedJobId = completedJobId;
+      result = merged;
+      if (saved.retryBaseDraftItems) {
+        preservedDrafts = saved.retryBaseDraftItems.filter(function (draft) {
+          return draft.itemId !== retryItemId;
+        });
       }
-      state.excelSmartFillResultRevision = (state.excelSmartFillResultRevision || 0) + 1;
-      tryRebindSmartFillTarget(merged || {});
-      state.smartFillRetryItemId = "";
-      state.smartFillRetryBaseResult = null;
-      state.smartFillRetryBaseDraftItems = null;
-      renderExcelSmartFillResult(merged, nextPreservedDrafts, retryItemId);
     }
-    recordFinalizedSmartFillResult(completedJobId, merged, success, targetDocSession);
+    recordFinalizedSmartFillResult(completedJobId, result, success, targetDocSession, preservedDrafts);
+    if (isExcelTaskVisible("excel.smart_fill", targetDocSession)) {
+      restoreSmartFillSessionState(state.activeSmartFillStatesBySession[targetDocSession]);
+      renderExcelSmartFillResult(result, preservedDrafts, retryItemId);
+    }
   }
 
   function updateHistoryBadge() {
@@ -2809,6 +2819,7 @@
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var docSessionId = boundDocSessionId || currentDocSession;
+    if (docSessionId !== currentDocSession) { return; }
     if (!state.activeSmartFillStatesBySession) {
       state.activeSmartFillStatesBySession = {};
     }
@@ -2822,11 +2833,15 @@
       editBaselineAddress: state.smartFillEditBaselineAddress,
       workbookId: state.smartFillWorkbookId,
       instruction: state.smartFillInstruction,
+      retryItemId: state.smartFillRetryItemId,
+      retryBaseResult: state.smartFillRetryBaseResult,
+      retryBaseDraftItems: state.smartFillRetryBaseDraftItems,
+      resultRevision: state.excelSmartFillResultRevision,
       completedJobId: state.excelSmartFillCompletedJobId
     };
   }
 
-  function recordFinalizedSmartFillResult(completedJobId, result, isSuccess, boundDocSessionId) {
+  function recordFinalizedSmartFillResult(completedJobId, result, isSuccess, boundDocSessionId, preservedDrafts) {
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -2835,9 +2850,20 @@
       state.activeSmartFillResultsBySession = {};
     }
     state.activeSmartFillResultsBySession[docSessionId] = result;
-    if (typeof saveCurrentSmartFillSessionState === "function") {
-      saveCurrentSmartFillSessionState(docSessionId);
+    if (!state.activeSmartFillStatesBySession) {
+      state.activeSmartFillStatesBySession = {};
     }
+    var saved = state.activeSmartFillStatesBySession[docSessionId] || {};
+    // Build the terminal snapshot from its owner, never from the foreground projection.
+    saved.preview = null;
+    saved.draftItems = preservedDrafts || [];
+    saved.resultRevision = (saved.resultRevision || 0) + 1;
+    saved.result = result;
+    saved.completedJobId = completedJobId || "";
+    saved.retryItemId = "";
+    saved.retryBaseResult = null;
+    saved.retryBaseDraftItems = null;
+    state.activeSmartFillStatesBySession[docSessionId] = saved;
     if (isSuccess && (!result || !result.historyNotice)) {
       state.historyUnreadCount = (state.historyUnreadCount || 0) + 1;
       updateHistoryBadge();
@@ -3191,10 +3217,14 @@
     if (!id) {
       return;
     }
+    var requestedTaskType = getCurrentWorkflowTaskType();
+    state.historyRequestId = (state.historyRequestId || 0) + 1;
+    var thisRequestId = state.historyRequestId;
     request("/history/" + encodeURIComponent(id), null, {
       method: "DELETE",
       timeoutMs: 8000
     }).then(function () {
+      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) { return; }
       state.historyItems = state.historyItems.filter(function (it) {
         return it.id !== id;
       });
@@ -3204,6 +3234,7 @@
       }
       setStatus("已删除该条历史记录。");
     }).catch(function (error) {
+      if (thisRequestId !== state.historyRequestId || getCurrentWorkflowTaskType() !== requestedTaskType) { return; }
       setStatus("删除历史记录失败：" + error.message);
     });
   }
@@ -3282,12 +3313,15 @@
 
   function startExcelFormulaWaitFeedback() {
     var timers = [];
+    var session = getCurrentExcelDocumentSession();
     var modeUi = getFormulaModeUi(state.formulaMode);
     timers.push(setTimeout(function () {
+      if (!isExcelTaskVisible("excel.formula_assistant", session)) { return; }
       setStatus(modeUi.waitingStatus);
       setPlainResult("公式助手请求已提交，模型后台正在处理。请保持 WPS 和 adapter 打开。");
     }, 8000));
     timers.push(setTimeout(function () {
+      if (!isExcelTaskVisible("excel.formula_assistant", session)) { return; }
       setStatus(modeUi.stillWaitingStatus);
       setPlainResult("公式助手仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复提交。");
     }, 30000));
@@ -3298,11 +3332,14 @@
 
   function startExcelAnalysisWaitFeedback() {
     var timers = [];
+    var session = getCurrentExcelDocumentSession();
     timers.push(setTimeout(function () {
+      if (!isExcelTaskVisible("excel.analysis", session)) { return; }
       setStatus("模型后台正在处理智能分析，请继续等待...");
       setPlainResult("智能分析请求已提交，模型后台正在处理。数据量较大或繁忙时可能需要更久，请保持 WPS 和 adapter 打开。");
     }, 8000));
     timers.push(setTimeout(function () {
+      if (!isExcelTaskVisible("excel.analysis", session)) { return; }
       setStatus("智能分析仍在等待模型后台返回...");
       setPlainResult("智能分析仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复点击分析按钮。");
     }, 30000));
@@ -3311,12 +3348,6 @@
         clearTimeout(timer);
       });
     };
-  }
-
-  function scheduleExcelAnalysisPoll(jobId, stopWaiting, delayMs) {
-    setTimeout(function () {
-      pollExcelAnalysisJob(jobId, stopWaiting);
-    }, delayMs);
   }
 
   function isFatalExcelAnalysisPollError(error) {
@@ -3359,6 +3390,7 @@
   }
 
   function finishCancelledExcelAnalysis(jobId, stopWaiting, boundDocSessionId) {
+    var taskSession = getExcelTaskSession("excel.analysis", boundDocSessionId);
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var latestSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -3369,11 +3401,11 @@
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
     }
-    if (state.excelAnalysisJobId === jobId) {
-      state.excelAnalysisJobId = "";
-      state.excelAnalysisPollStartedAt = 0;
-      state.excelAnalysisPollErrorCount = 0;
-      state.excelAnalysisResumeExpected = false;
+    if (taskSession.jobId === jobId) {
+      taskSession.jobId = "";
+      taskSession.pollStartedAt = 0;
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = false;
     }
     stopWaiting();
     if (isCurrent) {
@@ -3384,7 +3416,8 @@
   }
 
   function cancelQueuedExcelAnalysisJob() {
-    var jobId = state.excelAnalysisJobId;
+    var taskSession = getExcelTaskSession("excel.analysis");
+    var jobId = taskSession.jobId;
     if (!jobId) {
       return;
     }
@@ -3397,28 +3430,28 @@
       method: "DELETE",
       timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
-      if (state.excelAnalysisJobId !== jobId) {
+      if (taskSession.jobId !== jobId) {
         return;
       }
       if ((body.data || {}).status === "cancelled") {
         finishCancelledExcelAnalysis(jobId, function () {
-          setAnalysisBusy(false, targetDocSession);
+          setExcelTaskBusy(false, targetDocSession, "excel.analysis");
         }, targetDocSession);
       }
     }).catch(function (error) {
       var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
       var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
       var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
-      if (state.excelAnalysisJobId === jobId && state.currentMode === "excelAnalysis" && curr === targetDocSession) {
+      if (taskSession.jobId === jobId && state.currentMode === "excelAnalysis" && curr === targetDocSession) {
         setExcelAnalysisCancelVisible(true, false);
         setStatus("取消排队任务失败：" + describeExcelAnalysisPollError(error));
       }
     });
   }
 
-  function pollExcelAnalysisJob(jobId, stopWaiting) {
-    var boundDocSessionId = arguments[2];
-    if (!jobId || state.excelAnalysisJobId !== jobId) {
+  function pollExcelAnalysisJob(jobId, stopWaiting, boundDocSessionId) {
+    var taskSession = getExcelTaskSession("excel.analysis", boundDocSessionId);
+    if (!jobId || taskSession.jobId !== jobId) {
       return;
     }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -3427,15 +3460,12 @@
     var targetDocSession = boundDocSessionId || currentSession;
 
     function isVisibleForTask() {
-      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
-      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
-      return state.currentMode === "excelAnalysis" && curr === targetDocSession;
+      return isExcelTaskVisible("excel.analysis", targetDocSession);
     }
 
     request(
       "/excel/analysis/jobs/" + encodeURIComponent(jobId) +
-        (state.excelAnalysisResumeExpected ? "?resume=1" : ""),
+        (taskSession.resumeExpected ? "?resume=1" : ""),
       null,
       {
         timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
@@ -3443,27 +3473,27 @@
     )
       .then(function (body) {
         var job = body.data || {};
-        if (state.excelAnalysisJobId !== jobId) {
+        if (taskSession.jobId !== jobId) {
           return;
         }
-        state.excelAnalysisPollErrorCount = 0;
+        taskSession.pollErrorCount = 0;
         if (isVisibleForTask()) {
           setTrace(body.traceId || job.traceId || jobId);
         }
         saveExcelAnalysisActiveJob({
           jobId: jobId,
           traceId: body.traceId || job.traceId || "",
-          startedAt: state.excelAnalysisPollStartedAt || Date.now(),
+          startedAt: taskSession.pollStartedAt || Date.now(),
           documentSessionId: targetDocSession,
           host: "et",
           taskType: "excel.analysis"
         });
         if (job.status === "completed") {
           clearExcelAnalysisActiveJob(jobId, targetDocSession);
-          if (state.excelAnalysisJobId === jobId) {
-            state.excelAnalysisJobId = "";
-            state.excelAnalysisPollStartedAt = 0;
-            state.excelAnalysisResumeExpected = false;
+          if (taskSession.jobId === jobId) {
+            taskSession.jobId = "";
+            taskSession.pollStartedAt = 0;
+            taskSession.resumeExpected = false;
           }
           recordFinalizedAnalysisResult(jobId, job.result || {}, true, targetDocSession);
           stopWaiting();
@@ -3485,10 +3515,10 @@
         }
         if (job.status === "failed") {
           clearExcelAnalysisActiveJob(jobId, targetDocSession);
-          if (state.excelAnalysisJobId === jobId) {
-            state.excelAnalysisJobId = "";
-            state.excelAnalysisPollStartedAt = 0;
-            state.excelAnalysisResumeExpected = false;
+          if (taskSession.jobId === jobId) {
+            taskSession.jobId = "";
+            taskSession.pollStartedAt = 0;
+            taskSession.resumeExpected = false;
           }
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
@@ -3511,21 +3541,21 @@
         var message;
         var withinRetryBudget;
         var retryDelay;
-        if (state.excelAnalysisJobId !== jobId) {
+        if (taskSession.jobId !== jobId) {
           return;
         }
         message = describeExcelAnalysisPollError(error);
-        state.excelAnalysisPollErrorCount = (state.excelAnalysisPollErrorCount || 0) + 1;
-        elapsed = Date.now() - (state.excelAnalysisPollStartedAt || Date.now());
+        taskSession.pollErrorCount = (taskSession.pollErrorCount || 0) + 1;
+        elapsed = Date.now() - (taskSession.pollStartedAt || Date.now());
         if (error && error.adapterCode === "EXCEL_ANALYSIS_JOB_INTERRUPTED") {
           clearExcelAnalysisActiveJob(jobId, targetDocSession);
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
           }
-          state.excelAnalysisJobId = "";
-          state.excelAnalysisPollStartedAt = 0;
-          state.excelAnalysisPollErrorCount = 0;
-          state.excelAnalysisResumeExpected = false;
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.pollErrorCount = 0;
+          taskSession.resumeExpected = false;
           stopWaiting();
           if (isVisibleForTask()) {
             setExcelAnalysisCancelVisible(false);
@@ -3537,7 +3567,7 @@
         }
         if (!isFatalExcelAnalysisPollError(error)) {
           withinRetryBudget = (
-            state.excelAnalysisPollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
+            taskSession.pollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
             elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
           );
           retryDelay = withinRetryBudget
@@ -3546,7 +3576,7 @@
           saveExcelAnalysisActiveJob({
             jobId: jobId,
             traceId: state.traceId || "",
-            startedAt: state.excelAnalysisPollStartedAt || Date.now(),
+            startedAt: taskSession.pollStartedAt || Date.now(),
             documentSessionId: targetDocSession,
             host: "et",
             taskType: "excel.analysis"
@@ -3560,7 +3590,7 @@
                 ? "智能分析状态查询暂时失败，adapter 后台任务可能仍在执行，将继续自动刷新。"
                 : "智能分析任务连接中断，前台不会丢弃任务编号，将继续低频自动刷新。",
               "这不代表模型后台任务失败；如果模型后台已收到请求，请保持 WPS 和 adapter 打开。",
-              "已重试：" + state.excelAnalysisPollErrorCount + "/" + EXCEL_ANALYSIS_POLL_MAX_ERRORS,
+              "已重试：" + taskSession.pollErrorCount + "/" + EXCEL_ANALYSIS_POLL_MAX_ERRORS,
               "任务编号：" + jobId,
               "最近错误：" + message
             ].join("\n"));
@@ -3572,9 +3602,9 @@
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", targetDocSession, jobId);
         }
-        state.excelAnalysisJobId = "";
-        state.excelAnalysisPollStartedAt = 0;
-        state.excelAnalysisPollErrorCount = 0;
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.pollErrorCount = 0;
         stopWaiting();
         if (isVisibleForTask()) {
           setStatus("智能分析状态查询持续失败，请查看最近一次任务诊断。");
@@ -3584,6 +3614,7 @@
   }
 
   function resumeExcelAnalysisActiveJob() {
+    var taskSession = getExcelTaskSession("excel.analysis");
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -3599,46 +3630,65 @@
       clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
       return;
     }
+    if (taskSession.jobId && !taskSession.recoveryPending) {
+      return;
+    }
+    taskSession.recoveryPending = false;
+    taskSession.jobId = active.jobId;
+    taskSession.pollStartedAt = active.startedAt || Date.now();
+    taskSession.resumeExpected = true;
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.analysis", currentDocSession, active.jobId);
+    }
+    setExcelTaskBusy(true, currentDocSession, "excel.analysis");
     state.documentSessionId = currentDocSession;
     return request("/excel/analysis/jobs/" + encodeURIComponent(active.jobId) + "?resume=1", null, {
       timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
+      if (taskSession.jobId !== active.jobId) { return; }
       var job = body && body.data ? body.data : {};
       if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
         clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
-        state.excelAnalysisJobId = "";
-        state.excelAnalysisPollStartedAt = 0;
-        state.excelAnalysisResumeExpected = false;
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.resumeExpected = false;
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", currentDocSession, active.jobId);
         }
+        setExcelTaskBusy(false, currentDocSession, "excel.analysis");
         return;
       }
       if (helpers.claimTaskSlot) {
         helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.analysis", currentDocSession, active.jobId);
       }
-      state.excelAnalysisJobId = active.jobId;
-      state.excelAnalysisPollStartedAt = active.startedAt || Date.now();
-      state.excelAnalysisPollErrorCount = 0;
-      state.excelAnalysisResumeExpected = true;
-      setInterruptedRetryVisible(false);
-      setAnalysisBusy(true, currentDocSession);
-      setTrace(active.traceId || active.jobId);
-      setStatus("已恢复未完成的智能分析任务，正在查询模型后台结果...");
-      setPlainResult([
-        "检测到未完成的智能分析任务，将继续查询 adapter 后台状态。",
-        "如果模型后台仍在处理，请保持 WPS 和 adapter 打开。",
-        "任务编号：" + active.jobId
-      ].join("\n"));
+      taskSession.jobId = active.jobId;
+      taskSession.pollStartedAt = active.startedAt || Date.now();
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = true;
+      if (isExcelTaskVisible("excel.analysis", currentDocSession)) {
+        setInterruptedRetryVisible(false);
+        setExcelTaskBusy(true, currentDocSession, "excel.analysis");
+        setTrace(active.traceId || active.jobId);
+        setStatus("已恢复未完成的智能分析任务，正在查询模型后台结果...");
+        setPlainResult([
+          "检测到未完成的智能分析任务，将继续查询 adapter 后台状态。",
+          "如果模型后台仍在处理，请保持 WPS 和 adapter 打开。",
+          "任务编号：" + active.jobId
+        ].join("\n"));
+      }
       pollExcelAnalysisJob(active.jobId, function () {
-        setAnalysisBusy(false, currentDocSession);
+        setExcelTaskBusy(false, currentDocSession, "excel.analysis");
       }, currentDocSession);
     }).catch(function (error) {
+      if (taskSession.jobId !== active.jobId) { return; }
+      taskSession.recoveryPending = true;
       if (error && (error.status === 404 || (error.adapterCode && error.adapterCode.indexOf("NOT_FOUND") >= 0))) {
+        taskSession.jobId = "";
         clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", currentDocSession, active.jobId);
         }
+        setExcelTaskBusy(false, currentDocSession, "excel.analysis");
       }
     });
   }
@@ -3672,6 +3722,7 @@
   }
 
   function runExcelAnalysisAction() {
+    var taskSession = getExcelTaskSession("excel.analysis");
     var stopWaiting;
     var clientJobId = buildExcelAnalysisClientJobId();
     var startedAt;
@@ -3683,10 +3734,7 @@
     state.documentDisplayName = docName;
 
     function isCurrentVisible() {
-      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
-      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
-      return state.currentMode === "excelAnalysis" && curr === docSessionId;
+      return isExcelTaskVisible("excel.analysis", docSessionId);
     }
 
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", "excel.analysis", docSessionId)) {
@@ -3702,13 +3750,14 @@
     }
 
     setTimeout(function () {
-      setAnalysisBusy(true, docSessionId);
+      if (!isCurrentVisible()) { return; }
+      setExcelTaskBusy(true, docSessionId, "excel.analysis");
       try {
         state.latestExcelPayload = extractExcelRange();
         byId("excel-range-summary").textContent = summarizeExcelPayload(state.latestExcelPayload);
         setScopeLine(summarizeExcelPayload(state.latestExcelPayload));
       } catch (error) {
-        setAnalysisBusy(false, docSessionId);
+        setExcelTaskBusy(false, docSessionId, "excel.analysis");
         setStatus("读取 Excel 表格失败：" + error.message);
         // Do NOT clear state.analysisResult on local validation/reading error!
         return;
@@ -3722,10 +3771,11 @@
         delete state.activeAnalysisResultsBySession[docSessionId];
       }
       clearExcelAnalysisActiveJob(null, docSessionId);
-      state.excelAnalysisJobId = clientJobId;
-      state.excelAnalysisPollStartedAt = 0;
-      state.excelAnalysisPollErrorCount = 0;
-      state.excelAnalysisResumeExpected = false;
+      taskSession.recoveryPending = false;
+      taskSession.jobId = clientJobId;
+      taskSession.pollStartedAt = 0;
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = false;
       byId("result-view-switch").hidden = true;
 
       if (helpers.claimTaskSlot) {
@@ -3738,7 +3788,7 @@
       (function (stopFeedback) {
         stopWaiting = function () {
           stopFeedback();
-          setAnalysisBusy(false, docSessionId);
+          setExcelTaskBusy(false, docSessionId, "excel.analysis");
         };
       })(stopWaiting);
 
@@ -3747,8 +3797,8 @@
       state.latestExcelPayload.documentSessionId = docSessionId;
       state.latestExcelPayload.documentDisplayName = docName;
       state.latestExcelPayload.host = "et";
-      state.excelAnalysisPollStartedAt = startedAt;
-      state.excelAnalysisResumeExpected = true;
+      taskSession.pollStartedAt = startedAt;
+      taskSession.resumeExpected = true;
       saveExcelAnalysisActiveJob({
         jobId: clientJobId,
         traceId: "",
@@ -3764,7 +3814,7 @@
         .then(function (body) {
           var job = body.data || {};
           var jobId = job.jobId || clientJobId || body.traceId;
-          if (state.excelAnalysisJobId !== clientJobId) {
+          if (taskSession.jobId !== clientJobId) {
             return;
           }
           if (isCurrentVisible()) {
@@ -3782,7 +3832,7 @@
             }
             return;
           }
-          state.excelAnalysisJobId = jobId;
+          taskSession.jobId = jobId;
           saveExcelAnalysisActiveJob({
             jobId: jobId,
             traceId: body.traceId || job.traceId || "",
@@ -3793,9 +3843,9 @@
           });
           if (job.status === "completed") {
             clearExcelAnalysisActiveJob(jobId, docSessionId);
-            state.excelAnalysisJobId = "";
-            state.excelAnalysisPollStartedAt = 0;
-            state.excelAnalysisResumeExpected = false;
+            taskSession.jobId = "";
+            taskSession.pollStartedAt = 0;
+            taskSession.resumeExpected = false;
             recordFinalizedAnalysisResult(jobId, job.result || {}, true, docSessionId);
             stopWaiting();
             if (isCurrentVisible()) {
@@ -3811,7 +3861,7 @@
         })
         .catch(function (error) {
           var message = describeExcelAnalysisPollError(error);
-          if (state.excelAnalysisJobId !== clientJobId) {
+          if (taskSession.jobId !== clientJobId) {
             return;
           }
           if (isFatalExcelAnalysisPollError(error)) {
@@ -3819,8 +3869,8 @@
             if (helpers.releaseTaskSlot) {
               helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.analysis", docSessionId, clientJobId);
             }
-            state.excelAnalysisJobId = "";
-            state.excelAnalysisPollStartedAt = 0;
+            taskSession.jobId = "";
+            taskSession.pollStartedAt = 0;
             stopWaiting();
             if (isCurrentVisible()) {
               setStatus("智能分析失败：" + message);
@@ -3887,6 +3937,7 @@
   }
 
   function finishCancelledExcelFormula(jobId, stopWaiting, boundDocSessionId) {
+    var taskSession = getExcelTaskSession("excel.formula_assistant", boundDocSessionId);
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var latestSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -3897,11 +3948,11 @@
     if (helpers.releaseTaskSlot) {
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
     }
-    if (state.excelFormulaJobId === jobId) {
-      state.excelFormulaJobId = "";
-      state.excelFormulaPollStartedAt = 0;
-      state.excelFormulaPollErrorCount = 0;
-      state.excelFormulaResumeExpected = false;
+    if (taskSession.jobId === jobId) {
+      taskSession.jobId = "";
+      taskSession.pollStartedAt = 0;
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = false;
     }
     stopWaiting();
     if (isCurrent) {
@@ -3912,7 +3963,8 @@
   }
 
   function cancelQueuedExcelFormulaJob() {
-    var jobId = state.excelFormulaJobId;
+    var taskSession = getExcelTaskSession("excel.formula_assistant");
+    var jobId = taskSession.jobId;
     if (!jobId) {
       return;
     }
@@ -3925,25 +3977,25 @@
       method: "DELETE",
       timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
-      if (state.excelFormulaJobId === jobId && (body.data || {}).status === "cancelled") {
+      if (taskSession.jobId === jobId && (body.data || {}).status === "cancelled") {
         finishCancelledExcelFormula(jobId, function () {
-          setAnalysisBusy(false, targetDocSession);
+          setExcelTaskBusy(false, targetDocSession, "excel.formula_assistant");
         }, targetDocSession);
       }
     }).catch(function (error) {
       var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
       var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
       var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
-      if (state.excelFormulaJobId === jobId && state.currentMode === "excelFormulaAssistant" && curr === targetDocSession) {
+      if (taskSession.jobId === jobId && state.currentMode === "excelFormulaAssistant" && curr === targetDocSession) {
         setExcelFormulaCancelVisible(true, false);
         setStatus("取消排队任务失败：" + describeExcelFormulaPollError(error));
       }
     });
   }
 
-  function pollExcelFormulaJob(jobId, stopWaiting) {
-    var boundDocSessionId = arguments[2];
-    if (!jobId || state.excelFormulaJobId !== jobId) {
+  function pollExcelFormulaJob(jobId, stopWaiting, boundDocSessionId) {
+    var taskSession = getExcelTaskSession("excel.formula_assistant", boundDocSessionId);
+    if (!jobId || taskSession.jobId !== jobId) {
       return;
     }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -3952,40 +4004,37 @@
     var targetDocSession = boundDocSessionId || currentDocSession;
 
     function isVisibleForTask() {
-      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
-      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
-      return state.currentMode === "excelFormulaAssistant" && curr === targetDocSession;
+      return isExcelTaskVisible("excel.formula_assistant", targetDocSession);
     }
 
     request(
       "/excel/formula-assistant/jobs/" + encodeURIComponent(jobId) +
-        (state.excelFormulaResumeExpected ? "?resume=1" : ""),
+        (taskSession.resumeExpected ? "?resume=1" : ""),
       null,
       { timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS }
     ).then(function (body) {
       var job = body.data || {};
-      if (state.excelFormulaJobId !== jobId) {
+      if (taskSession.jobId !== jobId) {
         return;
       }
-      state.excelFormulaPollErrorCount = 0;
+      taskSession.pollErrorCount = 0;
       if (isVisibleForTask()) {
         setTrace(body.traceId || job.traceId || jobId);
       }
       saveExcelFormulaActiveJob({
         jobId: jobId,
         traceId: body.traceId || job.traceId || "",
-        startedAt: state.excelFormulaPollStartedAt || Date.now(),
+        startedAt: taskSession.pollStartedAt || Date.now(),
         documentSessionId: targetDocSession,
         host: "et",
         taskType: "excel.formula_assistant"
       });
       if (job.status === "completed") {
         clearExcelFormulaActiveJob(jobId, targetDocSession);
-        if (state.excelFormulaJobId === jobId) {
-          state.excelFormulaJobId = "";
-          state.excelFormulaPollStartedAt = 0;
-          state.excelFormulaResumeExpected = false;
+        if (taskSession.jobId === jobId) {
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.resumeExpected = false;
         }
         recordFinalizedFormulaResult(jobId, job.result || {}, true, targetDocSession);
         stopWaiting();
@@ -4007,10 +4056,10 @@
       }
       if (job.status === "failed") {
         clearExcelFormulaActiveJob(jobId, targetDocSession);
-        if (state.excelFormulaJobId === jobId) {
-          state.excelFormulaJobId = "";
-          state.excelFormulaPollStartedAt = 0;
-          state.excelFormulaResumeExpected = false;
+        if (taskSession.jobId === jobId) {
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.resumeExpected = false;
         }
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
@@ -4032,21 +4081,21 @@
       var withinRetryBudget;
       var retryDelay;
       var message;
-      if (state.excelFormulaJobId !== jobId) {
+      if (taskSession.jobId !== jobId) {
         return;
       }
       message = describeExcelFormulaPollError(error);
-      state.excelFormulaPollErrorCount += 1;
-      elapsed = Date.now() - (state.excelFormulaPollStartedAt || Date.now());
+      taskSession.pollErrorCount += 1;
+      elapsed = Date.now() - (taskSession.pollStartedAt || Date.now());
       if (error && error.adapterCode === "EXCEL_FORMULA_JOB_INTERRUPTED") {
         clearExcelFormulaActiveJob(jobId, targetDocSession);
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
         }
-        state.excelFormulaJobId = "";
-        state.excelFormulaPollStartedAt = 0;
-        state.excelFormulaPollErrorCount = 0;
-        state.excelFormulaResumeExpected = false;
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.pollErrorCount = 0;
+        taskSession.resumeExpected = false;
         stopWaiting();
         if (isVisibleForTask()) {
           setExcelFormulaCancelVisible(false);
@@ -4058,7 +4107,7 @@
       }
       if (!isFatalExcelFormulaPollError(error)) {
         withinRetryBudget = (
-          state.excelFormulaPollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
+          taskSession.pollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
           elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
         );
         retryDelay = withinRetryBudget
@@ -4067,7 +4116,7 @@
         saveExcelFormulaActiveJob({
           jobId: jobId,
           traceId: state.traceId || "",
-          startedAt: state.excelFormulaPollStartedAt || Date.now(),
+          startedAt: taskSession.pollStartedAt || Date.now(),
           documentSessionId: targetDocSession,
           host: "et",
           taskType: "excel.formula_assistant"
@@ -4088,9 +4137,9 @@
       if (helpers.releaseTaskSlot) {
         helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", targetDocSession, jobId);
       }
-      state.excelFormulaJobId = "";
-      state.excelFormulaPollStartedAt = 0;
-      state.excelFormulaPollErrorCount = 0;
+      taskSession.jobId = "";
+      taskSession.pollStartedAt = 0;
+      taskSession.pollErrorCount = 0;
       stopWaiting();
       if (isVisibleForTask()) {
         setStatus("公式助手状态查询持续失败，请查看最近一次任务诊断。");
@@ -4100,6 +4149,7 @@
   }
 
   function resumeExcelFormulaActiveJob() {
+    var taskSession = getExcelTaskSession("excel.formula_assistant");
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentDocSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -4115,47 +4165,67 @@
       clearExcelFormulaActiveJob(active.jobId, currentDocSession);
       return;
     }
+    if (taskSession.jobId && !taskSession.recoveryPending) {
+      return;
+    }
+    taskSession.recoveryPending = false;
+    taskSession.jobId = active.jobId;
+    taskSession.pollStartedAt = active.startedAt || Date.now();
+    taskSession.resumeExpected = true;
+    if (helpers.claimTaskSlot) {
+      helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", currentDocSession, active.jobId);
+    }
+    setExcelTaskBusy(true, currentDocSession, "excel.formula_assistant");
     state.documentSessionId = currentDocSession;
     return request("/excel/formula-assistant/jobs/" + encodeURIComponent(active.jobId) + "?resume=1", null, {
       timeoutMs: EXCEL_ANALYSIS_POLL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
+      if (taskSession.jobId !== active.jobId) { return; }
       var job = body && body.data ? body.data : {};
       if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
         clearExcelFormulaActiveJob(active.jobId, currentDocSession);
-        state.excelFormulaJobId = "";
-        state.excelFormulaPollStartedAt = 0;
-        state.excelFormulaResumeExpected = false;
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.resumeExpected = false;
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", currentDocSession, active.jobId);
         }
+        setExcelTaskBusy(false, currentDocSession, "excel.formula_assistant");
         return;
       }
       if (helpers.claimTaskSlot) {
         helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", currentDocSession, active.jobId);
       }
-      state.excelFormulaJobId = active.jobId;
-      state.excelFormulaPollStartedAt = active.startedAt || Date.now();
-      state.excelFormulaPollErrorCount = 0;
-      state.excelFormulaResumeExpected = true;
-      setFormulaInterruptedRetryVisible(false);
-      setAnalysisBusy(true, currentDocSession);
-      setTrace(active.traceId || active.jobId);
-      setStatus("已恢复未完成的公式助手任务，正在查询模型后台结果...");
-      setPlainResult("检测到未完成的公式助手任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
+      taskSession.jobId = active.jobId;
+      taskSession.pollStartedAt = active.startedAt || Date.now();
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = true;
+      if (isExcelTaskVisible("excel.formula_assistant", currentDocSession)) {
+        setFormulaInterruptedRetryVisible(false);
+        setExcelTaskBusy(true, currentDocSession, "excel.formula_assistant");
+        setTrace(active.traceId || active.jobId);
+        setStatus("已恢复未完成的公式助手任务，正在查询模型后台结果...");
+        setPlainResult("检测到未完成的公式助手任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
+      }
       pollExcelFormulaJob(active.jobId, function () {
-        setAnalysisBusy(false, currentDocSession);
+        setExcelTaskBusy(false, currentDocSession, "excel.formula_assistant");
       }, currentDocSession);
     }).catch(function (error) {
+      if (taskSession.jobId !== active.jobId) { return; }
+      taskSession.recoveryPending = true;
       if (error && (error.status === 404 || (error.adapterCode && error.adapterCode.indexOf("NOT_FOUND") >= 0))) {
+        taskSession.jobId = "";
         clearExcelFormulaActiveJob(active.jobId, currentDocSession);
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", currentDocSession, active.jobId);
         }
+        setExcelTaskBusy(false, currentDocSession, "excel.formula_assistant");
       }
     });
   }
 
   function runExcelFormulaAction() {
+    var taskSession = getExcelTaskSession("excel.formula_assistant");
     var stopWaiting;
     var clientJobId = buildExcelFormulaClientJobId();
     var startedAt;
@@ -4167,10 +4237,7 @@
     state.documentDisplayName = docName;
 
     function isCurrentVisible() {
-      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
-      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
-      return state.currentMode === "excelFormulaAssistant" && curr === docSessionId;
+      return isExcelTaskVisible("excel.formula_assistant", docSessionId);
     }
 
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId)) {
@@ -4192,14 +4259,15 @@
     }
 
     setTimeout(function () {
+      if (!isCurrentVisible()) { return; }
       var payload;
-      setAnalysisBusy(true, docSessionId);
+      setExcelTaskBusy(true, docSessionId, "excel.formula_assistant");
       try {
         payload = extractExcelFormulaRange();
         byId("excel-formula-range-summary").textContent = summarizeExcelFormulaPayload(payload);
         setScopeLine(summarizeExcelFormulaPayload(payload));
       } catch (error) {
-        setAnalysisBusy(false, docSessionId);
+        setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
         setStatus("读取公式上下文失败：" + error.message);
         // Do NOT clear state.formulaResult on local validation error
         return;
@@ -4214,10 +4282,11 @@
       byId("btn-copy-formula").hidden = true;
       byId("excel-formula-alternative").hidden = true;
       clearExcelFormulaActiveJob(null, docSessionId);
-      state.excelFormulaJobId = clientJobId;
-      state.excelFormulaPollStartedAt = 0;
-      state.excelFormulaPollErrorCount = 0;
-      state.excelFormulaResumeExpected = false;
+      taskSession.recoveryPending = false;
+      taskSession.jobId = clientJobId;
+      taskSession.pollStartedAt = 0;
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = false;
       byId("result-view-switch").hidden = true;
 
       if (helpers.claimTaskSlot) {
@@ -4230,7 +4299,7 @@
       (function (stopFeedback) {
         stopWaiting = function () {
           stopFeedback();
-          setAnalysisBusy(false, docSessionId);
+          setExcelTaskBusy(false, docSessionId, "excel.formula_assistant");
         };
       })(stopWaiting);
 
@@ -4239,8 +4308,8 @@
       payload.documentSessionId = docSessionId;
       payload.documentDisplayName = docName;
       payload.host = "et";
-      state.excelFormulaPollStartedAt = startedAt;
-      state.excelFormulaResumeExpected = true;
+      taskSession.pollStartedAt = startedAt;
+      taskSession.resumeExpected = true;
       saveExcelFormulaActiveJob({
         jobId: clientJobId,
         startedAt: startedAt,
@@ -4254,7 +4323,7 @@
       }).then(function (body) {
         var job = body.data || {};
         var jobId = job.jobId || clientJobId || body.traceId;
-        if (state.excelFormulaJobId !== clientJobId) {
+        if (taskSession.jobId !== clientJobId) {
           return;
         }
         if (isCurrentVisible()) {
@@ -4272,7 +4341,7 @@
           }
           return;
         }
-        state.excelFormulaJobId = jobId;
+        taskSession.jobId = jobId;
         saveExcelFormulaActiveJob({
           jobId: jobId,
           traceId: body.traceId || job.traceId || "",
@@ -4283,9 +4352,9 @@
         });
         if (job.status === "completed") {
           clearExcelFormulaActiveJob(jobId, docSessionId);
-          state.excelFormulaJobId = "";
-          state.excelFormulaPollStartedAt = 0;
-          state.excelFormulaResumeExpected = false;
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.resumeExpected = false;
           recordFinalizedFormulaResult(jobId, job.result || {}, true, docSessionId);
           stopWaiting();
           if (isCurrentVisible()) {
@@ -4300,7 +4369,7 @@
         pollExcelFormulaJob(jobId, stopWaiting, docSessionId);
       }).catch(function (error) {
         var message = describeExcelFormulaPollError(error);
-        if (state.excelFormulaJobId !== clientJobId) {
+        if (taskSession.jobId !== clientJobId) {
           return;
         }
         if (isFatalExcelFormulaPollError(error)) {
@@ -4308,8 +4377,8 @@
           if (helpers.releaseTaskSlot) {
             helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.formula_assistant", docSessionId, clientJobId);
           }
-          state.excelFormulaJobId = "";
-          state.excelFormulaPollStartedAt = 0;
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
           stopWaiting();
           if (isCurrentVisible()) {
             setStatus("公式助手失败：" + message);
@@ -4342,11 +4411,14 @@
 
   function startExcelSmartFillWaitFeedback() {
     var timers = [];
+    var session = getCurrentExcelDocumentSession();
     timers.push(setTimeout(function () {
+      if (!isExcelTaskVisible("excel.smart_fill", session)) { return; }
       setStatus("模型后台正在处理智能填写，请继续等待..." );
       setPlainResult("智能填写请求已提交，模型后台正在处理。请保持 WPS 和 adapter 打开。" );
     }, 8000));
     timers.push(setTimeout(function () {
+      if (!isExcelTaskVisible("excel.smart_fill", session)) { return; }
       setStatus("智能填写仍在等待模型后台返回..." );
       setPlainResult("智能填写仍在等待模型后台返回。任务窗格会继续自动刷新，无需重复提交。" );
     }, 30000));
@@ -4406,6 +4478,7 @@
   }
 
   function finishCancelledExcelSmartFill(jobId, stopWaiting, partialResult, boundDocSessionId) {
+    var taskSession = getExcelTaskSession("excel.smart_fill", boundDocSessionId);
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentSession = (workbook && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
@@ -4416,11 +4489,11 @@
       helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
     }
     clearExcelSmartFillActiveJob(jobId, targetDocSession);
-    if (state.excelSmartFillJobId === jobId) {
-      state.excelSmartFillJobId = "";
-      state.excelSmartFillPollStartedAt = 0;
-      state.excelSmartFillPollErrorCount = 0;
-      state.excelSmartFillResumeExpected = false;
+    if (taskSession.jobId === jobId) {
+      taskSession.jobId = "";
+      taskSession.pollStartedAt = 0;
+      taskSession.pollErrorCount = 0;
+      taskSession.resumeExpected = false;
     }
     stopWaiting();
     if (partialResult && Array.isArray(partialResult.items) && partialResult.items.length) {
@@ -4439,7 +4512,8 @@
   }
 
   function cancelExcelSmartFillJob() {
-    var jobId = state.excelSmartFillJobId;
+    var taskSession = getExcelTaskSession("excel.smart_fill");
+    var jobId = taskSession.jobId;
     if (!jobId) {
       return;
     }
@@ -4451,13 +4525,13 @@
       method: "DELETE",
       timeoutMs: EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS
     }).then(function (body) {
-      if (state.excelSmartFillJobId === jobId) {
+      if (taskSession.jobId === jobId) {
         var job = (body && body.data) || {};
         if (job.status === "cancelled") {
           finishCancelledExcelSmartFill(jobId, function () {
-            setAnalysisBusy(false, docSessionId);
+            setExcelTaskBusy(false, docSessionId, "excel.smart_fill");
           }, job.result || null, docSessionId);
-        } else if (job.status === "running" && job.cancelRequested) {
+        } else if (job.status === "running" && job.cancelRequested && isExcelTaskVisible("excel.smart_fill", docSessionId)) {
           setStatus("智能填写正在停止，当前批次完成后将保留部分预览。");
         }
       }
@@ -4465,7 +4539,7 @@
       var app2 = typeof getEtApplication === "function" ? getEtApplication() : null;
       var wb2 = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app2) : null;
       var curr = (wb2 && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb2) : "") || state.documentSessionId || "default";
-      if (state.excelSmartFillJobId === jobId && state.currentMode === "excelSmartFill" && curr === docSessionId) {
+      if (taskSession.jobId === jobId && state.currentMode === "excelSmartFill" && curr === docSessionId) {
         setExcelSmartFillCancelVisible(true, false);
         setStatus("取消智能填写任务失败：" + describeExcelSmartFillPollError(error));
       }
@@ -4473,7 +4547,8 @@
   }
 
   function pollExcelSmartFillJob(jobId, stopWaiting, boundDocSessionId) {
-    if (!jobId || state.excelSmartFillJobId !== jobId) {
+    var taskSession = getExcelTaskSession("excel.smart_fill", boundDocSessionId);
+    if (!jobId || taskSession.jobId !== jobId) {
       return;
     }
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
@@ -4482,43 +4557,40 @@
     var targetDocSession = boundDocSessionId || currentSession;
 
     function isCurrentDoc() {
-      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
-      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
-      return state.currentMode === "excelSmartFill" && curr === targetDocSession;
+      return isExcelTaskVisible("excel.smart_fill", targetDocSession);
     }
 
     request(
       "/excel/smart-fill/jobs/" + encodeURIComponent(jobId) +
-        (state.excelSmartFillResumeExpected ? "?resume=1" : ""),
+        (taskSession.resumeExpected ? "?resume=1" : ""),
       null,
       { timeoutMs: EXCEL_SMART_FILL_REQUEST_TIMEOUT_MS }
     ).then(function (body) {
       var job = body.data || {};
-      if (state.excelSmartFillJobId !== jobId) {
+      if (taskSession.jobId !== jobId) {
         return;
       }
-      state.excelSmartFillPollErrorCount = 0;
+      taskSession.pollErrorCount = 0;
       if (isCurrentDoc()) {
         setTrace(body.traceId || job.traceId || jobId);
       }
       saveExcelSmartFillActiveJob({
         jobId: jobId,
         traceId: body.traceId || job.traceId || "",
-        startedAt: state.excelSmartFillPollStartedAt || Date.now(),
+        startedAt: taskSession.pollStartedAt || Date.now(),
         documentSessionId: targetDocSession,
         host: "et",
         taskType: "excel.smart_fill"
       });
       if (job.status === "completed") {
         clearExcelSmartFillActiveJob(jobId, targetDocSession);
-        if (state.excelSmartFillJobId === jobId) {
-          state.excelSmartFillJobId = "";
-          state.excelSmartFillPollStartedAt = 0;
-          state.excelSmartFillResumeExpected = false;
+        if (taskSession.jobId === jobId) {
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.resumeExpected = false;
         }
-        stopWaiting();
         finalizeExcelSmartFillResult(job.result || {}, jobId, true, targetDocSession);
+        stopWaiting();
         if (isCurrentDoc()) {
           setExcelSmartFillCancelVisible(false);
           setStatus("智能填写预览已生成，请确认后写入。");
@@ -4535,11 +4607,14 @@
         return;
       }
       if (job.status === "failed") {
+        if (helpers.releaseTaskSlot) {
+          helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
+        }
         clearExcelSmartFillActiveJob(jobId, targetDocSession);
-        if (state.excelSmartFillJobId === jobId) {
-          state.excelSmartFillJobId = "";
-          state.excelSmartFillPollStartedAt = 0;
-          state.excelSmartFillResumeExpected = false;
+        if (taskSession.jobId === jobId) {
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.resumeExpected = false;
         }
         stopWaiting();
         var overflowFailed = job.error && (
@@ -4579,22 +4654,22 @@
       var withinRetryBudget;
       var retryDelay;
       var message;
-      if (state.excelSmartFillJobId !== jobId) {
+      if (taskSession.jobId !== jobId) {
         return;
       }
       message = describeExcelSmartFillPollError(error);
-      state.excelSmartFillPollErrorCount += 1;
-      elapsed = Date.now() - (state.excelSmartFillPollStartedAt || Date.now());
+      taskSession.pollErrorCount += 1;
+      elapsed = Date.now() - (taskSession.pollStartedAt || Date.now());
       if (error && error.adapterCode === "EXCEL_SMART_FILL_JOB_INTERRUPTED") {
         if (helpers.releaseTaskSlot) {
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
         }
         clearExcelSmartFillActiveJob(jobId, targetDocSession);
-        if (state.excelSmartFillJobId === jobId) {
-          state.excelSmartFillJobId = "";
-          state.excelSmartFillPollStartedAt = 0;
-          state.excelSmartFillPollErrorCount = 0;
-          state.excelSmartFillResumeExpected = false;
+        if (taskSession.jobId === jobId) {
+          taskSession.jobId = "";
+          taskSession.pollStartedAt = 0;
+          taskSession.pollErrorCount = 0;
+          taskSession.resumeExpected = false;
         }
         stopWaiting();
         if (isCurrentDoc()) {
@@ -4610,7 +4685,7 @@
       }
       if (!isFatalExcelSmartFillPollError(error)) {
         withinRetryBudget = (
-          state.excelSmartFillPollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
+          taskSession.pollErrorCount <= EXCEL_ANALYSIS_POLL_MAX_ERRORS &&
           elapsed <= EXCEL_ANALYSIS_POLL_MAX_WAIT_MS
         );
         retryDelay = withinRetryBudget
@@ -4619,7 +4694,7 @@
         saveExcelSmartFillActiveJob({
           jobId: jobId,
           traceId: state.traceId || "",
-          startedAt: state.excelSmartFillPollStartedAt || Date.now(),
+          startedAt: taskSession.pollStartedAt || Date.now(),
           documentSessionId: targetDocSession,
           host: "et",
           taskType: "excel.smart_fill"
@@ -4642,10 +4717,10 @@
         helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", targetDocSession, jobId);
       }
       clearExcelSmartFillActiveJob(jobId, targetDocSession);
-      if (state.excelSmartFillJobId === jobId) {
-        state.excelSmartFillJobId = "";
-        state.excelSmartFillPollStartedAt = 0;
-        state.excelSmartFillPollErrorCount = 0;
+      if (taskSession.jobId === jobId) {
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.pollErrorCount = 0;
       }
       stopWaiting();
       if (isCurrentDoc()) {
@@ -4661,11 +4736,13 @@
   }
 
   function resumeExcelSmartFillActiveJob() {
+    var taskSession = getExcelTaskSession("excel.smart_fill");
     var app = typeof getEtApplication === "function" ? getEtApplication() : null;
     var workbook = typeof getActiveWorkbook === "function" ? getActiveWorkbook(app) : null;
     var currentDocSession = (helpers.getDocumentSessionId ? helpers.getDocumentSessionId(workbook) : "") || state.documentSessionId || "default";
     var active = loadExcelSmartFillActiveJob(currentDocSession);
     var restored;
+    if (taskSession.jobId) { return; }
     if (helpers.sanitizeRestoredExcelSmartFillState) {
       restored = helpers.sanitizeRestoredExcelSmartFillState(state);
       state.smartFillTarget = restored.smartFillTarget;
@@ -4686,21 +4763,22 @@
     if (helpers.claimTaskSlot) {
       helpers.claimTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", currentDocSession, active.jobId);
     }
-    state.excelSmartFillJobId = active.jobId;
-    state.excelSmartFillPollStartedAt = active.startedAt || Date.now();
-    state.excelSmartFillPollErrorCount = 0;
-    state.excelSmartFillResumeExpected = true;
+    taskSession.jobId = active.jobId;
+    taskSession.pollStartedAt = active.startedAt || Date.now();
+    taskSession.pollErrorCount = 0;
+    taskSession.resumeExpected = true;
     setSmartFillInterruptedRetryVisible(false);
-    setAnalysisBusy(true);
+    setExcelTaskBusy(true, currentDocSession, "excel.smart_fill");
     setTrace(active.traceId || active.jobId);
     setStatus("已恢复未完成的智能填写任务，正在查询模型后台结果..." );
     setPlainResult("检测到未完成的智能填写任务，将继续查询 adapter 后台状态。\n任务编号：" + active.jobId);
     pollExcelSmartFillJob(active.jobId, function () {
-      setAnalysisBusy(false);
+      setExcelTaskBusy(false, currentDocSession, "excel.smart_fill");
     }, currentDocSession);
   }
 
   function runExcelSmartFillAction() {
+    var taskSession = getExcelTaskSession("excel.smart_fill");
     var stopWaiting;
     var clientJobId = buildExcelSmartFillClientJobId();
     var payload;
@@ -4713,10 +4791,7 @@
     state.documentDisplayName = docName;
 
     function isCurrentVisible() {
-      var a = typeof getEtApplication === "function" ? getEtApplication() : null;
-      var wb = typeof getActiveWorkbook === "function" ? getActiveWorkbook(a) : null;
-      var curr = (wb && helpers.getDocumentSessionId ? helpers.getDocumentSessionId(wb) : "") || state.documentSessionId || "default";
-      return state.currentMode === "excelSmartFill" && curr === docSessionId;
+      return isExcelTaskVisible("excel.smart_fill", docSessionId);
     }
 
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId)) {
@@ -4751,7 +4826,7 @@
     state.smartFillInstruction = payload.userInstruction;
     setSmartFillInterruptedRetryVisible(false);
     setExcelSmartFillCancelVisible(false);
-    setAnalysisBusy(true, docSessionId);
+    setExcelTaskBusy(true, docSessionId, "excel.smart_fill");
     if (!state.smartFillRetryItemId) {
       state.smartFillResult = null;
       state.smartFillPreview = null;
@@ -4767,11 +4842,13 @@
     }
     byId("btn-write-smart-fill").hidden = true;
     clearExcelSmartFillActiveJob(null, docSessionId);
-    state.excelSmartFillJobId = clientJobId;
-    state.excelSmartFillPollStartedAt = Date.now();
-    state.excelSmartFillPollErrorCount = 0;
-    state.excelSmartFillResumeExpected = true;
-    startedAt = state.excelSmartFillPollStartedAt;
+    taskSession.recoveryPending = false;
+    taskSession.jobId = clientJobId;
+    taskSession.pollStartedAt = Date.now();
+    taskSession.pollErrorCount = 0;
+    taskSession.resumeExpected = true;
+    startedAt = taskSession.pollStartedAt;
+    saveCurrentSmartFillSessionState(docSessionId);
     saveExcelSmartFillActiveJob({ jobId: clientJobId, startedAt: startedAt, documentSessionId: docSessionId });
     byId("result-view-switch").hidden = true;
     setScopeLine(summarizeSmartFillSource(payload.source));
@@ -4781,7 +4858,7 @@
     (function (stopFeedback) {
       stopWaiting = function () {
         stopFeedback();
-        setAnalysisBusy(false, docSessionId);
+        setExcelTaskBusy(false, docSessionId, "excel.smart_fill");
       };
     })(stopWaiting);
     request("/excel/smart-fill/jobs", payload, {
@@ -4789,7 +4866,7 @@
     }).then(function (body) {
       var job = body.data || {};
       var jobId = job.jobId || clientJobId || body.traceId;
-      if (state.excelSmartFillJobId !== clientJobId) {
+      if (taskSession.jobId !== clientJobId) {
         return;
       }
       if (isCurrentVisible()) {
@@ -4800,18 +4877,18 @@
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
         }
         clearExcelSmartFillActiveJob(clientJobId, docSessionId);
-        state.excelSmartFillCompletedJobId = "";
         stopWaiting();
-        if (state.smartFillRetryItemId) {
-          restoreSmartFillRetryResult();
-        }
         if (isCurrentVisible()) {
+          state.excelSmartFillCompletedJobId = "";
+          if (state.smartFillRetryItemId) {
+            restoreSmartFillRetryResult();
+          }
           setStatus("智能填写失败：adapter 未返回后台任务编号。");
           setPlainResult("adapter 未返回后台任务编号，请重试或查看最近一次任务诊断。");
         }
         return;
       }
-      state.excelSmartFillJobId = jobId;
+      taskSession.jobId = jobId;
       saveExcelSmartFillActiveJob({
         jobId: jobId,
         traceId: body.traceId || job.traceId || "",
@@ -4823,10 +4900,9 @@
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, jobId);
         }
         clearExcelSmartFillActiveJob(jobId, docSessionId);
-        state.excelSmartFillCompletedJobId = jobId;
-        state.excelSmartFillJobId = "";
-        state.excelSmartFillPollStartedAt = 0;
-        state.excelSmartFillResumeExpected = false;
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.resumeExpected = false;
         stopWaiting();
         finalizeExcelSmartFillResult(job.result || {}, jobId, true, docSessionId);
         if (isCurrentVisible()) {
@@ -4840,7 +4916,7 @@
       pollExcelSmartFillJob(jobId, stopWaiting, docSessionId);
     }).catch(function (error) {
       var message = describeExcelSmartFillPollError(error);
-      if (state.excelSmartFillJobId !== clientJobId) {
+      if (taskSession.jobId !== clientJobId) {
         return;
       }
       if (isFatalExcelSmartFillPollError(error)) {
@@ -4848,16 +4924,16 @@
           helpers.releaseTaskSlot(state.activeTaskSlots, "et", "excel.smart_fill", docSessionId, clientJobId);
         }
         clearExcelSmartFillActiveJob(clientJobId, docSessionId);
-        state.excelSmartFillCompletedJobId = "";
-        state.excelSmartFillJobId = "";
-        state.excelSmartFillPollStartedAt = 0;
-        state.excelSmartFillResumeExpected = false;
-        setExcelSmartFillCancelVisible(false);
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.resumeExpected = false;
         stopWaiting();
-        if (state.smartFillRetryItemId) {
-          restoreSmartFillRetryResult();
-        }
         if (isCurrentVisible()) {
+          state.excelSmartFillCompletedJobId = "";
+          setExcelSmartFillCancelVisible(false);
+          if (state.smartFillRetryItemId) {
+            restoreSmartFillRetryResult();
+          }
           setStatus("智能填写失败：" + message);
           setPlainResult(message);
         }

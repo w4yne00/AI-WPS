@@ -17,7 +17,9 @@ function functionSource(name) {
   }
   assert.ok(start >= 0, `missing function ${name}`);
   const next = taskpaneSource.indexOf("\n  function ", start + 3);
-  return taskpaneSource.slice(start, next === -1 ? taskpaneSource.length : next);
+  const common = ['getCurrentExcelDocumentSession', 'getExcelTaskSession', 'isExcelTaskVisible', 'saveCurrentSmartFillSessionState', 'restoreSmartFillSessionState'];
+  const dependencies = common.includes(name) ? '' : common.map(functionSource).join('\n');
+  return dependencies + '\n' + taskpaneSource.slice(start, next === -1 ? taskpaneSource.length : next);
 }
 
 function createBaseTestContext(initialOverrides = {}) {
@@ -116,7 +118,7 @@ function createBaseTestContext(initialOverrides = {}) {
     }),
     clearExcelSmartFillActiveJob: () => {},
     saveExcelSmartFillActiveJob: () => {},
-    setAnalysisBusy: (busy) => { state.busy = busy; },
+    setExcelTaskBusy: (busy) => { state.busy = busy; },
     setSmartFillInterruptedRetryVisible: () => {},
     setExcelSmartFillCancelVisible: () => {},
     setScopeLine: () => {},
