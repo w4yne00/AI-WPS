@@ -21,6 +21,7 @@ if HAS_API_DEPS:
 
     from app.main import app
     from app.core.errors import AdapterError
+    from app.core.config import AppSettings
     from app.api.provider import (
         DirectServiceApiKeyRequest,
         DirectServiceCreateRequest,
@@ -40,12 +41,99 @@ if HAS_API_DEPS:
         update_direct_service,
         update_task_model_selection_route,
     )
+    from app.services.model_configurations import ModelConfigurationStore
+    from app.services.provider_client import ProviderClient
+    from app.services.word.rewriter import WordRewriter
+    from app.services.word.smart_imitator import WordSmartImitator
 
 
 @unittest.skipUnless(
     HAS_API_DEPS, "fastapi and pydantic are required for direct services API tests"
 )
 class DirectServicesApiTests(unittest.TestCase):
+    def test_word_writing_tasks_resolve_atomic_selections_from_public_api(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            key_dir = root / "provider_api_keys"
+            store = DirectServiceStore(config_path, key_dir)
+
+            with patch(
+                "app.api.provider.get_direct_service_store", return_value=store
+            ):
+                client = TestClient(app)
+                created = client.post(
+                    "/provider/direct-services",
+                    json={
+                        "name": "Word 共享直连",
+                        "serviceBaseUrl": "https://api.example.com/v1",
+                        "defaultModel": "shared-default",
+                    },
+                )
+                self.assertEqual(created.status_code, 200)
+                service_id = created.json()["data"]["directService"]["id"]
+                store.replace_api_key(service_id, "sk-word-shared", expected_revision=1)
+                store.update_model_list(
+                    service_id,
+                    ["shared-default", "write-model", "imitation-model"],
+                    expected_revision=2,
+                    trusted=True,
+                )
+
+                task_payloads = {
+                    "word.smart_write": {
+                        "serviceId": service_id,
+                        "modelName": "write-model",
+                        "temperature": 0.3,
+                        "maxOutputTokens": 2048,
+                        "contextWindowTokens": 32000,
+                        "customModel": False,
+                    },
+                    "word.smart_imitation": {
+                        "serviceId": service_id,
+                        "modelName": "imitation-model",
+                        "temperature": 0.6,
+                        "maxOutputTokens": 4096,
+                        "contextWindowTokens": 64000,
+                        "customModel": False,
+                    },
+                }
+                for task_type, selection in task_payloads.items():
+                    response = client.post(
+                        "/provider/direct-services/{0}/activate".format(service_id),
+                        json={
+                            "taskType": task_type,
+                            "taskModelSelection": selection,
+                        },
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.json()["data"]["taskModelSelection"]["modelName"],
+                        selection["modelName"],
+                    )
+
+            provider_client = ProviderClient(
+                settings=AppSettings(),
+                model_configuration_store=ModelConfigurationStore(
+                    config_path=config_path, key_dir=key_dir
+                ),
+                direct_service_store=store,
+            )
+            write_auth = WordRewriter(
+                provider_client=provider_client
+            ).snapshot_task_auth()
+            imitation_auth = WordSmartImitator(
+                provider_client=provider_client
+            ).snapshot_task_auth()
+
+            self.assertEqual(write_auth["modelConfigurationId"], service_id)
+            self.assertEqual(write_auth["modelName"], "write-model")
+            self.assertEqual(write_auth["temperature"], 0.3)
+            self.assertEqual(imitation_auth["modelConfigurationId"], service_id)
+            self.assertEqual(imitation_auth["modelName"], "imitation-model")
+            self.assertEqual(imitation_auth["temperature"], 0.6)
+
     def test_model_mutation_requests_require_expected_revision(self) -> None:
         for request_type, payload in (
             (DirectServiceModelListUpdateRequest, {"modelList": ["gpt-4o"]}),

@@ -285,6 +285,7 @@
       revision: 1,
       dirty: false
     },
+    directServiceOperationId: 0,
     directServiceDeleteCandidate: null,
     taskModelSelections: {},
     lastValidatedCustomModel: null,
@@ -2702,6 +2703,7 @@
   }
 
   function getWorkflowProfileData(taskType) {
+    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation";
     var base = state.workflowProfiles[taskType] || {
       taskType: taskType,
       activeProfileId: "",
@@ -2710,12 +2712,12 @@
     };
     var activeId = base.activeProfileId;
     var taskKeyStatus = state.taskApiKeys && state.taskApiKeys[taskType];
-    if (taskKeyStatus && taskKeyStatus.accessMethod === "direct_model" && taskKeyStatus.activeProfileId) {
+    if (sharedDirectServiceEnabled && taskKeyStatus && taskKeyStatus.accessMethod === "direct_model" && taskKeyStatus.activeProfileId) {
       activeId = taskKeyStatus.activeProfileId;
-    } else if (!activeId && taskKeyStatus && taskKeyStatus.activeProfileId) {
+    } else if (!activeId && taskKeyStatus && taskKeyStatus.accessMethod !== "direct_model" && taskKeyStatus.activeProfileId) {
       activeId = taskKeyStatus.activeProfileId;
     }
-    if (!activeId && state.workflowProfileSelections[taskType] && String(state.workflowProfileSelections[taskType]).startsWith("direct_svc_")) {
+    if (sharedDirectServiceEnabled && !activeId && state.workflowProfileSelections[taskType] && String(state.workflowProfileSelections[taskType]).startsWith("direct_svc_")) {
       activeId = state.workflowProfileSelections[taskType];
     }
     return {
@@ -2724,8 +2726,10 @@
       profileCount: base.profileCount,
       profiles: base.profiles,
       loadError: base.loadError,
-      directServices: state.directServices || [],
-      taskModelSelection: (state.taskModelSelections && state.taskModelSelections[taskType]) || null
+      directServices: sharedDirectServiceEnabled ? (state.directServices || []) : [],
+      taskModelSelection: sharedDirectServiceEnabled
+        ? ((state.taskModelSelections && state.taskModelSelections[taskType]) || null)
+        : null
     };
   }
 
@@ -2935,6 +2939,7 @@
     var items = helpers.buildTaskModelConfigMenuItems
       ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], {
         activeProfileId: data.activeProfileId,
+        taskType: taskType,
         directServices: data.directServices,
         taskModelSelection: data.taskModelSelection
       })
@@ -3130,6 +3135,7 @@
       state.taskModelConfigMenu.items = helpers.buildTaskModelConfigMenuItems
         ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], {
           activeProfileId: data.activeProfileId,
+          taskType: taskType,
           directServices: data.directServices,
           taskModelSelection: data.taskModelSelection
         })
@@ -3159,7 +3165,7 @@
         return profiles[index];
       }
     }
-    var directServices = state.directServices || [];
+    var directServices = data.directServices || [];
     for (index = 0; index < directServices.length; index += 1) {
       if (directServices[index].id === profileId) {
         var svc = directServices[index];
@@ -3282,11 +3288,13 @@
   function syncWorkflowProfileManagerBusyState() {
     var manager = byId("workflow-profile-manager");
     var editorView = byId("workflow-editor-view");
+    var directServicesCard = byId("direct-services-card");
+    var taskDirectServiceSection = byId("word-task-direct-service-section");
     var controls;
     var index;
-    var roots = [manager, editorView];
+    var roots = [manager, editorView, directServicesCard, taskDirectServiceSection];
     var rootIndex;
-    if (!manager && !editorView) {
+    if (!manager && !editorView && !directServicesCard && !taskDirectServiceSection) {
       return;
     }
     for (rootIndex = 0; rootIndex < roots.length; rootIndex += 1) {
@@ -3298,7 +3306,10 @@
         controls[index].disabled = state.workflowProfileMutationBusy;
       }
     }
-    byId("btn-new-workflow-profile").disabled = state.workflowProfileMutationBusy;
+    var btnNewWorkflowProfile = byId("btn-new-workflow-profile");
+    if (btnNewWorkflowProfile) {
+      btnNewWorkflowProfile.disabled = state.workflowProfileMutationBusy;
+    }
   }
 
   function setWorkflowProfileMutationBusy(busy) {
@@ -3735,13 +3746,26 @@
     setWorkflowProfileMutationBusy(true);
     var isDirectService = String(profileId || "").startsWith("direct_svc_");
     var activationPromise = isDirectService
-      ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", { taskType: taskType })
+      ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", {
+        taskType: taskType,
+        taskModelSelection: {
+          serviceId: profileId,
+          modelName: "",
+          customModel: false,
+          temperature: null,
+          maxOutputTokens: null,
+          contextWindowTokens: null
+        }
+      })
       : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {});
     return activationPromise
       .then(function (body) {
         if (isDirectService) {
           state.workflowProfileSelections[taskType] = profileId;
           state.taskModelConfigStatusByTask[taskType] = "";
+          if (body && body.data && body.data.taskModelSelection) {
+            state.taskModelSelections[taskType] = body.data.taskModelSelection;
+          }
           if (state.taskApiKeys && state.taskApiKeys[taskType]) {
             state.taskApiKeys[taskType].activeProfileId = profileId;
           }
@@ -4014,7 +4038,7 @@
     return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
   }
 
-  function loadDirectServices(configRefreshRequestId, requestOptions) {
+  function loadDirectServices(configRefreshRequestId, requestOptions, directServiceOperationId) {
     return Promise.all([
       request("/provider/direct-services", null, requestOptions),
       request("/provider/task-model-selections?host=word", null, requestOptions)
@@ -4022,6 +4046,9 @@
       var dsBody = results[0];
       var tmsBody = results[1];
       if (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId) {
+        return { superseded: true };
+      }
+      if (directServiceOperationId && state.directServiceOperationId !== directServiceOperationId) {
         return { superseded: true };
       }
       state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
@@ -4053,9 +4080,12 @@
       if (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId) {
         return { superseded: true };
       }
+      if (directServiceOperationId && state.directServiceOperationId !== directServiceOperationId) {
+        return { superseded: true };
+      }
       renderDirectServicesList();
       renderTaskModelSelectionSection();
-      return { failed: true, error: error };
+      throw error;
     });
   }
 
@@ -4119,6 +4149,7 @@
       return;
     }
 
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
     state.directServiceEditor = {
       open: true,
       mode: mode,
@@ -4188,7 +4219,22 @@
   }
 
   function closeDirectServiceEditor() {
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
     state.directServiceEditor.open = false;
+    var keyInput = byId("direct-service-key");
+    if (keyInput) {
+      keyInput.value = "";
+    }
+    if (state.workflowProfileMutationBusy) {
+      if (typeof setWorkflowMutationBusy === "function") {
+        setWorkflowMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+        if (typeof syncWorkflowProfileManagerBusyState === "function") {
+          syncWorkflowProfileManagerBusyState();
+        }
+      }
+    }
     byId("direct-service-editor-view").hidden = true;
     byId("direct-services-list").hidden = false;
     byId("btn-new-direct-service").hidden = false;
@@ -4275,6 +4321,9 @@
   }
 
   function saveDirectServiceEditor() {
+    if (state.workflowProfileMutationBusy) {
+      return;
+    }
     var isCreate = state.directServiceEditor.mode === "create";
     var serviceId = state.directServiceEditor.serviceId;
     var revision = state.directServiceEditor.revision;
@@ -4304,15 +4353,52 @@
       return;
     }
 
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    var editorMode = state.directServiceEditor.mode;
+    function isCurrentOperation() {
+      return state.directServiceOperationId === operationId &&
+        state.directServiceEditor && state.directServiceEditor.open &&
+        state.directServiceEditor.mode === editorMode &&
+        state.directServiceEditor.serviceId === serviceId;
+    }
+    function completeSave(message) {
+      return loadDirectServices(undefined, undefined, operationId).then(function () {
+        if (!isCurrentOperation()) {
+          return { superseded: true };
+        }
+        setWorkflowMutationBusy(false);
+        closeDirectServiceEditor();
+        setStatus(message);
+        return { success: true };
+      });
+    }
+    function failSave(error, prefix) {
+      if (!isCurrentOperation()) {
+        return { superseded: true };
+      }
+      setWorkflowMutationBusy(false);
+      if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
+        if (errorBox) {
+          errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
+        }
+      } else if (errorBox) {
+        errorBox.textContent = prefix + describeFetchError(error);
+      }
+      return { failed: true, error: error };
+    }
     setWorkflowMutationBusy(true);
 
     if (isCreate) {
-      request("/provider/direct-services", {
+      return request("/provider/direct-services", {
         name: draft.name,
         serviceBaseUrl: draft.serviceBaseUrl,
         defaultModel: draft.defaultModel,
         apiKey: draft.apiKey
       }).then(function (body) {
+        if (!isCurrentOperation()) {
+          return { superseded: true };
+        }
         var created = (body.data && body.data.directService) || body.data;
         var createdId = created.id;
         var createdRev = created.revision || 1;
@@ -4332,59 +4418,41 @@
             });
 
         return keyPromise.then(function () {
-          closeDirectServiceEditor();
-          return loadDirectServices().then(function () {
-            setWorkflowMutationBusy(false);
-            setStatus("共享直连服务已新建，模型目录已自动刷新。");
-          });
+          if (!isCurrentOperation()) {
+            return { superseded: true };
+          }
+          return completeSave("共享直连服务已新建，模型目录已自动刷新。");
         });
       }).catch(function (error) {
-        setWorkflowMutationBusy(false);
-        if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
-          if (errorBox) {
-            errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
-          }
-        } else if (errorBox) {
-          errorBox.textContent = "新建直连服务失败：" + describeFetchError(error);
-        }
+        return failSave(error, "新建直连服务失败：");
       });
-      return;
     }
 
-    request("/provider/direct-services/" + encodeURIComponent(serviceId), {
+    return request("/provider/direct-services/" + encodeURIComponent(serviceId), {
       name: draft.name,
       serviceBaseUrl: draft.serviceBaseUrl,
       defaultModel: draft.defaultModel,
       expectedRevision: revision
     }, { method: "PATCH" }).then(function (patchBody) {
+      if (!isCurrentOperation()) {
+        return { superseded: true };
+      }
       var updated = (patchBody.data && patchBody.data.directService) || patchBody.data || {};
       var nextRev = updated.revision || (revision + 1);
       if (!draft.key) {
-        closeDirectServiceEditor();
-        return loadDirectServices().then(function () {
-          setWorkflowMutationBusy(false);
-          setStatus("共享直连服务已保存。");
-        });
+        return completeSave("共享直连服务已保存。");
       }
       return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/api-key", {
         apiKey: draft.key,
         expectedRevision: nextRev
       }).then(function () {
-        closeDirectServiceEditor();
-        return loadDirectServices().then(function () {
-          setWorkflowMutationBusy(false);
-          setStatus("共享直连服务与 API Key 已保存。");
-        });
+        if (!isCurrentOperation()) {
+          return { superseded: true };
+        }
+        return completeSave("共享直连服务与 API Key 已保存。");
       });
     }).catch(function (error) {
-      setWorkflowMutationBusy(false);
-      if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
-        if (errorBox) {
-          errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
-        }
-      } else if (errorBox) {
-        errorBox.textContent = "保存直连服务失败：" + describeFetchError(error);
-      }
+      return failSave(error, "保存直连服务失败：");
     });
   }
 
@@ -4392,15 +4460,21 @@
     var serviceId = state.directServiceEditor.serviceId;
     var revision = state.directServiceEditor.revision;
     var statusNode = byId("direct-service-models-status");
-    if (!serviceId) {
+    if (!serviceId || state.workflowProfileMutationBusy) {
       return;
     }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    setWorkflowMutationBusy(true);
     if (statusNode) {
       statusNode.textContent = "正在刷新模型目录...";
     }
-    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/refresh-models", {
+    return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/refresh-models", {
       expectedRevision: revision
     }).then(function (body) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
       var svc = (body && body.data && body.data.directService) || {};
       var models = svc.modelList || (body && body.data && body.data.models) || [];
       var nextRev = svc.revision || (body && body.data && body.data.revision) || (revision + 1);
@@ -4412,7 +4486,10 @@
           ? formatDirectServiceCatalogStatus(svc)
           : ("已获取 " + models.length + " 个模型");
       }
-      return loadDirectServices().then(function () {
+      return loadDirectServices(undefined, undefined, operationId).then(function () {
+        if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+          return { superseded: true };
+        }
         if (state.directServiceEditor && state.directServiceEditor.open && state.directServiceEditor.serviceId === serviceId) {
           var updatedSvc = findDirectService(serviceId);
           if (updatedSvc && updatedSvc.revision) {
@@ -4422,19 +4499,18 @@
             statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
           }
         }
+        setWorkflowMutationBusy(false);
+        return { success: true };
       });
     }).catch(function (error) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
+      setWorkflowMutationBusy(false);
       if (statusNode) {
         statusNode.textContent = "刷新失败：" + describeFetchError(error);
       }
-      if (typeof loadDirectServices === "function") {
-        loadDirectServices().then(function () {
-          var updatedSvc = findDirectService(serviceId);
-          if (statusNode && updatedSvc && typeof formatDirectServiceCatalogStatus === "function") {
-            statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
-          }
-        }).catch(function () {});
-      }
+      return { failed: true, error: error };
     });
   }
 
@@ -4444,7 +4520,7 @@
     var revision = editor.revision;
     var statusNode = byId("direct-service-validation-status");
     var modelsStatus = byId("direct-service-models-status");
-    if (!serviceId) {
+    if (!serviceId || state.workflowProfileMutationBusy) {
       if (statusNode) {
         statusNode.textContent = "请先保存直连服务。";
       }
@@ -4453,10 +4529,15 @@
     if (statusNode) {
       statusNode.textContent = "正在验证服务连接、认证和模型目录（不执行任务调用）...";
     }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
     setWorkflowMutationBusy(true);
-    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/validate", {
+    return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/validate", {
       expectedRevision: revision
     }).then(function (body) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
       setWorkflowMutationBusy(false);
       var data = (body && body.data) || {};
       var catalogAvailable = data.modelCatalogAvailable;
@@ -4481,15 +4562,18 @@
         }
       }
       if (typeof loadDirectServices === "function") {
-        loadDirectServices().catch(function () {});
+        loadDirectServices(undefined, undefined, operationId).catch(function () {});
       }
     }).catch(function (error) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
       setWorkflowMutationBusy(false);
       if (statusNode) {
         statusNode.textContent = "服务验证失败：" + describeFetchError(error);
       }
       if (typeof loadDirectServices === "function") {
-        loadDirectServices().then(function () {
+        loadDirectServices(undefined, undefined, operationId).then(function () {
           var currentSvc = findDirectService(serviceId);
           if (modelsStatus && currentSvc && typeof formatDirectServiceCatalogStatus === "function") {
             modelsStatus.textContent = formatDirectServiceCatalogStatus(currentSvc);
@@ -4809,7 +4893,7 @@
     var statusNode = byId("word-task-model-validation-status");
     var costWarning = byId("word-task-model-cost-warning");
     var currentSvc = findDirectService(draft.serviceId);
-    if (!draft.serviceId) {
+    if (!draft.serviceId || state.workflowProfileMutationBusy) {
       if (statusNode) {
         statusNode.textContent = "请先选择直连服务。";
       }
@@ -4831,9 +4915,14 @@
       costWarning.hidden = false;
       costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
     }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
     setWorkflowProfileMutationBusy(true);
-    request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
       .then(function (body) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
         setWorkflowProfileMutationBusy(false);
         if (draft.customModel && draft.modelName) {
           state.lastValidatedCustomModel = {
@@ -4853,6 +4942,9 @@
           costWarning.textContent = result.costWarning;
         }
       }).catch(function (error) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
         setWorkflowProfileMutationBusy(false);
         if (statusNode) {
           statusNode.textContent = "验证失败：" + describeFetchError(error);
@@ -4865,7 +4957,7 @@
     var taskType = getSettingsWorkflowTaskType();
     var statusNode = byId("word-task-model-validation-status");
     var currentSvc = findDirectService(draft.serviceId);
-    if (!draft.serviceId) {
+    if (!draft.serviceId || state.workflowProfileMutationBusy) {
       setStatus("请先选择直连服务。");
       return;
     }
@@ -4891,17 +4983,29 @@
       }
       draft.customModelValidated = true;
     }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    var activationSaved = false;
     setWorkflowProfileMutationBusy(true);
-    request("/provider/task-model-selections/" + encodeURIComponent(taskType), draft, { method: "PUT" })
-      .then(function () {
-        return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
-          taskType: taskType
-        });
-      }).then(function () {
+    return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
+      taskType: taskType,
+      taskModelSelection: draft
+    }).then(function (body) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
+        activationSaved = true;
+        state.workflowProfileSelections[taskType] = draft.serviceId;
+        if (body && body.data && body.data.taskModelSelection) {
+          state.taskModelSelections[taskType] = body.data.taskModelSelection;
+        }
         return Promise.all([
           loadWorkflowProfiles(taskType),
-          loadDirectServices()
+          loadDirectServices(undefined, undefined, operationId)
         ]).then(function () {
+          if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+            return { superseded: true };
+          }
           setWorkflowProfileMutationBusy(false);
           var taskLabel = taskType === "word.smart_imitation" ? "智能仿写" : "智能编写";
           setStatus(taskLabel + "接入直连服务已保存并设为当前。");
@@ -4910,9 +5014,17 @@
           }
         });
       }).catch(function (error) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
         setWorkflowProfileMutationBusy(false);
         if (statusNode) {
-          statusNode.textContent = "保存失败：" + describeFetchError(error);
+          statusNode.textContent = activationSaved
+            ? "已保存，但刷新列表失败：" + describeFetchError(error)
+            : "保存失败：" + describeFetchError(error);
+        }
+        if (activationSaved) {
+          setStatus("任务接入已保存，但刷新最新列表失败：" + describeFetchError(error));
         }
       });
   }
@@ -10506,6 +10618,42 @@
     }
   }
 
+  function bindDirectServiceEvents() {
+    if (!helpers.bindDirectServiceEvents) {
+      return;
+    }
+    helpers.bindDirectServiceEvents({
+      byId: byId,
+      handlers: {
+        openCreate: function () {
+          openDirectServiceEditor("create", "");
+        },
+        listAction: handleDirectServiceAction,
+        closeEditor: closeDirectServiceEditor,
+        saveEditor: saveDirectServiceEditor,
+        refreshModels: refreshDirectServiceModelsInEditor,
+        validateService: validateDirectService,
+        cancelDelete: hideDirectServiceDeleteDialog,
+        confirmDelete: confirmDirectServiceDelete,
+        clearKey: clearDirectServiceApiKey,
+        editorInput: function (id) {
+          state.directServiceEditor.dirty = true;
+          var err = byId("direct-service-editor-error");
+          if (err) {
+            err.textContent = "";
+          }
+          if (id === "direct-service-url") {
+            updateDirectServiceUrlImpact();
+          }
+        },
+        taskServiceChange: handleTaskDirectServiceSelectChange,
+        customModelChange: handleTaskCustomModelCheckChange,
+        validateTaskSelection: validateTaskModelSelection,
+        saveTaskSelection: saveTaskModelSelection
+      }
+    });
+  }
+
   function bindEvents() {
     var workflowHelpButton = byId("workflow-help-button");
     var workflowHelpPopover = byId("workflow-help-popover");
@@ -10868,66 +11016,7 @@
       historyContent.addEventListener("click", handleWritingHistoryContentClick);
     }
 
-    if (byId("btn-new-direct-service")) {
-      byId("btn-new-direct-service").addEventListener("click", function () {
-        openDirectServiceEditor("create", "");
-      });
-    }
-    if (byId("direct-services-list")) {
-      byId("direct-services-list").addEventListener("click", handleDirectServiceAction);
-    }
-    if (byId("btn-direct-service-editor-back")) {
-      byId("btn-direct-service-editor-back").addEventListener("click", closeDirectServiceEditor);
-    }
-    if (byId("btn-cancel-direct-service")) {
-      byId("btn-cancel-direct-service").addEventListener("click", closeDirectServiceEditor);
-    }
-    if (byId("btn-save-direct-service")) {
-      byId("btn-save-direct-service").addEventListener("click", saveDirectServiceEditor);
-    }
-    if (byId("btn-refresh-direct-service-models")) {
-      byId("btn-refresh-direct-service-models").addEventListener("click", refreshDirectServiceModelsInEditor);
-    }
-    if (byId("btn-validate-direct-service")) {
-      byId("btn-validate-direct-service").addEventListener("click", validateDirectService);
-    }
-    if (byId("btn-cancel-direct-service-delete")) {
-      byId("btn-cancel-direct-service-delete").addEventListener("click", hideDirectServiceDeleteDialog);
-    }
-    if (byId("btn-confirm-direct-service-delete")) {
-      byId("btn-confirm-direct-service-delete").addEventListener("click", confirmDirectServiceDelete);
-    }
-    if (byId("btn-clear-direct-service-key")) {
-      byId("btn-clear-direct-service-key").addEventListener("click", clearDirectServiceApiKey);
-    }
-    ["direct-service-name", "direct-service-url", "direct-service-key", "direct-service-default-model"].forEach(function (id) {
-      var el = byId(id);
-      if (el) {
-        el.addEventListener("input", function () {
-          state.directServiceEditor.dirty = true;
-          var err = byId("direct-service-editor-error");
-          if (err) {
-            err.textContent = "";
-          }
-          if (id === "direct-service-url") {
-            updateDirectServiceUrlImpact();
-          }
-        });
-      }
-    });
-
-    if (byId("word-task-direct-service-select")) {
-      byId("word-task-direct-service-select").addEventListener("change", handleTaskDirectServiceSelectChange);
-    }
-    if (byId("word-task-custom-model-check")) {
-      byId("word-task-custom-model-check").addEventListener("change", handleTaskCustomModelCheckChange);
-    }
-    if (byId("btn-validate-task-model-selection")) {
-      byId("btn-validate-task-model-selection").addEventListener("click", validateTaskModelSelection);
-    }
-    if (byId("btn-save-task-model-selection")) {
-      byId("btn-save-task-model-selection").addEventListener("click", saveTaskModelSelection);
-    }
+    bindDirectServiceEvents();
   }
 
   if (!isTaskpanePage()) {

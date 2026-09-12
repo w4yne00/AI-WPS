@@ -122,6 +122,7 @@ test("Compact menu integration: includes shared direct service in Word writing m
   // Active is direct service
   const items = helpers.buildTaskModelConfigMenuItems(profiles, {
     activeProfileId: "direct_svc_1",
+    taskType: "word.smart_write",
     directServices: directServices,
     taskModelSelection: { serviceId: "direct_svc_1", modelName: "gpt-4o" }
   });
@@ -130,9 +131,20 @@ test("Compact menu integration: includes shared direct service in Word writing m
   const directItem = items.find(i => i.id === "direct_svc_1");
   assert.ok(directItem, "direct service item must exist");
   assert.strictEqual(directItem.selected, true);
-  assert.ok(directItem.label.includes("企业直连"));
-  assert.ok(directItem.label.includes("模型直连"));
-  assert.ok(directItem.label.includes("gpt-4o"));
+  assert.strictEqual(directItem.label, "企业直连 · 模型直连");
+  assert.strictEqual(directItem.label.includes("gpt-4o"), false, "compact menu must not expose model identifiers");
+
+  const reviewItems = helpers.buildTaskModelConfigMenuItems(profiles, {
+    activeProfileId: "wf_1",
+    taskType: "word.document_review",
+    directServices: directServices,
+    taskModelSelection: { serviceId: "direct_svc_1", modelName: "gpt-4o" }
+  });
+  assert.strictEqual(
+    reviewItems.some(item => item.id === "direct_svc_1"),
+    false,
+    "document review must not expose shared direct services"
+  );
 
   const manageItem = items.find(i => i.id === "manage");
   assert.ok(manageItem, "manage item must exist");
@@ -309,6 +321,18 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   const activateReq = requestsMade.find(r => r.url.includes("/provider/direct-services/direct_svc_2/activate"));
   assert.ok(activateReq, "must invoke direct service activation endpoint");
   assert.strictEqual(activateReq.payload.taskType, "word.smart_write");
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(activateReq.payload.taskModelSelection)),
+    {
+      serviceId: "direct_svc_2",
+      modelName: "",
+      customModel: false,
+      temperature: null,
+      maxOutputTokens: null,
+      contextWindowTokens: null
+    },
+    "compact-menu activation must clear the previous service model override atomically"
+  );
   assert.strictEqual(state.workflowProfileSelections["word.smart_write"], "direct_svc_2");
 
   // 4. Activate direct service for smart_imitation
@@ -489,3 +513,269 @@ test("Delete protection and URL impact warnings respect Word task references", (
   assert.ok(urlImpact.warning.includes("立即调用新地址"));
 });
 
+test("shared direct-service reads fail closed and preserve the last good snapshot", async () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  const previousServices = [{ id: "direct_svc_existing", name: "现有服务" }];
+  const state = {
+    directServices: previousServices,
+    taskModelSelections: { "word.smart_write": { serviceId: "direct_svc_existing" } },
+    taskApiKeys: {},
+    workflowProfileSelections: {},
+    configRefreshRequestId: 7
+  };
+  const expectedError = new Error("task selections unavailable");
+  const ctx = {
+    state,
+    TASK_API_KEY_DEFS: [{ taskType: "word.smart_write" }],
+    renderDirectServicesList() {},
+    renderTaskModelSelectionSection() {},
+    renderWorkflowProfileStrip() {},
+    renderWorkflowProfileManager() {},
+    request(url) {
+      if (url === "/provider/direct-services") {
+        return Promise.resolve({ data: { directServices: [{ id: "direct_svc_new" }] } });
+      }
+      return Promise.reject(expectedError);
+    }
+  };
+  const loadDirectServices = vm.runInNewContext(`(${functionSource("loadDirectServices")})`, ctx);
+
+  await assert.rejects(loadDirectServices(7), /task selections unavailable/);
+  assert.strictEqual(state.directServices, previousServices, "partial reads must not replace the last good snapshot");
+  assert.strictEqual(state.taskModelSelections["word.smart_write"].serviceId, "direct_svc_existing");
+});
+
+test("direct-service busy state covers new controls and closing the editor clears the API key", () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  function control() {
+    return { disabled: false };
+  }
+  const directControls = [control(), control(), control()];
+  const taskControls = [control(), control()];
+  const roots = {
+    "workflow-profile-manager": { querySelectorAll() { return []; } },
+    "workflow-editor-view": { querySelectorAll() { return []; } },
+    "direct-services-card": { querySelectorAll() { return directControls; } },
+    "word-task-direct-service-section": { querySelectorAll() { return taskControls; } },
+    "btn-new-workflow-profile": control(),
+    "direct-service-editor-view": { hidden: false },
+    "direct-services-list": { hidden: true },
+    "btn-new-direct-service": { hidden: true, disabled: false },
+    "direct-service-editor-error": { textContent: "old error" },
+    "direct-service-url-impact": { hidden: false, textContent: "old warning" },
+    "direct-service-key": { value: "sk-plaintext-must-not-remain" }
+  };
+  const state = {
+    workflowProfileMutationBusy: true,
+    directServiceOperationId: 3,
+    directServiceEditor: { open: true, serviceId: "direct_svc_1" }
+  };
+  const ctx = {
+    state,
+    byId(id) { return roots[id] || null; },
+    syncSettingsRefreshController() {},
+    renderWorkflowProfileStrip() {},
+    renderWorkflowTaskTabs() {}
+  };
+  const syncBusy = vm.runInNewContext(`(${functionSource("syncWorkflowProfileManagerBusyState")})`, ctx);
+  const closeEditor = vm.runInNewContext(`(${functionSource("closeDirectServiceEditor")})`, ctx);
+
+  syncBusy();
+  directControls.concat(taskControls).forEach(node => assert.strictEqual(node.disabled, true));
+
+  closeEditor();
+  assert.strictEqual(roots["direct-service-key"].value, "", "hidden editor must not retain plaintext API keys");
+  assert.strictEqual(state.directServiceEditor.open, false);
+  assert.ok(state.directServiceOperationId > 3, "closing the editor must invalidate older async callbacks");
+});
+
+test("direct-service refresh ignores duplicates and stale completion callbacks", async () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  let resolveRequest;
+  let requestCount = 0;
+  const pending = new Promise(resolve => { resolveRequest = resolve; });
+  const statusNode = { textContent: "idle" };
+  const state = {
+    workflowProfileMutationBusy: false,
+    directServiceOperationId: 0,
+    directServiceEditor: { open: true, serviceId: "direct_svc_old", revision: 1 }
+  };
+  const ctx = {
+    state,
+    byId(id) { return id === "direct-service-models-status" ? statusNode : null; },
+    setWorkflowMutationBusy(value) { state.workflowProfileMutationBusy = value; },
+    findDirectService() { return null; },
+    loadDirectServices() { return Promise.resolve(); },
+    describeFetchError(error) { return error.message; },
+    formatDirectServiceCatalogStatus() { return "旧服务目录"; },
+    request() {
+      requestCount += 1;
+      return pending;
+    }
+  };
+  const refresh = vm.runInNewContext(`(${functionSource("refreshDirectServiceModelsInEditor")})`, ctx);
+
+  const first = refresh();
+  const duplicate = refresh();
+  assert.strictEqual(requestCount, 1, "duplicate clicks while busy must not issue another request");
+  assert.strictEqual(state.workflowProfileMutationBusy, true);
+  assert.ok(first && typeof first.then === "function", "async handlers must return their operation promise");
+  assert.strictEqual(duplicate, undefined);
+
+  state.directServiceOperationId += 1;
+  state.directServiceEditor = { open: true, serviceId: "direct_svc_new", revision: 9 };
+  statusNode.textContent = "new editor status";
+  resolveRequest({ data: { directService: { id: "direct_svc_old", revision: 2, modelList: ["old-model"] } } });
+  await first;
+
+  assert.strictEqual(state.directServiceEditor.revision, 9, "stale callback must not mutate the newer editor");
+  assert.strictEqual(statusNode.textContent, "new editor status", "stale callback must not overwrite the newer editor status");
+});
+
+test("task selection save uses one atomic activation request", () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  const nodes = {
+    "word-task-direct-service-select": { value: "direct_svc_1" },
+    "word-task-custom-model-check": { checked: false },
+    "word-task-model-select": { value: "write-model" },
+    "word-task-custom-model-input": { value: "" },
+    "word-task-temperature": { value: "0.4" },
+    "word-task-max-output": { value: "2048" },
+    "word-task-context": { value: "32000" },
+    "word-task-model-validation-status": { textContent: "" }
+  };
+  const state = {
+    workflowProfileMutationBusy: false,
+    settingsWorkflowTaskType: "word.smart_write",
+    lastValidatedCustomModel: null,
+    directServices: [{ id: "direct_svc_1", serviceBaseUrl: "https://api.example.com/v1", keyConfigured: true, modelList: ["write-model"] }]
+  };
+  const requests = [];
+  const ctx = {
+    state,
+    helpers,
+    byId(id) { return nodes[id] || null; },
+    getSettingsWorkflowTaskType() { return state.settingsWorkflowTaskType; },
+    findDirectService(id) { return state.directServices.find(service => service.id === id); },
+    setWorkflowProfileMutationBusy(value) { state.workflowProfileMutationBusy = value; },
+    setStatus() {},
+    describeFetchError(error) { return error.message; },
+    loadWorkflowProfiles() { return Promise.resolve(); },
+    loadDirectServices() { return Promise.resolve(); },
+    request(url, payload, options) {
+      requests.push({ url, payload, method: options && options.method });
+      return new Promise(() => {});
+    }
+  };
+  ctx.getTaskModelSelectionDraft = vm.runInNewContext(`(${functionSource("getTaskModelSelectionDraft")})`, ctx);
+  const save = vm.runInNewContext(`(${functionSource("saveTaskModelSelection")})`, ctx);
+
+  save();
+  assert.strictEqual(requests.length, 1);
+  assert.strictEqual(requests[0].url, "/provider/direct-services/direct_svc_1/activate");
+  assert.strictEqual(requests[0].method, undefined);
+  assert.strictEqual(requests[0].payload.taskType, "word.smart_write");
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(requests[0].payload.taskModelSelection)),
+    {
+      serviceId: "direct_svc_1",
+      modelName: "write-model",
+      customModel: false,
+      temperature: 0.4,
+      maxOutputTokens: 2048,
+      contextWindowTokens: 32000
+    }
+  );
+});
+
+test("formal direct-service event binding invokes the production handlers", () => {
+  const ids = [
+    "btn-new-direct-service",
+    "direct-services-list",
+    "btn-direct-service-editor-back",
+    "btn-cancel-direct-service",
+    "btn-save-direct-service",
+    "btn-refresh-direct-service-models",
+    "btn-validate-direct-service",
+    "btn-cancel-direct-service-delete",
+    "btn-confirm-direct-service-delete",
+    "btn-clear-direct-service-key",
+    "direct-service-name",
+    "direct-service-url",
+    "direct-service-key",
+    "direct-service-default-model",
+    "word-task-direct-service-select",
+    "word-task-custom-model-check",
+    "btn-validate-task-model-selection",
+    "btn-save-task-model-selection"
+  ];
+  const nodes = Object.fromEntries(ids.map(id => [id, new EventTarget()]));
+  const calls = [];
+  helpers.bindDirectServiceEvents({
+    byId(id) { return nodes[id] || null; },
+    handlers: {
+      openCreate() { calls.push(["open", "create", ""]); },
+      listAction() { calls.push(["list"]); },
+      closeEditor() { calls.push(["close"]); },
+      saveEditor() { calls.push(["save"]); },
+      refreshModels() { calls.push(["refresh"]); },
+      validateService() { calls.push(["validate-service"]); },
+      cancelDelete() { calls.push(["cancel-delete"]); },
+      confirmDelete() { calls.push(["confirm-delete"]); },
+      clearKey() { calls.push(["clear-key"]); },
+      editorInput() { calls.push(["editor-input"]); },
+      taskServiceChange() { calls.push(["task-service-change"]); },
+      customModelChange() { calls.push(["custom-change"]); },
+      validateTaskSelection() { calls.push(["validate-task"]); },
+      saveTaskSelection() { calls.push(["save-task"]); }
+    }
+  });
+
+  nodes["btn-new-direct-service"].dispatchEvent(new Event("click"));
+  nodes["btn-save-direct-service"].dispatchEvent(new Event("click"));
+  nodes["btn-refresh-direct-service-models"].dispatchEvent(new Event("click"));
+  nodes["btn-validate-direct-service"].dispatchEvent(new Event("click"));
+  nodes["btn-validate-task-model-selection"].dispatchEvent(new Event("click"));
+  nodes["btn-save-task-model-selection"].dispatchEvent(new Event("click"));
+
+  assert.deepStrictEqual(calls.slice(0, 6), [
+    ["open", "create", ""],
+    ["save"],
+    ["refresh"],
+    ["validate-service"],
+    ["validate-task"],
+    ["save-task"]
+  ]);
+});

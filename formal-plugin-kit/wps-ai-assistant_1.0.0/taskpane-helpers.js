@@ -5297,7 +5297,7 @@
     var activeId = options && options.activeProfileId || "";
     var items = [];
     var directServices = (options && options.directServices) || [];
-    var taskSelection = options && options.taskModelSelection;
+    var taskType = options && options.taskType || "";
 
     (profiles || []).forEach(function (profile) {
       var option = workflowProfileOptionState(profile, activeId);
@@ -5310,10 +5310,12 @@
       });
     });
 
+    if (taskType === "word.document_review" || taskType === "word.format_review") {
+      directServices = [];
+    }
     directServices.forEach(function (svc) {
       var isCurrent = svc.id === activeId;
-      var effModel = (taskSelection && taskSelection.serviceId === svc.id && (taskSelection.modelName || taskSelection.effectiveModel)) || svc.defaultModel || "默认模型";
-      var label = (svc.name || "直连服务") + " · 模型直连 · " + effModel;
+      var label = (svc.name || "直连服务") + " · 模型直连";
       items.push({
         id: svc.id,
         action: "select",
@@ -5331,6 +5333,42 @@
       disabled: false
     });
     return items;
+  }
+
+  function bindDirectServiceEvents(options) {
+    var input = options || {};
+    var getById = input.byId;
+    var handlers = input.handlers || {};
+    function bind(id, type, handlerName) {
+      var node = typeof getById === "function" ? getById(id) : null;
+      var handler = handlers[handlerName];
+      if (node && typeof node.addEventListener === "function" && typeof handler === "function") {
+        node.addEventListener(type, handler);
+      }
+    }
+
+    bind("btn-new-direct-service", "click", "openCreate");
+    bind("direct-services-list", "click", "listAction");
+    bind("btn-direct-service-editor-back", "click", "closeEditor");
+    bind("btn-cancel-direct-service", "click", "closeEditor");
+    bind("btn-save-direct-service", "click", "saveEditor");
+    bind("btn-refresh-direct-service-models", "click", "refreshModels");
+    bind("btn-validate-direct-service", "click", "validateService");
+    bind("btn-cancel-direct-service-delete", "click", "cancelDelete");
+    bind("btn-confirm-direct-service-delete", "click", "confirmDelete");
+    bind("btn-clear-direct-service-key", "click", "clearKey");
+    ["direct-service-name", "direct-service-url", "direct-service-key", "direct-service-default-model"].forEach(function (id) {
+      var node = typeof getById === "function" ? getById(id) : null;
+      if (node && typeof node.addEventListener === "function" && typeof handlers.editorInput === "function") {
+        node.addEventListener("input", function (event) {
+          handlers.editorInput(id, event);
+        });
+      }
+    });
+    bind("word-task-direct-service-select", "change", "taskServiceChange");
+    bind("word-task-custom-model-check", "change", "customModelChange");
+    bind("btn-validate-task-model-selection", "click", "validateTaskSelection");
+    bind("btn-save-task-model-selection", "click", "saveTaskSelection");
   }
 
   function resolveTaskModelConfigViewStatus(input) {
@@ -6438,6 +6476,7 @@
     formatTaskModelConfigEntry: formatTaskModelConfigEntry,
     resolveCurrentTaskModelConfigProfile: resolveCurrentTaskModelConfigProfile,
     buildTaskModelConfigMenuItems: buildTaskModelConfigMenuItems,
+    bindDirectServiceEvents: bindDirectServiceEvents,
     resolveTaskModelConfigViewStatus: resolveTaskModelConfigViewStatus,
     evaluateTaskModelConfigSwitch: evaluateTaskModelConfigSwitch,
     rollbackTaskModelConfigSwitch: rollbackTaskModelConfigSwitch,
