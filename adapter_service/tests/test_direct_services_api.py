@@ -45,6 +45,8 @@ if HAS_API_DEPS:
     from app.services.provider_client import ProviderClient
     from app.services.word.rewriter import WordRewriter
     from app.services.word.smart_imitator import WordSmartImitator
+    from app.services.ppt.slide_assistant import PptSlideAssistant
+    from app.services.ppt.structure_review import PptStructureReviewer
 
 
 @unittest.skipUnless(
@@ -133,6 +135,89 @@ class DirectServicesApiTests(unittest.TestCase):
             self.assertEqual(imitation_auth["modelConfigurationId"], service_id)
             self.assertEqual(imitation_auth["modelName"], "imitation-model")
             self.assertEqual(imitation_auth["temperature"], 0.6)
+
+    def test_ppt_tasks_resolve_atomic_selections_from_public_api(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            key_dir = root / "provider_api_keys"
+            store = DirectServiceStore(config_path, key_dir)
+
+            with patch(
+                "app.api.provider.get_direct_service_store", return_value=store
+            ):
+                client = TestClient(app)
+                created = client.post(
+                    "/provider/direct-services",
+                    json={
+                        "name": "PPT 共享直连",
+                        "serviceBaseUrl": "https://api.example.com/v1",
+                        "defaultModel": "shared-default",
+                    },
+                )
+                self.assertEqual(created.status_code, 200)
+                service_id = created.json()["data"]["directService"]["id"]
+                store.replace_api_key(service_id, "sk-ppt-shared", expected_revision=1)
+                store.update_model_list(
+                    service_id,
+                    ["shared-default", "slide-model", "structure-model"],
+                    expected_revision=2,
+                    trusted=True,
+                )
+
+                task_payloads = {
+                    "ppt.slide_assistant": {
+                        "serviceId": service_id,
+                        "modelName": "slide-model",
+                        "temperature": 0.4,
+                        "maxOutputTokens": 2048,
+                        "contextWindowTokens": 32000,
+                        "customModel": False,
+                    },
+                    "ppt.structure_review": {
+                        "serviceId": service_id,
+                        "modelName": "structure-model",
+                        "temperature": 0.2,
+                        "maxOutputTokens": 4096,
+                        "contextWindowTokens": 64000,
+                        "customModel": False,
+                    },
+                }
+                for task_type, selection in task_payloads.items():
+                    response = client.post(
+                        "/provider/direct-services/{0}/activate".format(service_id),
+                        json={
+                            "taskType": task_type,
+                            "taskModelSelection": selection,
+                        },
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.json()["data"]["taskModelSelection"]["modelName"],
+                        selection["modelName"],
+                    )
+
+            provider_client = ProviderClient(
+                settings=AppSettings(),
+                model_configuration_store=ModelConfigurationStore(
+                    config_path=config_path, key_dir=key_dir
+                ),
+                direct_service_store=store,
+            )
+            slide_auth = PptSlideAssistant(
+                provider_client=provider_client
+            ).snapshot_task_auth()
+            structure_auth = PptStructureReviewer(
+                provider_client=provider_client
+            ).snapshot_task_auth()
+
+            self.assertEqual(slide_auth["modelConfigurationId"], service_id)
+            self.assertEqual(slide_auth["modelName"], "slide-model")
+            self.assertEqual(slide_auth["temperature"], 0.4)
+            self.assertEqual(structure_auth["modelConfigurationId"], service_id)
+            self.assertEqual(structure_auth["modelName"], "structure-model")
+            self.assertEqual(structure_auth["temperature"], 0.2)
 
     def test_model_mutation_requests_require_expected_revision(self) -> None:
         for request_type, payload in (

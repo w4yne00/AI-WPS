@@ -55,6 +55,18 @@
     profiles: { activeProfileId: "", profiles: [] },
     profilesByTask: {},
     selectedProfileId: "",
+    directServices: [],
+    directServiceEditor: {
+      open: false,
+      mode: "create",
+      serviceId: "",
+      revision: 1,
+      dirty: false
+    },
+    directServiceOperationId: 0,
+    directServiceDeleteCandidate: null,
+    taskModelSelections: {},
+    lastValidatedCustomModel: null,
     workflowProfileMutationBusy: false,
     workflowProfileActivationTimer: null,
     profileLoadRequestId: 0,
@@ -992,6 +1004,13 @@
   }
 
   function submitPptSlideJob(payload) {
+    var readiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("ppt.slide_assistant")
+      : { valid: true };
+    if (readiness && !readiness.valid) {
+      setStatus("无法提交任务：" + readiness.error);
+      return;
+    }
     var clientJobId = payload.clientJobId;
     state.jobSourceMode = payload.sourceMode || "slide";
     state.jobId = clientJobId;
@@ -1478,6 +1497,13 @@
   }
 
   function submitStructureReviewJob(payload) {
+    var readiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("ppt.structure_review")
+      : { valid: true };
+    if (readiness && !readiness.valid) {
+      setStatus("无法提交任务：" + readiness.error);
+      return;
+    }
     var clientJobId = payload.clientJobId;
     var pres = typeof getActivePresentation === "function" ? getActivePresentation() : null;
     var docSession = payload.documentSessionId || (helpers.getDocumentSessionId && pres ? helpers.getDocumentSessionId(pres) : state.documentSessionId) || "";
@@ -1823,6 +1849,7 @@
     renderWorkflowTaskTabs();
     renderProfileStrip();
     renderProfileManager();
+    renderTaskModelSelectionSection();
     scrollWorkflowTaskTabIntoView(event.target);
     loadProfiles();
   }
@@ -1863,9 +1890,20 @@
     button.setAttribute("aria-expanded", open ? "true" : "false");
   }
 
+  function findDirectService(serviceId) {
+    var services = state.directServices || [];
+    var i;
+    for (i = 0; i < services.length; i += 1) {
+      if (services[i].id === serviceId) {
+        return services[i];
+      }
+    }
+    return null;
+  }
+
   function getWorkflowProfileData(taskType) {
     var type = taskType || getCurrentWorkflowTaskType();
-    return state.profilesByTask[type] || state.profiles || {
+    return (state.workflowProfiles && state.workflowProfiles[type]) || (state.profilesByTask && state.profilesByTask[type]) || state.profiles || {
       taskType: type,
       activeProfileId: "",
       profileCount: 0,
@@ -1881,14 +1919,38 @@
         return profiles[index];
       }
     }
+    var directServices = state.directServices || [];
+    for (index = 0; index < directServices.length; index += 1) {
+      if (directServices[index] && directServices[index].id === profileId) {
+        var svc = directServices[index];
+        var selection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
+        var effModel = selection.effectiveModel || svc.defaultModel || "";
+        return {
+          id: svc.id,
+          name: svc.name,
+          accessMethod: "direct_model",
+          effectiveModel: effModel,
+          complete: Boolean(svc.serviceBaseUrl && svc.keyConfigured),
+          serviceBaseUrl: svc.serviceBaseUrl,
+          keyConfigured: svc.keyConfigured
+        };
+      }
+    }
     return null;
+  }
+
+  function findWorkflowProfile(profileId, taskType) {
+    return getWorkflowProfileById(taskType || getCurrentWorkflowTaskType(), profileId);
   }
 
   function currentTaskModelConfigProfile(data) {
     var taskType = (data && data.taskType) || getCurrentWorkflowTaskType();
     var selectedId = (state.workflowProfileSelections || {})[taskType] || (data && data.activeProfileId) || "";
     if (helpers.resolveCurrentTaskModelConfigProfile) {
-      return helpers.resolveCurrentTaskModelConfigProfile(data, selectedId);
+      return helpers.resolveCurrentTaskModelConfigProfile(data, selectedId, {
+        directServices: state.directServices,
+        taskModelSelection: state.taskModelSelections && state.taskModelSelections[taskType]
+      });
     }
     return getWorkflowProfileById(taskType, selectedId);
   }
@@ -2003,7 +2065,12 @@
     var data = getWorkflowProfileData(taskType);
     var activeId = (state.workflowProfileSelections || {})[taskType] || data.activeProfileId || "";
     var items = helpers.buildTaskModelConfigMenuItems
-      ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], { activeProfileId: activeId })
+      ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], {
+        activeProfileId: activeId,
+        taskType: taskType,
+        directServices: state.directServices,
+        taskModelSelection: state.taskModelSelections && state.taskModelSelections[taskType]
+      })
       : [];
     var selectedIndex = 0;
     items.forEach(function (item, index) {
@@ -2194,7 +2261,10 @@
     if (state.taskModelConfigMenu && state.taskModelConfigMenu.open) {
       state.taskModelConfigMenu.items = helpers.buildTaskModelConfigMenuItems
         ? helpers.buildTaskModelConfigMenuItems(data.profiles || [], {
-          activeProfileId: (state.workflowProfileSelections || {})[taskType] || data.activeProfileId || ""
+          activeProfileId: (state.workflowProfileSelections || {})[taskType] || data.activeProfileId || "",
+          taskType: taskType,
+          directServices: state.directServices,
+          taskModelSelection: state.taskModelSelections && state.taskModelSelections[taskType]
         })
         : [];
       state.taskModelConfigMenu.itemCount = state.taskModelConfigMenu.items.length;
@@ -2613,23 +2683,26 @@
     var data;
     var profile;
     var decision;
-    if (typeof arg2 === "string" && arg2.indexOf("ppt.") === 0) {
+    if (typeof arg2 === "string" && (arg2.indexOf("ppt.") === 0 || arg2.indexOf("word.") === 0 || arg2.indexOf("excel.") === 0)) {
       taskType = arg2;
       previousProfileId = arg3;
+    } else if (typeof arg3 === "string" && (arg3.indexOf("ppt.") === 0 || arg3.indexOf("word.") === 0 || arg3.indexOf("excel.") === 0)) {
+      taskType = arg3;
+      previousProfileId = arg2;
     } else {
       taskType = getSettingsWorkflowTaskType();
-      previousProfileId = arg3;
+      previousProfileId = arg3 || arg2;
     }
     data = getWorkflowProfileData(taskType);
-    profile = getWorkflowProfileById(taskType, profileId) || profileById(profileId);
+    profile = getWorkflowProfileById(taskType, profileId) || (typeof profileById === "function" ? profileById(profileId) : null);
     previousProfileId = typeof previousProfileId === "string"
       ? previousProfileId
-      : (data.activeProfileId || state.selectedProfileId || "");
+      : ((state.workflowProfileSelections && state.workflowProfileSelections[taskType]) || data.activeProfileId || state.selectedProfileId || "");
     decision = helpers.evaluateTaskModelConfigSwitch
       ? helpers.evaluateTaskModelConfigSwitch({
         requestedId: profileId,
         previousId: previousProfileId,
-        busy: state.busy,
+        busy: state.busy || (typeof isWorkflowInteractionBlocked === "function" ? isWorkflowInteractionBlocked() : false),
         mutationBusy: state.workflowProfileMutationBusy,
         profileComplete: Boolean(profile && profile.complete)
       })
@@ -2642,13 +2715,17 @@
     if (!decision.allowed) {
       state.workflowProfileSelections[taskType] = decision.nextSelectionId;
       state.selectedProfileId = decision.nextSelectionId;
-      renderProfileStrip();
+      if (typeof renderWorkflowProfileStrip === "function") {
+        renderWorkflowProfileStrip();
+      } else if (typeof renderProfileStrip === "function") {
+        renderProfileStrip();
+      }
       if (decision.reason === "incomplete") {
         setStatus("该模型配置不完整，暂时不可切换。");
       } else if (decision.reason === "busy") {
         setStatus("当前正忙，请稍后切换模型配置。");
       }
-      if (decision.restoreFocus && state.currentView !== "settings") {
+      if (decision.restoreFocus && state.currentView !== "settings" && typeof focusTaskModelConfigTrigger === "function") {
         focusTaskModelConfigTrigger();
       }
       return Promise.resolve();
@@ -2656,35 +2733,122 @@
     state.taskModelConfigStatusByTask[taskType] = "";
     state.workflowProfileSelections[taskType] = profileId;
     state.selectedProfileId = profileId;
-    state.profileLoadRequestId += 1;
-    setWorkflowProfileMutationBusy(true);
-    return request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {})
+    if (typeof state.profileLoadRequestId === "number") {
+      state.profileLoadRequestId += 1;
+    }
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+
+    var isDirectService = String(profileId || "").indexOf("direct_svc_") === 0;
+    var activationPromise = isDirectService
+      ? request("/provider/direct-services/" + encodeURIComponent(profileId) + "/activate", {
+        taskType: taskType,
+        taskModelSelection: {
+          serviceId: profileId,
+          modelName: "",
+          customModel: false,
+          temperature: null,
+          maxOutputTokens: null,
+          contextWindowTokens: null
+        }
+      })
+      : request("/provider/model-configurations/" + encodeURIComponent(profileId) + "/activate", {});
+
+    return activationPromise
       .then(function (body) {
-        var nextData = helpers.normalizeWorkflowProfiles
-          ? helpers.normalizeWorkflowProfiles((body && body.data) || {})
-          : data;
-        if (!nextData.taskType) {
-          nextData.taskType = taskType;
+        if (isDirectService) {
+          state.workflowProfileSelections[taskType] = profileId;
+          state.selectedProfileId = profileId;
+          state.taskModelConfigStatusByTask[taskType] = "";
+          if (body && body.data && body.data.taskModelSelection) {
+            state.taskModelSelections[taskType] = body.data.taskModelSelection;
+          }
+          if (state.taskApiKeys && state.taskApiKeys[taskType]) {
+            state.taskApiKeys[taskType].activeProfileId = profileId;
+          }
+        } else {
+          var nextData = helpers.normalizeWorkflowProfiles
+            ? helpers.normalizeWorkflowProfiles((body && body.data) || {})
+            : data;
+          if (!nextData.taskType) {
+            nextData.taskType = taskType;
+          }
+          state.profilesByTask[taskType] = nextData;
+          if (state.workflowTaskType === taskType || getCurrentWorkflowTaskType() === taskType) {
+            state.profiles = nextData;
+            state.selectedProfileId = nextData.activeProfileId || profileId;
+          }
+          state.workflowProfileSelections[taskType] = nextData.activeProfileId || profileId;
+          state.taskModelConfigStatusByTask[taskType] = "";
         }
-        state.profilesByTask[taskType] = nextData;
-        if (state.workflowTaskType === taskType || getCurrentWorkflowTaskType() === taskType) {
-          state.profiles = nextData;
-          state.selectedProfileId = nextData.activeProfileId || profileId;
-        }
-        state.workflowProfileSelections[taskType] = nextData.activeProfileId || profileId;
-        state.taskModelConfigStatusByTask[taskType] = "";
-        setWorkflowProfileMutationBusy(false);
-        renderProfileStrip();
-        renderWorkflowTaskTabs();
-        renderProfileManager();
-        renderModelInterfaceState(state.modelInterfaceDetectable);
-        setStatus("已切换至：" + ((profile && profile.name) || "模型配置"));
+        var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices() : Promise.resolve();
+        var wfRefresh = typeof loadWorkflowProfiles === "function" ? loadWorkflowProfiles(taskType) : (typeof loadProfiles === "function" ? loadProfiles() : Promise.resolve());
+        return Promise.all([wfRefresh, dsRefresh]).then(function () {
+          if (typeof setWorkflowProfileMutationBusy === "function") {
+            setWorkflowProfileMutationBusy(false);
+          } else {
+            state.workflowProfileMutationBusy = false;
+          }
+          if (typeof renderWorkflowProfileStrip === "function") {
+            renderWorkflowProfileStrip();
+          } else if (typeof renderProfileStrip === "function") {
+            renderProfileStrip();
+          }
+          if (typeof renderWorkflowTaskTabs === "function") {
+            renderWorkflowTaskTabs();
+          }
+          if (typeof renderWorkflowProfileManager === "function") {
+            renderWorkflowProfileManager();
+          } else if (typeof renderProfileManager === "function") {
+            renderProfileManager();
+          }
+          if (typeof renderTaskModelSelectionSection === "function") {
+            renderTaskModelSelectionSection();
+          }
+          if (typeof renderModelInterfaceState === "function") {
+            renderModelInterfaceState(state.modelInterfaceDetectable);
+          }
+          setStatus("已切换至：" + ((profile && profile.name) || "模型配置"));
+        }).catch(function (refreshError) {
+          if (typeof setWorkflowProfileMutationBusy === "function") {
+            setWorkflowProfileMutationBusy(false);
+          } else {
+            state.workflowProfileMutationBusy = false;
+          }
+          if (typeof renderWorkflowProfileStrip === "function") {
+            renderWorkflowProfileStrip();
+          } else if (typeof renderProfileStrip === "function") {
+            renderProfileStrip();
+          }
+          if (typeof renderWorkflowTaskTabs === "function") {
+            renderWorkflowTaskTabs();
+          }
+          if (typeof renderWorkflowProfileManager === "function") {
+            renderWorkflowProfileManager();
+          } else if (typeof renderProfileManager === "function") {
+            renderProfileManager();
+          }
+          if (typeof renderTaskModelSelectionSection === "function") {
+            renderTaskModelSelectionSection();
+          }
+          var refreshErrMsg = typeof describeFetchError === "function"
+            ? describeFetchError(refreshError)
+            : (typeof describeSettingsError === "function"
+              ? describeSettingsError(refreshError)
+              : ((refreshError && refreshError.message) || String(refreshError || "未知错误")));
+          setStatus("模型配置已激活，但刷新最新列表失败：" + refreshErrMsg);
+        });
       })
       .catch(function (error) {
-        var previousProfile = getWorkflowProfileById(taskType, previousProfileId);
+        var previousProfile = typeof getWorkflowProfileById === "function"
+          ? getWorkflowProfileById(taskType, previousProfileId)
+          : (typeof findWorkflowProfile === "function" ? findWorkflowProfile(previousProfileId, taskType) : null);
         var previousEntry = helpers.formatTaskModelConfigEntry
           ? helpers.formatTaskModelConfigEntry(previousProfile, { status: "error" })
-          : { visibleText: activeProfileName() };
+          : { visibleText: typeof activeProfileName === "function" ? activeProfileName() : "尚未配置" };
         var rolled = helpers.rollbackTaskModelConfigSwitch
           ? helpers.rollbackTaskModelConfigSwitch({
             previousId: previousProfileId,
@@ -2698,21 +2862,43 @@
         var stillRelevant = state.currentView === "settings"
           ? getSettingsWorkflowTaskType() === taskType
           : getCurrentWorkflowTaskType() === taskType;
-        setWorkflowProfileMutationBusy(false);
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
         state.workflowProfileSelections[taskType] = rolled.selectionId;
         if (stillRelevant) {
           state.selectedProfileId = rolled.selectionId;
         }
         state.taskModelConfigStatusByTask[taskType] = "error";
-        renderProfileStrip();
-        renderWorkflowTaskTabs();
-        renderProfileManager();
+        if (typeof renderWorkflowProfileStrip === "function") {
+          renderWorkflowProfileStrip();
+        } else if (typeof renderProfileStrip === "function") {
+          renderProfileStrip();
+        }
+        if (typeof renderWorkflowTaskTabs === "function") {
+          renderWorkflowTaskTabs();
+        }
+        if (typeof renderWorkflowProfileManager === "function") {
+          renderWorkflowProfileManager();
+        } else if (typeof renderProfileManager === "function") {
+          renderProfileManager();
+        }
+        if (typeof renderTaskModelSelectionSection === "function") {
+          renderTaskModelSelectionSection();
+        }
         if (!stillRelevant) {
           return;
         }
-        setStatus("切换模型配置失败：" + (typeof describeSettingsError === "function" ? describeSettingsError(error) : error.message));
+        var errorMsg = typeof describeFetchError === "function"
+          ? describeFetchError(error)
+          : (typeof describeSettingsError === "function"
+            ? describeSettingsError(error)
+            : ((error && error.message) || String(error || "未知错误")));
+        setStatus("切换模型配置失败：" + errorMsg);
         setNodeTextIfChanged(byId("workflow-switch-feedback"), rolled.statusText);
-        if (rolled.restoreFocus && state.currentView !== "settings") {
+        if (rolled.restoreFocus && state.currentView !== "settings" && typeof focusTaskModelConfigTrigger === "function") {
           focusTaskModelConfigTrigger();
         }
       });
@@ -2782,6 +2968,1202 @@
     } else if (action === "delete") {
       deleteWorkflowProfile(profileId);
     }
+  }
+
+  function describeFetchError(error) {
+    if (typeof describeSettingsError === "function") {
+      return describeSettingsError(error);
+    }
+    return (error && error.message) || String(error || "未知错误");
+  }
+
+  function escapeWorkflowText(value) {
+    if (typeof escaped === "function") {
+      return escaped(value);
+    }
+    return helpers.escapeHtml ? helpers.escapeHtml(String(value || "")) : String(value || "");
+  }
+
+  function loadWorkflowProfiles(taskType) {
+    return typeof loadProfiles === "function" ? loadProfiles() : Promise.resolve({});
+  }
+
+  function renderWorkflowProfileStrip() {
+    if (typeof renderProfileStrip === "function") {
+      return renderProfileStrip();
+    }
+  }
+
+  function renderWorkflowProfileManager() {
+    if (typeof renderProfileManager === "function") {
+      return renderProfileManager();
+    }
+  }
+
+  function formatDirectServiceCatalogStatus(service) {
+    var catalog = helpers.getDirectServiceCatalogState
+      ? helpers.getDirectServiceCatalogState(service)
+      : { status: "unavailable", models: [] };
+    var count = catalog.models ? catalog.models.length : 0;
+    var errorText = catalog.lastError && (catalog.lastError.message || catalog.lastError.code);
+    if (catalog.status === "available" && catalog.cacheStatus === "valid") {
+      if (catalog.fetchStatus === "error" && errorText) {
+        return "目录刷新失败，继续使用 " + count + " 个缓存模型；" + errorText;
+      }
+      return "目录有效：" + count + " 个模型" + (catalog.fetchedAt ? "，获取于 " + catalog.fetchedAt : "");
+    }
+    if (catalog.status === "expired") {
+      return "目录已过期；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+    }
+    if (catalog.status === "empty") {
+      return "目录为空；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+    }
+    return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+  }
+
+  function loadDirectServices(configRefreshRequestId, requestOptions, directServiceOperationId) {
+    return Promise.all([
+      request("/provider/direct-services", null, requestOptions),
+      request("/provider/task-model-selections?host=ppt", null, requestOptions)
+    ]).then(function (results) {
+      var dsBody = results[0];
+      var tmsBody = results[1];
+      if (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId) {
+        return { superseded: true };
+      }
+      if (directServiceOperationId && state.directServiceOperationId !== directServiceOperationId) {
+        return { superseded: true };
+      }
+      state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
+      var selectionsMap = {};
+      var rawSelections = (tmsBody && tmsBody.data && (tmsBody.data.taskModelSelections || tmsBody.data.selections)) || [];
+      if (Array.isArray(rawSelections)) {
+        rawSelections.forEach(function (sel) {
+          if (sel && sel.taskType) {
+            selectionsMap[sel.taskType] = sel;
+          }
+        });
+      } else if (rawSelections && typeof rawSelections === "object") {
+        selectionsMap = rawSelections;
+      }
+      state.taskModelSelections = selectionsMap;
+      TASK_API_KEY_DEFS.forEach(function (definition) {
+        var taskType = definition.taskType;
+        var taskStatus = state.taskApiKeys && state.taskApiKeys[taskType];
+        if (taskStatus && taskStatus.accessMethod === "direct_model" && taskStatus.activeProfileId) {
+          state.workflowProfileSelections[taskType] = taskStatus.activeProfileId;
+        }
+      });
+      renderDirectServicesList();
+      renderTaskModelSelectionSection();
+      if (typeof renderWorkflowProfileStrip === "function") {
+        renderWorkflowProfileStrip();
+      } else if (typeof renderProfileStrip === "function") {
+        renderProfileStrip();
+      }
+      if (typeof renderWorkflowProfileManager === "function") {
+        renderWorkflowProfileManager();
+      } else if (typeof renderProfileManager === "function") {
+        renderProfileManager();
+      }
+      return { success: true };
+    }).catch(function (error) {
+      if (configRefreshRequestId && state.configRefreshRequestId !== configRefreshRequestId) {
+        return { superseded: true };
+      }
+      if (directServiceOperationId && state.directServiceOperationId !== directServiceOperationId) {
+        return { superseded: true };
+      }
+      renderDirectServicesList();
+      renderTaskModelSelectionSection();
+      throw error;
+    });
+  }
+
+  function renderDirectServicesList() {
+    var list = byId("direct-services-list");
+    var btnNew = byId("btn-new-direct-service");
+    var rows = [];
+    if (!list) {
+      return;
+    }
+    if (btnNew) {
+      btnNew.disabled = (state.directServices || []).length >= 5;
+    }
+    if (!state.directServices || state.directServices.length === 0) {
+      list.innerHTML = '<p class="field-hint">尚未建立共享直连服务。</p>';
+      return;
+    }
+    state.directServices.forEach(function (svc) {
+      var id = escapeWorkflowText(svc.id);
+      var modelText = svc.defaultModel ? (" · 默认模型：" + escapeWorkflowText(svc.defaultModel)) : "";
+      var catalogText = typeof formatDirectServiceCatalogStatus === "function"
+        ? formatDirectServiceCatalogStatus(svc)
+        : (svc.modelList && svc.modelList.length ? ("目录已有 " + svc.modelList.length + " 个模型") : "目录未获取");
+      rows.push('<div class="workflow-profile-list-row" data-direct-service-id="' + id + '">');
+      rows.push('<div class="workflow-profile-copy">');
+      rows.push('<div class="workflow-profile-title"><strong>' + escapeWorkflowText(svc.name) + '</strong>');
+      rows.push('<span class="provider-badge">' + (svc.keyConfigured ? "已配Key" : "未配Key") + '</span></div>');
+      rows.push('<p class="workflow-profile-note">' + escapeWorkflowText(svc.serviceBaseUrl || "未配置URL") + modelText + '</p>');
+      rows.push('<p class="workflow-profile-note">' + escapeWorkflowText(catalogText) + '</p>');
+      rows.push('</div>');
+      rows.push('<div class="workflow-profile-actions">');
+      rows.push('<button type="button" class="ghost-action mini-button" data-direct-action="edit" data-direct-id="' + id + '">编辑</button>');
+      rows.push('<button type="button" class="ghost-action mini-button danger-action" data-direct-action="delete" data-direct-id="' + id + '">删除</button>');
+      rows.push('</div></div>');
+    });
+    list.innerHTML = rows.join("");
+  }
+
+  function openDirectServiceEditor(mode, serviceId) {
+    var isCreate = mode === "create";
+    var svc = isCreate ? null : findDirectService(serviceId);
+    var title = byId("direct-service-editor-title");
+    var nameInput = byId("direct-service-name");
+    var urlInput = byId("direct-service-url");
+    var keyInput = byId("direct-service-key");
+    var keyLabel = byId("direct-service-key-label");
+    var keyStatus = byId("direct-service-key-status");
+    var defaultModelInput = byId("direct-service-default-model");
+    var modelsStatus = byId("direct-service-models-status");
+    var btnRefresh = byId("btn-refresh-direct-service-models");
+    var btnValidate = byId("btn-validate-direct-service");
+    var validationStatus = byId("direct-service-validation-status");
+    var errorBox = byId("direct-service-editor-error");
+
+    if (isCreate && (state.directServices || []).length >= 5) {
+      setStatus("最多只能保存 5 份共享直连服务。");
+      return;
+    }
+    if (!isCreate && !svc) {
+      setStatus("未找到指定的直连服务。");
+      return;
+    }
+
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    state.directServiceEditor = {
+      open: true,
+      mode: mode,
+      serviceId: isCreate ? "" : svc.id,
+      revision: isCreate ? 1 : svc.revision,
+      dirty: false
+    };
+
+    if (title) {
+      title.textContent = isCreate ? "新建直连服务" : "编辑直连服务";
+    }
+    if (nameInput) {
+      nameInput.value = isCreate ? "" : svc.name;
+    }
+    if (urlInput) {
+      urlInput.value = isCreate ? "" : svc.serviceBaseUrl;
+    }
+    if (keyInput) {
+      keyInput.value = "";
+      keyInput.placeholder = isCreate ? "输入 API Key" : "留空保持原 API Key 不变";
+    }
+    if (keyLabel) {
+      keyLabel.textContent = isCreate ? "API Key（仅需录入一次）" : "更换 API Key";
+    }
+    if (keyStatus) {
+      keyStatus.textContent = isCreate ? "" : (svc.keyConfigured ? "已配置（留空保持不变）" : "未配置");
+    }
+    if (defaultModelInput) {
+      defaultModelInput.value = isCreate ? "" : (svc.defaultModel || "");
+    }
+    if (modelsStatus) {
+      modelsStatus.textContent = !isCreate && typeof formatDirectServiceCatalogStatus === "function"
+        ? formatDirectServiceCatalogStatus(svc)
+        : (!isCreate && svc.modelList && svc.modelList.length
+          ? ("已获取 " + svc.modelList.length + " 个模型")
+          : "目录未获取");
+    }
+    if (btnRefresh) {
+      btnRefresh.disabled = isCreate;
+    }
+    if (btnValidate) {
+      btnValidate.disabled = isCreate;
+    }
+    if (validationStatus) {
+      validationStatus.textContent = "";
+    }
+    if (errorBox) {
+      errorBox.textContent = "";
+    }
+    var urlImpactNode = byId("direct-service-url-impact");
+    if (urlImpactNode) {
+      urlImpactNode.hidden = true;
+      urlImpactNode.textContent = "";
+    }
+    var btnClearKey = byId("btn-clear-direct-service-key");
+    if (btnClearKey) {
+      btnClearKey.hidden = isCreate || !svc.keyConfigured;
+      btnClearKey.disabled = false;
+    }
+
+    var editorView = byId("direct-service-editor-view");
+    if (editorView) {
+      editorView.hidden = false;
+    }
+    var dsList = byId("direct-services-list");
+    if (dsList) {
+      dsList.hidden = true;
+    }
+    var btnNewDs = byId("btn-new-direct-service");
+    if (btnNewDs) {
+      btnNewDs.hidden = true;
+    }
+    if (nameInput && typeof nameInput.focus === "function") {
+      nameInput.focus();
+    }
+  }
+
+  function closeDirectServiceEditor() {
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    if (state.directServiceEditor) {
+      state.directServiceEditor.open = false;
+    }
+    var keyInput = byId("direct-service-key");
+    if (keyInput) {
+      keyInput.value = "";
+    }
+    if (state.workflowProfileMutationBusy) {
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+    }
+    var editorView = byId("direct-service-editor-view");
+    if (editorView) {
+      editorView.hidden = true;
+    }
+    var dsList = byId("direct-services-list");
+    if (dsList) {
+      dsList.hidden = false;
+    }
+    var btnNewDs = byId("btn-new-direct-service");
+    if (btnNewDs) {
+      btnNewDs.hidden = false;
+    }
+    var errorBox = byId("direct-service-editor-error");
+    if (errorBox) {
+      errorBox.textContent = "";
+    }
+    var urlImpactNode = byId("direct-service-url-impact");
+    if (urlImpactNode) {
+      urlImpactNode.hidden = true;
+      urlImpactNode.textContent = "";
+    }
+  }
+
+  function updateDirectServiceUrlImpact() {
+    var editor = state.directServiceEditor || {};
+    if (editor.mode !== "edit" || !editor.serviceId) {
+      var node = byId("direct-service-url-impact");
+      if (node) {
+        node.hidden = true;
+        node.textContent = "";
+      }
+      return;
+    }
+    var svc = findDirectService(editor.serviceId);
+    var urlInput = byId("direct-service-url");
+    var urlImpactNode = byId("direct-service-url-impact");
+    if (!svc || !urlInput || !urlImpactNode) {
+      return;
+    }
+    var res = helpers.evaluateDirectServiceUrlImpact
+      ? helpers.evaluateDirectServiceUrlImpact(svc, urlInput.value)
+      : { isModified: false, warning: "" };
+    if (res.isModified && res.warning) {
+      urlImpactNode.textContent = res.warning;
+      urlImpactNode.hidden = false;
+    } else {
+      urlImpactNode.hidden = true;
+      urlImpactNode.textContent = "";
+    }
+  }
+
+  function clearDirectServiceApiKey() {
+    var editor = state.directServiceEditor || {};
+    var serviceId = editor.serviceId;
+    var revision = editor.revision;
+    var keyInput = byId("direct-service-key");
+    var keyStatus = byId("direct-service-key-status");
+    var btnClear = byId("btn-clear-direct-service-key");
+    var errorBox = byId("direct-service-editor-error");
+    if (!serviceId || state.workflowProfileMutationBusy) {
+      return;
+    }
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+    request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/api-key?expectedRevision=" + encodeURIComponent(revision), null, {
+      method: "DELETE"
+    }).then(function (body) {
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      var svc = (body && body.data && body.data.directService) || {};
+      var nextRev = svc.revision || (revision + 1);
+      if (state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
+        state.directServiceEditor.revision = nextRev;
+      }
+      if (keyInput) {
+        keyInput.value = "";
+        keyInput.placeholder = "输入新 API Key";
+      }
+      if (keyStatus) {
+        keyStatus.textContent = "未配置";
+      }
+      if (btnClear) {
+        btnClear.hidden = true;
+      }
+      return loadDirectServices().then(function () {
+        setStatus("API Key 已清除。");
+      });
+    }).catch(function (error) {
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
+        if (errorBox) {
+          errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止清除 Key。请刷新后重新编辑，本次修改未自动合并。";
+        }
+      } else if (errorBox) {
+        errorBox.textContent = "清除 API Key 失败：" + describeFetchError(error);
+      }
+    });
+  }
+
+  function saveDirectServiceEditor() {
+    if (state.workflowProfileMutationBusy) {
+      return;
+    }
+    var editor = state.directServiceEditor || {};
+    var isCreate = editor.mode === "create";
+    var serviceId = editor.serviceId;
+    var revision = editor.revision;
+    var nameInput = byId("direct-service-name");
+    var urlInput = byId("direct-service-url");
+    var keyInput = byId("direct-service-key");
+    var defaultModelInput = byId("direct-service-default-model");
+    var errorBox = byId("direct-service-editor-error");
+
+    var name = (nameInput && nameInput.value || "").trim();
+    var url = (urlInput && urlInput.value || "").trim();
+    var key = (keyInput && keyInput.value || "").trim();
+    var defaultModel = (defaultModelInput && defaultModelInput.value || "").trim();
+
+    var draft = {
+      name: name,
+      serviceBaseUrl: url,
+      apiKey: key,
+      key: key,
+      isNew: isCreate,
+      defaultModel: defaultModel
+    };
+
+    var checked = helpers.validateDirectServiceDraft
+      ? helpers.validateDirectServiceDraft(draft, editor.mode)
+      : { ok: Boolean(draft.name && draft.serviceBaseUrl && (!isCreate || draft.apiKey)) };
+
+    if (!checked.ok) {
+      if (errorBox) {
+        errorBox.textContent = checked.message || checked.error || "请检查输入项。";
+      }
+      return;
+    }
+
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    var editorMode = editor.mode;
+    function isCurrentOperation() {
+      return state.directServiceOperationId === operationId &&
+        state.directServiceEditor && state.directServiceEditor.open &&
+        state.directServiceEditor.mode === editorMode &&
+        state.directServiceEditor.serviceId === serviceId;
+    }
+    function completeSave(message) {
+      return loadDirectServices(undefined, undefined, operationId).then(function () {
+        if (!isCurrentOperation()) {
+          return { superseded: true };
+        }
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
+        closeDirectServiceEditor();
+        setStatus(message);
+        return { success: true };
+      });
+    }
+    function failSave(error, prefix) {
+      if (!isCurrentOperation()) {
+        return { superseded: true };
+      }
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      if (helpers.isDirectServiceRevisionConflict && helpers.isDirectServiceRevisionConflict(error)) {
+        if (errorBox) {
+          errorBox.textContent = "服务已被其他操作修改（版本冲突），已停止保存。请刷新后重新编辑，本次修改未自动合并。";
+        }
+      } else if (errorBox) {
+        errorBox.textContent = prefix + describeFetchError(error);
+      }
+      return { failed: true, error: error };
+    }
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+
+    if (isCreate) {
+      return request("/provider/direct-services", {
+        name: draft.name,
+        serviceBaseUrl: draft.serviceBaseUrl,
+        defaultModel: draft.defaultModel,
+        apiKey: draft.apiKey
+      }).then(function (body) {
+        if (!isCurrentOperation()) {
+          return { superseded: true };
+        }
+        var created = (body && body.data && body.data.directService) || (body && body.data);
+        var createdId = created ? created.id : "";
+        var createdRev = (created && created.revision) || 1;
+        var keyPromise = (created && created.keyConfigured)
+          ? Promise.resolve()
+          : request("/provider/direct-services/" + encodeURIComponent(createdId) + "/api-key", {
+              apiKey: draft.apiKey,
+              expectedRevision: createdRev
+            }).catch(function (keyErr) {
+              return request("/provider/direct-services/" + encodeURIComponent(createdId) + "?expectedRevision=" + encodeURIComponent(createdRev), null, {
+                method: "DELETE"
+              }).then(function () {
+                throw keyErr;
+              }, function () {
+                throw keyErr;
+              });
+            });
+
+        return keyPromise.then(function () {
+          if (!isCurrentOperation()) {
+            return { superseded: true };
+          }
+          return completeSave("共享直连服务已新建，模型目录已自动刷新。");
+        });
+      }).catch(function (error) {
+        return failSave(error, "新建直连服务失败：");
+      });
+    }
+
+    return request("/provider/direct-services/" + encodeURIComponent(serviceId), {
+      name: draft.name,
+      serviceBaseUrl: draft.serviceBaseUrl,
+      defaultModel: draft.defaultModel,
+      expectedRevision: revision
+    }, { method: "PATCH" }).then(function (patchBody) {
+      if (!isCurrentOperation()) {
+        return { superseded: true };
+      }
+      var updated = (patchBody && patchBody.data && patchBody.data.directService) || (patchBody && patchBody.data) || {};
+      var nextRev = updated.revision || (revision + 1);
+      if (!draft.key) {
+        return completeSave("共享直连服务已保存。");
+      }
+      return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/api-key", {
+        apiKey: draft.key,
+        expectedRevision: nextRev
+      }).then(function () {
+        if (!isCurrentOperation()) {
+          return { superseded: true };
+        }
+        return completeSave("共享直连服务与 API Key 已保存。");
+      });
+    }).catch(function (error) {
+      return failSave(error, "保存直连服务失败：");
+    });
+  }
+
+  function refreshDirectServiceModelsInEditor() {
+    var editor = state.directServiceEditor || {};
+    var serviceId = editor.serviceId;
+    var revision = editor.revision;
+    var statusNode = byId("direct-service-models-status");
+    if (!serviceId || state.workflowProfileMutationBusy) {
+      return;
+    }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+    if (statusNode) {
+      statusNode.textContent = "正在刷新模型目录...";
+    }
+    return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/refresh-models", {
+      expectedRevision: revision
+    }).then(function (body) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
+      var svc = (body && body.data && body.data.directService) || {};
+      var models = svc.modelList || (body && body.data && body.data.models) || [];
+      var nextRev = svc.revision || (body && body.data && body.data.revision) || (revision + 1);
+      if (state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
+        state.directServiceEditor.revision = nextRev;
+      }
+      if (statusNode) {
+        statusNode.textContent = typeof formatDirectServiceCatalogStatus === "function"
+          ? formatDirectServiceCatalogStatus(svc)
+          : ("已获取 " + models.length + " 个模型");
+      }
+      return loadDirectServices(undefined, undefined, operationId).then(function () {
+        if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+          return { superseded: true };
+        }
+        if (state.directServiceEditor && state.directServiceEditor.open && state.directServiceEditor.serviceId === serviceId) {
+          var updatedSvc = findDirectService(serviceId);
+          if (updatedSvc && updatedSvc.revision) {
+            state.directServiceEditor.revision = updatedSvc.revision;
+          }
+          if (statusNode && updatedSvc && typeof formatDirectServiceCatalogStatus === "function") {
+            statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
+          }
+        }
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
+        return { success: true };
+      });
+    }).catch(function (error) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      if (statusNode) {
+        statusNode.textContent = "刷新失败：" + describeFetchError(error);
+      }
+      return { failed: true, error: error };
+    });
+  }
+
+  function validateDirectService() {
+    var editor = state.directServiceEditor || {};
+    var serviceId = editor.serviceId;
+    var revision = editor.revision;
+    var statusNode = byId("direct-service-validation-status");
+    var modelsStatus = byId("direct-service-models-status");
+    if (!serviceId || state.workflowProfileMutationBusy) {
+      if (statusNode) {
+        statusNode.textContent = "请先保存直连服务。";
+      }
+      return;
+    }
+    if (statusNode) {
+      statusNode.textContent = "正在验证服务连接、认证和模型目录（不执行任务调用）...";
+    }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+    return request("/provider/direct-services/" + encodeURIComponent(serviceId) + "/validate", {
+      expectedRevision: revision
+    }).then(function (body) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      var data = (body && body.data) || {};
+      var catalogAvailable = data.modelCatalogAvailable;
+      if (catalogAvailable === undefined && data.directService) {
+        catalogAvailable = helpers.getDirectServiceCatalogState
+          ? helpers.getDirectServiceCatalogState(data.directService).usableForSelection
+          : Boolean(data.directService.modelList && data.directService.modelList.length);
+      }
+      if (modelsStatus && data.directService && typeof formatDirectServiceCatalogStatus === "function") {
+        modelsStatus.textContent = formatDirectServiceCatalogStatus(data.directService);
+      }
+      if (data.directService && data.directService.revision && state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
+        state.directServiceEditor.revision = data.directService.revision;
+      }
+      if (statusNode) {
+        if (catalogAvailable) {
+          statusNode.textContent = "服务验证成功；模型目录可用。";
+        } else if (data.authenticationVerified === false) {
+          statusNode.textContent = "服务可达，但认证未验证；未提供可用模型目录，可使用高级手填。";
+        } else {
+          statusNode.textContent = "服务可达且认证成功，但未提供可用模型目录；可使用高级手填。";
+        }
+      }
+      if (typeof loadDirectServices === "function") {
+        loadDirectServices(undefined, undefined, operationId).catch(function () {});
+      }
+    }).catch(function (error) {
+      if (state.directServiceOperationId !== operationId || !state.directServiceEditor.open || state.directServiceEditor.serviceId !== serviceId) {
+        return { superseded: true };
+      }
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      if (statusNode) {
+        statusNode.textContent = "服务验证失败：" + describeFetchError(error);
+      }
+      if (typeof loadDirectServices === "function") {
+        loadDirectServices(undefined, undefined, operationId).then(function () {
+          var currentSvc = findDirectService(serviceId);
+          if (modelsStatus && currentSvc && typeof formatDirectServiceCatalogStatus === "function") {
+            modelsStatus.textContent = formatDirectServiceCatalogStatus(currentSvc);
+          }
+        }).catch(function () {});
+      }
+    });
+  }
+
+  function openDirectServiceDeleteDialog(serviceId) {
+    var svc = findDirectService(serviceId);
+    var nameNode = byId("direct-service-delete-name");
+    var warningNode = byId("direct-service-delete-warning");
+    var confirmBtn = byId("btn-confirm-direct-service-delete");
+    var dialog = byId("direct-service-delete-dialog");
+    if (!svc) {
+      return;
+    }
+    state.directServiceDeleteCandidate = { id: svc.id, name: svc.name, revision: svc.revision };
+    if (nameNode) {
+      nameNode.textContent = svc.name;
+    }
+    var evalRes = helpers.evaluateDirectServiceDelete ? helpers.evaluateDirectServiceDelete(svc) : { canDelete: true, message: "" };
+    if (warningNode) {
+      warningNode.textContent = evalRes.message || "";
+    }
+    if (confirmBtn) {
+      confirmBtn.disabled = !evalRes.canDelete;
+    }
+    if (dialog) {
+      dialog.hidden = false;
+    }
+  }
+
+  function hideDirectServiceDeleteDialog() {
+    state.directServiceDeleteCandidate = null;
+    var dialog = byId("direct-service-delete-dialog");
+    if (dialog) {
+      dialog.hidden = true;
+    }
+    var confirmBtn = byId("btn-confirm-direct-service-delete");
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+    }
+  }
+
+  function confirmDirectServiceDelete() {
+    var candidate = state.directServiceDeleteCandidate;
+    if (!candidate || state.workflowProfileMutationBusy) {
+      return;
+    }
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+    request("/provider/direct-services/" + encodeURIComponent(candidate.id) + "?expectedRevision=" + encodeURIComponent(candidate.revision), null, {
+      method: "DELETE"
+    }).then(function () {
+      hideDirectServiceDeleteDialog();
+      return loadDirectServices().then(function () {
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
+        setStatus("直连服务“" + candidate.name + "”已删除。");
+      });
+    }).catch(function (error) {
+      hideDirectServiceDeleteDialog();
+      if (typeof setWorkflowProfileMutationBusy === "function") {
+        setWorkflowProfileMutationBusy(false);
+      } else {
+        state.workflowProfileMutationBusy = false;
+      }
+      var errObj = error || {};
+      var referenced = errObj.referencedTasks || (errObj.data && errObj.data.referencedTasks);
+      if ((errObj.adapterCode || errObj.code) === "DIRECT_SERVICE_IN_USE" || (Array.isArray(referenced) && referenced.length)) {
+        var tasksStr = helpers.formatReferencedTasks ? helpers.formatReferencedTasks(referenced) : "";
+        setStatus("删除直连服务失败：该服务正被任务使用（" + (tasksStr || "已引用") + "），无法删除。");
+      } else {
+        setStatus("删除直连服务失败：" + describeFetchError(error));
+      }
+    });
+  }
+
+  function handleDirectServiceAction(event) {
+    var action = event.target.getAttribute("data-direct-action");
+    var serviceId = event.target.getAttribute("data-direct-id") || "";
+    if (!action || state.workflowProfileMutationBusy) {
+      return;
+    }
+    if (action === "edit") {
+      openDirectServiceEditor("edit", serviceId);
+    } else if (action === "delete") {
+      openDirectServiceDeleteDialog(serviceId);
+    }
+  }
+
+  function renderTaskModelSelectionSection() {
+    var section = byId("ppt-task-direct-service-section");
+    var title = byId("ppt-task-direct-service-title");
+    var hint = byId("ppt-task-direct-service-hint");
+    var select = byId("ppt-task-direct-service-select");
+    var paramsDiv = byId("ppt-task-direct-params");
+    var modelSelect = byId("ppt-task-model-select");
+    var customCheck = byId("ppt-task-custom-model-check");
+    var customRow = byId("ppt-task-custom-model-row");
+    var customInput = byId("ppt-task-custom-model-input");
+    var tempInput = byId("ppt-task-temperature");
+    var maxOutInput = byId("ppt-task-max-output");
+    var contextInput = byId("ppt-task-context");
+    var costWarning = byId("ppt-task-model-cost-warning");
+    var statusNode = byId("ppt-task-model-validation-status");
+
+    if (!section || !select) {
+      return;
+    }
+
+    var currentTask = getSettingsWorkflowTaskType();
+    var isSupportedTask = (currentTask === "ppt.slide_assistant" || currentTask === "ppt.structure_review");
+    section.hidden = !isSupportedTask;
+    if (!isSupportedTask) {
+      return;
+    }
+
+    if (title) {
+      title.textContent = currentTask === "ppt.structure_review" ? "结构审查接入选择" : "智能总结接入选择";
+    }
+    if (hint) {
+      hint.textContent = "使用工作流平台或绑定上方共享直连服务，独立调整任务参数。";
+    }
+
+    var directServices = state.directServices || [];
+    var currentSelection = (state.taskModelSelections && state.taskModelSelections[currentTask]) || null;
+    var profileData = (typeof getWorkflowProfileData === "function")
+      ? getWorkflowProfileData(currentTask)
+      : ((state.workflowProfiles && state.workflowProfiles[currentTask]) || (state.profilesByTask && state.profilesByTask[currentTask]) || {});
+    var activeProfileId = (profileData && profileData.activeProfileId) || "";
+    var chosenServiceId = (currentSelection && currentSelection.serviceId) || (String(activeProfileId).startsWith("direct_svc_") ? activeProfileId : "");
+
+    var optionsHtml = ['<option value="">-- 使用工作流平台配置 --</option>'];
+    directServices.forEach(function (svc) {
+      var selectedAttr = svc.id === chosenServiceId ? " selected" : "";
+      optionsHtml.push('<option value="' + escapeWorkflowText(svc.id) + '"' + selectedAttr + '>' + escapeWorkflowText(svc.name) + '</option>');
+    });
+    select.innerHTML = optionsHtml.join("");
+
+    if (!chosenServiceId) {
+      if (paramsDiv) {
+        paramsDiv.hidden = true;
+      }
+      if (costWarning) {
+        costWarning.hidden = true;
+      }
+      if (statusNode) {
+        statusNode.textContent = "";
+      }
+      return;
+    }
+
+    if (paramsDiv) {
+      paramsDiv.hidden = false;
+    }
+
+    var currentSvc = findDirectService(chosenServiceId);
+    var catalog = helpers.getDirectServiceCatalogState
+      ? helpers.getDirectServiceCatalogState(currentSvc || {})
+      : {
+        status: currentSvc && currentSvc.modelList && currentSvc.modelList.length ? "available" : "unavailable",
+        cacheStatus: currentSvc && currentSvc.modelList && currentSvc.modelList.length ? "valid" : "empty",
+        fetchStatus: "not_attempted",
+        models: (currentSvc && currentSvc.modelList) || [],
+        manualModelAllowed: true,
+        usableForSelection: Boolean(currentSvc && currentSvc.modelList && currentSvc.modelList.length)
+      };
+    var modelList = catalog.usableForSelection ? catalog.models : [];
+    var defaultModel = (currentSvc && currentSvc.defaultModel) || "";
+    var currentModel = (currentSelection && currentSelection.modelName) || "";
+
+    var modelOptionsHtml = ['<option value="">继承服务默认模型 (' + (escapeWorkflowText(defaultModel) || "未设置") + ')</option>'];
+    var isModelInCatalog = false;
+    modelList.forEach(function (m) {
+      var sel = m === currentModel ? " selected" : "";
+      if (sel) {
+        isModelInCatalog = true;
+      }
+      modelOptionsHtml.push('<option value="' + escapeWorkflowText(m) + '"' + sel + '>' + escapeWorkflowText(m) + '</option>');
+    });
+    var isCustom = currentSelection && currentSelection.customModel !== undefined
+      ? Boolean(currentSelection.customModel)
+      : Boolean(currentModel && !isModelInCatalog);
+    if (currentModel && !isCustom && !isModelInCatalog) {
+      modelOptionsHtml.push('<option value="' + escapeWorkflowText(currentModel) + '" selected disabled>当前模型：' + escapeWorkflowText(currentModel) + '（目录不可用）</option>');
+    }
+    if (modelSelect) {
+      modelSelect.innerHTML = modelOptionsHtml.join("");
+    }
+    if (customCheck) {
+      customCheck.checked = isCustom;
+      customCheck.disabled = Boolean(!catalog.manualModelAllowed && !isCustom);
+      customCheck.title = catalog.usableForSelection
+        ? "模型目录可用时不能使用高级手填模型。"
+        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
+    }
+    if (customRow) {
+      customRow.hidden = !isCustom;
+    }
+    if (customInput) {
+      customInput.value = isCustom ? currentModel : "";
+    }
+    if (tempInput) {
+      tempInput.value = currentSelection && currentSelection.temperature !== null && currentSelection.temperature !== undefined ? currentSelection.temperature : "";
+    }
+    if (maxOutInput) {
+      maxOutInput.value = currentSelection && currentSelection.maxOutputTokens !== null && currentSelection.maxOutputTokens !== undefined ? currentSelection.maxOutputTokens : "";
+    }
+    if (contextInput) {
+      contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "40000";
+    }
+    if (costWarning) {
+      costWarning.hidden = false;
+      costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
+    }
+    if (statusNode) {
+      var unavailableReason = currentSelection && currentSelection.modelUnavailableReason;
+      if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "catalog_usable") {
+        statusNode.textContent = "模型目录当前可用，不能使用高级手填模型；请从目录选择。";
+      } else if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "cache_expired") {
+        statusNode.textContent = "模型目录已过期，不能发起新任务；请先刷新目录。";
+      } else if (currentSelection && currentSelection.modelAvailable === false && (unavailableReason === "catalog_unavailable" || unavailableReason === "catalog_empty")) {
+        statusNode.textContent = "模型目录当前不可用；请刷新目录，或使用高级手填并验证真实任务调用。";
+      } else if (currentSelection && currentSelection.modelAvailable === false) {
+        statusNode.textContent = "当前模型已从最新目录移除，不能发起新任务；请重新选择模型。";
+      } else if (catalog.fetchStatus === "error" && catalog.cacheStatus === "valid") {
+        statusNode.textContent = "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。";
+      } else {
+        statusNode.textContent = "";
+      }
+    }
+  }
+
+  function handleTaskDirectServiceSelectChange() {
+    var select = byId("ppt-task-direct-service-select");
+    var serviceId = select ? select.value : "";
+    var paramsDiv = byId("ppt-task-direct-params");
+    var modelSelect = byId("ppt-task-model-select");
+    var customCheck = byId("ppt-task-custom-model-check");
+    var customRow = byId("ppt-task-custom-model-row");
+    var customInput = byId("ppt-task-custom-model-input");
+    var statusNode = byId("ppt-task-model-validation-status");
+    state.lastValidatedCustomModel = null;
+
+    if (!serviceId) {
+      if (paramsDiv) {
+        paramsDiv.hidden = true;
+      }
+      return;
+    }
+    if (paramsDiv) {
+      paramsDiv.hidden = false;
+    }
+    var svc = findDirectService(serviceId);
+    var catalog = helpers.getDirectServiceCatalogState
+      ? helpers.getDirectServiceCatalogState(svc || {})
+      : { usableForSelection: Boolean(svc && svc.modelList && svc.modelList.length), manualModelAllowed: true };
+    var modelList = catalog.usableForSelection ? catalog.models : [];
+    var defaultModel = (svc && svc.defaultModel) || "";
+    var modelOptionsHtml = ['<option value="">继承服务默认模型 (' + (escapeWorkflowText(defaultModel) || "未设置") + ')</option>'];
+    modelList.forEach(function (m) {
+      modelOptionsHtml.push('<option value="' + escapeWorkflowText(m) + '">' + escapeWorkflowText(m) + '</option>');
+    });
+    if (modelSelect) {
+      modelSelect.innerHTML = modelOptionsHtml.join("");
+    }
+    if (customCheck) {
+      customCheck.checked = false;
+      customCheck.disabled = Boolean(!catalog.manualModelAllowed);
+      customCheck.title = catalog.usableForSelection
+        ? "模型目录可用时不能使用高级手填模型。"
+        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
+    }
+    if (customRow) {
+      customRow.hidden = true;
+    }
+    if (customInput) {
+      customInput.value = "";
+    }
+    if (statusNode) {
+      statusNode.textContent = catalog.fetchStatus === "error" && catalog.cacheStatus === "valid"
+        ? "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。"
+        : "";
+    }
+  }
+
+  function handleTaskCustomModelCheckChange() {
+    var customCheck = byId("ppt-task-custom-model-check");
+    var customRow = byId("ppt-task-custom-model-row");
+    var customInput = byId("ppt-task-custom-model-input");
+    var isChecked = Boolean(customCheck && customCheck.checked);
+    if (customRow) {
+      customRow.hidden = !isChecked;
+    }
+    if (isChecked && customInput && typeof customInput.focus === "function") {
+      customInput.focus();
+    }
+  }
+
+  function getTaskModelSelectionDraft() {
+    var serviceId = (byId("ppt-task-direct-service-select") && byId("ppt-task-direct-service-select").value) || "";
+    var isCustom = Boolean(byId("ppt-task-custom-model-check") && byId("ppt-task-custom-model-check").checked);
+    var modelName = isCustom
+      ? (byId("ppt-task-custom-model-input") ? byId("ppt-task-custom-model-input").value.trim() : "")
+      : (byId("ppt-task-model-select") ? byId("ppt-task-model-select").value : "");
+    var tempVal = byId("ppt-task-temperature") ? byId("ppt-task-temperature").value : "";
+    var maxOutVal = byId("ppt-task-max-output") ? byId("ppt-task-max-output").value : "";
+    var contextVal = byId("ppt-task-context") ? byId("ppt-task-context").value : "";
+
+    return {
+      serviceId: serviceId,
+      modelName: modelName,
+      customModel: isCustom,
+      temperature: tempVal !== "" ? Number(tempVal) : null,
+      maxOutputTokens: maxOutVal !== "" ? Number(maxOutVal) : null,
+      contextWindowTokens: contextVal !== "" ? Number(contextVal) : 40000
+    };
+  }
+
+  function validateTaskModelSelection() {
+    var draft = getTaskModelSelectionDraft();
+    var taskType = getSettingsWorkflowTaskType();
+    var statusNode = byId("ppt-task-model-validation-status");
+    var costWarning = byId("ppt-task-model-cost-warning");
+    var currentSvc = findDirectService(draft.serviceId);
+    if (!draft.serviceId || state.workflowProfileMutationBusy) {
+      if (statusNode) {
+        statusNode.textContent = "请先选择直连服务。";
+      }
+      return;
+    }
+    var checked = helpers.validateTaskModelSelectionDraft
+      ? helpers.validateTaskModelSelectionDraft(draft, { service: currentSvc })
+      : { ok: Boolean(draft.serviceId) };
+    if (!checked.ok) {
+      if (statusNode) {
+        statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
+      }
+      return;
+    }
+    if (statusNode) {
+      statusNode.textContent = "正在验证调用（会真实请求模型，可能产生费用）...";
+    }
+    if (costWarning) {
+      costWarning.hidden = false;
+      costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
+    }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
+      .then(function (body) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
+        if (draft.customModel && draft.modelName) {
+          state.lastValidatedCustomModel = {
+            serviceId: draft.serviceId,
+            modelName: draft.modelName
+          };
+        } else {
+          state.lastValidatedCustomModel = null;
+        }
+        var result = body && body.data && body.data.validation ? body.data.validation : (body && body.data) || {};
+        if (statusNode) {
+          statusNode.textContent = (result.costWarning || result.mayIncurModelCost)
+            ? "验证成功（真实调用，可能产生费用）。"
+            : "验证成功！模型可正常调用。";
+        }
+        if (costWarning && result.costWarning) {
+          costWarning.textContent = result.costWarning;
+        }
+      }).catch(function (error) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
+        if (statusNode) {
+          statusNode.textContent = "验证失败：" + describeFetchError(error);
+        }
+      });
+  }
+
+  function saveTaskModelSelection() {
+    var draft = getTaskModelSelectionDraft();
+    var taskType = getSettingsWorkflowTaskType();
+    var statusNode = byId("ppt-task-model-validation-status");
+    var currentSvc = findDirectService(draft.serviceId);
+    if (!draft.serviceId || state.workflowProfileMutationBusy) {
+      setStatus("请先选择直连服务。");
+      return;
+    }
+    var checked = helpers.validateTaskModelSelectionDraft
+      ? helpers.validateTaskModelSelectionDraft(draft, { service: currentSvc })
+      : { ok: Boolean(draft.serviceId) };
+    if (!checked.ok) {
+      if (statusNode) {
+        statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
+      }
+      return;
+    }
+    if (draft.customModel) {
+      var validatedCustom = state.lastValidatedCustomModel;
+      var customValidated = typeof validatedCustom === "string"
+        ? validatedCustom === draft.modelName
+        : Boolean(validatedCustom && validatedCustom.serviceId === draft.serviceId && validatedCustom.modelName === draft.modelName);
+      if (!customValidated) {
+        if (statusNode) {
+          statusNode.textContent = "请先验证调用；验证会真实请求模型并可能产生费用。";
+        }
+        return;
+      }
+      draft.customModelValidated = true;
+    }
+    state.directServiceOperationId = Number(state.directServiceOperationId || 0) + 1;
+    var operationId = state.directServiceOperationId;
+    var activationSaved = false;
+    if (typeof setWorkflowProfileMutationBusy === "function") {
+      setWorkflowProfileMutationBusy(true);
+    } else {
+      state.workflowProfileMutationBusy = true;
+    }
+    return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
+      taskType: taskType,
+      taskModelSelection: draft
+    }).then(function (body) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
+        activationSaved = true;
+        state.workflowProfileSelections[taskType] = draft.serviceId;
+        if (body && body.data && body.data.taskModelSelection) {
+          state.taskModelSelections[taskType] = body.data.taskModelSelection;
+        }
+        var wfPromise = typeof loadProfiles === "function" ? loadProfiles() : Promise.resolve();
+        return Promise.all([
+          wfPromise,
+          loadDirectServices(undefined, undefined, operationId)
+        ]).then(function () {
+          if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+            return { superseded: true };
+          }
+          if (typeof setWorkflowProfileMutationBusy === "function") {
+            setWorkflowProfileMutationBusy(false);
+          } else {
+            state.workflowProfileMutationBusy = false;
+          }
+          var taskLabel = taskType === "ppt.structure_review" ? "结构审查" : "智能总结";
+          setStatus(taskLabel + "接入直连服务已保存并设为当前。");
+          if (statusNode) {
+            statusNode.textContent = "已保存并设为当前。";
+          }
+        });
+      }).catch(function (error) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) {
+          return { superseded: true };
+        }
+        if (typeof setWorkflowProfileMutationBusy === "function") {
+          setWorkflowProfileMutationBusy(false);
+        } else {
+          state.workflowProfileMutationBusy = false;
+        }
+        if (statusNode) {
+          statusNode.textContent = activationSaved
+            ? "已保存，但刷新列表失败：" + describeFetchError(error)
+            : "保存失败：" + describeFetchError(error);
+        }
+        if (activationSaved) {
+          setStatus("任务接入已保存，但刷新最新列表失败：" + describeFetchError(error));
+        }
+      });
+  }
+
+  function validateActiveDirectTaskSelection(taskType) {
+    var taskStatus = (state.taskApiKeys && state.taskApiKeys[taskType]) || {};
+    var selection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
+    var activeProfileId = String(taskStatus.activeProfileId || "").trim();
+    var serviceId = "";
+    var service;
+
+    if (taskStatus.accessMethod !== "direct_model") {
+      return { valid: true, ok: true, applicable: false, error: "" };
+    }
+    if (activeProfileId) {
+      serviceId = activeProfileId;
+    } else if (selection.serviceId) {
+      serviceId = String(selection.serviceId).trim();
+    } else if (taskStatus.serviceId) {
+      serviceId = String(taskStatus.serviceId).trim();
+    } else {
+      return { valid: true, ok: true, applicable: false, error: "" };
+    }
+
+    service = findDirectService(serviceId);
+    if (helpers.validateDirectTaskSelectionReadiness) {
+      return helpers.validateDirectTaskSelectionReadiness(
+        Object.assign({}, selection, { serviceId: serviceId }),
+        service,
+        Object.assign({}, taskStatus, { accessMethod: "direct_model" })
+      );
+    }
+    return { valid: true, ok: true };
   }
 
   function renderProviderDiagnostics(items) {
@@ -2955,7 +4337,8 @@
       }
       return Promise.all([
         request("/config", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
-        loadProfiles(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
+        loadProfiles(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+        loadDirectServices(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
       ]);
     }).then(function (items) {
       if (!items) {
@@ -3683,6 +5066,34 @@
         setSettingsStatus("API URL 保存失败：" + describeSettingsError(error));
       });
     });
+    if (helpers.bindDirectServiceEvents) {
+      helpers.bindDirectServiceEvents({
+        byId: byId,
+        handlers: {
+          openCreate: function () { openDirectServiceEditor("create", ""); },
+          listAction: handleDirectServiceAction,
+          closeEditor: closeDirectServiceEditor,
+          saveEditor: saveDirectServiceEditor,
+          refreshModels: refreshDirectServiceModelsInEditor,
+          validateService: validateDirectService,
+          cancelDelete: hideDirectServiceDeleteDialog,
+          confirmDelete: confirmDirectServiceDelete,
+          clearKey: clearDirectServiceApiKey,
+          editorInput: function (id, event) {
+            if (state.directServiceEditor) {
+              state.directServiceEditor.dirty = true;
+            }
+            if (id === "direct-service-url") {
+              updateDirectServiceUrlImpact();
+            }
+          },
+          taskServiceChange: handleTaskDirectServiceSelectChange,
+          customModelChange: handleTaskCustomModelCheckChange,
+          validateTaskSelection: validateTaskModelSelection,
+          saveTaskSelection: saveTaskModelSelection
+        }
+      });
+    }
   }
 
   function initialize() {

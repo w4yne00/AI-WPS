@@ -31,6 +31,25 @@
 - **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；若 18100 仍被历史 Adapter 占用则释放该端口监听进程；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
 - **状态记录**：当前自动化候选为 `ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
+
+## 当前功能实现：Issue #177 迁移 PPT 任务至共享直连服务
+
+- **共享直连服务架构收敛**：遵循 ADR-0128 与 Issue #164 父规格规范，将 PPT 宿主的两类任务（智能总结 `ppt.slide_assistant` 与结构审查 `ppt.structure_review`）迁移接入设置页首页的共享模型直连服务（`DirectServiceCard`），与 Word、Excel 保持三宿主完全一致的交互与视觉体验；
+- **共享服务与独立选型分离**：
+  - 共享直连服务统一管理服务地址、单密码输入 API Key（不回显、无确认输入框）与模型目录拉取/刷新，全局上限 5 个；
+  - 任务模型配置选项卡（`ppt.slide_assistant` 与 `ppt.structure_review`）各自独立选择直连服务，支持覆盖自定义模型名、温度（Temperature 0.0–2.0）、最大输出 Tokens 及上下文窗口，并保留独立的类 Dify 工作流平台配置；
+  - 任务直接接入直连服务保存时，采用原子激活请求（`POST /provider/direct-services/{id}/activate`），携带完整 `taskModelSelection`，避免分步保存产生的状态不一致；
+- **任务窗格单行紧凑入口集成**：PPT 智能总结与结构审查主界面的紧凑单行模型配置入口（`#task-model-config-trigger` + `#task-model-config-menu`）无缝追加共享直连服务选项，支持即时激活与失败安全回滚（`rollbackTaskModelConfigSwitch`），且在设置页不同任务标签间保持精准的状态隔离与通告；
+- **执行前置就绪门禁（Preflight Gate）**：
+  - 在 `submitPptSlideJob`（智能总结）与 `submitStructureReviewJob`（结构审查）提交前，调用 `validateActiveDirectTaskSelection` 进行直连服务完整性门禁检查；
+  - 若直连服务未配置、缺少有效模型或已被删除，立即阻断长任务提交，并在状态栏清晰提示具体原因（如“直连服务未就绪，请先在设置中完成配置”），防止无效请求穿透至后端；
+- **引用感知与删除保护**：后端 `DirectServiceStore` 汇总 PPT 两项任务的模型选择引用，被引用的直连服务禁止删除（返回 409 `DIRECT_SERVICE_IN_USE`）；前端删除确认弹窗与服务地址修改影响披露（`evaluateDirectServiceUrlImpact`）自动关联“智能总结”与“结构审查”任务显示；
+- **测试覆盖与质量验证**：
+  - 前端契约测试：新增 `formal-plugin-kit/tests/ppt-shared-direct-service.test.js`（10/10 通过），全量覆盖页面结构、单密码 Key 字段、5 服务上限、任务参数覆盖草稿、紧凑菜单集成、原子激活与失败回滚、预检拦截阻断、删除保护与地址影响提示；
+  - 全量正式插件套件：`formal-plugin-kit/tests/*.test.js` 全部 158/158 测试全绿通过，包括跨宿主体验契约、单行紧凑入口契约、视口布局与跨运行时哈希契约；
+  - 后端单元测试：`adapter_service/tests/test_direct_services.py` 与 `test_direct_services_api.py` 22 项测试全绿通过；
+  - 静态检查：`packaging/check_python38_compatibility.py` 扫描 165 个 Python 文件通过；JS 语法检查通过；`git diff --check` 无空白或冲突警告；不可触碰路径零改动。
+
 ## 当前功能实现：Issue #175 保护共享服务修改并执行 Key 轮换失效
 
 - **版本与并发冲突控制**：遵循 ADR-0128 与 ADR-0129，共享直连服务对象暴露 `revision: int`。所有变更操作（更新属性、替换 Key、清除 Key、更新或刷新模型目录、验证服务、删除服务）强制携带 `expectedRevision` 校验。若发生版本冲突，后端返回 409 `DIRECT_SERVICE_REVISION_CONFLICT`；前端拦截冲突并明确提示版本冲突，要求用户刷新后重新编辑，严格禁止前端自动合并字段或盲目覆盖；
