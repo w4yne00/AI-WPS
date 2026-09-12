@@ -347,14 +347,14 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
 
             with patch("urllib.request.urlopen", return_value=mock_models_resp):
                 refreshed = refresh_direct_service_models(
-                    service["id"], DirectServiceRefreshRequest(expected_revision=2)
+                    service["id"], DirectServiceRefreshRequest(expectedRevision=2)
                 )
             self.assertTrue(refreshed["success"])
             self.assertEqual(refreshed["data"]["directService"]["modelList"], ["gpt-4o", "gpt-4o-mini"])
 
             # 2. Activate for excel.analysis
             act_res = activate_direct_service_route(
-                service["id"], DirectServiceActivateRequest(task_type="excel.analysis")
+                service["id"], DirectServiceActivateRequest(taskType="excel.analysis")
             )
             self.assertTrue(act_res["success"])
             self.assertEqual(act_res["data"]["activeConfigurationId"], service["id"])
@@ -382,8 +382,8 @@ class TracerExcelDirectServiceTests(unittest.TestCase):
                 val_res = validate_task_model_selection_route(
                     "excel.analysis",
                     TaskModelSelectionValidateRequest(
-                        service_id=service["id"],
-                        model_name="gpt-4o",
+                        serviceId=service["id"],
+                        modelName="gpt-4o",
                     )
                 )
             self.assertTrue(val_res["success"])

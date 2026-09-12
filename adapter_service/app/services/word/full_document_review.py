@@ -1800,6 +1800,7 @@ class FullDocumentReviewService:
                 if job_id in self._recovery_rejections:
                     return deepcopy(self._recovery_rejections[job_id])
             return None
+        job.pop("result", None)
         result = self._get_report(job_id)
         if isinstance(result, dict):
             job["report"] = {
