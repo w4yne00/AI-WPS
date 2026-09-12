@@ -2623,8 +2623,9 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         if path == "/provider/direct-services":
+            store = DirectServiceStore()
             try:
-                service = DirectServiceStore().create_service(
+                service = store.create_service(
                     payload.get("name", ""),
                     service_base_url=payload.get("serviceBaseUrl", ""),
                     default_model=payload.get("defaultModel", ""),
@@ -2633,12 +2634,20 @@ class Handler(BaseHTTPRequestHandler):
             except DirectServiceError as error:
                 self._write_direct_service_error(error)
                 return
+            refresh_result = store.refresh_models_best_effort(
+                service["id"], expected_revision=service.get("revision")
+            )
             self._write(
                 200,
                 envelope(
                     "standalone-direct-service",
                     "provider.direct_service",
-                    {"directService": service},
+                    {
+                        "directService": refresh_result["directService"],
+                        "modelCatalogRefresh": refresh_result[
+                            "modelCatalogRefresh"
+                        ],
+                    },
                     message="saved",
                 ),
             )
@@ -2657,12 +2666,20 @@ class Handler(BaseHTTPRequestHandler):
                         payload.get("apiKey", ""),
                         expected_revision=payload.get("expectedRevision"),
                     )
+                    refresh_result = store.refresh_models_best_effort(
+                        service_id, expected_revision=service.get("revision")
+                    )
                     self._write(
                         200,
                         envelope(
                             "standalone-direct-service",
                             "provider.direct_service",
-                            {"directService": service},
+                            {
+                                "directService": refresh_result["directService"],
+                                "modelCatalogRefresh": refresh_result[
+                                    "modelCatalogRefresh"
+                                ],
+                            },
                             message="saved",
                         ),
                     )
@@ -2672,6 +2689,8 @@ class Handler(BaseHTTPRequestHandler):
                         service_id,
                         payload.get("modelList", []),
                         expected_revision=payload.get("expectedRevision"),
+                        trusted=False,
+                        source="client",
                     )
                     self._write(
                         200,
@@ -2699,6 +2718,21 @@ class Handler(BaseHTTPRequestHandler):
                                 "revision": service.get("revision", 1),
                             },
                             message="refreshed",
+                        ),
+                    )
+                    return
+                elif action == "validate":
+                    result = store.validate_service(
+                        service_id,
+                        expected_revision=payload.get("expectedRevision"),
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-direct-service-validation",
+                            "provider.direct_service",
+                            result,
+                            message="validated",
                         ),
                     )
                     return
@@ -3624,8 +3658,9 @@ class Handler(BaseHTTPRequestHandler):
         direct_service_prefix = "/provider/direct-services/"
         if path.startswith(direct_service_prefix):
             service_id = unquote(path[len(direct_service_prefix) :]).strip("/")
+            store = DirectServiceStore()
             try:
-                service = DirectServiceStore().update_service(
+                service = store.update_service(
                     service_id,
                     name=payload.get("name", ""),
                     expected_revision=payload.get("expectedRevision"),
@@ -3635,12 +3670,20 @@ class Handler(BaseHTTPRequestHandler):
             except DirectServiceError as error:
                 self._write_direct_service_error(error)
                 return
+            refresh_result = store.refresh_models_best_effort(
+                service_id, expected_revision=service.get("revision")
+            )
             self._write(
                 200,
                 envelope(
                     "standalone-direct-service-update",
                     "provider.direct_service",
-                    {"directService": service},
+                    {
+                        "directService": refresh_result["directService"],
+                        "modelCatalogRefresh": refresh_result[
+                            "modelCatalogRefresh"
+                        ],
+                    },
                     message="saved",
                 ),
             )
@@ -4414,6 +4457,7 @@ class Handler(BaseHTTPRequestHandler):
             "DIRECT_SERVICE_LIMIT",
             "DIRECT_SERVICE_NAME_DUPLICATE",
             "DIRECT_SERVICE_REVISION_CONFLICT",
+            "DIRECT_SERVICE_CONFIG_CHANGED",
             "DIRECT_SERVICE_IN_USE",
         }:
             status_code = 409
