@@ -76,8 +76,60 @@ test("Direct Service Lifecycle Helpers: evaluateDirectServiceDelete and evaluate
 
   // isDirectServiceRevisionConflict
   assert.strictEqual(helpers.isDirectServiceRevisionConflict({ code: "DIRECT_SERVICE_REVISION_CONFLICT" }), true);
+  assert.strictEqual(helpers.isDirectServiceRevisionConflict({ adapterCode: "DIRECT_SERVICE_REVISION_CONFLICT" }), true);
   assert.strictEqual(helpers.isDirectServiceRevisionConflict({ status: 409 }), true);
   assert.strictEqual(helpers.isDirectServiceRevisionConflict({ code: "PARAM_INVALID", status: 400 }), false);
+});
+
+test("Direct Service request preserves adapter error metadata", async () => {
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  const ctx = {
+    ADAPTER_BASE_URL: "http://127.0.0.1:18100",
+    state: { configurationMutationsAllowed: true, modelTasksAllowed: true },
+    fetch() {
+      return Promise.resolve({
+        ok: false,
+        status: 409,
+        json() {
+          return Promise.resolve({
+            data: { currentRevision: 4 },
+            errors: [{
+              code: "DIRECT_SERVICE_IN_USE",
+              message: "该服务仍被任务引用。",
+              referencedTasks: ["excel.analysis"]
+            }]
+          });
+        }
+      });
+    },
+    Promise,
+    Error,
+    JSON,
+    String,
+    Array,
+    encodeURIComponent,
+    setTimeout,
+    clearTimeout
+  };
+  const requestFn = vm.runInNewContext(`(${functionSource("request")})`, ctx);
+
+  await assert.rejects(
+    requestFn("/provider/direct-services/direct_svc_used", null, { method: "DELETE" }),
+    error => {
+      assert.strictEqual(error.adapterCode, "DIRECT_SERVICE_IN_USE");
+      assert.strictEqual(error.code, "DIRECT_SERVICE_IN_USE");
+      assert.strictEqual(error.status, 409);
+      assert.deepStrictEqual(Array.from(error.referencedTasks), ["excel.analysis"]);
+      assert.strictEqual(error.data.currentRevision, 4);
+      return true;
+    }
+  );
 });
 
 test("Direct Service Delete Dialog blocks deletion when service is referenced", () => {

@@ -892,10 +892,19 @@
             }).join("\n");
             requestError = new Error("HTTP " + response.status + " 请求数据校验失败：\n" + details);
             requestError.adapterCode = "REQUEST_VALIDATION_FAILED";
+            requestError.code = requestError.adapterCode;
+            requestError.status = response.status;
+            requestError.data = body.data || {};
             throw requestError;
           }
           requestError = new Error(adapterError.message || body.message || ("HTTP " + response.status));
           requestError.adapterCode = adapterError.code || "";
+          requestError.code = requestError.adapterCode;
+          requestError.status = response.status;
+          requestError.data = body.data || {};
+          requestError.referencedTasks = Array.isArray(adapterError.referencedTasks)
+            ? adapterError.referencedTasks
+            : (Array.isArray(requestError.data.referencedTasks) ? requestError.data.referencedTasks : []);
           throw requestError;
         }
         return body;
@@ -6806,7 +6815,7 @@
       setWorkflowMutationBusy(false);
       var errObj = error || {};
       var referenced = errObj.referencedTasks || (errObj.data && errObj.data.referencedTasks);
-      if (errObj.code === "DIRECT_SERVICE_IN_USE" || (Array.isArray(referenced) && referenced.length)) {
+      if ((errObj.adapterCode || errObj.code) === "DIRECT_SERVICE_IN_USE" || (Array.isArray(referenced) && referenced.length)) {
         var tasksStr = helpers.formatReferencedTasks ? helpers.formatReferencedTasks(referenced) : "";
         setStatus("删除直连服务失败：该服务正被任务使用（" + (tasksStr || "已引用") + "），无法删除。");
       } else {

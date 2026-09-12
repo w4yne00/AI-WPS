@@ -150,6 +150,7 @@ class ExcelSmartFillJobStore:
                 trace_id=trace_id,
                 task_type=task_type,
                 runner=self._run,
+                success_committer=self._commit_success,
                 snapshot={
                     "jobId": job_id,
                     "traceId": trace_id,
@@ -499,6 +500,10 @@ class ExcelSmartFillJobStore:
             "batchCount": batch_count,
             "totalBatches": batch_count,
         }
+        return processed_result
+
+    @staticmethod
+    def _commit_success(snapshot: Dict, result: Dict) -> None:
         try:
             req = snapshot.get("request")
             doc_name = (
@@ -511,37 +516,34 @@ class ExcelSmartFillJobStore:
             service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
             model_name = auth.get("modelName") or result.get("provider") or "model"
             job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
-
             req_items_map = {}
             if req and hasattr(req, "items") and req.items:
                 for req_item in req.items:
                     if isinstance(req_item, dict):
-                        i_id = req_item.get("itemId") or req_item.get("item_id")
-                        row_idx = req_item.get("sourceRowIndex") or req_item.get("source_row_index")
+                        item_id = req_item.get("itemId") or req_item.get("item_id")
+                        row_index = req_item.get("sourceRowIndex") or req_item.get("source_row_index")
                     else:
-                        i_id = getattr(req_item, "item_id", None) or getattr(req_item, "itemId", None)
-                        row_idx = getattr(req_item, "source_row_index", None) or getattr(req_item, "sourceRowIndex", None)
-                    if i_id:
-                        req_items_map[str(i_id)] = row_idx
-
+                        item_id = getattr(req_item, "item_id", None) or getattr(req_item, "itemId", None)
+                        row_index = getattr(req_item, "source_row_index", None) or getattr(req_item, "sourceRowIndex", None)
+                    if item_id:
+                        req_items_map[str(item_id)] = row_index
             archived_items = []
-            for item in combined:
+            for item in result.get("items") or []:
                 if not isinstance(item, dict):
                     continue
                 item_id = str(item.get("itemId") or "")
-                row_idx = req_items_map.get(item_id, item.get("sourceRowIndex"))
                 archived_items.append({
                     "itemId": item.get("itemId"),
                     "status": item.get("status"),
                     "valueType": item.get("valueType", "text"),
                     "value": item.get("value", ""),
-                    "sourceRowIndex": row_idx,
+                    "sourceRowIndex": req_items_map.get(item_id, item.get("sourceRowIndex")),
                 })
             archived_result = {
                 "schemaVersion": "excel.smart_fill.v2",
                 "processedItemCount": len(archived_items),
                 "items": archived_items,
-                "totalBatches": batch_count,
+                "totalBatches": result.get("totalBatches", 0),
             }
             get_task_history_store().record_success(
                 task_type="excel.smart_fill",
@@ -553,13 +555,11 @@ class ExcelSmartFillJobStore:
             )
         except TaskHistoryError as exc:
             if exc.code == "HISTORY_ENTRY_TOO_LARGE":
-                processed_result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+                result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
             else:
-                processed_result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
+                result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
         except Exception:
-            processed_result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
-
-        return processed_result
+            result["historyNotice"] = "历史记录写入失败，未保存至历史列表。"
 
     def _raise_if_deadline_exceeded(self, snapshot: Dict) -> None:
         started = float(snapshot.get("startedAtMonotonic", self.clock()))

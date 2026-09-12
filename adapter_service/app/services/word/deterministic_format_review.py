@@ -1256,6 +1256,7 @@ class DeterministicFormatReviewService:
                 trace_id=trace_id,
                 task_type=TASK_TYPE,
                 runner=self._run,
+                success_committer=self._commit_success,
                 snapshot={
                     "jobId": job_id,
                     "traceId": trace_id,
@@ -1683,8 +1684,6 @@ class DeterministicFormatReviewService:
                 continuation = True
                 return LongTaskContinuation(snapshot, phase="provider_processing")
             report = self._build_report(result, snapshot)
-            self._save_report(snapshot["jobId"], report)
-            self._record_history_on_report_saved(snapshot["jobId"], snapshot, report)
             summary = report["summary"]
             return {
                 "summary": deepcopy(summary),
@@ -1692,6 +1691,7 @@ class DeterministicFormatReviewService:
                 "duplicateGroupCount": report.get("duplicateGroupCount", 0),
                 "coverage": deepcopy(report.get("coverage", {})),
                 "reportAvailable": True,
+                "_reportForCommit": report,
             }
         finally:
             if not continuation:
@@ -1702,6 +1702,12 @@ class DeterministicFormatReviewService:
                         self._active_doc_sessions.pop(session_key, None)
                 self._remove_snapshot(snapshot.get("snapshotId", ""))
                 self.image_asset_store.cleanup_snapshot(snapshot.get("snapshotId", ""))
+
+    def _commit_success(self, snapshot: Dict, result: Dict) -> None:
+        report = result.pop("_reportForCommit")
+        job_id = str(snapshot.get("jobId") or "")
+        self._save_report(job_id, report)
+        self._record_history_on_report_saved(job_id, snapshot, report)
 
     def _build_report(self, result: Dict, snapshot: Dict) -> Dict:
         result = result if isinstance(result, dict) else {}

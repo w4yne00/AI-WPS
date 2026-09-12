@@ -16,11 +16,18 @@ HAS_API_DEPS = (
 )
 
 if HAS_API_DEPS:
+    from fastapi.testclient import TestClient
+    from pydantic import ValidationError
+
+    from app.main import app
     from app.core.errors import AdapterError
     from app.api.provider import (
         DirectServiceApiKeyRequest,
         DirectServiceCreateRequest,
+        DirectServiceModelListUpdateRequest,
+        DirectServiceRefreshRequest,
         DirectServiceUpdateRequest,
+        DirectServiceValidateRequest,
         TaskModelSelectionUpdateRequest,
         clear_direct_service_api_key,
         create_direct_service,
@@ -39,6 +46,42 @@ if HAS_API_DEPS:
     HAS_API_DEPS, "fastapi and pydantic are required for direct services API tests"
 )
 class DirectServicesApiTests(unittest.TestCase):
+    def test_model_mutation_requests_require_expected_revision(self) -> None:
+        for request_type, payload in (
+            (DirectServiceModelListUpdateRequest, {"modelList": ["gpt-4o"]}),
+            (DirectServiceRefreshRequest, {}),
+            (DirectServiceValidateRequest, {}),
+        ):
+            with self.assertRaises(ValidationError):
+                request_type(**payload)
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = DirectServiceStore(config_path, root / "provider_api_keys")
+            service = store.create_service(
+                name="API 版本必填测试",
+                service_base_url="https://api.example.com/v1",
+            )
+            with patch(
+                "app.api.provider.get_direct_service_store", return_value=store
+            ):
+                client = TestClient(app)
+                for action, payload in (
+                    ("models", {"modelList": ["gpt-4o"]}),
+                    ("refresh-models", {}),
+                    ("validate", {}),
+                ):
+                    response = client.post(
+                        "/provider/direct-services/{0}/{1}".format(
+                            service["id"], action
+                        ),
+                        json=payload,
+                    )
+                    self.assertEqual(response.status_code, 422)
+            self.assertEqual(store.get_service(service["id"])["revision"], 1)
+
     def test_direct_services_and_task_model_selection_api_routes(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

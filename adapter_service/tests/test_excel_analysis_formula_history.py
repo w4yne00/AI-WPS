@@ -73,6 +73,7 @@ from app.core.models import (
 )
 from app.services.excel.analysis_jobs import ExcelAnalysisJobStore
 from app.services.excel.formula_assistant_jobs import ExcelFormulaAssistantJobStore
+from app.services.direct_services import DirectServiceStore
 from app.services.long_task_coordinator import LongTaskCoordinator
 from app.services.task_history import TaskHistoryError, TaskHistoryStore
 
@@ -177,6 +178,72 @@ class TestExcelAnalysisFormulaHistory(unittest.TestCase):
         self.assertEqual(req.document_session_id, "session-analysis-1")
         self.assertEqual(req.document_display_name, "财务报表.xlsx")
         self.assertEqual(req.host, "et")
+
+    @patch("app.services.excel.analysis_jobs.get_task_history_store")
+    def test_key_rotation_suppresses_real_analysis_history_commit(
+        self, mock_get_history
+    ):
+        service_id = "direct_svc_analysis_history"
+        service_revision = 11
+        old_fp = DirectServiceStore.api_key_fingerprint("sk-analysis-old")
+        started = threading.Event()
+        release = threading.Event()
+
+        class BlockingAnalyzer(MockAnalyzer):
+            def snapshot_task_auth(self):
+                auth = super().snapshot_task_auth()
+                auth.update(
+                    {
+                        "directService": {
+                            "id": service_id,
+                            "revision": service_revision,
+                        },
+                        "apiKeyFingerprint": old_fp,
+                    }
+                )
+                return auth
+
+            def analyze(self, *args, **kwargs):
+                started.set()
+                release.wait(timeout=2)
+                return super().analyze(*args, **kwargs)
+
+        mock_get_history.return_value = self.history_store
+        store = ExcelAnalysisJobStore(
+            analyzer=BlockingAnalyzer(), coordinator=self.coordinator
+        )
+        request = ExcelAnalysisRequest(
+            workbookId="wb-rotation",
+            clientJobId="job-analysis-rotation",
+            documentSessionId="doc-analysis-rotation",
+            documentDisplayName="轮换分析.xlsx",
+            host="et",
+            table=ExcelAnalysisTable(headers=["A"], rows=[["1"]]),
+        )
+
+        store.start(request, "trace-analysis-rotation")
+        self.assertTrue(started.wait(timeout=1))
+        self.coordinator.invalidate_by_auth(
+            service_id,
+            old_fp,
+            service_revision=service_revision,
+        )
+        release.set()
+        terminal = self.coordinator.wait(
+            "job-analysis-rotation", task_type="excel.analysis"
+        )
+        for _ in range(100):
+            if self.coordinator.diagnostics()["runningCount"] == 0:
+                break
+            time.sleep(0.01)
+
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(
+            terminal["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+        )
+        self.assertEqual(
+            self.history_store.list_history(task_type="excel.analysis"), []
+        )
 
     def test_excel_formula_request_model_attributes(self):
         req = ExcelFormulaAssistantRequest(

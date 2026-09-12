@@ -79,29 +79,42 @@ def _format_utc_timestamp(value: datetime) -> str:
 
 
 class DirectServiceStore:
-    _KEY_ROTATION_LISTENERS: List[Callable[[str, str], None]] = []
+    _KEY_ROTATION_LISTENERS: List[Callable[[str, str, int], None]] = []
 
     @classmethod
-    def register_key_rotation_listener(cls, listener: Callable[[str, str], None]) -> None:
+    def register_key_rotation_listener(
+        cls, listener: Callable[[str, str, int], None]
+    ) -> None:
         if listener not in cls._KEY_ROTATION_LISTENERS:
             cls._KEY_ROTATION_LISTENERS.append(listener)
 
     @classmethod
-    def unregister_key_rotation_listener(cls, listener: Callable[[str, str], None]) -> None:
+    def unregister_key_rotation_listener(
+        cls, listener: Callable[[str, str, int], None]
+    ) -> None:
         if listener in cls._KEY_ROTATION_LISTENERS:
             cls._KEY_ROTATION_LISTENERS.remove(listener)
 
-    def _notify_key_rotation(self, service_id: str, old_key_fingerprint: str) -> None:
+    def _notify_key_rotation(
+        self,
+        service_id: str,
+        old_key_fingerprint: str,
+        service_revision: int,
+    ) -> None:
         for listener in list(self._KEY_ROTATION_LISTENERS):
             try:
-                listener(service_id, old_key_fingerprint)
+                listener(service_id, old_key_fingerprint, service_revision)
             except Exception:
                 pass
         try:
             from app.services.long_task_coordinator import get_long_task_coordinator
             coord = get_long_task_coordinator()
             if coord is not None and hasattr(coord, "invalidate_by_auth"):
-                coord.invalidate_by_auth(service_id, old_key_fingerprint)
+                coord.invalidate_by_auth(
+                    service_id,
+                    old_key_fingerprint,
+                    service_revision=service_revision,
+                )
         except Exception:
             pass
 
@@ -291,6 +304,7 @@ class DirectServiceStore:
                 if had_prior_key and prior_key
                 else ""
             )
+            old_revision = int(service.get("revision", 1))
 
             self._invalidate_model_catalog(service)
             self._write_key(service_id, clean_key)
@@ -310,7 +324,7 @@ class DirectServiceStore:
                     self._delete_key(service_id)
                 raise
             if old_fp:
-                self._notify_key_rotation(service_id, old_fp)
+                self._notify_key_rotation(service_id, old_fp, old_revision)
             return self._sanitize_service(service, payload=payload)
 
     def clear_api_key(
@@ -332,6 +346,7 @@ class DirectServiceStore:
                 if had_prior_key and prior_key
                 else ""
             )
+            old_revision = int(service.get("revision", 1))
 
             self._invalidate_model_catalog(service)
             self._delete_key(service_id)
@@ -349,7 +364,7 @@ class DirectServiceStore:
                         pass
                 raise
             if old_fp:
-                self._notify_key_rotation(service_id, old_fp)
+                self._notify_key_rotation(service_id, old_fp, old_revision)
             return self._sanitize_service(service, payload=payload)
 
     def update_model_list(
@@ -366,8 +381,7 @@ class DirectServiceStore:
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
-            if expected_revision is not None:
-                self._check_revision(service, expected_revision)
+            self._check_revision(service, expected_revision)
 
             clean_models = self._extract_model_list(model_list)
             if not trusted:
@@ -609,8 +623,7 @@ class DirectServiceStore:
             payload = load_config_payload(self.config_path)
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
-            if expected_revision is not None:
-                self._check_revision(service, expected_revision)
+            self._check_revision(service, expected_revision)
             snapshot_revision = int(service.get("revision", 1))
 
             api_key = self._read_key(service_id)

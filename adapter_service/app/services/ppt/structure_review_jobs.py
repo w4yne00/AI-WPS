@@ -94,6 +94,7 @@ class PptStructureReviewJobStore:
                 trace_id=trace_id,
                 task_type=task_type,
                 runner=self._run,
+                success_committer=self._commit_success,
                 snapshot={
                     "request": _copy_request(request),
                     "taskAuth": task_auth,
@@ -139,49 +140,6 @@ class PptStructureReviewJobStore:
                 trace_id=snapshot.get("traceId", "") or "",
                 **kwargs
             )
-            try:
-                req = snapshot.get("request")
-                doc_name = (
-                    getattr(req, "document_display_name", "")
-                    or getattr(req, "presentation_id", "")
-                    or "演示文稿"
-                )
-                auth = snapshot.get("taskAuth") or {}
-                service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
-                model_name = auth.get("modelName") or result.get("provider") or "model"
-                job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
-
-                high_priority_issues = result.get("highPriorityIssues") or []
-                general_suggestions = result.get("generalSuggestions") or []
-                slide_recommendations = result.get("slideRecommendations") or []
-
-                # Strict ADR-0131 sanitization: only archive summary metadata and report reference
-                archived_result = {
-                    "resultType": "structure_review",
-                    "reportId": job_id,
-                    "jobId": job_id,
-                    "reviewedRange": result.get("reviewedRange"),
-                    "overallStoryline": result.get("overallStoryline", ""),
-                    "reviewConclusion": result.get("reviewConclusion", ""),
-                    "highPriorityIssueCount": len(high_priority_issues),
-                    "generalSuggestionCount": len(general_suggestions),
-                    "slideRecommendationCount": len(slide_recommendations),
-                    "reportExpiresAt": float(time.time() + 7200),
-                }
-
-                get_task_history_store().record_success(
-                    task_type="ppt.structure_review",
-                    job_id=job_id,
-                    result=archived_result,
-                    document_display_name=doc_name,
-                    service_name=service_name,
-                    model_name=model_name,
-                )
-            except TaskHistoryError as exc:
-                if exc.code == "HISTORY_ENTRY_TOO_LARGE":
-                    result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
-            except Exception:
-                pass
             return result
         finally:
             doc_session = str(snapshot.get("documentSessionId") or "")
@@ -191,3 +149,42 @@ class PptStructureReviewJobStore:
                     slot_key = (host, "ppt.structure_review", doc_session)
                     if self._active_doc_sessions.get(slot_key) == snapshot.get("jobId"):
                         self._active_doc_sessions.pop(slot_key, None)
+
+    @staticmethod
+    def _commit_success(snapshot: Dict, result: Dict) -> None:
+        try:
+            req = snapshot.get("request")
+            doc_name = (
+                getattr(req, "document_display_name", "")
+                or getattr(req, "presentation_id", "")
+                or "演示文稿"
+            )
+            auth = snapshot.get("taskAuth") or {}
+            service_name = auth.get("serviceName") or auth.get("providerName") or "模型服务"
+            model_name = auth.get("modelName") or result.get("provider") or "model"
+            job_id = str(snapshot.get("jobId") or snapshot.get("traceId") or "")
+            archived_result = {
+                "resultType": "structure_review",
+                "reportId": job_id,
+                "jobId": job_id,
+                "reviewedRange": result.get("reviewedRange"),
+                "overallStoryline": result.get("overallStoryline", ""),
+                "reviewConclusion": result.get("reviewConclusion", ""),
+                "highPriorityIssueCount": len(result.get("highPriorityIssues") or []),
+                "generalSuggestionCount": len(result.get("generalSuggestions") or []),
+                "slideRecommendationCount": len(result.get("slideRecommendations") or []),
+                "reportExpiresAt": float(time.time() + 7200),
+            }
+            get_task_history_store().record_success(
+                task_type="ppt.structure_review",
+                job_id=job_id,
+                result=archived_result,
+                document_display_name=doc_name,
+                service_name=service_name,
+                model_name=model_name,
+            )
+        except TaskHistoryError as exc:
+            if exc.code == "HISTORY_ENTRY_TOO_LARGE":
+                result["historyNotice"] = "任务结果超过 5 MiB，未写入历史记录。"
+        except Exception:
+            pass

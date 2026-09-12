@@ -4843,7 +4843,7 @@
     if (!error) {
       return false;
     }
-    var code = String(error.code || (error.data && error.data.code) || "");
+    var code = String(error.adapterCode || error.code || (error.data && error.data.code) || "");
     var msg = String(error.message || "");
     var status = error.status || error.statusCode;
     return code === "DIRECT_SERVICE_REVISION_CONFLICT" || status === 409 || msg.indexOf("冲突") !== -1 || msg.indexOf("conflict") !== -1;

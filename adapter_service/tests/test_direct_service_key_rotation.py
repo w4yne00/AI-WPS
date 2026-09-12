@@ -1,4 +1,5 @@
 import json
+import threading
 import time
 import unittest
 from pathlib import Path
@@ -95,8 +96,172 @@ class DirectServiceRevisionAndReferenceTests(unittest.TestCase):
                 store.delete_service(service_id, expected_revision=1)
             self.assertEqual(ctx.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
 
+    def test_key_rotation_notification_identifies_revoked_service_revision(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            service = store.create_service(
+                name="轮换代际测试", service_base_url="https://api.openai.com/v1"
+            )
+            store.replace_api_key(service["id"], "sk-first", expected_revision=1)
+            notifications = []
+
+            def listener(service_id, fingerprint, service_revision):
+                notifications.append((service_id, fingerprint, service_revision))
+
+            store.register_key_rotation_listener(listener)
+            try:
+                store.replace_api_key(
+                    service["id"], "sk-second", expected_revision=2
+                )
+            finally:
+                store.unregister_key_rotation_listener(listener)
+
+            self.assertEqual(
+                notifications,
+                [
+                    (
+                        service["id"],
+                        DirectServiceStore.api_key_fingerprint("sk-first"),
+                        2,
+                    )
+                ],
+            )
+
+    def test_clear_key_invalidates_task_bound_to_cleared_revision(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            service = store.create_service(
+                name="清除密钥测试", service_base_url="https://api.openai.com/v1"
+            )
+            store.replace_api_key(service["id"], "sk-clear", expected_revision=1)
+            coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+            release = threading.Event()
+
+            def listener(service_id, fingerprint, service_revision):
+                coordinator.invalidate_by_auth(
+                    service_id,
+                    fingerprint,
+                    service_revision=service_revision,
+                )
+
+            store.register_key_rotation_listener(listener)
+            try:
+                coordinator.submit(
+                    job_id="clear-key-job",
+                    trace_id="clear-key-trace",
+                    task_type="word.smart_write",
+                    runner=lambda _snapshot, _progress: (
+                        release.wait(timeout=2) or {"plainText": "旧结果"}
+                    ),
+                    snapshot={
+                        "taskAuth": {
+                            "directService": {
+                                "id": service["id"],
+                                "revision": 2,
+                            },
+                            "apiKey": "sk-clear",
+                        }
+                    },
+                    failure_code="FAILED",
+                    failure_message="failed",
+                )
+                cleared = store.clear_api_key(
+                    service["id"], expected_revision=2
+                )
+                failed = coordinator.get(
+                    "clear-key-job", task_type="word.smart_write"
+                )
+            finally:
+                release.set()
+                store.unregister_key_rotation_listener(listener)
+
+            self.assertFalse(cleared["keyConfigured"])
+            self.assertEqual(failed["status"], "failed")
+            self.assertEqual(
+                failed["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+            )
 
 class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
+    def test_auth_invalidated_before_submit_is_registered_as_failed(self) -> None:
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+        service_id = "direct_svc_submit_race"
+        old_fp = DirectServiceStore.api_key_fingerprint("sk-old")
+        runner_called = threading.Event()
+
+        coordinator.invalidate_by_auth(
+            service_id,
+            old_fp,
+            service_revision=7,
+        )
+        submitted = coordinator.submit(
+            job_id="stale_snapshot_job",
+            trace_id="stale_snapshot_trace",
+            task_type="excel.analysis",
+            runner=lambda _snapshot, _progress: runner_called.set(),
+            snapshot={
+                "taskAuth": {
+                    "directService": {"id": service_id, "revision": 7},
+                    "apiKeyFingerprint": old_fp,
+                }
+            },
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+
+        self.assertEqual(submitted["status"], "failed")
+        self.assertEqual(
+            submitted["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+        )
+        self.assertFalse(runner_called.wait(timeout=0.05))
+
+    def test_key_rotation_wins_before_atomic_success_commit(self) -> None:
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+        service_id = "direct_svc_completion_race"
+        old_fp = DirectServiceStore.api_key_fingerprint("sk-running")
+        runner_started = threading.Event()
+        release_runner = threading.Event()
+        committed_results = []
+
+        def runner(_snapshot, _progress):
+            runner_started.set()
+            release_runner.wait(timeout=2)
+            return {"plainText": "旧认证生成的正文"}
+
+        coordinator.submit(
+            job_id="completion_race_job",
+            trace_id="completion_race_trace",
+            task_type="excel.analysis",
+            runner=runner,
+            snapshot={
+                "taskAuth": {
+                    "directService": {"id": service_id, "revision": 3},
+                    "apiKeyFingerprint": old_fp,
+                }
+            },
+            failure_code="FAILED",
+            failure_message="failed",
+            success_committer=lambda _snapshot, result: committed_results.append(
+                result["plainText"]
+            ),
+        )
+        self.assertTrue(runner_started.wait(timeout=1))
+
+        coordinator.invalidate_by_auth(
+            service_id,
+            old_fp,
+            service_revision=3,
+        )
+        release_runner.set()
+        terminal = coordinator.wait(
+            "completion_race_job", task_type="excel.analysis"
+        )
+
+        self.assertEqual(terminal["status"], "failed")
+        self.assertEqual(
+            terminal["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+        )
+        self.assertEqual(committed_results, [])
+
     def test_coordinator_invalidates_queued_task_on_key_rotation(self) -> None:
         coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
         service_id = "direct_svc_test_1"
@@ -258,6 +423,34 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
         res = coordinator.wait_result("new_post_rotation_job", task_type="excel.formula_assistant", not_found_code="NOT_FOUND", not_found_message="not found", cancelled_message="cancelled", failure_code="FAILED", failure_message="failed", safe_error_statuses=set())
         self.assertEqual(res["formula"], "=SUM(A1:A10)")
 
+    def test_same_key_value_is_allowed_for_a_newer_service_revision(self) -> None:
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+        service_id = "direct_svc_same_key"
+        fingerprint = DirectServiceStore.api_key_fingerprint("sk-same")
+        coordinator.invalidate_by_auth(
+            service_id, fingerprint, service_revision=4
+        )
+
+        coordinator.submit(
+            job_id="same-key-new-revision-job",
+            trace_id="same-key-new-revision-trace",
+            task_type="excel.analysis",
+            runner=lambda _snapshot, _progress: {"ok": True},
+            snapshot={
+                "taskAuth": {
+                    "directService": {"id": service_id, "revision": 5},
+                    "apiKeyFingerprint": fingerprint,
+                }
+            },
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+        completed = coordinator.wait(
+            "same-key-new-revision-job", task_type="excel.analysis"
+        )
+
+        self.assertEqual(completed["status"], "completed")
+
 
 class CrossHostTaskCoordinatorKeyRotationTests(unittest.TestCase):
     """Verifies that Key rotation in DirectServiceStore invalidates tasks across Word, Excel, PPT."""
@@ -302,9 +495,14 @@ class CrossHostTaskCoordinatorKeyRotationTests(unittest.TestCase):
             initial_fp = DirectServiceStore.api_key_fingerprint("sk-initial-secret")
 
             # Connect coordinator invalidation listener to store
-            store.register_key_rotation_listener(
-                lambda sid, old_fp: coordinator.invalidate_by_auth(sid, old_fp)
-            )
+            def invalidate_listener(sid, old_fp, service_revision):
+                coordinator.invalidate_by_auth(
+                    sid,
+                    old_fp,
+                    service_revision=service_revision,
+                )
+
+            store.register_key_rotation_listener(invalidate_listener)
 
             # Block running slot so subsequent jobs stay in queue
             unblock_event = False
@@ -329,6 +527,7 @@ class CrossHostTaskCoordinatorKeyRotationTests(unittest.TestCase):
                 auth = {
                     "directServiceId": svc_id,
                     "apiKeyFingerprint": initial_fp,
+                    "directService": {"id": svc_id, "revision": 2},
                 }
                 sub = coordinator.submit(
                     job_id=job_id,
@@ -361,6 +560,7 @@ class CrossHostTaskCoordinatorKeyRotationTests(unittest.TestCase):
             # Clean up blocker
             unblock_event = True
             coordinator.wait_result("root_blocker", task_type="excel.analysis", not_found_code="NOT_FOUND", not_found_message="not found", cancelled_message="cancelled", failure_code="FAILED", failure_message="failed", safe_error_statuses=set())
+            store.unregister_key_rotation_listener(invalidate_listener)
 
 
 if __name__ == "__main__":

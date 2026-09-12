@@ -128,7 +128,7 @@ class DirectServiceClearApiKeyRequest(BaseModel):
 
 class DirectServiceModelListUpdateRequest(BaseModel):
     model_list: List[str] = Field(alias="modelList")
-    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+    expected_revision: int = Field(alias="expectedRevision")
     fetched_at: Optional[str] = Field(default=None, alias="fetchedAt")
 
 
@@ -148,11 +148,11 @@ class TaskModelSelectionUpdateRequest(BaseModel):
 
 
 class DirectServiceRefreshRequest(BaseModel):
-    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+    expected_revision: int = Field(alias="expectedRevision")
 
 
 class DirectServiceValidateRequest(BaseModel):
-    expected_revision: Optional[int] = Field(default=None, alias="expectedRevision")
+    expected_revision: int = Field(alias="expectedRevision")
 
 
 class DirectServiceActivateRequest(BaseModel):
@@ -861,12 +861,11 @@ def update_task_model_selection_route(
 
 @router.post("/provider/direct-services/{service_id}/refresh-models")
 def refresh_direct_service_models(
-    service_id: str, request: Optional[DirectServiceRefreshRequest] = None
+    service_id: str, request: DirectServiceRefreshRequest
 ) -> dict:
-    expected_revision = request.expected_revision if request else None
     try:
         service = get_direct_service_store().refresh_models(
-            service_id, expected_revision=expected_revision
+            service_id, expected_revision=request.expected_revision
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
@@ -883,12 +882,11 @@ def refresh_direct_service_models(
 
 @router.post("/provider/direct-services/{service_id}/validate")
 def validate_direct_service_route(
-    service_id: str, request: Optional[DirectServiceValidateRequest] = None
+    service_id: str, request: DirectServiceValidateRequest
 ) -> dict:
-    expected_revision = request.expected_revision if request else None
     try:
         result = get_direct_service_store().validate_service(
-            service_id, expected_revision=expected_revision
+            service_id, expected_revision=request.expected_revision
         )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)

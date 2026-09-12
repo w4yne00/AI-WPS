@@ -192,27 +192,15 @@ class DirectServiceModelCatalogContractTests(unittest.TestCase):
             "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE",
         )
 
-    def test_refresh_without_revision_cannot_write_after_configuration_change(self) -> None:
+    def test_refresh_without_revision_is_rejected_before_network_call(self) -> None:
         service = self._service("刷新竞态服务")
-        response = self._response({"data": [{"id": "stale-model"}]})
-
-        def delayed_urlopen(*_args, **_kwargs):
-            self.store.update_service(
-                service["id"],
-                name="刷新竞态服务",
-                service_base_url="https://changed.example.com/v1",
-                default_model="gpt-4o",
-                expected_revision=1,
-            )
-            return response
-
-        with patch("urllib.request.urlopen", side_effect=delayed_urlopen):
+        with patch("urllib.request.urlopen") as urlopen:
             with self.assertRaises(DirectServiceError) as context:
                 self.store.refresh_models(service["id"])
 
-        self.assertEqual(context.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
+        self.assertEqual(context.exception.code, "DIRECT_SERVICE_REVISION_REQUIRED")
+        urlopen.assert_not_called()
         current = self.store.get_service(service["id"])
-        self.assertEqual(current["serviceBaseUrl"], "https://changed.example.com/v1")
         self.assertEqual(current["modelList"], [])
         self.assertFalse(current["modelCatalog"]["usableForSelection"])
 

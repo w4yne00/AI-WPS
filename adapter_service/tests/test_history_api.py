@@ -6,6 +6,8 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from app.services.direct_services import DirectServiceStore
+from app.services.long_task_coordinator import LongTaskCoordinator
 from app.services.task_history import TaskHistoryStore
 
 HAS_PYDANTIC = bool(importlib.util.find_spec("pydantic"))
@@ -180,6 +182,52 @@ class FastApiHistoryApiTests(unittest.TestCase):
             res = self.client.delete("/history?taskType=ppt.slide_assistant")
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json()["data"]["clearedCount"], 2)
+
+    def test_completed_history_remains_visible_after_key_rotation(self) -> None:
+        coordinator = LongTaskCoordinator()
+        service_id = "direct_history_service"
+        old_fingerprint = DirectServiceStore.api_key_fingerprint("sk-history")
+        coordinator.submit(
+            job_id="history-rotation-job",
+            trace_id="history-rotation-trace",
+            task_type="ppt.slide_assistant",
+            runner=lambda _snapshot, _progress: {"summary": "已完成结果"},
+            snapshot={
+                "taskAuth": {
+                    "directService": {"id": service_id, "revision": 5},
+                    "apiKeyFingerprint": old_fingerprint,
+                }
+            },
+            failure_code="FAILED",
+            failure_message="failed",
+            success_committer=lambda _snapshot, result: self.store.record_success(
+                task_type="ppt.slide_assistant",
+                job_id="history-rotation-job",
+                result=result,
+                document_display_name="轮换前完成.pptx",
+                service_name="共享直连",
+                model_name="model-a",
+            ),
+        )
+        completed = coordinator.wait(
+            "history-rotation-job", task_type="ppt.slide_assistant"
+        )
+        coordinator.invalidate_by_auth(
+            service_id, old_fingerprint, service_revision=5
+        )
+
+        with patch("app.api.history.get_task_history_store", return_value=self.store):
+            response = self.client.get(
+                "/history?taskType=ppt.slide_assistant"
+            )
+
+        self.assertEqual(completed["status"], "completed")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["data"]["total"], 1)
+        self.assertEqual(
+            response.json()["data"]["items"][0]["jobId"],
+            "history-rotation-job",
+        )
 
 
 if __name__ == "__main__":
