@@ -1264,6 +1264,59 @@ button.ghost-action:hover {
   margin-top: 4px;
 }
 
+.direct-services-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.direct-services-heading h4 {
+  margin: 0 0 4px;
+}
+
+.direct-services-list {
+  min-width: 0;
+  border-bottom: 1px solid var(--border-color, #e0e0e0);
+  margin-bottom: 12px;
+}
+
+.direct-service-editor-view {
+  width: 100%;
+  min-width: 0;
+}
+
+.direct-service-model-fetch-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 8px 0 12px;
+}
+
+.direct-service-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 4px;
+  margin-bottom: 8px;
+}
+
+.task-model-selection-card {
+  padding: 12px;
+  margin-bottom: 14px;
+  border: 1px solid var(--border-color, #e0e0e0);
+  border-radius: var(--radius-card, 8px);
+  background: var(--color-surface-muted, #f8f9fa);
+}
+
+.grid-three-col {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
 /* Shared restrained settings and interaction treatment. */
 .model-interface-card,
 .workflow-settings-card,
