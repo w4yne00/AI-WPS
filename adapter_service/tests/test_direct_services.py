@@ -748,6 +748,81 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         self.assertIn("excel.analysis", data["selections"])
         self.assertEqual(data["selections"]["excel.analysis"]["taskType"], "excel.analysis")
 
+    def test_standalone_ppt_tasks_direct_service_activation(self) -> None:
+        """PPT tasks (slide_assistant and structure_review) direct service activation and delete protection."""
+        res = self._invoke(
+            "do_POST",
+            "/provider/direct-services",
+            {
+                "name": "PPT直连网关",
+                "serviceBaseUrl": "https://api.openai.com/v1",
+                "defaultModel": "gpt-4o",
+                "apiKey": "sk-ppt-test-key",
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        svc_id = res["body"]["data"]["directService"]["id"]
+
+        # Populate trusted model catalog so models are available
+        store = DirectServiceStore(config_path=self.config_path, api_key_dir=self.api_key_dir)
+        store.update_model_list(
+            svc_id,
+            ["gpt-4o", "ppt-summary-model", "ppt-review-model"],
+            expected_revision=1,
+            trusted=True,
+        )
+
+        # Activate on ppt.slide_assistant
+        res = self._invoke(
+            "do_POST",
+            f"/provider/direct-services/{svc_id}/activate",
+            {
+                "taskType": "ppt.slide_assistant",
+                "taskModelSelection": {
+                    "serviceId": svc_id,
+                    "modelName": "ppt-summary-model",
+                    "temperature": 0.4,
+                    "maxOutputTokens": 2048,
+                },
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        sel = res["body"]["data"]["taskModelSelection"]
+        self.assertEqual(sel["modelName"], "ppt-summary-model")
+        self.assertEqual(sel["temperature"], 0.4)
+
+        # Activate on ppt.structure_review
+        res = self._invoke(
+            "do_POST",
+            f"/provider/direct-services/{svc_id}/activate",
+            {
+                "taskType": "ppt.structure_review",
+                "taskModelSelection": {
+                    "serviceId": svc_id,
+                    "modelName": "ppt-review-model",
+                    "temperature": 0.2,
+                    "maxOutputTokens": 4096,
+                },
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        sel = res["body"]["data"]["taskModelSelection"]
+        self.assertEqual(sel["modelName"], "ppt-review-model")
+
+        # Query host=ppt
+        res = self._invoke("do_GET", "/provider/task-model-selections?host=ppt")
+        self.assertEqual(res["status"], 200)
+        selections = res["body"]["data"]["selections"]
+        self.assertIn("ppt.slide_assistant", selections)
+        self.assertIn("ppt.structure_review", selections)
+
+        # Try deleting service while in use -> 409 and both referenced
+        res = self._invoke("do_DELETE", f"/provider/direct-services/{svc_id}?expectedRevision=2")
+        self.assertEqual(res["status"], 409)
+        ref_tasks = res["body"]["errors"][0]["referencedTasks"]
+        self.assertIn("ppt.slide_assistant", ref_tasks)
+        self.assertIn("ppt.structure_review", ref_tasks)
+
 
 if __name__ == "__main__":
     unittest.main()

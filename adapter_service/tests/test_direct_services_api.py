@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -45,6 +46,8 @@ if HAS_API_DEPS:
     from app.services.provider_client import ProviderClient
     from app.services.word.rewriter import WordRewriter
     from app.services.word.smart_imitator import WordSmartImitator
+    from app.services.ppt.slide_assistant import PptSlideAssistant
+    from app.services.ppt.structure_review import PptStructureReviewer
 
 
 @unittest.skipUnless(
@@ -133,6 +136,137 @@ class DirectServicesApiTests(unittest.TestCase):
             self.assertEqual(imitation_auth["modelConfigurationId"], service_id)
             self.assertEqual(imitation_auth["modelName"], "imitation-model")
             self.assertEqual(imitation_auth["temperature"], 0.6)
+
+    def test_ppt_tasks_resolve_atomic_selections_from_public_api(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            key_dir = root / "provider_api_keys"
+            store = DirectServiceStore(config_path, key_dir)
+
+            with patch(
+                "app.api.provider.get_direct_service_store", return_value=store
+            ):
+                client = TestClient(app)
+                created = client.post(
+                    "/provider/direct-services",
+                    json={
+                        "name": "PPT 共享直连",
+                        "serviceBaseUrl": "https://api.example.com/v1",
+                        "defaultModel": "shared-default",
+                    },
+                )
+                self.assertEqual(created.status_code, 200)
+                service_id = created.json()["data"]["directService"]["id"]
+                store.replace_api_key(service_id, "sk-ppt-shared", expected_revision=1)
+                store.update_model_list(
+                    service_id,
+                    ["shared-default", "slide-model", "structure-model"],
+                    expected_revision=2,
+                    trusted=True,
+                )
+
+                task_payloads = {
+                    "ppt.slide_assistant": {
+                        "serviceId": service_id,
+                        "modelName": "slide-model",
+                        "temperature": 0.4,
+                        "maxOutputTokens": 2048,
+                        "contextWindowTokens": 32000,
+                        "customModel": False,
+                    },
+                    "ppt.structure_review": {
+                        "serviceId": service_id,
+                        "modelName": "structure-model",
+                        "temperature": 0.2,
+                        "maxOutputTokens": 4096,
+                        "contextWindowTokens": 64000,
+                        "customModel": False,
+                    },
+                }
+                for task_type, selection in task_payloads.items():
+                    response = client.post(
+                        "/provider/direct-services/{0}/activate".format(service_id),
+                        json={
+                            "taskType": task_type,
+                            "taskModelSelection": selection,
+                        },
+                    )
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(
+                        response.json()["data"]["taskModelSelection"]["modelName"],
+                        selection["modelName"],
+                    )
+
+            provider_client = ProviderClient(
+                settings=AppSettings(),
+                model_configuration_store=ModelConfigurationStore(
+                    config_path=config_path, key_dir=key_dir
+                ),
+                direct_service_store=store,
+            )
+            from app.api import ppt as ppt_api
+            from app.services.ppt.slide_assistant_jobs import PptSlideAssistantJobStore
+            from app.services.ppt.structure_review_jobs import PptStructureReviewJobStore
+            from app.services.long_task_coordinator import LongTaskCoordinator
+
+            slide_jobs = PptSlideAssistantJobStore(
+                assistant=PptSlideAssistant(provider_client=provider_client),
+                coordinator=LongTaskCoordinator(),
+            )
+            structure_jobs = PptStructureReviewJobStore(
+                reviewer=PptStructureReviewer(provider_client=provider_client),
+                coordinator=LongTaskCoordinator(),
+            )
+            captured = {}
+
+            def model_response(task_type, trace_id, inputs, prompt, **kwargs):
+                captured[task_type] = kwargs["task_auth"]
+                return {"answer": json.dumps({
+                    "suggestedTitle": "测试标题", "bullets": ["测试要点"],
+                    "conclusion": "测试结论", "overallStoryline": "测试结构",
+                    "highPriorityIssues": [], "generalSuggestions": [],
+                    "slideRecommendations": [], "recommendedOutline": [],
+                })}
+
+            with patch.object(ppt_api, "ppt_slide_jobs", slide_jobs), patch.object(
+                ppt_api, "ppt_structure_review_jobs", structure_jobs
+            ), patch.object(provider_client, "post_task", side_effect=model_response):
+                client = TestClient(app)
+                for task_type, endpoint, content in (
+                    ("ppt.slide_assistant", "slide-assistant", {
+                        "slide": {"index": 1, "title": "测试", "textBlocks": ["项目进展"]},
+                        "userInstruction": "总结项目进展",
+                    }),
+                    ("ppt.structure_review", "structure-review", {
+                        "scope": {"totalSlides": 1, "startSlide": 1, "endSlide": 1},
+                        "slides": [{"index": 1, "title": "项目背景"}],
+                    }),
+                ):
+                    job_id = "client-public-" + endpoint
+                    submitted = client.post("/ppt/" + endpoint + "/jobs", json={
+                        "scene": "ppt", "presentationId": "test-presentation",
+                        "documentSessionId": "session-" + endpoint,
+                        "clientJobId": job_id, **content,
+                    })
+                    self.assertEqual(submitted.status_code, 200, submitted.text)
+                    deadline = time.monotonic() + 5
+                    while time.monotonic() < deadline:
+                        response = client.get("/ppt/" + endpoint + "/jobs/" + job_id)
+                        self.assertEqual(response.status_code, 200, response.text)
+                        job = response.json()["data"]
+                        if job["status"] in ("completed", "failed", "cancelled"):
+                            break
+                        time.sleep(0.01)
+                    self.assertEqual(job["status"], "completed", job)
+                    auth = captured[task_type]
+                    self.assertEqual(auth["modelConfigurationId"], service_id)
+                    self.assertEqual(auth["providerBaseUrl"], "https://api.example.com/v1")
+                    self.assertEqual(auth["apiKey"], "sk-ppt-shared")
+                    for field in ("modelName", "temperature", "maxOutputTokens", "contextWindowTokens"):
+                        self.assertEqual(auth[field], task_payloads[task_type][field])
+            slide_jobs.close()
 
     def test_model_mutation_requests_require_expected_revision(self) -> None:
         for request_type, payload in (

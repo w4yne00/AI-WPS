@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## PR #195 复审修复（2026-09-13）
+
+- PPT 首页与设置页先应用 `/config.taskApiKeys`，再读取任务配置及共享直连服务；配置未完成或读取失败时阻断新任务提交。任务配置视图合并当前服务 ID，激活成功同步接入方式，失败恢复原服务。
+- 请求错误保留 HTTP 状态、错误代码、响应数据及 `referencedTasks`；自定义模型保存可复用相同服务和模型的持久化验证结果，服务端仍负责 URL、Key 和模型变化后的失效检查。
+- 新增完整 `taskpane.js` 初始化、真实菜单失败回滚、409 响应、重开保存和提交拦截测试。后端测试通过两个 `/ppt/*/jobs` 公开接口提交并轮询到完成，在模型传输边界核对共享服务、Key、模型和任务参数，无真实模型付费调用。
+- 本轮 Docker Python 3.8 相关后端测试 96 通过；专项前端测试 21 通过，`wps-addon` 单元测试 12 通过、Vite 构建通过，Python 3.8 兼容扫描 76 个生产文件通过。最终正式插件非浏览器测试 166 通过、0 失败；此前全量运行的 `format-review-issue-cards.test.js` 因 Chrome 启动失败未通过，最终验证排除此浏览器用例。独立复核确认工作流保存后状态刷新及不完整直连配置阻断问题已解决。本轮不替代目标机人工界面验收。
+
+
 更新时间：2026-09-10
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
@@ -31,6 +39,25 @@
 - **一次性安装断代**：默认安装根 `$TARGET_HOME/ai-wps`，只读检测历史 `$TARGET_HOME/ai-wps-phase1` 并提示人工重装与重新配置，绝不自动迁移、覆盖或删除历史数据；若 18100 仍被历史 Adapter 占用则释放该端口监听进程；
 - **构建与审计闭包**：白名单组装、System Prompt 清单、Wheel、第三方许可证、来源 provenance、文件哈希、Python 3.8 兼容性与生命周期门禁全部闭合；
 - **状态记录**：当前自动化候选为 `ai-wps-delivery-20260909-487830e-v0260-preview1.tar.gz`（SHA-256 `7d798d43cdfea0dda124ecf5e6fe3081149d866812f379db1f380ccd1b0a5e2d`，源码提交 `487830eb618b0c6d93bafdbff7a23ca6e6e04d7e`）；目标机验收绑定 Issue #154 并保持 `manual-pending`。
+
+## 当前功能实现：Issue #177 迁移 PPT 任务至共享直连服务
+
+- **共享直连服务架构收敛**：遵循 ADR-0128 与 Issue #164 父规格规范，将 PPT 宿主的两类任务（智能总结 `ppt.slide_assistant` 与结构审查 `ppt.structure_review`）迁移接入设置页首页的共享模型直连服务（`DirectServiceCard`），与 Word、Excel 保持三宿主完全一致的交互与视觉体验；
+- **共享服务与独立选型分离**：
+  - 共享直连服务统一管理服务地址、单密码输入 API Key（不回显、无确认输入框）与模型目录拉取/刷新，全局上限 5 个；
+  - 任务模型配置选项卡（`ppt.slide_assistant` 与 `ppt.structure_review`）各自独立选择直连服务，支持覆盖自定义模型名、温度（Temperature 0.0–2.0）、最大输出 Tokens 及上下文窗口，并保留独立的类 Dify 工作流平台配置；
+  - 任务直接接入直连服务保存时，采用原子激活请求（`POST /provider/direct-services/{id}/activate`），携带完整 `taskModelSelection`，避免分步保存产生的状态不一致；
+- **任务窗格单行紧凑入口集成**：PPT 智能总结与结构审查主界面的紧凑单行模型配置入口（`#task-model-config-trigger` + `#task-model-config-menu`）无缝追加共享直连服务选项，支持即时激活与失败安全回滚（`rollbackTaskModelConfigSwitch`），且在设置页不同任务标签间保持精准的状态隔离与通告；
+- **执行前置就绪门禁（Preflight Gate）**：
+  - 在 `submitPptSlideJob`（智能总结）与 `submitStructureReviewJob`（结构审查）提交前，调用 `validateActiveDirectTaskSelection` 进行直连服务完整性门禁检查；
+  - 若直连服务未配置、缺少有效模型或已被删除，立即阻断长任务提交，并在状态栏清晰提示具体原因（如“直连服务未就绪，请先在设置中完成配置”），防止无效请求穿透至后端；
+- **引用感知与删除保护**：后端 `DirectServiceStore` 汇总 PPT 两项任务的模型选择引用，被引用的直连服务禁止删除（返回 409 `DIRECT_SERVICE_IN_USE`）；前端删除确认弹窗与服务地址修改影响披露（`evaluateDirectServiceUrlImpact`）自动关联“智能总结”与“结构审查”任务显示；
+- **测试覆盖与质量验证**：
+  - 前端契约测试：新增 `formal-plugin-kit/tests/ppt-shared-direct-service.test.js`（10/10 通过），全量覆盖页面结构、单密码 Key 字段、5 服务上限、任务参数覆盖草稿、紧凑菜单集成、原子激活与失败回滚、预检拦截阻断、删除保护与地址影响提示；
+  - 全量正式插件套件：`formal-plugin-kit/tests/*.test.js` 全部 158/158 测试全绿通过，包括跨宿主体验契约、单行紧凑入口契约、视口布局与跨运行时哈希契约；
+  - 后端单元测试：`adapter_service/tests/test_direct_services.py` 与 `test_direct_services_api.py` 22 项测试全绿通过；
+  - 静态检查：`packaging/check_python38_compatibility.py` 扫描 165 个 Python 文件通过；JS 语法检查通过；`git diff --check` 无空白或冲突警告；不可触碰路径零改动。
+
 ## 当前功能实现：Issue #175 保护共享服务修改并执行 Key 轮换失效
 
 - **版本与并发冲突控制**：遵循 ADR-0128 与 ADR-0129，共享直连服务对象暴露 `revision: int`。所有变更操作（更新属性、替换 Key、清除 Key、更新或刷新模型目录、验证服务、删除服务）强制携带 `expectedRevision` 校验。若发生版本冲突，后端返回 409 `DIRECT_SERVICE_REVISION_CONFLICT`；前端拦截冲突并明确提示版本冲突，要求用户刷新后重新编辑，严格禁止前端自动合并字段或盲目覆盖；
