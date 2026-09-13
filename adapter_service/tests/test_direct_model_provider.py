@@ -64,8 +64,9 @@ class DirectModelProviderTests(unittest.TestCase):
             temperature=0.2,
             max_output_tokens=1200 if context_window > 2000 else 100,
             context_window_tokens=context_window,
+            allow_direct=True,
         )
-        store.replace_api_key(configuration["id"], "direct-secret")
+        store.replace_api_key(configuration["id"], "direct-secret", allow_direct=True)
         store.activate_configuration(configuration["id"])
         return ProviderClient(
             AppSettings(timeout_seconds=75), model_configuration_store=store
@@ -99,8 +100,9 @@ class DirectModelProviderTests(unittest.TestCase):
             model_name="format-role-model",
             max_output_tokens=1024,
             context_window_tokens=40000,
+            allow_direct=True,
         )
-        store.replace_api_key(configuration["id"], "format-secret")
+        store.replace_api_key(configuration["id"], "format-secret", allow_direct=True)
         return (
             ProviderClient(AppSettings(timeout_seconds=75), model_configuration_store=store),
             store,
@@ -170,8 +172,9 @@ class DirectModelProviderTests(unittest.TestCase):
                 model_name="format-role-model",
                 max_output_tokens=8192,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
-            store.replace_api_key(configuration["id"], "format-secret")
+            store.replace_api_key(configuration["id"], "format-secret", allow_direct=True)
             store.activate_configuration(configuration["id"])
             client = ProviderClient(
                 AppSettings(timeout_seconds=75), model_configuration_store=store
@@ -215,8 +218,9 @@ class DirectModelProviderTests(unittest.TestCase):
                 model_name="deepseek-v4-flash",
                 max_output_tokens=None,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
-            store.replace_api_key(configuration["id"], "format-secret")
+            store.replace_api_key(configuration["id"], "format-secret", allow_direct=True)
             store.activate_configuration(configuration["id"])
             client = ProviderClient(
                 AppSettings(timeout_seconds=75), model_configuration_store=store
@@ -603,6 +607,7 @@ class DirectModelProviderTests(unittest.TestCase):
             client, store, configuration_id = self._direct_format_client(Path(tmp))
             store.update_configuration(
                 configuration_id,
+                allow_direct=True,
                 name="格式语义直连",
                 access_method=ACCESS_DIRECT_MODEL,
                 service_base_url="https://format-model.example/v1",
@@ -928,8 +933,9 @@ class DirectModelProviderTests(unittest.TestCase):
                 model_name="review-model",
                 max_output_tokens=2048,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
-            store.replace_api_key(configuration["id"], "direct-secret")
+            store.replace_api_key(configuration["id"], "direct-secret", allow_direct=True)
             store.activate_configuration(configuration["id"])
             client = ProviderClient(
                 AppSettings(timeout_seconds=75), model_configuration_store=store

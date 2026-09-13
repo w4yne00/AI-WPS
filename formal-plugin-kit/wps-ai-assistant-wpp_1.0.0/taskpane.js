@@ -2475,14 +2475,8 @@
     byId("workflow-editor-title").textContent = editing ? "编辑模型配置" : "新建模型配置";
     byId("workflow-editor-name").value = editing ? profile.name : "";
     byId("workflow-editor-note").value = editing ? profile.note : "";
-    byId("workflow-editor-method").value = editing ? profile.accessMethod : "workflow_platform";
+    byId("workflow-editor-method").value = "workflow_platform";
     byId("workflow-editor-url").value = editing ? profile.serviceBaseUrl : "";
-    byId("workflow-editor-model").value = editing ? profile.modelName : "";
-    byId("workflow-editor-model-row").hidden = byId("workflow-editor-method").value !== "direct_model";
-    byId("workflow-editor-direct-advanced").hidden = byId("workflow-editor-method").value !== "direct_model";
-    byId("workflow-editor-temperature").value = editing && profile.temperature !== null ? profile.temperature : "";
-    byId("workflow-editor-max-output").value = editing && profile.maxOutputTokens ? profile.maxOutputTokens : "";
-    byId("workflow-editor-context").value = editing ? profile.contextWindowTokens : 40000;
     byId("workflow-editor-key").value = "";
     byId("workflow-editor-key-confirm").value = "";
     byId("workflow-editor-key").type = "password";
@@ -2522,26 +2516,7 @@
   }
 
   function handleModelAccessMethodChange() {
-    var editor = state.workflowEditor;
-    var input = byId("workflow-editor-method");
-    var nextMethod = input.value;
-    if (editor.currentAccessMethod && editor.currentAccessMethod !== nextMethod && window.confirm &&
-        !window.confirm("切换接入方式会清空原方式的专属参数和 API Key，是否继续？")) {
-      input.value = editor.currentAccessMethod;
-      return;
-    }
-    editor.currentAccessMethod = nextMethod;
-    editor.dirty = true;
-    byId("workflow-editor-model-row").hidden = nextMethod !== "direct_model";
-    byId("workflow-editor-direct-advanced").hidden = nextMethod !== "direct_model";
-    byId("btn-validate-model-configuration").disabled = true;
-    if (editor.originalAccessMethod && editor.originalAccessMethod !== nextMethod) {
-      byId("workflow-editor-key").value = "";
-      byId("workflow-editor-key-confirm").value = "";
-      byId("workflow-editor-model").value = "";
-      byId("workflow-editor-temperature").value = "";
-      byId("workflow-editor-max-output").value = "";
-    }
+    state.workflowEditor.dirty = true;
   }
 
   function validateCurrentModelConfiguration() {
@@ -2617,12 +2592,12 @@
       note: byId("workflow-editor-note").value,
       apiKey: byId("workflow-editor-key").value.trim(),
       apiKeyConfirm: byId("workflow-editor-key-confirm").value.trim(),
-      accessMethod: byId("workflow-editor-method").value,
+      accessMethod: "workflow_platform",
       serviceBaseUrl: byId("workflow-editor-url").value.trim(),
-      modelName: byId("workflow-editor-model").value.trim(),
-      temperature: byId("workflow-editor-temperature").value,
-      maxOutputTokens: byId("workflow-editor-max-output").value,
-      contextWindowTokens: byId("workflow-editor-context").value || "40000"
+      modelName: "",
+      temperature: "",
+      maxOutputTokens: "",
+      contextWindowTokens: "40000"
     };
     var draft = validateWorkflowProfileDraft(rawDraft, mode);
     if (!draft.ok) {
@@ -2640,12 +2615,12 @@
       taskType: state.workflowTaskType,
       name: draft.name,
       note: draft.note,
-      accessMethod: rawDraft.accessMethod,
+      accessMethod: "workflow_platform",
       serviceBaseUrl: rawDraft.serviceBaseUrl,
-      modelName: rawDraft.accessMethod === "direct_model" ? rawDraft.modelName : "",
-      temperature: rawDraft.accessMethod === "direct_model" && rawDraft.temperature !== "" ? Number(rawDraft.temperature) : null,
-      maxOutputTokens: rawDraft.accessMethod === "direct_model" && rawDraft.maxOutputTokens !== "" ? Number(rawDraft.maxOutputTokens) : null,
-      contextWindowTokens: rawDraft.accessMethod === "direct_model" ? Number(rawDraft.contextWindowTokens) : 40000
+      modelName: "",
+      temperature: null,
+      maxOutputTokens: null,
+      contextWindowTokens: 40000
     };
     setWorkflowProfileMutationBusy(true);
     if (mode === "create") {
@@ -2656,8 +2631,7 @@
           var shouldActivate = !state.profiles.loadError && shouldActivateNewWorkflowProfile(
             state.profiles.profileCount, byId("workflow-editor-activate").checked
           );
-          var complete = Boolean(rawDraft.serviceBaseUrl && rawDraft.apiKey &&
-            (rawDraft.accessMethod !== "direct_model" || rawDraft.modelName));
+          var complete = Boolean(rawDraft.serviceBaseUrl && rawDraft.apiKey);
           return shouldActivate && complete
             ? request("/provider/model-configurations/" + encodeURIComponent(configuration.id) + "/activate", {})
             : null;
@@ -5025,14 +4999,16 @@
       closeWorkflowEditor(false);
     });
     byId("btn-save-workflow-editor").addEventListener("click", saveWorkflowEditor);
-    ["workflow-editor-name", "workflow-editor-note", "workflow-editor-url", "workflow-editor-model",
-      "workflow-editor-key", "workflow-editor-key-confirm", "workflow-editor-temperature",
-      "workflow-editor-max-output", "workflow-editor-context"].forEach(function (id) {
-      byId(id).addEventListener("input", function () {
-        state.workflowEditor.dirty = true;
-        byId("workflow-editor-error").textContent = "";
-        byId("btn-validate-model-configuration").disabled = true;
-      });
+    ["workflow-editor-name", "workflow-editor-note", "workflow-editor-url",
+      "workflow-editor-key", "workflow-editor-key-confirm"].forEach(function (id) {
+      var el = byId(id);
+      if (el) {
+        el.addEventListener("input", function () {
+          state.workflowEditor.dirty = true;
+          byId("workflow-editor-error").textContent = "";
+          byId("btn-validate-model-configuration").disabled = true;
+        });
+      }
     });
     byId("workflow-editor-method").addEventListener("change", handleModelAccessMethodChange);
     byId("btn-validate-model-configuration").addEventListener("click", validateCurrentModelConfiguration);

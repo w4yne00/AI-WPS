@@ -197,7 +197,7 @@ class DirectServiceStore:
 
     def list_services(self) -> dict:
         with _STORE_LOCK:
-            payload, migration = self._load_with_legacy_document_review_migration()
+            payload, migration = self._load_with_legacy_direct_migration()
             services = [
                 self._sanitize_service(item, payload=payload)
                 for item in self._service_map(payload).values()
@@ -224,7 +224,7 @@ class DirectServiceStore:
     ) -> Optional[dict]:
         clean_task = self._validate_task_type(task_type)
         with _STORE_LOCK:
-            payload, _ = self._load_with_legacy_document_review_migration()
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             active = payload.get("activeModelConfigurations")
             active_id = str(active.get(clean_task, "")).strip() if isinstance(active, dict) else ""
@@ -252,7 +252,7 @@ class DirectServiceStore:
                 "taskModelSelection": selection,
             }
 
-    def _load_with_legacy_document_review_migration(self):
+    def _load_with_legacy_direct_migration(self):
         payload = load_config_payload(self.config_path)
         configurations = payload.get("modelConfigurations")
         if not isinstance(configurations, dict):
@@ -262,7 +262,7 @@ class DirectServiceStore:
             str(configuration_id): dict(configuration)
             for configuration_id, configuration in configurations.items()
             if isinstance(configuration, dict)
-            and str(configuration.get("taskType", "")) == "word.document_review"
+            and str(configuration.get("taskType", "")) in SUPPORTED_WORKFLOW_TASKS
             and str(configuration.get("accessMethod", "")) == ACCESS_DIRECT_MODEL
         }
         if not legacy:
@@ -275,8 +275,12 @@ class DirectServiceStore:
             service_key = self._read_key(service_id)
             service_url = str(service.get("serviceBaseUrl", "")).strip()
             if service_url and service_key:
+                try:
+                    norm_url = self._normalize_url(service_url)
+                except DirectServiceError:
+                    norm_url = service_url
                 identity_to_service[
-                    (self._normalize_url(service_url), self._api_key_fingerprint(service_key))
+                    (norm_url, self._api_key_fingerprint(service_key))
                 ] = service_id
 
         groups = {}
@@ -321,7 +325,7 @@ class DirectServiceStore:
         now = _utc_now()
 
         def unique_name(source):
-            base = str(source or "文档审查直连服务").strip() or "文档审查直连服务"
+            base = str(source or "共享直连服务").strip() or "共享直连服务"
             base = base[:MAX_DIRECT_SERVICE_NAME_LENGTH]
             candidate = base
             suffix_number = 2
@@ -373,33 +377,55 @@ class DirectServiceStore:
         active_source = payload.get("activeModelConfigurations")
         active = dict(active_source) if isinstance(active_source, dict) else {}
         selections = dict(self._selection_map(payload))
-        active_legacy_id = str(active.get("word.document_review", ""))
-        if active_legacy_id in legacy:
-            active_configuration = legacy[active_legacy_id]
-            service_id = configuration_service_ids[active_legacy_id]
-            api_key = legacy_keys[active_legacy_id][1]
-            service_url = str(services[service_id].get("serviceBaseUrl", ""))
-            model_name = str(active_configuration.get("modelName", "")).strip()
-            max_output_tokens = active_configuration.get("maxOutputTokens")
-            context_window_tokens = active_configuration.get("contextWindowTokens")
-            selections["word.document_review"] = {
-                "serviceId": service_id,
-                "modelName": model_name,
-                "temperature": active_configuration.get("temperature"),
-                "maxOutputTokens": max_output_tokens,
-                "contextWindowTokens": context_window_tokens,
-                "imageInputMode": active_configuration.get("imageInputMode", "disabled"),
-                "customModel": False,
-                "customModelValidated": False,
-                "updatedAt": now,
-            }
-            token_limits_valid = self._legacy_token_limits_valid(
-                max_output_tokens, context_window_tokens
-            )
-            if service_url and api_key and model_name and token_limits_valid:
-                active["word.document_review"] = service_id
+
+        for task_type in SUPPORTED_WORKFLOW_TASKS:
+            active_legacy_id = str(active.get(task_type, ""))
+            if active_legacy_id in legacy:
+                active_configuration = legacy[active_legacy_id]
+                service_id = configuration_service_ids[active_legacy_id]
+                api_key = legacy_keys[active_legacy_id][1]
+                service_url = str(services[service_id].get("serviceBaseUrl", ""))
+                model_name = str(active_configuration.get("modelName", "")).strip()
+                max_output_tokens = active_configuration.get("maxOutputTokens")
+                context_window_tokens = active_configuration.get("contextWindowTokens")
+                selections[task_type] = {
+                    "serviceId": service_id,
+                    "modelName": model_name,
+                    "temperature": active_configuration.get("temperature"),
+                    "maxOutputTokens": max_output_tokens,
+                    "contextWindowTokens": context_window_tokens,
+                    "imageInputMode": active_configuration.get("imageInputMode", "disabled"),
+                    "customModel": False,
+                    "customModelValidated": False,
+                    "updatedAt": now,
+                }
+                token_limits_valid = self._legacy_token_limits_valid(
+                    max_output_tokens, context_window_tokens
+                )
+                if service_url and api_key and model_name and token_limits_valid:
+                    active[task_type] = service_id
+                else:
+                    active.pop(task_type, None)
             else:
-                active.pop("word.document_review", None)
+                task_legacies = [
+                    (cid, cfg)
+                    for cid, cfg in legacy.items()
+                    if cfg.get("taskType") == task_type
+                ]
+                if task_legacies and task_type not in selections:
+                    last_cid, last_cfg = task_legacies[-1]
+                    service_id = configuration_service_ids[last_cid]
+                    selections[task_type] = {
+                        "serviceId": service_id,
+                        "modelName": str(last_cfg.get("modelName", "")).strip(),
+                        "temperature": last_cfg.get("temperature"),
+                        "maxOutputTokens": last_cfg.get("maxOutputTokens"),
+                        "contextWindowTokens": last_cfg.get("contextWindowTokens"),
+                        "imageInputMode": last_cfg.get("imageInputMode", "disabled"),
+                        "customModel": False,
+                        "customModelValidated": False,
+                        "updatedAt": now,
+                    }
 
         remaining_configurations = {
             configuration_id: configuration
@@ -432,16 +458,19 @@ class DirectServiceStore:
                     raise DirectServiceError(
                         "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的 API Key 校验失败。"
                     )
-            if active_legacy_id in legacy and active.get("word.document_review"):
-                selected_id = str(
-                    self._selection_map(verified)
-                    .get("word.document_review", {})
-                    .get("serviceId", "")
-                )
-                if selected_id != active.get("word.document_review"):
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的任务绑定校验失败。"
+            for task_type in SUPPORTED_WORKFLOW_TASKS:
+                if task_type in active and str(active[task_type]).startswith("direct_svc_"):
+                    expected_service = active[task_type]
+                    selected_id = str(
+                        self._selection_map(verified)
+                        .get(task_type, {})
+                        .get("serviceId", "")
                     )
+                    if selected_id != expected_service:
+                        raise DirectServiceError(
+                            "DIRECT_SERVICE_MIGRATION_FAILED",
+                            f"迁移后的任务 {task_type} 绑定校验失败。",
+                        )
         except Exception:
             save_config_payload(original_payload, self.config_path)
             for service_id in newly_written_service_ids:
@@ -472,6 +501,8 @@ class DirectServiceStore:
             "migratedConfigurationCount": len(legacy),
             "createdServiceCount": created_service_count,
         }
+
+    _load_with_legacy_document_review_migration = _load_with_legacy_direct_migration
 
     def _legacy_key_path(self, api_key_ref: str) -> Optional[Path]:
         ref = str(api_key_ref or "").strip()

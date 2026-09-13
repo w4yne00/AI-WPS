@@ -86,6 +86,7 @@ from app.services.word.smart_imitator import WordSmartImitator
 from app.services.template_loader import TemplateLoader
 from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
     ModelConfigurationError,
     ModelConfigurationStore,
     WorkflowProfileCompatibilityStore,
@@ -2822,6 +2823,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if path == "/provider/model-configurations":
+            if str(payload.get("accessMethod", "")).strip() == ACCESS_DIRECT_MODEL:
+                self._write_model_configuration_error(
+                    ModelConfigurationError(
+                        "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                        "模型直连写入合同已退役，请使用共享直连服务接口。",
+                    )
+                )
+                return
             try:
                 configuration = ModelConfigurationStore().create_configuration(
                     payload.get("taskType", ""),
@@ -3639,6 +3648,14 @@ class Handler(BaseHTTPRequestHandler):
         model_prefix = "/provider/model-configurations/"
         if path.startswith(model_prefix):
             configuration_id = unquote(path[len(model_prefix) :]).strip("/")
+            if str(payload.get("accessMethod", "")).strip() == ACCESS_DIRECT_MODEL:
+                self._write_model_configuration_error(
+                    ModelConfigurationError(
+                        "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                        "模型直连写入合同已退役，请使用共享直连服务接口。",
+                    )
+                )
+                return
             try:
                 update_fields = {}
                 if "name" in payload:

@@ -177,8 +177,11 @@ class OverlayUpgradeImageSemanticTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
-            saved = store.replace_api_key(saved["id"], "other-secret")
+            saved = store.replace_api_key(
+                saved["id"], "other-secret", allow_direct=True
+            )
             saved_auth = saved["imageExternalAuthorization"]
             self.assertEqual(authorization["serviceHost"], saved_auth["serviceHost"])
             self.assertEqual(authorization["imageInputMode"], saved_auth["imageInputMode"])
@@ -215,6 +218,7 @@ class OverlayUpgradeImageSemanticTests(unittest.TestCase):
             store, _listed, _writing = _upgrade(config_path, key_dir)
             changed = store.update_configuration(
                 "legacy",
+                allow_direct=True,
                 name="旧直连",
                 access_method=ACCESS_DIRECT_MODEL,
                 service_base_url="https://other-vision.example/v1",
@@ -224,6 +228,7 @@ class OverlayUpgradeImageSemanticTests(unittest.TestCase):
             self.assertTrue(changed["imageExternalAuthorization"]["stale"])
             rebound = store.update_configuration(
                 "legacy",
+                allow_direct=True,
                 name="旧直连",
                 access_method=ACCESS_DIRECT_MODEL,
                 service_base_url="https://other-vision.example/v1",

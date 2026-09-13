@@ -1,5 +1,23 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #181 迁移旧直连配置并收缩旧写入合同（2026-09-13）
+
+- **旧直连配置自动分组与迁移（覆盖全量 9 类任务）**：
+  - 遵循 Issue #164 父规格与 ADR-0130，对历史遗留的 `direct_model` 配置按 `(normalized_service_base_url, api_key_fingerprint)` 强分组；
+  - 迁移入口全量覆盖 9 类任务（Word 4 类：智能编写、智能仿写、文档审查、格式审查；Excel 3 类：智能分析、公式助手、智能填写；PPT 2 类：智能总结、结构审查）；
+  - 任务模型、温度、Token、图片参数（`imageInputMode`）及激活状态完整迁移至对应的 `taskModelSelections`；
+  - 缺失 Key 或不完整的旧配置迁移为未激活草稿；同一组内模型标识冲突时保留各任务独立选择并将共享服务 `defaultModel` 置空；
+  - 迁移在内存副本与临时目录中执行，经过全量自检与引用验证后原子切换；失败时零副作用回滚；切换成功后安全清理孤立旧 Key 文件；
+  - 若形成的共享直连服务超过 5 组，迁移进入受限保护状态（`status = "restricted"`, 错误码 `DIRECT_SERVICE_MIGRATION_LIMIT`），绝不擅自删除或覆盖配置。
+- **旧直连写入合同全面收缩与退役**：
+  - `POST/PATCH /provider/model-configurations` 及其 API Key 替换、副本创建与外部授权接口严格拒绝 `access_method == "direct_model"`，统一返回 HTTP 400（错误码 `MODEL_CONFIG_DIRECT_WRITE_RETIRED`）；
+  - `WorkflowProfileCompatibilityStore` 兼容层严格限定仅访问 `workflow_platform` 配置；
+  - Word、Excel、PPT 三大宿主模型配置编辑器（Workflow Profile Editor）全面下线 `direct_model` 选项、模型名输入框及温度/Token 高级配置，直连模型录入与管理统一收敛至共享直连服务管理体系。
+- **测试覆盖与质量验证**：
+  - 前端：新增 `formal-plugin-kit/tests/direct-model-contract-shrinkage.test.js` 验证三大宿主配置编辑器移除直连输入；回归 Word/Excel/PPT 工作流设置与共享直连服务套件；
+  - 后端：新增 `adapter_service/tests/test_direct_service_migration.py` 覆盖 9 类任务迁移、冲突解决、原子回滚、孤立 Key 清理及 5 服务上限受限模式；更新 `test_direct_services.py` 覆盖写入合同退役 400 拦截；
+  - 静态检查：`git diff --check` 通过，Python 3.8 py_compile 语法检查通过，受保护路径（`config/adapter.json`、`run/` 等）零触碰。
+
 ## 当前功能实现：Issue #180 迁移 Word 文档审查的直连接入（2026-09-13）
 
 - **文档审查共享直连服务收敛**：遵循 Issue #164 父规格、ADR-0128/ADR-0129/ADR-0130，将 Word 宿主下的文档审查任务（`word.document_review`）平滑迁移接入设置页首页的共享模型直连服务，与格式审查（PR #197）、智能编写、智能仿写及 Excel、PPT 直连接入架构保持完全一致；

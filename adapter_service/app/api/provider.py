@@ -15,6 +15,7 @@ from app.services.provider_client import (
 from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
     DEFAULT_CONTEXT_WINDOW_TOKENS,
     MAX_TASK_CONTEXT_WINDOW_TOKENS,
     MAX_TASK_MAX_OUTPUT_TOKENS,
@@ -361,6 +362,12 @@ def get_model_configurations(task_type: str = Query(alias="taskType")) -> dict:
 
 @router.post("/provider/model-configurations")
 def create_model_configuration(request: ModelConfigurationCreateRequest) -> dict:
+    if str(request.access_method or "").strip() == ACCESS_DIRECT_MODEL:
+        raise AdapterError(
+            "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+            "模型直连写入合同已退役，请使用共享直连服务接口。",
+            status_code=400,
+        )
     try:
         configuration = get_model_configuration_store().create_configuration(
             request.task_type,
@@ -387,6 +394,12 @@ def create_model_configuration(request: ModelConfigurationCreateRequest) -> dict
 def update_model_configuration(
     configuration_id: str, request: ModelConfigurationUpdateRequest
 ) -> dict:
+    if str(request.access_method or "").strip() == ACCESS_DIRECT_MODEL:
+        raise AdapterError(
+            "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+            "模型直连写入合同已退役，请使用共享直连服务接口。",
+            status_code=400,
+        )
     try:
         configuration = get_model_configuration_store().update_configuration(
             configuration_id,
