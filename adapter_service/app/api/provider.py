@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, root_validator
 from typing import List, Optional
 import time
 
@@ -16,6 +16,11 @@ from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
     DEFAULT_CONTEXT_WINDOW_TOKENS,
+    MAX_TASK_CONTEXT_WINDOW_TOKENS,
+    MAX_TASK_MAX_OUTPUT_TOKENS,
+    MIN_TASK_CONTEXT_WINDOW_TOKENS,
+    MIN_TASK_MAX_OUTPUT_TOKENS,
+    direct_model_input_budget,
     ModelConfigurationError,
     ModelConfigurationStore,
     WorkflowProfileCompatibilityStore,
@@ -141,15 +146,35 @@ class TaskModelSelectionUpdateRequest(BaseModel):
     service_id: str = Field(default="", alias="serviceId")
     model_name: str = Field(default="", alias="modelName")
     temperature: Optional[float] = None
-    max_output_tokens: Optional[int] = Field(default=None, alias="maxOutputTokens")
+    max_output_tokens: Optional[int] = Field(
+        default=None,
+        ge=MIN_TASK_MAX_OUTPUT_TOKENS,
+        le=MAX_TASK_MAX_OUTPUT_TOKENS,
+        alias="maxOutputTokens",
+    )
     context_window_tokens: Optional[int] = Field(
-        default=None, alias="contextWindowTokens"
+        default=None,
+        ge=MIN_TASK_CONTEXT_WINDOW_TOKENS,
+        le=MAX_TASK_CONTEXT_WINDOW_TOKENS,
+        alias="contextWindowTokens",
     )
     image_input_mode: Optional[str] = Field(default=None, alias="imageInputMode")
     custom_model: bool = Field(default=False, alias="customModel")
     custom_model_validated: bool = Field(
         default=False, alias="customModelValidated"
     )
+
+    @root_validator(skip_on_failure=True)
+    def validate_token_budget(cls, values):
+        max_output = values.get("max_output_tokens")
+        context_window = values.get("context_window_tokens")
+        if (
+            max_output is not None
+            and context_window is not None
+            and direct_model_input_budget(context_window, max_output)[0] <= 0
+        ):
+            raise ValueError("上下文容量必须大于最大输出 Token 与安全余量之和。")
+        return values
 
 
 class DirectServiceRefreshRequest(BaseModel):
@@ -173,10 +198,16 @@ class TaskModelSelectionValidateRequest(BaseModel):
     custom_model: Optional[bool] = Field(default=False, alias="customModel")
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     max_output_tokens: Optional[int] = Field(
-        default=None, ge=1, le=16384, alias="maxOutputTokens"
+        default=None,
+        ge=MIN_TASK_MAX_OUTPUT_TOKENS,
+        le=MAX_TASK_MAX_OUTPUT_TOKENS,
+        alias="maxOutputTokens",
     )
     context_window_tokens: Optional[int] = Field(
-        default=None, ge=1, le=2000000, alias="contextWindowTokens"
+        default=None,
+        ge=MIN_TASK_CONTEXT_WINDOW_TOKENS,
+        le=MAX_TASK_CONTEXT_WINDOW_TOKENS,
+        alias="contextWindowTokens",
     )
     image_input_mode: Optional[str] = Field(
         default="disabled", alias="imageInputMode"

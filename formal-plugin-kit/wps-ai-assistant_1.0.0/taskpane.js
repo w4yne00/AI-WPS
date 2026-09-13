@@ -1002,8 +1002,20 @@
 
   function getFullDocumentReviewReadiness() {
     var data = getWorkflowProfileData("word.document_review");
-    var active = data.profiles.filter(function (profile) {
-      return profile.id === data.activeProfileId;
+    if (data && data.activeProfileId && String(data.activeProfileId).startsWith("direct_svc_")) {
+      var selection = data.taskModelSelection || (state.taskModelSelections && state.taskModelSelections["word.document_review"]);
+      if (!selection || !selection.serviceId) {
+        return { fullDocumentReviewReady: false, label: "请先配置并保存文档审查直连服务。" };
+      }
+      var readiness = selection.fullDocumentReviewReadiness;
+      var ready = Boolean(selection.fullDocumentReviewReady);
+      return {
+        fullDocumentReviewReady: ready,
+        label: (readiness && readiness.label) || (ready ? "限量审查与全篇审查均可用。" : "当前配置尚未满足全篇审查要求。")
+      };
+    }
+    var active = (data && data.profiles ? data.profiles : []).filter(function (profile) {
+      return profile.id === (data && data.activeProfileId);
     })[0];
     if (!active) {
       return { fullDocumentReviewReady: false, label: "请先启用文档审查模型配置。" };
@@ -2703,7 +2715,7 @@
   }
 
   function getWorkflowProfileData(taskType) {
-    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation" || taskType === "word.format_review";
+    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation" || taskType === "word.format_review" || taskType === "word.document_review";
     var base = state.workflowProfiles[taskType] || {
       taskType: taskType,
       activeProfileId: "",
@@ -3766,9 +3778,15 @@
           if (body && body.data && body.data.taskModelSelection) {
             state.taskModelSelections[taskType] = body.data.taskModelSelection;
           }
-          if (state.taskApiKeys && state.taskApiKeys[taskType]) {
-            state.taskApiKeys[taskType].activeProfileId = profileId;
-          }
+          state.taskApiKeys = state.taskApiKeys || {};
+          state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType] || {}, {
+            activeProfileId: profileId,
+            activeConfigurationId: profileId,
+            accessMethod: "direct_model",
+            serviceId: profileId,
+            configured: true,
+            taskKeyConfigured: true
+          });
         } else {
           var nextData = normalizeWorkflowProfileData(body && body.data || {}, taskType);
           if (typeof invalidateWorkflowProfileRequests === "function") {
@@ -3777,6 +3795,15 @@
           state.workflowProfiles[taskType] = nextData;
           state.workflowProfileSelections[taskType] = nextData.activeProfileId || profileId;
           state.taskModelConfigStatusByTask[taskType] = "";
+          state.taskApiKeys = state.taskApiKeys || {};
+          state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType] || {}, {
+            activeProfileId: nextData.activeProfileId || profileId,
+            activeConfigurationId: nextData.activeProfileId || profileId,
+            accessMethod: String(profile && profile.accessMethod || "workflow_platform"),
+            serviceId: "",
+            configured: Boolean(profile && profile.complete),
+            taskKeyConfigured: Boolean(profile && profile.keyConfigured)
+          });
         }
         var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices() : Promise.resolve();
         return Promise.all([
@@ -3789,6 +3816,9 @@
           if (typeof renderTaskModelSelectionSection === "function") {
             renderTaskModelSelectionSection();
           }
+          if (taskType === "word.document_review" && typeof renderFullDocumentReviewEntry === "function") {
+            renderFullDocumentReviewEntry();
+          }
           renderModelInterfaceState(state.modelInterfaceDetectable);
           setStatus("模型配置已切换，从下一次任务开始生效。");
         }).catch(function (refreshError) {
@@ -3798,6 +3828,9 @@
           renderWorkflowProfileManager();
           if (typeof renderTaskModelSelectionSection === "function") {
             renderTaskModelSelectionSection();
+          }
+          if (taskType === "word.document_review" && typeof renderFullDocumentReviewEntry === "function") {
+            renderFullDocumentReviewEntry();
           }
           renderModelInterfaceState(state.modelInterfaceDetectable);
           setStatus("模型配置已激活，但刷新最新列表失败：" + describeFetchError(refreshError));
@@ -4682,7 +4715,7 @@
     }
 
     var currentTask = getSettingsWorkflowTaskType();
-    var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review");
+    var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review" || currentTask === "word.document_review");
     section.hidden = !isSupportedTask;
     if (!isSupportedTask) {
       return;
@@ -4691,6 +4724,8 @@
     if (title) {
       if (currentTask === "word.format_review") {
         title.textContent = "格式审查接入选择";
+      } else if (currentTask === "word.document_review") {
+        title.textContent = "文档审查接入选择";
       } else if (currentTask === "word.smart_imitation") {
         title.textContent = "智能仿写接入选择";
       } else {
@@ -5072,6 +5107,15 @@
         if (body && body.data && body.data.taskModelSelection) {
           state.taskModelSelections[taskType] = body.data.taskModelSelection;
         }
+        state.taskApiKeys = state.taskApiKeys || {};
+        state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType] || {}, {
+          activeProfileId: draft.serviceId,
+          activeConfigurationId: draft.serviceId,
+          accessMethod: "direct_model",
+          serviceId: draft.serviceId,
+          configured: true,
+          taskKeyConfigured: true
+        });
         return Promise.all([
           loadWorkflowProfiles(taskType),
           loadDirectServices(undefined, undefined, operationId)
@@ -5080,10 +5124,13 @@
             return { superseded: true };
           }
           setWorkflowProfileMutationBusy(false);
-          var taskLabel = taskType === "word.format_review" ? "格式审查" : (taskType === "word.smart_imitation" ? "智能仿写" : "智能编写");
+          var taskLabel = taskType === "word.format_review" ? "格式审查" : (taskType === "word.document_review" ? "文档审查" : (taskType === "word.smart_imitation" ? "智能仿写" : "智能编写"));
           setStatus(taskLabel + "接入直连服务已保存并设为当前。");
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
+          }
+          if (taskType === "word.document_review" && typeof renderFullDocumentReviewEntry === "function") {
+            renderFullDocumentReviewEntry();
           }
         });
       }).catch(function (error) {
@@ -9283,6 +9330,13 @@
       setStatus(readiness.label || "全篇审查尚未就绪。");
       return;
     }
+    var directReadiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("word.document_review")
+      : { valid: true };
+    if (directReadiness && !directReadiness.valid) {
+      setStatus(directReadiness.error || readiness.label || "全篇审查尚未就绪。");
+      return;
+    }
     if (helpers.isTaskSlotBusy && helpers.isTaskSlotBusy(state.activeTaskSlots, "wps", "word.document_review.full", currentDoc)) {
       setStatus("当前文档已存在进行中的全篇审查任务，请等待其完成。");
       return;
@@ -9527,6 +9581,15 @@
     if (!scope.ok) {
       setStatus(scope.message);
       setResult(scope.message);
+      return;
+    }
+    var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("word.document_review")
+      : { valid: true };
+    if (modelReadiness && !modelReadiness.valid) {
+      var unreadyMsg = modelReadiness.error || "所选模型服务尚未就绪，无法执行文档审查。";
+      setStatus(unreadyMsg);
+      setResult(unreadyMsg);
       return;
     }
     resetSmartWritePreviewState();

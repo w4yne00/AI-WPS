@@ -1,3 +1,4 @@
+import copy
 import hashlib
 import json
 import os
@@ -16,9 +17,14 @@ from app.core.config import default_config_path, load_config_payload, save_confi
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.model_configurations import (
     ACCESS_DIRECT_MODEL,
+    MAX_TASK_CONTEXT_WINDOW_TOKENS,
+    MAX_TASK_MAX_OUTPUT_TOKENS,
     MAX_CONFIGURATION_NAME_LENGTH,
+    MIN_TASK_CONTEXT_WINDOW_TOKENS,
+    MIN_TASK_MAX_OUTPUT_TOKENS,
     ModelConfigurationError,
     _STORE_LOCK,
+    direct_model_input_budget,
     host_for_task,
     normalize_service_base_url,
 )
@@ -191,7 +197,7 @@ class DirectServiceStore:
 
     def list_services(self) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, migration = self._load_with_legacy_document_review_migration()
             services = [
                 self._sanitize_service(item, payload=payload)
                 for item in self._service_map(payload).values()
@@ -201,6 +207,7 @@ class DirectServiceStore:
                 "schemaVersion": DIRECT_SERVICE_SCHEMA_VERSION,
                 "directServiceCount": len(services),
                 "directServices": services,
+                "legacyDirectMigration": migration,
             }
 
     def get_service(self, service_id: str, include_secret: bool = False) -> dict:
@@ -211,6 +218,312 @@ class DirectServiceStore:
             if include_secret:
                 result["apiKey"] = self._read_key(service["id"])
             return result
+
+    def resolve_active_task_selection(
+        self, task_type: str, include_secret: bool = False
+    ) -> Optional[dict]:
+        clean_task = self._validate_task_type(task_type)
+        with _STORE_LOCK:
+            payload, _ = self._load_with_legacy_document_review_migration()
+            services = self._service_map(payload)
+            active = payload.get("activeModelConfigurations")
+            active_id = str(active.get(clean_task, "")).strip() if isinstance(active, dict) else ""
+            if not active_id or active_id not in services:
+                return None
+
+            raw_selection = self._selection_map(payload).get(clean_task, {})
+            selected_service_id = str(raw_selection.get("serviceId", "")).strip()
+            if selected_service_id != active_id:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_SELECTION_MISMATCH",
+                    "当前直连服务与任务模型选择不一致，请刷新配置后重试。",
+                )
+
+            service = self.get_service(active_id, include_secret=include_secret)
+            selection = self.get_task_model_selection(clean_task)
+            if str(selection.get("serviceId", "")).strip() != active_id:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_SELECTION_MISMATCH",
+                    "当前直连服务与任务模型选择不一致，请刷新配置后重试。",
+                )
+            return {
+                "activeServiceId": active_id,
+                "directService": service,
+                "taskModelSelection": selection,
+            }
+
+    def _load_with_legacy_document_review_migration(self):
+        payload = load_config_payload(self.config_path)
+        configurations = payload.get("modelConfigurations")
+        if not isinstance(configurations, dict):
+            return payload, {"status": "not_needed", "migratedConfigurationCount": 0}
+
+        legacy = {
+            str(configuration_id): dict(configuration)
+            for configuration_id, configuration in configurations.items()
+            if isinstance(configuration, dict)
+            and str(configuration.get("taskType", "")) == "word.document_review"
+            and str(configuration.get("accessMethod", "")) == ACCESS_DIRECT_MODEL
+        }
+        if not legacy:
+            return payload, {"status": "not_needed", "migratedConfigurationCount": 0}
+
+        original_payload = copy.deepcopy(payload)
+        services = dict(self._service_map(payload))
+        identity_to_service = {}
+        for service_id, service in services.items():
+            service_key = self._read_key(service_id)
+            service_url = str(service.get("serviceBaseUrl", "")).strip()
+            if service_url and service_key:
+                identity_to_service[
+                    (self._normalize_url(service_url), self._api_key_fingerprint(service_key))
+                ] = service_id
+
+        groups = {}
+        legacy_keys = {}
+        for configuration_id, configuration in legacy.items():
+            api_key_ref = str(configuration.get("apiKeyRef", "")).strip()
+            api_key = self._read_legacy_key(api_key_ref)
+            legacy_keys[configuration_id] = (api_key_ref, api_key)
+            raw_url = str(configuration.get("serviceBaseUrl", "")).strip()
+            try:
+                normalized_url = self._normalize_url(raw_url) if raw_url else ""
+            except DirectServiceError:
+                normalized_url = ""
+            identity = (
+                ("complete", normalized_url, self._api_key_fingerprint(api_key))
+                if normalized_url and api_key
+                else ("draft", configuration_id)
+            )
+            groups.setdefault(identity, []).append(configuration_id)
+
+        new_group_count = sum(
+            1
+            for identity in groups
+            if identity[0] == "draft" or identity[1:] not in identity_to_service
+        )
+        if len(services) + new_group_count > MAX_DIRECT_SERVICES:
+            return payload, {
+                "status": "restricted",
+                "code": "DIRECT_SERVICE_MIGRATION_LIMIT",
+                "migratedConfigurationCount": 0,
+                "requiredServiceCount": len(services) + new_group_count,
+            }
+
+        existing_names = {
+            str(service.get("name", "")).strip().casefold()
+            for service in services.values()
+        }
+        configuration_service_ids = {}
+        newly_written_service_ids = []
+        pending_service_keys = []
+        created_service_count = 0
+        now = _utc_now()
+
+        def unique_name(source):
+            base = str(source or "文档审查直连服务").strip() or "文档审查直连服务"
+            base = base[:MAX_DIRECT_SERVICE_NAME_LENGTH]
+            candidate = base
+            suffix_number = 2
+            while candidate.casefold() in existing_names:
+                suffix = f" {suffix_number}"
+                candidate = base[: MAX_DIRECT_SERVICE_NAME_LENGTH - len(suffix)] + suffix
+                suffix_number += 1
+            existing_names.add(candidate.casefold())
+            return candidate
+
+        for identity, configuration_ids in groups.items():
+            service_id = ""
+            if identity[0] == "complete":
+                service_id = identity_to_service.get(identity[1:], "")
+            if not service_id:
+                service_id = f"direct_svc_{uuid.uuid4().hex[:12]}"
+                group_configurations = [legacy[item_id] for item_id in configuration_ids]
+                first = group_configurations[0]
+                models = {
+                    str(item.get("modelName", "")).strip()
+                    for item in group_configurations
+                    if str(item.get("modelName", "")).strip()
+                }
+                service_url = identity[1] if identity[0] == "complete" else ""
+                services[service_id] = {
+                    "id": service_id,
+                    "name": unique_name(first.get("name")),
+                    "serviceBaseUrl": service_url,
+                    "defaultModel": next(iter(models)) if len(models) == 1 else "",
+                    "modelList": [],
+                    "modelListFetchedAt": None,
+                    "modelListLastAttemptAt": None,
+                    "modelListFetchStatus": "not_attempted",
+                    "modelListLastError": None,
+                    "modelListInvalidated": False,
+                    "modelListTrusted": True,
+                    "modelListSource": "none",
+                    "revision": 1,
+                    "createdAt": now,
+                    "updatedAt": now,
+                }
+                if identity[0] == "complete":
+                    source_key = legacy_keys[configuration_ids[0]][1]
+                    pending_service_keys.append((service_id, source_key))
+                created_service_count += 1
+            for configuration_id in configuration_ids:
+                configuration_service_ids[configuration_id] = service_id
+
+        active_source = payload.get("activeModelConfigurations")
+        active = dict(active_source) if isinstance(active_source, dict) else {}
+        selections = dict(self._selection_map(payload))
+        active_legacy_id = str(active.get("word.document_review", ""))
+        if active_legacy_id in legacy:
+            active_configuration = legacy[active_legacy_id]
+            service_id = configuration_service_ids[active_legacy_id]
+            api_key = legacy_keys[active_legacy_id][1]
+            service_url = str(services[service_id].get("serviceBaseUrl", ""))
+            model_name = str(active_configuration.get("modelName", "")).strip()
+            max_output_tokens = active_configuration.get("maxOutputTokens")
+            context_window_tokens = active_configuration.get("contextWindowTokens")
+            selections["word.document_review"] = {
+                "serviceId": service_id,
+                "modelName": model_name,
+                "temperature": active_configuration.get("temperature"),
+                "maxOutputTokens": max_output_tokens,
+                "contextWindowTokens": context_window_tokens,
+                "imageInputMode": active_configuration.get("imageInputMode", "disabled"),
+                "customModel": False,
+                "customModelValidated": False,
+                "updatedAt": now,
+            }
+            token_limits_valid = self._legacy_token_limits_valid(
+                max_output_tokens, context_window_tokens
+            )
+            if service_url and api_key and model_name and token_limits_valid:
+                active["word.document_review"] = service_id
+            else:
+                active.pop("word.document_review", None)
+
+        remaining_configurations = {
+            configuration_id: configuration
+            for configuration_id, configuration in configurations.items()
+            if configuration_id not in legacy
+        }
+        payload["directServices"] = services
+        payload["taskModelSelections"] = selections
+        payload["activeModelConfigurations"] = active
+        payload["modelConfigurations"] = remaining_configurations
+
+        try:
+            for service_id, source_key in pending_service_keys:
+                self._write_key(service_id, source_key)
+                newly_written_service_ids.append(service_id)
+            save_config_payload(payload, self.config_path)
+            verified = load_config_payload(self.config_path)
+            verified_services = self._service_map(verified)
+            for configuration_id, service_id in configuration_service_ids.items():
+                if service_id not in verified_services:
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的直连服务校验失败。"
+                    )
+                source_key = legacy_keys[configuration_id][1]
+                if (
+                    source_key
+                    and self._api_key_fingerprint(self._read_key(service_id))
+                    != self._api_key_fingerprint(source_key)
+                ):
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的 API Key 校验失败。"
+                    )
+            if active_legacy_id in legacy and active.get("word.document_review"):
+                selected_id = str(
+                    self._selection_map(verified)
+                    .get("word.document_review", {})
+                    .get("serviceId", "")
+                )
+                if selected_id != active.get("word.document_review"):
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的任务绑定校验失败。"
+                    )
+        except Exception:
+            save_config_payload(original_payload, self.config_path)
+            for service_id in newly_written_service_ids:
+                self._delete_key(service_id)
+            raise
+
+        remaining_refs = {
+            str(item.get("apiKeyRef", "")).strip()
+            for item in remaining_configurations.values()
+            if isinstance(item, dict)
+        }
+        workflow_profiles = payload.get("workflowProfiles")
+        if isinstance(workflow_profiles, dict):
+            remaining_refs.update(
+                str(item.get("apiKeyRef", "")).strip()
+                for item in workflow_profiles.values()
+                if isinstance(item, dict)
+            )
+        remaining_refs.update(
+            f"direct_service_{service_id}" for service_id in services
+        )
+        for api_key_ref, _ in legacy_keys.values():
+            if api_key_ref and api_key_ref not in remaining_refs:
+                self._delete_legacy_key(api_key_ref)
+
+        return load_config_payload(self.config_path), {
+            "status": "completed",
+            "migratedConfigurationCount": len(legacy),
+            "createdServiceCount": created_service_count,
+        }
+
+    def _legacy_key_path(self, api_key_ref: str) -> Optional[Path]:
+        ref = str(api_key_ref or "").strip()
+        if not ref or not _SAFE_KEY_REF.fullmatch(ref):
+            return None
+        return self.key_dir / ref
+
+    def _read_legacy_key(self, api_key_ref: str) -> str:
+        path = self._legacy_key_path(api_key_ref)
+        if path is None or not path.exists():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            return ""
+
+    def _delete_legacy_key(self, api_key_ref: str) -> None:
+        path = self._legacy_key_path(api_key_ref)
+        if path is not None and path.exists():
+            try:
+                path.unlink()
+            except OSError:
+                pass
+
+    @staticmethod
+    def _legacy_token_limits_valid(max_output_tokens, context_window_tokens) -> bool:
+        try:
+            max_output = (
+                None if max_output_tokens in (None, "") else int(max_output_tokens)
+            )
+            context_window = (
+                None
+                if context_window_tokens in (None, "")
+                else int(context_window_tokens)
+            )
+        except (TypeError, ValueError):
+            return False
+        if max_output is not None and not (
+            MIN_TASK_MAX_OUTPUT_TOKENS <= max_output <= MAX_TASK_MAX_OUTPUT_TOKENS
+        ):
+            return False
+        if context_window is not None and not (
+            MIN_TASK_CONTEXT_WINDOW_TOKENS
+            <= context_window
+            <= MAX_TASK_CONTEXT_WINDOW_TOKENS
+        ):
+            return False
+        return not (
+            max_output is not None
+            and context_window is not None
+            and direct_model_input_budget(context_window, max_output)[0] <= 0
+        )
 
     def create_service(
         self,
@@ -1114,39 +1427,97 @@ class DirectServiceStore:
                             "label": "格式语义协议尚未验证，格式审查仅运行确定性规则。",
                         }
 
-                results.append(
-                    {
-                        "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
-                        "taskType": task,
-                        "host": host_for_task(task),
-                        "serviceId": service_id,
-                        "serviceName": str(service.get("name", "")),
-                        "modelName": model_name,
-                        "effectiveModel": effective_model,
-                        "temperature": raw.get("temperature"),
-                        "maxOutputTokens": raw.get("maxOutputTokens"),
-                        "contextWindowTokens": raw.get("contextWindowTokens"),
-                        "imageInputMode": image_mode,
-                        "imageExternalAuthorization": image_authorization,
-                        "imageSemanticValidation": image_validation,
-                        "imageSemanticReadiness": image_readiness,
-                        "formatSemanticValidation": format_semantic_validation,
-                        "formatSemanticReadiness": format_semantic_readiness,
-                        "customModel": custom_model,
-                        "customModelValidated": custom_model_validated,
-                        "modelAvailability": model_availability,
-                        "modelAvailable": model_available,
-                        "modelUnavailableReason": unavailable_reason,
-                        "modelCatalogStatus": catalog.get("status", "unavailable"),
-                        "modelCatalogCacheStatus": catalog.get(
-                            "cacheStatus", "empty"
-                        ),
-                        "manualModelAllowed": bool(
-                            catalog.get("manualModelAllowed", False)
-                        ),
-                        "updatedAt": str(raw.get("updatedAt", "")),
-                    }
-                )
+                limited_review_ready = None
+                full_document_review_ready = None
+                full_document_review_readiness = None
+
+                if task == "word.document_review":
+                    has_service = bool(service)
+                    has_url = bool(service and service.get("serviceBaseUrl"))
+                    has_key = bool(self._key_exists(service_id)) if service else False
+                    has_model = bool(effective_model)
+                    config_complete = bool(has_service and has_url and has_key and has_model)
+                    limited_review_ready = bool(config_complete and model_available)
+
+                    if not config_complete:
+                        full_document_review_readiness = {
+                            "code": "configuration_incomplete",
+                            "label": "模型配置不完整。",
+                        }
+                    elif not model_available:
+                        full_document_review_readiness = {
+                            "code": "model_unavailable",
+                            "label": unavailable_reason or "所选模型当前不可用。",
+                        }
+                    elif raw.get("maxOutputTokens") is None:
+                        full_document_review_readiness = {
+                            "code": "explicit_output_tokens_required",
+                            "label": "仅限量审查可用：请显式设置最大输出 Token。",
+                        }
+                    elif raw.get("contextWindowTokens") is None:
+                        full_document_review_readiness = {
+                            "code": "explicit_context_tokens_required",
+                            "label": "仅限量审查可用：请显式设置上下文容量。",
+                        }
+                    elif int(raw.get("maxOutputTokens") or 0) < 2048:
+                        full_document_review_readiness = {
+                            "code": "output_tokens_too_small",
+                            "label": "仅限量审查可用：全篇审查至少需要 2048 输出 Token。",
+                        }
+                    elif direct_model_input_budget(
+                        int(raw.get("contextWindowTokens")),
+                        int(raw.get("maxOutputTokens")),
+                    )[0] <= 0:
+                        full_document_review_readiness = {
+                            "code": "token_budget_invalid",
+                            "label": "仅限量审查可用：上下文容量不足以容纳输出 Token 与安全余量。",
+                        }
+                    else:
+                        full_document_review_readiness = {
+                            "code": "ready",
+                            "label": "限量审查与全篇审查均可用。",
+                        }
+                    full_document_review_ready = bool(
+                        full_document_review_readiness["code"] == "ready"
+                    )
+
+                entry = {
+                    "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
+                    "taskType": task,
+                    "host": host_for_task(task),
+                    "serviceId": service_id,
+                    "serviceName": str(service.get("name", "")),
+                    "modelName": model_name,
+                    "effectiveModel": effective_model,
+                    "temperature": raw.get("temperature"),
+                    "maxOutputTokens": raw.get("maxOutputTokens"),
+                    "contextWindowTokens": raw.get("contextWindowTokens"),
+                    "contextWindowTokensExplicit": raw.get("contextWindowTokens") is not None,
+                    "imageInputMode": image_mode,
+                    "imageExternalAuthorization": image_authorization,
+                    "imageSemanticValidation": image_validation,
+                    "imageSemanticReadiness": image_readiness,
+                    "formatSemanticValidation": format_semantic_validation,
+                    "formatSemanticReadiness": format_semantic_readiness,
+                    "customModel": custom_model,
+                    "customModelValidated": custom_model_validated,
+                    "modelAvailability": model_availability,
+                    "modelAvailable": model_available,
+                    "modelUnavailableReason": unavailable_reason,
+                    "modelCatalogStatus": catalog.get("status", "unavailable"),
+                    "modelCatalogCacheStatus": catalog.get(
+                        "cacheStatus", "empty"
+                    ),
+                    "manualModelAllowed": bool(
+                        catalog.get("manualModelAllowed", False)
+                    ),
+                    "updatedAt": str(raw.get("updatedAt", "")),
+                }
+                if task == "word.document_review":
+                    entry["limitedReviewReady"] = limited_review_ready
+                    entry["fullDocumentReviewReady"] = full_document_review_ready
+                    entry["fullDocumentReviewReadiness"] = full_document_review_readiness
+                results.append(entry)
 
             return {
                 "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
@@ -1219,12 +1590,27 @@ class DirectServiceStore:
 
         clean_model = self._validate_model_name(model_name)
         clean_temp = self._validate_temperature(temperature)
-        clean_max_output = self._validate_positive_int(
-            max_output_tokens, "最大输出 Token"
+        clean_max_output = self._validate_int_range(
+            max_output_tokens,
+            "最大输出 Token",
+            MIN_TASK_MAX_OUTPUT_TOKENS,
+            MAX_TASK_MAX_OUTPUT_TOKENS,
         )
-        clean_context = self._validate_positive_int(
-            context_window_tokens, "上下文容量"
+        clean_context = self._validate_int_range(
+            context_window_tokens,
+            "上下文容量",
+            MIN_TASK_CONTEXT_WINDOW_TOKENS,
+            MAX_TASK_CONTEXT_WINDOW_TOKENS,
         )
+        if (
+            clean_max_output is not None
+            and clean_context is not None
+            and direct_model_input_budget(clean_context, clean_max_output)[0] <= 0
+        ):
+            raise DirectServiceError(
+                "DIRECT_SERVICE_TOKEN_BUDGET_INVALID",
+                "上下文容量必须大于最大输出 Token 与安全余量之和。",
+            )
         clean_image_mode = self._validate_image_input_mode(
             task_type, image_input_mode
         )
@@ -1744,17 +2130,20 @@ class DirectServiceStore:
         )
 
     @staticmethod
-    def _validate_positive_int(value, label: str) -> Optional[int]:
+    def _validate_int_range(
+        value, label: str, minimum: int, maximum: int
+    ) -> Optional[int]:
         if value in (None, ""):
             return None
         try:
             val = int(value)
-            if val > 0:
+            if minimum <= val <= maximum:
                 return val
         except (TypeError, ValueError):
             pass
         raise DirectServiceError(
-            "DIRECT_SERVICE_PARAM_INVALID", f"{label}必须是正整数。"
+            "DIRECT_SERVICE_PARAM_INVALID",
+            f"{label}必须在 {minimum} 到 {maximum} 之间。",
         )
 
     @staticmethod

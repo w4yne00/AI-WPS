@@ -5310,9 +5310,6 @@
       });
     });
 
-    if (taskType === "word.document_review") {
-      directServices = [];
-    }
     directServices.forEach(function (svc) {
       var isCurrent = svc.id === activeId;
       var label = (svc.name || "直连服务") + " · 模型直连";

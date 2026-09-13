@@ -1,5 +1,23 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #180 迁移 Word 文档审查的直连接入（2026-09-13）
+
+- **文档审查共享直连服务收敛**：遵循 Issue #164 父规格、ADR-0128/ADR-0129/ADR-0130，将 Word 宿主下的文档审查任务（`word.document_review`）平滑迁移接入设置页首页的共享模型直连服务，与格式审查（PR #197）、智能编写、智能仿写及 Excel、PPT 直连接入架构保持完全一致；
+- **独立参数覆盖与默认继承**：文档审查可绑定任意已配置的共享直连服务，未覆盖模型时自动继承服务级默认模型（`defaultModel`），并支持独立调优 `temperature`（0.0–2.0）、`maxOutputTokens`（1–16384）、`contextWindowTokens`（1000–2000000）及高级手填自定义模型；同时各自保留独立的工作流平台配置；
+- **全篇审查前置门禁严格 Fail-Closed**：
+  - 限量审查门禁：服务存在、URL 存在、API Key 存在、有效模型存在且模型可用；
+  - 全篇审查就绪度门禁：显式输出 Token 必填（`explicit_output_tokens_required`）、显式上下文容量必填（`explicit_context_tokens_required`）、最大输出 Token 必须 >= 2048（`output_tokens_too_small`），全部满足且模型可用时标记为 `ready`；未满足时前端入口明确披露原因并禁用启动；
+- **快照认证冻结与 Key 轮换失效**：
+  - 全篇审查提交时生成快照 `authIdentity`，严格冻结服务 ID、模型名、Token 参数、服务 `revision` 及 API Key 哈希指纹；
+  - 发生 Key 轮换或删除时，通过 `LongTaskCoordinator` 立即失效运行中和排队中的任务，防止失效凭据继续穿透；
+- **任务窗格单行紧凑入口与前置预检**：
+  - 任务窗格紧凑单行模型配置入口下拉菜单展示共享直连服务，支持即时激活与失败自动回滚；
+  - `runDocumentReview` 与 `runFullDocumentReview` 执行前调用 `validateActiveDirectTaskSelection("word.document_review")` 进行服务就绪性前置校验；
+- **测试覆盖与质量验证**：
+  - 前端：新增 `formal-plugin-kit/tests/word-document-review-direct-service.test.js`（5/5 通过），回归 `word-shared-direct-service.test.js`（15/15 通过）、`word-format-review-direct-service.test.js`（10/10 通过）、全量正式插件套件（192 项非浏览器测试全绿通过）；
+  - 后端：新增 `adapter_service/tests/test_word_document_review_direct_service.py` 覆盖继承、参数覆盖、全篇就绪度门禁、认证解析与删除保护；
+  - 静态检查：`git diff --check` 通过，Python 3.8 兼容扫描（160 文件）通过，受保护路径零改动。
+
 ## PR #197 审查修复（2026-09-13）
 
 - Word 格式审查共享直连服务支持服务默认模型、任务模型和参数覆盖；图片模式默认 `openai_image_url`，可关闭。

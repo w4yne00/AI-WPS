@@ -127,6 +127,82 @@ class DirectServiceRevisionAndReferenceTests(unittest.TestCase):
                 ],
             )
 
+    def test_key_rotation_invalidates_queued_task_from_earlier_same_key_revision(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            service = store.create_service(
+                name="轮换范围测试", service_base_url="https://api.openai.com/v1"
+            )
+            service = store.replace_api_key(
+                service["id"], "sk-shared-revision", expected_revision=1
+            )
+            coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+            release = threading.Event()
+
+            def listener(service_id, fingerprint, service_revision):
+                coordinator.invalidate_by_auth(
+                    service_id,
+                    fingerprint,
+                    service_revision=service_revision,
+                )
+
+            store.register_key_rotation_listener(listener)
+            try:
+                coordinator.submit(
+                    job_id="revision-range-blocker",
+                    trace_id="revision-range-blocker-trace",
+                    task_type="excel.analysis",
+                    runner=lambda _snapshot, _progress: (
+                        release.wait(timeout=2) or {"ok": True}
+                    ),
+                    snapshot={},
+                    failure_code="FAILED",
+                    failure_message="failed",
+                )
+                queued = coordinator.submit(
+                    job_id="earlier-revision-job",
+                    trace_id="earlier-revision-trace",
+                    task_type="word.document_review",
+                    runner=lambda _snapshot, _progress: {"unexpected": True},
+                    snapshot={
+                        "taskAuth": {
+                            "directService": {
+                                "id": service["id"],
+                                "revision": service["revision"],
+                            },
+                            "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint(
+                                "sk-shared-revision"
+                            ),
+                        }
+                    },
+                    failure_code="FAILED",
+                    failure_message="failed",
+                )
+                self.assertEqual(queued["status"], "queued")
+
+                renamed = store.update_service(
+                    service["id"],
+                    name="轮换范围测试（已改名）",
+                    service_base_url="https://api.openai.com/v1",
+                    expected_revision=service["revision"],
+                )
+                store.replace_api_key(
+                    service["id"],
+                    "sk-rotated",
+                    expected_revision=renamed["revision"],
+                )
+
+                failed = coordinator.get(
+                    "earlier-revision-job", task_type="word.document_review"
+                )
+                self.assertEqual(failed["status"], "failed")
+                self.assertEqual(
+                    failed["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+                )
+            finally:
+                release.set()
+                store.unregister_key_rotation_listener(listener)
+
     def test_clear_key_invalidates_task_bound_to_cleared_revision(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
@@ -182,6 +258,36 @@ class DirectServiceRevisionAndReferenceTests(unittest.TestCase):
             )
 
 class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
+    def test_auth_invalidation_range_rejects_earlier_revision_on_submit(self) -> None:
+        coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
+        service_id = "direct_svc_recoverable_revision"
+        fingerprint = DirectServiceStore.api_key_fingerprint("sk-recoverable")
+        coordinator.invalidate_by_auth(
+            service_id,
+            fingerprint,
+            service_revision=6,
+        )
+
+        submitted = coordinator.submit(
+            job_id="recoverable-earlier-revision-job",
+            trace_id="recoverable-earlier-revision-trace",
+            task_type="word.document_review.full",
+            runner=lambda _snapshot, _progress: {"unexpected": True},
+            snapshot={
+                "taskAuth": {
+                    "directService": {"id": service_id, "revision": 4},
+                    "apiKeyFingerprint": fingerprint,
+                }
+            },
+            failure_code="FAILED",
+            failure_message="failed",
+        )
+
+        self.assertEqual(submitted["status"], "failed")
+        self.assertEqual(
+            submitted["error"]["code"], "DIRECT_SERVICE_KEY_ROTATED"
+        )
+
     def test_auth_invalidated_before_submit_is_registered_as_failed(self) -> None:
         coordinator = LongTaskCoordinator(max_running=1, max_queued=5)
         service_id = "direct_svc_submit_race"
@@ -287,7 +393,7 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
 
         # Submit job that will wait in queue
         task_auth = {
-            "directServiceId": service_id,
+            "directService": {"id": service_id, "revision": 2},
             "apiKeyFingerprint": old_fp,
         }
         queued_job = coordinator.submit(
@@ -302,7 +408,9 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
         self.assertEqual(queued_job["status"], "queued")
 
         # Invalidate jobs referencing (service_id, old_fp)
-        count = coordinator.invalidate_by_auth(service_id, old_fp)
+        count = coordinator.invalidate_by_auth(
+            service_id, old_fp, service_revision=3
+        )
         self.assertEqual(count, 1)
 
         # Verify queued job immediately transitioned to failed
@@ -333,7 +441,7 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
             return {"data": "unwanted_completed_data"}
 
         task_auth = {
-            "directServiceId": service_id,
+            "directService": {"id": service_id, "revision": 2},
             "apiKeyFingerprint": old_fp,
         }
         running_job = coordinator.submit(
@@ -352,8 +460,10 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
         while not running_started:
             time.sleep(0.005)
 
-        # Rotate key and invalidate
-        count = coordinator.invalidate_by_auth(service_id, old_fp)
+        # Rotate at a later service revision and invalidate the older running task.
+        count = coordinator.invalidate_by_auth(
+            service_id, old_fp, service_revision=3
+        )
         self.assertEqual(count, 1)
 
         # Even while worker has not exited yet, get() reveals failure
@@ -378,7 +488,7 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
         old_fp = DirectServiceStore.api_key_fingerprint(old_key)
 
         task_auth = {
-            "directServiceId": service_id,
+            "directService": {"id": service_id, "revision": 2},
             "apiKeyFingerprint": old_fp,
         }
         coordinator.submit(
@@ -394,7 +504,7 @@ class LongTaskCoordinatorAuthInvalidationTests(unittest.TestCase):
         self.assertEqual(res["summary"], "valid_presentation_summary")
 
         # Key rotation invalidation
-        coordinator.invalidate_by_auth(service_id, old_fp)
+        coordinator.invalidate_by_auth(service_id, old_fp, service_revision=3)
 
         # Completed job MUST still be completed!
         checked = coordinator.get("completed_target_job", task_type="ppt.slide_assistant")

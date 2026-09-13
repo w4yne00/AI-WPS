@@ -44,13 +44,13 @@ test("Compact menu integration: word.format_review includes shared direct servic
   assert.strictEqual(directItem.label, "通用大模型服务 · 模型直连");
   assert.strictEqual(directItem.label.includes("gpt-4o"), false, "compact menu must not expose model identifiers");
 
-  // Verify word.document_review still excludes direct services
+  // Verify word.document_review now includes direct services (Issue #180)
   const docReviewItems = helpers.buildTaskModelConfigMenuItems(profiles, {
     activeProfileId: "wf_1",
     taskType: "word.document_review",
     directServices: directServices
   });
-  assert.strictEqual(docReviewItems.some(i => i.id === "direct_svc_1"), false);
+  assert.strictEqual(docReviewItems.some(i => i.id === "direct_svc_1"), true);
 });
 
 test("Word taskpane HTML contains format review image input mode control", () => {

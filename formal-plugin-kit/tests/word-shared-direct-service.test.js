@@ -142,8 +142,8 @@ test("Compact menu integration: includes shared direct service in Word writing m
   });
   assert.strictEqual(
     reviewItems.some(item => item.id === "direct_svc_1"),
-    false,
-    "document review must not expose shared direct services"
+    true,
+    "document review must expose shared direct services"
   );
 
   const manageItem = items.find(i => i.id === "manage");
@@ -284,6 +284,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   };
 
   ctx.findDirectService = loadFn("findDirectService", ctx);
+  ctx.normalizeWorkflowProfileData = loadFn("normalizeWorkflowProfileData", ctx);
   ctx.renderDirectServicesList = loadFn("renderDirectServicesList", ctx);
   ctx.openDirectServiceEditor = loadFn("openDirectServiceEditor", ctx);
   ctx.closeDirectServiceEditor = loadFn("closeDirectServiceEditor", ctx);
@@ -291,6 +292,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   ctx.getWorkflowProfileData = loadFn("getWorkflowProfileData", ctx);
   ctx.findWorkflowProfile = loadFn("findWorkflowProfile", ctx);
   ctx.getWorkflowProfileById = loadFn("getWorkflowProfileById", ctx);
+  ctx.validateActiveDirectTaskSelection = loadFn("validateActiveDirectTaskSelection", ctx);
   ctx.activateWorkflowProfile = loadFn("activateWorkflowProfile", ctx);
 
   // 1. Max 5 services limit check
@@ -334,8 +336,48 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
     "compact-menu activation must clear the previous service model override atomically"
   );
   assert.strictEqual(state.workflowProfileSelections["word.smart_write"], "direct_svc_2");
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(state.taskApiKeys["word.smart_write"])),
+    {
+      activeProfileId: "direct_svc_2",
+      activeConfigurationId: "direct_svc_2",
+      accessMethod: "direct_model",
+      serviceId: "direct_svc_2",
+      configured: true,
+      taskKeyConfigured: true
+    },
+    "successful direct activation must synchronously update the preflight source of truth"
+  );
+  assert.strictEqual(
+    ctx.validateActiveDirectTaskSelection("word.smart_write").applicable,
+    true,
+    "the next task must run direct-service preflight without waiting for /config reload"
+  );
 
-  // 4. Activate direct service for smart_imitation
+  // 4. Switching back to workflow clears stale direct-service preflight state.
+  state.workflowProfiles["word.smart_write"].profiles = [{
+    id: "wf_profile_1",
+    name: "工作流配置",
+    complete: true,
+    keyConfigured: true,
+    accessMethod: "workflow_platform"
+  }];
+  await ctx.activateWorkflowProfile("wf_profile_1", "word.smart_write", "direct_svc_2");
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(state.taskApiKeys["word.smart_write"])),
+    {
+      activeProfileId: "wf_profile_1",
+      activeConfigurationId: "wf_profile_1",
+      accessMethod: "workflow_platform",
+      serviceId: "",
+      configured: true,
+      taskKeyConfigured: true
+    },
+    "workflow activation must remove the prior direct-service identity"
+  );
+  assert.strictEqual(ctx.validateActiveDirectTaskSelection("word.smart_write").applicable, false);
+
+  // 5. Activate direct service for smart_imitation
   requestsMade.length = 0;
   state.settingsWorkflowTaskType = "word.smart_imitation";
   await ctx.activateWorkflowProfile("direct_svc_3", "word.smart_imitation", "direct_svc_1");
@@ -344,7 +386,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   assert.strictEqual(activateImitationReq.payload.taskType, "word.smart_imitation");
   assert.strictEqual(state.workflowProfileSelections["word.smart_imitation"], "direct_svc_3");
 
-  // 5. Activation failure rollback
+  // 6. Activation failure rollback
   ctx.request = () => Promise.reject(new Error("网络超时"));
   await ctx.activateWorkflowProfile("direct_svc_4", "word.smart_write", "direct_svc_2");
   assert.strictEqual(state.workflowProfileSelections["word.smart_write"], "direct_svc_2", "must rollback to previous selection on failure");
@@ -434,10 +476,11 @@ test("Word task model selection: parameters override, draft generation, and revi
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "智能仿写接入选择");
 
-  // 4. Review tabs isolation: hidden on document_review, supported on format_review
+  // 4. Review tabs: document_review and format_review both supported
   state.settingsWorkflowTaskType = "word.document_review";
   ctx.renderTaskModelSelectionSection();
-  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, true, "task direct service section must be hidden for document_review");
+  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "task direct service section must be visible for document_review");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "文档审查接入选择");
 
   state.settingsWorkflowTaskType = "word.format_review";
   ctx.renderTaskModelSelectionSection();
@@ -657,7 +700,7 @@ test("direct-service refresh ignores duplicates and stale completion callbacks",
   assert.strictEqual(statusNode.textContent, "new editor status", "stale callback must not overwrite the newer editor status");
 });
 
-test("task selection save uses one atomic activation request", () => {
+test("task selection save atomically activates and synchronizes preflight state", async () => {
   const vm = require("node:vm");
 
   function functionSource(name) {
@@ -681,7 +724,16 @@ test("task selection save uses one atomic activation request", () => {
     workflowProfileMutationBusy: false,
     settingsWorkflowTaskType: "word.smart_write",
     lastValidatedCustomModel: null,
-    directServices: [{ id: "direct_svc_1", serviceBaseUrl: "https://api.example.com/v1", keyConfigured: true, modelList: ["write-model"] }]
+    directServices: [{ id: "direct_svc_1", serviceBaseUrl: "https://api.example.com/v1", keyConfigured: true, modelList: ["write-model"] }],
+    taskApiKeys: {
+      "word.smart_write": {
+        activeProfileId: "wf_profile_1",
+        accessMethod: "workflow_platform",
+        serviceId: ""
+      }
+    },
+    taskModelSelections: {},
+    workflowProfileSelections: {}
   };
   const requests = [];
   const ctx = {
@@ -697,13 +749,14 @@ test("task selection save uses one atomic activation request", () => {
     loadDirectServices() { return Promise.resolve(); },
     request(url, payload, options) {
       requests.push({ url, payload, method: options && options.method });
-      return new Promise(() => {});
+      return Promise.resolve({ data: { taskModelSelection: payload.taskModelSelection } });
     }
   };
   ctx.getTaskModelSelectionDraft = vm.runInNewContext(`(${functionSource("getTaskModelSelectionDraft")})`, ctx);
+  ctx.validateActiveDirectTaskSelection = vm.runInNewContext(`(${functionSource("validateActiveDirectTaskSelection")})`, ctx);
   const save = vm.runInNewContext(`(${functionSource("saveTaskModelSelection")})`, ctx);
 
-  save();
+  await save();
   assert.strictEqual(requests.length, 1);
   assert.strictEqual(requests[0].url, "/provider/direct-services/direct_svc_1/activate");
   assert.strictEqual(requests[0].method, undefined);
@@ -719,6 +772,18 @@ test("task selection save uses one atomic activation request", () => {
       contextWindowTokens: 32000
     }
   );
+  assert.deepStrictEqual(
+    JSON.parse(JSON.stringify(state.taskApiKeys["word.smart_write"])),
+    {
+      activeProfileId: "direct_svc_1",
+      activeConfigurationId: "direct_svc_1",
+      accessMethod: "direct_model",
+      serviceId: "direct_svc_1",
+      configured: true,
+      taskKeyConfigured: true
+    }
+  );
+  assert.strictEqual(ctx.validateActiveDirectTaskSelection("word.smart_write").applicable, true);
 });
 
 test("formal direct-service event binding invokes the production handlers", () => {
