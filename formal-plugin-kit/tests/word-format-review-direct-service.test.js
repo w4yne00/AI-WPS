@@ -181,3 +181,93 @@ test("Preflight gate: runDeterministicFormatReview invokes validateActiveDirectT
   assert.ok(js.includes('validateActiveDirectTaskSelection("word.format_review")'),
     "runDeterministicFormatReview must call validateActiveDirectTaskSelection(\"word.format_review\")");
 });
+
+test("image actions use saved task selection, persist authorization and refresh readiness", async () => {
+  const saved = { serviceId: "direct_svc_1", modelName: "vision", imageInputMode: "openai_image_url" };
+  const calls = [];
+  const nodes = { "word-task-model-validation-status": { textContent: "" } };
+  const ctx = {
+    state: { taskModelSelections: { "word.format_review": saved } },
+    getSettingsWorkflowTaskType: () => "word.format_review",
+    getTaskModelSelectionDraft: () => saved,
+    findDirectService: () => ({ name: "测试服务", serviceBaseUrl: "https://example.com/v1", revision: 7 }),
+    byId: id => nodes[id],
+    window: { confirm: () => true },
+    setWorkflowProfileMutationBusy() {},
+    describeFetchError: error => error.message,
+    request: async (route, payload) => { calls.push({ route, payload }); return { data: { taskModelSelection: { ...saved, imageSemanticReadiness: { code: "ready" } } } }; }
+  };
+  const action = loadFn("performTaskImageAction", ctx);
+  await action("image-authorization", true);
+  await action("validate-image");
+  assert.equal(calls[0].route, "/provider/task-model-selections/word.format_review/image-authorization");
+  assert.equal(calls[0].payload.authorized, true);
+  assert.equal(calls[0].payload.expectedServiceRevision, 7);
+  assert.equal(calls[1].route, "/provider/task-model-selections/word.format_review/validate-image");
+  assert.equal(ctx.state.taskModelSelections["word.format_review"].imageSemanticReadiness.code, "ready");
+});
+
+test("image authorization never applies an unsaved draft or a cancelled confirmation", async () => {
+  const saved = { serviceId: "direct_svc_1", modelName: "vision", imageInputMode: "openai_image_url" };
+  const node = { textContent: "" };
+  let count = 0;
+  const ctx = { state: { taskModelSelections: { "word.format_review": saved } },
+    getSettingsWorkflowTaskType: () => "word.format_review", getTaskModelSelectionDraft: () => ({ ...saved, serviceId: "other" }),
+    byId: () => node, request: async () => { count++; }, window: { confirm: () => false },
+    findDirectService: () => ({ name: "服务", serviceBaseUrl: "https://example.com" }) };
+  const action = loadFn("performTaskImageAction", ctx);
+  await action("image-authorization", true);
+  assert.equal(count, 0);
+  assert.match(node.textContent, /保存/);
+  ctx.getTaskModelSelectionDraft = () => saved;
+  await action("image-authorization", true);
+  assert.equal(count, 0);
+});
+
+test("image buttons bind the production taskpane handlers", () => {
+  const listeners = {};
+  const calls = [];
+  const ctx = { helpers, byId: id => ({ addEventListener: (event, fn) => { listeners[id] = fn; } }),
+    performTaskImageAction: (...args) => calls.push(args) };
+  // Other handlers are unrelated to the image actions, but are referenced by the real binder.
+  for (const name of ["handleDirectServiceAction", "closeDirectServiceEditor", "saveDirectServiceEditor", "refreshDirectServiceModelsInEditor", "validateDirectServiceInEditor", "clearDirectServiceKey", "confirmDirectServiceDelete", "closeDirectServiceDeleteDialog", "handleDirectServiceEditorInput", "handleTaskDirectServiceChange", "handleTaskCustomModelChange", "validateTaskModelSelection", "saveTaskModelSelection"]) ctx[name] = () => {};
+  const source = functionSource("bindDirectServiceEvents");
+  // Expose all referenced named callbacks as inert functions except the image action.
+  for (const match of source.matchAll(/:\s*(\w+),/g)) if (!(match[1] in ctx)) ctx[match[1]] = () => {};
+  loadFn("bindDirectServiceEvents", ctx)();
+  listeners['btn-authorize-task-images']();
+  listeners['btn-revoke-task-images']();
+  listeners['btn-validate-task-images']();
+  assert.deepEqual(calls, [["image-authorization", true], ["image-authorization", false], ["validate-image"]]);
+});
+
+test("real format submission reaches background jobs when semantic validation is pending", async () => {
+  const selection = { serviceId: 'direct_svc_1', modelName: 'vision', modelAvailable: true,
+    formatSemanticReadiness: { code: 'validation_required' }, imageSemanticReadiness: { code: 'authorization_required' } };
+  const service = { id: 'direct_svc_1', defaultModel: 'vision', keyConfigured: true, modelList: ['vision'],
+    modelCatalog: { usableForSelection: true, status: 'fresh', models: ['vision'] } };
+  const calls = [];
+  let complete;
+  const completed = new Promise(resolve => { complete = resolve; });
+  const noop = () => {};
+  const ctx = { helpers: { ...helpers, getDocumentSessionId: () => 'doc-1', getDocumentDisplayName: () => 'test.docx', buildDeterministicFormatReviewBatches: () => [] },
+    state: { deterministicFormatReviewEnabled: true, activeTaskSlots: {}, taskModelSelections: { 'word.format_review': selection },
+      taskApiKeys: { 'word.format_review': { accessMethod: 'direct_model', activeProfileId: service.id } } },
+    findDirectService: () => service, getActiveDocument: () => ({}), resolveSelectionScope: () => ({ ok: true }),
+    setStatus: noop, setPlainResult: noop, setResult: message => complete(new Error(message)), setActiveResultRecord: noop,
+    clearDeterministicFormatReviewPresentation: noop, clearDeterministicFormatReviewActiveJob: noop, setModelTaskBusy: noop,
+    setTimeout, DETERMINISTIC_FORMAT_REVIEW_REQUEST_TIMEOUT_MS: 1000,
+    extractDeterministicFormatReviewSnapshot: () => ({ blocks: [], contentSha256: 'c', structureSha256: 's', formatSha256: 'f', documentIdentity: {}, coverage: {}, editSequence: '1' }),
+    ensureDeterministicFormatReviewPreparation: noop, setTrace: noop, uploadDeterministicFormatReviewBatches: async () => {},
+    exportDeterministicFormatReviewImageGroups: async () => {}, saveDeterministicFormatReviewActiveJob: noop,
+    setActiveReviewJobRecord: noop, setDocumentReviewCancelVisible: noop, pollDeterministicFormatReviewJob: () => complete(),
+    cleanupDeterministicFormatReviewTerminal: noop, discardDeterministicFormatReviewSnapshot: noop, describeFetchError: error => error.message,
+    request: async route => { calls.push(route); return { data: { snapshotId: 'snapshot-1', snapshotToken: 'token', jobId: 'job-1' } }; }
+  };
+  ctx.validateActiveDirectTaskSelection = loadFn('validateActiveDirectTaskSelection', ctx);
+  loadFn('runDeterministicFormatReview', ctx)();
+  const error = await completed;
+  assert.equal(error, undefined);
+  assert.ok(calls.includes('/word/format-review/jobs'));
+  assert.equal(ctx.state.deterministicFormatReviewJobId, 'job-1');
+});

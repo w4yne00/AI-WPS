@@ -519,6 +519,12 @@
                           <option value="disabled">关闭图片输入 (disabled)</option>
                         </select>
                       </label>
+                      <p class="field-hint">保存选择后授权本任务图片外发，再用无敏感内容的合成图片验证视觉能力。</p>
+                      <div class="button-row">
+                        <button id="btn-authorize-task-images" class="ghost-action" type="button">授权图片外发</button>
+                        <button id="btn-revoke-task-images" class="ghost-action" type="button">撤销授权</button>
+                        <button id="btn-validate-task-images" class="ghost-action" type="button">验证视觉能力</button>
+                      </div>
                     </div>
                     <div class="button-row" style="margin-top: 8px;">
                       <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>

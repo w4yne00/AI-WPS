@@ -1,25 +1,14 @@
 # Codex Handoff - AI-WPS
 
-## 当前功能实现：Issue #179 迁移 Word 格式审查的直连接入（2026-09-13）
+## PR #197 审查修复（2026-09-13）
 
-- **Word 格式审查共享直连服务迁移完成**：遵循 ADR-0128/ADR-0130/ADR-0131 与 Issue #164 父规格规范，将 Word 格式审查（`word.format_review`）平滑迁移接入设置页首页的共享模型直连服务（`#word-task-direct-service-section`），与 Word 智能编写、智能仿写及 Excel/PPT 共享直连体系深度对齐；
-- **任务模型覆盖与图片模式控制**：
-  - 支持绑定任意已配置的共享直连服务，默认继承服务默认模型（`defaultModel`），并支持覆盖模型名（目录下拉或高级手填）、`temperature`、`maxOutputTokens` 与 `contextWindowTokens`；
-  - 默认 `imageInputMode` 为 `"openai_image_url"`，并允许显式切换为 `"disabled"`；界面提供 `#word-task-image-mode-row` 专属切换控件；
-- **图片外发授权与语义验证强绑定**：
-  - `imageExternalAuthorization` 与 `imageSemanticValidation` 严格绑定当前任务选择的 `(serviceHost, modelName, imageInputMode)` 三元组；服务地址、模型名或模式改变后自动置为 `stale: true`，绝不提升为全局授权；
-  - 当图片模式为 `disabled` 时，`imageExternalAuthorization` 自动重置为 `None`；
-- **协议语义验证与平滑降级**：
-  - 格式审查验证真实调用执行合成协议分类验证（`_validate_format_semantic_direct`），并持久化协议验证记录；
-  - 运行时无授权或验证未就绪时自动降级到确定性/纯文本规则审查，不中断用户任务；
-- **任务窗格单行紧凑入口与前置就绪门禁**：
-  - 单行紧凑入口（ADR-0127）支持格式审查展示与即时切换，标签格式为 `[状态圆点] 配置名称 · 模型直连 ›`，隐藏敏感模型 ID；
-  - 格式审查提交入口（`runDeterministicFormatReview`）前置执行 `validateActiveDirectTaskSelection("word.format_review")` 门禁，直连配置未就绪时阻断提交并给出明确提示；
-  - 各任务独立维护工作流平台配置不受影响；
-- **质量验证**：
-  - 前端：`formal-plugin-kit/tests/word-format-review-direct-service.test.js` 6 项测试全绿，`formal-plugin-kit/tests/word-shared-direct-service.test.js` 15 项测试全绿，全部 Word 测试 45 项全绿，全量直连服务测试 67 项全绿；
-  - 后端：`adapter_service/tests/test_word_format_review_direct_service.py` 7 项测试通过，`adapter_service/tests/test_direct_services.py` 24 项测试全绿；
-  - 静态检查：`python3 packaging/check_python38_compatibility.py adapter_service` 166 个文件扫描通过，`git diff --check` 通过。
+- Word 格式审查共享直连服务支持服务默认模型、任务模型和参数覆盖；图片模式默认 `openai_image_url`，可关闭。
+- 文本语义未验证或验证失效时，后端不调用模型，仍完成确定性审查并报告 `format_semantic_protocol_not_ready`。前端保留模型目录/配置可用性检查，不因语义验证待完成而阻止确定性任务。
+- 格式语义验证绑定服务 ID、规范化完整端点、现有 API Key 指纹、有效模型、温度、输出 Token、上下文容量及图片模式。草稿验证只记录被验证身份，每个任务保留一份待保存草稿记录；保存时原子匹配，不能把草稿 A 的成功写到当前选择 B。失败重验记录失败，验证期间服务身份变化返回 409。
+- 图片外发需用户单独授权；普通保存不刷新失效授权。新增任务级 `image-authorization` 和 `validate-image` 接口，FastAPI 与 standalone 共用存储/验证逻辑。任务窗格提供授权、撤销和视觉验证按钮；授权提交携带确认时的服务 revision，配置变化时拒绝旧确认；视觉验证发送合成 PNG，并检查模型返回的八色排列顺序。接口及操作顺序见 `docs/operations/word-format-review-direct-validation.md`。
+- 视觉验证记录也绑定完整调用身份，并在落盘前核对当前选择及授权。运行时图片策略拒绝 `stale` 记录，Key 或端点变化后不能沿用旧视觉许可。
+- 验证：Docker Python 3.8 直连、格式审查和模型配置相关回归 305 项通过；前端专项 95 项通过（含沙箱外 Chrome 布局测试）；`wps-addon` 单元测试 12 项和 Vite 构建通过；Python 3.8 兼容扫描 167 文件通过；交付源码体验契约测试 6 项通过。新增公开接口用例模拟模型 HTTP 响应并检查实际 PNG 请求，不消耗真实模型费用。
+- 本轮未生成发布包，不替代真实 WPS、实际模型服务或麒麟目标机人工验收。
 
 ## PR #195 复审修复（2026-09-13）
 

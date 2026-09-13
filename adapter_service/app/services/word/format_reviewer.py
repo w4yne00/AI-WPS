@@ -2013,7 +2013,7 @@ class WordFormatReviewer:
     def _semantic_protocol_ready(task_auth: Optional[Dict]) -> bool:
         if not isinstance(task_auth, dict):
             return True
-        if str(task_auth.get("accessMethod", "")) != "workflow_platform":
+        if str(task_auth.get("accessMethod", "")) not in {"workflow_platform", "direct_model"}:
             return True
         readiness = task_auth.get("formatSemanticReadiness")
         if not isinstance(readiness, dict):

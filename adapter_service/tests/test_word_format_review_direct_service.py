@@ -113,14 +113,15 @@ class WordFormatReviewDirectServiceTest(unittest.TestCase):
         self.assertTrue(refreshed["imageSemanticValidation"]["stale"])
         self.assertEqual(refreshed["imageSemanticReadiness"]["code"], "authorization_required")
 
-        # 再次保存选择 -> 重新绑定新地址，清除 authorization stale
+        # 再次保存不能代替用户重新授权。
         rebound = self.store.update_task_model_selection(
             "word.format_review",
             service_id=svc["id"],
             model_name="vision-model-1",
             image_input_mode="openai_image_url",
         )
-        self.assertFalse(rebound["imageExternalAuthorization"]["stale"])
+        self.assertTrue(rebound["imageExternalAuthorization"]["stale"])
+        rebound = self.store.set_image_external_authorization("word.format_review", True)
         self.assertEqual(rebound["imageExternalAuthorization"]["serviceHost"], "new-api.openai.com")
 
         # 变更模型 -> 授权与验证再次失效
@@ -294,7 +295,11 @@ class WordFormatReviewDirectServiceTest(unittest.TestCase):
         self.assertEqual(called["task_auth"]["modelName"], "vision-model-1")
         self.assertEqual(called["task_auth"]["modelConfiguration"]["modelName"], "vision-model-1")
 
-        # 检查验证结果已持久化并使 formatSemanticReadiness 就绪
+        # 草稿参数不同于当前选择；保存该草稿后才能绑定验证。
+        self.store.update_task_model_selection(
+            "word.format_review", service_id=svc["id"], model_name="vision-model-1",
+            temperature=0.2, max_output_tokens=2048,
+        )
         sel = self.store.get_task_model_selection("word.format_review")
         self.assertIsNotNone(sel["formatSemanticValidation"])
         self.assertFalse(sel["formatSemanticValidation"]["stale"])

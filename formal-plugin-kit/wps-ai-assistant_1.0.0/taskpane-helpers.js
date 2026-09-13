@@ -5368,6 +5368,9 @@
     bind("word-task-direct-service-select", "change", "taskServiceChange");
     bind("word-task-custom-model-check", "change", "customModelChange");
     bind("btn-validate-task-model-selection", "click", "validateTaskSelection");
+    bind("btn-authorize-task-images", "click", "authorizeTaskImages");
+    bind("btn-revoke-task-images", "click", "revokeTaskImages");
+    bind("btn-validate-task-images", "click", "validateTaskImages");
     bind("btn-save-task-model-selection", "click", "saveTaskSelection");
   }
 

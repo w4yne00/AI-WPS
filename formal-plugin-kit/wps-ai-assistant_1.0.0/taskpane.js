@@ -4922,6 +4922,44 @@
     return draft;
   }
 
+  function performTaskImageAction(action, authorized) {
+    var taskType = getSettingsWorkflowTaskType();
+    var statusNode = byId("word-task-model-validation-status");
+    var saved = (state.taskModelSelections || {})[taskType] || {};
+    var draft = getTaskModelSelectionDraft();
+    if (taskType !== "word.format_review" || state.workflowProfileMutationBusy) return;
+    var fields = ["serviceId", "modelName", "imageInputMode", "temperature", "maxOutputTokens", "contextWindowTokens"];
+    var changed = fields.some(function (key) { return (draft[key] == null ? "" : draft[key]) !== (saved[key] == null ? "" : saved[key]); });
+    if (!saved.serviceId || changed || saved.imageInputMode !== "openai_image_url") {
+      if (statusNode) statusNode.textContent = "请先保存当前模型选择和图片输入模式，再授权或验证图片。";
+      return;
+    }
+    var service = findDirectService(saved.serviceId) || {};
+    if (action === "image-authorization" && authorized && !window.confirm(
+      "允许格式审查向「" + (service.name || "所选服务") + "」发送本任务图片？\n服务地址：" +
+      (service.serviceBaseUrl || "") + "\n模型：" + (saved.effectiveModel || saved.modelName || service.defaultModel || "") +
+      "\n授权仅用于当前任务及模型配置，可随时撤销。"
+    )) return;
+    var operationId = Number(state.directServiceOperationId || 0) + 1;
+    state.directServiceOperationId = operationId;
+    setWorkflowProfileMutationBusy(true);
+    if (statusNode) statusNode.textContent = action === "validate-image"
+      ? "正在发送无敏感内容的合成测试图片，验证会产生模型调用费用…" : "正在保存图片授权…";
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/" + action,
+      action === "image-authorization" ? { authorized: Boolean(authorized), expectedSelection: draft, expectedServiceRevision: service.revision } : {})
+      .then(function (body) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
+        var selection = body && body.data && body.data.taskModelSelection;
+        if (selection) state.taskModelSelections[taskType] = selection;
+        if (statusNode) statusNode.textContent = action === "validate-image" ? "视觉能力验证成功。" : (authorized ? "已授权，请继续验证视觉能力。" : "已撤销图片外发授权。");
+      }).catch(function (error) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
+        if (statusNode) statusNode.textContent = "操作失败：" + describeFetchError(error);
+      }).then(function () {
+        if (state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
+      });
+  }
+
   function validateTaskModelSelection() {
     var draft = getTaskModelSelectionDraft();
     var taskType = getSettingsWorkflowTaskType();
@@ -10692,6 +10730,9 @@
         taskServiceChange: handleTaskDirectServiceSelectChange,
         customModelChange: handleTaskCustomModelCheckChange,
         validateTaskSelection: validateTaskModelSelection,
+        authorizeTaskImages: function () { return performTaskImageAction("image-authorization", true); },
+        revokeTaskImages: function () { return performTaskImageAction("image-authorization", false); },
+        validateTaskImages: function () { return performTaskImageAction("validate-image"); },
         saveTaskSelection: saveTaskModelSelection
       }
     });

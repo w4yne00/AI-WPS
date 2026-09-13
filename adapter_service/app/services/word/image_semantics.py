@@ -66,7 +66,7 @@ def _image_binding(configuration: Dict[str, Any]) -> Dict[str, Any]:
 def _binding_matches(record: Any, binding: Dict[str, Any]) -> bool:
     if not isinstance(record, dict):
         return False
-    return all(record.get(key) == value for key, value in binding.items())
+    return not record.get("stale", False) and all(record.get(key) == value for key, value in binding.items())
 
 
 def image_pixel_policy(

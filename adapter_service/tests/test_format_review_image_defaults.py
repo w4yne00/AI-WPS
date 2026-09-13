@@ -121,6 +121,7 @@ def _ready_task_auth(validated=True, enabled=True, mode="openai_image_url"):
     validation["validated"] = validated
     return {
         "providerBaseUrl": "https://vision.example/v1",
+        "formatSemanticReadiness": {"code": "ready"},
         "apiKey": "frozen-secret",
         "accessMethod": ACCESS_DIRECT_MODEL,
         "modelName": "vision-1",
