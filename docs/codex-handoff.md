@@ -7,8 +7,19 @@
 - 新增完整 `taskpane.js` 初始化、真实菜单失败回滚、409 响应、重开保存和提交拦截测试。后端测试通过两个 `/ppt/*/jobs` 公开接口提交并轮询到完成，在模型传输边界核对共享服务、Key、模型和任务参数，无真实模型付费调用。
 - 本轮 Docker Python 3.8 相关后端测试 96 通过；专项前端测试 21 通过，`wps-addon` 单元测试 12 通过、Vite 构建通过，Python 3.8 兼容扫描 76 个生产文件通过。最终正式插件非浏览器测试 166 通过、0 失败；此前全量运行的 `format-review-issue-cards.test.js` 因 Chrome 启动失败未通过，最终验证排除此浏览器用例。独立复核确认工作流保存后状态刷新及不完整直连配置阻断问题已解决。本轮不替代目标机人工界面验收。
 
+## 当前功能实现：Issue #178 迁移 Excel 公式助手与智能填写的直连接入（2026-09-13）
 
-更新时间：2026-09-10
+- **三任务共享直连服务统一收敛**：遵循 ADR-0128/ADR-0130 与 Issue #164 父规格规范，将 Excel 宿主下的公式助手（`excel.formula_assistant`）与智能填写（`excel.smart_fill`）平滑迁移接入设置页首页的共享模型直连服务（`#excel-task-direct-service-section`），与智能分析（`excel.analysis`）及 Word、PPT 保持完全一致的直连服务交互架构；
+- **任务模型覆盖与独立调优**：公式助手与智能填写可绑定任意已配置的共享直连服务，默认继承服务级默认模型（`defaultModel`），并支持任务级覆盖 `modelName`（支持标准目录选择或高级手填自定义模型）、`temperature`（0.0–2.0）、`maxOutputTokens`（1–16384）与 `contextWindowTokens`（1000–2000000），同时各自保留独立的工作流平台配置；
+- **任务窗格单行紧凑入口与隐私保护**：紧凑单行模型配置入口展示格式严格遵循 `[状态圆点] 配置名称 · 模型直连 ›`，绝不向界面泄漏具体模型 ID；下拉菜单选项展示服务名称与解析后任务模型，支持即时激活与失败自动回滚；
+- **动态标签与独立状态隔离**：设置页「Excel 任务」三选项卡（智能分析、公式助手、智能填写）动态联动直连配置卡片标题（`智能分析接入选择`、`公式助手接入选择`、`智能填写接入选择`）与参数输入，验证与保存请求（`PUT /provider/task-model-selections/{taskType}` 及 `POST /provider/direct-services/{id}/activate`）精确路由至当前任务，避免状态串扰；
+- **就绪门禁与生命周期保护保持**：接入前置就绪门禁（`validateDirectTaskSelectionReadiness`），在目录失效、过期或高级手填未经验证时阻断任务提交；删除保护（`evaluateDirectServiceDelete`）与服务地址变更影响披露（`evaluateDirectServiceUrlImpact`）自动关联披露被引用的表格公式助手与智能填写任务；
+- **质量验证**：
+  - 前端：`formal-plugin-kit/tests/excel-shared-direct-service.test.js` 12 项测试全绿，全量 Excel 测试 77 项全绿，正式插件套件 171 项测试全绿；
+  - 后端：`adapter_service/tests/test_direct_services.py` 23 项测试全绿；
+  - 静态检查：`git diff --check` 通过，Python 3.8 语法兼容性检查通过。
+
+更新时间：2026-09-13
 
 当前仓库：`https://github.com/w4yne00/AI-WPS.git`
 

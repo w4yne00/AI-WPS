@@ -460,3 +460,276 @@ test("Code review fixes: loadDirectServices array-to-map, draft customModel, and
   assert.strictEqual(state.directServiceEditor.revision, 2, "editor revision must be updated to 2 after refresh");
   assert.ok(statusNode.textContent.includes("2 个模型"), "status must reflect model count");
 });
+
+test("Excel settings tabs dynamically show task direct service section for all 3 tasks with proper titles", async () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  function loadFn(name, ctx) {
+    return vm.runInNewContext(`(${functionSource(name)})`, ctx);
+  }
+
+  const mockNodes = {
+    "excel-task-direct-service-section": { hidden: true },
+    "excel-task-direct-service-title": { textContent: "" },
+    "excel-task-direct-service-select": { innerHTML: "", value: "" },
+    "excel-task-direct-params": { hidden: true },
+    "excel-task-model-select": { innerHTML: "", value: "" },
+    "excel-task-custom-model-check": { checked: false, disabled: false, title: "" },
+    "excel-task-custom-model-row": { hidden: true },
+    "excel-task-custom-model-input": { value: "" },
+    "excel-task-temperature": { value: "" },
+    "excel-task-max-output": { value: "" },
+    "excel-task-context": { value: "" },
+    "excel-task-model-cost-warning": { hidden: true, textContent: "" },
+    "excel-task-model-validation-status": { textContent: "" }
+  };
+
+  const state = {
+    workflowTaskType: "excel.formula_assistant",
+    directServices: [
+      { id: "direct_svc_1", name: "共享直连服务", defaultModel: "gpt-4o", modelList: ["gpt-4o", "formula-pro"], keyConfigured: true, serviceBaseUrl: "https://api.openai.com/v1" }
+    ],
+    taskModelSelections: {
+      "excel.formula_assistant": {
+        serviceId: "direct_svc_1",
+        modelName: "formula-pro",
+        temperature: 0.2,
+        maxOutputTokens: 1024,
+        contextWindowTokens: 32000
+      },
+      "excel.smart_fill": {
+        serviceId: "direct_svc_1",
+        modelName: "fill-pro",
+        customModel: true,
+        temperature: 0.1,
+        maxOutputTokens: 2048,
+        contextWindowTokens: 40000
+      }
+    },
+    workflowProfilesByTask: {
+      "excel.formula_assistant": { activeProfileId: "direct_svc_1", profiles: [] },
+      "excel.smart_fill": { activeProfileId: "direct_svc_1", profiles: [] }
+    },
+    taskApiKeys: {
+      "excel.formula_assistant": { activeProfileId: "direct_svc_1", accessMethod: "direct_model" },
+      "excel.smart_fill": { activeProfileId: "direct_svc_1", accessMethod: "direct_model" }
+    }
+  };
+
+  const ctx = {
+    state,
+    helpers,
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
+    EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
+    byId(id) { return mockNodes[id] || null; },
+    escaped(s) { return s || ""; },
+    findDirectService(id) { return state.directServices.find(s => s.id === id) || null; },
+    getWorkflowProfileData(taskType) {
+      const base = state.workflowProfilesByTask[taskType] || { activeProfileId: "", profiles: [] };
+      return {
+        activeProfileId: base.activeProfileId,
+        profiles: base.profiles,
+        directServices: state.directServices,
+        taskModelSelection: state.taskModelSelections[taskType] || null
+      };
+    }
+  };
+
+  ctx.getSettingsWorkflowTaskType = js.includes("function getSettingsWorkflowTaskType(")
+    ? loadFn("getSettingsWorkflowTaskType", ctx)
+    : () => state.workflowTaskType;
+
+  ctx.renderTaskModelSelectionSection = loadFn("renderTaskModelSelectionSection", ctx);
+
+  // 1. Render for formula assistant
+  state.workflowTaskType = "excel.formula_assistant";
+  ctx.renderTaskModelSelectionSection();
+  assert.strictEqual(mockNodes["excel-task-direct-service-section"].hidden, false, "section must NOT be hidden for formula_assistant");
+  assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "公式助手接入选择");
+  assert.strictEqual(mockNodes["excel-task-temperature"].value, 0.2);
+  assert.strictEqual(mockNodes["excel-task-max-output"].value, 1024);
+
+  // 2. Render for smart fill
+  state.workflowTaskType = "excel.smart_fill";
+  ctx.renderTaskModelSelectionSection();
+  assert.strictEqual(mockNodes["excel-task-direct-service-section"].hidden, false, "section must NOT be hidden for smart_fill");
+  assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "智能填写接入选择");
+  assert.strictEqual(mockNodes["excel-task-temperature"].value, 0.1);
+  assert.strictEqual(mockNodes["excel-task-max-output"].value, 2048);
+  assert.strictEqual(mockNodes["excel-task-custom-model-check"].checked, true);
+  assert.strictEqual(mockNodes["excel-task-custom-model-input"].value, "fill-pro");
+});
+
+test("saveTaskModelSelection and validateTaskModelSelection support formula assistant and smart fill", async () => {
+  const vm = require("node:vm");
+
+  function functionSource(name) {
+    const start = js.indexOf(`function ${name}(`);
+    assert.ok(start !== -1, `function ${name} must exist in taskpane.js`);
+    const next = js.indexOf("\n  function ", start + 3);
+    return js.slice(start, next === -1 ? js.length : next);
+  }
+
+  function loadFn(name, ctx) {
+    return vm.runInNewContext(`(${functionSource(name)})`, ctx);
+  }
+
+  const requestsMade = [];
+  const mockNodes = {
+    "excel-task-direct-service-select": { value: "direct_svc_1" },
+    "excel-task-model-select": { value: "formula-v1" },
+    "excel-task-custom-model-check": { checked: false },
+    "excel-task-custom-model-input": { value: "" },
+    "excel-task-temperature": { value: "0.5" },
+    "excel-task-max-output": { value: "1000" },
+    "excel-task-context": { value: "32000" },
+    "excel-task-model-validation-status": { textContent: "" },
+    "excel-task-model-cost-warning": { hidden: false, textContent: "" }
+  };
+
+  const state = {
+    workflowTaskType: "excel.formula_assistant",
+    directServices: [{ id: "direct_svc_1", name: "S1", serviceBaseUrl: "https://api.openai.com/v1", defaultModel: "gpt-4o", keyConfigured: true, modelList: ["gpt-4o", "formula-v1", "fill-v1"] }],
+    taskModelSelections: {},
+    workflowProfileSelections: {},
+    taskApiKeys: { "excel.formula_assistant": {} },
+    workflowProfilesByTask: { "excel.formula_assistant": { activeProfileId: "direct_svc_1" } }
+  };
+
+  const ctx = {
+    state,
+    helpers,
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis",
+    EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant",
+    EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
+    byId(id) { return mockNodes[id] || null; },
+    findDirectService(id) { return state.directServices.find(s => s.id === id) || null; },
+    setWorkflowMutationBusy() {},
+    setWorkflowProfileMutationBusy() {},
+    setStatus() {},
+    describeFetchError(e) { return String(e); },
+    loadWorkflowProfileForTask() { return Promise.resolve(); },
+    loadDirectServices() { return Promise.resolve(); },
+    getWorkflowProfileData(taskType) {
+      return state.workflowProfilesByTask[taskType] || { activeProfileId: "" };
+    },
+    getSettingsWorkflowTaskType: js.includes("function getSettingsWorkflowTaskType(")
+      ? loadFn("getSettingsWorkflowTaskType", { state, EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis", EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant", EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill" })
+      : () => state.workflowTaskType,
+    request(url, payload, options) {
+      requestsMade.push({ url, payload, method: (options && options.method) || "POST" });
+      if (url.includes("/activate")) {
+        return Promise.resolve({
+          data: {
+            taskType: payload.taskType,
+            taskModelSelection: payload.taskModelSelection || {
+              serviceId: "direct_svc_1",
+              modelName: "formula-v1"
+            }
+          }
+        });
+      }
+      if (url.includes("/validate")) {
+        return Promise.resolve({ data: { validation: { success: true } } });
+      }
+      return Promise.resolve({ data: {} });
+    }
+  };
+
+  ctx.getTaskModelSelectionDraft = loadFn("getTaskModelSelectionDraft", ctx);
+  ctx.validateTaskModelSelection = loadFn("validateTaskModelSelection", ctx);
+  ctx.saveTaskModelSelection = loadFn("saveTaskModelSelection", ctx);
+
+  // 1. Validate for formula assistant
+  await ctx.validateTaskModelSelection();
+  const valReq = requestsMade.find(r => r.url.includes("/provider/task-model-selections/excel.formula_assistant/validate"));
+  assert.ok(valReq, "must validate against excel.formula_assistant endpoint");
+
+  // 2. Save for formula assistant
+  requestsMade.length = 0;
+  await ctx.saveTaskModelSelection();
+  const actReq = requestsMade.find(r => r.url.includes("/provider/direct-services/direct_svc_1/activate"));
+  assert.ok(actReq, "must call activate");
+  assert.strictEqual(actReq.payload.taskType, "excel.formula_assistant");
+  assert.strictEqual(state.workflowProfileSelections["excel.formula_assistant"], "direct_svc_1");
+
+  // 3. Save for smart fill
+  state.workflowTaskType = "excel.smart_fill";
+  state.workflowProfilesByTask["excel.smart_fill"] = { activeProfileId: "direct_svc_1" };
+  state.taskApiKeys["excel.smart_fill"] = {};
+  mockNodes["excel-task-model-select"].value = "fill-v1";
+  requestsMade.length = 0;
+  await ctx.saveTaskModelSelection();
+  const actReqFill = requestsMade.find(r => r.url.includes("/provider/direct-services/direct_svc_1/activate"));
+  assert.ok(actReqFill, "must call activate for smart_fill");
+  assert.strictEqual(actReqFill.payload.taskType, "excel.smart_fill");
+  assert.strictEqual(state.workflowProfileSelections["excel.smart_fill"], "direct_svc_1");
+});
+
+test("Delete protection and URL change impact disclose formula assistant and smart fill", () => {
+  const service = {
+    id: "direct_svc_shared",
+    name: "企业通用直连",
+    serviceBaseUrl: "https://old.api.example.com/v1",
+    referencedTasks: ["excel.analysis", "excel.formula_assistant", "excel.smart_fill"]
+  };
+
+  const deleteEval = helpers.evaluateDirectServiceDelete(service);
+  assert.strictEqual(deleteEval.canDelete, false);
+  assert.ok(deleteEval.message.includes("表格公式助手"));
+  assert.ok(deleteEval.message.includes("表格智能填写"));
+
+  const impactMsg = helpers.evaluateDirectServiceUrlImpact(service, "https://new.api.example.com/v1");
+  assert.ok(impactMsg.includes("表格公式助手"));
+  assert.ok(impactMsg.includes("表格智能填写"));
+});
+
+test("Readiness gate blocks formula assistant and smart fill when direct service model is unavailable", () => {
+  assert.strictEqual(typeof helpers.validateDirectTaskSelectionReadiness, "function");
+
+  const service = {
+    id: "direct_svc_1",
+    name: "企业直连",
+    serviceBaseUrl: "https://api.example.com",
+    keyConfigured: true,
+    defaultModel: "gpt-4o",
+    modelList: ["gpt-4o"],
+    modelCatalog: {
+      status: "unavailable",
+      usableForSelection: false,
+      models: []
+    }
+  };
+
+  // Model catalog unavailable without custom model
+  const formulaReadiness = helpers.validateDirectTaskSelectionReadiness(
+    { serviceId: "direct_svc_1", modelName: "gpt-4o", customModel: false },
+    { service }
+  );
+  assert.strictEqual(formulaReadiness.ok, false);
+  assert.ok(formulaReadiness.error.includes("不可用"));
+
+  // Model catalog expired
+  const expiredService = {
+    ...service,
+    modelCatalog: {
+      status: "expired",
+      usableForSelection: true,
+      models: ["gpt-4o"]
+    }
+  };
+  const fillReadiness = helpers.validateDirectTaskSelectionReadiness(
+    { serviceId: "direct_svc_1", modelName: "gpt-4o", customModel: false },
+    { service: expiredService }
+  );
+  assert.strictEqual(fillReadiness.ok, false);
+  assert.ok(fillReadiness.error.includes("过期"));
+});

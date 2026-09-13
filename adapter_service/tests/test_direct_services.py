@@ -823,6 +823,87 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         self.assertIn("ppt.slide_assistant", ref_tasks)
         self.assertIn("ppt.structure_review", ref_tasks)
 
+    def test_activate_direct_service_for_excel_formula_and_smart_fill(self) -> None:
+        create_res = self._invoke(
+            "do_POST",
+            "/provider/direct-services",
+            {
+                "name": "Excel共享直连服务",
+                "serviceBaseUrl": "https://api.openai.com/v1",
+                "apiKey": "sk-excel-secret-key",
+                "defaultModel": "gpt-4o",
+            },
+        )
+        self.assertEqual(create_res["status"], 200)
+        svc_id = create_res["body"]["data"]["directService"]["id"]
+
+        # Populate trusted model catalog so models are available
+        store = DirectServiceStore(config_path=self.config_path, api_key_dir=self.api_key_dir)
+        store.update_model_list(
+            svc_id,
+            ["gpt-4o", "excel-formula-model", "excel-fill-model"],
+            expected_revision=1,
+            trusted=True,
+        )
+
+        # Activate on excel.formula_assistant
+        res = self._invoke(
+            "do_POST",
+            f"/provider/direct-services/{svc_id}/activate",
+            {
+                "taskType": "excel.formula_assistant",
+                "taskModelSelection": {
+                    "serviceId": svc_id,
+                    "modelName": "excel-formula-model",
+                    "temperature": 0.3,
+                    "maxOutputTokens": 1024,
+                    "contextWindowTokens": 32000,
+                },
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        sel = res["body"]["data"]["taskModelSelection"]
+        self.assertEqual(sel["modelName"], "excel-formula-model")
+        self.assertEqual(sel["temperature"], 0.3)
+        self.assertEqual(sel["maxOutputTokens"], 1024)
+        self.assertEqual(sel["contextWindowTokens"], 32000)
+
+        # Activate on excel.smart_fill
+        res = self._invoke(
+            "do_POST",
+            f"/provider/direct-services/{svc_id}/activate",
+            {
+                "taskType": "excel.smart_fill",
+                "taskModelSelection": {
+                    "serviceId": svc_id,
+                    "modelName": "excel-fill-model",
+                    "temperature": 0.1,
+                    "maxOutputTokens": 2048,
+                    "contextWindowTokens": 40000,
+                },
+            },
+        )
+        self.assertEqual(res["status"], 200)
+        sel = res["body"]["data"]["taskModelSelection"]
+        self.assertEqual(sel["modelName"], "excel-fill-model")
+        self.assertEqual(sel["temperature"], 0.1)
+
+        # Query host=excel
+        res = self._invoke("do_GET", "/provider/task-model-selections?host=excel")
+        self.assertEqual(res["status"], 200)
+        selections = res["body"]["data"]["selections"]
+        self.assertIn("excel.formula_assistant", selections)
+        self.assertIn("excel.smart_fill", selections)
+        self.assertEqual(selections["excel.formula_assistant"]["modelName"], "excel-formula-model")
+        self.assertEqual(selections["excel.smart_fill"]["modelName"], "excel-fill-model")
+
+        # Try deleting service while in use -> 409 and both referenced
+        res = self._invoke("do_DELETE", f"/provider/direct-services/{svc_id}?expectedRevision=2")
+        self.assertEqual(res["status"], 409)
+        ref_tasks = res["body"]["errors"][0]["referencedTasks"]
+        self.assertIn("excel.formula_assistant", ref_tasks)
+        self.assertIn("excel.smart_fill", ref_tasks)
+
 
 if __name__ == "__main__":
     unittest.main()
