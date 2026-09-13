@@ -2761,6 +2761,26 @@ class Handler(BaseHTTPRequestHandler):
             relative = path[len(task_model_selection_prefix) :].strip("/")
             task_type, separator, action = relative.partition("/")
             task_type = unquote(task_type)
+            if action in {"image-authorization", "validate-image"}:
+                try:
+                    store = DirectServiceStore()
+                    if action == "image-authorization":
+                        if not isinstance(payload.get("authorized"), bool):
+                            raise DirectServiceError("IMAGE_AUTHORIZATION_INVALID", "authorized 必须为布尔值。")
+                        result = {"taskModelSelection": store.set_image_external_authorization(task_type, payload["authorized"], expected_selection=payload.get("expectedSelection"), expected_service_revision=payload.get("expectedServiceRevision"))}
+                    else:
+                        result = ProviderClient(direct_service_store=store).validate_task_image_selection(
+                            task_type, new_trace_id("standalone-image-validation")
+                        )
+                except DirectServiceError as error:
+                    self._write_direct_service_error(error)
+                    return
+                except AdapterError as error:
+                    self._write(error.status_code, envelope("standalone-image-validation", "error",
+                        {"code": error.code, "message": error.message}, success=False, message=error.message))
+                    return
+                self._write(200, envelope("standalone-image-validation", "provider.task_model_selection", result))
+                return
             if action == "validate":
                 trace_id = new_trace_id("standalone-task-model-selection-validation")
                 started = time.monotonic()
@@ -4459,6 +4479,7 @@ class Handler(BaseHTTPRequestHandler):
             "DIRECT_SERVICE_NAME_DUPLICATE",
             "DIRECT_SERVICE_REVISION_CONFLICT",
             "DIRECT_SERVICE_CONFIG_CHANGED",
+            "IMAGE_AUTHORIZATION_REQUIRED",
             "DIRECT_SERVICE_IN_USE",
         }:
             status_code = 409

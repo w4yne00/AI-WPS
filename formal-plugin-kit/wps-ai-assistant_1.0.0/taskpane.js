@@ -2703,7 +2703,7 @@
   }
 
   function getWorkflowProfileData(taskType) {
-    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation";
+    var sharedDirectServiceEnabled = taskType === "word.smart_write" || taskType === "word.smart_imitation" || taskType === "word.format_review";
     var base = state.workflowProfiles[taskType] || {
       taskType: taskType,
       activeProfileId: "",
@@ -4682,14 +4682,20 @@
     }
 
     var currentTask = getSettingsWorkflowTaskType();
-    var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation");
+    var isSupportedTask = (currentTask === "word.smart_write" || currentTask === "word.smart_imitation" || currentTask === "word.format_review");
     section.hidden = !isSupportedTask;
     if (!isSupportedTask) {
       return;
     }
 
     if (title) {
-      title.textContent = currentTask === "word.smart_imitation" ? "智能仿写接入选择" : "智能编写接入选择";
+      if (currentTask === "word.format_review") {
+        title.textContent = "格式审查接入选择";
+      } else if (currentTask === "word.smart_imitation") {
+        title.textContent = "智能仿写接入选择";
+      } else {
+        title.textContent = "智能编写接入选择";
+      }
     }
     if (hint) {
       hint.textContent = "使用工作流平台或绑定上方共享直连服务，独立调整任务参数。";
@@ -4710,6 +4716,10 @@
     if (!chosenServiceId) {
       if (paramsDiv) {
         paramsDiv.hidden = true;
+      }
+      var noServiceImageModeRow = byId("word-task-image-mode-row");
+      if (noServiceImageModeRow) {
+        noServiceImageModeRow.hidden = true;
       }
       if (costWarning) {
         costWarning.hidden = true;
@@ -4779,6 +4789,15 @@
     if (contextInput) {
       contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "40000";
     }
+    var imageModeRow = byId("word-task-image-mode-row");
+    var imageModeSelect = byId("word-task-image-input-mode");
+    if (imageModeRow) {
+      imageModeRow.hidden = (currentTask !== "word.format_review");
+    }
+    if (imageModeSelect && currentTask === "word.format_review") {
+      var currentImageMode = (currentSelection && currentSelection.imageInputMode) || "openai_image_url";
+      imageModeSelect.value = currentImageMode;
+    }
     if (costWarning) {
       costWarning.hidden = false;
       costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
@@ -4847,6 +4866,15 @@
     if (customInput) {
       customInput.value = "";
     }
+    var currentTask = getSettingsWorkflowTaskType();
+    var imageModeRow = byId("word-task-image-mode-row");
+    var imageModeSelect = byId("word-task-image-input-mode");
+    if (imageModeRow) {
+      imageModeRow.hidden = (currentTask !== "word.format_review");
+    }
+    if (imageModeSelect && currentTask === "word.format_review") {
+      imageModeSelect.value = "openai_image_url";
+    }
     if (statusNode) {
       statusNode.textContent = catalog.fetchStatus === "error" && catalog.cacheStatus === "valid"
         ? "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。"
@@ -4877,7 +4905,9 @@
     var maxOutVal = byId("word-task-max-output") ? byId("word-task-max-output").value : "";
     var contextVal = byId("word-task-context") ? byId("word-task-context").value : "";
 
-    return {
+    var taskType = typeof getSettingsWorkflowTaskType === "function" ? getSettingsWorkflowTaskType() : "";
+
+    var draft = {
       serviceId: serviceId,
       modelName: modelName,
       customModel: isCustom,
@@ -4885,6 +4915,49 @@
       maxOutputTokens: maxOutVal !== "" ? Number(maxOutVal) : null,
       contextWindowTokens: contextVal !== "" ? Number(contextVal) : 40000
     };
+    if (taskType === "word.format_review") {
+      var imageModeVal = (byId("word-task-image-input-mode") && byId("word-task-image-input-mode").value) || "openai_image_url";
+      draft.imageInputMode = imageModeVal;
+    }
+    return draft;
+  }
+
+  function performTaskImageAction(action, authorized) {
+    var taskType = getSettingsWorkflowTaskType();
+    var statusNode = byId("word-task-model-validation-status");
+    var saved = (state.taskModelSelections || {})[taskType] || {};
+    var draft = getTaskModelSelectionDraft();
+    if (taskType !== "word.format_review" || state.workflowProfileMutationBusy) return;
+    var fields = ["serviceId", "modelName", "imageInputMode", "temperature", "maxOutputTokens", "contextWindowTokens"];
+    var changed = fields.some(function (key) { return (draft[key] == null ? "" : draft[key]) !== (saved[key] == null ? "" : saved[key]); });
+    if (!saved.serviceId || changed || saved.imageInputMode !== "openai_image_url") {
+      if (statusNode) statusNode.textContent = "请先保存当前模型选择和图片输入模式，再授权或验证图片。";
+      return;
+    }
+    var service = findDirectService(saved.serviceId) || {};
+    if (action === "image-authorization" && authorized && !window.confirm(
+      "允许格式审查向「" + (service.name || "所选服务") + "」发送本任务图片？\n服务地址：" +
+      (service.serviceBaseUrl || "") + "\n模型：" + (saved.effectiveModel || saved.modelName || service.defaultModel || "") +
+      "\n授权仅用于当前任务及模型配置，可随时撤销。"
+    )) return;
+    var operationId = Number(state.directServiceOperationId || 0) + 1;
+    state.directServiceOperationId = operationId;
+    setWorkflowProfileMutationBusy(true);
+    if (statusNode) statusNode.textContent = action === "validate-image"
+      ? "正在发送无敏感内容的合成测试图片，验证会产生模型调用费用…" : "正在保存图片授权…";
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/" + action,
+      action === "image-authorization" ? { authorized: Boolean(authorized), expectedSelection: draft, expectedServiceRevision: service.revision } : {})
+      .then(function (body) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
+        var selection = body && body.data && body.data.taskModelSelection;
+        if (selection) state.taskModelSelections[taskType] = selection;
+        if (statusNode) statusNode.textContent = action === "validate-image" ? "视觉能力验证成功。" : (authorized ? "已授权，请继续验证视觉能力。" : "已撤销图片外发授权。");
+      }).catch(function (error) {
+        if (state.directServiceOperationId !== operationId || getSettingsWorkflowTaskType() !== taskType) return;
+        if (statusNode) statusNode.textContent = "操作失败：" + describeFetchError(error);
+      }).then(function () {
+        if (state.directServiceOperationId === operationId) setWorkflowProfileMutationBusy(false);
+      });
   }
 
   function validateTaskModelSelection() {
@@ -5007,7 +5080,7 @@
             return { superseded: true };
           }
           setWorkflowProfileMutationBusy(false);
-          var taskLabel = taskType === "word.smart_imitation" ? "智能仿写" : "智能编写";
+          var taskLabel = taskType === "word.format_review" ? "格式审查" : (taskType === "word.smart_imitation" ? "智能仿写" : "智能编写");
           setStatus(taskLabel + "接入直连服务已保存并设为当前。");
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
@@ -10246,6 +10319,14 @@
       setStatus("已有格式审查任务正在执行，请等待当前任务完成。");
       return;
     }
+    var modelReadiness = typeof validateActiveDirectTaskSelection === "function"
+      ? validateActiveDirectTaskSelection("word.format_review")
+      : { valid: true };
+    if (!modelReadiness.valid) {
+      setStatus(modelReadiness.error || "模型配置不可用，请前往设置检查模型目录或配置。");
+      setPlainResult(modelReadiness.error || "模型配置不可用，请前往设置检查模型目录或配置。");
+      return;
+    }
     scope = resolveSelectionScope(false);
     if (!scope.ok) {
       setStatus(scope.message);
@@ -10649,6 +10730,9 @@
         taskServiceChange: handleTaskDirectServiceSelectChange,
         customModelChange: handleTaskCustomModelCheckChange,
         validateTaskSelection: validateTaskModelSelection,
+        authorizeTaskImages: function () { return performTaskImageAction("image-authorization", true); },
+        revokeTaskImages: function () { return performTaskImageAction("image-authorization", false); },
+        validateTaskImages: function () { return performTaskImageAction("validate-image"); },
         saveTaskSelection: saveTaskModelSelection
       }
     });

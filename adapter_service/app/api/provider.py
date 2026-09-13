@@ -98,6 +98,11 @@ class ModelConfigurationImageAuthorizationRequest(BaseModel):
     authorized: bool
 
 
+class TaskImageAuthorizationRequest(ModelConfigurationImageAuthorizationRequest):
+    expected_service_revision: Optional[int] = Field(default=None, alias="expectedServiceRevision")
+    expected_selection: Optional[dict] = Field(default=None, alias="expectedSelection")
+
+
 class ModelConfigurationCopyRequest(BaseModel):
     target_task_type: Optional[str] = Field(default=None, alias="targetTaskType")
     name: str = ""
@@ -198,6 +203,7 @@ def _raise_direct_service_error(exc: DirectServiceError) -> None:
         "DIRECT_SERVICE_NAME_DUPLICATE",
         "DIRECT_SERVICE_REVISION_CONFLICT",
         "DIRECT_SERVICE_CONFIG_CHANGED",
+        "IMAGE_AUTHORIZATION_REQUIRED",
         "DIRECT_SERVICE_IN_USE",
     }:
         status_code = 409
@@ -921,6 +927,29 @@ def activate_direct_service_route(
         "message": "activated",
         "data": result,
     }
+
+
+@router.post("/provider/task-model-selections/{task_type}/image-authorization")
+def authorize_task_model_selection_image(task_type: str, request: TaskImageAuthorizationRequest) -> dict:
+    try:
+        selection = get_direct_service_store().set_image_external_authorization(
+            task_type, request.authorized, expected_selection=request.expected_selection,
+            expected_service_revision=request.expected_service_revision,
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": {"taskModelSelection": selection}}
+
+
+@router.post("/provider/task-model-selections/{task_type}/validate-image")
+def validate_task_model_selection_image(task_type: str) -> dict:
+    try:
+        result = ProviderClient(direct_service_store=get_direct_service_store()).validate_task_image_selection(
+            task_type, "task-image-validation-{0}".format(int(time.time() * 1000))
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": result}
 
 
 @router.post("/provider/task-model-selections/{task_type}/validate")
