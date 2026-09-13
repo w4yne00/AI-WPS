@@ -341,6 +341,29 @@ class DirectServiceStoreTests(unittest.TestCase):
             self.assertTrue(sel["customModel"])
             self.assertEqual(sel["schemaVersion"], "provider.task_model_selection.v1")
 
+    def test_excel_activation_without_default_model_preserves_configuration(self) -> None:
+        for task_type in ("excel.analysis", "excel.formula_assistant", "excel.smart_fill"):
+            with self.subTest(task_type=task_type), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                store = self._store(root)
+                first = store.create_service("原服务", service_base_url="https://old.example.com/v1", default_model="old-model")
+                second = store.create_service("无默认模型", service_base_url="https://new.example.com/v1")
+                for service, models in ((first, ["old-model"]), (second, ["new-model"])):
+                    store.replace_api_key(service["id"], "sk-test", expected_revision=1)
+                    store.update_model_list(service["id"], models, expected_revision=2, trusted=True)
+                store.activate_direct_service(first["id"], task_type, task_model_selection={
+                    "serviceId": first["id"], "modelName": "old-model",
+                    "temperature": 0.2, "maxOutputTokens": 1000, "contextWindowTokens": 16000,
+                })
+                before = json.loads((root / "adapter.json").read_text(encoding="utf-8"))
+                with self.assertRaises(DirectServiceError) as context:
+                    store.activate_direct_service(second["id"], task_type, task_model_selection={
+                        "serviceId": second["id"], "modelName": "",
+                        "temperature": 0.7, "maxOutputTokens": 2000, "contextWindowTokens": 32000,
+                    })
+                self.assertEqual(context.exception.code, "DIRECT_SERVICE_MODEL_REQUIRED")
+                self.assertEqual(json.loads((root / "adapter.json").read_text(encoding="utf-8")), before)
+
     def test_activation_updates_selection_and_active_service_atomically(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

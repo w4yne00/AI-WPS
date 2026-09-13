@@ -733,3 +733,91 @@ test("Readiness gate blocks formula assistant and smart fill when direct service
   assert.strictEqual(fillReadiness.ok, false);
   assert.ok(fillReadiness.error.includes("过期"));
 });
+
+// Exercise production save + both reload functions; only the HTTP and DOM boundaries are fake.
+function selectionSaveHarness(taskType, options = {}) {
+  const vm = require("node:vm");
+  const oldSelection = { taskType, serviceId: "direct_svc_old", modelName: "old-model", temperature: 0.2, maxOutputTokens: 1000, contextWindowTokens: 16000 };
+  const draft = { serviceId: "direct_svc_new", modelName: "new-model", customModel: false, temperature: 0.7, maxOutputTokens: 2000, contextWindowTokens: 32000, ...options.draft };
+  const services = ["old", "new"].map(name => ({ id: `direct_svc_${name}`, name, keyConfigured: true, serviceBaseUrl: "https://example.com/v1", defaultModel: `${name}-model`, modelList: draft.customModel ? [] : [`${name}-model`] }));
+  const persisted = { active: oldSelection.serviceId, selection: { ...oldSelection } };
+  const state = {
+    workflowTaskType: taskType, lastValidatedCustomModel: null,
+    taskApiKeys: { [taskType]: { activeProfileId: oldSelection.serviceId, accessMethod: "direct_model", keyConfigured: true } },
+    taskModelSelections: { [taskType]: { ...oldSelection, ...options.saved } },
+    workflowProfileSelections: { [taskType]: oldSelection.serviceId },
+    workflowProfilesByTask: {}, workflowProfileLoadSequences: {}, directServices: services
+  };
+  const reloadSnapshots = [];
+  const ctx = {
+    state, helpers, TASK_API_KEY_DEFS: [{ taskType }],
+    EXCEL_WORKFLOW_TASK_TYPE: "excel.analysis", EXCEL_FORMULA_WORKFLOW_TASK_TYPE: "excel.formula_assistant", EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE: "excel.smart_fill",
+    getSettingsWorkflowTaskType: () => taskType,
+    getTaskModelSelectionDraft: () => ({ ...draft }),
+    byId: () => ({ textContent: "" }), setStatus() {}, setWorkflowMutationBusy() {},
+    describeFetchError: e => e.message,
+    renderDirectServicesList() {}, renderTaskModelSelectionSection() {},
+    renderWorkflowProfileStrip() {}, renderWorkflowProfileManager() {}, renderModelInterfaceState() {},
+    async request(url, payload) {
+      if (url.endsWith("/activate")) {
+        if (options.fail) throw new Error("DIRECT_SERVICE_MODEL_REQUIRED");
+        persisted.active = payload.taskModelSelection.serviceId;
+        persisted.selection = { ...payload.taskModelSelection, taskType, effectiveModel: payload.taskModelSelection.modelName || "new-model" };
+        return { data: { taskModelSelection: { ...persisted.selection } } };
+      }
+      if (payload) { persisted.selection = { ...payload, taskType }; return { data: {} }; }
+      reloadSnapshots.push(JSON.parse(JSON.stringify(state.taskModelSelections[taskType])));
+      if (url.includes("model-configurations?")) return { data: { activeConfigurationId: "", configurations: [] } };
+      if (url.includes("task-model-selections?")) return { data: { taskModelSelections: [persisted.selection] } };
+      if (url === "/provider/direct-services") return { data: { directServices: services } };
+      throw new Error(`Unexpected URL: ${url}`);
+    }
+  };
+  for (const name of ["emptyWorkflowProfileData", "normalizeWorkflowProfileData", "getWorkflowProfileData", "findDirectService", "loadWorkflowProfileForTask", "loadDirectServices", "saveTaskModelSelection"]) {
+    const start = js.indexOf(`function ${name}(`);
+    const end = js.indexOf("\n  function ", start + 3);
+    ctx[name] = vm.runInNewContext(`(${js.slice(start, end)})`, ctx);
+  }
+  return { ctx, state, persisted, reloadSnapshots };
+}
+
+for (const taskType of ["excel.analysis", "excel.formula_assistant", "excel.smart_fill"]) {
+  test(`${taskType}: saving new service survives real profile and service reloads`, async () => {
+    const h = selectionSaveHarness(taskType);
+    await h.ctx.saveTaskModelSelection();
+    assert.equal(h.state.workflowProfileSelections[taskType], "direct_svc_new");
+    assert.equal(h.ctx.getWorkflowProfileData(taskType).activeProfileId, "direct_svc_new");
+    assert.equal(h.state.taskApiKeys[taskType].activeProfileId, "direct_svc_new");
+    assert.equal(h.state.taskApiKeys[taskType].accessMethod, "direct_model");
+    assert.equal(h.state.taskApiKeys[taskType].keyConfigured, true);
+    assert.ok(h.reloadSnapshots.every(s => s.effectiveModel === "new-model"), "activation response must be applied before reload");
+  });
+  test(`${taskType}: failed activation preserves service, model and all parameter overrides`, async () => {
+    const h = selectionSaveHarness(taskType, { fail: true, draft: { modelName: "" } });
+    const before = JSON.stringify(h.persisted);
+    const uiBefore = JSON.stringify(h.state);
+    await assert.rejects(h.ctx.saveTaskModelSelection(), /DIRECT_SERVICE_MODEL_REQUIRED/);
+    assert.equal(JSON.stringify(h.persisted), before);
+    assert.equal(JSON.stringify(h.state), uiBefore);
+  });
+  test(`${taskType}: reopened pane reuses matching persisted custom model validation`, async () => {
+    const h = selectionSaveHarness(taskType, {
+      draft: { customModel: true, modelName: "custom-model" },
+      saved: { serviceId: "direct_svc_new", modelName: "custom-model", customModel: true, customModelValidated: true }
+    });
+    await h.ctx.saveTaskModelSelection();
+    assert.equal(h.persisted.selection.temperature, 0.7);
+    assert.equal(h.persisted.selection.modelName, "custom-model");
+  });
+  for (const saved of [
+    { serviceId: "direct_svc_old", modelName: "custom-model", customModelValidated: true },
+    { serviceId: "direct_svc_new", modelName: "other-model", customModelValidated: true },
+    { serviceId: "direct_svc_new", modelName: "custom-model", customModelValidated: false }
+  ]) {
+    test(`${taskType}: rejects unmatched persisted custom validation ${JSON.stringify(saved)}`, async () => {
+      const h = selectionSaveHarness(taskType, { draft: { customModel: true, modelName: "custom-model" }, saved });
+      await assert.rejects(h.ctx.saveTaskModelSelection(), /请先验证调用/);
+      assert.equal(h.persisted.active, "direct_svc_old");
+    });
+  }
+}

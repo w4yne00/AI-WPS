@@ -7166,6 +7166,12 @@
       var customValidated = typeof validatedCustom === "string"
         ? validatedCustom === draft.modelName
         : Boolean(validatedCustom && validatedCustom.serviceId === draft.serviceId && validatedCustom.modelName === draft.modelName);
+      var persistedSelection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
+      customValidated = customValidated || Boolean(
+        persistedSelection.customModelValidated &&
+        persistedSelection.serviceId === draft.serviceId &&
+        persistedSelection.modelName === draft.modelName
+      );
       if (!customValidated) {
         if (statusNode) {
           statusNode.textContent = "请先验证调用；验证会真实请求模型并可能产生费用。";
@@ -7175,13 +7181,17 @@
       draft.customModelValidated = true;
     }
     setWorkflowMutationBusy(true);
-    return request("/provider/task-model-selections/" + encodeURIComponent(taskType), draft, { method: "PUT" })
-      .then(function () {
-        return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
-          taskType: taskType,
-          taskModelSelection: draft
+    return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
+      taskType: taskType,
+      taskModelSelection: draft
+    }).then(function (body) {
+        if (!state.taskApiKeys) {
+          state.taskApiKeys = {};
+        }
+        state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType], {
+          activeProfileId: draft.serviceId,
+          accessMethod: "direct_model"
         });
-      }).then(function () {
         if (!state.workflowProfileSelections) {
           state.workflowProfileSelections = {};
         }
@@ -7189,7 +7199,7 @@
         if (!state.taskModelSelections) {
           state.taskModelSelections = {};
         }
-        state.taskModelSelections[taskType] = draft;
+        state.taskModelSelections[taskType] = (body && body.data && body.data.taskModelSelection) || draft;
         return Promise.all([
           loadWorkflowProfileForTask(taskType),
           loadDirectServices()
