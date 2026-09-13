@@ -446,6 +446,7 @@ test("Preflight readiness check: validateActiveDirectTaskSelection blocks unread
   }
 
   const state = {
+    taskConfigurationReady: true,
     taskApiKeys: {
       "ppt.slide_assistant": { accessMethod: "direct_model", activeProfileId: "svc_1" }
     },

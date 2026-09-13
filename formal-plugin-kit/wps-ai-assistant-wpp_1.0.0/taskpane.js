@@ -66,6 +66,8 @@
     directServiceOperationId: 0,
     directServiceDeleteCandidate: null,
     taskModelSelections: {},
+    taskApiKeys: {},
+    taskConfigurationReady: false,
     lastValidatedCustomModel: null,
     workflowProfileMutationBusy: false,
     workflowProfileActivationTimer: null,
@@ -394,7 +396,14 @@
             body.message ||
             ("HTTP " + response.status)
           );
-          error.adapterCode = body.errors && body.errors[0] && body.errors[0].code;
+          var adapterError = (body.errors && body.errors[0]) || {};
+          error.adapterCode = adapterError.code || "";
+          error.code = error.adapterCode;
+          error.status = response.status;
+          error.data = body.data || {};
+          error.referencedTasks = Array.isArray(adapterError.referencedTasks)
+            ? adapterError.referencedTasks
+            : (Array.isArray(error.data.referencedTasks) ? error.data.referencedTasks : []);
           throw error;
         }
         return body;
@@ -1903,12 +1912,18 @@
 
   function getWorkflowProfileData(taskType) {
     var type = taskType || getCurrentWorkflowTaskType();
-    return (state.workflowProfiles && state.workflowProfiles[type]) || (state.profilesByTask && state.profilesByTask[type]) || state.profiles || {
+    var base = (state.workflowProfiles && state.workflowProfiles[type]) || (state.profilesByTask && state.profilesByTask[type]) || state.profiles || {
       taskType: type,
       activeProfileId: "",
       profileCount: 0,
       profiles: []
     };
+    var taskStatus = (state.taskApiKeys && state.taskApiKeys[type]) || {};
+    return Object.assign({}, base, {
+      activeProfileId: taskStatus.activeProfileId || base.activeProfileId || "",
+      directServices: state.directServices || [],
+      taskModelSelection: (state.taskModelSelections && state.taskModelSelections[type]) || null
+    });
   }
 
   function getWorkflowProfileById(taskType, profileId) {
@@ -2349,6 +2364,7 @@
           (bodies[index] && bodies[index].data) || {}
         );
         state.workflowProfileSelections[definition.taskType] =
+          ((state.taskApiKeys || {})[definition.taskType] || {}).activeProfileId ||
           nextProfilesByTask[definition.taskType].activeProfileId || "";
       });
       state.profilesByTask = nextProfilesByTask;
@@ -2586,7 +2602,7 @@
   function finishWorkflowEditorSave(message) {
     state.workflowEditor.dirty = false;
     setWorkflowProfileMutationBusy(false);
-    return loadProfiles().then(function () {
+    return refreshSettings({ silent: true }).then(function () {
       closeWorkflowEditor(true);
       updateWorkflowEditorControls();
       setStatus(message);
@@ -2759,6 +2775,10 @@
 
     return activationPromise
       .then(function (body) {
+        state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType], {
+          activeProfileId: profileId,
+          accessMethod: isDirectService ? "direct_model" : (profile.accessMethod || "workflow_platform")
+        });
         if (isDirectService) {
           state.workflowProfileSelections[taskType] = profileId;
           state.selectedProfileId = profileId;
@@ -4068,6 +4088,12 @@
       var customValidated = typeof validatedCustom === "string"
         ? validatedCustom === draft.modelName
         : Boolean(validatedCustom && validatedCustom.serviceId === draft.serviceId && validatedCustom.modelName === draft.modelName);
+      var persistedSelection = state.taskModelSelections[taskType] || {};
+      customValidated = customValidated || Boolean(
+        persistedSelection.customModelValidated &&
+        persistedSelection.serviceId === draft.serviceId &&
+        persistedSelection.modelName === draft.modelName
+      );
       if (!customValidated) {
         if (statusNode) {
           statusNode.textContent = "请先验证调用；验证会真实请求模型并可能产生费用。";
@@ -4092,6 +4118,9 @@
           return { superseded: true };
         }
         activationSaved = true;
+        state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType], {
+          activeProfileId: draft.serviceId, accessMethod: "direct_model"
+        });
         state.workflowProfileSelections[taskType] = draft.serviceId;
         if (body && body.data && body.data.taskModelSelection) {
           state.taskModelSelections[taskType] = body.data.taskModelSelection;
@@ -4136,6 +4165,9 @@
   }
 
   function validateActiveDirectTaskSelection(taskType) {
+    if (!state.taskConfigurationReady) {
+      return { valid: false, ok: false, error: "任务接入配置尚未就绪，请刷新配置后重试。" };
+    }
     var taskStatus = (state.taskApiKeys && state.taskApiKeys[taskType]) || {};
     var selection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
     var activeProfileId = String(taskStatus.activeProfileId || "").trim();
@@ -4151,8 +4183,6 @@
       serviceId = String(selection.serviceId).trim();
     } else if (taskStatus.serviceId) {
       serviceId = String(taskStatus.serviceId).trim();
-    } else {
-      return { valid: true, ok: true, applicable: false, error: "" };
     }
 
     service = findDirectService(serviceId);
@@ -4163,7 +4193,7 @@
         Object.assign({}, taskStatus, { accessMethod: "direct_model" })
       );
     }
-    return { valid: true, ok: true };
+    return { valid: false, ok: false, error: "直连服务校验尚未就绪，请重新打开任务窗格。" };
   }
 
   function renderProviderDiagnostics(items) {
@@ -4322,6 +4352,7 @@
     state.configRefreshRequestId = requestId;
     state.configRefreshActiveRequestId = requestId;
     state.configRefreshActiveSilent = silent;
+    state.taskConfigurationReady = false;
     if (!silent) {
       setSettingsStatus("正在刷新配置...");
     }
@@ -4335,11 +4366,25 @@
       if (healthState.status === "recovery") {
         return null;
       }
-      return Promise.all([
-        request("/config", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
-        loadProfiles(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
-        loadDirectServices(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
-      ]);
+      return request("/config", null, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }).then(function (config) {
+        if (state.configRefreshRequestId !== requestId) {
+          return null;
+        }
+        var taskKeys = config.data && config.data.taskApiKeys;
+        if (!taskKeys || TASK_API_KEY_DEFS.some(function (definition) {
+          var status = taskKeys[definition.taskType];
+          return !status || (typeof status.configured !== "boolean" &&
+            status.accessMethod !== "direct_model" && status.accessMethod !== "workflow_platform");
+        })) {
+          throw new Error("任务接入状态读取失败");
+        }
+        state.taskApiKeys = taskKeys;
+        return Promise.all([
+          Promise.resolve(config),
+          loadProfiles(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS }),
+          loadDirectServices(requestId, { timeoutMs: SETTINGS_REFRESH_REQUEST_TIMEOUT_MS })
+        ]);
+      });
     }).then(function (items) {
       if (!items) {
         return null;
@@ -4354,6 +4399,7 @@
       if (!profileResult || profileResult.failed) {
         throw new Error("模型配置读取失败");
       }
+      state.taskConfigurationReady = true;
       setProviderBaseUrl(items[0].data && items[0].data.providerBaseUrl);
       state.modelInterfaceDetectable = true;
       renderModelInterfaceState(state.modelInterfaceDetectable);
@@ -5111,8 +5157,7 @@
     });
     switchView(initialView);
     if (initialView === "home") {
-      checkHealth();
-      loadProfiles();
+      refreshSettings({ silent: true });
     }
   }
 

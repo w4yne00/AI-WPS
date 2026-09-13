@@ -1555,6 +1555,7 @@ async function assertPptBehavioralDomContracts() {
   const escaped = (v) => pptHelperApi.escapeHtml ? pptHelperApi.escapeHtml(v) : String(v || "");
 
   const testState = {
+    taskApiKeys: {},
     taskMode: "pptSlideAssistant",
     currentView: "home",
     sourceMode: "slide",
