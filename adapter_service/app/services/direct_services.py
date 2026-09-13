@@ -1114,39 +1114,89 @@ class DirectServiceStore:
                             "label": "格式语义协议尚未验证，格式审查仅运行确定性规则。",
                         }
 
-                results.append(
-                    {
-                        "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
-                        "taskType": task,
-                        "host": host_for_task(task),
-                        "serviceId": service_id,
-                        "serviceName": str(service.get("name", "")),
-                        "modelName": model_name,
-                        "effectiveModel": effective_model,
-                        "temperature": raw.get("temperature"),
-                        "maxOutputTokens": raw.get("maxOutputTokens"),
-                        "contextWindowTokens": raw.get("contextWindowTokens"),
-                        "imageInputMode": image_mode,
-                        "imageExternalAuthorization": image_authorization,
-                        "imageSemanticValidation": image_validation,
-                        "imageSemanticReadiness": image_readiness,
-                        "formatSemanticValidation": format_semantic_validation,
-                        "formatSemanticReadiness": format_semantic_readiness,
-                        "customModel": custom_model,
-                        "customModelValidated": custom_model_validated,
-                        "modelAvailability": model_availability,
-                        "modelAvailable": model_available,
-                        "modelUnavailableReason": unavailable_reason,
-                        "modelCatalogStatus": catalog.get("status", "unavailable"),
-                        "modelCatalogCacheStatus": catalog.get(
-                            "cacheStatus", "empty"
-                        ),
-                        "manualModelAllowed": bool(
-                            catalog.get("manualModelAllowed", False)
-                        ),
-                        "updatedAt": str(raw.get("updatedAt", "")),
-                    }
-                )
+                limited_review_ready = None
+                full_document_review_ready = None
+                full_document_review_readiness = None
+
+                if task == "word.document_review":
+                    has_service = bool(service)
+                    has_url = bool(service and service.get("serviceBaseUrl"))
+                    has_key = bool(self._key_exists(service_id)) if service else False
+                    has_model = bool(effective_model)
+                    config_complete = bool(has_service and has_url and has_key and has_model)
+                    limited_review_ready = bool(config_complete and model_available)
+
+                    if not config_complete:
+                        full_document_review_readiness = {
+                            "code": "configuration_incomplete",
+                            "label": "模型配置不完整。",
+                        }
+                    elif not model_available:
+                        full_document_review_readiness = {
+                            "code": "model_unavailable",
+                            "label": unavailable_reason or "所选模型当前不可用。",
+                        }
+                    elif raw.get("maxOutputTokens") is None:
+                        full_document_review_readiness = {
+                            "code": "explicit_output_tokens_required",
+                            "label": "仅限量审查可用：请显式设置最大输出 Token。",
+                        }
+                    elif raw.get("contextWindowTokens") is None:
+                        full_document_review_readiness = {
+                            "code": "explicit_context_tokens_required",
+                            "label": "仅限量审查可用：请显式设置上下文容量。",
+                        }
+                    elif int(raw.get("maxOutputTokens") or 0) < 2048:
+                        full_document_review_readiness = {
+                            "code": "output_tokens_too_small",
+                            "label": "仅限量审查可用：全篇审查至少需要 2048 输出 Token。",
+                        }
+                    else:
+                        full_document_review_readiness = {
+                            "code": "ready",
+                            "label": "限量审查与全篇审查均可用。",
+                        }
+                    full_document_review_ready = bool(
+                        full_document_review_readiness["code"] == "ready"
+                    )
+
+                entry = {
+                    "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
+                    "taskType": task,
+                    "host": host_for_task(task),
+                    "serviceId": service_id,
+                    "serviceName": str(service.get("name", "")),
+                    "modelName": model_name,
+                    "effectiveModel": effective_model,
+                    "temperature": raw.get("temperature"),
+                    "maxOutputTokens": raw.get("maxOutputTokens"),
+                    "contextWindowTokens": raw.get("contextWindowTokens"),
+                    "contextWindowTokensExplicit": raw.get("contextWindowTokens") is not None,
+                    "imageInputMode": image_mode,
+                    "imageExternalAuthorization": image_authorization,
+                    "imageSemanticValidation": image_validation,
+                    "imageSemanticReadiness": image_readiness,
+                    "formatSemanticValidation": format_semantic_validation,
+                    "formatSemanticReadiness": format_semantic_readiness,
+                    "customModel": custom_model,
+                    "customModelValidated": custom_model_validated,
+                    "modelAvailability": model_availability,
+                    "modelAvailable": model_available,
+                    "modelUnavailableReason": unavailable_reason,
+                    "modelCatalogStatus": catalog.get("status", "unavailable"),
+                    "modelCatalogCacheStatus": catalog.get(
+                        "cacheStatus", "empty"
+                    ),
+                    "manualModelAllowed": bool(
+                        catalog.get("manualModelAllowed", False)
+                    ),
+                    "updatedAt": str(raw.get("updatedAt", "")),
+                }
+                if task == "word.document_review":
+                    entry["limitedReviewReady"] = limited_review_ready
+                    entry["fullDocumentReviewReady"] = full_document_review_ready
+                    entry["fullDocumentReviewReadiness"] = full_document_review_readiness
+                results.append(entry)
 
             return {
                 "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,

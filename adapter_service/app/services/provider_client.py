@@ -2126,6 +2126,7 @@ class ProviderClient:
                         "providerInputMode": DIFY_INPUT_MODE_LEGACY,
                         "accessMethod": ACCESS_DIRECT_MODEL,
                         "serviceBaseUrl": base_url,
+                        "serviceName": str(service.get("name", "")),
                         "modelConfiguration": None,
                         "modelConfigurationId": service["id"],
                         "modelConfigurationName": str(service.get("name", "")),
@@ -2171,7 +2172,24 @@ class ProviderClient:
                             "imageSemanticReadiness": image_readiness,
                             "formatSemanticValidation": format_val,
                             "formatSemanticReadiness": format_readiness,
-                            "configVersion": 1,
+                            "configVersion": int(service.get("revision", 1)),
+                        }
+                    elif task_type == "word.document_review":
+                        resolved_auth["modelConfiguration"] = {
+                            "id": service["id"],
+                            "name": str(service.get("name", "模型直连")),
+                            "taskType": "word.document_review",
+                            "accessMethod": ACCESS_DIRECT_MODEL,
+                            "serviceBaseUrl": base_url,
+                            "modelName": effective_model,
+                            "temperature": selection.get("temperature"),
+                            "maxOutputTokens": selection.get("maxOutputTokens"),
+                            "contextWindowTokens": int(
+                                selection.get("contextWindowTokens")
+                                or DEFAULT_CONTEXT_WINDOW_TOKENS
+                            ),
+                            "contextWindowTokensExplicit": selection.get("contextWindowTokens") is not None,
+                            "configVersion": int(service.get("revision", 1)),
                         }
                     return resolved_auth
             except DirectServiceError:

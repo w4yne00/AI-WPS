@@ -142,8 +142,8 @@ test("Compact menu integration: includes shared direct service in Word writing m
   });
   assert.strictEqual(
     reviewItems.some(item => item.id === "direct_svc_1"),
-    false,
-    "document review must not expose shared direct services"
+    true,
+    "document review must expose shared direct services"
   );
 
   const manageItem = items.find(i => i.id === "manage");
@@ -434,10 +434,11 @@ test("Word task model selection: parameters override, draft generation, and revi
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "智能仿写接入选择");
 
-  // 4. Review tabs isolation: hidden on document_review, supported on format_review
+  // 4. Review tabs: document_review and format_review both supported
   state.settingsWorkflowTaskType = "word.document_review";
   ctx.renderTaskModelSelectionSection();
-  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, true, "task direct service section must be hidden for document_review");
+  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "task direct service section must be visible for document_review");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "文档审查接入选择");
 
   state.settingsWorkflowTaskType = "word.format_review";
   ctx.renderTaskModelSelectionSection();
