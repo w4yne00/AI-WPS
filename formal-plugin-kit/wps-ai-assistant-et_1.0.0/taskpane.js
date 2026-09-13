@@ -5229,6 +5229,10 @@
       : EXCEL_WORKFLOW_TASK_TYPE;
   }
 
+  function getSettingsWorkflowTaskType() {
+    return state.workflowTaskType || (typeof getTaskPageWorkflowType === "function" ? getTaskPageWorkflowType() : EXCEL_WORKFLOW_TASK_TYPE);
+  }
+
   function focusTaskModelConfigTrigger() {
     var trigger = byId("task-model-config-trigger");
     if (trigger && typeof trigger.focus === "function") {
@@ -6840,6 +6844,8 @@
   function renderTaskModelSelectionSection() {
     var section = byId("excel-task-direct-service-section");
     var select = byId("excel-task-direct-service-select");
+    var titleNode = byId("excel-task-direct-service-title");
+    var hintNode = byId("excel-task-direct-service-hint");
     var paramsDiv = byId("excel-task-direct-params");
     var modelSelect = byId("excel-task-model-select");
     var customCheck = byId("excel-task-custom-model-check");
@@ -6855,14 +6861,36 @@
       return;
     }
 
-    section.hidden = state.workflowTaskType !== EXCEL_WORKFLOW_TASK_TYPE;
+    var taskType = typeof getSettingsWorkflowTaskType === "function"
+      ? getSettingsWorkflowTaskType()
+      : (state.workflowTaskType || EXCEL_WORKFLOW_TASK_TYPE);
+
+    var isExcelTask = taskType === EXCEL_WORKFLOW_TASK_TYPE ||
+      taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE ||
+      taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE;
+
+    section.hidden = !isExcelTask;
     if (section.hidden) {
       return;
     }
 
+    if (titleNode) {
+      if (taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE) {
+        titleNode.textContent = "公式助手接入选择";
+      } else if (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE) {
+        titleNode.textContent = "智能填写接入选择";
+      } else {
+        titleNode.textContent = "智能分析接入选择";
+      }
+    }
+    if (hintNode) {
+      hintNode.textContent = "使用工作流平台或绑定上方共享直连服务，独立调整任务参数。";
+    }
+
     var directServices = state.directServices || [];
-    var currentSelection = (state.taskModelSelections && state.taskModelSelections["excel.analysis"]) || null;
-    var activeProfileId = getWorkflowProfileData("excel.analysis").activeProfileId;
+    var currentSelection = (state.taskModelSelections && state.taskModelSelections[taskType]) || null;
+    var profileData = typeof getWorkflowProfileData === "function" ? getWorkflowProfileData(taskType) : { activeProfileId: "" };
+    var activeProfileId = profileData ? profileData.activeProfileId : "";
     var chosenServiceId = (currentSelection && currentSelection.serviceId) || (String(activeProfileId).startsWith("direct_svc_") ? activeProfileId : "");
 
     var optionsHtml = ['<option value="">-- 使用工作流平台配置 --</option>'];
@@ -7053,6 +7081,9 @@
   }
 
   function validateTaskModelSelection() {
+    var taskType = typeof getSettingsWorkflowTaskType === "function"
+      ? getSettingsWorkflowTaskType()
+      : (state.workflowTaskType || EXCEL_WORKFLOW_TASK_TYPE);
     var draft = getTaskModelSelectionDraft();
     var statusNode = byId("excel-task-model-validation-status");
     var costWarning = byId("excel-task-model-cost-warning");
@@ -7061,7 +7092,7 @@
       if (statusNode) {
         statusNode.textContent = "请先选择直连服务。";
       }
-      return;
+      return Promise.reject(new Error("请先选择直连服务。"));
     }
     var checked = helpers.validateTaskModelSelectionDraft
       ? helpers.validateTaskModelSelectionDraft(draft, { service: currentSvc })
@@ -7070,7 +7101,7 @@
       if (statusNode) {
         statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
       }
-      return;
+      return Promise.reject(new Error(checked.message || checked.error || "请检查参数设置。"));
     }
     if (statusNode) {
       statusNode.textContent = "正在验证调用（会真实请求模型，可能产生费用）...";
@@ -7080,7 +7111,7 @@
       costWarning.textContent = "验证调用会真实请求模型，可能产生费用并等待服务返回。";
     }
     setWorkflowMutationBusy(true);
-    request("/provider/task-model-selections/excel.analysis/validate", draft)
+    return request("/provider/task-model-selections/" + encodeURIComponent(taskType) + "/validate", draft)
       .then(function (body) {
         setWorkflowMutationBusy(false);
         if (draft.customModel && draft.modelName) {
@@ -7100,21 +7131,26 @@
         if (costWarning && result.costWarning) {
           costWarning.textContent = result.costWarning;
         }
+        return body;
       }).catch(function (error) {
         setWorkflowMutationBusy(false);
         if (statusNode) {
           statusNode.textContent = "验证失败：" + describeFetchError(error);
         }
+        throw error;
       });
   }
 
   function saveTaskModelSelection() {
+    var taskType = typeof getSettingsWorkflowTaskType === "function"
+      ? getSettingsWorkflowTaskType()
+      : (state.workflowTaskType || EXCEL_WORKFLOW_TASK_TYPE);
     var draft = getTaskModelSelectionDraft();
     var statusNode = byId("excel-task-model-validation-status");
     var currentSvc = findDirectService(draft.serviceId);
     if (!draft.serviceId) {
       setStatus("请先选择直连服务。");
-      return;
+      return Promise.reject(new Error("请先选择直连服务。"));
     }
     var checked = helpers.validateTaskModelSelectionDraft
       ? helpers.validateTaskModelSelectionDraft(draft, { service: currentSvc })
@@ -7123,36 +7159,61 @@
       if (statusNode) {
         statusNode.textContent = checked.message || checked.error || "请检查参数设置。";
       }
-      return;
+      return Promise.reject(new Error(checked.message || checked.error || "请检查参数设置。"));
     }
     if (draft.customModel) {
       var validatedCustom = state.lastValidatedCustomModel;
       var customValidated = typeof validatedCustom === "string"
         ? validatedCustom === draft.modelName
         : Boolean(validatedCustom && validatedCustom.serviceId === draft.serviceId && validatedCustom.modelName === draft.modelName);
+      var persistedSelection = (state.taskModelSelections && state.taskModelSelections[taskType]) || {};
+      customValidated = customValidated || Boolean(
+        persistedSelection.customModelValidated &&
+        persistedSelection.serviceId === draft.serviceId &&
+        persistedSelection.modelName === draft.modelName
+      );
       if (!customValidated) {
         if (statusNode) {
           statusNode.textContent = "请先验证调用；验证会真实请求模型并可能产生费用。";
         }
-        return;
+        return Promise.reject(new Error("请先验证调用；验证会真实请求模型并可能产生费用。"));
       }
       draft.customModelValidated = true;
     }
     setWorkflowMutationBusy(true);
-    request("/provider/task-model-selections/excel.analysis", draft, { method: "PUT" })
-      .then(function () {
-        return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
-          taskType: "excel.analysis"
+    return request("/provider/direct-services/" + encodeURIComponent(draft.serviceId) + "/activate", {
+      taskType: taskType,
+      taskModelSelection: draft
+    }).then(function (body) {
+        if (!state.taskApiKeys) {
+          state.taskApiKeys = {};
+        }
+        state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType], {
+          activeProfileId: draft.serviceId,
+          accessMethod: "direct_model"
         });
-      }).then(function () {
+        if (!state.workflowProfileSelections) {
+          state.workflowProfileSelections = {};
+        }
+        state.workflowProfileSelections[taskType] = draft.serviceId;
+        if (!state.taskModelSelections) {
+          state.taskModelSelections = {};
+        }
+        state.taskModelSelections[taskType] = (body && body.data && body.data.taskModelSelection) || draft;
         return Promise.all([
-          loadWorkflowProfileForTask("excel.analysis"),
+          loadWorkflowProfileForTask(taskType),
           loadDirectServices()
         ]).then(function () {
           setWorkflowMutationBusy(false);
-          setStatus("智能分析接入直连服务已保存并设为当前。");
+          var taskLabel = taskType === EXCEL_FORMULA_WORKFLOW_TASK_TYPE
+            ? "公式助手"
+            : (taskType === EXCEL_SMART_FILL_WORKFLOW_TASK_TYPE ? "智能填写" : "智能分析");
+          setStatus(taskLabel + "接入直连服务已保存并设为当前。");
           if (statusNode) {
             statusNode.textContent = "已保存并设为当前。";
+          }
+          if (typeof renderWorkflowProfileStrip === "function") {
+            renderWorkflowProfileStrip();
           }
         });
       }).catch(function (error) {
@@ -7160,6 +7221,7 @@
         if (statusNode) {
           statusNode.textContent = "保存失败：" + describeFetchError(error);
         }
+        throw error;
       });
   }
 

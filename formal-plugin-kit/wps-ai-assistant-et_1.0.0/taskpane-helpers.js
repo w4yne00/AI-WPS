@@ -4333,9 +4333,7 @@
       result.visibleText = "未配置";
       result.statusText = "未配置";
     } else {
-      var accessPart = profile.accessMethod === "direct_model" && profile.effectiveModel
-        ? "模型直连 · " + profile.effectiveModel
-        : formatTaskModelConfigAccessMethod(profile.accessMethod);
+      var accessPart = formatTaskModelConfigAccessMethod(profile.accessMethod);
       result.visibleText = String(profile.name || "未命名配置") + " · " + accessPart;
       if (status === "busy") {
         result.statusText = "正在切换";
@@ -4368,7 +4366,7 @@
       if (directServices[index] && directServices[index].id === id) {
         var svc = directServices[index];
         var selection = (data && data.taskModelSelection) || {};
-        var effModel = selection.effectiveModel || svc.defaultModel || "";
+        var effModel = selection.modelName || selection.effectiveModel || svc.defaultModel || "";
         return {
           id: svc.id,
           name: svc.name,
@@ -4725,17 +4723,18 @@
 
   function validateDirectTaskSelectionReadiness(selection, service, taskStatus) {
     var current = selection || {};
+    var svc = (service && service.service) ? service.service : service;
     var status = taskStatus || {};
-    var serviceId = String(current.serviceId || (service && service.id) || "").trim();
-    var modelName = String(current.modelName || (service && service.defaultModel) || "").trim();
+    var serviceId = String(current.serviceId || (svc && svc.id) || "").trim();
+    var modelName = String(current.modelName || (svc && svc.defaultModel) || "").trim();
     var customModel = Boolean(current.customModel);
     var reason;
     var draftResult;
 
-    if (status.accessMethod !== "direct_model") {
+    if (status.accessMethod && status.accessMethod !== "direct_model") {
       return { valid: true, ok: true, applicable: false, error: "" };
     }
-    if (!serviceId || !service) {
+    if (!serviceId || !svc) {
       return { valid: false, ok: false, applicable: true, error: "直连服务状态尚未加载，请刷新设置后重试。" };
     }
 
@@ -4745,7 +4744,7 @@
         modelName: modelName,
         customModel: customModel
       },
-      { service: service }
+      { service: svc }
     );
     if (!draftResult.ok) {
       return {
@@ -4768,12 +4767,12 @@
         return { valid: false, ok: false, applicable: true, error: "高级手填模型尚未通过真实任务调用验证，请先验证模型。" };
       }
       if (reason === "catalog_unavailable" || reason === "catalog_empty") {
-        return { valid: false, ok: false, applicable: true, error: "模型目录当前不可用，请刷新目录，或先验证高级手填模型。" };
+        return { valid: false, ok: false, applicable: true, error: "模型目录当前不可用；请刷新目录，或使用高级手填并验证真实任务调用。" };
       }
       if (reason === "disappeared") {
         return { valid: false, ok: false, applicable: true, error: "所选模型已从最新目录移除，请重新选择。" };
       }
-      return { valid: false, ok: false, applicable: true, error: "当前模型不可用，请先刷新目录或重新验证模型。" };
+      return { valid: false, ok: false, applicable: true, error: "当前模型不可用，不能发起新任务；请重新选择模型。" };
     }
 
     return { valid: true, ok: true, applicable: true, error: "" };
@@ -4829,14 +4828,16 @@
     var newUrl = String(draftUrl || "").trim();
     var isModified = Boolean(origUrl && newUrl && origUrl !== newUrl);
     var referenced = Array.isArray(s.referencedTasks) ? s.referencedTasks : [];
-    return {
-      isModified: isModified,
-      referencedCount: referenced.length,
-      referencedTasks: referenced,
-      warning: isModified && referenced.length > 0
-        ? "修改服务地址将影响以下任务：" + formatReferencedTasks(referenced) + "。保存后这些任务将立即调用新地址。"
-        : ""
-    };
+    var warning = isModified && referenced.length > 0
+      ? "修改服务地址将影响以下任务：" + formatReferencedTasks(referenced) + "。保存后这些任务将立即调用新地址。"
+      : "";
+    var res = new String(warning);
+    res.isModified = isModified;
+    res.referencedCount = referenced.length;
+    res.referencedTasks = referenced;
+    res.warning = warning;
+    res.message = warning;
+    return res;
   }
 
   function isDirectServiceRevisionConflict(error) {
