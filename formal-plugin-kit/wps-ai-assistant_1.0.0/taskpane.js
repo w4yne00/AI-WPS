@@ -3778,9 +3778,15 @@
           if (body && body.data && body.data.taskModelSelection) {
             state.taskModelSelections[taskType] = body.data.taskModelSelection;
           }
-          if (state.taskApiKeys && state.taskApiKeys[taskType]) {
-            state.taskApiKeys[taskType].activeProfileId = profileId;
-          }
+          state.taskApiKeys = state.taskApiKeys || {};
+          state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType] || {}, {
+            activeProfileId: profileId,
+            activeConfigurationId: profileId,
+            accessMethod: "direct_model",
+            serviceId: profileId,
+            configured: true,
+            taskKeyConfigured: true
+          });
         } else {
           var nextData = normalizeWorkflowProfileData(body && body.data || {}, taskType);
           if (typeof invalidateWorkflowProfileRequests === "function") {
@@ -3789,6 +3795,15 @@
           state.workflowProfiles[taskType] = nextData;
           state.workflowProfileSelections[taskType] = nextData.activeProfileId || profileId;
           state.taskModelConfigStatusByTask[taskType] = "";
+          state.taskApiKeys = state.taskApiKeys || {};
+          state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType] || {}, {
+            activeProfileId: nextData.activeProfileId || profileId,
+            activeConfigurationId: nextData.activeProfileId || profileId,
+            accessMethod: String(profile && profile.accessMethod || "workflow_platform"),
+            serviceId: "",
+            configured: Boolean(profile && profile.complete),
+            taskKeyConfigured: Boolean(profile && profile.keyConfigured)
+          });
         }
         var dsRefresh = typeof loadDirectServices === "function" ? loadDirectServices() : Promise.resolve();
         return Promise.all([
@@ -5092,6 +5107,15 @@
         if (body && body.data && body.data.taskModelSelection) {
           state.taskModelSelections[taskType] = body.data.taskModelSelection;
         }
+        state.taskApiKeys = state.taskApiKeys || {};
+        state.taskApiKeys[taskType] = Object.assign({}, state.taskApiKeys[taskType] || {}, {
+          activeProfileId: draft.serviceId,
+          activeConfigurationId: draft.serviceId,
+          accessMethod: "direct_model",
+          serviceId: draft.serviceId,
+          configured: true,
+          taskKeyConfigured: true
+        });
         return Promise.all([
           loadWorkflowProfiles(taskType),
           loadDirectServices(undefined, undefined, operationId)

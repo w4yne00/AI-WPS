@@ -440,9 +440,8 @@ class LongTaskCoordinator:
                 if (
                     job.get("_authServiceId") == service_id
                     and job.get("_authKeyFingerprint") == api_key_fingerprint
-                    and (
-                        service_revision is None
-                        or job.get("_authServiceRevision") == service_revision
+                    and self._auth_revision_is_invalidated(
+                        job.get("_authServiceRevision"), service_revision
                     )
                 ):
                     invalidated_count += 1
@@ -488,13 +487,33 @@ class LongTaskCoordinator:
     ) -> Optional[Dict]:
         if not service_id or not api_key_fingerprint:
             return None
-        exact = self._invalidated_auth_errors.get(
-            (service_id, api_key_fingerprint, service_revision)
-        )
         wildcard = self._invalidated_auth_errors.get(
             (service_id, api_key_fingerprint, None)
         )
-        return deepcopy(exact or wildcard) if exact or wildcard else None
+        if wildcard:
+            return deepcopy(wildcard)
+        matching = [
+            (revision, error)
+            for (stored_service_id, stored_fingerprint, revision), error
+            in self._invalidated_auth_errors.items()
+            if stored_service_id == service_id
+            and stored_fingerprint == api_key_fingerprint
+            and revision is not None
+            and self._auth_revision_is_invalidated(service_revision, revision)
+        ]
+        if not matching:
+            return None
+        return deepcopy(max(matching, key=lambda item: item[0])[1])
+
+    @staticmethod
+    def _auth_revision_is_invalidated(
+        task_revision: Optional[int], rotation_revision: Optional[int]
+    ) -> bool:
+        if rotation_revision is None:
+            return True
+        if task_revision is None:
+            return False
+        return int(task_revision) <= int(rotation_revision)
 
     @staticmethod
     def _commit_auth_invalidation_locked(job: Dict, error: Dict) -> None:

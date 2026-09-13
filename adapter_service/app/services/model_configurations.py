@@ -28,6 +28,10 @@ ACCESS_DIRECT_MODEL = "direct_model"
 SUPPORTED_ACCESS_METHODS = (ACCESS_WORKFLOW_PLATFORM, ACCESS_DIRECT_MODEL)
 DEFAULT_CONTEXT_WINDOW_TOKENS = 40000
 DEFAULT_RESERVED_OUTPUT_TOKENS = 8000
+MIN_TASK_MAX_OUTPUT_TOKENS = 1
+MAX_TASK_MAX_OUTPUT_TOKENS = 16384
+MIN_TASK_CONTEXT_WINDOW_TOKENS = 1000
+MAX_TASK_CONTEXT_WINDOW_TOKENS = 2000000
 MAX_CONFIGURATION_NAME_LENGTH = 40
 MAX_CONFIGURATION_NOTE_LENGTH = 200
 KNOWN_CALL_SUFFIXES = ("/chat-messages", "/files/upload", "/chat/completions")
@@ -46,6 +50,15 @@ def default_image_input_mode(task_type: str, access_method: str) -> str:
     ):
         return "openai_image_url"
     return "disabled"
+
+
+def direct_model_input_budget(
+    context_window_tokens: int, max_output_tokens: int
+) -> Tuple[int, int]:
+    context_window = int(context_window_tokens)
+    reserved_output = int(max_output_tokens)
+    safety_margin = max(int(context_window * 0.1), 1)
+    return context_window - reserved_output - safety_margin, safety_margin
 
 
 class ModelConfigurationError(ValueError):

@@ -43,6 +43,7 @@ from app.services.model_configurations import (
     DEFAULT_RESERVED_OUTPUT_TOKENS,
     ModelConfigurationError,
     ModelConfigurationStore,
+    direct_model_input_budget,
 )
 from app.services.system_prompts import SystemPromptError, SystemPromptStore
 from app.services.direct_services import DirectServiceError, DirectServiceStore
@@ -2047,13 +2048,14 @@ class ProviderClient:
         self.refresh_settings()
         if self.direct_service_store is not None:
             try:
-                payload = load_config_payload(self.direct_service_store.config_path)
-                active_map = payload.get("activeModelConfigurations") or {}
-                active_id = str(active_map.get(task_type, "")).strip()
-                services = payload.get("directServices") or {}
-                if active_id and active_id in services:
-                    service = self.direct_service_store.get_service(active_id, include_secret=True)
-                    selection = self.direct_service_store.get_task_model_selection(task_type)
+                resolved_selection = (
+                    self.direct_service_store.resolve_active_task_selection(
+                        task_type, include_secret=True
+                    )
+                )
+                if resolved_selection:
+                    service = resolved_selection["directService"]
+                    selection = resolved_selection["taskModelSelection"]
                     effective_model = str(selection.get("modelName") or service.get("defaultModel") or "").strip()
                     if not effective_model:
                         raise AdapterError(
@@ -2192,7 +2194,9 @@ class ProviderClient:
                             "configVersion": int(service.get("revision", 1)),
                         }
                     return resolved_auth
-            except DirectServiceError:
+            except DirectServiceError as exc:
+                if exc.code == "DIRECT_SERVICE_SELECTION_MISMATCH":
+                    raise AdapterError(exc.code, exc.message, status_code=409) from exc
                 pass
 
         model_configuration = self.get_active_model_configuration(task_type, include_secret=True)
@@ -2917,8 +2921,9 @@ class ProviderClient:
         )
         max_output_tokens = resolved_task_auth.get("maxOutputTokens")
         reserved_output = int(max_output_tokens or DEFAULT_RESERVED_OUTPUT_TOKENS)
-        safety_margin = max(int(context_window * 0.1), 1)
-        input_budget = context_window - reserved_output - safety_margin
+        input_budget, safety_margin = direct_model_input_budget(
+            context_window, reserved_output
+        )
         if input_token_limit is not None:
             input_budget = min(input_budget, int(input_token_limit))
         estimated_input = _estimate_direct_tokens(prompt_asset["content"], query)
