@@ -1,5 +1,26 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #179 迁移 Word 格式审查的直连接入（2026-09-13）
+
+- **Word 格式审查共享直连服务迁移完成**：遵循 ADR-0128/ADR-0130/ADR-0131 与 Issue #164 父规格规范，将 Word 格式审查（`word.format_review`）平滑迁移接入设置页首页的共享模型直连服务（`#word-task-direct-service-section`），与 Word 智能编写、智能仿写及 Excel/PPT 共享直连体系深度对齐；
+- **任务模型覆盖与图片模式控制**：
+  - 支持绑定任意已配置的共享直连服务，默认继承服务默认模型（`defaultModel`），并支持覆盖模型名（目录下拉或高级手填）、`temperature`、`maxOutputTokens` 与 `contextWindowTokens`；
+  - 默认 `imageInputMode` 为 `"openai_image_url"`，并允许显式切换为 `"disabled"`；界面提供 `#word-task-image-mode-row` 专属切换控件；
+- **图片外发授权与语义验证强绑定**：
+  - `imageExternalAuthorization` 与 `imageSemanticValidation` 严格绑定当前任务选择的 `(serviceHost, modelName, imageInputMode)` 三元组；服务地址、模型名或模式改变后自动置为 `stale: true`，绝不提升为全局授权；
+  - 当图片模式为 `disabled` 时，`imageExternalAuthorization` 自动重置为 `None`；
+- **协议语义验证与平滑降级**：
+  - 格式审查验证真实调用执行合成协议分类验证（`_validate_format_semantic_direct`），并持久化协议验证记录；
+  - 运行时无授权或验证未就绪时自动降级到确定性/纯文本规则审查，不中断用户任务；
+- **任务窗格单行紧凑入口与前置就绪门禁**：
+  - 单行紧凑入口（ADR-0127）支持格式审查展示与即时切换，标签格式为 `[状态圆点] 配置名称 · 模型直连 ›`，隐藏敏感模型 ID；
+  - 格式审查提交入口（`runDeterministicFormatReview`）前置执行 `validateActiveDirectTaskSelection("word.format_review")` 门禁，直连配置未就绪时阻断提交并给出明确提示；
+  - 各任务独立维护工作流平台配置不受影响；
+- **质量验证**：
+  - 前端：`formal-plugin-kit/tests/word-format-review-direct-service.test.js` 6 项测试全绿，`formal-plugin-kit/tests/word-shared-direct-service.test.js` 15 项测试全绿，全部 Word 测试 45 项全绿，全量直连服务测试 67 项全绿；
+  - 后端：`adapter_service/tests/test_word_format_review_direct_service.py` 7 项测试通过，`adapter_service/tests/test_direct_services.py` 24 项测试全绿；
+  - 静态检查：`python3 packaging/check_python38_compatibility.py adapter_service` 166 个文件扫描通过，`git diff --check` 通过。
+
 ## PR #195 复审修复（2026-09-13）
 
 - PPT 首页与设置页先应用 `/config.taskApiKeys`，再读取任务配置及共享直连服务；配置未完成或读取失败时阻断新任务提交。任务配置视图合并当前服务 ID，激活成功同步接入方式，失败恢复原服务。

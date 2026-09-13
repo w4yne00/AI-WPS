@@ -2107,7 +2107,17 @@ class ProviderClient:
                     api_key = str(service.get("apiKey", "")).strip()
                     auth_source = "task-file" if service.get("keyConfigured") else "none"
 
-                    return {
+                    image_mode = selection.get(
+                        "imageInputMode",
+                        "openai_image_url" if task_type == "word.format_review" else "disabled",
+                    )
+                    image_auth = selection.get("imageExternalAuthorization")
+                    image_val = selection.get("imageSemanticValidation")
+                    image_readiness = selection.get("imageSemanticReadiness")
+                    format_val = selection.get("formatSemanticValidation")
+                    format_readiness = selection.get("formatSemanticReadiness")
+
+                    resolved_auth = {
                         "providerBaseUrl": base_url,
                         "providerChatPath": call_path,
                         "providerMode": "blocking",
@@ -2115,6 +2125,7 @@ class ProviderClient:
                         "providerType": ACCESS_DIRECT_MODEL,
                         "providerInputMode": DIFY_INPUT_MODE_LEGACY,
                         "accessMethod": ACCESS_DIRECT_MODEL,
+                        "serviceBaseUrl": base_url,
                         "modelConfiguration": None,
                         "modelConfigurationId": service["id"],
                         "modelConfigurationName": str(service.get("name", "")),
@@ -2126,18 +2137,43 @@ class ProviderClient:
                             or DEFAULT_CONTEXT_WINDOW_TOKENS
                         ),
                         "contextWindowTokensExplicit": selection.get("contextWindowTokens") is not None,
-                        "formatSemanticValidation": None,
-                        "formatSemanticReadiness": None,
+                        "formatSemanticValidation": format_val,
+                        "formatSemanticReadiness": format_readiness,
                         "imageSemantics": self.image_semantic_settings(),
-                        "imageInputMode": selection.get("imageInputMode", "disabled"),
-                        "imageExternalAuthorization": None,
-                        "imageSemanticValidation": None,
+                        "imageInputMode": image_mode,
+                        "imageExternalAuthorization": image_auth,
+                        "imageSemanticValidation": image_val,
+                        "imageSemanticReadiness": image_readiness,
                         "apiKeyRef": service["id"],
                         "apiKey": api_key,
                         "authSource": auth_source,
                         "directService": service,
                         "taskModelSelection": selection,
                     }
+                    if task_type == "word.format_review":
+                        resolved_auth["modelConfiguration"] = {
+                            "id": service["id"],
+                            "name": str(service.get("name", "模型直连")),
+                            "taskType": "word.format_review",
+                            "accessMethod": ACCESS_DIRECT_MODEL,
+                            "serviceBaseUrl": base_url,
+                            "modelName": effective_model,
+                            "temperature": selection.get("temperature"),
+                            "maxOutputTokens": selection.get("maxOutputTokens"),
+                            "contextWindowTokens": int(
+                                selection.get("contextWindowTokens")
+                                or DEFAULT_CONTEXT_WINDOW_TOKENS
+                            ),
+                            "contextWindowTokensExplicit": selection.get("contextWindowTokens") is not None,
+                            "imageInputMode": image_mode,
+                            "imageExternalAuthorization": image_auth,
+                            "imageSemanticValidation": image_val,
+                            "imageSemanticReadiness": image_readiness,
+                            "formatSemanticValidation": format_val,
+                            "formatSemanticReadiness": format_readiness,
+                            "configVersion": 1,
+                        }
+                    return resolved_auth
             except DirectServiceError:
                 pass
 
@@ -3578,12 +3614,23 @@ class ProviderClient:
                 status_code=400,
             )
 
-        probe = _VALIDATION_PROBES.get(task_type)
-        if not probe:
-            raise AdapterError(
-                "MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400
-            )
-
+        model_configuration = {
+            "id": service["id"],
+            "name": service.get("name", ""),
+            "taskType": task_type,
+            "providerType": ACCESS_DIRECT_MODEL,
+            "accessMethod": ACCESS_DIRECT_MODEL,
+            "modelName": model_name,
+            "temperature": selection_data.get("temperature"),
+            "maxOutputTokens": selection_data.get("maxOutputTokens"),
+            "contextWindowTokens": int(
+                selection_data.get("contextWindowTokens") or DEFAULT_CONTEXT_WINDOW_TOKENS
+            ),
+            "imageInputMode": selection_data.get(
+                "imageInputMode",
+                "openai_image_url" if task_type == "word.format_review" else "disabled",
+            ),
+        }
         task_auth = {
             "providerBaseUrl": service["serviceBaseUrl"].rstrip("/"),
             "providerChatPath": "/chat/completions",
@@ -3592,7 +3639,7 @@ class ProviderClient:
             "providerType": ACCESS_DIRECT_MODEL,
             "providerInputMode": DIFY_INPUT_MODE_LEGACY,
             "accessMethod": ACCESS_DIRECT_MODEL,
-            "modelConfiguration": None,
+            "modelConfiguration": model_configuration,
             "modelConfigurationId": service["id"],
             "modelConfigurationName": service.get("name", ""),
             "modelName": model_name,
@@ -3605,7 +3652,10 @@ class ProviderClient:
             "formatSemanticValidation": None,
             "formatSemanticReadiness": None,
             "imageSemantics": self.image_semantic_settings(),
-            "imageInputMode": selection_data.get("imageInputMode", "disabled"),
+            "imageInputMode": selection_data.get(
+                "imageInputMode",
+                "openai_image_url" if task_type == "word.format_review" else "disabled",
+            ),
             "imageExternalAuthorization": None,
             "imageSemanticValidation": None,
             "apiKeyRef": service["id"],
@@ -3614,6 +3664,45 @@ class ProviderClient:
             "directService": service,
             "taskModelSelection": selection_data,
         }
+
+        if task_type == "word.format_review":
+            format_semantic_validation = self._validate_format_semantic_direct(trace_id, task_auth)
+            self.direct_service_store.record_format_semantic_validation(
+                task_type,
+                format_semantic_validation,
+            )
+            if is_custom:
+                self.direct_service_store.mark_custom_model_validated(
+                    task_type,
+                    service["id"],
+                    model_name,
+                    expected_service_base_url=service.get("serviceBaseUrl", ""),
+                    expected_api_key_fingerprint=DirectServiceStore.api_key_fingerprint(
+                        service.get("apiKey", "")
+                    ),
+                )
+            return {
+                "success": True,
+                "validationScope": "task",
+                "taskType": task_type,
+                "serviceId": service["id"],
+                "serviceName": service.get("name", ""),
+                "modelName": model_name,
+                "customModel": is_custom,
+                "customModelValidated": True,
+                "taskCallPerformed": True,
+                "taskContractValidated": True,
+                "promptVersion": "format_semantics.v1",
+                "formatSemanticValidation": format_semantic_validation,
+                "mayIncurModelCost": True,
+                "costWarning": "验证调用会真实请求模型，可能产生费用并等待服务返回。",
+            }
+
+        probe = _VALIDATION_PROBES.get(task_type)
+        if not probe:
+            raise AdapterError(
+                "MODEL_CONFIG_TASK_UNSUPPORTED", "不支持的任务类型。", status_code=400
+            )
 
         timeout = max(self.settings.timeout_seconds, INTERACTIVE_WRITING_TIMEOUT_SECONDS)
         body = self.post_task(

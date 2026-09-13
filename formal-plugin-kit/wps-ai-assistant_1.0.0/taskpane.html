@@ -511,6 +511,15 @@
                       <label class="field"><span>最大 Token</span><input id="word-task-max-output" type="number" min="1" placeholder="默认" /></label>
                       <label class="field"><span>上下文容量</span><input id="word-task-context" type="number" min="1000" placeholder="40000" /></label>
                     </div>
+                    <div id="word-task-image-mode-row" class="field" hidden>
+                      <label class="field" for="word-task-image-input-mode">
+                        <span>图片输入模式</span>
+                        <select id="word-task-image-input-mode">
+                          <option value="openai_image_url">OpenAI 格式图片 URL (openai_image_url)</option>
+                          <option value="disabled">关闭图片输入 (disabled)</option>
+                        </select>
+                      </label>
+                    </div>
                     <div class="button-row" style="margin-top: 8px;">
                       <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
                       <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>

@@ -434,14 +434,15 @@ test("Word task model selection: parameters override, draft generation, and revi
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false);
   assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "智能仿写接入选择");
 
-  // 4. Review tabs isolation: hidden on document_review and format_review
+  // 4. Review tabs isolation: hidden on document_review, supported on format_review
   state.settingsWorkflowTaskType = "word.document_review";
   ctx.renderTaskModelSelectionSection();
   assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, true, "task direct service section must be hidden for document_review");
 
   state.settingsWorkflowTaskType = "word.format_review";
   ctx.renderTaskModelSelectionSection();
-  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, true, "task direct service section must be hidden for format_review");
+  assert.strictEqual(mockNodes["word-task-direct-service-section"].hidden, false, "task direct service section must be visible for format_review");
+  assert.strictEqual(mockNodes["word-task-direct-service-title"].textContent, "格式审查接入选择");
 });
 
 test("Preflight readiness check: validateActiveDirectTaskSelection blocks unready services", () => {

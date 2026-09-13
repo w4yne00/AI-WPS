@@ -5310,7 +5310,7 @@
       });
     });
 
-    if (taskType === "word.document_review" || taskType === "word.format_review") {
+    if (taskType === "word.document_review") {
       directServices = [];
     }
     directServices.forEach(function (svc) {

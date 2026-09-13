@@ -8,12 +8,14 @@ import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 
 from app.core.config import default_config_path, load_config_payload, save_config_payload
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
     MAX_CONFIGURATION_NAME_LENGTH,
     ModelConfigurationError,
     _STORE_LOCK,
@@ -22,6 +24,43 @@ from app.services.model_configurations import (
 )
 from app.services.word.image_semantics import IMAGE_INPUT_MODES
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
+
+
+def _service_host(service_base_url: str) -> str:
+    try:
+        return (urlsplit(str(service_base_url or "")).hostname or "").lower()
+    except ValueError:
+        return ""
+
+
+def _binding_matches(record: Any, binding: Dict[str, Any]) -> bool:
+    if not isinstance(record, dict):
+        return False
+    return all(record.get(k) == v for k, v in binding.items())
+
+
+def _format_review_image_binding(service: dict, selection: dict) -> Dict[str, Any]:
+    effective_model = str(
+        selection.get("modelName") or service.get("defaultModel") or ""
+    ).strip()
+    return {
+        "configVersion": 1,
+        "serviceHost": _service_host(str(service.get("serviceBaseUrl", ""))),
+        "accessMethod": ACCESS_DIRECT_MODEL,
+        "imageInputMode": str(selection.get("imageInputMode", "disabled")),
+        "modelName": effective_model,
+    }
+
+
+def _format_review_format_semantic_binding(service: dict, selection: dict) -> Dict[str, Any]:
+    effective_model = str(
+        selection.get("modelName") or service.get("defaultModel") or ""
+    ).strip()
+    return {
+        "serviceHost": _service_host(str(service.get("serviceBaseUrl", ""))),
+        "modelName": effective_model,
+    }
+
 
 MAX_DIRECT_SERVICES = 5
 MAX_DIRECT_SERVICE_NAME_LENGTH = MAX_CONFIGURATION_NAME_LENGTH
@@ -975,6 +1014,109 @@ class DirectServiceStore:
                 )
                 catalog = self._model_catalog_state(service) if service else {}
 
+                image_mode = str(
+                    raw.get("imageInputMode")
+                    or ("openai_image_url" if task == "word.format_review" else "disabled")
+                )
+                image_authorization = None
+                image_validation = None
+                image_readiness = None
+                format_semantic_validation = None
+                format_semantic_readiness = None
+
+                if task == "word.format_review":
+                    img_binding = _format_review_image_binding(
+                        service,
+                        {
+                            "modelName": model_name or effective_model,
+                            "imageInputMode": image_mode,
+                        },
+                    )
+                    raw_auth = raw.get("imageExternalAuthorization")
+                    if image_mode == "disabled" or not isinstance(raw_auth, dict):
+                        image_authorization = None
+                    else:
+                        is_stale = (
+                            not _binding_matches(raw_auth, img_binding)
+                            or not service
+                            or not self._key_exists(service_id)
+                        )
+                        image_authorization = {**raw_auth, "stale": is_stale}
+
+                    raw_val = raw.get("imageSemanticValidation")
+                    if not isinstance(raw_val, dict):
+                        image_validation = None
+                    else:
+                        is_stale = (
+                            not _binding_matches(raw_val, img_binding)
+                            or not service
+                            or not self._key_exists(service_id)
+                        )
+                        image_validation = {**raw_val, "stale": is_stale}
+
+                    if image_mode not in IMAGE_INPUT_MODES or image_mode == "disabled":
+                        image_readiness = {
+                            "code": "disabled",
+                            "ready": False,
+                            "label": "图片输入已禁用。",
+                        }
+                    elif (
+                        not image_authorization
+                        or not image_authorization.get("authorized")
+                        or image_authorization.get("stale")
+                    ):
+                        image_readiness = {
+                            "code": "authorization_required",
+                            "ready": False,
+                            "label": "请再次保存配置以绑定当前模型服务。",
+                        }
+                    elif (
+                        not image_validation
+                        or not image_validation.get("validated")
+                        or image_validation.get("stale")
+                    ):
+                        image_readiness = {
+                            "code": "validation_required",
+                            "ready": False,
+                            "label": "请使用无敏感测试图片完成视觉能力验证。",
+                        }
+                    else:
+                        image_readiness = {
+                            "code": "ready",
+                            "ready": True,
+                            "label": "图片外发授权和视觉能力验证均有效。",
+                        }
+
+                    fmt_binding = _format_review_format_semantic_binding(
+                        service,
+                        {"modelName": model_name or effective_model},
+                    )
+                    raw_fmt_val = raw.get("formatSemanticValidation")
+                    if not isinstance(raw_fmt_val, dict):
+                        format_semantic_validation = None
+                    else:
+                        is_stale = (
+                            not _binding_matches(raw_fmt_val, fmt_binding)
+                            or not service
+                            or not self._key_exists(service_id)
+                        )
+                        format_semantic_validation = {**raw_fmt_val, "stale": is_stale}
+
+                    if (
+                        format_semantic_validation
+                        and bool(format_semantic_validation.get("success"))
+                        and not format_semantic_validation.get("stale")
+                    ):
+                        format_semantic_readiness = {
+                            "code": "ready",
+                            "label": "格式语义协议已验证，格式审查可调用模型直连。",
+                        }
+                    else:
+                        format_semantic_readiness = {
+                            "code": "validation_required",
+                            "label": "格式语义协议尚未验证，格式审查仅运行确定性规则。",
+                        }
+
                 results.append(
                     {
                         "schemaVersion": TASK_MODEL_SELECTION_SCHEMA_VERSION,
@@ -987,7 +1129,12 @@ class DirectServiceStore:
                         "temperature": raw.get("temperature"),
                         "maxOutputTokens": raw.get("maxOutputTokens"),
                         "contextWindowTokens": raw.get("contextWindowTokens"),
-                        "imageInputMode": str(raw.get("imageInputMode", "disabled")),
+                        "imageInputMode": image_mode,
+                        "imageExternalAuthorization": image_authorization,
+                        "imageSemanticValidation": image_validation,
+                        "imageSemanticReadiness": image_readiness,
+                        "formatSemanticValidation": format_semantic_validation,
+                        "formatSemanticReadiness": format_semantic_readiness,
                         "customModel": custom_model,
                         "customModelValidated": custom_model_validated,
                         "modelAvailability": model_availability,
@@ -1109,7 +1256,13 @@ class DirectServiceStore:
                 clean_model,
             )
         )
-        return {
+        existing_selections = payload.get("taskModelSelections", {})
+        existing = (
+            existing_selections.get(task_type, {})
+            if isinstance(existing_selections, dict)
+            else {}
+        )
+        record = {
             "serviceId": clean_service_id,
             "modelName": clean_model,
             "temperature": clean_temp,
@@ -1120,6 +1273,45 @@ class DirectServiceStore:
             "customModelValidated": effective_validated,
             "updatedAt": _utc_now(),
         }
+        if task_type == "word.format_review":
+            prev_service_id = str(existing.get("serviceId", "")).strip()
+            prev_service = services.get(prev_service_id, {}) if prev_service_id else {}
+            prev_url = str(prev_service.get("serviceBaseUrl", "")).strip()
+            prev_model = str(
+                existing.get("modelName") or prev_service.get("defaultModel") or ""
+            ).strip()
+            prev_mode = str(existing.get("imageInputMode", "disabled")).strip()
+
+            curr_url = str(service.get("serviceBaseUrl", "")).strip()
+            curr_model = str(
+                clean_model or service.get("defaultModel") or ""
+            ).strip()
+            curr_mode = clean_image_mode
+
+            changed = (
+                prev_service_id != clean_service_id
+                or prev_url != curr_url
+                or prev_model != curr_model
+                or prev_mode != curr_mode
+            )
+
+            image_auth = existing.get("imageExternalAuthorization")
+            if not isinstance(image_auth, dict) or clean_image_mode == "disabled":
+                image_auth = None
+            elif not changed and clean_service_id and self._key_exists(clean_service_id):
+                image_auth = {
+                    "authorized": bool(image_auth.get("authorized", True)),
+                    **_format_review_image_binding(
+                        service,
+                        {"modelName": clean_model, "imageInputMode": clean_image_mode},
+                    ),
+                }
+
+            record["imageExternalAuthorization"] = image_auth
+            record["imageSemanticValidation"] = existing.get("imageSemanticValidation")
+            record["formatSemanticValidation"] = existing.get("formatSemanticValidation")
+
+        return record
 
     def mark_custom_model_validated(
         self,
@@ -1181,6 +1373,111 @@ class DirectServiceStore:
             payload["customModelValidations"] = validations
             save_config_payload(payload, self.config_path)
             return dict(validations[clean_task])
+
+    def set_image_external_authorization(
+        self, task_type: str, authorized: bool
+    ) -> dict:
+        clean_task = self._validate_task_type(task_type)
+        if clean_task != "word.format_review":
+            raise DirectServiceError(
+                "DIRECT_SERVICE_TASK_UNSUPPORTED",
+                f"任务类型 {task_type} 不支持图片外发授权。",
+            )
+        with _STORE_LOCK:
+            payload = load_config_payload(self.config_path)
+            services = self._service_map(payload)
+            selections = self._selection_map(payload)
+            raw = selections.get(clean_task, {})
+            service_id = str(raw.get("serviceId", "")).strip()
+            service = self._require_service(services, service_id)
+            mode = str(raw.get("imageInputMode", "disabled"))
+            if authorized and mode == "disabled":
+                raise DirectServiceError(
+                    "IMAGE_INPUT_MODE_REQUIRED",
+                    "启用图片外发授权前必须选择图片输入模式。",
+                )
+            if not self._key_exists(service_id):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_KEY_REQUIRED",
+                    "直连服务未配置 API Key，无法授权图片外发。",
+                )
+            binding = _format_review_image_binding(service, raw)
+            raw["imageExternalAuthorization"] = {
+                "authorized": bool(authorized),
+                **binding,
+            }
+            raw["updatedAt"] = _utc_now()
+            selections[clean_task] = raw
+            payload["taskModelSelections"] = selections
+            save_config_payload(payload, self.config_path)
+            return self.get_task_model_selection(clean_task)
+
+    def record_image_semantic_validation(
+        self, task_type: str, summary: dict
+    ) -> dict:
+        clean_task = self._validate_task_type(task_type)
+        if clean_task != "word.format_review":
+            raise DirectServiceError(
+                "DIRECT_SERVICE_TASK_UNSUPPORTED",
+                f"任务类型 {task_type} 不支持视觉能力验证。",
+            )
+        with _STORE_LOCK:
+            payload = load_config_payload(self.config_path)
+            services = self._service_map(payload)
+            selections = self._selection_map(payload)
+            raw = selections.get(clean_task, {})
+            service_id = str(raw.get("serviceId", "")).strip()
+            service = self._require_service(services, service_id)
+            binding = _format_review_image_binding(service, raw)
+            raw["imageSemanticValidation"] = {
+                "validated": bool(
+                    summary.get("validated", summary.get("success", False))
+                ),
+                "completedAt": str(summary.get("completedAt") or _utc_now()),
+                "errorCode": str(summary.get("errorCode") or "")[:80],
+                **binding,
+            }
+            raw["updatedAt"] = _utc_now()
+            selections[clean_task] = raw
+            payload["taskModelSelections"] = selections
+            save_config_payload(payload, self.config_path)
+            return self.get_task_model_selection(clean_task)
+
+    def record_format_semantic_validation(
+        self, task_type: str, summary: dict
+    ) -> dict:
+        clean_task = self._validate_task_type(task_type)
+        if clean_task != "word.format_review":
+            raise DirectServiceError(
+                "DIRECT_SERVICE_TASK_UNSUPPORTED",
+                f"任务类型 {task_type} 不支持格式语义验证。",
+            )
+        with _STORE_LOCK:
+            payload = load_config_payload(self.config_path)
+            services = self._service_map(payload)
+            selections = self._selection_map(payload)
+            raw = selections.get(clean_task, {})
+            service_id = str(raw.get("serviceId", "")).strip()
+            service = self._require_service(services, service_id)
+            binding = _format_review_format_semantic_binding(service, raw)
+            raw["formatSemanticValidation"] = {
+                "success": bool(summary.get("success", False)),
+                "protocolVersion": str(
+                    summary.get("protocolVersion") or "format_semantics.v1"
+                ),
+                "operations": summary.get("operations")
+                or {"classify_role": True},
+                "durationMs": int(summary.get("durationMs") or 0),
+                "errorCode": str(summary.get("errorCode") or "")[:80],
+                "message": str(summary.get("message") or "")[:200],
+                "completedAt": str(summary.get("completedAt") or _utc_now()),
+                **binding,
+            }
+            raw["updatedAt"] = _utc_now()
+            selections[clean_task] = raw
+            payload["taskModelSelections"] = selections
+            save_config_payload(payload, self.config_path)
+            return self.get_task_model_selection(clean_task)
 
     # ------------------------------------------------------------------
     # Internal Helpers
@@ -1452,6 +1749,8 @@ class DirectServiceStore:
 
     @staticmethod
     def _validate_image_input_mode(task_type: str, mode) -> str:
+        if mode is None and task_type == "word.format_review":
+            return "openai_image_url"
         clean = str(mode or "disabled").strip()
         if clean not in IMAGE_INPUT_MODES:
             raise DirectServiceError(
