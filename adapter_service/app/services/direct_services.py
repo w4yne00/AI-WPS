@@ -3,6 +3,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import socket
 import threading
 import urllib.request
@@ -253,9 +254,15 @@ class DirectServiceStore:
             }
 
     def _load_with_legacy_direct_migration(self):
-        payload = load_config_payload(self.config_path)
+        payload = self._load_payload_recovering()
         configurations = payload.get("modelConfigurations")
+        existing_pending = payload.get("legacyDirectPending")
+        existing_pending = (
+            dict(existing_pending) if isinstance(existing_pending, dict) else {}
+        )
         if not isinstance(configurations, dict):
+            if existing_pending:
+                return payload, self._pending_manual_status(existing_pending, 0)
             return payload, {"status": "not_needed", "migratedConfigurationCount": 0}
 
         legacy = {
@@ -266,6 +273,8 @@ class DirectServiceStore:
             and str(configuration.get("accessMethod", "")) == ACCESS_DIRECT_MODEL
         }
         if not legacy:
+            if existing_pending:
+                return payload, self._pending_manual_status(existing_pending, 0)
             return payload, {"status": "not_needed", "migratedConfigurationCount": 0}
 
         original_payload = copy.deepcopy(payload)
@@ -283,9 +292,36 @@ class DirectServiceStore:
                     (norm_url, self._api_key_fingerprint(service_key))
                 ] = service_id
 
+        active_source = payload.get("activeModelConfigurations")
+        active = dict(active_source) if isinstance(active_source, dict) else {}
+        consumed_ids = set()
+        for task_type in SUPPORTED_WORKFLOW_TASKS:
+            active_legacy_id = str(active.get(task_type, ""))
+            if active_legacy_id in legacy:
+                consumed_ids.add(active_legacy_id)
+            else:
+                task_ids = [
+                    configuration_id
+                    for configuration_id, configuration in legacy.items()
+                    if configuration.get("taskType") == task_type
+                ]
+                if task_ids:
+                    consumed_ids.add(task_ids[-1])
+
+        pending_legacy = {
+            configuration_id: copy.deepcopy(configuration)
+            for configuration_id, configuration in legacy.items()
+            if configuration_id not in consumed_ids
+        }
+        consumed_legacy = {
+            configuration_id: configuration
+            for configuration_id, configuration in legacy.items()
+            if configuration_id in consumed_ids
+        }
+
         groups = {}
         legacy_keys = {}
-        for configuration_id, configuration in legacy.items():
+        for configuration_id, configuration in consumed_legacy.items():
             api_key_ref = str(configuration.get("apiKeyRef", "")).strip()
             api_key = self._read_legacy_key(api_key_ref)
             legacy_keys[configuration_id] = (api_key_ref, api_key)
@@ -319,7 +355,6 @@ class DirectServiceStore:
             for service in services.values()
         }
         configuration_service_ids = {}
-        newly_written_service_ids = []
         pending_service_keys = []
         created_service_count = 0
         now = _utc_now()
@@ -330,7 +365,7 @@ class DirectServiceStore:
             candidate = base
             suffix_number = 2
             while candidate.casefold() in existing_names:
-                suffix = f" {suffix_number}"
+                suffix = " {0}".format(suffix_number)
                 candidate = base[: MAX_DIRECT_SERVICE_NAME_LENGTH - len(suffix)] + suffix
                 suffix_number += 1
             existing_names.add(candidate.casefold())
@@ -340,48 +375,66 @@ class DirectServiceStore:
             service_id = ""
             if identity[0] == "complete":
                 service_id = identity_to_service.get(identity[1:], "")
-            if not service_id:
-                service_id = f"direct_svc_{uuid.uuid4().hex[:12]}"
-                group_configurations = [legacy[item_id] for item_id in configuration_ids]
+            group_configurations = [
+                consumed_legacy[item_id] for item_id in configuration_ids
+            ]
+            models = {
+                str(item.get("modelName", "")).strip()
+                for item in group_configurations
+                if str(item.get("modelName", "")).strip()
+            }
+            if service_id:
+                existing = services[service_id]
+                union = set(models)
+                existing_default = str(existing.get("defaultModel", "")).strip()
+                if existing_default:
+                    union.add(existing_default)
+                if len(union) > 1:
+                    existing["defaultModel"] = ""
+                    existing["updatedAt"] = now
+                    services[service_id] = existing
+            else:
+                service_id = "direct_svc_{0}".format(uuid.uuid4().hex[:12])
                 first = group_configurations[0]
-                models = {
-                    str(item.get("modelName", "")).strip()
-                    for item in group_configurations
-                    if str(item.get("modelName", "")).strip()
-                }
-                service_url = identity[1] if identity[0] == "complete" else ""
+                if identity[0] == "complete":
+                    service_url = identity[1]
+                else:
+                    raw_url = str(first.get("serviceBaseUrl", "")).strip()
+                    try:
+                        service_url = self._normalize_url(raw_url) if raw_url else ""
+                    except DirectServiceError:
+                        service_url = ""
+                seeded_models = sorted(models)
                 services[service_id] = {
                     "id": service_id,
                     "name": unique_name(first.get("name")),
                     "serviceBaseUrl": service_url,
                     "defaultModel": next(iter(models)) if len(models) == 1 else "",
-                    "modelList": [],
+                    "modelList": seeded_models,
                     "modelListFetchedAt": None,
                     "modelListLastAttemptAt": None,
                     "modelListFetchStatus": "not_attempted",
                     "modelListLastError": None,
                     "modelListInvalidated": False,
                     "modelListTrusted": True,
-                    "modelListSource": "none",
+                    "modelListSource": "legacy_migration" if seeded_models else "none",
                     "revision": 1,
                     "createdAt": now,
                     "updatedAt": now,
                 }
-                if identity[0] == "complete":
-                    source_key = legacy_keys[configuration_ids[0]][1]
+                source_key = legacy_keys[configuration_ids[0]][1]
+                if source_key:
                     pending_service_keys.append((service_id, source_key))
                 created_service_count += 1
             for configuration_id in configuration_ids:
                 configuration_service_ids[configuration_id] = service_id
 
-        active_source = payload.get("activeModelConfigurations")
-        active = dict(active_source) if isinstance(active_source, dict) else {}
         selections = dict(self._selection_map(payload))
 
         for task_type in SUPPORTED_WORKFLOW_TASKS:
             active_legacy_id = str(active.get(task_type, ""))
-            if active_legacy_id in legacy:
-                active_configuration = legacy[active_legacy_id]
+            if active_legacy_id in consumed_legacy:
+                active_configuration = consumed_legacy[active_legacy_id]
                 service_id = configuration_service_ids[active_legacy_id]
                 api_key = legacy_keys[active_legacy_id][1]
                 service_url = str(services[service_id].get("serviceBaseUrl", ""))
@@ -394,7 +447,9 @@ class DirectServiceStore:
                     "temperature": active_configuration.get("temperature"),
                     "maxOutputTokens": max_output_tokens,
                     "contextWindowTokens": context_window_tokens,
-                    "imageInputMode": active_configuration.get("imageInputMode", "disabled"),
+                    "imageInputMode": active_configuration.get(
+                        "imageInputMode", "disabled"
+                    ),
                     "customModel": False,
                     "customModelValidated": False,
                     "updatedAt": now,
@@ -408,9 +463,9 @@ class DirectServiceStore:
                     active.pop(task_type, None)
             else:
                 task_legacies = [
-                    (cid, cfg)
-                    for cid, cfg in legacy.items()
-                    if cfg.get("taskType") == task_type
+                    (configuration_id, configuration)
+                    for configuration_id, configuration in consumed_legacy.items()
+                    if configuration.get("taskType") == task_type
                 ]
                 if task_legacies and task_type not in selections:
                     last_cid, last_cfg = task_legacies[-1]
@@ -432,56 +487,36 @@ class DirectServiceStore:
             for configuration_id, configuration in configurations.items()
             if configuration_id not in legacy
         }
+        merged_pending = dict(existing_pending)
+        merged_pending.update(pending_legacy)
         payload["directServices"] = services
         payload["taskModelSelections"] = selections
         payload["activeModelConfigurations"] = active
         payload["modelConfigurations"] = remaining_configurations
+        if merged_pending:
+            payload["legacyDirectPending"] = merged_pending
+        else:
+            payload.pop("legacyDirectPending", None)
 
-        try:
-            for service_id, source_key in pending_service_keys:
-                self._write_key(service_id, source_key)
-                newly_written_service_ids.append(service_id)
-            save_config_payload(payload, self.config_path)
-            verified = load_config_payload(self.config_path)
-            verified_services = self._service_map(verified)
-            for configuration_id, service_id in configuration_service_ids.items():
-                if service_id not in verified_services:
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的直连服务校验失败。"
-                    )
-                source_key = legacy_keys[configuration_id][1]
-                if (
-                    source_key
-                    and self._api_key_fingerprint(self._read_key(service_id))
-                    != self._api_key_fingerprint(source_key)
-                ):
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的 API Key 校验失败。"
-                    )
-            for task_type in SUPPORTED_WORKFLOW_TASKS:
-                if task_type in active and str(active[task_type]).startswith("direct_svc_"):
-                    expected_service = active[task_type]
-                    selected_id = str(
-                        self._selection_map(verified)
-                        .get(task_type, {})
-                        .get("serviceId", "")
-                    )
-                    if selected_id != expected_service:
-                        raise DirectServiceError(
-                            "DIRECT_SERVICE_MIGRATION_FAILED",
-                            f"迁移后的任务 {task_type} 绑定校验失败。",
-                        )
-        except Exception:
-            save_config_payload(original_payload, self.config_path)
-            for service_id in newly_written_service_ids:
-                self._delete_key(service_id)
-            raise
+        self._commit_legacy_migration(
+            original_payload,
+            payload,
+            pending_service_keys,
+            configuration_service_ids,
+            legacy_keys,
+            active,
+        )
 
         remaining_refs = {
             str(item.get("apiKeyRef", "")).strip()
             for item in remaining_configurations.values()
             if isinstance(item, dict)
         }
+        remaining_refs.update(
+            str(item.get("apiKeyRef", "")).strip()
+            for item in merged_pending.values()
+            if isinstance(item, dict)
+        )
         workflow_profiles = payload.get("workflowProfiles")
         if isinstance(workflow_profiles, dict):
             remaining_refs.update(
@@ -490,15 +525,20 @@ class DirectServiceStore:
                 if isinstance(item, dict)
             )
         remaining_refs.update(
-            f"direct_service_{service_id}" for service_id in services
+            "direct_service_{0}".format(service_id) for service_id in services
         )
         for api_key_ref, _ in legacy_keys.values():
             if api_key_ref and api_key_ref not in remaining_refs:
                 self._delete_legacy_key(api_key_ref)
 
-        return load_config_payload(self.config_path), {
+        migrated_payload = load_config_payload(self.config_path)
+        if merged_pending:
+            return migrated_payload, self._pending_manual_status(
+                merged_pending, len(consumed_legacy), created_service_count
+            )
+        return migrated_payload, {
             "status": "completed",
-            "migratedConfigurationCount": len(legacy),
+            "migratedConfigurationCount": len(consumed_legacy),
             "createdServiceCount": created_service_count,
         }
 
@@ -526,6 +566,190 @@ class DirectServiceStore:
                 path.unlink()
             except OSError:
                 pass
+
+    def _pre_migration_backup_path(self) -> Path:
+        return Path(str(self.config_path) + ".pre-direct-migration")
+
+    def _migration_recovery_record_path(self) -> Path:
+        return self.config_path.with_name("adapter-direct-migration-recovery.json")
+
+    @staticmethod
+    def _pending_manual_status(
+        pending, migrated_count, created_service_count=0
+    ) -> dict:
+        status = {
+            "status": "pending_manual",
+            "code": "DIRECT_SERVICE_MIGRATION_PENDING_PROFILES",
+            "migratedConfigurationCount": migrated_count,
+            "pendingConfigurationCount": len(pending),
+        }
+        if created_service_count:
+            status["createdServiceCount"] = created_service_count
+        return status
+
+    @staticmethod
+    def _copy_file(source: Path, destination: Path) -> None:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        temporary = destination.parent / ".{0}.{1}.tmp".format(
+            destination.name, uuid.uuid4().hex
+        )
+        try:
+            shutil.copyfile(str(source), str(temporary))
+            os.replace(str(temporary), str(destination))
+        finally:
+            if temporary.exists():
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+
+    def _write_json_atomic(self, path: Path, payload: dict) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.parent / ".{0}.{1}.tmp".format(path.name, uuid.uuid4().hex)
+        descriptor = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                json.dump(payload, handle, ensure_ascii=False, indent=2)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(str(temporary), str(path))
+        finally:
+            if temporary.exists():
+                try:
+                    temporary.unlink()
+                except OSError:
+                    pass
+
+    def _write_migration_recovery_record(self, reason: str) -> None:
+        record = {
+            "restoredAt": _utc_now(),
+            "reason": reason,
+            "restoredFrom": str(self._pre_migration_backup_path()),
+        }
+        try:
+            self._write_json_atomic(self._migration_recovery_record_path(), record)
+        except OSError:
+            pass
+
+    def _load_payload_recovering(self) -> dict:
+        try:
+            return load_config_payload(self.config_path)
+        except (json.JSONDecodeError, OSError, UnicodeError):
+            backup = self._pre_migration_backup_path()
+            if not backup.is_file():
+                raise
+            self._copy_file(backup, self.config_path)
+            self._write_migration_recovery_record("truncated_or_unreadable_config")
+            return load_config_payload(self.config_path)
+
+    def _restore_pre_migration_backup(self) -> None:
+        backup = self._pre_migration_backup_path()
+        if backup.is_file():
+            self._copy_file(backup, self.config_path)
+
+    def _verify_migrated_payload(
+        self,
+        verified: dict,
+        read_key,
+        configuration_service_ids: dict,
+        legacy_keys: dict,
+        active: dict,
+    ) -> None:
+        verified_services = self._service_map(verified)
+        for configuration_id, service_id in configuration_service_ids.items():
+            if service_id not in verified_services:
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的直连服务校验失败。"
+                )
+            source_key = legacy_keys[configuration_id][1]
+            if source_key and self._api_key_fingerprint(
+                read_key(service_id)
+            ) != self._api_key_fingerprint(source_key):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_MIGRATION_FAILED", "迁移后的 API Key 校验失败。"
+                )
+        for task_type in SUPPORTED_WORKFLOW_TASKS:
+            if task_type in active and str(active[task_type]).startswith("direct_svc_"):
+                expected_service = active[task_type]
+                selected_id = str(
+                    self._selection_map(verified)
+                    .get(task_type, {})
+                    .get("serviceId", "")
+                )
+                if selected_id != expected_service:
+                    raise DirectServiceError(
+                        "DIRECT_SERVICE_MIGRATION_FAILED",
+                        "迁移后的任务 {0} 绑定校验失败。".format(task_type),
+                    )
+
+    def _commit_legacy_migration(
+        self,
+        original_payload: dict,
+        payload: dict,
+        pending_service_keys,
+        configuration_service_ids: dict,
+        legacy_keys: dict,
+        active: dict,
+    ) -> None:
+        backup_path = self._pre_migration_backup_path()
+        if self.config_path.exists():
+            self._copy_file(self.config_path, backup_path)
+
+        stage_root = self.key_dir.parent / ".direct-migration-stage-{0}".format(
+            uuid.uuid4().hex
+        )
+        stage_keys = stage_root / "keys"
+        stage_config = stage_root / "adapter.json"
+        newly_written_service_ids = []
+        try:
+            stage_root.mkdir(parents=True, exist_ok=True)
+            stage_store = DirectServiceStore(stage_config, stage_keys)
+            self._write_json_atomic(stage_config, payload)
+            for service_id, source_key in pending_service_keys:
+                stage_store._write_key(service_id, source_key)
+
+            def read_staged_or_live(service_id):
+                staged_key = stage_store._read_key(service_id)
+                if staged_key:
+                    return staged_key
+                return self._read_key(service_id)
+
+            staged_payload = load_config_payload(stage_config)
+            self._verify_migrated_payload(
+                staged_payload,
+                read_staged_or_live,
+                configuration_service_ids,
+                legacy_keys,
+                active,
+            )
+            for service_id, source_key in pending_service_keys:
+                newly_written_service_ids.append(service_id)
+                self._write_key(service_id, source_key)
+            save_config_payload(payload, self.config_path)
+            verified = load_config_payload(self.config_path)
+            self._verify_migrated_payload(
+                verified,
+                self._read_key,
+                configuration_service_ids,
+                legacy_keys,
+                active,
+            )
+        except BaseException:
+            self._restore_pre_migration_backup()
+            if not self._pre_migration_backup_path().is_file():
+                try:
+                    save_config_payload(original_payload, self.config_path)
+                except Exception:
+                    pass
+            for service_id in newly_written_service_ids:
+                try:
+                    self._delete_key(service_id)
+                except Exception:
+                    pass
+            raise
+        finally:
+            shutil.rmtree(str(stage_root), ignore_errors=True)
 
     @staticmethod
     def _legacy_token_limits_valid(max_output_tokens, context_window_tokens) -> bool:
@@ -1976,6 +2200,17 @@ class DirectServiceStore:
                 payload, clean_task, service, model_name
             )
 
+    @staticmethod
+    def _legacy_model_compatible(service: dict, model_name: str) -> bool:
+        if str(service.get("modelListSource", "")) != "legacy_migration":
+            return False
+        if bool(service.get("modelListInvalidated")):
+            return False
+        models = service.get("modelList")
+        if not isinstance(models, list):
+            return False
+        return bool(model_name) and model_name in models
+
     def _model_availability(
         self,
         service_id: str,
@@ -2000,6 +2235,8 @@ class DirectServiceStore:
             if model_name in models:
                 return "available", True, ""
             return "unavailable", False, "disappeared"
+        if self._legacy_model_compatible(service, model_name):
+            return "available", True, "legacy_compatible"
         if catalog.get("status") == "expired":
             return "expired", False, "cache_expired"
         if catalog.get("status") == "unavailable" or service.get("modelListInvalidated") or (

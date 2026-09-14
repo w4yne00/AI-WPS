@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## PR #199 审查修复（Issue #181，2026-09-14）
+
+- 已迁移活动任务在目录尚未拉取前以 `legacy_compatible` 保持可运行；`resolve_task_auth()` 不再因空 `modelList` 抛出 `DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE`。
+- 不完整草稿逐字段保留有效 URL 或 Key，保持未激活。
+- 同任务未消费的旧直连档案写入 `legacyDirectPending`，迁移状态 `pending_manual`，不删除对应配置和 Key。
+- 迁移在暂存目录校验后再提交；保留 `.pre-direct-migration` 备份，`BaseException`（含 `SystemExit`）回滚；截断 JSON 可从备份恢复。
+- URL 规范化折叠主机名大小写、IDNA 与默认端口；复用已有共享服务时默认模型冲突置空 `defaultModel`。
+
 ## 当前功能实现：Issue #181 迁移旧直连配置并收缩旧写入合同（2026-09-13）
 
 - **旧直连配置自动分组与迁移（覆盖全量 9 类任务）**：

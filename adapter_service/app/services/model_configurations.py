@@ -89,7 +89,8 @@ def normalize_service_base_url(value: str) -> str:
         parts = urlsplit(raw)
     except ValueError as exc:
         raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址格式无效。") from exc
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
+    scheme = str(parts.scheme or "").lower()
+    if scheme not in {"http", "https"} or not parts.netloc:
         raise ModelConfigurationError(
             "MODEL_CONFIG_URL_INVALID", "服务地址必须是有效的 http 或 https 地址。"
         )
@@ -97,13 +98,34 @@ def normalize_service_base_url(value: str) -> str:
         raise ModelConfigurationError(
             "MODEL_CONFIG_URL_INVALID", "服务地址不能包含账号、密码、查询参数或片段。"
         )
+    hostname = parts.hostname
+    if not hostname:
+        raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址格式无效。")
+    try:
+        hostname = hostname.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError) as exc:
+        raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址主机名无效。") from exc
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址端口无效。") from exc
+    if port is not None and (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        port = None
+    if ":" in hostname:
+        netloc = "[" + hostname + "]"
+    else:
+        netloc = hostname
+    if port is not None:
+        netloc = "{0}:{1}".format(netloc, port)
     path = (parts.path or "").rstrip("/")
     lowered = path.lower()
     for suffix in KNOWN_CALL_SUFFIXES:
         if lowered.endswith(suffix):
             path = path[: -len(suffix)].rstrip("/")
             break
-    return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/")
+    return urlunsplit((scheme, netloc, path, "", "")).rstrip("/")
 
 
 class ModelConfigurationStore:

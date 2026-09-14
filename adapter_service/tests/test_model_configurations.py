@@ -200,6 +200,40 @@ class ModelConfigurationStoreTests(unittest.TestCase):
         with self.assertRaises(ModelConfigurationError):
             normalize_service_base_url("https://host/v1?key=secret")
 
+    def test_normalize_service_url_folds_hostname_case_default_ports_and_ipv6(self) -> None:
+        self.assertEqual(
+            normalize_service_base_url("https://API.Example.com/v1"),
+            "https://api.example.com/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://api.example.com:443/v1"),
+            "https://api.example.com/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("http://api.example.com:80/v1"),
+            "http://api.example.com/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://api.example.com:8443/v1"),
+            "https://api.example.com:8443/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://[2001:db8::1]/v1"),
+            "https://[2001:db8::1]/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://[2001:db8::1]:443/v1"),
+            "https://[2001:db8::1]/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://[2001:db8::1]:8443/v1"),
+            "https://[2001:db8::1]:8443/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://例子.example/v1"),
+            "https://xn--fsqu00a.example/v1",
+        )
+
     def test_format_semantic_readiness_is_stale_after_configuration_changes(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))

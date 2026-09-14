@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from app.services.direct_services import DirectServiceStore
+from app.services.direct_services import DirectServiceError, DirectServiceStore
 from app.services.model_configurations import (
     ACCESS_DIRECT_MODEL,
     ACCESS_WORKFLOW_PLATFORM,
@@ -13,6 +13,7 @@ from app.services.model_configurations import (
     ModelConfigurationStore,
     WorkflowProfileCompatibilityStore,
 )
+from app.services.provider_client import ProviderClient
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 
 
@@ -67,6 +68,9 @@ class DirectServiceMigrationTests(unittest.TestCase):
         self.config_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    def _production_direct_service_keys(self):
+        return sorted(self.key_dir.glob("direct_service_direct_svc_*"))
 
     def test_migration_not_needed_when_no_legacy_direct_configurations(self):
         result = self.store.list_services()
@@ -295,9 +299,235 @@ class DirectServiceMigrationTests(unittest.TestCase):
         self.assertEqual(payload["activeModelConfigurations"]["word.smart_write"], "legacy_rollback")
         self.assertTrue((self.key_dir / "key_rollback").exists())
 
-        # No direct_svc_ key files created
-        direct_keys = list(self.key_dir.glob("direct_svc_*"))
-        self.assertEqual(len(direct_keys), 0)
+        self.assertEqual(self._production_direct_service_keys(), [])
+
+    def test_migrated_active_task_can_resolve_auth_without_catalog(self):
+        self._seed_legacy_config(
+            "legacy_active_write",
+            "word.smart_write",
+            "key_active_write",
+            "sk-live-key",
+            model_name="glm-5.2",
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["modelName"], "glm-5.2")
+        self.assertEqual(selection["modelAvailability"], "available")
+        self.assertTrue(selection["modelAvailable"])
+
+        client = ProviderClient(direct_service_store=self.store)
+        auth = client.resolve_task_auth("word.smart_write")
+        self.assertEqual(auth["modelName"], "glm-5.2")
+        self.assertEqual(auth["apiKey"], "sk-live-key")
+        self.assertEqual(auth["accessMethod"], ACCESS_DIRECT_MODEL)
+
+    def test_incomplete_url_without_key_kept_as_inactive_draft(self):
+        self._seed_legacy_config(
+            "legacy_url_only",
+            "word.smart_write",
+            "key_url_only",
+            "",
+            service_base_url="https://draft.example.com/v1",
+            model_name="glm-5.2",
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        service = result["directServices"][0]
+        self.assertEqual(service["serviceBaseUrl"], "https://draft.example.com/v1")
+        self.assertFalse(service["keyConfigured"])
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertNotIn("word.smart_write", payload.get("activeModelConfigurations", {}))
+
+    def test_incomplete_key_without_url_kept_as_inactive_draft(self):
+        self._seed_legacy_config(
+            "legacy_key_only",
+            "excel.analysis",
+            "key_only",
+            "sk-draft-key",
+            service_base_url="",
+            model_name="glm-5.2",
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        service = result["directServices"][0]
+        self.assertEqual(service["serviceBaseUrl"], "")
+        self.assertTrue(service["keyConfigured"])
+        self.assertEqual(self.store._read_key(service["id"]), "sk-draft-key")
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertNotIn("excel.analysis", payload.get("activeModelConfigurations", {}))
+
+    def test_unconsumed_profiles_for_same_task_are_held_for_manual_processing(self):
+        self._seed_legacy_config(
+            "legacy_write_a",
+            "word.smart_write",
+            "key_write_a",
+            "sk-profile-a",
+            name="档案 A",
+            model_name="glm-5.2",
+            temperature=0.1,
+            active=False,
+        )
+        self._seed_legacy_config(
+            "legacy_write_b",
+            "word.smart_write",
+            "key_write_b",
+            "sk-profile-b",
+            name="档案 B",
+            service_base_url="https://other.example.com/v1",
+            model_name="deepseek-v4-flash",
+            temperature=0.9,
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "pending_manual")
+        self.assertEqual(
+            result["legacyDirectMigration"]["code"],
+            "DIRECT_SERVICE_MIGRATION_PENDING_PROFILES",
+        )
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["modelName"], "deepseek-v4-flash")
+        self.assertEqual(selection["temperature"], 0.9)
+
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        pending = payload.get("legacyDirectPending", {})
+        self.assertIn("legacy_write_a", pending)
+        self.assertNotIn("legacy_write_a", payload.get("modelConfigurations", {}))
+        self.assertNotIn("legacy_write_b", payload.get("modelConfigurations", {}))
+        self.assertTrue((self.key_dir / "key_write_a").exists())
+        self.assertFalse((self.key_dir / "key_write_b").exists())
+
+        again = self.store.list_services()
+        self.assertEqual(again["legacyDirectMigration"]["status"], "pending_manual")
+        self.assertIn("legacy_write_a", json.loads(self.config_path.read_text(encoding="utf-8")).get("legacyDirectPending", {}))
+
+    def test_reused_existing_service_clears_default_model_on_conflict(self):
+        existing = self.store.create_service(
+            name="已有共享服务",
+            service_base_url="https://shared.example.com/v1",
+            default_model="alpha-model",
+            api_key="sk-shared",
+        )
+        self._seed_legacy_config(
+            "legacy_beta",
+            "word.smart_write",
+            "key_beta",
+            "sk-shared",
+            service_base_url="https://shared.example.com/v1",
+            model_name="beta-model",
+            active=True,
+        )
+        self._seed_legacy_config(
+            "legacy_gamma",
+            "excel.analysis",
+            "key_gamma",
+            "sk-shared",
+            service_base_url="https://shared.example.com/v1",
+            model_name="gamma-model",
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        self.assertEqual(result["directServiceCount"], 1)
+        service = result["directServices"][0]
+        self.assertEqual(service["id"], existing["id"])
+        self.assertEqual(service["defaultModel"], "")
+
+    def test_hostname_case_and_default_port_do_not_split_services(self):
+        self._seed_legacy_config(
+            "legacy_upper",
+            "word.smart_write",
+            "key_upper",
+            "sk-same",
+            service_base_url="https://API.Example.com:443/v1",
+            active=True,
+        )
+        self._seed_legacy_config(
+            "legacy_lower",
+            "excel.analysis",
+            "key_lower",
+            "sk-same",
+            service_base_url="https://api.example.com/v1",
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        self.assertEqual(result["directServiceCount"], 1)
+        self.assertEqual(result["directServices"][0]["serviceBaseUrl"], "https://api.example.com/v1")
+
+    def test_atomic_rollback_after_config_write_restores_original(self):
+        self._seed_legacy_config(
+            "legacy_after_write",
+            "word.smart_write",
+            "key_after_write",
+            "sk-after-write",
+            active=True,
+        )
+        original = self.config_path.read_text(encoding="utf-8")
+        real_save = __import__("app.core.config", fromlist=["save_config_payload"]).save_config_payload
+
+        def save_then_fail(payload, config_path=None):
+            real_save(payload, config_path)
+            raise DirectServiceError("DIRECT_SERVICE_MIGRATION_FAILED", "injected verify failure")
+
+        with patch("app.services.direct_services.save_config_payload", side_effect=save_then_fail):
+            with self.assertRaises(DirectServiceError):
+                self.store.list_services()
+
+        self.assertEqual(
+            json.loads(self.config_path.read_text(encoding="utf-8")),
+            json.loads(original),
+        )
+        self.assertTrue((self.key_dir / "key_after_write").exists())
+        self.assertEqual(self._production_direct_service_keys(), [])
+
+    def test_systemexit_during_commit_leaves_original_config_and_keys(self):
+        self._seed_legacy_config(
+            "legacy_sysexit",
+            "word.smart_write",
+            "key_sysexit",
+            "sk-sysexit",
+            active=True,
+        )
+        original = self.config_path.read_text(encoding="utf-8")
+
+        with patch("app.services.direct_services.save_config_payload", side_effect=SystemExit(1)):
+            with self.assertRaises(SystemExit):
+                self.store.list_services()
+
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), original)
+        self.assertTrue((self.key_dir / "key_sysexit").exists())
+        self.assertEqual(self._production_direct_service_keys(), [])
+
+    def test_truncated_config_is_restored_from_pre_migration_backup(self):
+        self._seed_legacy_config(
+            "legacy_recover",
+            "word.smart_write",
+            "key_recover",
+            "sk-recover",
+            active=True,
+        )
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        backup = Path(str(self.config_path) + ".pre-direct-migration")
+        self.assertTrue(backup.is_file())
+        self.config_path.write_text("{", encoding="utf-8")
+
+        recovered = self.store.list_services()
+        self.assertIn(recovered["legacyDirectMigration"]["status"], ("completed", "not_needed"))
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertTrue(payload.get("directServices") or payload.get("modelConfigurations"))
+        recovery_record = self.config_path.with_name("adapter-direct-migration-recovery.json")
+        self.assertTrue(recovery_record.is_file())
 
     def test_legacy_direct_write_contract_is_retired(self):
         model_store = ModelConfigurationStore(self.config_path, self.key_dir)

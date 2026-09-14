@@ -567,7 +567,11 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
 
         migrated = self.store.list_services()
         self.assertEqual(migrated["directServiceCount"], 1)
-        self.assertEqual(migrated["legacyDirectMigration"]["status"], "completed")
+        self.assertEqual(migrated["legacyDirectMigration"]["status"], "pending_manual")
+        self.assertEqual(
+            migrated["legacyDirectMigration"]["code"],
+            "DIRECT_SERVICE_MIGRATION_PENDING_PROFILES",
+        )
         selection = self.store.get_task_model_selection("word.document_review")
         self.assertEqual(selection["serviceId"], svc["id"])
         self.assertEqual(selection["temperature"], 0.35)
@@ -577,9 +581,10 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
         self.assertTrue(selection["fullDocumentReviewReady"])
 
         payload = json.loads(self.config_path.read_text(encoding="utf-8"))
-        self.assertNotIn("legacy_doc_a", payload["modelConfigurations"])
-        self.assertNotIn("legacy_doc_b", payload["modelConfigurations"])
-        self.assertFalse((self.key_dir / "legacy_doc_key_a").exists())
+        self.assertIn("legacy_doc_a", payload.get("legacyDirectPending", {}))
+        self.assertNotIn("legacy_doc_a", payload.get("modelConfigurations", {}))
+        self.assertNotIn("legacy_doc_b", payload.get("modelConfigurations", {}))
+        self.assertTrue((self.key_dir / "legacy_doc_key_a").exists())
         self.assertFalse((self.key_dir / "legacy_doc_key_b").exists())
 
     def test_legacy_direct_migration_over_capacity_preserves_original_data(self):
