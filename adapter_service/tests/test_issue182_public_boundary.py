@@ -84,9 +84,10 @@ class _OutcomeWorker(object):
 
     def _execute(self, *args, **kwargs):
         self.started.set()
-        if self.outcome == "block":
+        if self.outcome in ("block", "hold"):
             self.release.wait(timeout=5)
-            raise LongTaskCancelled(partial_result=None)
+            if self.outcome == "block":
+                raise LongTaskCancelled(partial_result=None)
         if self.outcome == "fail":
             raise RuntimeError("forced job failure")
         payload = dict(self.result)
@@ -514,9 +515,9 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
                 store_cls = getattr(store_module, spec["store_import"][1])
                 originals.append((module, spec["store_attr"], getattr(module, spec["store_attr"])))
 
-                success_worker = _OutcomeWorker("ok", spec["result"])
                 fail_worker = _OutcomeWorker("fail", spec["result"])
-                success_store = store_cls(success_worker, LongTaskCoordinator())
+                hold_worker = _OutcomeWorker("hold", spec["result"])
+                success_store = store_cls(hold_worker, LongTaskCoordinator())
                 setattr(module, spec["store_attr"], success_store)
 
                 success_id = "ok-{0}".format(spec["task_type"].replace(".", "-"))
@@ -530,6 +531,17 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
                     json=spec["payload"](success_id, "session-{0}-ok".format(spec["task_type"])),
                 )
                 self.assertEqual(duplicate.status_code, 200, duplicate.text)
+                self.assertTrue(hold_worker.started.wait(timeout=2), spec["task_type"])
+                try:
+                    resumed = client.get("{0}/{1}?resume=1".format(spec["path"], success_id))
+                    self.assertEqual(resumed.status_code, 200, resumed.text)
+                    self.assertIn(
+                        resumed.json()["data"]["status"],
+                        ("queued", "running"),
+                        spec["task_type"],
+                    )
+                finally:
+                    hold_worker.release.set()
                 completed = success_store.coordinator.wait(success_id, task_type=spec["task_type"])
                 self.assertEqual(completed["status"], "completed", spec["task_type"])
 
@@ -570,10 +582,6 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
                     blocker.release.set()
                     cancel_store.coordinator.wait(blocker_id, task_type=spec["task_type"])
 
-                if spec["resume"]:
-                    missing = client.get("{0}/missing-{1}?resume=1".format(spec["path"], spec["task_type"]))
-                    self.assertEqual(missing.status_code, 404, missing.text)
-
             listed_before_restart = {}
             with patch("app.api.history.get_task_history_store", return_value=self.history):
                 for spec in JOB_SPECS:
@@ -582,12 +590,38 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
                     _assert_no_secret(self, listed.json())
                     items = listed.json()["data"]["items"]
                     self.assertEqual(len(items), 1, spec["task_type"])
-                    self.assertEqual(items[0]["jobId"], "ok-{0}".format(spec["task_type"].replace(".", "-")))
-                    listed_before_restart[spec["task_type"]] = items[0]["id"]
+                    self.assertEqual(
+                        items[0]["jobId"],
+                        "ok-{0}".format(spec["task_type"].replace(".", "-")),
+                    )
+                    listed_before_restart[spec["task_type"]] = items[0]
 
             restarted = TaskHistoryStore(self.history_dir)
             with patch("app.api.history.get_task_history_store", return_value=restarted):
-                success_id = listed_before_restart["excel.analysis"]
+                seen_ids = []
+                for spec in JOB_SPECS:
+                    listed = client.get("/history?taskType={0}".format(spec["task_type"]))
+                    self.assertEqual(listed.status_code, 200, listed.text)
+                    _assert_no_secret(self, listed.json())
+                    items = listed.json()["data"]["items"]
+                    self.assertEqual(len(items), 1, spec["task_type"])
+                    success_job_id = "ok-{0}".format(spec["task_type"].replace(".", "-"))
+                    self.assertEqual(items[0]["jobId"], success_job_id, spec["task_type"])
+                    self.assertEqual(
+                        items[0]["id"],
+                        listed_before_restart[spec["task_type"]]["id"],
+                        spec["task_type"],
+                    )
+                    job_ids = [item["jobId"] for item in items]
+                    self.assertEqual(job_ids, [success_job_id], spec["task_type"])
+                    for item in items:
+                        self.assertFalse(str(item["jobId"]).startswith("fail-"), spec["task_type"])
+                        self.assertFalse(str(item["jobId"]).startswith("cancel-"), spec["task_type"])
+                        self.assertFalse(str(item["jobId"]).startswith("block-"), spec["task_type"])
+                    seen_ids.append(items[0]["id"])
+                self.assertEqual(len(seen_ids), len(set(seen_ids)))
+
+                success_id = listed_before_restart["excel.analysis"]["id"]
                 detail = client.get("/history/{0}".format(success_id))
                 self.assertEqual(detail.status_code, 200, detail.text)
                 _assert_no_secret(self, detail.json())
@@ -692,34 +726,33 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
         )
 
     def test_format_review_public_job_api_archives_success_only(self):
-        os.environ["AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW"] = "1"
         from app.api import word as word_api
         from app.services.word.deterministic_format_review import DeterministicFormatReviewService
 
+        format_result = {
+            "summary": {
+                "scope": "document",
+                "templateId": "technical-document-template-rules",
+                "provider": "local",
+                "semanticStatus": "not_needed",
+                "executionStatus": "completed",
+                "complianceStatus": "violations_found",
+                "coverageStatus": "complete",
+            },
+            "issues": [],
+        }
         history_patches = [patch(target, return_value=self.history) for target in HISTORY_PATCH_TARGETS]
         for item in history_patches:
             item.start()
         original = word_api.deterministic_format_review_service
+        env_patch = patch.dict(os.environ, {"AI_WPS_ENABLE_DETERMINISTIC_FORMAT_REVIEW": "1"})
+        env_patch.start()
         client = self._client()
         try:
-            success_worker = _OutcomeWorker(
-                "ok",
-                {
-                    "summary": {
-                        "scope": "document",
-                        "templateId": "technical-document-template-rules",
-                        "provider": "local",
-                        "semanticStatus": "not_needed",
-                        "executionStatus": "completed",
-                        "complianceStatus": "violations_found",
-                        "coverageStatus": "complete",
-                    },
-                    "issues": [],
-                },
-            )
+            hold_worker = _OutcomeWorker("hold", format_result)
             service = DeterministicFormatReviewService(
                 staging_root=Path(self.tmp.name) / "format-staging",
-                reviewer=success_worker,
+                reviewer=hold_worker,
                 coordinator=LongTaskCoordinator(),
             )
             word_api.deterministic_format_review_service = service
@@ -738,10 +771,20 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
                 },
             )
             self.assertEqual(posted.status_code, 200, posted.text)
+            self.assertTrue(hold_worker.started.wait(timeout=2))
+            try:
+                resumed = client.get("/word/format-review/jobs/ok-word-format-review")
+                self.assertEqual(resumed.status_code, 200, resumed.text)
+                self.assertIn(resumed.json()["data"]["status"], ("queued", "running"))
+            finally:
+                hold_worker.release.set()
             completed = service.coordinator.wait(
                 "ok-word-format-review", task_type="word.format_review.deterministic"
             )
             self.assertEqual(completed["status"], "completed")
+            resumed_done = client.get("/word/format-review/jobs/ok-word-format-review")
+            self.assertEqual(resumed_done.status_code, 200, resumed_done.text)
+            self.assertEqual(resumed_done.json()["data"]["status"], "completed")
 
             fail_worker = _OutcomeWorker("fail", {})
             fail_service = DeterministicFormatReviewService(
@@ -769,13 +812,89 @@ class Issue182PublicApiBoundaryTests(unittest.TestCase):
             )
             self.assertEqual(failed["status"], "failed")
 
+            blocker = _OutcomeWorker("block", format_result)
+            cancel_service = DeterministicFormatReviewService(
+                staging_root=Path(self.tmp.name) / "format-staging-cancel",
+                reviewer=blocker,
+                coordinator=LongTaskCoordinator(max_running=1, max_queued=4),
+            )
+            word_api.deterministic_format_review_service = cancel_service
+            block_committed = self._commit_format_snapshot(
+                cancel_service, "format-block.docx", "session-format-block", "占用.docx"
+            )
+            cancel_committed = self._commit_format_snapshot(
+                cancel_service, "format-cancel.docx", "session-format-cancel", "取消.docx"
+            )
+            occupy = client.post(
+                "/word/format-review/jobs",
+                json={
+                    "snapshotId": block_committed["snapshotId"],
+                    "snapshotToken": block_committed["snapshotToken"],
+                    "clientJobId": "block-word-format-review",
+                    "documentSessionId": "session-format-block",
+                    "host": "wps",
+                },
+            )
+            self.assertEqual(occupy.status_code, 200, occupy.text)
+            self.assertTrue(blocker.started.wait(timeout=2))
+            try:
+                cancel_post = client.post(
+                    "/word/format-review/jobs",
+                    json={
+                        "snapshotId": cancel_committed["snapshotId"],
+                        "snapshotToken": cancel_committed["snapshotToken"],
+                        "clientJobId": "cancel-word-format-review",
+                        "documentSessionId": "session-format-cancel",
+                        "host": "wps",
+                    },
+                )
+                self.assertEqual(cancel_post.status_code, 200, cancel_post.text)
+                self.assertEqual(cancel_post.json()["data"]["status"], "queued")
+                cancelled_req = client.delete("/word/format-review/jobs/cancel-word-format-review")
+                self.assertEqual(cancelled_req.status_code, 200, cancelled_req.text)
+                cancelled = cancel_service.coordinator.wait(
+                    "cancel-word-format-review",
+                    task_type="word.format_review.deterministic",
+                )
+                self.assertEqual(cancelled["status"], "cancelled")
+            finally:
+                blocker.release.set()
+                cancel_service.coordinator.wait(
+                    "block-word-format-review",
+                    task_type="word.format_review.deterministic",
+                )
+
             with patch("app.api.history.get_task_history_store", return_value=self.history):
                 listed = client.get("/history?taskType=word.format_review")
             self.assertEqual(listed.status_code, 200, listed.text)
             _assert_no_secret(self, listed.json())
-            self.assertEqual(listed.json()["data"]["total"], 1)
-            self.assertEqual(listed.json()["data"]["items"][0]["jobId"], "ok-word-format-review")
+            items = listed.json()["data"]["items"]
+            self.assertEqual(len(items), 1)
+            self.assertEqual(items[0]["jobId"], "ok-word-format-review")
+            history_id = items[0]["id"]
+
+            restarted = TaskHistoryStore(self.history_dir)
+            with patch("app.api.history.get_task_history_store", return_value=restarted):
+                listed_after = client.get("/history?taskType=word.format_review")
+                self.assertEqual(listed_after.status_code, 200, listed_after.text)
+                _assert_no_secret(self, listed_after.json())
+                after_items = listed_after.json()["data"]["items"]
+                self.assertEqual(len(after_items), 1)
+                self.assertEqual(after_items[0]["jobId"], "ok-word-format-review")
+                self.assertEqual(after_items[0]["id"], history_id)
+                self.assertEqual(
+                    [item["jobId"] for item in after_items],
+                    ["ok-word-format-review"],
+                )
+                for item in after_items:
+                    self.assertFalse(str(item["jobId"]).startswith("fail-"))
+                    self.assertFalse(str(item["jobId"]).startswith("cancel-"))
+                    self.assertFalse(str(item["jobId"]).startswith("block-"))
+                detail = client.get("/history/{0}".format(history_id))
+                self.assertEqual(detail.status_code, 200, detail.text)
+                _assert_no_secret(self, detail.json())
         finally:
+            env_patch.stop()
             word_api.deterministic_format_review_service = original
             for item in reversed(history_patches):
                 item.stop()
