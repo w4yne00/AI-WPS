@@ -3343,37 +3343,7 @@
   }
 
   function handleModelConfigurationEditorChange(event) {
-    var editor = state.workflowProfileEditor;
-    var methodInput;
-    var nextMethod;
-    var directFields;
-    var index;
     markWorkflowProfileEditorDirty();
-    if (!editor || !event.target || !event.target.hasAttribute("data-workflow-editor-method")) {
-      return;
-    }
-    methodInput = event.target;
-    nextMethod = methodInput.value;
-    if (editor.currentAccessMethod && editor.currentAccessMethod !== nextMethod && window.confirm &&
-        !window.confirm("切换接入方式会清空原方式的专属参数和 API Key，是否继续？")) {
-      methodInput.value = editor.currentAccessMethod;
-      return;
-    }
-    editor.currentAccessMethod = nextMethod;
-    directFields = document.querySelectorAll(".model-direct-field");
-    for (index = 0; index < directFields.length; index += 1) {
-      directFields[index].hidden = nextMethod !== "direct_model";
-    }
-    if (editor.originalAccessMethod && editor.originalAccessMethod !== nextMethod) {
-      ["[data-workflow-editor-key]", "[data-workflow-editor-key-confirm]",
-        "[data-workflow-editor-model]", "[data-workflow-editor-temperature]",
-        "[data-workflow-editor-max-output]"].forEach(function (selector) {
-        var input = document.querySelector(selector);
-        if (input) {
-          input.value = "";
-        }
-      });
-    }
   }
 
   function renderWorkflowProfileManager() {
@@ -3412,8 +3382,7 @@
         renderWorkflowProfileManager();
         return;
       }
-      var accessMethod = profile ? profile.accessMethod : "workflow_platform";
-      var directHidden = accessMethod === "direct_model" ? "" : " hidden";
+      var accessMethod = "workflow_platform";
       var validationSummary = profile
         ? (helpers.formatModelValidationStatus
           ? helpers.formatModelValidationStatus(profile, data.activeProfileId)
@@ -3428,12 +3397,9 @@
       rows.push('<label class="field"><span>配置名称</span><input type="text" data-workflow-editor-name maxlength="40" value="' +
         escapeWorkflowText(profile ? profile.name : "") + '"' + disabledAttribute + ' /></label>');
       rows.push('<label class="field"><span>接入方式</span><select data-workflow-editor-method' + disabledAttribute + '>' +
-        '<option value="workflow_platform"' + (accessMethod === "workflow_platform" ? " selected" : "") + '>工作流平台</option>' +
-        '<option value="direct_model"' + (accessMethod === "direct_model" ? " selected" : "") + '>模型直连</option></select></label>');
+        '<option value="workflow_platform" selected>工作流平台</option></select></label>');
       rows.push('<label class="field"><span>服务地址</span><input type="text" data-workflow-editor-url placeholder="例如：http://1.1.1.1:1111/one-api/v1" value="' +
         escapeWorkflowText(profile ? profile.serviceBaseUrl : "") + '"' + disabledAttribute + ' /></label>');
-      rows.push('<label class="field model-direct-field"' + directHidden + '><span>模型标识</span><input type="text" data-workflow-editor-model placeholder="例如：glm-5.2" value="' +
-        escapeWorkflowText(profile ? profile.modelName : "") + '"' + disabledAttribute + ' /></label>');
       rows.push('<label class="field"><span>备注</span><textarea data-workflow-editor-note rows="3" maxlength="200" placeholder="选填"' + disabledAttribute + '>' +
         escapeWorkflowText(profile ? profile.note : "") + '</textarea></label>');
       rows.push('<section class="model-key-editor"><div class="model-key-status">API Key：' +
@@ -3442,12 +3408,6 @@
         '</span><input type="password" data-workflow-editor-key autocomplete="new-password"' + disabledAttribute + ' /></label>' +
         '<label class="field"><span>再次输入 API Key</span><input type="password" data-workflow-editor-key-confirm autocomplete="new-password"' + disabledAttribute + ' /></label></section>');
       rows.push('<details class="model-advanced-settings"><summary>高级配置</summary><div class="workflow-editor-fields">' +
-        '<label class="field model-direct-field"' + directHidden + '><span>温度（选填）</span><input type="number" min="0" max="2" step="0.1" data-workflow-editor-temperature value="' +
-        escapeWorkflowText(profile && profile.temperature !== null && typeof profile.temperature !== "undefined" ? profile.temperature : "") + '"' + disabledAttribute + ' /></label>' +
-        '<label class="field model-direct-field"' + directHidden + '><span>最大输出 Token（选填）</span><input type="number" min="1" data-workflow-editor-max-output value="' +
-        escapeWorkflowText(profile && profile.maxOutputTokens ? profile.maxOutputTokens : "") + '"' + disabledAttribute + ' /></label>' +
-        '<label class="field model-direct-field"' + directHidden + '><span>上下文容量</span><input type="number" min="1000" data-workflow-editor-context value="' +
-        escapeWorkflowText(profile ? profile.contextWindowTokens : 40000) + '"' + disabledAttribute + ' /></label>' +
         (profile ? '<button type="button" class="ghost-action" data-workflow-action="validate" data-task-type="' + taskType + '" data-profile-id="' + escapeWorkflowText(profile.id) + '"' +
           (!profile.complete || editor.dirty ? " disabled" : "") + '>验证调用</button><p class="inline-status" data-model-validation-summary>' +
           escapeWorkflowText(validationSummary) + '</p>' : '') +
@@ -3556,12 +3516,12 @@
     return {
       name: value("[data-workflow-editor-name]"),
       note: value("[data-workflow-editor-note]"),
-      accessMethod: value("[data-workflow-editor-method]") || "workflow_platform",
+      accessMethod: "workflow_platform",
       serviceBaseUrl: value("[data-workflow-editor-url]"),
-      modelName: value("[data-workflow-editor-model]"),
-      temperature: value("[data-workflow-editor-temperature]"),
-      maxOutputTokens: value("[data-workflow-editor-max-output]"),
-      contextWindowTokens: value("[data-workflow-editor-context]") || "40000",
+      modelName: "",
+      temperature: "",
+      maxOutputTokens: "",
+      contextWindowTokens: "40000",
       apiKey: value("[data-workflow-editor-key]"),
       apiKeyConfirm: value("[data-workflow-editor-key-confirm]")
     };
@@ -3572,12 +3532,12 @@
       taskType: taskType,
       name: draft.name,
       note: draft.note,
-      accessMethod: draft.accessMethod,
+      accessMethod: "workflow_platform",
       serviceBaseUrl: draft.serviceBaseUrl,
-      modelName: draft.accessMethod === "direct_model" ? draft.modelName : "",
-      temperature: draft.accessMethod === "direct_model" && draft.temperature !== "" ? Number(draft.temperature) : null,
-      maxOutputTokens: draft.accessMethod === "direct_model" && draft.maxOutputTokens !== "" ? Number(draft.maxOutputTokens) : null,
-      contextWindowTokens: draft.accessMethod === "direct_model" ? Number(draft.contextWindowTokens || 40000) : 40000
+      modelName: "",
+      temperature: null,
+      maxOutputTokens: null,
+      contextWindowTokens: 40000
     };
   }
 
@@ -3588,10 +3548,6 @@
     }
     if (draft.apiKey !== draft.apiKeyConfirm) {
       return { valid: false, message: "两次输入的 API Key 不一致。" };
-    }
-    if (draft.accessMethod === "direct_model" && draft.maxOutputTokens &&
-        Number(draft.maxOutputTokens) >= Number(draft.contextWindowTokens || 40000)) {
-      return { valid: false, message: "最大输出 Token 必须小于上下文容量。" };
     }
     return { valid: true, message: "" };
   }
@@ -4071,6 +4027,17 @@
     return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
   }
 
+  function renderLegacyDirectPendingStatus() {
+    var node = byId("legacy-direct-pending-status");
+    if (!node) return;
+    var pending = state.legacyDirectPending || {};
+    var count = Number(pending.pendingConfigurationCount || 0);
+    node.hidden = count < 1;
+    setNodeTextIfChanged(node, count > 0
+      ? "发现 " + count + " 份待处理旧直连配置。请由管理员通过迁移管理接口处理。"
+      : "");
+  }
+
   function loadDirectServices(configRefreshRequestId, requestOptions, directServiceOperationId) {
     return Promise.all([
       request("/provider/direct-services", null, requestOptions),
@@ -4085,6 +4052,10 @@
         return { superseded: true };
       }
       state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
+      state.legacyDirectPending = (dsBody && dsBody.data && dsBody.data.legacyDirectPending) || {};
+      if (typeof renderLegacyDirectPendingStatus === "function") {
+        renderLegacyDirectPendingStatus();
+      }
       var selectionsMap = {};
       var rawSelections = (tmsBody && tmsBody.data && (tmsBody.data.taskModelSelections || tmsBody.data.selections)) || [];
       if (Array.isArray(rawSelections)) {

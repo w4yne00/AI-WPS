@@ -525,6 +525,38 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
                 "DIRECT_SERVICE_REVISION_REQUIRED",
             )
 
+    def test_pending_mutation_route_requires_expected_revision(self) -> None:
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    "legacyDirectPending": {
+                        "legacy_pending_route": {
+                            "id": "legacy_pending_route",
+                            "taskType": "word.smart_write",
+                            "name": "待处理",
+                            "accessMethod": "direct_model",
+                            "serviceBaseUrl": "https://pending.example/v1",
+                            "revision": 1,
+                        }
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        response = self._invoke(
+            "do_POST",
+            "/provider/legacy-direct-pending/legacy_pending_route/abandon",
+            {},
+        )
+
+        self.assertEqual(response["status"], 400)
+        self.assertEqual(
+            response["body"]["errors"][0]["code"],
+            "DIRECT_SERVICE_REVISION_REQUIRED",
+        )
+
     def test_standalone_direct_service_lifecycle(self) -> None:
         # 1. List services initially empty
         res = self._invoke("do_GET", "/provider/direct-services")
@@ -674,9 +706,8 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         cfg = model_store.create_configuration(
             task_type="word.smart_write",
             name="既有编写配置",
-            access_method="direct_model",
+            access_method="workflow_platform",
             service_base_url="https://api.openai.com/v1",
-            model_name="gpt-4o",
         )
         cfg_id = cfg["id"]
 
@@ -692,6 +723,47 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
         self.assertEqual(res["writes"][0][0], 200)
         self.assertEqual(
             res["body"]["data"]["configuration"]["name"], "修改后的编写配置"
+        )
+
+    def test_standalone_model_configuration_write_rejects_direct_model(self) -> None:
+        """Verify that POST and PATCH on model-configurations reject direct_model access method."""
+        from app.services.model_configurations import ModelConfigurationStore
+
+        model_store = ModelConfigurationStore(
+            config_path=self.config_path, key_dir=self.api_key_dir
+        )
+        cfg = model_store.create_configuration(
+            task_type="word.smart_write",
+            name="工作流配置",
+            access_method="workflow_platform",
+            service_base_url="https://api.openai.com/v1",
+        )
+
+        # POST /provider/model-configurations with direct_model must return 400
+        res_post = self._invoke(
+            "do_POST",
+            "/provider/model-configurations",
+            {
+                "taskType": "word.smart_write",
+                "name": "旧直连创建",
+                "accessMethod": "direct_model",
+                "serviceBaseUrl": "https://api.openai.com/v1",
+            },
+        )
+        self.assertEqual(res_post["status"], 400)
+        self.assertEqual(
+            res_post["body"]["errors"][0]["code"], "MODEL_CONFIG_DIRECT_WRITE_RETIRED"
+        )
+
+        # PATCH /provider/model-configurations/{id} with direct_model must return 400
+        res_patch = self._invoke(
+            "do_PATCH",
+            f"/provider/model-configurations/{cfg['id']}",
+            {"accessMethod": "direct_model"},
+        )
+        self.assertEqual(res_patch["status"], 400)
+        self.assertEqual(
+            res_patch["body"]["errors"][0]["code"], "MODEL_CONFIG_DIRECT_WRITE_RETIRED"
         )
 
     def test_standalone_writing_policy_put_does_not_fall_through_to_501(self) -> None:

@@ -1,10 +1,9 @@
-import json
 import os
 import re
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
-from app.core.config import default_config_path
+from app.core.config import default_config_path, load_config_payload
 from app.core.runtime_paths import resolve_runtime_paths
 from app.services.workflow_profiles import SUPPORTED_WORKFLOW_TASKS
 from app.services.writing_policy import get_writing_policy_service
@@ -68,7 +67,7 @@ def _read_config_payload() -> dict:
     path = Path(default_config_path())
     if not path.exists():
         return {}
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_config_payload(path)
     if not isinstance(payload, dict):
         raise _CoreHealthError("configuration root must be an object")
     return payload

@@ -194,8 +194,9 @@ class FullDocumentReviewReadinessTests(unittest.TestCase):
             model_name="review-model" if access_method == ACCESS_DIRECT_MODEL else "",
             max_output_tokens=max_output_tokens,
             context_window_tokens=40000,
+            allow_direct=True,
         )
-        return store.replace_api_key(configuration["id"], "secret")
+        return store.replace_api_key(configuration["id"], "secret", allow_direct=True)
 
     def test_direct_model_with_explicit_capacity_is_full_review_ready(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -243,8 +244,11 @@ class FullDocumentReviewReadinessTests(unittest.TestCase):
                 model_name="review-model",
                 max_output_tokens=2048,
                 context_window_tokens=None,
+                allow_direct=True,
             )
-            configuration = store.replace_api_key(configuration["id"], "secret")
+            configuration = store.replace_api_key(
+                configuration["id"], "secret", allow_direct=True
+            )
 
         self.assertTrue(configuration["limitedReviewReady"])
         self.assertFalse(configuration["fullDocumentReviewReady"])

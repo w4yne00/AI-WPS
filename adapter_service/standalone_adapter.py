@@ -86,6 +86,7 @@ from app.services.word.smart_imitator import WordSmartImitator
 from app.services.template_loader import TemplateLoader
 from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
     ModelConfigurationError,
     ModelConfigurationStore,
     WorkflowProfileCompatibilityStore,
@@ -1692,6 +1693,22 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/provider/legacy-direct-pending":
+            try:
+                data = DirectServiceStore().list_legacy_pending()
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-legacy-direct-pending",
+                    "provider.legacy_direct_pending",
+                    data,
+                ),
+            )
+            return
+
         if path == "/provider/direct-services":
             try:
                 data = DirectServiceStore().list_services()
@@ -2622,6 +2639,62 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        pending_prefix = "/provider/legacy-direct-pending/"
+        if path.startswith(pending_prefix):
+            relative = path[len(pending_prefix) :].strip("/")
+            config_id, separator, action = relative.partition("/")
+            config_id = unquote(config_id)
+            store = DirectServiceStore()
+            try:
+                if action == "migrate":
+                    service = store.migrate_legacy_pending(
+                        config_id, expected_revision=payload.get("expectedRevision")
+                    )
+                    message = "migrated"
+                elif action == "rebuild":
+                    service = store.rebuild_legacy_pending(
+                        config_id, expected_revision=payload.get("expectedRevision")
+                    )
+                    message = "rebuilt"
+                elif action == "abandon":
+                    data = store.abandon_legacy_pending(
+                        config_id, expected_revision=payload.get("expectedRevision")
+                    )
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-legacy-direct-pending",
+                            "provider.legacy_direct_pending",
+                            data,
+                            message="abandoned",
+                        ),
+                    )
+                    return
+                else:
+                    self._write(
+                        404,
+                        envelope(
+                            "standalone-legacy-direct-pending",
+                            "provider.legacy_direct_pending",
+                            {},
+                            message="not found",
+                        ),
+                    )
+                    return
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-legacy-direct-pending",
+                    "provider.legacy_direct_pending",
+                    {"directService": service},
+                    message=message,
+                ),
+            )
+            return
+
         if path == "/provider/direct-services":
             store = DirectServiceStore()
             try:
@@ -2822,6 +2895,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
 
         if path == "/provider/model-configurations":
+            if str(payload.get("accessMethod", "")).strip() == ACCESS_DIRECT_MODEL:
+                self._write_model_configuration_error(
+                    ModelConfigurationError(
+                        "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                        "模型直连写入合同已退役，请使用共享直连服务接口。",
+                    )
+                )
+                return
             try:
                 configuration = ModelConfigurationStore().create_configuration(
                     payload.get("taskType", ""),
@@ -3639,6 +3720,14 @@ class Handler(BaseHTTPRequestHandler):
         model_prefix = "/provider/model-configurations/"
         if path.startswith(model_prefix):
             configuration_id = unquote(path[len(model_prefix) :]).strip("/")
+            if str(payload.get("accessMethod", "")).strip() == ACCESS_DIRECT_MODEL:
+                self._write_model_configuration_error(
+                    ModelConfigurationError(
+                        "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                        "模型直连写入合同已退役，请使用共享直连服务接口。",
+                    )
+                )
+                return
             try:
                 update_fields = {}
                 if "name" in payload:
@@ -4472,7 +4561,7 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _write_direct_service_error(self, error):
-        if error.code == "DIRECT_SERVICE_NOT_FOUND":
+        if error.code in {"DIRECT_SERVICE_NOT_FOUND", "DIRECT_SERVICE_PENDING_NOT_FOUND"}:
             status_code = 404
         elif error.code in {
             "DIRECT_SERVICE_LIMIT",

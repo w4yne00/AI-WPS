@@ -97,8 +97,9 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://model.example/v1",
                 model_name="glm-5.2",
+                allow_direct=True,
             )
-            store.replace_api_key(direct["id"], "direct-secret")
+            store.replace_api_key(direct["id"], "direct-secret", allow_direct=True)
             store.activate_configuration(direct["id"])
 
             deleted = store.delete_configuration("profile_existing")
@@ -119,8 +120,13 @@ class ModelConfigurationStoreTests(unittest.TestCase):
     def test_direct_configuration_requires_model_and_key_before_activation(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
+            # Retired by default
+            with self.assertRaises(ModelConfigurationError) as cm:
+                store.create_configuration("excel.analysis", "直连", ACCESS_DIRECT_MODEL)
+            self.assertEqual(cm.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED")
+
             configuration = store.create_configuration(
-                "excel.analysis", "直连", ACCESS_DIRECT_MODEL
+                "excel.analysis", "直连", ACCESS_DIRECT_MODEL, allow_direct=True
             )
             self.assertFalse(configuration["complete"])
             with self.assertRaises(ModelConfigurationError):
@@ -128,12 +134,13 @@ class ModelConfigurationStoreTests(unittest.TestCase):
 
             configuration = store.update_configuration(
                 configuration["id"],
+                allow_direct=True,
                 name="直连",
                 access_method=ACCESS_DIRECT_MODEL,
                 service_base_url="http://1.1.1.1:1111/one-api/v1/chat/completions",
                 model_name="deepseek-v4-flash",
             )
-            store.replace_api_key(configuration["id"], "direct-secret")
+            store.replace_api_key(configuration["id"], "direct-secret", allow_direct=True)
             active = store.activate_configuration(configuration["id"])
 
             self.assertEqual(active["activeConfigurationId"], configuration["id"])
@@ -151,12 +158,14 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 service_base_url="https://model.example/v1",
                 model_name="glm-5.2",
                 temperature=0.2,
+                allow_direct=True,
             )
-            direct = store.replace_api_key(direct["id"], "old-secret")
+            direct = store.replace_api_key(direct["id"], "old-secret", allow_direct=True)
             old_ref = direct["apiKeyRef"]
 
             platform = store.update_configuration(
                 direct["id"],
+                allow_direct=True,
                 name="切换测试",
                 access_method=ACCESS_WORKFLOW_PLATFORM,
                 service_base_url="https://workflow.example/v1",
@@ -190,6 +199,45 @@ class ModelConfigurationStoreTests(unittest.TestCase):
         )
         with self.assertRaises(ModelConfigurationError):
             normalize_service_base_url("https://host/v1?key=secret")
+
+    def test_normalize_service_url_folds_hostname_case_default_ports_and_ipv6(self) -> None:
+        self.assertEqual(
+            normalize_service_base_url("https://API.Example.com/v1"),
+            "https://api.example.com/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://api.example.com:443/v1"),
+            "https://api.example.com/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("http://api.example.com:80/v1"),
+            "http://api.example.com/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://api.example.com:8443/v1"),
+            "https://api.example.com:8443/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://[2001:db8::1]/v1"),
+            "https://[2001:db8::1]/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://[2001:db8::1]:443/v1"),
+            "https://[2001:db8::1]/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://[2001:db8::1]:8443/v1"),
+            "https://[2001:db8::1]:8443/v1",
+        )
+        self.assertEqual(
+            normalize_service_base_url("https://例子.example/v1"),
+            "https://xn--fsqu00a.example/v1",
+        )
+        with self.assertRaises(ModelConfigurationError) as empty_userinfo:
+            normalize_service_base_url("https://@Example.com/v1")
+        self.assertEqual(empty_userinfo.exception.code, "MODEL_CONFIG_URL_INVALID")
+        with self.assertRaises(ModelConfigurationError):
+            normalize_service_base_url("https://user:pass@api.example.com/v1")
 
     def test_format_semantic_readiness_is_stale_after_configuration_changes(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -244,8 +292,11 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 model_name="format-role-model",
                 max_output_tokens=1024,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
-            configuration = store.replace_api_key(configuration["id"], "secret")
+            configuration = store.replace_api_key(
+                configuration["id"], "secret", allow_direct=True
+            )
             validated = store.record_format_semantic_validation(
                 configuration["id"],
                 {
@@ -256,7 +307,9 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             )
             self.assertEqual(validated["formatSemanticReadiness"]["code"], "ready")
 
-            changed = store.replace_api_key(configuration["id"], "new-secret")
+            changed = store.replace_api_key(
+                configuration["id"], "new-secret", allow_direct=True
+            )
             self.assertGreater(changed["configVersion"], validated["configVersion"])
             self.assertTrue(changed["formatSemanticValidation"]["stale"])
             self.assertEqual(
@@ -272,9 +325,12 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
             self.assertEqual(configuration["imageInputMode"], "openai_image_url")
-            saved = store.replace_api_key(configuration["id"], "secret")
+            saved = store.replace_api_key(
+                configuration["id"], "secret", allow_direct=True
+            )
             self.assertTrue(saved["imageExternalAuthorization"]["authorized"])
             self.assertEqual(
                 saved["imageSemanticReadiness"]["code"],
@@ -287,6 +343,7 @@ class ModelConfigurationStoreTests(unittest.TestCase):
 
             changed = store.update_configuration(
                 validated["id"],
+                allow_direct=True,
                 name="图片门禁",
                 access_method=ACCESS_DIRECT_MODEL,
                 service_base_url="https://other-vision.example/v1",
@@ -335,8 +392,9 @@ class ModelConfigurationStoreTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://model.example/v1",
                 model_name="glm-5.2",
+                allow_direct=True,
             )
-            store.replace_api_key(direct["id"], "direct-secret")
+            store.replace_api_key(direct["id"], "direct-secret", allow_direct=True)
             store.activate_configuration(direct["id"])
 
             facade = WorkflowProfileCompatibilityStore(

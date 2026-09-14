@@ -5803,14 +5803,8 @@
     byId("workflow-editor-title").textContent = profile ? "编辑模型配置" : "新建模型配置";
     byId("workflow-editor-name").value = profile ? profile.name : "";
     byId("workflow-editor-note").value = profile ? profile.note : "";
-    byId("workflow-editor-method").value = profile ? profile.accessMethod : "workflow_platform";
+    byId("workflow-editor-method").value = "workflow_platform";
     byId("workflow-editor-url").value = profile ? profile.serviceBaseUrl : "";
-    byId("workflow-editor-model").value = profile ? profile.modelName : "";
-    byId("workflow-editor-model-row").hidden = byId("workflow-editor-method").value !== "direct_model";
-    byId("workflow-editor-direct-advanced").hidden = byId("workflow-editor-method").value !== "direct_model";
-    byId("workflow-editor-temperature").value = profile && profile.temperature !== null ? profile.temperature : "";
-    byId("workflow-editor-max-output").value = profile && profile.maxOutputTokens ? profile.maxOutputTokens : "";
-    byId("workflow-editor-context").value = profile ? profile.contextWindowTokens : 40000;
     byId("workflow-editor-key").value = "";
     byId("workflow-editor-key-confirm").value = "";
     byId("workflow-editor-key-label").textContent = profile && profile.keyConfigured ? "更换 API Key（选填）" : "API Key（可稍后配置）";
@@ -5846,26 +5840,7 @@
   }
 
   function handleModelAccessMethodChange() {
-    var editor = state.workflowEditor;
-    var input = byId("workflow-editor-method");
-    var nextMethod = input.value;
-    if (editor.currentAccessMethod && editor.currentAccessMethod !== nextMethod && window.confirm &&
-        !window.confirm("切换接入方式会清空原方式的专属参数和 API Key，是否继续？")) {
-      input.value = editor.currentAccessMethod;
-      return;
-    }
-    editor.currentAccessMethod = nextMethod;
-    editor.dirty = true;
-    byId("workflow-editor-model-row").hidden = nextMethod !== "direct_model";
-    byId("workflow-editor-direct-advanced").hidden = nextMethod !== "direct_model";
-    byId("btn-validate-model-configuration").disabled = true;
-    if (editor.originalAccessMethod && editor.originalAccessMethod !== nextMethod) {
-      byId("workflow-editor-key").value = "";
-      byId("workflow-editor-key-confirm").value = "";
-      byId("workflow-editor-model").value = "";
-      byId("workflow-editor-temperature").value = "";
-      byId("workflow-editor-max-output").value = "";
-    }
+    state.workflowEditor.dirty = true;
   }
 
   function validateCurrentModelConfiguration() {
@@ -5937,12 +5912,12 @@
       note: byId("workflow-editor-note").value,
       apiKey: byId("workflow-editor-key").value.trim(),
       apiKeyConfirm: byId("workflow-editor-key-confirm").value.trim(),
-      accessMethod: byId("workflow-editor-method").value,
+      accessMethod: "workflow_platform",
       serviceBaseUrl: byId("workflow-editor-url").value.trim(),
-      modelName: byId("workflow-editor-model").value.trim(),
-      temperature: byId("workflow-editor-temperature").value,
-      maxOutputTokens: byId("workflow-editor-max-output").value,
-      contextWindowTokens: byId("workflow-editor-context").value || "40000"
+      modelName: "",
+      temperature: "",
+      maxOutputTokens: "",
+      contextWindowTokens: "40000"
     };
     var checked = helpers.validateWorkflowProfileDraft
       ? helpers.validateWorkflowProfileDraft(draft, state.workflowEditor.mode)
@@ -5961,12 +5936,12 @@
       taskType: state.workflowTaskType,
       name: checked.name,
       note: checked.note,
-      accessMethod: draft.accessMethod,
+      accessMethod: "workflow_platform",
       serviceBaseUrl: draft.serviceBaseUrl,
-      modelName: draft.accessMethod === "direct_model" ? draft.modelName : "",
-      temperature: draft.accessMethod === "direct_model" && draft.temperature !== "" ? Number(draft.temperature) : null,
-      maxOutputTokens: draft.accessMethod === "direct_model" && draft.maxOutputTokens !== "" ? Number(draft.maxOutputTokens) : null,
-      contextWindowTokens: draft.accessMethod === "direct_model" ? Number(draft.contextWindowTokens) : 40000
+      modelName: "",
+      temperature: null,
+      maxOutputTokens: null,
+      contextWindowTokens: 40000
     };
     setWorkflowMutationBusy(true);
     if (state.workflowEditor.mode === "create") {
@@ -5977,8 +5952,7 @@
           var shouldActivate = helpers.shouldActivateNewWorkflowProfile
             ? helpers.shouldActivateNewWorkflowProfile(data.profileCount, activateChecked)
             : data.profileCount === 0 || activateChecked;
-          var complete = Boolean(draft.serviceBaseUrl && draft.apiKey &&
-            (draft.accessMethod !== "direct_model" || draft.modelName));
+          var complete = Boolean(draft.serviceBaseUrl && draft.apiKey);
           return shouldActivate && complete
             ? request("/provider/model-configurations/" + encodeURIComponent(configuration.id) + "/activate", {})
             : null;
@@ -6280,6 +6254,17 @@
     return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
   }
 
+  function renderLegacyDirectPendingStatus() {
+    var node = byId("legacy-direct-pending-status");
+    if (!node) return;
+    var pending = state.legacyDirectPending || {};
+    var count = Number(pending.pendingConfigurationCount || 0);
+    node.hidden = count < 1;
+    setNodeTextIfChanged(node, count > 0
+      ? "发现 " + count + " 份待处理旧直连配置。请由管理员通过迁移管理接口处理。"
+      : "");
+  }
+
   function loadDirectServices(configRefreshRequestId, requestOptions) {
     return Promise.all([
       request("/provider/direct-services", null, requestOptions),
@@ -6291,6 +6276,10 @@
         return { superseded: true };
       }
       state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
+      state.legacyDirectPending = (dsBody && dsBody.data && dsBody.data.legacyDirectPending) || {};
+      if (typeof renderLegacyDirectPendingStatus === "function") {
+        renderLegacyDirectPendingStatus();
+      }
       var selectionsMap = {};
       var rawSelections = (tmsBody && tmsBody.data && (tmsBody.data.taskModelSelections || tmsBody.data.selections)) || [];
       if (Array.isArray(rawSelections)) {
@@ -7889,14 +7878,16 @@
       closeWorkflowEditor(false);
     });
     byId("btn-save-workflow-editor").addEventListener("click", saveWorkflowEditor);
-    ["workflow-editor-name", "workflow-editor-note", "workflow-editor-url", "workflow-editor-model",
-      "workflow-editor-key", "workflow-editor-key-confirm", "workflow-editor-temperature",
-      "workflow-editor-max-output", "workflow-editor-context", "workflow-editor-activate"].forEach(function (id) {
-      byId(id).addEventListener("input", function () {
-        state.workflowEditor.dirty = true;
-        byId("workflow-editor-error").textContent = "";
-        byId("btn-validate-model-configuration").disabled = true;
-      });
+    ["workflow-editor-name", "workflow-editor-note", "workflow-editor-url",
+      "workflow-editor-key", "workflow-editor-key-confirm", "workflow-editor-activate"].forEach(function (id) {
+      var el = byId(id);
+      if (el) {
+        el.addEventListener("input", function () {
+          state.workflowEditor.dirty = true;
+          byId("workflow-editor-error").textContent = "";
+          byId("btn-validate-model-configuration").disabled = true;
+        });
+      }
     });
     byId("workflow-editor-method").addEventListener("change", handleModelAccessMethodChange);
     byId("btn-validate-model-configuration").addEventListener("click", validateCurrentModelConfiguration);

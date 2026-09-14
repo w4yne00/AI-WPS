@@ -20,6 +20,7 @@ SCENARIOS = [
     "fresh_install",
     "legacy_boundary",
     "preview_upgrade",
+    "preview_legacy_direct_migration",
 ]
 
 
@@ -334,6 +335,151 @@ def run_preview_upgrade(delivery_root: Path, temp_root: Path, reserve_port) -> N
     print("lifecycle_scenario=preview_upgrade passed")
 
 
+def seed_legacy_direct_state(state_root: Path) -> None:
+    keys = state_root / "provider_api_keys"
+    keys.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "modelConfigurations": {
+            "legacy_write": {
+                "id": "legacy_write",
+                "taskType": "word.smart_write",
+                "name": "旧直连编写",
+                "accessMethod": "direct_model",
+                "serviceBaseUrl": "https://api.example.com/v1",
+                "apiKeyRef": "key_write",
+                "modelName": "glm-5.2",
+                "temperature": 0.2,
+                "maxOutputTokens": 2048,
+                "contextWindowTokens": 32000,
+                "imageInputMode": "disabled",
+            }
+        },
+        "activeModelConfigurations": {"word.smart_write": "legacy_write"},
+    }
+    (state_root / "adapter.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (keys / "key_write").write_text("sk-delivery-live\n", encoding="utf-8")
+    (keys / "key_write").chmod(0o600)
+
+
+def seed_legacy_direct_over_limit_state(state_root: Path) -> None:
+    keys = state_root / "provider_api_keys"
+    keys.mkdir(parents=True, exist_ok=True)
+    tasks = [
+        "word.smart_write",
+        "word.smart_imitation",
+        "word.document_review",
+        "excel.analysis",
+        "excel.formula_assistant",
+        "ppt.slide_assistant",
+    ]
+    configurations = {}
+    active = {}
+    for index, task_type in enumerate(tasks):
+        config_id = "legacy_limit_{0}".format(index)
+        key_ref = "key_limit_{0}".format(index)
+        configurations[config_id] = {
+            "id": config_id,
+            "taskType": task_type,
+            "name": "超限档案 {0}".format(index),
+            "accessMethod": "direct_model",
+            "serviceBaseUrl": "https://svc{0}.example.com/v1".format(index),
+            "apiKeyRef": key_ref,
+            "modelName": "model-{0}".format(index),
+            "temperature": 0.1,
+            "maxOutputTokens": 1024,
+            "contextWindowTokens": 8000,
+            "imageInputMode": "disabled",
+        }
+        (keys / key_ref).write_text("sk-limit-{0}\n".format(index), encoding="utf-8")
+        active[task_type] = config_id
+    payload = {
+        "modelConfigurations": configurations,
+        "activeModelConfigurations": active,
+    }
+    (state_root / "adapter.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _load_direct_store(adapter_root: Path):
+    adapter = str(adapter_root)
+    if adapter not in sys.path:
+        sys.path.insert(0, adapter)
+    from app.services.direct_services import DirectServiceStore
+    from app.services.provider_client import ProviderClient
+
+    return DirectServiceStore, ProviderClient
+
+
+def verify_legacy_direct_migration(state_root: Path, adapter_root: Path) -> None:
+    DirectServiceStore, ProviderClient = _load_direct_store(adapter_root)
+    config_path = state_root / "adapter.json"
+    key_dir = state_root / "provider_api_keys"
+    store = DirectServiceStore(config_path, key_dir)
+    result = store.list_services()
+    require(
+        result.get("legacyDirectMigration", {}).get("status") in {"completed", "pending_manual"},
+        "LEGACY_DIRECT_MIGRATION_NOT_COMPLETED",
+    )
+    client = ProviderClient(direct_service_store=store)
+    auth = client.resolve_task_auth("word.smart_write")
+    require(auth.get("apiKey") == "sk-delivery-live", "LEGACY_DIRECT_AUTH_MISMATCH")
+    require(auth.get("modelName") == "glm-5.2", "LEGACY_DIRECT_MODEL_MISMATCH")
+    config_path.write_text("{", encoding="utf-8")
+    recovered_store = DirectServiceStore(config_path, key_dir)
+    recovered_auth = ProviderClient(direct_service_store=recovered_store).resolve_task_auth(
+        "word.smart_write"
+    )
+    require(
+        recovered_auth.get("apiKey") == "sk-delivery-live",
+        "LEGACY_DIRECT_RECOVERY_AUTH_MISMATCH",
+    )
+
+
+def verify_legacy_direct_over_limit(state_root: Path, adapter_root: Path) -> None:
+    DirectServiceStore, _unused = _load_direct_store(adapter_root)
+    store = DirectServiceStore(
+        state_root / "adapter.json",
+        state_root / "provider_api_keys",
+    )
+    result = store.list_services()
+    require(
+        result.get("legacyDirectMigration", {}).get("status") == "restricted",
+        "LEGACY_DIRECT_LIMIT_NOT_RESTRICTED",
+    )
+    payload = json.loads((state_root / "adapter.json").read_text(encoding="utf-8"))
+    require(
+        len(payload.get("modelConfigurations") or {}) == 6,
+        "LEGACY_DIRECT_LIMIT_DATA_LOST",
+    )
+
+
+def run_preview_legacy_direct_migration(
+    delivery_root: Path, temp_root: Path, reserve_port
+) -> None:
+    root = temp_root / "preview-legacy-direct"
+    environment = install_environment(root, *reserve_install_ports(reserve_port))
+    run_installer(delivery_root, environment)
+    try:
+        stop_adapter(environment)
+        state_root = Path(environment["AI_WPS_INSTALL_ROOT"]) / "state"
+        adapter_root = Path(environment["AI_WPS_INSTALL_ROOT"]) / "current" / "adapter_service"
+        if not adapter_root.is_dir():
+            adapter_root = delivery_root / "adapter_service"
+        require(adapter_root.is_dir(), "PACKAGED_ADAPTER_MISSING")
+        seed_legacy_direct_over_limit_state(state_root)
+        verify_legacy_direct_over_limit(state_root, adapter_root)
+        seed_legacy_direct_state(state_root)
+        verify_legacy_direct_migration(state_root, adapter_root)
+    finally:
+        stop_adapter(environment)
+    print("lifecycle_scenario=preview_legacy_direct_migration passed")
+
+
 def run_gate(
     archive_path: Path,
     expected_version: str,
@@ -361,6 +507,7 @@ def run_gate(
         run_fresh_install(delivery_root, temp_root, runtime_gate.reserve_port)
         run_legacy_boundary(delivery_root, temp_root, runtime_gate.reserve_port)
         run_preview_upgrade(delivery_root, temp_root, runtime_gate.reserve_port)
+        run_preview_legacy_direct_migration(delivery_root, temp_root, runtime_gate.reserve_port)
     print("python38_delivery_lifecycle_gate=passed status=candidate")
 
 

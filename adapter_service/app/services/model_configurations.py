@@ -89,21 +89,49 @@ def normalize_service_base_url(value: str) -> str:
         parts = urlsplit(raw)
     except ValueError as exc:
         raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址格式无效。") from exc
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
+    scheme = str(parts.scheme or "").lower()
+    if scheme not in {"http", "https"} or not parts.netloc:
         raise ModelConfigurationError(
             "MODEL_CONFIG_URL_INVALID", "服务地址必须是有效的 http 或 https 地址。"
         )
-    if parts.username or parts.password or parts.query or parts.fragment:
+    if (
+        parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or "@" in str(parts.netloc or "")
+    ):
         raise ModelConfigurationError(
             "MODEL_CONFIG_URL_INVALID", "服务地址不能包含账号、密码、查询参数或片段。"
         )
+    hostname = parts.hostname
+    if not hostname:
+        raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址格式无效。")
+    try:
+        hostname = hostname.encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError) as exc:
+        raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址主机名无效。") from exc
+    try:
+        port = parts.port
+    except ValueError as exc:
+        raise ModelConfigurationError("MODEL_CONFIG_URL_INVALID", "服务地址端口无效。") from exc
+    if port is not None and (
+        (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    ):
+        port = None
+    if ":" in hostname:
+        netloc = "[" + hostname + "]"
+    else:
+        netloc = hostname
+    if port is not None:
+        netloc = "{0}:{1}".format(netloc, port)
     path = (parts.path or "").rstrip("/")
     lowered = path.lower()
     for suffix in KNOWN_CALL_SUFFIXES:
         if lowered.endswith(suffix):
             path = path[: -len(suffix)].rstrip("/")
             break
-    return urlunsplit((parts.scheme, parts.netloc, path, "", "")).rstrip("/")
+    return urlunsplit((scheme, netloc, path, "", "")).rstrip("/")
 
 
 class ModelConfigurationStore:
@@ -154,6 +182,7 @@ class ModelConfigurationStore:
         max_output_tokens=None,
         context_window_tokens=None,
         image_input_mode=None,
+        allow_direct: bool = False,
     ) -> dict:
         task = self._validate_task_type(task_type)
         if image_input_mode in (None, ""):
@@ -168,6 +197,7 @@ class ModelConfigurationStore:
             max_output_tokens=max_output_tokens,
             context_window_tokens=context_window_tokens,
             image_input_mode=image_input_mode,
+            allow_direct=allow_direct,
         )
         with _STORE_LOCK:
             payload = self._load_and_migrate()
@@ -199,11 +229,18 @@ class ModelConfigurationStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize(configuration)
 
-    def update_configuration(self, configuration_id: str, **fields) -> dict:
+    def update_configuration(
+        self, configuration_id: str, allow_direct: bool = False, **fields
+    ) -> dict:
         with _STORE_LOCK:
             payload = self._load_and_migrate()
             configurations = self._configuration_map(payload)
             configuration = self._require_configuration(configurations, configuration_id)
+            if configuration.get("accessMethod") == ACCESS_DIRECT_MODEL and not allow_direct:
+                raise ModelConfigurationError(
+                    "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                    "模型直连写入合同已退役，请使用共享直连服务接口。",
+                )
             merged = {
                 "name": fields.get("name", configuration.get("name", "")),
                 "note": fields.get("note", configuration.get("note", "")),
@@ -225,6 +262,7 @@ class ModelConfigurationStore:
                 "image_input_mode": fields.get("image_input_mode")
                 if fields.get("image_input_mode") not in (None, "")
                 else configuration.get("imageInputMode", "disabled"),
+                "allow_direct": allow_direct,
             }
             clean = self._validated_fields(**merged)
             if fields.get("context_window_tokens") in (None, ""):
@@ -266,12 +304,19 @@ class ModelConfigurationStore:
                 self._delete_key(old_ref)
             return self._sanitize(configuration)
 
-    def replace_api_key(self, configuration_id: str, api_key: str) -> dict:
+    def replace_api_key(
+        self, configuration_id: str, api_key: str, allow_direct: bool = False
+    ) -> dict:
         clean_key = self._validate_api_key(api_key)
         with _STORE_LOCK:
             payload = self._load_and_migrate()
             configurations = self._configuration_map(payload)
             configuration = self._require_configuration(configurations, configuration_id)
+            if configuration.get("accessMethod") == ACCESS_DIRECT_MODEL and not allow_direct:
+                raise ModelConfigurationError(
+                    "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                    "模型直连写入合同已退役，请使用共享直连服务接口。",
+                )
             self._write_key(configuration["apiKeyRef"], clean_key)
             self._touch(configuration)
             self._sync_image_egress_binding(configuration, configuration)
@@ -281,12 +326,17 @@ class ModelConfigurationStore:
             return self._sanitize(configuration)
 
     def set_image_external_authorization(
-        self, configuration_id: str, authorized: bool
+        self, configuration_id: str, authorized: bool, allow_direct: bool = False
     ) -> dict:
         with _STORE_LOCK:
             payload = self._load_and_migrate()
             configurations = self._configuration_map(payload)
             configuration = self._require_configuration(configurations, configuration_id)
+            if configuration.get("accessMethod") == ACCESS_DIRECT_MODEL and not allow_direct:
+                raise ModelConfigurationError(
+                    "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                    "模型直连写入合同已退役，请使用共享直连服务接口。",
+                )
             mode = str(configuration.get("imageInputMode", "disabled"))
             if authorized and mode == "disabled":
                 raise ModelConfigurationError(
@@ -359,6 +409,11 @@ class ModelConfigurationStore:
             payload = self._load_and_migrate()
             configurations = self._configuration_map(payload)
             source = self._require_configuration(configurations, source_id)
+            if source.get("accessMethod") == ACCESS_DIRECT_MODEL:
+                raise ModelConfigurationError(
+                    "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                    "模型直连写入合同已退役，请使用共享直连服务接口。",
+                )
             target_task = self._validate_task_type(target_task_type or source["taskType"])
             if host_for_task(target_task) != source.get("host", host_for_task(source["taskType"])):
                 raise ModelConfigurationError(
@@ -552,7 +607,7 @@ class ModelConfigurationStore:
         payload["migrationState"] = migration_state
 
     def _load_and_migrate(self) -> dict:
-        payload = load_config_payload(self.config_path)
+        payload = load_config_payload(self.config_path, self.key_dir)
         configurations = self._configuration_map(payload)
         active = self._active_map(payload)
         changed = False
@@ -905,6 +960,7 @@ class ModelConfigurationStore:
         max_output_tokens,
         context_window_tokens,
         image_input_mode="disabled",
+        allow_direct=False,
     ) -> dict:
         clean_name = str(name or "").strip()
         if not clean_name:
@@ -915,6 +971,11 @@ class ModelConfigurationStore:
         if len(clean_note) > MAX_CONFIGURATION_NOTE_LENGTH:
             raise ModelConfigurationError("MODEL_CONFIG_NOTE_TOO_LONG", "配置备注不能超过 200 个字符。")
         method = str(access_method or "").strip()
+        if method == ACCESS_DIRECT_MODEL and not allow_direct:
+            raise ModelConfigurationError(
+                "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+                "模型直连写入合同已退役，请使用共享直连服务接口。",
+            )
         if method not in SUPPORTED_ACCESS_METHODS:
             raise ModelConfigurationError("MODEL_CONFIG_ACCESS_METHOD_INVALID", "请选择有效的模型调用方式。")
         service_url = normalize_service_base_url(service_base_url)
@@ -1170,7 +1231,7 @@ class WorkflowProfileCompatibilityStore:
         }
 
     def _global_service_base_url(self) -> str:
-        payload = load_config_payload(self.config_path)
+        payload = load_config_payload(self.config_path, self.key_dir)
         return str(payload.get("providerBaseUrl", ""))
 
     def create_profile(

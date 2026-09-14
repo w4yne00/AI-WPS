@@ -173,6 +173,7 @@
                 </div>
                 <button id="btn-new-direct-service" type="button">新建直连服务</button>
               </div>
+              <p id="legacy-direct-pending-status" class="inline-status" aria-live="polite" hidden></p>
               <div id="direct-services-list" class="direct-services-list">
                 <p class="field-hint">正在读取共享直连服务...</p>
               </div>
@@ -310,16 +311,11 @@
                   <span>接入方式</span>
                   <select id="workflow-editor-method">
                     <option value="workflow_platform">工作流平台</option>
-                    <option value="direct_model">模型直连</option>
                   </select>
                 </label>
                 <label class="field" for="workflow-editor-url">
                   <span>服务地址</span>
                   <input id="workflow-editor-url" type="text" placeholder="例如：http://1.1.1.1:1111/one-api/v1" />
-                </label>
-                <label id="workflow-editor-model-row" class="field" for="workflow-editor-model" hidden>
-                  <span>模型标识</span>
-                  <input id="workflow-editor-model" type="text" placeholder="例如：deepseek-v4-flash" />
                 </label>
                 <label class="field" for="workflow-editor-note">
                   <span>配置备注</span>
@@ -336,11 +332,6 @@
                 <p id="workflow-editor-key-status" class="inline-status"></p>
                 <details class="model-advanced-settings">
                   <summary>高级配置</summary>
-                  <div id="workflow-editor-direct-advanced" hidden>
-                    <label class="field"><span>温度（选填）</span><input id="workflow-editor-temperature" type="number" min="0" max="2" step="0.1" /></label>
-                    <label class="field"><span>最大输出 Token（选填）</span><input id="workflow-editor-max-output" type="number" min="1" /></label>
-                    <label class="field"><span>上下文容量</span><input id="workflow-editor-context" type="number" min="1000" value="40000" /></label>
-                  </div>
                   <button id="btn-validate-model-configuration" class="ghost-action" type="button" disabled>验证调用</button>
                   <p id="model-validation-summary" class="inline-status">保存完整配置后可验证</p>
                 </details>

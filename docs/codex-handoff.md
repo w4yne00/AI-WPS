@@ -1,5 +1,48 @@
 # Codex Handoff - AI-WPS
 
+## PR #199 第三轮审查修复（Issue #181，2026-09-14）
+
+- 交付白名单补入 `direct_migration_txn.py`，生命周期测试从组装后的 Adapter 目录实际导入迁移运行时；普通 `config/adapter.json` 布局的恢复会定位到同级 `run/provider_api_keys`。
+- 配置启动、健康检查和直连服务读取统一通过可恢复入口；迁移 journal 采用跨进程文件锁、严格路径/引用校验，损坏状态 fail-closed，快照使用 `0600/0700`、哈希 manifest 和 7 天回滚保留期。
+- 提交顺序调整为配置原子发布 → committed 快照完整写入 → journal 标记 `committed`；pending 迁移/重建/放弃与常规直连服务写操作统一使用跨进程锁和 `expectedRevision`，失败保留 pending 状态并遵守 5 服务上限。
+- legacy 兼容证明缺失、过期或 Key 指纹不匹配时 fail-closed；三宿主显示待人工处理数量；FastAPI 与 standalone 对 pending 不存在统一返回 404。
+- 验证：迁移专项 40 项、直连服务及相关后端 94 项中 93 项通过、1 项既有跳过；交付套件 33 项通过；前端直连契约 59 项通过；Python 3.8 兼容扫描 189 个文件通过。完整后端收集仍受本机缺少 `fastapi` 阻断，未安装新依赖。
+
+## PR #199 审查修复 round 2（Issue #181，2026-09-14）
+
+- 迁移快照自包含 JSON 与被引用 Key；`load_config_payload` 在正式配置不可读时先恢复。恢复后 `resolve_task_auth()` 与迁移后服务 ID、Key 指纹一致。
+- 复用已有共享服务时播种 `legacyCompatibility`（绑定 URL、Key 指纹、revision、TTL）；401/403 立即撤销 `legacy_compatible`。
+- 提交写事务日志；`os._exit` 后启动协调回滚未提交密钥并清理 staging。恢复记录写失败在 `legacyDirectMigrationRecovery.recordWriteFailed` 可见。
+- 未消费档案：`GET /provider/direct-services` 返回脱敏 `legacyDirectPending`；`/provider/legacy-direct-pending` 支持列表、迁移、重建、放弃。三宿主任务窗不新增 pending 管理页。
+- URL 规范化拒绝 `userinfo@host`。交付生命周期增加 `preview_legacy_direct_migration`（超限、认证解析、截断恢复）。
+- 本轮未在 Docker Python 3.8 或麒麟上跑完整交付构建。
+
+## PR #199 审查修复（Issue #181，2026-09-14）
+
+- 已迁移活动任务在目录尚未拉取前以 `legacy_compatible` 保持可运行；`resolve_task_auth()` 不再因空 `modelList` 抛出 `DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE`。
+- 不完整草稿逐字段保留有效 URL 或 Key，保持未激活。
+- 同任务未消费的旧直连档案写入 `legacyDirectPending`，迁移状态 `pending_manual`，不删除对应配置和 Key。
+- 迁移在暂存目录校验后再提交；保留 `.pre-direct-migration` 备份，`BaseException`（含 `SystemExit`）回滚；截断 JSON 可从备份恢复。
+- URL 规范化折叠主机名大小写、IDNA 与默认端口；复用已有共享服务时默认模型冲突置空 `defaultModel`。
+
+## 当前功能实现：Issue #181 迁移旧直连配置并收缩旧写入合同（2026-09-13）
+
+- **旧直连配置自动分组与迁移（覆盖全量 9 类任务）**：
+  - 遵循 Issue #164 父规格与 ADR-0130，对历史遗留的 `direct_model` 配置按 `(normalized_service_base_url, api_key_fingerprint)` 强分组；
+  - 迁移入口全量覆盖 9 类任务（Word 4 类：智能编写、智能仿写、文档审查、格式审查；Excel 3 类：智能分析、公式助手、智能填写；PPT 2 类：智能总结、结构审查）；
+  - 任务模型、温度、Token、图片参数（`imageInputMode`）及激活状态完整迁移至对应的 `taskModelSelections`；
+  - 缺失 Key 或不完整的旧配置迁移为未激活草稿；同一组内模型标识冲突时保留各任务独立选择并将共享服务 `defaultModel` 置空；
+  - 迁移在内存副本与临时目录中执行，经过全量自检与引用验证后原子切换；失败时零副作用回滚；切换成功后安全清理孤立旧 Key 文件；
+  - 若形成的共享直连服务超过 5 组，迁移进入受限保护状态（`status = "restricted"`, 错误码 `DIRECT_SERVICE_MIGRATION_LIMIT`），绝不擅自删除或覆盖配置。
+- **旧直连写入合同全面收缩与退役**：
+  - `POST/PATCH /provider/model-configurations` 及其 API Key 替换、副本创建与外部授权接口严格拒绝 `access_method == "direct_model"`，统一返回 HTTP 400（错误码 `MODEL_CONFIG_DIRECT_WRITE_RETIRED`）；
+  - `WorkflowProfileCompatibilityStore` 兼容层严格限定仅访问 `workflow_platform` 配置；
+  - Word、Excel、PPT 三大宿主模型配置编辑器（Workflow Profile Editor）全面下线 `direct_model` 选项、模型名输入框及温度/Token 高级配置，直连模型录入与管理统一收敛至共享直连服务管理体系。
+- **测试覆盖与质量验证**：
+  - 前端：新增 `formal-plugin-kit/tests/direct-model-contract-shrinkage.test.js` 验证三大宿主配置编辑器移除直连输入；回归 Word/Excel/PPT 工作流设置与共享直连服务套件；
+  - 后端：新增 `adapter_service/tests/test_direct_service_migration.py` 覆盖 9 类任务迁移、冲突解决、原子回滚、孤立 Key 清理及 5 服务上限受限模式；更新 `test_direct_services.py` 覆盖写入合同退役 400 拦截；
+  - 静态检查：`git diff --check` 通过，Python 3.8 py_compile 语法检查通过，受保护路径（`config/adapter.json`、`run/` 等）零触碰。
+
 ## 当前功能实现：Issue #180 迁移 Word 文档审查的直连接入（2026-09-13）
 
 - **文档审查共享直连服务收敛**：遵循 Issue #164 父规格、ADR-0128/ADR-0129/ADR-0130，将 Word 宿主下的文档审查任务（`word.document_review`）平滑迁移接入设置页首页的共享模型直连服务，与格式审查（PR #197）、智能编写、智能仿写及 Excel、PPT 直连接入架构保持完全一致；

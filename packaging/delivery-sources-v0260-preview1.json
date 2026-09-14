@@ -10,6 +10,11 @@
   "entries": [
     {
       "type": "file",
+      "source": "adapter_service/app/core/direct_migration_txn.py",
+      "target": "packages/adapter-start-kit/adapter_service/app/core/direct_migration_txn.py"
+    },
+    {
+      "type": "file",
       "source": "adapter_service/app/services/excel/smart_fill.py",
       "target": "packages/adapter-start-kit/adapter_service/app/services/excel/smart_fill.py"
     },

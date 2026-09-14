@@ -15,6 +15,7 @@ from app.services.provider_client import (
 from app.services.long_task_coordinator import get_long_task_coordinator
 from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
+    ACCESS_DIRECT_MODEL,
     DEFAULT_CONTEXT_WINDOW_TOKENS,
     MAX_TASK_CONTEXT_WINDOW_TOKENS,
     MAX_TASK_MAX_OUTPUT_TOKENS,
@@ -185,6 +186,10 @@ class DirectServiceValidateRequest(BaseModel):
     expected_revision: int = Field(alias="expectedRevision")
 
 
+class LegacyDirectPendingMutationRequest(BaseModel):
+    expected_revision: int = Field(alias="expectedRevision")
+
+
 class DirectServiceActivateRequest(BaseModel):
     task_type: str = Field(..., alias="taskType")
     task_model_selection: Optional[TaskModelSelectionUpdateRequest] = Field(
@@ -227,7 +232,7 @@ def get_direct_service_store() -> DirectServiceStore:
 
 
 def _raise_direct_service_error(exc: DirectServiceError) -> None:
-    if exc.code == "DIRECT_SERVICE_NOT_FOUND":
+    if exc.code in {"DIRECT_SERVICE_NOT_FOUND", "DIRECT_SERVICE_PENDING_NOT_FOUND"}:
         status_code = 404
     elif exc.code in {
         "DIRECT_SERVICE_LIMIT",
@@ -361,6 +366,12 @@ def get_model_configurations(task_type: str = Query(alias="taskType")) -> dict:
 
 @router.post("/provider/model-configurations")
 def create_model_configuration(request: ModelConfigurationCreateRequest) -> dict:
+    if str(request.access_method or "").strip() == ACCESS_DIRECT_MODEL:
+        raise AdapterError(
+            "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+            "模型直连写入合同已退役，请使用共享直连服务接口。",
+            status_code=400,
+        )
     try:
         configuration = get_model_configuration_store().create_configuration(
             request.task_type,
@@ -387,6 +398,12 @@ def create_model_configuration(request: ModelConfigurationCreateRequest) -> dict
 def update_model_configuration(
     configuration_id: str, request: ModelConfigurationUpdateRequest
 ) -> dict:
+    if str(request.access_method or "").strip() == ACCESS_DIRECT_MODEL:
+        raise AdapterError(
+            "MODEL_CONFIG_DIRECT_WRITE_RETIRED",
+            "模型直连写入合同已退役，请使用共享直连服务接口。",
+            status_code=400,
+        )
     try:
         configuration = get_model_configuration_store().update_configuration(
             configuration_id,
@@ -706,6 +723,62 @@ def get_direct_services() -> dict:
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
     return {"success": True, "data": data}
+
+
+@router.get("/provider/legacy-direct-pending")
+def get_legacy_direct_pending() -> dict:
+    try:
+        data = get_direct_service_store().list_legacy_pending()
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": data}
+
+
+@router.post("/provider/legacy-direct-pending/{config_id}/migrate")
+def migrate_legacy_direct_pending(
+    config_id: str, request: LegacyDirectPendingMutationRequest
+) -> dict:
+    try:
+        service = get_direct_service_store().migrate_legacy_pending(
+            config_id, expected_revision=request.expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "migrated",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/legacy-direct-pending/{config_id}/rebuild")
+def rebuild_legacy_direct_pending(
+    config_id: str, request: LegacyDirectPendingMutationRequest
+) -> dict:
+    try:
+        service = get_direct_service_store().rebuild_legacy_pending(
+            config_id, expected_revision=request.expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "rebuilt",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/legacy-direct-pending/{config_id}/abandon")
+def abandon_legacy_direct_pending(
+    config_id: str, request: LegacyDirectPendingMutationRequest
+) -> dict:
+    try:
+        data = get_direct_service_store().abandon_legacy_pending(
+            config_id, expected_revision=request.expected_revision
+        )
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "message": "abandoned", "data": data}
 
 
 @router.post("/provider/direct-services")
