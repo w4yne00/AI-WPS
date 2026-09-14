@@ -52,7 +52,7 @@ Word, Excel, and PPT ship as separate add-ins so Ribbon buttons never cross-disp
 | PPT | 智能总结 | Current slide, or one `.md` / `.docx` (≤10 MB) for a full-deck outline; preview and copy only |
 | PPT | 结构审查 | Up to 60 slides; 幻灯片页角色 list; read-only |
 
-The local adapter (default `127.0.0.1:18100`) stores per-task model configurations for nine tasks. Workflow-platform access uses `/chat-messages`; direct-model access uses OpenAI-compatible `/chat/completions`. Runtime requests do not fall back to a unified URL or key. Production mock output stays off unless explicitly enabled.
+The local adapter (default `127.0.0.1:18100`) keeps workflow-platform settings per task (`/chat-messages`) and a shared direct-model service for all nine tasks (`/chat/completions`). Direct URL and API Key are entered once; each task still selects its model and parameters. Runtime requests do not fall back to a unified URL or key. Production mock output stays off unless explicitly enabled.
 
 ## Architecture
 

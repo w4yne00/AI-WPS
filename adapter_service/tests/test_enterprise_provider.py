@@ -3,6 +3,7 @@ import json
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+import shutil
 import socket
 import threading
 import sys
@@ -1611,8 +1612,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_chat_path, "/chat-messages")
         self.assertEqual(settings.provider_mode, "blocking")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_document_review_uses_longer_timeout_budget(self) -> None:
         class CapturingProviderClient(ProviderClient):
@@ -1676,8 +1676,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertEqual(settings.task_api_key_refs["word.format_review"], "format_key")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_load_settings_reads_task_routes(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -1709,8 +1708,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertTrue(settings.task_routes["word.document_review"].enabled)
         self.assertFalse(settings.task_routes["word.format_review"].enabled)
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_load_settings_reads_task_route_transport_fields(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -1746,8 +1744,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(route.response_mode, "blocking")
         self.assertEqual(route.output_key, "result")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_load_settings_does_not_inject_default_task_routes_into_old_config(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -1768,8 +1765,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_name, "目标机旧配置")
         self.assertEqual(settings.task_routes, {})
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_load_settings_preserves_user_task_route_over_default_route(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -1804,8 +1800,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(route.output_key, "answer")
         self.assertNotIn("word.document_review", settings.task_routes)
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_provider_client_resolves_default_task_route(self) -> None:
         client = ProviderClient(load_settings())
@@ -2299,8 +2294,7 @@ class EnterpriseProviderTests(unittest.TestCase):
 
         self.assertEqual(settings.provider_base_url, "")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_save_provider_base_url_updates_config_file(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -2323,8 +2317,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_base_url, "https://new.example/v1")
         self.assertEqual(settings.service_port, 19100)
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_save_task_api_key_ref_updates_config_file(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -2345,8 +2338,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.task_api_key_refs["word.format_review"], "format_key")
         self.assertEqual(settings.provider_base_url, "https://old.example/v1")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_save_provider_base_url_updates_provider_name(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -2368,8 +2360,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_name, "新名称")
         self.assertEqual(settings.provider_base_url, "https://new.example/v1")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_save_provider_base_url_allows_empty_url_and_updates_name(self) -> None:
         tmp_dir = Path("tmp-test-config")
@@ -2391,8 +2382,7 @@ class EnterpriseProviderTests(unittest.TestCase):
         self.assertEqual(settings.provider_name, "自定义供应商")
         self.assertEqual(settings.provider_base_url, "")
 
-        config_file.unlink()
-        tmp_dir.rmdir()
+        shutil.rmtree(tmp_dir, ignore_errors=True)
 
     def test_provider_requires_key_and_base_url_to_be_configured(self) -> None:
         previous = os.environ.get("ENTERPRISE_AI_API_KEY")

@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from app.services.model_configurations import (
     ACCESS_DIRECT_MODEL,
     ACCESS_WORKFLOW_PLATFORM,
+    ModelConfigurationError,
     ModelConfigurationStore,
 )
 from app.services.word.image_semantics import (
@@ -186,6 +187,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
             self.assertEqual(configuration["imageInputMode"], "openai_image_url")
 
@@ -205,6 +207,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="writer-1",
+                allow_direct=True,
             )
             self.assertEqual(workflow["imageInputMode"], "disabled")
             self.assertEqual(writing["imageInputMode"], "disabled")
@@ -219,8 +222,9 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
-            saved = store.replace_api_key(created["id"], "secret")
+            saved = store.replace_api_key(created["id"], "secret", allow_direct=True)
             authorization = saved["imageExternalAuthorization"]
             self.assertTrue(authorization["authorized"])
             self.assertFalse(authorization.get("stale", False))
@@ -240,8 +244,9 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
-            saved = store.replace_api_key(created["id"], "secret")
+            saved = store.replace_api_key(created["id"], "secret", allow_direct=True)
             changed = store.update_configuration(
                 saved["id"],
                 name="直连格式审查",
@@ -249,6 +254,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 service_base_url="https://other-vision.example/v1",
                 model_name="vision-1",
                 image_input_mode="openai_image_url",
+                allow_direct=True,
             )
             self.assertTrue(changed["imageExternalAuthorization"]["stale"])
 
@@ -259,6 +265,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 service_base_url="https://other-vision.example/v1",
                 model_name="vision-1",
                 image_input_mode="openai_image_url",
+                allow_direct=True,
             )
             self.assertFalse(rebound["imageExternalAuthorization"]["stale"])
             self.assertEqual(
@@ -275,6 +282,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
             disabled = store.update_configuration(
                 created["id"],
@@ -283,6 +291,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
                 image_input_mode="disabled",
+                allow_direct=True,
             )
             self.assertEqual(disabled["imageInputMode"], "disabled")
             self.assertIsNone(disabled["imageExternalAuthorization"])
@@ -297,8 +306,9 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
-            saved = store.replace_api_key(created["id"], "secret")
+            saved = store.replace_api_key(created["id"], "secret", allow_direct=True)
             failed = store.record_image_semantic_validation(
                 saved["id"], {"validated": False, "errorCode": "IMAGE_PROBE_FAILED"}
             )
@@ -307,8 +317,7 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
             activated = store.activate_configuration(failed["id"])
             self.assertEqual(activated["activeConfigurationId"], failed["id"])
 
-    def test_copying_usable_format_review_direct_writes_egress_binding(self):
-        # Break: copy drops authorization even when the copy is already usable.
+    def test_copying_legacy_format_review_direct_is_retired(self):
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))
             created = store.create_configuration(
@@ -317,15 +326,12 @@ class FormatReviewDirectConfigDefaultTests(unittest.TestCase):
                 ACCESS_DIRECT_MODEL,
                 service_base_url="https://vision.example/v1",
                 model_name="vision-1",
+                allow_direct=True,
             )
-            store.replace_api_key(created["id"], "secret")
-            copied = store.copy_configuration(created["id"], name="直连副本")
-            authorization = copied["imageExternalAuthorization"]
-            self.assertEqual(copied["imageInputMode"], "openai_image_url")
-            self.assertTrue(authorization["authorized"])
-            self.assertFalse(authorization.get("stale", False))
-            self.assertEqual(authorization["serviceHost"], "vision.example")
-            self.assertTrue(copied["complete"])
+            store.replace_api_key(created["id"], "secret", allow_direct=True)
+            with self.assertRaises(ModelConfigurationError) as raised:
+                store.copy_configuration(created["id"], name="直连副本")
+            self.assertEqual(raised.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED")
 
 
 @unittest.skipUnless(HAS_PYDANTIC, "pydantic is required for format review tests")
