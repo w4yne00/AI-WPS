@@ -1,5 +1,14 @@
 # Codex Handoff - AI-WPS
 
+## PR #199 审查修复 round 2（Issue #181，2026-09-14）
+
+- 迁移快照自包含 JSON 与被引用 Key；`load_config_payload` 在正式配置不可读时先恢复。恢复后 `resolve_task_auth()` 与迁移后服务 ID、Key 指纹一致。
+- 复用已有共享服务时播种 `legacyCompatibility`（绑定 URL、Key 指纹、revision、TTL）；401/403 立即撤销 `legacy_compatible`。
+- 提交写事务日志；`os._exit` 后启动协调回滚未提交密钥并清理 staging。恢复记录写失败在 `legacyDirectMigrationRecovery.recordWriteFailed` 可见。
+- 未消费档案：`GET /provider/direct-services` 返回脱敏 `legacyDirectPending`；`/provider/legacy-direct-pending` 支持列表、迁移、重建、放弃。三宿主任务窗不新增 pending 管理页。
+- URL 规范化拒绝 `userinfo@host`。交付生命周期增加 `preview_legacy_direct_migration`（超限、认证解析、截断恢复）。
+- 本轮未在 Docker Python 3.8 或麒麟上跑完整交付构建。
+
 ## PR #199 审查修复（Issue #181，2026-09-14）
 
 - 已迁移活动任务在目录尚未拉取前以 `legacy_compatible` 保持可运行；`resolve_task_auth()` 不再因空 `modelList` 抛出 `DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE`。

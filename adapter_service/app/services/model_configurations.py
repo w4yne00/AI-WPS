@@ -94,7 +94,13 @@ def normalize_service_base_url(value: str) -> str:
         raise ModelConfigurationError(
             "MODEL_CONFIG_URL_INVALID", "服务地址必须是有效的 http 或 https 地址。"
         )
-    if parts.username or parts.password or parts.query or parts.fragment:
+    if (
+        parts.username is not None
+        or parts.password is not None
+        or parts.query
+        or parts.fragment
+        or "@" in str(parts.netloc or "")
+    ):
         raise ModelConfigurationError(
             "MODEL_CONFIG_URL_INVALID", "服务地址不能包含账号、密码、查询参数或片段。"
         )

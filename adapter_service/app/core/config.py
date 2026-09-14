@@ -48,7 +48,15 @@ class AppSettings:
 def load_config_payload(config_path: Optional[Path] = None) -> dict:
     path = config_path or default_config_path()
     if path.exists():
-        return json.loads(path.read_text(encoding="utf-8"))
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError, UnicodeError):
+            from app.core.direct_migration_txn import recover_unreadable_config
+
+            restored = recover_unreadable_config(path)
+            if restored is not None:
+                return restored
+            raise
     if EXAMPLE_CONFIG_PATH.exists():
         return json.loads(EXAMPLE_CONFIG_PATH.read_text(encoding="utf-8"))
     return {}

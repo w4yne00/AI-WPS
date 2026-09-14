@@ -1693,6 +1693,22 @@ class Handler(BaseHTTPRequestHandler):
             )
             return
 
+        if path == "/provider/legacy-direct-pending":
+            try:
+                data = DirectServiceStore().list_legacy_pending()
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-legacy-direct-pending",
+                    "provider.legacy_direct_pending",
+                    data,
+                ),
+            )
+            return
+
         if path == "/provider/direct-services":
             try:
                 data = DirectServiceStore().list_services()
@@ -2619,6 +2635,56 @@ class Handler(BaseHTTPRequestHandler):
                     "ppt.slide_assistant",
                     data,
                     message="文档已安全接收。",
+                ),
+            )
+            return
+
+        pending_prefix = "/provider/legacy-direct-pending/"
+        if path.startswith(pending_prefix):
+            relative = path[len(pending_prefix) :].strip("/")
+            config_id, separator, action = relative.partition("/")
+            config_id = unquote(config_id)
+            store = DirectServiceStore()
+            try:
+                if action == "migrate":
+                    service = store.migrate_legacy_pending(config_id)
+                    message = "migrated"
+                elif action == "rebuild":
+                    service = store.rebuild_legacy_pending(config_id)
+                    message = "rebuilt"
+                elif action == "abandon":
+                    data = store.abandon_legacy_pending(config_id)
+                    self._write(
+                        200,
+                        envelope(
+                            "standalone-legacy-direct-pending",
+                            "provider.legacy_direct_pending",
+                            data,
+                            message="abandoned",
+                        ),
+                    )
+                    return
+                else:
+                    self._write(
+                        404,
+                        envelope(
+                            "standalone-legacy-direct-pending",
+                            "provider.legacy_direct_pending",
+                            {},
+                            message="not found",
+                        ),
+                    )
+                    return
+            except DirectServiceError as error:
+                self._write_direct_service_error(error)
+                return
+            self._write(
+                200,
+                envelope(
+                    "standalone-legacy-direct-pending",
+                    "provider.legacy_direct_pending",
+                    {"directService": service},
+                    message=message,
                 ),
             )
             return

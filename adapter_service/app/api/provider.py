@@ -228,7 +228,7 @@ def get_direct_service_store() -> DirectServiceStore:
 
 
 def _raise_direct_service_error(exc: DirectServiceError) -> None:
-    if exc.code == "DIRECT_SERVICE_NOT_FOUND":
+    if exc.code in {"DIRECT_SERVICE_NOT_FOUND", "DIRECT_SERVICE_PENDING_NOT_FOUND"}:
         status_code = 404
     elif exc.code in {
         "DIRECT_SERVICE_LIMIT",
@@ -719,6 +719,50 @@ def get_direct_services() -> dict:
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
     return {"success": True, "data": data}
+
+
+@router.get("/provider/legacy-direct-pending")
+def get_legacy_direct_pending() -> dict:
+    try:
+        data = get_direct_service_store().list_legacy_pending()
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "data": data}
+
+
+@router.post("/provider/legacy-direct-pending/{config_id}/migrate")
+def migrate_legacy_direct_pending(config_id: str) -> dict:
+    try:
+        service = get_direct_service_store().migrate_legacy_pending(config_id)
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "migrated",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/legacy-direct-pending/{config_id}/rebuild")
+def rebuild_legacy_direct_pending(config_id: str) -> dict:
+    try:
+        service = get_direct_service_store().rebuild_legacy_pending(config_id)
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {
+        "success": True,
+        "message": "rebuilt",
+        "data": {"directService": service},
+    }
+
+
+@router.post("/provider/legacy-direct-pending/{config_id}/abandon")
+def abandon_legacy_direct_pending(config_id: str) -> dict:
+    try:
+        data = get_direct_service_store().abandon_legacy_pending(config_id)
+    except DirectServiceError as exc:
+        _raise_direct_service_error(exc)
+    return {"success": True, "message": "abandoned", "data": data}
 
 
 @router.post("/provider/direct-services")

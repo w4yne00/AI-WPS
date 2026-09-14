@@ -1,10 +1,15 @@
 import json
+import os
+import subprocess
+import sys
 import unittest
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from app.core.errors import AdapterError
+from app.core import direct_migration_txn as migration_txn
 from app.services.direct_services import DirectServiceError, DirectServiceStore
 from app.services.model_configurations import (
     ACCESS_DIRECT_MODEL,
@@ -575,6 +580,259 @@ class DirectServiceMigrationTests(unittest.TestCase):
         data = facade.list_for_task("excel.analysis")
         self.assertEqual(data["profileCount"], 1)
         self.assertEqual(data["profiles"][0]["id"], wf["id"])
+
+    def test_truncated_config_restores_self_contained_auth_state(self):
+        self._seed_legacy_config(
+            "legacy_recover",
+            "word.smart_write",
+            "key_recover",
+            "sk-recover-live",
+            model_name="glm-5.2",
+            active=True,
+        )
+        migrated = self.store.list_services()
+        self.assertEqual(migrated["legacyDirectMigration"]["status"], "completed")
+        service_id = migrated["directServices"][0]["id"]
+        fingerprint_before = DirectServiceStore.api_key_fingerprint("sk-recover-live")
+        self.assertEqual(
+            DirectServiceStore.api_key_fingerprint(self.store._read_key(service_id)),
+            fingerprint_before,
+        )
+        self.config_path.write_text("{", encoding="utf-8")
+
+        from app.core.config import load_config_payload
+
+        payload = load_config_payload(self.config_path)
+        self.assertIn(service_id, payload.get("directServices", {}))
+        self.assertEqual(
+            payload.get("activeModelConfigurations", {}).get("word.smart_write"),
+            service_id,
+        )
+
+        client = ProviderClient(direct_service_store=self.store)
+        auth = client.resolve_task_auth("word.smart_write")
+        self.assertEqual(auth["apiKey"], "sk-recover-live")
+        self.assertEqual(auth["modelName"], "glm-5.2")
+        self.assertEqual(
+            DirectServiceStore.api_key_fingerprint(auth["apiKey"]),
+            fingerprint_before,
+        )
+
+    def test_reused_existing_service_seeds_legacy_compatibility_for_auth(self):
+        existing = self.store.create_service(
+            name="已有共享服务",
+            service_base_url="https://shared.example.com/v1",
+            default_model="alpha-model",
+            api_key="sk-shared",
+        )
+        self.assertEqual(existing["modelListSource"], "none")
+        self._seed_legacy_config(
+            "legacy_beta",
+            "word.smart_write",
+            "key_beta",
+            "sk-shared",
+            service_base_url="https://shared.example.com/v1",
+            model_name="beta-model",
+            active=True,
+        )
+
+        result = self.store.list_services()
+        self.assertEqual(result["legacyDirectMigration"]["status"], "completed")
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["modelName"], "beta-model")
+        self.assertEqual(selection["modelAvailability"], "available")
+        self.assertTrue(selection["modelAvailable"])
+
+        client = ProviderClient(direct_service_store=self.store)
+        auth = client.resolve_task_auth("word.smart_write")
+        self.assertEqual(auth["modelName"], "beta-model")
+        self.assertEqual(auth["apiKey"], "sk-shared")
+
+    def test_auth_failure_revokes_legacy_compatible(self):
+        self._seed_legacy_config(
+            "legacy_auth",
+            "word.smart_write",
+            "key_auth",
+            "sk-bad",
+            model_name="glm-5.2",
+            active=True,
+        )
+        self.store.list_services()
+        selection = self.store.get_task_model_selection("word.smart_write")
+        self.assertEqual(selection["modelAvailability"], "available")
+        service_id = selection["serviceId"]
+        self.store._record_model_catalog_failure(
+            service_id,
+            DirectServiceError("DIRECT_SERVICE_AUTH_FAILED", "API Key 认证失败。"),
+        )
+        after = self.store.get_task_model_selection("word.smart_write")
+        self.assertNotEqual(after.get("modelUnavailableReason"), "legacy_compatible")
+        self.assertNotEqual(after.get("modelAvailability"), "available")
+        self.assertFalse(after.get("modelAvailable"))
+        client = ProviderClient(direct_service_store=self.store)
+        with self.assertRaises(AdapterError) as cm:
+            client.resolve_task_auth("word.smart_write")
+        self.assertEqual(cm.exception.code, "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE")
+
+    def test_hard_exit_after_production_keys_reconciles_on_restart(self):
+        self._seed_legacy_config(
+            "legacy_hard",
+            "word.smart_write",
+            "key_hard",
+            "sk-hard-exit",
+            model_name="glm-5.2",
+            active=True,
+        )
+        adapter_root = Path(__file__).resolve().parents[1]
+        script = self.root / "crash_after_keys.py"
+        script.write_text(
+            "\n".join(
+                [
+                    "import os, sys",
+                    "sys.path.insert(0, {0!r})".format(str(adapter_root)),
+                    "from app.services.direct_services import DirectServiceStore",
+                    "store = DirectServiceStore({0!r}, {1!r})".format(
+                        str(self.config_path), str(self.key_dir)
+                    ),
+                    "original = store._write_key",
+                    "def crash_after(service_id, api_key):",
+                    "    original(service_id, api_key)",
+                    "    os._exit(17)",
+                    "store._write_key = crash_after",
+                    "store.list_services()",
+                ]
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        crashed = subprocess.run(
+            [sys.executable, str(script)],
+            cwd=str(adapter_root),
+            env=dict(os.environ, PYTHONPATH=str(adapter_root)),
+            check=False,
+        )
+        self.assertEqual(crashed.returncode, 17)
+        restarted = DirectServiceStore(self.config_path, self.key_dir)
+        restarted.list_services()
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertTrue(
+            "legacy_hard" in payload.get("modelConfigurations", {})
+            or payload.get("directServices")
+        )
+        staging = list(self.key_dir.parent.glob(".direct-migration-stage-*"))
+        self.assertEqual(staging, [])
+        referenced = {
+            "direct_service_{0}".format(service_id)
+            for service_id in payload.get("directServices", {})
+        }
+        orphan = [
+            path
+            for path in self._production_direct_service_keys()
+            if path.name not in referenced
+        ]
+        self.assertEqual(orphan, [])
+        client = ProviderClient(direct_service_store=restarted)
+        auth = client.resolve_task_auth("word.smart_write")
+        self.assertEqual(auth["apiKey"], "sk-hard-exit")
+        self.assertEqual(auth["modelName"], "glm-5.2")
+
+    def test_pending_profiles_can_be_listed_migrated_and_abandoned(self):
+        self._seed_legacy_config(
+            "legacy_write_a",
+            "word.smart_write",
+            "key_write_a",
+            "sk-profile-a",
+            name="档案 A",
+            model_name="glm-5.2",
+            active=False,
+        )
+        self._seed_legacy_config(
+            "legacy_write_b",
+            "word.smart_write",
+            "key_write_b",
+            "sk-profile-b",
+            name="档案 B",
+            service_base_url="https://other.example.com/v1",
+            model_name="deepseek-v4-flash",
+            active=True,
+        )
+        listed = self.store.list_services()
+        pending = listed.get("legacyDirectPending") or self.store.list_legacy_pending()
+        if isinstance(pending, dict) and "items" in pending:
+            items = pending["items"]
+        else:
+            items = pending
+        ids = {item["id"] for item in items}
+        self.assertIn("legacy_write_a", ids)
+        item = next(entry for entry in items if entry["id"] == "legacy_write_a")
+        self.assertTrue(item["keyConfigured"])
+        self.assertNotIn("apiKey", item)
+        self.assertNotEqual(item.get("apiKey"), "sk-profile-a")
+
+        migrated = self.store.migrate_legacy_pending("legacy_write_a")
+        self.assertIn(migrated["id"], {svc["id"] for svc in self.store.list_services()["directServices"]})
+        again = self.store.list_legacy_pending()
+        again_items = again["items"] if isinstance(again, dict) and "items" in again else again
+        self.assertEqual(again_items, [])
+
+        self._seed_legacy_config(
+            "legacy_write_c",
+            "excel.analysis",
+            "key_write_c",
+            "sk-profile-c",
+            name="档案 C",
+            service_base_url="https://third.example.com/v1",
+            model_name="other-model",
+            active=False,
+        )
+        self._seed_legacy_config(
+            "legacy_write_d",
+            "excel.analysis",
+            "key_write_d",
+            "sk-profile-d",
+            name="档案 D",
+            service_base_url="https://fourth.example.com/v1",
+            model_name="other-model-2",
+            active=True,
+        )
+        self.store.list_services()
+        abandoned = self.store.abandon_legacy_pending("legacy_write_c")
+        self.assertEqual(abandoned["id"], "legacy_write_c")
+        self.assertFalse((self.key_dir / "key_write_c").exists())
+        leftover = self.store.list_legacy_pending()
+        leftover_items = leftover["items"] if isinstance(leftover, dict) and "items" in leftover else leftover
+        leftover_ids = {item["id"] for item in leftover_items}
+        self.assertNotIn("legacy_write_c", leftover_ids)
+
+    def test_recovery_record_write_failure_is_visible(self):
+        self._seed_legacy_config(
+            "legacy_record",
+            "word.smart_write",
+            "key_record",
+            "sk-record",
+            active=True,
+        )
+        self.store.list_services()
+        self.config_path.write_text("{", encoding="utf-8")
+        original_write = migration_txn.write_json_atomic
+
+        def fail_record(path, payload):
+            if Path(path).name == "adapter-direct-migration-recovery.json":
+                raise OSError("disk full")
+            return original_write(path, payload)
+
+        with patch(
+            "app.core.direct_migration_txn.write_json_atomic", fail_record
+        ):
+            recovered = DirectServiceStore(self.config_path, self.key_dir).list_services()
+        status = recovered.get("legacyDirectMigrationRecovery") or recovered.get(
+            "legacyDirectMigration"
+        )
+        self.assertTrue(
+            recovered.get("recoveryRecordWriteFailed")
+            or (isinstance(status, dict) and status.get("recordWriteFailed"))
+            or recovered.get("health", {}).get("degraded")
+        )
 
 
 if __name__ == "__main__":

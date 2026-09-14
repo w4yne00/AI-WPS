@@ -233,6 +233,11 @@ class ModelConfigurationStoreTests(unittest.TestCase):
             normalize_service_base_url("https://例子.example/v1"),
             "https://xn--fsqu00a.example/v1",
         )
+        with self.assertRaises(ModelConfigurationError) as empty_userinfo:
+            normalize_service_base_url("https://@Example.com/v1")
+        self.assertEqual(empty_userinfo.exception.code, "MODEL_CONFIG_URL_INVALID")
+        with self.assertRaises(ModelConfigurationError):
+            normalize_service_base_url("https://user:pass@api.example.com/v1")
 
     def test_format_semantic_readiness_is_stale_after_configuration_changes(self) -> None:
         with TemporaryDirectory() as tmp:

@@ -973,6 +973,24 @@ def test_preview_upgrade_allows_runtime_migration_fields_while_preserving_user_c
     assert calls == [1, 2]
 
 
+def test_preview_legacy_direct_migration_covers_auth_limit_and_recovery(tmp_path):
+    lifecycle_path = ROOT / "packaging/python38_preview1_delivery_lifecycle_gate.py"
+    spec = importlib.util.spec_from_file_location(
+        "preview_lifecycle_legacy_direct", lifecycle_path
+    )
+    assert spec is not None and spec.loader is not None
+    lifecycle = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(lifecycle)
+
+    over_limit = tmp_path / "over-limit"
+    lifecycle.seed_legacy_direct_over_limit_state(over_limit)
+    lifecycle.verify_legacy_direct_over_limit(over_limit, ROOT / "adapter_service")
+
+    migrated = tmp_path / "migrated"
+    lifecycle.seed_legacy_direct_state(migrated)
+    lifecycle.verify_legacy_direct_migration(migrated, ROOT / "adapter_service")
+
+
 def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):
     build = ROOT / "packaging/build_v0260_preview1_delivery_kit.sh"
     output = tmp_path / "dist"
