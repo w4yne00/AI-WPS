@@ -48,6 +48,13 @@ FORBIDDEN_ACCEPTANCE_STATUS = (
     "当前记录状态：`target-accepted`",
     "当前记录状态：`passed`",
 )
+FORBIDDEN_ACCEPTANCE_PHRASES = (
+    "不创建历史文件",
+)
+REQUIRED_SMART_FILL_HISTORY_CONTRACT = (
+    "写回动作不新增或修改历史",
+    "生成成功结果已只读归档",
+)
 
 REQUIRED_OPS_MARKERS = (
     "共享直连服务",
@@ -90,6 +97,10 @@ class Issue182DeliveryEvidenceTests(unittest.TestCase):
             self.assertIn(marker, text, "验收清单缺少：{0}".format(marker))
         for forbidden in FORBIDDEN_ACCEPTANCE_STATUS:
             self.assertNotIn(forbidden, text, "未完成目标机验收不得写成：{0}".format(forbidden))
+        for forbidden in FORBIDDEN_ACCEPTANCE_PHRASES:
+            self.assertNotIn(forbidden, text, "验收清单不得保留冲突表述：{0}".format(forbidden))
+        for marker in REQUIRED_SMART_FILL_HISTORY_CONTRACT:
+            self.assertIn(marker, text, "验收清单缺少智能填写历史合同：{0}".format(marker))
         self.assertIn("Issue #164", text)
         self.assertIn("不宣称", text)
 
