@@ -40,6 +40,26 @@
     },
     {
       "type": "file",
+      "source": "docs/operations/shared-direct-service.md",
+      "target": "docs/operations/shared-direct-service.md"
+    },
+    {
+      "type": "file",
+      "source": "docs/operations/task-result-lifecycle.md",
+      "target": "docs/operations/task-result-lifecycle.md"
+    },
+    {
+      "type": "file",
+      "source": "docs/operations/direct-service-model-catalog.md",
+      "target": "docs/operations/direct-service-model-catalog.md"
+    },
+    {
+      "type": "file",
+      "source": "docs/operations/word-format-review-direct-validation.md",
+      "target": "docs/operations/word-format-review-direct-validation.md"
+    },
+    {
+      "type": "file",
       "source": "packaging/reference-workflows/excel-smart-fill-v2.yml",
       "target": "reference-workflows/excel-smart-fill-v2.yml"
     },

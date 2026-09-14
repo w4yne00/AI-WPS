@@ -49,26 +49,19 @@ class WorkflowProfileApiTests(unittest.TestCase):
             config_path.write_text("{}\n", encoding="utf-8")
             store = ModelConfigurationStore(config_path, root / "provider_api_keys")
             with patch("app.api.provider.get_model_configuration_store", return_value=store):
-                created = create_model_configuration(
-                    ModelConfigurationCreateRequest(
-                        taskType="word.format_review",
-                        name="视觉配置",
-                        accessMethod=ACCESS_DIRECT_MODEL,
-                        serviceBaseUrl="https://vision.example/v1",
-                        modelName="vision-1",
-                        imageInputMode="openai_image_url",
+                with self.assertRaises(AdapterError) as raised:
+                    create_model_configuration(
+                        ModelConfigurationCreateRequest(
+                            taskType="word.format_review",
+                            name="视觉配置",
+                            accessMethod=ACCESS_DIRECT_MODEL,
+                            serviceBaseUrl="https://vision.example/v1",
+                            modelName="vision-1",
+                            imageInputMode="openai_image_url",
+                        )
                     )
-                )
-                configuration_id = created["data"]["configuration"]["id"]
-                authorized = set_model_configuration_image_authorization(
-                    configuration_id,
-                    ModelConfigurationImageAuthorizationRequest(authorized=True),
-                )
-
-            self.assertEqual(
-                authorized["data"]["configuration"]["imageSemanticReadiness"]["code"],
-                "validation_required",
-            )
+            self.assertEqual(raised.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED")
+            self.assertEqual(raised.exception.status_code, 400)
 
     def test_direct_format_validation_returns_identity_without_activation(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -84,8 +77,9 @@ class WorkflowProfileApiTests(unittest.TestCase):
                 model_name="format-role-model",
                 max_output_tokens=1024,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
-            store.replace_api_key(created["id"], "format-secret")
+            store.replace_api_key(created["id"], "format-secret", allow_direct=True)
             validation = {
                 "success": True,
                 "taskType": "word.format_review",
@@ -137,6 +131,7 @@ class WorkflowProfileApiTests(unittest.TestCase):
                 model_name="format-role-model",
                 max_output_tokens=1024,
                 context_window_tokens=40000,
+                allow_direct=True,
             )
             with patch("app.api.provider.get_model_configuration_store", return_value=store), patch(
                 "app.api.provider.ProviderClient.validate_model_configuration",
