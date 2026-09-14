@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## PR #199 第三轮审查修复（Issue #181，2026-09-14）
+
+- 交付白名单补入 `direct_migration_txn.py`，生命周期测试从组装后的 Adapter 目录实际导入迁移运行时；普通 `config/adapter.json` 布局的恢复会定位到同级 `run/provider_api_keys`。
+- 配置启动、健康检查和直连服务读取统一通过可恢复入口；迁移 journal 采用跨进程文件锁、严格路径/引用校验，损坏状态 fail-closed，快照使用 `0600/0700`、哈希 manifest 和 7 天回滚保留期。
+- 提交顺序调整为配置原子发布 → committed 快照完整写入 → journal 标记 `committed`；pending 迁移/重建/放弃与常规直连服务写操作统一使用跨进程锁和 `expectedRevision`，失败保留 pending 状态并遵守 5 服务上限。
+- legacy 兼容证明缺失、过期或 Key 指纹不匹配时 fail-closed；三宿主显示待人工处理数量；FastAPI 与 standalone 对 pending 不存在统一返回 404。
+- 验证：迁移专项 40 项、直连服务及相关后端 94 项中 93 项通过、1 项既有跳过；交付套件 33 项通过；前端直连契约 59 项通过；Python 3.8 兼容扫描 189 个文件通过。完整后端收集仍受本机缺少 `fastapi` 阻断，未安装新依赖。
+
 ## PR #199 审查修复 round 2（Issue #181，2026-09-14）
 
 - 迁移快照自包含 JSON 与被引用 Key；`load_config_payload` 在正式配置不可读时先恢复。恢复后 `resolve_task_auth()` 与迁移后服务 ID、Key 指纹一致。

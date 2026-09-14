@@ -9,6 +9,7 @@ import threading
 import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
+from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 from urllib.error import HTTPError, URLError
@@ -97,6 +98,16 @@ class DirectServiceError(ValueError):
         self.code = code
         self.message = message
         self.referenced_tasks = referenced_tasks or []
+
+
+def _serialized_store_transaction(operation):
+    @wraps(operation)
+    def wrapper(store, *args, **kwargs):
+        with _STORE_LOCK:
+            with migration_txn.migration_lock(store.config_path):
+                return operation(store, *args, **kwargs)
+
+    return wrapper
 
 
 def _utc_now() -> str:
@@ -222,7 +233,7 @@ class DirectServiceStore:
 
     def get_service(self, service_id: str, include_secret: bool = False) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             service = self._require_service(self._service_map(payload), service_id)
             result = self._sanitize_service(service, payload=payload)
             if include_secret:
@@ -262,8 +273,15 @@ class DirectServiceStore:
                 "taskModelSelection": selection,
             }
 
+    @migration_txn.serialized
     def _load_with_legacy_direct_migration(self):
-        migration_txn.reconcile_inflight(self.config_path, self.key_dir)
+        try:
+            migration_txn.reconcile_inflight(self.config_path, self.key_dir)
+        except migration_txn.MigrationStateError as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_MIGRATION_STATE_INVALID",
+                "旧直连迁移事务状态不可用，请由管理员检查恢复记录。",
+            ) from exc
         payload = self._load_payload_recovering()
         configurations = payload.get("modelConfigurations")
         existing_pending = payload.get("legacyDirectPending")
@@ -514,6 +532,13 @@ class DirectServiceStore:
         }
         merged_pending = dict(existing_pending)
         merged_pending.update(pending_legacy)
+        for pending_id, pending_item in list(merged_pending.items()):
+            if isinstance(pending_item, dict):
+                normalized_pending = dict(pending_item)
+                normalized_pending["revision"] = int(
+                    normalized_pending.get("revision", 1) or 1
+                )
+                merged_pending[pending_id] = normalized_pending
         payload["directServices"] = services
         payload["taskModelSelections"] = selections
         payload["activeModelConfigurations"] = active
@@ -556,7 +581,7 @@ class DirectServiceStore:
             if api_key_ref and api_key_ref not in remaining_refs:
                 self._delete_legacy_key(api_key_ref)
 
-        migrated_payload = load_config_payload(self.config_path)
+        migrated_payload = load_config_payload(self.config_path, self.key_dir)
         if merged_pending:
             return migrated_payload, self._pending_manual_status(
                 merged_pending, len(consumed_legacy), created_service_count
@@ -627,6 +652,7 @@ class DirectServiceStore:
             "imageInputMode": configuration.get("imageInputMode", "disabled"),
             "keyConfigured": bool(key),
             "apiKeyFingerprint": self._api_key_fingerprint(key) if key else "",
+            "revision": int(configuration.get("revision", 1) or 1),
         }
 
     def _pending_map(self, payload: dict) -> dict:
@@ -671,75 +697,74 @@ class DirectServiceStore:
             names.add("direct_service_{0}".format(service_id))
         return names
 
-    def migrate_legacy_pending(self, config_id: str, rebuild: bool = False) -> dict:
+    @_serialized_store_transaction
+    def migrate_legacy_pending(
+        self,
+        config_id: str,
+        rebuild: bool = False,
+        expected_revision: Optional[int] = None,
+    ) -> dict:
         clean_id = str(config_id or "").strip()
         with _STORE_LOCK:
             payload, _ = self._load_with_legacy_direct_migration()
+            original_payload = copy.deepcopy(payload)
             configuration = dict(self._require_pending(payload, clean_id))
-            pending = self._pending_map(payload)
-            pending.pop(clean_id, None)
-            if pending:
-                payload["legacyDirectPending"] = pending
-            else:
-                payload.pop("legacyDirectPending", None)
-            configurations = dict(payload.get("modelConfigurations") or {})
-            if not isinstance(payload.get("modelConfigurations"), dict):
-                configurations = {}
-            configurations[clean_id] = configuration
-            payload["modelConfigurations"] = configurations
-            save_config_payload(payload, self.config_path)
-
-        if rebuild:
-            with _STORE_LOCK:
-                payload = load_config_payload(self.config_path)
-                services = self._service_map(payload)
-                api_key = self._read_legacy_key(
-                    str(configuration.get("apiKeyRef", "")).strip()
+            self._check_pending_revision(configuration, expected_revision)
+            services_before = self._service_map(payload)
+            service_ids_before = set(services_before)
+            api_key_ref = str(configuration.get("apiKeyRef", "")).strip()
+            api_key = self._read_legacy_key(api_key_ref)
+            raw_url = str(configuration.get("serviceBaseUrl", "")).strip()
+            try:
+                normalized = self._normalize_url(raw_url) if raw_url else ""
+            except DirectServiceError:
+                normalized = ""
+            fingerprint = self._api_key_fingerprint(api_key) if api_key else ""
+            matching_service_id = ""
+            if normalized and fingerprint:
+                for service_id, service in services_before.items():
+                    if str(service.get("serviceBaseUrl", "")) != normalized:
+                        continue
+                    existing_key = self._read_key(service_id)
+                    if self._api_key_fingerprint(existing_key) == fingerprint:
+                        matching_service_id = service_id
+                        break
+            if len(services_before) >= MAX_DIRECT_SERVICES and (
+                rebuild or not matching_service_id
+            ):
+                raise DirectServiceError(
+                    "DIRECT_SERVICE_LIMIT",
+                    "最多只能保存 {0} 份共享直连服务。".format(MAX_DIRECT_SERVICES),
                 )
-                raw_url = str(configuration.get("serviceBaseUrl", "")).strip()
-                try:
-                    normalized = self._normalize_url(raw_url) if raw_url else ""
-                except DirectServiceError:
-                    normalized = ""
-                pending_after = self._pending_map(payload)
-                pending_after.pop(clean_id, None)
-                configurations = dict(payload.get("modelConfigurations") or {})
-                configurations.pop(clean_id, None)
-                payload["modelConfigurations"] = configurations
-                if pending_after:
-                    payload["legacyDirectPending"] = pending_after
+
+            if rebuild:
+                pending = self._pending_map(payload)
+                pending.pop(clean_id, None)
+                if pending:
+                    payload["legacyDirectPending"] = pending
                 else:
                     payload.pop("legacyDirectPending", None)
-                if len(services) >= MAX_DIRECT_SERVICES:
-                    raise DirectServiceError(
-                        "DIRECT_SERVICE_LIMIT",
-                        "最多只能保存 {0} 份共享直连服务。".format(MAX_DIRECT_SERVICES),
-                    )
                 now = _utc_now()
                 service_id = "direct_svc_{0}".format(uuid.uuid4().hex[:12])
                 model_name = str(configuration.get("modelName", "")).strip()
                 existing_names = {
                     str(item.get("name", "")).strip().casefold()
-                    for item in services.values()
+                    for item in services_before.values()
                 }
-
-                def unique_name(source):
-                    base = str(source or "共享直连服务").strip() or "共享直连服务"
-                    base = base[:MAX_DIRECT_SERVICE_NAME_LENGTH]
-                    candidate = base
-                    suffix_number = 2
-                    while candidate.casefold() in existing_names:
-                        suffix = " {0}".format(suffix_number)
-                        candidate = (
-                            base[: MAX_DIRECT_SERVICE_NAME_LENGTH - len(suffix)] + suffix
-                        )
-                        suffix_number += 1
-                    existing_names.add(candidate.casefold())
-                    return candidate
-
+                base_name = str(configuration.get("name") or "共享直连服务").strip()
+                base_name = (base_name or "共享直连服务")[:MAX_DIRECT_SERVICE_NAME_LENGTH]
+                service_name = base_name
+                suffix_number = 2
+                while service_name.casefold() in existing_names:
+                    suffix = " {0}".format(suffix_number)
+                    service_name = (
+                        base_name[: MAX_DIRECT_SERVICE_NAME_LENGTH - len(suffix)] + suffix
+                    )
+                    suffix_number += 1
+                services = dict(services_before)
                 services[service_id] = {
                     "id": service_id,
-                    "name": unique_name(configuration.get("name")),
+                    "name": service_name,
                     "serviceBaseUrl": normalized,
                     "defaultModel": model_name,
                     "modelList": [model_name] if model_name else [],
@@ -760,14 +785,38 @@ class DirectServiceStore:
                     normalized,
                     api_key,
                 )
-                if api_key:
-                    self._write_key(service_id, api_key)
                 payload["directServices"] = services
-                save_config_payload(payload, self.config_path)
+                self._commit_legacy_migration(
+                    original_payload,
+                    payload,
+                    [(service_id, api_key)] if api_key else [],
+                    {clean_id: service_id},
+                    {clean_id: (api_key_ref, api_key)},
+                    {},
+                )
+                if api_key_ref and api_key_ref not in self._referenced_key_names(payload):
+                    self._delete_legacy_key(api_key_ref)
                 return self._sanitize_service(services[service_id], payload=payload)
 
-        result = self.list_services()
+            pending = self._pending_map(payload)
+            pending.pop(clean_id, None)
+            if pending:
+                payload["legacyDirectPending"] = pending
+            else:
+                payload.pop("legacyDirectPending", None)
+            configurations = dict(payload.get("modelConfigurations") or {})
+            if not isinstance(payload.get("modelConfigurations"), dict):
+                configurations = {}
+            configurations[clean_id] = configuration
+            payload["modelConfigurations"] = configurations
+            save_config_payload(payload, self.config_path)
+            try:
+                result = self.list_services()
+            except BaseException:
+                migration_txn.write_json_atomic(self.config_path, original_payload)
+                raise
         if result["legacyDirectMigration"].get("status") == "restricted":
+            migration_txn.write_json_atomic(self.config_path, original_payload)
             raise DirectServiceError(
                 "DIRECT_SERVICE_MIGRATION_LIMIT",
                 "迁移将超过共享直连服务上限。",
@@ -790,29 +839,54 @@ class DirectServiceStore:
                 "DIRECT_SERVICE_MIGRATION_FAILED",
                 "待处理档案未能迁移。",
             )
-        target_url = str(configuration.get("serviceBaseUrl") or "").strip()
-        try:
-            if target_url:
-                target_url = self._normalize_url(target_url)
-        except DirectServiceError:
-            pass
-        model_name = str(configuration.get("modelName") or "").strip()
-        matched = None
-        for service in services:
-            if target_url and str(service.get("serviceBaseUrl") or "") == target_url:
-                if not model_name or model_name in (service.get("modelList") or []):
-                    matched = service
-                    break
-        return matched or services[-1]
+        raw_after = load_config_payload(self.config_path, self.key_dir)
+        raw_services_after = self._service_map(raw_after)
+        candidates = [
+            service
+            for service in services
+            if str(service.get("id") or "") not in service_ids_before
+        ]
+        if not candidates:
+            candidates = services
+        for service in candidates:
+            service_id = str(service.get("id") or "")
+            raw_service = raw_services_after.get(service_id, {})
+            service_url = str(raw_service.get("serviceBaseUrl") or "")
+            service_fingerprint = self._api_key_fingerprint(
+                self._read_key(service_id)
+            )
+            if normalized and service_url != normalized:
+                continue
+            if fingerprint and service_fingerprint != fingerprint:
+                continue
+            if not normalized and not fingerprint and len(candidates) != 1:
+                continue
+            if normalized and not fingerprint and service_id in service_ids_before:
+                continue
+            if fingerprint and not normalized and service_id in service_ids_before:
+                continue
+            return service
+        raise DirectServiceError(
+            "DIRECT_SERVICE_MIGRATION_FAILED",
+            "无法确认待处理档案对应的共享直连服务。",
+        )
 
-    def rebuild_legacy_pending(self, config_id: str) -> dict:
-        return self.migrate_legacy_pending(config_id, rebuild=True)
+    def rebuild_legacy_pending(
+        self, config_id: str, expected_revision: Optional[int] = None
+    ) -> dict:
+        return self.migrate_legacy_pending(
+            config_id, rebuild=True, expected_revision=expected_revision
+        )
 
-    def abandon_legacy_pending(self, config_id: str) -> dict:
+    @_serialized_store_transaction
+    def abandon_legacy_pending(
+        self, config_id: str, expected_revision: Optional[int] = None
+    ) -> dict:
         clean_id = str(config_id or "").strip()
         with _STORE_LOCK:
             payload, _ = self._load_with_legacy_direct_migration()
             configuration = dict(self._require_pending(payload, clean_id))
+            self._check_pending_revision(configuration, expected_revision)
             pending = self._pending_map(payload)
             pending.pop(clean_id, None)
             if pending:
@@ -825,6 +899,27 @@ class DirectServiceStore:
             if ref and ref not in remaining:
                 self._delete_legacy_key(ref)
             return {"id": clean_id}
+
+    @staticmethod
+    def _check_pending_revision(configuration: dict, expected_revision) -> None:
+        if expected_revision is None:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_REVISION_REQUIRED",
+                "必须提供 expectedRevision。",
+            )
+        try:
+            current = int(configuration.get("revision", 1) or 1)
+            expected = int(expected_revision)
+        except (TypeError, ValueError) as exc:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_REVISION_CONFLICT",
+                "待处理档案版本无效，请刷新后重试。",
+            ) from exc
+        if current != expected:
+            raise DirectServiceError(
+                "DIRECT_SERVICE_REVISION_CONFLICT",
+                "待处理档案已变化，请刷新后重试。",
+            )
 
     @staticmethod
     def _copy_file(source: Path, destination: Path) -> None:
@@ -849,7 +944,7 @@ class DirectServiceStore:
         migration_txn.write_recovery_record(self.config_path, reason)
 
     def _load_payload_recovering(self) -> dict:
-        return load_config_payload(self.config_path)
+        return load_config_payload(self.config_path, self.key_dir)
 
     def _restore_pre_migration_backup(self) -> None:
         restored = migration_txn.restore_snapshot_tree(
@@ -943,7 +1038,8 @@ class DirectServiceStore:
         }
         migration_txn.write_journal(self.config_path, journal)
         try:
-            stage_root.mkdir(parents=True, exist_ok=True)
+            stage_root.mkdir(parents=True, mode=0o700, exist_ok=True)
+            os.chmod(str(stage_root), 0o700)
             stage_store = DirectServiceStore(stage_config, stage_keys)
             self._write_json_atomic(stage_config, payload)
             for service_id, source_key in pending_service_keys:
@@ -969,7 +1065,7 @@ class DirectServiceStore:
             for service_id, source_key in pending_service_keys:
                 newly_written_service_ids.append(service_id)
                 self._write_key(service_id, source_key)
-            save_config_payload(payload, self.config_path)
+            migration_txn.write_json_atomic(self.config_path, payload)
             verified = json.loads(self.config_path.read_text(encoding="utf-8"))
             self._verify_migrated_payload(
                 verified,
@@ -978,9 +1074,10 @@ class DirectServiceStore:
                 legacy_keys,
                 active,
             )
+            migration_txn.write_committed_snapshot(self.config_path, self.key_dir)
             journal["phase"] = migration_txn.PHASE_COMMITTED
             migration_txn.write_journal(self.config_path, journal)
-            migration_txn.write_committed_snapshot(self.config_path, self.key_dir)
+            migration_txn.finalize_committed(self.config_path)
         except BaseException:
             self._restore_pre_migration_backup()
             if not (migration_txn.snapshot_dir(self.config_path) / "pre" / "adapter.json").is_file():
@@ -1027,6 +1124,7 @@ class DirectServiceStore:
             and direct_model_input_budget(context_window, max_output)[0] <= 0
         )
 
+    @_serialized_store_transaction
     def create_service(
         self,
         name: str,
@@ -1035,7 +1133,7 @@ class DirectServiceStore:
         api_key: Optional[str] = None,
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             if len(services) >= MAX_DIRECT_SERVICES:
                 raise DirectServiceError(
@@ -1074,6 +1172,7 @@ class DirectServiceStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize_service(record)
 
+    @_serialized_store_transaction
     def update_service(
         self,
         service_id: str,
@@ -1083,7 +1182,7 @@ class DirectServiceStore:
         default_model: str = "",
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
@@ -1109,13 +1208,14 @@ class DirectServiceStore:
             save_config_payload(payload, self.config_path)
             return self._sanitize_service(service)
 
+    @_serialized_store_transaction
     def delete_service(
         self,
         service_id: str,
         expected_revision: int,
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
@@ -1135,6 +1235,7 @@ class DirectServiceStore:
             self._delete_key(service_id)
             return self.list_services()
 
+    @_serialized_store_transaction
     def replace_api_key(
         self,
         service_id: str,
@@ -1142,7 +1243,7 @@ class DirectServiceStore:
         expected_revision: int,
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
@@ -1184,13 +1285,14 @@ class DirectServiceStore:
                 self._notify_key_rotation(service_id, old_fp, old_revision)
             return self._sanitize_service(service, payload=payload)
 
+    @_serialized_store_transaction
     def clear_api_key(
         self,
         service_id: str,
         expected_revision: int,
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
@@ -1224,6 +1326,7 @@ class DirectServiceStore:
                 self._notify_key_rotation(service_id, old_fp, old_revision)
             return self._sanitize_service(service, payload=payload)
 
+    @_serialized_store_transaction
     def update_model_list(
         self,
         service_id: str,
@@ -1234,7 +1337,7 @@ class DirectServiceStore:
         source: Optional[str] = None,
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
 
@@ -1368,6 +1471,7 @@ class DirectServiceStore:
             "submittedModelsCount": len(models),
         }
 
+    @_serialized_store_transaction
     def _record_model_catalog_failure(
         self,
         service_id: str,
@@ -1375,7 +1479,7 @@ class DirectServiceStore:
         expected_revision: Optional[int] = None,
     ) -> None:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
             if expected_revision is not None:
@@ -1479,11 +1583,12 @@ class DirectServiceStore:
                 extracted.append(model_name)
         return extracted
 
+    @_serialized_store_transaction
     def refresh_models(
         self, service_id: str, expected_revision: Optional[int] = None
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
             self._check_revision(service, expected_revision)
@@ -1695,6 +1800,7 @@ class DirectServiceStore:
                 },
             }
 
+    @_serialized_store_transaction
     def activate_direct_service(
         self,
         service_id: str,
@@ -1703,7 +1809,7 @@ class DirectServiceStore:
     ) -> dict:
         clean_task = self._validate_task_type(task_type)
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
             if not service.get("serviceBaseUrl"):
@@ -1761,6 +1867,7 @@ class DirectServiceStore:
                 service,
                 task_sel,
                 effective_model,
+                payload,
             )
 
             task_sel["serviceId"] = service_id
@@ -1792,7 +1899,7 @@ class DirectServiceStore:
         task_type: Optional[str] = None,
     ) -> dict:
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             selections = self._selection_map(payload)
 
@@ -2042,6 +2149,7 @@ class DirectServiceStore:
             )
         return items[0]
 
+    @_serialized_store_transaction
     def update_task_model_selection(
         self,
         task_type: str,
@@ -2056,7 +2164,7 @@ class DirectServiceStore:
     ) -> dict:
         clean_task = self._validate_task_type(task_type)
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             selections = self._selection_map(payload)
             record = self._build_task_model_selection_record(
@@ -2176,6 +2284,7 @@ class DirectServiceStore:
 
         return record
 
+    @_serialized_store_transaction
     def mark_custom_model_validated(
         self,
         task_type: str,
@@ -2191,7 +2300,7 @@ class DirectServiceStore:
                 "DIRECT_SERVICE_MODEL_REQUIRED", "自定义模型名称不能为空。"
             )
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             service = self._require_service(services, service_id)
             if not self._key_exists(service["id"]):
@@ -2237,6 +2346,7 @@ class DirectServiceStore:
             save_config_payload(payload, self.config_path)
             return dict(validations[clean_task])
 
+    @_serialized_store_transaction
     def set_image_external_authorization(
         self, task_type: str, authorized: bool, expected_selection: Optional[dict] = None,
         expected_service_revision: Optional[int] = None,
@@ -2248,7 +2358,7 @@ class DirectServiceStore:
                 f"任务类型 {task_type} 不支持图片外发授权。",
             )
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             selections = self._selection_map(payload)
             raw = selections.get(clean_task, {})
@@ -2282,6 +2392,7 @@ class DirectServiceStore:
             save_config_payload(payload, self.config_path)
             return self.get_task_model_selection(clean_task)
 
+    @_serialized_store_transaction
     def record_image_semantic_validation(
         self, task_type: str, summary: dict, expected_binding: Optional[dict] = None,
         expected_authorization: Optional[dict] = None,
@@ -2293,7 +2404,7 @@ class DirectServiceStore:
                 f"任务类型 {task_type} 不支持视觉能力验证。",
             )
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             selections = self._selection_map(payload)
             raw = selections.get(clean_task, {})
@@ -2344,6 +2455,7 @@ class DirectServiceStore:
         binding["apiKeyFingerprint"] = self._api_key_fingerprint(key)
         return binding
 
+    @_serialized_store_transaction
     def record_format_semantic_validation(
         self, task_type: str, summary: dict, selection: Optional[dict] = None,
         expected_binding: Optional[dict] = None,
@@ -2352,7 +2464,7 @@ class DirectServiceStore:
         if clean_task != "word.format_review":
             raise DirectServiceError("DIRECT_SERVICE_TASK_UNSUPPORTED", "任务不支持格式语义验证。")
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             services = self._service_map(payload)
             selections = self._selection_map(payload)
             raw = selections.get(clean_task, {})
@@ -2445,7 +2557,7 @@ class DirectServiceStore:
     ) -> bool:
         clean_task = self._validate_task_type(task_type)
         with _STORE_LOCK:
-            payload = load_config_payload(self.config_path)
+            payload, _ = self._load_with_legacy_direct_migration()
             service = self._require_service(
                 self._service_map(payload), service_id
             )
@@ -2531,24 +2643,18 @@ class DirectServiceStore:
             except (TypeError, ValueError):
                 return False
             expires = _parse_utc_timestamp(proof.get("expiresAt"))
-            if expires is not None and datetime.now(timezone.utc) >= expires:
+            if expires is None or datetime.now(timezone.utc) >= expires:
                 return False
             expected_fp = str(proof.get("apiKeyFingerprint") or "")
-            if expected_fp:
-                actual_fp = self._api_key_fingerprint(
-                    self._read_key(str(service.get("id", "")))
-                )
-                if actual_fp != expected_fp:
-                    return False
+            if not expected_fp:
+                return False
+            actual_fp = self._api_key_fingerprint(
+                self._read_key(str(service.get("id", "")))
+            )
+            if actual_fp != expected_fp:
+                return False
             return True
-        if str(service.get("modelListSource", "")) != "legacy_migration":
-            return False
-        if bool(service.get("modelListInvalidated")):
-            return False
-        models = service.get("modelList")
-        if not isinstance(models, list):
-            return False
-        return model_name in models
+        return False
 
     def _model_availability(
         self,
@@ -2594,10 +2700,13 @@ class DirectServiceStore:
         service: dict,
         selection: dict,
         effective_model: str,
+        payload: Optional[dict] = None,
     ) -> None:
         custom_model = bool(selection.get("customModel", False))
         custom_validated = self._is_custom_model_validated(
-            load_config_payload(self.config_path),
+            payload
+            if isinstance(payload, dict)
+            else load_config_payload(self.config_path, self.key_dir),
             task_type,
             service,
             effective_model,
@@ -2789,7 +2898,7 @@ class DirectServiceStore:
         catalog = self._model_catalog_state(service)
         if payload is None:
             try:
-                payload = load_config_payload(self.config_path)
+                payload = load_config_payload(self.config_path, self.key_dir)
             except Exception:
                 payload = {}
         referenced_tasks = self._get_referenced_tasks(payload, service_id)

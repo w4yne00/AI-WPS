@@ -2,12 +2,14 @@ import json
 import os
 import subprocess
 import sys
+import time
 import unittest
 import uuid
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
+from app.core.config import load_config_payload
 from app.core.errors import AdapterError
 from app.core import direct_migration_txn as migration_txn
 from app.services.direct_services import DirectServiceError, DirectServiceStore
@@ -294,7 +296,17 @@ class DirectServiceMigrationTests(unittest.TestCase):
             active=True,
         )
 
-        with patch("app.services.direct_services.save_config_payload", side_effect=IOError("disk full")):
+        real_write = migration_txn.write_json_atomic
+
+        def fail_config_write(path, payload):
+            if Path(path) == self.config_path:
+                raise IOError("disk full")
+            return real_write(path, payload)
+
+        with patch(
+            "app.services.direct_services.migration_txn.write_json_atomic",
+            side_effect=fail_config_write,
+        ):
             with self.assertRaises(IOError):
                 self.store.list_services()
 
@@ -478,13 +490,17 @@ class DirectServiceMigrationTests(unittest.TestCase):
             active=True,
         )
         original = self.config_path.read_text(encoding="utf-8")
-        real_save = __import__("app.core.config", fromlist=["save_config_payload"]).save_config_payload
+        real_save = migration_txn.write_json_atomic
 
-        def save_then_fail(payload, config_path=None):
-            real_save(payload, config_path)
-            raise DirectServiceError("DIRECT_SERVICE_MIGRATION_FAILED", "injected verify failure")
+        def save_then_fail(path, payload):
+            real_save(path, payload)
+            if Path(path) == self.config_path:
+                raise DirectServiceError("DIRECT_SERVICE_MIGRATION_FAILED", "injected verify failure")
 
-        with patch("app.services.direct_services.save_config_payload", side_effect=save_then_fail):
+        with patch(
+            "app.services.direct_services.migration_txn.write_json_atomic",
+            side_effect=save_then_fail,
+        ):
             with self.assertRaises(DirectServiceError):
                 self.store.list_services()
 
@@ -505,7 +521,17 @@ class DirectServiceMigrationTests(unittest.TestCase):
         )
         original = self.config_path.read_text(encoding="utf-8")
 
-        with patch("app.services.direct_services.save_config_payload", side_effect=SystemExit(1)):
+        real_write = migration_txn.write_json_atomic
+
+        def exit_on_config(path, payload):
+            if Path(path) == self.config_path:
+                raise SystemExit(1)
+            return real_write(path, payload)
+
+        with patch(
+            "app.services.direct_services.migration_txn.write_json_atomic",
+            side_effect=exit_on_config,
+        ):
             with self.assertRaises(SystemExit):
                 self.store.list_services()
 
@@ -618,6 +644,257 @@ class DirectServiceMigrationTests(unittest.TestCase):
             fingerprint_before,
         )
 
+    def test_load_settings_recovers_truncated_migrated_config_before_startup(self):
+        self._seed_legacy_config(
+            "legacy_startup",
+            "word.smart_write",
+            "key_startup",
+            "sk-startup",
+            model_name="glm-5.2",
+            active=True,
+        )
+        migrated = self.store.list_services()
+        service_id = migrated["directServices"][0]["id"]
+        self.config_path.write_text("{", encoding="utf-8")
+
+        from app.core.config import load_settings
+
+        settings = load_settings(self.config_path)
+        self.assertEqual(settings.service_port, 18100)
+        restored = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertIn(service_id, restored.get("directServices", {}))
+
+    def test_health_read_recovers_truncated_migrated_config(self):
+        self._seed_legacy_config(
+            "legacy_health",
+            "word.smart_write",
+            "key_health",
+            "sk-health",
+            model_name="glm-5.2",
+            active=True,
+        )
+        migrated = self.store.list_services()
+        service_id = migrated["directServices"][0]["id"]
+        self.config_path.write_text("{", encoding="utf-8")
+
+        from app.services.health import _read_config_payload
+
+        with patch(
+            "app.services.health.default_config_path", return_value=self.config_path
+        ):
+            restored = _read_config_payload()
+
+        self.assertIn(service_id, restored.get("directServices", {}))
+
+    def test_default_config_layout_recovers_keys_from_sibling_run_directory(self):
+        runtime_root = self.root / "runtime"
+        config_path = runtime_root / "config" / "adapter.json"
+        key_dir = runtime_root / "run" / "provider_api_keys"
+        config_path.parent.mkdir(parents=True)
+        key_dir.mkdir(parents=True)
+        config_path.write_text('{"directServices": {}}\n', encoding="utf-8")
+        (key_dir / "direct_service_direct_svc_runtime").write_text(
+            "sk-runtime", encoding="utf-8"
+        )
+        migration_txn.write_pre_snapshot(
+            config_path,
+            key_dir,
+            config_path.read_bytes(),
+            extra_key_names=["direct_service_direct_svc_runtime"],
+        )
+        config_path.write_text("{", encoding="utf-8")
+
+        restored = migration_txn.recover_unreadable_config(config_path)
+
+        self.assertEqual(restored, {"directServices": {}})
+        self.assertEqual(
+            (key_dir / "direct_service_direct_svc_runtime").read_text(
+                encoding="utf-8"
+            ),
+            "sk-runtime",
+        )
+
+    def test_provider_client_startup_recovers_shared_state_before_auth_resolution(self):
+        state_dir = self.root / "shared-state"
+        config_path = state_dir / "adapter.json"
+        key_dir = state_dir / "provider_api_keys"
+        key_dir.mkdir(parents=True)
+        config_path.write_text("{}\n", encoding="utf-8")
+        self._seed_legacy_config(
+            "legacy_provider_startup",
+            "word.smart_write",
+            "key_provider_startup",
+            "sk-provider-startup",
+            model_name="glm-5.2",
+            active=True,
+        )
+        # The helper above seeds the test fixture's default paths; copy its
+        # resulting payload/key into the shared runtime layout used by startup.
+        config_path.write_bytes(self.config_path.read_bytes())
+        (key_dir / "key_provider_startup").write_text(
+            "sk-provider-startup", encoding="utf-8"
+        )
+        store = DirectServiceStore(config_path, key_dir)
+        migrated = store.list_services()
+        self.assertEqual(migrated["legacyDirectMigration"]["status"], "completed")
+        config_path.write_text("{", encoding="utf-8")
+
+        from app.services.provider_client import ProviderClient
+
+        with patch.dict(os.environ, {"AI_WPS_STATE_DIR": str(state_dir)}):
+            auth = ProviderClient().resolve_task_auth("word.smart_write")
+
+        self.assertEqual(auth["apiKey"], "sk-provider-startup")
+        self.assertEqual(auth["modelName"], "glm-5.2")
+
+    def test_untrusted_journal_paths_never_delete_external_targets(self):
+        victim_file = self.root / "victim.txt"
+        victim_dir = self.root / "victim-dir"
+        victim_file.write_text("keep", encoding="utf-8")
+        victim_dir.mkdir()
+        (victim_dir / "keep.txt").write_text("keep", encoding="utf-8")
+        migration_txn.write_json_atomic(
+            migration_txn.journal_path(self.config_path),
+            {
+                "phase": migration_txn.PHASE_COMMITTING,
+                "configPath": str(self.config_path),
+                "keyDir": str(self.key_dir),
+                "stagingDir": str(victim_dir),
+                "newKeyRefs": [str(victim_file)],
+                "stagedConfigSha256": "0" * 64,
+            },
+        )
+        self.config_path.write_text("{", encoding="utf-8")
+
+        from app.core.config import load_config_payload
+
+        with self.assertRaises(Exception):
+            load_config_payload(self.config_path)
+        self.assertEqual(victim_file.read_text(encoding="utf-8"), "keep")
+        self.assertTrue((victim_dir / "keep.txt").is_file())
+
+    def test_corrupt_journal_fails_closed_even_when_config_is_readable(self):
+        migration_txn.journal_path(self.config_path).write_text(
+            "{", encoding="utf-8"
+        )
+
+        with self.assertRaises(DirectServiceError) as caught:
+            self.store.list_services()
+
+        self.assertEqual(
+            caught.exception.code, "DIRECT_SERVICE_MIGRATION_STATE_INVALID"
+        )
+
+    @unittest.skipIf(migration_txn.fcntl is None, "fcntl is required")
+    def test_migration_lock_blocks_other_processes(self):
+        adapter_root = Path(__file__).resolve().parents[1]
+        script = (
+            "import sys, time\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, sys.argv[2])\n"
+            "from app.core.direct_migration_txn import migration_lock\n"
+            "with migration_lock(Path(sys.argv[1])):\n"
+            "    print('locked', flush=True)\n"
+            "    time.sleep(0.4)\n"
+        )
+        process = subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                script,
+                str(self.config_path),
+                str(adapter_root),
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            self.assertEqual(process.stdout.readline().strip(), "locked")
+            started = time.monotonic()
+            with migration_txn.migration_lock(self.config_path):
+                elapsed = time.monotonic() - started
+            self.assertGreaterEqual(elapsed, 0.2)
+            self.assertEqual(process.wait(timeout=2), 0)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait(timeout=2)
+
+    def test_reconcile_does_not_mark_committed_when_snapshot_write_fails(self):
+        payload = {"directServices": {"direct_svc_kept": {"id": "direct_svc_kept"}}}
+        migration_txn.write_json_atomic(self.config_path, payload)
+        stage_dir = self.key_dir.parent / ".direct-migration-stage-safe"
+        stage_dir.mkdir()
+        migration_txn.write_json_atomic(
+            migration_txn.journal_path(self.config_path),
+            {
+                "phase": migration_txn.PHASE_COMMITTING,
+                "configPath": str(self.config_path),
+                "keyDir": str(self.key_dir),
+                "stagingDir": str(stage_dir),
+                "newKeyRefs": [],
+                "stagedConfigSha256": migration_txn.sha256_file(self.config_path),
+            },
+        )
+
+        with patch(
+            "app.core.direct_migration_txn.write_committed_snapshot",
+            side_effect=OSError("disk full"),
+        ):
+            migration_txn.reconcile_inflight(self.config_path, self.key_dir)
+
+        journal = json.loads(
+            migration_txn.journal_path(self.config_path).read_text(encoding="utf-8")
+        )
+        self.assertEqual(journal["phase"], migration_txn.PHASE_COMMITTING)
+        self.assertTrue(stage_dir.is_dir())
+
+    def test_snapshots_are_private_and_reject_tampering(self):
+        original_umask = os.umask(0)
+        try:
+            metadata = migration_txn.write_pre_snapshot(
+                self.config_path,
+                self.key_dir,
+                self.config_path.read_bytes(),
+            )
+        finally:
+            os.umask(original_umask)
+        tree = migration_txn.snapshot_dir(self.config_path) / "pre"
+        self.assertEqual(tree.stat().st_mode & 0o777, 0o700)
+        self.assertEqual((tree / "adapter.json").stat().st_mode & 0o777, 0o600)
+        self.assertTrue((tree / "manifest.json").is_file())
+        self.assertEqual(metadata["configSha256"], migration_txn.sha256_file(tree / "adapter.json"))
+
+        (tree / "adapter.json").write_text('{"tampered": true}', encoding="utf-8")
+        self.assertIsNone(
+            migration_txn.restore_snapshot_tree(tree, self.config_path, self.key_dir)
+        )
+
+    def test_committed_snapshot_retention_removes_expired_recovery_copies(self):
+        migration_txn.write_pre_snapshot(
+            self.config_path,
+            self.key_dir,
+            self.config_path.read_bytes(),
+        )
+        migration_txn.write_committed_snapshot(
+            self.config_path,
+            self.key_dir,
+        )
+        expired_at = time.time() - migration_txn.SNAPSHOT_RETENTION_SECONDS - 1
+        snapshot_root = migration_txn.snapshot_dir(self.config_path)
+        retained_paths = (
+            snapshot_root / "pre",
+            migration_txn.pre_backup_path(self.config_path),
+        )
+        for target in retained_paths:
+            os.utime(target, (expired_at, expired_at))
+
+        migration_txn.finalize_committed(self.config_path)
+
+        for target in retained_paths:
+            self.assertFalse(target.exists())
+
     def test_reused_existing_service_seeds_legacy_compatibility_for_auth(self):
         existing = self.store.create_service(
             name="已有共享服务",
@@ -673,6 +950,33 @@ class DirectServiceMigrationTests(unittest.TestCase):
         with self.assertRaises(AdapterError) as cm:
             client.resolve_task_auth("word.smart_write")
         self.assertEqual(cm.exception.code, "DIRECT_SERVICE_MODEL_CATALOG_UNAVAILABLE")
+
+    def test_legacy_compatibility_requires_valid_expiring_proof(self):
+        self._seed_legacy_config(
+            "legacy_proof",
+            "word.smart_write",
+            "key_proof",
+            "sk-proof",
+            model_name="glm-5.2",
+            active=True,
+        )
+        migrated = self.store.list_services()
+        service_id = migrated["directServices"][0]["id"]
+        payload = json.loads(self.config_path.read_text(encoding="utf-8"))
+        service = payload["directServices"][service_id]
+        service.pop("legacyCompatibility", None)
+        migration_txn.write_json_atomic(self.config_path, payload)
+        self.assertFalse(self.store._legacy_model_compatible(service, "glm-5.2"))
+
+        service["legacyCompatibility"] = {
+            "models": ["glm-5.2"],
+            "serviceBaseUrl": service["serviceBaseUrl"],
+            "revision": service["revision"],
+            "apiKeyFingerprint": DirectServiceStore.api_key_fingerprint("sk-proof"),
+            "expiresAt": "not-a-timestamp",
+            "revoked": False,
+        }
+        self.assertFalse(self.store._legacy_model_compatible(service, "glm-5.2"))
 
     def test_hard_exit_after_production_keys_reconciles_on_restart(self):
         self._seed_legacy_config(
@@ -769,7 +1073,9 @@ class DirectServiceMigrationTests(unittest.TestCase):
         self.assertNotIn("apiKey", item)
         self.assertNotEqual(item.get("apiKey"), "sk-profile-a")
 
-        migrated = self.store.migrate_legacy_pending("legacy_write_a")
+        migrated = self.store.migrate_legacy_pending(
+            "legacy_write_a", expected_revision=item["revision"]
+        )
         self.assertIn(migrated["id"], {svc["id"] for svc in self.store.list_services()["directServices"]})
         again = self.store.list_legacy_pending()
         again_items = again["items"] if isinstance(again, dict) and "items" in again else again
@@ -796,13 +1102,176 @@ class DirectServiceMigrationTests(unittest.TestCase):
             active=True,
         )
         self.store.list_services()
-        abandoned = self.store.abandon_legacy_pending("legacy_write_c")
+        pending_before_abandon = self.store.list_legacy_pending()["items"]
+        abandon_item = next(
+            entry for entry in pending_before_abandon if entry["id"] == "legacy_write_c"
+        )
+        abandoned = self.store.abandon_legacy_pending(
+            "legacy_write_c", expected_revision=abandon_item["revision"]
+        )
         self.assertEqual(abandoned["id"], "legacy_write_c")
         self.assertFalse((self.key_dir / "key_write_c").exists())
         leftover = self.store.list_legacy_pending()
         leftover_items = leftover["items"] if isinstance(leftover, dict) and "items" in leftover else leftover
         leftover_ids = {item["id"] for item in leftover_items}
         self.assertNotIn("legacy_write_c", leftover_ids)
+
+    def test_pending_migrate_limit_failure_preserves_pending_profile(self):
+        payload = {"directServices": {}, "legacyDirectPending": {}}
+        now = "2026-09-14T00:00:00Z"
+        for index in range(5):
+            service_id = "direct_svc_existing_{0}".format(index)
+            payload["directServices"][service_id] = {
+                "id": service_id,
+                "name": "已有服务 {0}".format(index),
+                "serviceBaseUrl": "https://existing-{0}.example/v1".format(index),
+                "defaultModel": "model",
+                "modelList": ["model"],
+                "revision": 1,
+                "createdAt": now,
+                "updatedAt": now,
+            }
+        payload["legacyDirectPending"]["legacy_limit"] = {
+            "id": "legacy_limit",
+            "taskType": "word.smart_write",
+            "name": "待迁移",
+            "accessMethod": ACCESS_DIRECT_MODEL,
+            "serviceBaseUrl": "https://sixth.example/v1",
+            "apiKeyRef": "legacy_limit_key",
+            "modelName": "glm-5.2",
+        }
+        migration_txn.write_json_atomic(self.config_path, payload)
+        (self.key_dir / "legacy_limit_key").write_text("sk-limit", encoding="utf-8")
+
+        with self.assertRaises(DirectServiceError):
+            self.store.migrate_legacy_pending(
+                "legacy_limit", expected_revision=1
+            )
+
+        after = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertIn("legacy_limit", after.get("legacyDirectPending", {}))
+        self.assertNotIn("legacy_limit", after.get("modelConfigurations", {}))
+
+    def test_pending_rebuild_never_exceeds_service_limit_when_credentials_match(self):
+        first = None
+        for index in range(5):
+            created = self.store.create_service(
+                name="已有服务 {0}".format(index),
+                service_base_url="https://existing-{0}.example/v1".format(index),
+                default_model="model",
+                api_key="sk-existing-{0}".format(index),
+            )
+            if first is None:
+                first = created
+        payload = load_config_payload(self.config_path)
+        payload["legacyDirectPending"] = {
+            "legacy_rebuild_limit": {
+                "id": "legacy_rebuild_limit",
+                "taskType": "word.smart_write",
+                "name": "待重建",
+                "accessMethod": ACCESS_DIRECT_MODEL,
+                "serviceBaseUrl": first["serviceBaseUrl"],
+                "apiKeyRef": "legacy_rebuild_limit_key",
+                "modelName": "model",
+                "revision": 1,
+            }
+        }
+        migration_txn.write_json_atomic(self.config_path, payload)
+        (self.key_dir / "legacy_rebuild_limit_key").write_text(
+            "sk-existing-0", encoding="utf-8"
+        )
+
+        with self.assertRaises(DirectServiceError) as caught:
+            self.store.rebuild_legacy_pending(
+                "legacy_rebuild_limit", expected_revision=1
+            )
+
+        self.assertEqual(caught.exception.code, "DIRECT_SERVICE_LIMIT")
+        after = load_config_payload(self.config_path)
+        self.assertEqual(len(after.get("directServices", {})), 5)
+        self.assertIn(
+            "legacy_rebuild_limit", after.get("legacyDirectPending", {})
+        )
+
+    def test_pending_mutation_rejects_stale_revision_without_changes(self):
+        payload = {
+            "legacyDirectPending": {
+                "legacy_stale": {
+                    "id": "legacy_stale",
+                    "taskType": "word.smart_write",
+                    "name": "待处理",
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "serviceBaseUrl": "https://stale.example/v1",
+                    "apiKeyRef": "legacy_stale_key",
+                    "modelName": "glm-5.2",
+                    "revision": 3,
+                }
+            }
+        }
+        migration_txn.write_json_atomic(self.config_path, payload)
+        before = self.config_path.read_bytes()
+
+        with self.assertRaises(DirectServiceError) as caught:
+            self.store.migrate_legacy_pending(
+                "legacy_stale", expected_revision=2
+            )
+
+        self.assertEqual(caught.exception.code, "DIRECT_SERVICE_REVISION_CONFLICT")
+        self.assertEqual(self.config_path.read_bytes(), before)
+
+    def test_pending_mutation_requires_revision(self):
+        payload = {
+            "legacyDirectPending": {
+                "legacy_revision_required": {
+                    "id": "legacy_revision_required",
+                    "taskType": "word.smart_write",
+                    "name": "待处理",
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "serviceBaseUrl": "https://revision.example/v1",
+                    "revision": 1,
+                }
+            }
+        }
+        migration_txn.write_json_atomic(self.config_path, payload)
+
+        with self.assertRaises(DirectServiceError) as caught:
+            self.store.abandon_legacy_pending("legacy_revision_required")
+
+        self.assertEqual(caught.exception.code, "DIRECT_SERVICE_REVISION_REQUIRED")
+        self.assertIn(
+            "legacy_revision_required",
+            load_config_payload(self.config_path).get("legacyDirectPending", {}),
+        )
+
+    def test_pending_rebuild_save_failure_rolls_back_key_and_pending(self):
+        payload = {
+            "legacyDirectPending": {
+                "legacy_rebuild": {
+                    "id": "legacy_rebuild",
+                    "taskType": "word.smart_write",
+                    "name": "待重建",
+                    "accessMethod": ACCESS_DIRECT_MODEL,
+                    "serviceBaseUrl": "https://rebuild.example/v1",
+                    "apiKeyRef": "legacy_rebuild_key",
+                    "modelName": "glm-5.2",
+                }
+            }
+        }
+        migration_txn.write_json_atomic(self.config_path, payload)
+        (self.key_dir / "legacy_rebuild_key").write_text("sk-rebuild", encoding="utf-8")
+
+        with patch(
+            "app.core.direct_migration_txn.write_committed_snapshot",
+            side_effect=OSError("disk full"),
+        ):
+            with self.assertRaises(OSError):
+                self.store.rebuild_legacy_pending(
+                    "legacy_rebuild", expected_revision=1
+                )
+
+        after = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertIn("legacy_rebuild", after.get("legacyDirectPending", {}))
+        self.assertEqual(self._production_direct_service_keys(), [])
 
     def test_recovery_record_write_failure_is_visible(self):
         self._seed_legacy_config(

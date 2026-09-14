@@ -186,6 +186,10 @@ class DirectServiceValidateRequest(BaseModel):
     expected_revision: int = Field(alias="expectedRevision")
 
 
+class LegacyDirectPendingMutationRequest(BaseModel):
+    expected_revision: int = Field(alias="expectedRevision")
+
+
 class DirectServiceActivateRequest(BaseModel):
     task_type: str = Field(..., alias="taskType")
     task_model_selection: Optional[TaskModelSelectionUpdateRequest] = Field(
@@ -731,9 +735,13 @@ def get_legacy_direct_pending() -> dict:
 
 
 @router.post("/provider/legacy-direct-pending/{config_id}/migrate")
-def migrate_legacy_direct_pending(config_id: str) -> dict:
+def migrate_legacy_direct_pending(
+    config_id: str, request: LegacyDirectPendingMutationRequest
+) -> dict:
     try:
-        service = get_direct_service_store().migrate_legacy_pending(config_id)
+        service = get_direct_service_store().migrate_legacy_pending(
+            config_id, expected_revision=request.expected_revision
+        )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
     return {
@@ -744,9 +752,13 @@ def migrate_legacy_direct_pending(config_id: str) -> dict:
 
 
 @router.post("/provider/legacy-direct-pending/{config_id}/rebuild")
-def rebuild_legacy_direct_pending(config_id: str) -> dict:
+def rebuild_legacy_direct_pending(
+    config_id: str, request: LegacyDirectPendingMutationRequest
+) -> dict:
     try:
-        service = get_direct_service_store().rebuild_legacy_pending(config_id)
+        service = get_direct_service_store().rebuild_legacy_pending(
+            config_id, expected_revision=request.expected_revision
+        )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
     return {
@@ -757,9 +769,13 @@ def rebuild_legacy_direct_pending(config_id: str) -> dict:
 
 
 @router.post("/provider/legacy-direct-pending/{config_id}/abandon")
-def abandon_legacy_direct_pending(config_id: str) -> dict:
+def abandon_legacy_direct_pending(
+    config_id: str, request: LegacyDirectPendingMutationRequest
+) -> dict:
     try:
-        data = get_direct_service_store().abandon_legacy_pending(config_id)
+        data = get_direct_service_store().abandon_legacy_pending(
+            config_id, expected_revision=request.expected_revision
+        )
     except DirectServiceError as exc:
         _raise_direct_service_error(exc)
     return {"success": True, "message": "abandoned", "data": data}

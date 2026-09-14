@@ -78,3 +78,19 @@ test("PPT taskpane HTML and JS do not expose legacy direct_model in workflow edi
     "PPT taskpane.html should not have workflow-editor-direct-advanced"
   );
 });
+
+test("all hosts disclose pending legacy direct migrations with an admin path", () => {
+  [
+    "wps-ai-assistant_1.0.0",
+    "wps-ai-assistant-et_1.0.0",
+    "wps-ai-assistant-wpp_1.0.0"
+  ].forEach((packageName) => {
+    const root = path.join(kitRoot, packageName);
+    const html = fs.readFileSync(path.join(root, "taskpane.html"), "utf-8");
+    const js = fs.readFileSync(path.join(root, "taskpane.js"), "utf-8");
+    assert.ok(html.includes('id="legacy-direct-pending-status"'));
+    assert.ok(js.includes("data.legacyDirectPending"));
+    assert.ok(js.includes("pendingConfigurationCount"));
+    assert.ok(js.includes("请由管理员通过迁移管理接口处理"));
+  });
+});

@@ -982,13 +982,16 @@ def test_preview_legacy_direct_migration_covers_auth_limit_and_recovery(tmp_path
     lifecycle = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(lifecycle)
 
+    delivery = _prepare_delivery(tmp_path)
+    assembled_adapter = delivery / "packages/adapter-start-kit/adapter_service"
+
     over_limit = tmp_path / "over-limit"
     lifecycle.seed_legacy_direct_over_limit_state(over_limit)
-    lifecycle.verify_legacy_direct_over_limit(over_limit, ROOT / "adapter_service")
+    lifecycle.verify_legacy_direct_over_limit(over_limit, assembled_adapter)
 
     migrated = tmp_path / "migrated"
     lifecycle.seed_legacy_direct_state(migrated)
-    lifecycle.verify_legacy_direct_migration(migrated, ROOT / "adapter_service")
+    lifecycle.verify_legacy_direct_migration(migrated, assembled_adapter)
 
 
 def test_preview_build_requires_v0253_baseline_before_creating_output(tmp_path):

@@ -607,7 +607,7 @@ class ModelConfigurationStore:
         payload["migrationState"] = migration_state
 
     def _load_and_migrate(self) -> dict:
-        payload = load_config_payload(self.config_path)
+        payload = load_config_payload(self.config_path, self.key_dir)
         configurations = self._configuration_map(payload)
         active = self._active_map(payload)
         changed = False
@@ -1231,7 +1231,7 @@ class WorkflowProfileCompatibilityStore:
         }
 
     def _global_service_base_url(self) -> str:
-        payload = load_config_payload(self.config_path)
+        payload = load_config_payload(self.config_path, self.key_dir)
         return str(payload.get("providerBaseUrl", ""))
 
     def create_profile(

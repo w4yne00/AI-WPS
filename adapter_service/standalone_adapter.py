@@ -2647,13 +2647,19 @@ class Handler(BaseHTTPRequestHandler):
             store = DirectServiceStore()
             try:
                 if action == "migrate":
-                    service = store.migrate_legacy_pending(config_id)
+                    service = store.migrate_legacy_pending(
+                        config_id, expected_revision=payload.get("expectedRevision")
+                    )
                     message = "migrated"
                 elif action == "rebuild":
-                    service = store.rebuild_legacy_pending(config_id)
+                    service = store.rebuild_legacy_pending(
+                        config_id, expected_revision=payload.get("expectedRevision")
+                    )
                     message = "rebuilt"
                 elif action == "abandon":
-                    data = store.abandon_legacy_pending(config_id)
+                    data = store.abandon_legacy_pending(
+                        config_id, expected_revision=payload.get("expectedRevision")
+                    )
                     self._write(
                         200,
                         envelope(
@@ -4555,7 +4561,7 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _write_direct_service_error(self, error):
-        if error.code == "DIRECT_SERVICE_NOT_FOUND":
+        if error.code in {"DIRECT_SERVICE_NOT_FOUND", "DIRECT_SERVICE_PENDING_NOT_FOUND"}:
             status_code = 404
         elif error.code in {
             "DIRECT_SERVICE_LIMIT",

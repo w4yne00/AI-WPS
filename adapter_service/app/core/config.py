@@ -45,15 +45,26 @@ class AppSettings:
     task_api_key_refs: Dict[str, str] = field(default_factory=dict)
 
 
-def load_config_payload(config_path: Optional[Path] = None) -> dict:
+def load_config_payload(
+    config_path: Optional[Path] = None, key_dir: Optional[Path] = None
+) -> dict:
     path = config_path or default_config_path()
+    from app.core import direct_migration_txn
+
+    recovery_key_dir = (
+        Path(key_dir)
+        if key_dir is not None
+        else direct_migration_txn.infer_key_dir(path)
+    )
+    if direct_migration_txn.journal_path(path).is_file():
+        direct_migration_txn.reconcile_inflight(path, recovery_key_dir)
     if path.exists():
         try:
             return json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError, UnicodeError):
-            from app.core.direct_migration_txn import recover_unreadable_config
-
-            restored = recover_unreadable_config(path)
+            restored = direct_migration_txn.recover_unreadable_config(
+                path, recovery_key_dir
+            )
             if restored is not None:
                 return restored
             raise
@@ -64,11 +75,10 @@ def load_config_payload(config_path: Optional[Path] = None) -> dict:
 
 def save_config_payload(payload: dict, config_path: Optional[Path] = None) -> None:
     path = config_path or default_config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
+    from app.core.direct_migration_txn import migration_lock, write_json_atomic
+
+    with migration_lock(path):
+        write_json_atomic(path, payload)
 
 
 def _load_example_payload() -> dict:
@@ -143,7 +153,7 @@ def load_settings(config_path: Optional[Path] = None) -> AppSettings:
     if not path.exists():
         return AppSettings()
 
-    payload = json.loads(path.read_text(encoding="utf-8"))
+    payload = load_config_payload(path)
     task_routes = _parse_task_routes(payload)
     task_api_key_refs = _parse_task_api_key_refs(payload)
     runtime_paths = resolve_runtime_paths(BASE_DIR)

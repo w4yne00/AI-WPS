@@ -4027,6 +4027,17 @@
     return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
   }
 
+  function renderLegacyDirectPendingStatus() {
+    var node = byId("legacy-direct-pending-status");
+    if (!node) return;
+    var pending = state.legacyDirectPending || {};
+    var count = Number(pending.pendingConfigurationCount || 0);
+    node.hidden = count < 1;
+    setNodeTextIfChanged(node, count > 0
+      ? "发现 " + count + " 份待处理旧直连配置。请由管理员通过迁移管理接口处理。"
+      : "");
+  }
+
   function loadDirectServices(configRefreshRequestId, requestOptions, directServiceOperationId) {
     return Promise.all([
       request("/provider/direct-services", null, requestOptions),
@@ -4041,6 +4052,10 @@
         return { superseded: true };
       }
       state.directServices = (dsBody && dsBody.data && dsBody.data.directServices) || [];
+      state.legacyDirectPending = (dsBody && dsBody.data && dsBody.data.legacyDirectPending) || {};
+      if (typeof renderLegacyDirectPendingStatus === "function") {
+        renderLegacyDirectPendingStatus();
+      }
       var selectionsMap = {};
       var rawSelections = (tmsBody && tmsBody.data && (tmsBody.data.taskModelSelections || tmsBody.data.selections)) || [];
       if (Array.isArray(rawSelections)) {

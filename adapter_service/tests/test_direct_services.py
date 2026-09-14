@@ -525,6 +525,38 @@ class StandaloneDirectServiceHandlerTests(unittest.TestCase):
                 "DIRECT_SERVICE_REVISION_REQUIRED",
             )
 
+    def test_pending_mutation_route_requires_expected_revision(self) -> None:
+        self.config_path.write_text(
+            json.dumps(
+                {
+                    "legacyDirectPending": {
+                        "legacy_pending_route": {
+                            "id": "legacy_pending_route",
+                            "taskType": "word.smart_write",
+                            "name": "待处理",
+                            "accessMethod": "direct_model",
+                            "serviceBaseUrl": "https://pending.example/v1",
+                            "revision": 1,
+                        }
+                    }
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+
+        response = self._invoke(
+            "do_POST",
+            "/provider/legacy-direct-pending/legacy_pending_route/abandon",
+            {},
+        )
+
+        self.assertEqual(response["status"], 400)
+        self.assertEqual(
+            response["body"]["errors"][0]["code"],
+            "DIRECT_SERVICE_REVISION_REQUIRED",
+        )
+
     def test_standalone_direct_service_lifecycle(self) -> None:
         # 1. List services initially empty
         res = self._invoke("do_GET", "/provider/direct-services")
