@@ -9,6 +9,7 @@ from tempfile import TemporaryDirectory
 from app.services.model_configurations import (
     ACCESS_DIRECT_MODEL,
     ACCESS_WORKFLOW_PLATFORM,
+    ModelConfigurationError,
     ModelConfigurationStore,
 )
 from app.services.direct_services import DirectServiceStore
@@ -338,6 +339,29 @@ class FormatReviewDirectServiceDefaultTests(unittest.TestCase):
             self.assertEqual(
                 sorted(shared["referencedTasks"]),
                 ["word.format_review", "word.smart_write"],
+            )
+
+    def test_copying_legacy_format_review_direct_is_retired(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(
+                config_path, root / "provider_api_keys"
+            )
+            created = store.create_configuration(
+                "word.format_review",
+                "直连格式审查",
+                ACCESS_DIRECT_MODEL,
+                service_base_url="https://vision.example/v1",
+                model_name="vision-1",
+                allow_direct=True,
+            )
+            store.replace_api_key(created["id"], "secret", allow_direct=True)
+            with self.assertRaises(ModelConfigurationError) as raised:
+                store.copy_configuration(created["id"], name="直连副本")
+            self.assertEqual(
+                raised.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED"
             )
 
 

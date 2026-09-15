@@ -14,11 +14,13 @@ if HAS_API_DEPS:
     from app.main import app
     from app.core.errors import AdapterError
     from app.api.provider import (
+        ModelConfigurationCreateRequest,
         ModelConfigurationImageAuthorizationRequest,
         WorkflowProfileApiKeyRequest,
         WorkflowProfileCreateRequest,
         WorkflowProfileUpdateRequest,
         activate_workflow_profile,
+        create_model_configuration,
         create_workflow_profile,
         delete_provider_task_api_key,
         delete_workflow_profile,
@@ -66,6 +68,36 @@ class WorkflowProfileApiTests(unittest.TestCase):
                     )
 
             self.assertEqual(raised.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED")
+            self.assertEqual(raised.exception.status_code, 400)
+
+    def test_legacy_direct_creation_is_retired_at_provider_boundary(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "adapter.json"
+            config_path.write_text("{}\n", encoding="utf-8")
+            store = ModelConfigurationStore(
+                config_path, root / "provider_api_keys"
+            )
+            with patch(
+                "app.api.provider.get_model_configuration_store",
+                return_value=store,
+            ):
+                with self.assertRaises(AdapterError) as raised:
+                    create_model_configuration(
+                        ModelConfigurationCreateRequest(
+                            taskType="word.format_review",
+                            name="视觉配置",
+                            accessMethod=ACCESS_DIRECT_MODEL,
+                            serviceBaseUrl="https://vision.example/v1",
+                            modelName="vision-1",
+                            imageInputMode="openai_image_url",
+                        )
+                    )
+
+            self.assertEqual(
+                raised.exception.code, "MODEL_CONFIG_DIRECT_WRITE_RETIRED"
+            )
+            self.assertEqual(raised.exception.status_code, 400)
 
     def test_direct_format_validation_returns_identity_without_activation(self) -> None:
         with TemporaryDirectory() as tmp:

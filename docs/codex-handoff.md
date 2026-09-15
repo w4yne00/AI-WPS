@@ -1,5 +1,13 @@
 # Codex Handoff - AI-WPS
 
+## 当前功能实现：Issue #182 整合迁移、容量、安全与三宿主交付验证（2026-09-14）
+
+- 在最新 `origin/main`（含 Issue #181 迁移合入）上核对父规格 #164：九类任务共享直连、活动结果与只读历史的代码路径已由 #165–#181 落地。
+- 公开边界测试锁定一份共享服务绑定九类任务、工作流配置不受影响、被引用服务不可删除，以及九类历史只归档成功结果并剥离 Key/路径/请求头。
+- 三宿主契约测试锁定设置首页共享直连单 Key 录入、工作流仍按任务确认 Key，以及结果区历史查看/清空/返回且无写回入口。
+- 操作文档、验收清单和 Preview 白名单与最终公开合同对齐：`docs/operations/shared-direct-service.md`、`docs/operations/task-result-lifecycle.md`，并更新 `workflow-profile-management.md`、`packaging/v0260-preview1-delivery.md`、`packaging/v0260-preview1-target-machine-acceptance.md`。
+- 验证：Docker Python 3.8 `pytest adapter_service/tests` 为 1363 passed / 56 skipped；正式插件 `node --test formal-plugin-kit/tests/*.test.js` 为 210 passed（哈希合同使用 `AI_WPS_HASH_CONTRACT_PYTHON`）；`wps-addon` vitest 12 passed 且 Vite 构建通过；Python 3.8 兼容扫描 172 文件通过。未完成麒麟 V10 / 真实 WPS 验收，保持 `candidate` / `manual-pending`。
+
 ## PR #199 第三轮审查修复（Issue #181，2026-09-14）
 
 - 交付白名单补入 `direct_migration_txn.py`，生命周期测试从组装后的 Adapter 目录实际导入迁移运行时；普通 `config/adapter.json` 布局的恢复会定位到同级 `run/provider_api_keys`。
