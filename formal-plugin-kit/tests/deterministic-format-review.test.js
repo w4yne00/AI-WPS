@@ -621,7 +621,10 @@ for (const status of ["completed", "failed", "cancelled"]) {
       setStatus: message => effects.push(message),
       setPlainResult: result => effects.push(result),
       pollDeterministicFormatReviewJob: () => effects.push("poll"),
-      loadDeterministicFormatReviewReport: () => effects.push("load-report")
+      loadDeterministicFormatReviewReport: () => {
+        effects.push("load-report");
+        return Promise.resolve();
+      }
     });
     vm.runInContext([
       "getWritingDocTaskKey", "getReviewActiveJobStorageKey", "loadDeterministicFormatReviewActiveJob",
@@ -640,6 +643,10 @@ for (const status of ["completed", "failed", "cancelled"]) {
     assert.strictEqual(state.activeReviewJobs["wps::word.format_review::doc-A"], undefined);
     assert.strictEqual(state.deterministicFormatReviewJobId, "");
     assert.strictEqual(state.modelTaskBusy, false);
-    assert.deepStrictEqual(effects, [], "old terminal results must not be rendered or polled again");
+    if (status === "completed") {
+      assert.deepStrictEqual(effects, ["load-report", "已恢复当前格式审查结果。"]);
+    } else {
+      assert.deepStrictEqual(effects, [], "failed or cancelled terminal results must not be rendered");
+    }
   });
 }

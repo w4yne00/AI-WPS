@@ -303,7 +303,7 @@ test("Behavioral: switchMode for formatReview displays history button and restor
   assert.strictEqual(doc2Rec, null, "doc-session-2 should have no active format review result");
 });
 
-test("Behavioral: resumeDeterministicFormatReviewActiveJob recovers unfinished jobs and rejects completed jobs", async () => {
+test("Behavioral: resumeDeterministicFormatReviewActiveJob recovers running and completed jobs", async () => {
   const ctx = createBaseTestContext();
   let pollStarted = false;
   ctx.pollDeterministicFormatReviewJob = (jid) => {
@@ -336,7 +336,7 @@ test("Behavioral: resumeDeterministicFormatReviewActiveJob recovers unfinished j
   await new Promise((r) => setTimeout(r, 10));
   assert.strictEqual(pollStarted, true, "Polling should be initiated for running job");
 
-  // 2. Completed job -> must NOT be loaded via active recovery
+  // 2. Completed job -> restore the completed report into the current preview.
   const ctxCompleted = createBaseTestContext();
 
   ctxCompleted.storage["ai-wps:review-active-job:word.format_review:doc-session-1"] = JSON.stringify({
@@ -364,7 +364,7 @@ test("Behavioral: resumeDeterministicFormatReviewActiveJob recovers unfinished j
   assert.strictEqual(resumedCompleted, true, "Initial resume check begins");
   await new Promise((r) => setTimeout(r, 10));
 
-  assert.strictEqual(loadedReport, false, "Completed report must NOT be loaded through active recovery");
+  assert.strictEqual(loadedReport, true, "Completed report must be loaded through active recovery");
   assert.strictEqual(
     helpers.isTaskSlotBusy(ctxCompleted.state.activeTaskSlots, "wps", "word.format_review", "doc-session-1"),
     false,

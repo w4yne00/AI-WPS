@@ -25,11 +25,11 @@ Adapter 继续兼容旧版 `inputs.query` 和新版顶层 `query/files` 输入�
 
 ### 模型直连
 
-用于兼容 OpenAI Chat Completions 协议的模型网关。已知目标包括 GLM 5.2 和 DeepSeek V4 Flash。共享直连服务在同一 Adapter 运行环境只录入一次服务地址和 API Key；九类任务选择该服务，并各自保存任务模型与温度、Token、图片参数。固定应用路径为 `/chat/completions`。操作步骤见 `shared-direct-service.md`，模型目录见 `direct-service-model-catalog.md`。
+用于兼容 OpenAI Chat Completions 协议的模型网关。已知目标包括 GLM 5.2 和 DeepSeek V4 Flash。共享直连服务在同一 Adapter 运行环境只录入一次服务地址和 API Key；默认模型和任务模型均从该服务返回的模型目录中选择，九类任务各自保存温度、Token、图片参数。固定应用路径为 `/chat/completions`。操作步骤见 `shared-direct-service.md`，模型目录见 `direct-service-model-catalog.md`。
 
 Adapter 将对应任务的版本化 System Prompt 与用户输入分别放入 `system`、`user` 消息。System Prompt 位于 `adapter_service/system_prompts/`，启动和交付构建会按清单哈希校验。
 
-“最大输出 Token”在任务选择中保持选填。格式审查在字段留空时只按精确模型标识查询随版本离线交付的能力表；当前登记 `deepseek-v4-flash`、`deepseek-v4-pro` 和 `glm-5.2`，实际格式语义调用仍受 `4096` Token 任务上限约束。模型标识无法精确匹配时，确定性格式审查继续执行，但模型语义补充要求管理员显式填写该字段。格式审查直连验证见 `word-format-review-direct-validation.md`。
+“最大输出 Token”和“上下文容量”在任务选择中保持选填，`0` 或留空表示不设置任务级限制；正整数不设置产品级上限。格式审查在字段留空时只按精确模型标识查询随版本离线交付的能力表；当前登记 `deepseek-v4-flash`、`deepseek-v4-pro` 和 `glm-5.2`，实际格式语义调用仍受 `4096` Token 任务上限约束。模型标识无法精确匹配时，确定性格式审查继续执行，但模型语义补充要求管理员显式填写该字段。格式审查直连验证见 `word-format-review-direct-validation.md`。
 
 ## 新建与验证
 

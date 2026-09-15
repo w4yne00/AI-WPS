@@ -261,6 +261,33 @@ class DirectServiceStoreTests(unittest.TestCase):
             ppt_selections = store.list_task_model_selections(host="ppt")
             self.assertEqual(len(ppt_selections["taskModelSelections"]), 2)
 
+    def test_task_token_overrides_accept_zero_as_unlimited_and_have_no_product_upper_bound(self) -> None:
+        with TemporaryDirectory() as tmp:
+            store = self._store(Path(tmp))
+            service = store.create_service(
+                name="无固定容量上限",
+                service_base_url="https://api.example.com/v1",
+                default_model="model-large-context",
+            )
+
+            unlimited = store.update_task_model_selection(
+                task_type="excel.analysis",
+                service_id=service["id"],
+                max_output_tokens=0,
+                context_window_tokens=0,
+            )
+            self.assertIsNone(unlimited["maxOutputTokens"])
+            self.assertIsNone(unlimited["contextWindowTokens"])
+
+            large = store.update_task_model_selection(
+                task_type="excel.analysis",
+                service_id=service["id"],
+                max_output_tokens=200000,
+                context_window_tokens=4000000,
+            )
+            self.assertEqual(large["maxOutputTokens"], 200000)
+            self.assertEqual(large["contextWindowTokens"], 4000000)
+
     def test_task_model_selection_validates_task_and_service_and_params(self) -> None:
         with TemporaryDirectory() as tmp:
             store = self._store(Path(tmp))

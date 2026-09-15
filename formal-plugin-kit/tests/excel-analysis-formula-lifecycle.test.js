@@ -462,7 +462,7 @@ test("Behavioral: switchMode isolates active results across task modes", () => {
   assert.strictEqual(ctx.byId("btn-view-history").hidden, true, "history button must be hidden in settings");
 });
 
-test("Behavioral: resume completed analysis job clears storage and leaves UI clean", async () => {
+test("Behavioral: resume completed analysis job clears storage and restores the preview", async () => {
   let clearedJob = null;
   const mockStorage = {};
   const currentSession = "doc_session_1";
@@ -487,6 +487,11 @@ test("Behavioral: resume completed analysis job clears storage and leaves UI cle
       }),
       pollExcelAnalysisJob: () => {
         assert.fail("Must not poll completed job");
+      },
+      updateHistoryBadge: () => {},
+      renderExcelAnalysisResult: (result) => {
+        ctx.state.analysisResult = result;
+        ctx.byId("result-output").textContent = result.structuredReport.overview;
       }
     }
   });
@@ -498,7 +503,8 @@ test("Behavioral: resume completed analysis job clears storage and leaves UI cle
   const clearCode = functionSource("clearExcelAnalysisActiveJob");
   const resumeCode = functionSource("resumeExcelAnalysisActiveJob");
 
-  vm.runInContext([getStorageKeyCode, saveCode, loadCode, clearCode, resumeCode].join("\n"), sandbox);
+  const recordCode = functionSource("recordFinalizedAnalysisResult");
+  vm.runInContext([getStorageKeyCode, saveCode, loadCode, clearCode, recordCode, resumeCode].join("\n"), sandbox);
 
   // Store a completed job in storage
   mockStorage["wps_ai_excel_analysis_active_job_" + encodeURIComponent(currentSession)] = JSON.stringify({
@@ -516,12 +522,12 @@ test("Behavioral: resume completed analysis job clears storage and leaves UI cle
     undefined,
     "completed job must be cleared from storage"
   );
-  // Must NOT set active analysis result in state
-  assert.strictEqual(ctx.state.analysisResult, null, "analysisResult must remain null");
+  assert.strictEqual(ctx.state.analysisResult.structuredReport.overview, "已完成的历史分析结果");
+  assert.strictEqual(ctx.byId("result-output").textContent, "已完成的历史分析结果");
   assert.strictEqual(ctx.state.excelTaskSessions["excel.analysis::" + currentSession].jobId, "", "completed analysis must not stay active");
 });
 
-test("Behavioral: resume completed formula job clears storage and leaves UI clean", async () => {
+test("Behavioral: resume completed formula job clears storage and restores the preview", async () => {
   const mockStorage = {};
   const currentSession = "doc_session_1";
 
@@ -546,7 +552,13 @@ test("Behavioral: resume completed formula job clears storage and leaves UI clea
       }),
       pollExcelFormulaJob: () => {
         assert.fail("Must not poll completed job");
-      }
+      },
+      updateHistoryBadge: () => {},
+      renderExcelFormulaResult: (result) => {
+        ctx.state.formulaResult = result;
+        ctx.byId("result-output").textContent = result.primaryFormula;
+      },
+      getExcelFormulaCompletionStatus: () => "公式已生成。"
     }
   });
 
@@ -557,7 +569,8 @@ test("Behavioral: resume completed formula job clears storage and leaves UI clea
   const clearCode = functionSource("clearExcelFormulaActiveJob");
   const resumeCode = functionSource("resumeExcelFormulaActiveJob");
 
-  vm.runInContext([getStorageKeyCode, saveCode, loadCode, clearCode, resumeCode].join("\n"), sandbox);
+  const recordCode = functionSource("recordFinalizedFormulaResult");
+  vm.runInContext([getStorageKeyCode, saveCode, loadCode, clearCode, recordCode, resumeCode].join("\n"), sandbox);
 
   mockStorage["wps_ai_excel_formula_active_job_" + encodeURIComponent(currentSession)] = JSON.stringify({
     jobId: "job-completed-form-01",
@@ -573,7 +586,8 @@ test("Behavioral: resume completed formula job clears storage and leaves UI clea
     undefined,
     "completed job must be cleared from storage"
   );
-  assert.strictEqual(ctx.state.formulaResult, null, "formulaResult must remain null");
+  assert.strictEqual(ctx.state.formulaResult.primaryFormula, "=SUM(A1:A10)");
+  assert.strictEqual(ctx.byId("result-output").textContent, "=SUM(A1:A10)");
   assert.strictEqual(ctx.state.excelTaskSessions["excel.formula_assistant::" + currentSession].jobId, "", "completed formula must not stay active");
 });
 

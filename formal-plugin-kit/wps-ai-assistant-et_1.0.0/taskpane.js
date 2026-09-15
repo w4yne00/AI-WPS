@@ -3663,7 +3663,20 @@
     }).then(function (body) {
       if (taskSession.jobId !== active.jobId) { return; }
       var job = body && body.data ? body.data : {};
-      if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
+      if (job.status === "completed") {
+        clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.resumeExpected = false;
+        recordFinalizedAnalysisResult(active.jobId, job.result || {}, false, currentDocSession);
+        setExcelTaskBusy(false, currentDocSession, "excel.analysis");
+        if (isExcelTaskVisible("excel.analysis", currentDocSession)) {
+          renderExcelAnalysisResult(job.result || {});
+          setStatus("智能分析报告已恢复。");
+        }
+        return;
+      }
+      if (job.status === "failed" || job.status === "cancelled") {
         clearExcelAnalysisActiveJob(active.jobId, currentDocSession);
         taskSession.jobId = "";
         taskSession.pollStartedAt = 0;
@@ -4205,7 +4218,20 @@
     }).then(function (body) {
       if (taskSession.jobId !== active.jobId) { return; }
       var job = body && body.data ? body.data : {};
-      if (job.status === "completed" || job.status === "failed" || job.status === "cancelled") {
+      if (job.status === "completed") {
+        clearExcelFormulaActiveJob(active.jobId, currentDocSession);
+        taskSession.jobId = "";
+        taskSession.pollStartedAt = 0;
+        taskSession.resumeExpected = false;
+        recordFinalizedFormulaResult(active.jobId, job.result || {}, false, currentDocSession);
+        setExcelTaskBusy(false, currentDocSession, "excel.formula_assistant");
+        if (isExcelTaskVisible("excel.formula_assistant", currentDocSession)) {
+          renderExcelFormulaResult(job.result || {});
+          setStatus(getExcelFormulaCompletionStatus(job.result));
+        }
+        return;
+      }
+      if (job.status === "failed" || job.status === "cancelled") {
         clearExcelFormulaActiveJob(active.jobId, currentDocSession);
         taskSession.jobId = "";
         taskSession.pollStartedAt = 0;
@@ -6252,12 +6278,12 @@
       return "目录有效：" + count + " 个模型" + (catalog.fetchedAt ? "，获取于 " + catalog.fetchedAt : "");
     }
     if (catalog.status === "expired") {
-      return "目录已过期；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+      return "目录已过期，请刷新" + (errorText ? "；最近错误：" + errorText : "");
     }
     if (catalog.status === "empty") {
-      return "目录为空；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+      return "目录为空，请检查服务能力" + (errorText ? "；最近错误：" + errorText : "");
     }
-    return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+    return "目录不可用，请刷新" + (errorText ? "；最近错误：" + errorText : "");
   }
 
   function renderLegacyDirectPendingStatus() {
@@ -6407,9 +6433,7 @@
     if (keyStatus) {
       keyStatus.textContent = isCreate ? "" : (svc.keyConfigured ? "已配置（留空保持不变）" : "未配置");
     }
-    if (defaultModelInput) {
-      defaultModelInput.value = isCreate ? "" : (svc.defaultModel || "");
-    }
+    renderDirectServiceDefaultModelOptions(isCreate ? null : svc);
     if (modelsStatus) {
       modelsStatus.textContent = !isCreate && typeof formatDirectServiceCatalogStatus === "function"
         ? formatDirectServiceCatalogStatus(svc)
@@ -6445,6 +6469,24 @@
     byId("btn-new-direct-service").hidden = true;
     if (nameInput && typeof nameInput.focus === "function") {
       nameInput.focus();
+    }
+  }
+
+  function renderDirectServiceDefaultModelOptions(service) {
+    var select = byId("direct-service-default-model");
+    var models = service && Array.isArray(service.modelList) ? service.modelList : [];
+    var current = service ? String(service.defaultModel || "") : "";
+    var options = ['<option value="">不设置默认模型</option>'];
+    if (current && models.indexOf(current) < 0) {
+      options.push('<option value="' + escaped(current) + '">' + escaped(current) + '（当前目录不可用）</option>');
+    }
+    models.forEach(function (model) {
+      options.push('<option value="' + escaped(model) + '">' + escaped(model) + '</option>');
+    });
+    if (select) {
+      select.innerHTML = options.join("");
+      select.value = current;
+      select.disabled = !service;
     }
   }
 
@@ -6682,6 +6724,9 @@
           if (statusNode && updatedSvc && typeof formatDirectServiceCatalogStatus === "function") {
             statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
           }
+          if (updatedSvc) {
+            renderDirectServiceDefaultModelOptions(updatedSvc);
+          }
         }
       });
     }).catch(function (error) {
@@ -6730,13 +6775,16 @@
       if (data.directService && data.directService.revision && state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
         state.directServiceEditor.revision = data.directService.revision;
       }
+      if (data.directService) {
+        renderDirectServiceDefaultModelOptions(data.directService);
+      }
       if (statusNode) {
         if (catalogAvailable) {
           statusNode.textContent = "服务验证成功；模型目录可用。";
         } else if (data.authenticationVerified === false) {
-          statusNode.textContent = "服务可达，但认证未验证；未提供可用模型目录，可使用高级手填。";
+          statusNode.textContent = "服务可达，但认证未验证；未提供可用模型目录，请检查地址、Key 或刷新。";
         } else {
-          statusNode.textContent = "服务可达且认证成功，但未提供可用模型目录；可使用高级手填。";
+          statusNode.textContent = "服务可达且认证成功，但未提供可用模型目录，请检查服务是否支持模型目录。";
         }
       }
       if (typeof loadDirectServices === "function") {
@@ -6843,9 +6891,6 @@
     var hintNode = byId("excel-task-direct-service-hint");
     var paramsDiv = byId("excel-task-direct-params");
     var modelSelect = byId("excel-task-model-select");
-    var customCheck = byId("excel-task-custom-model-check");
-    var customRow = byId("excel-task-custom-model-row");
-    var customInput = byId("excel-task-custom-model-input");
     var tempInput = byId("excel-task-temperature");
     var maxOutInput = byId("excel-task-max-output");
     var contextInput = byId("excel-task-context");
@@ -6939,19 +6984,6 @@
     if (modelSelect) {
       modelSelect.innerHTML = modelOptionsHtml.join("");
     }
-    if (customCheck) {
-      customCheck.checked = isCustom;
-      customCheck.disabled = Boolean(!catalog.manualModelAllowed && !isCustom);
-      customCheck.title = catalog.usableForSelection
-        ? "模型目录可用时不能使用高级手填模型。"
-        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
-    }
-    if (customRow) {
-      customRow.hidden = !isCustom;
-    }
-    if (customInput) {
-      customInput.value = isCustom ? currentModel : "";
-    }
     if (tempInput) {
       tempInput.value = currentSelection && currentSelection.temperature !== null && currentSelection.temperature !== undefined ? currentSelection.temperature : "";
     }
@@ -6959,7 +6991,7 @@
       maxOutInput.value = currentSelection && currentSelection.maxOutputTokens !== null && currentSelection.maxOutputTokens !== undefined ? currentSelection.maxOutputTokens : "";
     }
     if (contextInput) {
-      contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "40000";
+      contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "";
     }
     if (costWarning) {
       costWarning.hidden = false;
@@ -6972,7 +7004,7 @@
       } else if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "cache_expired") {
         statusNode.textContent = "模型目录已过期，不能发起新任务；请先刷新目录。";
       } else if (currentSelection && currentSelection.modelAvailable === false && (unavailableReason === "catalog_unavailable" || unavailableReason === "catalog_empty")) {
-        statusNode.textContent = "模型目录当前不可用；请刷新目录，或使用高级手填并验证真实任务调用。";
+        statusNode.textContent = "模型目录当前不可用；请先刷新目录。";
       } else if (currentSelection && currentSelection.modelAvailable === false) {
         statusNode.textContent = "当前模型已从最新目录移除，不能发起新任务；请重新选择模型。";
       } else if (catalog.fetchStatus === "error" && catalog.cacheStatus === "valid") {
@@ -6988,9 +7020,6 @@
     var serviceId = select ? select.value : "";
     var paramsDiv = byId("excel-task-direct-params");
     var modelSelect = byId("excel-task-model-select");
-    var customCheck = byId("excel-task-custom-model-check");
-    var customRow = byId("excel-task-custom-model-row");
-    var customInput = byId("excel-task-custom-model-input");
     var statusNode = byId("excel-task-model-validation-status");
     state.lastValidatedCustomModel = null;
 
@@ -7016,19 +7045,6 @@
     if (modelSelect) {
       modelSelect.innerHTML = modelOptionsHtml.join("");
     }
-    if (customCheck) {
-      customCheck.checked = false;
-      customCheck.disabled = Boolean(!catalog.manualModelAllowed);
-      customCheck.title = catalog.usableForSelection
-        ? "模型目录可用时不能使用高级手填模型。"
-        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
-    }
-    if (customRow) {
-      customRow.hidden = true;
-    }
-    if (customInput) {
-      customInput.value = "";
-    }
     if (statusNode) {
       statusNode.textContent = catalog.fetchStatus === "error" && catalog.cacheStatus === "valid"
         ? "目录刷新失败，当前继续使用有效缓存；请留意最近一次错误。"
@@ -7036,25 +7052,10 @@
     }
   }
 
-  function handleTaskCustomModelCheckChange() {
-    var customCheck = byId("excel-task-custom-model-check");
-    var customRow = byId("excel-task-custom-model-row");
-    var customInput = byId("excel-task-custom-model-input");
-    var isChecked = Boolean(customCheck && customCheck.checked);
-    if (customRow) {
-      customRow.hidden = !isChecked;
-    }
-    if (isChecked && customInput && typeof customInput.focus === "function") {
-      customInput.focus();
-    }
-  }
-
   function getTaskModelSelectionDraft() {
     var serviceId = (byId("excel-task-direct-service-select") && byId("excel-task-direct-service-select").value) || "";
-    var isCustom = Boolean(byId("excel-task-custom-model-check") && byId("excel-task-custom-model-check").checked);
-    var modelName = isCustom
-      ? (byId("excel-task-custom-model-input") ? byId("excel-task-custom-model-input").value.trim() : "")
-      : (byId("excel-task-model-select") ? byId("excel-task-model-select").value : "");
+    var isCustom = false;
+    var modelName = byId("excel-task-model-select") ? byId("excel-task-model-select").value : "";
     var tempVal = byId("excel-task-temperature") ? byId("excel-task-temperature").value : "";
     var maxOutVal = byId("excel-task-max-output") ? byId("excel-task-max-output").value : "";
     var contextVal = byId("excel-task-context") ? byId("excel-task-context").value : "";
@@ -7064,8 +7065,8 @@
       modelName: modelName,
       customModel: isCustom,
       temperature: tempVal !== "" ? Number(tempVal) : null,
-      maxOutputTokens: maxOutVal !== "" ? Number(maxOutVal) : null,
-      contextWindowTokens: contextVal !== "" ? Number(contextVal) : 40000
+      maxOutputTokens: maxOutVal !== "" && Number(maxOutVal) !== 0 ? Number(maxOutVal) : null,
+      contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null
     };
   }
 
@@ -7944,9 +7945,6 @@
 
     if (byId("excel-task-direct-service-select")) {
       byId("excel-task-direct-service-select").addEventListener("change", handleTaskDirectServiceSelectChange);
-    }
-    if (byId("excel-task-custom-model-check")) {
-      byId("excel-task-custom-model-check").addEventListener("change", handleTaskCustomModelCheckChange);
     }
     if (byId("btn-validate-task-model-selection")) {
       byId("btn-validate-task-model-selection").addEventListener("click", validateTaskModelSelection);

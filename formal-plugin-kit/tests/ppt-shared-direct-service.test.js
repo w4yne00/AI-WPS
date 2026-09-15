@@ -20,7 +20,7 @@ test("PPT settings markup exposes shared direct services card and editor", () =>
   assert.ok(html.includes('id="direct-service-name"'), "missing #direct-service-name");
   assert.ok(html.includes('id="direct-service-url"'), "missing #direct-service-url");
   assert.ok(html.includes('id="direct-service-url-impact"'), "missing #direct-service-url-impact");
-  assert.ok(html.includes('id="direct-service-default-model"'), "missing #direct-service-default-model");
+  assert.match(html, /<select id="direct-service-default-model">/, "default model must be a catalog-backed select");
   assert.ok(html.includes('id="btn-refresh-direct-service-models"'), "missing #btn-refresh-direct-service-models");
   assert.ok(html.includes('id="btn-validate-direct-service"'), "missing #btn-validate-direct-service");
   assert.ok(html.includes('id="direct-service-models-status"'), "missing #direct-service-models-status");
@@ -39,8 +39,8 @@ test("PPT settings markup exposes shared direct services card and editor", () =>
   assert.ok(html.includes('id="ppt-task-direct-service-section"'), "missing #ppt-task-direct-service-section");
   assert.ok(html.includes('id="ppt-task-direct-service-select"'), "missing #ppt-task-direct-service-select");
   assert.ok(html.includes('id="ppt-task-model-select"'), "missing #ppt-task-model-select");
-  assert.ok(html.includes('id="ppt-task-custom-model-check"'), "missing #ppt-task-custom-model-check");
-  assert.ok(html.includes('id="ppt-task-custom-model-input"'), "missing #ppt-task-custom-model-input");
+  assert.strictEqual(html.includes('id="ppt-task-custom-model-check"'), false, "custom model checkbox must be removed");
+  assert.strictEqual(html.includes('id="ppt-task-custom-model-input"'), false, "custom model input must be removed");
   assert.ok(html.includes('id="btn-validate-task-model-selection"'), "missing #btn-validate-task-model-selection");
   assert.ok(html.includes('id="btn-save-task-model-selection"'), "missing #btn-save-task-model-selection");
 });
@@ -107,6 +107,12 @@ test("Task Model Selection helpers: validateDirectServiceDraft and validateTaskM
     contextWindowTokens: 40000
   });
   assert.strictEqual(validSelection.valid, true);
+  assert.strictEqual(helpers.validateTaskModelSelectionDraft({
+    serviceId: "direct_svc_1", modelName: "gpt-4o", maxOutputTokens: 0, contextWindowTokens: 0
+  }).valid, true);
+  assert.strictEqual(helpers.validateTaskModelSelectionDraft({
+    serviceId: "direct_svc_1", modelName: "gpt-4o", maxOutputTokens: 200000, contextWindowTokens: 4000000
+  }).valid, true);
 });
 
 test("Compact menu integration: includes shared direct service in PPT menu items", () => {
@@ -193,7 +199,7 @@ test("PPT direct services behavior: max 5 limit, single key, and activation roll
     "direct-service-key": { value: "", placeholder: "" },
     "direct-service-key-label": { textContent: "" },
     "direct-service-key-status": { textContent: "" },
-    "direct-service-default-model": { value: "" },
+    "direct-service-default-model": { value: "", innerHTML: "", disabled: false },
     "direct-service-models-status": { textContent: "" },
     "btn-refresh-direct-service-models": { disabled: false },
     "direct-service-editor-error": { textContent: "" },
@@ -282,6 +288,7 @@ test("PPT direct services behavior: max 5 limit, single key, and activation roll
   };
 
   ctx.findDirectService = loadFn("findDirectService", ctx);
+  ctx.renderDirectServiceDefaultModelOptions = loadFn("renderDirectServiceDefaultModelOptions", ctx);
   ctx.renderDirectServicesList = loadFn("renderDirectServicesList", ctx);
   ctx.openDirectServiceEditor = loadFn("openDirectServiceEditor", ctx);
   ctx.closeDirectServiceEditor = loadFn("closeDirectServiceEditor", ctx);

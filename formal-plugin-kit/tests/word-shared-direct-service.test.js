@@ -20,7 +20,7 @@ test("Word settings markup exposes shared direct services card and editor", () =
   assert.ok(html.includes('id="direct-service-name"'), "missing #direct-service-name");
   assert.ok(html.includes('id="direct-service-url"'), "missing #direct-service-url");
   assert.ok(html.includes('id="direct-service-url-impact"'), "missing #direct-service-url-impact");
-  assert.ok(html.includes('id="direct-service-default-model"'), "missing #direct-service-default-model");
+  assert.match(html, /<select id="direct-service-default-model">/, "default model must be a catalog-backed select");
   assert.ok(html.includes('id="btn-refresh-direct-service-models"'), "missing #btn-refresh-direct-service-models");
   assert.ok(html.includes('id="btn-validate-direct-service"'), "missing #btn-validate-direct-service");
   assert.ok(html.includes('id="direct-service-models-status"'), "missing #direct-service-models-status");
@@ -39,8 +39,8 @@ test("Word settings markup exposes shared direct services card and editor", () =
   assert.ok(html.includes('id="word-task-direct-service-section"'), "missing #word-task-direct-service-section");
   assert.ok(html.includes('id="word-task-direct-service-select"'), "missing #word-task-direct-service-select");
   assert.ok(html.includes('id="word-task-model-select"'), "missing #word-task-model-select");
-  assert.ok(html.includes('id="word-task-custom-model-check"'), "missing #word-task-custom-model-check");
-  assert.ok(html.includes('id="word-task-custom-model-input"'), "missing #word-task-custom-model-input");
+  assert.strictEqual(html.includes('id="word-task-custom-model-check"'), false, "custom model checkbox must be removed");
+  assert.strictEqual(html.includes('id="word-task-custom-model-input"'), false, "custom model input must be removed");
   assert.ok(html.includes('id="btn-validate-task-model-selection"'), "missing #btn-validate-task-model-selection");
   assert.ok(html.includes('id="btn-save-task-model-selection"'), "missing #btn-save-task-model-selection");
 });
@@ -107,6 +107,22 @@ test("Task Model Selection helpers: validateDirectServiceDraft and validateTaskM
     contextWindowTokens: 40000
   });
   assert.strictEqual(validSelection.valid, true);
+
+  const unlimitedSelection = helpers.validateTaskModelSelectionDraft({
+    serviceId: "direct_svc_1",
+    modelName: "gpt-4o",
+    maxOutputTokens: 0,
+    contextWindowTokens: 0
+  });
+  assert.strictEqual(unlimitedSelection.valid, true, "zero means no explicit token limit");
+
+  const largeSelection = helpers.validateTaskModelSelectionDraft({
+    serviceId: "direct_svc_1",
+    modelName: "gpt-4o",
+    maxOutputTokens: 200000,
+    contextWindowTokens: 4000000
+  });
+  assert.strictEqual(largeSelection.valid, true, "token values must not have product-specific upper bounds");
 });
 
 test("Compact menu integration: includes shared direct service in Word writing menu items", () => {
@@ -196,7 +212,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
     "direct-service-key": { value: "", placeholder: "" },
     "direct-service-key-label": { textContent: "" },
     "direct-service-key-status": { textContent: "" },
-    "direct-service-default-model": { value: "" },
+    "direct-service-default-model": { value: "", innerHTML: "", disabled: false },
     "direct-service-models-status": { textContent: "" },
     "btn-refresh-direct-service-models": { disabled: false },
     "direct-service-editor-error": { textContent: "" },
@@ -284,6 +300,7 @@ test("Word direct services behavior: max 5 limit, single key, and activation rol
   };
 
   ctx.findDirectService = loadFn("findDirectService", ctx);
+  ctx.renderDirectServiceDefaultModelOptions = loadFn("renderDirectServiceDefaultModelOptions", ctx);
   ctx.normalizeWorkflowProfileData = loadFn("normalizeWorkflowProfileData", ctx);
   ctx.renderDirectServicesList = loadFn("renderDirectServicesList", ctx);
   ctx.openDirectServiceEditor = loadFn("openDirectServiceEditor", ctx);
@@ -803,7 +820,6 @@ test("formal direct-service event binding invokes the production handlers", () =
     "direct-service-key",
     "direct-service-default-model",
     "word-task-direct-service-select",
-    "word-task-custom-model-check",
     "btn-validate-task-model-selection",
     "btn-save-task-model-selection"
   ];
@@ -823,7 +839,6 @@ test("formal direct-service event binding invokes the production handlers", () =
       clearKey() { calls.push(["clear-key"]); },
       editorInput() { calls.push(["editor-input"]); },
       taskServiceChange() { calls.push(["task-service-change"]); },
-      customModelChange() { calls.push(["custom-change"]); },
       validateTaskSelection() { calls.push(["validate-task"]); },
       saveTaskSelection() { calls.push(["save-task"]); }
     }

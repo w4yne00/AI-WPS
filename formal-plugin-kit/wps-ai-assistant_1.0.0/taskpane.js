@@ -4019,12 +4019,12 @@
       return "目录有效：" + count + " 个模型" + (catalog.fetchedAt ? "，获取于 " + catalog.fetchedAt : "");
     }
     if (catalog.status === "expired") {
-      return "目录已过期；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+      return "目录已过期，请刷新" + (errorText ? "；最近错误：" + errorText : "");
     }
     if (catalog.status === "empty") {
-      return "目录为空；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+      return "目录为空，请检查服务能力" + (errorText ? "；最近错误：" + errorText : "");
     }
-    return "目录不可用；可使用高级手填" + (errorText ? "；最近错误：" + errorText : "");
+    return "目录不可用，请刷新" + (errorText ? "；最近错误：" + errorText : "");
   }
 
   function renderLegacyDirectPendingStatus() {
@@ -4181,9 +4181,7 @@
     if (keyStatus) {
       keyStatus.textContent = isCreate ? "" : (svc.keyConfigured ? "已配置（留空保持不变）" : "未配置");
     }
-    if (defaultModelInput) {
-      defaultModelInput.value = isCreate ? "" : (svc.defaultModel || "");
-    }
+    renderDirectServiceDefaultModelOptions(isCreate ? null : svc);
     if (modelsStatus) {
       modelsStatus.textContent = !isCreate && typeof formatDirectServiceCatalogStatus === "function"
         ? formatDirectServiceCatalogStatus(svc)
@@ -4219,6 +4217,24 @@
     byId("btn-new-direct-service").hidden = true;
     if (nameInput && typeof nameInput.focus === "function") {
       nameInput.focus();
+    }
+  }
+
+  function renderDirectServiceDefaultModelOptions(service) {
+    var select = byId("direct-service-default-model");
+    var models = service && Array.isArray(service.modelList) ? service.modelList : [];
+    var current = service ? String(service.defaultModel || "") : "";
+    var options = ['<option value="">不设置默认模型</option>'];
+    if (current && models.indexOf(current) < 0) {
+      options.push('<option value="' + escapeWorkflowText(current) + '">' + escapeWorkflowText(current) + '（当前目录不可用）</option>');
+    }
+    models.forEach(function (model) {
+      options.push('<option value="' + escapeWorkflowText(model) + '">' + escapeWorkflowText(model) + '</option>');
+    });
+    if (select) {
+      select.innerHTML = options.join("");
+      select.value = current;
+      select.disabled = !service;
     }
   }
 
@@ -4502,6 +4518,9 @@
           if (statusNode && updatedSvc && typeof formatDirectServiceCatalogStatus === "function") {
             statusNode.textContent = formatDirectServiceCatalogStatus(updatedSvc);
           }
+          if (updatedSvc) {
+            renderDirectServiceDefaultModelOptions(updatedSvc);
+          }
         }
         setWorkflowMutationBusy(false);
         return { success: true };
@@ -4556,13 +4575,16 @@
       if (data.directService && data.directService.revision && state.directServiceEditor && state.directServiceEditor.serviceId === serviceId) {
         state.directServiceEditor.revision = data.directService.revision;
       }
+      if (data.directService) {
+        renderDirectServiceDefaultModelOptions(data.directService);
+      }
       if (statusNode) {
         if (catalogAvailable) {
           statusNode.textContent = "服务验证成功；模型目录可用。";
         } else if (data.authenticationVerified === false) {
-          statusNode.textContent = "服务可达，但认证未验证；未提供可用模型目录，可使用高级手填。";
+          statusNode.textContent = "服务可达，但认证未验证；未提供可用模型目录，请检查地址、Key 或刷新。";
         } else {
-          statusNode.textContent = "服务可达且认证成功，但未提供可用模型目录；可使用高级手填。";
+          statusNode.textContent = "服务可达且认证成功，但未提供可用模型目录，请检查服务是否支持模型目录。";
         }
       }
       if (typeof loadDirectServices === "function") {
@@ -4672,9 +4694,6 @@
     var select = byId("word-task-direct-service-select");
     var paramsDiv = byId("word-task-direct-params");
     var modelSelect = byId("word-task-model-select");
-    var customCheck = byId("word-task-custom-model-check");
-    var customRow = byId("word-task-custom-model-row");
-    var customInput = byId("word-task-custom-model-input");
     var tempInput = byId("word-task-temperature");
     var maxOutInput = byId("word-task-max-output");
     var contextInput = byId("word-task-context");
@@ -4765,19 +4784,6 @@
     if (modelSelect) {
       modelSelect.innerHTML = modelOptionsHtml.join("");
     }
-    if (customCheck) {
-      customCheck.checked = isCustom;
-      customCheck.disabled = Boolean(!catalog.manualModelAllowed && !isCustom);
-      customCheck.title = catalog.usableForSelection
-        ? "模型目录可用时不能使用高级手填模型。"
-        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
-    }
-    if (customRow) {
-      customRow.hidden = !isCustom;
-    }
-    if (customInput) {
-      customInput.value = isCustom ? currentModel : "";
-    }
     if (tempInput) {
       tempInput.value = currentSelection && currentSelection.temperature !== null && currentSelection.temperature !== undefined ? currentSelection.temperature : "";
     }
@@ -4785,7 +4791,7 @@
       maxOutInput.value = currentSelection && currentSelection.maxOutputTokens !== null && currentSelection.maxOutputTokens !== undefined ? currentSelection.maxOutputTokens : "";
     }
     if (contextInput) {
-      contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "40000";
+      contextInput.value = currentSelection && currentSelection.contextWindowTokens ? currentSelection.contextWindowTokens : "";
     }
     var imageModeRow = byId("word-task-image-mode-row");
     var imageModeSelect = byId("word-task-image-input-mode");
@@ -4807,7 +4813,7 @@
       } else if (currentSelection && currentSelection.modelAvailable === false && unavailableReason === "cache_expired") {
         statusNode.textContent = "模型目录已过期，不能发起新任务；请先刷新目录。";
       } else if (currentSelection && currentSelection.modelAvailable === false && (unavailableReason === "catalog_unavailable" || unavailableReason === "catalog_empty")) {
-        statusNode.textContent = "模型目录当前不可用；请刷新目录，或使用高级手填并验证真实任务调用。";
+        statusNode.textContent = "模型目录当前不可用；请先刷新目录。";
       } else if (currentSelection && currentSelection.modelAvailable === false) {
         statusNode.textContent = "当前模型已从最新目录移除，不能发起新任务；请重新选择模型。";
       } else if (catalog.fetchStatus === "error" && catalog.cacheStatus === "valid") {
@@ -4823,9 +4829,6 @@
     var serviceId = select ? select.value : "";
     var paramsDiv = byId("word-task-direct-params");
     var modelSelect = byId("word-task-model-select");
-    var customCheck = byId("word-task-custom-model-check");
-    var customRow = byId("word-task-custom-model-row");
-    var customInput = byId("word-task-custom-model-input");
     var statusNode = byId("word-task-model-validation-status");
     state.lastValidatedCustomModel = null;
 
@@ -4851,19 +4854,6 @@
     if (modelSelect) {
       modelSelect.innerHTML = modelOptionsHtml.join("");
     }
-    if (customCheck) {
-      customCheck.checked = false;
-      customCheck.disabled = Boolean(!catalog.manualModelAllowed);
-      customCheck.title = catalog.usableForSelection
-        ? "模型目录可用时不能使用高级手填模型。"
-        : "模型目录不可用或已过期时，可手填并在真实调用验证后使用。";
-    }
-    if (customRow) {
-      customRow.hidden = true;
-    }
-    if (customInput) {
-      customInput.value = "";
-    }
     var currentTask = getSettingsWorkflowTaskType();
     var imageModeRow = byId("word-task-image-mode-row");
     var imageModeSelect = byId("word-task-image-input-mode");
@@ -4880,25 +4870,10 @@
     }
   }
 
-  function handleTaskCustomModelCheckChange() {
-    var customCheck = byId("word-task-custom-model-check");
-    var customRow = byId("word-task-custom-model-row");
-    var customInput = byId("word-task-custom-model-input");
-    var isChecked = Boolean(customCheck && customCheck.checked);
-    if (customRow) {
-      customRow.hidden = !isChecked;
-    }
-    if (isChecked && customInput && typeof customInput.focus === "function") {
-      customInput.focus();
-    }
-  }
-
   function getTaskModelSelectionDraft() {
     var serviceId = (byId("word-task-direct-service-select") && byId("word-task-direct-service-select").value) || "";
-    var isCustom = Boolean(byId("word-task-custom-model-check") && byId("word-task-custom-model-check").checked);
-    var modelName = isCustom
-      ? (byId("word-task-custom-model-input") ? byId("word-task-custom-model-input").value.trim() : "")
-      : (byId("word-task-model-select") ? byId("word-task-model-select").value : "");
+    var isCustom = false;
+    var modelName = byId("word-task-model-select") ? byId("word-task-model-select").value : "";
     var tempVal = byId("word-task-temperature") ? byId("word-task-temperature").value : "";
     var maxOutVal = byId("word-task-max-output") ? byId("word-task-max-output").value : "";
     var contextVal = byId("word-task-context") ? byId("word-task-context").value : "";
@@ -4910,8 +4885,8 @@
       modelName: modelName,
       customModel: isCustom,
       temperature: tempVal !== "" ? Number(tempVal) : null,
-      maxOutputTokens: maxOutVal !== "" ? Number(maxOutVal) : null,
-      contextWindowTokens: contextVal !== "" ? Number(contextVal) : 40000
+      maxOutputTokens: maxOutVal !== "" && Number(maxOutVal) !== 0 ? Number(maxOutVal) : null,
+      contextWindowTokens: contextVal !== "" && Number(contextVal) !== 0 ? Number(contextVal) : null
     };
     if (taskType === "word.format_review") {
       var imageModeVal = (byId("word-task-image-input-mode") && byId("word-task-image-input-mode").value) || "openai_image_url";
@@ -8119,16 +8094,7 @@
           helpers.releaseTaskSlot(state.activeTaskSlots, "wps", taskType, targetDocSession, jobId);
         }
         clearWritingActiveJob(jobId, taskType, targetDocSession);
-        if (resumed) {
-          if (state.writingJobId === jobId) {
-            setWritingJob("", "", "");
-            setModelTaskBusy(false);
-          }
-          setActiveWritingJobRecord(taskType, targetDocSession, null);
-          setStatus("历史写作任务已结束，可在历史记录中查看。");
-          return;
-        }
-        completeWritingJob(job.result || {}, body.traceId || job.traceId || jobId, taskType, false, mode, jobId, targetDocSession);
+        completeWritingJob(job.result || {}, body.traceId || job.traceId || jobId, taskType, resumed, mode, jobId, targetDocSession);
         return;
       }
       if (job.status === "cancelled") {
@@ -8160,7 +8126,7 @@
       if (state.currentMode === mode) {
         renderWritingJobProgress(job, taskType, jobId);
       }
-      scheduleWritingPoll(jobId, taskType, mode, false, WRITING_POLL_INTERVAL_MS, targetDocSession);
+      scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_INTERVAL_MS, targetDocSession);
     }).catch(function (error) {
       state.writingJobPollErrorCount += 1;
       if (isFatalWritingPollError(error)) {
@@ -8176,7 +8142,7 @@
           "最近错误：" + describeFetchError(error)
         ].join("\n"));
       }
-      scheduleWritingPoll(jobId, taskType, mode, false, WRITING_POLL_RETRY_DELAY_MS, targetDocSession);
+      scheduleWritingPoll(jobId, taskType, mode, resumed, WRITING_POLL_RETRY_DELAY_MS, targetDocSession);
     });
   }
 
@@ -9850,6 +9816,15 @@
       }
       if (job.status === "completed") {
         cleanupDeterministicFormatReviewTerminal(currentDoc, jobId);
+        loadDeterministicFormatReviewReport(jobId, currentDoc).then(function () {
+          if (state.currentMode === "formatReview") {
+            setStatus("已恢复当前格式审查结果。");
+          }
+        }).catch(function (error) {
+          if (state.currentMode === "formatReview") {
+            setStatus("格式审查已完成，但报告读取失败：" + describeFetchError(error));
+          }
+        });
         return;
       }
       if (job.status === "failed" || job.status === "cancelled") {
@@ -10754,7 +10729,6 @@
           }
         },
         taskServiceChange: handleTaskDirectServiceSelectChange,
-        customModelChange: handleTaskCustomModelCheckChange,
         validateTaskSelection: validateTaskModelSelection,
         authorizeTaskImages: function () { return performTaskImageAction("image-authorization", true); },
         revokeTaskImages: function () { return performTaskImageAction("image-authorization", false); },

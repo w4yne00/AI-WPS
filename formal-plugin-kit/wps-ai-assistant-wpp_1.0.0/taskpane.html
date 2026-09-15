@@ -231,25 +231,17 @@
                       <option value="">继承服务默认模型</option>
                     </select>
                   </label>
-                  <label class="workflow-activate-check" for="ppt-task-custom-model-check">
-                    <input id="ppt-task-custom-model-check" type="checkbox" />
-                    <span>使用自定义模型标识</span>
-                  </label>
-                  <label id="ppt-task-custom-model-row" class="field" for="ppt-task-custom-model-input" hidden>
-                    <span>自定义模型</span>
-                    <input id="ppt-task-custom-model-input" type="text" placeholder="例如：deepseek-reasoner" />
-                  </label>
                   <div class="grid-three-col">
                     <label class="field"><span>温度</span><input id="ppt-task-temperature" type="number" min="0" max="2" step="0.1" placeholder="默认" /></label>
-                    <label class="field"><span>最大 Token</span><input id="ppt-task-max-output" type="number" min="1" placeholder="默认" /></label>
-                    <label class="field"><span>上下文容量</span><input id="ppt-task-context" type="number" min="1000" placeholder="40000" /></label>
+                    <label class="field"><span>最大 Token</span><input id="ppt-task-max-output" type="number" min="0" step="1" placeholder="0 或空表示不限" /></label>
+                    <label class="field"><span>上下文容量</span><input id="ppt-task-context" type="number" min="0" step="1" placeholder="0 或空表示不限" /></label>
                   </div>
                   <div class="button-row" style="margin-top: 8px;">
                     <button id="btn-validate-task-model-selection" class="ghost-action" type="button">验证调用</button>
                     <button id="btn-save-task-model-selection" type="button">保存并设为当前</button>
                   </div>
                   <p id="ppt-task-model-cost-warning" class="field-hint">验证调用会真实请求模型，可能产生费用并等待服务返回。</p>
-                  <p id="ppt-task-model-validation-status" class="inline-status"></p>
+                  <p id="ppt-task-model-validation-status" class="inline-status" aria-live="polite"></p>
                 </div>
               </section>
             </section>
@@ -296,14 +288,14 @@
                 </div>
                 <label class="field" for="direct-service-default-model">
                   <span>默认模型</span>
-                  <input id="direct-service-default-model" type="text" placeholder="例如：gpt-4o" />
+                  <select id="direct-service-default-model"><option value="">请先刷新模型目录</option></select>
                 </label>
                 <div class="direct-service-model-fetch-row">
-                  <button id="btn-refresh-direct-service-models" class="ghost-action" type="button">刷新模型目录</button>
+                  <button id="btn-refresh-direct-service-models" class="ghost-action" type="button">刷新</button>
                   <button id="btn-validate-direct-service" class="ghost-action" type="button">验证服务</button>
-                  <span id="direct-service-models-status" class="inline-status">目录未获取</span>
                 </div>
-                <p id="direct-service-validation-status" class="inline-status"></p>
+                <p id="direct-service-models-status" class="inline-status direct-service-catalog-status">目录未获取</p>
+                <p id="direct-service-validation-status" class="inline-status" aria-live="polite"></p>
                 <div id="direct-service-editor-error" class="workflow-profile-error" role="alert"></div>
                 <div class="workflow-editor-actions">
                   <button id="btn-cancel-direct-service" class="ghost-action" type="button">取消</button>

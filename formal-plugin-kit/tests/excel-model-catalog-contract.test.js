@@ -207,8 +207,9 @@ test("Direct service validation stays separate from task validation", async () =
     },
     getDirectServiceCatalogState: helpers.getDirectServiceCatalogState,
     formatDirectServiceCatalogStatus() {
-      return "目录不可用；可使用高级手填";
+      return "目录不可用，请刷新";
     },
+    renderDirectServiceDefaultModelOptions() {},
     describeFetchError(error) {
       return String(error);
     }
@@ -223,6 +224,6 @@ test("Direct service validation stays separate from task validation", async () =
   assert.strictEqual(validationState.directServiceEditor.revision, 5);
   assert.strictEqual(
     validationNodes["direct-service-validation-status"].textContent,
-    "服务可达，但认证未验证；未提供可用模型目录，可使用高级手填。"
+    "服务可达，但认证未验证；未提供可用模型目录，请检查地址、Key 或刷新。"
   );
 });

@@ -784,8 +784,8 @@ function testStructureReviewPresentationSwitchingDuringFinish() {
   assert.strictEqual(renderedResults.length, 1);
 }
 
-// Test 17: Resuming Completed Task Clears Storage Without Populating Active Results View
-async function testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean() {
+// Test 17: Resuming a completed task restores it to the active result view.
+async function testStructureReviewResumeCompletedRestoresPreview() {
   let clearedJob = null;
   const elements = {
     "structure-result-output": { textContent: "默认空状态" },
@@ -813,7 +813,7 @@ async function testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean()
       data: {
         jobId: "job-completed-01",
         status: "completed",
-        result: { reviewConclusion: "历史旧结果，不应进活动视图" }
+        result: { reviewConclusion: "恢复完成的结构审查结果" }
       }
     }),
     describeStructureProgress: () => ({ status: "", detail: "" }),
@@ -822,8 +822,15 @@ async function testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean()
       ...helpers,
       getDocumentSessionId: () => "doc_session_1"
     },
-    setStatus: () => {},
+    setStatus: (message) => { elements["status-line"].textContent = message; },
     setRunDisabled: () => {},
+    finishStructureJob: (jobId, result, docSessionId) => {
+      clearedJob = jobId;
+      state.structureResultsBySession = state.structureResultsBySession || {};
+      state.structureResultsBySession[docSessionId] = result;
+      state.structureResult = result;
+      elements["structure-result-output"].textContent = result.reviewConclusion;
+    },
     pollStructureReviewJob: () => { assert.fail("Must not poll completed job"); },
     PPT_STRUCTURE_WORKFLOW_TASK_TYPE: "ppt.structure_review",
     PPT_SLIDE_POLL_REQUEST_TIMEOUT_MS: 5000
@@ -840,10 +847,8 @@ async function testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean()
   assert.strictEqual(clearedJob, "job-completed-01", "Storage must be cleared for completed job");
   // Must NOT populate state.jobId
   assert.strictEqual(state.jobId, "", "state.jobId must remain empty");
-  // Must NOT set state.structureResult
-  assert.strictEqual(state.structureResult, null, "state.structureResult must remain null");
-  // Must NOT touch structure-result-output
-  assert.strictEqual(elements["structure-result-output"].textContent, "默认空状态");
+  assert.strictEqual(state.structureResult.reviewConclusion, "恢复完成的结构审查结果");
+  assert.strictEqual(elements["structure-result-output"].textContent, "恢复完成的结构审查结果");
 }
 
 // Test 18: Resuming Running Task Sets Active State And Begins Polling
@@ -923,7 +928,7 @@ async function runAll() {
   testStructureReviewHistoryRendering();
   testStructureReviewMultiWindowLocalStorageIsolation();
   testStructureReviewPresentationSwitchingDuringFinish();
-  await testStructureReviewResumeCompletedClearsStorageAndLeavesUIClean();
+  await testStructureReviewResumeCompletedRestoresPreview();
   await testStructureReviewResumeRunningSetsActiveStateAndBeginsPolling();
   await testHistoryListEnvelopeParsing();
   console.log("All PPT active result and history tests passed!");

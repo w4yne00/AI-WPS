@@ -1801,14 +1801,14 @@
     }
     if (input.maxOutputTokens !== undefined && input.maxOutputTokens !== null && input.maxOutputTokens !== "") {
       var m = Number(input.maxOutputTokens);
-      if (isNaN(m) || m < 1 || m > 16384) {
-        return { valid: false, ok: false, error: "最大输出 Token 必须在 1 到 16384 之间。" };
+      if (isNaN(m) || m < 0 || Math.floor(m) !== m) {
+        return { valid: false, ok: false, error: "最大输出 Token 必须是非负整数，0 或空表示不限。" };
       }
     }
     if (input.contextWindowTokens !== undefined && input.contextWindowTokens !== null && input.contextWindowTokens !== "") {
       var c = Number(input.contextWindowTokens);
-      if (isNaN(c) || c < 1000 || c > 2000000) {
-        return { valid: false, ok: false, error: "上下文容量必须在 1000 到 2000000 之间。" };
+      if (isNaN(c) || c < 0 || Math.floor(c) !== c) {
+        return { valid: false, ok: false, error: "上下文容量必须是非负整数，0 或空表示不限。" };
       }
     }
     if (input.customModel) {
@@ -1833,7 +1833,7 @@
         return { valid: false, ok: false, error: "模型目录已因服务地址或 API Key 变更失效，请先刷新目录。" };
       }
       if (selectedCatalog.status === "empty" || selectedCatalog.status === "unavailable") {
-        return { valid: false, ok: false, error: "模型目录当前不可用，请使用高级手填并先验证真实任务调用。" };
+        return { valid: false, ok: false, error: "模型目录当前不可用，请先刷新目录。" };
       }
       if (selectedCatalog.usableForSelection && selectedName && selectedCatalog.models.indexOf(selectedName) < 0) {
         return { valid: false, ok: false, error: "所选模型已从最新目录移除，请重新选择。" };
@@ -1998,7 +1998,6 @@
       }
     });
     bind("ppt-task-direct-service-select", "change", "taskServiceChange");
-    bind("ppt-task-custom-model-check", "change", "customModelChange");
     bind("btn-validate-task-model-selection", "click", "validateTaskSelection");
     bind("btn-save-task-model-selection", "click", "saveTaskSelection");
   }

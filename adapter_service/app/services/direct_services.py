@@ -1108,16 +1108,12 @@ class DirectServiceStore:
             )
         except (TypeError, ValueError):
             return False
-        if max_output is not None and not (
-            MIN_TASK_MAX_OUTPUT_TOKENS <= max_output <= MAX_TASK_MAX_OUTPUT_TOKENS
-        ):
+        if max_output is not None and max_output < 0:
             return False
-        if context_window is not None and not (
-            MIN_TASK_CONTEXT_WINDOW_TOKENS
-            <= context_window
-            <= MAX_TASK_CONTEXT_WINDOW_TOKENS
-        ):
+        if context_window is not None and context_window < 0:
             return False
+        max_output = None if max_output == 0 else max_output
+        context_window = None if context_window == 0 else context_window
         return not (
             max_output is not None
             and context_window is not None
@@ -2206,17 +2202,11 @@ class DirectServiceStore:
 
         clean_model = self._validate_model_name(model_name)
         clean_temp = self._validate_temperature(temperature)
-        clean_max_output = self._validate_int_range(
-            max_output_tokens,
-            "最大输出 Token",
-            MIN_TASK_MAX_OUTPUT_TOKENS,
-            MAX_TASK_MAX_OUTPUT_TOKENS,
+        clean_max_output = self._validate_optional_token_limit(
+            max_output_tokens, "最大输出 Token"
         )
-        clean_context = self._validate_int_range(
-            context_window_tokens,
-            "上下文容量",
-            MIN_TASK_CONTEXT_WINDOW_TOKENS,
-            MAX_TASK_CONTEXT_WINDOW_TOKENS,
+        clean_context = self._validate_optional_token_limit(
+            context_window_tokens, "上下文容量"
         )
         if (
             clean_max_output is not None
@@ -2860,6 +2850,21 @@ class DirectServiceStore:
         raise DirectServiceError(
             "DIRECT_SERVICE_PARAM_INVALID",
             f"{label}必须在 {minimum} 到 {maximum} 之间。",
+        )
+
+    @staticmethod
+    def _validate_optional_token_limit(value, label: str) -> Optional[int]:
+        if value in (None, "", 0, "0"):
+            return None
+        try:
+            val = int(value)
+            if val > 0:
+                return val
+        except (TypeError, ValueError):
+            pass
+        raise DirectServiceError(
+            "DIRECT_SERVICE_PARAM_INVALID",
+            f"{label}必须是非负整数，0 或空表示不限。",
         )
 
     @staticmethod

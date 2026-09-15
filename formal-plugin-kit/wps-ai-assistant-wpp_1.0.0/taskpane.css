@@ -1300,8 +1300,19 @@ button.ghost-action:hover {
 .direct-service-model-fetch-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
-  margin: 8px 0 12px;
+  margin: 8px 0 4px;
+}
+
+.direct-service-model-fetch-row button { white-space: nowrap; }
+
+.direct-service-catalog-status {
+  display: block;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
 }
 
 .direct-service-key-row {

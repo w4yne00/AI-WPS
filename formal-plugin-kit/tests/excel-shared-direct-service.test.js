@@ -19,7 +19,7 @@ test("Excel settings markup exposes shared direct services card and editor", () 
   assert.ok(html.includes('id="direct-service-editor-view"'), "missing #direct-service-editor-view");
   assert.ok(html.includes('id="direct-service-name"'), "missing #direct-service-name");
   assert.ok(html.includes('id="direct-service-url"'), "missing #direct-service-url");
-  assert.ok(html.includes('id="direct-service-default-model"'), "missing #direct-service-default-model");
+  assert.match(html, /<select id="direct-service-default-model">/, "default model must be a catalog-backed select");
   assert.ok(html.includes('id="btn-refresh-direct-service-models"'), "missing #btn-refresh-direct-service-models");
   assert.ok(html.includes('id="direct-service-models-status"'), "missing #direct-service-models-status");
   assert.ok(html.includes('id="direct-service-editor-error"'), "missing #direct-service-editor-error");
@@ -37,8 +37,8 @@ test("Excel settings markup exposes shared direct services card and editor", () 
   assert.ok(html.includes('id="excel-task-direct-service-section"'), "missing #excel-task-direct-service-section");
   assert.ok(html.includes('id="excel-task-direct-service-select"'), "missing #excel-task-direct-service-select");
   assert.ok(html.includes('id="excel-task-model-select"'), "missing #excel-task-model-select");
-  assert.ok(html.includes('id="excel-task-custom-model-check"'), "missing #excel-task-custom-model-check");
-  assert.ok(html.includes('id="excel-task-custom-model-input"'), "missing #excel-task-custom-model-input");
+  assert.strictEqual(html.includes('id="excel-task-custom-model-check"'), false, "custom model checkbox must be removed");
+  assert.strictEqual(html.includes('id="excel-task-custom-model-input"'), false, "custom model input must be removed");
   assert.ok(html.includes('id="btn-validate-task-model-selection"'), "missing #btn-validate-task-model-selection");
   assert.ok(html.includes('id="btn-save-task-model-selection"'), "missing #btn-save-task-model-selection");
 });
@@ -100,6 +100,12 @@ test("Task Model Selection helpers: validateDirectServiceDraft and validateTaskM
     contextWindowTokens: 40000
   });
   assert.strictEqual(validSelection.valid, true);
+  assert.strictEqual(helpers.validateTaskModelSelectionDraft({
+    serviceId: "direct_svc_1", modelName: "gpt-4o", maxOutputTokens: 0, contextWindowTokens: 0
+  }).valid, true);
+  assert.strictEqual(helpers.validateTaskModelSelectionDraft({
+    serviceId: "direct_svc_1", modelName: "gpt-4o", maxOutputTokens: 200000, contextWindowTokens: 4000000
+  }).valid, true);
 });
 
 test("Compact menu integration: includes shared direct service in Excel Analysis menu items", () => {
@@ -202,7 +208,7 @@ test("Direct services behavior: max 5 limit, single key contract, and activation
     "direct-service-key": { value: "", placeholder: "" },
     "direct-service-key-label": { textContent: "" },
     "direct-service-key-status": { textContent: "" },
-    "direct-service-default-model": { value: "" },
+    "direct-service-default-model": { value: "", innerHTML: "", disabled: false },
     "direct-service-models-status": { textContent: "" },
     "btn-refresh-direct-service-models": { disabled: false },
     "direct-service-editor-error": { textContent: "" },
@@ -275,6 +281,7 @@ test("Direct services behavior: max 5 limit, single key contract, and activation
   };
 
   ctx.findDirectService = loadFn("findDirectService", ctx);
+  ctx.renderDirectServiceDefaultModelOptions = loadFn("renderDirectServiceDefaultModelOptions", ctx);
   ctx.renderDirectServicesList = loadFn("renderDirectServicesList", ctx);
   ctx.openDirectServiceEditor = loadFn("openDirectServiceEditor", ctx);
   ctx.closeDirectServiceEditor = loadFn("closeDirectServiceEditor", ctx);
@@ -353,12 +360,10 @@ test("Code review fixes: loadDirectServices array-to-map, draft customModel, and
   }, "edit");
   assert.strictEqual(editEmptyKeyConfigured.valid, true);
 
-  // 2. Draft returns customModel
+  // 2. Draft uses only the catalog model selector; custom model entry was removed.
   const mockNodes = {
     "excel-task-direct-service-select": { value: "direct_svc_1" },
-    "excel-task-custom-model-check": { checked: true },
-    "excel-task-custom-model-input": { value: "deepseek-custom-v3" },
-    "excel-task-model-select": { value: "" },
+    "excel-task-model-select": { value: "deepseek-v3" },
     "excel-task-temperature": { value: "0.8" },
     "excel-task-max-output": { value: "2048" },
     "excel-task-context": { value: "64000" }
@@ -369,8 +374,8 @@ test("Code review fixes: loadDirectServices array-to-map, draft customModel, and
   };
   const getDraft = loadFn("getTaskModelSelectionDraft", draftCtx);
   const draft = getDraft();
-  assert.strictEqual(draft.customModel, true, "draft must contain customModel: true");
-  assert.strictEqual(draft.modelName, "deepseek-custom-v3");
+  assert.strictEqual(draft.customModel, false, "new task selections must come from the model catalog");
+  assert.strictEqual(draft.modelName, "deepseek-v3");
   assert.strictEqual(draft.serviceId, "direct_svc_1");
 
   // 3. loadDirectServices converts taskModelSelections array to map
@@ -564,8 +569,8 @@ test("Excel settings tabs dynamically show task direct service section for all 3
   assert.strictEqual(mockNodes["excel-task-direct-service-title"].textContent, "接入选择");
   assert.strictEqual(mockNodes["excel-task-temperature"].value, 0.1);
   assert.strictEqual(mockNodes["excel-task-max-output"].value, 2048);
-  assert.strictEqual(mockNodes["excel-task-custom-model-check"].checked, true);
-  assert.strictEqual(mockNodes["excel-task-custom-model-input"].value, "fill-pro");
+  assert.strictEqual(mockNodes["excel-task-custom-model-check"].checked, false);
+  assert.strictEqual(mockNodes["excel-task-custom-model-input"].value, "");
 });
 
 test("saveTaskModelSelection and validateTaskModelSelection support formula assistant and smart fill", async () => {

@@ -17,10 +17,6 @@ from app.services.workflow_profiles import WorkflowProfileError
 from app.services.model_configurations import (
     ACCESS_DIRECT_MODEL,
     DEFAULT_CONTEXT_WINDOW_TOKENS,
-    MAX_TASK_CONTEXT_WINDOW_TOKENS,
-    MAX_TASK_MAX_OUTPUT_TOKENS,
-    MIN_TASK_CONTEXT_WINDOW_TOKENS,
-    MIN_TASK_MAX_OUTPUT_TOKENS,
     direct_model_input_budget,
     ModelConfigurationError,
     ModelConfigurationStore,
@@ -149,14 +145,12 @@ class TaskModelSelectionUpdateRequest(BaseModel):
     temperature: Optional[float] = None
     max_output_tokens: Optional[int] = Field(
         default=None,
-        ge=MIN_TASK_MAX_OUTPUT_TOKENS,
-        le=MAX_TASK_MAX_OUTPUT_TOKENS,
+        ge=0,
         alias="maxOutputTokens",
     )
     context_window_tokens: Optional[int] = Field(
         default=None,
-        ge=MIN_TASK_CONTEXT_WINDOW_TOKENS,
-        le=MAX_TASK_CONTEXT_WINDOW_TOKENS,
+        ge=0,
         alias="contextWindowTokens",
     )
     image_input_mode: Optional[str] = Field(default=None, alias="imageInputMode")
@@ -170,8 +164,8 @@ class TaskModelSelectionUpdateRequest(BaseModel):
         max_output = values.get("max_output_tokens")
         context_window = values.get("context_window_tokens")
         if (
-            max_output is not None
-            and context_window is not None
+            max_output
+            and context_window
             and direct_model_input_budget(context_window, max_output)[0] <= 0
         ):
             raise ValueError("上下文容量必须大于最大输出 Token 与安全余量之和。")
@@ -204,14 +198,12 @@ class TaskModelSelectionValidateRequest(BaseModel):
     temperature: Optional[float] = Field(default=None, ge=0.0, le=2.0)
     max_output_tokens: Optional[int] = Field(
         default=None,
-        ge=MIN_TASK_MAX_OUTPUT_TOKENS,
-        le=MAX_TASK_MAX_OUTPUT_TOKENS,
+        ge=0,
         alias="maxOutputTokens",
     )
     context_window_tokens: Optional[int] = Field(
         default=None,
-        ge=MIN_TASK_CONTEXT_WINDOW_TOKENS,
-        le=MAX_TASK_CONTEXT_WINDOW_TOKENS,
+        ge=0,
         alias="contextWindowTokens",
     )
     image_input_mode: Optional[str] = Field(

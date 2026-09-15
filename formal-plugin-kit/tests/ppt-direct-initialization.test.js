@@ -63,16 +63,11 @@ test('request preserves real HTTP 409 referencing task details', async () => {
   const p = pane();
   await assert.rejects(p.request('/conflict'), error => error.status === 409 && JSON.stringify(error.referencedTasks) === JSON.stringify(tasks));
 });
-test('reopened custom selection reuses persisted validation only for the same service and model', async () => {
+test('reopened legacy custom selection cannot be resaved after manual model entry is removed', async () => {
   const p = pane(); p.initialize(); await settle(p);
   p.node('ppt-task-direct-service-select').value = 'direct_svc_old';
-  p.node('ppt-task-custom-model-check').checked = true;
-  p.node('ppt-task-custom-model-input').value = 'changed';
   await p.saveTaskModelSelection();
   assert.equal(p.calls.some(route => route.endsWith('/activate')), false);
-  p.node('ppt-task-custom-model-input').value = 'custom';
-  await p.saveTaskModelSelection();
-  assert.ok(p.calls.includes('/provider/direct-services/direct_svc_old/activate'));
 });
 
 test('actual compact menu activation failure restores the active shared service for both PPT tasks', async () => {

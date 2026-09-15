@@ -203,7 +203,7 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
         )
 
     @unittest.skipUnless(HAS_PROVIDER_API, "fastapi and pydantic are required for API validation tests")
-    def test_task_model_selection_api_enforces_token_bounds(self):
+    def test_task_model_selection_api_accepts_unlimited_and_unbounded_token_values(self):
         valid = TaskModelSelectionUpdateRequest.parse_obj(
             {"maxOutputTokens": 16384, "contextWindowTokens": 2000000}
         )
@@ -212,25 +212,48 @@ class WordDocumentReviewDirectServiceTest(unittest.TestCase):
 
         for field, value in (
             ("maxOutputTokens", 0),
-            ("maxOutputTokens", 16385),
-            ("contextWindowTokens", 999),
-            ("contextWindowTokens", 2000001),
+            ("maxOutputTokens", 200000),
+            ("contextWindowTokens", 0),
+            ("contextWindowTokens", 4000000),
         ):
             with self.subTest(field=field, value=value):
+                parsed = TaskModelSelectionUpdateRequest.parse_obj({field: value})
+                self.assertEqual(
+                    parsed.max_output_tokens if field == "maxOutputTokens" else parsed.context_window_tokens,
+                    value,
+                )
+        for field in ("maxOutputTokens", "contextWindowTokens"):
+            with self.subTest(field=field):
                 with self.assertRaises(ValidationError):
-                    TaskModelSelectionUpdateRequest.parse_obj({field: value})
+                    TaskModelSelectionUpdateRequest.parse_obj({field: -1})
         with self.assertRaises(ValidationError):
             TaskModelSelectionUpdateRequest.parse_obj(
                 {"maxOutputTokens": 2048, "contextWindowTokens": 1000}
             )
 
-    def test_task_model_selection_store_rejects_invalid_token_budget(self):
+    def test_task_model_selection_store_normalizes_unlimited_and_rejects_invalid_token_budget(self):
         svc = self._create_service()
+        unlimited = self.store.update_task_model_selection(
+            "word.document_review",
+            service_id=svc["id"],
+            max_output_tokens=0,
+            context_window_tokens=0,
+        )
+        self.assertIsNone(unlimited["maxOutputTokens"])
+        self.assertIsNone(unlimited["contextWindowTokens"])
+
+        large = self.store.update_task_model_selection(
+            "word.document_review",
+            service_id=svc["id"],
+            max_output_tokens=200000,
+            context_window_tokens=4000000,
+        )
+        self.assertEqual(large["maxOutputTokens"], 200000)
+        self.assertEqual(large["contextWindowTokens"], 4000000)
+
         invalid_inputs = (
-            {"max_output_tokens": 0},
-            {"max_output_tokens": 16385},
-            {"context_window_tokens": 999},
-            {"context_window_tokens": 2000001},
+            {"max_output_tokens": -1},
+            {"context_window_tokens": -1},
             {"max_output_tokens": 2048, "context_window_tokens": 1000},
         )
         for values in invalid_inputs:

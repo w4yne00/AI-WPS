@@ -654,7 +654,7 @@ function testResumeTaskRunningToCompletedRendersResult() {
 
   return lastRequestPromise.then(() => {
     assert.ok(scheduledPollArgs, "Must have scheduled next poll");
-    assert.strictEqual(scheduledPollArgs.resumed, false, "Subsequent poll must have resumed = false");
+    assert.strictEqual(scheduledPollArgs.resumed, true, "A recovered job must remain read-only across subsequent polls");
 
     // Poll 2 with scheduled args (resumed = false)
     ctx.pollWritingJob(
@@ -672,6 +672,38 @@ function testResumeTaskRunningToCompletedRendersResult() {
       byId("result-output").textContent,
       "已完成的恢复改写文本",
       "Result must be rendered upon terminal completion of resumed job"
+    );
+  });
+}
+
+// Regression: a recovered job may already be completed on the first status read.
+function testResumeTaskAlreadyCompletedRendersResult() {
+  let lastRequestPromise;
+  const { ctx, byId } = createBaseContext({
+    ctx: {
+      request: () => {
+        lastRequestPromise = Promise.resolve({
+          data: { status: "completed", result: { rewrittenText: "恢复时已经完成的改写文本" } },
+          traceId: "tr_already_done"
+        });
+        return lastRequestPromise;
+      },
+      renderWritingJobProgress: () => {},
+      isFatalWritingPollError: () => false,
+      writingJobPath: () => "/word/smart-write/jobs",
+      WRITING_POLL_REQUEST_TIMEOUT_MS: 5000,
+      WRITING_POLL_INTERVAL_MS: 1000
+    }
+  });
+
+  ctx.pollWritingJob = vm.runInNewContext(`(${functionSource("pollWritingJob")}\n)`, ctx);
+  ctx.pollWritingJob("job_resume_done", "word.smart_write", "smartWrite", true, "doc_1");
+
+  return lastRequestPromise.then(() => new Promise((resolve) => setImmediate(resolve))).then(() => {
+    assert.strictEqual(
+      byId("result-output").textContent,
+      "恢复时已经完成的改写文本",
+      "A recovered completed result must be restored to the current preview"
     );
   });
 }
@@ -817,6 +849,7 @@ async function runAll() {
   testRealSwitchModePathAndWritebackEligibility();
   await testHistoryListEnvelopeParsingAndActions();
   await testResumeTaskRunningToCompletedRendersResult();
+  await testResumeTaskAlreadyCompletedRendersResult();
   console.log("All Word active result and history tests passed!");
 }
 

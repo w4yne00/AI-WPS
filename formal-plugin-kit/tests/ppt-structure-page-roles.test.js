@@ -141,6 +141,7 @@ function testRenderKeepsListFirstAndRecommendationsInOriginalSlot() {
   assert.ok(!render.includes("view.html"));
   assert.ok(!render.includes("item.role"));
   assert.ok(!render.includes("slides["));
+  assert.ok(render.includes("helpers.renderMarkdown(data.rawAnswer)"), "raw model Markdown must use the safe preview renderer");
   assert.ok(copyHandler.includes("copyConclusionText"));
 }
 
