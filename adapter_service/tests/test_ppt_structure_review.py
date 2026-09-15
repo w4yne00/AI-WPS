@@ -1154,7 +1154,11 @@ class PptStructureReviewActiveResultsAndHistoryTests(unittest.TestCase):
 
         class CustomHistoryStore:
             def record_success(self, **kwargs):
-                recorded.append(kwargs)
+                # The patched factory is process-global while background jobs from
+                # other tests may still be draining. Count only this test's job so
+                # unrelated completions cannot contaminate the duplicate-write check.
+                if kwargs.get("job_id") == "client-job-history-1":
+                    recorded.append(kwargs)
 
         with patch(
             "app.services.ppt.structure_review_jobs.get_task_history_store",
