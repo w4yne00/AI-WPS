@@ -18,6 +18,9 @@
   --radius-panel: 8px;
   --shadow-panel: 0 1px 3px rgba(23, 38, 46, 0.08);
   --control-height: 36px;
+  --font-size-caption: 12px;
+  --font-size-body: 13px;
+  --font-size-section: 16px;
   --bg: var(--color-bg);
   --surface: var(--color-surface);
   --surface-strong: var(--color-surface);
@@ -38,6 +41,9 @@ body {
   margin: 0;
   border-top: 3px solid var(--color-primary);
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  font-size: var(--font-size-body);
+  font-optical-sizing: auto;
+  line-height: 1.5;
   background: var(--color-bg);
   color: var(--text);
   overflow-x: hidden;
@@ -151,6 +157,10 @@ body {
   border: 1px solid var(--hairline);
   background: var(--surface);
   box-shadow: var(--shadow-soft);
+}
+
+.inline-status:empty {
+  display: none;
 }
 
 .badge-ok {
@@ -2221,6 +2231,62 @@ select:focus-visible,
   position: relative;
 }
 
+.settings-card,
+.task-model-selection-card {
+  position: relative;
+}
+
+.workflow-settings-heading,
+.task-selection-heading {
+  padding-right: 36px;
+}
+
+.direct-services-heading {
+  display: block;
+  min-height: 36px;
+  padding-right: 40px;
+}
+
+.direct-services-title-actions {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.direct-services-title-actions h4 {
+  margin: 0;
+  font-size: var(--font-size-section);
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.direct-services-title-actions #btn-new-direct-service {
+  min-height: 32px;
+  padding: 5px 12px;
+}
+
+.settings-card-help {
+  position: absolute;
+  z-index: 12;
+  top: 16px;
+  right: 16px;
+}
+
+.task-selection-heading .settings-card-help,
+.info-button.settings-card-help {
+  position: absolute;
+}
+
+.settings-card h3,
+.settings-card h4,
+.task-model-selection-card h4 {
+  font-size: var(--font-size-section);
+  font-weight: 650;
+  line-height: 1.25;
+}
+
 .workflow-manager-head {
   display: flex;
   min-width: 0;
@@ -2342,4 +2408,20 @@ select:focus-visible,
     flex-wrap: nowrap;
     align-items: center;
   }
+}
+
+/* Anchor every settings help affordance to its card, not to mutable title width. */
+.direct-services-heading,
+.workflow-settings-heading,
+.task-selection-heading {
+  position: static;
+}
+
+.settings-card-help,
+.task-selection-heading .context-help.settings-card-help,
+.info-button.settings-card-help {
+  position: absolute;
+  z-index: 12;
+  top: 16px;
+  right: 16px;
 }

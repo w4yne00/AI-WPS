@@ -176,7 +176,7 @@
             <section id="model-configuration-card" class="settings-card workflow-settings-card">
               <div class="workflow-settings-heading">
                 <h4>模型配置</h4>
-                <button id="workflow-help-button" class="info-button" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">!</button>
+                <button id="workflow-help-button" class="info-button settings-card-help" type="button" aria-label="查看模型配置说明" aria-expanded="false" aria-controls="workflow-help-popover">!</button>
               </div>
               <div id="workflow-help-popover" class="workflow-help-popover" role="tooltip" hidden>每项任务可保存多个独立模型配置，并选择工作流平台或模型直连接入。</div>
               <div id="workflow-task-tabs" class="workflow-task-tabs" role="tablist" aria-label="Excel 任务">
@@ -188,7 +188,7 @@
                 <section id="excel-task-direct-service-section" class="task-model-selection-card">
                   <div class="task-selection-heading">
                     <h4 id="excel-task-direct-service-title">接入选择</h4>
-                    <details class="context-help">
+                    <details class="context-help settings-card-help">
                       <summary aria-label="查看接入选择说明">!</summary>
                       <div id="excel-task-direct-service-hint" class="context-help-popover" role="note">使用工作流平台或绑定直连模型配置，独立调整任务参数。</div>
                     </details>
@@ -196,7 +196,7 @@
                   <label class="field" for="excel-task-direct-service-select">
                     <span class="sr-only">接入选择</span>
                     <select id="excel-task-direct-service-select">
-                      <option value="">-- 使用工作流平台配置 --</option>
+                      <option value="">-- 使用工作流或模型配置 --</option>
                     </select>
                   </label>
                   <div id="excel-task-direct-params" hidden>
@@ -232,14 +232,14 @@
 
             <section id="direct-services-card" class="settings-card direct-services-card">
               <div class="direct-services-heading">
-                <div class="section-heading-with-help">
+                <div class="direct-services-title-actions">
                   <h4>直连模型配置</h4>
-                  <details class="context-help">
-                    <summary aria-label="查看直连模型配置说明">!</summary>
-                    <div class="context-help-popover" role="note">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</div>
-                  </details>
+                  <button id="btn-new-direct-service" type="button">新建</button>
                 </div>
-                <button id="btn-new-direct-service" type="button">新建</button>
+                <details class="context-help settings-card-help">
+                  <summary aria-label="查看直连模型配置说明">!</summary>
+                  <div class="context-help-popover" role="note">同一运行环境所有宿主共享配置，最多 5 个。仅需录入一次单份 API Key。</div>
+                </details>
               </div>
               <p id="legacy-direct-pending-status" class="inline-status" aria-live="polite" hidden></p>
               <div id="direct-services-list" class="direct-services-list">
@@ -307,7 +307,7 @@
                     <h3 id="workflow-manager-title">工作流配置</h3>
                     <p id="workflow-manager-summary">正在读取工作流配置...</p>
                   </div>
-                  <button id="btn-new-workflow-profile" type="button">新建工作流配置</button>
+                  <button id="btn-new-workflow-profile" type="button">新建</button>
                 </div>
                 <div id="workflow-profile-manager" class="workflow-profile-manager"></div>
               </section>

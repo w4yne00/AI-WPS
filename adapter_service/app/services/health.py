@@ -103,14 +103,49 @@ def _validate_model_configuration_data(payload: dict) -> None:
             _validate_ref(item.get("apiKeyRef"))
         normalized[item_id] = task_type
 
+    direct_services = _require_mapping(payload, "directServices")
+    normalized_direct_services = {}
+    for service_id, item in direct_services.items():
+        if not isinstance(item, dict):
+            raise _CoreHealthError("direct service must be an object")
+        item_id = _validate_ref(item.get("id", service_id))
+        normalized_direct_services[item_id] = item
+
+    task_selections = _require_mapping(payload, "taskModelSelections")
+    normalized_task_selections = {}
+    for task_type, item in task_selections.items():
+        task = str(task_type).strip()
+        if task not in SUPPORTED_WORKFLOW_TASKS or not isinstance(item, dict):
+            raise _CoreHealthError("task model selection is invalid")
+        service_id = str(item.get("serviceId", "")).strip()
+        if service_id and service_id not in normalized_direct_services:
+            raise _CoreHealthError("task model selection reference is invalid")
+        normalized_task_selections[task] = item
+
     active = _require_mapping(payload, "activeModelConfigurations")
     for task_type, configuration_id in active.items():
         task = str(task_type).strip()
         target = str(configuration_id).strip()
         if task not in SUPPORTED_WORKFLOW_TASKS:
             raise _CoreHealthError("active model task is invalid")
-        if normalized.get(target) != task:
+        if normalized.get(target) == task:
+            continue
+        direct_service = normalized_direct_services.get(target)
+        task_selection = normalized_task_selections.get(task, {})
+        if not isinstance(direct_service, dict):
             raise _CoreHealthError("active model reference is invalid")
+        if str(task_selection.get("serviceId", "")).strip() != target:
+            raise _CoreHealthError("active direct service selection is invalid")
+        effective_model = str(
+            task_selection.get("modelName")
+            or direct_service.get("defaultModel")
+            or ""
+        ).strip()
+        if (
+            not str(direct_service.get("serviceBaseUrl", "")).strip()
+            or not effective_model
+        ):
+            raise _CoreHealthError("active direct service selection is invalid")
 
     legacy = _require_mapping(payload, "workflowProfiles")
     legacy_ids = set()

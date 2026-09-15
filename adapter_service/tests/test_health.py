@@ -5,11 +5,64 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.services.health import (
+    _CoreHealthError,
+    _validate_model_configuration_data,
+)
+
 HAS_API_DEPS = importlib.util.find_spec("fastapi") is not None and importlib.util.find_spec("pydantic") is not None
 
 if HAS_API_DEPS:
     from fastapi.testclient import TestClient
     from app.main import app
+
+
+class HealthValidationTests(unittest.TestCase):
+    def test_active_direct_service_is_accepted_by_core_health_validation(
+        self,
+    ) -> None:
+        task_type = "word.smart_write"
+        service_id = "direct_svc_primary"
+        _validate_model_configuration_data(
+            {
+                "modelConfigurations": {},
+                "directServices": {
+                    service_id: {
+                        "id": service_id,
+                        "name": "Primary",
+                        "serviceBaseUrl": "https://api.example.test/v1",
+                        "defaultModel": "model-a",
+                    }
+                },
+                "taskModelSelections": {
+                    task_type: {
+                        "serviceId": service_id,
+                        "modelName": "model-a",
+                    }
+                },
+                "activeModelConfigurations": {task_type: service_id},
+            }
+        )
+
+    def test_active_direct_service_rejects_a_missing_task_selection(self) -> None:
+        task_type = "word.smart_write"
+        service_id = "direct_svc_primary"
+        with self.assertRaisesRegex(_CoreHealthError, "active direct service selection"):
+            _validate_model_configuration_data(
+                {
+                    "modelConfigurations": {},
+                    "directServices": {
+                        service_id: {
+                            "id": service_id,
+                            "name": "Primary",
+                            "serviceBaseUrl": "https://api.example.test/v1",
+                            "defaultModel": "model-a",
+                        }
+                    },
+                    "taskModelSelections": {},
+                    "activeModelConfigurations": {task_type: service_id},
+                }
+            )
 
 
 @unittest.skipUnless(HAS_API_DEPS, "fastapi and pydantic are required for API tests")
@@ -110,6 +163,7 @@ class HealthApiTests(unittest.TestCase):
         self.assertEqual(data["status"], "recovery")
         self.assertFalse(data["operationPolicy"]["configurationMutationsAllowed"])
         self.assertFalse(data["operationPolicy"]["modelTasksAllowed"])
+        self.assertFalse(data["operationPolicy"]["writingPolicyMutationsAllowed"])
         self.assertEqual(mutation_response.status_code, 503)
         self.assertEqual(
             mutation_response.json()["errors"][0]["code"],
@@ -118,6 +172,88 @@ class HealthApiTests(unittest.TestCase):
         self.assertEqual(task_response.status_code, 503)
         serialized = json.dumps(aggregate_response.json(), ensure_ascii=False)
         self.assertNotIn(str(config_path), serialized)
+
+    def test_active_direct_service_is_valid_model_configuration_state(self) -> None:
+        task_type = "word.smart_write"
+        service_id = "direct_svc_primary"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "adapter.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "modelConfigurations": {},
+                        "directServices": {
+                            service_id: {
+                                "id": service_id,
+                                "name": "Primary",
+                                "serviceBaseUrl": "https://api.example.test/v1",
+                                "defaultModel": "model-a",
+                            }
+                        },
+                        "taskModelSelections": {
+                            task_type: {
+                                "serviceId": service_id,
+                                "modelName": "model-a",
+                            }
+                        },
+                        "activeModelConfigurations": {
+                            task_type: service_id,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "app.services.health.default_config_path",
+                return_value=config_path,
+            ):
+                response = TestClient(app).get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["status"], "ready")
+        self.assertEqual(data["subsystems"]["modelConfigurations"]["status"], "ready")
+        self.assertTrue(data["operationPolicy"]["configurationMutationsAllowed"])
+        self.assertTrue(data["operationPolicy"]["modelTasksAllowed"])
+
+    def test_active_direct_service_requires_matching_task_selection(self) -> None:
+        task_type = "word.smart_write"
+        service_id = "direct_svc_primary"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config_path = Path(temp_dir) / "adapter.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "modelConfigurations": {},
+                        "directServices": {
+                            service_id: {
+                                "id": service_id,
+                                "name": "Primary",
+                                "serviceBaseUrl": "https://api.example.test/v1",
+                                "defaultModel": "model-a",
+                            }
+                        },
+                        "taskModelSelections": {},
+                        "activeModelConfigurations": {
+                            task_type: service_id,
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch(
+                "app.services.health.default_config_path",
+                return_value=config_path,
+            ):
+                response = TestClient(app).get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()["data"]
+        self.assertEqual(data["status"], "recovery")
+        self.assertEqual(
+            data["subsystems"]["modelConfigurations"]["errorCode"],
+            "MODEL_CONFIGURATION_DATA_INVALID",
+        )
 
     def test_invalid_task_route_enters_recovery_without_exposing_route_data(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

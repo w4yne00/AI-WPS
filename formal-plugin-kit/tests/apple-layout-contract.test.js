@@ -34,7 +34,8 @@ test("direct model guidance is hidden behind an accessible exclamation control",
   Object.keys(HOSTS).forEach((host) => {
     const html = source(host, "taskpane.html");
     assert.match(html, /<h4>直连模型配置<\/h4>/);
-    assert.match(html, /class="context-help[^\"]*"/);
+    assert.match(html, /class="direct-services-title-actions"/);
+    assert.match(html, /class="context-help settings-card-help"/);
     assert.match(html, /aria-label="查看直连模型配置说明"/);
     assert.match(html, />!<\/summary>/);
     assert.match(html, />新建<\/button>/);
@@ -47,6 +48,9 @@ test("task access cards use a generic label and move guidance into help", () => 
     const html = source(host, "taskpane.html");
     const js = source(host, "taskpane.js");
     assert.match(html, />接入选择<\/h4>/);
+    assert.match(html, />-- 使用工作流或模型配置 --<\/option>/);
+    assert.match(js, /-- 使用工作流或模型配置 --/);
+    assert.doesNotMatch(js, /-- 使用工作流平台配置 --/);
     assert.match(html, /aria-label="查看接入选择说明"/);
     assert.doesNotMatch(html, />接入模式<\/span>/);
     assert.doesNotMatch(js, /title(?:Node)?\.textContent = "(?:智能编写|智能仿写|文档审查|格式审查|智能分析|公式助手|智能填写|智能总结|结构审查)接入选择"/);
@@ -59,7 +63,7 @@ test("workflow-only configuration uses workflow terminology", () => {
     const js = source(host, "taskpane.js");
     assert.match(html, /id="workflow-configuration-card"/);
     assert.match(html, />工作流配置<\/h[234]>/);
-    assert.match(html, />新建工作流配置<\/button>/);
+    assert.match(html, /id="btn-new-workflow-profile"[^>]*>新建<\/button>/);
     assert.match(js, /尚未建立工作流配置/);
     assert.doesNotMatch(js, /尚未建立模型配置/);
   });
@@ -96,6 +100,18 @@ test("all hosts share compact action and contextual-help control dimensions", ()
     assert.match(css, /\.result-actions\s+\.ghost-action[\s\S]*?min-height:\s*32px/);
     assert.match(css, /\.copy-toolbar\s+\.ghost-action[\s\S]*?min-height:\s*32px/);
     assert.match(css, /\.context-help\s*>\s*summary[\s\S]*?width:\s*28px/);
+    assert.match(css, /\.settings-card-help\s*\{[\s\S]*?position:\s*absolute[\s\S]*?top:\s*16px[\s\S]*?right:\s*16px/);
+    assert.match(css, /\.inline-status:empty\s*\{[\s\S]*?display:\s*none/);
+  });
+});
+
+test("all hosts use a restrained system typography scale", () => {
+  Object.keys(HOSTS).forEach((host) => {
+    const css = source(host, "taskpane.css");
+    assert.match(css, /--font-size-body:\s*13px/);
+    assert.match(css, /--font-size-caption:\s*12px/);
+    assert.match(css, /--font-size-section:\s*16px/);
+    assert.match(css, /font-optical-sizing:\s*auto/);
   });
 });
 

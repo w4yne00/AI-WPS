@@ -4704,7 +4704,7 @@
     var activeProfileId = getWorkflowProfileData(currentTask).activeProfileId;
     var chosenServiceId = (currentSelection && currentSelection.serviceId) || (String(activeProfileId).startsWith("direct_svc_") ? activeProfileId : "");
 
-    var optionsHtml = ['<option value="">-- 使用工作流平台配置 --</option>'];
+    var optionsHtml = ['<option value="">-- 使用工作流或模型配置 --</option>'];
     directServices.forEach(function (svc) {
       var selectedAttr = svc.id === chosenServiceId ? " selected" : "";
       optionsHtml.push('<option value="' + escapeWorkflowText(svc.id) + '"' + selectedAttr + '>' + escapeWorkflowText(svc.name) + '</option>');
